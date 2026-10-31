@@ -74,24 +74,6 @@ func appendCampaignLocaleContentAudit(
 	})
 }
 
-func campaignLocaleContentOperation(
-	source bool,
-	create bool,
-	remove bool,
-	previouslyExists bool,
-) sharedtelemetry.AuditItemOperation {
-	switch {
-	case source:
-		return sharedtelemetry.AuditItemOperationUpdated
-	case remove:
-		return sharedtelemetry.AuditItemOperationDeleted
-	case create || !previouslyExists:
-		return sharedtelemetry.AuditItemOperationCreated
-	default:
-		return sharedtelemetry.AuditItemOperationUpdated
-	}
-}
-
 func campaignAuditState(status string) sharedtelemetry.AuditState {
 	switch status {
 	case "CAMPAIGN_STATUS_SCHEDULED":

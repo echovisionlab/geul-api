@@ -187,7 +187,7 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	internalLegalService, err := legal.NewInternalService(legal.InternalDeps{
 		DB:            db,
 		ContentBlocks: contentBlockStore,
-		Permissions:   spicedbClient,
+		SpiceDB:       spicedbClient,
 		Checkpoints:   collaborationRuntime.Checkpoints,
 		OG:            legalDependencies.OG,
 		Audit:         telemetryWriter,
@@ -208,9 +208,9 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	mux.Handle(internalFormPath, internalRPCTrust.collab(internalFormHandler))
 	slog.Info("Registered internal service", "path", internalFormPath)
 
-	legalAIDocumentService, err := legal.NewAuditedAIDocumentService(
-		db, contentBlockStore, spicedbClient, legalRuntime, telemetryWriter,
-	)
+	legalAIDocumentService, err := legal.NewAIDocumentService(legal.AIDocumentDeps{
+		DB: db, ContentBlocks: contentBlockStore, SpiceDB: spicedbClient, OG: legalRuntime, Audit: telemetryWriter,
+	})
 	if err != nil {
 		return internalContentServices{}, fmt.Errorf("initialize Legal AI document service: %w", err)
 	}

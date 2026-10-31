@@ -2,8 +2,9 @@ package campaign
 
 import (
 	"context"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"gorm.io/gorm"
 
@@ -77,7 +78,7 @@ func campaignRenderSnapshot(
 	}
 	contentSnapshot, err := contentBlocks.LoadSnapshotInTransaction(ctx, db, documentID, sourceLocale)
 	if err != nil {
-		return CampaignDeliverySnapshot{}, normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
+		return CampaignDeliverySnapshot{}, campaignContent.NormalizeContentBlockError(err)
 	}
 	for _, row := range campaignRows {
 		locale := normalizeCampaignLocale(row.Locale)
@@ -88,11 +89,11 @@ func campaignRenderSnapshot(
 		}
 		localizedDocument, err := contentblock.MaterializeSnapshotRichTextLocale(contentSnapshot, locale)
 		if err != nil {
-			return CampaignDeliverySnapshot{}, normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
+			return CampaignDeliverySnapshot{}, campaignContent.NormalizeContentBlockError(err)
 		}
 		materialized, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, localizedDocument, nil, sitevariable.TemplateContext())
 		if err != nil {
-			return CampaignDeliverySnapshot{}, normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
+			return CampaignDeliverySnapshot{}, campaignContent.NormalizeContentBlockError(err)
 		}
 		subject := sourceSubject
 		if row.IsSourceLocale || row.Subject != nil {

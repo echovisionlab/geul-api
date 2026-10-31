@@ -1,6 +1,7 @@
 package legal
 
 import (
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -72,6 +73,6 @@ func TestLegalTranslationJobApplyDocumentFenceUsesRootExistenceOnly(t *testing.T
 			kind,
 			entityID,
 		)(t.Context(), db, documentID)
-		require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+		require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -78,7 +80,7 @@ func (s *InternalCampaignService) ApplyBlockBatch(
 	if campaignID == "" {
 		return nil, errs.Required("campaign_id")
 	}
-	locale, err := normalizeCampaignDocumentLocale(req.Msg.GetLocale())
+	locale, err := emailcontent.NormalizeLocale(req.Msg.GetLocale())
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +109,7 @@ func (s *InternalCampaignService) ApplyBlockBatch(
 	}
 	batch, err := contentblock.BatchFromRichTextStorage(documentID, req.Msg.Batch.Profile, storage)
 	if err != nil {
-		return nil, normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
+		return nil, campaignContent.NormalizeContentBlockError(err)
 	}
 	for _, group := range batch.LocaleGroups {
 		if group.Locale != locale {
@@ -137,10 +139,10 @@ func (s *InternalCampaignService) ApplyBlockBatch(
 			if err := requireCampaignCollaborationContributors(ctx, tx, s.checkpoints, campaignID, contributors); err != nil {
 				return err
 			}
-			output, applyErr := applyCampaignTargetLocaleMutation(
+			output, applyErr := campaignContent.ApplyTargetLocaleMutation(
 				ctx, tx, s.contentBlocks,
-				campaignTargetLocaleMutationInput{
-					CampaignID: campaignID, DocumentID: documentID, Locale: locale,
+				emailcontent.TargetLocaleMutation{
+					ID: campaignID, DocumentID: documentID, Locale: locale,
 					Batch: batch, ExpectedDocumentRevision: expectedDocumentRevision,
 					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
 					Now:                    now,
@@ -154,7 +156,7 @@ func (s *InternalCampaignService) ApplyBlockBatch(
 			if result.Changed {
 				return appendCampaignLocaleContentAudit(
 					ctx, tx, s.auditWriter, originMemberID, campaignID, locale,
-					campaignLocaleContentOperation(false, false, false, true),
+					emailcontent.LocaleContentOperation(false, false, false, true),
 				)
 			}
 			return nil
@@ -187,7 +189,7 @@ func (s *InternalCampaignService) ApplyBlockBatch(
 			),
 		)
 		if applyErr != nil {
-			return normalizeCampaignEmailContentBlockError(campaignContentEntity, applyErr)
+			return campaignContent.NormalizeContentBlockError(applyErr)
 		}
 		if !result.Changed {
 			return nil
@@ -200,7 +202,7 @@ func (s *InternalCampaignService) ApplyBlockBatch(
 			ctx, tx, documentID, domain.SourceLocale,
 		)
 		if applyErr != nil {
-			return normalizeCampaignEmailContentBlockError(campaignContentEntity, applyErr)
+			return campaignContent.NormalizeContentBlockError(applyErr)
 		}
 		projectionLocales := result.ChangedLocales
 		if result.TranslationSourceChanged || len(projectionLocales) == 0 {
@@ -237,7 +239,7 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 	if campaignID == "" {
 		return nil, errs.Required("campaign_id")
 	}
-	locale, err := normalizeCampaignDocumentLocale(req.Msg.GetLocale())
+	locale, err := emailcontent.NormalizeLocale(req.Msg.GetLocale())
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +271,7 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 		}
 		originMemberID := contributors[0]
 		batch := contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedRevision}
-		var output campaignTargetLocaleMutationResult
+		var output emailcontent.TargetLocaleMutationResult
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			if err := requireCampaignContributors(ctx, tx, s.contributors, contributors); err != nil {
 				return err
@@ -278,10 +280,10 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 				return err
 			}
 			var applyErr error
-			output, applyErr = applyCampaignTargetLocaleMutation(
+			output, applyErr = campaignContent.ApplyTargetLocaleMutation(
 				ctx, tx, s.contentBlocks,
-				campaignTargetLocaleMutationInput{
-					CampaignID: campaignID, DocumentID: documentID, Locale: locale,
+				emailcontent.TargetLocaleMutation{
+					ID: campaignID, DocumentID: documentID, Locale: locale,
 					Batch: batch, ExpectedDocumentRevision: expectedRevision,
 					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
 					SetSubject:             true, Subject: req.Msg.Subject, Now: now,
@@ -294,7 +296,7 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 			if output.Result.Changed {
 				return appendCampaignLocaleContentAudit(
 					ctx, tx, s.auditWriter, originMemberID, campaignID, locale,
-					campaignLocaleContentOperation(false, false, false, true),
+					emailcontent.LocaleContentOperation(false, false, false, true),
 				)
 			}
 			return nil
@@ -336,7 +338,7 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 			},
 		)
 		if advanceErr != nil {
-			return normalizeCampaignEmailContentBlockError(campaignContentEntity, advanceErr)
+			return campaignContent.NormalizeContentBlockError(advanceErr)
 		}
 		domain, advanceErr := lockCampaignEmailTranslationSource(ctx, tx, campaignContentEntity, campaignID)
 		if advanceErr != nil {
@@ -349,7 +351,7 @@ func (s *InternalCampaignService) UpdateCampaignLocaleMetadata(
 			ctx, tx, documentID, domain.SourceLocale,
 		)
 		if advanceErr != nil {
-			return normalizeCampaignEmailContentBlockError(campaignContentEntity, advanceErr)
+			return campaignContent.NormalizeContentBlockError(advanceErr)
 		}
 		return projectCampaignEmailMaterializedContent(
 			ctx, tx, campaignID, snapshot, []string{domain.SourceLocale}, now,
@@ -378,7 +380,7 @@ func (s *InternalCampaignService) LoadDocument(
 	if campaignID == "" {
 		return nil, errs.Required("campaign_id")
 	}
-	locale, err := normalizeCampaignDocumentLocale(req.Msg.GetLocale())
+	locale, err := emailcontent.NormalizeLocale(req.Msg.GetLocale())
 	if err != nil {
 		return nil, err
 	}
@@ -392,7 +394,7 @@ func (s *InternalCampaignService) LoadDocument(
 	); err != nil {
 		return nil, err
 	}
-	var state campaignExactLocaleState
+	var state emailcontent.ExactLocaleState
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		documentID, loadErr := loadCampaignEmailContentDocumentRoot(
 			ctx, tx, campaignContentEntity, campaignID, true,
@@ -400,20 +402,20 @@ func (s *InternalCampaignService) LoadDocument(
 		if loadErr != nil {
 			return loadErr
 		}
-		state, loadErr = loadCampaignExactLocaleState(
+		state, loadErr = campaignContent.LoadExactLocaleState(
 			ctx, tx, s.contentBlocks, campaignID, documentID, locale, false,
 		)
 		return loadErr
 	}); err != nil {
 		return nil, err
 	}
-	document, err := materializeCampaignExactLocaleDocument(state, locale)
+	document, err := state.MaterializeLocale(campaignContent, locale)
 	if err != nil {
 		return nil, err
 	}
 	presentLocaleValues, err := contentblock.PresentRichTextLocaleValues(state.Snapshot, locale)
 	if err != nil {
-		return nil, normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
+		return nil, campaignContent.NormalizeContentBlockError(err)
 	}
 	var targetRevision *string
 	if locale != state.SourceLocale && state.TargetMetadata != nil {

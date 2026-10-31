@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"connectrpc.com/connect"
 	authzedv1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
@@ -68,11 +70,11 @@ func TestEmailAuthoringAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBa
 	compilerFailure := errors.New("stop after authorized Email Template compiler")
 	compilerCalls := 0
 	_, err = templateApplication.ExecuteAIDocumentMutation(
-		ctx, template.Msg.Id, "en", AIDocumentExecutionValidate,
-		func(state AIDocumentState) (AIDocumentMutation, error) {
+		ctx, template.Msg.Id, "en", emailcontent.AIDocumentExecutionValidate,
+		func(state emailcontent.AIDocumentState) (emailcontent.AIDocumentMutation, error) {
 			compilerCalls++
-			require.Equal(t, template.Msg.Id, state.TemplateID)
-			return AIDocumentMutation{}, compilerFailure
+			require.Equal(t, template.Msg.Id, state.Reference)
+			return emailcontent.AIDocumentMutation{}, compilerFailure
 		},
 	)
 	require.ErrorIs(t, err, compilerFailure)
@@ -92,12 +94,12 @@ func TestEmailAuthoringAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBa
 		WHERE email_template.id = ?
 	`, template.Msg.Id).Row().Scan(&templateSubjectBefore, &templateRevisionBefore))
 	templateResult, err := templateApplication.ExecuteAIDocumentMutation(
-		ctx, template.Msg.Id, "en", AIDocumentExecutionValidate,
-		func(state AIDocumentState) (AIDocumentMutation, error) {
+		ctx, template.Msg.Id, "en", emailcontent.AIDocumentExecutionValidate,
+		func(state emailcontent.AIDocumentState) (emailcontent.AIDocumentMutation, error) {
 			memberID := uuid.MustParse(state.ViewerMemberID)
 			revision := uuid.MustParse(state.DocumentRevision)
-			return AIDocumentMutation{
-				TemplateID: state.TemplateID, Locale: state.Locale,
+			return emailcontent.AIDocumentMutation{
+				Reference: state.Reference, Locale: state.Locale,
 				ExpectedDocumentRevision: state.DocumentRevision, ExpectedSource: state.SourceLocale,
 				ExpectedPresence: state.LocaleExists, ContributorMember: memberID,
 				SetSubject: true, Subject: "Template changed only inside Validate",
@@ -129,11 +131,11 @@ func TestEmailAuthoringAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBa
 
 	templateApplySubject := "Template changed by Apply"
 	templateResult, err = templateApplication.ExecuteAIDocumentMutation(
-		ctx, template.Msg.Id, "en", AIDocumentExecutionApply,
-		func(state AIDocumentState) (AIDocumentMutation, error) {
+		ctx, template.Msg.Id, "en", emailcontent.AIDocumentExecutionApply,
+		func(state emailcontent.AIDocumentState) (emailcontent.AIDocumentMutation, error) {
 			memberID := uuid.MustParse(state.ViewerMemberID)
-			return AIDocumentMutation{
-				TemplateID: state.TemplateID, Locale: state.Locale,
+			return emailcontent.AIDocumentMutation{
+				Reference: state.Reference, Locale: state.Locale,
 				ExpectedDocumentRevision: state.DocumentRevision, ExpectedSource: state.SourceLocale,
 				ExpectedPresence: state.LocaleExists, ContributorMember: memberID,
 				SetSubject: true, Subject: templateApplySubject,
@@ -152,11 +154,11 @@ func TestEmailAuthoringAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBa
 	requireEmailAuthoringAIDocumentLocaleAudits(t, db, "email_template", template.Msg.Id, "en", 1)
 
 	templateResult, err = templateApplication.ExecuteAIDocumentMutation(
-		ctx, template.Msg.Id, "en", AIDocumentExecutionApply,
-		func(state AIDocumentState) (AIDocumentMutation, error) {
+		ctx, template.Msg.Id, "en", emailcontent.AIDocumentExecutionApply,
+		func(state emailcontent.AIDocumentState) (emailcontent.AIDocumentMutation, error) {
 			memberID := uuid.MustParse(state.ViewerMemberID)
-			return AIDocumentMutation{
-				TemplateID: state.TemplateID, Locale: state.Locale,
+			return emailcontent.AIDocumentMutation{
+				Reference: state.Reference, Locale: state.Locale,
 				ExpectedDocumentRevision: state.DocumentRevision, ExpectedSource: state.SourceLocale,
 				ExpectedPresence: state.LocaleExists, ContributorMember: memberID,
 				SetSubject: true, Subject: templateApplySubject,
@@ -286,10 +288,10 @@ func TestEmailAuthoringAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBa
 	require.NoError(t, err)
 	compilerCalls = 0
 	_, err = deniedTemplateApplication.ExecuteAIDocumentMutation(
-		ctx, template.Msg.Id, "en", AIDocumentExecutionApply,
-		func(AIDocumentState) (AIDocumentMutation, error) {
+		ctx, template.Msg.Id, "en", emailcontent.AIDocumentExecutionApply,
+		func(emailcontent.AIDocumentState) (emailcontent.AIDocumentMutation, error) {
 			compilerCalls++
-			return AIDocumentMutation{}, nil
+			return emailcontent.AIDocumentMutation{}, nil
 		},
 	)
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))

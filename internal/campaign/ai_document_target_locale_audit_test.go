@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
@@ -70,9 +72,9 @@ func TestCampaignLocaleAuditFailureRollsBackOwningTransaction(t *testing.T) {
 
 func TestCampaignLocaleAuditOperationDistinguishesSourceAndTargetCRUD(t *testing.T) {
 	t.Parallel()
-	require.Equal(t, sharedtelemetry.AuditItemOperationUpdated, campaignLocaleContentOperation(true, false, false, true))
-	require.Equal(t, sharedtelemetry.AuditItemOperationCreated, campaignLocaleContentOperation(false, true, false, false))
-	require.Equal(t, sharedtelemetry.AuditItemOperationCreated, campaignLocaleContentOperation(false, false, false, false))
-	require.Equal(t, sharedtelemetry.AuditItemOperationUpdated, campaignLocaleContentOperation(false, false, false, true))
-	require.Equal(t, sharedtelemetry.AuditItemOperationDeleted, campaignLocaleContentOperation(false, false, true, true))
+	require.Equal(t, sharedtelemetry.AuditItemOperationUpdated, emailcontent.LocaleContentOperation(true, false, false, true))
+	require.Equal(t, sharedtelemetry.AuditItemOperationCreated, emailcontent.LocaleContentOperation(false, true, false, false))
+	require.Equal(t, sharedtelemetry.AuditItemOperationCreated, emailcontent.LocaleContentOperation(false, false, false, false))
+	require.Equal(t, sharedtelemetry.AuditItemOperationUpdated, emailcontent.LocaleContentOperation(false, false, false, true))
+	require.Equal(t, sharedtelemetry.AuditItemOperationDeleted, emailcontent.LocaleContentOperation(false, false, true, true))
 }

@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
-	"github.com/echovisionlab/geul-api/internal/translation"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -23,12 +23,43 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 const (
 	campaignContentEntity = "campaign"
 	emailContentProfile   = "email"
 )
+
+// campaignContent is the Campaign owner of shared email content.
+var campaignContent = emailcontent.Owner{
+	Name: "Campaign", Entity: campaignContentEntity, IDField: "campaign_id",
+	FileBlocksRejected:        "Campaign documents cannot contain File Blocks",
+	TranslatedSubjectRequired: "translated Campaign subject is required",
+	ContentEntityType:         managev1.ContentEntityType_CONTENT_ENTITY_TYPE_CAMPAIGN,
+	Rows:                      campaignContentRows{},
+	LocaleContentAudit: emailcontent.LocaleContentAudit{
+		Action: sharedtelemetry.AuditCampaignUpdated,
+		Record: sharedtelemetry.NewCampaignLocaleContentAuditRecord,
+	},
+}
+
+// campaignContentRows reads the Campaign rows beside its email content.
+type campaignContentRows struct{}
+
+func (campaignContentRows) DocumentID(ctx context.Context, db *gorm.DB, id string) (uuid.UUID, error) {
+	return loadCampaignEmailContentDocumentID(ctx, db, campaignContentEntity, id)
+}
+
+func (campaignContentRows) SourceContext(ctx context.Context, db *gorm.DB, id string, lock bool) (contentblock.DomainContext, error) {
+	return loadCampaignSourceContext(ctx, db, id, lock)
+}
+
+// ProjectSource rebuilds the source locale's materialized content; a
+// Campaign's targets keep theirs until they are written.
+func (campaignContentRows) ProjectSource(ctx context.Context, tx *gorm.DB, id string, snapshot contentblock.Snapshot, _ bool, now time.Time) error {
+	return projectCampaignEmailMaterializedContent(ctx, tx, id, snapshot, []string{snapshot.SourceLocale}, now)
+}
 
 type campaignEmailContentRoot struct {
 	ID                string         `gorm:"column:id"`
@@ -281,7 +312,7 @@ func loadCampaignSourceContext(ctx context.Context, db *gorm.DB, entityID string
 	if sourceLocale == "" {
 		return contentblock.DomainContext{}, errs.FailedPrecondition("Campaign translation source is not initialized")
 	}
-	normalized, err := normalizeCampaignDocumentLocale(sourceLocale)
+	normalized, err := emailcontent.NormalizeLocale(sourceLocale)
 	if err != nil {
 		return contentblock.DomainContext{}, errs.WithCause(errs.FailedPrecondition("Campaign translation source locale is invalid"), failurecause.ServerFault(err))
 	}
@@ -355,7 +386,7 @@ func updateCampaignEmailLocaleSubject(
 	if err := requireCampaignContentEntity(entityType); err != nil {
 		return contentblock.MetadataEffect{}, errs.Internal(err)
 	}
-	locale, err := normalizeCampaignDocumentLocale(locale)
+	locale, err := emailcontent.NormalizeLocale(locale)
 	if err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
@@ -414,34 +445,6 @@ func updateCampaignEmailLocaleSubject(
 	return contentblock.MetadataEffect{Changed: true, AffectsTranslationSource: true}, nil
 }
 
-func normalizeCampaignEmailContentBlockError(entityType string, err error) error {
-	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
-		return err
-	}
-	if entityType != campaignContentEntity {
-		return errs.Internal(fmt.Errorf("unsupported Campaign content entity %q: %w", entityType, err))
-	}
-	var targetConflict *translation.TargetRevisionConflict
-	if errors.As(err, &targetConflict) {
-		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err)
-	}
-
-	switch {
-	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		return errs.WithCause(errs.NotFoundMsg("campaign content document not found"), err)
-	case errors.Is(err, contentblock.ErrStaleRevision):
-		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "campaign content revision changed; reload before saving", err)
-	case errors.Is(err, contentblock.ErrCrossDocument):
-		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
-	case errors.Is(err, contentblock.ErrFileReference):
-		return errs.WithCause(errs.InvalidArgument("blocks", "Campaign documents cannot contain File Blocks"), err)
-	case errors.Is(err, contentblock.ErrInvalidMutation):
-		return errs.InvalidArgument("blocks", err.Error())
-	default:
-		return errs.Internal(fmt.Errorf("campaign content document: %w", err))
-	}
-}
-
 func asCampaignEmailConnectError(err error) error {
 	if err == nil {
 		return nil
@@ -484,11 +487,11 @@ func projectCampaignEmailMaterializedContent(
 	for _, locale := range locales {
 		document, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, locale)
 		if err != nil {
-			return normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
+			return campaignContent.NormalizeContentBlockError(err)
 		}
 		projection, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, nil, sitevariable.TemplateContext())
 		if err != nil {
-			return normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
+			return campaignContent.NormalizeContentBlockError(err)
 		}
 		updates := map[string]any{
 			"content_html": projection.HTML,

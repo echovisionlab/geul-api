@@ -605,6 +605,8 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		ContentBlocks: contentBlockStore,
 		OG:            legalDependencies.OG,
 		Notice:        legalDependencies.Notice,
+		PreviewLinks:  sharelinkadapter.LegalPreviewLinks{},
+		Members:       memberadapter.PreferredLocales{},
 		Audit:         telemetryWriter,
 		BaseURL:       cfg.SiteOrigin,
 	})

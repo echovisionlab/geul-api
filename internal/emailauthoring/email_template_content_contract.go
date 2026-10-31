@@ -8,16 +8,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/translation"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 const (
@@ -25,6 +26,56 @@ const (
 	emailContentProfile        = "email"
 	emailLayoutContentProfile  = "compact"
 )
+
+// emailTemplateContent is the Email Template owner of shared email content.
+var emailTemplateContent = emailcontent.Owner{
+	Name: "Email Template", Entity: emailTemplateContentEntity, IDField: "email_template_id",
+	FileBlocksRejected:        "email documents cannot contain File Blocks",
+	TranslatedSubjectRequired: "translated email subject is required",
+	ContentEntityType:         managev1.ContentEntityType_CONTENT_ENTITY_TYPE_EMAIL_TEMPLATE,
+	Rows:                      emailTemplateContentRows{},
+	LocaleContentAudit: emailcontent.LocaleContentAudit{
+		Action: sharedtelemetry.AuditEmailTemplateUpdated,
+		Record: sharedtelemetry.NewEmailTemplateLocaleContentAuditRecord,
+	},
+}
+
+// emailTemplateContentRows reads the Email Template rows beside its email
+// content.
+type emailTemplateContentRows struct{}
+
+func (emailTemplateContentRows) DocumentID(ctx context.Context, db *gorm.DB, id string) (uuid.UUID, error) {
+	return loadCampaignEmailContentDocumentID(ctx, db, emailTemplateContentEntity, id)
+}
+
+func (emailTemplateContentRows) SourceContext(ctx context.Context, db *gorm.DB, id string, lock bool) (contentblock.DomainContext, error) {
+	if lock {
+		return lockCampaignEmailTranslationSource(ctx, db, emailTemplateContentEntity, id)
+	}
+	return loadCampaignEmailSourceContext(ctx, db, emailTemplateContentEntity, id)
+}
+
+// ProjectSource rebuilds the source locale's materialized content. A changed
+// translation source can alter the fallback output of every target row, so
+// each keeps its sparse values but has its projection refreshed, and the
+// template's custom variables follow the new source HTML.
+func (emailTemplateContentRows) ProjectSource(ctx context.Context, tx *gorm.DB, id string, snapshot contentblock.Snapshot, sourceChanged bool, now time.Time) error {
+	if !sourceChanged {
+		return projectEmailTemplateMaterializedContent(ctx, tx, id, snapshot, []string{snapshot.SourceLocale}, now)
+	}
+	if err := projectEmailTemplateMaterializedContent(ctx, tx, id, snapshot, nil, now); err != nil {
+		return err
+	}
+	localized, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, snapshot.SourceLocale)
+	if err != nil {
+		return emailTemplateContent.NormalizeContentBlockError(err)
+	}
+	projection, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, localized, nil, sitevariable.TemplateContext())
+	if err != nil {
+		return emailTemplateContent.NormalizeContentBlockError(err)
+	}
+	return syncCustomEmailTemplateVariables(ctx, tx, id, projection.HTML)
+}
 
 type emailTemplateContentRoot struct {
 	ID                string         `gorm:"column:id"`
@@ -147,7 +198,7 @@ func updateCampaignEmailLocaleSubject(ctx context.Context, tx *gorm.DB, entityTy
 	if locale != domain.SourceLocale {
 		return contentblock.MetadataEffect{}, errs.FailedPrecondition("target email locale metadata is read-only")
 	}
-	current, exists, err := loadEmailTemplateExactLocaleMetadata(ctx, tx, entityID, locale, true)
+	current, exists, err := emailTemplateContent.LoadLocaleMetadata(ctx, tx, entityID, locale, true)
 	if err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
@@ -214,31 +265,6 @@ func campaignEmailDeleteContentFence(
 	entityID string,
 ) contentblock.DomainFence {
 	return campaignEmailContentFence(references, entityType, entityID)
-}
-
-func normalizeCampaignEmailContentBlockError(entityType string, err error) error {
-	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
-		return err
-	}
-	var targetConflict *translation.TargetRevisionConflict
-	if errors.As(err, &targetConflict) {
-		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, targetConflict.Error(), err)
-	}
-
-	switch {
-	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		return errs.WithCause(errs.NotFoundMsg(entityType+" content document not found"), err)
-	case errors.Is(err, contentblock.ErrStaleRevision):
-		return errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, entityType+" content revision changed; reload before saving", err)
-	case errors.Is(err, contentblock.ErrCrossDocument):
-		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
-	case errors.Is(err, contentblock.ErrFileReference):
-		return errs.WithCause(errs.InvalidArgument("blocks", "email documents cannot contain File Blocks"), err)
-	case errors.Is(err, contentblock.ErrInvalidMutation):
-		return errs.InvalidArgument("blocks", err.Error())
-	default:
-		return errs.Internal(fmt.Errorf("%s content document: %w", entityType, err))
-	}
 }
 
 func asCampaignEmailConnectError(err error) error {

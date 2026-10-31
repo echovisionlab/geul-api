@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"connectrpc.com/connect"
@@ -78,7 +80,7 @@ func (s *InternalEmailTemplateService) ApplyBlockBatch(
 	if templateID == "" {
 		return nil, errs.Required("email_template_id")
 	}
-	locale, err := normalizeEmailTemplateDocumentLocale(req.Msg.GetLocale())
+	locale, err := emailcontent.NormalizeLocale(req.Msg.GetLocale())
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +105,7 @@ func (s *InternalEmailTemplateService) ApplyBlockBatch(
 	}
 	batch, err := contentblock.BatchFromRichTextStorage(documentID, req.Msg.GetBatch().GetProfile(), storage)
 	if err != nil {
-		return nil, normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, err)
+		return nil, emailTemplateContent.NormalizeContentBlockError(err)
 	}
 	for _, group := range batch.LocaleGroups {
 		if group.Locale != locale {
@@ -128,10 +130,10 @@ func (s *InternalEmailTemplateService) ApplyBlockBatch(
 			if err := requireEmailTemplateCollaborationContributors(ctx, tx, s.checkpoints, templateID, contributors); err != nil {
 				return err
 			}
-			output, applyErr := applyEmailTemplateTargetLocaleMutation(
+			output, applyErr := emailTemplateContent.ApplyTargetLocaleMutation(
 				ctx, tx, s.contentBlocks,
-				emailTemplateTargetLocaleMutationInput{
-					TemplateID: templateID, DocumentID: documentID, Locale: locale,
+				emailcontent.TargetLocaleMutation{
+					ID: templateID, DocumentID: documentID, Locale: locale,
 					Batch: batch, ExpectedDocumentRevision: batch.ExpectedRevision,
 					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
 					Now:                    now,
@@ -145,7 +147,7 @@ func (s *InternalEmailTemplateService) ApplyBlockBatch(
 			if result.Changed {
 				return appendEmailTemplateLocaleContentAudit(
 					ctx, tx, s.auditWriter, originMemberID, templateID, locale,
-					emailAuthoringLocaleContentOperation(false, false, false, true),
+					emailcontent.LocaleContentOperation(false, false, false, true),
 				)
 			}
 			return nil
@@ -183,7 +185,7 @@ func (s *InternalEmailTemplateService) ApplyBlockBatch(
 			),
 		)
 		if applyErr != nil {
-			return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, applyErr)
+			return emailTemplateContent.NormalizeContentBlockError(applyErr)
 		}
 		if !result.Changed {
 			return nil
@@ -196,7 +198,7 @@ func (s *InternalEmailTemplateService) ApplyBlockBatch(
 			ctx, tx, documentID, domain.SourceLocale,
 		)
 		if applyErr != nil {
-			return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, applyErr)
+			return emailTemplateContent.NormalizeContentBlockError(applyErr)
 		}
 		projectionLocales := result.ChangedLocales
 		if result.TranslationSourceChanged {
@@ -215,11 +217,11 @@ func (s *InternalEmailTemplateService) ApplyBlockBatch(
 				snapshot, domain.SourceLocale,
 			)
 			if applyErr != nil {
-				return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, applyErr)
+				return emailTemplateContent.NormalizeContentBlockError(applyErr)
 			}
 			projection, applyErr := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, nil, sitevariable.TemplateContext())
 			if applyErr != nil {
-				return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, applyErr)
+				return emailTemplateContent.NormalizeContentBlockError(applyErr)
 			}
 			if applyErr := syncCustomEmailTemplateVariables(ctx, tx, templateID, projection.HTML); applyErr != nil {
 				return applyErr
@@ -227,7 +229,7 @@ func (s *InternalEmailTemplateService) ApplyBlockBatch(
 		}
 		return appendEmailTemplateLocaleContentAudit(
 			ctx, tx, s.auditWriter, originMemberID, templateID, locale,
-			emailAuthoringLocaleContentOperation(true, false, false, true),
+			emailcontent.LocaleContentOperation(true, false, false, true),
 		)
 	}); err != nil {
 		return nil, asCampaignEmailConnectError(err)
@@ -250,7 +252,7 @@ func (s *InternalEmailTemplateService) UpdateEmailTemplateLocaleMetadata(
 	if templateID == "" {
 		return nil, errs.Required("email_template_id")
 	}
-	locale, err := normalizeEmailTemplateDocumentLocale(req.Msg.GetLocale())
+	locale, err := emailcontent.NormalizeLocale(req.Msg.GetLocale())
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +278,7 @@ func (s *InternalEmailTemplateService) UpdateEmailTemplateLocaleMetadata(
 	if locale != domain.SourceLocale {
 		contributors := req.Msg.GetContributorMemberIds()
 		batch := contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedRevision}
-		var output emailTemplateTargetLocaleMutationResult
+		var output emailcontent.TargetLocaleMutationResult
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			originMemberID, err := requireEmailAuthoringMutationContributor(ctx, tx, contributors)
 			if err != nil {
@@ -286,10 +288,10 @@ func (s *InternalEmailTemplateService) UpdateEmailTemplateLocaleMetadata(
 				return err
 			}
 			var applyErr error
-			output, applyErr = applyEmailTemplateTargetLocaleMutation(
+			output, applyErr = emailTemplateContent.ApplyTargetLocaleMutation(
 				ctx, tx, s.contentBlocks,
-				emailTemplateTargetLocaleMutationInput{
-					TemplateID: templateID, DocumentID: documentID, Locale: locale,
+				emailcontent.TargetLocaleMutation{
+					ID: templateID, DocumentID: documentID, Locale: locale,
 					Batch: batch, ExpectedDocumentRevision: expectedRevision,
 					ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
 					SetSubject:             true, Subject: req.Msg.Subject, Now: now,
@@ -302,7 +304,7 @@ func (s *InternalEmailTemplateService) UpdateEmailTemplateLocaleMetadata(
 			if output.Result.Changed {
 				return appendEmailTemplateLocaleContentAudit(
 					ctx, tx, s.auditWriter, originMemberID, templateID, locale,
-					emailAuthoringLocaleContentOperation(false, false, false, true),
+					emailcontent.LocaleContentOperation(false, false, false, true),
 				)
 			}
 			return nil
@@ -348,12 +350,12 @@ func (s *InternalEmailTemplateService) UpdateEmailTemplateLocaleMetadata(
 			},
 		)
 		if advanceErr != nil {
-			return normalizeCampaignEmailContentBlockError(emailTemplateContentEntity, advanceErr)
+			return emailTemplateContent.NormalizeContentBlockError(advanceErr)
 		}
 		if result.Changed {
 			return appendEmailTemplateLocaleContentAudit(
 				ctx, tx, s.auditWriter, originMemberID, templateID, locale,
-				emailAuthoringLocaleContentOperation(true, false, false, true),
+				emailcontent.LocaleContentOperation(true, false, false, true),
 			)
 		}
 		return nil
@@ -386,7 +388,7 @@ func (s *InternalEmailTemplateService) LoadDocument(
 	if templateID == "" {
 		return nil, errs.Required("email_template_id")
 	}
-	locale, err := normalizeEmailTemplateDocumentLocale(req.Msg.GetLocale())
+	locale, err := emailcontent.NormalizeLocale(req.Msg.GetLocale())
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +403,7 @@ func (s *InternalEmailTemplateService) LoadDocument(
 	); err != nil {
 		return nil, err
 	}
-	var state emailTemplateExactLocaleState
+	var state emailcontent.ExactLocaleState
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		documentID, loadErr := loadCampaignEmailContentDocumentRoot(
 			ctx, tx, emailTemplateContentEntity, templateID, true,
@@ -409,14 +411,14 @@ func (s *InternalEmailTemplateService) LoadDocument(
 		if loadErr != nil {
 			return loadErr
 		}
-		state, loadErr = loadEmailTemplateExactLocaleState(
+		state, loadErr = emailTemplateContent.LoadExactLocaleState(
 			ctx, tx, s.contentBlocks, templateID, documentID, locale, false,
 		)
 		return loadErr
 	}); err != nil {
 		return nil, err
 	}
-	document, err := materializeEmailTemplateExactLocaleDocument(state, locale)
+	document, err := state.MaterializeLocale(emailTemplateContent, locale)
 	if err != nil {
 		return nil, err
 	}

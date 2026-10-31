@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -162,7 +164,7 @@ func (s *InternalEmailLayoutService) SaveDocument(
 		if advance.Changed {
 			return appendEmailLayoutLocaleContentAudit(
 				ctx, tx, s.auditWriter, originMemberID, r.EmailLayoutId, roomLocale,
-				emailAuthoringLocaleContentOperation(true, false, false, true),
+				emailcontent.LocaleContentOperation(true, false, false, true),
 			)
 		}
 		return nil
@@ -242,7 +244,7 @@ func (s *InternalEmailLayoutService) saveTargetDocument(
 		}
 		if err := appendEmailLayoutLocaleContentAudit(
 			ctx, tx, s.auditWriter, contributorMemberID, request.EmailLayoutId, output.locale,
-			emailAuthoringLocaleContentOperation(false, false, false, true),
+			emailcontent.LocaleContentOperation(false, false, false, true),
 		); err != nil {
 			return err
 		}

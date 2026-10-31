@@ -2,7 +2,6 @@
 # *Status_value lookups) per package. Map stored statuses in one function per
 # domain (docs/architecture.md); lower with -update.
 5 internal/adapters/collaboration
-4 internal/adapters/legal
 10 internal/adapters/mcp
 1 internal/adapters/release
 2 internal/adapters/series/public
@@ -16,8 +15,6 @@
 16 internal/filemedia/public
 15 internal/label
 12 internal/label/public
-18 internal/legal
-16 internal/legal/public
 50 internal/post
 10 internal/post/public
 28 internal/programevent

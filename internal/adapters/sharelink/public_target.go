@@ -7,7 +7,7 @@ import (
 
 	"gorm.io/gorm"
 
-	legalpublic "github.com/echovisionlab/geul-api/internal/legal/public"
+	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
 	sharelinkpublic "github.com/echovisionlab/geul-api/internal/sharelink/public"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -23,8 +23,19 @@ func NewPublicTargetResolver(db *gorm.DB) *PublicTargetResolver {
 	return &PublicTargetResolver{db: db}
 }
 
+// IsAutomaticPublicHistoryToken reports whether token is the preview link a
+// Terms or Privacy update notice mailed out for entityID.
 func (r *PublicTargetResolver) IsAutomaticPublicHistoryToken(ctx context.Context, token string, entityType managev1.ShareLinkEntityType, entityID string) (bool, error) {
-	return legalpublic.IsAutomaticLegalNoticePublicHistoryToken(ctx, r.db, token, entityType, entityID)
+	var kind string
+	switch entityType {
+	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY:
+		kind = "privacy"
+	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS:
+		kind = "terms"
+	default:
+		return false, nil
+	}
+	return campaignadapter.LegalNoticeRuns{}.IsUpdateNoticePreviewToken(ctx, r.db, kind, entityID, token)
 }
 
 func (r *PublicTargetResolver) Resolve(ctx context.Context, entityType managev1.ShareLinkEntityType, entityID string, now time.Time) (sharelinkpublic.Target, error) {

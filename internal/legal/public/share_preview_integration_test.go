@@ -15,7 +15,6 @@ import (
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/crypto"
-	legalpublic "github.com/echovisionlab/geul-api/internal/legal/public"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -48,7 +47,7 @@ func TestPublicLegalSharePreviewRequiresExactIDTokenPairIntegration(t *testing.T
 		}
 		require.NoError(t, db.Create(&link).Error)
 
-		service := legalpublic.NewPrivacyServiceWithContentBlocks(db, store, media)
+		service := newPublicPrivacyHandler(t, db, store, media)
 		preview, err := service.Get(context.Background(), connect.NewRequest(&openv1.GetPrivacyRequest{
 			Id: &scheduled.ID, ShareToken: &link.Token,
 		}))
@@ -102,7 +101,7 @@ func TestPublicLegalSharePreviewRequiresExactIDTokenPairIntegration(t *testing.T
 		}
 		require.NoError(t, db.Create(&link).Error)
 
-		service := legalpublic.NewTermsServiceWithContentBlocks(db, store, media)
+		service := newPublicTermsHandler(t, db, store, media)
 		preview, err := service.Get(context.Background(), connect.NewRequest(&openv1.GetTermsRequest{
 			Id: &scheduled.ID, ShareToken: &link.Token,
 		}))
@@ -175,7 +174,7 @@ func TestPublicLegalManualShareLinkOpensExactTypedHistoryAfterPasswordIntegratio
 	require.NoError(t, db.Create(&termsLink).Error)
 
 	wrong := "wrong"
-	privacyService := legalpublic.NewPrivacyServiceWithContentBlocks(db, store, media)
+	privacyService := newPublicPrivacyHandler(t, db, store, media)
 	rejectedPrivacy, err := privacyService.Get(t.Context(), connect.NewRequest(&openv1.GetPrivacyRequest{
 		Id: &privacy.ID, ShareToken: &privacyLink.Token, SharePassword: &wrong,
 	}))
@@ -190,7 +189,7 @@ func TestPublicLegalManualShareLinkOpensExactTypedHistoryAfterPasswordIntegratio
 	require.Equal(t, "Exact active privacy", publicLegalDocumentText(openedPrivacy.Msg.Privacy.GetDocument()))
 	require.Nil(t, openedPrivacy.Msg.Scheduled)
 
-	termsService := legalpublic.NewTermsServiceWithContentBlocks(db, store, media)
+	termsService := newPublicTermsHandler(t, db, store, media)
 	openedTerms, err := termsService.Get(t.Context(), connect.NewRequest(&openv1.GetTermsRequest{
 		Id: &terms.ID, ShareToken: &termsLink.Token, SharePassword: &password,
 	}))

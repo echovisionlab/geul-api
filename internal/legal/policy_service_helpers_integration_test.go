@@ -3,6 +3,8 @@
 package legal_test
 
 import (
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -29,6 +31,7 @@ func newLegalPolicyTestService(
 ) *legaldomain.Service {
 	deps := legaldomain.Deps{
 		DB: db, SpiceDB: spiceDB, OG: dependencies.OG, Notice: dependencies.Notice, Audit: audit, BaseURL: baseURL,
+		PreviewLinks: sharelinkadapter.LegalPreviewLinks{}, Members: memberadapter.PreferredLocales{},
 	}
 	for _, option := range options {
 		option(&deps)
@@ -87,11 +90,11 @@ func newTestInternalLegalService(
 	audit domainaudit.Appender,
 	dependencies legaldomain.Dependencies,
 	store *contentblock.Store,
-	permissions legaldomain.CollaborationPermissionChecker,
+	permissions *auth.SpiceDBClient,
 	checkpoints persistencecheckpoint.ContributorFence,
 ) *legaldomain.InternalService {
 	service, err := legaldomain.NewInternalService(legaldomain.InternalDeps{
-		DB: db, ContentBlocks: store, Permissions: permissions, Checkpoints: checkpoints,
+		DB: db, ContentBlocks: store, SpiceDB: permissions, Checkpoints: checkpoints,
 		OG: dependencies.OG, Audit: audit,
 	})
 	if err != nil {
@@ -105,7 +108,7 @@ func newTestInternalTermsService(
 	audit domainaudit.Appender,
 	dependencies legaldomain.Dependencies,
 	store *contentblock.Store,
-	permissions legaldomain.CollaborationPermissionChecker,
+	permissions *auth.SpiceDBClient,
 	checkpoints persistencecheckpoint.ContributorFence,
 ) *legaldomain.InternalTermsConnectHandler {
 	return legaldomain.NewInternalTermsConnectHandler(newTestInternalLegalService(db, audit, dependencies, store, permissions, checkpoints))
@@ -116,7 +119,7 @@ func newTestInternalPrivacyService(
 	audit domainaudit.Appender,
 	dependencies legaldomain.Dependencies,
 	store *contentblock.Store,
-	permissions legaldomain.CollaborationPermissionChecker,
+	permissions *auth.SpiceDBClient,
 	checkpoints persistencecheckpoint.ContributorFence,
 ) *legaldomain.InternalPrivacyConnectHandler {
 	return legaldomain.NewInternalPrivacyConnectHandler(newTestInternalLegalService(db, audit, dependencies, store, permissions, checkpoints))

@@ -6,6 +6,9 @@ import (
 	"strings"
 	"time"
 
+	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
+	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -21,8 +24,10 @@ type EmailDeliveryDispatcher interface {
 
 // NoticeRuntime seals legal-policy source, email-template, and layout
 // revisions in the policy transaction, then delegates post-commit dispatch to
-// Campaign's generic delivery runtime.
+// Campaign's generic delivery runtime. Campaign's adapter reads and stops the
+// runs a policy lifecycle change affects.
 type NoticeRuntime struct {
+	campaignadapter.LegalNoticeRuns
 	dispatcher EmailDeliveryDispatcher
 }
 
@@ -33,13 +38,6 @@ func NewNoticeRuntime(dispatcher EmailDeliveryDispatcher) *NoticeRuntime {
 type noticeRenderTranslation = campaign.CampaignDeliverySnapshotTranslation
 type noticeLayoutTranslation = campaign.CampaignDeliverySnapshotLayout
 type noticeRenderSnapshot = campaign.CampaignDeliverySnapshot
-
-type noticeTranslationRow struct {
-	Locale         string  `gorm:"column:locale"`
-	Subject        *string `gorm:"column:subject"`
-	ContentHTML    *string `gorm:"column:content_html"`
-	IsSourceLocale bool    `gorm:"column:is_source_locale"`
-}
 
 func (r *NoticeRuntime) CreateRun(
 	ctx context.Context,
@@ -152,7 +150,7 @@ func (*NoticeRuntime) PrepareAutomaticPreviewShareLink(
 	run model.CampaignDeliveryRun,
 	now time.Time,
 ) error {
-	return legaldomain.PrepareAutomaticNoticePreviewShareLink(ctx, tx, run, now)
+	return legaldomain.PrepareAutomaticNoticePreviewShareLink(ctx, tx, sharelinkadapter.LegalPreviewLinks{}, run, now)
 }
 
 func loadNoticeRenderSnapshot(
@@ -164,12 +162,8 @@ func loadNoticeRenderSnapshot(
 	if strings.HasPrefix(eventKey, "campaign:") {
 		return noticeRenderSnapshot{}, errs.FailedPrecondition("legal notice email template event key is invalid")
 	}
-	var rows []noticeTranslationRow
-	if err := db.WithContext(ctx).Table("email_template_translation AS translation").
-		Select("translation.locale, translation.subject, translation.content_html, translation.locale = source.source_locale AS is_source_locale").
-		Joins("JOIN email_template AS source ON source.id = translation.entity_id").
-		Where("translation.entity_id = ?", template.ID).
-		Order("is_source_locale DESC, locale ASC").Scan(&rows).Error; err != nil {
+	rows, err := emailauthoringadapter.TemplateLocaleContents(ctx, db, template.ID)
+	if err != nil {
 		return noticeRenderSnapshot{}, err
 	}
 	if len(rows) == 0 {

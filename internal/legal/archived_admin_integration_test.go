@@ -4,6 +4,7 @@ package legal_test
 
 import (
 	"context"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -192,7 +193,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 			err = legaldomain.RequireEditableTranslationMutationWithDB(
 				authorCtx, db, spiceDB, testCase.name, id,
 			)
-			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+			require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
 			var rootLocale struct {
 				Locale string `gorm:"column:source_locale"`
 			}
@@ -244,9 +245,9 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 			assertLegalSourceIdentityUnchangedIntegration(
 				t, db, store, testCase.name, id, providerDocumentRevision, providerSourceLocale,
 			)
-			documentAPI, err := legaldomain.NewAuditedAIDocumentService(
-				db, store, spiceDB, legalIntegrationDependencies(db, "").OG, noopDomainAuditAppender{},
-			)
+			documentAPI, err := legaldomain.NewAIDocumentService(legaldomain.AIDocumentDeps{
+				DB: db, ContentBlocks: store, SpiceDB: spiceDB, OG: legalIntegrationDependencies(db, "").OG, Audit: noopDomainAuditAppender{},
+			})
 			require.NoError(t, err)
 			targetDocument, err := documentAPI.LoadAIDocument(adminCtx, testCase.name, id, "ko")
 			require.NoError(t, err)

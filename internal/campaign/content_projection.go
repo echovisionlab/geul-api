@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	"gorm.io/gorm"
@@ -46,7 +48,7 @@ func loadCampaignSourceLocales(
 		return nil, errs.Internal(err)
 	}
 	for _, row := range rows {
-		locale, normalizeErr := normalizeCampaignDocumentLocale(row.SourceLocale)
+		locale, normalizeErr := emailcontent.NormalizeLocale(row.SourceLocale)
 		if normalizeErr != nil {
 			return nil, errs.WithCause(errs.FailedPrecondition("Campaign source locale is invalid"), failurecause.ServerFault(failurecause.WithAttrs(normalizeErr, slog.String("campaign_id", row.EntityID))))
 		}
@@ -81,11 +83,11 @@ func loadCampaignEmailEditorProjection(
 	}
 	snapshot, err := store.LoadSnapshot(ctx, db, documentID, domain.SourceLocale)
 	if err != nil {
-		return campaignEmailEditorProjection{}, normalizeCampaignEmailContentBlockError(entityType, err)
+		return campaignEmailEditorProjection{}, campaignContent.NormalizeContentBlockError(err)
 	}
 	document, err := contentblock.SnapshotToRichTextDocument(snapshot)
 	if err != nil {
-		return campaignEmailEditorProjection{}, normalizeCampaignEmailContentBlockError(entityType, err)
+		return campaignEmailEditorProjection{}, campaignContent.NormalizeContentBlockError(err)
 	}
 	if _, _, err := loadCampaignEmailLocaleMetadata(ctx, db, entityType, entityID); err != nil {
 		return campaignEmailEditorProjection{}, err

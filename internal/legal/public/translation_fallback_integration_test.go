@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
-	legalpublic "github.com/echovisionlab/geul-api/internal/legal/public"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
@@ -40,7 +39,7 @@ func TestPublishedAndArchivedLegalHistoryFallsBackAfterTargetDeletionIntegration
 			read: func(id string) (string, string, string) {
 				request := connect.NewRequest(&openv1.GetPrivacyRequest{Id: &id})
 				request.Header().Set("Accept-Language", "ko")
-				response, err := legalpublic.NewPrivacyServiceWithContentBlocks(db, store, media).Get(t.Context(), request)
+				response, err := newPublicPrivacyHandler(t, db, store, media).Get(t.Context(), request)
 				require.NoError(t, err)
 				return response.Msg.Privacy.GetTitle(),
 					publicLegalDocumentText(response.Msg.Privacy.GetDocument()),
@@ -56,7 +55,7 @@ func TestPublishedAndArchivedLegalHistoryFallsBackAfterTargetDeletionIntegration
 			read: func(id string) (string, string, string) {
 				request := connect.NewRequest(&openv1.GetPrivacyRequest{Id: &id})
 				request.Header().Set("Accept-Language", "ko")
-				response, err := legalpublic.NewPrivacyServiceWithContentBlocks(db, store, media).Get(t.Context(), request)
+				response, err := newPublicPrivacyHandler(t, db, store, media).Get(t.Context(), request)
 				require.NoError(t, err)
 				return response.Msg.Privacy.GetTitle(),
 					publicLegalDocumentText(response.Msg.Privacy.GetDocument()),
@@ -72,7 +71,7 @@ func TestPublishedAndArchivedLegalHistoryFallsBackAfterTargetDeletionIntegration
 			read: func(id string) (string, string, string) {
 				request := connect.NewRequest(&openv1.GetTermsRequest{Id: &id})
 				request.Header().Set("Accept-Language", "ko")
-				response, err := legalpublic.NewTermsServiceWithContentBlocks(db, store, media).Get(t.Context(), request)
+				response, err := newPublicTermsHandler(t, db, store, media).Get(t.Context(), request)
 				require.NoError(t, err)
 				return response.Msg.Terms.GetTitle(),
 					publicLegalDocumentText(response.Msg.Terms.GetDocument()),
@@ -88,7 +87,7 @@ func TestPublishedAndArchivedLegalHistoryFallsBackAfterTargetDeletionIntegration
 			read: func(id string) (string, string, string) {
 				request := connect.NewRequest(&openv1.GetTermsRequest{Id: &id})
 				request.Header().Set("Accept-Language", "ko")
-				response, err := legalpublic.NewTermsServiceWithContentBlocks(db, store, media).Get(t.Context(), request)
+				response, err := newPublicTermsHandler(t, db, store, media).Get(t.Context(), request)
 				require.NoError(t, err)
 				return response.Msg.Terms.GetTitle(),
 					publicLegalDocumentText(response.Msg.Terms.GetDocument()),

@@ -96,7 +96,7 @@ func ResolveLocalizedCampaign(
 		nil, sitevariable.TemplateContext(),
 	)
 	if err != nil {
-		return campaign, selectedLocale, normalizeCampaignEmailContentBlockError(campaignContentEntity, err)
+		return campaign, selectedLocale, campaignContent.NormalizeContentBlockError(err)
 	}
 	return applyCampaignLocalizedContent(campaign, source, target, materialized), selectedLocale, nil
 }

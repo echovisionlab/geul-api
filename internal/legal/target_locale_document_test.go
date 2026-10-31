@@ -1,6 +1,7 @@
 package legal
 
 import (
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -15,7 +16,7 @@ func TestCanonicalLegalLocaleRequiresExactCanonicalValue(t *testing.T) {
 		t.Fatalf("canonical locale = (%q, %v)", locale, err)
 	}
 	for _, input := range []string{"KO", "ko-KR", "ko_KR", " ko ", "zh-Hant", "es-MX"} {
-		if _, err := canonicalLegalLocale(input); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		if _, err := canonicalLegalLocale(input); errs.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Fatalf("canonicalLegalLocale(%q) error = %v", input, err)
 		}
 	}

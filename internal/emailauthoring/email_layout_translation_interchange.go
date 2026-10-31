@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -46,7 +48,7 @@ func LoadEmailLayoutTranslationInterchangeTarget(
 	if tx == nil {
 		return EmailLayoutTranslationInterchangeTarget{}, errs.Internal(errors.New("email layout translation interchange transaction is not configured"))
 	}
-	layoutID, err := canonicalEmailAIDocumentID("email_layout_id", layoutID)
+	layoutID, err := emailcontent.CanonicalID("email_layout_id", layoutID)
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, err
 	}
@@ -81,7 +83,7 @@ func ApplyEmailLayoutTranslationInterchange(
 	if tx == nil || references == nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, errs.Internal(errors.New("email layout translation interchange dependencies are not configured"))
 	}
-	layoutID, err := canonicalEmailAIDocumentID("email_layout_id", layoutID)
+	layoutID, err := emailcontent.CanonicalID("email_layout_id", layoutID)
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}

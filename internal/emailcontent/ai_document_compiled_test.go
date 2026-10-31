@@ -1,4 +1,4 @@
-package emailauthoring
+package emailcontent
 
 import (
 	"errors"
@@ -10,18 +10,18 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 )
 
-func TestCompiledEmailTemplateAIDocumentMutationBindsLockedState(t *testing.T) {
+func TestCompiledAIDocumentMutationBindsLockedState(t *testing.T) {
 	t.Parallel()
 	documentID := uuid.New()
 	revision := uuid.New()
 	memberID := uuid.New()
 	state := AIDocumentState{
-		TemplateID: "11111111-1111-4111-8111-111111111111", DocumentID: documentID,
+		Reference: "33333333-3333-4333-8333-333333333333", DocumentID: documentID,
 		DocumentRevision: revision.String(), SourceLocale: "ko", Locale: "en",
 		LocaleExists: true, ViewerMemberID: memberID.String(),
 	}
 	mutation := AIDocumentMutation{
-		TemplateID: state.TemplateID, Locale: state.Locale,
+		Reference: state.Reference, Locale: state.Locale,
 		ExpectedDocumentRevision: state.DocumentRevision, ExpectedSource: state.SourceLocale,
 		ExpectedPresence: state.LocaleExists, ContributorMember: memberID,
 		Batch: &contentblock.Batch{
@@ -29,24 +29,28 @@ func TestCompiledEmailTemplateAIDocumentMutationBindsLockedState(t *testing.T) {
 			ContributorMemberIDs: []uuid.UUID{memberID},
 		},
 	}
-	require.NoError(t, validateCompiledEmailTemplateAIDocumentMutation(state, mutation, revision))
+	require.NoError(t, testOwner.validateCompiledAIDocumentMutation(state, mutation, revision))
 
-	stale := mutation
-	stale.ExpectedPresence = false
-	var conflict *AIDocumentRevisionConflictError
-	require.ErrorAs(t, validateCompiledEmailTemplateAIDocumentMutation(state, stale, revision), &conflict)
-	require.Equal(t, state.DocumentRevision, conflict.CurrentDocumentRevision)
+	for _, stale := range []AIDocumentMutation{
+		func() AIDocumentMutation { value := mutation; value.ExpectedSource = "fr"; return value }(),
+		func() AIDocumentMutation { value := mutation; value.ExpectedPresence = false; return value }(),
+	} {
+		var conflict *AIDocumentRevisionConflictError
+		require.ErrorAs(t, testOwner.validateCompiledAIDocumentMutation(state, stale, revision), &conflict)
+		require.Equal(t, state.DocumentRevision, conflict.CurrentDocumentRevision)
+	}
 
 	wrongContributor := mutation
 	wrongContributor.ContributorMember = uuid.New()
-	require.Error(t, validateCompiledEmailTemplateAIDocumentMutation(state, wrongContributor, revision))
+	require.Error(t, testOwner.validateCompiledAIDocumentMutation(state, wrongContributor, revision))
 
 	wrongDocument := mutation
 	wrongDocument.Batch = &contentblock.Batch{
 		DocumentID: uuid.New(), ExpectedRevision: revision,
 		ContributorMemberIDs: []uuid.UUID{memberID},
 	}
-	err := validateCompiledEmailTemplateAIDocumentMutation(state, wrongDocument, revision)
+	err := testOwner.validateCompiledAIDocumentMutation(state, wrongDocument, revision)
 	require.Error(t, err)
+	var conflict *AIDocumentRevisionConflictError
 	require.False(t, errors.As(err, &conflict))
 }

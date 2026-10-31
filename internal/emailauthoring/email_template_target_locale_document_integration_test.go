@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -66,13 +68,13 @@ func TestEmailTemplateTargetCollaborationAndProviderKeepSharedRevisionIntegratio
 	require.NoError(t, err)
 	expectedDocumentRevision := uuid.MustParse(sourceWrite.Msg.DocumentRevision)
 	expectedMissing := false
-	var createdTarget emailTemplateTargetLocaleMutationResult
+	var createdTarget emailcontent.TargetLocaleMutationResult
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		var createErr error
-		createdTarget, createErr = applyEmailTemplateTargetLocaleMutation(
+		createdTarget, createErr = emailTemplateContent.ApplyTargetLocaleMutation(
 			ctx, tx, store,
-			emailTemplateTargetLocaleMutationInput{
-				TemplateID: template.Msg.Id, DocumentID: documentID, Locale: "ko",
+			emailcontent.TargetLocaleMutation{
+				ID: template.Msg.Id, DocumentID: documentID, Locale: "ko",
 				Batch: contentblock.Batch{
 					DocumentID: documentID, ExpectedRevision: expectedDocumentRevision,
 				},
@@ -91,7 +93,7 @@ func TestEmailTemplateTargetCollaborationAndProviderKeepSharedRevisionIntegratio
 	require.Equal(t, sourceWrite.Msg.DocumentRevision, createdTarget.Result.DocumentRevision.String())
 	require.NotEmpty(t, createdTarget.TargetRevision)
 
-	targetState, err := loadEmailTemplateExactLocaleState(
+	targetState, err := emailTemplateContent.LoadExactLocaleState(
 		ctx, db, store, template.Msg.Id, documentID, "ko", false,
 	)
 	require.NoError(t, err)
@@ -126,7 +128,7 @@ func TestEmailTemplateTargetCollaborationAndProviderKeepSharedRevisionIntegratio
 	err = db.Transaction(func(tx *gorm.DB) error {
 		_, applyErr := ApplyTemplateTranslationInterchange(
 			ctx, tx, store, references, template.Msg.Id, "en",
-			TemplateTranslationInterchangeMutation{
+			emailcontent.InterchangeMutation{
 				TargetLocale: "ko", ExpectedDocumentRevision: sourceWrite.Msg.DocumentRevision,
 				ExpectedTargetRevision: &staleTargetRevision, ExpectedPresence: true,
 				Subject: &staleInterchangeSubject, ContributorMemberID: contributorID, Now: time.Now().UTC(),
@@ -136,7 +138,7 @@ func TestEmailTemplateTargetCollaborationAndProviderKeepSharedRevisionIntegratio
 	})
 	var targetConflict *translation.TargetRevisionConflict
 	require.ErrorAs(t, err, &targetConflict)
-	afterStaleInterchange, err := loadEmailTemplateExactLocaleState(
+	afterStaleInterchange, err := emailTemplateContent.LoadExactLocaleState(
 		ctx, db, store, template.Msg.Id, documentID, "ko", false,
 	)
 	require.NoError(t, err)

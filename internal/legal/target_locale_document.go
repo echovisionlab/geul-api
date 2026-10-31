@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
@@ -80,7 +80,7 @@ type legalTargetLocaleDeleteInput struct {
 func canonicalLegalLocale(value string) (string, error) {
 	normalized := localization.NormalizeExactSupportedLocale(value)
 	if normalized == nil {
-		return "", errs.InvalidArgument("locale", "must be an exact canonical locale")
+		return "", domainerr.InvalidField("locale", "must be an exact canonical locale")
 	}
 	return *normalized, nil
 }
@@ -94,9 +94,6 @@ func loadLegalTargetLocaleState(
 	locale string,
 	lockTarget bool,
 ) (legalTargetLocaleState, error) {
-	if tx == nil || store == nil {
-		return legalTargetLocaleState{}, errs.InternalMsg("legal target locale dependencies are required")
-	}
 	locale, err := canonicalLegalLocale(locale)
 	if err != nil {
 		return legalTargetLocaleState{}, err
@@ -110,12 +107,10 @@ func loadLegalTargetLocaleState(
 		return legalTargetLocaleState{}, err
 	}
 	if snapshot.SourceLocale != root.SourceLocale {
-		return legalTargetLocaleState{}, errs.FailedPrecondition(
-			entityType + " source locale does not match its content document",
-		)
+		return legalTargetLocaleState{}, domainerr.Precondition(entityType + " source locale does not match its content document")
 	}
 	if snapshot.Document.Profile != legalContentDocumentProfile {
-		return legalTargetLocaleState{}, errs.FailedPrecondition(entityType + " target locale requires the policy content profile")
+		return legalTargetLocaleState{}, domainerr.Precondition(entityType + " target locale requires the policy content profile")
 	}
 	// Collaboration consumers need the complete current block graph with
 	// source fallback for leaves that are absent in this target locale. The
@@ -147,12 +142,10 @@ func loadLegalTargetLocaleState(
 	var target legalTargetLocaleMetadataRow
 	if err := query.Take(&target).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return legalTargetLocaleState{}, errs.Internal(err)
+			return legalTargetLocaleState{}, err
 		}
 		if targetlocale.SnapshotHasLocale(snapshot, locale) {
-			return legalTargetLocaleState{}, errs.FailedPrecondition(
-				entityType + " target locale Blocks exist without owning metadata",
-			)
+			return legalTargetLocaleState{}, domainerr.Precondition(entityType + " target locale Blocks exist without owning metadata")
 		}
 		return result, nil
 	}
@@ -173,7 +166,7 @@ func deriveLegalTargetRevision(
 		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &updatedAt,
 	})
 	if err != nil {
-		return "", errs.Internal(err)
+		return "", err
 	}
 	return revision, nil
 }
@@ -184,106 +177,163 @@ func applyLegalTargetLocaleMutation(
 	store *contentblock.Store,
 	input legalTargetLocaleMutationInput,
 ) (legalTargetLocaleMutationResult, error) {
-	if tx == nil || store == nil || input.ExpectedDocumentRevision == uuid.Nil || input.Fence == nil {
-		return legalTargetLocaleMutationResult{}, errs.InvalidArgument("target", "legal target identity, revision, and fence are required")
-	}
-	if err := validateAIDocumentIdentity(input.EntityType, input.EntityID, input.Locale); err != nil {
-		return legalTargetLocaleMutationResult{}, err
-	}
-	locale, err := canonicalLegalLocale(input.Locale)
-	if err != nil {
-		return legalTargetLocaleMutationResult{}, err
-	}
-	state, err := loadLegalTargetLocaleState(
-		ctx, tx, store, input.EntityType, input.EntityID, locale, true,
-	)
+	state, locale, err := lockLegalTargetLocale(ctx, tx, store, input.target())
 	if err != nil {
 		return legalTargetLocaleMutationResult{}, err
 	}
 	if locale == state.SourceLocale {
-		return legalTargetLocaleMutationResult{}, errs.InvalidArgument("locale", "legal target locale must differ from the source locale")
+		return legalTargetLocaleMutationResult{}, domainerr.InvalidField("locale", "legal target locale must differ from the source locale")
 	}
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
 		return legalTargetLocaleMutationResult{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
 	}
-	documentID := *state.Root.ContentDocumentID
 	batch, err := input.Policy.Admit(state.locked(), locale, input.Batch, input.ExpectedTargetRevision)
 	if err != nil {
 		return legalTargetLocaleMutationResult{}, err
 	}
-	domain, err := input.Fence(ctx, tx, documentID)
+	fence, err := lockedTargetFence(ctx, tx, state, input.Fence, "legal source locale changed; reload before saving")
 	if err != nil {
 		return legalTargetLocaleMutationResult{}, err
 	}
-	if domain.SourceLocale != state.SourceLocale {
-		return legalTargetLocaleMutationResult{}, errs.FailedPrecondition("legal source locale changed; reload before saving")
+	write := legalTargetMetadataWrite{
+		input: input, state: state, locale: locale, now: targetlocale.WriteTime(input.Now),
 	}
-	now := targetlocale.WriteTime(input.Now)
+	storeResult, err := store.ApplyTargetLocaleBatchWithMetadata(ctx, tx, batch, locale, fence, write.apply)
+	if err != nil {
+		return legalTargetLocaleMutationResult{}, err
+	}
 	result := legalTargetLocaleMutationResult{
 		DocumentRevision: state.Snapshot.Document.Revision.String(),
 		LocaleCreated:    state.TargetMetadata == nil,
+		Changed:          storeResult.Changed,
+		ContentChanged:   storeResult.ContentChanged,
+		MetadataChanged:  storeResult.MetadataChanged,
 	}
-	var finalMetadata legalTargetLocaleMetadataRow
-	storeResult, err := store.ApplyTargetLocaleBatchWithMetadata(
-		ctx,
-		tx,
-		batch,
-		locale,
-		contentblock.LockedFence(legalEntityName, documentID, domain),
-		func(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
-			currentTitle := state.SourceMetadata.Title
-			if state.TargetMetadata != nil {
-				currentTitle = state.TargetMetadata.Title
-			}
-			title := currentTitle
-			metadataChanged := false
-			if input.SetTitle {
-				title = input.Title
-				metadataChanged = !sameNullableString(currentTitle, title)
-			}
-			if state.TargetMetadata == nil {
-				finalMetadata = legalTargetLocaleMetadataRow{Locale: locale, Title: title, UpdatedAt: now}
-				insert := tx.WithContext(ctx).Exec(
-					"INSERT INTO "+input.EntityType+"_translation (entity_id, locale, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-					input.EntityID, locale, title, now, now,
-				)
-				if insert.Error != nil {
-					return contentblock.MetadataEffect{}, errs.Internal(insert.Error)
-				}
-				if insert.RowsAffected != 1 {
-					return contentblock.MetadataEffect{}, errs.InternalMsg("legal target locale could not be created")
-				}
-				return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
-			}
-			if !contentChanged && !metadataChanged {
-				finalMetadata = *state.TargetMetadata
-				return contentblock.MetadataEffect{}, nil
-			}
-			updatedAt := translation.NextTargetUpdatedAt(now, state.TargetMetadata.UpdatedAt)
-			updated := tx.WithContext(ctx).Table(input.EntityType+"_translation").
-				Where("entity_id = ? AND locale = ?", input.EntityID, locale).
-				Updates(structured.Fields{"title": title, "updated_at": updatedAt})
-			if updated.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(updated.Error)
-			}
-			if updated.RowsAffected != 1 {
-				return contentblock.MetadataEffect{}, errs.InternalMsg("legal target locale disappeared while saving")
-			}
-			finalMetadata = legalTargetLocaleMetadataRow{Locale: locale, Title: title, UpdatedAt: updatedAt}
-			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
-		},
-	)
-	if err != nil {
-		return legalTargetLocaleMutationResult{}, err
-	}
-	result.Changed = storeResult.Changed
-	result.ContentChanged = storeResult.ContentChanged
-	result.MetadataChanged = storeResult.MetadataChanged
-	result.TargetRevision, err = deriveLegalTargetRevision(result.DocumentRevision, finalMetadata)
+	result.TargetRevision, err = deriveLegalTargetRevision(result.DocumentRevision, write.final)
 	if err != nil {
 		return legalTargetLocaleMutationResult{}, err
 	}
 	return result, nil
+}
+
+// legalTargetLocale names one target locale write.
+type legalTargetLocale struct {
+	entityType               string
+	entityID                 string
+	locale                   string
+	expectedDocumentRevision uuid.UUID
+	fence                    contentblock.DomainFence
+}
+
+func (input legalTargetLocaleMutationInput) target() legalTargetLocale {
+	return legalTargetLocale{
+		entityType: input.EntityType, entityID: input.EntityID, locale: input.Locale,
+		expectedDocumentRevision: input.ExpectedDocumentRevision, fence: input.Fence,
+	}
+}
+
+func (input legalTargetLocaleDeleteInput) target() legalTargetLocale {
+	return legalTargetLocale{
+		entityType: input.EntityType, entityID: input.EntityID, locale: input.Locale,
+		expectedDocumentRevision: input.ExpectedDocumentRevision, fence: input.Fence,
+	}
+}
+
+// lockLegalTargetLocale validates a target write and loads its locked state.
+func lockLegalTargetLocale(
+	ctx context.Context,
+	tx *gorm.DB,
+	store *contentblock.Store,
+	target legalTargetLocale,
+) (legalTargetLocaleState, string, error) {
+	if target.expectedDocumentRevision == uuid.Nil || target.fence == nil {
+		return legalTargetLocaleState{}, "", domainerr.InvalidField("target", "legal target identity, revision, and fence are required")
+	}
+	if err := validateAIDocumentIdentity(target.entityType, target.entityID, target.locale); err != nil {
+		return legalTargetLocaleState{}, "", err
+	}
+	locale, err := canonicalLegalLocale(target.locale)
+	if err != nil {
+		return legalTargetLocaleState{}, "", err
+	}
+	state, err := loadLegalTargetLocaleState(ctx, tx, store, target.entityType, target.entityID, locale, true)
+	return state, locale, err
+}
+
+// lockedTargetFence runs the write's domain fence once and returns the
+// fence of the locked document; a source locale that moved answers
+// sourceChanged.
+func lockedTargetFence(
+	ctx context.Context,
+	tx *gorm.DB,
+	state legalTargetLocaleState,
+	fence contentblock.DomainFence,
+	sourceChanged string,
+) (contentblock.DomainFence, error) {
+	documentID := *state.Root.ContentDocumentID
+	domain, err := fence(ctx, tx, documentID)
+	if err != nil {
+		return nil, err
+	}
+	if domain.SourceLocale != state.SourceLocale {
+		return nil, domainerr.Precondition(sourceChanged)
+	}
+	return contentblock.LockedFence(legalEntityName, documentID, domain), nil
+}
+
+// legalTargetMetadataWrite creates or updates the target locale's row with
+// the content batch; final is the row the write left.
+type legalTargetMetadataWrite struct {
+	input  legalTargetLocaleMutationInput
+	state  legalTargetLocaleState
+	locale string
+	now    time.Time
+	final  legalTargetLocaleMetadataRow
+}
+
+func (w *legalTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
+	current := w.state.TargetMetadata
+	currentTitle := w.state.SourceMetadata.Title
+	if current != nil {
+		currentTitle = current.Title
+	}
+	title := currentTitle
+	metadataChanged := false
+	if w.input.SetTitle {
+		title = w.input.Title
+		metadataChanged = !sameNullableString(currentTitle, title)
+	}
+	changed := contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{w.locale}}
+	if current == nil {
+		w.final = legalTargetLocaleMetadataRow{Locale: w.locale, Title: title, UpdatedAt: w.now}
+		insert := tx.WithContext(ctx).Exec(
+			"INSERT INTO "+w.input.EntityType+"_translation (entity_id, locale, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+			w.input.EntityID, w.locale, title, w.now, w.now,
+		)
+		if insert.Error != nil {
+			return contentblock.MetadataEffect{}, insert.Error
+		}
+		if insert.RowsAffected != 1 {
+			return contentblock.MetadataEffect{}, errors.New("legal target locale could not be created")
+		}
+		return changed, nil
+	}
+	if !contentChanged && !metadataChanged {
+		w.final = *current
+		return contentblock.MetadataEffect{}, nil
+	}
+	updatedAt := translation.NextTargetUpdatedAt(w.now, current.UpdatedAt)
+	updated := tx.WithContext(ctx).Table(w.input.EntityType+"_translation").
+		Where("entity_id = ? AND locale = ?", w.input.EntityID, w.locale).
+		Updates(structured.Fields{"title": title, "updated_at": updatedAt})
+	if updated.Error != nil {
+		return contentblock.MetadataEffect{}, updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return contentblock.MetadataEffect{}, errors.New("legal target locale disappeared while saving")
+	}
+	w.final = legalTargetLocaleMetadataRow{Locale: w.locale, Title: title, UpdatedAt: updatedAt}
+	return changed, nil
 }
 
 func deleteLegalTargetLocale(
@@ -292,24 +342,12 @@ func deleteLegalTargetLocale(
 	store *contentblock.Store,
 	input legalTargetLocaleDeleteInput,
 ) (contentblock.Result, error) {
-	if tx == nil || store == nil || input.ExpectedDocumentRevision == uuid.Nil || input.Fence == nil {
-		return contentblock.Result{}, errs.InvalidArgument("target", "legal target identity, revision, and fence are required")
-	}
-	if err := validateAIDocumentIdentity(input.EntityType, input.EntityID, input.Locale); err != nil {
-		return contentblock.Result{}, err
-	}
-	locale, err := canonicalLegalLocale(input.Locale)
-	if err != nil {
-		return contentblock.Result{}, err
-	}
-	state, err := loadLegalTargetLocaleState(
-		ctx, tx, store, input.EntityType, input.EntityID, locale, true,
-	)
+	state, locale, err := lockLegalTargetLocale(ctx, tx, store, input.target())
 	if err != nil {
 		return contentblock.Result{}, err
 	}
 	if locale == state.SourceLocale {
-		return contentblock.Result{}, errs.InvalidArgument("locale", "source locale is not a translation resource")
+		return contentblock.Result{}, domainerr.InvalidField("locale", "source locale is not a translation resource")
 	}
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
 		return contentblock.Result{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
@@ -318,37 +356,26 @@ func deleteLegalTargetLocale(
 		return contentblock.Result{}, err
 	}
 	if state.TargetMetadata == nil {
-		return contentblock.Result{
-			DocumentRevision: state.Snapshot.Document.Revision,
-		}, nil
+		return contentblock.Result{DocumentRevision: state.Snapshot.Document.Revision}, nil
 	}
-	documentID := *state.Root.ContentDocumentID
-	domain, err := input.Fence(ctx, tx, documentID)
+	fence, err := lockedTargetFence(ctx, tx, state, input.Fence, "legal source locale changed; reload before deleting target")
 	if err != nil {
 		return contentblock.Result{}, err
 	}
-	if domain.SourceLocale != state.SourceLocale {
-		return contentblock.Result{}, errs.FailedPrecondition("legal source locale changed; reload before deleting target")
-	}
 	batch := contentblock.Batch{
-		DocumentID: documentID, ExpectedRevision: input.ExpectedDocumentRevision,
+		DocumentID: *state.Root.ContentDocumentID, ExpectedRevision: input.ExpectedDocumentRevision,
 		ContributorMemberIDs: append([]uuid.UUID(nil), input.ContributorMemberIDs...),
 		LocaleGroups:         targetlocale.DeleteGroups(state.Snapshot, locale),
 	}
-	return store.ApplyTargetLocaleBatchWithMetadata(
-		ctx,
-		tx,
-		batch,
-		locale,
-		contentblock.LockedFence(legalEntityName, documentID, domain),
+	return store.ApplyTargetLocaleBatchWithMetadata(ctx, tx, batch, locale, fence,
 		func(ctx context.Context, tx *gorm.DB, _ bool) (contentblock.MetadataEffect, error) {
 			deleted := tx.WithContext(ctx).Table(input.EntityType+"_translation").
 				Where("entity_id = ? AND locale = ?", input.EntityID, locale).Delete(nil)
 			if deleted.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(deleted.Error)
+				return contentblock.MetadataEffect{}, deleted.Error
 			}
 			if deleted.RowsAffected != 1 {
-				return contentblock.MetadataEffect{}, errs.InternalMsg("legal target locale disappeared while deleting")
+				return contentblock.MetadataEffect{}, errors.New("legal target locale disappeared while deleting")
 			}
 			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
 		},

@@ -1,15 +1,16 @@
 package legal
 
 import (
-	"context"
 	"errors"
 	"slices"
 	"strings"
 
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -22,7 +23,7 @@ import (
 type InternalDeps struct {
 	DB            *gorm.DB
 	ContentBlocks *contentblock.Store
-	Permissions   CollaborationPermissionChecker
+	SpiceDB       *auth.SpiceDBClient
 	Checkpoints   persistencecheckpoint.ContributorFence
 	OG            OG
 	Audit         domainaudit.Appender
@@ -31,7 +32,7 @@ type InternalDeps struct {
 func (d InternalDeps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
-		"DB": d.DB == nil, "ContentBlocks": d.ContentBlocks == nil, "Permissions": d.Permissions == nil,
+		"DB": d.DB == nil, "ContentBlocks": d.ContentBlocks == nil, "SpiceDB": d.SpiceDB == nil,
 		"Checkpoints": d.Checkpoints == nil, "OG": d.OG == nil, "Audit": d.Audit == nil,
 	} {
 		if absent {
@@ -48,7 +49,12 @@ func (d InternalDeps) validate() error {
 // InternalService holds the collaboration use cases of Terms and Privacy
 // documents. Each takes the PolicyKind it acts on.
 type InternalService struct {
-	deps InternalDeps
+	db            *gorm.DB
+	contentBlocks *contentblock.Store
+	spiceDB       *auth.SpiceDBClient
+	checkpoints   persistencecheckpoint.ContributorFence
+	legalOG       OG
+	mutations     *mutation.Runner
 }
 
 // NewInternalService validates deps and returns the collaboration use cases.
@@ -56,16 +62,13 @@ func NewInternalService(deps InternalDeps) (*InternalService, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	return &InternalService{deps: deps}, nil
-}
-
-func (s *InternalService) documents(kind PolicyKind) (internalLegalDocumentService, error) {
-	if _, err := kind.descriptor(); err != nil {
-		return internalLegalDocumentService{}, err
+	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, deps.Audit)
+	if err != nil {
+		return nil, err
 	}
-	return internalLegalDocumentService{
-		db: s.deps.DB, kind: string(kind), auditWriter: s.deps.Audit, contentBlocks: s.deps.ContentBlocks,
-		spiceDB: s.deps.Permissions, checkpoints: s.deps.Checkpoints, legalOG: s.deps.OG,
+	return &InternalService{
+		db: deps.DB, contentBlocks: deps.ContentBlocks, spiceDB: deps.SpiceDB,
+		checkpoints: deps.Checkpoints, legalOG: deps.OG, mutations: mutations,
 	}, nil
 }
 
@@ -77,15 +80,6 @@ type LoadBlockDocumentQuery struct {
 	Principal *intrav1.CollaborationPrincipal
 }
 
-// LoadBlockDocument returns the version's document for collaboration.
-func (s *InternalService) LoadBlockDocument(ctx context.Context, kind PolicyKind, query LoadBlockDocumentQuery) (*BlockDocument, error) {
-	documents, err := s.documents(kind)
-	if err != nil {
-		return nil, err
-	}
-	return documents.loadDocument(ctx, query.ID, query.Locale, query.Principal)
-}
-
 // ApplyBlockBatchCommand applies a collaboration Block batch to a version.
 type ApplyBlockBatchCommand struct {
 	ID                     string
@@ -95,20 +89,40 @@ type ApplyBlockBatchCommand struct {
 	AffectedLocaleValues   []*managev1.AIDocumentFieldTarget
 }
 
-// ApplyBlockBatch applies the batch and returns what changed.
-func (s *InternalService) ApplyBlockBatch(ctx context.Context, kind PolicyKind, command ApplyBlockBatchCommand) (*DocumentChange, error) {
-	documents, err := s.documents(kind)
-	if err != nil {
-		return nil, err
-	}
-	return documents.applyDocumentMutation(ctx, command.ID, command.Locale, command.ExpectedTargetRevision, command.Batch, command.AffectedLocaleValues)
+// UpdateLocaleMetadataCommand changes a version's title in one locale.
+type UpdateLocaleMetadataCommand struct {
+	EntityID               string
+	Locale                 string
+	ExpectedRevision       string
+	ExpectedTargetRevision *string
+	Title                  *string
+	Contributors           []string
 }
 
-// UpdateLocaleMetadata changes a version's title in one locale.
-func (s *InternalService) UpdateLocaleMetadata(ctx context.Context, kind PolicyKind, command UpdateLocaleMetadataCommand) (*DocumentChange, error) {
-	documents, err := s.documents(kind)
-	if err != nil {
-		return nil, err
-	}
-	return documents.updateDocumentMetadata(ctx, command)
+// LocaleMetadata is a version's title in one locale.
+type LocaleMetadata struct {
+	Locale string
+	Title  *string
+}
+
+// BlockDocument is a version's document as collaboration loads it.
+type BlockDocument struct {
+	Document       *contentv1.LocalizedRichTextDocument
+	Snapshot       contentblock.Snapshot
+	SourceLocale   string
+	SourceMetadata LocaleMetadata
+	Locale         string
+	LocaleExists   bool
+	LocaleMetadata *LocaleMetadata
+	TargetRevision *string
+}
+
+// DocumentChange is what a collaboration write changed.
+type DocumentChange struct {
+	DocumentRevision string
+	Changed          bool
+	SourceChanged    bool
+	ChangedLocales   []string
+	Locale           string
+	TargetRevision   *string
 }
