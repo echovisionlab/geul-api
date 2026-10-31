@@ -242,7 +242,6 @@
 1 internal/post -> content_block
 1 internal/post -> content_block_locale
 2 internal/post -> content_document
-3 internal/post -> kratos.identities
 1 internal/post -> map_place
 5 internal/post -> member
 1 internal/post/public -> map_place

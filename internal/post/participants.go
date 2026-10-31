@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -69,9 +70,7 @@ func (s *Service) ListPostParticipants(ctx context.Context, query PostParticipan
 		       END AS has_effective_authority
 		FROM post_author AS author
 		JOIN member ON member.id = author.member_id
-		LEFT JOIN kratos.identities AS identity
-		  ON identity.id = member.account_identity_id
-		 AND identity.external_id = member.id::text
+		`+identityread.LeftJoinLinked("member", "identity")+`
 		WHERE author.post_id = ?::uuid
 		UNION ALL
 		SELECT collaborator.member_id::text AS member_id,
@@ -87,9 +86,7 @@ func (s *Service) ListPostParticipants(ctx context.Context, query PostParticipan
 		       END AS has_effective_authority
 		FROM post_collaborator AS collaborator
 		JOIN member ON member.id = collaborator.member_id
-		LEFT JOIN kratos.identities AS identity
-		  ON identity.id = member.account_identity_id
-		 AND identity.external_id = member.id::text
+		`+identityread.LeftJoinLinked("member", "identity")+`
 		WHERE collaborator.post_id = ?::uuid
 		ORDER BY role ASC, created_at ASC, member_id ASC
 	`, query.PostID, query.PostID).Scan(&rows).Error; err != nil {

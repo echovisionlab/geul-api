@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -179,8 +180,9 @@ func requirePostContributorsPermission(
 	var rows []contributorRow
 	if err := tx.WithContext(ctx).
 		Table("member AS member").
-		Joins("JOIN kratos.identities AS identity ON identity.id = member.account_identity_id AND identity.external_id = member.id::text AND identity.state = ?", "active").
+		Joins(identityread.JoinLinked("member", "identity")).
 		Select("member.id::text AS member_id, member.account_identity_id::text AS identity_id").
+		Where("identity.state = ?", "active").
 		Where("member.id IN ? AND member.deleted_at IS NULL AND member.onboarded = TRUE AND member.account_identity_id IS NOT NULL AND COALESCE((identity.metadata_admin ->> 'banned')::boolean, false) = FALSE", memberIDs).
 		Find(&rows).Error; err != nil {
 		return fmt.Errorf("load Post collaboration contributors: %w", err)
