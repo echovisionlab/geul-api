@@ -21,6 +21,7 @@ type Translation interface {
 type MemberProjection interface {
 	LoadMemberSummaries(context.Context, []string) (map[string]*commonv1.MemberSummary, error)
 	LoadAuthorizationEligibleMemberSummary(context.Context, string) (*commonv1.MemberSummary, error)
+	LoadAuthorizationEligibleIdentities(context.Context, []string) (map[string]string, error)
 }
 
 // Runtime is Label's narrow boundary to shared File/media and OG lifecycles.

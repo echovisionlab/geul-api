@@ -13,7 +13,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -47,21 +46,21 @@ func CheckPermissionForPrincipal(ctx context.Context, checker PermissionChecker,
 func RequireGlobalAction(ctx context.Context, checker PermissionChecker, can policyv1.Can) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated {
-		return errs.NotAuthenticated()
+		return domainerr.New(domainerr.Unauthenticated, "", "not authenticated")
 	}
 	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return errAuthenticationRequired.WithCause(err)
 	}
 	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.AdminRequired()
+		return domainerr.Denied("admin access required")
 	}
 	return nil
 }
@@ -70,7 +69,7 @@ func RequireGlobalAction(ctx context.Context, checker PermissionChecker, can pol
 func (s Spec) RequireCreate(ctx context.Context, checker PermissionChecker) error {
 	can, err := s.Policy.Create()
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return RequireGlobalAction(ctx, checker, can)
 }
@@ -79,7 +78,7 @@ func (s Spec) RequireCreate(ctx context.Context, checker PermissionChecker) erro
 func (s Spec) RequireList(ctx context.Context, checker PermissionChecker) error {
 	can, err := s.Policy.List()
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return RequireGlobalAction(ctx, checker, can)
 }
@@ -88,7 +87,7 @@ func (s Spec) RequireList(ctx context.Context, checker PermissionChecker) error 
 // entity. A denial answers not found so the entity's existence stays hidden.
 func (s Spec) RequirePermission(ctx context.Context, checker PermissionChecker, entityID string, action auth.ResourceAction) error {
 	if auth.GetUser(ctx) == nil {
-		return errs.AuthenticationRequired()
+		return errAuthenticationRequired
 	}
 	return s.RequirePrincipalPermission(ctx, checker, entityID, action, auth.GetUser(ctx))
 }
@@ -98,10 +97,10 @@ func (s Spec) RequirePermission(ctx context.Context, checker PermissionChecker, 
 func (s Spec) RequirePrincipalPermission(ctx context.Context, checker PermissionChecker, entityID string, action auth.ResourceAction, principal *auth.UserInfo) error {
 	allowed, err := CheckPermissionForPrincipal(ctx, checker, entityID, action, principal)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), failurecause.WithAttrs(err, slog.String(s.IDColumn, entityID)))
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(failurecause.WithAttrs(err, slog.String(s.IDColumn, entityID)))
 	}
 	if !allowed {
-		return errs.NotFound(s.Name, entityID)
+		return domainerr.ResourceNotFound(s.Name, entityID)
 	}
 	return nil
 }
@@ -133,9 +132,9 @@ func (s Spec) LockRoot(ctx context.Context, tx *gorm.DB, entityID string) error 
 	}
 	if err := tx.WithContext(ctx).Table(s.Table).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id").Where("id = ?::uuid", entityID).Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFound(s.Name, entityID)
+			return domainerr.ResourceNotFound(s.Name, entityID)
 		}
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }
@@ -146,7 +145,7 @@ func (s Spec) LockActivePrincipal(ctx context.Context, tx *gorm.DB) (*auth.UserI
 	principal := auth.GetUser(ctx)
 	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("lock %s mutation principal: %w", s.Title, err))
+		return nil, fmt.Errorf("lock %s mutation principal: %w", s.Title, err)
 	}
 	if !active {
 		return nil, nil
@@ -168,7 +167,7 @@ func AllowedActions[A any](ctx context.Context, s Spec, checker PermissionChecke
 	for _, check := range checks {
 		allowed, err := CheckPermissionForPrincipal(ctx, checker, entityID, check.Can, principal)
 		if err != nil {
-			return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), failurecause.WithAttrs(err, slog.String(s.IDColumn, entityID)))
+			return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(failurecause.WithAttrs(err, slog.String(s.IDColumn, entityID)))
 		}
 		if allowed {
 			actions = append(actions, check.Action)
@@ -190,10 +189,14 @@ func (s Spec) MapMutationError(err error) error {
 		return err
 	}
 	if strings.Contains(err.Error(), lastOwnerConstraint) {
-		return errs.WithCause(errs.FailedPrecondition(s.Article+" "+lastOwnerConstraint), err)
+		return domainerr.Precondition(s.Article + " " + lastOwnerConstraint).WithCause(err)
 	}
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return errs.NotFoundMsg(s.Title + " participant not found")
+		return domainerr.New(domainerr.NotFound, "", s.Title+" participant not found")
 	}
-	return errs.Internal(err)
+	return err
 }
+
+// errAuthenticationRequired answers a caller without an authenticated
+// principal.
+var errAuthenticationRequired = domainerr.New(domainerr.Unauthenticated, "", "authentication required")

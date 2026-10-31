@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -150,6 +152,10 @@ func (p artistIntegrationMemberProjection) LoadAuthorizationEligibleMemberSummar
 		return nil, fmt.Errorf("Artist integration Member %s is not eligible", memberID)
 	}
 	return summary, nil
+}
+
+func (p artistIntegrationMemberProjection) LoadAuthorizationEligibleIdentities(ctx context.Context, memberIDs []string) (map[string]string, error) {
+	return memberadapter.NewParticipantIdentities(p.db).LoadAuthorizationEligibleIdentities(ctx, memberIDs)
 }
 
 func (m artistIdentityManager) GetIdentity(_ context.Context, id string) (*auth.Identity, error) {

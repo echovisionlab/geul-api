@@ -43,7 +43,7 @@ func TestPermissionFailureKeepsRedactedCauseOnGenericDependencyError(t *testing.
 		Authenticated: true,
 	})
 	cause := fmt.Errorf("permission check: %w", errors.New(`relation "artist_participant" <view> unavailable: password=private-secret https://user:pass@auth.test/check?token=private-token private@example.test`))
-	err := artistEntity.RequireCreate(ctx, failedPermissionChecker{cause})
+	err := errs.Wrap(artistEntity.RequireCreate(ctx, failedPermissionChecker{cause}))
 	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
 	require.NotContains(t, err.Error(), cause.Error())
 	require.ErrorIs(t, err, cause)

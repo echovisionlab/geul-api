@@ -8,10 +8,8 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -36,16 +34,16 @@ func ParseNullableStringUpdate(field string, input *intrav1.NullableStringMutati
 	case *intrav1.NullableStringMutation_Set:
 		value := strings.TrimSpace(operation.Set)
 		if value == "" {
-			return NullableStringUpdate{}, errs.InvalidArgument(field, "set value must not be empty; use clear instead")
+			return NullableStringUpdate{}, domainerr.InvalidField(field, "set value must not be empty; use clear instead")
 		}
 		return NullableStringUpdate{Present: true, Value: &value}, nil
 	case *intrav1.NullableStringMutation_Clear:
 		if !operation.Clear {
-			return NullableStringUpdate{}, errs.InvalidArgument(field, "clear must be true")
+			return NullableStringUpdate{}, domainerr.InvalidField(field, "clear must be true")
 		}
 		return NullableStringUpdate{Present: true}, nil
 	default:
-		return NullableStringUpdate{}, errs.InvalidArgument(field, "set or clear is required")
+		return NullableStringUpdate{}, domainerr.InvalidField(field, "set or clear is required")
 	}
 }
 
@@ -90,7 +88,7 @@ func (s Spec) Complete(columns *MetadataColumns, socialLinksPresent bool, social
 	if columns.Parent.Value != nil {
 		parsed, err := uuid.Parse(*columns.Parent.Value)
 		if err != nil {
-			return errs.InvalidArgument(s.ParentColumn, "must be a valid "+s.Title+" ID")
+			return domainerr.InvalidField(s.ParentColumn, "must be a valid "+s.Title+" ID")
 		}
 		canonical := parsed.String()
 		columns.Parent.Value = &canonical
@@ -198,35 +196,8 @@ func (s Spec) CheckParent(ctx context.Context, tx *gorm.DB, entityID string, pla
 	return true, s.ValidateParentTransition(ctx, tx, entityID, parentID)
 }
 
-// CheckParentUpdate is CheckParent for a save that runs its own
-// authorization mutation; write is nil without one.
-func (s Spec) CheckParentUpdate(ctx context.Context, tx *gorm.DB, entityID string, plan ParentUpdate, current *string, write authzmutation.WriteRelationships) (bool, error) {
-	return s.CheckParent(ctx, tx, entityID, plan, current, write != nil)
-}
-
-// WriteParentRelationships moves the entity's SpiceDB parent from current to
-// the planned parent.
-func (s Spec) WriteParentRelationships(entityID string, plan ParentUpdate, current *string, write authzmutation.WriteRelationships) error {
-	apply, compensate, err := s.ReplaceParentRelationships(entityID, current, plan.Update.Value)
-	if err != nil {
-		return err
-	}
-	return write(apply, compensate)
-}
-
 func (s Spec) parentChangedConcurrently() error {
-	return errs.FailedPrecondition(s.Title + " parent changed concurrently; reload before saving")
-}
-
-// ExecuteMetadataMutation runs mutate inside an authorization mutation when
-// the parent changes, and inside a plain transaction with a nil write
-// otherwise.
-func ExecuteMetadataMutation(ctx context.Context, db *gorm.DB, spiceDB *auth.SpiceDBClient, plan ParentUpdate, mutate func(*gorm.DB, authzmutation.WriteRelationships) error) error {
-	if plan.RequiresWrite() {
-		_, err := authzmutation.Execute(ctx, db, spiceDB, mutate)
-		return err
-	}
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error { return mutate(tx, nil) })
+	return domainerr.Precondition(s.Title + " parent changed concurrently; reload before saving")
 }
 
 // MetadataSave is one document-metadata save of the entity: it advances the
