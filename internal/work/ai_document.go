@@ -178,10 +178,15 @@ func (s *Service) applyAIDocumentMutationInTransaction(
 			)
 		},
 	)
-	if err != nil || !result.Changed {
-		return workAIDocumentApply{result: AIDocumentMutationResult{Content: result}}, err
+	applied := workAIDocumentApply{
+		result:    AIDocumentMutationResult{Content: result},
+		operation: sharedtelemetry.AuditItemOperationUpdated,
+		audited:   result.Changed,
 	}
-	return workAIDocumentApply{result: AIDocumentMutationResult{Content: result}}, touchWork(ctx, tx, mutation.WorkID, now)
+	if err != nil || !result.Changed {
+		return applied, err
+	}
+	return applied, touchWork(ctx, tx, mutation.WorkID, now)
 }
 
 // validateWorkAIDocumentMutation rejects a compiled mutation whose shape

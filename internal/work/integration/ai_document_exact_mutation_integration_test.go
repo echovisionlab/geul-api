@@ -32,6 +32,40 @@ import (
 	"gorm.io/gorm"
 )
 
+// A source locale AI edit is a Member's locale content change like a
+// collaboration save, so it leaves the same audit record.
+func TestWorkAIDocumentSourceEditIsAuditedIntegration(t *testing.T) {
+	t.Parallel()
+	db := testutil.NewIntegrationDB(t)
+	identityID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Work source AI audit")
+	ctx := workIntegrationAdminCtx(identityID)
+	workService := newWorkIntegrationService(t, db, identityID, referenceNoopFileDeleter{})
+	isPresent := true
+	created, err := workService.CreateWork(ctx, connect.NewRequest(&managev1.CreateWorkRequest{
+		Title: "Work source AI audit " + testutil.IntegrationUUID(),
+		Type:  managev1.WorkType_WORK_TYPE_ARTICLE, Year: 2026, Month: 8, IsPresent: &isPresent,
+		Document: emptyWorkIntegrationDocument("en"),
+	}))
+	require.NoError(t, err)
+	application := newWorkServiceForTest(t, workdomain.Deps{DB: db})
+	contributor := testutil.PostIntegrationMemberID(identityID)
+	source, err := application.LoadAIDocument(ctx, created.Msg.Id, "en")
+	require.NoError(t, err)
+	title := "Audited source title"
+	_, err = applyWorkAIDocument(ctx, application, workAIDocumentIntegrationMutation(source, contributor, func(mutation *workdomain.AIDocumentMutation) {
+		mutation.Metadata = workdomain.AIDocumentMetadataPatch{SetTitle: true, Title: &title}
+	}))
+	require.NoError(t, err)
+
+	var records int64
+	require.NoError(t, db.Table("public.domain_audit").
+		Where("target_type = 'work' AND target_id = ? AND action = ?", created.Msg.Id, "work.updated").
+		Where("actor_member_id = ?::uuid AND attributes->'changed_fields' ? 'locale_content'", contributor).
+		Count(&records).Error)
+	require.EqualValues(t, 1, records)
+}
+
 func TestWorkAIDocumentTargetCASIsolationAndDeleteNoBumpIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
