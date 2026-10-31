@@ -102,6 +102,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/member",
 			"./internal/member/public",
 			"./internal/menu",
+			"./internal/mutation",
 			"./internal/og",
 			"./internal/page",
 			"./internal/page/public",
