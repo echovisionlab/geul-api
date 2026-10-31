@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -147,8 +146,7 @@ func (s *AccountEmailChangeLifecycle) stageProvenAccountEmailCandidate(
 			CreatedAt: s.now().UTC(),
 		}
 		if err := tx.Create(&stage.request).Error; dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(tx.Statement.Context, "Account email change conflicted", "reason", "account_email_change_conflict", failurecause.Attr(err), "identity_id", identityID, "request_id", stage.request.ID)
-			return ErrAccountEmailChangeConflict
+			return fmt.Errorf("%w: %w", ErrAccountEmailChangeConflict, err)
 		} else {
 			return err
 		}
@@ -220,16 +218,14 @@ func (s *AccountEmailChangeLifecycle) applyProvenAccountEmailIdentity(
 	if !auth.IsKratosConflict(err) {
 		return err
 	}
-	var upstreamError *auth.KratosHTTPError
-	privateBody := ""
-	if errors.As(err, &upstreamError) {
-		privateBody = upstreamError.Body
-	}
-	slog.WarnContext(ctx, "Operation failed", "reason", "account_email_apply_conflict", failurecause.Attr(err, privateBody), "identity_id", identityID, "request_id", request.ID)
 	if finishErr := s.finishAccountEmailChangeRequest(db, request, "address_conflict"); finishErr != nil {
 		return finishErr
 	}
-	return fmt.Errorf("%w: %v", ErrAccountEmailChangeConflict, err)
+	// The text keeps the Kratos conflict; its body stays private.
+	return failurecause.WithPrivate(
+		fmt.Errorf("%w: %v", ErrAccountEmailChangeConflict, err),
+		failurecause.PrivateValues(err)...,
+	)
 }
 
 // materializeProvenEmailAddress projects an already-authoritative proof into

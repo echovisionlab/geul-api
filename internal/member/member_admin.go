@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"strings"
 	"time"
@@ -13,7 +12,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/securityaccess"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -41,7 +39,6 @@ func (s *MemberService) SearchMembers(
 	if req.Msg.EffectiveAuthorsOnly {
 		subjects, err := s.spicedb.LookupGlobalSubjects(ctx, policyv1.Platform.LookupAuthorSubjects())
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "operation", "SearchMembers", failurecause.Attr(err))
 			return nil, errs.Internal(fmt.Errorf("lookup author candidates: %w", err))
 		}
 		identityIDs := make([]string, 0, len(subjects))
@@ -61,7 +58,6 @@ func (s *MemberService) SearchMembers(
 	}
 	var members []model.Member
 	if err := query.Order("nickname ASC, id ASC").Limit(limit).Find(&members).Error; err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "SearchMembers", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	ids := make([]string, len(members))
@@ -70,7 +66,6 @@ func (s *MemberService) SearchMembers(
 	}
 	assets, err := s.loadAvatarAssets(ctx, ids)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "SearchMembers", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	result := make([]*commonv1.MemberSummary, len(members))
@@ -97,7 +92,6 @@ func (s *MemberService) GetMember(
 	}
 	tags, err := s.getMemberTagIDs(ctx, member.ID)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "GetMember", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	details, err := s.accountAdminDetails(ctx, *member)
@@ -106,7 +100,6 @@ func (s *MemberService) GetMember(
 	}
 	subscriptions, err := s.newsletterSubscriptions(ctx, []string{member.ID})
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "GetMember", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	result := &managev1.AdminMember{Member: profile, Account: account, TagIds: tags, AccountDetails: details, NewsletterSubscription: &managev1.NewsletterSubscriptionState{}, Onboarded: member.Onboarded}
@@ -115,7 +108,7 @@ func (s *MemberService) GetMember(
 	}
 	if s.personalDataAccess != nil {
 		if err := s.personalDataAccess.AppendMember(ctx, member.ID); err != nil {
-			return nil, securityaccess.Unavailable()
+			return nil, errs.WithCause(securityaccess.Unavailable(), err)
 		}
 	}
 	return connect.NewResponse(result), nil
@@ -141,16 +134,9 @@ func (s *MemberService) kratosIdentityWithOIDCCredentials(ctx context.Context, i
 	}
 	identity, err := loadMemberIdentityWithEmailCredentials(ctx, s.identity, identityID)
 	if err != nil || identity == nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		cause := failurecause.Message(err, privateBody)
 		if err == nil {
-			cause = "Kratos identity response is empty"
+			err = errors.New("Kratos identity response is empty")
 		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "kratosIdentityWithOIDCCredentials", "failure_cause", cause)
 		return nil, errs.Internal(fmt.Errorf("read member account details: %w", err))
 	}
 	return identity, nil
@@ -211,7 +197,6 @@ func (s *MemberService) ListMembersAdmin(ctx context.Context, req *connect.Reque
 	}
 	var total int64
 	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "ListMembersAdmin", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	query, err = memberAdminSortConfig.ApplySort(query, req.Msg.Sorts)
@@ -223,7 +208,6 @@ func (s *MemberService) ListMembersAdmin(ctx context.Context, req *connect.Reque
 	}
 	var members []model.Member
 	if err := query.Select("m.*").Limit(limit).Offset(offset).Scan(&members).Error; err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "ListMembersAdmin", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	ids := make([]string, len(members))
@@ -232,7 +216,6 @@ func (s *MemberService) ListMembersAdmin(ctx context.Context, req *connect.Reque
 	}
 	assets, err := s.loadAvatarAssets(ctx, ids)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "ListMembersAdmin", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	accounts, err := s.accountSummaries(ctx, ids)
@@ -241,12 +224,10 @@ func (s *MemberService) ListMembersAdmin(ctx context.Context, req *connect.Reque
 	}
 	tags, err := s.getMemberTagIDsBatch(ctx, ids)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "ListMembersAdmin", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	subscriptions, err := s.newsletterSubscriptions(ctx, ids)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "ListMembersAdmin", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	result := make([]*managev1.AdminMember, len(members))
@@ -258,7 +239,7 @@ func (s *MemberService) ListMembersAdmin(ctx context.Context, req *connect.Reque
 	}
 	if s.personalDataAccess != nil {
 		if err := s.personalDataAccess.AppendMemberCollection(ctx); err != nil {
-			return nil, securityaccess.Unavailable()
+			return nil, errs.WithCause(securityaccess.Unavailable(), err)
 		}
 	}
 	return connect.NewResponse(&managev1.ListMembersAdminResponse{Members: result, Pagination: &commonv1.PaginationResponse{Total: int32(min(total, math.MaxInt32)), Limit: int32(limit), Offset: int32(offset), HasMore: int64(offset+len(members)) < total}}), nil

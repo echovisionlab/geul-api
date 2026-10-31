@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 
 	"connectrpc.com/connect"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -69,31 +67,26 @@ func (s *MemberService) GetPublicMember(
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return connect.NewResponse(&openv1.GetPublicMemberResponse{}), nil
 		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "GetPublicMember", failurecause.Attr(err))
 		return nil, errs.Internal(fmt.Errorf("load public member: %w", err))
 	}
 	member := row.Member
 	if member.AccountIdentityID != nil && member.DeletedAt == nil {
 		actor, err := policyv1.NewAccountIdentityActor(*member.AccountIdentityID)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "operation", "GetPublicMember", failurecause.Attr(err))
 			return nil, errs.Internal(fmt.Errorf("parse public member account identity: %w", err))
 		}
 		can, err := policyv1.Platform.IsAuthor()
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "operation", "GetPublicMember", failurecause.Attr(err))
 			return nil, errs.Internal(fmt.Errorf("build public member visibility permission: %w", err))
 		}
 		canExpose, err := s.spiceDB.CheckActorCan(ctx, actor, can)
 		if err != nil {
-			slog.ErrorContext(ctx, "Operation failed", "operation", "GetPublicMember", failurecause.Attr(err))
 			return nil, errs.Internal(fmt.Errorf("check public member visibility permission: %w", err))
 		}
 		row.CanExposeExtendedProfile = canExpose
 	}
 	avatars, err := loadPublicMemberAvatars(ctx, s.db, s.cdnDomain, []string{member.ID})
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "GetPublicMember", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	summary := projectPublicMemberSummary(member, avatars[member.ID])
@@ -137,7 +130,6 @@ func (s *MemberService) ListAuthors(
 	}
 	authorSubjects, err := s.spiceDB.LookupGlobalSubjects(ctx, policyv1.Platform.LookupAuthorSubjects())
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "ListAuthors", failurecause.Attr(err))
 		return nil, errs.Internal(fmt.Errorf("lookup public author identities: %w", err))
 	}
 	authorIdentityIDs := make(map[string]struct{}, len(authorSubjects))
@@ -160,7 +152,6 @@ func (s *MemberService) ListAuthors(
 		ORDER BY post_count DESC, pa.member_id ASC
 		LIMIT ?
 	`, "POST_STATUS_PUBLISHED", "POST_STATUS_ARCHIVED", limit).Scan(&rows).Error; err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "ListAuthors", failurecause.Attr(err))
 		return nil, errs.Internal(fmt.Errorf("list top post contributors: %w", err))
 	}
 
@@ -170,7 +161,6 @@ func (s *MemberService) ListAuthors(
 	}
 	summaries, err := LoadPublicMemberSummaries(ctx, s.db, s.cdnDomain, memberIDs)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "ListAuthors", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 
@@ -235,13 +225,11 @@ func (s *MemberService) listSelectedAuthors(
 		  AND m.account_identity_id IS NOT NULL
 		GROUP BY m.id, m.account_identity_id, m.bio
 	`, "POST_STATUS_PUBLISHED", "POST_STATUS_ARCHIVED", memberIDs).Scan(&rows).Error; err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "listSelectedAuthors", failurecause.Attr(err))
 		return nil, errs.Internal(fmt.Errorf("load selected authors: %w", err))
 	}
 
 	authorSubjects, err := s.spiceDB.LookupGlobalSubjects(ctx, policyv1.Platform.LookupAuthorSubjects())
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "listSelectedAuthors", failurecause.Attr(err))
 		return nil, errs.Internal(fmt.Errorf("lookup selected author identities: %w", err))
 	}
 	authorIdentityIDs := make(map[string]struct{}, len(authorSubjects))
@@ -260,7 +248,6 @@ func (s *MemberService) listSelectedAuthors(
 
 	summaries, err := LoadPublicMemberSummaries(ctx, s.db, s.cdnDomain, eligibleMemberIDs)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "listSelectedAuthors", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	authors := make([]*openv1.PublicAuthorSummary, 0, len(eligibleMemberIDs))

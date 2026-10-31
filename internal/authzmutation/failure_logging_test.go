@@ -3,7 +3,6 @@ package authzmutation
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"log/slog"
 	"testing"
 
@@ -14,7 +13,9 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestMutationPanicLogsCauseAndStackBeforeRepanicking(t *testing.T) {
+// The RPC and queue boundaries log a recovered panic once, with its stack;
+// the mutation helper only re-raises it after rollback.
+func TestMutationPanicRepanicsWithoutLogging(t *testing.T) {
 	var output bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(sharedtelemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
@@ -28,9 +29,5 @@ func TestMutationPanicLogsCauseAndStackBeforeRepanicking(t *testing.T) {
 		_, _ = Execute(context.Background(), db, &auth.SpiceDBClient{}, func(*gorm.DB, WriteRelationships) error { panic("forced mutation panic") })
 	})
 	require.Equal(t, "forced mutation panic", value)
-	var entry map[string]any
-	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
-	require.Equal(t, "authorization_mutation_panic", entry["reason"])
-	require.Contains(t, entry["failure_cause"], "forced mutation panic")
-	require.Contains(t, entry["panic_stack"], "runtime/debug.Stack")
+	require.Empty(t, output.String())
 }

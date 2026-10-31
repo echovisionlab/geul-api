@@ -3,7 +3,6 @@ package member
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"maps"
 	"sort"
 	"strings"
@@ -35,18 +34,15 @@ func (s *MemberService) GetMySettings(
 	memberID := principal.MemberID.String()
 	var member model.Member
 	if err := s.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL AND account_identity_id IS NOT NULL", memberID).First(&member).Error; err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "GetMySettings", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	subscription, err := newsletterSubscriptionState(ctx, s.db, principal.IdentityID.String())
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "GetMySettings", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	var consent model.UserCookieConsent
 	consentErr := s.db.WithContext(ctx).Where("member_id = ?", memberID).Order("recorded_at DESC").First(&consent).Error
 	if consentErr != nil && !errors.Is(consentErr, gorm.ErrRecordNotFound) {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "GetMySettings", failurecause.Attr(consentErr))
 		return nil, errs.Internal(consentErr)
 	}
 	account, err := s.accountSummary(ctx, memberID)
@@ -140,8 +136,10 @@ func (s *MemberService) updateProfile(
 		})
 	}); err != nil {
 		if nickname != nil && dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "Member nickname conflict", failurecause.Attr(err, *nickname, strings.TrimSpace(*nickname)))
-			return nil, errs.AlreadyExists("member", "nickname", strings.TrimSpace(*nickname))
+			return nil, errs.WithCause(
+				errs.AlreadyExists("member", "nickname", strings.TrimSpace(*nickname)),
+				failurecause.WithPrivate(err, *nickname, strings.TrimSpace(*nickname)),
+			)
 		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("member", memberID)
@@ -149,19 +147,7 @@ func (s *MemberService) updateProfile(
 		if code := connect.CodeOf(err); code != connect.CodeUnknown && code != connect.CodeInternal && code != connect.CodeUnavailable && code != connect.CodeDeadlineExceeded {
 			return nil, err
 		}
-		var privateValues []string
-		for _, value := range updates {
-			switch value := value.(type) {
-			case string:
-				privateValues = append(privateValues, value)
-			case map[string]string:
-				for _, entry := range value {
-					privateValues = append(privateValues, entry)
-				}
-			}
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "updateProfile", failurecause.Attr(err, privateValues...))
-		return nil, errs.Internal(err)
+		return nil, errs.Internal(failurecause.WithPrivate(err, profileUpdatePrivateValues(updates)...))
 	}
 	_, profile, err := s.memberProfileByID(ctx, memberID)
 	return profile, err
@@ -188,19 +174,7 @@ func (s *MemberService) updateMemberProfileAsAdmin(
 				if errors.Is(err, authorizationtarget.ErrIneligible) {
 					return errs.NotFound("member", memberID)
 				}
-				var privateValues []string
-				for _, value := range updates {
-					switch value := value.(type) {
-					case string:
-						privateValues = append(privateValues, value)
-					case map[string]string:
-						for _, entry := range value {
-							privateValues = append(privateValues, entry)
-						}
-					}
-				}
-				slog.ErrorContext(ctx, "Operation failed", "operation", "updateMemberProfileAsAdmin", failurecause.Attr(err, privateValues...))
-				return errs.Internal(err)
+				return errs.Internal(failurecause.WithPrivate(err, profileUpdatePrivateValues(updates)...))
 			}
 			if current.IdentityID != target.IdentityID {
 				return errs.NotFound("member", memberID)
@@ -229,8 +203,10 @@ func (s *MemberService) updateMemberProfileAsAdmin(
 	})
 	if err != nil {
 		if nickname != nil && dberrors.IsUniqueViolation(err) {
-			slog.WarnContext(ctx, "Member nickname conflict", failurecause.Attr(err, *nickname, strings.TrimSpace(*nickname)))
-			return nil, errs.AlreadyExists("member", "nickname", strings.TrimSpace(*nickname))
+			return nil, errs.WithCause(
+				errs.AlreadyExists("member", "nickname", strings.TrimSpace(*nickname)),
+				failurecause.WithPrivate(err, *nickname, strings.TrimSpace(*nickname)),
+			)
 		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("member", memberID)
@@ -238,22 +214,27 @@ func (s *MemberService) updateMemberProfileAsAdmin(
 		if code := connect.CodeOf(err); code != connect.CodeUnknown && code != connect.CodeInternal && code != connect.CodeUnavailable && code != connect.CodeDeadlineExceeded {
 			return nil, err
 		}
-		var privateValues []string
-		for _, value := range updates {
-			switch value := value.(type) {
-			case string:
-				privateValues = append(privateValues, value)
-			case map[string]string:
-				for _, entry := range value {
-					privateValues = append(privateValues, entry)
-				}
-			}
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "updateMemberProfileAsAdmin", failurecause.Attr(err, privateValues...))
-		return nil, errs.Internal(err)
+		return nil, errs.Internal(failurecause.WithPrivate(err, profileUpdatePrivateValues(updates)...))
 	}
 	_, profile, err := s.memberProfileByID(ctx, memberID)
 	return profile, err
+}
+
+// profileUpdatePrivateValues lists the submitted profile values, which a
+// database error can echo, so the failure record redacts them.
+func profileUpdatePrivateValues(updates structured.Fields) []string {
+	var values []string
+	for _, value := range updates {
+		switch value := value.(type) {
+		case string:
+			values = append(values, value)
+		case map[string]string:
+			for _, entry := range value {
+				values = append(values, entry)
+			}
+		}
+	}
+	return values
 }
 
 func memberProfileChangedFields(current model.Member, updates structured.Fields) ([]string, string) {
@@ -324,8 +305,7 @@ func (s *MemberService) CheckNicknameAvailability(
 			  AND deleted_at IS NULL
 		)
 	`, nickname, principal.MemberID.String()).Scan(&claimed).Error; err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "CheckNicknameAvailability", failurecause.Attr(err, nickname))
-		return nil, errs.Internal(err)
+		return nil, errs.Internal(failurecause.WithPrivate(err, nickname))
 	}
 	return connect.NewResponse(&managev1.CheckNicknameAvailabilityResponse{Available: !claimed}), nil
 }

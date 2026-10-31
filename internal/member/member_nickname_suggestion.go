@@ -3,7 +3,6 @@ package member
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -99,12 +98,7 @@ func (s *MemberService) nicknameSuggestion(ctx context.Context, member model.Mem
 	identity, err := s.identity.GetIdentityWithIncludeCredential(ctx, principal.IdentityID.String(), "oidc")
 	if err != nil || identity == nil {
 		if err != nil {
-			var upstreamError *auth.KratosHTTPError
-			privateBody := ""
-			if errors.As(err, &upstreamError) {
-				privateBody = upstreamError.Body
-			}
-			slog.ErrorContext(ctx, "OIDC nickname suggestion identity lookup failed", "failure_cause", failurecause.Message(err, privateBody), "identity_id", principal.IdentityID.String())
+			slog.WarnContext(ctx, "OIDC nickname suggestion identity lookup failed", "failure_cause", failurecause.Message(err), "identity_id", principal.IdentityID.String())
 		}
 		return nil
 	}
@@ -123,7 +117,7 @@ func (s *MemberService) nicknameSuggestion(ctx context.Context, member model.Mem
 		suggestion, lookupErr := fetchMemberNicknameSuggestion(lookupCtx, provider.Provider, provider.InitialAccessToken)
 		cancel()
 		if lookupErr != nil {
-			slog.ErrorContext(ctx, "OIDC nickname suggestion lookup failed", "failure_cause", failurecause.Message(lookupErr, provider.InitialAccessToken), "provider", provider.Provider, "identity_id", principal.IdentityID.String())
+			slog.WarnContext(ctx, "OIDC nickname suggestion lookup failed", "failure_cause", failurecause.Message(lookupErr, provider.InitialAccessToken), "provider", provider.Provider, "identity_id", principal.IdentityID.String())
 			continue
 		}
 		suggestion, normalizeErr := normalizeMemberNickname(suggestion)

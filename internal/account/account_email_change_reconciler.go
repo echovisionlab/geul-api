@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/postgreslock"
@@ -78,11 +77,6 @@ func (s *AccountEmailChangeLifecycle) Reconcile(ctx context.Context) error {
 		for i := range requests {
 			request := &requests[i]
 			if err := s.ReconcileRequest(ctx, request.ID); err != nil {
-				var upstreamError *auth.KratosHTTPError
-				privateBody := ""
-				if errors.As(err, &upstreamError) {
-					privateBody = upstreamError.Body
-				}
 				slog.ErrorContext(ctx,
 					"Account email change request reconcile failed",
 					"domain", "auth",
@@ -90,7 +84,7 @@ func (s *AccountEmailChangeLifecycle) Reconcile(ctx context.Context) error {
 					"outcome", "failed",
 					"reason", "request_reconcile_failed",
 					"error_type", fmt.Sprintf("%T", err),
-					"failure_cause", failurecause.Message(err, privateBody),
+					"failure_cause", failurecause.Message(err),
 					"request_id", request.ID,
 					"identity_id", request.IdentityID,
 				)
@@ -108,11 +102,6 @@ func (s *AccountEmailChangeLifecycle) Reconcile(ctx context.Context) error {
 }
 
 func logAccountEmailChangeError(ctx context.Context, message, reason string, err error) {
-	var upstreamError *auth.KratosHTTPError
-	privateBody := ""
-	if errors.As(err, &upstreamError) {
-		privateBody = upstreamError.Body
-	}
 	slog.ErrorContext(ctx,
 		message,
 		"domain", "auth",
@@ -120,6 +109,6 @@ func logAccountEmailChangeError(ctx context.Context, message, reason string, err
 		"outcome", "failed",
 		"reason", reason,
 		"error_type", fmt.Sprintf("%T", err),
-		"failure_cause", failurecause.Message(err, privateBody),
+		"failure_cause", failurecause.Message(err),
 	)
 }

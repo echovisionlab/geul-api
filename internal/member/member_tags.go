@@ -3,7 +3,6 @@ package member
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"math"
 	"slices"
 	"sort"
@@ -13,7 +12,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -71,7 +69,6 @@ func (s *MemberService) ListMemberTagsAdmin(
 	}
 	var total int64
 	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "ListMemberTagsAdmin", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	type row struct {
@@ -90,7 +87,6 @@ func (s *MemberService) ListMemberTagsAdmin(
 		query = query.Order("t.id ASC")
 	}
 	if err := query.Limit(limit).Offset(offset).Scan(&rows).Error; err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "ListMemberTagsAdmin", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	tags := make([]*managev1.MemberTag, len(rows))
@@ -125,11 +121,6 @@ func (s *MemberService) CreateMemberTag(
 			},
 		)
 	}); err != nil {
-		level := slog.LevelError
-		if code := connect.CodeOf(err); code != connect.CodeUnknown && code != connect.CodeInternal && code != connect.CodeUnavailable && code != connect.CodeDeadlineExceeded {
-			level = slog.LevelWarn
-		}
-		slog.Log(ctx, level, "Operation failed", "operation", "CreateMemberTag", failurecause.Attr(err))
 		return nil, errs.Wrap(err)
 	}
 	return connect.NewResponse(&managev1.MemberTag{Id: tag.ID, Name: tag.Name, CreatedAt: timestamppb.New(tag.CreatedAt)}), nil
@@ -180,11 +171,6 @@ func (s *MemberService) DeleteMemberTag(
 		)
 	})
 	if err != nil {
-		level := slog.LevelError
-		if code := connect.CodeOf(err); code != connect.CodeUnknown && code != connect.CodeInternal && code != connect.CodeUnavailable && code != connect.CodeDeadlineExceeded {
-			level = slog.LevelWarn
-		}
-		slog.Log(ctx, level, "Operation failed", "operation", "DeleteMemberTag", failurecause.Attr(err))
 		return nil, errs.Wrap(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
@@ -265,11 +251,6 @@ func (s *MemberService) replaceMemberTags(ctx context.Context, memberID string, 
 		)
 	})
 	if err != nil {
-		level := slog.LevelError
-		if code := connect.CodeOf(err); code != connect.CodeUnknown && code != connect.CodeInternal && code != connect.CodeUnavailable && code != connect.CodeDeadlineExceeded {
-			level = slog.LevelWarn
-		}
-		slog.Log(ctx, level, "Member tag replacement failed", "member_id", memberID, failurecause.Attr(err))
 		return nil, err
 	}
 	return tagIDs, nil

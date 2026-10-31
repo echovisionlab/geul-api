@@ -82,7 +82,7 @@ func (s *AccountCredentialHookLifecycle) Validate(
 ) (err error) {
 	defer func() {
 		if err != nil {
-			logCredentialHookFailure(ctx, "validate", input, err)
+			err = annotateCredentialHookFailure("validate", input, err)
 		}
 	}()
 	if err := validateAccountCredentialHookInput(input, true, false); err != nil {
@@ -120,7 +120,7 @@ func (s *AccountCredentialHookLifecycle) Complete(
 ) (err error) {
 	defer func() {
 		if err != nil {
-			logCredentialHookFailure(ctx, "complete", input, err)
+			err = annotateCredentialHookFailure("complete", input, err)
 		}
 	}()
 	if err := validateAccountCredentialHookInput(input, true, true); err != nil {
@@ -374,11 +374,11 @@ func lockActiveCredentialMutationMember(
 	return authorizationtarget.LockActivePairForCredentialMutation(ctx, tx, memberID, identityID)
 }
 
-// Keep diagnostics useful after telemetry redaction without logging identities,
-// credential contents, or arbitrary upstream error messages.
-func logCredentialHookFailure(ctx context.Context, stage string, input AccountCredentialHookInput, err error) {
+// annotateCredentialHookFailure attaches the diagnosis the hook endpoint's
+// failure record needs after telemetry redaction, and marks provider subjects,
+// tokens, and email data private so no record keeps them.
+func annotateCredentialHookFailure(stage string, input AccountCredentialHookInput, err error) error {
 	code := "credential_hook_failed"
-	level := slog.LevelError
 	switch {
 	case errors.Is(err, ErrAccountCredentialSnapshotMissing):
 		code = "credential_snapshot_missing"
@@ -387,16 +387,11 @@ func logCredentialHookFailure(ctx context.Context, stage string, input AccountCr
 	case errors.Is(err, ErrAccountCredentialMutationShape):
 		code = "credential_mutation_invalid"
 	case errors.Is(err, ErrAccountCredentialUnrecoverable):
-		code, level = "recoverable_auth_method", slog.LevelWarn
+		code = "recoverable_auth_method"
 	case errors.Is(err, ErrMemberPrimaryEmailUnavailable):
-		code, level = "canonical_email_provider_required", slog.LevelWarn
+		code = "canonical_email_provider_required"
 	}
-	var upstreamError *auth.KratosHTTPError
-	privateBody := ""
-	if errors.As(err, &upstreamError) {
-		privateBody = upstreamError.Body
-	}
-	privateValues := []string{privateBody}
+	var privateValues []string
 	for _, credentials := range []map[string]auth.Credential{input.PreviousCredentials, input.Credentials} {
 		for _, provider := range auth.NewCredentialInventory(credentials).OIDCProviders() {
 			privateValues = append(privateValues, provider.Subject, provider.InitialAccessToken)
@@ -408,9 +403,9 @@ func logCredentialHookFailure(ctx context.Context, stage string, input AccountCr
 			privateValues = append(privateValues, value)
 		}
 	}
-	slog.LogAttrs(ctx, level, "Settings credential hook failed",
+	return failurecause.WithAttrs(
+		failurecause.WithPrivate(err, privateValues...),
 		slog.String("error_code", code),
-		slog.String("failure_cause", failurecause.Message(err, privateValues...)),
 		slog.String("stage", stage),
 		slog.String("credential_type", string(input.Kind)),
 		slog.Bool("proposed_snapshot_present", input.CredentialSnapshotPresent && input.Credentials != nil),

@@ -2,12 +2,10 @@ package account
 
 import (
 	"context"
-	"log/slog"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
@@ -22,7 +20,6 @@ func (s *AccountService) SetMyNewsletterSubscription(
 	if err := s.mutateNewsletterSubscriptionWithAudit(
 		ctx, principal.IdentityID.String(), principal.MemberID.String(), req.Msg.GetSubscribed(),
 	); err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "SetMyNewsletterSubscription", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	if s.newsletter == nil {
@@ -30,7 +27,6 @@ func (s *AccountService) SetMyNewsletterSubscription(
 	}
 	state, err := s.newsletter.State(ctx, s.db, principal.IdentityID.String())
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "SetMyNewsletterSubscription", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(
@@ -50,7 +46,6 @@ func (s *AccountService) UnsubscribeAccountFromNewsletter(
 		return nil, err
 	}
 	if err := s.mutateNewsletterSubscriptionWithAudit(ctx, identityID, memberID, false); err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "UnsubscribeAccountFromNewsletter", failurecause.Attr(err))
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(

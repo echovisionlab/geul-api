@@ -218,18 +218,15 @@ func (s *MemberService) isGlobalAuthor(ctx context.Context) (bool, error) {
 	}
 	can, err := policyv1.Platform.IsAuthor()
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "operation", "isGlobalAuthor", failurecause.Attr(err))
 		return false, errs.Internal(err)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		slog.WarnContext(ctx, "Operation failed", "reason", "authorization_decision_failed", failurecause.Attr(err))
-		return false, errs.InvalidSession()
+		return false, errs.WithCause(errs.InvalidSession(), err)
 	}
 	allowed, err := s.spicedb.Can(ctx, decision)
 	if err != nil {
-		slog.ErrorContext(ctx, "Operation failed", "reason", "authorization_check_failed", failurecause.Attr(err))
-		return false, errs.DependencyUnavailable("SpiceDB")
+		return false, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
 	}
 	return allowed, nil
 }

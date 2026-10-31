@@ -3,7 +3,6 @@ package account
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 
 	"connectrpc.com/connect"
@@ -11,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -41,12 +39,6 @@ func (s *AccountService) SetMyCanonicalEmail(
 				)
 			},
 		); err != nil {
-			var upstreamError *auth.KratosHTTPError
-			privateBody := ""
-			if errors.As(err, &upstreamError) {
-				privateBody = upstreamError.Body
-			}
-			slog.ErrorContext(ctx, "Operation failed", "operation", "SetMyCanonicalEmail", failurecause.Attr(err, privateBody))
 			return nil, errs.Internal(err)
 		}
 	}
@@ -61,8 +53,16 @@ func (s *AccountService) SetMyCanonicalEmail(
 // without exposing an identity provider response body in the RPC message.
 type accountIdentityLookupError struct{ cause error }
 
-func (accountIdentityLookupError) Error() string   { return "identity lookup failed" }
+const msgAccountIdentityLookupFailed = "identity lookup failed"
+
+func (accountIdentityLookupError) Error() string   { return msgAccountIdentityLookupFailed }
 func (e accountIdentityLookupError) Unwrap() error { return e.cause }
+
+// OperationContext renders the cause in the failure record, which redacts the
+// provider body the cause carries.
+func (e accountIdentityLookupError) OperationContext() (rendered, operation string) {
+	return msgAccountIdentityLookupFailed, msgAccountIdentityLookupFailed + ": " + e.cause.Error()
+}
 
 func (s *AccountService) RequestEmailChange(
 	ctx context.Context,
@@ -78,14 +78,9 @@ func (s *AccountService) RequestEmailChange(
 	identity, err := s.identity.GetIdentity(ctx, p.IdentityID.String())
 	if err != nil {
 		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			if upstreamError.StatusCode == http.StatusNotFound {
-				return nil, errs.NotFound("identity", p.IdentityID.String())
-			}
-			privateBody = upstreamError.Body
+		if errors.As(err, &upstreamError) && upstreamError.StatusCode == http.StatusNotFound {
+			return nil, errs.WithCause(errs.NotFound("identity", p.IdentityID.String()), err)
 		}
-		slog.ErrorContext(ctx, "Operation failed", "reason", "request_email_change_identity_lookup_failed", failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(accountIdentityLookupError{cause: err})
 	}
 	if identity == nil {
@@ -100,12 +95,6 @@ func (s *AccountService) RequestEmailChange(
 	}
 	used, err := emailCodeAddressUsedByAnotherIdentity(ctx, s.identity, p.IdentityID.String(), normalized)
 	if err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "RequestEmailChange", failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(err)
 	}
 	if used {
@@ -133,24 +122,12 @@ func (s *AccountService) RevokeMySession(
 	}
 	var owned bool
 	if err := s.db.WithContext(ctx).Raw(`SELECT EXISTS(SELECT 1 FROM kratos.sessions WHERE id=?::uuid AND identity_id=?::uuid AND active=TRUE AND expires_at>NOW())`, req.Msg.SessionId, p.IdentityID.String()).Scan(&owned).Error; err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "RevokeMySession", failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(err)
 	}
 	if !owned {
 		return nil, errs.NotFound("session", req.Msg.SessionId)
 	}
 	if err := s.identity.DeleteSession(ctx, req.Msg.SessionId); err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "RevokeMySession", failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(err)
 	}
 	if err := s.appendAccountUpdatedAudit(
@@ -164,12 +141,6 @@ func (s *AccountService) RevokeMySession(
 			)
 		},
 	); err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "RevokeMySession", failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(err)
 	}
 	security, err := s.securityForIdentity(ctx, p.MemberID.String(), p.IdentityID.String(), p.SessionID.String())
@@ -194,12 +165,6 @@ func (s *AccountService) RevokeMyOtherSessions(
 	}
 	revokedSessionIDs, err := revokeOtherSessions(ctx, s.db, s.identity, p.IdentityID.String(), p.SessionID.String())
 	if err != nil {
-		var upstreamError *auth.KratosHTTPError
-		privateBody := ""
-		if errors.As(err, &upstreamError) {
-			privateBody = upstreamError.Body
-		}
-		slog.ErrorContext(ctx, "Operation failed", "operation", "RevokeMyOtherSessions", failurecause.Attr(err, privateBody))
 		return nil, errs.Internal(err)
 	}
 	if len(revokedSessionIDs) > 0 {
@@ -214,12 +179,6 @@ func (s *AccountService) RevokeMyOtherSessions(
 				)
 			},
 		); err != nil {
-			var upstreamError *auth.KratosHTTPError
-			privateBody := ""
-			if errors.As(err, &upstreamError) {
-				privateBody = upstreamError.Body
-			}
-			slog.ErrorContext(ctx, "Operation failed", "operation", "RevokeMyOtherSessions", failurecause.Attr(err, privateBody))
 			return nil, errs.Internal(err)
 		}
 	}
