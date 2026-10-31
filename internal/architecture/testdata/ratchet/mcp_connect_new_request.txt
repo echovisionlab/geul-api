@@ -1,6 +1,6 @@
 # connect.NewRequest calls per MCP adapter file. The MCP adapter calls use
 # cases directly; lower with -update, never add a line.
-4 internal/adapters/mcp/admin_settings_tools.go
+3 internal/adapters/mcp/admin_settings_tools.go
 22 internal/adapters/mcp/content_management_tools.go
 27 internal/adapters/mcp/content_related_tools.go
 5 internal/adapters/mcp/document_discovery_tools.go

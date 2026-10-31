@@ -94,8 +94,8 @@ func TestAdapterTestFailureLogsCauseWithoutChangingResponse(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	failure := errors.New("verification failed: mailbox@example.test token=secret-value")
 	response := sendAdapterTestEmail(t.Context(), deliveryAdapterStub{sendErr: failure}, "mailbox@example.test")
-	require.False(t, response.Msg.Success)
-	require.Equal(t, failure.Error(), response.Msg.GetError())
+	require.False(t, response.Success)
+	require.Equal(t, failure.Error(), response.GetError())
 	var entry map[string]any
 	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
 	require.Contains(t, entry["failure_cause"], "verification failed")

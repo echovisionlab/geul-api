@@ -6,8 +6,6 @@ import (
 	"log/slog"
 	"net/mail"
 
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -27,12 +25,12 @@ func FailureCause(err error, job *managev1.SendEmailEvent) string {
 
 // requestPrivateValues are the recipient and the string template values of an
 // incoming SendEmail request, which no failure log may keep.
-func requestPrivateValues(request *intrav1.SendEmailRequest) []string {
-	values := []string{request.GetRecipient()}
-	if recipient, parseErr := mail.ParseAddress(request.GetRecipient()); parseErr == nil {
+func requestPrivateValues(command QueueAuthEmailCommand) []string {
+	values := []string{command.Recipient}
+	if recipient, parseErr := mail.ParseAddress(command.Recipient); parseErr == nil {
 		values = append(values, recipient.Name)
 	}
-	for _, value := range request.GetTemplateData().AsMap() {
+	for _, value := range command.TemplateData.AsMap() {
 		if text, ok := value.(string); ok {
 			values = append(values, text)
 		}

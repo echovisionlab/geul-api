@@ -3,9 +3,10 @@ package emaildelivery
 import (
 	"context"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"log/slog"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"golang.org/x/time/rate"

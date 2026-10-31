@@ -103,7 +103,7 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 		time.Duration(cfg.AuthCodeLifespanSeconds)*time.Second,
 		emaildelivery.WithVerificationUIURL(cfg.SiteOrigin+"/verify"),
 	)
-	emailCourierPath, emailCourierHandler := intrav1connect.NewEmailCourierServiceHandler(emailCourierService, internalHandlerOpts...)
+	emailCourierPath, emailCourierHandler := intrav1connect.NewEmailCourierServiceHandler(emaildelivery.NewCourierConnectHandler(emailCourierService), internalHandlerOpts...)
 	mux.Handle(emailCourierPath, internalRPCTrust.identity(emailCourierHandler))
 	slog.Info("Registered internal service", "path", emailCourierPath)
 	internalPageService := page.NewInternalPageService(

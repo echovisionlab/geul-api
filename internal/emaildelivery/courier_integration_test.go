@@ -60,7 +60,7 @@ func TestEmailCourierServiceEnqueuesReservedPGMQMessageIntegration(t *testing.T)
 			TemplateData: templateData,
 		})
 	}
-	resp, sendErr := service.SendEmail(ctx, request())
+	resp, sendErr := NewCourierConnectHandler(service).SendEmail(ctx, request())
 	require.NoError(t, sendErr)
 	require.True(t, resp.Msg.Queued)
 

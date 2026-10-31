@@ -8,7 +8,6 @@
 1 internal/authentication
 5 internal/campaign
 9 internal/emailauthoring
-6 internal/emaildelivery
 12 internal/form
 2 internal/form/public
 4 internal/label

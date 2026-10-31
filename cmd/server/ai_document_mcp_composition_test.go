@@ -549,7 +549,7 @@ func compositionContentApplications() contentMCPApplications {
 		menus:        managev1connect.UnimplementedMenuServiceHandler{},
 		menuSettings: managev1connect.UnimplementedSiteSettingServiceHandler{},
 		siteSettings: managev1connect.UnimplementedSiteSettingServiceHandler{},
-		mailAdapters: &emaildelivery.MailAdapterService{},
+		mailAdapters: &emaildelivery.Service{},
 	}
 }
 

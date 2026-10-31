@@ -662,13 +662,21 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(emailLayoutPath, emailLayoutHandler)
 	slog.Info("Registered service", "path", emailLayoutPath)
 
-	mailAdapterService := emaildelivery.NewAuditedMailAdapterService(db, adapterLoader, ogPublisher, telemetryWriter, spicedbClient)
-	mailAdapterPath, mailAdapterHandler := managev1connect.NewMailAdapterServiceHandler(mailAdapterService, handlerOpts...)
+	mailAdapterService, err := emaildelivery.NewService(emaildelivery.Deps{
+		DB:             db,
+		SpiceDB:        spicedbClient,
+		AdapterCache:   adapterLoader,
+		AdapterChanges: ogPublisher,
+		Audit:          telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize email delivery service: %w", err)
+	}
+	mailAdapterPath, mailAdapterHandler := managev1connect.NewMailAdapterServiceHandler(emaildelivery.NewMailAdapterConnectHandler(mailAdapterService), handlerOpts...)
 	mux.Handle(mailAdapterPath, mailAdapterHandler)
 	slog.Info("Registered service", "path", mailAdapterPath)
 
-	emailSuppressionService := emaildelivery.NewAuditedEmailSuppressionService(db, telemetryWriter, spicedbClient)
-	emailSuppressionPath, emailSuppressionHandler := managev1connect.NewEmailSuppressionServiceHandler(emailSuppressionService, handlerOpts...)
+	emailSuppressionPath, emailSuppressionHandler := managev1connect.NewEmailSuppressionServiceHandler(emaildelivery.NewEmailSuppressionConnectHandler(mailAdapterService), handlerOpts...)
 	mux.Handle(emailSuppressionPath, emailSuppressionHandler)
 	slog.Info("Registered service", "path", emailSuppressionPath)
 

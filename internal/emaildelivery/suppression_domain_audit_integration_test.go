@@ -32,9 +32,7 @@ func TestEmailSuppressionReleaseDomainAuditIntegration(t *testing.T) {
 
 	t.Run("release stores exact non-PII transition and repeat is unaudited", func(t *testing.T) {
 		suppression := seedSuppressionReleaseAuditFixture(t, db, "suppressed-audit@example.test")
-		service := NewAuditedEmailSuppressionService(
-			db, apitelemetry.NewDurableWriter(db), spiceDB,
-		)
+		service := NewEmailSuppressionConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB, Audit: apitelemetry.NewDurableWriter(db)}))
 		request := connect.NewRequest(&managev1.ReleaseEmailSuppressionRequest{Email: suppression.Email})
 		_, err := service.ReleaseEmailSuppression(ctx, request)
 		require.NoError(t, err)
@@ -60,8 +58,8 @@ func TestEmailSuppressionReleaseDomainAuditIntegration(t *testing.T) {
 
 	t.Run("audit failure rolls back release", func(t *testing.T) {
 		suppression := seedSuppressionReleaseAuditFixture(t, db, "suppressed-rollback@example.test")
-		_, err := NewAuditedEmailSuppressionService(
-			db, failingSuppressionAuditAppender{}, spiceDB,
+		_, err := NewEmailSuppressionConnectHandler(
+			newTestService(t, Deps{DB: db, SpiceDB: spiceDB, Audit: failingSuppressionAuditAppender{}}),
 		).ReleaseEmailSuppression(ctx, connect.NewRequest(
 			&managev1.ReleaseEmailSuppressionRequest{Email: suppression.Email},
 		))
@@ -118,7 +116,7 @@ func TestEmailSuppressionLookupRequiresAdministratorIntegration(t *testing.T) {
 	db := testutil.NewIntegrationDB(t)
 	adminContext, spiceDB := testutil.IntegrationAdminContext(t, db)
 	suppression := seedSuppressionReleaseAuditFixture(t, db, "suppressed-lookup@example.test")
-	service := NewEmailSuppressionService(db, spiceDB)
+	service := NewEmailSuppressionConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB}))
 	request := connect.NewRequest(&managev1.GetEmailSuppressionRequest{Email: suppression.Email})
 
 	response, err := service.GetEmailSuppression(adminContext, request)
