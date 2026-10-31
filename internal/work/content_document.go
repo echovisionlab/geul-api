@@ -53,8 +53,9 @@ func normalizeWorkContentBlockError(err error) error {
 	case errors.Is(err, contentblock.ErrCrossDocument):
 		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
 	case errors.Is(err, contentblock.ErrFileReference):
-		// The AI document adapter turns ErrFileReference in the chain into an
-		// operation issue; this path has always answered FailedPrecondition.
+		// The cause stays out of the chain: AI document callers would turn
+		// ErrFileReference into an operation issue, and Work has always
+		// answered FailedPrecondition here.
 		return errs.FailedPrecondition("a Work Block File reference is not attachable")
 	case errors.Is(err, contentblock.ErrInvalidMutation):
 		return errs.InvalidArgument("blocks", err.Error())
