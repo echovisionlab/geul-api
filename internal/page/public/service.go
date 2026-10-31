@@ -48,8 +48,16 @@ type PageService struct {
 
 type PageServiceOption func(*PageService)
 
+// pageLocator names the column a public Page read matches.
+type pageLocator string
+
+const (
+	pageLocatorID   pageLocator = "id"
+	pageLocatorSlug pageLocator = "slug"
+)
+
 type publicPageRead struct {
-	column          string
+	locator         pageLocator
 	value           string
 	publishedOnly   bool
 	notFoundAsEmpty bool
@@ -223,7 +231,7 @@ func (s *PageService) handleHomepage(
 	}
 
 	return s.buildPageResponse(ctx, acceptLanguage, publicPageRead{
-		column:          "id",
+		locator:         pageLocatorID,
 		value:           homepagePageID,
 		publishedOnly:   true,
 		notFoundAsEmpty: true,
@@ -239,12 +247,12 @@ func (s *PageService) handlePageBySlugOrID(
 	sharePassword string,
 	acceptLanguage string,
 ) (*connect.Response[openv1.GetPageResponse], error) {
-	column := "slug"
+	locator := pageLocatorSlug
 	if _, err := uuid.Parse(slugOrID); err == nil {
-		column = "id"
+		locator = pageLocatorID
 	}
 	return s.buildPageResponse(ctx, acceptLanguage, publicPageRead{
-		column:        column,
+		locator:       locator,
 		value:         slugOrID,
 		shareToken:    shareToken,
 		sharePassword: sharePassword,
@@ -257,7 +265,7 @@ func (s *PageService) buildPageResponse(
 	acceptLanguage string,
 	read publicPageRead,
 ) (*connect.Response[openv1.GetPageResponse], error) {
-	if read.column != "id" && read.column != "slug" {
+	if read.locator != pageLocatorID && read.locator != pageLocatorSlug {
 		return nil, errs.InternalMsg("Page read locator is invalid")
 	}
 	if s.blocks == nil {
@@ -269,146 +277,209 @@ func (s *PageService) buildPageResponse(
 		settings = translation.DefaultRuntimeSettings()
 	}
 
-	var sourceMetadata *pagedomain.PageSourceLocaleMetadata
-	var localization publiccontent.Selection
-	var snapshot contentblock.Snapshot
-	var document *contentv1.LocalizedPageDocument
-	var blockMedia []*contentv1.ContentBlockMediaItem
-	var page model.Page
-	var mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization
-	visible := false
-	accessReason := commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED
+	var result pageReadResult
 	// A concurrent Page write aborts this repeatable read (SQLSTATE 40001); the
 	// read is retried after it commits, starting from empty state each time.
 	err := dberrors.RetrySerializationFailure(ctx, func() error {
-		sourceMetadata, localization, snapshot, document, blockMedia = nil, publiccontent.Selection{}, contentblock.Snapshot{}, nil, nil
-		page, mediaAuthorization = model.Page{}, mediaasset.ContentDownloadOwnerAuthorization{}
-		visible, accessReason = false, commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED
-		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			var err error
-			if err := tx.WithContext(ctx).
-				Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-				Where(read.column+" = ?", read.value).
-				Take(&page).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					if read.notFoundAsEmpty {
-						return nil
-					}
-					return errs.NotFoundMsg("page not found")
-				}
-				return errs.Internal(err)
-			}
-			if read.publishedOnly && page.Status != model.PageStatus(managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()) {
-				return errs.NotFoundMsg("page not found")
-			}
-			if !read.publishedOnly && page.Status != model.PageStatus(managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()) {
-				allowed, permissionErr := s.draftAccess.CanViewPageDraft(ctx, page.ID)
-				if permissionErr != nil {
-					return errs.Internal(fmt.Errorf("check page draft view permission: %w", permissionErr))
-				}
-				if !allowed {
-					shareToken := ""
-					if read.shareToken != nil {
-						shareToken = *read.shareToken
-					}
-					link, shareErr := s.shareLinks.RequirePageShareLinkAccess(
-						ctx, tx, shareToken, read.sharePassword, page.ID,
-					)
-					if shareErr != nil {
-						return shareErr
-					}
-					mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessShare
-					mediaAuthorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
-				} else {
-					mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft
-					if user := auth.GetUser(ctx); user != nil {
-						mediaAuthorization.IdentityID = user.IdentityID.String()
-						mediaAuthorization.MemberID = user.MemberID.String()
-					}
-				}
-			} else {
-				accessReason, err = pageaccess.Evaluate(ctx, tx, s.permissions, page.ID, page.AccessPolicy)
-				if err != nil {
-					return errs.Internal(err)
-				}
-				if accessReason != commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED {
-					return nil
-				}
-				mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessPublic
-			}
-			visible = true
-			accessReason = commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED
-
-			documentID, err := pagedomain.LoadPageContentDocumentIDForPublicRead(ctx, tx, page.ID)
-			if err != nil {
-				return err
-			}
-			mediaAuthorization.ResourceType = "page"
-			mediaAuthorization.ResourceID = page.ID
-			mediaAuthorization.Status = string(page.Status)
-			mediaAuthorization.DocumentID = documentID.String()
-			sourceMetadata, err = pagedomain.LoadPageSourceLocaleMetadataForPublic(ctx, tx, page.ID)
-			if err != nil {
-				return errs.Internal(fmt.Errorf("load Page source locale metadata: %w", err))
-			}
-			if sourceMetadata == nil {
-				return errs.InternalMsg("Page source locale metadata is not initialized")
-			}
-			snapshot, err = s.blocks.LoadSnapshotInTransaction(
-				ctx,
-				tx,
-				documentID,
-				sourceMetadata.Locale,
-			)
-			if err != nil {
-				return errs.Internal(fmt.Errorf("load Page content document: %w", err))
-			}
-			localization, err = resolvePageLocalizedMetadataSelection(
-				ctx,
-				tx,
-				page.ID,
-				acceptLanguage,
-				pageDocumentLocales(snapshot),
-				settings,
-			)
-			if err != nil {
-				return errs.Internal(fmt.Errorf("select Page locale: %w", err))
-			}
-			localization, err = publiccontent.ResolveOGConsistency(
-				ctx, tx, pageLocalizationSpec, page.ID, localization,
-				func(ctx context.Context, assetID string) (bool, error) {
-					asset, err := s.media.ResolvePageOGAsset(ctx, nil, &assetID)
-					return asset != nil, err
-				},
-			)
-			if err != nil {
-				return errs.Internal(fmt.Errorf("select Page OG locale: %w", err))
-			}
-			document, err = pagedomain.MaterializeLocalizedPageContentDocument(
-				snapshot,
-				localization.DisplayedLocale,
-			)
-			if err != nil {
-				return errs.Internal(fmt.Errorf("materialize Page content document: %w", err))
-			}
-			blockMedia, err = pagedomain.LoadContentBlockMediaReferences(ctx, tx, documentID)
-			if err != nil {
-				return errs.Internal(err)
-			}
-			return nil
-		}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+		var err error
+		result, err = s.loadPageRead(ctx, read, acceptLanguage, settings)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	if !visible {
-		return connect.NewResponse(&openv1.GetPageResponse{AccessReason: accessReason}), nil
+	if !result.visible {
+		return connect.NewResponse(&openv1.GetPageResponse{AccessReason: result.accessReason}), nil
 	}
+	protoPage, err := s.toOpenPage(ctx, &result)
+	if err != nil {
+		return nil, err
+	}
+	blockMedia, err := s.hydratePageMedia(ctx, protoPage, result)
+	if err != nil {
+		return nil, err
+	}
+
+	return connect.NewResponse(&openv1.GetPageResponse{
+		AccessReason: result.accessReason,
+		Page:         protoPage,
+		BlockMedia:   blockMedia,
+	}), nil
+}
+
+// pageReadResult is what one repeatable-read attempt observed. visible is
+// false when the Page is absent from an empty-on-miss read or its access
+// policy denies the reader; accessReason then says why.
+type pageReadResult struct {
+	page               model.Page
+	visible            bool
+	accessReason       commonv1.PageAccessReason
+	mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization
+	sourceMetadata     *pagedomain.PageSourceLocaleMetadata
+	localization       publiccontent.Selection
+	snapshot           contentblock.Snapshot
+	document           *contentv1.LocalizedPageDocument
+	blockMedia         []*contentv1.ContentBlockMediaItem
+}
+
+func (s *PageService) loadPageRead(
+	ctx context.Context,
+	read publicPageRead,
+	acceptLanguage string,
+	settings translation.RuntimeSettings,
+) (pageReadResult, error) {
+	var result pageReadResult
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).
+			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
+			Where(string(read.locator)+" = ?", read.value).
+			Take(&result.page).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				if read.notFoundAsEmpty {
+					return nil
+				}
+				return errs.NotFoundMsg("page not found")
+			}
+			return errs.Internal(err)
+		}
+		var err error
+		result.accessReason, result.mediaAuthorization, err = s.authorizePageRead(ctx, tx, read, result.page)
+		if err != nil {
+			return err
+		}
+		if result.accessReason != commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED {
+			return nil
+		}
+		result.visible = true
+		return s.loadPageDocument(ctx, tx, &result, acceptLanguage, settings)
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	return result, err
+}
+
+// authorizePageRead decides whether the reader may see page and returns the
+// owner authorization its media is delivered under. A draft is visible to a
+// reader with draft view permission or a valid share link; a published Page
+// follows its access policy, and a denial is a reason, not an error.
+func (s *PageService) authorizePageRead(
+	ctx context.Context,
+	tx *gorm.DB,
+	read publicPageRead,
+	page model.Page,
+) (commonv1.PageAccessReason, mediaasset.ContentDownloadOwnerAuthorization, error) {
+	var authorization mediaasset.ContentDownloadOwnerAuthorization
+	published := page.Status == model.PageStatus(managev1.PageStatus_PAGE_STATUS_PUBLISHED.String())
+	if published {
+		accessReason, err := pageaccess.Evaluate(ctx, tx, s.permissions, page.ID, page.AccessPolicy)
+		if err != nil {
+			return accessReason, authorization, errs.Internal(err)
+		}
+		if accessReason == commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED {
+			authorization.Mode = mediaasset.ContentDownloadOwnerAccessPublic
+		}
+		return accessReason, authorization, nil
+	}
+	if read.publishedOnly {
+		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, authorization, errs.NotFoundMsg("page not found")
+	}
+	allowed, err := s.draftAccess.CanViewPageDraft(ctx, page.ID)
+	if err != nil {
+		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, authorization, errs.Internal(fmt.Errorf("check page draft view permission: %w", err))
+	}
+	if allowed {
+		authorization.Mode = mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft
+		if user := auth.GetUser(ctx); user != nil {
+			authorization.IdentityID = user.IdentityID.String()
+			authorization.MemberID = user.MemberID.String()
+		}
+		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, authorization, nil
+	}
+	shareToken := ""
+	if read.shareToken != nil {
+		shareToken = *read.shareToken
+	}
+	link, err := s.shareLinks.RequirePageShareLinkAccess(ctx, tx, shareToken, read.sharePassword, page.ID)
+	if err != nil {
+		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, authorization, err
+	}
+	authorization.Mode = mediaasset.ContentDownloadOwnerAccessShare
+	authorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
+	return commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, authorization, nil
+}
+
+// loadPageDocument loads the visible Page's content snapshot, selects the
+// displayed locale and materializes the document in result.
+func (s *PageService) loadPageDocument(
+	ctx context.Context,
+	tx *gorm.DB,
+	result *pageReadResult,
+	acceptLanguage string,
+	settings translation.RuntimeSettings,
+) error {
+	page := &result.page
+	documentID, err := pagedomain.LoadPageContentDocumentIDForPublicRead(ctx, tx, page.ID)
+	if err != nil {
+		return err
+	}
+	result.mediaAuthorization.ResourceType = "page"
+	result.mediaAuthorization.ResourceID = page.ID
+	result.mediaAuthorization.Status = string(page.Status)
+	result.mediaAuthorization.DocumentID = documentID.String()
+	result.sourceMetadata, err = pagedomain.LoadPageSourceLocaleMetadataForPublic(ctx, tx, page.ID)
+	if err != nil {
+		return errs.Internal(fmt.Errorf("load Page source locale metadata: %w", err))
+	}
+	if result.sourceMetadata == nil {
+		return errs.InternalMsg("Page source locale metadata is not initialized")
+	}
+	result.snapshot, err = s.blocks.LoadSnapshotInTransaction(ctx, tx, documentID, result.sourceMetadata.Locale)
+	if err != nil {
+		return errs.Internal(fmt.Errorf("load Page content document: %w", err))
+	}
+	localization, err := resolvePageLocalizedMetadataSelection(
+		ctx,
+		tx,
+		page.ID,
+		acceptLanguage,
+		pageDocumentLocales(result.snapshot),
+		settings,
+	)
+	if err != nil {
+		return errs.Internal(fmt.Errorf("select Page locale: %w", err))
+	}
+	result.localization, err = publiccontent.ResolveOGConsistency(
+		ctx, tx, pageLocalizationSpec, page.ID, localization,
+		func(ctx context.Context, assetID string) (bool, error) {
+			asset, err := s.media.ResolvePageOGAsset(ctx, nil, &assetID)
+			return asset != nil, err
+		},
+	)
+	if err != nil {
+		return errs.Internal(fmt.Errorf("select Page OG locale: %w", err))
+	}
+	result.document, err = pagedomain.MaterializeLocalizedPageContentDocument(
+		result.snapshot,
+		result.localization.DisplayedLocale,
+	)
+	if err != nil {
+		return errs.Internal(fmt.Errorf("materialize Page content document: %w", err))
+	}
+	result.blockMedia, err = pagedomain.LoadContentBlockMediaReferences(ctx, tx, documentID)
+	if err != nil {
+		return errs.Internal(err)
+	}
+	return nil
+}
+
+// toOpenPage maps a visible read to the public Page, overlaying source locale
+// metadata on result.page and resolving its OG asset and localized summary.
+func (s *PageService) toOpenPage(ctx context.Context, result *pageReadResult) (*openv1.Page, error) {
+	page := &result.page
+	localization := result.localization
 	accessPolicy, err := pageaccess.Decode(page.AccessPolicy)
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
-	pagedomain.OverlayPageSourceLocaleMetadataForPublic(&page, sourceMetadata)
+	pagedomain.OverlayPageSourceLocaleMetadataForPublic(page, result.sourceMetadata)
 	documentLayout, err := page.DocumentLayout.Proto()
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -420,8 +491,8 @@ func (s *PageService) buildPageResponse(
 		Title:          page.Title,
 		ShowTitle:      page.ShowTitle,
 		Status:         s.toProtoStatus(page.Status),
-		Document:       document,
-		Revision:       snapshot.Document.Revision.String(),
+		Document:       result.document,
+		Revision:       result.snapshot.Document.Revision.String(),
 		DocumentLayout: documentLayout,
 		CreatedAt:      timestamppb.New(page.CreatedAt),
 		UpdatedAt:      timestamppb.New(page.UpdatedAt),
@@ -455,26 +526,27 @@ func (s *PageService) buildPageResponse(
 		}
 		protoPage.Summary = &resolved
 	}
+	return protoPage, nil
+}
 
-	blockMedia, err = s.media.HydrateAuthorizedContentBlockMedia(
-		mediaasset.WithContentDownloadOwnerAuthorization(ctx, mediaAuthorization), blockMedia,
+// hydratePageMedia authorizes the read's content Block media under its owner
+// authorization and sets the featured image delivery on protoPage.
+func (s *PageService) hydratePageMedia(
+	ctx context.Context,
+	protoPage *openv1.Page,
+	result pageReadResult,
+) ([]*contentv1.ContentBlockMediaItem, error) {
+	blockMedia, err := s.media.HydrateAuthorizedContentBlockMedia(
+		mediaasset.WithContentDownloadOwnerAuthorization(ctx, result.mediaAuthorization), result.blockMedia,
 	)
 	if err != nil {
 		return nil, err
 	}
-	protoPage.FeaturedImageDelivery, err = s.media.ResolvePageFeaturedImageDelivery(
-		ctx,
-		page.FeaturedImageFileID,
-	)
+	protoPage.FeaturedImageDelivery, err = s.media.ResolvePageFeaturedImageDelivery(ctx, result.page.FeaturedImageFileID)
 	if err != nil {
 		return nil, err
 	}
-
-	return connect.NewResponse(&openv1.GetPageResponse{
-		AccessReason: accessReason,
-		Page:         protoPage,
-		BlockMedia:   blockMedia,
-	}), nil
+	return blockMedia, nil
 }
 
 func (s *PageService) getHomepagePageID(ctx context.Context) (string, error) {
