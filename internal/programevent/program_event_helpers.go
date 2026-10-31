@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -56,7 +57,7 @@ func validateProgramEventSlug(slug string) (string, error) {
 	if slug == "" {
 		return "", errs.Required("slug")
 	}
-	if err := validateSlugWithoutSlash(slug); err != nil {
+	if err := pathslug.Validate(slug); err != nil {
 		return "", err
 	}
 	if len(slug) > 160 {

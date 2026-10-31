@@ -10,6 +10,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 )
 
 const referenceValueMaxLength = 100
@@ -33,7 +34,7 @@ func normalizeReferenceSlug(value string) (string, error) {
 	if utf8.RuneCountInString(value) > referenceValueMaxLength {
 		return "", errs.InvalidArgument("slug", fmt.Sprintf("must be at most %d characters", referenceValueMaxLength))
 	}
-	if err := validateSlugWithoutSlash(value); err != nil {
+	if err := pathslug.Validate(value); err != nil {
 		return "", err
 	}
 	return value, nil

@@ -14,6 +14,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
@@ -90,7 +91,7 @@ func buildLabelDocumentMetadataPlan(input *intrav1.LabelDocumentMetadataUpdate) 
 		return labelDocumentMetadataPlan{}, err
 	}
 	if plan.slug.value != nil {
-		if err := validateSlugWithoutSlash(*plan.slug.value); err != nil {
+		if err := pathslug.Validate(*plan.slug.value); err != nil {
 			return labelDocumentMetadataPlan{}, err
 		}
 	}

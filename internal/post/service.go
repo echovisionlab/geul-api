@@ -25,6 +25,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -437,7 +438,7 @@ func (s *PostService) buildPostUpdate(ctx context.Context, request *managev1.Upd
 	}
 	update.normalizedSlug, update.slugPresent = normalizeOptionalNullableString(request.Slug)
 	if update.normalizedSlug != nil {
-		if err := validateSlugWithoutSlash(*update.normalizedSlug); err != nil {
+		if err := pathslug.Validate(*update.normalizedSlug); err != nil {
 			return postUpdate{}, err
 		}
 		if err := routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "post", "posts", *update.normalizedSlug); err != nil {

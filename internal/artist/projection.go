@@ -9,6 +9,7 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -33,7 +34,7 @@ var artistSortConfig = queryutil.SortConfig{
 // checkSlugAvailable checks if an artist slug is available for use
 // excludeID can be empty for new artists, or set to the current artist ID when updating
 func (s *ArtistService) checkSlugAvailable(ctx context.Context, slug string, excludeID string) error {
-	if err := validateSlugWithoutSlash(slug); err != nil {
+	if err := pathslug.Validate(slug); err != nil {
 		return err
 	}
 	if slug == "" {
@@ -74,7 +75,7 @@ func (s *ArtistService) CheckArtistSlugAvailable(
 			return nil, err
 		}
 	}
-	if err := validateSlugWithoutSlash(req.Msg.Slug); err != nil {
+	if err := pathslug.Validate(req.Msg.Slug); err != nil {
 		return nil, err
 	}
 

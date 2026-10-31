@@ -13,6 +13,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -40,7 +41,7 @@ func (s *LabelService) CheckLabelSlugAvailable(
 			return nil, err
 		}
 	}
-	if err := validateSlugWithoutSlash(req.Msg.Slug); err != nil {
+	if err := pathslug.Validate(req.Msg.Slug); err != nil {
 		return nil, err
 	}
 
@@ -252,7 +253,7 @@ func (s *LabelService) toProtoLabel(
 // checkSlugAvailable checks if a slug is available for use
 // excludeID can be empty for new labels, or set to the current label ID when updating
 func (s *LabelService) checkSlugAvailable(ctx context.Context, slug string, excludeID string) error {
-	if err := validateSlugWithoutSlash(slug); err != nil {
+	if err := pathslug.Validate(slug); err != nil {
 		return err
 	}
 	if slug == "" {

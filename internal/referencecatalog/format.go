@@ -19,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -151,7 +152,7 @@ func (s *FormatService) CreateFormat(
 	if req.Msg.Slug != nil && *req.Msg.Slug != "" {
 		slug = *req.Msg.Slug
 	}
-	if err := validateSlugWithoutSlash(slug); err != nil {
+	if err := pathslug.Validate(slug); err != nil {
 		return nil, err
 	}
 
@@ -212,7 +213,7 @@ func (s *FormatService) UpdateFormat(
 	updates := structured.Fields{}
 
 	if req.Msg.Slug != nil {
-		if err := validateSlugWithoutSlash(*req.Msg.Slug); err != nil {
+		if err := pathslug.Validate(*req.Msg.Slug); err != nil {
 			return nil, err
 		}
 	}

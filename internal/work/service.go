@@ -20,6 +20,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -513,7 +514,7 @@ func (s *WorkService) validateNewWorkSlug(ctx context.Context, slug *string) err
 	if slug == nil {
 		return nil
 	}
-	if err := validateSlugWithoutSlash(*slug); err != nil {
+	if err := pathslug.Validate(*slug); err != nil {
 		return err
 	}
 	return routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "work", "works", *slug)

@@ -11,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -173,7 +174,7 @@ func (s *FormService) normalizeFormUpdateSlug(
 		return nil, nil
 	}
 	slug := strings.TrimSpace(*r.Slug)
-	if err := validateSlugWithoutSlash(slug); err != nil {
+	if err := pathslug.Validate(slug); err != nil {
 		return nil, err
 	}
 	if err := ensureSlugAvailable(ctx, db, slug, formID); err != nil {

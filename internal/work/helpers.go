@@ -80,13 +80,6 @@ func normalizeOptionalNullableString(value *string) (*string, bool) {
 	return &normalized, true
 }
 
-func validateSlugWithoutSlash(slug string) error {
-	if strings.Contains(slug, "/") {
-		return errs.InvalidArgument("slug", "must not contain '/'")
-	}
-	return nil
-}
-
 // IsValidUUID reports whether value is a UUID accepted by Work public reads.
 func IsValidUUID(value string) bool { _, err := uuid.Parse(value); return err == nil }
 

@@ -20,13 +20,6 @@ func IsValidUUID(value string) bool {
 	return uuidPattern.MatchString(value)
 }
 
-func validateSlugWithoutSlash(slug string) error {
-	if strings.Contains(slug, "/") {
-		return errs.InvalidArgument("slug", "must not contain '/'")
-	}
-	return nil
-}
-
 func isSlugAvailable(ctx context.Context, db *gorm.DB, slug, excludeID string) (bool, error) {
 	if slug == "" {
 		return true, nil

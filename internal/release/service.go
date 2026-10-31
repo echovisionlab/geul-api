@@ -22,6 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -352,7 +353,7 @@ func (s *ReleaseService) CreateRelease(
 	}
 
 	if req.Msg.Slug != nil {
-		if err := validateSlugWithoutSlash(*req.Msg.Slug); err != nil {
+		if err := pathslug.Validate(*req.Msg.Slug); err != nil {
 			return nil, err
 		}
 		if err := routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "release", "releases", *req.Msg.Slug); err != nil {
