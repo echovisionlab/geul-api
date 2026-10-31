@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -103,25 +102,8 @@ func loadLegalTypedTranslationContentForLocale(
 	return legalTypedTranslationContent{title: title, snapshot: snapshot}, nil
 }
 
-// ApplyTypedTranslationCandidateWithDB persists one translated policy locale
-// behind the archived-policy translation fence. The Translation application
-// drives it in its own transaction and reads its answers as Connect errors;
-// a candidate whose source moved stays the bare ErrSourceNoLongerCurrent.
-func ApplyTypedTranslationCandidateWithDB(
-	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
-	candidate *translation.Candidate,
-	auditWriter domainaudit.Appender,
-) error {
-	err := applyTypedTranslationCandidate(ctx, tx, store, job, candidate, auditWriter)
-	if err == nil || errors.Is(err, translation.ErrSourceNoLongerCurrent) {
-		return err
-	}
-	return errs.Wrap(err)
-}
-
+// applyTypedTranslationCandidate persists one translated policy locale
+// behind the archived-policy translation fence.
 func applyTypedTranslationCandidate(
 	ctx context.Context,
 	tx *gorm.DB,
