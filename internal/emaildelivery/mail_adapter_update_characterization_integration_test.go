@@ -135,20 +135,24 @@ func TestMailAdapterUpdateCharacterizationIntegration(t *testing.T) {
 		publisher.requireUpdated(t, adapter.ID)
 	})
 
-	t.Run("resending the same config still verifies", func(t *testing.T) {
+	t.Run("resending the stored config skips verification", func(t *testing.T) {
 		server := newFakeSMTPServer(t, false)
 		adapter := seedSMTPMailAdapter(t, db, server, `{}`)
 		service, publisher := newService()
 		fromName := "SMTP Sender"
-		_, err := service.Update(adminCtx, connect.NewRequest(&managev1.UpdateMailAdapterRequest{
-			Id: adapter.ID,
-			Config: &managev1.UpdateMailAdapterRequest_SmtpConfig{SmtpConfig: &managev1.SMTPConfig{
-				Host: "127.0.0.1", Port: server.port(), User: "smtp-user", Password: "smtp-secret",
-				FromEmail: "smtp-sender@example.test", FromName: &fromName,
-			}},
-		}))
-		require.NoError(t, err)
-		require.Equal(t, []string{"smtp-sender@example.test"}, server.recipients())
+		// With and without the stored password, the request matches the
+		// stored config.
+		for _, password := range []string{"smtp-secret", ""} {
+			_, err := service.Update(adminCtx, connect.NewRequest(&managev1.UpdateMailAdapterRequest{
+				Id: adapter.ID,
+				Config: &managev1.UpdateMailAdapterRequest_SmtpConfig{SmtpConfig: &managev1.SMTPConfig{
+					Host: "127.0.0.1", Port: server.port(), User: "smtp-user", Password: password,
+					FromEmail: "smtp-sender@example.test", FromName: &fromName,
+				}},
+			}))
+			require.NoError(t, err)
+		}
+		require.Empty(t, server.recipients())
 		stored := loadMailAdapter(t, db, adapter.ID)
 		require.Equal(t, adapter.UpdatedAt.UTC(), stored.UpdatedAt.UTC())
 		requireMailAdapterAudits(t, db, adapter.ID, nil)

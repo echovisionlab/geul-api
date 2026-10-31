@@ -260,8 +260,10 @@ func (s *MailAdapterService) update(
 			if err != nil {
 				return err
 			}
+			// Only a changed sender or delivery setting needs a provider send to
+			// prove it; resending the stored config is a no-op.
 			configChanged = !configJSONSemanticallyEqual(adapter.Config.RawMessage, requestedConfig.RawMessage)
-			if !senderChanged || configChanged {
+			if configChanged {
 				if err := s.verifyAdapterBeforeSave(ctx, requestedName, effectiveType, config); err != nil {
 					if senderChanged {
 						// Provider diagnostics can contain credentials. Keep their cause
