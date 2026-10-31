@@ -155,7 +155,7 @@ func (p *pagePort) executeMutation(
 			}
 			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
 				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentRevision),
-				CurrentTargetRevision: pageCoreTargetRevision(conflict.CurrentTargetRevision),
+				CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
 				AffectedHandles:       append([]string(nil), run.command.AffectedHandles...),
 			}}
 		}
@@ -178,7 +178,7 @@ func (p *pagePort) executeMutation(
 
 	output := core.ApplyResult{
 		DocumentRevision: core.Revision(domainResult.DocumentRevision),
-		TargetRevision:   pageCoreTargetRevision(domainResult.TargetRevision),
+		TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
 		Changed:          domainResult.Changed,
 	}
 	if domainResult.Changed {
@@ -216,7 +216,7 @@ func (p *pagePort) project(identity core.DocumentIdentity, locale core.Locale, s
 	}
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.Revision),
-		TargetRevision: pageCoreTargetRevision(state.TargetRevision),
+		TargetRevision: core.OptionalRevision(state.TargetRevision),
 		SourceLocale:   core.Locale(state.SourceLocale), Locale: locale, LocaleExists: state.LocaleExists,
 		Catalog: p.catalog, Nodes: append([]core.Node{metadata}, nodes...),
 	}, nil
@@ -237,7 +237,7 @@ func (p *pagePort) compile(ctx context.Context, state pagedomain.AIDocumentState
 	}
 	mutation := pagedomain.AIDocumentMutation{
 		PageID: string(loaded.Identity.Reference), Locale: string(loaded.Locale), ExpectedRevision: expected,
-		ExpectedTargetRevision: pageDomainTargetRevision(loaded.TargetRevision),
+		ExpectedTargetRevision: core.OptionalRevisionString(loaded.TargetRevision),
 		ObservedSourceLocale:   string(loaded.SourceLocale), ObservedLocaleExists: loaded.LocaleExists,
 		ContributorMemberID: contributor.String(),
 		Batch:               contentblock.Batch{DocumentID: state.Snapshot.Document.ID, ExpectedRevision: expected, ContributorMemberIDs: []uuid.UUID{contributor}},
@@ -367,22 +367,6 @@ func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatc
 	}
 	patch.SetDocumentLayout, patch.DocumentLayout = true, layout
 	return true, nil
-}
-
-func pageCoreTargetRevision(revision *string) *core.Revision {
-	if revision == nil {
-		return nil
-	}
-	converted := core.Revision(*revision)
-	return &converted
-}
-
-func pageDomainTargetRevision(revision *core.Revision) *string {
-	if revision == nil {
-		return nil
-	}
-	converted := string(*revision)
-	return &converted
 }
 
 func compilePageMetadataOperation(patch *pagedomain.AIDocumentMetadataPatch, operation core.Operation, index int) (bool, *core.OperationIssue) {

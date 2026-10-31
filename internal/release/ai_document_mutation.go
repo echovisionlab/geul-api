@@ -11,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -145,8 +146,8 @@ func validateCompiledReleaseAIDocumentMutation(state AIDocumentState, input AIDo
 	if input.ExpectedDocumentRevision != state.DocumentRevision {
 		return uuid.Nil, &AIDocumentRevisionConflictError{Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: state.DocumentRevision}
 	}
-	if !releaseOptionalRevisionEqual(input.ExpectedTargetRevision, state.TargetRevision) {
-		return uuid.Nil, &AIDocumentRevisionConflictError{Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: state.DocumentRevision, CurrentTargetRevision: cloneReleaseRevision(state.TargetRevision)}
+	if !optional.Equal(input.ExpectedTargetRevision, state.TargetRevision) {
+		return uuid.Nil, &AIDocumentRevisionConflictError{Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: state.DocumentRevision, CurrentTargetRevision: optional.Clone(state.TargetRevision)}
 	}
 	if input.Batch != nil && (input.Batch.DocumentID != state.DocumentID || input.Batch.ExpectedRevision != expected || len(input.Batch.ContributorMemberIDs) != 1 || input.Batch.ContributorMemberIDs[0] != memberID) {
 		return uuid.Nil, errs.InvalidArgument("mutation", "compiled Release document, revision, and attribution must match the locked state")
@@ -339,21 +340,6 @@ func releaseAIDocumentContentUpdatedEvent(input AIDocumentMutation, result AIDoc
 		event.TargetRevision = &targetRevision
 	}
 	return event
-}
-
-func releaseOptionalRevisionEqual(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == right
-	}
-	return *left == *right
-}
-
-func cloneReleaseRevision(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	clone := *value
-	return &clone
 }
 
 func releaseTargetConflictRevision(conflict *translation.TargetRevisionConflict) *string {

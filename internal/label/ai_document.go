@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -425,11 +426,11 @@ func validateCompiledLabelAIDocumentMutation(
 			Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: state.Revision,
 		}
 	}
-	if !equalLabelTargetRevision(input.ExpectedTargetRevision, state.TargetRevision) {
+	if !optional.Equal(input.ExpectedTargetRevision, state.TargetRevision) {
 		return uuid.Nil, &AIDocumentRevisionConflictError{
 			Kind:                    AIDocumentTargetRevisionConflict,
 			CurrentDocumentRevision: state.Revision,
-			CurrentTargetRevision:   cloneLabelTargetRevision(state.TargetRevision),
+			CurrentTargetRevision:   optional.Clone(state.TargetRevision),
 		}
 	}
 	if input.Batch != nil {
@@ -534,7 +535,7 @@ func mapLabelAIDocumentMutationError(err error, currentDocumentRevision string) 
 	if errors.As(err, &targetConflict) {
 		var currentTargetRevision *string
 		if targetConflict.CurrentExists {
-			currentTargetRevision = cloneLabelTargetRevision(&targetConflict.CurrentRevision)
+			currentTargetRevision = optional.Clone(&targetConflict.CurrentRevision)
 		}
 		return &AIDocumentRevisionConflictError{
 			Kind:                    AIDocumentTargetRevisionConflict,
@@ -543,19 +544,4 @@ func mapLabelAIDocumentMutationError(err error, currentDocumentRevision string) 
 		}
 	}
 	return normalizeLabelContentBlockError(err)
-}
-
-func equalLabelTargetRevision(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
-}
-
-func cloneLabelTargetRevision(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	clone := *value
-	return &clone
 }

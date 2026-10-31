@@ -12,6 +12,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -247,20 +248,13 @@ func validateCompiledPageAIDocumentMutation(
 	if mutation.ExpectedRevision.String() != state.Revision {
 		return &AIDocumentRevisionConflictError{Kind: AIDocumentDocumentRevisionConflict, CurrentRevision: state.Revision}
 	}
-	if !samePageTargetRevision(mutation.ExpectedTargetRevision, state.TargetRevision) {
+	if !optional.Equal(mutation.ExpectedTargetRevision, state.TargetRevision) {
 		return &AIDocumentRevisionConflictError{
 			Kind: AIDocumentTargetRevisionConflict, CurrentRevision: state.Revision,
 			CurrentTargetRevision: cloneOptionalString(state.TargetRevision),
 		}
 	}
 	return nil
-}
-
-func samePageTargetRevision(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
 }
 
 func pageTargetConflictRevision(conflict *translation.TargetRevisionConflict) *string {

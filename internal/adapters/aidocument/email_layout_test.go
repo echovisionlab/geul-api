@@ -121,7 +121,7 @@ func TestEmailLayoutCompileAllowsOnlyLocaleValueSetAndLifecycle(t *testing.T) {
 	}
 	domain.state.LocaleExists = true
 	targetRevision := core.Revision("tr1_target")
-	domain.state.TargetRevision = emailLayoutStringRevision(&targetRevision)
+	domain.state.TargetRevision = core.OptionalRevisionString(&targetRevision)
 	document.LocaleExists = true
 	document.TargetRevision = &targetRevision
 	deleted, issues, err := compileEmailLayoutMutation(domain.state, document, member, []core.Operation{core.DeleteTranslationOperation()})

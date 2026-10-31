@@ -18,6 +18,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -243,20 +244,13 @@ func validateCompiledPostAIDocumentMutation(
 		)
 	}
 	if mutation.ExpectedRevision.String() != state.DocumentRevision ||
-		!equalPostAIDocumentTargetRevision(mutation.ExpectedTargetRevision, state.TargetRevision) {
+		!optional.Equal(mutation.ExpectedTargetRevision, state.TargetRevision) {
 		return uuid.Nil, errs.InvalidArgument(
 			"mutation",
 			"compiled Post document and target revisions must match the locked state",
 		)
 	}
 	return documentID, nil
-}
-
-func equalPostAIDocumentTargetRevision(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
 }
 
 func postAIDocumentUpdatedEvent(

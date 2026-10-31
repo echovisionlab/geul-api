@@ -225,7 +225,7 @@ func (p *emailRichTextPort) executeMutation(
 	}
 	result := core.ApplyResult{
 		DocumentRevision: core.Revision(domainResult.DocumentRevision),
-		TargetRevision:   emailRichTextCoreRevision(domainResult.TargetRevision),
+		TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
 		Changed:          domainResult.Changed,
 	}
 	if domainResult.Changed {
@@ -263,7 +263,7 @@ func (p *emailRichTextPort) document(
 	nodes = append([]core.Node{metadata}, nodes...)
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.DocumentRevision),
-		TargetRevision: emailRichTextCoreRevision(state.TargetRevision),
+		TargetRevision: core.OptionalRevision(state.TargetRevision),
 		SourceLocale:   core.Locale(state.SourceLocale), Locale: locale,
 		LocaleExists: state.LocaleExists, Catalog: p.catalog, Nodes: nodes,
 	}, nil
@@ -278,7 +278,7 @@ func (p *emailRichTextPort) compile(
 	mutation := emailRichTextMutation{
 		Reference: state.Reference, Locale: string(document.Locale),
 		ExpectedDocumentRevision: string(document.DocumentRevision),
-		ExpectedTargetRevision:   emailRichTextStringRevision(document.TargetRevision),
+		ExpectedTargetRevision:   core.OptionalRevisionString(document.TargetRevision),
 		ExpectedSource:           state.SourceLocale,
 		ExpectedPresence:         state.LocaleExists, ContributorMemberID: contributor,
 	}
@@ -418,25 +418,9 @@ func (p *emailRichTextPort) conflict(conflict *emailRichTextRevisionConflict, ha
 	return &core.ConflictError{Conflict: core.Conflict{
 		Code:                    conflict.kind,
 		CurrentDocumentRevision: core.Revision(conflict.currentDocumentRevision),
-		CurrentTargetRevision:   emailRichTextCoreRevision(conflict.currentTargetRevision),
+		CurrentTargetRevision:   core.OptionalRevision(conflict.currentTargetRevision),
 		AffectedHandles:         append([]string(nil), handles...),
 	}}
-}
-
-func emailRichTextCoreRevision(value *string) *core.Revision {
-	if value == nil {
-		return nil
-	}
-	revision := core.Revision(*value)
-	return &revision
-}
-
-func emailRichTextStringRevision(value *core.Revision) *string {
-	if value == nil {
-		return nil
-	}
-	revision := string(*value)
-	return &revision
 }
 
 func emailRichTextDomainIssue(err error, operations []core.Operation) *core.OperationIssue {

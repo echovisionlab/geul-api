@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/optional"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 
 	"connectrpc.com/connect"
@@ -228,14 +229,14 @@ func (s *MenuService) ExecuteAIDocumentMutation(
 		if locked.DocumentRevision != command.ExpectedDocumentRevision {
 			return &AIDocumentRevisionConflict{
 				CurrentDocumentRevision: locked.DocumentRevision,
-				CurrentTargetRevision:   cloneMenuRevision(locked.TargetRevision),
+				CurrentTargetRevision:   optional.Clone(locked.TargetRevision),
 				AffectedHandles:         append([]string(nil), command.AffectedHandles...),
 			}
 		}
-		if !equalMenuRevision(locked.TargetRevision, command.ExpectedTargetRevision) {
+		if !optional.Equal(locked.TargetRevision, command.ExpectedTargetRevision) {
 			return &AIDocumentRevisionConflict{
 				Target: true, CurrentDocumentRevision: locked.DocumentRevision,
-				CurrentTargetRevision: cloneMenuRevision(locked.TargetRevision),
+				CurrentTargetRevision: optional.Clone(locked.TargetRevision),
 				AffectedHandles:       append([]string(nil), command.AffectedHandles...),
 			}
 		}
@@ -252,7 +253,7 @@ func (s *MenuService) ExecuteAIDocumentMutation(
 		if !compiled.changed {
 			result = AIDocumentApplyResult{
 				DocumentRevision: locked.DocumentRevision,
-				TargetRevision:   cloneMenuRevision(locked.TargetRevision),
+				TargetRevision:   optional.Clone(locked.TargetRevision),
 			}
 		} else {
 			now := time.Now().UTC()
@@ -303,12 +304,12 @@ func (s *MenuService) ExecuteAIDocumentMutation(
 			if err != nil {
 				return err
 			}
-			if next.DocumentRevision == locked.DocumentRevision && equalMenuRevision(next.TargetRevision, locked.TargetRevision) {
+			if next.DocumentRevision == locked.DocumentRevision && optional.Equal(next.TargetRevision, locked.TargetRevision) {
 				return errs.Internal(errors.New("menu AI document mutation did not advance its authoritative revision"))
 			}
 			result = AIDocumentApplyResult{
 				DocumentRevision: next.DocumentRevision,
-				TargetRevision:   cloneMenuRevision(next.TargetRevision),
+				TargetRevision:   optional.Clone(next.TargetRevision),
 				Changed:          true,
 			}
 		}
@@ -330,21 +331,6 @@ func (s *MenuService) ExecuteAIDocumentMutation(
 		return AIDocumentApplyResult{}, err
 	}
 	return result, nil
-}
-
-func cloneMenuRevision(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
-}
-
-func equalMenuRevision(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
 }
 
 func menuAIDocumentAction(operations []AIDocumentOperation) AIDocumentMutationAction {

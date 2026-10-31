@@ -147,7 +147,7 @@ func (p *menuAIDocumentPort) executeMutation(
 			return menudomain.AIDocumentApply{
 				MenuID: string(identity.Reference), Locale: string(request.Locale),
 				ExpectedDocumentRevision: string(run.command.ExpectedDocumentRevision),
-				ExpectedTargetRevision:   menuStringRevision(run.command.ExpectedTargetRevision),
+				ExpectedTargetRevision:   core.OptionalRevisionString(run.command.ExpectedTargetRevision),
 				AffectedHandles:          append([]string(nil), run.command.AffectedHandles...),
 				Operations:               operations,
 			}, nil
@@ -175,7 +175,7 @@ func (p *menuAIDocumentPort) executeMutation(
 			}
 			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
 				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision: menuCoreRevision(conflict.CurrentTargetRevision),
+				CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
 				AffectedHandles:       append([]string(nil), conflict.AffectedHandles...),
 			}}
 		}
@@ -186,7 +186,7 @@ func (p *menuAIDocumentPort) executeMutation(
 	}
 	result := core.ApplyResult{
 		DocumentRevision: core.Revision(domainResult.DocumentRevision),
-		TargetRevision:   menuCoreRevision(domainResult.TargetRevision), Changed: domainResult.Changed,
+		TargetRevision:   core.OptionalRevision(domainResult.TargetRevision), Changed: domainResult.Changed,
 	}
 	if domainResult.Changed {
 		for index, operation := range run.command.Operations {
@@ -270,26 +270,10 @@ func projectMenuAIDocument(snapshot menudomain.AIDocumentSnapshot) core.Document
 	return core.Document{
 		Identity:         core.DocumentIdentity{Domain: core.DomainMenu, Reference: core.DocumentReference(snapshot.ID)},
 		DocumentRevision: core.Revision(snapshot.DocumentRevision),
-		TargetRevision:   menuCoreRevision(snapshot.TargetRevision), SourceLocale: core.Locale(snapshot.SourceLocale),
+		TargetRevision:   core.OptionalRevision(snapshot.TargetRevision), SourceLocale: core.Locale(snapshot.SourceLocale),
 		Locale: core.Locale(snapshot.Locale), LocaleExists: snapshot.LocaleExists,
 		Catalog: menuCatalog, Nodes: nodes,
 	}
-}
-
-func menuCoreRevision(value *string) *core.Revision {
-	if value == nil {
-		return nil
-	}
-	revision := core.Revision(*value)
-	return &revision
-}
-
-func menuStringRevision(value *core.Revision) *string {
-	if value == nil {
-		return nil
-	}
-	revision := string(*value)
-	return &revision
 }
 
 func projectMenuItemSourceFields(item menudomain.AIDocumentItem) []core.FieldValue {

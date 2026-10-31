@@ -127,7 +127,7 @@ func (p *labelPort) executeMutation(
 			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
 				Code:                    code,
 				CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision:   labelCoreTargetRevision(conflict.CurrentTargetRevision),
+				CurrentTargetRevision:   core.OptionalRevision(conflict.CurrentTargetRevision),
 				AffectedHandles:         append([]string(nil), run.command.AffectedHandles...),
 			}}
 		}
@@ -141,7 +141,7 @@ func (p *labelPort) executeMutation(
 		DocumentRevision: core.Revision(domainResult.Content.DocumentRevision.String()),
 		Changed:          domainResult.Content.Changed,
 	}
-	output.TargetRevision = labelCoreTargetRevision(domainResult.TargetRevision)
+	output.TargetRevision = core.OptionalRevision(domainResult.TargetRevision)
 	if domainResult.Content.Changed {
 		for index, operation := range run.command.Operations {
 			output.Changes = append(output.Changes, core.Change{
@@ -163,7 +163,7 @@ func (p *labelPort) compileMutation(
 	mutation := labeldomain.AIDocumentMutation{
 		LabelID: string(loaded.Identity.Reference), Locale: string(loaded.Locale),
 		ExpectedRevision: string(loaded.DocumentRevision), ExpectedSource: string(loaded.SourceLocale),
-		ExpectedTargetRevision: labelDomainTargetRevision(loaded.TargetRevision),
+		ExpectedTargetRevision: core.OptionalRevisionString(loaded.TargetRevision),
 		ExpectedPresence:       loaded.LocaleExists, ContributorMemberID: contributor,
 	}
 	if len(operations) == 1 && operations[0].Kind == core.OperationCreateTranslation {
@@ -203,7 +203,7 @@ func (p *labelPort) document(identity core.DocumentIdentity, locale core.Locale,
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.Revision), SourceLocale: core.Locale(state.SourceLocale),
 		Locale: locale, LocaleExists: state.LocaleExists, Catalog: p.codec.Catalog(), Nodes: nodes,
-		TargetRevision: labelCoreTargetRevision(state.TargetRevision),
+		TargetRevision: core.OptionalRevision(state.TargetRevision),
 	}, nil
 }
 
@@ -226,22 +226,6 @@ func validateLabelIdentity(identity core.DocumentIdentity) error {
 		return errors.New("label AI document reference must be a canonical UUID")
 	}
 	return nil
-}
-
-func labelCoreTargetRevision(revision *string) *core.Revision {
-	if revision == nil {
-		return nil
-	}
-	converted := core.Revision(*revision)
-	return &converted
-}
-
-func labelDomainTargetRevision(revision *core.Revision) *string {
-	if revision == nil {
-		return nil
-	}
-	converted := string(*revision)
-	return &converted
 }
 
 func labelOperationHandles(operation core.Operation, locale core.Locale) []string {

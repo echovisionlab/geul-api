@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -176,10 +177,10 @@ func validateCompiledArtistAIDocumentMutation(
 			Kind: AIDocumentDocumentRevisionConflict, CurrentRevision: state.Revision,
 		}
 	}
-	if !sameArtistTargetRevision(input.ExpectedTargetRevision, state.TargetRevision) {
+	if !optional.Equal(input.ExpectedTargetRevision, state.TargetRevision) {
 		return uuid.Nil, &AIDocumentRevisionConflictError{
 			Kind: AIDocumentTargetRevisionConflict, CurrentRevision: state.Revision,
-			CurrentTargetRevision: cloneArtistTargetRevision(state.TargetRevision),
+			CurrentTargetRevision: optional.Clone(state.TargetRevision),
 		}
 	}
 	if input.Batch != nil {
@@ -348,21 +349,6 @@ func artistAIDocumentContentUpdatedEvent(input AIDocumentMutation, result AIDocu
 func createArtistAIDocumentTranslation(ctx context.Context, tx *gorm.DB, artistID, locale string) (bool, error) {
 	result := tx.WithContext(ctx).Exec("INSERT INTO artist_translation (entity_id, locale, title, created_at, updated_at) VALUES (?::uuid, ?, NULL, now(), now()) ON CONFLICT (entity_id, locale) DO NOTHING", artistID, locale)
 	return result.RowsAffected != 0, result.Error
-}
-
-func sameArtistTargetRevision(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
-}
-
-func cloneArtistTargetRevision(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
 }
 
 func artistTargetConflictRevision(conflict *translation.TargetRevisionConflict) *string {

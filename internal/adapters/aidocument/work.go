@@ -147,7 +147,7 @@ func (p *workPort) executeMutation(
 			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
 				Code:                    code,
 				CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision:   workCoreTargetRevision(conflict.CurrentTargetRevision),
+				CurrentTargetRevision:   core.OptionalRevision(conflict.CurrentTargetRevision),
 				AffectedHandles:         append([]string(nil), run.command.AffectedHandles...),
 			}}
 		}
@@ -170,7 +170,7 @@ func (p *workPort) executeMutation(
 
 	output := core.ApplyResult{
 		DocumentRevision: core.Revision(domainResult.Content.DocumentRevision.String()),
-		TargetRevision:   workCoreTargetRevision(domainResult.TargetRevision),
+		TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
 		Changed:          domainResult.Content.Changed,
 	}
 	if domainResult.Content.Changed {
@@ -200,25 +200,9 @@ func (p *workPort) project(identity core.DocumentIdentity, locale core.Locale, s
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.DocumentRevision),
 		SourceLocale: core.Locale(state.SourceLocale), Locale: locale,
-		LocaleExists: state.LocaleExists, TargetRevision: workCoreTargetRevision(state.TargetRevision),
+		LocaleExists: state.LocaleExists, TargetRevision: core.OptionalRevision(state.TargetRevision),
 		Catalog: p.catalog, Nodes: nodes,
 	}, nil
-}
-
-func workCoreTargetRevision(revision *string) *core.Revision {
-	if revision == nil {
-		return nil
-	}
-	converted := core.Revision(*revision)
-	return &converted
-}
-
-func workDomainTargetRevision(revision *core.Revision) *string {
-	if revision == nil {
-		return nil
-	}
-	converted := string(*revision)
-	return &converted
 }
 
 func canonicalWorkContributor(memberID string) (uuid.UUID, error) {
@@ -242,7 +226,7 @@ func (p *workPort) compile(
 	mutation := workdomain.AIDocumentMutation{
 		WorkID: string(loaded.Identity.Reference), Locale: string(loaded.Locale),
 		ExpectedRevision: expected, ObservedSourceLocale: string(loaded.SourceLocale),
-		ExpectedTargetRevision: workDomainTargetRevision(loaded.TargetRevision),
+		ExpectedTargetRevision: core.OptionalRevisionString(loaded.TargetRevision),
 		ObservedLocaleExists:   loaded.LocaleExists,
 		ContributorMemberID:    contributor.String(),
 		Batch: contentblock.Batch{

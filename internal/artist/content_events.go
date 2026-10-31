@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/optional"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -52,7 +53,7 @@ func buildArtistContentUpdatedEvent(
 		DocumentRevision:     &revision,
 		Locale:               &locale,
 		LocaleExists:         &localeExists,
-		TargetRevision:       cloneArtistTargetRevision(targetRevision),
+		TargetRevision:       optional.Clone(targetRevision),
 		TimestampMs:          time.Now().UnixMilli(),
 	}
 }

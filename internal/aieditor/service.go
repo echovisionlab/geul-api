@@ -251,7 +251,7 @@ func (s *Service) start(
 		slog.Log(turnCtx, documentFailureLevel(err), "AI editor document open failed", "domain", "ai_editor", "event", "ai_editor.document.open_failed", failurecause.Attr(err), "turn_id", turnID, "action", request.Action)
 		return emitTerminalFailure(terminal, managev1.AIEditorTurnFailureCode_AI_EDITOR_TURN_FAILURE_CODE_DOCUMENT)
 	}
-	expectedTargetRevision := optionalRevision(request.ExpectedTargetRevision)
+	expectedTargetRevision := aidocument.OptionalRevision(request.ExpectedTargetRevision)
 	if metadata.DocumentRevision != aidocument.Revision(request.ExpectedDocumentRevision) ||
 		!sameRevision(metadata.TargetRevision, expectedTargetRevision) {
 		return emitTerminalFailure(terminal, managev1.AIEditorTurnFailureCode_AI_EDITOR_TURN_FAILURE_CODE_DOCUMENT)
@@ -510,14 +510,6 @@ func acceptedProviderPrompt(result aidocument.ApplyResult) string {
 		result.DocumentRevision,
 		*result.TargetRevision,
 	)
-}
-
-func optionalRevision(value *string) *aidocument.Revision {
-	if value == nil {
-		return nil
-	}
-	revision := aidocument.Revision(*value)
-	return &revision
 }
 
 func cloneRevision(value *aidocument.Revision) *aidocument.Revision {

@@ -76,7 +76,7 @@ func (s *InternalPostSeriesService) LoadDocument(
 			Source:           postSeriesLocaleFields(state.source.Title, state.source.Summary),
 			Requested:        postSeriesRequestedLocaleFields(state.locale),
 			DocumentRevision: string(state.documentRevision),
-			TargetRevision:   postSeriesStringRevision(state.targetRevision),
+			TargetRevision:   core.OptionalRevisionString(state.targetRevision),
 		})
 		return nil
 	})
@@ -306,14 +306,6 @@ func appendPostSeriesCollaborationAudit(
 			)
 		},
 	)
-}
-
-func postSeriesStringRevision(value *core.Revision) *string {
-	if value == nil {
-		return nil
-	}
-	revision := string(*value)
-	return &revision
 }
 
 func stringPostSeriesRevision(value *core.Revision) string {

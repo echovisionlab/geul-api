@@ -153,7 +153,7 @@ func (p *postPort) executeMutation(
 			}
 			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
 				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision: postTargetAIDocumentRevision(conflict.CurrentTargetRevision),
+				CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
 				AffectedHandles:       append([]string(nil), run.command.AffectedHandles...),
 			}}
 		}
@@ -222,16 +222,8 @@ func (p *postPort) project(
 		Identity: identity, DocumentRevision: core.Revision(state.DocumentRevision),
 		SourceLocale: core.Locale(state.SourceLocale), Locale: locale,
 		LocaleExists: state.LocaleExists, Catalog: p.catalog, Nodes: nodes,
-		TargetRevision: postTargetAIDocumentRevision(state.TargetRevision),
+		TargetRevision: core.OptionalRevision(state.TargetRevision),
 	}, nil
-}
-
-func postTargetAIDocumentRevision(revision *string) *core.Revision {
-	if revision == nil {
-		return nil
-	}
-	converted := core.Revision(*revision)
-	return &converted
 }
 
 func postIDList(ids []string) core.Value {
@@ -260,7 +252,7 @@ func (p *postPort) compile(
 		PostID: string(loaded.Identity.Reference), Locale: string(loaded.Locale),
 		ObservedSourceLocale: string(loaded.SourceLocale), ObservedLocaleExists: loaded.LocaleExists,
 		ExpectedRevision: expected, ContributorMemberID: contributor,
-		ExpectedTargetRevision: postDomainTargetRevision(loaded.TargetRevision),
+		ExpectedTargetRevision: core.OptionalRevisionString(loaded.TargetRevision),
 		Batch: contentblock.Batch{
 			DocumentID: documentID, ExpectedRevision: expected,
 			ContributorMemberIDs: []uuid.UUID{contributor},
@@ -306,14 +298,6 @@ func (p *postPort) compile(
 		mutation.Metadata.EnsureLocale = true
 	}
 	return mutation, nil, nil
-}
-
-func postDomainTargetRevision(revision *core.Revision) *string {
-	if revision == nil {
-		return nil
-	}
-	converted := string(*revision)
-	return &converted
 }
 
 func compilePostMetadataOperation(

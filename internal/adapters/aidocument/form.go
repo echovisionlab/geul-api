@@ -166,7 +166,7 @@ func (p *formPort) executeMutation(
 
 	output := core.ApplyResult{
 		DocumentRevision: core.Revision(domainResult.DocumentRevision),
-		TargetRevision:   formCoreRevision(domainResult.TargetRevision),
+		TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
 		Changed:          domainResult.Changed,
 	}
 	if domainResult.Changed {
@@ -191,7 +191,7 @@ func (p *formPort) document(identity core.DocumentIdentity, locale core.Locale, 
 	}
 	return core.Document{
 		Identity: identity, DocumentRevision: core.Revision(state.DocumentRevision),
-		TargetRevision: formCoreRevision(state.TargetRevision), SourceLocale: core.Locale(state.SourceLocale),
+		TargetRevision: core.OptionalRevision(state.TargetRevision), SourceLocale: core.Locale(state.SourceLocale),
 		Locale: locale, LocaleExists: state.LocaleExists, Catalog: p.catalog, Nodes: nodes,
 	}, nil
 }
@@ -209,7 +209,7 @@ func (p *formPort) compile(state formdomain.AIDocumentState, document core.Docum
 	mutation := formdomain.AIDocumentMutation{
 		FormID: state.FormID, Locale: string(document.Locale),
 		ExpectedDocumentRevision: string(document.DocumentRevision),
-		ExpectedTargetRevision:   formStringRevision(document.TargetRevision),
+		ExpectedTargetRevision:   core.OptionalRevisionString(document.TargetRevision),
 		ExpectedSource:           state.SourceLocale, ExpectedPresence: state.LocaleExists,
 		ContributorMemberID: contributor,
 	}
@@ -318,25 +318,9 @@ func formConflict(conflict *formdomain.AIDocumentRevisionConflictError, handles 
 	}
 	return &core.ConflictError{Conflict: core.Conflict{
 		Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-		CurrentTargetRevision: formCoreRevision(conflict.CurrentTargetRevision),
+		CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
 		AffectedHandles:       append([]string(nil), handles...),
 	}}
-}
-
-func formCoreRevision(value *string) *core.Revision {
-	if value == nil {
-		return nil
-	}
-	revision := core.Revision(*value)
-	return &revision
-}
-
-func formStringRevision(value *core.Revision) *string {
-	if value == nil {
-		return nil
-	}
-	revision := string(*value)
-	return &revision
 }
 
 func projectFormNodes(state formdomain.AIDocumentState) ([]core.Node, error) {
