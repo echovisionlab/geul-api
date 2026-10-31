@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -51,9 +52,12 @@ func TestLegalTranslationInterchangeAuditIsExactMemberLocaleContent(t *testing.T
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			capture := &legalTranslationInterchangeAuditCapture{}
-			require.NoError(t, appendLegalTargetLocaleContentAudit(
-				t.Context(), nil, capture, memberID, testCase.entityType,
-				policyID, 7, "ko", testCase.operation,
+			change := legalLocaleContentChange{
+				kind: testCase.entityType, policyID: policyID, version: 7, locale: "ko",
+				operation: testCase.operation, memberID: memberID,
+			}
+			require.NoError(t, domainaudit.AppendMember(
+				t.Context(), nil, capture, change.memberID, sharedtelemetry.AuditLegalPolicyUpdated, change.record,
 			))
 			require.NoError(t, capture.record.Validate())
 			require.Equal(t, sharedtelemetry.AuditLegalPolicyUpdated, capture.record.Action)

@@ -7,7 +7,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
@@ -51,15 +50,13 @@ func TestLegalPermissionSelectionUsesArchivedCapabilitiesExclusively(t *testing.
 	t.Parallel()
 
 	for _, entityType := range []string{"terms", "privacy"} {
-		policy, err := legalDocumentPolicyForType(entityType)
+		kind, err := legalKind(entityType)
 		require.NoError(t, err)
-		require.Equal(t, legalActionViewArchived, legalViewAction(policy, policy.archivedStatus))
-		activeStatus := managev1.TermsStatus_TERMS_STATUS_ACTIVE.String()
-		if entityType == "privacy" {
-			activeStatus = managev1.PrivacyStatus_PRIVACY_STATUS_ACTIVE.String()
-		}
-		for _, status := range []string{policy.draftStatus, policy.scheduledStatus, activeStatus} {
-			require.Equal(t, legalActionView, legalViewAction(policy, status))
+		archived := string(kind.archived)
+		require.Equal(t, legalActionViewArchived, legalViewAction(kind, archived))
+		current := []string{string(kind.draft), string(kind.scheduled), string(kind.active)}
+		for _, status := range current {
+			require.Equal(t, legalActionView, legalViewAction(kind, status))
 		}
 		for _, normal := range []legalAction{
 			legalActionEdit,
@@ -68,9 +65,9 @@ func TestLegalPermissionSelectionUsesArchivedCapabilitiesExclusively(t *testing.
 			legalActionManage,
 			legalActionManageShareLinks,
 		} {
-			require.Equal(t, legalActionEditArchived, legalMutationAction(policy, policy.archivedStatus, normal))
-			for _, status := range []string{policy.draftStatus, policy.scheduledStatus, activeStatus} {
-				require.Equal(t, normal, legalMutationAction(policy, status, normal))
+			require.Equal(t, legalActionEditArchived, legalMutationAction(kind, archived, normal))
+			for _, status := range current {
+				require.Equal(t, normal, legalMutationAction(kind, status, normal))
 			}
 		}
 	}

@@ -8,9 +8,10 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // LoadTranslationInterchangeAIDocumentWithDB projects one locale after the
@@ -23,9 +24,6 @@ func (s *AIDocumentService) LoadTranslationInterchangeAIDocumentWithDB(
 	entityID string,
 	locale string,
 ) (AIDocument, error) {
-	if s == nil || s.contentBlocks == nil || tx == nil {
-		return AIDocument{}, errs.DependencyUnavailable("Legal translation interchange")
-	}
 	if err := validateAIDocumentIdentity(entityType, entityID, locale); err != nil {
 		return AIDocument{}, err
 	}
@@ -34,7 +32,7 @@ func (s *AIDocumentService) LoadTranslationInterchangeAIDocumentWithDB(
 	}
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated || principal.MemberID == "" {
-		return AIDocument{}, errs.AuthenticationRequired()
+		return AIDocument{}, domainerr.AuthenticationRequired()
 	}
 	document, _, err := s.loadAIDocumentAfterAuthorization(
 		ctx, tx, entityType, entityID, locale, principal.MemberID.String(),
@@ -55,11 +53,8 @@ func (s *AIDocumentService) ExecuteTranslationInterchangeMutationWithDB(
 	locale string,
 	compiler AIDocumentMutationCompiler,
 ) (AIDocumentMutationResult, error) {
-	if s == nil || s.contentBlocks == nil || s.legalOG == nil || s.auditWriter == nil || tx == nil {
-		return AIDocumentMutationResult{}, errs.DependencyUnavailable("Legal translation interchange")
-	}
 	if compiler == nil {
-		return AIDocumentMutationResult{}, errs.DependencyUnavailable("Legal translation interchange compiler")
+		return AIDocumentMutationResult{}, domainerr.DependencyUnavailable("Legal translation interchange compiler")
 	}
 	if err := validateAIDocumentIdentity(entityType, entityID, locale); err != nil {
 		return AIDocumentMutationResult{}, err
@@ -75,51 +70,21 @@ func (s *AIDocumentService) ExecuteTranslationInterchangeMutationWithDB(
 	result, err := s.compileAndApplyAIDocumentMutationWithDB(
 		ctx, tx, root, entityType, entityID, locale, principal.MemberID.String(), compiler, false, true,
 	)
+	if err == nil {
+		err = s.recordInterchange(ctx, tx, result)
+	}
 	return legalAIDocumentResult(entityType, result, err)
 }
 
-func (s *AIDocumentService) executeAIDocumentMutationWithDB(
-	ctx context.Context,
-	tx *gorm.DB,
-	entityType string,
-	entityID string,
-	locale string,
-	compiler AIDocumentMutationCompiler,
-	requestSavedOG bool,
-	allowAuthoritativeTargetReplacement bool,
-) (legalAIDocumentApplyResult, error) {
-	root, err := loadLegalContentDocumentRoot(ctx, tx, entityType, entityID, true)
-	if err != nil {
-		return legalAIDocumentApplyResult{}, err
+// recordInterchange appends the interchange's locale content record and
+// signals the change in the Translation application's transaction.
+func (s *AIDocumentService) recordInterchange(ctx context.Context, tx *gorm.DB, result legalAIDocumentApplyResult) error {
+	if change := result.localeChange; change != nil {
+		if err := domainaudit.AppendMember(ctx, tx, s.auditWriter, change.memberID, sharedtelemetry.AuditLegalPolicyUpdated, change.record); err != nil {
+			return err
+		}
 	}
-	principal, err := requireLegalAIPrincipal(ctx)
-	if err != nil {
-		return legalAIDocumentApplyResult{}, legalAIDocumentMutationAccessError(entityType, entityID, err)
-	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
-	if err != nil {
-		return legalAIDocumentApplyResult{}, errs.Internal(err)
-	}
-	if !active {
-		return legalAIDocumentApplyResult{}, errs.NotFound(entityType, entityID)
-	}
-	policy, err := legalDocumentPolicyForType(entityType)
-	if err != nil {
-		return legalAIDocumentApplyResult{}, err
-	}
-	if err := requireLegalPermission(
-		ctx,
-		s.spiceDB,
-		entityType,
-		entityID,
-		legalMutationAction(policy, root.Status, legalActionEdit),
-	); err != nil {
-		return legalAIDocumentApplyResult{}, legalAIDocumentMutationAccessError(entityType, entityID, err)
-	}
-	return s.compileAndApplyAIDocumentMutationWithDB(
-		ctx, tx, root, entityType, entityID, locale, principal.MemberID.String(), compiler, requestSavedOG,
-		allowAuthoritativeTargetReplacement,
-	)
+	return result.publish(ctx, tx)
 }
 
 func (s *AIDocumentService) compileAndApplyAIDocumentMutationWithDB(
@@ -162,10 +127,7 @@ func legalAIDocumentResult(
 	err error,
 ) (AIDocumentMutationResult, error) {
 	if err == nil {
-		return AIDocumentMutationResult{
-			Revision: result.Content.DocumentRevision.String(), TargetRevision: result.TargetRevision,
-			Changed: result.Content.Changed,
-		}, nil
+		return result.output(), nil
 	}
 	var compilerErr *legalAIDocumentCompilerError
 	var stale *contentblock.StaleRevisionError

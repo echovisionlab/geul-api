@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -59,7 +59,7 @@ func legalCanSetForKind(kind intrav1.CollaborationResourceType) (legalCanSet, er
 			manageShareLinks: policyv1.PrivacyHistory.ManageShareLinks,
 		}, nil
 	default:
-		return legalCanSet{}, errs.InvalidArgument("resource.type", "must be legal policy history")
+		return legalCanSet{}, domainerr.InvalidField("resource.type", "must be legal policy history")
 	}
 }
 
@@ -93,7 +93,7 @@ func legalCanForAction(
 	case legalActionManageShareLinks:
 		return set.manageShareLinks(resourceID)
 	default:
-		return policyv1.Can{}, errs.InvalidArgument("action", "is not supported for legal policy")
+		return policyv1.Can{}, domainerr.InvalidField("action", "is not supported for legal policy")
 	}
 }
 
@@ -105,24 +105,21 @@ func requireLegalPermissionForPrincipal(
 	action legalAction,
 	principal *auth.UserInfo,
 ) error {
-	if checker == nil {
-		return errs.DependencyUnavailable("SpiceDB")
-	}
 	can, err := legalCanForAction(kind, resourceID, action)
 	if err != nil {
-		return errs.InvalidArgument("resource.id", "must be a canonical resource UUID")
+		return domainerr.InvalidField("resource.id", "must be a canonical resource UUID")
 	}
 	authorizationCtx := auth.WithUser(ctx, principal)
 	decision, err := auth.AuthorizationDecision(authorizationCtx, can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := checker.Can(authorizationCtx, decision)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.NoPermission(can.Action().Name(), "legal policy")
+		return domainerr.NoPermission(can.Action().Name(), "legal policy")
 	}
 	return nil
 }

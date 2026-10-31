@@ -90,11 +90,11 @@ func newTestInternalLegalService(
 	audit domainaudit.Appender,
 	dependencies legaldomain.Dependencies,
 	store *contentblock.Store,
-	permissions legaldomain.CollaborationPermissionChecker,
+	permissions *auth.SpiceDBClient,
 	checkpoints persistencecheckpoint.ContributorFence,
 ) *legaldomain.InternalService {
 	service, err := legaldomain.NewInternalService(legaldomain.InternalDeps{
-		DB: db, ContentBlocks: store, Permissions: permissions, Checkpoints: checkpoints,
+		DB: db, ContentBlocks: store, SpiceDB: permissions, Checkpoints: checkpoints,
 		OG: dependencies.OG, Audit: audit,
 	})
 	if err != nil {
@@ -108,7 +108,7 @@ func newTestInternalTermsService(
 	audit domainaudit.Appender,
 	dependencies legaldomain.Dependencies,
 	store *contentblock.Store,
-	permissions legaldomain.CollaborationPermissionChecker,
+	permissions *auth.SpiceDBClient,
 	checkpoints persistencecheckpoint.ContributorFence,
 ) *legaldomain.InternalTermsConnectHandler {
 	return legaldomain.NewInternalTermsConnectHandler(newTestInternalLegalService(db, audit, dependencies, store, permissions, checkpoints))
@@ -119,7 +119,7 @@ func newTestInternalPrivacyService(
 	audit domainaudit.Appender,
 	dependencies legaldomain.Dependencies,
 	store *contentblock.Store,
-	permissions legaldomain.CollaborationPermissionChecker,
+	permissions *auth.SpiceDBClient,
 	checkpoints persistencecheckpoint.ContributorFence,
 ) *legaldomain.InternalPrivacyConnectHandler {
 	return legaldomain.NewInternalPrivacyConnectHandler(newTestInternalLegalService(db, audit, dependencies, store, permissions, checkpoints))

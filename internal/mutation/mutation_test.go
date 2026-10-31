@@ -251,6 +251,9 @@ func TestIsDeniedRecognizesFreshCheckDenials(t *testing.T) {
 	require.False(t, IsUnauthenticated(errs.NoPermission("edit", "post")))
 	require.True(t, IsNotFound(fmt.Errorf("lock: %w", errs.NotFound("member", "id"))))
 	require.False(t, IsNotFound(errs.NoPermission("edit", "post")))
+	require.True(t, IsClassified(fmt.Errorf("load: %w", errs.FailedPrecondition("changed"))))
+	require.True(t, IsClassified(domainerr.Precondition("changed")))
+	require.False(t, IsClassified(fmt.Errorf("load: %w", errors.New("database is down"))))
 }
 
 func TestNewRunnerRequiresEveryCollaborator(t *testing.T) {

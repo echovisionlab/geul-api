@@ -13,11 +13,13 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // LoadTypedTranslationSourceDocument loads the canonical policy Rich Text
@@ -64,9 +66,6 @@ func loadLegalTypedTranslationContentForLocale(
 	entityID string,
 	locale string,
 ) (legalTypedTranslationContent, error) {
-	if store == nil {
-		return legalTypedTranslationContent{}, errs.InternalMsg(kind + " translation Content Block store is not configured")
-	}
 	locale, err := canonicalLegalLocale(locale)
 	if err != nil {
 		return legalTypedTranslationContent{}, err
@@ -85,12 +84,12 @@ func loadLegalTypedTranslationContentForLocale(
 			Where("entity_id = ? AND locale = ?", entityID, locale).
 			Take(&target).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return legalTypedTranslationContent{}, errs.NotFound(kind+" translation", locale)
+				return legalTypedTranslationContent{}, domainerr.ResourceNotFound(kind+" translation", locale)
 			}
-			return legalTypedTranslationContent{}, errs.Internal(err)
+			return legalTypedTranslationContent{}, err
 		}
 		if target.Title == nil || strings.TrimSpace(*target.Title) == "" {
-			return legalTypedTranslationContent{}, errs.FailedPrecondition(kind + " target locale title is missing")
+			return legalTypedTranslationContent{}, domainerr.Precondition(kind + " target locale title is missing")
 		}
 		title = strings.TrimSpace(*target.Title)
 	}
@@ -99,13 +98,15 @@ func loadLegalTypedTranslationContentForLocale(
 		return legalTypedTranslationContent{}, normalizeLegalContentBlockError(kind, err)
 	}
 	if snapshot.Document.Profile != legalContentDocumentProfile {
-		return legalTypedTranslationContent{}, errs.FailedPrecondition(kind + " content document must use the policy profile")
+		return legalTypedTranslationContent{}, domainerr.Precondition(kind + " content document must use the policy profile")
 	}
 	return legalTypedTranslationContent{title: title, snapshot: snapshot}, nil
 }
 
 // ApplyTypedTranslationCandidateWithDB persists one translated policy locale
-// behind the archived-policy translation fence.
+// behind the archived-policy translation fence. The Translation application
+// drives it in its own transaction and reads its answers as Connect errors;
+// a candidate whose source moved stays the bare ErrSourceNoLongerCurrent.
 func ApplyTypedTranslationCandidateWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -114,8 +115,23 @@ func ApplyTypedTranslationCandidateWithDB(
 	candidate *translation.Candidate,
 	auditWriter domainaudit.Appender,
 ) error {
+	err := applyTypedTranslationCandidate(ctx, tx, store, job, candidate, auditWriter)
+	if err == nil || errors.Is(err, translation.ErrSourceNoLongerCurrent) {
+		return err
+	}
+	return errs.Wrap(err)
+}
+
+func applyTypedTranslationCandidate(
+	ctx context.Context,
+	tx *gorm.DB,
+	store *contentblock.Store,
+	job *model.TranslationJob,
+	candidate *translation.Candidate,
+	auditWriter domainaudit.Appender,
+) error {
 	if tx == nil || store == nil || job == nil || candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
-		return errs.Internal(errors.New("legal typed translation candidate and Content Block transaction are required"))
+		return errors.New("legal typed translation candidate and Content Block transaction are required")
 	}
 	if err := validateLegalTranslationCandidate(job, candidate); err != nil {
 		return err
@@ -170,7 +186,7 @@ func ApplyTypedTranslationCandidateWithDB(
 
 func validateLegalTranslationCandidate(job *model.TranslationJob, candidate *translation.Candidate) error {
 	if job.EntityType != "terms" && job.EntityType != "privacy" {
-		return errs.InvalidArgument("entity_type", "legal typed translation requires terms or privacy")
+		return domainerr.InvalidField("entity_type", "legal typed translation requires terms or privacy")
 	}
 	if _, err := canonicalLegalLocale(job.SourceLocale); err != nil {
 		return err
@@ -179,10 +195,10 @@ func validateLegalTranslationCandidate(job *model.TranslationJob, candidate *tra
 		return err
 	}
 	if candidate.ContentBlockLocaleOverlay.GetLocale() != job.TargetLocale {
-		return errs.InvalidArgument("document.locale_overlay.locale", "must match the translation target locale")
+		return domainerr.InvalidField("document.locale_overlay.locale", "must match the translation target locale")
 	}
 	if candidate.Title == nil || strings.TrimSpace(*candidate.Title) == "" {
-		return errs.FailedPrecondition("legal target locale title is required")
+		return domainerr.Precondition("legal target locale title is required")
 	}
 	return nil
 }
@@ -277,7 +293,7 @@ func (a legalTranslationApply) applySource(ctx context.Context, tx *gorm.DB) err
 	job, root := a.job, a.root
 	memberID, parseErr := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
 	if parseErr != nil || memberID == uuid.Nil || memberID.String() != strings.TrimSpace(job.RequestedByMemberID) {
-		return errs.InternalMsg("legal translation audit requires canonical requester Member")
+		return errors.New("legal translation audit requires canonical requester Member")
 	}
 	batch := a.batch
 	batch.ContributorMemberIDs = []uuid.UUID{memberID}
@@ -288,7 +304,7 @@ func (a legalTranslationApply) applySource(ctx context.Context, tx *gorm.DB) err
 				Where("id = ? AND title IS DISTINCT FROM ?", job.EntityID, a.title).
 				Updates(map[string]any{"title": a.title, "updated_at": a.now})
 			if updated.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(updated.Error)
+				return contentblock.MetadataEffect{}, updated.Error
 			}
 			changed := updated.RowsAffected != 0
 			return contentblock.MetadataEffect{
@@ -304,15 +320,12 @@ func (a legalTranslationApply) applySource(ctx context.Context, tx *gorm.DB) err
 		return nil
 	}
 	if !result.TranslationSourceChanged {
-		return errs.InternalMsg("provider source legal translation did not advance source state")
+		return errors.New("provider source legal translation did not advance source state")
 	}
 	if err := a.refreshDerivedProjections(ctx, tx); err != nil {
 		return err
 	}
-	return appendLegalTargetLocaleContentAudit(
-		ctx, tx, a.auditWriter, memberID.String(), job.EntityType, job.EntityID, root.Version,
-		root.SourceLocale, legalTargetLocaleContentOperation(AITranslationUnchanged, true),
-	)
+	return a.appendLocaleContentAudit(ctx, tx, memberID.String(), root.SourceLocale, sharedtelemetry.AuditItemOperationUpdated)
 }
 
 // applyTarget creates or overwrites the target locale and its title.
@@ -344,17 +357,10 @@ func (a legalTranslationApply) applyTarget(ctx context.Context, tx *gorm.DB, exp
 		return nil
 	}
 	if strings.TrimSpace(job.RequestedByMemberID) == "" {
-		return errs.InternalMsg("legal translation audit requires requester Member")
+		return errors.New("legal translation audit requires requester Member")
 	}
-	return appendLegalTargetLocaleContentAudit(
-		ctx,
-		tx,
-		a.auditWriter,
-		job.RequestedByMemberID,
-		job.EntityType,
-		job.EntityID,
-		a.root.Version,
-		job.TargetLocale,
+	return a.appendLocaleContentAudit(
+		ctx, tx, job.RequestedByMemberID, job.TargetLocale,
 		legalTargetLocaleContentOperation(AITranslationUnchanged, !targetResult.LocaleCreated),
 	)
 }
@@ -366,6 +372,20 @@ func (a legalTranslationApply) refreshDerivedProjections(ctx context.Context, tx
 	if err != nil {
 		return normalizeLegalContentBlockError(a.job.EntityType, err)
 	}
-	return (internalLegalDocumentService{db: tx, kind: a.job.EntityType, contentBlocks: a.store}).
-		refreshDerivedContentProjectionsWithDB(ctx, tx, a.job.EntityID, snapshot, a.root.SourceLocale, a.now)
+	return refreshDerivedContent(ctx, tx, a.job.EntityType, a.job.EntityID, snapshot, a.root.SourceLocale, a.now)
+}
+
+// appendLocaleContentAudit records the translated locale as the job's
+// requester in the Translation application's transaction.
+func (a legalTranslationApply) appendLocaleContentAudit(
+	ctx context.Context,
+	tx *gorm.DB,
+	memberID string,
+	locale string,
+	operation sharedtelemetry.AuditItemOperation,
+) error {
+	change := legalLocaleContentChange{
+		kind: a.job.EntityType, policyID: a.job.EntityID, version: a.root.Version, locale: locale, operation: operation,
+	}
+	return domainaudit.AppendMember(ctx, tx, a.auditWriter, memberID, sharedtelemetry.AuditLegalPolicyUpdated, change.record)
 }

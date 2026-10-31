@@ -244,9 +244,9 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 			assertLegalSourceIdentityUnchangedIntegration(
 				t, db, store, testCase.name, id, providerDocumentRevision, providerSourceLocale,
 			)
-			documentAPI, err := legaldomain.NewAuditedAIDocumentService(
-				db, store, spiceDB, legalIntegrationDependencies(db, "").OG, noopDomainAuditAppender{},
-			)
+			documentAPI, err := legaldomain.NewAIDocumentService(legaldomain.AIDocumentDeps{
+				DB: db, ContentBlocks: store, SpiceDB: spiceDB, OG: legalIntegrationDependencies(db, "").OG, Audit: noopDomainAuditAppender{},
+			})
 			require.NoError(t, err)
 			targetDocument, err := documentAPI.LoadAIDocument(adminCtx, testCase.name, id, "ko")
 			require.NoError(t, err)

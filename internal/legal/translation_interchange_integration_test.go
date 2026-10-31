@@ -62,9 +62,9 @@ func TestLegalTranslationInterchangeCreateDeleteRecreateAndCASIntegration(t *tes
 			store := newLegalLifecycleContentBlockStore(t, spiceDB)
 			entityID, err := testCase.create(adminCtx, db, store, spiceDB)
 			require.NoError(t, err)
-			domain, err := legaldomain.NewAuditedAIDocumentService(
-				db, store, spiceDB, legalIntegrationDependencies(db, "").OG, noopDomainAuditAppender{},
-			)
+			domain, err := legaldomain.NewAIDocumentService(legaldomain.AIDocumentDeps{
+				DB: db, ContentBlocks: store, SpiceDB: spiceDB, OG: legalIntegrationDependencies(db, "").OG, Audit: noopDomainAuditAppender{},
+			})
 			require.NoError(t, err)
 			port := translationadapter.NewLegalInterchange(domain)
 

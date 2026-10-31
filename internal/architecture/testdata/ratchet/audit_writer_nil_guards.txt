@@ -10,7 +10,6 @@
 12 internal/form
 2 internal/form/public
 4 internal/label
-3 internal/legal
 6 internal/maptheme
 2 internal/member/public
 2 internal/menu

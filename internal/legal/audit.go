@@ -1,13 +1,11 @@
 package legal
 
 import (
-	"context"
 	"fmt"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
 )
 
 func legalPolicyAuditType(entityType string) (sharedtelemetry.AuditPolicyType, error) {
@@ -21,27 +19,17 @@ func legalPolicyAuditType(entityType string) (sharedtelemetry.AuditPolicyType, e
 	}
 }
 
-func appendLegalPolicyIdentityAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	writer domainaudit.Appender,
-	action sharedtelemetry.AuditAction,
-	entityType string,
-	policyID string,
-	version int,
-) error {
-	if writer == nil {
-		return nil
-	}
-	policyType, err := legalPolicyAuditType(entityType)
-	if err != nil {
-		return err
-	}
-	return domainaudit.AppendRequest(ctx, tx, writer, action, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-		if action == sharedtelemetry.AuditLegalPolicyCreated {
-			return sharedtelemetry.NewLegalPolicyCreatedAuditRecord(metadata, policyID, policyType, int64(version))
+// policyIdentityAudit names the record of a created or deleted version.
+func policyIdentityAudit(action sharedtelemetry.AuditAction, kind *policyKind, row policyRow) mutation.Audit {
+	return mutation.RequestAudit(action, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		policyType, err := legalPolicyAuditType(kind.entity())
+		if err != nil {
+			return sharedtelemetry.AuditRecord{}, err
 		}
-		return sharedtelemetry.NewLegalPolicyDeletedAuditRecord(metadata, policyID, policyType, int64(version))
+		if action == sharedtelemetry.AuditLegalPolicyCreated {
+			return sharedtelemetry.NewLegalPolicyCreatedAuditRecord(metadata, row.ID, policyType, int64(row.Version))
+		}
+		return sharedtelemetry.NewLegalPolicyDeletedAuditRecord(metadata, row.ID, policyType, int64(row.Version))
 	})
 }
 
@@ -66,64 +54,38 @@ func (c legalLifecycleChange) record(metadata sharedtelemetry.AuditMetadata) (sh
 	)
 }
 
-func appendLegalPolicyLifecycleAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	writer domainaudit.Appender,
-	change legalLifecycleChange,
-) error {
-	return domainaudit.AppendRequest(ctx, tx, writer, sharedtelemetry.AuditLegalPolicyUpdated, change.record)
+func (c legalLifecycleChange) audit() mutation.Audit {
+	return mutation.RequestAudit(sharedtelemetry.AuditLegalPolicyUpdated, c.record)
 }
 
-func appendLegalTargetLocaleContentAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	writer domainaudit.Appender,
-	memberID string,
-	entityType string,
-	policyID string,
-	version int,
-	locale string,
-	operation sharedtelemetry.AuditItemOperation,
-) error {
-	return domainaudit.AppendMember(ctx, tx, writer, memberID, sharedtelemetry.AuditLegalPolicyUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-		switch entityType {
-		case "privacy":
-			return sharedtelemetry.NewPrivacyLocaleContentAuditRecord(metadata, policyID, int64(version), locale, operation)
-		case "terms":
-			return sharedtelemetry.NewTermsLocaleContentAuditRecord(metadata, policyID, int64(version), locale, operation)
-		default:
-			return sharedtelemetry.AuditRecord{}, fmt.Errorf("unsupported legal policy type %q", entityType)
-		}
-	})
+// legalLocaleContentChange is the record of a version's content in one
+// locale. memberID attributes it to the contributing Member; without one the
+// request's Member is the actor.
+type legalLocaleContentChange struct {
+	kind      string
+	policyID  string
+	version   int
+	locale    string
+	operation sharedtelemetry.AuditItemOperation
+	memberID  string
 }
 
-func appendLegalRequestTargetLocaleContentAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	writer domainaudit.Appender,
-	entityType string,
-	policyID string,
-	version int,
-	locale string,
-) error {
-	if writer == nil {
-		return fmt.Errorf("%s target-locale audit writer is required", entityType)
+func (c legalLocaleContentChange) record(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+	switch c.kind {
+	case "privacy":
+		return sharedtelemetry.NewPrivacyLocaleContentAuditRecord(metadata, c.policyID, int64(c.version), c.locale, c.operation)
+	case "terms":
+		return sharedtelemetry.NewTermsLocaleContentAuditRecord(metadata, c.policyID, int64(c.version), c.locale, c.operation)
+	default:
+		return sharedtelemetry.AuditRecord{}, fmt.Errorf("unsupported legal policy type %q", c.kind)
 	}
-	policyType, err := legalPolicyAuditType(entityType)
-	if err != nil {
-		return err
+}
+
+func (c legalLocaleContentChange) audit() mutation.Audit {
+	if c.memberID == "" {
+		return mutation.RequestAudit(sharedtelemetry.AuditLegalPolicyUpdated, c.record)
 	}
-	return domainaudit.AppendRequest(ctx, tx, writer, sharedtelemetry.AuditLegalPolicyUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-		switch policyType {
-		case sharedtelemetry.AuditPolicyTypePrivacy:
-			return sharedtelemetry.NewPrivacyLocaleContentAuditRecord(metadata, policyID, int64(version), locale, sharedtelemetry.AuditItemOperationUpdated)
-		case sharedtelemetry.AuditPolicyTypeTerms:
-			return sharedtelemetry.NewTermsLocaleContentAuditRecord(metadata, policyID, int64(version), locale, sharedtelemetry.AuditItemOperationUpdated)
-		default:
-			return sharedtelemetry.AuditRecord{}, fmt.Errorf("unsupported legal policy type %q", entityType)
-		}
-	})
+	return mutation.MemberAudit(c.memberID, sharedtelemetry.AuditLegalPolicyUpdated, c.record)
 }
 
 func legalTargetLocaleContentOperation(
