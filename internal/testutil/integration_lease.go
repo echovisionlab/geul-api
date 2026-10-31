@@ -7,7 +7,9 @@ import (
 
 const AppIntegrationPostgresImage = "registry.rawsector.com/echovisionlab/geul-postgres@sha256:73020bae7decd43b5a00291488740ef307dbd12f405674f0526098df71257138"
 
-const AppIntegrationMinIOImage = "minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e"
+// The upstream minio/minio images are no longer pullable from Docker Hub;
+// Chainguard publishes the same server, pinned here by its multi-arch index.
+const AppIntegrationMinIOImage = "cgr.dev/chainguard/minio@sha256:3b6e40c30ecd5cea627e382ff0b82ca841f58c52294578787043ee80c8ef7c82"
 
 const AppIntegrationMinIOImageEnv = "GEUL_INTEGRATION_MINIO_IMAGE"
 

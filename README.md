@@ -421,16 +421,9 @@ configs, `geul-editor-collab`, `geul-common`, `geul-event-contracts`, and
 `geul-telemetry` checkouts and all selected local images before starting containers.
 The `db` band needs only `schema.sql` and its PostgreSQL image.
 
-The default pinned `minio/minio` digest is no longer pullable from Docker Hub.
-For local integration tests, pre-pull an alternative and select it explicitly:
-
-```sh
-docker pull cgr.dev/chainguard/minio:latest
-GOWORK=off go run -tags=integration ./scripts/test/integration \
-  --band ory --schema-root ../geul-schema \
-  --postgres-image registry.rawsector.com/echovisionlab/geul-postgres@sha256:73020bae7decd43b5a00291488740ef307dbd12f405674f0526098df71257138 \
-  --minio-image cgr.dev/chainguard/minio:latest
-```
+The default MinIO image is Chainguard's build, pinned by digest, because the
+upstream `minio/minio` images are no longer pullable from Docker Hub. Override
+it with `--minio-image` or `GEUL_INTEGRATION_MINIO_IMAGE` when needed.
 
 `--minio-image` overrides `GEUL_INTEGRATION_MINIO_IMAGE` for both the shared
 backend and child test processes. MinIO readiness does not require a shell in
