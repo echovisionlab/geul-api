@@ -40,7 +40,7 @@ var segmentFilterConfig = &queryutil.FilterConfig{
 	},
 }
 
-func (s *AudienceService) GetSegment(
+func (s *Service) GetSegment(
 	ctx context.Context,
 	req *connect.Request[managev1.GetSegmentRequest],
 ) (*connect.Response[managev1.Segment], error) {
@@ -73,7 +73,7 @@ func (s *AudienceService) GetSegment(
 	return connect.NewResponse(proto), nil
 }
 
-func (s *AudienceService) ListSegmentsAdmin(
+func (s *Service) ListSegmentsAdmin(
 	ctx context.Context,
 	req *connect.Request[managev1.ListSegmentsAdminRequest],
 ) (*connect.Response[managev1.ListSegmentsAdminResponse], error) {
@@ -125,7 +125,7 @@ func (s *AudienceService) ListSegmentsAdmin(
 	}), nil
 }
 
-func (s *AudienceService) ListSegmentsForAuthenticatedAccess(
+func (s *Service) ListSegmentsForAuthenticatedAccess(
 	ctx context.Context,
 	req *connect.Request[managev1.ListSegmentsForAuthenticatedAccessRequest],
 ) (*connect.Response[managev1.ListSegmentsForAuthenticatedAccessResponse], error) {
@@ -165,7 +165,7 @@ func (s *AudienceService) ListSegmentsForAuthenticatedAccess(
 	return connect.NewResponse(newAudienceSegmentListResponse(summaries, total, limit, offset)), nil
 }
 
-func (s *AudienceService) estimateCount(ctx context.Context, segment *model.AudienceSegment) (int32, error) {
+func (s *Service) estimateCount(ctx context.Context, segment *model.AudienceSegment) (int32, error) {
 	if segment == nil {
 		return 0, fmt.Errorf("segment is required")
 	}

@@ -24,7 +24,7 @@ import (
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-func (s *AudienceService) CreateSegment(
+func (s *Service) CreateSegment(
 	ctx context.Context,
 	req *connect.Request[managev1.CreateSegmentRequest],
 ) (*connect.Response[managev1.Segment], error) {
@@ -77,7 +77,7 @@ func (s *AudienceService) CreateSegment(
 		); err != nil {
 			return err
 		}
-		return domainaudit.AppendOptionalRequest(
+		return domainaudit.AppendRequest(
 			ctx,
 			tx,
 			s.auditWriter,
@@ -96,7 +96,7 @@ func (s *AudienceService) CreateSegment(
 	return connect.NewResponse(toProtoSegment(&segment)), nil
 }
 
-func (s *AudienceService) EstimateSegmentCount(
+func (s *Service) EstimateSegmentCount(
 	ctx context.Context,
 	req *connect.Request[managev1.EstimateSegmentCountRequest],
 ) (*connect.Response[managev1.EstimateSegmentCountResponse], error) {
@@ -179,7 +179,7 @@ func buildSegmentUpdatePlan(request *managev1.UpdateSegmentRequest) (segmentUpda
 	return plan, nil
 }
 
-func (s *AudienceService) UpdateSegment(
+func (s *Service) UpdateSegment(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateSegmentRequest],
 ) (*connect.Response[managev1.Segment], error) {
@@ -201,7 +201,7 @@ func (s *AudienceService) UpdateSegment(
 	return connect.NewResponse(toProtoSegment(segment)), nil
 }
 
-func (s *AudienceService) applySegmentUpdate(
+func (s *Service) applySegmentUpdate(
 	ctx context.Context,
 	segmentID string,
 	plan segmentUpdatePlan,
@@ -233,7 +233,7 @@ func (s *AudienceService) applySegmentUpdate(
 			return err
 		}
 		if len(changedFields) > 0 {
-			if err := domainaudit.AppendOptionalRequest(
+			if err := domainaudit.AppendRequest(
 				ctx,
 				tx,
 				s.auditWriter,

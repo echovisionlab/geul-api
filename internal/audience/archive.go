@@ -26,7 +26,7 @@ const maxArchiveAttempts = 3
 
 var errArchiveRetry = errors.New("audience archive relationship changed while acquiring locks")
 
-func (s *AudienceService) ArchiveSegment(
+func (s *Service) ArchiveSegment(
 	ctx context.Context,
 	req *connect.Request[managev1.ArchiveSegmentRequest],
 ) (*connect.Response[managev1.Segment], error) {
@@ -56,7 +56,7 @@ func (s *AudienceService) ArchiveSegment(
 	)
 }
 
-func (s *AudienceService) RestoreSegment(
+func (s *Service) RestoreSegment(
 	ctx context.Context,
 	req *connect.Request[managev1.RestoreSegmentRequest],
 ) (*connect.Response[managev1.Segment], error) {
@@ -97,7 +97,7 @@ func (s *AudienceService) RestoreSegment(
 		if result.RowsAffected != 1 {
 			return errs.FailedPrecondition("audience segment is not archived")
 		}
-		if err := domainaudit.AppendOptionalRequest(
+		if err := domainaudit.AppendRequest(
 			ctx,
 			tx,
 			s.auditWriter,
@@ -475,7 +475,7 @@ func appendArchiveAudits(
 ) error {
 	for _, campaignID := range campaignIDs {
 		campaignID := campaignID
-		if err := domainaudit.AppendOptionalRequest(
+		if err := domainaudit.AppendRequest(
 			ctx,
 			tx,
 			writer,
@@ -500,7 +500,7 @@ func appendArchiveAudits(
 		if err != nil {
 			return err
 		}
-		if err := domainaudit.AppendOptionalRequest(
+		if err := domainaudit.AppendRequest(
 			ctx,
 			tx,
 			writer,
@@ -510,7 +510,7 @@ func appendArchiveAudits(
 			return err
 		}
 	}
-	return domainaudit.AppendOptionalRequest(
+	return domainaudit.AppendRequest(
 		ctx,
 		tx,
 		writer,

@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -84,13 +85,18 @@ func (campaignAudienceMemberReferences) EligibleIDs(
 func newCampaignAudienceService(
 	db *gorm.DB,
 	spiceDB *auth.SpiceDBClient,
-) *audience.AudienceService {
-	return audience.NewAudienceService(
-		db,
-		spiceDB,
-		campaignAudienceRecipientCounter{db: db, spiceDB: spiceDB},
-		campaignAudienceMemberReferences{},
-	)
+) *audience.Service {
+	service, err := audience.NewService(audience.Deps{
+		DB:               db,
+		SpiceDB:          spiceDB,
+		RecipientCounter: campaignAudienceRecipientCounter{db: db, spiceDB: spiceDB},
+		MemberReferences: campaignAudienceMemberReferences{},
+		Audit:            &audittest.Recorder{},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return service
 }
 
 func publishCampaignSourceBlocksForIntegration(

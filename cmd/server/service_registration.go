@@ -690,13 +690,16 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(campaignPath, campaignHandler)
 	slog.Info("Registered service", "path", campaignPath)
 
-	audienceService := audience.NewAuditedAudienceService(
-		db,
-		telemetryWriter,
-		spicedbClient,
-		audienceadapter.NewRecipientCounter(db, spicedbClient),
-		audienceadapter.MemberReferences{},
-	)
+	audienceService, err := audience.NewService(audience.Deps{
+		DB:               db,
+		SpiceDB:          spicedbClient,
+		RecipientCounter: audienceadapter.NewRecipientCounter(db, spicedbClient),
+		MemberReferences: audienceadapter.MemberReferences{},
+		Audit:            telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize audience service: %w", err)
+	}
 	audiencePath, audienceHandler := managev1connect.NewAudienceServiceHandler(audienceService, handlerOpts...)
 	mux.Handle(audiencePath, audienceHandler)
 	slog.Info("Registered service", "path", audiencePath)

@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/echovisionlab/geul-api/internal/audience"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
@@ -199,8 +200,15 @@ func (fileTestAudienceMemberReferences) EligibleIDs(_ context.Context, _ *gorm.D
 	return memberIDs, nil
 }
 
-func newAudienceServiceForTest(db *gorm.DB, spiceDB *auth.SpiceDBClient) *audience.AudienceService {
-	return audience.NewAudienceService(db, spiceDB, fileTestAudienceRecipientCounter{}, fileTestAudienceMemberReferences{})
+func newAudienceServiceForTest(db *gorm.DB, spiceDB *auth.SpiceDBClient) *audience.Service {
+	service, err := audience.NewService(audience.Deps{
+		DB: db, SpiceDB: spiceDB, RecipientCounter: fileTestAudienceRecipientCounter{},
+		MemberReferences: fileTestAudienceMemberReferences{}, Audit: &audittest.Recorder{},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return service
 }
 
 func seedAudiencePostFileAttachment(t *testing.T, db *gorm.DB, postID, fileID string) {

@@ -146,7 +146,7 @@ func TestAudienceArchiveAndCancelCampaignShareCampaignFirstLockOrderIntegration(
 	stack := newCampaignLocalKratosStack(t)
 	db := openCampaignIntegrationDB(t, stack)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	adminContext := auth.WithUser(context.Background(), admin.AuthUserInfo())
+	adminContext := auth.WithUser(campaignRequestContext(t), admin.AuthUserInfo())
 	var runID, campaignID, segmentID string
 	t.Cleanup(func() {
 		cleanupConcurrentCampaignDeliveryFixture(
@@ -385,7 +385,7 @@ func TestCampaignDeliveryMutationEntryPointsLockCampaignBeforeRunIntegration(
 			stack := newCampaignLocalKratosStack(t)
 			db := openCampaignIntegrationDB(t, stack)
 			admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-			adminContext := auth.WithUser(context.Background(), admin.AuthUserInfo())
+			adminContext := auth.WithUser(campaignRequestContext(t), admin.AuthUserInfo())
 			var runID, campaignID, identityID string
 			t.Cleanup(func() {
 				cleanupConcurrentCampaignDeliveryFixture(

@@ -2,7 +2,9 @@ package audience
 
 import (
 	"context"
-	"reflect"
+	"errors"
+	"slices"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -37,8 +39,37 @@ type MemberReferences interface {
 	EligibleIDs(context.Context, *gorm.DB, []string) ([]string, error)
 }
 
-// AudienceService implements the Audience Connect handler.
-type AudienceService struct {
+// Deps are the collaborators of the Audience use cases. Every field is
+// required; NewService rejects a missing one.
+type Deps struct {
+	DB      *gorm.DB
+	SpiceDB *auth.SpiceDBClient
+	// RecipientCounter estimates the recipients of a segment.
+	RecipientCounter RecipientCounter
+	// MemberReferences validates excluded Members before they are stored.
+	MemberReferences MemberReferences
+	Audit            domainaudit.Appender
+}
+
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "RecipientCounter": d.RecipientCounter == nil,
+		"MemberReferences": d.MemberReferences == nil, "Audit": d.Audit == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("audience dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// Service implements the Audience Connect handler.
+type Service struct {
 	managev1connect.UnimplementedAudienceServiceHandler
 	db               *gorm.DB
 	spiceDB          *auth.SpiceDBClient
@@ -47,60 +78,16 @@ type AudienceService struct {
 	auditWriter      domainaudit.Appender
 }
 
-// NewAudienceService constructs an audience service with its required
-// consumer-owned persistence seams.
-func NewAudienceService(
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	recipientCounter RecipientCounter,
-	memberReferences MemberReferences,
-) *AudienceService {
-	if db == nil {
-		panic("db is required")
+// NewService validates deps and returns the Audience use cases.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
 	}
-	if spiceDB == nil {
-		panic("spiceDB is required")
-	}
-	if dependencyIsNil(recipientCounter) {
-		panic("recipient counter is required")
-	}
-	if dependencyIsNil(memberReferences) {
-		panic("member references are required")
-	}
-	return &AudienceService{
-		db:               db,
-		spiceDB:          spiceDB,
-		recipientCounter: recipientCounter,
-		memberReferences: memberReferences,
-	}
-}
-
-func dependencyIsNil(value any) bool {
-	if value == nil {
-		return true
-	}
-	v := reflect.ValueOf(value)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return v.IsNil()
-	default:
-		return false
-	}
-}
-
-// NewAuditedAudienceService constructs an audience service that appends
-// authoritative domain audit records in the surrounding database transaction.
-func NewAuditedAudienceService(
-	db *gorm.DB,
-	auditWriter domainaudit.Appender,
-	spiceDB *auth.SpiceDBClient,
-	recipientCounter RecipientCounter,
-	memberReferences MemberReferences,
-) *AudienceService {
-	if auditWriter == nil {
-		panic("audience audit writer is required")
-	}
-	service := NewAudienceService(db, spiceDB, recipientCounter, memberReferences)
-	service.auditWriter = auditWriter
-	return service
+	return &Service{
+		db:               deps.DB,
+		spiceDB:          deps.SpiceDB,
+		recipientCounter: deps.RecipientCounter,
+		memberReferences: deps.MemberReferences,
+		auditWriter:      deps.Audit,
+	}, nil
 }
