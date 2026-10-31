@@ -552,3 +552,16 @@ func TestValidateDocumentCatalogValuesTable(t *testing.T) {
 		})
 	}
 }
+
+// A missing grandparent used to surface as a parent cycle of the grandchild
+// when the grandchild was listed first.
+func TestValidateNodesReportsMissingAncestorParent(t *testing.T) {
+	nodes := []Node{
+		{ID: "child", Kind: "paragraph", Parent: "parent"},
+		{ID: "parent", Kind: "paragraph", Parent: "ghost"},
+	}
+	err := validateNodes(nodes)
+	if err == nil || err.Error() != `block "parent" has missing parent "ghost"` {
+		t.Fatalf("err = %v", err)
+	}
+}

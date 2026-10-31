@@ -132,6 +132,9 @@ func (d Document) validate() error {
 	return validateDocumentCatalogValues(d.Catalog, d.Nodes)
 }
 
+// validateNodes extends the projected shape checks, which already reject
+// parent cycles among the given nodes, with the full-document requirement that
+// every parent is present.
 func validateNodes(nodes []Node) error {
 	if err := validateProjectedNodes(nodes); err != nil {
 		return err
@@ -141,24 +144,11 @@ func validateNodes(nodes []Node) error {
 		ids[node.ID] = struct{}{}
 	}
 	for _, node := range nodes {
-		if node.Parent != "" {
-			if _, ok := ids[node.Parent]; !ok {
-				return fmt.Errorf("block %q has missing parent %q", node.ID, node.Parent)
-			}
+		if node.Parent == "" {
+			continue
 		}
-		visited := map[BlockID]struct{}{node.ID: {}}
-		parent := node.Parent
-		for parent != "" {
-			if _, cycle := visited[parent]; cycle {
-				return fmt.Errorf("block %q is part of a parent cycle", node.ID)
-			}
-			visited[parent] = struct{}{}
-			for _, candidate := range nodes {
-				if candidate.ID == parent {
-					parent = candidate.Parent
-					break
-				}
-			}
+		if _, ok := ids[node.Parent]; !ok {
+			return fmt.Errorf("block %q has missing parent %q", node.ID, node.Parent)
 		}
 	}
 	return nil
