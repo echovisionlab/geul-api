@@ -4,6 +4,7 @@ package legal_test
 
 import (
 	"context"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -192,7 +193,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 			err = legaldomain.RequireEditableTranslationMutationWithDB(
 				authorCtx, db, spiceDB, testCase.name, id,
 			)
-			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+			require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
 			var rootLocale struct {
 				Locale string `gorm:"column:source_locale"`
 			}
