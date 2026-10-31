@@ -784,3 +784,18 @@ func appIntegrationAssetRootPath(root string) string {
 	}
 	return appIntegrationRepoPath(filepath.Join("..", "..", root))
 }
+
+// RequireLockWaiters waits until want sessions of the test's own database are
+// blocked on a lock, so concurrent operations queue in a known order.
+func RequireLockWaiters(t *testing.T, db *gorm.DB, want int) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		var waiting int
+		err := db.Raw(`
+			SELECT count(*)
+			FROM pg_stat_activity
+			WHERE datname = current_database()
+			  AND wait_event_type = 'Lock'`).Scan(&waiting).Error
+		return err == nil && waiting >= want
+	}, 10*time.Second, 10*time.Millisecond)
+}

@@ -69,7 +69,6 @@ func TestAutomaticOgRequestReloadsCanonicalSeriesSnapshotAfterTargetLockIntegrat
 
 	planner := og.NewPlanner(db, "https://cdn.example.com", seriesOgRenderConfig{}, seriesadapter.NewProjection())
 	refresher := og.NewRefresher(planner, og.NewResolver(seriesadapter.NewRequests()))
-	started := make(chan struct{})
 	result := make(chan struct {
 		plan *og.Plan
 		err  error
@@ -77,7 +76,6 @@ func TestAutomaticOgRequestReloadsCanonicalSeriesSnapshotAfterTargetLockIntegrat
 	go func() {
 		var plan *og.Plan
 		err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			close(started)
 			var requestErr error
 			plan, requestErr = refresher.RequestCurrentWithDB(
 				ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_SERIES,
@@ -90,8 +88,7 @@ func TestAutomaticOgRequestReloadsCanonicalSeriesSnapshotAfterTargetLockIntegrat
 			err  error
 		}{plan: plan, err: err}
 	}()
-	<-started
-	time.Sleep(150 * time.Millisecond)
+	testutil.RequireLockWaiters(t, db, 1)
 	require.NoError(t, db.WithContext(ctx).Table("series_translation").
 		Where("entity_id = ? AND locale = ?", seriesID, "en").
 		Updates(structured.Fields{"title": "Title B", "updated_at": time.Now().UTC()}).Error)
