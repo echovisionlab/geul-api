@@ -2,6 +2,7 @@ package errors
 
 import (
 	stderrors "errors"
+	"fmt"
 
 	"connectrpc.com/connect"
 
@@ -40,6 +41,13 @@ func Classified(err error) (*connect.Error, bool) {
 		return nil, false
 	}
 	client := connect.NewError(code, stderrors.New(domainErr.Message))
+	if domainErr.Detail != nil {
+		detail, err := connect.NewErrorDetail(domainErr.Detail)
+		if err != nil {
+			return Internal(fmt.Errorf("encode use-case error detail: %w", err)), true
+		}
+		client.AddDetail(detail)
+	}
 	if err == error(domainErr) { //nolint:errorlint // identity: only the use-case error's own cause needs keeping
 		if cause := domainErr.Unwrap(); cause != nil {
 			return WithCause(client, cause), true
@@ -75,4 +83,13 @@ func outermostClassification(err error) (*connect.Error, *domainerr.Error) {
 		}
 	}
 	return nil, nil
+}
+
+// CodeOf is connect.CodeOf for a chain that may carry a use-case error.
+// Code that branches on an outcome a use case reports reads it here.
+func CodeOf(err error) connect.Code {
+	if classified, ok := Classified(err); ok {
+		return classified.Code()
+	}
+	return connect.CodeOf(err)
 }

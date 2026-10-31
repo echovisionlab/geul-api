@@ -9,6 +9,8 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // A use case that switches from an errs constructor to its domainerr
@@ -85,6 +87,56 @@ func TestClassifiedAnswersTheOutermostClassification(t *testing.T) {
 	joined := stderrors.Join(stderrors.New("rollback failed"), domainerr.Precondition("menu is locked"))
 	if mapped := Wrap(joined); mapped.Code() != connect.CodeFailedPrecondition {
 		t.Fatalf("Wrap() = %s, want the joined use-case classification", mapped.Code())
+	}
+}
+
+func TestCodeOfReadsUseCaseOutcomes(t *testing.T) {
+	if code := CodeOf(fmt.Errorf("lock: %w", domainerr.NoPermission("edit", "menu"))); code != connect.CodePermissionDenied {
+		t.Fatalf("CodeOf() = %s, want permission_denied", code)
+	}
+	if code := CodeOf(NotFound("menu", "id")); code != connect.CodeNotFound {
+		t.Fatalf("CodeOf() = %s, want not_found", code)
+	}
+	if code := CodeOf(stderrors.New("database is down")); code != connect.CodeUnknown {
+		t.Fatalf("CodeOf() = %s, want unknown", code)
+	}
+}
+
+// A collaboration conflict decided by a use case reaches the client exactly
+// as the Connect constructor builds it.
+func TestDomainCollaborationOutcomesKeepTheirDetail(t *testing.T) {
+	exists := true
+	domain := Wrap(domainerr.CollaborationConflict(
+		intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, "target changed",
+		domainerr.CollaborationRevisions{Document: "document-1", Target: "target-1", TargetExists: &exists},
+	))
+	legacy := CollaborationConflict(
+		intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED, "target changed",
+		CollaborationState{Document: "document-1", Target: "target-1", TargetExists: &exists},
+	)
+	requireSameClientError(t, legacy, domain)
+
+	rejection := intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN
+	requireSameClientError(t, CollaborationMutationRejection(rejection, "structure is shared"), Wrap(domainerr.CollaborationRejection(rejection, "structure is shared")))
+}
+
+func requireSameClientError(t *testing.T, want, got *connect.Error) {
+	t.Helper()
+	if got.Code() != want.Code() || got.Message() != want.Message() || len(got.Details()) != len(want.Details()) {
+		t.Fatalf("got %s %q with %d details, want %s %q with %d", got.Code(), got.Message(), len(got.Details()), want.Code(), want.Message(), len(want.Details()))
+	}
+	for index := range want.Details() {
+		wantValue, err := want.Details()[index].Value()
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotValue, err := got.Details()[index].Value()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !proto.Equal(wantValue, gotValue) {
+			t.Fatalf("detail %d = %v, want %v", index, gotValue, wantValue)
+		}
 	}
 }
 

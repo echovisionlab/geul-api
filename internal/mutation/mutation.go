@@ -224,6 +224,13 @@ func IsDenied(err error) bool {
 	return ok && classified.Code() == connect.CodePermissionDenied
 }
 
+// IsUnauthenticated reports whether err rejects a missing or stale session,
+// for a domain that masks it like a denial.
+func IsUnauthenticated(err error) bool {
+	classified, ok := errs.Classified(err)
+	return ok && classified.Code() == connect.CodeUnauthenticated
+}
+
 // PrincipalFence locks the authenticated principal's Identity without an
 // action check, for a principal's own lifecycle transition that Change
 // guards by state (onboarding, before the principal is onboarded).

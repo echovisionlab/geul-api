@@ -219,6 +219,9 @@ func TestIsDeniedRecognizesFreshCheckDenials(t *testing.T) {
 	require.False(t, IsDenied(domainerr.ResourceNotFound("post", "id")))
 	require.False(t, IsDenied(errors.New("database is down")))
 	require.False(t, IsDenied(domainerr.ResourceNotFound("post", "id").WithCause(errs.NoPermission("edit", "post"))))
+	require.True(t, IsUnauthenticated(fmt.Errorf("authorize: %w", errs.AuthenticationRequired())))
+	require.True(t, IsUnauthenticated(domainerr.AuthenticationRequired()))
+	require.False(t, IsUnauthenticated(errs.NoPermission("edit", "post")))
 }
 
 func TestNewRunnerRequiresEveryCollaborator(t *testing.T) {

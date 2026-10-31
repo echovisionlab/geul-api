@@ -4,7 +4,12 @@
 // handlers and MCP tools map it at their boundary through internal/errors.
 package domainerr
 
-import "fmt"
+import (
+	"fmt"
+
+	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
+	"google.golang.org/protobuf/proto"
+)
 
 // Kind classifies an outcome by what the client can do about it.
 type Kind uint8
@@ -32,7 +37,10 @@ type Error struct {
 	Kind    Kind
 	Field   string
 	Message string
-	cause   error
+	// Detail is a machine-readable reason the client branches on, such as
+	// a collaboration conflict.
+	Detail proto.Message
+	cause  error
 }
 
 func (e *Error) Error() string {
@@ -131,4 +139,34 @@ func InvalidEntityType(entityType string) *Error {
 // InvalidEntityID rejects an entity ID that is not a UUID.
 func InvalidEntityID() *Error {
 	return New(Invalid, "entity_id", "invalid entity_id format: must be a valid UUID")
+}
+
+// CollaborationRevisions are the revisions a collaboration save found under
+// the owning resource lock.
+type CollaborationRevisions struct {
+	Document     string
+	Target       string
+	TargetExists *bool
+}
+
+// CollaborationConflict rejects a collaboration save whose expected
+// revisions changed. Consumers branch on the reason detail rather than the
+// message.
+func CollaborationConflict(reason intrav1.CollaborationConflictReason, message string, current CollaborationRevisions) *Error {
+	detail := &intrav1.CollaborationConflictDetail{Reason: reason, CurrentTargetExists: current.TargetExists}
+	if current.Document != "" {
+		detail.CurrentDocumentRevision = &current.Document
+	}
+	if current.Target != "" {
+		detail.CurrentTargetRevision = &current.Target
+	}
+	conflict := Precondition(message)
+	conflict.Detail = detail
+	return conflict
+}
+
+// CollaborationRejection rejects a collaboration save the room may not make;
+// persistence was never attempted.
+func CollaborationRejection(reason intrav1.CollaborationMutationRejectionReason, message string) *Error {
+	return &Error{Kind: Invalid, Message: message, Detail: &intrav1.CollaborationMutationRejectionDetail{Reason: reason}}
 }
