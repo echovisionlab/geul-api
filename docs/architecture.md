@@ -151,6 +151,7 @@ func Checked(check func(context.Context, *gorm.DB) error) Access // authority th
 func RequestAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func Unchanged() Audit
+func Each(audits ...Audit) Audit // several records of one change, in order
 
 func Read(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error // one read-only snapshot
 ```
@@ -192,7 +193,8 @@ Rules for a spec:
   lock the same pair of Identities from deadlocking.
 - **Audit.** Every mutation names a record or returns `Unchanged()` because
   nothing changed. A zero `Audit` fails the mutation. There is no optional
-  writer.
+  writer. A change that alters separately audited aspects at once, such as a
+  Map Place's metadata and its image, names each record with `Each`.
 - **Outbox.** Enqueue PGMQ commands and schedule `content.updated` in the
   transaction. Get the executor with `contentsignal.TransactionExecutor(tx)`,
   which refuses a pool that is not a live transaction; publish signals with
