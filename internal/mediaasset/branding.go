@@ -4,9 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"connectrpc.com/connect"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -27,7 +26,7 @@ func (s *Lifecycle) ReadyBrandingAssetRef(
 	brandingKind string,
 ) (*commonv1.AssetRef, string, error) {
 	ref, err := s.ReadyAssetRefForSourceFile(ctx, sourceFileID, brandingKind)
-	if err == nil || connect.CodeOf(err) != connect.CodeNotFound ||
+	if err == nil || !mutation.IsNotFound(err) ||
 		(brandingKind != BrandingKindLogo && brandingKind != BrandingKindEmailImage) {
 		return ref, brandingKind, err
 	}
@@ -37,7 +36,7 @@ func (s *Lifecycle) ReadyBrandingAssetRef(
 	}
 	mimeType := strings.ToLower(strings.TrimSpace(strings.Split(ref.GetMimeType(), ";")[0]))
 	if mimeType != "image/png" && (brandingKind != BrandingKindLogo || mimeType != "image/svg+xml") {
-		return nil, brandingKind, errs.InvalidArgument("file_id", "branding requires PNG or SVG; email branding requires PNG")
+		return nil, brandingKind, domainerr.InvalidField("file_id", "branding requires PNG or SVG; email branding requires PNG")
 	}
 	return ref, "image", nil
 }

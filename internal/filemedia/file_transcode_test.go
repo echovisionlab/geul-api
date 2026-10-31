@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -232,7 +233,7 @@ func TestFileIngestAudioOutputAllocatorRejectsPendingSourceFile(t *testing.T) {
 
 	_, _, _, err := ensureStableFileIngestAudioOutputs(t.Context(), db, fileID)
 	require.Error(t, err)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.Wrap(err).Code())
 
 	var assetCount int64
 	require.NoError(t, db.Model(&model.PublicAsset{}).Count(&assetCount).Error)

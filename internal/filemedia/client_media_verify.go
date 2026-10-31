@@ -289,10 +289,10 @@ func (s *FileService) clientMediaRegistrationReady(ctx context.Context, session 
 }
 
 func clientMediaCompletionError(err error) error {
-	if connect.CodeOf(err) == connect.CodeUnavailable && strings.Contains(err.Error(), missingClientArtifactReason) {
+	if errs.CodeOf(err) == connect.CodeUnavailable && strings.Contains(err.Error(), missingClientArtifactReason) {
 		return err
 	}
-	if connect.CodeOf(err) == connect.CodePermissionDenied || connect.CodeOf(err) == connect.CodeUnauthenticated {
+	if errs.CodeOf(err) == connect.CodePermissionDenied || errs.CodeOf(err) == connect.CodeUnauthenticated {
 		return err
 	}
 	return errs.FailedPrecondition(err.Error())

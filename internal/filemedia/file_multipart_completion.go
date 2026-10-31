@@ -223,7 +223,7 @@ func (s *FileService) loadAuthorizedMultipartCompletion(
 	now := time.Now()
 	claimed, uploadedParts, err := s.claimMultipartCompletion(ctx, session, now)
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
+		if errs.CodeOf(err) != connect.CodeUnknown {
 			return nil, false, completion.publishFailure(err)
 		}
 		return nil, false, completion.publishFailure(

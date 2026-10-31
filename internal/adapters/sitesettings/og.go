@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/sitelogo"
 	settingsdomain "github.com/echovisionlab/geul-api/internal/sitesettings"
@@ -214,7 +214,7 @@ func (*RenderConfig) Snapshot(ctx context.Context, db *gorm.DB, cdnDomain string
 			continue
 		}
 		asset, _, err := readySiteSettingAsset(ctx, db, cdnDomain, *slot.fileID, "logo")
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) && connect.CodeOf(err) != connect.CodeNotFound {
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) && !mutation.IsNotFound(err) {
 			return nil, "", err
 		}
 		if err == nil {

@@ -229,7 +229,7 @@ func (s *FileService) stageMediaArtifact(request *http.Request, bundleID string,
 }
 
 func clientArtifactHTTPStatus(err error) int {
-	switch connect.CodeOf(err) {
+	switch errs.CodeOf(err) {
 	case connect.CodeInvalidArgument, connect.CodeOutOfRange:
 		return http.StatusBadRequest
 	case connect.CodeUnauthenticated:

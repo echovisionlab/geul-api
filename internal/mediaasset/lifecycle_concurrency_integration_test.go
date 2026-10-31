@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -54,7 +56,7 @@ func TestMediaAssetLifecycleBindRechecksReadyAfterAssetLockIntegration(t *testin
 	require.NoError(t, blocker.Commit().Error)
 
 	err := requireMediaAssetCallResult(t, result)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.Wrap(err).Code())
 	var bindingCount int64
 	require.NoError(t, db.Model(&model.PublicAssetBinding{}).
 		Where("owner_type = ? AND owner_id = ?", "post", ownerID).
@@ -103,7 +105,7 @@ func TestMediaAssetLifecycleRebindFailsClosedWhenBindingChangesWhileWaitingInteg
 	require.NoError(t, blocker.Commit().Error)
 
 	err := requireMediaAssetCallResult(t, result)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.Wrap(err).Code())
 	var binding model.PublicAssetBinding
 	require.NoError(t, db.Where(
 		"owner_type = ? AND owner_id = ? AND binding_key = ?", "page", ownerID, bindingKey,
@@ -142,7 +144,7 @@ func TestMediaAssetLifecycleConcurrentFirstBindConvergesIntegration(t *testing.T
 			continue
 		}
 		failures++
-		require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+		require.Equal(t, connect.CodeFailedPrecondition, errs.Wrap(err).Code())
 	}
 	require.GreaterOrEqual(t, successes, 1)
 	require.Equal(t, 2, successes+failures)

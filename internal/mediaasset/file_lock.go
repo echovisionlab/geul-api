@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 )
@@ -30,14 +30,14 @@ func LockAttachableFilesForUpdate(ctx context.Context, tx *gorm.DB, fileIDs []st
 		Where("id IN ?", ids).
 		Order("id ASC").
 		Find(&files).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if len(files) != len(ids) {
-		return errs.FailedPrecondition("one or more files no longer exist")
+		return domainerr.Precondition("one or more files no longer exist")
 	}
 	for _, file := range files {
 		if file.DeleteRequestedAt != nil {
-			return errs.FailedPrecondition("file is pending deletion")
+			return domainerr.Precondition("file is pending deletion")
 		}
 	}
 	return nil

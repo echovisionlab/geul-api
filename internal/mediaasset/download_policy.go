@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
@@ -335,7 +335,7 @@ func LoadFileDownloadPolicyFingerprints(
 			return nil, err
 		}
 		if loader == nil {
-			return nil, errs.DependencyUnavailable("Audience segment configuration")
+			return nil, domainerr.DependencyUnavailable("Audience segment configuration")
 		}
 		pointers := make([]*model.AudienceSegment, 0, len(segments))
 		for i := range segments {
@@ -677,7 +677,7 @@ func evaluateFileDownloadAccessBatchAt(
 		segmentPointers = append(segmentPointers, &segments[i])
 	}
 	if len(loaders) != 1 || loaders[0] == nil {
-		return nil, errs.DependencyUnavailable("Audience segment configuration")
+		return nil, domainerr.DependencyUnavailable("Audience segment configuration")
 	}
 	if err := loaders[0].LoadSegmentConfigs(ctx, db, segmentPointers); err != nil {
 		return nil, err
@@ -917,10 +917,10 @@ func resolveRestrictedFileDownloadPermissions(
 		permissions, err := normalizeFileDownloadAccountPermissions(segment.Config.AccountRoles)
 		if err != nil {
 			// The permissions come from a stored segment, not from this request.
-			return nil, errs.Internal(failurecause.WithAttrs(
+			return nil, failurecause.WithAttrs(
 				fmt.Errorf("read stored File download segment: %w", err),
 				slog.String("segment_id", segment.ID),
-			))
+			)
 		}
 		for _, permission := range permissions {
 			requested[permission] = struct{}{}
@@ -931,20 +931,20 @@ func resolveRestrictedFileDownloadPermissions(
 		return resolved, nil
 	}
 	if spiceDB == nil || user == nil {
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, domainerr.DependencyUnavailable("SpiceDB")
 	}
 	for permission := range requested {
 		can, err := restrictedDownloadPlatformCan(permission)
 		if err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 		decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, user), can)
 		if err != nil {
-			return nil, errs.WithCause(errs.AuthenticationRequired(), err)
+			return nil, domainerr.AuthenticationRequired().WithCause(err)
 		}
 		allowed, checkErr := spiceDB.Can(ctx, decision)
 		if checkErr != nil {
-			return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), checkErr)
+			return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(checkErr)
 		}
 		resolved[permission] = allowed
 	}

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/google/uuid"
 
@@ -154,7 +155,7 @@ func parseUploadSourceQuery(rawQuery string) (remoteFileImportOptions, error) {
 
 func writeUploadSourceError(w http.ResponseWriter, err error) {
 	status := http.StatusBadGateway
-	switch connect.CodeOf(err) {
+	switch errs.CodeOf(err) {
 	case connect.CodeInvalidArgument:
 		status = http.StatusBadRequest
 	case connect.CodeUnauthenticated:

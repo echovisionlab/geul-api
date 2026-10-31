@@ -156,7 +156,7 @@ func (s *FileService) getMediaDelivery(
 			if retryErr == nil {
 				return retried, nil
 			}
-			if connect.CodeOf(retryErr) != connect.CodePermissionDenied && connect.CodeOf(retryErr) != connect.CodeNotFound {
+			if errs.CodeOf(retryErr) != connect.CodePermissionDenied && errs.CodeOf(retryErr) != connect.CodeNotFound {
 				return nil, retryErr
 			}
 		}

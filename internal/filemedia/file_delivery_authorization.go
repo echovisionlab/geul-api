@@ -149,7 +149,7 @@ func (s *FileService) authorizeManageFileDeliveriesWithWitness(
 				err := s.authorizeManageFilePermissionTarget(ctx, user, target)
 				if err == nil {
 					allowed = true
-				} else if connect.CodeOf(err) == connect.CodePermissionDenied || connect.CodeOf(err) == connect.CodeNotFound {
+				} else if errs.CodeOf(err) == connect.CodePermissionDenied || errs.CodeOf(err) == connect.CodeNotFound {
 					if denied == nil {
 						denied = err
 					}
