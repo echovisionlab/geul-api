@@ -90,6 +90,8 @@ func (a *DownloadAccess) Resolve(
 					signIn[id] = true
 				case mediaasset.FileDownloadAudienceRestricted:
 					restricted[id] = source
+				case mediaasset.FileDownloadAudienceDisabled, mediaasset.FileDownloadAudiencePublic:
+					// Signing in changes nothing: the download is off, or already open.
 				}
 			}
 			presence, presenceErr := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, tx, restricted)
