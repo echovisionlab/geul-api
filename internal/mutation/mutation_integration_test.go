@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // The relationship batch commits with the domain change, and a later step's
@@ -80,4 +81,20 @@ func TestRunWritesRelationshipsWithTheChangeIntegration(t *testing.T) {
 	require.ErrorIs(t, err, auditDown)
 	require.False(t, canManage(rolledBack))
 	require.Zero(t, tagCount(rolledBack))
+}
+
+// A read-only snapshot refuses row locks; LockedRead keeps the snapshot and
+// takes them.
+func TestLockedReadTakesRowLocksInOneSnapshotIntegration(t *testing.T) {
+	t.Parallel()
+	db := testutil.NewIntegrationDB(t)
+	tag := model.UserTag{Name: "locked-read-" + uuid.NewString()}
+	require.NoError(t, db.Create(&tag).Error)
+	lockTag := func(tx *gorm.DB) error {
+		var locked model.UserTag
+		return tx.Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Take(&locked, "id = ?", tag.ID).Error
+	}
+
+	require.Error(t, Read(t.Context(), db, lockTag))
+	require.NoError(t, LockedRead(t.Context(), db, lockTag))
 }

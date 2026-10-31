@@ -13,3 +13,10 @@ import (
 func Read(ctx context.Context, db *gorm.DB, read func(tx *gorm.DB) error) error {
 	return db.WithContext(ctx).Transaction(read, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 }
+
+// LockedRead is Read for a read that locks the rows it checks, such as an
+// authorization root or a share link, which a read-only transaction
+// refuses.
+func LockedRead(ctx context.Context, db *gorm.DB, read func(tx *gorm.DB) error) error {
+	return db.WithContext(ctx).Transaction(read, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+}
