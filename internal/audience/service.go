@@ -11,7 +11,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 const (
@@ -74,7 +76,7 @@ type Service struct {
 	spiceDB          *auth.SpiceDBClient
 	recipientCounter RecipientCounter
 	memberReferences MemberReferences
-	auditWriter      domainaudit.Appender
+	mutations        *mutation.Runner
 }
 
 // NewService validates deps and returns the Audience use cases.
@@ -82,11 +84,20 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
+	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, deps.Audit)
+	if err != nil {
+		return nil, err
+	}
 	return &Service{
 		db:               deps.DB,
 		spiceDB:          deps.SpiceDB,
 		recipientCounter: deps.RecipientCounter,
 		memberReferences: deps.MemberReferences,
-		auditWriter:      deps.Audit,
+		mutations:        mutations,
 	}, nil
+}
+
+// freshAdmin is the in-transaction authority of every segment mutation.
+func freshAdmin(can policyv1.Can) mutation.Access {
+	return mutation.FreshAdminCan(can, nil)
 }

@@ -11,12 +11,10 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/authz"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -58,39 +56,30 @@ func (s *Service) CreateSegment(ctx context.Context, command CreateSegmentComman
 	if err := ValidateSegmentConfigForType(command.SegmentType, config); err != nil {
 		return nil, invalidSegment(err.Error())
 	}
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		if err := tx.Omit("ID", "Config").Clauses(clause.Returning{}).Create(&segment).Error; err != nil {
-			return err
-		}
-		if err := replaceSegmentRelations(tx, s.memberReferences, segment.ID, config); err != nil {
-			return err
-		}
-		policyTouch, err := policyv1.AudienceSegment.TouchPolicy(segment.ID)
-		if err != nil {
-			return err
-		}
-		policyDelete, err := policyv1.AudienceSegment.DeletePolicy(segment.ID)
-		if err != nil {
-			return err
-		}
-		if err := write(
-			[]policyv1.RelationshipMutation{policyTouch},
-			[]policyv1.RelationshipMutation{policyDelete},
-		); err != nil {
-			return err
-		}
-		return domainaudit.AppendRequest(
-			ctx,
-			tx,
-			s.auditWriter,
-			sharedtelemetry.AuditAudienceSegmentCreated,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+	created, err := mutation.Run(ctx, s.mutations, mutation.Spec[model.AudienceSegment]{
+		Access: freshAdmin(can),
+		Change: func(_ context.Context, tx *gorm.DB) (model.AudienceSegment, error) {
+			if err := tx.Omit("ID", "Config").Clauses(clause.Returning{}).Create(&segment).Error; err != nil {
+				return segment, err
+			}
+			return segment, replaceSegmentRelations(tx, s.memberReferences, segment.ID, config)
+		},
+		Audit: func(segment model.AudienceSegment) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditAudienceSegmentCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 				return sharedtelemetry.NewAudienceSegmentCreatedAuditRecord(metadata, segment.ID)
-			},
-		)
+			})
+		},
+		Relationships: func(segment model.AudienceSegment) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			policyTouch, err := policyv1.AudienceSegment.TouchPolicy(segment.ID)
+			if err != nil {
+				return nil, nil, err
+			}
+			policyDelete, err := policyv1.AudienceSegment.DeletePolicy(segment.ID)
+			if err != nil {
+				return nil, nil, err
+			}
+			return []policyv1.RelationshipMutation{policyTouch}, []policyv1.RelationshipMutation{policyDelete}, nil
+		},
 	})
 	if err != nil {
 		if dberrors.IsForeignKeyViolation(err) {
@@ -98,7 +87,7 @@ func (s *Service) CreateSegment(ctx context.Context, command CreateSegmentComman
 		}
 		return nil, err
 	}
-	return toProtoSegment(&segment), nil
+	return toProtoSegment(&created), nil
 }
 
 // EstimateSegmentCountQuery estimates the recipients of an unsaved segment.
@@ -218,6 +207,12 @@ func (s *Service) UpdateSegment(ctx context.Context, command UpdateSegmentComman
 	return toProtoSegment(segment), nil
 }
 
+// segmentUpdate is an applied segment change and the fields it changed.
+type segmentUpdate struct {
+	segment       model.AudienceSegment
+	changedFields []string
+}
+
 func (s *Service) applySegmentUpdate(
 	ctx context.Context,
 	segmentID string,
@@ -225,50 +220,47 @@ func (s *Service) applySegmentUpdate(
 	can policyv1.Can,
 ) (*model.AudienceSegment, error) {
 	var segment model.AudienceSegment
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := lockSegmentForUpdate(ctx, tx, segmentID, &segment); err != nil {
-			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		if err := LoadSegmentConfig(ctx, tx, &segment); err != nil {
-			return err
-		}
-		if err := ensureSegmentMutableForActiveDelivery(tx, segment.ID); err != nil {
-			return err
-		}
-		nextType, nextConfig, err := plan.nextState(segment)
-		if err != nil {
-			return err
-		}
-		if err := ensureAudienceAccessTypeCompatible(tx, segment, nextType); err != nil {
-			return err
-		}
-		changedFields, err := applySegmentUpdates(tx, s.memberReferences, &segment, plan, nextType, nextConfig)
-		if err != nil {
-			return err
-		}
-		if len(changedFields) > 0 {
-			if err := domainaudit.AppendRequest(
-				ctx,
-				tx,
-				s.auditWriter,
-				sharedtelemetry.AuditAudienceSegmentUpdated,
-				func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-					return sharedtelemetry.NewAudienceSegmentConfigUpdatedAuditRecord(
-						metadata,
-						segment.ID,
-						changedFields,
-					)
-				},
-			); err != nil {
-				return err
+	updated, err := mutation.Run(ctx, s.mutations, mutation.Spec[segmentUpdate]{
+		Lock: func(ctx context.Context, tx *gorm.DB) error {
+			return lockSegmentForUpdate(ctx, tx, segmentID, &segment)
+		},
+		Access: freshAdmin(can),
+		Change: func(ctx context.Context, tx *gorm.DB) (segmentUpdate, error) {
+			if err := LoadSegmentConfig(ctx, tx, &segment); err != nil {
+				return segmentUpdate{}, err
 			}
-		}
-		return loadSegmentForResponse(ctx, tx, segmentID, &segment)
+			if err := ensureSegmentMutableForActiveDelivery(tx, segment.ID); err != nil {
+				return segmentUpdate{}, err
+			}
+			nextType, nextConfig, err := plan.nextState(segment)
+			if err != nil {
+				return segmentUpdate{}, err
+			}
+			if err := ensureAudienceAccessTypeCompatible(tx, segment, nextType); err != nil {
+				return segmentUpdate{}, err
+			}
+			changedFields, err := applySegmentUpdates(tx, s.memberReferences, &segment, plan, nextType, nextConfig)
+			if err != nil {
+				return segmentUpdate{}, err
+			}
+			if err := loadSegmentForResponse(ctx, tx, segmentID, &segment); err != nil {
+				return segmentUpdate{}, err
+			}
+			return segmentUpdate{segment: segment, changedFields: changedFields}, nil
+		},
+		Audit: func(update segmentUpdate) mutation.Audit {
+			if len(update.changedFields) == 0 {
+				return mutation.Unchanged()
+			}
+			return mutation.RequestAudit(sharedtelemetry.AuditAudienceSegmentUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewAudienceSegmentConfigUpdatedAuditRecord(metadata, segmentID, update.changedFields)
+			})
+		},
 	})
-	return &segment, err
+	if err != nil {
+		return nil, err
+	}
+	return &updated.segment, nil
 }
 
 // invalidSegment rejects a segment request with message.
