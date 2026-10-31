@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
 
@@ -18,8 +18,8 @@ var PageFilterConfig = &queryutil.FilterConfig{Fields: map[string]queryutil.Fiel
 	"status": {
 		Column: "status", Type: queryutil.TypeEnum, AllowedOps: queryutil.EnumOps,
 		EnumValues: []string{
-			managev1.PageStatus_PAGE_STATUS_DRAFT.String(),
-			managev1.PageStatus_PAGE_STATUS_PUBLISHED.String(),
+			string(model.PageStatusDraft),
+			string(model.PageStatusPublished),
 		},
 	},
 }}

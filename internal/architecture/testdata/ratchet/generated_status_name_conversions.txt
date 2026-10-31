@@ -19,8 +19,6 @@
 12 internal/label/public
 42 internal/legal
 16 internal/legal/public
-9 internal/page
-3 internal/page/public
 50 internal/post
 10 internal/post/public
 28 internal/programevent

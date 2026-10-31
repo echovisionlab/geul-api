@@ -294,7 +294,7 @@ func (s *Service) preparePageCreation(ctx context.Context, command CreatePageCom
 	page := &model.Page{
 		DocumentLayout: model.DefaultDocumentLayout(),
 		AccessPolicy:   encodedPolicy,
-		Status:         model.PageStatus(managev1.PageStatus_PAGE_STATUS_DRAFT.String()),
+		Status:         model.PageStatusDraft,
 		ShowTitle:      true,
 		CreatedAt:      createdAt,
 		UpdatedAt:      createdAt,
@@ -461,7 +461,7 @@ func (s *Service) PublishPage(ctx context.Context, command PublishPageCommand) (
 	defer failurecause.Annotate(&returnErr, slog.String("page_id", command.ID))
 
 	return s.transitionPage(ctx, command.ID, pageLifecycle{
-		action: policyv1.Page.Publish, status: model.PageStatus(managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()),
+		action: policyv1.Page.Publish, status: model.PageStatusPublished,
 		previous: sharedtelemetry.AuditStateDraft, next: sharedtelemetry.AuditStatePublished,
 		fields: []string{"state.status", "state.published_at"},
 		admit:  s.requirePublicationReady,
@@ -473,7 +473,7 @@ func (s *Service) UnpublishPage(ctx context.Context, command UnpublishPageComman
 	defer failurecause.Annotate(&returnErr, slog.String("page_id", command.ID))
 
 	return s.transitionPage(ctx, command.ID, pageLifecycle{
-		action: policyv1.Page.Publish, status: model.PageStatus(managev1.PageStatus_PAGE_STATUS_DRAFT.String()),
+		action: policyv1.Page.Publish, status: model.PageStatusDraft,
 		previous: sharedtelemetry.AuditStatePublished, next: sharedtelemetry.AuditStateDraft,
 		fields: []string{"state.status"},
 	})
@@ -507,7 +507,7 @@ func (s *Service) transitionPage(ctx context.Context, pageID string, lifecycle p
 	response := &managev1.PageLifecycleMutationResponse{
 		Id:        page.ID,
 		Changed:   transition.changed,
-		Status:    managev1.PageStatus(managev1.PageStatus_value[string(page.Status)]),
+		Status:    pageStatusToProto(page.Status),
 		UpdatedAt: timestamppb.New(page.UpdatedAt),
 	}
 	if page.PublishedAt != nil {
@@ -535,7 +535,7 @@ func applyPageLifecycle(ctx context.Context, tx *gorm.DB, pageID string, lifecyc
 	}
 	now := dbtime.Now()
 	updates := structured.Fields{"status": string(lifecycle.status), "updated_at": now}
-	publishes := lifecycle.status == model.PageStatus(managev1.PageStatus_PAGE_STATUS_PUBLISHED.String())
+	publishes := lifecycle.status == model.PageStatusPublished
 	if publishes && page.PublishedAt == nil {
 		updates["published_at"] = now
 	}

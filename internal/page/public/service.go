@@ -28,7 +28,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -364,7 +363,7 @@ func (s *Service) authorizePageRead(
 	page model.Page,
 ) (commonv1.PageAccessReason, mediaasset.ContentDownloadOwnerAuthorization, error) {
 	var authorization mediaasset.ContentDownloadOwnerAuthorization
-	published := page.Status == model.PageStatus(managev1.PageStatus_PAGE_STATUS_PUBLISHED.String())
+	published := page.Status == model.PageStatusPublished
 	if published {
 		accessReason, err := pageaccess.Evaluate(ctx, tx, s.permissions, page.ID, page.AccessPolicy)
 		if err != nil {
@@ -563,12 +562,13 @@ func (s *Service) getHomepagePageID(ctx context.Context) (string, error) {
 	return *settings.HomepagePageID, nil
 }
 
-// toProtoStatus converts model page status to proto status
+// toProtoStatus maps a stored Page status to the public API enum. A value
+// the API does not know is UNSPECIFIED.
 func toProtoStatus(status model.PageStatus) openv1.PageStatus {
 	switch status {
-	case model.PageStatus(managev1.PageStatus_PAGE_STATUS_DRAFT.String()):
+	case model.PageStatusDraft:
 		return openv1.PageStatus_PAGE_STATUS_DRAFT
-	case model.PageStatus(managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()):
+	case model.PageStatusPublished:
 		return openv1.PageStatus_PAGE_STATUS_PUBLISHED
 	default:
 		return openv1.PageStatus_PAGE_STATUS_UNSPECIFIED
