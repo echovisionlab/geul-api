@@ -2,6 +2,7 @@ package form
 
 import (
 	"context"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -24,7 +25,7 @@ func (s *FormService) toProtoForm(ctx context.Context, f *model.Form) (*managev1
 		SourceLocale: f.SourceLocale,
 		Title:        resolveFormTitle(sourceState.Title),
 		Schema:       sourceState.ContentJSON,
-		Status:       managev1.FormStatus(managev1.FormStatus_value[string(f.Status)]),
+		Status:       formStatusToProto(f.Status),
 		IsPublic:     f.IsPublic,
 		AllowedRoles: f.AllowedRoles,
 		CreatedAt:    timestamppb.New(f.CreatedAt),
@@ -93,7 +94,7 @@ func toProtoFormSummaryWithSubmissionCount(
 	summary := &managev1.FormSummary{
 		Id:              f.ID,
 		Title:           resolveFormTitle(&sourceTitle),
-		Status:          managev1.FormStatus(managev1.FormStatus_value[string(f.Status)]),
+		Status:          formStatusToProto(f.Status),
 		SubmissionCount: int32(submissionCount),
 		CreatedAt:       timestamppb.New(f.CreatedAt),
 		SourceLocale:    f.SourceLocale,

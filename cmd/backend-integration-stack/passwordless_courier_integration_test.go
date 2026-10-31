@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
@@ -308,21 +311,21 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 		500*time.Millisecond,
 	)
 	onboardingNickname := fmt.Sprintf("RegisteredMember%d", time.Now().UnixNano())
-	memberService := member.NewAuditedMemberService(
-		stack.Postgres.DB,
-		"",
-		stack.SpiceDBClient,
-		stack.KratosClient,
-		backendIntegrationNoopFileDeleter{},
-		"https://www.example.test",
-		publisher,
-		apitelemetry.NewDurableWriter(stack.Postgres.DB),
-		member.WithAccountSummaryReader(memberadapter.AccountSummaryReader{}),
-		member.WithAccountEmailProjection(memberadapter.AccountEmailProjection{}),
-	)
+	memberService, err := member.NewService(member.Deps{
+		DB:            stack.Postgres.DB,
+		SpiceDB:       stack.SpiceDBClient,
+		Identity:      stack.KratosClient,
+		AvatarFiles:   backendIntegrationAvatarFiles{},
+		WelcomeEmails: publisher,
+		Accounts:      memberadapter.AccountSummaryReader{},
+		AccountEmails: memberadapter.AccountEmailProjection{},
+		Audit:         apitelemetry.NewDurableWriter(stack.Postgres.DB),
+		SiteOrigin:    "https://www.example.test",
+	})
+	require.NoError(t, err)
 	onboardingRequestContext, err := sharedtelemetry.NewPublicRequestContext("127.0.0.1")
 	require.NoError(t, err)
-	onboardingResponse, err := memberService.CompleteMyOnboarding(
+	onboardingResponse, err := member.NewConnectHandler(memberService).CompleteMyOnboarding(
 		auth.WithUser(sharedtelemetry.WithRequestContext(ctx, onboardingRequestContext), &auth.UserInfo{
 			IdentityID:    auth.IdentityID(registeredSession.Session.Identity.ID),
 			MemberID:      auth.MemberID(provisionedMember.ID),
@@ -408,10 +411,10 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 	)
 }
 
-type backendIntegrationNoopFileDeleter struct{}
+type backendIntegrationAvatarFiles struct{}
 
-func (backendIntegrationNoopFileDeleter) DeleteFileByID(context.Context, string) error {
-	return nil
+func (backendIntegrationAvatarFiles) PromoteUserAvatarAsset(context.Context, string) (*commonv1.AssetRef, error) {
+	return nil, errors.New("the courier stack does not promote avatars")
 }
 
 func serveBackendIntegrationKratosProxy(

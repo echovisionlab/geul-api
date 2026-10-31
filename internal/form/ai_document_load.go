@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/model"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -175,10 +175,10 @@ func loadFormAIDocumentLocale(ctx context.Context, tx *gorm.DB, formID, locale s
 }
 
 func formAIDocumentLifecycle(status string) (published, valid bool) {
-	switch status {
-	case managev1.FormStatus_FORM_STATUS_DRAFT.String():
+	switch model.FormStatus(status) {
+	case model.FormStatusDraft:
 		return false, true
-	case managev1.FormStatus_FORM_STATUS_PUBLISHED.String():
+	case model.FormStatusPublished:
 		return true, true
 	default:
 		return false, false

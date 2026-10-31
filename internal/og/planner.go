@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -184,9 +186,9 @@ func (p *Planner) requestBulkWithDB(
 		notifyOgLifecycle(tx, &generation, &target, model.OgGenerationStatusQueued, nil, nil, now)
 	}
 	if tx.Dialector.Name() == "postgres" {
-		executor, ok := tx.Statement.ConnPool.(eventpkg.DBTX)
-		if !ok {
-			return fmt.Errorf("OG generation transaction does not expose a PGMQ executor")
+		executor, err := contentsignal.TransactionExecutor(tx)
+		if err != nil {
+			return err
 		}
 		for _, generation := range generations {
 			if err := mq.EnqueueProtobuf(

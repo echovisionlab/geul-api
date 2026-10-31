@@ -7,28 +7,58 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-func (s *MemberService) getMemberTagIDs(ctx context.Context, memberID string) ([]string, error) {
+// Tag is an administrator-defined Member tag. MemberCount is set only by
+// ListMemberTags.
+type Tag struct {
+	ID          string
+	Name        string
+	CreatedAt   time.Time
+	MemberCount int32
+}
+
+var memberTagAdminFilterConfig = queryutil.FilterConfig{Fields: map[string]queryutil.FieldDef{
+	"search": {
+		Type: queryutil.TypeText, AllowedOps: queryutil.SearchOps, SearchColumns: []string{"t.name"},
+	},
+	"name": {
+		Column: "t.name", Type: queryutil.TypeText, AllowedOps: queryutil.TextOps,
+	},
+	"created_at": {
+		Column: "t.created_at", Type: queryutil.TypeDate, AllowedOps: queryutil.DateOps,
+	},
+}}
+
+var memberTagAdminSortConfig = queryutil.SortConfig{
+	AllowedFields: map[string]string{
+		"name":       "t.name",
+		"user_count": "COUNT(m.member_id)",
+		"created_at": "t.created_at",
+	},
+	DefaultSort: "t.name ASC, t.id ASC",
+}
+
+func (s *Service) memberTagIDs(ctx context.Context, memberID string) ([]string, error) {
 	values := []string{}
 	err := s.db.WithContext(ctx).Model(&model.UserTagMapping{}).Where("member_id = ?", memberID).Order("tag_id").Pluck("tag_id", &values).Error
 	return values, err
 }
-func (s *MemberService) getMemberTagIDsBatch(ctx context.Context, memberIDs []string) (map[string][]string, error) {
+
+func (s *Service) memberTagIDsBatch(ctx context.Context, memberIDs []string) (map[string][]string, error) {
 	result := make(map[string][]string, len(memberIDs))
 	if len(memberIDs) == 0 {
 		return result, nil
@@ -42,149 +72,170 @@ func (s *MemberService) getMemberTagIDsBatch(ctx context.Context, memberIDs []st
 	}
 	return result, nil
 }
-func (s *MemberService) ListMemberTagsAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListMemberTagsAdminRequest],
-) (*connect.Response[managev1.ListMemberTagsAdminResponse], error) {
+
+// ListMemberTagsQuery pages through Member tags.
+type ListMemberTagsQuery struct {
+	// Limit defaults to 50 and is capped at 500.
+	Limit   int32
+	Offset  int32
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+}
+
+// TagPage is one page of Member tags.
+type TagPage struct {
+	Tags       []Tag
+	Pagination *commonv1.PaginationResponse
+}
+
+// ListMemberTags returns one page of tags with their member counts.
+func (s *Service) ListMemberTags(ctx context.Context, query ListMemberTagsQuery) (TagPage, error) {
 	if _, err := s.requireAdminMember(ctx); err != nil {
-		return nil, err
+		return TagPage{}, err
 	}
 	limit, offset := 50, 0
-	if p := req.Msg.Pagination; p != nil {
-		if p.Limit > 0 {
-			limit = int(p.Limit)
-		}
-		if p.Offset > 0 {
-			offset = int(p.Offset)
-		}
+	if query.Limit > 0 {
+		limit = int(query.Limit)
+	}
+	if query.Offset > 0 {
+		offset = int(query.Offset)
 	}
 	if limit > 500 {
 		limit = 500
 	}
-	query := s.db.WithContext(ctx).Table("user_tag AS t")
+	list := s.db.WithContext(ctx).Table("user_tag AS t")
 	var err error
-	query, err = memberTagAdminFilterConfig.ApplyFilters(query, req.Msg.Filters)
+	list, err = memberTagAdminFilterConfig.ApplyFilters(list, query.Filters)
 	if err != nil {
-		return nil, err
+		return TagPage{}, err
 	}
 	var total int64
-	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := list.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+		return TagPage{}, err
 	}
 	type row struct {
 		model.UserTag
 		MemberCount int32 `gorm:"column:member_count"`
 	}
 	var rows []row
-	query = query.Select("t.*, COUNT(m.member_id)::int AS member_count").
+	list = list.Select("t.*, COUNT(m.member_id)::int AS member_count").
 		Joins("LEFT JOIN user_tag_mapping AS m ON m.tag_id = t.id").
 		Group("t.id")
-	query, err = memberTagAdminSortConfig.ApplySort(query, req.Msg.Sorts)
+	list, err = memberTagAdminSortConfig.ApplySort(list, query.Sorts)
 	if err != nil {
-		return nil, err
+		return TagPage{}, err
 	}
-	if len(req.Msg.Sorts) != 0 {
-		query = query.Order("t.id ASC")
+	if len(query.Sorts) != 0 {
+		list = list.Order("t.id ASC")
 	}
-	if err := query.Limit(limit).Offset(offset).Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := list.Limit(limit).Offset(offset).Scan(&rows).Error; err != nil {
+		return TagPage{}, err
 	}
-	tags := make([]*managev1.MemberTag, len(rows))
+	tags := make([]Tag, len(rows))
 	for i, row := range rows {
-		tags[i] = &managev1.MemberTag{Id: row.ID, Name: row.Name, CreatedAt: timestamppb.New(row.CreatedAt), MemberCount: row.MemberCount}
+		tags[i] = Tag{ID: row.ID, Name: row.Name, CreatedAt: row.CreatedAt, MemberCount: row.MemberCount}
 	}
-	return connect.NewResponse(&managev1.ListMemberTagsAdminResponse{Tags: tags, Pagination: &commonv1.PaginationResponse{Total: int32(min(total, math.MaxInt32)), Limit: int32(limit), Offset: int32(offset), HasMore: int64(offset+len(rows)) < total}}), nil
+	return TagPage{Tags: tags, Pagination: &commonv1.PaginationResponse{Total: int32(min(total, math.MaxInt32)), Limit: int32(limit), Offset: int32(offset), HasMore: int64(offset+len(rows)) < total}}, nil
 }
-func (s *MemberService) CreateMemberTag(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateMemberTagRequest],
-) (*connect.Response[managev1.MemberTag], error) {
-	if _, err := s.requireAdminMember(ctx); err != nil {
-		return nil, err
-	}
-	name := strings.TrimSpace(req.Msg.Name)
-	if name == "" {
-		return nil, errs.Required("name")
-	}
-	tag := model.UserTag{Name: name}
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&tag).Error; err != nil {
-			return errs.Internal(err)
-		}
-		return domainaudit.AppendOptionalRequest(
-			ctx,
-			tx,
-			s.auditWriter,
-			sharedtelemetry.AuditMemberTagCreated,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewMemberTagCreatedAuditRecord(metadata, tag.ID, tag.Name)
-			},
-		)
-	}); err != nil {
-		return nil, errs.Wrap(err)
-	}
-	return connect.NewResponse(&managev1.MemberTag{Id: tag.ID, Name: tag.Name, CreatedAt: timestamppb.New(tag.CreatedAt)}), nil
+
+// CreateMemberTagCommand creates a Member tag.
+type CreateMemberTagCommand struct {
+	Name string
 }
-func (s *MemberService) DeleteMemberTag(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteMemberTagRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
-	if _, err := s.requireAdminMember(ctx); err != nil {
-		return nil, err
-	}
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var tag model.UserTag
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&tag, "id = ?", req.Msg.Id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("member tag", req.Msg.Id)
+
+// CreateMemberTag creates the tag and returns it.
+func (s *Service) CreateMemberTag(ctx context.Context, command CreateMemberTagCommand) (Tag, error) {
+	return mutation.Run(ctx, s.mutations, mutation.Spec[Tag]{
+		Access: freshAdmin(),
+		Change: func(_ context.Context, tx *gorm.DB) (Tag, error) {
+			name := strings.TrimSpace(command.Name)
+			if name == "" {
+				return Tag{}, domainerr.Required("name")
 			}
-			return errs.Internal(err)
-		}
-
-		var referenced bool
-		if err := tx.Raw(`
-			SELECT EXISTS (
-				SELECT 1
-				FROM audience_segment_user_tag
-				WHERE user_tag_id = ?
-			)
-		`, tag.ID).Scan(&referenced).Error; err != nil {
-			return errs.Internal(err)
-		}
-		if referenced {
-			return errs.FailedPrecondition("member tag is referenced by an audience segment")
-		}
-		if err := tx.Where("tag_id = ?", req.Msg.Id).Delete(&model.UserTagMapping{}).Error; err != nil {
-			return errs.Internal(err)
-		}
-		if err := tx.Delete(&tag).Error; err != nil {
-			return errs.Internal(err)
-		}
-		return domainaudit.AppendOptionalRequest(
-			ctx,
-			tx,
-			s.auditWriter,
-			sharedtelemetry.AuditMemberTagDeleted,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewMemberTagDeletedAuditRecord(metadata, tag.ID, tag.Name)
-			},
-		)
+			tag := model.UserTag{Name: name}
+			if err := tx.Create(&tag).Error; err != nil {
+				return Tag{}, err
+			}
+			return Tag{ID: tag.ID, Name: tag.Name, CreatedAt: tag.CreatedAt}, nil
+		},
+		Audit: func(tag Tag) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditMemberTagCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewMemberTagCreatedAuditRecord(metadata, tag.ID, tag.Name)
+			})
+		},
 	})
-	if err != nil {
-		return nil, errs.Wrap(err)
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
 }
 
-func (s *MemberService) replaceMemberTags(ctx context.Context, memberID string, rawTagIDs []string) ([]string, error) {
+// DeleteMemberTagCommand deletes a Member tag that no audience segment uses.
+type DeleteMemberTagCommand struct {
+	ID string
+}
+
+// DeleteMemberTag deletes the tag and its Member assignments.
+func (s *Service) DeleteMemberTag(ctx context.Context, command DeleteMemberTagCommand) error {
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[model.UserTag]{
+		Access: freshAdmin(),
+		Change: func(_ context.Context, tx *gorm.DB) (model.UserTag, error) {
+			var tag model.UserTag
+			if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&tag, "id = ?", command.ID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return tag, domainerr.ResourceNotFound("member tag", command.ID)
+				}
+				return tag, err
+			}
+			var referenced bool
+			if err := tx.Raw(`
+				SELECT EXISTS (
+					SELECT 1
+					FROM audience_segment_user_tag
+					WHERE user_tag_id = ?
+				)
+			`, tag.ID).Scan(&referenced).Error; err != nil {
+				return tag, err
+			}
+			if referenced {
+				return tag, domainerr.Precondition("member tag is referenced by an audience segment")
+			}
+			if err := tx.Where("tag_id = ?", command.ID).Delete(&model.UserTagMapping{}).Error; err != nil {
+				return tag, err
+			}
+			return tag, tx.Delete(&tag).Error
+		},
+		Audit: func(tag model.UserTag) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditMemberTagDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewMemberTagDeletedAuditRecord(metadata, tag.ID, tag.Name)
+			})
+		},
+	})
+	return err
+}
+
+// SetMemberTagsCommand replaces the tags assigned to a Member.
+type SetMemberTagsCommand struct {
+	MemberID string
+	TagIDs   []string
+}
+
+// SetMemberTags applies command and returns the refreshed administrator view.
+func (s *Service) SetMemberTags(ctx context.Context, command SetMemberTagsCommand) (*managev1.AdminMember, error) {
+	if _, err := s.requireAdminMember(ctx); err != nil {
+		return nil, err
+	}
+	if _, err := s.replaceMemberTags(ctx, command.MemberID, command.TagIDs); err != nil {
+		return nil, err
+	}
+	return s.adminMember(ctx, command.MemberID)
+}
+
+func (s *Service) replaceMemberTags(ctx context.Context, memberID string, rawTagIDs []string) ([]string, error) {
 	if _, err := uuidutil.ParseCanonical(memberID, "member_id"); err != nil {
-		return nil, errs.InvalidArgument("member_id", "must be a canonical UUID")
+		return nil, domainerr.InvalidField("member_id", "must be a canonical UUID")
 	}
 	tagIDs := make([]string, 0, len(rawTagIDs))
 	seen := make(map[string]struct{}, len(rawTagIDs))
 	for _, tagID := range rawTagIDs {
 		if _, err := uuidutil.ParseCanonical(tagID, "tag_id"); err != nil {
-			return nil, errs.InvalidArgument("tag_ids", "must contain canonical UUIDs")
+			return nil, domainerr.InvalidField("tag_ids", "must contain canonical UUIDs")
 		}
 		if _, exists := seen[tagID]; exists {
 			continue
@@ -197,74 +248,53 @@ func (s *MemberService) replaceMemberTags(ctx context.Context, memberID string, 
 	if err != nil {
 		return nil, err
 	}
-
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := identitystate.Lock(tx, target.IdentityID); err != nil {
-			return errs.Internal(err)
-		}
-		current, err := authorizationtarget.LinkedMemberForMember(tx.WithContext(ctx), memberID, false)
-		if err != nil {
-			if errors.Is(err, authorizationtarget.ErrIneligible) {
-				return errs.NotFound("member", memberID)
+	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
+		Subjects: []string{target.IdentityID},
+		Access:   freshAdmin(),
+		Change: func(_ context.Context, tx *gorm.DB) (bool, error) {
+			if err := recheckTarget(tx, memberID, target, linkedMember(false)); err != nil {
+				return false, err
 			}
-			return err
-		}
-		if current.IdentityID != target.IdentityID {
-			return errs.NotFound("member", memberID)
-		}
-
-		if len(tagIDs) != 0 {
-			var count int64
-			if err := tx.Model(&model.UserTag{}).Where("id IN ?", tagIDs).Count(&count).Error; err != nil {
-				return errs.Internal(err)
+			if len(tagIDs) != 0 {
+				var count int64
+				if err := tx.Model(&model.UserTag{}).Where("id IN ?", tagIDs).Count(&count).Error; err != nil {
+					return false, err
+				}
+				if count != int64(len(tagIDs)) {
+					return false, domainerr.InvalidField("tag_ids", "contains an unknown member tag")
+				}
 			}
-			if count != int64(len(tagIDs)) {
-				return errs.InvalidArgument("tag_ids", "contains an unknown member tag")
+			var currentTagIDs []string
+			if err := tx.Model(&model.UserTagMapping{}).
+				Where("member_id = ?", memberID).
+				Order("tag_id ASC").
+				Pluck("tag_id", &currentTagIDs).Error; err != nil {
+				return false, err
 			}
-		}
-		var currentTagIDs []string
-		if err := tx.Model(&model.UserTagMapping{}).
-			Where("member_id = ?", memberID).
-			Order("tag_id ASC").
-			Pluck("tag_id", &currentTagIDs).Error; err != nil {
-			return errs.Internal(err)
-		}
-		if slices.Equal(currentTagIDs, tagIDs) {
-			return nil
-		}
-		if err := tx.Where("member_id = ?", memberID).Delete(&model.UserTagMapping{}).Error; err != nil {
-			return errs.Internal(err)
-		}
-		for _, tagID := range tagIDs {
-			if err := tx.Create(&model.UserTagMapping{MemberID: memberID, TagID: tagID}).Error; err != nil {
-				return errs.Internal(err)
+			if slices.Equal(currentTagIDs, tagIDs) {
+				return false, nil
 			}
-		}
-		return domainaudit.AppendRequest(
-			ctx,
-			tx,
-			s.auditWriter,
-			sharedtelemetry.AuditMemberUpdated,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			if err := tx.Where("member_id = ?", memberID).Delete(&model.UserTagMapping{}).Error; err != nil {
+				return false, err
+			}
+			for _, tagID := range tagIDs {
+				if err := tx.Create(&model.UserTagMapping{MemberID: memberID, TagID: tagID}).Error; err != nil {
+					return false, err
+				}
+			}
+			return true, nil
+		},
+		Audit: func(changed bool) mutation.Audit {
+			if !changed {
+				return mutation.Unchanged()
+			}
+			return mutation.RequestAudit(sharedtelemetry.AuditMemberUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 				return sharedtelemetry.NewMemberTagsUpdatedAuditRecord(metadata, memberID, tagIDs)
-			},
-		)
+			})
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
 	return tagIDs, nil
-}
-
-func (s *MemberService) SetMemberTags(
-	ctx context.Context,
-	req *connect.Request[managev1.SetMemberTagsRequest],
-) (*connect.Response[managev1.AdminMember], error) {
-	if _, err := s.requireAdminMember(ctx); err != nil {
-		return nil, err
-	}
-	if _, err := s.replaceMemberTags(ctx, req.Msg.MemberId, req.Msg.TagIds); err != nil {
-		return nil, err
-	}
-	return s.GetMember(ctx, connect.NewRequest(&managev1.GetMemberRequest{MemberId: req.Msg.MemberId}))
 }

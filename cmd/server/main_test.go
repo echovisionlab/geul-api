@@ -175,6 +175,28 @@ func TestReportRuntimeFailureKeepsFirstFailureWithoutBlocking(t *testing.T) {
 	require.ErrorIs(t, <-failures, first)
 }
 
+func TestStartUntilReadyReportsOnlyFailuresAfterReadiness(t *testing.T) {
+	readinessErr := errors.New("queue topology unavailable")
+	var wg sync.WaitGroup
+	failures := make(chan error, 1)
+	err := startUntilReady(t.Context(), &wg, func(_ context.Context, ready chan<- error) error {
+		ready <- readinessErr
+		return readinessErr
+	}, failures)
+	wg.Wait()
+	require.ErrorIs(t, err, readinessErr)
+	require.Empty(t, failures, "startup logs a readiness failure; the runtime must not report it again")
+
+	runtimeErr := errors.New("consumer delivery channel closed")
+	err = startUntilReady(t.Context(), &wg, func(_ context.Context, ready chan<- error) error {
+		ready <- nil
+		return runtimeErr
+	}, failures)
+	wg.Wait()
+	require.NoError(t, err)
+	require.ErrorIs(t, <-failures, runtimeErr)
+}
+
 func TestMCPPrivateHTTPServerExposesOnlyExactRoutes(t *testing.T) {
 	admissionCalls := 0
 	admissionHandler := http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {

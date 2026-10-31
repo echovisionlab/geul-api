@@ -31,11 +31,7 @@ func auditedMemberContext(t *testing.T, identityID, memberID string) context.Con
 	})
 }
 
-type failingDomainAuditAppender struct{}
-
-func (failingDomainAuditAppender) AppendDomainAuditInTransaction(context.Context, *gorm.DB, sharedtelemetry.AuditRecord) error {
-	return errors.New("audit unavailable")
-}
+var errAuditUnavailable = errors.New("audit unavailable")
 
 func requireAccountIdentitySubject(t *testing.T, identityID string) auth.AccountIdentitySubject {
 	t.Helper()
@@ -193,4 +189,20 @@ func (integrationDirectRoleTransition) Transition(
 
 func integrationMemberProvisioner(db *gorm.DB, identity memberProvisioningIdentity, spiceDB *auth.SpiceDBClient) *MemberProvisioner {
 	return NewMemberProvisioner(db, identity, spiceDB, integrationAccountEmailProjection{}, integrationDirectRoleTransition{})
+}
+
+// freshAdminContext seeds an onboarded administrator in db and returns its
+// request context. Administrator mutations check this principal's identity
+// fence and fresh authority inside their transaction.
+func freshAdminContext(t *testing.T, db *gorm.DB) context.Context {
+	t.Helper()
+	identityID := testutil.IntegrationUUID()
+	memberID := seedAdminEditableMember(t, db, identityID, "admin-"+testutil.IntegrationUUID())
+	t.Cleanup(func() {
+		require.NoError(t, db.Exec(`DELETE FROM public.domain_audit WHERE actor_member_id = ?::uuid`, memberID).Error)
+		require.NoError(t, db.Exec(`DELETE FROM member WHERE id=?::uuid`, memberID).Error)
+		require.NoError(t, db.Exec(`DELETE FROM kratos.identities WHERE id=?::uuid`, identityID).Error)
+	})
+	syncIntegrationGlobalRole(t, testutil.SetupOryStack(t).SpiceDBClient, identityID, policyv1.Role.Admin())
+	return memberAuditContextForPair(t, identityID, memberID)
 }

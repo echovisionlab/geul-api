@@ -6,7 +6,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func validateFormSettings(form *model.Form) error {
@@ -15,8 +14,7 @@ func validateFormSettings(form *model.Form) error {
 	}
 
 	switch form.Status {
-	case model.FormStatus(managev1.FormStatus_FORM_STATUS_DRAFT.String()),
-		model.FormStatus(managev1.FormStatus_FORM_STATUS_PUBLISHED.String()):
+	case model.FormStatusDraft, model.FormStatusPublished:
 	default:
 		return errs.InvalidArgument("status", "must be draft or published")
 	}

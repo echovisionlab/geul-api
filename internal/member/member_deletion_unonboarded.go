@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -149,7 +150,7 @@ func (DeletionLifecycle) ListExpiredUnonboarded(
 		IdentityID string    `gorm:"column:identity_id"`
 		CreatedAt  time.Time `gorm:"column:created_at"`
 	}
-	query := db.WithContext(ctx).Table("member AS member").Joins(`JOIN kratos.identities AS identity ON identity.id = member.account_identity_id AND identity.external_id = member.id::text`).Select("member.id::text AS member_id", "identity.id::text AS identity_id", "member.created_at").Where("member.onboarded = FALSE AND member.deleted_at IS NULL AND member.created_at <= ?", cutoff.UTC())
+	query := db.WithContext(ctx).Table("member AS member").Joins(identityread.JoinLinked("member", "identity")).Select("member.id::text AS member_id", "identity.id::text AS identity_id", "member.created_at").Where("member.onboarded = FALSE AND member.deleted_at IS NULL AND member.created_at <= ?", cutoff.UTC())
 	if after != nil {
 		query = query.Where("(member.created_at, member.id) > (?, ?::uuid)", after.CreatedAt, after.MemberID)
 	}
@@ -181,7 +182,7 @@ func (DeletionLifecycle) RecheckUnonboarded(
 	if err := validateDeletionPair(memberID, identityID); err != nil {
 		return false, err
 	}
-	query := tx.WithContext(ctx).Table("member AS member").Joins(`JOIN kratos.identities AS identity ON identity.id = member.account_identity_id AND identity.external_id = member.id::text`).Select("member.id").Where("member.id = ?::uuid AND identity.id = ?::uuid AND member.onboarded = FALSE AND member.deleted_at IS NULL", memberID, identityID)
+	query := tx.WithContext(ctx).Table("member AS member").Joins(identityread.JoinLinked("member", "identity")).Select("member.id").Where("member.id = ?::uuid AND identity.id = ?::uuid AND member.onboarded = FALSE AND member.deleted_at IS NULL", memberID, identityID)
 	if cutoff != nil {
 		query = query.Where("member.created_at <= ?", cutoff.UTC())
 	}
@@ -201,7 +202,7 @@ func (DeletionLifecycle) UnonboardedIdentity(ctx context.Context, db *gorm.DB, m
 		return "", false, err
 	}
 	var identityID string
-	err := db.WithContext(ctx).Table("member AS member").Joins(`JOIN kratos.identities AS identity ON identity.id = member.account_identity_id AND identity.external_id = member.id::text`).Select("identity.id::text").Where("member.id = ?::uuid AND member.onboarded = FALSE AND member.deleted_at IS NULL", memberID).Take(&identityID).Error
+	err := db.WithContext(ctx).Table("member AS member").Joins(identityread.JoinLinked("member", "identity")).Select("identity.id::text").Where("member.id = ?::uuid AND member.onboarded = FALSE AND member.deleted_at IS NULL", memberID).Take(&identityID).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return "", false, nil
 	}
@@ -221,7 +222,7 @@ func deletionPairWitness(
 		Linked         bool `gorm:"column:linked"`
 		IdentityExists bool `gorm:"column:identity_exists"`
 	}
-	err = db.WithContext(ctx).Raw(`SELECT EXISTS (SELECT 1 FROM member JOIN kratos.identities AS identity ON identity.id = member.account_identity_id AND identity.external_id = member.id::text WHERE member.id = ?::uuid AND identity.id = ?::uuid) AS linked, EXISTS (SELECT 1 FROM kratos.identities WHERE id = ?::uuid) AS identity_exists`, memberID, identityID, identityID).Scan(&state).Error
+	err = db.WithContext(ctx).Raw(`SELECT EXISTS (SELECT 1 FROM member `+identityread.JoinLinked("member", "identity")+` WHERE member.id = ?::uuid AND identity.id = ?::uuid) AS linked, `+identityread.ExistsSQL+` AS identity_exists`, memberID, identityID, identityID).Scan(&state).Error
 	return state.Linked, state.IdentityExists, err
 }
 

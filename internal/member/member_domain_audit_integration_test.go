@@ -10,8 +10,11 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -64,15 +67,19 @@ func memberAuditContextForPair(t *testing.T, identityID, memberID string) contex
 	)
 }
 
-func memberAuditService(t *testing.T, db *gorm.DB, writer domainaudit.Appender) *MemberService {
+func memberAuditService(t *testing.T, deps Deps) *Service {
 	t.Helper()
-	return &MemberService{
-		db:                   db,
-		cdnDomain:            "https://cdn.example.test",
-		spicedb:              testutil.SetupOryStack(t).SpiceDBClient,
-		accountSummaryReader: integrationAccountSummaryReader{},
-		auditWriter:          writer,
-	}
+	deps.CDNDomain = "https://cdn.example.test"
+	deps.SpiceDB = testutil.SetupOryStack(t).SpiceDBClient
+	deps.Accounts = integrationAccountSummaryReader{}
+	return newTestService(t, deps)
+}
+
+func memberAdminAuditContext(t *testing.T, db *gorm.DB) (memberAuditFixture, context.Context) {
+	t.Helper()
+	admin := createMemberAuditFixture(t, db, "admin-"+uuid.NewString())
+	syncIntegrationGlobalRole(t, testutil.SetupOryStack(t).SpiceDBClient, admin.IdentityID, policyv1.Role.Admin())
+	return admin, memberAuditContext(t, admin)
 }
 
 func memberAuditAttributes(t *testing.T, db *gorm.DB, targetID string, offset int) map[string]any {
@@ -105,11 +112,11 @@ func TestMemberProfileAuditPersistsOnlyApprovedFieldsAndSkipsNoOpIntegration(t *
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	fixture := createMemberAuditFixture(t, db, "before")
-	service := memberAuditService(t, db, apitelemetry.NewDurableWriter(db))
+	service := memberAuditService(t, Deps{DB: db, Audit: apitelemetry.NewDurableWriter(db)})
 	ctx := memberAuditContext(t, fixture)
 	nickname, bio, website := "after", "approved biography", "https://profile.example.test"
 
-	_, err := service.updateProfile(ctx, fixture.MemberID, &nickname, &bio, &website, map[string]string{"site": website})
+	_, err := service.updateOwnProfile(ctx, auth.GetUser(ctx), profileEdit{Nickname: &nickname, Bio: &bio, Website: &website, SocialLinks: map[string]string{"site": website}})
 	require.NoError(t, err)
 	attributes := memberAuditAttributes(t, db, fixture.MemberID, 0)
 	require.Equal(t, []any{"bio", "nickname", "social_links", "website"}, attributes["changed_fields"])
@@ -119,13 +126,13 @@ func TestMemberProfileAuditPersistsOnlyApprovedFieldsAndSkipsNoOpIntegration(t *
 	require.NotContains(t, attributes, "social_links")
 	require.Equal(t, int64(1), memberAuditCount(t, db, fixture.MemberID))
 
-	_, err = service.updateProfile(ctx, fixture.MemberID, &nickname, &bio, &website, map[string]string{"site": website})
+	_, err = service.updateOwnProfile(ctx, auth.GetUser(ctx), profileEdit{Nickname: &nickname, Bio: &bio, Website: &website, SocialLinks: map[string]string{"site": website}})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), memberAuditCount(t, db, fixture.MemberID))
 
 	invalid := " "
-	_, err = service.updateProfile(ctx, fixture.MemberID, &invalid, nil, nil, nil)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	_, err = service.updateOwnProfile(ctx, auth.GetUser(ctx), profileEdit{Nickname: &invalid})
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 	require.Equal(t, int64(1), memberAuditCount(t, db, fixture.MemberID))
 }
 
@@ -133,11 +140,12 @@ func TestMemberProfileAuditFailureRollsBackIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	fixture := createMemberAuditFixture(t, db, "before")
-	service := memberAuditService(t, db, failingDomainAuditAppender{})
+	service := memberAuditService(t, Deps{DB: db, Audit: &audittest.Recorder{Err: errAuditUnavailable}})
 	nickname := "must-not-commit"
 
-	_, err := service.updateProfile(memberAuditContext(t, fixture), fixture.MemberID, &nickname, nil, nil, nil)
-	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
+	ctx := memberAuditContext(t, fixture)
+	_, err := service.updateOwnProfile(ctx, auth.GetUser(ctx), profileEdit{Nickname: &nickname})
+	require.Equal(t, connect.CodeInternal, errs.Wrap(err).Code())
 	var member model.Member
 	require.NoError(t, db.Where("id = ?", fixture.MemberID).Take(&member).Error)
 	require.Equal(t, "before", member.Nickname)
@@ -148,10 +156,12 @@ func TestMemberPreferencesAndTagsAuditPersistExactAttributesIntegration(t *testi
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	fixture := createMemberAuditFixture(t, db, "member")
-	service := memberAuditService(t, db, apitelemetry.NewDurableWriter(db))
+	service := memberAuditService(t, Deps{DB: db, Audit: apitelemetry.NewDurableWriter(db)})
+	handler := NewConnectHandler(service)
 	ctx := memberAuditContext(t, fixture)
+	_, adminCtx := memberAdminAuditContext(t, db)
 	locale := "ko"
-	_, err := service.UpdateMyPreferences(ctx, connect.NewRequest(&managev1.UpdateMyPreferencesRequest{
+	_, err := handler.UpdateMyPreferences(ctx, connect.NewRequest(&managev1.UpdateMyPreferencesRequest{
 		PreferredLocale: &locale,
 		CookieConsent:   &managev1.CookieConsentUpdate{Analytics: true, Version: 2},
 	}))
@@ -166,7 +176,7 @@ func TestMemberPreferencesAndTagsAuditPersistExactAttributesIntegration(t *testi
 	require.Equal(t, fixture.MemberID, consent.MemberID)
 	require.True(t, consent.Analytics)
 
-	_, err = service.UpdateMyPreferences(ctx, connect.NewRequest(&managev1.UpdateMyPreferencesRequest{PreferredLocale: &locale}))
+	_, err = handler.UpdateMyPreferences(ctx, connect.NewRequest(&managev1.UpdateMyPreferencesRequest{PreferredLocale: &locale}))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), memberAuditCount(t, db, fixture.MemberID))
 
@@ -174,7 +184,7 @@ func TestMemberPreferencesAndTagsAuditPersistExactAttributesIntegration(t *testi
 	secondTag := model.UserTag{ID: uuid.NewString(), Name: "second"}
 	require.NoError(t, db.Create(&firstTag).Error)
 	require.NoError(t, db.Create(&secondTag).Error)
-	_, err = service.replaceMemberTags(ctx, fixture.MemberID, []string{secondTag.ID, firstTag.ID})
+	_, err = service.replaceMemberTags(adminCtx, fixture.MemberID, []string{secondTag.ID, firstTag.ID})
 	require.NoError(t, err)
 	tagAttributes := memberAuditAttributes(t, db, fixture.MemberID, 1)
 	require.Equal(t, []any{"tags"}, tagAttributes["changed_fields"])
@@ -182,11 +192,11 @@ func TestMemberPreferencesAndTagsAuditPersistExactAttributesIntegration(t *testi
 	sort.Strings(expectedTagIDs)
 	require.Equal(t, []any{expectedTagIDs[0], expectedTagIDs[1]}, tagAttributes["tag_ids"])
 
-	_, err = service.replaceMemberTags(ctx, fixture.MemberID, []string{})
+	_, err = service.replaceMemberTags(adminCtx, fixture.MemberID, []string{})
 	require.NoError(t, err)
 	emptyTagAttributes := memberAuditAttributes(t, db, fixture.MemberID, 2)
 	require.Equal(t, []any{}, emptyTagAttributes["tag_ids"])
-	_, err = service.replaceMemberTags(ctx, fixture.MemberID, []string{})
+	_, err = service.replaceMemberTags(adminCtx, fixture.MemberID, []string{})
 	require.NoError(t, err)
 	require.Equal(t, int64(3), memberAuditCount(t, db, fixture.MemberID))
 }
@@ -195,7 +205,7 @@ func TestMemberPreferencesAuditFailureRollsBackIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	fixture := createMemberAuditFixture(t, db, "member")
-	service := memberAuditService(t, db, failingDomainAuditAppender{})
+	service := NewConnectHandler(memberAuditService(t, Deps{DB: db, Audit: &audittest.Recorder{Err: errAuditUnavailable}}))
 	locale := "ko"
 
 	_, err := service.UpdateMyPreferences(memberAuditContext(t, fixture), connect.NewRequest(&managev1.UpdateMyPreferencesRequest{
@@ -218,7 +228,7 @@ func TestMemberTagAuditsCommitExactLifecycleAndSkipRejectedMutationsIntegration(
 	admin := createMemberAuditFixture(t, db, "member-tag-admin")
 	firstMember := createMemberAuditFixture(t, db, "member-tag-first")
 	secondMember := createMemberAuditFixture(t, db, "member-tag-second")
-	service := memberAuditService(t, db, apitelemetry.NewDurableWriter(db))
+	service := NewConnectHandler(memberAuditService(t, Deps{DB: db, Audit: apitelemetry.NewDurableWriter(db)}))
 	syncIntegrationGlobalRole(t, testutil.SetupOryStack(t).SpiceDBClient, admin.IdentityID, policyv1.Role.Admin())
 	ctx := memberAuditContext(t, admin)
 
@@ -261,7 +271,7 @@ func TestMemberTagDeleteRejectsAudienceReferencesWithoutAuditIntegration(t *test
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	admin := createMemberAuditFixture(t, db, "member-tag-audience-admin")
-	service := memberAuditService(t, db, apitelemetry.NewDurableWriter(db))
+	service := NewConnectHandler(memberAuditService(t, Deps{DB: db, Audit: apitelemetry.NewDurableWriter(db)}))
 	syncIntegrationGlobalRole(t, testutil.SetupOryStack(t).SpiceDBClient, admin.IdentityID, policyv1.Role.Admin())
 	ctx := memberAuditContext(t, admin)
 
@@ -292,7 +302,7 @@ func TestMemberTagAuditAppendFailureRollsBackCreateAndDeleteIntegration(t *testi
 	db := testutil.NewIntegrationDB(t)
 	admin := createMemberAuditFixture(t, db, "member-tag-failing-admin")
 	assignedMember := createMemberAuditFixture(t, db, "member-tag-failing-member")
-	service := memberAuditService(t, db, failingDomainAuditAppender{})
+	service := NewConnectHandler(memberAuditService(t, Deps{DB: db, Audit: &audittest.Recorder{Err: errAuditUnavailable}}))
 	syncIntegrationGlobalRole(t, testutil.SetupOryStack(t).SpiceDBClient, admin.IdentityID, policyv1.Role.Admin())
 	ctx := memberAuditContext(t, admin)
 
@@ -339,8 +349,6 @@ func assertMemberTagAudit(t *testing.T, db *gorm.DB, action sharedtelemetry.Audi
 
 type memberAuditAvatarPromoter struct{ assetID string }
 
-func (memberAuditAvatarPromoter) DeleteFileByID(context.Context, string) error { return nil }
-
 func (p memberAuditAvatarPromoter) PromoteUserAvatarAsset(context.Context, string) (*commonv1.AssetRef, error) {
 	return &commonv1.AssetRef{AssetId: p.assetID}, nil
 }
@@ -360,34 +368,34 @@ func TestMemberAvatarAuditRollbackAndNoOpIntegration(t *testing.T) {
 		FileSize: &size, SHA256: make([]byte, 32), Disposition: "inline", Status: model.PublicAssetStatusReady, ReadyAt: &now,
 	}).Error)
 	require.NoError(t, db.Create(&model.FileIngestBinding{FileID: fileID, UploadType: managev1.UploadType_UPLOAD_TYPE_USER_AVATAR.String(), EntityID: fixture.MemberID}).Error)
-	service := memberAuditService(t, db, apitelemetry.NewDurableWriter(db))
-	service.fileService = memberAuditAvatarPromoter{assetID: assetID}
+	avatarFiles := memberAuditAvatarPromoter{assetID: assetID}
+	service := memberAuditService(t, Deps{DB: db, Audit: apitelemetry.NewDurableWriter(db), AvatarFiles: avatarFiles})
 	ctx := memberAuditContext(t, fixture)
+	self := mutation.PrincipalFence(auth.GetUser(ctx))
 
-	_, err := service.setAvatar(ctx, fixture.MemberID, fileID, false)
+	_, err := service.setAvatar(ctx, fixture.MemberID, fileID, self, false)
 	require.NoError(t, err)
 	attributes := memberAuditAttributes(t, db, fixture.MemberID, 0)
 	require.Equal(t, []any{"avatar"}, attributes["changed_fields"])
 	require.Equal(t, "added", attributes["collection_operation"])
 	require.Equal(t, assetID, attributes["asset_id"])
-	_, err = service.setAvatar(ctx, fixture.MemberID, fileID, false)
+	_, err = service.setAvatar(ctx, fixture.MemberID, fileID, self, false)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), memberAuditCount(t, db, fixture.MemberID))
 
-	failing := memberAuditService(t, db, failingDomainAuditAppender{})
-	failing.fileService = memberAuditAvatarPromoter{assetID: assetID}
-	_, err = failing.deleteAvatar(ctx, fixture.MemberID, false)
-	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
+	failing := memberAuditService(t, Deps{DB: db, Audit: &audittest.Recorder{Err: errAuditUnavailable}, AvatarFiles: avatarFiles})
+	_, err = failing.deleteAvatar(ctx, fixture.MemberID, self, false)
+	require.Equal(t, connect.CodeInternal, errs.Wrap(err).Code())
 	var binding model.PublicAssetBinding
 	require.NoError(t, db.Where("owner_type = 'member' AND owner_id = ? AND binding_key = 'avatar'", fixture.MemberID).Take(&binding).Error)
 	require.Equal(t, assetID, binding.AssetID)
 
-	_, err = service.deleteAvatar(ctx, fixture.MemberID, false)
+	_, err = service.deleteAvatar(ctx, fixture.MemberID, self, false)
 	require.NoError(t, err)
 	removedAttributes := memberAuditAttributes(t, db, fixture.MemberID, 1)
 	require.Equal(t, "removed", removedAttributes["collection_operation"])
 	require.Equal(t, assetID, removedAttributes["asset_id"])
-	_, err = service.deleteAvatar(ctx, fixture.MemberID, false)
+	_, err = service.deleteAvatar(ctx, fixture.MemberID, self, false)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), memberAuditCount(t, db, fixture.MemberID))
 }

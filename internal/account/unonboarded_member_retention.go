@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
 )
@@ -87,9 +87,9 @@ func enqueueExpiredUnonboardedMember(
 		if err != nil || !eligible {
 			return err
 		}
-		executor, ok := tx.Statement.ConnPool.(eventpkg.DBTX)
-		if !ok {
-			return fmt.Errorf("database transaction does not expose a PGMQ executor")
+		executor, err := contentsignal.TransactionExecutor(tx)
+		if err != nil {
+			return err
 		}
 		command := &managev1.UserDeleteIdentityCommand{
 			Mode:       managev1.UserDeleteIdentityMode_UNONBOARDED_HARD_DELETE,
@@ -141,9 +141,9 @@ func EnqueueUnonboardedMemberHardDelete(
 		if err != nil || !eligible {
 			return err
 		}
-		executor, ok := tx.Statement.ConnPool.(eventpkg.DBTX)
-		if !ok {
-			return fmt.Errorf("database transaction does not expose a PGMQ executor")
+		executor, err := contentsignal.TransactionExecutor(tx)
+		if err != nil {
+			return err
 		}
 		command := &managev1.UserDeleteIdentityCommand{
 			Mode:       managev1.UserDeleteIdentityMode_UNONBOARDED_HARD_DELETE,

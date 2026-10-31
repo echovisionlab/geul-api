@@ -6,11 +6,12 @@ import (
 
 	"connectrpc.com/connect"
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 )
 
-// expectedToolError turns safe, actionable application outcomes into MCP tool
-// errors. Unknown and internal failures remain generic JSON-RPC internal errors
+// expectedToolError turns safe, actionable application outcomes (Connect and
+// use-case errors) into MCP tool errors. Unknown and internal failures remain generic JSON-RPC internal errors
 // so implementation details and credentials cannot leak to clients.
 func expectedToolError(err error) (result mcpserver.ToolResult, resultErr error) {
 	defer func() {
@@ -25,8 +26,8 @@ func expectedToolError(err error) (result mcpserver.ToolResult, resultErr error)
 	if errors.As(err, &inputError) && inputError != nil {
 		return executionError(inputError)
 	}
-	var connectErr *connect.Error
-	if !errors.As(err, &connectErr) || connectErr == nil {
+	connectErr, classified := errs.Classified(err)
+	if !classified {
 		if errors.Is(err, context.Canceled) {
 			return executionError(errors.New("The request was canceled"))
 		}

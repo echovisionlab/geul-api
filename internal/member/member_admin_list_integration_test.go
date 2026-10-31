@@ -15,6 +15,7 @@ import (
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -57,24 +58,28 @@ func TestListMembersAdminFiltersSortsAndKeepsConstantQueryCount(t *testing.T) {
 		Interface: db.Config.Logger,
 		count:     &queryCount,
 	}})
-	service := &MemberService{
-		db:                     db,
-		spicedb:                spiceStack.SpiceDBClient,
-		accountSummaryReader:   integrationAccountSummaryReader{},
-		accountEmailProjection: integrationAccountEmailProjection{},
-		identity: &fakeIdentityManager{identity: &auth.Identity{
+	service := NewConnectHandler(newTestService(t, Deps{
+		DB:            db,
+		SpiceDB:       spiceStack.SpiceDBClient,
+		Accounts:      integrationAccountSummaryReader{},
+		AccountEmails: integrationAccountEmailProjection{},
+		Identity: &fakeIdentityManager{identity: &auth.Identity{
 			ID:         bob.identityID,
 			ExternalID: bob.memberID,
 			Traits:     map[string]interface{}{"email": bobEmail},
 		}},
-	}
+	}))
 	adminIdentityID := uuid.NewString()
 	syncIntegrationGlobalRole(t, spiceStack.SpiceDBClient, adminIdentityID, policyv1.Role.Admin())
-	adminCtx := auth.WithUser(t.Context(), &auth.UserInfo{
+	requestContext, err := sharedtelemetry.NewPublicRequestContext("198.51.100.24")
+	require.NoError(t, err)
+	// The service records each administrator read as personal-data access.
+	adminCtx := auth.WithUser(sharedtelemetry.WithRequestContext(t.Context(), requestContext), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(adminIdentityID),
 		MemberID:      auth.MemberID(uuid.NewString()),
 		SessionID:     auth.SessionID(uuid.NewString()),
 		Authenticated: true,
+		Onboarded:     true,
 	})
 
 	response, err := service.ListMembersAdmin(adminCtx, connect.NewRequest(&managev1.ListMembersAdminRequest{
@@ -157,7 +162,7 @@ func TestSearchMembersCanRestrictCandidatesToEffectiveAuthorsIntegration(t *test
 		SessionID:     auth.SessionID(uuid.NewString()),
 		Authenticated: true,
 	})
-	service := &MemberService{db: db, cdnDomain: "https://cdn.example.test", spicedb: spiceStack.SpiceDBClient}
+	service := NewConnectHandler(newTestService(t, Deps{DB: db, CDNDomain: "https://cdn.example.test", SpiceDB: spiceStack.SpiceDBClient}))
 	response, err := service.SearchMembers(viewerCtx, connect.NewRequest(&managev1.SearchMembersRequest{
 		EffectiveAuthorsOnly: true,
 		Limit:                10,
@@ -186,7 +191,7 @@ func TestListMemberTagsAdminAppliesFiltersAndSorts(t *testing.T) {
 		{MemberID: first.memberID, TagID: tags[1].ID},
 	}).Error)
 
-	service := &MemberService{db: db, spicedb: spiceStack.SpiceDBClient}
+	service := NewConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceStack.SpiceDBClient}))
 	adminIdentityID := uuid.NewString()
 	syncIntegrationGlobalRole(t, spiceStack.SpiceDBClient, adminIdentityID, policyv1.Role.Admin())
 	adminCtx := auth.WithUser(t.Context(), &auth.UserInfo{

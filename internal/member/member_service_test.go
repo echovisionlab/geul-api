@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -23,11 +24,11 @@ func TestSelfExtendedProfileMutationRequiresAuthorRole(t *testing.T) {
 
 	requireDenied := func(t *testing.T, err error) {
 		t.Helper()
-		if connect.CodeOf(err) != connect.CodePermissionDenied {
-			t.Fatalf("code = %s, error = %v; want permission_denied", connect.CodeOf(err), err)
+		if code := errs.Wrap(err).Code(); code != connect.CodePermissionDenied {
+			t.Fatalf("code = %s, error = %v; want permission_denied", code, err)
 		}
 	}
-	service := &MemberService{spicedb: stack.SpiceDBClient}
+	service := newTestService(t, Deps{DB: stack.DB, SpiceDB: stack.SpiceDBClient})
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
 	author := stack.CreateUser(t, policyv1.Role.Author().ID())
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
@@ -50,12 +51,12 @@ func TestGetCurrentSessionProjectsAuthenticatedIdentityIntegration(t *testing.T)
 	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.Author().ID())
-	service := &MemberService{
-		db:                   stack.DB,
-		cdnDomain:            "https://cdn.example.test",
-		spicedb:              stack.SpiceDBClient,
-		accountSummaryReader: integrationAccountSummaryReader{},
-	}
+	service := NewConnectHandler(newTestService(t, Deps{
+		DB:        stack.DB,
+		CDNDomain: "https://cdn.example.test",
+		SpiceDB:   stack.SpiceDBClient,
+		Accounts:  integrationAccountSummaryReader{},
+	}))
 
 	response, err := service.GetCurrentSession(
 		auth.WithUser(t.Context(), user.AuthUserInfo()),
@@ -102,19 +103,19 @@ func TestGetCurrentSessionUsesLeanProjectionWithoutProfileOrSectionAuthorization
 	stack := testutil.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.Author().ID())
 	email := "author@example.test"
-	service := &MemberService{
-		db:        stack.DB,
-		cdnDomain: "https://cdn.example.test",
-		// Intentionally nil: the lean session boundary must not perform author
+	service := NewConnectHandler(newTestService(t, Deps{
+		DB:        stack.DB,
+		CDNDomain: "https://cdn.example.test",
+		// Unconnected: the lean session boundary must not perform author
 		// checks or My-section resource lookups itself.
-		spicedb: nil,
-		accountSummaryReader: currentSessionAccountSummaryReader{summary: &managev1.AccountSummary{
+		SpiceDB: &auth.SpiceDBClient{},
+		Accounts: currentSessionAccountSummaryReader{summary: &managev1.AccountSummary{
 			MemberId:       user.MemberID,
 			CanonicalEmail: &managev1.CanonicalEmailSummary{Email: email},
 			Role:           policyv1.AuthorizationRole_AUTHOR,
 			Status:         managev1.AccountStatus_ACCOUNT_STATUS_ACTIVE,
 		}},
-	}
+	}))
 
 	response, err := service.GetCurrentSession(
 		auth.WithUser(t.Context(), user.AuthUserInfo()),

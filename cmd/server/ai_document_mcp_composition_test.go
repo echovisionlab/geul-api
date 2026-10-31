@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	"connectrpc.com/connect"
 	aidocumentadapter "github.com/echovisionlab/geul-api/internal/adapters/aidocument"
@@ -20,6 +21,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/member"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -472,9 +474,6 @@ type compositionClientReferences struct {
 type compositionMapPlaceReferences struct {
 	managev1connect.UnimplementedMapPlaceServiceHandler
 }
-type compositionMemberReferences struct {
-	managev1connect.UnimplementedMemberServiceHandler
-}
 type compositionArtistReferences struct {
 	managev1connect.UnimplementedArtistServiceHandler
 }
@@ -534,7 +533,7 @@ func compositionContentApplications() contentMCPApplications {
 		tags:         &compositionTagReferences{},
 		clients:      &compositionClientReferences{},
 		mapPlaces:    &compositionMapPlaceReferences{},
-		members:      &compositionMemberReferences{},
+		members:      &member.Service{},
 		artists:      &compositionArtistReferences{},
 		files:        &compositionFileReferences{},
 		eventTypes:   &compositionProgramEventTypeReferences{},

@@ -362,7 +362,11 @@ func InternalMsg(msg string) *connect.Error {
 // client outcomes are Debug, server faults Error, and the remaining client
 // rejections Warn.
 func OperationLogLevel(err error) slog.Level {
-	switch connect.CodeOf(err) {
+	code := connect.CodeOf(err)
+	if classified, ok := Classified(err); ok {
+		code = classified.Code()
+	}
+	switch code {
 	case connect.CodeNotFound, connect.CodeInvalidArgument, connect.CodeUnauthenticated, connect.CodeCanceled:
 		return slog.LevelDebug
 	case connect.CodeUnknown, connect.CodeInternal, connect.CodeUnavailable, connect.CodeDataLoss, connect.CodeDeadlineExceeded, connect.CodeUnimplemented:
@@ -374,7 +378,7 @@ func OperationLogLevel(err error) slog.Level {
 
 // Wrap returns a Connect error with the appropriate code based on the error type.
 // If err contains a *connect.Error, its code, message, details and metadata are
-// preserved. Request cancellation and deadlines retain their transport
+// preserved; a use-case error (domainerr) is mapped by its kind. Request cancellation and deadlines retain their transport
 // classification. Otherwise, it returns a CodeInternal error.
 //
 // Wrap does not log: it has no request context. When the classification
@@ -382,14 +386,8 @@ func OperationLogLevel(err error) slog.Level {
 // the RPC boundary (BoundaryInterceptor), which logs it with the request
 // context. Clients only ever see the classified message.
 func Wrap(err error) *connect.Error {
-	var connectErr *connect.Error
-	if stderrors.As(err, &connectErr) && connectErr != nil {
-		if err == connectErr { //nolint:errorlint // identity: an unwrapped Connect error needs no added context
-			return connectErr
-		}
-		// The outer operation context in err survives classification
-		// without reaching the client.
-		return WithCause(connectErr, err)
+	if classified, ok := Classified(err); ok {
+		return classified
 	}
 	if stderrors.Is(err, context.Canceled) {
 		return classifiedError(connect.CodeCanceled, context.Canceled.Error(), err)

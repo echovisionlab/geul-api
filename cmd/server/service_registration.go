@@ -292,18 +292,21 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(internalCollaborationAuthorizationPath, internalRPCTrust.collab(internalCollaborationAuthorizationHandler))
 	slog.Info("Registered internal service", "path", internalCollaborationAuthorizationPath)
 
-	memberService := member.NewAuditedMemberService(
-		db,
-		cfg.CDNURL,
-		spicedbClient,
-		kratosClient,
-		fileService,
-		cfg.SiteOrigin,
-		servicePublisher,
-		telemetryWriter,
-		member.WithAccountSummaryReader(memberadapter.AccountSummaryReader{}),
-		member.WithAccountEmailProjection(memberadapter.AccountEmailProjection{}),
-	)
+	memberService, err := member.NewService(member.Deps{
+		DB:            db,
+		SpiceDB:       spicedbClient,
+		Identity:      kratosClient,
+		AvatarFiles:   fileService,
+		WelcomeEmails: servicePublisher,
+		Accounts:      memberadapter.AccountSummaryReader{},
+		AccountEmails: memberadapter.AccountEmailProjection{},
+		Audit:         telemetryWriter,
+		CDNDomain:     cfg.CDNURL,
+		SiteOrigin:    cfg.SiteOrigin,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize member service: %w", err)
+	}
 	accountBaseService := account.NewAuditedAccountService(
 		db,
 		kratosClient,
@@ -447,7 +450,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	emailAuthoringReferences := emailauthoringadapter.NewCampaignDeliveryReferences()
 	programEventRuntime := programeventadapter.NewRuntime(cfg.CDNURL)
 	translationRegistry := translationadapter.NewDomainRegistry(emailAuthoringReferences, telemetryWriter)
-	memberPath, memberHandler := managev1connect.NewMemberServiceHandler(memberService, handlerOpts...)
+	memberPath, memberHandler := managev1connect.NewMemberServiceHandler(member.NewConnectHandler(memberService), handlerOpts...)
 	mux.Handle(memberPath, memberHandler)
 	slog.Info("Registered service", "path", memberPath)
 	accountPath, accountHandler := managev1connect.NewAccountServiceHandler(accountService, handlerOpts...)

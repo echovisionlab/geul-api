@@ -151,11 +151,7 @@ func (p *workPort) executeMutation(
 				AffectedHandles:         append([]string(nil), run.command.AffectedHandles...),
 			}}
 		}
-		operations := run.command.Operations
-		if len(operations) == 0 {
-			operations = request.Operations
-		}
-		if issue := workDomainIssue(err, operations); issue != nil {
+		if issue := workDomainIssue(err); issue != nil {
 			run.validation.Issues = append(run.validation.Issues, *issue)
 			if mode == workdomain.AIDocumentExecutionValidate {
 				return run.validation, core.ApplyResult{}, nil
@@ -359,21 +355,14 @@ func validateWorkIdentity(identity core.DocumentIdentity) error {
 	return nil
 }
 
-func workDomainIssue(err error, operations []core.Operation) *core.OperationIssue {
-	code := core.IssueInvalidOperation
-	index := -1
-	if errors.Is(err, contentblock.ErrFileReference) {
-		code = core.IssueInvalidFileReference
-		for candidate, operation := range operations {
-			if operation.Kind == core.OperationAttachFile || operation.Kind == core.OperationDetachFile {
-				index = candidate
-				break
-			}
-		}
-	} else if !errors.Is(err, contentblock.ErrInvalidMutation) {
+// workDomainIssue turns an invalid Block mutation into an operation issue. A
+// File reference rejection never reaches here: the Work domain answers it as
+// FailedPrecondition without contentblock.ErrFileReference in the chain.
+func workDomainIssue(err error) *core.OperationIssue {
+	if !errors.Is(err, contentblock.ErrInvalidMutation) {
 		return nil
 	}
-	return &core.OperationIssue{Operation: index, Code: code, Message: err.Error()}
+	return &core.OperationIssue{Operation: -1, Code: core.IssueInvalidOperation, Message: err.Error()}
 }
 
 func workOperationHandles(operation core.Operation) []string {

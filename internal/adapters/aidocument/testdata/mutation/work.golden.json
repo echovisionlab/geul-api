@@ -361,31 +361,17 @@
       ],
       "domain_error": "*fmt.wrapError: golden File rejection: invalid content block file reference",
       "validate": {
-        "validation": {
-          "valid": false,
-          "normalized": [
-            "fa"
-          ],
-          "issues": [
-            {
-              "operation": 0,
-              "code": "invalid_file_reference",
-              "message": "golden File rejection: invalid content block file reference"
-            }
-          ]
+        "error": {
+          "type": "*fmt.wrapError",
+          "message": "golden File rejection: invalid content block file reference",
+          "raw_domain_error": true
         }
       },
       "apply": {
         "error": {
-          "type": "*aidocument.ValidationError",
-          "message": "document operation validation failed with 1 issue(s)",
-          "issues": [
-            {
-              "operation": 0,
-              "code": "invalid_file_reference",
-              "message": "golden File rejection: invalid content block file reference"
-            }
-          ]
+          "type": "*fmt.wrapError",
+          "message": "golden File rejection: invalid content block file reference",
+          "raw_domain_error": true
         }
       }
     }

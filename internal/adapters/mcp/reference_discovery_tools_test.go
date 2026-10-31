@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"testing"
 
+	memberdomain "github.com/echovisionlab/geul-api/internal/member"
+
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -167,18 +169,17 @@ func (r *recordingMapPlaceReferences) SearchMapPlaces(_ context.Context, request
 }
 
 type recordingMemberReferences struct {
-	managev1connect.UnimplementedMemberServiceHandler
-	request *connect.Request[managev1.SearchMembersRequest]
-	count   int
+	query memberdomain.SearchMembersQuery
+	count int
 }
 
-func (r *recordingMemberReferences) SearchMembers(_ context.Context, request *connect.Request[managev1.SearchMembersRequest]) (*connect.Response[managev1.SearchMembersResponse], error) {
-	r.request = request
+func (r *recordingMemberReferences) SearchMembers(_ context.Context, query memberdomain.SearchMembersQuery) ([]*commonv1.MemberSummary, error) {
+	r.query = query
 	items := make([]*commonv1.MemberSummary, r.count)
 	for index := range items {
 		items[index] = &commonv1.MemberSummary{Id: managementWorkID, Nickname: "Member"}
 	}
-	return connect.NewResponse(&managev1.SearchMembersResponse{Members: items}), nil
+	return items, nil
 }
 
 type recordingArtistReferences struct {
@@ -232,7 +233,7 @@ func TestReferenceQuickSearchProbesTruncationWithinServiceCaps(t *testing.T) {
 				case "map_place":
 					requestLimit = places.request.Msg.Limit
 				case "member":
-					requestLimit = members.request.Msg.Limit
+					requestLimit = members.query.Limit
 				}
 				if requestLimit != int32(test.wantRequest) {
 					t.Fatalf("service limit=%d want=%d", requestLimit, test.wantRequest)

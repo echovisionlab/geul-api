@@ -4,11 +4,14 @@ package audience_test
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"testing"
 	"time"
+
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
 	audiencedomain "github.com/echovisionlab/geul-api/internal/audience"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -172,9 +175,11 @@ func (audienceIdentityManager) SetIdentityState(context.Context, string, string)
 func (audienceIdentityManager) DeleteIdentitySessions(context.Context, string) error   { return nil }
 func (audienceIdentityManager) DeleteIdentity(context.Context, string) error           { return nil }
 
-type audienceNoopFileDeleter struct{}
+type audienceAvatarFiles struct{}
 
-func (audienceNoopFileDeleter) DeleteFileByID(context.Context, string) error { return nil }
+func (audienceAvatarFiles) PromoteUserAvatarAsset(context.Context, string) (*commonv1.AssetRef, error) {
+	return nil, errors.New("audience tests do not promote avatars")
+}
 
 type noopMemberEmailPublisher struct{}
 

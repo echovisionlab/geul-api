@@ -9,7 +9,6 @@ import (
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -313,9 +312,9 @@ func buildProtoFormMetadataFromResolvedDocument(
 // toProtoStatus converts model form status to proto status
 func (s *FormService) toProtoStatus(status model.FormStatus) openv1.FormStatus {
 	switch status {
-	case model.FormStatus(managev1.FormStatus_FORM_STATUS_DRAFT.String()):
+	case model.FormStatusDraft:
 		return openv1.FormStatus_FORM_STATUS_DRAFT
-	case model.FormStatus(managev1.FormStatus_FORM_STATUS_PUBLISHED.String()):
+	case model.FormStatusPublished:
 		return openv1.FormStatus_FORM_STATUS_PUBLISHED
 	default:
 		return openv1.FormStatus_FORM_STATUS_UNSPECIFIED

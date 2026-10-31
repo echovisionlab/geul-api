@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -120,7 +121,7 @@ func allocateMemberUUID(tx *gorm.DB, next func() string) (string, error) {
 		if err := tx.Raw(`
 			SELECT EXISTS (SELECT 1 FROM member WHERE id = ?::uuid)
 			    OR EXISTS (SELECT 1 FROM member WHERE nickname = ?)
-			    OR EXISTS (SELECT 1 FROM kratos.identities WHERE id = ?::uuid)
+			    OR `+identityread.ExistsSQL+`
 		`, candidate, candidate, candidate).Scan(&occupied).Error; err != nil {
 			return "", err
 		}

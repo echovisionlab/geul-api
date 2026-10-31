@@ -9,7 +9,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 )
@@ -73,10 +72,7 @@ var FormFilterConfig = &queryutil.FilterConfig{
 		},
 		"status": {
 			Column: "status", Type: queryutil.TypeEnum, AllowedOps: queryutil.EnumOps,
-			EnumValues: []string{
-				managev1.FormStatus_FORM_STATUS_DRAFT.String(),
-				managev1.FormStatus_FORM_STATUS_PUBLISHED.String(),
-			},
+			EnumValues: []string{string(model.FormStatusDraft), string(model.FormStatusPublished)},
 		},
 	},
 }

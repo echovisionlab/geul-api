@@ -3,7 +3,7 @@ package ai
 import (
 	"context"
 
-	"github.com/echovisionlab/geul-api/internal/mq"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
@@ -24,7 +24,7 @@ func publishDurableProtoInTransaction(
 	messageID string,
 	message proto.Message,
 ) error {
-	executor, err := mq.GormTransactionExecutor(tx)
+	executor, err := contentsignal.TransactionExecutor(tx)
 	if err != nil {
 		return err
 	}

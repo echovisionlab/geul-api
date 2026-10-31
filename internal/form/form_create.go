@@ -102,7 +102,7 @@ func (s *FormService) newFormFromRequest(
 	now time.Time,
 ) (*model.Form, error) {
 	form := &model.Form{
-		Slug: slug, Status: model.FormStatus(managev1.FormStatus_FORM_STATUS_DRAFT.String()),
+		Slug: slug, Status: model.FormStatusDraft,
 		CreatedAt: now, RequireAuth: request.RequireAuth,
 		AllowDuplicateSubmission: request.AllowDuplicateSubmission,
 		MaxSubmissions:           request.MaxSubmissions,
