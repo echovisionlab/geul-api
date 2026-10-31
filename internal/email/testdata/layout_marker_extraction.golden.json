@@ -1,0 +1,226 @@
+{
+  "canonical_attribute_unit": {
+    "units": [
+      {
+        "Handle": "unit:22222222-2222-4222-8222-222222222222:attr:alt",
+        "MarkerID": "22222222-2222-4222-8222-222222222222",
+        "Kind": "attribute",
+        "Element": "img",
+        "Attribute": "alt",
+        "Order": 0,
+        "SourceValue": "Logo",
+        "SourceFormat": "plain_text",
+        "Context": "img[alt]"
+      },
+      {
+        "Handle": "unit:22222222-2222-4222-8222-222222222222:attr:title",
+        "MarkerID": "22222222-2222-4222-8222-222222222222",
+        "Kind": "attribute",
+        "Element": "img",
+        "Attribute": "title",
+        "Order": 1,
+        "SourceValue": "Brand",
+        "SourceFormat": "plain_text",
+        "Context": "img[title]"
+      }
+    ],
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
+  "canonical_excluded_elements": {
+    "units": [
+      {
+        "Handle": "unit:11111111-1111-4111-8111-111111111111:text",
+        "MarkerID": "11111111-1111-4111-8111-111111111111",
+        "Kind": "text",
+        "Element": "",
+        "Attribute": "",
+        "Order": 0,
+        "SourceValue": "Body",
+        "SourceFormat": "html_text",
+        "Context": "p"
+      }
+    ],
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
+  "canonical_explicit_empty_text": {
+    "units": [
+      {
+        "Handle": "unit:11111111-1111-4111-8111-111111111111:text",
+        "MarkerID": "11111111-1111-4111-8111-111111111111",
+        "Kind": "text",
+        "Element": "",
+        "Attribute": "",
+        "Order": 0,
+        "SourceValue": "",
+        "SourceFormat": "html_text",
+        "Context": "p"
+      }
+    ],
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
+  "canonical_line_breaks": {
+    "units": [
+      {
+        "Handle": "unit:11111111-1111-4111-8111-111111111111:text",
+        "MarkerID": "11111111-1111-4111-8111-111111111111",
+        "Kind": "text",
+        "Element": "",
+        "Attribute": "",
+        "Order": 0,
+        "SourceValue": "First\nSecond\nThird",
+        "SourceFormat": "html_text",
+        "Context": "p"
+      }
+    ],
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
+  "canonical_mixed_units": {
+    "units": [
+      {
+        "Handle": "unit:11111111-1111-4111-8111-111111111111:text",
+        "MarkerID": "11111111-1111-4111-8111-111111111111",
+        "Kind": "text",
+        "Element": "",
+        "Attribute": "",
+        "Order": 0,
+        "SourceValue": "Footer \u0026 more",
+        "SourceFormat": "html_text",
+        "Context": "footer"
+      },
+      {
+        "Handle": "unit:22222222-2222-4222-8222-222222222222:attr:aria-label",
+        "MarkerID": "22222222-2222-4222-8222-222222222222",
+        "Kind": "attribute",
+        "Element": "a",
+        "Attribute": "aria-label",
+        "Order": 1,
+        "SourceValue": "Privacy",
+        "SourceFormat": "plain_text",
+        "Context": "a[aria-label]"
+      },
+      {
+        "Handle": "unit:33333333-3333-4333-8333-333333333333:text",
+        "MarkerID": "33333333-3333-4333-8333-333333333333",
+        "Kind": "text",
+        "Element": "",
+        "Attribute": "",
+        "Order": 2,
+        "SourceValue": "Privacy",
+        "SourceFormat": "html_text",
+        "Context": "a"
+      }
+    ],
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
+  "canonical_placeholder_only": {
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
+  "canonical_text_unit": {
+    "units": [
+      {
+        "Handle": "unit:11111111-1111-4111-8111-111111111111:text",
+        "MarkerID": "11111111-1111-4111-8111-111111111111",
+        "Kind": "text",
+        "Element": "",
+        "Attribute": "",
+        "Order": 0,
+        "SourceValue": "Hello",
+        "SourceFormat": "html_text",
+        "Context": "p"
+      }
+    ],
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
+  "detached_element_marker": {
+    "units_error": "Email Layout text is missing its durable unit marker",
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
+  "duplicate_unit_marker": {
+    "units_error": "duplicate Email Layout unit marker \"11111111-1111-4111-8111-111111111111\"",
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
+  "element_marker_without_attributes": {
+    "units_error": "Email Layout element unit marker has no translatable attributes",
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
+  "empty": {
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
+  "malformed_unit_marker": {
+    "units_error": "malformed Email Layout unit marker",
+    "locale_values_error": "malformed Email Layout unit marker"
+  },
+  "missing_element_marker": {
+    "units_error": "Email Layout element \u003cimg\u003e is missing its durable unit marker",
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
+  "missing_text_marker": {
+    "units_error": "Email Layout text is missing its durable unit marker",
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
+  "nil_unit_uuid": {
+    "units_error": "Email Layout unit marker must contain a canonical UUID",
+    "locale_values_error": "Email Layout unit marker must contain a canonical UUID"
+  },
+  "non_canonical_unit_uuid": {
+    "units_error": "Email Layout unit marker must contain a canonical UUID",
+    "locale_values_error": "Email Layout unit marker must contain a canonical UUID"
+  },
+  "overlay_attribute_value": {
+    "units_error": "Email Layout source contains a target value marker",
+    "locale_values": {
+      "unit:22222222-2222-4222-8222-222222222222:attr:alt": "Logo FR"
+    }
+  },
+  "overlay_detached_value": {
+    "units_error": "Email Layout source contains a target value marker",
+    "locale_values_error": "Email Layout target value marker is detached from its unit"
+  },
+  "overlay_duplicated": {
+    "units_error": "Email Layout source contains a target value marker",
+    "locale_values_error": "Email Layout target sparse-overlay marker is duplicated or misplaced"
+  },
+  "overlay_explicit_empty_text": {
+    "units_error": "Email Layout source contains a target value marker",
+    "locale_values": {
+      "unit:11111111-1111-4111-8111-111111111111:text": ""
+    }
+  },
+  "overlay_missing_attribute": {
+    "units_error": "Email Layout source contains a target value marker",
+    "locale_values_error": "Email Layout target attribute \"title\" is missing"
+  },
+  "overlay_missing_marker": {
+    "units_error": "Email Layout source contains a target value marker",
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
+  "overlay_omitted_value": {
+    "units_error": "Email Layout source contains a target value marker"
+  },
+  "overlay_text_value": {
+    "units_error": "Email Layout source contains a target value marker",
+    "locale_values": {
+      "unit:11111111-1111-4111-8111-111111111111:text": "Bonjour"
+    }
+  },
+  "overlay_unsupported_attribute": {
+    "units_error": "Email Layout source contains a target value marker",
+    "locale_values_error": "unsupported Email Layout target attribute \"href\""
+  },
+  "overlay_value_kind_mismatch": {
+    "units_error": "Email Layout source contains a target value marker",
+    "locale_values_error": "Email Layout target value marker is detached from its unit"
+  },
+  "source_with_value_marker": {
+    "units_error": "Email Layout source contains a target value marker",
+    "locale_values_error": "Email Layout target value marker is detached from its unit"
+  },
+  "unmarked_plain_text": {
+    "units_error": "Email Layout text is missing its durable unit marker",
+    "locale_values_error": "Email Layout target sparse-overlay marker is missing"
+  },
+  "unsupported_unit_kind": {
+    "units_error": "unsupported Email Layout unit marker kind \"image\"",
+    "locale_values_error": "unsupported Email Layout unit marker kind \"image\""
+  }
+}
