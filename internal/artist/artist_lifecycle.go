@@ -96,7 +96,7 @@ func (s *Service) validateNewArtistSlug(ctx context.Context, slug *string) error
 
 func newArtist(command CreateArtistCommand) model.Artist {
 	artist := model.Artist{
-		Status:   managev1.ArtistStatus_ARTIST_STATUS_DRAFT.String(),
+		Status:   model.ArtistStatusDraft,
 		RealName: command.RealName, CountryCode: command.CountryCode,
 		Website: command.Website, SocialLinks: command.SocialLinks,
 	}
@@ -288,12 +288,12 @@ type UnpublishArtistCommand struct {
 // PublishArtist publishes the Artist; a published Artist is left unchanged.
 func (s *Service) PublishArtist(ctx context.Context, command PublishArtistCommand) (*managev1.ArtistLifecycleMutationResponse, error) {
 	return s.transitionArtist(ctx, command.ID, artistTransition{
-		target: managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String(), previous: sharedtelemetry.AuditStateDraft, next: sharedtelemetry.AuditStatePublished,
+		target: model.ArtistStatusPublished, previous: sharedtelemetry.AuditStateDraft, next: sharedtelemetry.AuditStatePublished,
 		fields: func(now time.Time) structured.Fields {
-			return structured.Fields{"status": managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String(), "published_at": now, "updated_at": now}
+			return structured.Fields{"status": model.ArtistStatusPublished, "published_at": now, "updated_at": now}
 		},
 		apply: func(artist *model.Artist, now time.Time) {
-			artist.Status = managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String()
+			artist.Status = model.ArtistStatusPublished
 			artist.PublishedAt = &now
 			artist.UpdatedAt = &now
 		},
@@ -305,12 +305,12 @@ func (s *Service) PublishArtist(ctx context.Context, command PublishArtistComman
 // unchanged.
 func (s *Service) UnpublishArtist(ctx context.Context, command UnpublishArtistCommand) (*managev1.ArtistLifecycleMutationResponse, error) {
 	return s.transitionArtist(ctx, command.ID, artistTransition{
-		target: managev1.ArtistStatus_ARTIST_STATUS_DRAFT.String(), previous: sharedtelemetry.AuditStatePublished, next: sharedtelemetry.AuditStateDraft,
+		target: model.ArtistStatusDraft, previous: sharedtelemetry.AuditStatePublished, next: sharedtelemetry.AuditStateDraft,
 		fields: func(now time.Time) structured.Fields {
-			return structured.Fields{"status": managev1.ArtistStatus_ARTIST_STATUS_DRAFT.String(), "updated_at": now}
+			return structured.Fields{"status": model.ArtistStatusDraft, "updated_at": now}
 		},
 		apply: func(artist *model.Artist, now time.Time) {
-			artist.Status = managev1.ArtistStatus_ARTIST_STATUS_DRAFT.String()
+			artist.Status = model.ArtistStatusDraft
 			artist.UpdatedAt = &now
 		},
 		paths: []string{"state.status"},
@@ -321,7 +321,7 @@ func (s *Service) UnpublishArtist(ctx context.Context, command UnpublishArtistCo
 // columns, apply mirrors them on the read row for the response, and paths
 // are the changed fields its content.updated signal names.
 type artistTransition struct {
-	target         string
+	target         model.ArtistStatus
 	previous, next sharedtelemetry.AuditState
 	fields         func(time.Time) structured.Fields
 	apply          func(*model.Artist, time.Time)
@@ -372,7 +372,7 @@ func (s *Service) transitionArtist(ctx context.Context, id string, transition ar
 	}
 	return &managev1.ArtistLifecycleMutationResponse{
 		Id: artist.ID, Changed: changed,
-		Status:      managev1.ArtistStatus(managev1.ArtistStatus_value[artist.Status]),
+		Status:      artistStatusToProto(artist.Status),
 		PublishedAt: timestampProtoPtr(artist.PublishedAt), UpdatedAt: timestampProtoPtr(artist.UpdatedAt),
 	}, nil
 }

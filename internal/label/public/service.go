@@ -347,7 +347,7 @@ func (s *Service) getLabelArtistsPreview(ctx context.Context, labelID string) ([
 				LIMIT 1
 			) artist_image ON TRUE
 		`).
-		Where("artist_label.label_id = ? AND artist.status = ?", labelID, managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String()).
+		Where("artist_label.label_id = ? AND artist.status = ?", labelID, model.ArtistStatusPublished).
 		Order(artistSourceTitleSQL("artist") + " ASC").
 		Limit(12).
 		Scan(&artists).Error; err != nil {
@@ -518,7 +518,7 @@ func (s *Service) getLabelRelationCounts(ctx context.Context, labelID string) (i
 			 WHERE release_label.label_id = ?::uuid AND release.status = ?)::integer AS release_count,
 			(SELECT COUNT(*) FROM artist_label JOIN artist ON artist.id = artist_label.artist_id
 			 WHERE artist_label.label_id = ?::uuid AND artist.status = ?)::integer AS artist_count
-	`, labelID, managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String(), labelID, managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String()).Scan(&counts).Error; err != nil {
+	`, labelID, managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String(), labelID, model.ArtistStatusPublished).Scan(&counts).Error; err != nil {
 		return 0, 0, err
 	}
 	return counts.ReleaseCount, counts.ArtistCount, nil

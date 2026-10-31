@@ -99,7 +99,7 @@ type ArtistPage struct {
 // List returns published artists with filtering and sorting
 func (s *Service) List(ctx context.Context, query ListArtistsQuery) (ArtistPage, error) {
 	// Base query - only published artists
-	artists := s.db.WithContext(ctx).Model(&model.Artist{}).Where("status = ?", openv1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String())
+	artists := s.db.WithContext(ctx).Model(&model.Artist{}).Where("status = ?", model.ArtistStatusPublished)
 
 	// 1. 조인 필터 직접 처리
 	var remainingFilters []*commonv1.FilterSpec
@@ -266,7 +266,7 @@ func (s *Service) Get(ctx context.Context, query GetArtistQuery) (*openv1.Artist
 	}
 
 	// Check access for draft artists
-	if artist.Status != openv1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String() {
+	if artist.Status != model.ArtistStatusPublished {
 		if err := s.requireDraftArtistAccess(ctx, artist.ID, shareToken, sharePassword); err != nil {
 			return nil, err
 		}
@@ -549,7 +549,7 @@ func (s *Service) buildArtistResponse(
 	acceptLanguage string,
 	artist *model.Artist,
 ) (*openv1.Artist, error) {
-	wasPublic := artist.Status == openv1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String()
+	wasPublic := artist.Status == model.ArtistStatusPublished
 	var response *openv1.Artist
 	err := mutation.LockingRead(ctx, s.db, func(tx *gorm.DB) error {
 		projection := *s
@@ -580,7 +580,7 @@ func (s *Service) buildArtistResponseInTransaction(
 		}
 		return nil, err
 	}
-	if wasPublic && current.Status != openv1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String() {
+	if wasPublic && current.Status != model.ArtistStatusPublished {
 		return nil, errArtistNotFound
 	}
 	*artist = current
@@ -610,7 +610,7 @@ func (s *Service) buildArtistResponseInTransaction(
 		Name:        artist.Name,
 		Document:    content.Document,
 		SocialLinks: artist.SocialLinks,
-		Status:      openv1.ArtistStatus(openv1.ArtistStatus_value[artist.Status]),
+		Status:      publicArtistStatus(artist.Status),
 		CreatedAt:   timestamppb.New(artist.CreatedAt),
 		IsGroup:     s.isArtistGroup(ctx, artist.ID),
 		Revision:    content.Revision,
@@ -768,7 +768,7 @@ func (s *Service) getArtistLabels(ctx context.Context, artistID string) ([]*open
 		Table("artist_label").
 		Select("label.id, "+labelSourceTitleSQL("label")+" AS name, label.slug, label.logo_light_file_id AS image_file_id").
 		Joins("JOIN label ON label.id = artist_label.label_id").
-		Where("artist_label.artist_id = ? AND label.status = ?", artistID, managev1.LabelStatus_LABEL_STATUS_PUBLISHED.String()).
+		Where("artist_label.artist_id = ? AND label.status = ?", artistID, model.LabelStatusPublished).
 		Order(labelSourceTitleSQL("label") + " ASC").
 		Limit(12).
 		Scan(&labels).Error; err != nil {

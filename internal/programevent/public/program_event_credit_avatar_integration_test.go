@@ -35,7 +35,7 @@ func seedPublicCreditAvatarArtist(t *testing.T, db *gorm.DB, published bool) str
 		status = managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String()
 	}
 	slug := "credit-artist-" + id
-	require.NoError(t, db.Create(&model.Artist{ID: id, ContentDocumentID: &documentID, Slug: &slug, SourceLocale: "en", Status: status}).Error)
+	require.NoError(t, db.Create(&model.Artist{ID: id, ContentDocumentID: &documentID, Slug: &slug, SourceLocale: "en", Status: model.ArtistStatus(status)}).Error)
 	require.NoError(t, db.Exec("INSERT INTO artist_translation (entity_id, locale, title) VALUES (?::uuid, 'en', 'Credit artist')", id).Error)
 	return id
 }

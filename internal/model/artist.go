@@ -4,33 +4,35 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/structured"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+)
+
+// ArtistStatus is the stored lifecycle state of an Artist. The values are
+// the API enum names the table already holds.
+type ArtistStatus string
+
+const (
+	ArtistStatusDraft     ArtistStatus = "ARTIST_STATUS_DRAFT"
+	ArtistStatusPublished ArtistStatus = "ARTIST_STATUS_PUBLISHED"
 )
 
 // Artist represents the artist table
 type Artist struct {
-	ID                   string                      `gorm:"column:id;type:uuid;primaryKey;default:gen_random_uuid()"`
-	ContentDocumentID    *string                     `gorm:"column:content_document_id;type:uuid"`
-	SourceLocale         string                      `gorm:"column:source_locale;type:text;not null;default:en"`
-	ContentDocument      *contentv1.RichTextDocument `gorm:"-"`
-	ContentRevision      string                      `gorm:"-"`
-	ContentCanonicalHash string                      `gorm:"-"`
-	Name                 string                      `gorm:"-"`
-	Slug                 *string                     `gorm:"column:slug;type:varchar(255);uniqueIndex"`
-	RealName             *string                     `gorm:"column:real_name;type:varchar(255)"`
-	ParentArtistID       *string                     `gorm:"column:parent_artist_id;type:uuid"`
-	Bio                  *string                     `gorm:"-"`
-	BioHTML              *string                     `gorm:"-"`
-	BioJSON              []byte                      `gorm:"-"`
-	CountryCode          *string                     `gorm:"column:country_code;type:varchar(2)"`
-	Website              *string                     `gorm:"column:website;type:varchar(500)"`
-	SocialLinks          map[string]string           `gorm:"column:social_links;type:jsonb;serializer:json"`
-	Metadata             structured.Fields           `gorm:"column:metadata;type:jsonb;serializer:json"`
-	OgAssetID            *string                     `gorm:"-"`
-	Status               string                      `gorm:"column:status;type:varchar(50);not null;default:ARTIST_STATUS_DRAFT"`
-	PublishedAt          *time.Time                  `gorm:"column:published_at"`
-	CreatedAt            time.Time                   `gorm:"column:created_at;not null;default:now()"`
-	UpdatedAt            *time.Time                  `gorm:"column:updated_at"`
+	ID                string            `gorm:"column:id;type:uuid;primaryKey;default:gen_random_uuid()"`
+	ContentDocumentID *string           `gorm:"column:content_document_id;type:uuid"`
+	SourceLocale      string            `gorm:"column:source_locale;type:text;not null;default:en"`
+	Name              string            `gorm:"-"`
+	Slug              *string           `gorm:"column:slug;type:varchar(255);uniqueIndex"`
+	RealName          *string           `gorm:"column:real_name;type:varchar(255)"`
+	ParentArtistID    *string           `gorm:"column:parent_artist_id;type:uuid"`
+	CountryCode       *string           `gorm:"column:country_code;type:varchar(2)"`
+	Website           *string           `gorm:"column:website;type:varchar(500)"`
+	SocialLinks       map[string]string `gorm:"column:social_links;type:jsonb;serializer:json"`
+	Metadata          structured.Fields `gorm:"column:metadata;type:jsonb;serializer:json"`
+	OgAssetID         *string           `gorm:"-"`
+	Status            ArtistStatus      `gorm:"column:status;type:varchar(50);not null;default:ARTIST_STATUS_DRAFT"`
+	PublishedAt       *time.Time        `gorm:"column:published_at"`
+	CreatedAt         time.Time         `gorm:"column:created_at;not null;default:now()"`
+	UpdatedAt         *time.Time        `gorm:"column:updated_at"`
 }
 
 // TableName returns the table name for GORM

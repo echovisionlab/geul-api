@@ -198,7 +198,7 @@ func toProtoArtist(
 		SourceLocale: a.SourceLocale,
 		Name:         document.Name,
 		Document:     document.Document,
-		Status:       a.Status,
+		Status:       string(a.Status),
 		CreatedAt:    timestamppb.New(a.CreatedAt),
 		OgAsset:      ogAsset,
 		Revision:     document.Revision,

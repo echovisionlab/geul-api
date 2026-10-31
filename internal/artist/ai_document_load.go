@@ -6,8 +6,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -54,9 +54,9 @@ func (s *Service) LoadAIDocumentState(ctx context.Context, artistID, locale stri
 }
 
 type artistAIDocumentRoot struct {
-	ID         string     `gorm:"column:id"`
-	Status     string     `gorm:"column:status"`
-	DocumentID *uuid.UUID `gorm:"column:content_document_id"`
+	ID         string             `gorm:"column:id"`
+	Status     model.ArtistStatus `gorm:"column:status"`
+	DocumentID *uuid.UUID         `gorm:"column:content_document_id"`
 }
 
 func loadArtistAIDocumentRoot(
@@ -111,7 +111,7 @@ func (s *Service) loadAIDocumentStateAfterAuthorization(
 		targetRevision = &localeState.TargetRevision
 	}
 	return AIDocumentState{
-		ArtistID: root.ID, Status: root.Status, DocumentID: *root.DocumentID,
+		ArtistID: root.ID, Status: string(root.Status), DocumentID: *root.DocumentID,
 		Revision: localeState.Snapshot.Document.Revision.String(), TargetRevision: targetRevision,
 		SourceLocale: localeState.SourceLocale,
 		Locale:       locale, LocaleExists: localeState.TargetMetadata != nil, Document: document,
@@ -119,11 +119,11 @@ func (s *Service) loadAIDocumentStateAfterAuthorization(
 	}, nil
 }
 
-func artistAIDocumentLifecycle(status string) (published, valid bool) {
+func artistAIDocumentLifecycle(status model.ArtistStatus) (published, valid bool) {
 	switch status {
-	case managev1.ArtistStatus_ARTIST_STATUS_DRAFT.String():
+	case model.ArtistStatusDraft:
 		return false, true
-	case managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String():
+	case model.ArtistStatusPublished:
 		return true, true
 	default:
 		return false, false

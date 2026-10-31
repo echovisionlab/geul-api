@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -13,7 +13,7 @@ var ArtistFilterConfig = &queryutil.FilterConfig{Fields: map[string]queryutil.Fi
 	"search":       {Type: queryutil.TypeText, AllowedOps: queryutil.SearchOps, SearchColumns: []string{ArtistSourceTitleSQL("artist"), "real_name"}},
 	"country_code": {Column: "country_code", Type: queryutil.TypeText, AllowedOps: queryutil.TextOps},
 	"status": {Column: "status", Type: queryutil.TypeEnum, AllowedOps: queryutil.EnumOps, EnumValues: []string{
-		managev1.ArtistStatus_ARTIST_STATUS_DRAFT.String(), managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String(),
+		string(model.ArtistStatusDraft), string(model.ArtistStatusPublished),
 	}},
 }}
 

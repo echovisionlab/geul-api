@@ -173,7 +173,7 @@ type ArtistPage struct {
 func (s *Service) ListArtists(ctx context.Context, query ListArtistsQuery) (ArtistPage, error) {
 	artists, err := s.listArtists(ctx, s.db.WithContext(ctx).
 		Model(&model.Artist{}).
-		Where("status = ?", managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String()), query, false)
+		Where("status = ?", model.ArtistStatusPublished), query, false)
 	if err != nil {
 		return ArtistPage{}, err
 	}
