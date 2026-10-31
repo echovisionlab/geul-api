@@ -799,3 +799,14 @@ func RequireLockWaiters(t *testing.T, db *gorm.DB, want int) {
 		return err == nil && waiting >= want
 	}, 10*time.Second, 10*time.Millisecond)
 }
+
+// DatabaseNow returns the database clock. Fixtures whose rows later
+// statements stamp with CURRENT_TIMESTAMP take their timestamps from it,
+// because the host clock may run ahead of the database container and break
+// ordering checks such as chk_member_timestamps.
+func DatabaseNow(t *testing.T, db *gorm.DB) time.Time {
+	t.Helper()
+	var now time.Time
+	require.NoError(t, db.Raw("SELECT CURRENT_TIMESTAMP").Scan(&now).Error)
+	return now.UTC()
+}

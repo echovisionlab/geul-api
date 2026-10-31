@@ -59,7 +59,7 @@ func SeedPostIntegrationIdentity(t *testing.T, db *gorm.DB, identityID, name str
 	email := identityID + "@example.test"
 	SeedKratosIdentityFixture(t, db, KratosIdentityFixture{ID: identityID, Email: email, Name: name})
 	memberID := PostIntegrationMemberID(identityID)
-	now := time.Now().UTC()
+	now := DatabaseNow(t, db)
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec("UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid", memberID, identityID).Error; err != nil {
 			return err
