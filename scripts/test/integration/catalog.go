@@ -28,6 +28,13 @@ const (
 
 const integrationHarnessPackage = "./scripts/test/integration"
 
+// integrationProcessDependencies lists packages whose tests start other module
+// binaries; a change to such a binary's dependencies selects them as well.
+var integrationProcessDependencies = map[string][]string{
+	"./internal/filemedia":        {"./cmd/server"},
+	"./internal/referencecatalog": {"./cmd/server"},
+}
+
 var integrationCatalog = []integrationBand{
 	{
 		// PostgreSQL or in-process SQLite only. Each package receives an
@@ -102,7 +109,6 @@ var integrationCatalog = []integrationBand{
 			"./internal/post/public",
 			"./internal/programevent",
 			"./internal/programevent/public",
-			"./internal/referencecatalog",
 			"./internal/referencecatalog/public",
 			"./internal/release",
 			"./internal/series",
@@ -126,6 +132,7 @@ var integrationCatalog = []integrationBand{
 		Packages: []string{
 			"./cmd/backend-integration-stack",
 			"./internal/filemedia",
+			"./internal/referencecatalog",
 			"./internal/testutil",
 		},
 	},

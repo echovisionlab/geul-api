@@ -97,6 +97,10 @@ jobs:
       - name: Test
         run: make test
 
+      # The suite runner's own integration-tagged tests need no services.
+      - name: Test integration runner
+        run: make test-integration-runner
+
       - name: Verify media authorization contract
         run: |
           go test -race -covermode=atomic -coverprofile="${RUNNER_TEMP}/mediaauth-coverage.out" ./internal/mediaauth
@@ -285,13 +289,12 @@ jobs:
 
       - name: Select integration packages
         id: select
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           selection=()
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            selection=(--changed-from "$BASE_SHA")
+            # The checkout is the merge commit; its first parent is the base.
+            selection=(--changed-from HEAD^1)
           fi
           go run -tags=integration ./scripts/test/integration "${selection[@]}" --list | tee "$RUNNER_TEMP/integration-selection.txt"
           go run -tags=integration ./scripts/test/integration "${selection[@]}" --list-images > "$RUNNER_TEMP/integration-images.txt"
@@ -428,7 +431,7 @@ jobs:
         env:
           SELECTION: ${{ steps.select.outputs.selection }}
         run: |
-          # SELECTION is either empty or "--changed-from <sha>".
+          # SELECTION is either empty or "--changed-from HEAD^1".
           # shellcheck disable=SC2086
           go run -tags=integration ./scripts/test/integration $SELECTION \
             --schema-root "$GITHUB_WORKSPACE/geul-schema" \

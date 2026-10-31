@@ -22,7 +22,7 @@ func TestChangedImportPathsAttributesPackageFilesAndIgnoresDocs(t *testing.T) {
 	changed, full, err := changedImportPaths(affectedTestRoot, []string{
 		"CHANGELOG.md",
 		"docs/logging.md",
-		".github/workflows/ci.yml",
+		".github/workflows/release.yml",
 		"internal/email/templates/welcome.html",
 		"internal/member/member.go",
 	}, affectedTestPackageDirs)
@@ -48,6 +48,7 @@ func TestChangedImportPathsSelectsFullCatalogForUnattributedChanges(t *testing.T
 
 	for _, file := range []string{
 		"go.mod",
+		".github/workflows/ci.yml",
 		"media/og/src/render.ts",
 		"internal/removed/package.go",
 		"scripts/test/integration/testdata/fixture.json",

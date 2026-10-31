@@ -301,9 +301,10 @@ func SetupOryStackWithLocalKratos(t *testing.T) *OryStack {
 	suite := activeOryIntegrationSuite
 	activeOryIntegrationSuiteMu.RUnlock()
 	if suite != nil {
-		if _, loaded := suite.tests.LoadOrStore(t, &oryIntegrationTestLease{name: t.Name(), stack: stack}); !loaded {
-			t.Cleanup(func() { suite.tests.Delete(t) })
+		if _, loaded := suite.tests.LoadOrStore(t, &oryIntegrationTestLease{name: t.Name(), stack: stack}); loaded {
+			t.Fatal("SetupOryStackWithLocalKratos must run before PrepareOryIntegrationTest in the same test, or helpers would mix two databases")
 		}
+		t.Cleanup(func() { suite.tests.Delete(t) })
 	}
 	return stack
 }

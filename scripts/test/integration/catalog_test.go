@@ -1,8 +1,11 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -90,5 +93,44 @@ func TestVerifyIntegrationCatalogRejectsDrift(t *testing.T) {
 	}
 	if err := verifyIntegrationCatalog(append(discoveredPackages, "./internal/newintegration")); err == nil {
 		t.Fatal("expected unclassified integration package to fail")
+	}
+}
+
+// Tests that start application processes depend on those binaries too; the
+// affected-package selection only sees them through integrationProcessDependencies.
+func TestRuntimeStackPackagesDeclareProcessDependencies(t *testing.T) {
+	t.Parallel()
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeHelper := regexp.MustCompile(`testutil\.Setup(Shared[A-Za-z]*)?(Direct[A-Za-z]*)?RuntimeStack[A-Za-z]*\(`)
+	var missing []string
+	err = filepath.WalkDir(filepath.Join(repoRoot, "internal"), func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || !strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if !runtimeHelper.Match(contents) {
+			return nil
+		}
+		relative, err := filepath.Rel(repoRoot, filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		packagePath := "./" + filepath.ToSlash(relative)
+		if _, ok := integrationProcessDependencies[packagePath]; !ok && !slices.Contains(missing, packagePath) {
+			missing = append(missing, packagePath)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missing) > 0 {
+		t.Fatalf("packages using runtime stacks must list their process dependencies: %v", missing)
 	}
 }

@@ -25,8 +25,8 @@ func TestSuiteBackendPreflightsEveryRuntimeImage(t *testing.T) {
 	}
 }
 
+// integration:serial replaces the process-wide MinIO image environment variable.
 func TestMinIOImageOverrideFeedsRuntimeAndPreflight(t *testing.T) {
-	t.Parallel()
 	t.Setenv(testutil.AppIntegrationMinIOImageEnv, testutil.AppIntegrationMinIOImage)
 	if err := configureSuiteMinIOImage("geul-test-minio:local"); err != nil {
 		t.Fatalf("configure MinIO image: %v", err)

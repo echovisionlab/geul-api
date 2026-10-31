@@ -340,8 +340,11 @@ make test-integration-db
 
 Pull requests run the cataloged integration packages whose test binaries import
 a package the pull request changed (`--changed-from <base>`). Changes the import
-graph cannot attribute, such as `go.mod`, the runner itself, or assets outside a
-package, run the whole catalog; documentation and workflow changes run none. The
+graph cannot attribute, such as `go.mod`, the runner itself, assets outside a
+package, or `.github/workflows/ci.yml` (which pins the schema, images and sibling
+revisions), run the whole catalog; documentation and other workflow changes run
+none. Packages whose tests start `cmd/server` also run when its dependencies
+change. The
 nightly schedule and a manual `CI` dispatch run the whole catalog. CI pins the
 schema, PostgreSQL image, and the sibling Identity, editor-collab, Common,
 Contracts and Telemetry revisions in `.github/workflows/ci.yml`. To preview a
@@ -387,8 +390,9 @@ Every top-level test in an integration-tagged file starts with `t.Parallel()`;
 process-global state may opt out with a `// integration:serial <reason>` doc
 comment. `--jobs` (default 4) bounds both package and test concurrency. The
 runtime band (`cmd/backend-integration-stack`, `internal/filemedia`,
-`internal/testutil`) still runs one test at a time because its fixtures start
-shared application processes.
+`internal/referencecatalog`, `internal/testutil`) still runs one test at a time
+because its fixtures start shared application processes and register the single
+Kratos hook upstream.
 
 For in-process SQLite fixtures, use `internal/testutil/sqlitetest.Open` with the
 test's SQLite driver. It allocates a fresh shared-memory database per invocation

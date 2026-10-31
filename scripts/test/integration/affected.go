@@ -42,12 +42,29 @@ func affectedIntegrationBands(ctx context.Context, repoRoot, goWork, base string
 	if err != nil {
 		return nil, err
 	}
+	for packagePath, binaries := range integrationProcessDependencies {
+		if slices.Contains(selected, packagePath) {
+			continue
+		}
+		arguments := append([]string{"list", "-tags=integration", "-deps", "-f", "{{.ImportPath}}"}, binaries...)
+		processDeps, err := commandOutputLines(ctx, repoRoot, goWork, "go", arguments...)
+		if err != nil {
+			return nil, fmt.Errorf("list %s process dependencies: %w", packagePath, err)
+		}
+		if slices.ContainsFunc(processDeps, func(dep string) bool { return changed[dep] }) {
+			selected = append(selected, packagePath)
+		}
+	}
+	slices.Sort(selected)
 	return bandsForPackages(selected), nil
 }
 
 // integrationIgnoredPath reports files that cannot change integration behavior.
 func integrationIgnoredPath(file string) bool {
 	switch {
+	case file == ".github/workflows/ci.yml":
+		// It pins the schema, images and sibling revisions the suite runs against.
+		return false
 	case strings.HasPrefix(file, "docs/"), strings.HasPrefix(file, ".github/"):
 		return true
 	case strings.HasSuffix(file, ".md"):
