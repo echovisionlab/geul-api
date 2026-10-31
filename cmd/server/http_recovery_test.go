@@ -16,9 +16,11 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authentication"
 	"github.com/echovisionlab/geul-api/internal/config"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -151,6 +153,30 @@ func TestConnectRoutesHideInternalCausesFromClientsAndRequestLog(t *testing.T) {
 	require.Equal(t, `internal: load subscription for [redacted]: ERROR: column "secret_digest" does not exist (SQLSTATE 42703)`,
 		completed["failure_cause"])
 	require.NotContains(t, logs.String(), recoveryPrivateToken)
+}
+
+// A Kratos failure deep in a handler leaves one record: request.completed with
+// the upstream body redacted and the identifiers the error carried.
+func TestConnectRoutesRecordKratosFailureOnceWithIdentifiers(t *testing.T) {
+	logs := captureServerLogs(t)
+	const upstreamBody = `{"error":{"reason":"traits.nickname quiet-river conflicts"}}`
+	client := serveConnectThroughProductionChain(t, func(context.Context) error {
+		lockErr := fmt.Errorf("lock identity state: %w", &auth.KratosHTTPError{StatusCode: http.StatusConflict, Body: upstreamBody})
+		return errs.Internal(failurecause.WithAttrs(
+			failurecause.WithPrivate(errors.Join(lockErr, errors.New("reserve nickname quiet-river")), "quiet-river"),
+			slog.String("entity_type", "member"), slog.String("entity_id", "0b9c1f9e-5a8b-4c1e-9d7a-3f2e1d0c9b8a"),
+		))
+	})
+
+	_, err := client.CallUnary(t.Context(), connect.NewRequest(&openv1.UnsubscribeNewsletterRequest{Token: recoveryPrivateToken}))
+
+	requireOpaqueInternalResponse(t, err)
+	completed := requireSingleTerminalRecord(t, logs)
+	require.Equal(t, "internal: lock identity state: kratos returned 409: [redacted]\nreserve nickname [redacted]", completed["failure_cause"])
+	require.Equal(t, "member", completed["entity_type"])
+	require.Equal(t, "0b9c1f9e-5a8b-4c1e-9d7a-3f2e1d0c9b8a", completed["entity_id"])
+	require.NotContains(t, logs.String(), "quiet-river")
+	require.NotContains(t, logs.String(), "traits.nickname")
 }
 
 func TestConnectRoutesRecoverHandlerPanics(t *testing.T) {

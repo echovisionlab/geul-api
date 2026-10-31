@@ -30,14 +30,103 @@ var (
 )
 
 // Message returns err's text with sensitive values removed. private lists
-// command-specific values (recipient, codes, template data) to redact verbatim.
+// command-specific values (recipient, codes, template data) to redact verbatim,
+// in addition to the private values the chain carries (see PrivateValuer).
 // Server-side context that an error in the chain keeps out of its Error text
 // (see OperationContext) is rendered in place.
 func Message(err error, private ...string) string {
 	if err == nil {
 		return ""
 	}
-	return redact(render(err), private)
+	return redact(render(err), append(PrivateValues(err), private...))
+}
+
+// PrivateValuer is implemented by an error whose text can hold values that no
+// log may keep, such as an upstream response body. Every sink that renders the
+// error through Message redacts them, wherever the error is in the chain.
+type PrivateValuer interface {
+	error
+	PrivateValues() []string
+}
+
+// PrivateValues returns the private values of every error in err's chain,
+// including each branch of a joined error.
+func PrivateValues(err error) []string {
+	var values []string
+	walk(err, func(node error) bool {
+		if valuer, ok := node.(PrivateValuer); ok { //nolint:errorlint // walk visits every node itself
+			values = append(values, valuer.PrivateValues()...)
+		}
+		return true
+	})
+	return values
+}
+
+// Attrs returns the identifier attributes added with WithAttrs anywhere in
+// err's chain. An outer attribute wins over an inner one with the same key.
+func Attrs(err error) []slog.Attr {
+	var attrs []slog.Attr
+	seen := map[string]bool{}
+	walk(err, func(node error) bool {
+		if annotated, ok := node.(*annotatedError); ok { //nolint:errorlint // walk visits every node itself
+			for _, attr := range annotated.attrs {
+				if !seen[attr.Key] {
+					seen[attr.Key] = true
+					attrs = append(attrs, attr)
+				}
+			}
+		}
+		return true
+	})
+	return attrs
+}
+
+// WithPrivate returns err carrying request values its text may contain, such
+// as a nickname or e-mail address, so that whichever sink logs the failure
+// redacts them. It returns nil for a nil err.
+func WithPrivate(err error, values ...string) error {
+	if err == nil || len(values) == 0 {
+		return err
+	}
+	return &annotatedError{cause: err, private: values}
+}
+
+// WithAttrs returns err carrying bounded identifier attributes (entity type and
+// ID, job ID, locale) for the one record that logs the failure. The request
+// log adds them to request.completed. It returns nil for a nil err.
+func WithAttrs(err error, attrs ...slog.Attr) error {
+	if err == nil || len(attrs) == 0 {
+		return err
+	}
+	return &annotatedError{cause: err, attrs: attrs}
+}
+
+// annotatedError adds diagnosis to an error without changing its text or
+// classification: errors.Is, errors.As and connect.CodeOf see the cause.
+type annotatedError struct {
+	cause   error
+	private []string
+	attrs   []slog.Attr
+}
+
+func (e *annotatedError) Error() string           { return e.cause.Error() }
+func (e *annotatedError) Unwrap() error           { return e.cause }
+func (e *annotatedError) PrivateValues() []string { return e.private }
+
+// walk visits err and the errors it wraps, depth first through every branch
+// of a joined error. visit returns false to skip what a node wraps.
+func walk(err error, visit func(error) bool) {
+	if err == nil || !visit(err) {
+		return
+	}
+	switch typed := err.(type) { //nolint:errorlint // the walk descends one node at a time
+	case interface{ Unwrap() []error }:
+		for _, wrapped := range typed.Unwrap() {
+			walk(wrapped, visit)
+		}
+	case interface{ Unwrap() error }:
+		walk(typed.Unwrap(), visit)
+	}
 }
 
 // OperationContext is implemented by an error whose Error text omits
@@ -63,21 +152,13 @@ func render(err error) string {
 // It does not descend into one: its operation already renders what it wraps.
 func operationContexts(err error) []OperationContext {
 	var found []OperationContext
-	var walk func(error)
-	walk = func(err error) {
-		switch typed := err.(type) { //nolint:errorlint // the walk descends one node at a time and must stop at the outermost OperationContext
-		case nil:
-		case OperationContext:
-			found = append(found, typed)
-		case interface{ Unwrap() []error }:
-			for _, wrapped := range typed.Unwrap() {
-				walk(wrapped)
-			}
-		case interface{ Unwrap() error }:
-			walk(typed.Unwrap())
+	walk(err, func(node error) bool {
+		classified, ok := node.(OperationContext) //nolint:errorlint // walk visits every node itself
+		if ok {
+			found = append(found, classified)
 		}
-	}
-	walk(err)
+		return !ok
+	})
 	return found
 }
 

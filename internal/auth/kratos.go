@@ -113,6 +113,10 @@ func (e *KratosHTTPError) Error() string {
 	return fmt.Sprintf("kratos returned %d: %s", e.StatusCode, e.Body)
 }
 
+// PrivateValues implements failurecause.PrivateValuer: the upstream body can
+// echo traits and identifiers, so logs keep only the status.
+func (e *KratosHTTPError) PrivateValues() []string { return []string{e.Body} }
+
 // Preserve the existing missing-identity message while retaining the HTTP
 // status for callers that distinguish absence from an upstream outage.
 type kratosIdentityNotFoundError struct {

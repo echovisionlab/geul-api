@@ -138,11 +138,11 @@ func emitRecordedConnectRequest(
 	}
 	handler := slogDefaultHandler()
 	if err != nil {
-		failure := &requestFailureHandler{Handler: handler, cause: failurecause.Message(err), status: result.StatusCode}
-		if cause, stack, recorded := recorder.Recorded(); recorded {
-			failure.cause, failure.stack = cause, stack
+		failure, recorded := recorder.Recorded()
+		if !recorded {
+			failure = failurecause.Of(err)
 		}
-		handler = failure
+		handler = &requestFailureHandler{Handler: handler, failure: failure, status: result.StatusCode}
 	}
 	if emitErr := sharedtelemetry.EmitRequest(ctx, handler, record); emitErr != nil {
 		slog.ErrorContext(ctx, "Emit RPC request record failed", "rpc_service", service, "rpc_method", method, "failure_cause", failurecause.Message(errors.Join(err, emitErr)))
@@ -201,13 +201,13 @@ func connectHTTPStatus(err error) int {
 }
 
 // Keep a single terminal request record, including its sanitized cause (the
-// boundary's recorded cause when present, with a panic's stack) and an
-// appropriate severity. Bodies, metadata and client error details are excluded.
+// boundary's recorded cause when present, with a panic's stack), the
+// identifiers the error carried, and an appropriate severity. Bodies, metadata
+// and client error details are excluded.
 type requestFailureHandler struct {
 	slog.Handler
-	cause  string
-	stack  string
-	status int
+	failure failurecause.Failure
+	status  int
 }
 
 func (h *requestFailureHandler) Handle(ctx context.Context, record slog.Record) error {
@@ -216,9 +216,20 @@ func (h *requestFailureHandler) Handle(ctx context.Context, record slog.Record) 
 	if h.status >= http.StatusInternalServerError {
 		record.Level = slog.LevelError
 	}
-	record.AddAttrs(slog.String("failure_cause", h.cause))
-	if h.stack != "" {
-		record.AddAttrs(slog.String("panic_stack", h.stack))
+	// An identifier never replaces a field of the request record itself.
+	present := map[string]bool{"failure_cause": true, "panic_stack": true}
+	record.Attrs(func(attr slog.Attr) bool {
+		present[attr.Key] = true
+		return true
+	})
+	record.AddAttrs(slog.String("failure_cause", h.failure.Cause))
+	if h.failure.Stack != "" {
+		record.AddAttrs(slog.String("panic_stack", h.failure.Stack))
+	}
+	for _, attr := range h.failure.Attrs {
+		if !present[attr.Key] {
+			record.AddAttrs(attr)
+		}
 	}
 	return h.Handler.Handle(ctx, record)
 }

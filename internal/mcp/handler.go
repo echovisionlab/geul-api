@@ -507,10 +507,9 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 			if cause == nil {
 				cause = executionErr
 			}
-			level := errs.OperationLogLevel(cause)
-			// The normalizing handler converts error to error_type; error_cause
-			// retains the sanitized diagnostic text through that handler.
-			slog.Log(request.Context(), level, "MCP tool execution rejected", "failure_cause", failurecause.Message(cause, private...), "tool", params.Name)
+			// Tool calls reach services without the RPC boundary, so this is the
+			// call's one failure record.
+			logToolFailure(request.Context(), errs.OperationLogLevel(cause), "MCP tool execution rejected", params.Name, cause, private)
 			messageText := executionErr.Message
 			if messageText == "" {
 				messageText = "Tool execution failed"
@@ -521,7 +520,7 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 			})
 			return
 		}
-		slog.ErrorContext(request.Context(), "MCP tool execution failed", "failure_cause", failurecause.Message(err, private...), "tool", params.Name)
+		logToolFailure(request.Context(), slog.LevelError, "MCP tool execution failed", params.Name, err, private)
 		writeRPCError(response, http.StatusOK, message.id, -32603, "Internal error")
 		return
 	}
@@ -534,6 +533,12 @@ func (h *handler) handleToolsCall(response http.ResponseWriter, request *http.Re
 		return
 	}
 	writeToolResult(response, message.id, result)
+}
+
+func logToolFailure(ctx context.Context, level slog.Level, message, tool string, err error, private []string) {
+	failure := failurecause.Of(err, private...)
+	attrs := append([]slog.Attr{slog.String("failure_cause", failure.Cause), slog.String("tool", tool)}, failure.Attrs...)
+	slog.LogAttrs(ctx, level, message, attrs...)
 }
 
 func (h *handler) listTools(ctx context.Context, principal Principal) ([]Tool, error) {

@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,7 +29,11 @@ func TestAccessLogRecordCarriesTheRecordedCauseAndStack(t *testing.T) {
 		func(ctx context.Context, _ *connect.Request[emptypb.Empty]) (*connect.Response[emptypb.Empty], error) {
 			recorder := failurecause.RecorderFrom(ctx)
 			require.NotNil(t, recorder, "the request log must install a recorder")
-			recorder.Record("load thing: relation missing", "goroutine 7 [running]:\nmain.handler(...)")
+			recorder.Record(failurecause.Failure{
+				Cause: "load thing: relation missing",
+				Stack: "goroutine 7 [running]:\nmain.handler(...)",
+				Attrs: []slog.Attr{slog.String("page_id", "page-1"), slog.String("status_code", "shadowed")},
+			})
 			return nil, connect.NewError(connect.CodeInternal, errors.New("internal error"))
 		},
 		connect.WithInterceptors(NewTracingInterceptor(), NewAccessLogInterceptor(&securityAccessWriterStub{})),
@@ -44,4 +49,6 @@ func TestAccessLogRecordCarriesTheRecordedCauseAndStack(t *testing.T) {
 	require.Equal(t, "ERROR", entry["level"])
 	require.Equal(t, "load thing: relation missing", entry["failure_cause"])
 	require.Equal(t, "goroutine 7 [running]:\nmain.handler(...)", entry["panic_stack"])
+	require.Equal(t, "page-1", entry["page_id"])
+	require.EqualValues(t, http.StatusInternalServerError, entry["status_code"], "an identifier must not replace a request record field")
 }

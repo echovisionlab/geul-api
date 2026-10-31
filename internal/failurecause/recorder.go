@@ -2,6 +2,7 @@ package failurecause
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 )
 
@@ -11,9 +12,21 @@ import (
 // records into it instead of logging a second record.
 type Recorder struct {
 	mu       sync.Mutex
-	cause    string
-	stack    string
+	failure  Failure
 	recorded bool
+}
+
+// Failure is a sanitized cause for a terminal record: the cause text, a
+// panic's stack, and the identifier attributes the error carried.
+type Failure struct {
+	Cause string
+	Stack string
+	Attrs []slog.Attr
+}
+
+// Of returns err's sanitized cause and the identifier attributes it carries.
+func Of(err error, private ...string) Failure {
+	return Failure{Cause: Message(err, private...), Attrs: Attrs(err)}
 }
 
 type recorderKey struct{}
@@ -30,21 +43,20 @@ func RecorderFrom(ctx context.Context) *Recorder {
 	return recorder
 }
 
-// Record stores a sanitized cause and, for a panic, its stack. The last
-// record wins: it is the one closest to the terminal outcome.
-func (r *Recorder) Record(cause, stack string) {
+// Record stores a sanitized failure. The last record wins: it is the one
+// closest to the terminal outcome.
+func (r *Recorder) Record(failure Failure) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.cause, r.stack, r.recorded = cause, stack, true
+	r.failure, r.recorded = failure, true
 }
 
-// Recorded returns the stored cause and stack, and whether anything was
-// recorded.
-func (r *Recorder) Recorded() (cause, stack string, ok bool) {
+// Recorded returns the stored failure, and whether anything was recorded.
+func (r *Recorder) Recorded() (Failure, bool) {
 	if r == nil {
-		return "", "", false
+		return Failure{}, false
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.cause, r.stack, r.recorded
+	return r.failure, r.recorded
 }
