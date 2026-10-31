@@ -20,7 +20,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -83,9 +82,9 @@ func (s *FileService) CreateGeneratedGeneralFile(
 		return nil, errs.Internal(fmt.Errorf("store generated File object: %w", err))
 	}
 
-	file := structured.Fields{
-		"id": fileID, "file_name": fileName, "mime_type": mimeType,
-		"file_size": int64(len(input.Body)), "extension": extension, "sha256": digest[:],
+	file := fileIngestRecord{
+		id: fileID, fileName: fileName, mimeType: mimeType,
+		fileSize: int64(len(input.Body)), extension: extension, sha256: digest[:],
 	}
 	createErr := s.createVerifiedFileIngestRecord(
 		ctx, file,

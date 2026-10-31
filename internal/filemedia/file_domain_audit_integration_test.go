@@ -13,7 +13,6 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -96,8 +95,8 @@ func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *t
 	}
 
 	createdID := testutil.IntegrationUUID()
-	err := service.createVerifiedFileIngestRecord(ctx, structured.Fields{
-		"id": createdID, "file_name": "verified", "mime_type": "image/jpeg", "file_size": int64(1024), "extension": "jpg", "sha256": make([]byte, 32), "ingest_attempt_id": testutil.IntegrationUUID(),
+	err := service.createVerifiedFileIngestRecord(ctx, fileIngestRecord{
+		id: createdID, fileName: "verified", mimeType: "image/jpeg", fileSize: 1024, extension: "jpg", sha256: make([]byte, 32), ingestAttemptID: testutil.IntegrationUUID(),
 	}, managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, "", trustedSystemFileIngestAuthority{})
 	require.NoError(t, err)
 	var createdRows []postSeriesAuditRow
@@ -111,8 +110,8 @@ func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *t
 
 	failingIngestID := testutil.IntegrationUUID()
 	failingIngest := &FileService{db: db, spiceDB: spiceDB, auditWriter: fileFailingAuditAppender{}}
-	err = failingIngest.createVerifiedFileIngestRecord(ctx, structured.Fields{
-		"id": failingIngestID, "file_name": "must-rollback", "mime_type": "image/jpeg", "file_size": int64(1024), "extension": "jpg", "sha256": make([]byte, 32), "ingest_attempt_id": testutil.IntegrationUUID(),
+	err = failingIngest.createVerifiedFileIngestRecord(ctx, fileIngestRecord{
+		id: failingIngestID, fileName: "must-rollback", mimeType: "image/jpeg", fileSize: 1024, extension: "jpg", sha256: make([]byte, 32), ingestAttemptID: testutil.IntegrationUUID(),
 	}, managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, "", trustedSystemFileIngestAuthority{})
 	require.Error(t, err)
 	var ingestCount int64

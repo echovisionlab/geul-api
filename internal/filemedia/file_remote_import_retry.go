@@ -15,7 +15,6 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/postgreslock"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -269,7 +268,7 @@ func (s *FileService) buildCompletedRemoteImportResult(
 
 func (s *FileService) createOrRestoreVerifiedRemoteImportRecord(
 	ctx context.Context,
-	file structured.Fields,
+	file fileIngestRecord,
 	entityID string,
 	slotID string,
 	identity remoteImportOperationIdentity,
