@@ -10,6 +10,7 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepublic "github.com/echovisionlab/geul-api/internal/release/public"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
@@ -53,7 +54,7 @@ func loadReadyPublicAssetsForSourceFiles(
 	sourceFileIDs []string,
 	kinds ...string,
 ) (map[string]readyPublicAssetRow, error) {
-	ids := uniqueNonEmptyIDs(sourceFileIDs)
+	ids := sliceutil.UniqueNonZero(sourceFileIDs)
 	result := make(map[string]readyPublicAssetRow, len(ids))
 	if len(ids) == 0 {
 		return result, nil

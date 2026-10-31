@@ -11,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -38,7 +39,7 @@ func (r *Runtime) LoadArtistImages(
 	artistIDs []string,
 ) (map[string][]artistdomain.ArtistImageProjection, error) {
 	result := make(map[string][]artistdomain.ArtistImageProjection, len(artistIDs))
-	artistIDs = normalizedUniqueStrings(artistIDs)
+	artistIDs = sliceutil.UniqueTrimmed(artistIDs)
 	if len(artistIDs) == 0 {
 		return result, nil
 	}
@@ -111,7 +112,7 @@ func (r *Runtime) ResolveReadyAssetRefs(
 	db *gorm.DB,
 	assetIDs []string,
 ) (map[string]*commonv1.AssetRef, error) {
-	assetIDs = normalizedUniqueStrings(assetIDs)
+	assetIDs = sliceutil.UniqueTrimmed(assetIDs)
 	result := make(map[string]*commonv1.AssetRef, len(assetIDs))
 	if len(assetIDs) == 0 {
 		return result, nil
@@ -252,23 +253,6 @@ func (*Runtime) IsResourceRouteAvailable(
 	slug string,
 ) (bool, error) {
 	return routeregistry.IsResourceRouteAvailable(ctx, db, pathPrefix, slug)
-}
-
-func normalizedUniqueStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
 }
 
 var _ artistdomain.Runtime = (*Runtime)(nil)

@@ -20,6 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -402,7 +403,7 @@ func (s *FileService) listFileManagerItems(
 	if err != nil {
 		return nil, err
 	}
-	members, err := memberSummaries.Load(ctx, normalizedSortedFileIDs(memberIDs))
+	members, err := memberSummaries.Load(ctx, sliceutil.SortedUniqueTrimmed(memberIDs))
 	if err != nil {
 		return nil, errs.Internal(err)
 	}

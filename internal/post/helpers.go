@@ -39,23 +39,6 @@ func validateSlugWithoutSlash(slug string) error {
 	return nil
 }
 
-func normalizeStringIDs(ids []string) []string {
-	normalized := make([]string, 0, len(ids))
-	seen := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		normalized = append(normalized, id)
-	}
-	return normalized
-}
-
 func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, _ auth.IdentityManager, acceptLanguage string) string {
 	if user := auth.GetUser(ctx); user != nil && user.Authenticated && db != nil {
 		var preferredLocale *string

@@ -7,6 +7,7 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -42,7 +43,7 @@ func loadPostSourceLocaleDocumentStates(
 	db *gorm.DB,
 	postIDs []string,
 ) (map[string]*translationLocaleDocumentState, error) {
-	normalized := normalizeStringIDs(postIDs)
+	normalized := sliceutil.UniqueTrimmed(postIDs)
 	if len(normalized) == 0 {
 		return map[string]*translationLocaleDocumentState{}, nil
 	}

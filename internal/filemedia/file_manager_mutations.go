@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -175,7 +176,7 @@ func (s *FileService) loadFileManagerFilesByIDs(ctx context.Context, fileIDs []s
 	if err != nil {
 		return nil, err
 	}
-	members, err := memberSummaries.Load(ctx, normalizedSortedFileIDs(memberIDs))
+	members, err := memberSummaries.Load(ctx, sliceutil.SortedUniqueTrimmed(memberIDs))
 	if err != nil {
 		return nil, errs.Internal(err)
 	}

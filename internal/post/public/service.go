@@ -22,6 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -1009,7 +1010,7 @@ func (s *PostService) overlayPostSourceLocaleDocuments(
 // loadPostAuthorMembers resolves durable post authors and Member
 // summaries in a fixed number of queries for any page size.
 func (s *PostService) loadPostAuthorMembers(ctx context.Context, postIDs []string) (map[string][]*commonv1.MemberSummary, error) {
-	ids := uniqueNonEmptyIDs(postIDs)
+	ids := sliceutil.UniqueTrimmed(postIDs)
 	result := make(map[string][]*commonv1.MemberSummary, len(ids))
 	if len(ids) == 0 {
 		return result, nil

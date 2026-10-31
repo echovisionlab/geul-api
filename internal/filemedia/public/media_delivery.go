@@ -10,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
@@ -31,23 +32,6 @@ type readyMediaGenerationRow struct {
 	FileID       string `gorm:"column:file_id"`
 	GenerationID string `gorm:"column:generation_id"`
 	ManifestName string `gorm:"column:manifest_name"`
-}
-
-func uniqueNonEmptyIDs(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
 }
 
 func readyPublicAssetSelect(alias string) string {
@@ -84,7 +68,7 @@ func loadReadyPublicAssetsForSourceFiles(
 	sourceFileIDs []string,
 	kinds ...string,
 ) (map[string]readyPublicAssetRow, error) {
-	ids := uniqueNonEmptyIDs(sourceFileIDs)
+	ids := sliceutil.UniqueTrimmed(sourceFileIDs)
 	result := make(map[string]readyPublicAssetRow, len(ids))
 	if len(ids) == 0 {
 		return result, nil
@@ -118,7 +102,7 @@ func loadReadyPublicAssetsByIDs(
 	db *gorm.DB,
 	assetIDs []string,
 ) (map[string]readyPublicAssetRow, error) {
-	ids := uniqueNonEmptyIDs(assetIDs)
+	ids := sliceutil.UniqueTrimmed(assetIDs)
 	result := make(map[string]readyPublicAssetRow, len(ids))
 	if len(ids) == 0 {
 		return result, nil
@@ -142,7 +126,7 @@ func loadReadyMediaGenerationsByIDs(
 	db *gorm.DB,
 	generationIDs []string,
 ) (map[string]readyMediaGenerationRow, error) {
-	ids := uniqueNonEmptyIDs(generationIDs)
+	ids := sliceutil.UniqueTrimmed(generationIDs)
 	result := make(map[string]readyMediaGenerationRow, len(ids))
 	if len(ids) == 0 {
 		return result, nil

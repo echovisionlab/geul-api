@@ -7,15 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTrackDerivativeURLFileIDNormalizationUnit(t *testing.T) {
-	t.Parallel()
-
-	got := uniqueNonEmptyIDs([]string{"", "file-a", "file-b", "file-a", "", "file-c", "file-b"})
-
-	assert.Equal(t, []string{"file-a", "file-b", "file-c"}, got)
-	assert.Empty(t, uniqueNonEmptyIDs(nil))
-}
-
 func TestProjectTrackStaticDerivativeRefsUnit(t *testing.T) {
 	t.Parallel()
 

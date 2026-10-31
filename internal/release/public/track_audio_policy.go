@@ -4,12 +4,13 @@ import (
 	"context"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"gorm.io/gorm"
 )
 
 func loadTrackOriginalFiles(ctx context.Context, db *gorm.DB, fileIDs []string) (map[string]scopedMediaFile, error) {
 	result := make(map[string]scopedMediaFile)
-	ids := uniqueNonEmptyIDs(fileIDs)
+	ids := sliceutil.UniqueNonZero(fileIDs)
 	if len(ids) == 0 {
 		return result, nil
 	}

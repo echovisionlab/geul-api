@@ -18,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -149,7 +150,7 @@ func LoadContentBlockDownloadSources(
 		requested[ContentBlockDownloadPolicyKey(blockID, referencePath)] = struct{}{}
 		blockIDs = append(blockIDs, blockID)
 	}
-	blockIDs = sortedUniqueNonEmptyStrings(blockIDs)
+	blockIDs = sliceutil.SortedUniqueTrimmed(blockIDs)
 	if len(blockIDs) == 0 {
 		return map[string]FileDownloadSource{}, nil
 	}
@@ -192,7 +193,7 @@ func LoadTrackDownloadSources(
 	db *gorm.DB,
 	trackIDs []string,
 ) (map[string]FileDownloadSource, error) {
-	trackIDs = sortedUniqueNonEmptyStrings(trackIDs)
+	trackIDs = sliceutil.SortedUniqueTrimmed(trackIDs)
 	if len(trackIDs) == 0 {
 		return map[string]FileDownloadSource{}, nil
 	}
@@ -325,7 +326,7 @@ func LoadFileDownloadPolicyFingerprints(
 		segmentIDsByPolicy[association.PolicyKey] = append(segmentIDsByPolicy[association.PolicyKey], association.AudienceSegmentID)
 		allSegmentIDs = append(allSegmentIDs, association.AudienceSegmentID)
 	}
-	allSegmentIDs = sortedUniqueNonEmptyStrings(allSegmentIDs)
+	allSegmentIDs = sliceutil.SortedUniqueTrimmed(allSegmentIDs)
 	segmentsByID := make(map[string]model.AudienceSegment, len(allSegmentIDs))
 	if len(allSegmentIDs) > 0 {
 		var segments []model.AudienceSegment
@@ -343,16 +344,16 @@ func LoadFileDownloadPolicyFingerprints(
 			return nil, err
 		}
 		for _, segment := range segments {
-			segment.Config.MemberTagIDs = sortedUniqueNonEmptyStrings(segment.Config.MemberTagIDs)
-			segment.Config.AccountRoles = sortedUniqueNonEmptyStrings(segment.Config.AccountRoles)
-			segment.Config.ExcludeMemberIDs = sortedUniqueNonEmptyStrings(segment.Config.ExcludeMemberIDs)
+			segment.Config.MemberTagIDs = sliceutil.SortedUniqueTrimmed(segment.Config.MemberTagIDs)
+			segment.Config.AccountRoles = sliceutil.SortedUniqueTrimmed(segment.Config.AccountRoles)
+			segment.Config.ExcludeMemberIDs = sliceutil.SortedUniqueTrimmed(segment.Config.ExcludeMemberIDs)
 			segmentsByID[segment.ID] = segment
 		}
 	}
 
 	result := make(map[string]string, len(sources))
 	for key, source := range sources {
-		segmentIDs := sortedUniqueNonEmptyStrings(segmentIDsByPolicy[key])
+		segmentIDs := sliceutil.SortedUniqueTrimmed(segmentIDsByPolicy[key])
 		record := fileDownloadPolicyFingerprint{
 			Kind: source.PolicyKind, BlockID: source.BlockID, ReferencePath: source.ReferencePath,
 			TrackID: source.TrackID, FileID: source.FileID, Extension: source.Extension,
@@ -432,7 +433,7 @@ func LoadFileDownloadViewerFingerprint(
 				Pluck("mapping.tag_id", &record.TagIDs).Error; err != nil {
 				return "", err
 			}
-			record.TagIDs = sortedUniqueNonEmptyStrings(record.TagIDs)
+			record.TagIDs = sliceutil.SortedUniqueTrimmed(record.TagIDs)
 		}
 	}
 	encoded, err := json.Marshal(record)
@@ -458,7 +459,7 @@ func LockFileDownloadPolicySegments(
 	for _, association := range associations {
 		segmentIDs = append(segmentIDs, association.AudienceSegmentID)
 	}
-	segmentIDs = sortedUniqueNonEmptyStrings(segmentIDs)
+	segmentIDs = sliceutil.SortedUniqueTrimmed(segmentIDs)
 	if len(segmentIDs) == 0 {
 		return nil
 	}
@@ -554,7 +555,7 @@ func loadFileDownloadAudienceAssociations(
 		}
 	}
 	associations := make([]fileDownloadAudienceAssociation, 0)
-	if blockIDs = sortedUniqueNonEmptyStrings(blockIDs); len(blockIDs) > 0 {
+	if blockIDs = sliceutil.SortedUniqueTrimmed(blockIDs); len(blockIDs) > 0 {
 		var rows []struct {
 			BlockID           string `gorm:"column:block_id"`
 			ReferencePath     string `gorm:"column:reference_path"`
@@ -578,7 +579,7 @@ func loadFileDownloadAudienceAssociations(
 			}
 		}
 	}
-	if trackIDs = sortedUniqueNonEmptyStrings(trackIDs); len(trackIDs) > 0 {
+	if trackIDs = sliceutil.SortedUniqueTrimmed(trackIDs); len(trackIDs) > 0 {
 		var rows []model.TrackDownloadAudienceSegment
 		query := db.WithContext(ctx).
 			Table("track_download_audience_segment AS association").
@@ -660,7 +661,7 @@ func evaluateFileDownloadAccessBatchAt(
 	for _, association := range associations {
 		segmentIDs = append(segmentIDs, association.AudienceSegmentID)
 	}
-	segmentIDs = sortedUniqueNonEmptyStrings(segmentIDs)
+	segmentIDs = sliceutil.SortedUniqueTrimmed(segmentIDs)
 	if len(segmentIDs) == 0 {
 		return result, nil
 	}
@@ -791,7 +792,7 @@ func loadRestrictedFileDownloadTagFacts(
 			referencedTagIDs = append(referencedTagIDs, tagIDs...)
 		}
 	}
-	referencedTagIDs = sortedUniqueNonEmptyStrings(referencedTagIDs)
+	referencedTagIDs = sliceutil.SortedUniqueTrimmed(referencedTagIDs)
 	existingTagIDs := make(map[string]struct{}, len(referencedTagIDs))
 	memberTagIDs := make(map[string]struct{}, len(referencedTagIDs))
 	if len(referencedTagIDs) == 0 {
@@ -999,24 +1000,6 @@ func normalizeFileDownloadAccountPermissions(values []string) ([]policyv1.RoleID
 		roles = append(roles, role)
 	}
 	return roles, nil
-}
-
-func sortedUniqueNonEmptyStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, rawValue := range values {
-		value := strings.TrimSpace(rawValue)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
 }
 
 func (audience FileDownloadAudience) Valid() bool {

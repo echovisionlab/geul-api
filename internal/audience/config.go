@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -151,27 +152,9 @@ func sortSegmentConfig(config *model.AudienceSegmentConfig) {
 	if config == nil {
 		return
 	}
-	config.MemberTagIDs = sortedUniqueNonEmptyStrings(config.MemberTagIDs)
-	config.AccountRoles = sortedUniqueNonEmptyStrings(config.AccountRoles)
-	config.ExcludeMemberIDs = sortedUniqueNonEmptyStrings(config.ExcludeMemberIDs)
-}
-
-func sortedUniqueNonEmptyStrings(values []string) []string {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, rawValue := range values {
-		value := strings.TrimSpace(rawValue)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
+	config.MemberTagIDs = sliceutil.SortedUniqueTrimmed(config.MemberTagIDs)
+	config.AccountRoles = sliceutil.SortedUniqueTrimmed(config.AccountRoles)
+	config.ExcludeMemberIDs = sliceutil.SortedUniqueTrimmed(config.ExcludeMemberIDs)
 }
 
 func toModelSegmentConfig(config *managev1.SegmentConfig) (model.AudienceSegmentConfig, error) {

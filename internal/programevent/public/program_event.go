@@ -10,6 +10,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -1077,7 +1078,7 @@ func loadPublicProgramEventType(ctx context.Context, db *gorm.DB, typeID string,
 }
 
 func loadPublicProgramEventTypes(ctx context.Context, db *gorm.DB, typeIDs []string) (map[string]model.ProgramEventType, error) {
-	ids := uniqueProgramEventIDs(typeIDs)
+	ids := sliceutil.UniqueTrimmed(typeIDs)
 	result := make(map[string]model.ProgramEventType, len(ids))
 	if len(ids) == 0 {
 		return result, nil
@@ -1093,7 +1094,7 @@ func loadPublicProgramEventTypes(ctx context.Context, db *gorm.DB, typeIDs []str
 }
 
 func loadPublicProgramEventTypeLocales(ctx context.Context, db *gorm.DB, typeIDs []string) (map[string][]publicProgramEventTypeLocaleRow, error) {
-	ids := uniqueProgramEventIDs(typeIDs)
+	ids := sliceutil.UniqueTrimmed(typeIDs)
 	result := make(map[string][]publicProgramEventTypeLocaleRow, len(ids))
 	if len(ids) == 0 {
 		return result, nil
@@ -1155,23 +1156,6 @@ func selectPublicProgramEventTypeLocaleRows(rows []publicProgramEventTypeLocaleR
 	return rows[0], nil
 }
 
-func uniqueProgramEventIDs(values []string) []string {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}
-
 func collectPublicProgramEventTypeIDs(events []model.ProgramEvent) []string {
 	typeIDs := make([]string, 0, len(events))
 	for i := range events {
@@ -1179,12 +1163,12 @@ func collectPublicProgramEventTypeIDs(events []model.ProgramEvent) []string {
 			typeIDs = append(typeIDs, events[i].TypeID)
 		}
 	}
-	return uniqueProgramEventIDs(typeIDs)
+	return sliceutil.UniqueTrimmed(typeIDs)
 }
 
 // loadProgramEventPosterFileIDs applies the public poster selection rule to an entire result page.
 func loadProgramEventPosterFileIDs(ctx context.Context, db *gorm.DB, eventIDs []string) (map[string]string, error) {
-	ids := uniqueProgramEventIDs(eventIDs)
+	ids := sliceutil.UniqueTrimmed(eventIDs)
 	fileByEvent := make(map[string]string, len(ids))
 	if len(ids) == 0 {
 		return fileByEvent, nil

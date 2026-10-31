@@ -19,6 +19,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -575,7 +576,7 @@ func applyPostAIDocumentMetadata(
 		return contentblock.MetadataEffect{}, err
 	}
 	if patch.SetCategories {
-		next := normalizeStringIDs(patch.CategoryIDs)
+		next := sliceutil.UniqueTrimmed(patch.CategoryIDs)
 		slices.Sort(next)
 		if !slices.Equal(currentCategories, next) {
 			if err := replacePostTaxonomyLinks(ctx, tx, "category", "post_category", "category_id", mutation.PostID, next); err != nil {
@@ -586,7 +587,7 @@ func applyPostAIDocumentMetadata(
 		}
 	}
 	if patch.SetTags {
-		next := normalizeStringIDs(patch.TagIDs)
+		next := sliceutil.UniqueTrimmed(patch.TagIDs)
 		slices.Sort(next)
 		if !slices.Equal(currentTags, next) {
 			if err := replacePostTaxonomyLinks(ctx, tx, "tag", "post_tag", "tag_id", mutation.PostID, next); err != nil {

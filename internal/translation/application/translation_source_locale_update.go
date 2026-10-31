@@ -3,12 +3,13 @@ package application
 import (
 	"context"
 	"errors"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
@@ -287,25 +288,9 @@ func listSourceSwitchLocales(
 	).Scan(&blockLocales).Error; err != nil {
 		return nil, errs.Internal(err)
 	}
-	locales = append(locales, blockLocales...)
-	return uniqueSortedStrings(locales), nil
-}
-
-func uniqueSortedStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	sort.Strings(result)
-	return result
+	locales = sliceutil.UniqueNonZero(append(locales, blockLocales...))
+	slices.Sort(locales)
+	return locales, nil
 }
 
 func (s *TranslationService) requestSourceLocaleSwitchOg(

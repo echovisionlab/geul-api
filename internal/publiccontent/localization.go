@@ -10,6 +10,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -167,7 +168,7 @@ func ResolveBatchWithPolicy(
 	if err := validateSpec(spec); err != nil {
 		return nil, err
 	}
-	ids := normalizedEntityIDs(entityIDs)
+	ids := sliceutil.UniqueTrimmed(entityIDs)
 	if len(ids) == 0 {
 		return map[string]Selection{}, nil
 	}
@@ -361,7 +362,7 @@ func loadRows(
 	entityID string,
 	locales []string,
 ) (map[string]translationRow, error) {
-	locales = normalizedLocales(locales)
+	locales = sliceutil.UniqueTrimmed(locales)
 	if len(locales) == 0 {
 		return map[string]translationRow{}, nil
 	}
@@ -513,40 +514,6 @@ func requestedLocale(acceptLanguage, fallback string) string {
 
 func normalizedLocale(locale, fallback string) string {
 	return localization.NormalizeWithDefault(locale, fallback)
-}
-
-func normalizedLocales(locales []string) []string {
-	result := make([]string, 0, len(locales))
-	seen := make(map[string]struct{}, len(locales))
-	for _, locale := range locales {
-		locale = strings.TrimSpace(locale)
-		if locale == "" {
-			continue
-		}
-		if _, exists := seen[locale]; exists {
-			continue
-		}
-		seen[locale] = struct{}{}
-		result = append(result, locale)
-	}
-	return result
-}
-
-func normalizedEntityIDs(entityIDs []string) []string {
-	result := make([]string, 0, len(entityIDs))
-	seen := make(map[string]struct{}, len(entityIDs))
-	for _, entityID := range entityIDs {
-		entityID = strings.TrimSpace(entityID)
-		if entityID == "" {
-			continue
-		}
-		if _, exists := seen[entityID]; exists {
-			continue
-		}
-		seen[entityID] = struct{}{}
-		result = append(result, entityID)
-	}
-	return result
 }
 
 func fallbackReason(reason localization.FallbackReason) openv1.LocalizationFallbackReason {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
@@ -18,7 +19,7 @@ func LoadPublicMemberSummaries(
 	cdnDomain string,
 	memberIDs []string,
 ) (map[string]*commonv1.MemberSummary, error) {
-	ids := uniqueNonEmptyIDs(memberIDs)
+	ids := sliceutil.UniqueNonZero(memberIDs)
 	result := make(map[string]*commonv1.MemberSummary, len(ids))
 	if len(ids) == 0 {
 		return result, nil
@@ -53,7 +54,7 @@ func loadPublicMemberAvatars(
 	cdnDomain string,
 	memberIDs []string,
 ) (map[string]*commonv1.AssetRef, error) {
-	ids := uniqueNonEmptyIDs(memberIDs)
+	ids := sliceutil.UniqueNonZero(memberIDs)
 	result := make(map[string]*commonv1.AssetRef, len(ids))
 	if len(ids) == 0 {
 		return result, nil

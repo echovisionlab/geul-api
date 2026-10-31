@@ -10,6 +10,7 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"gorm.io/gorm"
 )
@@ -51,7 +52,7 @@ func LoadSourceLocaleDocumentStates(
 	db *gorm.DB,
 	ids []string,
 ) (map[string]*SourceLocaleDocument, error) {
-	ids = normalizeSourceLocaleDocumentIDs(ids)
+	ids = sliceutil.UniqueTrimmed(ids)
 	if len(ids) == 0 {
 		return map[string]*SourceLocaleDocument{}, nil
 	}
@@ -139,23 +140,6 @@ func LoadTranslationSourceDocument(
 		ContentText:             document.ContentText,
 		ContentDocumentRevision: contentDocument.Revision.String(),
 	}, nil
-}
-
-func normalizeSourceLocaleDocumentIDs(ids []string) []string {
-	normalized := make([]string, 0, len(ids))
-	seen := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		normalized = append(normalized, id)
-	}
-	return normalized
 }
 
 func derefString(value *string) string {

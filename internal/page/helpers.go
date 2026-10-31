@@ -40,23 +40,6 @@ func normalizeOptionalNullableString(raw *string) (*string, bool) {
 	return &trimmed, true
 }
 
-func normalizeStringIDs(ids []string) []string {
-	result := make([]string, 0, len(ids))
-	seen := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		if _, exists := seen[id]; exists {
-			continue
-		}
-		seen[id] = struct{}{}
-		result = append(result, id)
-	}
-	return result
-}
-
 func readyManageOgAssetRef(
 	ctx context.Context,
 	assets MediaAssets,

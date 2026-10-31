@@ -2,7 +2,6 @@ package label
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"time"
 
@@ -10,6 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 )
 
 // publishLabelContentUpdated schedules content.updated in the caller's
@@ -79,7 +79,7 @@ func buildLabelContentUpdatedEvent(
 		EntityId:             labelID,
 		Source:               source,
 		ChangedFields:        labelContentUpdatedFields(fields),
-		ContributorMemberIds: normalizeLabelEventContributors(contributors),
+		ContributorMemberIds: sliceutil.SortedUniqueTrimmed(contributors),
 		DocumentStateChanged: documentStateChanged,
 		DocumentRevision:     &revision,
 		Locale:               &locale,
@@ -111,24 +111,6 @@ func labelContentUpdatedFields(fields []string) []*managev1.ContentUpdatedField 
 		seen[path] = struct{}{}
 		result = append(result, &managev1.ContentUpdatedField{Path: path, Kind: kind})
 	}
-	return result
-}
-
-func normalizeLabelEventContributors(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, exists := seen[value]; exists {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	sort.Strings(result)
 	return result
 }
 

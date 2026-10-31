@@ -3,29 +3,13 @@ package filemedia
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
-
-func normalizedSortedFileIDs(fileIDs []string) []string {
-	seen := make(map[string]struct{}, len(fileIDs))
-	for _, fileID := range fileIDs {
-		fileID = strings.TrimSpace(fileID)
-		if fileID != "" {
-			seen[fileID] = struct{}{}
-		}
-	}
-	ids := make([]string, 0, len(seen))
-	for fileID := range seen {
-		ids = append(ids, fileID)
-	}
-	sort.Strings(ids)
-	return ids
-}
 
 type fileAttachmentReferenceSpec struct {
 	name      string
@@ -118,7 +102,7 @@ func ActiveFileReferenceNames(ctx context.Context, db *gorm.DB, fileID string) (
 // bounded file set in one query. Callers must hold the corresponding file row
 // locks before using the result to mutate deletion state.
 func ActiveFileReferenceIDs(ctx context.Context, db *gorm.DB, fileIDs []string) (map[string]struct{}, error) {
-	ids := normalizedSortedFileIDs(fileIDs)
+	ids := sliceutil.SortedUniqueTrimmed(fileIDs)
 	result := make(map[string]struct{})
 	if len(ids) == 0 {
 		return result, nil

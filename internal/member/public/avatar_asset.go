@@ -53,21 +53,6 @@ func projectReadyPublicAsset(cdnDomain string, row readyPublicAssetRow) (*common
 	}, nil
 }
 
-func uniqueNonEmptyIDs(ids []string) []string {
-	result := make([]string, 0, len(ids))
-	seen := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		if id == "" {
-			continue
-		}
-		if _, exists := seen[id]; !exists {
-			seen[id] = struct{}{}
-			result = append(result, id)
-		}
-	}
-	return result
-}
-
 func optionalStringValue(value *string) string {
 	if value == nil {
 		return ""

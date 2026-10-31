@@ -29,23 +29,6 @@ func optionalStringValue(value *string) string {
 	return *value
 }
 
-func uniqueNonEmptyIDs(values []string) []string {
-	result := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}
-
 func hasDraftResourceView(
 	ctx context.Context,
 	spiceDB *auth.SpiceDBClient,

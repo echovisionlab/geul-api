@@ -10,6 +10,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
@@ -154,7 +155,7 @@ func (s *FileService) ResolvePublicDisplayMedia(
 			requested = append(requested, fileID)
 		}
 	}
-	requested = uniqueNonEmptyIDs(requested)
+	requested = sliceutil.UniqueTrimmed(requested)
 	result := make(map[string]*commonv1.MediaDelivery, len(requested))
 	if len(requested) == 0 {
 		return result, nil
