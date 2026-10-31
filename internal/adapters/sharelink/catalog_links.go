@@ -3,8 +3,7 @@ package sharelinkadapter
 import (
 	"context"
 
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/sharelink"
 	"gorm.io/gorm"
 )
 
@@ -17,16 +16,10 @@ func NewCatalogLinks() CatalogLinks { return CatalogLinks{} }
 
 // DeleteLabelShareLinks deletes every share link of the Label.
 func (CatalogLinks) DeleteLabelShareLinks(ctx context.Context, tx *gorm.DB, labelID string) error {
-	return deleteEntityShareLinks(ctx, tx, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL, labelID)
+	return EntityLinks{Type: sharelink.EntityLabel}.DeleteEntityShareLinks(ctx, tx, labelID)
 }
 
 // DeleteArtistShareLinks deletes every share link of the Artist.
 func (CatalogLinks) DeleteArtistShareLinks(ctx context.Context, tx *gorm.DB, artistID string) error {
-	return deleteEntityShareLinks(ctx, tx, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST, artistID)
-}
-
-func deleteEntityShareLinks(ctx context.Context, tx *gorm.DB, entityType managev1.ShareLinkEntityType, entityID string) error {
-	return tx.WithContext(ctx).
-		Where("entity_type = ? AND entity_id = ?", entityType.String(), entityID).
-		Delete(&model.ShareLink{}).Error
+	return EntityLinks{Type: sharelink.EntityArtist}.DeleteEntityShareLinks(ctx, tx, artistID)
 }
