@@ -148,6 +148,7 @@ func PrincipalFence(principal *auth.UserInfo) Access   // lock the principal's I
 
 func RequestAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
+func VersionAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func Unchanged() Audit
 ```
 
@@ -192,6 +193,13 @@ Rules for a spec:
 
 Work that must happen after the commit, such as a metric or a confirmation
 log, follows `Run` in the use case.
+
+A read that must see one snapshot while it share-locks its root runs in
+`mutation.ReadLocked` (repeatable read; PostgreSQL refuses row locks in a
+read-only transaction), so a migrated domain still opens no transaction
+itself. `mutation.IsClassified` tells a domain that maps only unclassified
+failures, such as content store sentinels, that a shared helper already
+answered.
 
 ## Errors
 
