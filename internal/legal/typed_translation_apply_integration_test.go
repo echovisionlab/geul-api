@@ -226,6 +226,14 @@ func testLegalTranslationRejections(t *testing.T, f legalTranslationFixture) {
 			sentinel: translation.ErrSourceNoLongerCurrent,
 		},
 		{
+			name: "stale source revision", job: f.job(id, "ko"), candidate: func() *translation.Candidate {
+				candidate := valid()
+				candidate.ContentDocumentRevision = uuid.NewString()
+				return candidate
+			}(),
+			sentinel: translation.ErrSourceNoLongerCurrent,
+		},
+		{
 			name: "target is the source locale", job: f.job(id, "en"),
 			candidate: legalTranslationCandidate(source, "en", "Source rewrite", "Source rewrite text"),
 			code:      connect.CodeInvalidArgument, message: "locale: legal target locale must differ from the source locale",
@@ -268,11 +276,14 @@ func testLegalTranslationTargetLifecycle(t *testing.T, f legalTranslationFixture
 	require.Equal(t, created, f.state(t, id))
 	requireLegalTranslationAudits(t, f, id, []legalTranslationAudit{{Locale: "ko", Operation: "created"}})
 
-	// The candidate revision is only parsed, never compared: a well-formed
-	// revision the document never had still replaces the target.
+	// A candidate translated from another source revision is discarded.
 	stale := legalTranslationCandidate(source, "ko", "갱신 제목", "갱신 본문")
 	stale.ContentDocumentRevision = uuid.NewString()
-	require.NoError(t, f.apply(f.job(id, "ko"), stale))
+	require.ErrorIs(t, f.apply(f.job(id, "ko"), stale), translation.ErrSourceNoLongerCurrent)
+	require.Equal(t, created, f.state(t, id))
+	requireLegalTranslationAudits(t, f, id, []legalTranslationAudit{{Locale: "ko", Operation: "created"}})
+
+	require.NoError(t, f.apply(f.job(id, "ko"), legalTranslationCandidate(source, "ko", "갱신 제목", "갱신 본문")))
 	require.Equal(t, map[string]legalTranslationTarget{
 		"ko": {Title: "갱신 제목", ContentText: "갱신 본문", BlockTexts: 1},
 	}, f.state(t, id).Targets)
@@ -339,8 +350,17 @@ func testLegalTranslationProviderSource(t *testing.T, f legalTranslationFixture)
 	requireLegalParityError(t, err, connect.CodeInternal, "legal translation audit requires canonical requester Member")
 	require.Equal(t, before, f.state(t, id))
 
-	// A late provider result whose target became the source locale rewrites
-	// the source title and the requested source units.
+	// A provider result requested for another source whose target is now
+	// the source locale is discarded instead of rewriting the source.
+	late := f.job(id, "en")
+	late.SourceLocale = "ko"
+	require.ErrorIs(t, f.apply(late, candidate), translation.ErrSourceNoLongerCurrent)
+	require.Equal(t, before, f.state(t, id))
+	require.Empty(t, legalParityAuditRows(t, f.db, id)[1:])
+
+	// A provider result whose job names the source locale on both sides
+	// rewrites the source title and the requested source units, as Post's
+	// same-locale provider operation does.
 	require.NoError(t, f.apply(f.job(id, "en"), candidate))
 	after := f.state(t, id)
 	require.NotEqual(t, before.DocumentRevision, after.DocumentRevision)
