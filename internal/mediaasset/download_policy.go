@@ -609,8 +609,6 @@ func evaluateFileDownloadAccessBatchAt(
 	_ time.Time,
 	loaders ...SegmentConfigLoader,
 ) (map[string]bool, error) {
-	result := make(map[string]bool, len(sources))
-	restrictedPolicyKeys := make([]string, 0, len(sources))
 	hasAuthenticatedUser := user != nil &&
 		user.Authenticated &&
 		!user.Banned &&
@@ -627,29 +625,13 @@ func evaluateFileDownloadAccessBatchAt(
 			return nil, err
 		}
 	}
-	for policyKey, source := range sources {
-		if !source.Audience.Valid() {
-			return nil, errors.New("file has invalid download audience")
-		}
-		switch source.Audience {
-		case FileDownloadAudienceDisabled:
-			result[policyKey] = false
-		case FileDownloadAudiencePublic:
-			result[policyKey] = true
-		case FileDownloadAudienceAuthenticated:
-			result[policyKey] = hasAuthenticatedUser && activeMemberFound
-		case FileDownloadAudienceRestricted:
-			if !hasAuthenticatedUser || !activeMemberFound {
-				result[policyKey] = false
-			} else {
-				restrictedPolicyKeys = append(restrictedPolicyKeys, policyKey)
-			}
-		}
+	result, restrictedPolicyKeys, err := fileDownloadAudienceDecisions(sources, hasAuthenticatedUser && activeMemberFound)
+	if err != nil {
+		return nil, err
 	}
 	if len(restrictedPolicyKeys) == 0 {
 		return result, nil
 	}
-	sort.Strings(restrictedPolicyKeys)
 	restrictedSources := make(map[string]FileDownloadSource, len(restrictedPolicyKeys))
 	for _, key := range restrictedPolicyKeys {
 		restrictedSources[key] = sources[key]
@@ -666,20 +648,8 @@ func evaluateFileDownloadAccessBatchAt(
 	if len(segmentIDs) == 0 {
 		return result, nil
 	}
-	var segments []model.AudienceSegment
-	if err := db.WithContext(ctx).
-		Where("id IN ? AND archived_at IS NULL", segmentIDs).
-		Find(&segments).Error; err != nil {
-		return nil, err
-	}
-	segmentPointers := make([]*model.AudienceSegment, 0, len(segments))
-	for i := range segments {
-		segmentPointers = append(segmentPointers, &segments[i])
-	}
-	if len(loaders) != 1 || loaders[0] == nil {
-		return nil, domainerr.DependencyUnavailable("Audience segment configuration")
-	}
-	if err := loaders[0].LoadSegmentConfigs(ctx, db, segmentPointers); err != nil {
+	segments, err := loadRestrictedFileDownloadSegments(ctx, db, segmentIDs, loaders)
+	if err != nil {
 		return nil, err
 	}
 	segmentsByID := make(map[string]model.AudienceSegment, len(segments))
@@ -720,6 +690,62 @@ func evaluateFileDownloadAccessBatchAt(
 		}
 	}
 	return result, nil
+}
+
+// fileDownloadAudienceDecisions decides each source whose audience needs no
+// segment lookup and returns the restricted policy keys left to match, in
+// order. eligible is whether the viewer is an active authenticated Member.
+func fileDownloadAudienceDecisions(sources map[string]FileDownloadSource, eligible bool) (map[string]bool, []string, error) {
+	result := make(map[string]bool, len(sources))
+	restrictedPolicyKeys := make([]string, 0, len(sources))
+	for policyKey, source := range sources {
+		if !source.Audience.Valid() {
+			return nil, nil, errors.New("file has invalid download audience")
+		}
+		switch source.Audience {
+		case FileDownloadAudienceDisabled:
+			result[policyKey] = false
+		case FileDownloadAudiencePublic:
+			result[policyKey] = true
+		case FileDownloadAudienceAuthenticated:
+			result[policyKey] = eligible
+		case FileDownloadAudienceRestricted:
+			if !eligible {
+				result[policyKey] = false
+			} else {
+				restrictedPolicyKeys = append(restrictedPolicyKeys, policyKey)
+			}
+		}
+	}
+	sort.Strings(restrictedPolicyKeys)
+	return result, restrictedPolicyKeys, nil
+}
+
+// loadRestrictedFileDownloadSegments loads the live segments a restricted
+// policy names, with their configuration.
+func loadRestrictedFileDownloadSegments(
+	ctx context.Context,
+	db *gorm.DB,
+	segmentIDs []string,
+	loaders []SegmentConfigLoader,
+) ([]model.AudienceSegment, error) {
+	var segments []model.AudienceSegment
+	if err := db.WithContext(ctx).
+		Where("id IN ? AND archived_at IS NULL", segmentIDs).
+		Find(&segments).Error; err != nil {
+		return nil, err
+	}
+	segmentPointers := make([]*model.AudienceSegment, 0, len(segments))
+	for i := range segments {
+		segmentPointers = append(segmentPointers, &segments[i])
+	}
+	if len(loaders) != 1 || loaders[0] == nil {
+		return nil, domainerr.DependencyUnavailable("Audience segment configuration")
+	}
+	if err := loaders[0].LoadSegmentConfigs(ctx, db, segmentPointers); err != nil {
+		return nil, err
+	}
+	return segments, nil
 }
 
 func loadRestrictedFileDownloadMemberFacts(
