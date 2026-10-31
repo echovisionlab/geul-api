@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"testing"
 )
@@ -23,6 +24,7 @@ func TestExpectedToolErrorPreservesActionableFailuresWithoutPrivateContext(t *te
 		{"connect canceled", connect.NewError(connect.CodeCanceled, errors.New("private upstream context")), "The request was canceled"},
 		{"connect deadline", connect.NewError(connect.CodeDeadlineExceeded, errors.New("private upstream context")), "The request timed out; try again"},
 		{"unavailable", connect.NewError(connect.CodeUnavailable, errors.New("private upstream context")), "The service is temporarily unavailable"},
+		{"use case", domainerr.Duplicate("member", "nickname", "taken").WithCause(errors.New("private constraint name")), "member with nickname 'taken' already exists"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			original := fmt.Errorf("private wrapper: %w", tc.err)
