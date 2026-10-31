@@ -28,8 +28,10 @@ func (s *SuppressionStore) Suppress(
 	if value := strings.TrimSpace(request.ReferenceID); value != "" {
 		referenceID = &value
 	}
-	return emaildelivery.SuppressEmailAddress(
-		ctx, s.db, request.Email, request.Reason, request.Source,
-		referenceID, request.ErrorType,
-	)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return emaildelivery.SuppressEmailAddress(
+			ctx, tx, request.Email, request.Reason, request.Source,
+			referenceID, request.ErrorType,
+		)
+	})
 }

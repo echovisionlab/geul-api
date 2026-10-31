@@ -64,7 +64,7 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	now := time.Now().UTC()
 	require.NoError(t, db.Create(&model.AudienceSegment{
 		ID: segmentID, Name: "Download audience " + uuid.NewString(),
-		SegmentType: managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String(),
+		SegmentType: model.AudienceSegmentMemberTags,
 		CreatedAt:   now, UpdatedAt: &now,
 	}).Error)
 	require.NoError(t, db.Create(&model.AudienceSegmentUserTag{

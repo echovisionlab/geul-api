@@ -8,7 +8,6 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -18,7 +17,7 @@ func TestRecipientSelectionFromAudienceSegmentMapsConfig(t *testing.T) {
 
 	createdAfter := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	selection, err := recipientSelectionFromAudienceSegment(&model.AudienceSegment{
-		SegmentType: managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String(),
+		SegmentType: model.AudienceSegmentMembersByFilter,
 		Config: model.AudienceSegmentConfig{
 			AccountRoles:     []string{"admin", "author"},
 			CreatedAfter:     &createdAfter,

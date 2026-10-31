@@ -30,6 +30,8 @@ const (
 	Unauthenticated
 	// Unavailable reports a dependency that may recover on retry.
 	Unavailable
+	// Aborted reports a concurrent change the client may retry past.
+	Aborted
 )
 
 // Error is a use-case outcome. Message is what the client sees; the cause
@@ -99,6 +101,12 @@ func Denied(message string) *Error {
 // stored Member and Identity.
 func InvalidSession() *Error {
 	return New(Unauthenticated, "", "invalid or expired session")
+}
+
+// Retry reports a concurrent change that stopped the request; repeating it
+// may succeed.
+func Retry(message string) *Error {
+	return New(Aborted, "", message)
 }
 
 // DependencyUnavailable reports an unavailable dependency.

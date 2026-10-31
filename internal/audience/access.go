@@ -2,21 +2,22 @@ package audience
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-var authenticatedAccessSegmentTypes = []string{
-	managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String(),
-	managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String(),
+var authenticatedAccessSegmentTypes = []model.AudienceSegmentType{
+	model.AudienceSegmentMemberTags,
+	model.AudienceSegmentMembersByFilter,
 }
 
 // ValidateAuthenticatedAccessSegmentIDs validates active segment references
@@ -31,17 +32,17 @@ func ValidateAuthenticatedAccessSegmentIDs(ctx context.Context, db *gorm.DB, seg
 		Where("id IN ?", segmentIDs).
 		Order("id ASC").
 		Find(&segments).Error; err != nil {
-		return errs.Internal(err)
+		return fmt.Errorf("lock authenticated access segments: %w", err)
 	}
 	if len(segments) != len(segmentIDs) {
-		return errs.InvalidArgument(
+		return domainerr.InvalidField(
 			"audience_segment_ids",
 			"one or more audience segments do not exist or cannot grant authenticated access",
 		)
 	}
 	for i := range segments {
 		if segments[i].ArchivedAt != nil || !authenticatedAccessSegmentType(segments[i].SegmentType) {
-			return errs.InvalidArgument(
+			return domainerr.InvalidField(
 				"audience_segment_ids",
 				"one or more audience segments do not exist or cannot grant authenticated access",
 			)
@@ -56,47 +57,49 @@ func AuthenticatedAccessSegmentSummary(segment *model.AudienceSegment) (*managev
 	if segment == nil || segment.ArchivedAt != nil || !authenticatedAccessSegmentType(segment.SegmentType) {
 		return nil, false
 	}
-	segmentType := managev1.SegmentType(managev1.SegmentType_value[strings.TrimSpace(segment.SegmentType)])
 	return &managev1.AudienceSegmentSummary{
 		Id:          segment.ID,
 		Name:        segment.Name,
 		Description: segment.Description,
-		SegmentType: segmentType,
+		SegmentType: segmentTypeToProto(trimmedSegmentType(segment.SegmentType)),
 	}, true
 }
 
-func authenticatedAccessSegmentType(segmentType string) bool {
-	switch strings.TrimSpace(segmentType) {
-	case managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String(),
-		managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String():
+func trimmedSegmentType(segmentType model.AudienceSegmentType) model.AudienceSegmentType {
+	return model.AudienceSegmentType(strings.TrimSpace(string(segmentType)))
+}
+
+func authenticatedAccessSegmentType(segmentType model.AudienceSegmentType) bool {
+	switch trimmedSegmentType(segmentType) {
+	case model.AudienceSegmentMemberTags, model.AudienceSegmentMembersByFilter:
 		return true
 	default:
 		return false
 	}
 }
 
-func requireDownloadPolicyAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient) (*auth.UserInfo, error) {
+func requireDownloadPolicyAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient) error {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || strings.TrimSpace(user.MemberID.String()) == "" {
-		return nil, errs.AuthenticationRequired()
+		return domainerr.New(domainerr.Unauthenticated, "", "authentication required")
 	}
 	if user.Banned {
-		return nil, errs.AccountBanned()
+		return domainerr.Denied("account is banned")
 	}
 	can, err := policyv1.AudienceSegment.ListAuthenticatedAccess()
 	if err != nil {
-		return nil, errs.Internal(err)
+		return err
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		return nil, errs.WithCause(errs.AuthenticationRequired(), err)
+		return domainerr.New(domainerr.Unauthenticated, "", "authentication required").WithCause(err)
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
-		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return nil, errs.AuthorRequired()
+		return domainerr.Denied("author access required")
 	}
-	return user, nil
+	return nil
 }

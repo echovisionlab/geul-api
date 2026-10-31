@@ -77,7 +77,7 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 		telemetryWriter,
 	)
 	_, rawCourierHandler := intrav1connect.NewEmailCourierServiceHandler(
-		emaildelivery.NewEmailCourierService(
+		emaildelivery.NewCourierConnectHandler(emaildelivery.NewEmailCourierService(
 			publisher,
 			stack.KratosClient,
 			emaildeliveryadapter.NewAuthIssuanceAuthority(
@@ -87,7 +87,7 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 			),
 			15*time.Minute,
 			emaildelivery.WithVerificationUIURL("https://www.example.test/verify"),
-		),
+		)),
 	)
 	go accountEmailChangeLifecycle.Start(ctx)
 	registrationMembers := member.NewMemberProvisioner(

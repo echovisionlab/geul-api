@@ -268,3 +268,28 @@ func TestLockOrderSortsAndDeduplicatesSubjects(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"a", "b"}, ordered)
 }
+
+func TestRunTakesDomainLocksBeforeAccess(t *testing.T) {
+	runner, db := newTestRunner(t, &audittest.Recorder{})
+	var steps []string
+	spec := noteSpec(&steps, "locked first")
+	spec.Lock = func(context.Context, *gorm.DB) error {
+		steps = append(steps, "lock")
+		return nil
+	}
+
+	_, err := Run(memberRequestContext(t), runner, spec)
+	require.NoError(t, err)
+	require.Equal(t, []string{"lock", "access", "change", "audit", "outbox"}, steps)
+
+	missing := errors.New("root not found")
+	steps = nil
+	spec.Lock = func(context.Context, *gorm.DB) error {
+		steps = append(steps, "lock")
+		return missing
+	}
+	_, err = Run(memberRequestContext(t), runner, spec)
+	require.ErrorIs(t, err, missing)
+	require.Equal(t, []string{"lock"}, steps)
+	require.EqualValues(t, 1, noteCount(t, db))
+}

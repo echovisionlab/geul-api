@@ -15,6 +15,7 @@ import (
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -31,9 +32,7 @@ func TestEmailSuppressionReleaseDomainAuditIntegration(t *testing.T) {
 
 	t.Run("release stores exact non-PII transition and repeat is unaudited", func(t *testing.T) {
 		suppression := seedSuppressionReleaseAuditFixture(t, db, "suppressed-audit@example.test")
-		service := NewAuditedEmailSuppressionService(
-			db, apitelemetry.NewDurableWriter(db), spiceDB,
-		)
+		service := NewEmailSuppressionConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB, Audit: apitelemetry.NewDurableWriter(db)}))
 		request := connect.NewRequest(&managev1.ReleaseEmailSuppressionRequest{Email: suppression.Email})
 		_, err := service.ReleaseEmailSuppression(ctx, request)
 		require.NoError(t, err)
@@ -59,8 +58,8 @@ func TestEmailSuppressionReleaseDomainAuditIntegration(t *testing.T) {
 
 	t.Run("audit failure rolls back release", func(t *testing.T) {
 		suppression := seedSuppressionReleaseAuditFixture(t, db, "suppressed-rollback@example.test")
-		_, err := NewAuditedEmailSuppressionService(
-			db, failingSuppressionAuditAppender{}, spiceDB,
+		_, err := NewEmailSuppressionConnectHandler(
+			newTestService(t, Deps{DB: db, SpiceDB: spiceDB, Audit: failingSuppressionAuditAppender{}}),
 		).ReleaseEmailSuppression(ctx, connect.NewRequest(
 			&managev1.ReleaseEmailSuppressionRequest{Email: suppression.Email},
 		))
@@ -111,3 +110,21 @@ func (failingSuppressionAuditAppender) AppendDomainAuditInTransaction(
 }
 
 var _ domainaudit.Appender = failingSuppressionAuditAppender{}
+
+func TestEmailSuppressionLookupRequiresAdministratorIntegration(t *testing.T) {
+	t.Parallel()
+	db := testutil.NewIntegrationDB(t)
+	adminContext, spiceDB := testutil.IntegrationAdminContext(t, db)
+	suppression := seedSuppressionReleaseAuditFixture(t, db, "suppressed-lookup@example.test")
+	service := NewEmailSuppressionConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB}))
+	request := connect.NewRequest(&managev1.GetEmailSuppressionRequest{Email: suppression.Email})
+
+	response, err := service.GetEmailSuppression(adminContext, request)
+	require.NoError(t, err)
+	require.Equal(t, suppression.ID, response.Msg.GetSuppression().GetId())
+
+	member := auth.GetUser(adminContext)
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, string(member.IdentityID), policyv1.Role.User())
+	_, err = service.GetEmailSuppression(adminContext, request)
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+}

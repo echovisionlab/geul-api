@@ -11,17 +11,14 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/email"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -29,9 +26,9 @@ var errAuthCodeIssuanceProvenanceMissing = errors.New("auth issuance provenance 
 
 const authIssuanceProvenanceNamespace = "__geul_auth_issuance"
 
-// EmailCourierService implements the EmailCourierService Connect handler
+// EmailCourierService queues the authentication emails Kratos sends through
+// its HTTP courier.
 type EmailCourierService struct {
-	intrav1connect.UnimplementedEmailCourierServiceHandler
 	publisher         EmailCourierPublisher
 	kratosClient      auth.IdentityManager
 	issuanceAuthority AuthIssuanceAuthority
@@ -108,51 +105,57 @@ func NewEmailCourierService(
 	return service
 }
 
-// SendEmail receives email requests from Kratos HTTP courier and queues them.
-// The HTTP route is additionally protected by the internal-service credential;
-// private-network placement is defense in depth.
-func (s *EmailCourierService) SendEmail(
-	ctx context.Context,
-	req *connect.Request[intrav1.SendEmailRequest],
-) (_ *connect.Response[intrav1.SendEmailResponse], rpcErr error) {
+// QueueAuthEmailCommand is an authentication email the Kratos HTTP courier
+// asks to send.
+type QueueAuthEmailCommand struct {
+	Recipient    string
+	TemplateType string
+	TemplateData *structpb.Struct
+}
+
+// QueueAuthEmail queues an authentication email from the Kratos HTTP courier.
+// It reports false for an email it deliberately skips. The HTTP route is
+// additionally protected by the internal-service credential; private-network
+// placement is defense in depth.
+func (s *EmailCourierService) QueueAuthEmail(ctx context.Context, command QueueAuthEmailCommand) (_ bool, rpcErr error) {
 	defer func() {
-		rpcErr = failurecause.WithAttrs(failurecause.WithPrivate(rpcErr, requestPrivateValues(req.Msg)...), slog.String("template_type", req.Msg.GetTemplateType()))
+		rpcErr = failurecause.WithAttrs(failurecause.WithPrivate(rpcErr, requestPrivateValues(command)...), slog.String("template_type", command.TemplateType))
 	}()
 
 	slog.Info("Received email request from Kratos",
-		"template_type", req.Msg.TemplateType,
+		"template_type", command.TemplateType,
 	)
 
 	// Validate required fields
-	if req.Msg.Recipient == "" {
-		return nil, errs.Required("recipient")
+	if command.Recipient == "" {
+		return false, domainerr.Required("recipient")
 	}
-	if req.Msg.TemplateType == "" {
-		return nil, errs.Required("template_type")
+	if command.TemplateType == "" {
+		return false, domainerr.Required("template_type")
 	}
 
 	// Convert template_data from Struct to map[string]string
 	templateData := make(map[string]string)
-	if req.Msg.TemplateData != nil {
-		templateData = structToStringMap(req.Msg.TemplateData)
+	if command.TemplateData != nil {
+		templateData = structToStringMap(command.TemplateData)
 	}
-	identityID := identityIDFromTemplateData(req.Msg.TemplateData)
-	targetLocale := localeFromTemplateData(req.Msg.TemplateData)
+	identityID := identityIDFromTemplateData(command.TemplateData)
+	targetLocale := localeFromTemplateData(command.TemplateData)
 
 	// Interpret provider-specific courier input only at this boundary. Internal
 	// queue jobs always carry a canonical provider-neutral event key.
-	templateEvent, supported := normalizeIdentityCourierTemplateType(req.Msg.TemplateType)
+	templateEvent, supported := normalizeIdentityCourierTemplateType(command.TemplateType)
 	if !supported {
 		reason := "unsupported_template_type"
-		switch req.Msg.TemplateType {
+		switch command.TemplateType {
 		case "verification_code_invalid":
 			reason = "disabled_anti_enumeration_selector"
 		}
 		slog.Info("Skipped unsupported identity courier email",
-			"template_type", req.Msg.TemplateType,
+			"template_type", command.TemplateType,
 			"reason", reason,
 		)
-		return connect.NewResponse(&intrav1.SendEmailResponse{Queued: false}), nil
+		return false, nil
 	}
 	templateType := templateEvent.String()
 	templateData = canonicalAutomaticEmailTemplateData(templateEvent, templateData)
@@ -164,64 +167,64 @@ func (s *EmailCourierService) SendEmail(
 	issuance, err := s.requireAuthIssuanceProvenance(
 		ctx,
 		templateEvent,
-		req.Msg.Recipient,
+		command.Recipient,
 		identityID,
-		req.Msg.TemplateData,
+		command.TemplateData,
 	)
 	if err != nil {
-		slog.WarnContext(ctx, "Authentication issuance provenance rejected", "domain", "mail", "event", "mail.courier.invalid_issuance_provenance", "outcome", "blocked", "template_type", req.Msg.TemplateType, "locale", targetLocale, "reason", "invalid_issuance_provenance", "failure_cause", failurecause.Message(err, requestPrivateValues(req.Msg)...))
-		return nil, errs.PermissionDenied("authentication issuance provenance is invalid")
+		slog.WarnContext(ctx, "Authentication issuance provenance rejected", "domain", "mail", "event", "mail.courier.invalid_issuance_provenance", "outcome", "blocked", "template_type", command.TemplateType, "locale", targetLocale, "reason", "invalid_issuance_provenance", "failure_cause", failurecause.Message(err, requestPrivateValues(command)...))
+		return false, domainerr.Denied("authentication issuance provenance is invalid")
 	}
 
 	// Build SendEmailEvent proto with template_type and template_data
 	job := &managev1.SendEmailEvent{
-		Recipient:    req.Msg.Recipient,
+		Recipient:    command.Recipient,
 		TemplateType: templateType,
 		TemplateData: templateData,
 	}
 	if targetLocale != "" {
 		job.Locale = &targetLocale
 	}
-	if ok := applyAuthRecipientContext(job, templateType, req.Msg.Recipient, identityID); !ok {
+	if ok := applyAuthRecipientContext(job, templateType, command.Recipient, identityID); !ok {
 		slog.WarnContext(ctx, "Skipped identity courier email without required authority context",
-			"template_type", req.Msg.TemplateType,
+			"template_type", command.TemplateType,
 		)
-		return connect.NewResponse(&intrav1.SendEmailResponse{Queued: false}), nil
+		return false, nil
 	}
 	if templateType == email.EventLoginCode.String() {
-		allowed, reason, err := s.authLoginAllowed(ctx, identityID, req.Msg.Recipient)
+		allowed, reason, err := s.authLoginAllowed(ctx, identityID, command.Recipient)
 		if err != nil {
 			LogDeliveryFailure(ctx, "mail.courier.identity_lookup_failed", job, err, "reason", "identity_lookup_failed")
-			return nil, errs.Internal(err)
+			return false, err
 		}
 		if !allowed {
 			slog.WarnContext(ctx, "Skipped login-code email before queue",
 				"identity_id", identityID,
-				"template_type", req.Msg.TemplateType,
+				"template_type", command.TemplateType,
 				"reason", reason,
 			)
-			return connect.NewResponse(&intrav1.SendEmailResponse{Queued: false}), nil
+			return false, nil
 		}
 	}
 
 	codeKey := templateEvent.String()
 	if strings.TrimSpace(templateData[codeKey]) == "" {
-		return nil, errs.InvalidArgument(codeKey, "generated authentication code is required")
+		return false, domainerr.InvalidField(codeKey, "generated authentication code is required")
 	}
 	expiresAt, err := authCodeExpiry(issuance.IssuedAt, s.codeLifespan, templateData)
 	if err != nil {
-		return nil, errs.InvalidArgument("expires_in_minutes", err.Error())
+		return false, domainerr.InvalidField("expires_in_minutes", err.Error())
 	}
 	if !expiresAt.After(s.now().UTC()) {
-		return nil, errs.InvalidArgumentMsg("authentication issuance has expired")
+		return false, domainerr.New(domainerr.Invalid, "", "authentication issuance has expired")
 	}
 	messageID, err := s.issuanceAuthority.IdempotencyKey(
 		templateEvent,
-		req.Msg.Recipient,
+		command.Recipient,
 		issuance.IssuanceID,
 	)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return false, err
 	}
 	issuanceID := issuance.IssuanceID
 	job.IssuanceId = &issuanceID
@@ -231,16 +234,14 @@ func (s *EmailCourierService) SendEmail(
 	err = s.publisher.PublishAuthEmail(ctx, job)
 	if err != nil {
 		LogDeliveryFailure(ctx, "mail.courier.queue_publish_failed", job, err, "reason", "queue_publish_failed")
-		return nil, errs.Internal(err)
+		return false, err
 	}
 
 	slog.Debug("Authentication email command confirmed", "message_id", messageID, "issuance_id", issuanceID)
 
-	slog.Info("Email queued successfully", "template_type", req.Msg.TemplateType)
+	slog.Info("Email queued successfully", "template_type", command.TemplateType)
 
-	return connect.NewResponse(&intrav1.SendEmailResponse{
-		Queued: true,
-	}), nil
+	return true, nil
 }
 
 func canonicalAutomaticEmailTemplateData(

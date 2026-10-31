@@ -63,18 +63,18 @@ func newLegalTranslationFixture(t *testing.T, kind string) legalTranslationFixtu
 		t.Helper()
 		var id string
 		if kind == "terms" {
-			created, err := legaldomain.NewAuditedTermsService(
+			created, err := newTestTermsService(
 				db, "https://example.com", writer, spiceDB, legalIntegrationDependencies(db, ""),
-				legaldomain.WithTermsContentBlockStore(store),
+				withLegalContentBlocks(store),
 			).CreateTermsVersion(ctx, connect.NewRequest(&managev1.CreateTermsVersionRequest{
 				Title: ptrString("Source terms"), Document: legalPolicyDocumentFixture("en", "Source terms text"),
 			}))
 			require.NoError(t, err)
 			id = created.Msg.Id
 		} else {
-			created, err := legaldomain.NewAuditedPrivacyService(
+			created, err := newTestPrivacyService(
 				db, "https://example.com", writer, spiceDB, legalIntegrationDependencies(db, ""),
-				legaldomain.WithPrivacyContentBlockStore(store),
+				withLegalContentBlocks(store),
 			).CreatePrivacyVersion(ctx, connect.NewRequest(&managev1.CreatePrivacyVersionRequest{
 				Title: ptrString("Source privacy"), Document: legalPolicyDocumentFixture("en", "Source privacy text"),
 			}))

@@ -31,7 +31,7 @@ func TestLegalTranslationInterchangeCreateDeleteRecreateAndCASIntegration(t *tes
 			name: "privacy",
 			create: func(ctx context.Context, db *gorm.DB, store *contentblock.Store, spiceDB *auth.SpiceDBClient) (string, error) {
 				created, err := newPrivacyServiceForLegalIntegrationTest(
-					db, "", "", spiceDB, legaldomain.WithPrivacyContentBlockStore(store),
+					db, "", "", spiceDB, withLegalContentBlocks(store),
 				).CreatePrivacyVersion(ctx, connect.NewRequest(&managev1.CreatePrivacyVersionRequest{
 					Title: ptrString("Privacy XLIFF"), Document: legalPolicyDocumentFixture("en", "privacy source"),
 				}))
@@ -45,7 +45,7 @@ func TestLegalTranslationInterchangeCreateDeleteRecreateAndCASIntegration(t *tes
 			name: "terms",
 			create: func(ctx context.Context, db *gorm.DB, store *contentblock.Store, spiceDB *auth.SpiceDBClient) (string, error) {
 				created, err := newTermsServiceForLegalIntegrationTest(
-					db, "", "", spiceDB, legaldomain.WithTermsContentBlockStore(store),
+					db, "", "", spiceDB, withLegalContentBlocks(store),
 				).CreateTermsVersion(ctx, connect.NewRequest(&managev1.CreateTermsVersionRequest{
 					Title: ptrString("Terms XLIFF"), Document: legalPolicyDocumentFixture("en", "terms source"),
 				}))

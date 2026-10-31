@@ -56,9 +56,7 @@ func testMailAdapterUpdatesAuditExactChangesAndSkipSemanticNoOps(
 	ctx := mailAdapterAuditedMemberContext(t, admin.IdentityID, admin.MemberID)
 	grantMailAdapterIntegrationAdmin(t, spiceDB, admin.IdentityID)
 
-	mailService := NewAuditedMailAdapterService(
-		db, nil, nil, apitelemetry.NewDurableWriter(db), spiceDB,
-	)
+	mailService := newMailAdapterTestClient(t, Deps{DB: db, SpiceDB: spiceDB, AdapterChanges: &recordingMailAdapterPublisher{}, Audit: apitelemetry.NewDurableWriter(db)})
 	createdMail, err := mailService.Create(ctx, connect.NewRequest(&managev1.CreateMailAdapterRequest{
 		Name: "Created audited mail adapter", Type: managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES,
 		Config: &managev1.CreateMailAdapterRequest_SesConfig{SesConfig: &managev1.SESConfig{
@@ -123,7 +121,7 @@ func testMailAdapterAuditFailureRollsBackMutation(
 	ctx := mailAdapterAuditedMemberContext(t, admin.IdentityID, admin.MemberID)
 	grantMailAdapterIntegrationAdmin(t, spiceDB, admin.IdentityID)
 	mail := insertedAuditedMailAdapter(t, db)
-	failing := NewAuditedMailAdapterService(db, nil, nil, failingMailAdapterAuditAppender{}, spiceDB)
+	failing := newMailAdapterTestClient(t, Deps{DB: db, SpiceDB: spiceDB, Audit: failingMailAdapterAuditAppender{}})
 
 	_, err := failing.Create(ctx, connect.NewRequest(&managev1.CreateMailAdapterRequest{
 		Name: "failed audit mail create", Type: managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES,

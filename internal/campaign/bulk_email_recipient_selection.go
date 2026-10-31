@@ -10,7 +10,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 )
@@ -58,17 +57,17 @@ func recipientSelectionFromAudienceSegment(
 		}, nil
 	}
 
-	switch strings.TrimSpace(segment.SegmentType) {
-	case managev1.SegmentType_SEGMENT_TYPE_ALL_MEMBERS.String():
+	switch model.AudienceSegmentType(strings.TrimSpace(string(segment.SegmentType))) {
+	case model.AudienceSegmentAllMembers:
 		return &bulkEmailRecipientSelection{
 			Mode: CampaignDeliveryTargetModeAllUsers,
 		}, nil
-	case managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String():
+	case model.AudienceSegmentMemberTags:
 		return &bulkEmailRecipientSelection{
 			Mode:         CampaignDeliveryTargetModeUserTags,
 			MemberTagIDs: segment.Config.MemberTagIDs,
 		}, nil
-	case managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String():
+	case model.AudienceSegmentMembersByFilter:
 		return &bulkEmailRecipientSelection{
 			Mode: CampaignDeliveryTargetModeUsersByFilter,
 			Filters: &bulkEmailRecipientFilters{
@@ -88,7 +87,7 @@ func recipientSelectionFromAudienceSegment(
 func CountBulkEmailRecipientsForAudienceSegment(ctx context.Context, db *gorm.DB, spiceDB *auth.SpiceDBClient, segment *model.AudienceSegment) (int64, error) {
 	if segment != nil {
 		switch segment.SegmentType {
-		case managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String():
+		case model.AudienceSegmentMemberTags:
 			if len(segment.Config.MemberTagIDs) == 0 {
 				return 0, nil
 			}

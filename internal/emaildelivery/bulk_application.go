@@ -3,9 +3,10 @@ package emaildelivery
 import (
 	"context"
 	"fmt"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"log/slog"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"golang.org/x/time/rate"
@@ -105,42 +106,57 @@ func (a *BulkApplication) Run(
 		if len(deliveries) == 0 {
 			return nil
 		}
-		emails := make([]string, 0, len(deliveries))
-		for _, delivery := range deliveries {
-			emails = append(emails, delivery.RecipientEmail)
-		}
-		suppressions, err := a.suppressions.Lookup(ctx, emails)
-		if err != nil {
+		if err := a.dispatchBatch(ctx, runID, limiter, deliveries); err != nil {
 			return err
 		}
-		for _, delivery := range deliveries {
-			afterID = delivery.RecipientID
-			if err := limiter.Wait(ctx); err != nil {
+		afterID = deliveries[len(deliveries)-1].RecipientID
+	}
+}
+
+// dispatchBatch publishes the send command of each pending delivery at the
+// run's rate, and ends a suppressed delivery or one without recipient
+// context in place.
+func (a *BulkApplication) dispatchBatch(ctx context.Context, runID string, limiter *rate.Limiter, deliveries []BulkDelivery) error {
+	emails := make([]string, 0, len(deliveries))
+	for _, delivery := range deliveries {
+		emails = append(emails, delivery.RecipientEmail)
+	}
+	suppressions, err := a.suppressions.Lookup(ctx, emails)
+	if err != nil {
+		return err
+	}
+	for _, delivery := range deliveries {
+		if err := limiter.Wait(ctx); err != nil {
+			return err
+		}
+		if suppression, found := suppressions[normalizeSuppressionAddress(delivery.RecipientEmail)]; found {
+			reason := strings.TrimSpace(suppression.Reason)
+			if reason == "" {
+				reason = "email_suppressed"
+			}
+			if err := a.finishBulkDelivery(ctx, delivery, RecipientStatusSuppressed, reason); err != nil {
 				return err
 			}
-			normalized := normalizeSuppressionAddress(delivery.RecipientEmail)
-			if suppression, found := suppressions[normalized]; found {
-				reason := strings.TrimSpace(suppression.Reason)
-				if reason == "" {
-					reason = "email_suppressed"
-				}
-				if err := a.campaign.MarkResult(ctx, delivery.RecipientID, RecipientStatusSuppressed, reason); err != nil {
-					return err
-				}
-				a.metrics.RecordRecipientStatus(ctx, delivery.TemplateType, RecipientStatusSuppressed)
-				continue
-			}
-			if delivery.Command == nil || delivery.Command.GetRecipientContext() == nil {
-				if err := a.campaign.MarkResult(ctx, delivery.RecipientID, RecipientStatusBlocked, "recipient_context_missing"); err != nil {
-					return err
-				}
-				a.metrics.RecordRecipientStatus(ctx, delivery.TemplateType, RecipientStatusBlocked)
-				continue
-			}
-			if err := a.publisher.PublishSendEmail(ctx, delivery.Command); err != nil {
-				LogDeliveryFailure(ctx, "mail.delivery.command_publish_failed", delivery.Command, err, "run_id", runID, "delivery_recipient_id", delivery.RecipientID)
+			continue
+		}
+		if delivery.Command == nil || delivery.Command.GetRecipientContext() == nil {
+			if err := a.finishBulkDelivery(ctx, delivery, RecipientStatusBlocked, "recipient_context_missing"); err != nil {
 				return err
 			}
+			continue
+		}
+		if err := a.publisher.PublishSendEmail(ctx, delivery.Command); err != nil {
+			LogDeliveryFailure(ctx, "mail.delivery.command_publish_failed", delivery.Command, err, "run_id", runID, "delivery_recipient_id", delivery.RecipientID)
+			return err
 		}
 	}
+	return nil
+}
+
+func (a *BulkApplication) finishBulkDelivery(ctx context.Context, delivery BulkDelivery, status, reason string) error {
+	if err := a.campaign.MarkResult(ctx, delivery.RecipientID, status, reason); err != nil {
+		return err
+	}
+	a.metrics.RecordRecipientStatus(ctx, delivery.TemplateType, status)
+	return nil
 }

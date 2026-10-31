@@ -16,13 +16,16 @@ import (
 	"connectrpc.com/connect"
 	aidocumentadapter "github.com/echovisionlab/geul-api/internal/adapters/aidocument"
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
+	mcpadapter "github.com/echovisionlab/geul-api/internal/adapters/mcp"
 	aidocument "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/legal"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/menu"
+	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/series"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -71,8 +74,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 
 	policyOwner := &compositionLegalPolicyApplication{}
 	references := compositionContentApplications()
-	references.terms = policyOwner
-	references.privacy = policyOwner
+	references.legalPolicies = policyOwner
 	composition, err := newAIDocumentMCPComposition(
 		registrations,
 		&compositionPostApplication{},
@@ -525,29 +527,28 @@ func (*compositionMapThemeReferences) UpdateMapThemeSnapshot(context.Context, st
 
 func compositionContentApplications() contentMCPApplications {
 	return contentMCPApplications{
-		terms:        managev1connect.UnimplementedTermsServiceHandler{},
-		privacy:      managev1connect.UnimplementedPrivacyServiceHandler{},
-		categories:   &compositionCategoryReferences{},
-		tags:         &compositionTagReferences{},
-		clients:      &compositionClientReferences{},
-		mapPlaces:    &compositionMapPlaceReferences{},
-		members:      &member.Service{},
-		artists:      &compositionArtistReferences{},
-		files:        &compositionFileReferences{},
-		eventTypes:   &compositionProgramEventTypeReferences{},
-		eventSeries:  &compositionProgramEventSeriesReferences{},
-		labels:       &compositionLabelReferences{},
-		genres:       &compositionGenreReferences{},
-		styles:       &compositionStyleReferences{},
-		formats:      &compositionFormatReferences{},
-		forms:        &compositionFormReferences{},
-		postSeries:   &series.Service{},
-		tracks:       &compositionTrackReferences{},
-		mapThemes:    &compositionMapThemeReferences{},
-		menus:        &menu.Service{},
-		menuSettings: managev1connect.UnimplementedSiteSettingServiceHandler{},
-		siteSettings: managev1connect.UnimplementedSiteSettingServiceHandler{},
-		mailAdapters: &emaildelivery.MailAdapterService{},
+		legalPolicies: &legal.Service{},
+		categories:    &compositionCategoryReferences{},
+		tags:          &compositionTagReferences{},
+		clients:       &compositionClientReferences{},
+		mapPlaces:     &compositionMapPlaceReferences{},
+		members:       &member.Service{},
+		artists:       &compositionArtistReferences{},
+		files:         &compositionFileReferences{},
+		eventTypes:    &compositionProgramEventTypeReferences{},
+		eventSeries:   &compositionProgramEventSeriesReferences{},
+		labels:        &compositionLabelReferences{},
+		genres:        &compositionGenreReferences{},
+		styles:        &compositionStyleReferences{},
+		formats:       &compositionFormatReferences{},
+		forms:         &compositionFormReferences{},
+		postSeries:    &series.Service{},
+		tracks:        &compositionTrackReferences{},
+		mapThemes:     &compositionMapThemeReferences{},
+		menus:         &menu.Service{},
+		menuSettings:  managev1connect.UnimplementedSiteSettingServiceHandler{},
+		siteSettings:  managev1connect.UnimplementedSiteSettingServiceHandler{},
+		mailAdapters:  &emaildelivery.Service{},
 	}
 }
 
@@ -849,24 +850,21 @@ func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContex
 // The HTTP composition must preserve the authenticated caller when dispatching
 // lifecycle commands to the owning Legal services.
 type compositionLegalPolicyApplication struct {
-	managev1connect.UnimplementedTermsServiceHandler
-	managev1connect.UnimplementedPrivacyServiceHandler
+	mcpadapter.LegalPolicyManagementApplication
 	principal *auth.UserInfo
 	title     string
 	kind      string
 }
 
-func (application *compositionLegalPolicyApplication) CreateTermsVersion(ctx context.Context, request *connect.Request[managev1.CreateTermsVersionRequest]) (*connect.Response[managev1.Terms], error) {
+func (application *compositionLegalPolicyApplication) CreatePolicyVersion(ctx context.Context, kind legal.PolicyKind, command legal.CreatePolicyVersionCommand) (legal.Policy, error) {
 	application.principal = auth.GetUser(ctx)
-	application.title = request.Msg.GetTitle()
-	application.kind = "terms"
-	return connect.NewResponse(&managev1.Terms{Id: compositionFileID, Version: 2, Title: application.title, SourceLocale: "ko", Revision: compositionIdentityID, Status: managev1.TermsStatus_TERMS_STATUS_DRAFT, CreatedAt: timestamppb.Now(), UpdatedAt: timestamppb.Now()}), nil
-}
-func (application *compositionLegalPolicyApplication) CreatePrivacyVersion(ctx context.Context, request *connect.Request[managev1.CreatePrivacyVersionRequest]) (*connect.Response[managev1.Privacy], error) {
-	application.principal = auth.GetUser(ctx)
-	application.title = request.Msg.GetTitle()
-	application.kind = "privacy"
-	return connect.NewResponse(&managev1.Privacy{Id: compositionFileID, Version: 2, Title: application.title, SourceLocale: "ko", Revision: compositionIdentityID, Status: managev1.PrivacyStatus_PRIVACY_STATUS_DRAFT, CreatedAt: timestamppb.Now(), UpdatedAt: timestamppb.Now()}), nil
+	application.title = *command.Title
+	application.kind = string(kind)
+	status := model.TermsStatusDraft
+	if kind == legal.Privacy {
+		status = model.PrivacyStatusDraft
+	}
+	return legal.Policy{ID: compositionFileID, Version: 2, Title: application.title, SourceLocale: "ko", Revision: compositionIdentityID, Status: status, CreatedAt: time.Now(), UpdatedAt: time.Now()}, nil
 }
 
 func (publisher *compositionSignalPublisher) NotifyProtobufWithExecutor(

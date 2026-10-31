@@ -80,7 +80,7 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 		"https://example.test",
 		"https://cdn.example.test",
 		spiceDB,
-		legaldomain.WithTermsContentBlockStore(store),
+		withLegalContentBlocks(store),
 	)
 	draft, err := service.CreateTermsVersion(
 		ctx,

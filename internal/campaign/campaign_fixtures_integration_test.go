@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -84,13 +85,19 @@ func (campaignAudienceMemberReferences) EligibleIDs(
 func newCampaignAudienceService(
 	db *gorm.DB,
 	spiceDB *auth.SpiceDBClient,
-) *audience.AudienceService {
-	return audience.NewAudienceService(
-		db,
-		spiceDB,
-		campaignAudienceRecipientCounter{db: db, spiceDB: spiceDB},
-		campaignAudienceMemberReferences{},
-	)
+) *audience.ConnectHandler {
+	service, err := audience.NewService(audience.Deps{
+		DB:               db,
+		SpiceDB:          spiceDB,
+		RecipientCounter: campaignAudienceRecipientCounter{db: db, spiceDB: spiceDB},
+		MemberReferences: campaignAudienceMemberReferences{},
+		Campaigns:        SegmentUsage{},
+		Audit:            &audittest.Recorder{},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return audience.NewConnectHandler(service)
 }
 
 func publishCampaignSourceBlocksForIntegration(
@@ -117,7 +124,7 @@ func publishCampaignSourceBlocksForIntegration(
 	contributorID := testutil.IntegrationUUID()
 	testutil.InsertAuthorizedDocumentContributor(t, db, spiceDB, contributorID)
 	_, err = NewInternalCampaignService(
-		db,
+		db, campaignTestContributorMembers{},
 		WithInternalCampaignContentBlockStore(store),
 		WithInternalCampaignSpiceDB(spiceDB),
 		WithInternalCampaignCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
@@ -218,4 +225,15 @@ func campaignRequestContext(t *testing.T) context.Context {
 	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.91")
 	require.NoError(t, err)
 	return sharedtelemetry.WithRequestContext(t.Context(), requestContext)
+}
+
+// campaignTestContributorMembers locks contributor Members as
+// memberadapter.ContributorMembers does; the adapter imports this package.
+type campaignTestContributorMembers struct{}
+
+func (campaignTestContributorMembers) LockMembers(ctx context.Context, tx *gorm.DB, memberIDs []string) ([]string, error) {
+	locked := []string{}
+	err := tx.WithContext(ctx).Table("member").Clauses(clause.Locking{Strength: "KEY SHARE"}).
+		Where("id IN ?", memberIDs).Pluck("id::text", &locked).Error
+	return locked, err
 }

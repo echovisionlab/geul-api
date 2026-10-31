@@ -494,11 +494,5 @@ func audienceAccessAdminContext(t *testing.T, db *gorm.DB) (*auth.SpiceDBClient,
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Audience access admin")
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	return spiceDB, auth.WithUser(context.Background(), &auth.UserInfo{
-		IdentityID:    auth.IdentityID(identityID),
-		MemberID:      auth.MemberID(memberID),
-		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
-		Authenticated: true,
-		Onboarded:     true,
-	})
+	return spiceDB, testutil.NewAuditContext(t, identityID, memberID)
 }

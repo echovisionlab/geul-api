@@ -3,12 +3,13 @@
 //
 //  1. lifecycle locks: the global authorization lock when the mutation writes
 //     SpiceDB relationships or changes another Identity, then those Identities;
-//  2. the caller's identity fence and fresh authorization (identitystate);
-//  3. the domain change;
-//  4. the audit record (domainaudit), which every mutation appends or
+//  2. the domain root locks, when the mutation names them;
+//  3. the caller's identity fence and fresh authorization (identitystate);
+//  4. the domain change;
+//  5. the audit records (domainaudit), which every mutation appends or
 //     explicitly declines because nothing changed;
-//  5. outbox work: PGMQ commands and content signals in the same transaction;
-//  6. SpiceDB relationship writes (authzmutation), compensated on rollback.
+//  6. outbox work: PGMQ commands and content signals in the same transaction;
+//  7. SpiceDB relationship writes (authzmutation), compensated on rollback.
 //
 // It wraps those primitives and does not reimplement them. A domain that has
 // moved to Run no longer opens transactions or calls authzmutation.Execute
@@ -65,6 +66,11 @@ type Spec[R any] struct {
 	// authorization lock and before Access, the order every Identity
 	// lifecycle mutation takes.
 	Subjects []string
+	// Lock takes the domain root row locks before Access, so a mutation
+	// that waited on a concurrent writer of the same root authorizes the
+	// caller as of when it proceeds. It also answers a missing root before
+	// authorization, as the domain's lock-first mutations always did.
+	Lock func(ctx context.Context, tx *gorm.DB) error
 	// Change performs the domain work in tx and returns its result.
 	Change func(ctx context.Context, tx *gorm.DB) (R, error)
 	// Audit names the record of the result, or Unchanged.
@@ -102,6 +108,11 @@ func Run[R any](ctx context.Context, runner *Runner, spec Spec[R]) (R, error) {
 		for _, subject := range subjects {
 			if err := identitystate.Lock(tx, subject); err != nil {
 				return fmt.Errorf("lock identity state: %w", err)
+			}
+		}
+		if spec.Lock != nil {
+			if err := spec.Lock(ctx, tx); err != nil {
+				return err
 			}
 		}
 		if err := spec.Access.authorize(ctx, tx, runner.spiceDB); err != nil {

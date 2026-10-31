@@ -7,7 +7,6 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -79,7 +78,7 @@ func TestDeriveCampaignDeliveryTargetUsesAudiencePortSnapshot(t *testing.T) {
 		require.Equal(t, segmentID, gotSegmentID)
 		return CampaignAudienceTarget{
 			Valid:             true,
-			SegmentType:       managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String(),
+			SegmentType:       model.AudienceSegmentMembersByFilter,
 			CreatedAfter:      &createdAfter,
 			AccountRoles:      []string{"ADMIN"},
 			ExcludedMemberIDs: []string{"member-a"},

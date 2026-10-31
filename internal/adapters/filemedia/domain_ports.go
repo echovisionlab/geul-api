@@ -158,7 +158,12 @@ func (*AudienceAccess) ValidateAuthenticatedSegmentIDs(
 	tx *gorm.DB,
 	segmentIDs []string,
 ) error {
-	return audiencedomain.ValidateAuthenticatedAccessSegmentIDs(ctx, tx, segmentIDs)
+	// Audience answers with use-case errors; File keeps answering with
+	// Connect errors until it migrates.
+	if err := audiencedomain.ValidateAuthenticatedAccessSegmentIDs(ctx, tx, segmentIDs); err != nil {
+		return errs.Wrap(err)
+	}
+	return nil
 }
 
 func (*AudienceAccess) AuthenticatedSegmentSummary(

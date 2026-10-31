@@ -33,7 +33,7 @@ func TestTermsRPCKeepsDatabaseCauseForTheRequestRecord(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT .* FROM "terms_history"`).WillReturnError(errors.New(`store failed: column "title" <policy> {constraint detail} reader@example.test password=private-password`))
 	mock.ExpectRollback()
-	service := &TermsService{db: db}
+	service := NewTermsConnectHandler(&Service{db: db})
 	_, err = service.GetTermsVersion(t.Context(), connect.NewRequest(&managev1.GetTermsVersionRequest{Id: "terms-1"}))
 	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
 	require.Empty(t, output.String())

@@ -592,27 +592,23 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(clientPath, clientHandler)
 	slog.Info("Registered service", "path", clientPath)
 
-	privacyService := legal.NewAuditedPrivacyService(
-		db,
-		cfg.SiteOrigin,
-		telemetryWriter,
-		spicedbClient,
-		legalDependencies,
-		legal.WithPrivacyContentBlockStore(contentBlockStore),
-	)
-	privacyPath, privacyHandler := managev1connect.NewPrivacyServiceHandler(privacyService, handlerOpts...)
+	legalPolicyService, err := legal.NewService(legal.Deps{
+		DB:            db,
+		SpiceDB:       spicedbClient,
+		ContentBlocks: contentBlockStore,
+		OG:            legalDependencies.OG,
+		Notice:        legalDependencies.Notice,
+		Audit:         telemetryWriter,
+		BaseURL:       cfg.SiteOrigin,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize legal policy service: %w", err)
+	}
+	privacyPath, privacyHandler := managev1connect.NewPrivacyServiceHandler(legal.NewPrivacyConnectHandler(legalPolicyService), handlerOpts...)
 	mux.Handle(privacyPath, privacyHandler)
 	slog.Info("Registered service", "path", privacyPath)
 
-	termsService := legal.NewAuditedTermsService(
-		db,
-		cfg.SiteOrigin,
-		telemetryWriter,
-		spicedbClient,
-		legalDependencies,
-		legal.WithTermsContentBlockStore(contentBlockStore),
-	)
-	termsPath, termsHandler := managev1connect.NewTermsServiceHandler(termsService, handlerOpts...)
+	termsPath, termsHandler := managev1connect.NewTermsServiceHandler(legal.NewTermsConnectHandler(legalPolicyService), handlerOpts...)
 	mux.Handle(termsPath, termsHandler)
 	slog.Info("Registered service", "path", termsPath)
 
@@ -653,13 +649,21 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(emailLayoutPath, emailLayoutHandler)
 	slog.Info("Registered service", "path", emailLayoutPath)
 
-	mailAdapterService := emaildelivery.NewAuditedMailAdapterService(db, adapterLoader, ogPublisher, telemetryWriter, spicedbClient)
-	mailAdapterPath, mailAdapterHandler := managev1connect.NewMailAdapterServiceHandler(mailAdapterService, handlerOpts...)
+	mailAdapterService, err := emaildelivery.NewService(emaildelivery.Deps{
+		DB:             db,
+		SpiceDB:        spicedbClient,
+		AdapterCache:   adapterLoader,
+		AdapterChanges: ogPublisher,
+		Audit:          telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize email delivery service: %w", err)
+	}
+	mailAdapterPath, mailAdapterHandler := managev1connect.NewMailAdapterServiceHandler(emaildelivery.NewMailAdapterConnectHandler(mailAdapterService), handlerOpts...)
 	mux.Handle(mailAdapterPath, mailAdapterHandler)
 	slog.Info("Registered service", "path", mailAdapterPath)
 
-	emailSuppressionService := emaildelivery.NewAuditedEmailSuppressionService(db, telemetryWriter, spicedbClient)
-	emailSuppressionPath, emailSuppressionHandler := managev1connect.NewEmailSuppressionServiceHandler(emailSuppressionService, handlerOpts...)
+	emailSuppressionPath, emailSuppressionHandler := managev1connect.NewEmailSuppressionServiceHandler(emaildelivery.NewEmailSuppressionConnectHandler(mailAdapterService), handlerOpts...)
 	mux.Handle(emailSuppressionPath, emailSuppressionHandler)
 	slog.Info("Registered service", "path", emailSuppressionPath)
 
@@ -681,14 +685,18 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(campaignPath, campaignHandler)
 	slog.Info("Registered service", "path", campaignPath)
 
-	audienceService := audience.NewAuditedAudienceService(
-		db,
-		telemetryWriter,
-		spicedbClient,
-		audienceadapter.NewRecipientCounter(db, spicedbClient),
-		audienceadapter.MemberReferences{},
-	)
-	audiencePath, audienceHandler := managev1connect.NewAudienceServiceHandler(audienceService, handlerOpts...)
+	audienceService, err := audience.NewService(audience.Deps{
+		DB:               db,
+		SpiceDB:          spicedbClient,
+		RecipientCounter: audienceadapter.NewRecipientCounter(db, spicedbClient),
+		MemberReferences: audienceadapter.MemberReferences{},
+		Campaigns:        campaign.SegmentUsage{},
+		Audit:            telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize audience service: %w", err)
+	}
+	audiencePath, audienceHandler := managev1connect.NewAudienceServiceHandler(audience.NewConnectHandler(audienceService), handlerOpts...)
 	mux.Handle(audiencePath, audienceHandler)
 	slog.Info("Registered service", "path", audiencePath)
 
@@ -826,29 +834,28 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		releaseService,
 		artistService,
 		contentMCPApplications{
-			terms:        termsService,
-			privacy:      privacyService,
-			categories:   categoryService,
-			tags:         tagService,
-			clients:      clientService,
-			mapPlaces:    mapPlaceService,
-			members:      memberService,
-			artists:      artistService,
-			files:        fileService,
-			eventTypes:   programEventTypeService,
-			eventSeries:  programEventSeriesService,
-			labels:       labelService,
-			genres:       genreService,
-			styles:       styleService,
-			formats:      formatService,
-			forms:        formService,
-			postSeries:   seriesService,
-			tracks:       trackService,
-			mapThemes:    mapThemeService,
-			menus:        menuService,
-			menuSettings: siteSettingService,
-			siteSettings: siteSettingService,
-			mailAdapters: mailAdapterService,
+			legalPolicies: legalPolicyService,
+			categories:    categoryService,
+			tags:          tagService,
+			clients:       clientService,
+			mapPlaces:     mapPlaceService,
+			members:       memberService,
+			artists:       artistService,
+			files:         fileService,
+			eventTypes:    programEventTypeService,
+			eventSeries:   programEventSeriesService,
+			labels:        labelService,
+			genres:        genreService,
+			styles:        styleService,
+			formats:       formatService,
+			forms:         formService,
+			postSeries:    seriesService,
+			tracks:        trackService,
+			mapThemes:     mapThemeService,
+			menus:         menuService,
+			menuSettings:  siteSettingService,
+			siteSettings:  siteSettingService,
+			mailAdapters:  mailAdapterService,
 		},
 		translationService,
 		fileService,

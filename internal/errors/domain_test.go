@@ -36,6 +36,7 @@ func TestDomainErrorsMapToTheirConnectCounterparts(t *testing.T) {
 		{"author required", domainerr.AuthorRequired(), AuthorRequired()},
 		{"invalid entity type", domainerr.InvalidEntityType("SHARE_LINK_ENTITY_TYPE_UNSPECIFIED"), InvalidEntityType("SHARE_LINK_ENTITY_TYPE_UNSPECIFIED")},
 		{"invalid entity id", domainerr.InvalidEntityID(), InvalidEntityID()},
+		{"retry", domainerr.Retry("audience segment changed while it was being archived; retry"), connect.NewError(connect.CodeAborted, stderrors.New("audience segment changed while it was being archived; retry"))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

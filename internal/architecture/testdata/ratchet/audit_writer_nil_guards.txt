@@ -4,15 +4,13 @@
 1 internal/account/public
 11 internal/adapters/translation
 6 internal/artist
-1 internal/audience
 1 internal/authentication
 5 internal/campaign
 9 internal/emailauthoring
-6 internal/emaildelivery
 12 internal/form
 2 internal/form/public
 4 internal/label
-7 internal/legal
+3 internal/legal
 6 internal/maptheme
 2 internal/member/public
 2 internal/menu

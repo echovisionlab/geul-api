@@ -4,6 +4,18 @@ import (
 	"time"
 )
 
+// LegalPolicyStatus is the stored lifecycle state of a Terms or Privacy
+// version. Each kind stores its own API enum names; internal/legal maps them
+// to and from the API enums.
+type LegalPolicyStatus string
+
+const (
+	TermsStatusDraft     LegalPolicyStatus = "TERMS_STATUS_DRAFT"
+	TermsStatusScheduled LegalPolicyStatus = "TERMS_STATUS_SCHEDULED"
+	TermsStatusActive    LegalPolicyStatus = "TERMS_STATUS_ACTIVE"
+	TermsStatusArchived  LegalPolicyStatus = "TERMS_STATUS_ARCHIVED"
+)
+
 // Terms represents a terms of service version
 // Maps to: sql/001_schema.sql - terms_history table
 type Terms struct {

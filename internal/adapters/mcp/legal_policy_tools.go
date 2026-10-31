@@ -7,10 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/legal"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -34,39 +32,30 @@ var legalPolicyTools = []mcpserver.Tool{
 	oauthTool(ToolPolicyDelete, "Delete legal policy", "Permanently delete a legal policy in any lifecycle using its exact current document_revision as expected_document_revision, including versions with notice delivery history. Sealed delivery history is retained; outstanding notices and pending recipients are cancelled. The public route and OG image are refreshed. This sends no new notice email.", policyRevisionInputJSONSchema, policyMutationOutputJSONSchema, false, true),
 }
 
-type TermsPolicyManagementApplication interface {
-	ListTermsVersions(context.Context, *connect.Request[managev1.ListTermsVersionsRequest]) (*connect.Response[managev1.ListTermsVersionsResponse], error)
-	GetTermsVersion(context.Context, *connect.Request[managev1.GetTermsVersionRequest]) (*connect.Response[managev1.Terms], error)
-	CreateTermsVersion(context.Context, *connect.Request[managev1.CreateTermsVersionRequest]) (*connect.Response[managev1.Terms], error)
-	ScheduleTerms(context.Context, *connect.Request[managev1.ScheduleTermsRequest]) (*connect.Response[managev1.TermsLifecycleMutationResponse], error)
-	CancelTermsSchedule(context.Context, *connect.Request[managev1.CancelTermsScheduleRequest]) (*connect.Response[managev1.TermsLifecycleMutationResponse], error)
-	ActivateTermsNow(context.Context, *connect.Request[managev1.ActivateTermsNowRequest]) (*connect.Response[managev1.TermsLifecycleMutationResponse], error)
-	DeleteTerms(context.Context, *connect.Request[managev1.DeleteTermsRequest]) (*connect.Response[managev1.DeleteResponse], error)
-}
-
-type PrivacyPolicyManagementApplication interface {
-	ListPrivacyVersions(context.Context, *connect.Request[managev1.ListPrivacyVersionsRequest]) (*connect.Response[managev1.ListPrivacyVersionsResponse], error)
-	GetPrivacyVersion(context.Context, *connect.Request[managev1.GetPrivacyVersionRequest]) (*connect.Response[managev1.Privacy], error)
-	CreatePrivacyVersion(context.Context, *connect.Request[managev1.CreatePrivacyVersionRequest]) (*connect.Response[managev1.Privacy], error)
-	SchedulePrivacy(context.Context, *connect.Request[managev1.SchedulePrivacyRequest]) (*connect.Response[managev1.PrivacyLifecycleMutationResponse], error)
-	CancelPrivacySchedule(context.Context, *connect.Request[managev1.CancelPrivacyScheduleRequest]) (*connect.Response[managev1.PrivacyLifecycleMutationResponse], error)
-	ActivatePrivacyNow(context.Context, *connect.Request[managev1.ActivatePrivacyNowRequest]) (*connect.Response[managev1.PrivacyLifecycleMutationResponse], error)
-	DeletePrivacy(context.Context, *connect.Request[managev1.DeletePrivacyRequest]) (*connect.Response[managev1.DeleteResponse], error)
+// LegalPolicyManagementApplication is the Terms and Privacy management use
+// cases the tools call, for the kind each call names.
+type LegalPolicyManagementApplication interface {
+	ListPolicyVersions(context.Context, legal.PolicyKind, legal.ListPolicyVersionsQuery) (legal.PolicyPage, error)
+	GetPolicyVersion(context.Context, legal.PolicyKind, legal.GetPolicyVersionQuery) (legal.Policy, error)
+	CreatePolicyVersion(context.Context, legal.PolicyKind, legal.CreatePolicyVersionCommand) (legal.Policy, error)
+	SchedulePolicy(context.Context, legal.PolicyKind, legal.SchedulePolicyCommand) (legal.PolicyLifecycle, error)
+	CancelPolicySchedule(context.Context, legal.PolicyKind, legal.CancelPolicyScheduleCommand) (legal.PolicyLifecycle, error)
+	ActivatePolicyNow(context.Context, legal.PolicyKind, legal.ActivatePolicyNowCommand) (legal.PolicyLifecycle, error)
+	DeletePolicy(context.Context, legal.PolicyKind, legal.DeletePolicyCommand) error
 }
 
 // LegalPolicyTools delegates all lifecycle, audit, notice delivery and deletion
 // decisions to the same Legal applications used by the site. Document editing
 // continues through AIDocumentTools and its interactive mutation coordinator.
 type LegalPolicyTools struct {
-	terms   TermsPolicyManagementApplication
-	privacy PrivacyPolicyManagementApplication
+	policies LegalPolicyManagementApplication
 }
 
-func NewLegalPolicyTools(terms TermsPolicyManagementApplication, privacy PrivacyPolicyManagementApplication) (*LegalPolicyTools, error) {
-	if interfaceValueIsNil(terms) || interfaceValueIsNil(privacy) {
+func NewLegalPolicyTools(policies LegalPolicyManagementApplication) (*LegalPolicyTools, error) {
+	if interfaceValueIsNil(policies) {
 		return nil, errors.New("MCP Terms and Privacy policy applications are required")
 	}
-	return &LegalPolicyTools{terms: terms, privacy: privacy}, nil
+	return &LegalPolicyTools{policies: policies}, nil
 }
 func (*LegalPolicyTools) ToolNames() []string { return toolDefinitionNames(legalPolicyTools) }
 func (*LegalPolicyTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
@@ -119,21 +108,18 @@ func (tools *LegalPolicyTools) CallTool(ctx context.Context, _ mcpserver.Princip
 			return executionError(err)
 		}
 	}
-	var effectiveFrom *timestamppb.Timestamp
+	var effectiveFrom *time.Time
 	if name == ToolPolicySchedule {
 		instant, err := time.Parse(time.RFC3339Nano, input.EffectiveFrom)
 		if err != nil {
 			return mcpserver.ToolResult{}, &mcpserver.ToolExecutionError{Message: "effective_from must be an RFC 3339 instant", Cause: err}
 		}
-		effectiveFrom = timestamppb.New(instant)
-		if err := effectiveFrom.CheckValid(); err != nil {
+		if err := timestamppb.New(instant).CheckValid(); err != nil {
 			return executionError(err)
 		}
+		effectiveFrom = &instant
 	}
-	if input.DocumentType == "terms" {
-		return tools.callTerms(ctx, name, input, effectiveFrom)
-	}
-	return tools.callPrivacy(ctx, name, input, effectiveFrom)
+	return tools.callPolicy(ctx, name, legal.PolicyKind(input.DocumentType), input, effectiveFrom)
 }
 
 func validatePolicyType(value string) error {
@@ -160,20 +146,12 @@ func (tools *LegalPolicyTools) create(ctx context.Context, arguments mcpserver.T
 	if input.Title != nil && strings.TrimSpace(*input.Title) == "" {
 		return executionError(errors.New("title must not be blank"))
 	}
-	var output map[string]any
-	if input.DocumentType == "terms" {
-		response, err := tools.terms.CreateTermsVersion(ctx, connect.NewRequest(&managev1.CreateTermsVersionRequest{Title: input.Title}))
-		if err != nil {
-			return expectedToolError(err)
-		}
-		output = termsPolicyOutput(response.Msg)
-	} else {
-		response, err := tools.privacy.CreatePrivacyVersion(ctx, connect.NewRequest(&managev1.CreatePrivacyVersionRequest{Title: input.Title}))
-		if err != nil {
-			return expectedToolError(err)
-		}
-		output = privacyPolicyOutput(response.Msg)
+	kind := legal.PolicyKind(input.DocumentType)
+	created, err := tools.policies.CreatePolicyVersion(ctx, kind, legal.CreatePolicyVersionCommand{Title: input.Title})
+	if err != nil {
+		return expectedToolError(err)
 	}
+	output := policyOutput(kind, created)
 	output["changed"] = true
 	return contentResult(output)
 }
@@ -208,38 +186,21 @@ func (tools *LegalPolicyTools) list(ctx context.Context, arguments mcpserver.Too
 			return executionError(errors.New("status must be draft, scheduled, active, or archived"))
 		}
 	}
-	pagination := &commonv1.PaginationRequest{Limit: limit, Offset: input.Offset}
-	policies := make([]map[string]any, 0)
-	var page *commonv1.PaginationResponse
-	if input.DocumentType == "terms" {
-		request := &managev1.ListTermsVersionsRequest{Pagination: pagination}
-		if input.Status != nil {
-			status := managev1.TermsStatus(managev1.TermsStatus_value["TERMS_STATUS_"+strings.ToUpper(*input.Status)])
-			request.Status = &status
-		}
-		response, err := tools.terms.ListTermsVersions(ctx, connect.NewRequest(request))
-		if err != nil {
-			return expectedToolError(err)
-		}
-		for _, policy := range response.Msg.Versions {
-			policies = append(policies, termsPolicyOutput(policy))
-		}
-		page = response.Msg.Pagination
-	} else {
-		request := &managev1.ListPrivacyVersionsRequest{Pagination: pagination}
-		if input.Status != nil {
-			status := managev1.PrivacyStatus(managev1.PrivacyStatus_value["PRIVACY_STATUS_"+strings.ToUpper(*input.Status)])
-			request.Status = &status
-		}
-		response, err := tools.privacy.ListPrivacyVersions(ctx, connect.NewRequest(request))
-		if err != nil {
-			return expectedToolError(err)
-		}
-		for _, policy := range response.Msg.Versions {
-			policies = append(policies, privacyPolicyOutput(policy))
-		}
-		page = response.Msg.Pagination
+	kind := legal.PolicyKind(input.DocumentType)
+	query := legal.ListPolicyVersionsQuery{Limit: limit, Offset: input.Offset}
+	if input.Status != nil {
+		status, _ := legal.PolicyStatus(kind, *input.Status)
+		query.Status = &status
 	}
+	listed, err := tools.policies.ListPolicyVersions(ctx, kind, query)
+	if err != nil {
+		return expectedToolError(err)
+	}
+	policies := make([]map[string]any, 0, len(listed.Versions))
+	for _, policy := range listed.Versions {
+		policies = append(policies, policyOutput(kind, policy))
+	}
+	page := listed.Pagination
 	var nextOffset any
 	if page.GetHasMore() {
 		nextOffset = int64(page.GetOffset()) + int64(page.GetLimit())
@@ -247,74 +208,54 @@ func (tools *LegalPolicyTools) list(ctx context.Context, arguments mcpserver.Too
 	return contentResult(map[string]any{"policies": policies, "total": page.GetTotal(), "next_offset": nextOffset})
 }
 
-func (tools *LegalPolicyTools) callTerms(ctx context.Context, name string, input policyArguments, effectiveFrom *timestamppb.Timestamp) (mcpserver.ToolResult, error) {
+func (tools *LegalPolicyTools) callPolicy(ctx context.Context, name string, kind legal.PolicyKind, input policyArguments, effectiveFrom *time.Time) (mcpserver.ToolResult, error) {
 	if name == ToolPolicyGet {
-		response, err := tools.terms.GetTermsVersion(ctx, connect.NewRequest(&managev1.GetTermsVersionRequest{Id: input.DocumentID}))
+		policy, err := tools.policies.GetPolicyVersion(ctx, kind, legal.GetPolicyVersionQuery{ID: input.DocumentID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		return contentResult(termsPolicyOutput(response.Msg))
+		return contentResult(policyOutput(kind, policy))
 	}
 	if name == ToolPolicyDelete {
-		response, err := tools.terms.DeleteTerms(ctx, connect.NewRequest(&managev1.DeleteTermsRequest{Id: input.DocumentID, ExpectedRevision: input.ExpectedDocumentRevision}))
-		if err != nil {
+		if err := tools.policies.DeletePolicy(ctx, kind, legal.DeletePolicyCommand{ID: input.DocumentID, ExpectedRevision: input.ExpectedDocumentRevision}); err != nil {
 			return expectedToolError(err)
 		}
-		return contentResult(map[string]any{"document_type": "terms", "document_id": input.DocumentID, "changed": response.Msg.Success, "deleted": response.Msg.Success})
+		return contentResult(map[string]any{"document_type": string(kind), "document_id": input.DocumentID, "changed": true, "deleted": true})
 	}
-	var response *connect.Response[managev1.TermsLifecycleMutationResponse]
+	var lifecycle legal.PolicyLifecycle
 	var err error
 	switch name {
 	case ToolPolicySchedule:
-		response, err = tools.terms.ScheduleTerms(ctx, connect.NewRequest(&managev1.ScheduleTermsRequest{Id: input.DocumentID, ExpectedRevision: input.ExpectedDocumentRevision, EffectiveFrom: effectiveFrom}))
+		lifecycle, err = tools.policies.SchedulePolicy(ctx, kind, legal.SchedulePolicyCommand{ID: input.DocumentID, ExpectedRevision: input.ExpectedDocumentRevision, EffectiveFrom: effectiveFrom})
 	case ToolPolicyScheduleCancel:
-		response, err = tools.terms.CancelTermsSchedule(ctx, connect.NewRequest(&managev1.CancelTermsScheduleRequest{Id: input.DocumentID}))
+		lifecycle, err = tools.policies.CancelPolicySchedule(ctx, kind, legal.CancelPolicyScheduleCommand{ID: input.DocumentID})
 	case ToolPolicyActivateNow:
-		response, err = tools.terms.ActivateTermsNow(ctx, connect.NewRequest(&managev1.ActivateTermsNowRequest{Id: input.DocumentID, ExpectedRevision: input.ExpectedDocumentRevision}))
+		lifecycle, err = tools.policies.ActivatePolicyNow(ctx, kind, legal.ActivatePolicyNowCommand{ID: input.DocumentID, ExpectedRevision: input.ExpectedDocumentRevision})
 	}
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(policyLifecycleOutput("terms", response.Msg.Id, response.Msg.Changed, response.Msg.DocumentRevision, contentStatus(response.Msg.Status.String(), "TERMS_STATUS_"), response.Msg.EffectiveFrom, response.Msg.EffectiveUntil, response.Msg.UpdatedAt))
+	if kind == legal.Terms {
+		response := legal.TermsLifecycleMessage(lifecycle)
+		return contentResult(policyLifecycleOutput(string(kind), response.Id, response.Changed, response.DocumentRevision, contentStatus(response.Status.String(), "TERMS_STATUS_"), response.EffectiveFrom, response.EffectiveUntil, response.UpdatedAt))
+	}
+	response := legal.PrivacyLifecycleMessage(lifecycle)
+	return contentResult(policyLifecycleOutput(string(kind), response.Id, response.Changed, response.DocumentRevision, contentStatus(response.Status.String(), "PRIVACY_STATUS_"), response.EffectiveFrom, response.EffectiveUntil, response.UpdatedAt))
 }
 
-func termsPolicyOutput(policy *managev1.Terms) map[string]any {
-	return map[string]any{"document_type": "terms", "document_id": policy.Id, "version": policy.Version, "title": policy.Title, "source_locale": policy.SourceLocale, "document_revision": policy.Revision, "status": contentStatus(policy.Status.String(), "TERMS_STATUS_"), "effective_from": optionalProgramEventTimestamp(policy.EffectiveFrom), "effective_until": optionalProgramEventTimestamp(policy.EffectiveUntil), "created_at": timestampString(policy.CreatedAt), "updated_at": timestampString(policy.UpdatedAt)}
+// policyOutput renders a version as the Connect message of its kind would,
+// so tool output follows the API's status names.
+func policyOutput(kind legal.PolicyKind, policy legal.Policy) map[string]any {
+	if kind == legal.Terms {
+		message := legal.TermsMessage(policy)
+		return policyMessageOutput(string(kind), message.Id, message.Version, message.Title, message.SourceLocale, message.Revision, contentStatus(message.Status.String(), "TERMS_STATUS_"), message.EffectiveFrom, message.EffectiveUntil, message.CreatedAt, message.UpdatedAt)
+	}
+	message := legal.PrivacyMessage(policy)
+	return policyMessageOutput(string(kind), message.Id, message.Version, message.Title, message.SourceLocale, message.Revision, contentStatus(message.Status.String(), "PRIVACY_STATUS_"), message.EffectiveFrom, message.EffectiveUntil, message.CreatedAt, message.UpdatedAt)
 }
 
-func (tools *LegalPolicyTools) callPrivacy(ctx context.Context, name string, input policyArguments, effectiveFrom *timestamppb.Timestamp) (mcpserver.ToolResult, error) {
-	if name == ToolPolicyGet {
-		response, err := tools.privacy.GetPrivacyVersion(ctx, connect.NewRequest(&managev1.GetPrivacyVersionRequest{Id: input.DocumentID}))
-		if err != nil {
-			return expectedToolError(err)
-		}
-		return contentResult(privacyPolicyOutput(response.Msg))
-	}
-	if name == ToolPolicyDelete {
-		response, err := tools.privacy.DeletePrivacy(ctx, connect.NewRequest(&managev1.DeletePrivacyRequest{Id: input.DocumentID, ExpectedRevision: input.ExpectedDocumentRevision}))
-		if err != nil {
-			return expectedToolError(err)
-		}
-		return contentResult(map[string]any{"document_type": "privacy", "document_id": input.DocumentID, "changed": response.Msg.Success, "deleted": response.Msg.Success})
-	}
-	var response *connect.Response[managev1.PrivacyLifecycleMutationResponse]
-	var err error
-	switch name {
-	case ToolPolicySchedule:
-		response, err = tools.privacy.SchedulePrivacy(ctx, connect.NewRequest(&managev1.SchedulePrivacyRequest{Id: input.DocumentID, ExpectedRevision: input.ExpectedDocumentRevision, EffectiveFrom: effectiveFrom}))
-	case ToolPolicyScheduleCancel:
-		response, err = tools.privacy.CancelPrivacySchedule(ctx, connect.NewRequest(&managev1.CancelPrivacyScheduleRequest{Id: input.DocumentID}))
-	case ToolPolicyActivateNow:
-		response, err = tools.privacy.ActivatePrivacyNow(ctx, connect.NewRequest(&managev1.ActivatePrivacyNowRequest{Id: input.DocumentID, ExpectedRevision: input.ExpectedDocumentRevision}))
-	}
-	if err != nil {
-		return expectedToolError(err)
-	}
-	return contentResult(policyLifecycleOutput("privacy", response.Msg.Id, response.Msg.Changed, response.Msg.DocumentRevision, contentStatus(response.Msg.Status.String(), "PRIVACY_STATUS_"), response.Msg.EffectiveFrom, response.Msg.EffectiveUntil, response.Msg.UpdatedAt))
-}
-
-func privacyPolicyOutput(policy *managev1.Privacy) map[string]any {
-	return map[string]any{"document_type": "privacy", "document_id": policy.Id, "version": policy.Version, "title": policy.Title, "source_locale": policy.SourceLocale, "document_revision": policy.Revision, "status": contentStatus(policy.Status.String(), "PRIVACY_STATUS_"), "effective_from": optionalProgramEventTimestamp(policy.EffectiveFrom), "effective_until": optionalProgramEventTimestamp(policy.EffectiveUntil), "created_at": timestampString(policy.CreatedAt), "updated_at": timestampString(policy.UpdatedAt)}
+func policyMessageOutput(kind, id string, version int32, title, sourceLocale, revision, status string, effectiveFrom, effectiveUntil, createdAt, updatedAt *timestamppb.Timestamp) map[string]any {
+	return map[string]any{"document_type": kind, "document_id": id, "version": version, "title": title, "source_locale": sourceLocale, "document_revision": revision, "status": status, "effective_from": optionalProgramEventTimestamp(effectiveFrom), "effective_until": optionalProgramEventTimestamp(effectiveUntil), "created_at": timestampString(createdAt), "updated_at": timestampString(updatedAt)}
 }
 
 func policyLifecycleOutput(kind, id string, changed bool, revision, status string, effectiveFrom, effectiveUntil, updatedAt *timestamppb.Timestamp) map[string]any {

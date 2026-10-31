@@ -42,7 +42,7 @@ func TestCampaignAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBackVali
 
 	checker := &countingCampaignAIDocumentPermissionChecker{allowed: true}
 	application, err := NewAIDocumentService(NewAuditedInternalCampaignService(
-		db, writer,
+		db, writer, campaignTestContributorMembers{},
 		WithInternalCampaignSpiceDB(checker),
 		WithInternalCampaignContentBlockStore(store),
 		WithInternalCampaignCheckpoints(testcollaboration.NewCheckpoints(db, stack.SpiceDBClient)),

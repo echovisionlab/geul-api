@@ -12,6 +12,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
@@ -47,7 +48,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 			scheduled: managev1.TermsStatus_TERMS_STATUS_SCHEDULED.String(),
 			active:    managev1.TermsStatus_TERMS_STATUS_ACTIVE.String(),
 			create: func(ctx context.Context, db *gorm.DB, store *contentblock.Store, spiceDB *auth.SpiceDBClient) (string, string, error) {
-				response, err := newTermsServiceForLegalIntegrationTest(db, "", "", spiceDB, legaldomain.WithTermsContentBlockStore(store)).CreateTermsVersion(
+				response, err := newTermsServiceForLegalIntegrationTest(db, "", "", spiceDB, withLegalContentBlocks(store)).CreateTermsVersion(
 					ctx, connect.NewRequest(&managev1.CreateTermsVersionRequest{Title: ptrString("Archived terms"), Document: legalPolicyDocumentFixture("en", "Archived terms")}),
 				)
 				if err != nil {
@@ -56,7 +57,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 				return response.Msg.Id, response.Msg.Revision, nil
 			},
 			get: func(ctx context.Context, db *gorm.DB, id string, store *contentblock.Store, spiceDB *auth.SpiceDBClient) (string, error) {
-				response, err := newTermsServiceForLegalIntegrationTest(db, "", "", spiceDB, legaldomain.WithTermsContentBlockStore(store)).GetTermsVersion(
+				response, err := newTermsServiceForLegalIntegrationTest(db, "", "", spiceDB, withLegalContentBlocks(store)).GetTermsVersion(
 					ctx, connect.NewRequest(&managev1.GetTermsVersionRequest{Id: id}),
 				)
 				if err != nil {
@@ -65,8 +66,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 				return response.Msg.Id, nil
 			},
 			load: func(ctx context.Context, db *gorm.DB, id, sessionID string, store *contentblock.Store, spiceDB *auth.SpiceDBClient) (string, error) {
-				service := legaldomain.NewInternalTermsService(db, legalIntegrationDependencies(db, ""))
-				legaldomain.WithInternalTermsContentBlocks(store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))(service)
+				service := newTestInternalTermsService(db, &audittest.Recorder{}, legalIntegrationDependencies(db, ""), store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))
 				response, err := service.LoadTermsBlockDocument(ctx, connect.NewRequest(&intrav1.LoadTermsBlockDocumentRequest{
 					TermsId: id, Locale: "en", Principal: &intrav1.CollaborationPrincipal{SessionId: sessionID},
 				}))
@@ -76,8 +76,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 				return response.Msg.DocumentRevision, nil
 			},
 			apply: func(ctx context.Context, db *gorm.DB, id string, batch *contentv1.RichTextBlockMutationBatch, store *contentblock.Store, spiceDB *auth.SpiceDBClient) (string, error) {
-				service := legaldomain.NewInternalTermsService(db, legalIntegrationDependencies(db, ""))
-				legaldomain.WithInternalTermsContentBlocks(store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))(service)
+				service := newTestInternalTermsService(db, &audittest.Recorder{}, legalIntegrationDependencies(db, ""), store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))
 				response, err := service.ApplyTermsBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyTermsBlockBatchRequest{TermsId: id, Locale: "en", Batch: batch}))
 				if err != nil {
 					return "", err
@@ -85,8 +84,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 				return response.Msg.DocumentRevision, nil
 			},
 			metadata: func(ctx context.Context, db *gorm.DB, id, revision, title string, contributors []string, store *contentblock.Store, spiceDB *auth.SpiceDBClient) (string, error) {
-				service := legaldomain.NewInternalTermsService(db, legalIntegrationDependencies(db, ""))
-				legaldomain.WithInternalTermsContentBlocks(store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))(service)
+				service := newTestInternalTermsService(db, &audittest.Recorder{}, legalIntegrationDependencies(db, ""), store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))
 				response, err := service.UpdateTermsLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdateTermsLocaleMetadataRequest{
 					TermsId: id, Locale: "en", ExpectedRevision: revision, Title: &title, ContributorMemberIds: contributors,
 				}))
@@ -102,7 +100,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 			scheduled: managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String(),
 			active:    managev1.PrivacyStatus_PRIVACY_STATUS_ACTIVE.String(),
 			create: func(ctx context.Context, db *gorm.DB, store *contentblock.Store, spiceDB *auth.SpiceDBClient) (string, string, error) {
-				response, err := newPrivacyServiceForLegalIntegrationTest(db, "", "", spiceDB, legaldomain.WithPrivacyContentBlockStore(store)).CreatePrivacyVersion(
+				response, err := newPrivacyServiceForLegalIntegrationTest(db, "", "", spiceDB, withLegalContentBlocks(store)).CreatePrivacyVersion(
 					ctx, connect.NewRequest(&managev1.CreatePrivacyVersionRequest{Title: ptrString("Archived privacy"), Document: legalPolicyDocumentFixture("en", "Archived privacy")}),
 				)
 				if err != nil {
@@ -111,7 +109,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 				return response.Msg.Id, response.Msg.Revision, nil
 			},
 			get: func(ctx context.Context, db *gorm.DB, id string, store *contentblock.Store, spiceDB *auth.SpiceDBClient) (string, error) {
-				response, err := newPrivacyServiceForLegalIntegrationTest(db, "", "", spiceDB, legaldomain.WithPrivacyContentBlockStore(store)).GetPrivacyVersion(
+				response, err := newPrivacyServiceForLegalIntegrationTest(db, "", "", spiceDB, withLegalContentBlocks(store)).GetPrivacyVersion(
 					ctx, connect.NewRequest(&managev1.GetPrivacyVersionRequest{Id: id}),
 				)
 				if err != nil {
@@ -120,8 +118,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 				return response.Msg.Id, nil
 			},
 			load: func(ctx context.Context, db *gorm.DB, id, sessionID string, store *contentblock.Store, spiceDB *auth.SpiceDBClient) (string, error) {
-				service := legaldomain.NewInternalPrivacyService(db, legalIntegrationDependencies(db, ""))
-				legaldomain.WithInternalPrivacyContentBlocks(store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))(service)
+				service := newTestInternalPrivacyService(db, &audittest.Recorder{}, legalIntegrationDependencies(db, ""), store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))
 				response, err := service.LoadPrivacyBlockDocument(ctx, connect.NewRequest(&intrav1.LoadPrivacyBlockDocumentRequest{
 					PrivacyId: id, Locale: "en", Principal: &intrav1.CollaborationPrincipal{SessionId: sessionID},
 				}))
@@ -131,8 +128,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 				return response.Msg.DocumentRevision, nil
 			},
 			apply: func(ctx context.Context, db *gorm.DB, id string, batch *contentv1.RichTextBlockMutationBatch, store *contentblock.Store, spiceDB *auth.SpiceDBClient) (string, error) {
-				service := legaldomain.NewInternalPrivacyService(db, legalIntegrationDependencies(db, ""))
-				legaldomain.WithInternalPrivacyContentBlocks(store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))(service)
+				service := newTestInternalPrivacyService(db, &audittest.Recorder{}, legalIntegrationDependencies(db, ""), store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))
 				response, err := service.ApplyPrivacyBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyPrivacyBlockBatchRequest{PrivacyId: id, Locale: "en", Batch: batch}))
 				if err != nil {
 					return "", err
@@ -140,8 +136,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 				return response.Msg.DocumentRevision, nil
 			},
 			metadata: func(ctx context.Context, db *gorm.DB, id, revision, title string, contributors []string, store *contentblock.Store, spiceDB *auth.SpiceDBClient) (string, error) {
-				service := legaldomain.NewInternalPrivacyService(db, legalIntegrationDependencies(db, ""))
-				legaldomain.WithInternalPrivacyContentBlocks(store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))(service)
+				service := newTestInternalPrivacyService(db, &audittest.Recorder{}, legalIntegrationDependencies(db, ""), store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB))
 				response, err := service.UpdatePrivacyLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdatePrivacyLocaleMetadataRequest{
 					PrivacyId: id, Locale: "en", ExpectedRevision: revision, Title: &title, ContributorMemberIds: contributors,
 				}))
