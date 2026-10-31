@@ -59,8 +59,45 @@ func (tools *MusicReferenceTools) CallTool(ctx context.Context, _ mcpserver.Prin
 	if name != ToolGenreList && name != ToolStyleList && name != ToolFormatList {
 		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
 	}
-	if err := rejectNullArguments(arguments, "query", "limit", "offset"); err != nil {
+	query, err := musicReferenceListQuery(arguments)
+	if err != nil {
 		return executionError(err)
+	}
+	switch name {
+	case ToolGenreList:
+		page, err := tools.genres.ListGenresAdmin(ctx, query)
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return musicReferenceResult(query, page.Pagination, projectMusicReferences(page.Items, projectGenreReference))
+	case ToolStyleList:
+		page, err := tools.styles.ListStylesAdmin(ctx, query)
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return musicReferenceResult(query, page.Pagination, projectMusicReferences(page.Items, projectStyleReference))
+	default:
+		page, err := tools.formats.ListFormatsAdmin(ctx, query)
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return musicReferenceResult(query, page.Pagination, projectMusicReferences(page.Items, projectFormatReference))
+	}
+}
+
+func musicReferenceResult(query referencecatalog.ReferenceListQuery, pagination *commonv1.PaginationResponse, items []map[string]any) (mcpserver.ToolResult, error) {
+	output := map[string]any{"items": items, "total": pagination.GetTotal(), "limit": query.Limit, "offset": query.Offset, "has_more": pagination.GetHasMore()}
+	if pagination.GetHasMore() {
+		output["next_offset"] = int64(query.Offset) + int64(query.Limit)
+	}
+	return contentResult(output)
+}
+
+// musicReferenceListQuery reads the query, limit (20 when absent) and offset
+// of a music reference list.
+func musicReferenceListQuery(arguments mcpserver.ToolArguments) (referencecatalog.ReferenceListQuery, error) {
+	if err := rejectNullArguments(arguments, "query", "limit", "offset"); err != nil {
+		return referencecatalog.ReferenceListQuery{}, err
 	}
 	var input struct {
 		Query  string `json:"query,omitempty"`
@@ -68,70 +105,58 @@ func (tools *MusicReferenceTools) CallTool(ctx context.Context, _ mcpserver.Prin
 		Offset int32  `json:"offset,omitempty"`
 	}
 	if err := decodeArguments(arguments, &input); err != nil {
-		return executionError(err)
+		return referencecatalog.ReferenceListQuery{}, err
 	}
 	limit := int32(20)
 	if input.Limit != nil {
 		limit = *input.Limit
 	}
 	if limit < 1 || limit > 100 {
-		return executionError(errors.New("limit must be between 1 and 100"))
+		return referencecatalog.ReferenceListQuery{}, errors.New("limit must be between 1 and 100")
 	}
 	if input.Offset < 0 {
-		return executionError(errors.New("offset must be between 0 and 2147483647"))
+		return referencecatalog.ReferenceListQuery{}, errors.New("offset must be between 0 and 2147483647")
 	}
-	query := referencecatalog.ReferenceListQuery{Filters: discoverySearchFilters(input.Query), Limit: limit, Offset: input.Offset}
-	items := make([]map[string]any, 0)
-	var responsePagination *commonv1.PaginationResponse
-	switch name {
-	case ToolGenreList:
-		page, err := tools.genres.ListGenresAdmin(ctx, query)
-		if err != nil {
-			return expectedToolError(err)
-		}
-		responsePagination = page.Pagination
-		for _, item := range page.Items {
-			if item != nil && item.Genre != nil {
-				genre := item.Genre
-				projected := map[string]any{"id": genre.Id, "name": genre.Name, "slug": genre.Slug}
-				if genre.Description != nil {
-					projected["description"] = *genre.Description
-				}
-				items = append(items, projected)
-			}
-		}
-	case ToolStyleList:
-		page, err := tools.styles.ListStylesAdmin(ctx, query)
-		if err != nil {
-			return expectedToolError(err)
-		}
-		responsePagination = page.Pagination
-		for _, item := range page.Items {
-			if item != nil && item.Style != nil {
-				style := item.Style
-				projected := map[string]any{"id": style.Id, "name": style.Name, "slug": style.Slug}
-				if style.Description != nil {
-					projected["description"] = *style.Description
-				}
-				items = append(items, projected)
-			}
-		}
-	case ToolFormatList:
-		page, err := tools.formats.ListFormatsAdmin(ctx, query)
-		if err != nil {
-			return expectedToolError(err)
-		}
-		responsePagination = page.Pagination
-		for _, item := range page.Items {
-			if item != nil && item.Format != nil {
-				format := item.Format
-				items = append(items, map[string]any{"id": format.Id, "name": format.Name, "slug": format.Slug})
-			}
+	return referencecatalog.ReferenceListQuery{Filters: discoverySearchFilters(input.Query), Limit: limit, Offset: input.Offset}, nil
+}
+
+// projectMusicReferences projects the listed references; project answers nil
+// for an empty entry, which is skipped.
+func projectMusicReferences[T any](listed []T, project func(T) map[string]any) []map[string]any {
+	items := make([]map[string]any, 0, len(listed))
+	for _, item := range listed {
+		if projected := project(item); projected != nil {
+			items = append(items, projected)
 		}
 	}
-	output := map[string]any{"items": items, "total": responsePagination.GetTotal(), "limit": limit, "offset": input.Offset, "has_more": responsePagination.GetHasMore()}
-	if responsePagination.GetHasMore() {
-		output["next_offset"] = int64(input.Offset) + int64(limit)
+	return items
+}
+
+func projectGenreReference(item *managev1.GenreWithStats) map[string]any {
+	if genre := item.GetGenre(); genre != nil {
+		return describedMusicReference(genre.Id, genre.Name, genre.Slug, genre.Description)
 	}
-	return contentResult(output)
+	return nil
+}
+
+func projectStyleReference(item *managev1.StyleWithStats) map[string]any {
+	if style := item.GetStyle(); style != nil {
+		return describedMusicReference(style.Id, style.Name, style.Slug, style.Description)
+	}
+	return nil
+}
+
+func projectFormatReference(item *managev1.FormatWithStats) map[string]any {
+	if format := item.GetFormat(); format != nil {
+		return map[string]any{"id": format.Id, "name": format.Name, "slug": format.Slug}
+	}
+	return nil
+}
+
+func describedMusicReference(id, name, slug string, description *string) map[string]any {
+	projected := map[string]any{"id": id, "name": name, "slug": slug}
+	if description != nil {
+		projected["description"] = *description
+	}
+	return projected
 }

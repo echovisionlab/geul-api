@@ -254,6 +254,16 @@ func planMapPlaceUpdate(
 			update.metadataChangedFields = append(update.metadataChangedFields, "address_components")
 		}
 	}
+	update.planImage(current, request)
+	if update.changed() {
+		update.place.UpdatedByMemberID = &memberID
+	}
+	return update, nil
+}
+
+// planImage removes the image on ClearImage, which takes precedence, or
+// selects a different supplied one.
+func (update *mapPlaceUpdatePlan) planImage(current model.MapPlace, request UpdateMapPlaceCommand) {
 	if request.ClearImage {
 		if current.ImageFileID != nil {
 			update.place.ImageFileID = nil
@@ -267,10 +277,6 @@ func planMapPlaceUpdate(
 		update.imageOperation = sharedtelemetry.AuditCollectionOperationAdded
 		update.imageFileID = *request.ImageFileID
 	}
-	if update.changed() {
-		update.place.UpdatedByMemberID = &memberID
-	}
-	return update, nil
 }
 
 func mapPlaceOptionalString(value *string) string {
