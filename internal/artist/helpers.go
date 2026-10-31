@@ -42,13 +42,6 @@ func ensureSlugAvailable(ctx context.Context, db *gorm.DB, value structured.Valu
 	return nil
 }
 
-func sameOptionalString(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
-}
-
 func loadReadyManageOgAssetRefs(ctx context.Context, runtime Runtime, db *gorm.DB, candidates ...*string) (map[string]*commonv1.AssetRef, error) {
 	ids := make([]string, 0, len(candidates))
 	seen := map[string]struct{}{}

@@ -1,24 +1,25 @@
-package artist
+package entityparticipant
 
 import (
 	"context"
 
-	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/member"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
 
-// MemberProjection adapts Member-owned summary projections to Artist
-// participant reads and mutation responses.
+// MemberProjection adapts Member-owned summary projections to participant
+// reads and mutation responses.
 type MemberProjection struct {
 	db        *gorm.DB
 	cdnDomain string
 }
 
-func NewMemberProjection(db *gorm.DB, cdnDomain string) *MemberProjection {
+// NewMemberProjection panics without a database; entityName ("artist") names
+// the consumer in that panic.
+func NewMemberProjection(entityName string, db *gorm.DB, cdnDomain string) *MemberProjection {
 	if db == nil {
-		panic("artist Member projection: db is required")
+		panic(entityName + " Member projection: db is required")
 	}
 	return &MemberProjection{db: db, cdnDomain: cdnDomain}
 }
@@ -36,5 +37,3 @@ func (p *MemberProjection) LoadAuthorizationEligibleMemberSummary(
 ) (*commonv1.MemberSummary, error) {
 	return member.LoadAuthorizationEligibleSummary(ctx, p.db, p.cdnDomain, memberID)
 }
-
-var _ artistdomain.MemberProjection = (*MemberProjection)(nil)

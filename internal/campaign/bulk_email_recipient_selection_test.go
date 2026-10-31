@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/assert"
@@ -55,4 +57,16 @@ func TestBuildBulkEmailRecipientCandidatesValidatesAudiencePlans(t *testing.T) {
 	assert.Contains(t, candidates.SQL, "m.onboarded = TRUE")
 	assert.True(t, strings.Count(candidates.SQL, "?") <= len(candidates.Args))
 
+}
+
+func TestResolveBulkEmailRecipientSelectionPermissionsTreatsStoredRolesAsServerData(t *testing.T) {
+	t.Parallel()
+
+	err := resolveBulkEmailRecipientSelectionPermissions(t.Context(), &auth.SpiceDBClient{}, &bulkEmailRecipientSelection{
+		Mode:    CampaignDeliveryTargetModeUsersByFilter,
+		Filters: &bulkEmailRecipientFilters{AccountRoles: []string{"retired-role"}},
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, connect.CodeInternal, connect.CodeOf(err))
 }

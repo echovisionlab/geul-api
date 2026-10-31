@@ -65,12 +65,12 @@ func (s *ArtistService) CheckArtistSlugAvailable(
 ) (*connect.Response[managev1.CheckArtistSlugAvailableResponse], error) {
 	// If excludeArtistId is provided, check edit permission on that artist
 	if req.Msg.ExcludeArtistId != nil && *req.Msg.ExcludeArtistId != "" {
-		if err := requireArtistPermission(ctx, s.spiceDB, *req.Msg.ExcludeArtistId, policyv1.Artist.Edit); err != nil {
+		if err := artistEntity.RequirePermission(ctx, s.spiceDB, *req.Msg.ExcludeArtistId, policyv1.Artist.Edit); err != nil {
 			return nil, err
 		}
 	} else {
 		// No artist specified - require admin role (for creating new artists)
-		if err := requireArtistCreate(ctx, s.spiceDB); err != nil {
+		if err := artistEntity.RequireCreate(ctx, s.spiceDB); err != nil {
 			return nil, err
 		}
 	}

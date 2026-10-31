@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -35,7 +36,7 @@ func TestRequireArtistPermissionChecksExactActionOnce(t *testing.T) {
 		Authenticated: true,
 	})
 
-	require.NoError(t, requireArtistPermission(ctx, checker, artistID, policyv1.Artist.Delete))
+	require.NoError(t, artistEntity.RequirePermission(ctx, checker, artistID, policyv1.Artist.Delete))
 	require.Len(t, checker.calls, 1)
 	require.Equal(t, "artist", checker.calls[0].Resource().Type())
 	require.Equal(t, artistID, checker.calls[0].Resource().ID())
@@ -51,10 +52,10 @@ func TestRequireArtistGlobalActionsUseDomainCatalog(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		actionName string
-		require    func(context.Context, artistPermissionChecker) error
+		require    func(context.Context, entityparticipant.PermissionChecker) error
 	}{
-		{name: "create", actionName: "artist.create", require: requireArtistCreate},
-		{name: "list", actionName: "artist.list", require: requireArtistList},
+		{name: "create", actionName: "artist.create", require: artistEntity.RequireCreate},
+		{name: "list", actionName: "artist.list", require: artistEntity.RequireList},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			admin, err := policyv1.Platform.IsAdmin()

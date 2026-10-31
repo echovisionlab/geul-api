@@ -195,7 +195,7 @@ func lockEditableArtistImages(ctx context.Context, tx *gorm.DB, spiceDB *auth.Sp
 		}
 		return err
 	}
-	return requireLockedArtistPermission(ctx, tx, spiceDB, artistID, policyv1.Artist.Manage)
+	return artistEntity.RequireLockedPermission(ctx, tx, spiceDB, artistID, policyv1.Artist.Manage)
 }
 
 func artistPrimaryImageID(images []ArtistImageProjection) string {

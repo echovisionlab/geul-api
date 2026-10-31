@@ -107,7 +107,7 @@ func (s *LabelService) SetLabelImage(
 			First(&label, "id = ?", req.Msg.LabelId).Error; err != nil {
 			return err
 		}
-		if err := requireLockedLabelPermission(ctx, tx, s.spiceDB, req.Msg.LabelId, policyv1.Label.Manage); err != nil {
+		if err := labelEntity.RequireLockedPermission(ctx, tx, s.spiceDB, req.Msg.LabelId, policyv1.Label.Manage); err != nil {
 			return err
 		}
 		previousEffectiveLogoFileID := effectiveLabelLogoFileID(label.LogoLightFileID, label.LogoDarkFileID)
@@ -198,7 +198,7 @@ func (s *LabelService) DeleteLabelImage(
 			First(&label, "id = ?", req.Msg.LabelId).Error; err != nil {
 			return err
 		}
-		if err := requireLockedLabelPermission(ctx, tx, s.spiceDB, req.Msg.LabelId, policyv1.Label.Manage); err != nil {
+		if err := labelEntity.RequireLockedPermission(ctx, tx, s.spiceDB, req.Msg.LabelId, policyv1.Label.Manage); err != nil {
 			return err
 		}
 		previousEffectiveLogoFileID := effectiveLabelLogoFileID(label.LogoLightFileID, label.LogoDarkFileID)

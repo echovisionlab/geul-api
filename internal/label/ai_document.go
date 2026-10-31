@@ -265,7 +265,7 @@ func (s *LabelService) ExecuteAIDocumentMutation(
 		if !labelAIDocumentLifecycleValid(root.Status) {
 			return errs.InternalMsg("Label has an unsupported lifecycle status")
 		}
-		if err := requireLockedLabelPermission(
+		if err := labelEntity.RequireLockedPermission(
 			ctx, tx, s.spiceDB, root.ID, policyv1.Label.Edit,
 		); err != nil {
 			return err

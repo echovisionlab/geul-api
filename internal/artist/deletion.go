@@ -34,7 +34,7 @@ func (s *ArtistService) PreviewDeleteArtist(
 	ctx context.Context,
 	req *connect.Request[managev1.PreviewDeleteArtistRequest],
 ) (*connect.Response[managev1.PreviewDeleteArtistResponse], error) {
-	if err := requireArtistPermission(ctx, s.spiceDB, req.Msg.Id, policyv1.Artist.Delete); err != nil {
+	if err := artistEntity.RequirePermission(ctx, s.spiceDB, req.Msg.Id, policyv1.Artist.Delete); err != nil {
 		return nil, err
 	}
 	impacts, err := loadArtistDeletionImpacts(ctx, s.db, req.Msg.Id)

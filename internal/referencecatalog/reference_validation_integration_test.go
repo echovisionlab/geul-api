@@ -13,21 +13,21 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-const referenceCatalogValueMaxLength = 100
-
-func TestGenreAndStyleValidationAndUniqueConstraintClassificationIntegration(t *testing.T) {
+func TestReferenceKindValidationAndUniqueConstraintClassificationIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.PrepareOryIntegrationConcurrentTest(t).DB
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	suffix := testutil.IntegrationUUID()[:8]
 
 	tests := []struct {
-		name   string
-		create func(name string, slug string) error
-		update func(id string, name *string, slug *string) error
+		name      string
+		maxLength int
+		create    func(name string, slug string) error
+		update    func(id string, name *string, slug *string) error
 	}{
 		{
-			name: "genre",
+			name:      "genre",
+			maxLength: 100,
 			create: func(name string, slug string) error {
 				_, err := NewGenreService(db, spiceDB).CreateGenre(ctx, connect.NewRequest(&managev1.CreateGenreRequest{Name: name, Slug: &slug}))
 				return err
@@ -38,13 +38,38 @@ func TestGenreAndStyleValidationAndUniqueConstraintClassificationIntegration(t *
 			},
 		},
 		{
-			name: "style",
+			name:      "style",
+			maxLength: 100,
 			create: func(name string, slug string) error {
 				_, err := NewStyleService(db, spiceDB).CreateStyle(ctx, connect.NewRequest(&managev1.CreateStyleRequest{Name: name, Slug: &slug}))
 				return err
 			},
 			update: func(id string, name *string, slug *string) error {
 				_, err := NewStyleService(db, spiceDB).UpdateStyle(ctx, connect.NewRequest(&managev1.UpdateStyleRequest{Id: id, Name: name, Slug: slug}))
+				return err
+			},
+		},
+		{
+			name:      "tag",
+			maxLength: 50,
+			create: func(name string, slug string) error {
+				_, err := NewTagService(db, referenceMenuTargetsForTest(nil), spiceDB).CreateTag(ctx, connect.NewRequest(&managev1.CreateTagRequest{Name: name, Slug: &slug}))
+				return err
+			},
+			update: func(id string, name *string, slug *string) error {
+				_, err := NewTagService(db, referenceMenuTargetsForTest(nil), spiceDB).UpdateTag(ctx, connect.NewRequest(&managev1.UpdateTagRequest{Id: id, Name: name, Slug: slug}))
+				return err
+			},
+		},
+		{
+			name:      "format",
+			maxLength: 50,
+			create: func(name string, slug string) error {
+				_, err := NewFormatService(db, spiceDB).CreateFormat(ctx, connect.NewRequest(&managev1.CreateFormatRequest{Name: name, Slug: &slug}))
+				return err
+			},
+			update: func(id string, name *string, slug *string) error {
+				_, err := NewFormatService(db, spiceDB).UpdateFormat(ctx, connect.NewRequest(&managev1.UpdateFormatRequest{Id: id, Name: name, Slug: slug}))
 				return err
 			},
 		},
@@ -81,22 +106,26 @@ func TestGenreAndStyleValidationAndUniqueConstraintClassificationIntegration(t *
 			require.Equal(t, connect.CodeAlreadyExists, connect.CodeOf(err))
 			var connectErr *connect.Error
 			require.ErrorAs(t, err, &connectErr)
-			require.Equal(t, test.name+" with name '"+name+"' already exists", connectErr.Message())
+			require.Equal(t, test.name+" with name '"+conflictingName+"' already exists", connectErr.Message())
 
 			err = test.update(id, nil, &conflictingSlug)
 			require.Equal(t, connect.CodeAlreadyExists, connect.CodeOf(err))
 			connectErr = nil
 			require.ErrorAs(t, err, &connectErr)
-			require.Equal(t, test.name+" with slug '"+slug+"' already exists", connectErr.Message())
+			require.Equal(t, test.name+" with slug '"+conflictingSlug+"' already exists", connectErr.Message())
 
 			blank := "   "
 			err = test.update(id, &blank, nil)
 			require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 
-			tooLong := strings.Repeat("가", referenceCatalogValueMaxLength+1)
+			// The limit is the column length, so one more character is a client
+			// error rather than a database failure.
+			tooLong := strings.Repeat("가", test.maxLength+1)
 			err = test.create(tooLong, slug+"-long")
 			require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 			err = test.update(id, nil, &tooLong)
+			require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+			err = test.update(id, &tooLong, nil)
 			require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 			err = test.create(name+" Blank Slug", blank)
 			require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))

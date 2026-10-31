@@ -44,7 +44,7 @@ func (s *InternalArtistService) LoadAIDocumentState(ctx context.Context, artistI
 			return errs.InternalMsg("Artist has an unsupported lifecycle status")
 		}
 		if !published {
-			if err := requireArtistPermission(ctx, s.spiceDB, id.String(), policyv1.Artist.View); err != nil {
+			if err := artistEntity.RequirePermission(ctx, s.spiceDB, id.String(), policyv1.Artist.View); err != nil {
 				return err
 			}
 		}

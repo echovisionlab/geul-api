@@ -12,26 +12,31 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 )
 
-const referenceValueMaxLength = 100
+// Reference kinds bound name and slug by their column length: varchar(100) for
+// genre, style and category, varchar(50) for format and tag.
+const (
+	referenceValueMaxLength      = 100
+	shortReferenceValueMaxLength = 50
+)
 
-func normalizeReferenceName(value string) (string, error) {
+func normalizeReferenceName(value string, maxLength int) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "", errs.Required("name")
 	}
-	if utf8.RuneCountInString(value) > referenceValueMaxLength {
-		return "", errs.InvalidArgument("name", fmt.Sprintf("must be at most %d characters", referenceValueMaxLength))
+	if utf8.RuneCountInString(value) > maxLength {
+		return "", errs.InvalidArgument("name", fmt.Sprintf("must be at most %d characters", maxLength))
 	}
 	return value, nil
 }
 
-func normalizeReferenceSlug(value string) (string, error) {
+func normalizeReferenceSlug(value string, maxLength int) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "", errs.Required("slug")
 	}
-	if utf8.RuneCountInString(value) > referenceValueMaxLength {
-		return "", errs.InvalidArgument("slug", fmt.Sprintf("must be at most %d characters", referenceValueMaxLength))
+	if utf8.RuneCountInString(value) > maxLength {
+		return "", errs.InvalidArgument("slug", fmt.Sprintf("must be at most %d characters", maxLength))
 	}
 	if err := validateSlugWithoutSlash(value); err != nil {
 		return "", err

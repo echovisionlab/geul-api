@@ -20,51 +20,6 @@ import (
 	"gorm.io/gorm"
 )
 
-func validateArtistParentTransition(ctx context.Context, tx *gorm.DB, artistID, parentID string) error {
-	if err := lockArtistParentGraph(ctx, tx); err != nil {
-		return err
-	}
-	if parentID == "" {
-		return nil
-	}
-	if parentID == artistID {
-		return errs.InvalidArgument("parent_artist_id", "cannot reference the same artist")
-	}
-	if !IsValidUUID(parentID) {
-		return errs.InvalidArgument("parent_artist_id", "must be a valid Artist ID")
-	}
-	var parentExists bool
-	if err := tx.WithContext(ctx).Raw(`SELECT EXISTS(SELECT 1 FROM artist WHERE id = ?::uuid)`, parentID).Scan(&parentExists).Error; err != nil {
-		return err
-	}
-	if !parentExists {
-		return errs.InvalidArgument("parent_artist_id", "artist does not exist")
-	}
-	var cycle bool
-	if err := tx.WithContext(ctx).Raw(`
-		WITH RECURSIVE descendants(id) AS (
-			SELECT id FROM artist WHERE parent_artist_id = ?::uuid
-			UNION
-			SELECT child.id
-			FROM artist child
-			JOIN descendants parent ON child.parent_artist_id = parent.id
-		)
-		SELECT EXISTS(SELECT 1 FROM descendants WHERE id = ?::uuid)
-	`, artistID, parentID).Scan(&cycle).Error; err != nil {
-		return err
-	}
-	if cycle {
-		return errs.InvalidArgument("parent_artist_id", "would create an artist hierarchy cycle")
-	}
-	return nil
-}
-
-func lockArtistParentGraph(ctx context.Context, tx *gorm.DB) error {
-	return tx.WithContext(ctx).
-		Exec("SELECT pg_advisory_xact_lock(hashtext('artist_parent_graph'))").
-		Error
-}
-
 type InternalArtistService struct {
 	db             *gorm.DB
 	asyncPublisher AsyncPublisher

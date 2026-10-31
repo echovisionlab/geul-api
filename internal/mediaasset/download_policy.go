@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sort"
 	"strings"
@@ -918,7 +919,10 @@ func resolveRestrictedFileDownloadPermissions(
 		permissions, err := normalizeFileDownloadAccountPermissions(segment.Config.AccountRoles)
 		if err != nil {
 			// The permissions come from a stored segment, not from this request.
-			return nil, failurecause.ServerFault(err)
+			return nil, errs.Internal(failurecause.WithAttrs(
+				fmt.Errorf("read stored File download segment: %w", err),
+				slog.String("segment_id", segment.ID),
+			))
 		}
 		for _, permission := range permissions {
 			requested[permission] = struct{}{}
@@ -990,7 +994,7 @@ func normalizeFileDownloadAccountPermissions(values []string) ([]policyv1.RoleID
 		}
 		role, ok := policyv1.Role.Parse(normalized)
 		if !ok {
-			return nil, errs.InvalidArgumentMsg(fmt.Sprintf("invalid account permission: %s", value))
+			return nil, fmt.Errorf("invalid account permission %q", value)
 		}
 		if _, exists := seen[role]; exists {
 			continue

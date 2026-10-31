@@ -6,6 +6,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -15,20 +16,25 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	participantRoleOwner   = entityparticipant.RoleOwner
+	participantRoleManager = entityparticipant.RoleManager
+)
+
 func (s *LabelService) ListLabelParticipants(
 	ctx context.Context,
 	req *connect.Request[managev1.ListLabelParticipantsRequest],
 ) (_ *connect.Response[managev1.ListLabelParticipantsResponse], returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("label_id", req.Msg.GetLabelId()))
 
-	if err := requireLabelPermission(ctx, s.spiceDB, req.Msg.LabelId, policyv1.Label.ManageParticipants); err != nil {
+	if err := labelEntity.RequirePermission(ctx, s.spiceDB, req.Msg.LabelId, policyv1.Label.ManageParticipants); err != nil {
 		return nil, err
 	}
-	views, err := loadEntityParticipantViews(ctx, s.db, s.spiceDB, s.members, labelParticipantSpec(), req.Msg.LabelId)
+	views, err := labelEntity.ListParticipants(ctx, s.db, s.spiceDB, s.members, req.Msg.LabelId)
 	if err != nil {
 		return nil, err
 	}
-	participants := mapEntityParticipantViews(views, labelParticipantFromView)
+	participants := entityparticipant.MapViews(views, labelParticipantFromView)
 	return connect.NewResponse(&managev1.ListLabelParticipantsResponse{Participants: participants}), nil
 }
 
@@ -42,9 +48,7 @@ func (s *LabelService) SetLabelParticipant(
 	if err != nil {
 		return nil, err
 	}
-	view, err := setEntityParticipantViewWithAudit(ctx, s.db, s.spiceDB, s.members, labelParticipantSpec(), req.Msg.LabelId, req.Msg.MemberId, role, func(ctx context.Context, tx *gorm.DB, previous, next string) error {
-		return s.appendLabelParticipantAudit(ctx, tx, req.Msg.LabelId, req.Msg.MemberId, labelAuditRelationship(previous), labelAuditRelationship(next))
-	})
+	view, err := labelEntity.SetParticipant(ctx, s.db, s.spiceDB, s.members, req.Msg.LabelId, req.Msg.MemberId, role, s.labelParticipantAudit(req.Msg.LabelId, req.Msg.MemberId))
 	if err != nil {
 		return nil, err
 	}
@@ -59,22 +63,19 @@ func (s *LabelService) RemoveLabelParticipant(
 ) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("label_id", req.Msg.GetLabelId()))
 
-	return removeEntityParticipantResponseWithAudit(ctx, s.db, s.spiceDB, labelParticipantSpec(), req.Msg.LabelId, req.Msg.MemberId, func(ctx context.Context, tx *gorm.DB, previous, next string) error {
-		return s.appendLabelParticipantAudit(ctx, tx, req.Msg.LabelId, req.Msg.MemberId, labelAuditRelationship(previous), labelAuditRelationship(next))
-	})
+	if err := labelEntity.RemoveParticipant(ctx, s.db, s.spiceDB, req.Msg.LabelId, req.Msg.MemberId, s.labelParticipantAudit(req.Msg.LabelId, req.Msg.MemberId)); err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
 }
 
-func labelAuditRelationship(role string) sharedtelemetry.AuditRelationship {
-	if role == participantRoleOwner {
-		return sharedtelemetry.AuditRelationshipOwner
+func (s *LabelService) labelParticipantAudit(labelID, memberID string) entityparticipant.Audit {
+	return func(ctx context.Context, tx *gorm.DB, previous, next sharedtelemetry.AuditRelationship) error {
+		return s.appendLabelParticipantAudit(ctx, tx, labelID, memberID, previous, next)
 	}
-	if role == participantRoleManager {
-		return sharedtelemetry.AuditRelationshipManager
-	}
-	return sharedtelemetry.AuditRelationshipNone
 }
 
-func labelParticipantFromView(view entityParticipantView) *managev1.LabelParticipant {
+func labelParticipantFromView(view entityparticipant.View) *managev1.LabelParticipant {
 	role := managev1.LabelParticipantRole_LABEL_PARTICIPANT_ROLE_MANAGER
 	if view.Role == participantRoleOwner {
 		role = managev1.LabelParticipantRole_LABEL_PARTICIPANT_ROLE_OWNER
@@ -95,7 +96,3 @@ func labelParticipantRole(role managev1.LabelParticipantRole) (string, error) {
 		return "", errs.InvalidArgument("role", "must be Owner or Manager")
 	}
 }
-
-// =============================================================================
-// Utility
-// =============================================================================
