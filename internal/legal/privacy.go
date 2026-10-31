@@ -417,9 +417,6 @@ func (s *PrivacyService) SchedulePrivacy(
 			&effectiveFrom, nil,
 		)
 	}); err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	dispatchCreatedLegalNoticeRun(ctx, s.notice, run)
@@ -546,9 +543,6 @@ func (s *PrivacyService) CancelPrivacySchedule(
 		)
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -633,9 +627,6 @@ func (s *PrivacyService) ActivatePrivacyNow(
 
 	if err != nil {
 		// Check if error is already a Connect error (for NotFound or FailedPrecondition)
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -737,9 +728,6 @@ func (s *PrivacyService) DeletePrivacy(
 		)
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	if err := s.legalOG.ReleaseAssets(ctx, s.db, "privacy", privacy.ID); err != nil {
@@ -768,9 +756,6 @@ func (s *PrivacyService) RegeneratePrivacyDerivedContent(
 		"privacy", req.Msg.Id, req.Msg.ExpectedSnapshotDigest,
 	)
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.RegeneratePrivacyDerivedContentResponse{

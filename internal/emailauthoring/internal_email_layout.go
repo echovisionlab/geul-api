@@ -175,9 +175,6 @@ func (s *InternalEmailLayoutService) SaveDocument(
 		}
 		return nil
 	}); err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&intrav1.SaveEmailLayoutDocumentResponse{
@@ -406,9 +403,6 @@ func (s *InternalEmailLayoutService) LoadDocument(
 		})
 		return nil
 	}); err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	return response, nil

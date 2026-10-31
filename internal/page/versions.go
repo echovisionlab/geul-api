@@ -322,9 +322,6 @@ func (s *PageService) RestorePageVersion(
 		)
 		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, event)
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	var page model.Page

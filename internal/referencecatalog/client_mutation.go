@@ -243,9 +243,6 @@ func (s *ClientService) DeleteClient(
 		return write([]policyv1.RelationshipMutation{policyDelete}, []policyv1.RelationshipMutation{policyTouch})
 	})
 	if err != nil {
-		if _, ok := err.(*connect.Error); ok {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{

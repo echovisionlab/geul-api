@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -116,9 +115,6 @@ func (s *Lifecycle) AllocatePublicAsset(
 		return tx.WithContext(ctx).Create(&asset).Error
 	}
 	if err := s.db.WithContext(ctx).Transaction(createAsset); err != nil {
-		if _, ok := err.(*connect.Error); ok {
-			return nil, nil, err
-		}
 		return nil, nil, errs.Internal(err)
 	}
 	target := &commonv1.AssetWriteTarget{

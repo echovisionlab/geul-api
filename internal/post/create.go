@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -293,9 +292,6 @@ func mapCreatePostError(err error, requestedSlug *string) error {
 	if strings.Contains(err.Error(), "duplicate key") {
 		slog.WarnContext(context.Background(), "content operation failed", "domain", "post", "operation", "classify_unique_violation", "outcome", "failed", failurecause.Attr(err))
 		return errs.SlugAlreadyExists("post", ptrStringValue(requestedSlug))
-	}
-	if connect.CodeOf(err) != connect.CodeUnknown {
-		return err
 	}
 	return errs.Internal(err)
 }

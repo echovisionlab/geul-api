@@ -341,9 +341,6 @@ func (s *WorkService) RestoreWorkVersion(
 		return publishWorkContentUpdated(ctx, tx, s.asyncPublisher, event)
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, normalizeWorkContentBlockError(err)
 	}
 

@@ -538,9 +538,6 @@ func (s *EmailLayoutService) UpdateEmailLayout(
 		layout = updated
 		return err
 	}); err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(toProtoEmailLayout(&layout)), nil
@@ -760,9 +757,6 @@ func (s *EmailLayoutService) DeleteEmailLayout(
 		)
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
@@ -809,9 +803,6 @@ func (s *EmailLayoutService) PreviewEmailLayout(
 	if req.Msg.Locale != nil && strings.TrimSpace(*req.Msg.Locale) != "" {
 		localizedHTML, _, err := email.ResolveLocalizedEmailLayoutHTML(ctx, s.db, layout.ID, *req.Msg.Locale)
 		if err != nil {
-			if connectErr, ok := err.(*connect.Error); ok {
-				return nil, connectErr
-			}
 			return nil, errs.Internal(err)
 		}
 		layoutHTML = localizedHTML

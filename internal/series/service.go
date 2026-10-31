@@ -130,9 +130,6 @@ func (s *SeriesService) ListSeriesPosts(
 			Order("series_order ASC NULLS LAST, created_at ASC").
 			Find(&posts).Error
 	}); err != nil {
-		if _, ok := err.(*connect.Error); ok {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -470,9 +467,6 @@ func (s *SeriesService) CreateSeries(
 		if dberrors.IsUniqueViolation(err) {
 			slog.WarnContext(ctx, "Operation failed", "domain", "series", "operation", "CreateSeries", failurecause.Attr(err))
 			return nil, errs.SlugAlreadyExists("series", slug)
-		}
-		if _, ok := err.(*connect.Error); ok {
-			return nil, err
 		}
 		return nil, errs.Internal(err)
 	}

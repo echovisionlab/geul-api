@@ -129,9 +129,6 @@ func (s *ClientService) SetClientLogo(
 		if err == gorm.ErrRecordNotFound {
 			return nil, errs.NotFound("client", req.Msg.ClientId)
 		}
-		if _, ok := err.(*connect.Error); ok {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -236,9 +233,6 @@ func (s *ClientService) DeleteClientLogo(
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errs.NotFound("client", req.Msg.ClientId)
-		}
-		if _, ok := err.(*connect.Error); ok {
-			return nil, err
 		}
 		return nil, errs.Internal(err)
 	}

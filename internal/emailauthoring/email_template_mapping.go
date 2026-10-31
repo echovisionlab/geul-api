@@ -93,9 +93,6 @@ func (s *EmailTemplateService) UpdateEventMapping(
 	})
 
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 

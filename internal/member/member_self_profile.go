@@ -161,9 +161,6 @@ func (s *MemberService) updateProfile(
 			}
 		}
 		slog.ErrorContext(ctx, "Operation failed", "operation", "updateProfile", failurecause.Attr(err, privateValues...))
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	_, profile, err := s.memberProfileByID(ctx, memberID)
@@ -203,9 +200,6 @@ func (s *MemberService) updateMemberProfileAsAdmin(
 					}
 				}
 				slog.ErrorContext(ctx, "Operation failed", "operation", "updateMemberProfileAsAdmin", failurecause.Attr(err, privateValues...))
-				if connect.CodeOf(err) != connect.CodeUnknown {
-					return err
-				}
 				return errs.Internal(err)
 			}
 			if current.IdentityID != target.IdentityID {
@@ -256,9 +250,6 @@ func (s *MemberService) updateMemberProfileAsAdmin(
 			}
 		}
 		slog.ErrorContext(ctx, "Operation failed", "operation", "updateMemberProfileAsAdmin", failurecause.Attr(err, privateValues...))
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	_, profile, err := s.memberProfileByID(ctx, memberID)

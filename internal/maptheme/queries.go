@@ -205,9 +205,6 @@ func (s *MapThemeService) CreateMapTheme(
 		return s.appendMapThemeCreatedAudit(ctx, tx, theme.ID)
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	result, err := s.toProto(theme)
@@ -282,9 +279,6 @@ func (s *MapThemeService) DeleteMapTheme(
 				"the current default or last map theme cannot be deleted; select another default first",
 			)
 		}
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	if rowsAffected == 0 {
@@ -354,9 +348,6 @@ func (s *MapThemeService) CopyMapTheme(
 		return s.appendMapThemeCreatedAudit(ctx, tx, copied.ID)
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	result, err := s.toProto(copied)
@@ -409,9 +400,6 @@ func (s *MapThemeService) SetDefaultMapTheme(
 		return appendMapThemeSiteSettingsAudit(ctx, tx, s.auditWriter)
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.SetDefaultMapThemeResponse{DefaultMapThemeId: themeID}), nil

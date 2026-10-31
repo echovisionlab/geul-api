@@ -511,9 +511,6 @@ func (s *CampaignService) UpdateCampaignConfiguration(
 			req.Msg.LayoutId,
 		)
 		if err != nil {
-			if connectErr, ok := err.(*connect.Error); ok {
-				return connectErr
-			}
 			return errs.Internal(err)
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&campaign, "id = ?", req.Msg.Id).Error; err != nil {

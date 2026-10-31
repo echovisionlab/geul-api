@@ -138,9 +138,6 @@ func (s *SeriesService) AddSeriesManager(
 		return write(apply, compensate)
 	})
 	if err != nil {
-		if _, ok := err.(*connect.Error); ok {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
@@ -203,9 +200,6 @@ func (s *SeriesService) RemoveSeriesManager(
 		return write(apply, compensate)
 	})
 	if err != nil {
-		if _, ok := err.(*connect.Error); ok {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil

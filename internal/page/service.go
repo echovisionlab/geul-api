@@ -595,9 +595,6 @@ func (s *PageService) DeletePage(
 		return nil
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
@@ -687,9 +684,6 @@ func (s *PageService) PublishPage(
 			),
 		)
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -759,9 +753,6 @@ func (s *PageService) UnpublishPage(
 			),
 		)
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 

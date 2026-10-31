@@ -116,9 +116,6 @@ func (s *MapPlaceService) CreateMapPlace(
 		return nil
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	users, err := s.resolveMembersForPlaces(ctx, []model.MapPlace{place})

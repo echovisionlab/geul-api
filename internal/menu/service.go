@@ -307,9 +307,6 @@ func (s *MenuService) CreateMenu(
 		)
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(fmt.Errorf("failed to create menu: %w", err))
 	}
 	protoMenu, err := s.toProtoMenu(menu)
@@ -345,9 +342,6 @@ func (s *MenuService) UpdateMenu(
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errs.NotFound("menu", id)
-		}
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
 		}
 		return nil, errs.Internal(fmt.Errorf("failed to update menu: %w", err))
 	}
@@ -428,9 +422,6 @@ func (s *MenuService) DeleteMenu(
 		)
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(fmt.Errorf("failed to delete menu: %w", err))
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil

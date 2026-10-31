@@ -220,9 +220,6 @@ func (s *InternalLabelService) UpdateLabelDocumentMetadata(ctx context.Context, 
 		err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error { return mutate(tx, nil) })
 	}
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&intrav1.UpdateLabelDocumentMetadataResponse{DocumentRevision: advanced.DocumentRevision.String(), Changed: advanced.Changed, SourceChanged: advanced.TranslationSourceChanged}), nil

@@ -114,9 +114,6 @@ func (s *ReleaseService) SetReleaseArtwork(
 	})
 
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -197,9 +194,6 @@ func (s *ReleaseService) DeleteReleaseArtwork(
 	})
 
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 

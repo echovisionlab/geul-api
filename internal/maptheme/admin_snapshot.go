@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -90,9 +89,6 @@ func (s *MapThemeService) UpdateMapThemeSnapshot(ctx context.Context, themeID st
 		if stderrors.Is(err, errMapThemeRevisionConflict) {
 			slog.WarnContext(ctx, "Operation failed", "domain", "maptheme", "operation", "UpdateMapThemeSnapshot", failurecause.Attr(err))
 			return nil, false, errs.CollaborationConflict(intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED, "map theme changed; reload before saving")
-		}
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, false, err
 		}
 		return nil, false, errs.Internal(err)
 	}

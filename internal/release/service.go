@@ -485,9 +485,6 @@ func (s *ReleaseService) CreateRelease(
 			slog.WarnContext(ctx, "Operation failed", "domain", "release", "operation", "CreateRelease", failurecause.Attr(err))
 			return nil, errs.SlugAlreadyExists("release", "slug")
 		}
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	if err := s.overlayReleaseSourceLocaleDocument(ctx, &release); err != nil {
@@ -571,9 +568,6 @@ func (s *ReleaseService) DeleteRelease(
 			}
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errs.NotFound("release", req.Msg.Id)
-			}
-			if connect.CodeOf(err) != connect.CodeUnknown {
-				return nil, err
 			}
 			return nil, errs.Internal(fmt.Errorf("cleanup release track audio uploads: %w", err))
 		}
@@ -674,9 +668,6 @@ func (s *ReleaseService) DeleteRelease(
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errs.NotFound("release", req.Msg.Id)
 			}
-			if connect.CodeOf(err) != connect.CodeUnknown {
-				return nil, err
-			}
 			return nil, errs.Internal(err)
 		}
 		deleted = true
@@ -746,9 +737,6 @@ func (s *ReleaseService) PublishRelease(
 			[]string{"state.status", "state.published_at"},
 		))
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -809,9 +797,6 @@ func (s *ReleaseService) UnpublishRelease(
 			[]string{"state.status"},
 		))
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 

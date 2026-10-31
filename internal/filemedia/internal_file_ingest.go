@@ -166,9 +166,6 @@ func (s *FileService) attachTrackOriginalAudio(
 		return nil
 	})
 	if err != nil {
-		if _, ok := err.(*connect.Error); ok {
-			return trackOriginalAudioAttachment{}, err
-		}
 		return trackOriginalAudioAttachment{}, errs.Internal(err)
 	}
 	result := intrav1.AttachTrackOriginalAudioResult_ATTACH_TRACK_ORIGINAL_AUDIO_RESULT_APPLIED

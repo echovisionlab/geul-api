@@ -1059,9 +1059,6 @@ func (s *FileService) FindMultipartUploadCandidate(
 	}
 	session, found, err := s.findMultipartUploadCandidate(ctx, search)
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(fmt.Errorf("failed to find upload session candidate: %w", err))
 	}
 	if !found {
@@ -1069,9 +1066,6 @@ func (s *FileService) FindMultipartUploadCandidate(
 	}
 	response, err := s.prepareMultipartCandidateResponse(ctx, session)
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(fmt.Errorf("failed to reconcile upload session candidate: %w", err))
 	}
 	return connect.NewResponse(response), nil

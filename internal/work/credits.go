@@ -176,9 +176,6 @@ func (s *WorkService) MoveWorkCreditItem(
 		return nil
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(result), nil
@@ -264,9 +261,6 @@ func (s *WorkService) CreateWorkCreditGroup(
 			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, group.WorkID, group.ID, sharedtelemetry.AuditItemOperationCreated)
 		})
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -329,9 +323,6 @@ func (s *WorkService) UpdateWorkCreditGroup(
 			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, group.WorkID, group.ID, sharedtelemetry.AuditItemOperationUpdated)
 		})
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -409,9 +400,6 @@ func (s *WorkService) DeleteWorkCreditGroup(
 			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, group.WorkID, group.ID, sharedtelemetry.AuditItemOperationDeleted)
 		})
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -496,9 +484,6 @@ func (s *WorkService) AddWorkCredit(
 			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, credit.WorkID, credit.ID, sharedtelemetry.AuditItemOperationCreated)
 		})
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -580,9 +565,6 @@ func (s *WorkService) UpdateWorkCredit(
 			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, credit.WorkID, credit.ID, sharedtelemetry.AuditItemOperationUpdated)
 		})
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -644,9 +626,6 @@ func (s *WorkService) DeleteWorkCredit(
 			return sharedtelemetry.NewWorkCreditAuditRecord(metadata, credit.WorkID, credit.ID, sharedtelemetry.AuditItemOperationDeleted)
 		})
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 

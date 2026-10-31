@@ -456,10 +456,6 @@ func asCampaignEmailConnectError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var connectErr *connect.Error
-	if errors.As(err, &connectErr) {
-		return connectErr
-	}
 	return errs.Internal(err)
 }
 

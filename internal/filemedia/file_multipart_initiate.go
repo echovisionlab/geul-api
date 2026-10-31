@@ -356,9 +356,6 @@ func multipartSessionInsertError(err error) error {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return errs.NotFoundMsg("track not found")
 	}
-	if connect.CodeOf(err) != connect.CodeUnknown {
-		return err
-	}
 	return errs.Internal(fmt.Errorf("failed to create upload session: %w", err))
 }
 

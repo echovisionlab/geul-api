@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"gorm.io/gorm"
@@ -58,9 +57,6 @@ func (s *FileService) reconcileMultipartResumeResponse(
 	}
 	reconciliation, err := s.reconcileWritableMultipartResumeParts(ctx, session)
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return model.UploadSession{}, err
-		}
 		return model.UploadSession{}, errs.Internal(fmt.Errorf("failed to reconcile multipart resume parts: %w", err))
 	}
 	response.Status = uploadSessionStatusToProto(reconciliation.session.Status)

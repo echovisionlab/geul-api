@@ -421,9 +421,6 @@ func (s *ArtistService) CreateArtist(
 		)
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	if err := s.overlayArtistSourceLocaleDocument(ctx, &artist); err != nil {

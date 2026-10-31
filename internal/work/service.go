@@ -754,9 +754,6 @@ func (s *WorkService) DeleteWork(
 		return nil
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{
@@ -832,9 +829,6 @@ func (s *WorkService) PublishWork(
 			),
 		)
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -908,9 +902,6 @@ func (s *WorkService) UnpublishWork(
 			),
 		)
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 

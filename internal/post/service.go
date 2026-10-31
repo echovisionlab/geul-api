@@ -434,9 +434,6 @@ func (s *PostService) UpdatePost(
 		}
 		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildManagePostContentUpdatedEvent(req.Msg))
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	documentLayout, err := post.DocumentLayout.Proto()
@@ -688,9 +685,6 @@ func (s *PostService) DeletePost(
 		return write(deleteRelationships, restoreRelationships)
 	})
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
@@ -1040,9 +1034,6 @@ func (s *PostService) DeletePostFeaturedImage(
 		}
 		return nil
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 

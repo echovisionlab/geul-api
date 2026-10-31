@@ -397,9 +397,6 @@ func (s *TrackService) CreateTrack(
 	})
 
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(s.toProto(&track)), nil
@@ -526,9 +523,6 @@ func (s *TrackService) UpdateTrack(
 		}
 		return nil
 	}); err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -587,9 +581,6 @@ func (s *TrackService) DeleteTrack(
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return nil, errs.NotFoundMsg("track not found")
 			}
-			if connect.CodeOf(err) != connect.CodeUnknown {
-				return nil, err
-			}
 			return nil, errs.Internal(err)
 		}
 		deleted = true
@@ -646,9 +637,6 @@ func (s *TrackService) SetTrackCredits(
 	}
 	err := s.replaceTrackCredits(ctx, req.Msg.TrackId, req.Msg.Credits, req.Msg.Observed)
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -758,9 +746,6 @@ func (s *TrackService) ReorderTracks(
 	})
 
 	if err != nil {
-		if connect.CodeOf(err) != connect.CodeUnknown {
-			return nil, err
-		}
 		return nil, errs.Internal(err)
 	}
 

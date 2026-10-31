@@ -416,9 +416,6 @@ func (s *TermsService) ScheduleTerms(
 			&effectiveFrom, nil,
 		)
 	}); err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	dispatchCreatedLegalNoticeRun(ctx, s.notice, run)
@@ -545,9 +542,6 @@ func (s *TermsService) CancelTermsSchedule(
 		)
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -632,9 +626,6 @@ func (s *TermsService) ActivateTermsNow(
 
 	if err != nil {
 		// Check if error is already a Connect error (for NotFound or FailedPrecondition)
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 
@@ -736,9 +727,6 @@ func (s *TermsService) DeleteTerms(
 		)
 	})
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	if err := s.legalOG.ReleaseAssets(ctx, s.db, "terms", terms.ID); err != nil {
@@ -767,9 +755,6 @@ func (s *TermsService) RegenerateTermsDerivedContent(
 		"terms", req.Msg.Id, req.Msg.ExpectedSnapshotDigest,
 	)
 	if err != nil {
-		if connectErr, ok := err.(*connect.Error); ok {
-			return nil, connectErr
-		}
 		return nil, errs.Internal(err)
 	}
 	return connect.NewResponse(&managev1.RegenerateTermsDerivedContentResponse{

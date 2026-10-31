@@ -315,8 +315,6 @@ func (s *InternalMapService) SaveMapThemeSnapshot(
 				intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
 				"map theme changed; reload before saving", err,
 			)
-		case connect.CodeOf(err) != connect.CodeUnknown:
-			return nil, err
 		default:
 			return nil, errs.Internal(err)
 		}
