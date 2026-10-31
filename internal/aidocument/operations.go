@@ -545,72 +545,94 @@ func (r ApplyRequest) validateEnvelope() error {
 
 func validateCanonicalOperations(operations []Operation) error {
 	for index, operation := range operations {
-		var err error
-		switch operation.Kind {
-		case OperationSetField:
-			if err = validateCanonicalFieldTarget(operation.SetField.Target); err == nil {
-				err = operation.SetField.Value.validate()
-			}
-		case OperationUnsetField:
-			err = validateCanonicalFieldTarget(operation.UnsetField.Target)
-		case OperationInsertBlock:
-			if err = validateStableID("block ID", string(operation.InsertBlock.Block), maxHandleLength); err == nil {
-				err = validateStableID("block kind", string(operation.InsertBlock.Kind), maxKindLength)
-			}
-			if err == nil && operation.InsertBlock.Parent != "" {
-				err = validateStableID("parent block ID", string(operation.InsertBlock.Parent), maxHandleLength)
-			}
-			if err == nil && operation.InsertBlock.After != "" {
-				err = validateStableID("after block ID", string(operation.InsertBlock.After), maxHandleLength)
-			}
-		case OperationDeleteBlock:
-			err = validateStableID("block ID", string(operation.DeleteBlock.Block), maxHandleLength)
-		case OperationMoveBlock:
-			if err = validateStableID("block ID", string(operation.MoveBlock.Block), maxHandleLength); err == nil && operation.MoveBlock.Parent != "" {
-				err = validateStableID("parent block ID", string(operation.MoveBlock.Parent), maxHandleLength)
-			}
-			if err == nil && operation.MoveBlock.After != "" {
-				err = validateStableID("after block ID", string(operation.MoveBlock.After), maxHandleLength)
-			}
-		case OperationReplaceBlockKind:
-			if err = validateStableID("block ID", string(operation.ReplaceBlockKind.Block), maxHandleLength); err == nil {
-				err = validateStableID("block kind", string(operation.ReplaceBlockKind.Kind), maxKindLength)
-			}
-		case OperationInsertRelationItem:
-			err = validateRelationOperationIDs(operation.InsertRelationItem.Block, operation.InsertRelationItem.Relation, operation.InsertRelationItem.Item)
-			if err == nil {
-				err = validateStableID("relation item kind", string(operation.InsertRelationItem.Kind), maxKindLength)
-			}
-			if err == nil && operation.InsertRelationItem.After != "" {
-				err = validateStableID("after relation item ID", string(operation.InsertRelationItem.After), maxHandleLength)
-			}
-		case OperationDeleteRelationItem:
-			err = validateRelationOperationIDs(operation.DeleteRelationItem.Block, operation.DeleteRelationItem.Relation, operation.DeleteRelationItem.Item)
-		case OperationMoveRelationItem:
-			err = validateRelationOperationIDs(operation.MoveRelationItem.Block, operation.MoveRelationItem.Relation, operation.MoveRelationItem.Item)
-			if err == nil {
-				err = validateStableID("target block ID", string(operation.MoveRelationItem.TargetBlock), maxHandleLength)
-			}
-			if err == nil {
-				err = validateStableID("target relation ID", string(operation.MoveRelationItem.Target), maxCatalogIDLength)
-			}
-			if err == nil && operation.MoveRelationItem.After != "" {
-				err = validateStableID("after relation item ID", string(operation.MoveRelationItem.After), maxHandleLength)
-			}
-		case OperationAttachFile:
-			if err = validateCanonicalFieldTarget(operation.AttachFile.Target); err == nil {
-				err = validateFileReference(operation.AttachFile.File)
-			}
-		case OperationDetachFile:
-			err = validateCanonicalFieldTarget(operation.DetachFile.Target)
-		case OperationCreateTranslation, OperationDeleteTranslation:
-			// Locale is carried once by the batch envelope.
-		default:
-			err = fmt.Errorf("unsupported operation kind %q", operation.Kind)
-		}
-		if err != nil {
+		if err := validateCanonicalOperation(operation); err != nil {
 			return fmt.Errorf("operation %d: %w", index, err)
 		}
 	}
 	return nil
+}
+
+func validateCanonicalOperation(operation Operation) error {
+	switch operation.Kind {
+	case OperationSetField:
+		if err := validateCanonicalFieldTarget(operation.SetField.Target); err != nil {
+			return err
+		}
+		return operation.SetField.Value.validate()
+	case OperationUnsetField:
+		return validateCanonicalFieldTarget(operation.UnsetField.Target)
+	case OperationInsertBlock:
+		op := operation.InsertBlock
+		if err := validateStableID("block ID", string(op.Block), maxHandleLength); err != nil {
+			return err
+		}
+		if err := validateStableID("block kind", string(op.Kind), maxKindLength); err != nil {
+			return err
+		}
+		return validateCanonicalPlacement(op.Parent, op.After)
+	case OperationDeleteBlock:
+		return validateStableID("block ID", string(operation.DeleteBlock.Block), maxHandleLength)
+	case OperationMoveBlock:
+		op := operation.MoveBlock
+		if err := validateStableID("block ID", string(op.Block), maxHandleLength); err != nil {
+			return err
+		}
+		return validateCanonicalPlacement(op.Parent, op.After)
+	case OperationReplaceBlockKind:
+		if err := validateStableID("block ID", string(operation.ReplaceBlockKind.Block), maxHandleLength); err != nil {
+			return err
+		}
+		return validateStableID("block kind", string(operation.ReplaceBlockKind.Kind), maxKindLength)
+	case OperationInsertRelationItem:
+		op := operation.InsertRelationItem
+		if err := validateRelationOperationIDs(op.Block, op.Relation, op.Item); err != nil {
+			return err
+		}
+		if err := validateStableID("relation item kind", string(op.Kind), maxKindLength); err != nil {
+			return err
+		}
+		return validateAfterRelationItem(op.After)
+	case OperationDeleteRelationItem:
+		op := operation.DeleteRelationItem
+		return validateRelationOperationIDs(op.Block, op.Relation, op.Item)
+	case OperationMoveRelationItem:
+		return validateCanonicalMoveRelationItem(*operation.MoveRelationItem)
+	case OperationAttachFile:
+		if err := validateCanonicalFieldTarget(operation.AttachFile.Target); err != nil {
+			return err
+		}
+		return validateFileReference(operation.AttachFile.File)
+	case OperationDetachFile:
+		return validateCanonicalFieldTarget(operation.DetachFile.Target)
+	case OperationCreateTranslation, OperationDeleteTranslation:
+		// Locale is carried once by the batch envelope.
+		return nil
+	default:
+		return fmt.Errorf("unsupported operation kind %q", operation.Kind)
+	}
+}
+
+func validateCanonicalPlacement(parent, after BlockID) error {
+	if parent != "" {
+		if err := validateStableID("parent block ID", string(parent), maxHandleLength); err != nil {
+			return err
+		}
+	}
+	if after == "" {
+		return nil
+	}
+	return validateStableID("after block ID", string(after), maxHandleLength)
+}
+
+func validateCanonicalMoveRelationItem(op MoveRelationItem) error {
+	if err := validateRelationOperationIDs(op.Block, op.Relation, op.Item); err != nil {
+		return err
+	}
+	if err := validateStableID("target block ID", string(op.TargetBlock), maxHandleLength); err != nil {
+		return err
+	}
+	if err := validateStableID("target relation ID", string(op.Target), maxCatalogIDLength); err != nil {
+		return err
+	}
+	return validateAfterRelationItem(op.After)
 }
