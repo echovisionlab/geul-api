@@ -242,33 +242,6 @@ func newPageIntegrationFiles(db *gorm.DB, spiceDB *auth.SpiceDBClient) *filemedi
 	)
 }
 
-type fakeIdentityManager struct{ identity *auth.Identity }
-
-func (f *fakeIdentityManager) GetIdentity(_ context.Context, identityID string) (*auth.Identity, error) {
-	if f.identity == nil || f.identity.ID != identityID {
-		return nil, errs.NotFound("identity", identityID)
-	}
-	return f.identity, nil
-}
-
-func (f *fakeIdentityManager) GetIdentityWithIncludeCredential(
-	ctx context.Context,
-	identityID string,
-	_ string,
-) (*auth.Identity, error) {
-	return f.GetIdentity(ctx, identityID)
-}
-
-func postIntegrationIdentity(id string, preferredLocale string) *auth.Identity {
-	traits := map[string]interface{}{"name": "Page Integration Admin"}
-	if preferredLocale != "" {
-		traits["preferred_locale"] = preferredLocale
-	}
-	return &auth.Identity{
-		ID: id, ExternalID: testutil.PostIntegrationMemberID(id), State: auth.KratosStateActive, Traits: traits,
-	}
-}
-
 type recordingArtistFileDeleter struct{ deletedIDs []string }
 
 func (d *recordingArtistFileDeleter) DeleteFileByID(_ context.Context, fileID string) error {

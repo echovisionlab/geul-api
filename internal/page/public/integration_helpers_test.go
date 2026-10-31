@@ -186,20 +186,6 @@ func (publicReferenceAsyncPublisher) NotifyProtobuf(context.Context, string, pro
 	return nil
 }
 
-type publicReferenceIdentityManager struct{ identity *auth.Identity }
-
-func (m *publicReferenceIdentityManager) GetIdentity(context.Context, string) (*auth.Identity, error) {
-	return m.identity, nil
-}
-
-func (m *publicReferenceIdentityManager) GetIdentityWithIncludeCredential(
-	context.Context,
-	string,
-	string,
-) (*auth.Identity, error) {
-	return m.identity, nil
-}
-
 type publicPageFileReuseAuthorizer struct{}
 
 func (publicPageFileReuseAuthorizer) AuthorizeFileReuse(
