@@ -14,13 +14,14 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestMeshOptimizationServiceRequiresSourceFileLinkedToEntityIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	pageID := seedHardCutPageFixture(t, db)
 	attachInternalResourcePolicy(t, spiceDB, pageID)
@@ -77,7 +78,7 @@ func TestMeshOptimizationServiceRequiresSourceFileLinkedToEntityIntegration(t *t
 
 func TestMeshOptimizationRequeueReturnsStoredCandidateIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	previousPageID := seedHardCutPageFixture(t, db)
 	pageID := seedHardCutPageFixture(t, db)
@@ -116,7 +117,7 @@ func TestMeshOptimizationRequeueReturnsStoredCandidateIntegration(t *testing.T) 
 
 func TestMeshOptimizationUseCandidateSelectsDerivativeWithoutChangingDocumentAttachmentIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	pageID := seedHardCutPageFixture(t, db)
 	attachInternalResourcePolicy(t, spiceDB, pageID)
@@ -153,7 +154,7 @@ func TestMeshOptimizationUseCandidateSelectsDerivativeWithoutChangingDocumentAtt
 
 func TestMeshOptimizationHandleCompleteRequiresOptimizedSizeIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	pageID := seedHardCutPageFixture(t, db)
 	sourceID := seedMeshOptimizationSourceFile(t, db)
 	seedMeshOptimizationPageFileLink(t, db, pageID, sourceID)
@@ -188,7 +189,7 @@ func TestMeshOptimizationHandleCompleteRequiresOptimizedSizeIntegration(t *testi
 
 func TestMeshOptimizationHandleCompletePersistsExtensionlessBasenameIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	pageID := seedHardCutPageFixture(t, db)
 	sourceID := seedMeshOptimizationSourceFile(t, db)
 	seedMeshOptimizationPageFileLink(t, db, pageID, sourceID)

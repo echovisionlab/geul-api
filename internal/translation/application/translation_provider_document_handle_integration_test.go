@@ -7,13 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTranslationProviderDocumentHandleLifecycleIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx := context.Background()
 	now := time.Unix(1_700_001_000, 0).UTC()
 	job, _ := seedRunningMenuTranslationJob(t, db, now)

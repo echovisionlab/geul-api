@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -17,7 +18,7 @@ import (
 
 func TestMapThemeCreateCopyDeleteAuditCommitsWithMutationIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
 	admin := mapThemeAdminUser(t)
 	memberID := admin.MemberID
@@ -59,7 +60,7 @@ func TestMapThemeCreateCopyDeleteAuditCommitsWithMutationIntegration(t *testing.
 
 func TestMapThemeContentSaveAuditCommitsWithMutationIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := durableAudienceSpiceDB(t)
 	admin := mapThemeAdminUser(t)
 	created, err := mapThemeServiceForTest(t, db, spiceDB).CreateMapTheme(
@@ -111,7 +112,7 @@ func TestMapThemeContentSaveAuditCommitsWithMutationIntegration(t *testing.T) {
 
 func TestMapThemeContentAuditAppendFailureRollsBackSaveIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := durableAudienceSpiceDB(t)
 	admin := mapThemeAdminUser(t)
 	created, err := mapThemeServiceForTest(t, db, spiceDB).CreateMapTheme(
@@ -143,7 +144,7 @@ func TestMapThemeContentAuditAppendFailureRollsBackSaveIntegration(t *testing.T)
 
 func TestMapThemeAuditAppendFailureRollsBackCreateIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
 	service := auditedMapThemeServiceForTest(t, db, spiceDB, failingDomainAuditAppender{})
 	name := "Audit rollback"

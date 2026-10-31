@@ -40,8 +40,8 @@ func TestPublicSeriesListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
 	db := newPublicIntegrationDB(t)
 	suffix := uuid.NewString()
 	for index := 0; index < 12; index++ {
-		imageFileID, _ := seedCanonicalPublicFileFixture(t, db, fmt.Sprintf("series-%02d.webp", index), "image/webp", "image")
-		_, ogAssetID := seedCanonicalPublicFileFixture(t, db, fmt.Sprintf("series-%02d-og.webp", index), "image/webp", "og")
+		imageFileID, _ := testutil.SeedCanonicalPublicFileFixture(t, db, fmt.Sprintf("series-%02d.webp", index), "image/webp", "image")
+		_, ogAssetID := testutil.SeedCanonicalPublicFileFixture(t, db, fmt.Sprintf("series-%02d-og.webp", index), "image/webp", "og")
 		seedLocalizedPublicSeries(
 			t, db, uuid.NewString(), fmt.Sprintf("Public Series %02d %s", index, suffix),
 			fmt.Sprintf("public-series-%02d-%s", index, suffix),

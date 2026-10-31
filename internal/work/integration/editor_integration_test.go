@@ -25,12 +25,12 @@ import (
 
 func TestWorkServiceAdminOnlyAccessIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	authorID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work Admin")
-	seedExternalKratosIdentityWithTraits(t, db, authorID, "Work Author")
-	authorMemberID := integrationMemberID(authorID)
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	authorID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Work Admin")
+	testutil.SeedPostIntegrationIdentity(t, db, authorID, "Work Author")
+	authorMemberID := testutil.PostIntegrationMemberID(authorID)
 
 	stack := testutil.SetupOryStack(t)
 	adminSubject, err := auth.NewAccountIdentitySubject(auth.IdentityID(adminID))
@@ -50,7 +50,7 @@ func TestWorkServiceAdminOnlyAccessIntegration(t *testing.T) {
 	authorCtx := auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(authorID),
 		MemberID:      auth.MemberID(authorMemberID),
-		SessionID:     auth.SessionID(integrationTestUUID()),
+		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 		Authenticated: true,
 	})
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
@@ -202,7 +202,7 @@ func (m *workEditorIdentityManager) GetIdentityEmail(context.Context, string) (s
 func workEditorIdentity(id string, name string) *auth.Identity {
 	return &auth.Identity{
 		ID:         id,
-		ExternalID: integrationMemberID(id),
+		ExternalID: testutil.PostIntegrationMemberID(id),
 		Traits:     map[string]interface{}{"name": name},
 		State:      auth.KratosStateActive,
 	}

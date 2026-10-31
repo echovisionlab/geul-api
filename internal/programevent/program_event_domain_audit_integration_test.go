@@ -11,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -33,12 +34,12 @@ type programEventAuditRow struct {
 
 func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	identityID := integrationTestUUID()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Program event audit admin")
+	db := testutil.NewIntegrationDB(t)
+	identityID := testutil.IntegrationUUID()
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Program event audit admin")
 	ctx := programEventAuditedMemberContext(t, identityID, memberID)
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	store := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 	files := newProgramEventIntegrationFileService(db, spiceDB)
 	writer := apitelemetry.NewDurableWriter(db)
@@ -54,7 +55,7 @@ func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
 		WithProgramEventContentBlockStore(store),
 	)
 
-	typeCreated, err := typeService.CreateProgramEventType(ctx, connect.NewRequest(&managev1.CreateProgramEventTypeRequest{Slug: "audit-type-" + integrationTestUUID(), Locale: "en", Name: "Audit type"}))
+	typeCreated, err := typeService.CreateProgramEventType(ctx, connect.NewRequest(&managev1.CreateProgramEventTypeRequest{Slug: "audit-type-" + testutil.IntegrationUUID(), Locale: "en", Name: "Audit type"}))
 	require.NoError(t, err)
 	typeID := typeCreated.Msg.Id
 	sortOrder := int32(7)
@@ -64,7 +65,7 @@ func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
 	_, err = typeService.UpdateProgramEventType(ctx, connect.NewRequest(&managev1.UpdateProgramEventTypeRequest{Id: typeID, Locale: "ko", Name: &localizedTypeName}))
 	require.NoError(t, err)
 
-	seriesCreated, err := seriesService.CreateProgramEventSeries(ctx, connect.NewRequest(&managev1.CreateProgramEventSeriesRequest{Title: "Audit series", Slug: "audit-series-" + integrationTestUUID()}))
+	seriesCreated, err := seriesService.CreateProgramEventSeries(ctx, connect.NewRequest(&managev1.CreateProgramEventSeriesRequest{Title: "Audit series", Slug: "audit-series-" + testutil.IntegrationUUID()}))
 	require.NoError(t, err)
 	seriesID := seriesCreated.Msg.Id
 	seriesPosterOne := seedImageBindingUploadedFileFixtureForKind(t, db, "program-event-audit/series-poster-one.webp", "poster")
@@ -81,7 +82,7 @@ func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
 
 	seriesOrder := int32(0)
 	eventCreated, err := eventService.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
-		Title: "Audited event", Slug: "audit-event-" + integrationTestUUID(), SourceLocale: "en", TypeId: typeID, SeriesId: &seriesID, SeriesOrder: &seriesOrder,
+		Title: "Audited event", Slug: "audit-event-" + testutil.IntegrationUUID(), SourceLocale: "en", TypeId: typeID, SeriesId: &seriesID, SeriesOrder: &seriesOrder,
 		StartsAt: timestamppb.New(time.Now().UTC().Add(time.Hour)), Timezone: "UTC", LocationMode: managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_ONLINE,
 	}))
 	require.NoError(t, err)
@@ -96,7 +97,7 @@ func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
 		WithInternalProgramEventMediaHydrator(files),
 	)
 	artistID, labelID, clientID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	artistSlug, labelSlug := "event-audit-artist-"+integrationTestUUID(), "event-audit-label-"+integrationTestUUID()
+	artistSlug, labelSlug := "event-audit-artist-"+testutil.IntegrationUUID(), "event-audit-label-"+testutil.IntegrationUUID()
 	artistDocumentID := seedServiceIntegrationContentDocument(t, db, creativeContentProfile)
 	require.NoError(t, db.Create(&model.Artist{ID: artistID, ContentDocumentID: &artistDocumentID, Slug: &artistSlug, Status: "ARTIST_STATUS_DRAFT", CreatedAt: time.Now().UTC()}).Error)
 	labelDocumentID := seedServiceIntegrationContentDocument(t, db, creativeContentProfile)
@@ -116,7 +117,7 @@ func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
 	}
 	_, err = eventService.UpdateProgramEvent(ctx, connect.NewRequest(relationRequest))
 	require.NoError(t, err)
-	unrelatedSlug := "audited-event-preserved-relations-" + integrationTestUUID()
+	unrelatedSlug := "audited-event-preserved-relations-" + testutil.IntegrationUUID()
 	_, err = eventService.UpdateProgramEvent(ctx, connect.NewRequest(&managev1.UpdateProgramEventRequest{
 		Id:   eventID,
 		Slug: &unrelatedSlug,
@@ -166,7 +167,7 @@ func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	require.True(t, metadataUpdated.Msg.Changed)
-	blockID := integrationTestUUID()
+	blockID := testutil.IntegrationUUID()
 	_, err = internalEventService.ApplyProgramEventBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyProgramEventBlockBatchRequest{
 		EventId: eventID,
 		Locale:  "en",
@@ -181,14 +182,14 @@ func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
 		),
 	}))
 	require.NoError(t, err)
-	newSlug := "audit-event-updated-" + integrationTestUUID()
+	newSlug := "audit-event-updated-" + testutil.IntegrationUUID()
 	_, err = eventService.UpdateProgramEvent(ctx, connect.NewRequest(&managev1.UpdateProgramEventRequest{Id: eventID, Slug: &newSlug}))
 	require.NoError(t, err)
 	failingMetadataService := NewAuditedProgramEventService(
 		db, newProgramEventRuntime(""), referenceNoopFileDeleter{}, failingDomainAuditAppender{}, spiceDB,
 		newProgramEventCreditMemberSummaries(db, ""),
 	)
-	failingSlug := "must-roll-back-event-" + integrationTestUUID()
+	failingSlug := "must-roll-back-event-" + testutil.IntegrationUUID()
 	_, err = failingMetadataService.UpdateProgramEvent(ctx, connect.NewRequest(&managev1.UpdateProgramEventRequest{Id: eventID, Slug: &failingSlug}))
 	require.Error(t, err)
 	var persistedSlug string
@@ -260,7 +261,7 @@ func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, bulkUpdate.Msg.Changed)
 	require.Equal(t, bulkAuditCount, programEventAuditCount(t, db, eventID), "same bulk credit shape is a no-op")
-	_, err = eventService.UpdateProgramEvent(ctx, connect.NewRequest(&managev1.UpdateProgramEventRequest{Id: eventID, ReplaceCredits: true, Credits: []*managev1.ProgramEventCredit{{Id: integrationTestUUID(), DisplayName: &bulkNameOne}}}))
+	_, err = eventService.UpdateProgramEvent(ctx, connect.NewRequest(&managev1.UpdateProgramEventRequest{Id: eventID, ReplaceCredits: true, Credits: []*managev1.ProgramEventCredit{{Id: testutil.IntegrationUUID(), DisplayName: &bulkNameOne}}}))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 	_, err = eventService.UpdateProgramEvent(ctx, connect.NewRequest(&managev1.UpdateProgramEventRequest{Id: eventID, ReplaceCredits: true, Credits: []*managev1.ProgramEventCredit{{Id: bulkFirst.Id, DisplayName: bulkFirst.DisplayName}, {Id: bulkFirst.Id, DisplayName: bulkFirst.DisplayName}}}))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))

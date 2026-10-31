@@ -15,7 +15,7 @@ import (
 
 func TestLoadTranslationRequestArtifactCanonicalizesJSONBRoundTrip(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	now := time.Now().UTC()
 	memberID := testutil.IntegrationUUID()
 	testutil.InsertDocumentContributor(t, db, memberID)

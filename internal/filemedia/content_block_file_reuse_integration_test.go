@@ -8,6 +8,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -15,10 +16,10 @@ import (
 
 func TestContentBlockForeignFileReuseUsesFileListAdmissionIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	fileID := uuid.New()
 	uploaderIdentityID := uuid.NewString()
-	uploaderMemberID := seedExternalKratosIdentityWithTraits(
+	uploaderMemberID := testutil.SeedPostIntegrationIdentity(
 		t,
 		db,
 		uploaderIdentityID,
@@ -46,8 +47,8 @@ func TestContentBlockForeignFileReuseUsesFileListAdmissionIntegration(t *testing
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			identityID := uuid.NewString()
-			memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, test.name)
-			grantIntegrationGlobalRole(t, spiceDB, identityID, test.role)
+			memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, test.name)
+			testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, test.role)
 			ctx := auth.WithUser(context.Background(), &auth.UserInfo{
 				IdentityID:    auth.IdentityID(identityID),
 				MemberID:      auth.MemberID(memberID),

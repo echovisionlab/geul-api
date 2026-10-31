@@ -28,8 +28,6 @@ import (
 	"gorm.io/gorm"
 )
 
-func newServiceIntegrationDB(t *testing.T) *gorm.DB { return testutil.NewIntegrationDB(t) }
-
 func newConcurrentServiceIntegrationDB(t *testing.T) *gorm.DB {
 	return testutil.NewConcurrentPostIntegrationDB(t)
 }
@@ -55,14 +53,6 @@ func requireSiteSettingIntegrationPolicy(t *testing.T, spiceDB *auth.SpiceDBClie
 		_, cleanupErr = spiceDB.ApplyRelationships(context.Background(), remove)
 		require.NoError(t, cleanupErr)
 	})
-}
-
-func grantIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string, role policyv1.RoleID) {
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, role)
-}
-
-func seedExternalKratosIdentityWithTraits(t *testing.T, db *gorm.DB, identityID, name string) string {
-	return testutil.SeedPostIntegrationIdentity(t, db, identityID, name)
 }
 
 func integrationAdminCtxWithIdentityAndSpiceDB(t *testing.T, db *gorm.DB) (context.Context, *auth.SpiceDBClient) {

@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -35,7 +36,7 @@ func TestPublicProgramEventSeriesListQueryBudgetDoesNotGrowPerRowIntegration(t *
 	db := newPublicIntegrationDB(t)
 	suffix := uuid.NewString()
 	for index := 0; index < 12; index++ {
-		fileID, _ := seedCanonicalPublicFileFixture(
+		fileID, _ := testutil.SeedCanonicalPublicFileFixture(
 			t,
 			db,
 			fmt.Sprintf("program-event-series-%02d.webp", index),

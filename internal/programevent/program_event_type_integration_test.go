@@ -10,19 +10,20 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 func TestProgramEventTypeAdminEditAndDeleteBoundaryIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Program Event Type Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Program Event Type Admin")
 	ctx := programEventIntegrationAdminCtx(adminID)
-	suffix := integrationTestUUID()
+	suffix := testutil.IntegrationUUID()
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	service := NewProgramEventTypeService(db, spiceDB)
 	contentBlocks := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 

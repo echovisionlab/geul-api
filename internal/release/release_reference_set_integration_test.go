@@ -9,15 +9,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 func TestReleaseRelationSettersRequireObservedSnapshotIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Observed snapshot admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Observed snapshot admin")
 	ctx := releaseIntegrationAdminCtx(adminID)
 	releaseService := newReleaseIntegrationService(t, db, adminID, &recordingArtistFileDeleter{})
 	releaseResponse, err := releaseService.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
@@ -69,9 +70,9 @@ func TestReleaseRelationSettersRequireObservedSnapshotIntegration(t *testing.T) 
 
 func TestReleaseReferenceSettersReplaceAndClearMappingsIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Release reference admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release reference admin")
 	ctx := releaseIntegrationAdminCtx(adminID)
 	releaseService := newReleaseIntegrationService(t, db, adminID, &recordingArtistFileDeleter{})
 	spiceDB := integrationSpiceDB(t)
@@ -136,9 +137,9 @@ func TestReleaseReferenceSettersReplaceAndClearMappingsIntegration(t *testing.T)
 
 func TestReleaseCategoryObservedSnapshotPreservesConcurrentAdditionIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Release observed category admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release observed category admin")
 	ctx := releaseIntegrationAdminCtx(adminID)
 	releaseService := newReleaseIntegrationService(t, db, adminID, &recordingArtistFileDeleter{})
 	spiceDB := integrationSpiceDB(t)
@@ -189,9 +190,9 @@ func TestReleaseCategoryObservedSnapshotPreservesConcurrentAdditionIntegration(t
 
 func TestGetReleaseRelationsReturnsAuthorizedEditorSnapshotIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Release relations reader")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release relations reader")
 	ctx := releaseIntegrationAdminCtx(adminID)
 	releaseService := newReleaseIntegrationService(t, db, adminID, &recordingArtistFileDeleter{})
 	spiceDB := integrationSpiceDB(t)
@@ -259,7 +260,7 @@ func TestGetReleaseRelationsReturnsAuthorizedEditorSnapshotIntegration(t *testin
 	require.Equal(t, "Sleeve notes", response.Msg.Credits[0].GetCreditedName())
 	require.Equal(t, "Writer", response.Msg.Credits[0].GetCreditRole())
 
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.User())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.User())
 	_, err = releaseService.GetReleaseRelations(ctx, connect.NewRequest(&managev1.GetReleaseRelationsRequest{
 		ReleaseId: releaseResponse.Msg.Id,
 	}))

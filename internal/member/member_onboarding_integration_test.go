@@ -244,7 +244,7 @@ func TestCompleteMyOnboardingConcurrentNicknameClaimHasOneWinner(t *testing.T) {
 
 func TestCompleteMyOnboardingSameNicknameRetryIsIdempotent(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	fixture := createOnboardingMember(t, db, "member@example.test")
 	publisher := &recordingOnboardingWelcomePublisher{}
 	service := onboardingService(db, fixture, publisher)
@@ -279,7 +279,7 @@ func TestCompleteMyOnboardingSameNicknameRetryIsIdempotent(t *testing.T) {
 
 func TestCompleteMyOnboardingWelcomeEnqueueFailureRollsBackThenRetrySends(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	fixture := createOnboardingMember(t, db, "publish-failure@example.test")
 	publisher := &recordingOnboardingWelcomePublisher{err: errors.New("queue unavailable")}
 	service := onboardingService(db, fixture, publisher)
@@ -317,7 +317,7 @@ func TestCompleteMyOnboardingWelcomeEnqueueFailureRollsBackThenRetrySends(t *tes
 
 func TestCompleteMyOnboardingAuditFailureRollsBackTransition(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	fixture := createOnboardingMember(t, db, "audit-failure@example.test")
 	publisher := &recordingOnboardingWelcomePublisher{}
 	service := onboardingService(db, fixture, publisher)
@@ -345,7 +345,7 @@ func TestCompleteMyOnboardingAuditFailureRollsBackTransition(t *testing.T) {
 
 func TestCheckNicknameAvailabilityIgnoresDeletedMembers(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	fixture := createOnboardingMember(t, db, "member@example.test")
 	require.NoError(t, db.Exec(`
 		INSERT INTO member (id, nickname, onboarded, deleted_at, created_at, updated_at)

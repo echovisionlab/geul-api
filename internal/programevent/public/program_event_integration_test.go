@@ -5,10 +5,11 @@ package public
 import (
 	"context"
 
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"strings"
 	"testing"
 	"time"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -69,7 +70,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	seriesPosterFileID, seriesPosterAssetID := seedCanonicalPublicFileFixture(t, db, "series-poster.webp", "image/webp", "poster")
+	seriesPosterFileID, seriesPosterAssetID := testutil.SeedCanonicalPublicFileFixture(t, db, "series-poster.webp", "image/webp", "poster")
 	seriesSvc := eventdomain.NewProgramEventSeriesService(db, newManageProgramEventRuntime("https://cdn.example.com"), publicIntegrationSpiceDB(t))
 	seriesResp, err := seriesSvc.CreateProgramEventSeries(adminCtx, connect.NewRequest(&managev1.CreateProgramEventSeriesRequest{
 		Title:        "Public Program Event Series " + suffix,
@@ -127,8 +128,8 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 		SeriesOrder:  publicInt32Ptr(1),
 	}))
 	require.NoError(t, err)
-	posterFileID, posterAssetID := seedCanonicalPublicFileFixture(t, db, "public-poster.webp", "image/webp", "poster")
-	blockFileID, blockAssetID := seedCanonicalPublicFileFixture(t, db, "program-event-block.webp", "image/webp", "image")
+	posterFileID, posterAssetID := testutil.SeedCanonicalPublicFileFixture(t, db, "public-poster.webp", "image/webp", "poster")
+	blockFileID, blockAssetID := testutil.SeedCanonicalPublicFileFixture(t, db, "program-event-block.webp", "image/webp", "image")
 	posterMedia, err := eventSvc.AddProgramEventMedia(adminCtx, connect.NewRequest(&managev1.AddProgramEventMediaRequest{
 		EventId: eventResp.Msg.Id,
 		FileId:  posterFileID,

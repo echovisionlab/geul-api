@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -65,17 +66,17 @@ func TestWorkPolicyAuthorityLocksArchivedRootAndActivePrincipalIntegration(t *te
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			db := newConcurrentServiceIntegrationDB(t)
-			identityID := integrationTestUUID()
-			memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Work Policy Authority")
-			documentID, workID := integrationTestUUID(), integrationTestUUID()
-			require.NoError(t, db.Exec(`INSERT INTO content_document (id, profile, revision) VALUES (?::uuid, 'work', ?::uuid)`, documentID, integrationTestUUID()).Error)
+			identityID := testutil.IntegrationUUID()
+			memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Work Policy Authority")
+			documentID, workID := testutil.IntegrationUUID(), testutil.IntegrationUUID()
+			require.NoError(t, db.Exec(`INSERT INTO content_document (id, profile, revision) VALUES (?::uuid, 'work', ?::uuid)`, documentID, testutil.IntegrationUUID()).Error)
 			require.NoError(t, db.Exec(`INSERT INTO work (id, type, status, year, month, is_present, content_document_id) VALUES (?::uuid, ?::work_type, ?, 2026, 8, TRUE, ?::uuid)`, workID, managev1.WorkType_WORK_TYPE_ARTICLE.String(), managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(), documentID).Error)
 
 			checker := &blockingWorkPolicyChecker{entered: make(chan policyv1.AuthorizationDecision, 1), release: make(chan struct{})}
 			authority := workdomain.NewPolicyAuthority(checker)
 			ctx := auth.WithUser(t.Context(), &auth.UserInfo{
 				IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
-				SessionID: auth.SessionID(integrationTestUUID()), Authenticated: true, Onboarded: true,
+				SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
 			})
 			authorized := make(chan error, 1)
 			go func() {

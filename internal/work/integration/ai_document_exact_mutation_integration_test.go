@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -26,15 +27,15 @@ import (
 
 func TestWorkAIDocumentTargetCASIsolationAndDeleteNoBumpIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	identityID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, identityID, "Work target locale CAS")
+	db := testutil.NewIntegrationDB(t)
+	identityID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Work target locale CAS")
 	ctx := workIntegrationAdminCtx(identityID)
 	workService := newWorkIntegrationService(t, db, identityID, referenceNoopFileDeleter{})
 	blockID := uuid.New()
 	isPresent := true
 	created, err := workService.CreateWork(ctx, connect.NewRequest(&managev1.CreateWorkRequest{
-		Title: "Work target locale CAS " + integrationTestUUID(),
+		Title: "Work target locale CAS " + testutil.IntegrationUUID(),
 		Type:  managev1.WorkType_WORK_TYPE_ARTICLE, Year: 2026, Month: 8, IsPresent: &isPresent,
 		Document: workTargetCASIntegrationDocument(blockID, "en", "source"),
 	}))
@@ -49,7 +50,7 @@ func TestWorkAIDocumentTargetCASIsolationAndDeleteNoBumpIntegration(t *testing.T
 	)
 	application, err := workdomain.NewAIDocumentService(internal)
 	require.NoError(t, err)
-	contributor := integrationMemberID(identityID)
+	contributor := testutil.PostIntegrationMemberID(identityID)
 
 	load := func(locale string) workdomain.AIDocumentState {
 		t.Helper()
@@ -262,14 +263,14 @@ func workTargetCASIntegrationOverlay(blockID uuid.UUID, locale, text string) *co
 
 func TestWorkAIDocumentExactMutationAuthorizesLockedLifecycleOnceIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	identityID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, identityID, "Work AI document exact mutation")
+	db := testutil.NewIntegrationDB(t)
+	identityID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Work AI document exact mutation")
 	ctx := workIntegrationAdminCtx(identityID)
 	workService := newWorkIntegrationService(t, db, identityID, referenceNoopFileDeleter{})
 	isPresent := true
 	created, err := workService.CreateWork(ctx, connect.NewRequest(&managev1.CreateWorkRequest{
-		Title:     "Work AI document exact mutation " + integrationTestUUID(),
+		Title:     "Work AI document exact mutation " + testutil.IntegrationUUID(),
 		Type:      managev1.WorkType_WORK_TYPE_ARTICLE,
 		Year:      2026,
 		Month:     8,

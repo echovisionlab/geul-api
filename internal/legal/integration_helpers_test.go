@@ -31,7 +31,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -189,43 +188,6 @@ func requireRelationWhereCount(
 	require.Equal(t, want, count)
 }
 
-func integrationMemberID(identityID string) string {
-	id := uuid.NewSHA1(uuid.NameSpaceURL, []byte("geul-legal-integration-member:"+identityID))
-	id[6] = (id[6] & 0x0f) | 0x40
-	id[8] = (id[8] & 0x3f) | 0x80
-	return id.String()
-}
-
-func seedExternalKratosIdentityWithTraits(
-	t *testing.T,
-	db *gorm.DB,
-	identityID string,
-	name string,
-) string {
-	t.Helper()
-	email := identityID + "@legal-integration.test"
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
-		ID: identityID, Email: email, Name: name, CreatedAt: time.Now().UTC(),
-	})
-	memberID := integrationMemberID(identityID)
-	require.NoError(t, db.Exec(`
-		INSERT INTO account_identity (id, created_at)
-		SELECT id, created_at FROM kratos.identities WHERE id = ?::uuid
-		ON CONFLICT (id) DO NOTHING
-	`, identityID).Error)
-	require.NoError(t, db.Exec(`
-		INSERT INTO public.member (
-			id, account_identity_id, nickname, onboarded,
-			primary_email, available_emails, created_at, updated_at
-		) VALUES (?::uuid, ?::uuid, ?, TRUE, ?, ARRAY[?]::text[], NOW(), NOW())
-	`, memberID, identityID, name, email, email).Error)
-	require.NoError(t, db.Exec(
-		"UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid",
-		memberID, identityID,
-	).Error)
-	return memberID
-}
-
 func ensureBulkEmailAudienceKratosIdentityColumns(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	testutil.EnsureKratosIdentityFixtureColumns(t, db)
@@ -242,7 +204,7 @@ func seedBulkEmailAudienceIdentity(
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
 		ID: identityID, Email: email, Name: "Legal notice recipient", CreatedAt: createdAt,
 	})
-	memberID := integrationMemberID(identityID)
+	memberID := testutil.PostIntegrationMemberID(identityID)
 	require.NoError(t, db.Exec(`
 		INSERT INTO account_identity (id, created_at)
 		SELECT id, created_at FROM kratos.identities WHERE id = ?::uuid
@@ -303,15 +265,3 @@ func (p *recordingLegalEmailPublisher) PublishSendBulkEmail(
 	p.sendBulkJobs = append(p.sendBulkJobs, job)
 	return nil
 }
-
-func grantIntegrationGlobalRole(
-	t *testing.T,
-	spiceDB *auth.SpiceDBClient,
-	identityID string,
-	role policyv1.RoleID,
-) {
-	t.Helper()
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, role)
-}
-
-func integrationTestUUID() string { return testutil.IntegrationUUID() }

@@ -9,6 +9,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -18,11 +19,11 @@ import (
 
 func TestPageTargetLocaleMetadataUsesExactCASWithoutAdvancingSharedRevisionIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	identityID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, identityID, "Page target locale CAS")
+	db := testutil.NewIntegrationDB(t)
+	identityID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Page target locale CAS")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := workIntegrationAdminCtx(identityID)
 	store := newPageIntegrationContentBlockStore(t, spiceDB)
 	service := NewPageService(
@@ -83,7 +84,7 @@ func TestPageTargetLocaleMetadataUsesExactCASWithoutAdvancingSharedRevisionInteg
 	updated, err := internal.UpdatePageLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdatePageLocaleMetadataRequest{
 		PageId: created.Msg.Id, Locale: "ko", Title: &title,
 		ExpectedRevision: sharedRevision.String(), ExpectedTargetRevision: &koToken,
-		ContributorMemberIds: []string{integrationMemberID(identityID)},
+		ContributorMemberIds: []string{testutil.PostIntegrationMemberID(identityID)},
 	}))
 	require.NoError(t, err)
 	require.True(t, updated.Msg.Changed)
@@ -130,7 +131,7 @@ func TestPageTargetLocaleMetadataUsesExactCASWithoutAdvancingSharedRevisionInteg
 	_, err = internal.UpdatePageLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdatePageLocaleMetadataRequest{
 		PageId: created.Msg.Id, Locale: "ko", Title: &staleTitle,
 		ExpectedRevision: sharedRevision.String(), ExpectedTargetRevision: &koToken,
-		ContributorMemberIds: []string{integrationMemberID(identityID)},
+		ContributorMemberIds: []string{testutil.PostIntegrationMemberID(identityID)},
 	}))
 	require.Error(t, err)
 	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
@@ -150,7 +151,7 @@ func TestPageTargetLocaleMetadataUsesExactCASWithoutAdvancingSharedRevisionInteg
 	freshUpdate, err := internal.UpdatePageLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdatePageLocaleMetadataRequest{
 		PageId: created.Msg.Id, Locale: "ko", Title: &recreatedTitle,
 		ExpectedRevision: sharedRevision.String(), ExpectedTargetRevision: &recreatedKoToken,
-		ContributorMemberIds: []string{integrationMemberID(identityID)},
+		ContributorMemberIds: []string{testutil.PostIntegrationMemberID(identityID)},
 	}))
 	require.NoError(t, err)
 	require.True(t, freshUpdate.Msg.Changed)
@@ -159,7 +160,7 @@ func TestPageTargetLocaleMetadataUsesExactCASWithoutAdvancingSharedRevisionInteg
 	unchangedTarget, err := internal.UpdatePageLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdatePageLocaleMetadataRequest{
 		PageId: created.Msg.Id, Locale: "ko", Title: &recreatedTitle,
 		ExpectedRevision: sharedRevision.String(), ExpectedTargetRevision: freshUpdate.Msg.TargetRevision,
-		ContributorMemberIds: []string{integrationMemberID(identityID)},
+		ContributorMemberIds: []string{testutil.PostIntegrationMemberID(identityID)},
 	}))
 	require.NoError(t, err)
 	require.False(t, unchangedTarget.Msg.Changed)
@@ -169,7 +170,7 @@ func TestPageTargetLocaleMetadataUsesExactCASWithoutAdvancingSharedRevisionInteg
 	sourceTitle := "Page source changed"
 	sourceUpdate, err := internal.UpdatePageLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdatePageLocaleMetadataRequest{
 		PageId: created.Msg.Id, Locale: "en", Title: &sourceTitle,
-		ExpectedRevision: sharedRevision.String(), ContributorMemberIds: []string{integrationMemberID(identityID)},
+		ExpectedRevision: sharedRevision.String(), ContributorMemberIds: []string{testutil.PostIntegrationMemberID(identityID)},
 	}))
 	require.NoError(t, err)
 	require.True(t, sourceUpdate.Msg.Changed)

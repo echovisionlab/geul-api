@@ -26,7 +26,6 @@ import (
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -177,25 +176,7 @@ func seedFormImageBindingFile(t *testing.T, db *gorm.DB, key string) string {
 	return fileID
 }
 
-func newServiceIntegrationDB(t *testing.T) *gorm.DB       { return testutil.NewIntegrationDB(t) }
-func integrationTestUUID() string                         { return testutil.IntegrationUUID() }
 func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient { return testutil.IntegrationSpiceDB(t) }
-func grantIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string, role policyv1.RoleID) {
-	t.Helper()
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, role)
-}
-
-func seedExternalKratosIdentityWithTraits(t *testing.T, db *gorm.DB, identityID, nickname string) string {
-	t.Helper()
-	email := identityID + "@form.test"
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Name: nickname, Email: email})
-	memberID := uuid.NewString()
-	require.NoError(t, db.Exec("INSERT INTO account_identity (id) VALUES (?::uuid) ON CONFLICT (id) DO NOTHING", identityID).Error)
-	now := time.Now().UTC()
-	require.NoError(t, db.Create(&model.Member{ID: memberID, AccountIdentityID: &identityID, Nickname: nickname, Onboarded: true, PrimaryEmail: &email, AvailableEmails: pq.StringArray{email}, SocialLinks: map[string]string{}, CreatedAt: now, UpdatedAt: now}).Error)
-	require.NoError(t, db.Exec("UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid", memberID, identityID).Error)
-	return memberID
-}
 
 func ptrString(value string) *string { return &value }
 

@@ -10,7 +10,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func TestMain(m *testing.M) {
@@ -36,11 +35,4 @@ func newConcurrentServiceIntegrationPostgres(t *testing.T) *testutil.AppPostgres
 	sqlDB, err := stack.DB.DB()
 	require.NoError(t, err)
 	return &testutil.AppPostgres{DSN: stack.PostgresDSN, SQLDB: sqlDB, DB: stack.DB}
-}
-
-func newServiceIntegrationDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	stack := testutil.PrepareOryIntegrationTest(t)
-	require.NotNil(t, stack)
-	return stack.DB
 }

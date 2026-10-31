@@ -19,7 +19,7 @@ import (
 
 func TestAdminDashboardStatsIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	now := time.Now().UTC()
 	adminID := uuid.NewString()
 	activeUserID := uuid.NewString()
@@ -124,7 +124,7 @@ func TestAdminDashboardStatsIntegration(t *testing.T) {
 	}).Error)
 
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	svc := &Service{db: db, spiceDB: spiceDB}
 	ctx := adminUserIntegrationAdminCtx(adminID)
 

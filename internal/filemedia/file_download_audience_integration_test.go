@@ -24,7 +24,7 @@ import (
 
 func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	authorIdentityID := uuid.NewString()
 	authorMemberID := uuid.NewString()
@@ -194,7 +194,7 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 
 func TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()

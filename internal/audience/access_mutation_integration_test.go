@@ -11,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -485,14 +486,14 @@ func seedAudienceAccessSegmentPolicy(t *testing.T, spiceDB *auth.SpiceDBClient, 
 
 func audienceAccessAdminContext(t *testing.T, db *gorm.DB) (*auth.SpiceDBClient, context.Context) {
 	t.Helper()
-	identityID := integrationTestUUID()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Audience access admin")
+	identityID := testutil.IntegrationUUID()
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Audience access admin")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	return spiceDB, auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(identityID),
 		MemberID:      auth.MemberID(memberID),
-		SessionID:     auth.SessionID(integrationTestUUID()),
+		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 		Authenticated: true,
 		Onboarded:     true,
 	})

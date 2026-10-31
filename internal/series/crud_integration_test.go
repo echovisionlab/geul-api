@@ -45,8 +45,8 @@ func newSeriesIntegrationService(
 func seriesIntegrationAdminCtx(id string) context.Context {
 	return auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(id),
-		MemberID:      auth.MemberID(integrationMemberID(id)),
-		SessionID:     auth.SessionID(integrationTestUUID()),
+		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(id)),
+		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 		Authenticated: true,
 	})
 }

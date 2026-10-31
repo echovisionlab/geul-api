@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
@@ -43,7 +44,7 @@ func (failingPageMenuTargets) Remove(
 
 func TestPageMenuTargetFailureRollsBackSlugAndDeleteIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := pageIntegrationAdmin(t, db)
 	pageSvc := NewPageService(
 		db,
@@ -57,7 +58,7 @@ func TestPageMenuTargetFailureRollsBackSlugAndDeleteIntegration(t *testing.T) {
 		WithPageMenuTargets(failingPageMenuTargets{}),
 	)
 
-	suffix := strings.ReplaceAll(integrationTestUUID(), "-", "")
+	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 	originalSlug := "page-menu-rollback-original-" + suffix
 	page, err := pageSvc.CreatePage(ctx, connect.NewRequest(&managev1.CreatePageRequest{
 		Title: "Page menu rollback " + suffix,

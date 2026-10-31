@@ -28,7 +28,7 @@ func TestManageMapThemeRPCsRequireAdmin(t *testing.T) {
 	memberCtx := mapThemeMemberContext(member)
 	target, err := service.CreateMapTheme(
 		adminCtx,
-		connect.NewRequest(validCreateMapThemeRequest("Authorization target "+integrationTestUUID())),
+		connect.NewRequest(validCreateMapThemeRequest("Authorization target "+testutil.IntegrationUUID())),
 	)
 	require.NoError(t, err)
 	id := target.Msg.Id
@@ -49,7 +49,7 @@ func TestManageMapThemeRPCsRequireAdmin(t *testing.T) {
 		{name: "create", call: func(ctx context.Context) error {
 			_, err := service.CreateMapTheme(
 				ctx,
-				connect.NewRequest(validCreateMapThemeRequest("Unauthorized create "+integrationTestUUID())),
+				connect.NewRequest(validCreateMapThemeRequest("Unauthorized create "+testutil.IntegrationUUID())),
 			)
 			return err
 		}},

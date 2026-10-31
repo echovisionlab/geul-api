@@ -93,13 +93,6 @@ func requireStringValue(t *testing.T, value *string) string {
 	return *value
 }
 
-func newServiceIntegrationDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	stack := testutil.PrepareOryIntegrationTest(t)
-	require.NotNil(t, stack)
-	return stack.DB
-}
-
 func newTranslationServiceForOGTest(
 	db *gorm.DB,
 	publisher translationServicePublisher,

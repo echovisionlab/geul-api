@@ -8,10 +8,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"os"
 	"testing"
-	"time"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	"connectrpc.com/connect"
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
@@ -53,44 +53,10 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func newServiceIntegrationDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	stack := testutil.PrepareOryIntegrationTest(t)
-	require.NotNil(t, stack)
-	return stack.DB
-}
-
-func integrationTestUUID() string { return uuid.NewString() }
-
-func integrationMemberID(identityID string) string {
-	id := uuid.NewSHA1(uuid.NameSpaceURL, []byte("dsub-label-integration-member:"+identityID))
-	id[6] = (id[6] & 0x0f) | 0x40
-	id[8] = (id[8] & 0x3f) | 0x80
-	return id.String()
-}
-
-func seedExternalKratosIdentityWithTraits(t *testing.T, db *gorm.DB, identityID, name string) string {
-	t.Helper()
-	email := identityID + "@label.test"
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Email: email, Name: name})
-	memberID := integrationMemberID(identityID)
-	now := time.Now().UTC()
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec(`UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid`, memberID, identityID).Error; err != nil {
-			return err
-		}
-		if err := tx.Exec(`INSERT INTO account_identity (id, created_at) SELECT id, created_at FROM kratos.identities WHERE id = ?::uuid ON CONFLICT (id) DO NOTHING`, identityID).Error; err != nil {
-			return err
-		}
-		return tx.Create(&model.Member{ID: memberID, AccountIdentityID: &identityID, Nickname: name, Onboarded: true, PrimaryEmail: &email, AvailableEmails: []string{email}, SocialLinks: map[string]string{}, CreatedAt: now, UpdatedAt: now}).Error
-	}))
-	return memberID
-}
-
 func artistIntegrationAdminCtx(identityID string) context.Context {
 	return auth.WithUser(context.Background(), &auth.UserInfo{
-		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(integrationMemberID(identityID)),
-		SessionID: auth.SessionID(integrationTestUUID()), Authenticated: true, Onboarded: true,
+		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(testutil.PostIntegrationMemberID(identityID)),
+		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
 }
 
@@ -158,7 +124,7 @@ func postIntegrationIdentity(id, preferredLocale string) *auth.Identity {
 	if preferredLocale != "" {
 		traits["preferred_locale"] = preferredLocale
 	}
-	return &auth.Identity{ID: id, ExternalID: integrationMemberID(id), State: auth.KratosStateActive, Traits: traits}
+	return &auth.Identity{ID: id, ExternalID: testutil.PostIntegrationMemberID(id), State: auth.KratosStateActive, Traits: traits}
 }
 
 type labelTestRenderConfig struct{}

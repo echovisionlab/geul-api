@@ -41,7 +41,7 @@ func (p *recordingDeletionFanout) PublishSendEmail(_ context.Context, command *m
 
 func TestProcessUserDeleteIdentityPreservesNameAndMemberEmails(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()
 	primaryEmail := "primary-" + identityID + "@example.test"
@@ -119,7 +119,7 @@ func TestProcessUserDeleteIdentityPreservesNameAndMemberEmails(t *testing.T) {
 
 func TestProcessUserDeleteIdentityReplaySucceedsAfterEmailRetentionScrub(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()
 	primaryEmail := "retained-" + identityID + "@example.test"
@@ -158,7 +158,7 @@ func TestProcessUserDeleteIdentityReplaySucceedsAfterEmailRetentionScrub(t *test
 
 func TestProcessUserDeleteIdentityResumesAfterIdentityDeletionBeforeTombstone(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()
 	primaryEmail := "crash-replay-" + identityID + "@example.test"
@@ -198,7 +198,7 @@ func TestProcessUserDeleteIdentityResumesAfterIdentityDeletionBeforeTombstone(t 
 
 func TestProcessUserDeleteIdentitySkipsCompletionMailWhenNeverOnboarded(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()
 	primaryEmail := "unonboarded-delete-" + identityID + "@example.test"

@@ -83,7 +83,7 @@ func TestPublicPageServiceReadsPublishedPageAndHomepageIntegration(t *testing.T)
 	require.NotNil(t, loaded.Msg.Document)
 	require.Equal(t, created.Msg.Revision, loaded.Msg.DocumentRevision)
 
-	bodyImageFileID, _ := seedCanonicalPublicFileFixture(t, db, "body.webp", "image/webp", "image")
+	bodyImageFileID, _ := testutil.SeedCanonicalPublicFileFixture(t, db, "body.webp", "image/webp", "image")
 	externalSectionID := uuid.NewString()
 	richSectionID := uuid.NewString()
 	fileBlockID := uuid.NewString()
@@ -205,7 +205,7 @@ func TestPublicPageServiceReadsPublishedPageAndHomepageIntegration(t *testing.T)
 	requirePageExternalVideoAggregate(t, managed.Msg.GetDocument(), externalSectionID, sourceLocale, caption)
 	requirePageBlockMediaItem(t, managed.Msg.GetBlockMedia(), fileBlockID, bodyImageFileID, true)
 
-	imageFileID, _ := seedCanonicalPublicFileFixture(t, db, "featured.webp", "image/webp", "image")
+	imageFileID, _ := testutil.SeedCanonicalPublicFileFixture(t, db, "featured.webp", "image/webp", "image")
 	imageResp, err := manageSvc.SetPageFeaturedImage(adminCtx, connect.NewRequest(&managev1.SetPageFeaturedImageRequest{
 		PageId: created.Msg.Id,
 		FileId: imageFileID,

@@ -216,7 +216,7 @@ func TestDeletedMemberMarkerSurvivesPublicProfileAndAuthorProjectionIntegration(
 		ID: memberID, Nickname: nickname, Onboarded: true, SocialLinks: map[string]string{}, DeletedAt: &deletedAt,
 		CreatedAt: deletedAt.Add(-time.Hour), UpdatedAt: deletedAt,
 	}).Error)
-	_, avatarAssetID := seedCanonicalPublicFileFixture(t, db, "deleted-member-avatar.webp", "image/webp", "avatar")
+	_, avatarAssetID := testutil.SeedCanonicalPublicFileFixture(t, db, "deleted-member-avatar.webp", "image/webp", "avatar")
 	require.NoError(t, db.Create(&model.PublicAssetBinding{
 		AssetID: avatarAssetID, OwnerType: "member", OwnerID: memberID, BindingKey: "avatar",
 	}).Error)
@@ -264,7 +264,7 @@ func TestUnlinkedMemberIsImmediatelyScrubbedAsPublicTombstoneIntegration(t *test
 		ID: memberID, Nickname: nickname, Onboarded: true, Bio: &bio, Website: &website,
 		SocialLinks: map[string]string{"private": website}, CreatedAt: now, UpdatedAt: now,
 	}).Error)
-	_, avatarAssetID := seedCanonicalPublicFileFixture(t, db, "unlinked-private-avatar.webp", "image/webp", "avatar")
+	_, avatarAssetID := testutil.SeedCanonicalPublicFileFixture(t, db, "unlinked-private-avatar.webp", "image/webp", "avatar")
 	require.NoError(t, db.Create(&model.PublicAssetBinding{
 		AssetID: avatarAssetID, OwnerType: "member", OwnerID: memberID, BindingKey: "avatar",
 	}).Error)

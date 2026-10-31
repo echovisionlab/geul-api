@@ -9,6 +9,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -20,9 +21,9 @@ import (
 
 func TestWorkLateProviderTranslationCannotOverwritePromotedSourceIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Work source promotion admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Work source promotion admin")
 	ctx := workIntegrationAdminCtx(adminID)
 	workService := newWorkIntegrationService(t, db, adminID, struct{}{})
 	present := true
@@ -33,7 +34,7 @@ func TestWorkLateProviderTranslationCannotOverwritePromotedSourceIntegration(t *
 	require.NoError(t, err)
 	_, err = uuid.Parse(created.Msg.Revision)
 	require.NoError(t, err, "the candidate must reach source-role validation with a valid document revision")
-	memberID := integrationMemberID(adminID)
+	memberID := testutil.PostIntegrationMemberID(adminID)
 	canonicalTitle := "Korean source title"
 	now := time.Now().UTC()
 	require.NoError(t, db.Exec(`

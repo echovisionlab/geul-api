@@ -6,8 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -18,7 +16,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -66,28 +63,6 @@ func stringPtr(value string) *string    { return &value }
 func boolPtr(value bool) *bool          { return &value }
 func publicInt32Ptr(value int32) *int32 { return &value }
 
-func seedCanonicalPublicFileFixture(t *testing.T, db *gorm.DB, fileName, mimeType, assetKind string) (string, string) {
-	t.Helper()
-	fileID := uuid.NewString()
-	extension := model.GetExtensionFromMime(mimeType)
-	fileName = strings.TrimSuffix(filepath.Base(fileName), filepath.Ext(fileName))
-	now := time.Now().UTC()
-	require.NoError(t, db.Create(&model.File{
-		ID: fileID, FileName: fileName, MimeType: mimeType, FileSize: 1024,
-		Extension: extension, SHA256: make([]byte, 32), CreatedAt: now,
-	}).Error)
-	assetID := uuid.NewString()
-	objectKey, err := mediaauth.AssetObjectKey(assetID, extension)
-	require.NoError(t, err)
-	fileSize := int64(1024)
-	require.NoError(t, db.Create(&model.PublicAsset{
-		ID: assetID, SourceFileID: &fileID, Kind: assetKind, ObjectKey: objectKey,
-		Extension: extension, MimeType: mimeType, FileSize: &fileSize, SHA256: make([]byte, 32),
-		Disposition: "inline", Status: model.PublicAssetStatusReady, ReadyAt: &now, CreatedAt: now, UpdatedAt: now,
-	}).Error)
-	return fileID, assetID
-}
-
 func readyPublicAssetURLForFileFixture(t *testing.T, db *gorm.DB, cdnDomain, fileID string) string {
 	t.Helper()
 	var asset model.PublicAsset
@@ -99,7 +74,7 @@ func readyPublicAssetURLForFileFixture(t *testing.T, db *gorm.DB, cdnDomain, fil
 
 func seedBoundOgAssetFixture(t *testing.T, db *gorm.DB, ownerType, ownerID, bindingKey string) (string, string) {
 	t.Helper()
-	fileID, assetID := seedCanonicalPublicFileFixture(t, db, "og.webp", "image/webp", "og")
+	fileID, assetID := testutil.SeedCanonicalPublicFileFixture(t, db, "og.webp", "image/webp", "og")
 	now := time.Now().UTC()
 	require.NoError(t, db.Create(&model.PublicAssetBinding{
 		AssetID: assetID, OwnerType: ownerType, OwnerID: ownerID, BindingKey: bindingKey,

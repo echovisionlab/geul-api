@@ -11,6 +11,7 @@ import (
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -26,7 +27,7 @@ func newWorkIntegrationService(
 ) *workdomain.WorkService {
 	t.Helper()
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	store, err := contentblock.NewGeneratedStore(newContentBlockFileReuseAuthorizer(spiceDB))
 	require.NoError(t, err)
 	return workdomain.NewWorkService(
@@ -76,8 +77,8 @@ func emptyWorkIntegrationDocument(locale string) *contentv1.RichTextDocument {
 func workIntegrationAdminCtx(id string) context.Context {
 	return auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(id),
-		MemberID:      auth.MemberID(integrationMemberID(id)),
-		SessionID:     auth.SessionID(integrationTestUUID()),
+		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(id)),
+		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 		Authenticated: true,
 		Onboarded:     true,
 	})

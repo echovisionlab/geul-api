@@ -7,11 +7,11 @@ import (
 	"crypto/sha256"
 	"flag"
 	"fmt"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"os"
 	"slices"
 	"testing"
-	"time"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
@@ -21,7 +21,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -51,74 +50,9 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func newServiceIntegrationDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	stack := testutil.PrepareOryIntegrationTest(t)
-	require.NotNil(t, stack)
-	return stack.DB
-}
-
-func integrationTestUUID() string { return uuid.NewString() }
-
-func integrationMemberID(identityID string) string {
-	id := uuid.NewSHA1(uuid.NameSpaceURL, []byte("geul-page-integration-member:"+identityID))
-	id[6] = (id[6] & 0x0f) | 0x40
-	id[8] = (id[8] & 0x3f) | 0x80
-	return id.String()
-}
-
 func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient {
 	t.Helper()
 	return testutil.SetupOryStack(t).SpiceDBClient
-}
-
-func grantIntegrationGlobalRole(
-	t *testing.T,
-	spiceDB *auth.SpiceDBClient,
-	identityID string,
-	role policyv1.RoleID,
-) {
-	t.Helper()
-	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
-	require.NoError(t, err)
-	_, err = spiceDB.SyncAccountIdentityGlobalRole(t.Context(), subject, role)
-	require.NoError(t, err)
-}
-
-func seedExternalKratosIdentityWithTraits(
-	t *testing.T,
-	db *gorm.DB,
-	identityID string,
-	name string,
-) string {
-	t.Helper()
-	email := identityID + "@example.test"
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
-		ID: identityID, Email: email, Name: name,
-	})
-	memberID := integrationMemberID(identityID)
-	now := time.Now().UTC()
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec(
-			"UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid",
-			memberID, identityID,
-		).Error; err != nil {
-			return err
-		}
-		if err := tx.Exec(`
-			INSERT INTO account_identity (id, created_at)
-			SELECT id, created_at FROM kratos.identities WHERE id = ?::uuid
-			ON CONFLICT (id) DO NOTHING
-		`, identityID).Error; err != nil {
-			return err
-		}
-		return tx.Create(&model.Member{
-			ID: memberID, AccountIdentityID: &identityID, Nickname: name,
-			Onboarded: true, PrimaryEmail: &email, AvailableEmails: []string{email},
-			SocialLinks: map[string]string{}, CreatedAt: now, UpdatedAt: now,
-		}).Error
-	}))
-	return memberID
 }
 
 func requireSynchronousAuthorizedResource(
@@ -175,7 +109,7 @@ func requireFileRowExists(t *testing.T, db *gorm.DB, fileID string) {
 func workIntegrationAdminCtx(identityID string) context.Context {
 	return auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(identityID),
-		MemberID:      auth.MemberID(integrationMemberID(identityID)),
+		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(identityID)),
 		SessionID:     auth.SessionID(uuid.NewString()),
 		Authenticated: true,
 		Onboarded:     true,
@@ -276,7 +210,7 @@ func postIntegrationIdentity(id string, preferredLocale string) *auth.Identity {
 		traits["preferred_locale"] = preferredLocale
 	}
 	return &auth.Identity{
-		ID: id, ExternalID: integrationMemberID(id), State: auth.KratosStateActive, Traits: traits,
+		ID: id, ExternalID: testutil.PostIntegrationMemberID(id), State: auth.KratosStateActive, Traits: traits,
 	}
 }
 

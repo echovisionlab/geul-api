@@ -152,7 +152,7 @@ func TestProvisionRegistrationConcurrentHooksConvergeOnOneMember(t *testing.T) {
 
 func TestAllocateMemberUUIDSkipsExistingUUIDNickname(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	claimedUUIDNickname := uuid.NewString()
 	availableUUID := uuid.NewString()
 	require.NoError(t, db.Exec(`
@@ -174,7 +174,7 @@ func TestAllocateMemberUUIDSkipsExistingUUIDNickname(t *testing.T) {
 
 func TestProvisionRegistrationIgnoresNonCanonicalEmailCodeIdentifiers(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
 	currentEmail := "z-current-" + identityID + "@example.test"
 	secondaryEmail := "a-secondary-" + identityID + "@example.test"
@@ -210,7 +210,7 @@ func TestProvisionRegistrationIgnoresNonCanonicalEmailCodeIdentifiers(t *testing
 
 func TestProvisionRegistrationEnforcesDeletedMemberEmailReuseHold(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	email := "returning-" + uuid.NewString() + "@example.test"
 	now := time.Now().UTC()
 	deletedAt := now.Add(-6 * 24 * time.Hour)
@@ -264,7 +264,7 @@ func TestProvisionRegistrationEnforcesDeletedMemberEmailReuseHold(t *testing.T) 
 
 func TestProvisionRegistrationRejectsConflictingExternalIDBeforeMemberCreate(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberEmail := "member-" + identityID + "@example.test"
 	conflictingMemberID := uuid.NewString()
@@ -301,7 +301,7 @@ func TestProvisionRegistrationRejectsConflictingExternalIDBeforeMemberCreate(t *
 
 func TestProvisionRegistrationAllowsIdempotentSamePairRetry(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
 	memberEmail := "member-" + identityID + "@example.test"
 	require.NoError(t, db.Exec(`

@@ -21,10 +21,10 @@ import (
 
 func TestMapThemeCreateValidationLeavesDBUnchanged(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := durableAudienceSpiceDB(t)
 	ctx := mapThemeAdminContext(t)
-	name := "Invalid pair " + integrationTestUUID()
+	name := "Invalid pair " + testutil.IntegrationUUID()
 	request := validCreateMapThemeRequest(name)
 	request.DarkVariant.BackgroundColor = "var(--arbitrary-css)"
 
@@ -37,7 +37,7 @@ func TestMapThemeCreateValidationLeavesDBUnchanged(t *testing.T) {
 
 func TestManageMapThemeAdminCanReadAndMutate(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := durableAudienceSpiceDB(t)
 	ctx := mapThemeAdminContext(t)
 	service := mapThemeServiceForTest(t, db, spiceDB)
@@ -63,7 +63,7 @@ func TestManageMapThemeAdminCanReadAndMutate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, originalDefaultID, resolved.Msg.ThemeId)
 
-	created, err := service.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Admin source "+integrationTestUUID())))
+	created, err := service.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Admin source "+testutil.IntegrationUUID())))
 	require.NoError(t, err)
 	createdID = created.Msg.Id
 	got, err := service.GetMapTheme(ctx, connect.NewRequest(&managev1.GetMapThemeRequest{Id: createdID}))
@@ -71,7 +71,7 @@ func TestManageMapThemeAdminCanReadAndMutate(t *testing.T) {
 	require.Equal(t, createdID, got.Msg.Id)
 
 	copied, err := service.CopyMapTheme(ctx, connect.NewRequest(&managev1.CopyMapThemeRequest{
-		Id: createdID, Name: "Admin copy " + integrationTestUUID(),
+		Id: createdID, Name: "Admin copy " + testutil.IntegrationUUID(),
 	}))
 	require.NoError(t, err)
 	copiedID = copied.Msg.Id
@@ -91,7 +91,7 @@ func TestManageMapThemeAdminCanReadAndMutate(t *testing.T) {
 
 func TestManageMapThemeAuthenticatedMemberCanListAndResolve(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	service := mapThemeServiceForTest(t, db, stack.SpiceDBClient)
 	memberCtx := mapThemeMemberContext(stack.CreateUser(t, "user"))
@@ -108,7 +108,7 @@ func TestManageMapThemeAuthenticatedMemberCanListAndResolve(t *testing.T) {
 
 func TestMapThemeDefaultSwitchBlocksCurrentDeleteAndAllowsFormerDelete(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	spiceDB := durableAudienceSpiceDB(t)
 	ctx := mapThemeAdminContext(t)
 	service := mapThemeServiceForTest(t, db, spiceDB)
@@ -123,7 +123,7 @@ func TestMapThemeDefaultSwitchBlocksCurrentDeleteAndAllowsFormerDelete(t *testin
 	}
 	require.True(t, defaultIncluded)
 
-	created, err := service.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Default "+integrationTestUUID())))
+	created, err := service.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Default "+testutil.IntegrationUUID())))
 	require.NoError(t, err)
 	set, err := service.SetDefaultMapTheme(ctx, connect.NewRequest(&managev1.SetDefaultMapThemeRequest{ThemeId: created.Msg.Id}))
 	require.NoError(t, err)
@@ -167,9 +167,9 @@ func TestMapThemeResolveUsesOneRepeatableReadSnapshotAcrossDefaultSwitchAndDelet
 	list, err := service.ListMapThemes(ctx, connect.NewRequest(&managev1.ListMapThemesRequest{}))
 	require.NoError(t, err)
 	originalDefaultID := list.Msg.DefaultMapThemeId
-	themeA, err := service.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Snapshot A "+integrationTestUUID())))
+	themeA, err := service.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Snapshot A "+testutil.IntegrationUUID())))
 	require.NoError(t, err)
-	themeB, err := service.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Snapshot B "+integrationTestUUID())))
+	themeB, err := service.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Snapshot B "+testutil.IntegrationUUID())))
 	require.NoError(t, err)
 	_, err = service.SetDefaultMapTheme(ctx, connect.NewRequest(&managev1.SetDefaultMapThemeRequest{ThemeId: themeA.Msg.Id}))
 	require.NoError(t, err)
@@ -179,7 +179,7 @@ func TestMapThemeResolveUsesOneRepeatableReadSnapshotAcrossDefaultSwitchAndDelet
 	})
 
 	reader := newConcurrentServiceIntegrationDB(t)
-	callbackName := "map_theme_snapshot_" + integrationTestUUID()
+	callbackName := "map_theme_snapshot_" + testutil.IntegrationUUID()
 	started := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
@@ -228,7 +228,7 @@ func TestMapThemeDetailCopyAndInternalLoadUseOneParentVariantSnapshot(t *testing
 			admin := mapThemeAdminUser(t)
 			ctx := mapThemeMemberContext(admin)
 			service := mapThemeServiceForTest(t, db, spiceDB)
-			created, err := service.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Snapshot source "+integrationTestUUID())))
+			created, err := service.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Snapshot source "+testutil.IntegrationUUID())))
 			require.NoError(t, err)
 
 			copiedID := ""
@@ -240,7 +240,7 @@ func TestMapThemeDetailCopyAndInternalLoadUseOneParentVariantSnapshot(t *testing
 			})
 
 			reader := newConcurrentServiceIntegrationDB(t)
-			callbackName := "map_theme_parent_variant_snapshot_" + integrationTestUUID()
+			callbackName := "map_theme_parent_variant_snapshot_" + testutil.IntegrationUUID()
 			started := make(chan struct{})
 			release := make(chan struct{})
 			var once sync.Once
@@ -279,7 +279,7 @@ func TestMapThemeDetailCopyAndInternalLoadUseOneParentVariantSnapshot(t *testing
 					}
 				case "copy":
 					response, readErr := mapThemeServiceForTest(t, reader, spiceDB).CopyMapTheme(ctx, connect.NewRequest(&managev1.CopyMapThemeRequest{
-						Id: created.Msg.Id, Name: "Snapshot copy " + integrationTestUUID(),
+						Id: created.Msg.Id, Name: "Snapshot copy " + testutil.IntegrationUUID(),
 					}))
 					result.err = readErr
 					if readErr == nil {
@@ -310,7 +310,7 @@ func TestMapThemeDetailCopyAndInternalLoadUseOneParentVariantSnapshot(t *testing
 				t.Fatal("map theme parent read did not reach the snapshot barrier")
 			}
 
-			updated := validDocumentSnapshot("Snapshot updated " + integrationTestUUID())
+			updated := validDocumentSnapshot("Snapshot updated " + testutil.IntegrationUUID())
 			updated.Settings.CalloutScale = 2
 			updated.LightVariant.BackgroundColor = "#101010"
 			updated.DarkVariant.BackgroundColor = "#202020"
@@ -360,12 +360,12 @@ func TestMapThemeDetailCopyAndInternalLoadUseOneParentVariantSnapshot(t *testing
 
 func TestMapThemeUnknownResolveFallsBackToCurrentDefaultForBothSchemes(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	service := mapThemeServiceForTest(t, db, durableAudienceSpiceDB(t))
 	list, err := service.ListMapThemes(adminCtx(), connect.NewRequest(&managev1.ListMapThemesRequest{}))
 	require.NoError(t, err)
 	for _, scheme := range []string{"light", "dark"} {
-		unknown := integrationTestUUID()
+		unknown := testutil.IntegrationUUID()
 		resolved, resolveErr := service.ResolveMapTheme(adminCtx(), connect.NewRequest(&managev1.ResolveMapThemeRequest{ThemeId: &unknown, Scheme: scheme}))
 		require.NoError(t, resolveErr)
 		require.Equal(t, list.Msg.DefaultMapThemeId, resolved.Msg.ThemeId)

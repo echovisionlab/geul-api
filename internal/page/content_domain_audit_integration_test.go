@@ -11,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -23,12 +24,12 @@ import (
 
 func TestPageDomainAuditClosesCreateVersionDeleteBoundariesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminIdentityID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminIdentityID, "Page audit admin")
+	db := testutil.NewIntegrationDB(t)
+	adminIdentityID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminIdentityID, "Page audit admin")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, adminIdentityID, policyv1.Role.Admin())
-	memberID := integrationMemberID(adminIdentityID)
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminIdentityID, policyv1.Role.Admin())
+	memberID := testutil.PostIntegrationMemberID(adminIdentityID)
 	contributorID := seedPageAuditContributor(t, db, spiceDB)
 	memberCtx := withPageAuditedRequestContext(t, workIntegrationAdminCtx(adminIdentityID))
 	writer := apitelemetry.NewDurableWriter(db)
@@ -151,8 +152,8 @@ func requirePageContentAuditRecords(
 func seedPageAuditContributor(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) string {
 	t.Helper()
 	identityID := uuid.NewString()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Page audit contributor")
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Page audit contributor")
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	return memberID
 }
 

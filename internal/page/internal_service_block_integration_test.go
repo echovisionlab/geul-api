@@ -4,10 +4,12 @@ package page
 
 import (
 	"context"
-	"google.golang.org/protobuf/proto"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/testutil"
+	"google.golang.org/protobuf/proto"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -27,11 +29,11 @@ import (
 
 func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Page Block Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Page Block Admin")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	ctx := workIntegrationAdminCtx(adminID)
 	store := newPageIntegrationContentBlockStore(t, spiceDB)
 
@@ -86,12 +88,12 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 	require.Equal(t, loaded.Msg.DocumentLayout, firstPaint.Msg.DocumentLayout)
 	require.True(t, firstPaint.Msg.Editable)
 
-	columnsID := integrationTestUUID()
-	columnAID := integrationTestUUID()
-	columnBID := integrationTestUUID()
-	richSectionID := integrationTestUUID()
-	paragraphID := integrationTestUUID()
-	memberID := integrationMemberID(adminID)
+	columnsID := testutil.IntegrationUUID()
+	columnAID := testutil.IntegrationUUID()
+	columnBID := testutil.IntegrationUUID()
+	richSectionID := testutil.IntegrationUUID()
+	paragraphID := testutil.IntegrationUUID()
+	memberID := testutil.PostIntegrationMemberID(adminID)
 	applied, err := internalService.ApplyPageBlockBatch(
 		withPageAuditedCollabRequestContext(t, context.Background()),
 		connect.NewRequest(&intrav1.ApplyPageBlockBatchRequest{
@@ -199,7 +201,7 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 
 	// A kind change also clears incompatible target overlays. Exercise it at
 	// the internal Page boundary, including a fresh target-room reload.
-	kindBlockID := integrationTestUUID()
+	kindBlockID := testutil.IntegrationUUID()
 	kindSeedBase := pageRichTextBaseUpsert(richSectionID, &contentv1.RichTextBlock{
 		Id: kindBlockID, Value: &contentv1.RichTextBlock_Paragraph{Paragraph: &contentv1.ParagraphBlock{Props: &contentv1.ParagraphProps{}}},
 	})
@@ -342,8 +344,8 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 	)
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 
-	unauthorizedIdentityID := integrationTestUUID()
-	unauthorizedMemberID := seedExternalKratosIdentityWithTraits(
+	unauthorizedIdentityID := testutil.IntegrationUUID()
+	unauthorizedMemberID := testutil.SeedPostIntegrationIdentity(
 		t, db, unauthorizedIdentityID, "Unauthorized Page contributor",
 	)
 	_, err = internalService.ApplyPageBlockBatch(
@@ -396,11 +398,11 @@ func TestInternalPageBlockAggregateLifecycleIntegration(t *testing.T) {
 
 func TestInternalPageMetadataCheckpointAndMissingFileIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Page Metadata Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Page Metadata Admin")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	ctx := withPageAuditedRequestContext(t, workIntegrationAdminCtx(adminID))
 	store := newPageIntegrationContentBlockStore(t, spiceDB)
 	pageService := NewPageService(
@@ -432,7 +434,7 @@ func TestInternalPageMetadataCheckpointAndMissingFileIntegration(t *testing.T) {
 		PageId: created.Msg.Id, Principal: &intrav1.CollaborationPrincipal{SessionId: sessionID}, Locale: "en",
 	}))
 	require.NoError(t, err)
-	memberID := integrationMemberID(adminID)
+	memberID := testutil.PostIntegrationMemberID(adminID)
 
 	nextTitle := "Updated metadata title"
 	metadata, err := internalService.UpdatePageLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdatePageLocaleMetadataRequest{
@@ -492,9 +494,9 @@ func TestInternalPageMetadataCheckpointAndMissingFileIntegration(t *testing.T) {
 	require.False(t, duplicate.Msg.Created)
 	require.Nil(t, duplicate.Msg.VersionId)
 
-	sectionID := integrationTestUUID()
-	fileBlockID := integrationTestUUID()
-	missingFileID := integrationTestUUID()
+	sectionID := testutil.IntegrationUUID()
+	fileBlockID := testutil.IntegrationUUID()
+	missingFileID := testutil.IntegrationUUID()
 	_, err = internalService.ApplyPageBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyPageBlockBatchRequest{
 		PageId: created.Msg.Id,
 		Locale: "en",
@@ -828,7 +830,7 @@ func requirePageSectionSlot(
 
 func insertPageIntegrationSession(t *testing.T, db *gorm.DB, identityID string) string {
 	t.Helper()
-	sessionID := integrationTestUUID()
+	sessionID := testutil.IntegrationUUID()
 	require.NoError(t, db.Exec(`
 		INSERT INTO kratos.sessions (
 			id, identity_id, active, authenticated_at, expires_at,

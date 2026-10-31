@@ -16,14 +16,14 @@ import (
 
 func TestFormDeleteReleasesFeaturedImageBindingAndPreservesFileIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	principal := auth.GetUser(ctx)
 	require.NotNil(t, principal)
 	service := newFormServiceForIntegration(db, principal.IdentityID.String(), spiceDB)
 
 	created, err := service.CreateForm(ctx, connect.NewRequest(&managev1.CreateFormRequest{
-		Title:  "Form Image Cleanup " + integrationTestUUID(),
+		Title:  "Form Image Cleanup " + testutil.IntegrationUUID(),
 		Schema: integrationFormSchema(),
 	}))
 	require.NoError(t, err)

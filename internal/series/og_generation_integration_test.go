@@ -21,8 +21,8 @@ import (
 
 func TestResolveSeriesOgGenerationUsesLocaleTitlesAndAllowsNoFeaturedImageIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	seriesID := seedSeriesRow(t, db, "English Series", "localized-series-"+integrationTestUUID(), managev1.SeriesStatus_SERIES_STATUS_PUBLISHED.String())
+	db := testutil.NewIntegrationDB(t)
+	seriesID := seedSeriesRow(t, db, "English Series", "localized-series-"+testutil.IntegrationUUID(), managev1.SeriesStatus_SERIES_STATUS_PUBLISHED.String())
 	now := time.Now().UTC()
 	require.NoError(t, db.Exec(`
 		INSERT INTO series_translation (
@@ -71,12 +71,12 @@ func TestResolveSeriesOgGenerationUsesLocaleTitlesAndAllowsNoFeaturedImageIntegr
 
 func TestSeriesOgRequestReleasesStaleLocaleProjectionUntilReplacementIsReadyIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	seriesID := seedSeriesRow(
 		t,
 		db,
 		"Pending Fallback Series",
-		"pending-fallback-series-"+integrationTestUUID(),
+		"pending-fallback-series-"+testutil.IntegrationUUID(),
 		managev1.SeriesStatus_SERIES_STATUS_PUBLISHED.String(),
 	)
 	oldAsset := seedHardCutReadyPublicAsset(t, db, "og", "webp", "image/webp", nil)
@@ -127,10 +127,10 @@ func TestSeriesOgRequestReleasesStaleLocaleProjectionUntilReplacementIsReadyInte
 
 func seedSeriesRow(t *testing.T, db *gorm.DB, title, slug, status string) string {
 	t.Helper()
-	id := integrationTestUUID()
+	id := testutil.IntegrationUUID()
 	now := time.Now().UTC()
-	contentDocumentID := integrationTestUUID()
-	contentDocumentRevision := integrationTestUUID()
+	contentDocumentID := testutil.IntegrationUUID()
+	contentDocumentRevision := testutil.IntegrationUUID()
 	require.NoError(t, db.Exec(`
 		INSERT INTO content_document (id, profile, revision, created_at, updated_at)
 		VALUES (?::uuid, 'compact', ?::uuid, ?, ?)`, contentDocumentID, contentDocumentRevision, now, now).Error)

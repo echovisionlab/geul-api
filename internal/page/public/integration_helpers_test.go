@@ -8,12 +8,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -103,37 +103,6 @@ func publicPrincipalContext(memberID, identityID string) context.Context {
 
 func publicLegalAdminCtx(memberID, identityID string) context.Context {
 	return publicPrincipalContext(memberID, identityID)
-}
-
-func seedCanonicalPublicFileFixture(
-	t *testing.T,
-	db *gorm.DB,
-	fileName string,
-	mimeType string,
-	assetKind string,
-) (string, string) {
-	t.Helper()
-	fileID := uuid.NewString()
-	extension := model.GetExtensionFromMime(mimeType)
-	fileName = strings.TrimSuffix(filepath.Base(fileName), filepath.Ext(fileName))
-	now := time.Now().UTC()
-	fileDigest := sha256.Sum256([]byte(fileID))
-	require.NoError(t, db.Create(&model.File{
-		ID: fileID, FileName: fileName, MimeType: mimeType, FileSize: 1024,
-		Extension: extension, SHA256: fileDigest[:], CreatedAt: now,
-	}).Error)
-	assetID := uuid.NewString()
-	objectKey, err := mediaauth.AssetObjectKey(assetID, extension)
-	require.NoError(t, err)
-	fileSize := int64(1024)
-	assetDigest := sha256.Sum256([]byte(assetID))
-	require.NoError(t, db.Create(&model.PublicAsset{
-		ID: assetID, SourceFileID: &fileID, Kind: assetKind, ObjectKey: objectKey,
-		Extension: extension, MimeType: mimeType, FileSize: &fileSize, SHA256: assetDigest[:],
-		Disposition: "inline", Status: model.PublicAssetStatusReady, ReadyAt: &now,
-		CreatedAt: now, UpdatedAt: now,
-	}).Error)
-	return fileID, assetID
 }
 
 func setPublicDownloadAudience(t *testing.T, db *gorm.DB, blockID, audience string) {

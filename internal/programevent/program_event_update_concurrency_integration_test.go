@@ -10,6 +10,7 @@ import (
 	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -17,14 +18,14 @@ import (
 
 func TestProgramEventUpdateRevalidatesTimeAndLocationAfterRootLockIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	contentBlocks := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 
 	typeResponse, err := NewProgramEventTypeService(db, spiceDB).CreateProgramEventType(
 		ctx,
 		connect.NewRequest(&managev1.CreateProgramEventTypeRequest{
-			Slug:              "program-event-update-race-type-" + integrationTestUUID(),
+			Slug:              "program-event-update-race-type-" + testutil.IntegrationUUID(),
 			Locale:            "en",
 			Name:              "Program Event update race type",
 			RequiresPlace:     ptrBool(false),
@@ -45,7 +46,7 @@ func TestProgramEventUpdateRevalidatesTimeAndLocationAfterRootLockIntegration(t 
 			Address:       "1 Concurrent Way, Seoul",
 			Lat:           37.57,
 			Lng:           126.98,
-			GooglePlaceId: ptrString("google-place-" + integrationTestUUID()),
+			GooglePlaceId: ptrString("google-place-" + testutil.IntegrationUUID()),
 		}))
 		require.NoError(t, err)
 		return place.Msg.Id
@@ -64,7 +65,7 @@ func TestProgramEventUpdateRevalidatesTimeAndLocationAfterRootLockIntegration(t 
 	endsAt := startsAt.Add(10 * time.Hour)
 	event, err := eventService.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title:        "Program Event update race",
-		Slug:         "program-event-update-race-" + integrationTestUUID(),
+		Slug:         "program-event-update-race-" + testutil.IntegrationUUID(),
 		SourceLocale: "en",
 		TypeId:       typeResponse.Msg.Id,
 		StartsAt:     timestamppb.New(startsAt),
@@ -129,9 +130,9 @@ func TestProgramEventUpdateRevalidatesTimeAndLocationAfterRootLockIntegration(t 
 
 	t.Run("relation snapshot applies membership delta to locked current rows", func(t *testing.T) {
 		createArtist := func(name string) string {
-			id := integrationTestUUID()
+			id := testutil.IntegrationUUID()
 			documentID := seedServiceIntegrationContentDocument(t, db, creativeContentProfile)
-			slug := name + "-" + integrationTestUUID()
+			slug := name + "-" + testutil.IntegrationUUID()
 			require.NoError(t, db.Create(&model.Artist{
 				ID: id, ContentDocumentID: &documentID, Slug: &slug,
 				Status: "ARTIST_STATUS_DRAFT", CreatedAt: time.Now().UTC(),

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -44,12 +45,12 @@ func TestPublicProgramEventCreditAvatarsIntegration(t *testing.T) {
 	db := newPublicIntegrationDB(t)
 	eventID := seedPublicProgramEventListQueryFixtures(t, db, 1)[0].eventID
 	role, description, fallback := "performer", "Credit description", "Fallback name"
-	readyFileID, readyAssetID := seedCanonicalPublicFileFixture(t, db, "credit-avatar.webp", "image/webp", "image")
-	nonReadyFileID, nonReadyAssetID := seedCanonicalPublicFileFixture(t, db, "credit-pending.webp", "image/webp", "image")
+	readyFileID, readyAssetID := testutil.SeedCanonicalPublicFileFixture(t, db, "credit-avatar.webp", "image/webp", "image")
+	nonReadyFileID, nonReadyAssetID := testutil.SeedCanonicalPublicFileFixture(t, db, "credit-pending.webp", "image/webp", "image")
 	require.NoError(t, db.Model(&model.PublicAsset{}).Where("id = ?", nonReadyAssetID).Update("status", model.PublicAssetStatusAllocated).Error)
-	missingFileID, missingAssetID := seedCanonicalPublicFileFixture(t, db, "credit-missing.webp", "image/webp", "image")
+	missingFileID, missingAssetID := testutil.SeedCanonicalPublicFileFixture(t, db, "credit-missing.webp", "image/webp", "image")
 	require.NoError(t, db.Delete(&model.PublicAsset{}, "id = ?", missingAssetID).Error)
-	wrongKindFileID, _ := seedCanonicalPublicFileFixture(t, db, "credit-poster.webp", "image/webp", "poster")
+	wrongKindFileID, _ := testutil.SeedCanonicalPublicFileFixture(t, db, "credit-poster.webp", "image/webp", "poster")
 	readyArtistID := seedPublicCreditAvatarArtist(t, db, true)
 	for order, fileID := range []string{readyFileID, nonReadyFileID} {
 		require.NoError(t, db.Create(&model.ArtistFile{ArtistID: readyArtistID, FileID: fileID, SortOrder: order}).Error)
@@ -111,7 +112,7 @@ func TestPublicProgramEventCreditAvatarQueryBudgetIntegration(t *testing.T) {
 	db := newPublicIntegrationDB(t)
 	eventID := seedPublicProgramEventListQueryFixtures(t, db, 1)[0].eventID
 	artistID := seedPublicCreditAvatarArtist(t, db, true)
-	fileID, assetID := seedCanonicalPublicFileFixture(t, db, "shared-avatar.webp", "image/webp", "image")
+	fileID, assetID := testutil.SeedCanonicalPublicFileFixture(t, db, "shared-avatar.webp", "image/webp", "image")
 	require.NoError(t, db.Create(&model.ArtistFile{ArtistID: artistID, FileID: fileID}).Error)
 	var queries atomic.Int64
 	countedDB := db.Session(&gorm.Session{Logger: publicProgramEventQueryCounter{Interface: db.Config.Logger, count: &queries}})

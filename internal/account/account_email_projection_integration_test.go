@@ -37,7 +37,7 @@ func (memberEmailProjectionIntegration) SyncEmailProjection(ctx context.Context,
 
 func TestSyncMemberEmailProjectionReplacesExactProvenCandidateSet(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID, memberID := uuid.NewString(), uuid.NewString()
 	primaryEmail := "primary-" + identityID + "@example.test"
 	seedAccountEmailProjectionPair(t, db, identityID, memberID, primaryEmail)
@@ -68,7 +68,7 @@ func TestSyncMemberEmailProjectionReplacesExactProvenCandidateSet(t *testing.T) 
 
 func TestSyncMemberEmailProjectionRejectsUnusableCanonical(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID, memberID := uuid.NewString(), uuid.NewString()
 	unprovenEmail := "unproven-" + identityID + "@example.test"
 	seedAccountEmailProjectionPair(t, db, identityID, memberID, unprovenEmail)
@@ -113,7 +113,7 @@ func seedAccountEmailProjectionPair(
 
 func TestSyncAccountEmailCandidateProjectionDoesNotMutateIdentityTraits(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID, memberID := uuid.NewString(), uuid.NewString()
 	deliveryEmail := "delivery-" + identityID + "@example.test"
 	seedAccountEmailProjectionPair(t, db, identityID, memberID, deliveryEmail)

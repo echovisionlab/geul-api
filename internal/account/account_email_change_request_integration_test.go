@@ -228,7 +228,7 @@ func (p *accountEmailChangePublisherFixture) PublishSendEmail(
 
 func TestAccountEmailChangeRequestMatchesCurrentMigrationSchemaIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 
 	var columns []string
 	require.NoError(t, db.Raw(`
@@ -252,7 +252,7 @@ func TestAccountEmailChangeRequestConvergesAndRetriesConfirmedNotificationIntegr
 	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
-	identityID := integrationTestUUID()
+	identityID := testutil.IntegrationUUID()
 	cleanupAccountEmailChangeFixtures(t, db, identityID)
 	previousEmail := "old-" + identityID + "@example.test"
 	requestedEmail := "new-" + identityID + "@example.test"
@@ -290,7 +290,7 @@ func TestAccountEmailChangeRequestReplacesOnlyUnverifiedActiveRequestIntegration
 	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
-	identityID := integrationTestUUID()
+	identityID := testutil.IntegrationUUID()
 	cleanupAccountEmailChangeFixtures(t, db, identityID)
 	previousEmail := "old-" + identityID + "@example.test"
 	firstEmail := "first-" + identityID + "@example.test"
@@ -320,7 +320,7 @@ func TestAccountEmailChangeRequestDoesNotStartWhenKratosIsUnavailableIntegration
 	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
-	identityID := integrationTestUUID()
+	identityID := testutil.IntegrationUUID()
 	cleanupAccountEmailChangeFixtures(t, db, identityID)
 	previousEmail := "old-" + identityID + "@example.test"
 	requestedEmail := "new-" + identityID + "@example.test"
@@ -340,8 +340,8 @@ func TestAccountEmailChangeConflictClearsOnlyRequestedAddressIntegration(t *test
 	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
-	identityID := integrationTestUUID()
-	otherIdentityID := integrationTestUUID()
+	identityID := testutil.IntegrationUUID()
+	otherIdentityID := testutil.IntegrationUUID()
 	cleanupAccountEmailChangeFixtures(t, db, identityID, otherIdentityID)
 	previousEmail := "old-" + identityID + "@example.test"
 	requestedEmail := "occupied-" + otherIdentityID + "@example.test"
@@ -376,7 +376,7 @@ func TestAccountEmailChangeExactPendingRequestSurvivesCodeExpiryIntegration(t *t
 	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
-	identityID := integrationTestUUID()
+	identityID := testutil.IntegrationUUID()
 	cleanupAccountEmailChangeFixtures(t, db, identityID)
 	previousEmail := "old-" + identityID + "@example.test"
 	requestedEmail := "new-" + identityID + "@example.test"
@@ -400,7 +400,7 @@ func TestAccountEmailChangeExactPendingRequestExpiresAndReleasesAddressIntegrati
 	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
-	identityID := integrationTestUUID()
+	identityID := testutil.IntegrationUUID()
 	cleanupAccountEmailChangeFixtures(t, db, identityID)
 	previousEmail := "old-" + identityID + "@example.test"
 	requestedEmail := "new-" + identityID + "@example.test"
@@ -432,7 +432,7 @@ func TestAccountEmailChangeOrphanRequestIsRemovedAfterGraceIntegration(t *testin
 	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
-	identityID := integrationTestUUID()
+	identityID := testutil.IntegrationUUID()
 	cleanupAccountEmailChangeFixtures(t, db, identityID)
 	previousEmail := "old-" + identityID + "@example.test"
 	requestedEmail := "new-" + identityID + "@example.test"
@@ -454,7 +454,7 @@ func TestAccountEmailChangePrePersistFailureCanBeRetriedAndOrphanedReplacementEx
 	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
-	identityID := integrationTestUUID()
+	identityID := testutil.IntegrationUUID()
 	cleanupAccountEmailChangeFixtures(t, db, identityID)
 	previousEmail := "old-" + identityID + "@example.test"
 	firstEmail := "first-" + identityID + "@example.test"
@@ -492,7 +492,7 @@ func TestAccountEmailChangePrePersistFailureCanBeRetriedAndOrphanedReplacementEx
 func TestAccountEmailChangeSettingsVerificationRequiresExactUnverifiedAddressIntegration(t *testing.T) {
 	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
-	identityID := integrationTestUUID()
+	identityID := testutil.IntegrationUUID()
 	cleanupAccountEmailChangeFixtures(t, db, identityID)
 	previousEmail := "old-" + identityID + "@example.test"
 	requestedEmail := "new-" + identityID + "@example.test"
@@ -537,7 +537,7 @@ func TestAccountEmailChangeConfirmUncertaintyMayDuplicateStableCommandIntegratio
 	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
 	ctx := t.Context()
-	identityID := integrationTestUUID()
+	identityID := testutil.IntegrationUUID()
 	cleanupAccountEmailChangeFixtures(t, db, identityID)
 	previousEmail := "old-" + identityID + "@example.test"
 	requestedEmail := "new-" + identityID + "@example.test"
@@ -572,7 +572,7 @@ func TestAccountEmailChangeReconcileScansPastFailingFirstBatchIntegration(t *tes
 	baseTime := time.Now().UTC().Add(-accountEmailChangeProofGrace - time.Minute)
 	var lastRequest model.AccountEmailChangeRequest
 	for i := 0; i < accountEmailChangeBatchSize+1; i++ {
-		identityID := integrationTestUUID()
+		identityID := testutil.IntegrationUUID()
 		identityIDs = append(identityIDs, identityID)
 		previousEmail := "old-" + identityID + "@example.test"
 		requestedEmail := "new-" + identityID + "@example.test"

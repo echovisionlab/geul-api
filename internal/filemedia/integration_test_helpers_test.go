@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/echovisionlab/geul-api/internal/audience"
@@ -58,13 +57,6 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func newServiceIntegrationDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	stack := testutil.PrepareOryIntegrationTest(t)
-	require.NotNil(t, stack)
-	return stack.DB
-}
-
 func newConcurrentServiceIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	stack := testutil.PrepareOryIntegrationConcurrentTest(t)
@@ -93,15 +85,6 @@ func openConcurrentServiceIntegrationDB(t *testing.T, stack *testutil.OryStack) 
 	return db
 }
 
-func integrationTestUUID() string { return uuid.NewString() }
-
-func integrationMemberID(identityID string) string {
-	id := uuid.NewSHA1(uuid.NameSpaceURL, []byte("geul-file-media-integration-member:"+identityID))
-	id[6] = (id[6] & 0x0f) | 0x40
-	id[8] = (id[8] & 0x3f) | 0x80
-	return id.String()
-}
-
 func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient {
 	t.Helper()
 	return testutil.SetupOryStack(t).SpiceDBClient
@@ -125,9 +108,9 @@ func (s *integrationMemberSummaries) Load(
 
 func releaseAuditContext(t *testing.T, identityID, memberID string) context.Context {
 	t.Helper()
-	sessionID := integrationTestUUID()
+	sessionID := testutil.IntegrationUUID()
 	request, err := sharedtelemetry.NewPropagatedRequestContext(
-		integrationTestUUID(),
+		testutil.IntegrationUUID(),
 		sharedtelemetry.MemberActor{
 			IdentityID: identityID,
 			MemberID:   memberID,
@@ -141,14 +124,6 @@ func releaseAuditContext(t *testing.T, identityID, memberID string) context.Cont
 	})
 }
 
-func grantIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string, role policyv1.RoleID) {
-	t.Helper()
-	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
-	require.NoError(t, err)
-	_, err = spiceDB.SyncAccountIdentityGlobalRole(t.Context(), subject, role)
-	require.NoError(t, err)
-}
-
 func integrationAdminCtxWithIdentityAndSpiceDB(t *testing.T, db *gorm.DB) (context.Context, *auth.SpiceDBClient) {
 	t.Helper()
 	spiceDB := integrationSpiceDB(t)
@@ -157,12 +132,12 @@ func integrationAdminCtxWithIdentityAndSpiceDB(t *testing.T, db *gorm.DB) (conte
 
 func integrationAdminCtxWithIdentity(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) context.Context {
 	t.Helper()
-	identityID := integrationTestUUID()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "File/Media integration Admin")
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	identityID := testutil.IntegrationUUID()
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "File/Media integration Admin")
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	return auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
-		SessionID: auth.SessionID(integrationTestUUID()), Authenticated: true, Onboarded: true,
+		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
 }
 
@@ -177,34 +152,6 @@ func attachInternalResourcePolicy(t *testing.T, spiceDB *auth.SpiceDBClient, res
 func durableAudienceSpiceDB(t *testing.T) *auth.SpiceDBClient {
 	t.Helper()
 	return testutil.SetupOryStack(t).SpiceDBClient
-}
-
-func seedExternalKratosIdentityWithTraits(t *testing.T, db *gorm.DB, identityID, name string) string {
-	t.Helper()
-	email := identityID + "@example.test"
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
-		ID: identityID, Email: email, Name: name,
-	})
-	memberID := integrationMemberID(identityID)
-	now := time.Now().UTC()
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid", memberID, identityID).Error; err != nil {
-			return err
-		}
-		if err := tx.Exec(`
-			INSERT INTO account_identity (id, created_at)
-			SELECT id, created_at FROM kratos.identities WHERE id = ?::uuid
-			ON CONFLICT (id) DO NOTHING
-		`, identityID).Error; err != nil {
-			return err
-		}
-		return tx.Create(&model.Member{
-			ID: memberID, AccountIdentityID: &identityID, Nickname: name,
-			Onboarded: true, PrimaryEmail: &email, AvailableEmails: []string{email},
-			SocialLinks: map[string]string{}, CreatedAt: now, UpdatedAt: now,
-		}).Error
-	}))
-	return memberID
 }
 
 func seedFileDeliveryPostAuthority(

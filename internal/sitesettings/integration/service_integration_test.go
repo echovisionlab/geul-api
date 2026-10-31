@@ -17,6 +17,7 @@ import (
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -35,7 +36,7 @@ func newSiteSettingIntegrationService(t *testing.T, db *gorm.DB) (*sitesettings.
 
 func TestSiteSettingServiceThemeLogoSettingsIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 
 	lightFileID, lightURL := seedSiteSettingReadyFile(t, db, "light-logo", "logo", "png", "image/png", 1024)
@@ -77,7 +78,7 @@ func TestSiteSettingServiceThemeLogoSettingsIntegration(t *testing.T) {
 // MCP general SVG ingest produces a ready image asset, rather than a dedicated logo asset.
 func TestSiteSettingServiceFileLibraryLogoSettingsIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 	lightID, lightURL := seedSiteSettingReadyFile(t, db, "library-light", "image", "svg", "image/svg+xml", 1024)
 	darkID, darkURL := seedSiteSettingReadyFile(t, db, "library-dark", "image", "svg", "image/svg+xml", 1024)
@@ -119,7 +120,7 @@ func TestSiteSettingServiceFileLibraryLogoSettingsIntegration(t *testing.T) {
 
 func TestSiteSettingLoaderAssetsUseOrderedRelationOnlyIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 	fileID := uuid.NewString()
 	digest := sha256.Sum256([]byte(fileID))
@@ -158,7 +159,7 @@ func TestSiteSettingLoaderAssetsUseOrderedRelationOnlyIntegration(t *testing.T) 
 
 func TestSiteSettingAssetReferencesEnforceSlotFormatIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 
 	webpLogoFileID, _ := seedSiteSettingReadyFile(t, db, "webp-logo", "logo", "webp", "image/webp", 1024)
@@ -199,7 +200,7 @@ func TestSiteSettingAssetReferencesEnforceSlotFormatIntegration(t *testing.T) {
 
 func TestSiteSettingHomepageRequiresPublishedPageIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 
 	draftPageID := uuid.NewString()
@@ -244,7 +245,7 @@ func TestSiteSettingHomepageRequiresPublishedPageIntegration(t *testing.T) {
 
 func TestSiteSettingOgInvalidationReturnsOneRunForOverlappingChangesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 
 	noRun, err := service.SetSetting(ctx, connect.NewRequest(&managev1.SetSettingRequest{
@@ -280,7 +281,7 @@ func TestSiteSettingOgInvalidationReturnsOneRunForOverlappingChangesIntegration(
 
 func TestSiteSettingLegalOgBackgroundPersistsWithoutPublishedLegalContentIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 
 	for _, entity := range []struct {
@@ -316,7 +317,7 @@ func TestSiteSettingLegalOgBackgroundPersistsWithoutPublishedLegalContentIntegra
 
 func TestSiteSettingOgPlannerFailureRollsBackSettingAndRunIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	service, ctx := newSiteSettingIntegrationService(t, db)
 	missingAssetFileID := uuid.NewString()
 	workDocumentID := uuid.NewString()

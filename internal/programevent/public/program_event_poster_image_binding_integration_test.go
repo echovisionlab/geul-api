@@ -61,7 +61,7 @@ func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
 	var primaryMediaID, primaryFileID string
 	for _, kind := range []string{"image", "poster"} {
 		if !t.Run("ready "+kind, func(t *testing.T) {
-			fileID, assetID := seedCanonicalPublicFileFixture(t, db, kind+".webp", "image/webp", kind)
+			fileID, assetID := testutil.SeedCanonicalPublicFileFixture(t, db, kind+".webp", "image/webp", kind)
 			added, err := service.AddProgramEventMedia(ctx, connect.NewRequest(&managev1.AddProgramEventMediaRequest{
 				EventId: event.Msg.Id, FileId: fileID, Role: "poster", MakePrimary: true,
 			}))
@@ -87,10 +87,10 @@ func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
 		}
 	}
 
-	nonReadyFileID, nonReadyAssetID := seedCanonicalPublicFileFixture(t, db, "not-ready.webp", "image/webp", "image")
+	nonReadyFileID, nonReadyAssetID := testutil.SeedCanonicalPublicFileFixture(t, db, "not-ready.webp", "image/webp", "image")
 	require.NoError(t, db.Model(&model.PublicAsset{}).Where("id = ?", nonReadyAssetID).Update("status", model.PublicAssetStatusAllocated).Error)
-	nonImageFileID, _ := seedCanonicalPublicFileFixture(t, db, "waveform.json", "application/json", "waveform")
-	missingFileID, missingAssetID := seedCanonicalPublicFileFixture(t, db, "missing.webp", "image/webp", "image")
+	nonImageFileID, _ := testutil.SeedCanonicalPublicFileFixture(t, db, "waveform.json", "application/json", "waveform")
+	missingFileID, missingAssetID := testutil.SeedCanonicalPublicFileFixture(t, db, "missing.webp", "image/webp", "image")
 	require.NoError(t, db.Delete(&model.PublicAsset{}, "id = ?", missingAssetID).Error)
 	for _, scenario := range []struct{ name, fileID string }{
 		{"non-ready image", nonReadyFileID}, {"non-image", nonImageFileID}, {"missing asset", missingFileID},
@@ -119,7 +119,7 @@ func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
 	}
 
 	t.Run("binding errors preserved", func(t *testing.T) {
-		fileID, _ := seedCanonicalPublicFileFixture(t, db, "invalid-binding.webp", "image/webp", "poster")
+		fileID, _ := testutil.SeedCanonicalPublicFileFixture(t, db, "invalid-binding.webp", "image/webp", "poster")
 		_, err := runtime.BindReadyAssetForSourceFile(ctx, db, fileID, "", event.Msg.Id, "invalid", "poster")
 		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 		var count int64
@@ -128,7 +128,7 @@ func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
 	})
 
 	t.Run("other expected kinds stay strict", func(t *testing.T) {
-		fileID, _ := seedCanonicalPublicFileFixture(t, db, "strict.webp", "image/webp", "image")
+		fileID, _ := testutil.SeedCanonicalPublicFileFixture(t, db, "strict.webp", "image/webp", "image")
 		_, err := runtime.BindReadyAssetForSourceFile(ctx, db, fileID, "program_event", event.Msg.Id, "strict", "map_image")
 		require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
 		var count int64
@@ -137,7 +137,7 @@ func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
 	})
 
 	t.Run("series reuses canonical image", func(t *testing.T) {
-		fileID, assetID := seedCanonicalPublicFileFixture(t, db, "series-image.webp", "image/webp", "image")
+		fileID, assetID := testutil.SeedCanonicalPublicFileFixture(t, db, "series-image.webp", "image/webp", "image")
 		series, err := eventdomain.NewProgramEventSeriesService(db, runtime, publicIntegrationSpiceDB(t)).CreateProgramEventSeries(ctx,
 			connect.NewRequest(&managev1.CreateProgramEventSeriesRequest{Title: "Image series", Slug: "image-series-" + uuid.NewString(), PosterFileId: &fileID}))
 		require.NoError(t, err)

@@ -61,42 +61,19 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func newServiceIntegrationDB(t *testing.T) *gorm.DB {
-	return testutil.NewIntegrationDB(t)
-}
-
 func newConcurrentServiceIntegrationDB(t *testing.T) *gorm.DB {
 	return testutil.NewConcurrentPostIntegrationDB(t)
-}
-
-func integrationTestUUID() string { return testutil.IntegrationUUID() }
-
-func integrationMemberID(identityID string) string {
-	return testutil.PostIntegrationMemberID(identityID)
-}
-
-func seedExternalKratosIdentityWithTraits(t *testing.T, db *gorm.DB, identityID, name string) string {
-	return testutil.SeedPostIntegrationIdentity(t, db, identityID, name)
 }
 
 func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient {
 	return testutil.IntegrationSpiceDB(t)
 }
 
-func grantIntegrationGlobalRole(
-	t *testing.T,
-	spiceDB *auth.SpiceDBClient,
-	identityID string,
-	role policyv1.RoleID,
-) {
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, role)
-}
-
 func releaseIntegrationAdminCtx(identityID string) context.Context {
 	return auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(identityID),
-		MemberID:      auth.MemberID(integrationMemberID(identityID)),
-		SessionID:     auth.SessionID(integrationTestUUID()),
+		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(identityID)),
+		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 		Authenticated: true,
 	})
 }
@@ -214,7 +191,7 @@ func newReleaseIntegrationService(
 ) *releasepkg.ReleaseService {
 	t.Helper()
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	return releasepkg.NewReleaseService(
 		db,
 		spiceDB,

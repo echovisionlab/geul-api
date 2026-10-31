@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -25,11 +26,11 @@ import (
 
 func TestSiteSettingsAuditCommitsExactChangesAndSkipsNoOpIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Site Settings audit admin")
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Site Settings audit admin")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	service := sitesettings.NewAuditedSiteSettingService(
 		db,
 		"https://www.example.test",
@@ -79,11 +80,11 @@ func TestSiteSettingsAuditCommitsExactChangesAndSkipsNoOpIntegration(t *testing.
 
 func TestSiteSettingsAuditFailureRollsBackMutationIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Site Settings rollback admin")
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Site Settings rollback admin")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	service := sitesettings.NewAuditedSiteSettingService(
 		db,
 		"https://www.example.test",
@@ -108,11 +109,11 @@ func TestSiteSettingsAuditFailureRollsBackMutationIntegration(t *testing.T) {
 
 func TestSiteSettingsNestedOgAuditUsesAggregateFieldAndRollsBackIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Site Settings OG audit admin")
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Site Settings OG audit admin")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := siteSettingsAuditedMemberContext(t, identityID, memberID)
 	service := sitesettings.NewAuditedSiteSettingService(
 		db, "https://www.example.test", sitesettingsadapter.NewAssets("https://cdn.example.test"), sitesettingsadapter.NewReferences(),

@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -23,16 +24,16 @@ import (
 
 func TestArchivedWorkAllowsAdminEditsButRestrictsLifecycleIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Archived Work Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Archived Work Admin")
 	ctx := workIntegrationAdminCtx(adminID)
 	workService := newWorkIntegrationService(t, db, adminID, referenceNoopFileDeleter{})
 	workSpiceDB := integrationSpiceDB(t)
 	isPresent := true
 
 	created, err := workService.CreateWork(ctx, connect.NewRequest(&managev1.CreateWorkRequest{
-		Title:     "Archived Work " + integrationTestUUID(),
+		Title:     "Archived Work " + testutil.IntegrationUUID(),
 		Type:      managev1.WorkType_WORK_TYPE_ARTICLE,
 		Year:      2026,
 		Month:     8,
@@ -85,7 +86,7 @@ func TestArchivedWorkAllowsAdminEditsButRestrictsLifecycleIntegration(t *testing
 	}))
 	require.NoError(t, err)
 
-	updatedSlug := "updated-while-archived-" + integrationTestUUID()
+	updatedSlug := "updated-while-archived-" + testutil.IntegrationUUID()
 	updated, err := workService.UpdateWork(ctx, connect.NewRequest(&managev1.UpdateWorkRequest{
 		Id:   created.Msg.Id,
 		Slug: &updatedSlug,
@@ -110,7 +111,7 @@ func TestArchivedWorkAllowsAdminEditsButRestrictsLifecycleIntegration(t *testing
 		workdomain.WithInternalWorkContentBlockMediaHydrator(passthroughWorkContentBlockMediaHydrator{}),
 		workdomain.WithInternalWorkCheckpoints(testcollaboration.NewCheckpoints(db, workSpiceDB)),
 	)
-	blockID := integrationTestUUID()
+	blockID := testutil.IntegrationUUID()
 	blockUpdated, err := internalWork.ApplyWorkBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyWorkBlockBatchRequest{
 		WorkId: created.Msg.Id,
 		Locale: "en",
@@ -118,7 +119,7 @@ func TestArchivedWorkAllowsAdminEditsButRestrictsLifecycleIntegration(t *testing
 			BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
 			Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK,
 			ExpectedRevision:        restored.Msg.Revision,
-			ContributorMemberIds:    []string{integrationMemberID(adminID)},
+			ContributorMemberIds:    []string{testutil.PostIntegrationMemberID(adminID)},
 			BaseMutations: []*contentv1.RichTextBlockMutation{{
 				Operation: &contentv1.RichTextBlockMutation_Upsert{Upsert: &contentv1.UpsertRichTextBlock{
 					Node: &contentv1.RichTextBlockNode{
@@ -152,9 +153,9 @@ func TestArchivedWorkAllowsAdminEditsButRestrictsLifecycleIntegration(t *testing
 	}))
 	require.NoError(t, err)
 	require.NotEmpty(t, blockUpdated.Msg.DocumentRevision)
-	authorID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, authorID, "Archived Work Author")
-	grantIntegrationGlobalRole(t, workSpiceDB, authorID, policyv1.Role.Author())
+	authorID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, authorID, "Archived Work Author")
+	testutil.GrantIntegrationGlobalRole(t, workSpiceDB, authorID, policyv1.Role.Author())
 	authorSessionID := insertWorkIntegrationSession(t, db, authorID)
 	authorBootstrap, err := internalWork.LoadWorkBlockDocument(context.Background(), connect.NewRequest(&intrav1.LoadWorkBlockDocumentRequest{
 		WorkId: created.Msg.Id, Locale: "en", Principal: &intrav1.CollaborationPrincipal{SessionId: authorSessionID},
@@ -164,7 +165,7 @@ func TestArchivedWorkAllowsAdminEditsButRestrictsLifecycleIntegration(t *testing
 	authorTitle := "Author must not persist archived Work metadata"
 	_, err = internalWork.UpdateWorkLocaleMetadata(context.Background(), connect.NewRequest(&intrav1.UpdateWorkLocaleMetadataRequest{
 		WorkId: created.Msg.Id, Locale: "en", Title: &authorTitle, ExpectedRevision: blockUpdated.Msg.DocumentRevision,
-		ContributorMemberIds: []string{integrationMemberID(authorID)},
+		ContributorMemberIds: []string{testutil.PostIntegrationMemberID(authorID)},
 	}))
 	require.Error(t, err)
 

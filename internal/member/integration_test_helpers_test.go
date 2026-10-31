@@ -12,11 +12,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/account"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -26,7 +26,7 @@ func auditedMemberContext(t *testing.T, identityID, memberID string) context.Con
 	request, err := sharedtelemetry.NewPublicRequestContext("192.0.2.77")
 	require.NoError(t, err)
 	return auth.WithUser(sharedtelemetry.WithRequestContext(t.Context(), request), &auth.UserInfo{
-		SessionID: auth.SessionID(integrationTestUUID()), IdentityID: auth.IdentityID(identityID),
+		SessionID: auth.SessionID(testutil.IntegrationUUID()), IdentityID: auth.IdentityID(identityID),
 		MemberID: auth.MemberID(memberID), Authenticated: true, Onboarded: true,
 	})
 }
@@ -52,8 +52,6 @@ func syncIntegrationGlobalRole(
 	_, err := spiceDB.SyncAccountIdentityGlobalRole(t.Context(), subject, role)
 	require.NoError(t, err)
 }
-
-func integrationTestUUID() string { return uuid.NewString() }
 
 type integrationAccountEmailProjection struct{}
 

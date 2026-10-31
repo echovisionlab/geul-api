@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -30,13 +31,13 @@ import (
 
 func TestInternalProgramEventServiceBlockDocumentLifecycleIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Program Event Internal Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Program Event Internal Admin")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	ctx := programEventAuditedMemberContext(t, adminID, integrationMemberID(adminID))
-	suffix := strings.ReplaceAll(integrationTestUUID(), "-", "")
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	ctx := programEventAuditedMemberContext(t, adminID, testutil.PostIntegrationMemberID(adminID))
+	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 	store := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 	files := newProgramEventIntegrationFileService(db, spiceDB)
 
@@ -103,9 +104,9 @@ func TestInternalProgramEventServiceBlockDocumentLifecycleIntegration(t *testing
 	require.Equal(t, "en", loaded.Msg.Locale)
 	require.True(t, loaded.Msg.LocaleExists)
 
-	memberID := integrationMemberID(adminID)
+	memberID := testutil.PostIntegrationMemberID(adminID)
 	systemCtx := programEventAuditedSystemContext(t)
-	blockID := integrationTestUUID()
+	blockID := testutil.IntegrationUUID()
 	sourceApplied, err := internalSvc.ApplyProgramEventBlockBatch(systemCtx, connect.NewRequest(&intrav1.ApplyProgramEventBlockBatchRequest{
 		EventId: created.Msg.Id,
 		Locale:  "en",
@@ -261,14 +262,14 @@ func TestInternalProgramEventServiceBlockDocumentLifecycleIntegration(t *testing
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 
 	_, err = internalSvc.LoadProgramEventBlockDocument(ctx, connect.NewRequest(&intrav1.LoadProgramEventBlockDocumentRequest{
-		EventId:   integrationTestUUID(),
+		EventId:   testutil.IntegrationUUID(),
 		Locale:    "en",
 		Principal: &intrav1.CollaborationPrincipal{SessionId: sessionID},
 	}))
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
 
 	providerSummary := "Provider target summary"
-	providerRequesterID := integrationTestUUID()
+	providerRequesterID := testutil.IntegrationUUID()
 	require.NoError(t, db.Exec(`
 		INSERT INTO public.member (id, nickname, onboarded, primary_email, available_emails)
 		VALUES (?::uuid, 'program-event-provider-requester', true, 'program-event-provider@example.test',
@@ -311,13 +312,13 @@ func TestInternalProgramEventServiceBlockDocumentLifecycleIntegration(t *testing
 
 func TestProgramEventSourceEditAndSwitchPreserveTargetAndRequestedJobIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Program Event translation invariant admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Program Event translation invariant admin")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	ctx := programEventIntegrationAdminCtx(adminID)
-	suffix := strings.ReplaceAll(integrationTestUUID(), "-", "")
+	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 	store := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 	files := newProgramEventIntegrationFileService(db, spiceDB)
 
@@ -350,16 +351,16 @@ func TestProgramEventSourceEditAndSwitchPreserveTargetAndRequestedJobIntegration
 		INSERT INTO program_event_translation (entity_id, locale, summary, created_at, updated_at)
 		VALUES (?, 'ko', NULL, ?, ?)
 	`, created.Msg.Id, now, now).Error)
-	jobID := integrationTestUUID()
+	jobID := testutil.IntegrationUUID()
 	require.NoError(t, db.Create(&model.TranslationJob{
 		ID:                    jobID,
 		EntityType:            EntityType,
 		EntityID:              created.Msg.Id,
 		TargetLocale:          "ko",
 		SourceLocale:          "en",
-		RequestedByMemberID:   integrationMemberID(adminID),
+		RequestedByMemberID:   testutil.PostIntegrationMemberID(adminID),
 		RequestArtifactDigest: strings.Repeat("a", 64),
-		OperationID:           integrationTestUUID(),
+		OperationID:           testutil.IntegrationUUID(),
 		Status:                "queued",
 		RequestedAt:           now,
 		RequestXLIFF:          []byte("request"),
@@ -389,7 +390,7 @@ func TestProgramEventSourceEditAndSwitchPreserveTargetAndRequestedJobIntegration
 		WithInternalProgramEventContentBlockStore(store),
 		WithInternalProgramEventMediaHydrator(files),
 	)
-	memberID := integrationMemberID(adminID)
+	memberID := testutil.PostIntegrationMemberID(adminID)
 	updatedSummary := "Source summary after edit"
 	metadataUpdated, err := internalService.UpdateProgramEventLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdateProgramEventLocaleMetadataRequest{
 		EventId:              created.Msg.Id,
@@ -412,13 +413,13 @@ func TestProgramEventSourceEditAndSwitchPreserveTargetAndRequestedJobIntegration
 
 func TestProgramEventFileBlockKeepsBaseIdentityAndLocalizedCaptionIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	seedExternalKratosIdentityWithTraits(t, db, adminID, "Program Event Media Name Admin")
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Program Event Media Name Admin")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	ctx := programEventAuditedMemberContext(t, adminID, integrationMemberID(adminID))
-	suffix := strings.ReplaceAll(integrationTestUUID(), "-", "")
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	ctx := programEventAuditedMemberContext(t, adminID, testutil.PostIntegrationMemberID(adminID))
+	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 	store := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 	files := newProgramEventIntegrationFileService(db, spiceDB)
 
@@ -463,8 +464,8 @@ func TestProgramEventFileBlockKeepsBaseIdentityAndLocalizedCaptionIntegration(t 
 	require.NoError(t, err)
 
 	fileID := seedImageBindingUploadedFileFixture(t, db, "program-event-block/file.webp")
-	blockID := integrationTestUUID()
-	memberID := integrationMemberID(adminID)
+	blockID := testutil.IntegrationUUID()
+	memberID := testutil.PostIntegrationMemberID(adminID)
 	sourceApplied, err := internalSvc.ApplyProgramEventBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyProgramEventBlockBatchRequest{
 		EventId: created.Msg.Id,
 		Locale:  "en",
@@ -492,7 +493,7 @@ func TestProgramEventFileBlockKeepsBaseIdentityAndLocalizedCaptionIntegration(t 
 	require.NoError(t, err)
 	requireProgramEventHydratedBlockMedia(t, sourceLoaded.Msg.BlockMedia, fileID, blockID)
 
-	duplicateBlockID := integrationTestUUID()
+	duplicateBlockID := testutil.IntegrationUUID()
 	duplicated, err := internalSvc.ApplyProgramEventBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyProgramEventBlockBatchRequest{
 		EventId: created.Msg.Id,
 		Locale:  "en",
@@ -606,7 +607,7 @@ func TestProgramEventFileBlockKeepsBaseIdentityAndLocalizedCaptionIntegration(t 
 		{name: "non-ready asset", fileID: nonReadyAssetFileID},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			blockID := integrationTestUUID()
+			blockID := testutil.IntegrationUUID()
 			applied, err := internalSvc.ApplyProgramEventBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyProgramEventBlockBatchRequest{
 				EventId: created.Msg.Id,
 				Locale:  "en",
@@ -755,7 +756,7 @@ func (*programEventIntegrationFileService) HydrateAuthorizedProgramEventBlockMed
 
 func insertProgramEventIntegrationSession(t *testing.T, db *gorm.DB, identityID string) string {
 	t.Helper()
-	sessionID := integrationTestUUID()
+	sessionID := testutil.IntegrationUUID()
 	require.NoError(t, db.Exec(`
 		INSERT INTO kratos.sessions (
 			id, identity_id, active, authenticated_at, expires_at,

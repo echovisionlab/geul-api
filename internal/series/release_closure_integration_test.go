@@ -20,6 +20,7 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -37,14 +38,14 @@ func (l seriesQueryCounter) Trace(ctx context.Context, begin time.Time, fc func(
 
 func TestSeriesLifecycleSlugAndAdminListContractIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	outsiderID := integrationTestUUID()
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	outsiderID := testutil.IntegrationUUID()
 	seedSeriesActor(t, db, adminID, "Series closure admin")
 	seedSeriesActor(t, db, outsiderID, "Series closure outsider")
 	service := newSeriesIntegrationService(t, db, adminID, &recordingSeriesFileDeleter{})
 	ctx := seriesIntegrationAdminCtx(adminID)
-	suffix := strings.ReplaceAll(integrationTestUUID(), "-", "")
+	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 
 	created, err := service.CreateSeries(ctx, connect.NewRequest(&managev1.CreateSeriesRequest{
 		Title: "Series Lifecycle " + suffix,
@@ -104,8 +105,8 @@ func TestSeriesLifecycleSlugAndAdminListContractIntegration(t *testing.T) {
 	require.Equal(t, alphaID, list.Msg.Series[0].GetSeries().GetId())
 
 	outsiderCtx := auth.WithUser(context.Background(), &auth.UserInfo{
-		IdentityID: auth.IdentityID(outsiderID), MemberID: auth.MemberID(integrationMemberID(outsiderID)),
-		SessionID: auth.SessionID(integrationTestUUID()), Authenticated: true,
+		IdentityID: auth.IdentityID(outsiderID), MemberID: auth.MemberID(testutil.PostIntegrationMemberID(outsiderID)),
+		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true,
 	})
 	_, err = service.GetSeriesWithManagers(outsiderCtx, connect.NewRequest(&managev1.GetSeriesWithManagersRequest{Id: created.Msg.Id}))
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
@@ -113,10 +114,10 @@ func TestSeriesLifecycleSlugAndAdminListContractIntegration(t *testing.T) {
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
 	_, err = service.ListSeriesPosts(outsiderCtx, connect.NewRequest(&managev1.ListSeriesPostsRequest{SeriesId: created.Msg.Id}))
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
-	_, err = service.ListSeriesManagers(ctx, connect.NewRequest(&managev1.ListSeriesManagersRequest{SeriesId: integrationTestUUID()}))
+	_, err = service.ListSeriesManagers(ctx, connect.NewRequest(&managev1.ListSeriesManagersRequest{SeriesId: testutil.IntegrationUUID()}))
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
 
-	adminMemberID := integrationMemberID(adminID)
+	adminMemberID := testutil.PostIntegrationMemberID(adminID)
 	_, err = service.AddSeriesManager(ctx, connect.NewRequest(&managev1.AddSeriesManagerRequest{
 		SeriesId: created.Msg.Id, MemberId: adminMemberID,
 	}))
@@ -134,7 +135,7 @@ func TestSeriesLifecycleSlugAndAdminListContractIntegration(t *testing.T) {
 	zeroManagers, err := service.GetSeriesWithManagers(ctx, connect.NewRequest(&managev1.GetSeriesWithManagersRequest{Id: alphaID}))
 	require.NoError(t, err)
 	require.Empty(t, zeroManagers.Msg.Managers)
-	outsiderMemberID := integrationMemberID(outsiderID)
+	outsiderMemberID := testutil.PostIntegrationMemberID(outsiderID)
 	_, err = service.AddSeriesManager(ctx, connect.NewRequest(&managev1.AddSeriesManagerRequest{
 		SeriesId: alphaID, MemberId: outsiderMemberID,
 	}))
@@ -154,22 +155,22 @@ func TestSeriesLifecycleSlugAndAdminListContractIntegration(t *testing.T) {
 
 func TestSeriesPostRelationAuthorityAndAtomicOrderingIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	authorID := integrationTestUUID()
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
+	authorID := testutil.IntegrationUUID()
 	seedSeriesActor(t, db, adminID, "Series relation admin")
 	seedSeriesActor(t, db, authorID, "Series relation author")
 	service := newSeriesIntegrationService(t, db, adminID, &recordingSeriesFileDeleter{})
-	grantIntegrationGlobalRole(t, service.spiceDB, authorID, policyv1.Role.Author())
+	testutil.GrantIntegrationGlobalRole(t, service.spiceDB, authorID, policyv1.Role.Author())
 	adminCtx := seriesIntegrationAdminCtx(adminID)
 	authorCtx := auth.WithUser(context.Background(), &auth.UserInfo{
-		IdentityID: auth.IdentityID(authorID), MemberID: auth.MemberID(integrationMemberID(authorID)),
-		SessionID: auth.SessionID(integrationTestUUID()), Authenticated: true,
+		IdentityID: auth.IdentityID(authorID), MemberID: auth.MemberID(testutil.PostIntegrationMemberID(authorID)),
+		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true,
 	})
-	suffix := strings.ReplaceAll(integrationTestUUID(), "-", "")
+	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 	seriesOne := createSeriesForClosure(t, service, adminCtx, "Relation One "+suffix, "relation-one-"+suffix)
 	seriesTwo := createSeriesForClosure(t, service, adminCtx, "Relation Two "+suffix, "relation-two-"+suffix)
-	memberID := integrationMemberID(authorID)
+	memberID := testutil.PostIntegrationMemberID(authorID)
 	addSeriesManagerRelation(t, service, authorID, seriesOne)
 	addSeriesManagerRelation(t, service, authorID, seriesTwo)
 
@@ -257,7 +258,7 @@ func TestSeriesPostRelationAuthorityAndAtomicOrderingIntegration(t *testing.T) {
 	requirePostSeriesRelation(t, db, postTwo, &seriesOne, intPtr(0))
 
 	addSeriesManagerRelation(t, service, authorID, seriesTwo)
-	replacementAuthorID := integrationMemberID(adminID)
+	replacementAuthorID := testutil.PostIntegrationMemberID(adminID)
 	require.NoError(t, db.Exec(`
 		INSERT INTO post_author (post_id, member_id, created_at)
 		VALUES (?::uuid, ?::uuid, NOW())
@@ -271,20 +272,20 @@ func TestSeriesPostRelationAuthorityAndAtomicOrderingIntegration(t *testing.T) {
 	requirePostSeriesRelation(t, db, postTwo, &seriesOne, intPtr(0))
 
 	_, err = service.AssignPostToSeries(authorCtx, connect.NewRequest(&managev1.AssignPostToSeriesRequest{
-		SeriesId: seriesTwo, PostId: integrationTestUUID(),
+		SeriesId: seriesTwo, PostId: testutil.IntegrationUUID(),
 	}))
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
 }
 
 func TestDeleteSeriesClearsPostRelationAndPreservesFeaturedImageFileIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
 	seedSeriesActor(t, db, adminID, "Series delete admin")
 	fileDeleter := &recordingSeriesFileDeleter{}
 	service := newSeriesIntegrationService(t, db, adminID, fileDeleter)
 	ctx := seriesIntegrationAdminCtx(adminID)
-	suffix := strings.ReplaceAll(integrationTestUUID(), "-", "")
+	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 	seriesID := createSeriesForClosure(t, service, ctx, "Delete Series "+suffix, "delete-series-"+suffix)
 	now := time.Now().UTC()
 	require.NoError(t, db.Exec(`
@@ -293,11 +294,11 @@ func TestDeleteSeriesClearsPostRelationAndPreservesFeaturedImageFileIntegration(
 		) VALUES (?::uuid, 'ko', '삭제 시리즈', ?, ?)
 	`, seriesID, now, now).Error)
 	_, err := service.AddSeriesManager(ctx, connect.NewRequest(&managev1.AddSeriesManagerRequest{
-		SeriesId: seriesID, MemberId: integrationMemberID(adminID),
+		SeriesId: seriesID, MemberId: testutil.PostIntegrationMemberID(adminID),
 	}))
 	require.NoError(t, err)
-	requireSeriesManagerAttribution(t, db, seriesID, integrationMemberID(adminID), true)
-	postID := seedSeriesPost(t, db, integrationMemberID(adminID))
+	requireSeriesManagerAttribution(t, db, seriesID, testutil.PostIntegrationMemberID(adminID), true)
+	postID := seedSeriesPost(t, db, testutil.PostIntegrationMemberID(adminID))
 	require.NoError(t, db.Table("post").Where("id = ?", postID).Updates(structured.Fields{
 		"series_id": seriesID, "series_order": 0,
 	}).Error)
@@ -357,13 +358,13 @@ func TestDeleteSeriesClearsPostRelationAndPreservesFeaturedImageFileIntegration(
 		Where("owner_type = ? AND owner_id = ? AND binding_key = ?", "series", seriesID, "featured_image").
 		Count(&bindingCount).Error)
 	require.Zero(t, bindingCount)
-	requireSeriesManagerAttribution(t, db, seriesID, integrationMemberID(adminID), false)
+	requireSeriesManagerAttribution(t, db, seriesID, testutil.PostIntegrationMemberID(adminID), false)
 }
 
 func TestDeleteSeriesSerializesWithFeaturedImageBindingIntegration(t *testing.T) {
 	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
+	adminID := testutil.IntegrationUUID()
 	seedSeriesActor(t, db, adminID, "Concurrent Series delete admin")
 	service := newSeriesIntegrationService(t, db, adminID, &recordingSeriesFileDeleter{})
 	ctx := seriesIntegrationAdminCtx(adminID)
@@ -374,7 +375,7 @@ func TestDeleteSeriesSerializesWithFeaturedImageBindingIntegration(t *testing.T)
 		_ = db.Exec(`DELETE FROM series WHERE id = ?`, seriesID).Error
 		_ = db.Exec(`DELETE FROM public_asset WHERE source_file_id = ?`, fileID).Error
 		_ = db.Exec(`DELETE FROM file WHERE id = ?`, fileID).Error
-		_ = db.Exec(`DELETE FROM member WHERE id = ?`, integrationMemberID(adminID)).Error
+		_ = db.Exec(`DELETE FROM member WHERE id = ?`, testutil.PostIntegrationMemberID(adminID)).Error
 		_ = db.Exec(`DELETE FROM kratos.identities WHERE id = ?`, adminID).Error
 	})
 
@@ -426,22 +427,22 @@ func TestDeleteSeriesSerializesWithFeaturedImageBindingIntegration(t *testing.T)
 func TestUpdateSeriesUsesLockedCurrentSlugForMenuRewriteIntegration(t *testing.T) {
 	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
+	adminID := testutil.IntegrationUUID()
 	seedSeriesActor(t, db, adminID, "Concurrent Series update admin")
 	service := newSeriesIntegrationService(t, db, adminID, &recordingSeriesFileDeleter{})
 	ctx := seriesIntegrationAdminCtx(adminID)
 	seriesID := createSeriesForClosure(t, service, ctx, "Concurrent Series update", "series-slug-original-"+adminID)
 	originalSlug := requireSeriesSlug(t, db, seriesID)
-	menuID := integrationTestUUID()
+	menuID := testutil.IntegrationUUID()
 	menuItems, err := json.Marshal([]model.MenuItem{{
 		ID: "series-link", Label: "Series", LinkType: "series", TargetID: &seriesID, TargetSlug: &originalSlug,
 	}})
 	require.NoError(t, err)
-	menuContentDocumentID := integrationTestUUID()
+	menuContentDocumentID := testutil.IntegrationUUID()
 	require.NoError(t, db.Exec(`
 		INSERT INTO content_document (id, profile, revision, created_at, updated_at)
 		VALUES (?::uuid, 'compact', ?::uuid, NOW(), NOW())
-	`, menuContentDocumentID, integrationTestUUID()).Error)
+	`, menuContentDocumentID, testutil.IntegrationUUID()).Error)
 	require.NoError(t, db.Create(&model.Menu{
 		ID: menuID, ContentDocumentID: menuContentDocumentID, SourceLocale: "en",
 		Name: "Concurrent Series menu", Items: menuItems, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
@@ -450,7 +451,7 @@ func TestUpdateSeriesUsesLockedCurrentSlugForMenuRewriteIntegration(t *testing.T
 		_ = db.Exec(`DELETE FROM menu WHERE id = ?`, menuID).Error
 		_ = db.Exec(`DELETE FROM content_document WHERE id = ?`, menuContentDocumentID).Error
 		_ = db.Exec(`DELETE FROM series WHERE id = ?`, seriesID).Error
-		_ = db.Exec(`DELETE FROM member WHERE id = ?`, integrationMemberID(adminID)).Error
+		_ = db.Exec(`DELETE FROM member WHERE id = ?`, testutil.PostIntegrationMemberID(adminID)).Error
 		_ = db.Exec(`DELETE FROM kratos.identities WHERE id = ?`, adminID).Error
 	})
 
@@ -495,23 +496,23 @@ func TestUpdateSeriesUsesLockedCurrentSlugForMenuRewriteIntegration(t *testing.T
 func TestSeriesMutationRechecksAuthorityAfterOwningRowLockIntegration(t *testing.T) {
 	t.Parallel()
 	db := newConcurrentServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
-	managerID := integrationTestUUID()
+	adminID := testutil.IntegrationUUID()
+	managerID := testutil.IntegrationUUID()
 	seedSeriesActor(t, db, adminID, "Series authority admin")
 	seedSeriesActor(t, db, managerID, "Series authority manager")
 	service := newSeriesIntegrationService(t, db, adminID, &recordingSeriesFileDeleter{})
 	adminCtx := seriesIntegrationAdminCtx(adminID)
 	seriesID := seedSeriesRow(t, db, "Authority Series", "authority-series-"+managerID, managev1.SeriesStatus_SERIES_STATUS_DRAFT.String())
-	managerMemberID := integrationMemberID(managerID)
+	managerMemberID := testutil.PostIntegrationMemberID(managerID)
 	t.Cleanup(func() {
 		_ = db.Exec(`DELETE FROM series WHERE id = ?`, seriesID).Error
-		_ = db.Exec(`DELETE FROM member WHERE id IN (?, ?)`, integrationMemberID(adminID), managerMemberID).Error
+		_ = db.Exec(`DELETE FROM member WHERE id IN (?, ?)`, testutil.PostIntegrationMemberID(adminID), managerMemberID).Error
 		_ = db.Exec(`DELETE FROM kratos.identities WHERE id IN (?, ?)`, adminID, managerID).Error
 	})
 	addSeriesManagerRelation(t, service, managerID, seriesID)
 	managerCtx := auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(managerID), MemberID: auth.MemberID(managerMemberID),
-		SessionID: auth.SessionID(integrationTestUUID()), Authenticated: true,
+		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true,
 	})
 
 	blocker := db.Begin()
@@ -573,10 +574,10 @@ func TestSeriesMutationRechecksAuthorityAfterOwningRowLockIntegration(t *testing
 
 func TestSeriesAdminListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
 	seedSeriesActor(t, db, adminID, "Series query admin")
-	suffix := strings.ReplaceAll(integrationTestUUID(), "-", "")
+	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 	for index := 0; index < 12; index++ {
 		seedSeriesRow(t, db, fmt.Sprintf("Query Series %02d %s", index, suffix), fmt.Sprintf("query-series-%02d-%s", index, suffix), managev1.SeriesStatus_SERIES_STATUS_DRAFT.String())
 	}
@@ -605,12 +606,12 @@ func TestSeriesAdminListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
 
 func TestListSeriesSimpleReturnsAllSeriesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
-	adminID := integrationTestUUID()
+	db := testutil.NewIntegrationDB(t)
+	adminID := testutil.IntegrationUUID()
 	seedSeriesActor(t, db, adminID, "Series simple list admin")
 	service := newSeriesIntegrationService(t, db, adminID, nil)
 	ctx := seriesIntegrationAdminCtx(adminID)
-	suffix := strings.ReplaceAll(integrationTestUUID(), "-", "")
+	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
 
 	const seededCount = 105
 	seededIDs := make(map[string]struct{}, seededCount)
@@ -675,7 +676,7 @@ func replaceSeriesPostAuthorRelation(t *testing.T, service *SeriesService, postI
 
 func seedSeriesFileDerivative(t *testing.T, db *gorm.DB, fileID string) string {
 	t.Helper()
-	assetID := integrationTestUUID()
+	assetID := testutil.IntegrationUUID()
 	objectKey, err := mediaauth.AssetObjectKey(assetID, "webp")
 	require.NoError(t, err)
 	now := time.Now().UTC()

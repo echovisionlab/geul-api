@@ -52,11 +52,11 @@ func audienceAuditContext(
 ) context.Context {
 	t.Helper()
 	request, err := sharedtelemetry.NewPropagatedRequestContext(
-		integrationTestUUID(),
+		testutil.IntegrationUUID(),
 		sharedtelemetry.MemberActor{
 			IdentityID: identityID,
 			MemberID:   memberID,
-			SessionID:  integrationTestUUID(),
+			SessionID:  testutil.IntegrationUUID(),
 		},
 	)
 	require.NoError(t, err)
@@ -65,7 +65,7 @@ func audienceAuditContext(
 		&auth.UserInfo{
 			IdentityID:    auth.IdentityID(identityID),
 			MemberID:      auth.MemberID(memberID),
-			SessionID:     auth.SessionID(integrationTestUUID()),
+			SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 			Authenticated: true,
 			Onboarded:     true,
 		},
@@ -169,7 +169,7 @@ func TestAudienceDomainAuditsArchiveCascadeAndRestoreIntegration(t *testing.T) {
 	db := newAudienceIntegrationDB(t)
 	identityID := uuid.NewString()
 	ory := testutil.SetupOryStack(t)
-	memberID := seedExternalKratosIdentityWithTraits(
+	memberID := testutil.SeedPostIntegrationIdentity(
 		t,
 		db,
 		identityID,
@@ -424,7 +424,7 @@ func TestAudienceAuditAppendFailureRollsBackCreateAndArchiveIntegration(t *testi
 	db := newAudienceIntegrationDB(t)
 	ory := testutil.SetupOryStack(t)
 	identityID := uuid.NewString()
-	memberID := seedExternalKratosIdentityWithTraits(
+	memberID := testutil.SeedPostIntegrationIdentity(
 		t,
 		db,
 		identityID,
@@ -502,7 +502,7 @@ func TestAudienceArchiveLocksSegmentBeforeExactPolicyRelationIntegration(t *test
 	stack := testutil.PrepareOryIntegrationConcurrentTest(t)
 	ory := testutil.SetupOryStack(t)
 	identityID := uuid.NewString()
-	memberID := seedExternalKratosIdentityWithTraits(
+	memberID := testutil.SeedPostIntegrationIdentity(
 		t,
 		stack.DB,
 		identityID,

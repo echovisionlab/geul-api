@@ -11,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -21,7 +22,7 @@ import (
 
 func TestPageAccessPolicyManagementIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := pageIntegrationAdmin(t, db)
 	ctx = withPageAuditedRequestContext(t, ctx)
 	service := NewAuditedPageService(db, newPageRuntimeForTest(db, "https://cdn.example.com"),
@@ -91,8 +92,8 @@ func TestPageAccessPolicyManagementIntegration(t *testing.T) {
 	require.Empty(t, reset.Msg.AccessPolicy.UserTagIds)
 
 	memberIdentityID := uuid.NewString()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, memberIdentityID, "Page policy user")
-	grantIntegrationGlobalRole(t, spiceDB, memberIdentityID, policyv1.Role.User())
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, memberIdentityID, "Page policy user")
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, memberIdentityID, policyv1.Role.User())
 	memberCtx := auth.WithUser(ctx, &auth.UserInfo{IdentityID: auth.IdentityID(memberIdentityID), MemberID: auth.MemberID(memberID), SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true})
 	_, err = service.UpdatePage(memberCtx, connect.NewRequest(&managev1.UpdatePageRequest{Id: pageID, AccessPolicy: conditions}))
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
@@ -102,7 +103,7 @@ func TestPageAccessPolicyManagementIntegration(t *testing.T) {
 
 func TestPageAccessPolicyAbsentUpdateReadsLockedStateIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := pageIntegrationAdmin(t, db)
 	service := NewPageService(db, newPageRuntimeForTest(db, "https://cdn.example.com"), newPageIntegrationFiles(db, spiceDB), noopAsyncPublisher{}, nil, spiceDB,
 		WithPageContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)), WithPageContentBlockMediaHydrator(passthroughPageContentBlockMediaHydrator{}))

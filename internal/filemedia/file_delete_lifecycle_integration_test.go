@@ -23,7 +23,7 @@ import (
 
 func TestFileServiceDeleteFilePersistsRequestAndPublishesDeleteEventIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	publisher := &hardCutAsyncPublisher{}
@@ -101,7 +101,7 @@ func TestFileServiceDeleteFilePersistsRequestAndPublishesDeleteEventIntegration(
 
 func TestFileServiceDeleteFileCleansUnselectedMeshOptimizationCandidatesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	publisher := &hardCutAsyncPublisher{}

@@ -17,7 +17,7 @@ import (
 
 func TestRegistrationEmailReuseHoldChecksEveryDeletedMemberCandidate(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	now := time.Now().UTC()
 	insertDeletedMemberEmailFixture(t, db, now.Add(-6*24*time.Hour), []string{
 		"primary@example.test", "secondary@example.test",
@@ -37,7 +37,7 @@ func TestRegistrationEmailReuseHoldChecksEveryDeletedMemberCandidate(t *testing.
 
 func TestPublicEmailCodeRegistrationBlocksCurrentProviderOnlyCandidate(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
 	email := "provider-only-" + identityID + "@example.test"
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
@@ -58,7 +58,7 @@ func TestPublicEmailCodeRegistrationBlocksCurrentProviderOnlyCandidate(t *testin
 
 func TestScrubExpiredMemberEmailProjectionsUsesDeletedAtRetention(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	now := time.Now().UTC()
 	expiredID := insertDeletedMemberEmailFixture(t, db, now.AddDate(-2, 0, -1), []string{"expired@example.test"})
 	retainedID := insertDeletedMemberEmailFixture(t, db, now.AddDate(-2, 0, 1), []string{"retained@example.test"})

@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/maptheme"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -23,11 +24,11 @@ import (
 
 func TestSiteSettingsLoaderAndDefaultThemeAuditCommitOnlyActualChangesIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Site Settings gap audit admin")
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Site Settings gap audit admin")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := siteSettingsGapAuditContext(t, identityID, memberID)
 	writer := apitelemetry.NewDurableWriter(db)
 	settings := sitesettings.NewAuditedSiteSettingService(
@@ -76,11 +77,11 @@ func TestSiteSettingsLoaderAndDefaultThemeAuditCommitOnlyActualChangesIntegratio
 
 func TestSiteSettingsLoaderAndDefaultThemeAuditFailureRollsBackIntegration(t *testing.T) {
 	t.Parallel()
-	db := newServiceIntegrationDB(t)
+	db := testutil.NewIntegrationDB(t)
 	identityID := uuid.NewString()
-	memberID := seedExternalKratosIdentityWithTraits(t, db, identityID, "Site Settings gap rollback admin")
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Site Settings gap rollback admin")
 	spiceDB := integrationSpiceDB(t)
-	grantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := siteSettingsGapAuditContext(t, identityID, memberID)
 	loaderFileID, _ := seedSiteSettingReadyFile(t, db, "rollback-loader", "loader", "webp", "image/webp", 1024)
 	settings := sitesettings.NewAuditedSiteSettingService(
