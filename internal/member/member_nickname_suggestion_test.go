@@ -81,7 +81,7 @@ func TestMemberNicknameSuggestionPrefersClaimsAndSkipsInvalidClaimValues(t *test
 			}}},
 		}},
 	}
-	service := &MemberService{identity: &fakeIdentityManager{identity: identity}}
+	service := &Service{identity: &fakeIdentityManager{identity: identity}}
 	member := model.Member{ID: memberID, AccountIdentityID: new(identityID)}
 	ctx := auth.WithUser(t.Context(), &auth.UserInfo{
 		IdentityID: identityID, MemberID: memberID,
@@ -123,7 +123,7 @@ func TestMemberNicknameSuggestionIsLiveBestEffortOnlyBeforeOnboarding(t *testing
 			}}},
 		}},
 	}
-	service := &MemberService{identity: &fakeIdentityManager{identity: identity}}
+	service := &Service{identity: &fakeIdentityManager{identity: identity}}
 	member := model.Member{ID: memberID, AccountIdentityID: new(identityID)}
 	ctx := auth.WithUser(t.Context(), &auth.UserInfo{
 		IdentityID: identityID, MemberID: memberID,

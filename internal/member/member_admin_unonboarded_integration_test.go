@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -35,17 +36,21 @@ func TestAdminProfileAvatarAndTagsKeepMemberUnonboardedIntegration(t *testing.T)
 	})
 	require.NoError(t, db.Exec(`UPDATE member SET onboarded=FALSE WHERE id=?::uuid`, memberID).Error)
 
-	service := &MemberService{
-		db:          db,
-		cdnDomain:   "https://cdn.example.test",
-		auditWriter: apitelemetry.NewDurableWriter(db),
-	}
+	service := newTestService(t, Deps{
+		DB:        db,
+		SpiceDB:   testutil.SetupOryStack(t).SpiceDBClient,
+		CDNDomain: "https://cdn.example.test",
+		Audit:     apitelemetry.NewDurableWriter(db),
+	})
 	nickname := "Edited by Admin"
 	bio := "Admin-authored biography"
 	website := "https://admin-edited.example.test"
 	links := map[string]string{"homepage": website}
-	adminCtx := memberAuditContextForPair(t, identityID, memberID)
-	profile, err := service.updateMemberProfileAsAdmin(adminCtx, memberID, &nickname, &bio, &website, links)
+	adminCtx := freshAdminContext(t, db)
+	require.NoError(t, service.updateMemberProfileAsAdmin(adminCtx, UpdateMemberProfileCommand{
+		MemberID: memberID, Nickname: &nickname, Bio: &bio, Website: &website, SocialLinks: links,
+	}))
+	_, profile, err := service.memberProfileByID(adminCtx, memberID)
 	require.NoError(t, err)
 	require.Equal(t, nickname, profile.Summary.Nickname)
 	require.Equal(t, bio, profile.GetBio())
@@ -78,7 +83,7 @@ func TestAdminProfileAvatarAndTagsKeepMemberUnonboardedIntegration(t *testing.T)
 	require.Equal(t, []string{secondTag.ID}, storedTagIDs)
 
 	_, err = service.replaceMemberTags(adminCtx, memberID, []string{uuid.NewString()})
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 	storedTagIDs = nil
 	require.NoError(t, db.Model(&model.UserTagMapping{}).
 		Where("member_id=?::uuid", memberID).
@@ -86,14 +91,14 @@ func TestAdminProfileAvatarAndTagsKeepMemberUnonboardedIntegration(t *testing.T)
 		Pluck("tag_id", &storedTagIDs).Error)
 	require.Equal(t, []string{secondTag.ID}, storedTagIDs)
 
-	avatarSummary, err := service.deleteAvatar(adminCtx, memberID, true)
+	avatarSummary, err := service.deleteAvatar(adminCtx, memberID, freshAdmin(), true)
 	require.NoError(t, err)
 	require.Equal(t, memberID, avatarSummary.Id)
 	requireMemberOnboarded(t, db, memberID, false)
 
 	require.NoError(t, db.Exec(`UPDATE member SET account_identity_id=NULL WHERE id=?::uuid`, memberID).Error)
 	_, err = service.replaceMemberTags(adminCtx, memberID, []string{firstTag.ID})
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.Wrap(err).Code())
 	storedTagIDs = nil
 	require.NoError(t, db.Model(&model.UserTagMapping{}).
 		Where("member_id=?::uuid", memberID).

@@ -3,12 +3,10 @@ package member
 import (
 	"context"
 	"fmt"
-	"net/http"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/geoip"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -16,7 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func (s *MemberService) currentMySections(
+func (s *Service) currentMySections(
 	ctx context.Context,
 	identityID auth.IdentityID,
 	author bool,
@@ -27,11 +25,11 @@ func (s *MemberService) currentMySections(
 	}
 	subject, err := auth.NewAccountIdentitySubject(identityID)
 	if err != nil {
-		return nil, errs.WithCause(errs.InvalidSession(), err)
+		return nil, domainerr.InvalidSession().WithCause(err)
 	}
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
-		return nil, errs.WithCause(errs.InvalidSession(), err)
+		return nil, domainerr.InvalidSession().WithCause(err)
 	}
 	resources := []struct {
 		lookup  policyv1.ResourceLookup
@@ -44,7 +42,7 @@ func (s *MemberService) currentMySections(
 	for _, resource := range resources {
 		ids, lookupErr := s.spicedb.LookupResources(ctx, resource.lookup, actor)
 		if lookupErr != nil {
-			return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), fmt.Errorf("lookup section resources: %w", lookupErr))
+			return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(fmt.Errorf("lookup section resources: %w", lookupErr))
 		}
 		if len(ids) != 0 {
 			sections = append(sections, resource.section)
@@ -53,8 +51,10 @@ func (s *MemberService) currentMySections(
 	return sections, nil
 }
 
-func buildRequestMetadata(ctx context.Context, header http.Header) *managev1.RequestMetadata {
-	metadata := &managev1.RequestMetadata{}
+// requestMetadata describes the request a session read arrived on.
+// clientAddress is the address the transport reports for the client.
+func requestMetadata(ctx context.Context, clientAddress string) *managev1.RequestMetadata {
+	metadata := &managev1.RequestMetadata{IpAddress: clientAddress}
 	if geo := geoip.GetInfo(ctx); geo != nil {
 		metadata.Geo = &managev1.GeoIPInfo{
 			CountryCode: geo.CountryCode,
@@ -71,18 +71,18 @@ func buildRequestMetadata(ctx context.Context, header http.Header) *managev1.Req
 			metadata.Geo.TimeZone = &geo.TimeZone
 		}
 	}
-	if value := header.Get("X-Forwarded-For"); value != "" {
-		metadata.IpAddress = value
-	} else {
-		metadata.IpAddress = header.Get("X-Real-IP")
-	}
 	return metadata
 }
 
-func (s *MemberService) GetCurrentSession(
-	ctx context.Context,
-	req *connect.Request[managev1.GetCurrentSessionRequest],
-) (*connect.Response[managev1.GetCurrentSessionResponse], error) {
+// CurrentSessionQuery reads the authenticated session. ClientAddress is the
+// client address the transport received the request from.
+type CurrentSessionQuery struct {
+	ClientAddress string
+}
+
+// CurrentSession returns the authenticated Member's session view, with a
+// nickname suggestion while the Member is not onboarded.
+func (s *Service) CurrentSession(ctx context.Context, query CurrentSessionQuery) (*managev1.GetCurrentSessionResponse, error) {
 	principal, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
 		return nil, err
@@ -92,18 +92,18 @@ func (s *MemberService) GetCurrentSession(
 		return nil, err
 	}
 	if member.AccountIdentityID == nil || *member.AccountIdentityID != principal.IdentityID.String() {
-		return nil, errs.InvalidSession()
+		return nil, domainerr.InvalidSession()
 	}
 	assets, err := s.loadAvatarAssets(ctx, []string{member.ID})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	account, err := s.sessionAccountSummary(ctx, member.ID)
+	account, err := s.accounts.SessionSummaryForMember(ctx, s.db, s.spicedb, member.ID)
 	if err != nil {
 		return nil, err
 	}
 	if account.MemberId != member.ID {
-		return nil, errs.InvalidSession()
+		return nil, domainerr.InvalidSession()
 	}
 	sessionMember := &managev1.CurrentSessionMember{
 		Summary:         memberSummary(*member, assets[member.ID]),
@@ -114,23 +114,21 @@ func (s *MemberService) GetCurrentSession(
 	if account.CanonicalEmail != nil {
 		sessionMember.Email = &account.CanonicalEmail.Email
 	}
-	metadata := buildRequestMetadata(ctx, req.Header())
-	response := &managev1.GetCurrentSessionResponse{
+	session := &managev1.GetCurrentSessionResponse{
 		Member:            sessionMember,
-		Metadata:          metadata,
+		Metadata:          requestMetadata(ctx, query.ClientAddress),
 		Onboarded:         member.Onboarded,
 		AccountIdentityId: principal.IdentityID.String(),
 	}
 	if !member.Onboarded {
-		response.NicknameSuggestion = s.nicknameSuggestion(ctx, *member)
+		session.NicknameSuggestion = s.nicknameSuggestion(ctx, *member)
 	}
-	return connect.NewResponse(response), nil
+	return session, nil
 }
 
-func (s *MemberService) GetMyProfile(
-	ctx context.Context,
-	_ *connect.Request[managev1.GetMyProfileRequest],
-) (*connect.Response[managev1.GetMyProfileResponse], error) {
+// OwnProfile returns the authenticated Member's profile. Bio, website and
+// social links are hidden unless the Member holds the Author role.
+func (s *Service) OwnProfile(ctx context.Context) (*managev1.MemberProfile, error) {
 	principal, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
 		return nil, err
@@ -146,29 +144,23 @@ func (s *MemberService) GetMyProfile(
 	if !author {
 		hideExtendedMemberProfile(profile)
 	}
-	return connect.NewResponse(&managev1.GetMyProfileResponse{Member: profile}), nil
+	return profile, nil
 }
 
-func (s *MemberService) GetMySections(
-	ctx context.Context,
-	_ *connect.Request[managev1.GetMySectionsRequest],
-) (*connect.Response[managev1.GetMySectionsResponse], error) {
+// OwnSections returns the account sections the authenticated Member may open.
+func (s *Service) OwnSections(ctx context.Context) ([]managev1.MySection, error) {
 	principal, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if !principal.Onboarded {
-		return connect.NewResponse(&managev1.GetMySectionsResponse{}), nil
+		return nil, nil
 	}
 	author, err := s.isGlobalAuthor(ctx)
 	if err != nil {
 		return nil, err
 	}
-	sections, err := s.currentMySections(ctx, principal.IdentityID, author)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.GetMySectionsResponse{Sections: sections}), nil
+	return s.currentMySections(ctx, principal.IdentityID, author)
 }
 
 func cookieConsentProto(row *model.UserCookieConsent) *managev1.CookieConsent {

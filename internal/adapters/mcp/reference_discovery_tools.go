@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/member"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -62,7 +63,7 @@ type MapPlaceReferenceDiscovery interface {
 	SearchMapPlaces(context.Context, *connect.Request[managev1.SearchMapPlacesRequest]) (*connect.Response[managev1.SearchMapPlacesResponse], error)
 }
 type MemberReferenceDiscovery interface {
-	SearchMembers(context.Context, *connect.Request[managev1.SearchMembersRequest]) (*connect.Response[managev1.SearchMembersResponse], error)
+	SearchMembers(context.Context, member.SearchMembersQuery) ([]*commonv1.MemberSummary, error)
 }
 type ArtistReferenceDiscovery interface {
 	ListArtists(context.Context, *connect.Request[managev1.ListArtistsRequest]) (*connect.Response[managev1.ListArtistsResponse], error)
@@ -181,12 +182,12 @@ func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, argu
 			}
 		}
 	case "member":
-		response, err := tools.members.SearchMembers(ctx, connect.NewRequest(&managev1.SearchMembersRequest{Query: input.Query, Limit: min(input.Limit+1, maximum)}))
+		members, err := tools.members.SearchMembers(ctx, member.SearchMembersQuery{Query: input.Query, Limit: min(input.Limit+1, maximum)})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		hasMore = quickSearchHasMore(len(response.Msg.Members), input.Limit, maximum)
-		for _, item := range response.Msg.Members[:min(len(response.Msg.Members), int(input.Limit))] {
+		hasMore = quickSearchHasMore(len(members), input.Limit, maximum)
+		for _, item := range members[:min(len(members), int(input.Limit))] {
 			if item != nil {
 				items = append(items, referenceItem(item.Id, item.Nickname, nil, "", "", item.Deleted))
 			}

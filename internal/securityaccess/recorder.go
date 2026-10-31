@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -116,11 +116,8 @@ func (recorder *Recorder) append(
 	)
 }
 
-// Unavailable returns the transport error used when a required access record
-// cannot be persisted.
-func Unavailable() *connect.Error {
-	return connect.NewError(
-		connect.CodeUnavailable,
-		errors.New("personal data access record is temporarily unavailable"),
-	)
+// Unavailable is the outcome when a required access record cannot be
+// persisted.
+func Unavailable() *domainerr.Error {
+	return domainerr.New(domainerr.Unavailable, "", "personal data access record is temporarily unavailable")
 }

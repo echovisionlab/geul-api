@@ -9,11 +9,6 @@ import (
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
-// FileDeleter is the Member-owned minimal avatar cleanup dependency.
-type FileDeleter interface {
-	DeleteFileByID(context.Context, string) error
-}
-
 // UserAvatarAssetPromoter is the exact File capability required for Member
 // avatar projection; File storage remains outside this domain.
 type UserAvatarAssetPromoter interface {

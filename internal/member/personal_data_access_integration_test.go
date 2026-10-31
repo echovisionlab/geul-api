@@ -16,7 +16,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -44,27 +43,6 @@ func (*personalDataAccessWriterStub) AppendDomainAuditInTransaction(
 	return nil
 }
 
-type personalDataFileDeleter struct{}
-
-func (personalDataFileDeleter) DeleteFileByID(context.Context, string) error { return nil }
-
-type personalDataEmailPublisher struct{}
-
-func (personalDataEmailPublisher) PublishSendEmail(
-	context.Context,
-	*managev1.SendEmailEvent,
-) error {
-	return nil
-}
-
-func (personalDataEmailPublisher) PublishSendEmailWithExecutor(
-	context.Context,
-	eventpkg.DBTX,
-	*managev1.SendEmailEvent,
-) error {
-	return nil
-}
-
 func TestMemberPersonalDataAccessPersistsExactOperationScopesIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
@@ -80,22 +58,18 @@ func TestMemberPersonalDataAccessPersistsExactOperationScopesIntegration(t *test
 		policyv1.Role.User(), false, false, now,
 	)
 	writer := apitelemetry.NewDurableWriter(db)
-	service := NewAuditedMemberService(
-		db,
-		"",
-		spiceDB,
-		&fakeIdentityManager{identity: &auth.Identity{
+	service := NewConnectHandler(newTestService(t, Deps{
+		DB:      db,
+		SpiceDB: spiceDB,
+		Identity: &fakeIdentityManager{identity: &auth.Identity{
 			ID:         target.identityID,
 			ExternalID: target.memberID,
 			Traits:     map[string]interface{}{"email": targetEmail},
 		}},
-		personalDataFileDeleter{},
-		"",
-		personalDataEmailPublisher{},
-		writer,
-		WithAccountSummaryReader(integrationAccountSummaryReader{}),
-		WithAccountEmailProjection(integrationAccountEmailProjection{}),
-	)
+		Accounts:      integrationAccountSummaryReader{},
+		AccountEmails: integrationAccountEmailProjection{},
+		Audit:         writer,
+	}))
 
 	_, err := service.ListMembersAdmin(
 		personalAccessAdminContext(t, admin),
@@ -163,17 +137,12 @@ func TestMemberPersonalDataAccessFailsClosedWhenAppendFailsIntegration(t *testin
 		policyv1.Role.Admin(), false, false, time.Now().UTC(),
 	)
 	writer := &personalDataAccessWriterStub{err: errors.New("audit storage unavailable")}
-	service := NewAuditedMemberService(
-		db,
-		"",
-		spiceDB,
-		&fakeIdentityManager{},
-		personalDataFileDeleter{},
-		"",
-		personalDataEmailPublisher{},
-		writer,
-		WithAccountSummaryReader(integrationAccountSummaryReader{}),
-	)
+	service := NewConnectHandler(newTestService(t, Deps{
+		DB:       db,
+		SpiceDB:  spiceDB,
+		Accounts: integrationAccountSummaryReader{},
+		Audit:    writer,
+	}))
 
 	response, err := service.ListMembersAdmin(
 		personalAccessAdminContext(t, admin),

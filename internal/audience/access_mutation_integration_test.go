@@ -7,6 +7,10 @@ import (
 	"testing"
 	"time"
 
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
@@ -98,14 +102,14 @@ func TestAudienceArchivePreservesCampaignAndUserTagReferencesUnit(t *testing.T) 
 	require.NotNil(t, archived.Msg.ArchivedAt)
 	require.Equal(t, int32(1), archived.Msg.CampaignCount)
 
-	memberSvc := memberdomain.NewMemberService(
-		db, "", spiceDB, audienceIdentityManager{}, audienceNoopFileDeleter{}, "", noopMemberEmailPublisher{},
-	)
-	_, err = memberSvc.DeleteMemberTag(
-		adminCtx,
-		connect.NewRequest(&managev1.DeleteMemberTagRequest{Id: userTagID}),
-	)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	memberSvc, err := memberdomain.NewService(memberdomain.Deps{
+		DB: db, SpiceDB: spiceDB, Identity: audienceIdentityManager{}, AvatarFiles: audienceAvatarFiles{},
+		WelcomeEmails: noopMemberEmailPublisher{}, Accounts: memberadapter.AccountSummaryReader{},
+		AccountEmails: memberadapter.AccountEmailProjection{}, Audit: &audittest.Recorder{},
+	})
+	require.NoError(t, err)
+	err = memberSvc.DeleteMemberTag(adminCtx, memberdomain.DeleteMemberTagCommand{ID: userTagID})
+	require.Equal(t, connect.CodeFailedPrecondition, errs.Wrap(err).Code())
 
 }
 

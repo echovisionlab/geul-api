@@ -57,14 +57,14 @@ func TestMemberAdminListBuildsExactQueryAndPagination(t *testing.T) {
 			filters: []*commonv1.FilterSpec{{Field: "status", Op: commonv1.FilterOp_FILTER_OP_EQ, Value: "deleted"}}},
 	} {
 		t.Run(test.arguments, func(t *testing.T) {
-			reader := &recordingMemberAdminReader{list: &managev1.ListMembersAdminResponse{Pagination: &commonv1.PaginationResponse{Total: 7, Limit: test.limit, Offset: test.offset, HasMore: true}}}
+			reader := &recordingMemberAdminReader{list: memberdomain.AdminMemberPage{Pagination: &commonv1.PaginationResponse{Total: 7, Limit: test.limit, Offset: test.offset, HasMore: true}}}
 			tools, err := NewMemberAdminTools(reader)
 			require.NoError(t, err)
 			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMemberAdminList, toolArguments(t, test.arguments))
 			require.NoError(t, err)
 			require.Equal(t, t.Context(), reader.ctx)
-			require.Equal(t, test.limit, reader.listRequest.Pagination.Limit)
-			require.Equal(t, test.offset, reader.listRequest.Pagination.Offset)
+			require.Equal(t, test.limit, reader.listRequest.Limit)
+			require.Equal(t, test.offset, reader.listRequest.Offset)
 			require.Equal(t, test.filters, reader.listRequest.Filters)
 			require.Empty(t, reader.listRequest.Sorts)
 			require.Equal(t, []any{}, result.StructuredContent["members"])
@@ -103,7 +103,7 @@ func TestMemberAdminGetProjectsBoundedDetailAndNativeStatuses(t *testing.T) {
 			require.NoError(t, err)
 			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMemberAdminGet, toolArguments(t, `{"member_id":"`+memberAdminTestID+`"}`))
 			require.NoError(t, err)
-			require.Equal(t, memberAdminTestID, reader.getRequest.MemberId)
+			require.Equal(t, memberAdminTestID, reader.getRequest.MemberID)
 			require.Equal(t, t.Context(), reader.ctx)
 			member := result.StructuredContent["member"].(map[string]any)
 			profile := member["profile"].(map[string]any)
@@ -178,7 +178,7 @@ func TestMemberAdminPreservesOwningDenialWithoutPersonalData(t *testing.T) {
 
 func TestMemberAdminUsesNativeAuthenticationBoundary(t *testing.T) {
 	// The real Member service rejects before touching any unset dependencies.
-	tools, err := NewMemberAdminTools(&memberdomain.MemberService{})
+	tools, err := NewMemberAdminTools(&memberdomain.Service{})
 	require.NoError(t, err)
 	for _, name := range []string{ToolMemberAdminList, ToolMemberAdminGet} {
 		arguments := toolArguments(t, `{}`)
@@ -194,25 +194,25 @@ func TestMemberAdminUsesNativeAuthenticationBoundary(t *testing.T) {
 }
 
 type recordingMemberAdminReader struct {
-	list        *managev1.ListMembersAdminResponse
+	list        memberdomain.AdminMemberPage
 	member      *managev1.AdminMember
 	err         error
-	listRequest *managev1.ListMembersAdminRequest
-	getRequest  *managev1.GetMemberRequest
+	listRequest memberdomain.ListAdminMembersQuery
+	getRequest  memberdomain.GetAdminMemberQuery
 	ctx         context.Context
 	calls       int
 }
 
-func (reader *recordingMemberAdminReader) ListMembersAdmin(ctx context.Context, request *connect.Request[managev1.ListMembersAdminRequest]) (*connect.Response[managev1.ListMembersAdminResponse], error) {
-	reader.ctx, reader.listRequest = ctx, request.Msg
+func (reader *recordingMemberAdminReader) ListAdminMembers(ctx context.Context, query memberdomain.ListAdminMembersQuery) (memberdomain.AdminMemberPage, error) {
+	reader.ctx, reader.listRequest = ctx, query
 	reader.calls++
-	return connect.NewResponse(reader.list), reader.err
+	return reader.list, reader.err
 }
 
-func (reader *recordingMemberAdminReader) GetMember(ctx context.Context, request *connect.Request[managev1.GetMemberRequest]) (*connect.Response[managev1.AdminMember], error) {
-	reader.ctx, reader.getRequest = ctx, request.Msg
+func (reader *recordingMemberAdminReader) GetAdminMember(ctx context.Context, query memberdomain.GetAdminMemberQuery) (*managev1.AdminMember, error) {
+	reader.ctx, reader.getRequest = ctx, query
 	reader.calls++
-	return connect.NewResponse(reader.member), reader.err
+	return reader.member, reader.err
 }
 
 func TestMemberAdminKeepsInternalFailurePrivateAndUnknownToolDistinct(t *testing.T) {

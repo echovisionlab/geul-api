@@ -7,6 +7,9 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
@@ -14,7 +17,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-type unchangedAvatarPromoter struct{ FileDeleter }
+type unchangedAvatarPromoter struct{}
 
 func (unchangedAvatarPromoter) PromoteUserAvatarAsset(context.Context, string) (*commonv1.AssetRef, error) {
 	return &commonv1.AssetRef{AssetId: "44444444-4444-4444-8444-444444444444"}, nil
@@ -44,9 +47,10 @@ func TestAvatarMutationDistinguishesMissingMemberFromProjectionFailure(t *testin
 					return sqlmock.NewRows([]string{"member_id", "identity_id", "onboarded"}).AddRow(memberID, identityID, true)
 				}
 				mock.ExpectQuery(`SELECT member.id::text AS member_id`).WillReturnRows(targetRows())
-				mock.ExpectExec(`SELECT pg_advisory_lock\(`).WillReturnResult(sqlmock.NewResult(0, 1))
-				mock.ExpectExec(`SELECT pg_advisory_lock\(hashtextextended`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectBegin()
+				mock.ExpectExec(`SELECT pg_advisory_xact_lock\(\$1\)`).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec(`SELECT pg_advisory_xact_lock\(hashtextextended`).WillReturnResult(sqlmock.NewResult(0, 1))
+				mock.ExpectExec(`SELECT pg_advisory_xact_lock\(hashtextextended`).WillReturnResult(sqlmock.NewResult(0, 1))
 				mock.ExpectQuery(`SELECT member.id::text AS member_id`).WillReturnRows(targetRows())
 				if set {
 					mock.ExpectQuery(`SELECT count\(\*\) FROM "file_ingest_binding"`).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
@@ -55,8 +59,6 @@ func TestAvatarMutationDistinguishesMissingMemberFromProjectionFailure(t *testin
 					mock.ExpectQuery(`SELECT .* FROM "public_asset_binding"`).WillReturnRows(sqlmock.NewRows([]string{"asset_id"}))
 				}
 				mock.ExpectCommit()
-				mock.ExpectQuery(`SELECT pg_advisory_unlock\(hashtextextended`).WillReturnRows(sqlmock.NewRows([]string{"released"}).AddRow(true))
-				mock.ExpectQuery(`SELECT pg_advisory_unlock\(`).WillReturnRows(sqlmock.NewRows([]string{"released"}).AddRow(true))
 				lookupErr := errors.New("member projection unavailable")
 				query := mock.ExpectQuery(`SELECT .* FROM "member"`)
 				want := connect.CodeInternal
@@ -66,15 +68,16 @@ func TestAvatarMutationDistinguishesMissingMemberFromProjectionFailure(t *testin
 				} else {
 					query.WillReturnError(lookupErr)
 				}
-				service := &MemberService{db: db, fileService: unchangedAvatarPromoter{}}
+				service := newTestService(t, Deps{DB: db, AvatarFiles: unchangedAvatarPromoter{}})
+				access := mutation.PrincipalFence(&auth.UserInfo{IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID), Authenticated: true})
 				var summary *commonv1.MemberSummary
 				if set {
-					summary, err = service.setAvatar(t.Context(), memberID, "33333333-3333-4333-8333-333333333333", false)
+					summary, err = service.setAvatar(t.Context(), memberID, "33333333-3333-4333-8333-333333333333", access, false)
 				} else {
-					summary, err = service.deleteAvatar(t.Context(), memberID, false)
+					summary, err = service.deleteAvatar(t.Context(), memberID, access, false)
 				}
 				require.Nil(t, summary)
-				require.Equal(t, want, connect.CodeOf(err))
+				require.Equal(t, want, errs.Wrap(err).Code())
 				if !missing {
 					require.ErrorIs(t, err, lookupErr)
 				}

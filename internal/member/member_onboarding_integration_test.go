@@ -11,6 +11,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
@@ -125,28 +126,21 @@ func onboardingIdentity(fixture onboardingMemberFixture) *auth.Identity {
 }
 
 func onboardingService(
+	t *testing.T,
 	db *gorm.DB,
 	fixture onboardingMemberFixture,
 	publisher EmailCommandPublisher,
-) *MemberService {
-	return &MemberService{
-		db:                     db,
-		identity:               &fakeIdentityManager{identity: onboardingIdentity(fixture)},
-		siteOrigin:             "https://www.example.test",
-		welcomeEmailPublisher:  publisher,
-		accountEmailProjection: integrationAccountEmailProjection{},
-		auditWriter:            apitelemetry.NewDurableWriter(db),
-	}
-}
-
-type failingOnboardingAuditWriter struct{}
-
-func (failingOnboardingAuditWriter) AppendDomainAuditInTransaction(
-	context.Context,
-	*gorm.DB,
-	sharedtelemetry.AuditRecord,
-) error {
-	return errors.New("audit persistence unavailable")
+	audit AuditAppender,
+) *ConnectHandler {
+	t.Helper()
+	return NewConnectHandler(newTestService(t, Deps{
+		DB:            db,
+		Identity:      &fakeIdentityManager{identity: onboardingIdentity(fixture)},
+		SiteOrigin:    "https://www.example.test",
+		WelcomeEmails: publisher,
+		AccountEmails: integrationAccountEmailProjection{},
+		Audit:         audit,
+	}))
 }
 
 func TestCompleteMyOnboardingConcurrentNicknameClaimHasOneWinner(t *testing.T) {
@@ -169,7 +163,7 @@ func TestCompleteMyOnboardingConcurrentNicknameClaimHasOneWinner(t *testing.T) {
 			defer group.Done()
 			<-start
 			ctx := withOnboardingRequestContext(t, fixture)
-			service := onboardingService(stack.DB, fixture, publisher)
+			service := onboardingService(t, stack.DB, fixture, publisher, apitelemetry.NewDurableWriter(stack.DB))
 			_, err := service.CompleteMyOnboarding(ctx, connect.NewRequest(&managev1.CompleteMyOnboardingRequest{Nickname: "SameNickname"}))
 			results <- result{memberID: fixture.MemberID, err: err}
 		}(fixture)
@@ -247,7 +241,7 @@ func TestCompleteMyOnboardingSameNicknameRetryIsIdempotent(t *testing.T) {
 	db := testutil.NewIntegrationDB(t)
 	fixture := createOnboardingMember(t, db, "member@example.test")
 	publisher := &recordingOnboardingWelcomePublisher{}
-	service := onboardingService(db, fixture, publisher)
+	service := onboardingService(t, db, fixture, publisher, apitelemetry.NewDurableWriter(db))
 	ctx := withOnboardingRequestContext(t, fixture)
 	request := connect.NewRequest(&managev1.CompleteMyOnboardingRequest{Nickname: "Member"})
 
@@ -282,7 +276,7 @@ func TestCompleteMyOnboardingWelcomeEnqueueFailureRollsBackThenRetrySends(t *tes
 	db := testutil.NewIntegrationDB(t)
 	fixture := createOnboardingMember(t, db, "publish-failure@example.test")
 	publisher := &recordingOnboardingWelcomePublisher{err: errors.New("queue unavailable")}
-	service := onboardingService(db, fixture, publisher)
+	service := onboardingService(t, db, fixture, publisher, apitelemetry.NewDurableWriter(db))
 	ctx := withOnboardingRequestContext(t, fixture)
 	request := connect.NewRequest(&managev1.CompleteMyOnboardingRequest{Nickname: "CommittedMember"})
 
@@ -320,8 +314,7 @@ func TestCompleteMyOnboardingAuditFailureRollsBackTransition(t *testing.T) {
 	db := testutil.NewIntegrationDB(t)
 	fixture := createOnboardingMember(t, db, "audit-failure@example.test")
 	publisher := &recordingOnboardingWelcomePublisher{}
-	service := onboardingService(db, fixture, publisher)
-	service.auditWriter = failingOnboardingAuditWriter{}
+	service := onboardingService(t, db, fixture, publisher, &audittest.Recorder{Err: errors.New("audit persistence unavailable")})
 
 	_, err := service.CompleteMyOnboarding(
 		withOnboardingRequestContext(t, fixture),
@@ -353,7 +346,7 @@ func TestCheckNicknameAvailabilityIgnoresDeletedMembers(t *testing.T) {
 	`, uuid.NewString()).Error)
 	active := createOnboardingMember(t, db, "active@example.test")
 	require.NoError(t, db.Exec(`UPDATE member SET nickname = 'Present' WHERE id = ?::uuid`, active.MemberID).Error)
-	service := onboardingService(db, fixture, &recordingOnboardingWelcomePublisher{})
+	service := onboardingService(t, db, fixture, &recordingOnboardingWelcomePublisher{}, apitelemetry.NewDurableWriter(db))
 	ctx := withOnboardingRequestContext(t, fixture)
 
 	for nickname, available := range map[string]bool{"Departed": true, "Present": false} {
