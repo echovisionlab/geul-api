@@ -573,6 +573,15 @@ func ExtractLayoutLocaleValues(content string) (map[string]string, error) {
 			unit = nil
 			valueMarkers = valueMarkers[:0]
 		case html.StartTagToken, html.SelfClosingTagToken:
+			// An explicit empty text value has no text token, so the next
+			// inline element is what ends it (as in the source extractor).
+			if unit != nil && unit.Kind == layoutTextMarker {
+				if err := flushEmptyText(); err != nil {
+					return nil, err
+				}
+				unit = nil
+				valueMarkers = valueMarkers[:0]
+			}
 			if unit != nil && unit.Kind == layoutElementMarker {
 				token := tokenizer.Token()
 				attributes := make(map[string]string, len(token.Attr))

@@ -38,6 +38,7 @@ var layoutMarkerSeeds = []struct {
 	{"overlay_text_value", `<!--geul-overlay:v1--><p><!--geul-unit:text:` + layoutFuzzTextID + `--><!--geul-value:text:` + layoutFuzzTextID + `-->Bonjour</p>`},
 	{"overlay_explicit_empty_text", `<!--geul-overlay:v1--><p><!--geul-unit:text:` + layoutFuzzTextID + `--><!--geul-value:text:` + layoutFuzzTextID + `--></p>`},
 	{"overlay_attribute_value", `<!--geul-overlay:v1--><!--geul-unit:element:` + layoutFuzzElementID + `--><!--geul-value:element:` + layoutFuzzElementID + `:alt--><img alt="Logo FR" title="Brand">`},
+	{"overlay_explicit_empty_text_before_element", `<!--geul-overlay:v1--><p><!--geul-unit:text:` + layoutFuzzTextID + `--><!--geul-value:text:` + layoutFuzzTextID + `--><b><!--geul-unit:text:` + layoutFuzzSecondID + `-->world</b></p>`},
 	{"overlay_omitted_value", `<!--geul-overlay:v1--><p><!--geul-unit:text:` + layoutFuzzTextID + `-->Source fallback</p>`},
 	{"overlay_missing_marker", `<p><!--geul-unit:text:` + layoutFuzzTextID + `--><!--geul-value:text:` + layoutFuzzTextID + `-->Bonjour</p>`},
 	{"overlay_duplicated", `<!--geul-overlay:v1--><!--geul-overlay:v1--><p>x</p>`},
@@ -94,6 +95,8 @@ func FuzzLayoutMarkerRoundTrip(f *testing.F) {
 		f.Add(seed.content, "Traduction")
 	}
 	f.Add(`<p>Hello <b>world</b></p><img alt="Logo" title=" ">`, "Bonjour")
+	// Explicit empty text values before an inline element were unreadable.
+	f.Add(`<p>Hello <b>world</b></p>`, "")
 	f.Add("<p>  spaced  </p>", "\n")
 	f.Add(`<p>Source</p>`, "  a <b> & \"q\"  ")
 	f.Fuzz(func(t *testing.T, content, value string) {
