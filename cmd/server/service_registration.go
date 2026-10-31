@@ -575,6 +575,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		kratosClient,
 		seriesMenuTargets,
 		seriesPostAccess,
+		postadapter.SeriesMembership{},
 		seriesadapter.NewMemberSummaries(db, cfg.CDNURL),
 		telemetryWriter,
 	)
@@ -582,7 +583,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(seriesPath, seriesHandler)
 	slog.Info("Registered service", "path", seriesPath)
 	postSeriesDocuments, err := series.NewAIDocumentService(
-		db, spicedbClient, seriesMenuTargets, seriesPostAccess, seriesRuntime, telemetryWriter,
+		db, spicedbClient, seriesMenuTargets, seriesPostAccess, postadapter.SeriesMembership{}, seriesRuntime, telemetryWriter,
 	)
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize Post Series document service: %w", err)

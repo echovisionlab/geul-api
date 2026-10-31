@@ -181,6 +181,7 @@ func auditedSeriesIntegrationService(t *testing.T, db *gorm.DB, adminID string, 
 		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en")),
 		seriesTestMenuTargets{},
 		seriesTestPostAccess{},
+		testPostMembership{},
 		seriesTestMemberSummaries{},
 		writer,
 	)

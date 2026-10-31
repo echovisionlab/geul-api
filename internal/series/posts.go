@@ -9,8 +9,8 @@ import (
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -19,18 +19,15 @@ func (s *SeriesService) AssignPostToSeries(
 	ctx context.Context,
 	req *connect.Request[managev1.AssignPostToSeriesRequest],
 ) (*connect.Response[managev1.DeleteResponse], error) {
-	var observed struct {
-		SeriesID *string `gorm:"column:series_id"`
-	}
-	if err := s.db.WithContext(ctx).Table("post").
-		Select("series_id").Where("id = ?", req.Msg.PostId).Take(&observed).Error; err != nil {
+	observed, err := s.postMembership.ReadSeriesRelation(ctx, s.db, req.Msg.PostId)
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errs.NotFound("post", req.Msg.PostId)
 		}
 		return nil, errs.Internal(err)
 	}
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return s.assignPostToSeriesWithDB(ctx, tx, req.Msg.PostId, req.Msg.SeriesId, observed.SeriesID)
+		return s.assignPostToSeriesWithDB(ctx, tx, req.Msg.PostId, req.Msg.SeriesId, observed)
 	}); err != nil {
 		return nil, err
 	}
@@ -74,7 +71,7 @@ func (s *SeriesService) assignPostToSeriesWithAuthorization(
 			return err
 		}
 	}
-	currentSeriesID, err := lockPostSeriesRelation(ctx, tx, postID)
+	currentSeriesID, err := lockPostSeriesRelation(ctx, tx, s.postMembership, postID)
 	if err != nil {
 		return err
 	}
@@ -87,12 +84,16 @@ func (s *SeriesService) assignPostToSeriesWithAuthorization(
 	if sameOptionalString(currentSeriesID, &seriesID) {
 		return nil
 	}
-	nextOrder, err := nextSeriesPostOrder(tx, seriesID)
+	nextOrder, err := s.postMembership.NextSeriesOrder(ctx, tx, seriesID)
 	if err != nil {
-		return err
+		return errs.Internal(err)
 	}
-	if err := updatePostSeriesAssignment(tx, postID, seriesID, nextOrder); err != nil {
-		return err
+	now := dbtime.Now()
+	if err := s.postMembership.AssignSeries(ctx, tx, postID, seriesID, nextOrder, now); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errs.NotFound("post", postID)
+		}
+		return errs.Internal(err)
 	}
 	previousSeriesID := ""
 	if currentSeriesID != nil {
@@ -104,7 +105,7 @@ func (s *SeriesService) assignPostToSeriesWithAuthorization(
 	if currentSeriesID == nil {
 		return advanceSeriesContentDocumentForMutation(ctx, tx, seriesID, time.Now().UTC())
 	}
-	if err := compactSeriesPostOrders(ctx, tx, *currentSeriesID); err != nil {
+	if err := compactSeriesPostOrders(ctx, tx, s.postMembership, *currentSeriesID, now); err != nil {
 		return err
 	}
 	if err := advanceSeriesContentDocumentForMutation(ctx, tx, seriesID, time.Now().UTC()); err != nil {
@@ -127,31 +128,6 @@ func lockSeriesAssignmentRoots(ctx context.Context, tx *gorm.DB, targetSeriesID 
 	return nil
 }
 
-func nextSeriesPostOrder(tx *gorm.DB, seriesID string) (int, error) {
-	var maxOrder *int
-	err := tx.Table("post").Where("series_id = ?", seriesID).
-		Select("MAX(series_order)").Scan(&maxOrder).Error
-	if err != nil {
-		return 0, errs.Internal(err)
-	}
-	if maxOrder == nil {
-		return 0, nil
-	}
-	return *maxOrder + 1, nil
-}
-
-func updatePostSeriesAssignment(tx *gorm.DB, postID, seriesID string, order int) error {
-	result := tx.Table("post").Where("id = ?", postID).
-		Updates(structured.Fields{"series_id": seriesID, "series_order": order})
-	if result.Error != nil {
-		return errs.Internal(result.Error)
-	}
-	if result.RowsAffected != 1 {
-		return errs.NotFound("post", postID)
-	}
-	return nil
-}
-
 // UnassignPostFromSeries removes a post from its series
 func (s *SeriesService) UnassignPostFromSeries(
 	ctx context.Context,
@@ -161,23 +137,18 @@ func (s *SeriesService) UnassignPostFromSeries(
 		if err := s.requireSeriesManageAndLock(ctx, tx, req.Msg.SeriesId); err != nil {
 			return err
 		}
-		postSeriesID, err := lockPostSeriesRelation(ctx, tx, req.Msg.PostId)
+		postSeriesID, err := lockPostSeriesRelation(ctx, tx, s.postMembership, req.Msg.PostId)
 		if err != nil {
 			return err
 		}
 		if postSeriesID == nil || *postSeriesID != req.Msg.SeriesId {
 			return errs.InvalidArgument("post_id", "must belong to the requested series")
 		}
-		result := tx.Table("post").
-			Where("id = ? AND series_id = ?", req.Msg.PostId, req.Msg.SeriesId).
-			Updates(structured.Fields{"series_id": nil, "series_order": nil})
-		if result.Error != nil {
-			return errs.Internal(result.Error)
+		now := dbtime.Now()
+		if err := seriesRelationError(s.postMembership.ClearSeries(ctx, tx, req.Msg.PostId, req.Msg.SeriesId, now)); err != nil {
+			return err
 		}
-		if result.RowsAffected != 1 {
-			return errs.FailedPrecondition("post series relation changed; retry")
-		}
-		if err := compactSeriesPostOrders(ctx, tx, req.Msg.SeriesId); err != nil {
+		if err := compactSeriesPostOrders(ctx, tx, s.postMembership, req.Msg.SeriesId, now); err != nil {
 			return err
 		}
 		if err := s.appendPostSeriesMembershipAudit(ctx, tx, req.Msg.SeriesId, req.Msg.PostId, req.Msg.SeriesId, ""); err != nil {
@@ -204,14 +175,11 @@ func (s *SeriesService) ReorderSeriesPosts(
 		if err := s.requireSeriesManageAndLock(ctx, tx, req.Msg.SeriesId); err != nil {
 			return err
 		}
-		if err := lockSeriesOrderPosts(ctx, tx, postIDs); err != nil {
+		if err := lockSeriesOrderPosts(ctx, tx, s.postMembership, postIDs); err != nil {
 			return err
 		}
-		var currentPostIDs []string
-		if err := tx.Table("post").
-			Where("series_id = ?", req.Msg.SeriesId).
-			Order("series_order ASC, id ASC").
-			Pluck("id", &currentPostIDs).Error; err != nil {
+		currentPostIDs, err := s.postMembership.SeriesPostIDs(ctx, tx, req.Msg.SeriesId)
+		if err != nil {
 			return errs.Internal(err)
 		}
 		if !sameStringSet(currentPostIDs, postIDs) {
@@ -220,16 +188,8 @@ func (s *SeriesService) ReorderSeriesPosts(
 		if sameSeriesPostOrder(currentPostIDs, postIDs) {
 			return nil
 		}
-		for index, postID := range postIDs {
-			result := tx.Table("post").
-				Where("id = ? AND series_id = ?", postID, req.Msg.SeriesId).
-				Update("series_order", index)
-			if result.Error != nil {
-				return errs.Internal(result.Error)
-			}
-			if result.RowsAffected != 1 {
-				return errs.FailedPrecondition("post series relation changed; retry")
-			}
+		if err := orderSeriesPosts(ctx, tx, s.postMembership, req.Msg.SeriesId, postIDs, dbtime.Now()); err != nil {
+			return err
 		}
 		if err := s.appendPostSeriesOrderAudit(ctx, tx, req.Msg.SeriesId, postIDs); err != nil {
 			return err

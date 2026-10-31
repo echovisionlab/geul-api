@@ -38,6 +38,7 @@ func newSeriesIntegrationService(
 		testutil.NewPostIdentityManager(testutil.PostIntegrationIdentity(adminID, "en")),
 		seriesIntegrationMenuTargets(),
 		seriesadapter.PostAccess{},
+		testPostMembership{},
 		seriesadapter.NewMemberSummaries(db, ""),
 	)
 }

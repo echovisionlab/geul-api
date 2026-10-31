@@ -2,6 +2,8 @@ package series
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -18,8 +20,43 @@ type MenuTargets interface {
 
 // PostAccess owns Post edit authorization used by Series membership changes.
 type PostAccess interface {
-	PostSourceTitleSQL() string
 	RequireLockedEdit(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error
+}
+
+// PostMembership reads and writes the Post rows of a membership change. Post
+// owns those rows and keeps its invariants (updated_at) when their Series
+// relation changes.
+type PostMembership interface {
+	ListSeriesPosts(ctx context.Context, db *gorm.DB, seriesID string) ([]SeriesPost, error)
+	SeriesPostIDs(ctx context.Context, tx *gorm.DB, seriesID string) ([]string, error)
+	// ReadSeriesRelation and LockSeriesRelation report gorm.ErrRecordNotFound
+	// for a missing Post.
+	ReadSeriesRelation(ctx context.Context, db *gorm.DB, postID string) (*string, error)
+	LockSeriesRelation(ctx context.Context, tx *gorm.DB, postID string) (*string, error)
+	// LockSeriesPosts locks the Posts in ID order and reports how many exist.
+	LockSeriesPosts(ctx context.Context, tx *gorm.DB, postIDs []string) (int, error)
+	NextSeriesOrder(ctx context.Context, tx *gorm.DB, seriesID string) (int, error)
+	// AssignSeries reports gorm.ErrRecordNotFound for a missing Post.
+	AssignSeries(ctx context.Context, tx *gorm.DB, postID, seriesID string, order int, now time.Time) error
+	// ClearSeries and OrderSeries report ErrPostRelationChanged for a Post
+	// that is no longer in the Series.
+	ClearSeries(ctx context.Context, tx *gorm.DB, postID, seriesID string, now time.Time) error
+	ClearAllSeries(ctx context.Context, tx *gorm.DB, seriesID string, now time.Time) error
+	OrderSeries(ctx context.Context, tx *gorm.DB, seriesID string, postIDs []string, now time.Time) error
+}
+
+// ErrPostRelationChanged reports a Post that left the Series it was read in.
+var ErrPostRelationChanged = errors.New("post series relation changed")
+
+// SeriesPost is a Post of a Series with its own source locale.
+type SeriesPost struct {
+	ID           string
+	Title        string
+	SourceLocale string
+	Slug         *string
+	Status       string
+	SeriesOrder  *int
+	PublishedAt  *time.Time
 }
 
 // MemberSummaries projects durable Series manager attribution.

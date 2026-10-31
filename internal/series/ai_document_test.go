@@ -449,7 +449,7 @@ func newSeriesAIDocumentFixture(t *testing.T) (*AIDocumentService, *gorm.DB, str
 		`CREATE TABLE content_document (id TEXT PRIMARY KEY, profile TEXT NOT NULL, revision TEXT NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)`,
 		`CREATE TABLE series (id TEXT PRIMARY KEY, slug TEXT NOT NULL, status TEXT NOT NULL, source_locale TEXT NOT NULL, content_document_id TEXT NOT NULL, featured_image_file_id TEXT, created_at DATETIME NOT NULL, updated_at DATETIME)`,
 		`CREATE TABLE series_translation (entity_id TEXT NOT NULL, locale TEXT NOT NULL, title TEXT, summary TEXT, content_json BLOB, content_html TEXT, content_text TEXT, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, og_asset_id TEXT, PRIMARY KEY (entity_id, locale))`,
-		`CREATE TABLE post (id TEXT PRIMARY KEY, series_id TEXT, series_order INTEGER)`,
+		`CREATE TABLE post (id TEXT PRIMARY KEY, series_id TEXT, series_order INTEGER, updated_at DATETIME)`,
 	}
 	for _, statement := range statements {
 		require.NoError(t, db.Exec(statement).Error)
@@ -478,7 +478,7 @@ func newSeriesAIDocumentFixture(t *testing.T) (*AIDocumentService, *gorm.DB, str
 	service := &AIDocumentService{
 		db: db, spiceDB: &auth.SpiceDBClient{}, access: allowSeriesAIDocumentAccess{},
 		menuTargets: seriesAIDocumentMenu{},
-		postAccess:  seriesAIDocumentPostAccess{}, ogRefresh: og, now: func() time.Time { return now.Add(time.Minute) },
+		postAccess:  seriesAIDocumentPostAccess{}, postMembership: testPostMembership{}, ogRefresh: og, now: func() time.Time { return now.Add(time.Minute) },
 	}
 	return service, db, seriesID, postIDs, og
 }

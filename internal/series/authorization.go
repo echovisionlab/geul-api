@@ -3,8 +3,8 @@ package series
 import (
 	"context"
 	"errors"
-	"sort"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -234,67 +234,50 @@ func lockSeriesRoot(ctx context.Context, tx *gorm.DB, seriesID string) error {
 	return nil
 }
 
-func lockPostSeriesRelation(ctx context.Context, tx *gorm.DB, postID string) (*string, error) {
-	var row struct {
-		SeriesID *string `gorm:"column:series_id"`
+func lockPostSeriesRelation(ctx context.Context, tx *gorm.DB, posts PostMembership, postID string) (*string, error) {
+	seriesID, err := posts.LockSeriesRelation(ctx, tx, postID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errs.NotFound("post", postID)
 	}
-	if err := tx.WithContext(ctx).Table("post").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Select("series_id").
-		Where("id = ?", postID).
-		Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("post", postID)
-		}
+	if err != nil {
 		return nil, errs.Internal(err)
 	}
-	return row.SeriesID, nil
+	return seriesID, nil
 }
 
-func lockSeriesOrderPosts(ctx context.Context, tx *gorm.DB, postIDs []string) error {
-	if len(postIDs) == 0 {
-		return nil
-	}
-	orderedIDs := append([]string(nil), postIDs...)
-	sort.Strings(orderedIDs)
-	var rows []struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := tx.WithContext(ctx).Table("post").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Select("id").
-		Where("id IN ?", orderedIDs).
-		Order("id ASC").
-		Find(&rows).Error; err != nil {
+func lockSeriesOrderPosts(ctx context.Context, tx *gorm.DB, posts PostMembership, postIDs []string) error {
+	locked, err := posts.LockSeriesPosts(ctx, tx, postIDs)
+	if err != nil {
 		return errs.Internal(err)
 	}
-	if len(rows) != len(orderedIDs) {
+	if locked != len(postIDs) {
 		return errs.InvalidArgument("post_ids", "must be the exact set of posts currently assigned to the series")
 	}
 	return nil
 }
 
-func compactSeriesPostOrders(ctx context.Context, tx *gorm.DB, seriesID string) error {
-	var postIDs []string
-	if err := tx.WithContext(ctx).Table("post").
-		Where("series_id = ?", seriesID).
-		Order("series_order ASC, id ASC").
-		Pluck("id", &postIDs).Error; err != nil {
+func compactSeriesPostOrders(ctx context.Context, tx *gorm.DB, posts PostMembership, seriesID string, now time.Time) error {
+	postIDs, err := posts.SeriesPostIDs(ctx, tx, seriesID)
+	if err != nil {
 		return errs.Internal(err)
 	}
-	if err := lockSeriesOrderPosts(ctx, tx, postIDs); err != nil {
+	if err := lockSeriesOrderPosts(ctx, tx, posts, postIDs); err != nil {
 		return err
 	}
-	for index, postID := range postIDs {
-		result := tx.WithContext(ctx).Table("post").
-			Where("id = ? AND series_id = ?", postID, seriesID).
-			Update("series_order", index)
-		if result.Error != nil {
-			return errs.Internal(result.Error)
-		}
-		if result.RowsAffected != 1 {
-			return errs.FailedPrecondition("post series relation changed; retry")
-		}
+	return orderSeriesPosts(ctx, tx, posts, seriesID, postIDs, now)
+}
+
+// orderSeriesPosts gives the Posts of seriesID the positions of postIDs.
+func orderSeriesPosts(ctx context.Context, tx *gorm.DB, posts PostMembership, seriesID string, postIDs []string, now time.Time) error {
+	return seriesRelationError(posts.OrderSeries(ctx, tx, seriesID, postIDs, now))
+}
+
+func seriesRelationError(err error) error {
+	if errors.Is(err, ErrPostRelationChanged) {
+		return errs.WithCause(errs.FailedPrecondition("post series relation changed; retry"), err)
+	}
+	if err != nil {
+		return errs.Internal(err)
 	}
 	return nil
 }

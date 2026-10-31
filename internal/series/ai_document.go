@@ -13,6 +13,7 @@ import (
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -70,14 +71,15 @@ func (a seriesAIDocumentAccess) RequirePermissionAndLock(
 // translation presence, Post ordering, Audit and derived refreshes in one
 // domain transaction.
 type AIDocumentService struct {
-	db          *gorm.DB
-	spiceDB     *auth.SpiceDBClient
-	access      aiDocumentAccess
-	menuTargets MenuTargets
-	postAccess  PostAccess
-	ogRefresh   OGRefresh
-	auditWriter domainaudit.Appender
-	now         func() time.Time
+	db             *gorm.DB
+	spiceDB        *auth.SpiceDBClient
+	access         aiDocumentAccess
+	menuTargets    MenuTargets
+	postAccess     PostAccess
+	postMembership PostMembership
+	ogRefresh      OGRefresh
+	auditWriter    domainaudit.Appender
+	now            func() time.Time
 }
 
 func NewAIDocumentService(
@@ -85,15 +87,16 @@ func NewAIDocumentService(
 	spiceDB *auth.SpiceDBClient,
 	menuTargets MenuTargets,
 	postAccess PostAccess,
+	postMembership PostMembership,
 	ogRefresh OGRefresh,
 	auditWriter domainaudit.Appender,
 ) (*AIDocumentService, error) {
-	if db == nil || spiceDB == nil || menuTargets == nil || postAccess == nil || ogRefresh == nil || auditWriter == nil {
+	if db == nil || spiceDB == nil || menuTargets == nil || postAccess == nil || postMembership == nil || ogRefresh == nil || auditWriter == nil {
 		return nil, errors.New("post series AI document dependencies are required")
 	}
 	return &AIDocumentService{
 		db: db, spiceDB: spiceDB, access: seriesAIDocumentAccess{spiceDB: spiceDB},
-		menuTargets: menuTargets, postAccess: postAccess,
+		menuTargets: menuTargets, postAccess: postAccess, postMembership: postMembership,
 		ogRefresh: ogRefresh, auditWriter: auditWriter, now: time.Now,
 	}, nil
 }
@@ -288,7 +291,7 @@ func (s *AIDocumentService) applyAIInsertPost(
 		return false, err
 	}
 	postID := string(operation.Item)
-	observed, err := lockPostSeriesRelation(ctx, tx, postID)
+	observed, err := lockPostSeriesRelation(ctx, tx, s.postMembership, postID)
 	if err != nil {
 		return false, err
 	}
@@ -296,7 +299,7 @@ func (s *AIDocumentService) applyAIInsertPost(
 		return false, err
 	}
 	mutation.postIDs = insertPostAfter(mutation.postIDs, postID, string(operation.After))
-	if err := persistSeriesPostOrder(ctx, tx, mutation.state.root.ID, mutation.postIDs); err != nil {
+	if err := orderSeriesPosts(ctx, tx, s.postMembership, mutation.state.root.ID, mutation.postIDs, dbtime.Now()); err != nil {
 		return false, err
 	}
 	if err := service.appendPostSeriesOrderAudit(ctx, tx, mutation.state.root.ID, mutation.postIDs); err != nil {
@@ -316,23 +319,18 @@ func (s *AIDocumentService) applyAIDeletePost(
 		return false, err
 	}
 	postID := string(operation.Item)
-	current, err := lockPostSeriesRelation(ctx, tx, postID)
+	current, err := lockPostSeriesRelation(ctx, tx, s.postMembership, postID)
 	if err != nil {
 		return false, err
 	}
 	if current == nil || *current != mutation.state.root.ID {
 		return false, errs.InvalidArgument("post", "must belong to the Post Series")
 	}
-	updated := tx.WithContext(ctx).Table("post").Where("id = ? AND series_id = ?", postID, mutation.state.root.ID).
-		Updates(structured.Fields{"series_id": nil, "series_order": nil})
-	if updated.Error != nil {
-		return false, errs.Internal(updated.Error)
-	}
-	if updated.RowsAffected != 1 {
-		return false, errs.FailedPrecondition("post series relation changed; retry")
+	if err := seriesRelationError(s.postMembership.ClearSeries(ctx, tx, postID, mutation.state.root.ID, dbtime.Now())); err != nil {
+		return false, err
 	}
 	mutation.postIDs = removePostID(mutation.postIDs, postID)
-	if err := persistSeriesPostOrder(ctx, tx, mutation.state.root.ID, mutation.postIDs); err != nil {
+	if err := orderSeriesPosts(ctx, tx, s.postMembership, mutation.state.root.ID, mutation.postIDs, dbtime.Now()); err != nil {
 		return false, err
 	}
 	if err := service.appendPostSeriesMembershipAudit(ctx, tx, mutation.state.root.ID, postID, mutation.state.root.ID, ""); err != nil {
@@ -358,7 +356,7 @@ func (s *AIDocumentService) applyAIMovePost(
 	if sameSeriesPostOrder(mutation.postIDs, next) {
 		return false, nil
 	}
-	if err := persistSeriesPostOrder(ctx, tx, mutation.state.root.ID, next); err != nil {
+	if err := orderSeriesPosts(ctx, tx, s.postMembership, mutation.state.root.ID, next, dbtime.Now()); err != nil {
 		return false, err
 	}
 	if err := service.appendPostSeriesOrderAudit(ctx, tx, mutation.state.root.ID, next); err != nil {
@@ -518,8 +516,7 @@ func (s *AIDocumentService) loadAIDocumentState(
 			return state, errs.Internal(err)
 		}
 	}
-	if err := tx.WithContext(ctx).Table("post").Where("series_id = ?", seriesID).
-		Order("series_order ASC, id ASC").Pluck("id", &state.postIDs).Error; err != nil {
+	if state.postIDs, err = s.postMembership.SeriesPostIDs(ctx, tx, seriesID); err != nil {
 		return state, errs.Internal(err)
 	}
 	if locale != state.root.SourceLocale && state.localeExists {
@@ -589,20 +586,6 @@ func validatePostSeriesAIRelation(block core.BlockID, relation core.RelationID, 
 	}
 	_, err := uuidutil.ParseCanonical(string(item), "post")
 	return err
-}
-
-func persistSeriesPostOrder(ctx context.Context, tx *gorm.DB, seriesID string, postIDs []string) error {
-	for index, postID := range postIDs {
-		result := tx.WithContext(ctx).Table("post").Where("id = ? AND series_id = ?", postID, seriesID).
-			Update("series_order", index)
-		if result.Error != nil {
-			return errs.Internal(result.Error)
-		}
-		if result.RowsAffected != 1 {
-			return errs.FailedPrecondition("post series relation changed; retry")
-		}
-	}
-	return nil
 }
 
 func insertPostAfter(ids []string, postID, after string) []string {

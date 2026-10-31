@@ -30,17 +30,18 @@ import (
 // SeriesService implements the SeriesService Connect handler
 type SeriesService struct {
 	managev1connect.UnimplementedSeriesServiceHandler
-	db           *gorm.DB
-	spiceDB      *auth.SpiceDBClient
-	permissions  seriesPermissionChecker
-	kratosClient auth.IdentityManager
-	menuTargets  MenuTargets
-	postAccess   PostAccess
-	members      MemberSummaries
-	auditWriter  domainaudit.Appender
-	media        MediaRuntime
-	ogRefresh    OGRefresh
-	reads        SeriesReadProjection
+	db             *gorm.DB
+	spiceDB        *auth.SpiceDBClient
+	permissions    seriesPermissionChecker
+	kratosClient   auth.IdentityManager
+	menuTargets    MenuTargets
+	postAccess     PostAccess
+	postMembership PostMembership
+	members        MemberSummaries
+	auditWriter    domainaudit.Appender
+	media          MediaRuntime
+	ogRefresh      OGRefresh
+	reads          SeriesReadProjection
 }
 
 func NewAuditedSeriesService(
@@ -52,13 +53,14 @@ func NewAuditedSeriesService(
 	kratosClient auth.IdentityManager,
 	menuTargets MenuTargets,
 	postAccess PostAccess,
+	postMembership PostMembership,
 	members MemberSummaries,
 	auditWriter domainaudit.Appender,
 ) *SeriesService {
 	if auditWriter == nil {
 		panic("series audit writer is required")
 	}
-	service := NewSeriesService(db, media, ogRefresh, reads, spiceDB, kratosClient, menuTargets, postAccess, members)
+	service := NewSeriesService(db, media, ogRefresh, reads, spiceDB, kratosClient, menuTargets, postAccess, postMembership, members)
 	service.auditWriter = auditWriter
 	return service
 }
@@ -73,6 +75,7 @@ func NewSeriesService(
 	kratosClient auth.IdentityManager,
 	menuTargets MenuTargets,
 	postAccess PostAccess,
+	postMembership PostMembership,
 	members MemberSummaries,
 ) *SeriesService {
 	if db == nil {
@@ -87,20 +90,21 @@ func NewSeriesService(
 	if kratosClient == nil {
 		panic("SeriesService: kratosClient is required")
 	}
-	if menuTargets == nil || postAccess == nil || members == nil {
+	if menuTargets == nil || postAccess == nil || postMembership == nil || members == nil {
 		panic("SeriesService: domain dependencies are required")
 	}
 	return &SeriesService{
-		db:           db,
-		media:        media,
-		ogRefresh:    ogRefresh,
-		reads:        reads,
-		spiceDB:      spiceDB,
-		permissions:  spiceDB,
-		kratosClient: kratosClient,
-		menuTargets:  menuTargets,
-		postAccess:   postAccess,
-		members:      members,
+		db:             db,
+		media:          media,
+		ogRefresh:      ogRefresh,
+		reads:          reads,
+		spiceDB:        spiceDB,
+		permissions:    spiceDB,
+		kratosClient:   kratosClient,
+		menuTargets:    menuTargets,
+		postAccess:     postAccess,
+		postMembership: postMembership,
+		members:        members,
 	}
 }
 
@@ -110,17 +114,14 @@ func (s *SeriesService) ListSeriesPosts(
 	ctx context.Context,
 	req *connect.Request[managev1.ListSeriesPostsRequest],
 ) (*connect.Response[managev1.ListSeriesPostsResponse], error) {
-	var posts []seriesPostRow
+	var posts []SeriesPost
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := s.requireSeriesViewAndLock(ctx, tx, req.Msg.SeriesId); err != nil {
 			return err
 		}
-		return tx.WithContext(ctx).
-			Table("post").
-			Select("id, "+s.postAccess.PostSourceTitleSQL()+" AS title, source_locale, slug, status, series_order, published_at").
-			Where("series_id = ?", req.Msg.SeriesId).
-			Order("series_order ASC NULLS LAST, created_at ASC").
-			Find(&posts).Error
+		var err error
+		posts, err = s.postMembership.ListSeriesPosts(ctx, tx, req.Msg.SeriesId)
+		return err
 	}); err != nil {
 		return nil, errs.Internal(err)
 	}
@@ -522,19 +523,14 @@ func (s *SeriesService) DeleteSeries(
 		if len(deleteRelationships) == 0 {
 			return errs.InternalMsg("series authorization relationships are missing")
 		}
-		var postIDs []string
-		if err := tx.Table("post").
-			Where("series_id = ?", series.ID).
-			Order("id ASC").
-			Pluck("id", &postIDs).Error; err != nil {
+		postIDs, err := s.postMembership.SeriesPostIDs(ctx, tx, series.ID)
+		if err != nil {
 			return errs.Internal(err)
 		}
-		if err := lockSeriesOrderPosts(ctx, tx, postIDs); err != nil {
+		if err := lockSeriesOrderPosts(ctx, tx, s.postMembership, postIDs); err != nil {
 			return err
 		}
-		if err := tx.Table("post").
-			Where("series_id = ?", series.ID).
-			Updates(structured.Fields{"series_id": nil, "series_order": nil}).Error; err != nil {
+		if err := s.postMembership.ClearAllSeries(ctx, tx, series.ID, dbtime.Now()); err != nil {
 			return errs.Internal(err)
 		}
 		if err := s.media.ReleaseFeaturedImage(ctx, tx, series.ID); err != nil {

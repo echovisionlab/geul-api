@@ -3,7 +3,6 @@ package series
 import (
 	"context"
 	"log/slog"
-	"time"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -121,18 +120,7 @@ var seriesSortConfig = queryutil.SortConfig{
 	DefaultSort: "created_at DESC",
 }
 
-// seriesPostRow retains each Post's source locale independently of its Series.
-type seriesPostRow struct {
-	ID           string
-	SourceLocale string
-	Title        string
-	Slug         *string
-	Status       string
-	SeriesOrder  *int
-	PublishedAt  *time.Time
-}
-
-func toProtoSeriesPost(post *seriesPostRow) *managev1.SeriesPost {
+func toProtoSeriesPost(post *SeriesPost) *managev1.SeriesPost {
 	response := &managev1.SeriesPost{Id: post.ID, SourceLocale: post.SourceLocale, Title: post.Title, Status: post.Status}
 	if post.Slug != nil {
 		response.Slug = *post.Slug
