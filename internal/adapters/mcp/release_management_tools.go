@@ -7,11 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/model"
+	releasedomain "github.com/echovisionlab/geul-api/internal/release"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -40,15 +41,15 @@ var releaseManagementTools = []mcpserver.Tool{
 }
 
 type ReleaseManagementApplication interface {
-	GetRelease(context.Context, *connect.Request[managev1.GetReleaseRequest]) (*connect.Response[managev1.Release], error)
-	CreateRelease(context.Context, *connect.Request[managev1.CreateReleaseRequest]) (*connect.Response[managev1.Release], error)
-	UpdateRelease(context.Context, *connect.Request[managev1.UpdateReleaseRequest]) (*connect.Response[managev1.UpdateReleaseResponse], error)
-	PublishRelease(context.Context, *connect.Request[managev1.PublishReleaseRequest]) (*connect.Response[managev1.ReleaseLifecycleMutationResponse], error)
-	UnpublishRelease(context.Context, *connect.Request[managev1.UnpublishReleaseRequest]) (*connect.Response[managev1.ReleaseLifecycleMutationResponse], error)
-	DeleteRelease(context.Context, *connect.Request[managev1.DeleteReleaseRequest]) (*connect.Response[managev1.DeleteResponse], error)
-	SetReleaseArtwork(context.Context, *connect.Request[managev1.SetReleaseArtworkRequest]) (*connect.Response[managev1.SetReleaseArtworkResponse], error)
-	DeleteReleaseArtwork(context.Context, *connect.Request[managev1.DeleteReleaseArtworkRequest]) (*connect.Response[managev1.OgAssetDeleteResponse], error)
-	CheckReleaseSlugAvailable(context.Context, *connect.Request[managev1.CheckReleaseSlugAvailableRequest]) (*connect.Response[managev1.CheckReleaseSlugAvailableResponse], error)
+	GetRelease(context.Context, releasedomain.GetReleaseQuery) (*managev1.Release, error)
+	CreateRelease(context.Context, releasedomain.CreateReleaseCommand) (*managev1.Release, error)
+	UpdateRelease(context.Context, releasedomain.UpdateReleaseCommand) (releasedomain.ReleaseUpdate, error)
+	PublishRelease(context.Context, releasedomain.PublishReleaseCommand) (releasedomain.LifecycleChange, error)
+	UnpublishRelease(context.Context, releasedomain.UnpublishReleaseCommand) (releasedomain.LifecycleChange, error)
+	DeleteRelease(context.Context, releasedomain.DeleteReleaseCommand) error
+	SetReleaseArtwork(context.Context, releasedomain.SetReleaseArtworkCommand) (*commonv1.AssetRef, error)
+	DeleteReleaseArtwork(context.Context, releasedomain.DeleteReleaseArtworkCommand) error
+	CheckReleaseSlugAvailable(context.Context, releasedomain.CheckReleaseSlugQuery) (bool, error)
 }
 
 type ReleaseManagementTools struct {
@@ -126,17 +127,15 @@ func (tools *ReleaseManagementTools) create(ctx context.Context, arguments mcpse
 	if err != nil {
 		return executionError(err)
 	}
-	request := connect.NewRequest(&managev1.CreateReleaseRequest{
-		Title: input.Title, SourceLocale: input.SourceLocale, Type: releaseType, Slug: input.Slug,
-		CatalogNumber: input.CatalogNumber, ReleaseDate: releaseDate,
-		SpotifyUrl: input.SpotifyURL, AppleMusicUrl: input.AppleMusicURL, BandcampUrl: input.BandcampURL, YoutubeMusicUrl: input.YoutubeMusicURL,
+	created, err := tools.application.CreateRelease(ctx, releasedomain.CreateReleaseCommand{
+		Title: input.Title, SourceLocale: input.SourceLocale, AcceptLanguage: input.SourceLocale, Type: releaseType,
+		Slug: input.Slug, CatalogNumber: input.CatalogNumber, ReleaseDate: releaseDate,
+		SpotifyURL: input.SpotifyURL, AppleMusicURL: input.AppleMusicURL, BandcampURL: input.BandcampURL, YoutubeMusicURL: input.YoutubeMusicURL,
 	})
-	request.Header().Set("Accept-Language", input.SourceLocale)
-	created, err := tools.application.CreateRelease(ctx, request)
 	if err != nil {
 		return expectedToolError(err)
 	}
-	output := releaseSettingsOutput(created.Msg)
+	output := releaseSettingsOutput(created)
 	output["changed"] = true
 	return contentResult(output)
 }
@@ -149,11 +148,11 @@ func (tools *ReleaseManagementTools) getSettings(ctx context.Context, arguments 
 	if err := validateUUID("document_id", input.DocumentID); err != nil {
 		return executionError(err)
 	}
-	response, err := tools.application.GetRelease(ctx, connect.NewRequest(&managev1.GetReleaseRequest{Id: input.DocumentID}))
+	release, err := tools.application.GetRelease(ctx, releasedomain.GetReleaseQuery{ID: input.DocumentID})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(releaseSettingsOutput(response.Msg))
+	return contentResult(releaseSettingsOutput(release))
 }
 
 type releaseSettingsArguments struct {
@@ -186,33 +185,33 @@ func (tools *ReleaseManagementTools) updateSettings(ctx context.Context, argumen
 	if input.ReleaseDate != nil && input.ClearReleaseDate {
 		return executionError(errors.New("release_date and clear_release_date cannot both be set"))
 	}
-	request := &managev1.UpdateReleaseRequest{
-		Id: input.DocumentID, Slug: input.Slug, CatalogNumber: input.CatalogNumber,
-		SpotifyUrl: input.SpotifyURL, AppleMusicUrl: input.AppleMusicURL, BandcampUrl: input.BandcampURL, YoutubeMusicUrl: input.YoutubeMusicURL,
+	command := releasedomain.UpdateReleaseCommand{
+		ID: input.DocumentID, Slug: input.Slug, CatalogNumber: input.CatalogNumber,
+		SpotifyURL: input.SpotifyURL, AppleMusicURL: input.AppleMusicURL, BandcampURL: input.BandcampURL, YoutubeMusicURL: input.YoutubeMusicURL,
 	}
 	if input.Type != nil {
 		parsed, err := parseReleaseType(*input.Type)
 		if err != nil {
 			return executionError(err)
 		}
-		request.Type = &parsed
+		command.Type = &parsed
 	}
 	date, err := parseReleaseDate(input.ReleaseDate)
 	if err != nil {
 		return executionError(err)
 	}
 	if date != nil {
-		request.ReleaseDateChange = &managev1.UpdateReleaseRequest_SetReleaseDate{SetReleaseDate: date}
+		command.ReleaseDateChange, command.ReleaseDate = releasedomain.ReleaseDateSet, date
 	} else if input.ClearReleaseDate {
-		request.ReleaseDateChange = &managev1.UpdateReleaseRequest_ClearReleaseDate{ClearReleaseDate: &emptypb.Empty{}}
+		command.ReleaseDateChange = releasedomain.ReleaseDateCleared
 	}
-	response, err := tools.application.UpdateRelease(ctx, connect.NewRequest(request))
+	update, err := tools.application.UpdateRelease(ctx, command)
 	if err != nil {
 		return expectedToolError(err)
 	}
-	output := map[string]any{"document_type": "release", "document_id": response.Msg.Id, "changed": response.Msg.Changed, "updated_at": timestampString(response.Msg.UpdatedAt)}
-	if response.Msg.ReleaseDate != nil {
-		output["release_date"] = timestampString(response.Msg.ReleaseDate)
+	output := map[string]any{"document_type": "release", "document_id": update.ID, "changed": update.Changed, "updated_at": timestampString(timestamppb.New(update.UpdatedAt))}
+	if update.ReleaseDate != nil {
+		output["release_date"] = timestampString(timestamppb.New(*update.ReleaseDate))
 	}
 	return contentResult(output)
 }
@@ -226,28 +225,27 @@ func (tools *ReleaseManagementTools) mutateLifecycle(ctx context.Context, name s
 		return executionError(err)
 	}
 	if name == ToolReleaseDelete {
-		response, err := tools.application.DeleteRelease(ctx, connect.NewRequest(&managev1.DeleteReleaseRequest{Id: input.DocumentID}))
-		if err != nil {
+		if err := tools.application.DeleteRelease(ctx, releasedomain.DeleteReleaseCommand{ID: input.DocumentID}); err != nil {
 			return expectedToolError(err)
 		}
-		return contentResult(map[string]any{"document_type": "release", "document_id": input.DocumentID, "changed": response.Msg.Success, "deleted": response.Msg.Success})
+		return contentResult(map[string]any{"document_type": "release", "document_id": input.DocumentID, "changed": true, "deleted": true})
 	}
-	var response *connect.Response[managev1.ReleaseLifecycleMutationResponse]
+	var change releasedomain.LifecycleChange
 	var err error
 	if name == ToolReleasePublish {
-		response, err = tools.application.PublishRelease(ctx, connect.NewRequest(&managev1.PublishReleaseRequest{Id: input.DocumentID}))
+		change, err = tools.application.PublishRelease(ctx, releasedomain.PublishReleaseCommand{ID: input.DocumentID})
 	} else {
-		response, err = tools.application.UnpublishRelease(ctx, connect.NewRequest(&managev1.UnpublishReleaseRequest{Id: input.DocumentID}))
+		change, err = tools.application.UnpublishRelease(ctx, releasedomain.UnpublishReleaseCommand{ID: input.DocumentID})
 	}
 	if err != nil {
 		return expectedToolError(err)
 	}
 	output := map[string]any{
-		"document_type": "release", "document_id": response.Msg.Id, "changed": response.Msg.Changed,
-		"status": contentStatus(response.Msg.Status.String(), "RELEASE_STATUS_"), "updated_at": timestampString(response.Msg.UpdatedAt),
+		"document_type": "release", "document_id": change.ID, "changed": change.Changed,
+		"status": contentStatus(string(change.Status), "RELEASE_STATUS_"), "updated_at": timestampString(timestamppb.New(change.UpdatedAt)),
 	}
-	if response.Msg.PublishedAt != nil {
-		output["published_at"] = timestampString(response.Msg.PublishedAt)
+	if change.PublishedAt != nil {
+		output["published_at"] = timestampString(timestamppb.New(*change.PublishedAt))
 	}
 	return contentResult(output)
 }
@@ -268,13 +266,13 @@ func (tools *ReleaseManagementTools) setArtwork(ctx context.Context, arguments m
 	if err := validateUUID("file_id", input.FileID); err != nil {
 		return executionError(err)
 	}
-	response, err := tools.application.SetReleaseArtwork(ctx, connect.NewRequest(&managev1.SetReleaseArtworkRequest{ReleaseId: input.DocumentID, FileId: input.FileID}))
+	asset, err := tools.application.SetReleaseArtwork(ctx, releasedomain.SetReleaseArtworkCommand{ReleaseID: input.DocumentID, FileID: input.FileID})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	output := map[string]any{"document_type": "release", "document_id": input.DocumentID, "file_id": input.FileID, "success": true, "og_generation_run_id": optionalStringValue(response.Msg.OgGenerationRunId)}
-	if response.Msg.ArtworkAsset != nil {
-		output["artwork_asset_id"] = response.Msg.ArtworkAsset.AssetId
+	output := map[string]any{"document_type": "release", "document_id": input.DocumentID, "file_id": input.FileID, "success": true}
+	if asset != nil {
+		output["artwork_asset_id"] = asset.AssetId
 	}
 	return contentResult(output)
 }
@@ -287,11 +285,10 @@ func (tools *ReleaseManagementTools) removeArtwork(ctx context.Context, argument
 	if err := validateUUID("document_id", input.DocumentID); err != nil {
 		return executionError(err)
 	}
-	response, err := tools.application.DeleteReleaseArtwork(ctx, connect.NewRequest(&managev1.DeleteReleaseArtworkRequest{ReleaseId: input.DocumentID}))
-	if err != nil {
+	if err := tools.application.DeleteReleaseArtwork(ctx, releasedomain.DeleteReleaseArtworkCommand{ReleaseID: input.DocumentID}); err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(map[string]any{"document_type": "release", "document_id": input.DocumentID, "success": response.Msg.Success, "og_generation_run_id": optionalStringValue(response.Msg.OgGenerationRunId)})
+	return contentResult(map[string]any{"document_type": "release", "document_id": input.DocumentID, "success": true})
 }
 
 type releaseSlugArguments struct {
@@ -315,29 +312,31 @@ func (tools *ReleaseManagementTools) checkSlug(ctx context.Context, arguments mc
 			return executionError(err)
 		}
 	}
-	response, err := tools.application.CheckReleaseSlugAvailable(ctx, connect.NewRequest(&managev1.CheckReleaseSlugAvailableRequest{Slug: input.Slug, ExcludeReleaseId: input.ExcludeDocumentID}))
+	available, err := tools.application.CheckReleaseSlugAvailable(ctx, releasedomain.CheckReleaseSlugQuery{Slug: input.Slug, ExcludeReleaseID: input.ExcludeDocumentID})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(map[string]any{"document_type": "release", "slug": input.Slug, "available": response.Msg.Available})
+	return contentResult(map[string]any{"document_type": "release", "slug": input.Slug, "available": available})
 }
 
-func parseReleaseType(value string) (managev1.ReleaseType, error) {
+func parseReleaseType(value string) (model.ReleaseType, error) {
 	switch value {
 	case "album":
-		return managev1.ReleaseType_RELEASE_TYPE_ALBUM, nil
+		return model.ReleaseTypeAlbum, nil
 	case "ep":
-		return managev1.ReleaseType_RELEASE_TYPE_EP, nil
+		return model.ReleaseTypeEP, nil
 	case "single":
-		return managev1.ReleaseType_RELEASE_TYPE_SINGLE, nil
+		return model.ReleaseTypeSingle, nil
 	case "compilation":
-		return managev1.ReleaseType_RELEASE_TYPE_COMPILATION, nil
+		return model.ReleaseTypeCompilation, nil
 	default:
-		return 0, errors.New("type must be album, ep, single, or compilation")
+		return "", errors.New("type must be album, ep, single, or compilation")
 	}
 }
 
-func parseReleaseDate(value *string) (*timestamppb.Timestamp, error) {
+// parseReleaseDate reads an RFC 3339 instant as the UTC instant the Release
+// stores.
+func parseReleaseDate(value *string) (*time.Time, error) {
 	if value == nil {
 		return nil, nil
 	}
@@ -345,7 +344,8 @@ func parseReleaseDate(value *string) (*timestamppb.Timestamp, error) {
 	if err != nil {
 		return nil, fmt.Errorf("release_date must be an RFC 3339 instant with an explicit offset: %w", err)
 	}
-	return timestamppb.New(date), nil
+	date = date.UTC()
+	return &date, nil
 }
 
 func releaseSettingsOutput(release *managev1.Release) map[string]any {

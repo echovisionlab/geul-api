@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
@@ -46,7 +46,7 @@ func (state artistTargetLocaleState) locked() targetlocale.State {
 func normalizeArtistDocumentLocale(locale string) (string, error) {
 	normalized := localization.NormalizeExactSupportedLocale(locale)
 	if normalized == nil {
-		return "", errs.InvalidArgument("locale", "must be an exact canonical locale")
+		return "", domainerr.InvalidField("locale", "must be an exact canonical locale")
 	}
 	return *normalized, nil
 }
@@ -66,7 +66,7 @@ func requireArtistSourceRoomLocale(
 		return "", err
 	}
 	if normalized != source.SourceLocale {
-		return "", errs.CollaborationMutationRejection(
+		return "", domainerr.CollaborationRejection(
 			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_DOCUMENT_METADATA_FORBIDDEN,
 			"Artist document metadata and audit checkpoints are source-locale only",
 		)
@@ -108,7 +108,7 @@ func loadOptionalArtistLocaleMetadataRow(
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return artistLocaleMetadataRow{}, false, nil
 		}
-		return artistLocaleMetadataRow{}, false, errs.Internal(err)
+		return artistLocaleMetadataRow{}, false, err
 	}
 	return row, true, nil
 }
@@ -119,7 +119,7 @@ func deriveArtistTargetRevision(documentRevision string, metadata artistLocaleMe
 		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &updatedAt,
 	})
 	if err != nil {
-		return "", errs.Internal(err)
+		return "", err
 	}
 	return revision, nil
 }
@@ -148,7 +148,7 @@ func loadArtistTargetLocaleState(
 		return artistTargetLocaleState{}, err
 	}
 	if lockedDocumentID != documentID {
-		return artistTargetLocaleState{}, errs.FailedPrecondition("Artist content document changed; reload before saving")
+		return artistTargetLocaleState{}, domainerr.Precondition("Artist content document changed; reload before saving")
 	}
 	source, err := loadCreativeDocumentAuthorityWithStrength(
 		ctx, tx, artistContentEntity, artistID, lock,
@@ -161,7 +161,7 @@ func loadArtistTargetLocaleState(
 		return artistTargetLocaleState{}, normalizeCreativeContentBlockError(artistContentEntity, err)
 	}
 	if snapshot.SourceLocale != source.SourceLocale || snapshot.Document.Profile != creativeContentProfile {
-		return artistTargetLocaleState{}, errs.FailedPrecondition("Artist content document source or profile is inconsistent")
+		return artistTargetLocaleState{}, domainerr.Precondition("Artist content document source or profile is inconsistent")
 	}
 	sourceMetadata, sourceExists, err := loadOptionalArtistLocaleMetadataRow(
 		ctx, tx, artistID, source.SourceLocale, forUpdate,
@@ -170,7 +170,7 @@ func loadArtistTargetLocaleState(
 		return artistTargetLocaleState{}, err
 	}
 	if !sourceExists {
-		return artistTargetLocaleState{}, errs.FailedPrecondition("Artist source locale metadata is missing")
+		return artistTargetLocaleState{}, domainerr.Precondition("Artist source locale metadata is missing")
 	}
 	state := artistTargetLocaleState{
 		Snapshot: snapshot, SourceLocale: source.SourceLocale, SourceMetadata: sourceMetadata,
@@ -185,7 +185,7 @@ func loadArtistTargetLocaleState(
 	}
 	if !exists {
 		if targetlocale.SnapshotHasLocale(snapshot, locale) {
-			return artistTargetLocaleState{}, errs.FailedPrecondition("Artist target locale Blocks exist without owning metadata")
+			return artistTargetLocaleState{}, domainerr.Precondition("Artist target locale Blocks exist without owning metadata")
 		}
 		return state, nil
 	}
@@ -203,7 +203,7 @@ func validateArtistSourceStorage(
 ) error {
 	for _, group := range storage.LocaleGroups {
 		if group.Locale != sourceLocale {
-			return errs.CollaborationMutationRejection(
+			return domainerr.CollaborationRejection(
 				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
 				"Artist source room mutation must match the current source locale",
 			)
@@ -240,10 +240,10 @@ func applyArtistTargetLocaleMutation(
 		return contentblock.Result{}, "", err
 	}
 	if locale == state.SourceLocale {
-		return contentblock.Result{}, "", errs.InvalidArgument("locale", "Artist target locale must differ from source locale")
+		return contentblock.Result{}, "", domainerr.InvalidField("locale", "Artist target locale must differ from source locale")
 	}
 	if state.SourceLocale != domain.SourceLocale {
-		return contentblock.Result{}, "", errs.FailedPrecondition("Artist source locale changed; reload before saving")
+		return contentblock.Result{}, "", domainerr.Precondition("Artist source locale changed; reload before saving")
 	}
 	batch, err := input.Policy.Admit(state.locked(), locale, input.Batch, input.ExpectedTargetRevision)
 	if err != nil {
@@ -260,10 +260,10 @@ func applyArtistTargetLocaleMutation(
 					artistID, locale, now, now,
 				)
 				if created.Error != nil {
-					return contentblock.MetadataEffect{}, errs.Internal(created.Error)
+					return contentblock.MetadataEffect{}, created.Error
 				}
 				if created.RowsAffected != 1 {
-					return contentblock.MetadataEffect{}, errs.InternalMsg("Artist target locale could not be created")
+					return contentblock.MetadataEffect{}, errors.New("Artist target locale could not be created")
 				}
 				final = artistLocaleMetadataRow{Locale: locale, UpdatedAt: now}
 				return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
@@ -277,10 +277,10 @@ func applyArtistTargetLocaleMutation(
 				Where("entity_id = ?::uuid AND locale = ?", artistID, locale).
 				UpdateColumn("updated_at", final.UpdatedAt)
 			if updated.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(updated.Error)
+				return contentblock.MetadataEffect{}, updated.Error
 			}
 			if updated.RowsAffected != 1 {
-				return contentblock.MetadataEffect{}, errs.InternalMsg("Artist target locale disappeared while saving")
+				return contentblock.MetadataEffect{}, errors.New("Artist target locale disappeared while saving")
 			}
 			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
 		},
@@ -292,7 +292,7 @@ func applyArtistTargetLocaleMutation(
 		if err := tx.WithContext(ctx).Model(&model.Artist{}).
 			Where("id = ?", artistID).
 			UpdateColumn("updated_at", now).Error; err != nil {
-			return contentblock.Result{}, "", errs.Internal(err)
+			return contentblock.Result{}, "", err
 		}
 	}
 	targetRevision, err := deriveArtistTargetRevision(result.DocumentRevision.String(), final)
@@ -316,7 +316,7 @@ func updateArtistTargetLocaleTitle(
 	fence contentblock.DomainFence,
 ) (contentblock.Result, string, error) {
 	if title == nil {
-		return contentblock.Result{}, "", errs.InvalidArgument("title", "is required")
+		return contentblock.Result{}, "", domainerr.InvalidField("title", "is required")
 	}
 	domain, err := fence(ctx, tx, documentID)
 	if err != nil {
@@ -327,10 +327,10 @@ func updateArtistTargetLocaleTitle(
 		return contentblock.Result{}, "", err
 	}
 	if state.TargetMetadata == nil || locale == state.SourceLocale {
-		return contentblock.Result{}, "", errs.FailedPrecondition("Artist target locale must exist before metadata is edited")
+		return contentblock.Result{}, "", domainerr.Precondition("Artist target locale must exist before metadata is edited")
 	}
 	if state.SourceLocale != domain.SourceLocale {
-		return contentblock.Result{}, "", errs.FailedPrecondition("Artist source locale changed; reload before saving")
+		return contentblock.Result{}, "", domainerr.Precondition("Artist source locale changed; reload before saving")
 	}
 	if state.Snapshot.Document.Revision != expectedRevision {
 		return contentblock.Result{}, "", &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
@@ -354,10 +354,10 @@ func updateArtistTargetLocaleTitle(
 				Where("entity_id = ?::uuid AND locale = ?", artistID, locale).
 				Updates(map[string]any{"title": normalizedTitle, "updated_at": final.UpdatedAt})
 			if updated.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(updated.Error)
+				return contentblock.MetadataEffect{}, updated.Error
 			}
 			if updated.RowsAffected != 1 {
-				return contentblock.MetadataEffect{}, errs.InternalMsg("Artist target locale disappeared while saving")
+				return contentblock.MetadataEffect{}, errors.New("Artist target locale disappeared while saving")
 			}
 			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
 		},
@@ -369,7 +369,7 @@ func updateArtistTargetLocaleTitle(
 		if err := tx.WithContext(ctx).Model(&model.Artist{}).
 			Where("id = ?", artistID).
 			UpdateColumn("updated_at", now).Error; err != nil {
-			return contentblock.Result{}, "", errs.Internal(err)
+			return contentblock.Result{}, "", err
 		}
 	}
 	targetRevision, err := deriveArtistTargetRevision(result.DocumentRevision.String(), final)
@@ -400,10 +400,10 @@ func deleteArtistTargetLocale(
 		return contentblock.Result{}, err
 	}
 	if state.TargetMetadata == nil || locale == state.SourceLocale {
-		return contentblock.Result{}, errs.FailedPrecondition("Artist target locale must exist before deletion")
+		return contentblock.Result{}, domainerr.Precondition("Artist target locale must exist before deletion")
 	}
 	if state.SourceLocale != domain.SourceLocale {
-		return contentblock.Result{}, errs.FailedPrecondition("Artist source locale changed; reload before saving")
+		return contentblock.Result{}, domainerr.Precondition("Artist source locale changed; reload before saving")
 	}
 	if state.Snapshot.Document.Revision != expectedRevision {
 		return contentblock.Result{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
@@ -423,10 +423,10 @@ func deleteArtistTargetLocale(
 				"DELETE FROM artist_translation WHERE entity_id = ?::uuid AND locale = ?", artistID, locale,
 			)
 			if deleted.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(deleted.Error)
+				return contentblock.MetadataEffect{}, deleted.Error
 			}
 			if deleted.RowsAffected != 1 {
-				return contentblock.MetadataEffect{}, errs.InternalMsg("Artist target locale disappeared while deleting")
+				return contentblock.MetadataEffect{}, errors.New("Artist target locale disappeared while deleting")
 			}
 			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
 		},
@@ -438,7 +438,7 @@ func deleteArtistTargetLocale(
 		if err := tx.WithContext(ctx).Model(&model.Artist{}).
 			Where("id = ?", artistID).
 			UpdateColumn("updated_at", time.Now().UTC()).Error; err != nil {
-			return contentblock.Result{}, errs.Internal(err)
+			return contentblock.Result{}, err
 		}
 	}
 	return result, nil

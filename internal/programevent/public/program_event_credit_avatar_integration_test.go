@@ -35,7 +35,7 @@ func seedPublicCreditAvatarArtist(t *testing.T, db *gorm.DB, published bool) str
 		status = managev1.ArtistStatus_ARTIST_STATUS_PUBLISHED.String()
 	}
 	slug := "credit-artist-" + id
-	require.NoError(t, db.Create(&model.Artist{ID: id, ContentDocumentID: &documentID, Slug: &slug, SourceLocale: "en", Status: status}).Error)
+	require.NoError(t, db.Create(&model.Artist{ID: id, ContentDocumentID: &documentID, Slug: &slug, SourceLocale: "en", Status: model.ArtistStatus(status)}).Error)
 	require.NoError(t, db.Exec("INSERT INTO artist_translation (entity_id, locale, title) VALUES (?::uuid, 'en', 'Credit artist')", id).Error)
 	return id
 }
@@ -80,7 +80,7 @@ func TestPublicProgramEventCreditAvatarsIntegration(t *testing.T) {
 	members := &publicEventCreditAvatarMembers{summaries: map[string]*commonv1.MemberSummary{
 		memberID: {Id: memberID, Nickname: "Credit member", AvatarAsset: &commonv1.AssetRef{AssetId: "member-avatar"}},
 	}}
-	service := NewProgramEventService(db, newPublicProgramEventAssets(db, "https://cdn.example.com"), members)
+	service := publicServiceForTest(t, Deps{DB: db, Assets: newPublicProgramEventAssets(db, "https://cdn.example.com"), CreditMembers: members})
 	credits, err := service.loadPublicProgramEventCredits(t.Context(), eventID)
 	require.NoError(t, err)
 	require.Len(t, credits, 9)
@@ -116,7 +116,7 @@ func TestPublicProgramEventCreditAvatarQueryBudgetIntegration(t *testing.T) {
 	require.NoError(t, db.Create(&model.ArtistFile{ArtistID: artistID, FileID: fileID}).Error)
 	var queries atomic.Int64
 	countedDB := db.Session(&gorm.Session{Logger: publicProgramEventQueryCounter{Interface: db.Config.Logger, count: &queries}})
-	service := NewProgramEventService(countedDB, newPublicProgramEventAssets(countedDB, "https://cdn.example.com"), &publicEventCreditAvatarMembers{})
+	service := publicServiceForTest(t, Deps{DB: countedDB, Assets: newPublicProgramEventAssets(countedDB, "https://cdn.example.com"), CreditMembers: &publicEventCreditAvatarMembers{}})
 	counts := make(map[int]int64)
 	credits, err := service.loadPublicProgramEventCredits(t.Context(), eventID)
 	require.NoError(t, err)

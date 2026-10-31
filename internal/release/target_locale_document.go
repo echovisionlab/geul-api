@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -71,7 +71,7 @@ type releaseTargetLocaleMutationResult struct {
 func normalizeReleaseDocumentLocale(locale string) (string, error) {
 	normalized := localization.NormalizeExactSupportedLocale(locale)
 	if normalized == nil {
-		return "", errs.InvalidArgument("locale", "must be an exact canonical locale")
+		return "", domainerr.InvalidField("locale", "must be an exact canonical locale")
 	}
 	return *normalized, nil
 }
@@ -90,24 +90,18 @@ func loadOptionalReleaseLocaleMetadataRow(
 		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
 	}
 	var row releaseLocaleMetadataRow
-	if err := query.Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return releaseLocaleMetadataRow{}, false, nil
-		}
-		return releaseLocaleMetadataRow{}, false, errs.Internal(err)
+	err := query.Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return releaseLocaleMetadataRow{}, false, nil
 	}
-	return row, true, nil
+	return row, err == nil, err
 }
 
 func deriveReleaseTargetRevision(documentRevision string, metadata releaseLocaleMetadataRow) (string, error) {
 	updatedAt := metadata.UpdatedAt
-	revision, err := translation.DeriveTargetRevision(translation.TargetRevisionFacts{
+	return translation.DeriveTargetRevision(translation.TargetRevisionFacts{
 		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &updatedAt,
 	})
-	if err != nil {
-		return "", errs.Internal(err)
-	}
-	return revision, nil
 }
 
 func loadReleaseTargetLocaleState(
@@ -136,7 +130,7 @@ func loadReleaseTargetLocaleState(
 		return releaseTargetLocaleState{}, normalizeReleaseContentBlockError(err)
 	}
 	if snapshot.SourceLocale != source.SourceLocale || snapshot.Document.Profile != releaseContentProfile {
-		return releaseTargetLocaleState{}, errs.FailedPrecondition("Release content document source or profile is inconsistent")
+		return releaseTargetLocaleState{}, domainerr.Precondition("Release content document source or profile is inconsistent")
 	}
 	sourceMetadata, exists, err := loadOptionalReleaseLocaleMetadataRow(
 		ctx, tx, releaseID, source.SourceLocale, forUpdate,
@@ -145,11 +139,11 @@ func loadReleaseTargetLocaleState(
 		return releaseTargetLocaleState{}, err
 	}
 	if !exists {
-		return releaseTargetLocaleState{}, errs.FailedPrecondition("Release source locale metadata is missing")
+		return releaseTargetLocaleState{}, domainerr.Precondition("Release source locale metadata is missing")
 	}
 	sourceNotes, err := loadReleaseCreditLocaleNotes(ctx, tx, releaseID, source.SourceLocale)
 	if err != nil {
-		return releaseTargetLocaleState{}, errs.Internal(err)
+		return releaseTargetLocaleState{}, err
 	}
 	state := releaseTargetLocaleState{
 		Snapshot: snapshot, SourceLocale: source.SourceLocale,
@@ -166,13 +160,13 @@ func loadReleaseTargetLocaleState(
 	}
 	if !exists {
 		if targetlocale.SnapshotHasLocale(snapshot, locale) {
-			return releaseTargetLocaleState{}, errs.FailedPrecondition("Release target locale Blocks exist without owning metadata")
+			return releaseTargetLocaleState{}, domainerr.Precondition("Release target locale Blocks exist without owning metadata")
 		}
 		return state, nil
 	}
 	targetNotes, err := loadReleaseCreditLocaleNotes(ctx, tx, releaseID, locale)
 	if err != nil {
-		return releaseTargetLocaleState{}, errs.Internal(err)
+		return releaseTargetLocaleState{}, err
 	}
 	state.TargetMetadata = &target
 	state.TargetNotes = targetNotes
@@ -191,7 +185,7 @@ func applyReleaseTargetLocaleMutation(
 ) (releaseTargetLocaleMutationResult, error) {
 	if store == nil || input.DocumentID == uuid.Nil || input.ExpectedDocumentRevision == uuid.Nil ||
 		strings.TrimSpace(input.ReleaseID) == "" || strings.TrimSpace(input.Locale) == "" || input.Fence == nil {
-		return releaseTargetLocaleMutationResult{}, errs.InvalidArgument("target", "Release target identity, revision, and fence are required")
+		return releaseTargetLocaleMutationResult{}, domainerr.InvalidField("target", "Release target identity, revision, and fence are required")
 	}
 	domain, err := input.Fence(ctx, tx, input.DocumentID)
 	if err != nil {
@@ -204,7 +198,7 @@ func applyReleaseTargetLocaleMutation(
 		return releaseTargetLocaleMutationResult{}, err
 	}
 	if input.Locale == state.SourceLocale || domain.SourceLocale != state.SourceLocale {
-		return releaseTargetLocaleMutationResult{}, errs.InvalidArgument("locale", "Release target locale must differ from the current source locale")
+		return releaseTargetLocaleMutationResult{}, domainerr.InvalidField("locale", "Release target locale must differ from the current source locale")
 	}
 	if state.Snapshot.Document.Revision != input.ExpectedDocumentRevision {
 		return releaseTargetLocaleMutationResult{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}
@@ -279,14 +273,14 @@ func (w *releaseTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, con
 			"INSERT INTO release_translation (entity_id, locale, title, created_at, updated_at) VALUES (?::uuid, ?, ?, ?, ?)",
 			w.input.ReleaseID, w.input.Locale, nextTitle, w.now, w.now,
 		)
-		if created.Error != nil || created.RowsAffected != 1 {
-			if created.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(created.Error)
-			}
-			return contentblock.MetadataEffect{}, errs.InternalMsg("Release target locale could not be created")
+		if created.Error != nil {
+			return contentblock.MetadataEffect{}, created.Error
+		}
+		if created.RowsAffected != 1 {
+			return contentblock.MetadataEffect{}, errors.New("Release target locale could not be created")
 		}
 		if err := replaceReleaseCreditLocaleNotes(ctx, tx, w.input.ReleaseID, w.input.Locale, nextNotes, w.now); err != nil {
-			return contentblock.MetadataEffect{}, errs.Internal(err)
+			return contentblock.MetadataEffect{}, err
 		}
 		return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{w.input.Locale}}, nil
 	}
@@ -298,15 +292,15 @@ func (w *releaseTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, con
 	updated := tx.WithContext(ctx).Table("release_translation").
 		Where("entity_id = ?::uuid AND locale = ?", w.input.ReleaseID, w.input.Locale).
 		Updates(map[string]any{"title": nextTitle, "updated_at": updatedAt})
-	if updated.Error != nil || updated.RowsAffected != 1 {
-		if updated.Error != nil {
-			return contentblock.MetadataEffect{}, errs.Internal(updated.Error)
-		}
-		return contentblock.MetadataEffect{}, errs.InternalMsg("Release target locale disappeared while saving")
+	if updated.Error != nil {
+		return contentblock.MetadataEffect{}, updated.Error
+	}
+	if updated.RowsAffected != 1 {
+		return contentblock.MetadataEffect{}, errors.New("Release target locale disappeared while saving")
 	}
 	if !maps.Equal(currentNotes, nextNotes) {
 		if err := replaceReleaseCreditLocaleNotes(ctx, tx, w.input.ReleaseID, w.input.Locale, nextNotes, updatedAt); err != nil {
-			return contentblock.MetadataEffect{}, errs.Internal(err)
+			return contentblock.MetadataEffect{}, err
 		}
 	}
 	w.final = releaseLocaleMetadataRow{Locale: w.input.Locale, Title: nextTitle, UpdatedAt: updatedAt}
@@ -329,7 +323,7 @@ func validateReleaseCreditNoteIdentityMap(
 	}
 	for creditID := range notes {
 		if _, ok := allowed[creditID]; !ok {
-			return errs.InvalidArgument("credit_notes", "credit_id does not belong to the Release")
+			return domainerr.InvalidField("credit_notes", "credit_id does not belong to the Release")
 		}
 	}
 	return nil
@@ -356,7 +350,7 @@ func deleteReleaseTargetLocale(
 		return contentblock.Result{}, err
 	}
 	if locale == state.SourceLocale || state.SourceLocale != domain.SourceLocale {
-		return contentblock.Result{}, errs.InvalidArgument("locale", "Release source translation cannot be deleted")
+		return contentblock.Result{}, domainerr.InvalidField("locale", "Release source translation cannot be deleted")
 	}
 	if state.Snapshot.Document.Revision != expectedDocumentRevision {
 		return contentblock.Result{}, &contentblock.StaleRevisionError{CurrentRevision: state.Snapshot.Document.Revision}

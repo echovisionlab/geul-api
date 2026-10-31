@@ -2,108 +2,106 @@ package release
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
+
+// GetReleaseRelationsQuery names the Release whose relations an editor reads.
+type GetReleaseRelationsQuery struct {
+	ReleaseID string
+}
 
 // GetReleaseRelations returns the current editable relation snapshot after checking
 // the same view permission as GetRelease. It is intentionally read-only: relation
 // mutations still validate write permission in their own transaction.
-func (s *ReleaseService) GetReleaseRelations(
-	ctx context.Context,
-	req *connect.Request[managev1.GetReleaseRelationsRequest],
-) (*connect.Response[managev1.GetReleaseRelationsResponse], error) {
-	if err := requireReleaseAction(ctx, s.spiceDB, req.Msg.ReleaseId, releaseActionView); err != nil {
+func (s *Service) GetReleaseRelations(ctx context.Context, query GetReleaseRelationsQuery) (*managev1.GetReleaseRelationsResponse, error) {
+	if err := requireReleaseAction(ctx, s.spiceDB, query.ReleaseID, releaseActionView); err != nil {
 		return nil, err
 	}
-
-	response := &managev1.GetReleaseRelationsResponse{ReleaseId: req.Msg.ReleaseId}
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	relations := &managev1.GetReleaseRelationsResponse{ReleaseId: query.ReleaseID}
+	err := mutation.Read(ctx, s.db, func(tx *gorm.DB) error {
 		var release model.Release
-		if err := tx.Select("id").Where("id = ?", req.Msg.ReleaseId).Take(&release).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("release", req.Msg.ReleaseId)
+		if err := tx.Select("id").Where("id = ?", query.ReleaseID).Take(&release).Error; err != nil {
+			return missingAs(err, releaseNotFound(query.ReleaseID))
+		}
+		for _, load := range []func(context.Context, *gorm.DB, string, *managev1.GetReleaseRelationsResponse) error{
+			s.loadReleaseEditorArtists, s.loadReleaseEditorLabels, loadReleaseEditorReferences, s.loadReleaseEditorCredits,
+		} {
+			if err := load(ctx, tx, query.ReleaseID, relations); err != nil {
+				return err
 			}
-			return errs.Internal(err)
-		}
-
-		if err := loadReleaseEditorArtists(ctx, tx, req.Msg.ReleaseId, response); err != nil {
-			return errs.Internal(err)
-		}
-		if err := loadReleaseEditorLabels(ctx, tx, req.Msg.ReleaseId, response); err != nil {
-			return errs.Internal(err)
-		}
-		if err := loadReleaseEditorReferences(ctx, tx, req.Msg.ReleaseId, response); err != nil {
-			return errs.Internal(err)
-		}
-		if err := loadReleaseEditorCredits(ctx, tx, req.Msg.ReleaseId, response); err != nil {
-			return errs.Internal(err)
 		}
 		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	})
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(response), nil
+	return relations, nil
 }
 
-func loadReleaseEditorArtists(ctx context.Context, tx *gorm.DB, releaseID string, response *managev1.GetReleaseRelationsResponse) error {
-	var rows []struct {
-		ID        string  `gorm:"column:id"`
-		Name      string  `gorm:"column:name"`
-		Slug      *string `gorm:"column:slug"`
-		SortOrder int32   `gorm:"column:sort_order"`
+// optionalSlug is the editor form of a summary slug: absent when empty.
+func optionalSlug(slug string) *string {
+	if slug == "" {
+		return nil
 	}
-	err := tx.WithContext(ctx).Table("release_artist AS relation").
-		Select(`relation.artist_id AS id,
-			COALESCE((SELECT translation.title FROM artist_translation AS translation WHERE translation.entity_id = artist.id AND translation.locale = artist.source_locale LIMIT 1), '') AS name,
-			artist.slug AS slug, relation.sort_order`).
-		Joins("JOIN artist ON artist.id = relation.artist_id").
-		Where("relation.release_id = ?", releaseID).
-		Order("relation.sort_order ASC, relation.artist_id ASC").Scan(&rows).Error
+	return &slug
+}
+
+func (s *Service) loadReleaseEditorArtists(ctx context.Context, tx *gorm.DB, releaseID string, response *managev1.GetReleaseRelationsResponse) error {
+	var rows []model.ReleaseArtist
+	if err := tx.WithContext(ctx).Where("release_id = ?", releaseID).
+		Order("sort_order ASC, artist_id ASC").Find(&rows).Error; err != nil {
+		return fmt.Errorf("load release artists: %w", err)
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ArtistID)
+	}
+	artists, err := s.artists.LoadArtistSummariesWithDB(ctx, tx, ids)
 	if err != nil {
 		return fmt.Errorf("load release artists: %w", err)
 	}
 	response.Artists = make([]*managev1.ReleaseArtistEditorItem, 0, len(rows))
 	for _, row := range rows {
+		artist, exists := artists[row.ArtistID]
+		if !exists {
+			continue
+		}
 		response.Artists = append(response.Artists, &managev1.ReleaseArtistEditorItem{
-			ArtistId: row.ID, ArtistName: row.Name, ArtistSlug: row.Slug, SortOrder: row.SortOrder,
+			ArtistId: row.ArtistID, ArtistName: artist.Title, ArtistSlug: optionalSlug(artist.Slug), SortOrder: int32(row.SortOrder),
 		})
 	}
 	return nil
 }
 
-func loadReleaseEditorLabels(ctx context.Context, tx *gorm.DB, releaseID string, response *managev1.GetReleaseRelationsResponse) error {
-	var rows []struct {
-		ID            string  `gorm:"column:id"`
-		Name          string  `gorm:"column:name"`
-		Slug          *string `gorm:"column:slug"`
-		CatalogNumber *string `gorm:"column:catalog_number"`
-		SortOrder     int32   `gorm:"column:sort_order"`
+func (s *Service) loadReleaseEditorLabels(ctx context.Context, tx *gorm.DB, releaseID string, response *managev1.GetReleaseRelationsResponse) error {
+	var rows []model.ReleaseLabel
+	if err := tx.WithContext(ctx).Where("release_id = ?", releaseID).
+		Order("sort_order ASC, label_id ASC").Find(&rows).Error; err != nil {
+		return fmt.Errorf("load release labels: %w", err)
 	}
-	err := tx.WithContext(ctx).Table("release_label AS relation").
-		Select(`relation.label_id AS id,
-			COALESCE((SELECT translation.title FROM label_translation AS translation WHERE translation.entity_id = label.id AND translation.locale = label.source_locale LIMIT 1), '') AS name,
-			label.slug AS slug, relation.catalog_number, relation.sort_order`).
-		Joins("JOIN label ON label.id = relation.label_id").
-		Where("relation.release_id = ?", releaseID).
-		Order("relation.sort_order ASC, relation.label_id ASC").Scan(&rows).Error
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.LabelID)
+	}
+	labels, err := s.labels.LoadLabelSummariesWithDB(ctx, tx, ids)
 	if err != nil {
 		return fmt.Errorf("load release labels: %w", err)
 	}
 	response.Labels = make([]*managev1.ReleaseLabelEditorItem, 0, len(rows))
 	for _, row := range rows {
+		label, exists := labels[row.LabelID]
+		if !exists {
+			continue
+		}
 		response.Labels = append(response.Labels, &managev1.ReleaseLabelEditorItem{
-			LabelId: row.ID, LabelName: row.Name, LabelSlug: row.Slug,
-			CatalogNumber: row.CatalogNumber, SortOrder: row.SortOrder,
+			LabelId: row.LabelID, LabelName: label.Title, LabelSlug: optionalSlug(label.Slug),
+			CatalogNumber: row.CatalogNumber, SortOrder: int32(row.SortOrder),
 		})
 	}
 	return nil
@@ -170,12 +168,10 @@ func tableNameForReleaseReference(relation string) string {
 	}
 }
 
-func loadReleaseEditorCredits(ctx context.Context, tx *gorm.DB, releaseID string, response *managev1.GetReleaseRelationsResponse) error {
+func (s *Service) loadReleaseEditorCredits(ctx context.Context, tx *gorm.DB, releaseID string, response *managev1.GetReleaseRelationsResponse) error {
 	var rows []struct {
 		ID           string  `gorm:"column:id"`
 		ArtistID     *string `gorm:"column:artist_id"`
-		ArtistName   *string `gorm:"column:artist_name"`
-		ArtistSlug   *string `gorm:"column:artist_slug"`
 		MemberID     *string `gorm:"column:member_id"`
 		MemberName   *string `gorm:"column:member_name"`
 		CreditedName *string `gorm:"column:credited_name"`
@@ -184,22 +180,34 @@ func loadReleaseEditorCredits(ctx context.Context, tx *gorm.DB, releaseID string
 	}
 	err := tx.WithContext(ctx).Table("release_credit AS credit").
 		Select(`credit.id, credit.artist_id, credit.member_id, credit.credited_name, credit.credit_role, credit.sort_order,
-			CASE WHEN credit.artist_id IS NOT NULL THEN COALESCE((SELECT translation.title FROM artist_translation AS translation WHERE translation.entity_id = artist.id AND translation.locale = artist.source_locale LIMIT 1), '') ELSE NULL END AS artist_name,
-			artist.slug AS artist_slug, member.nickname AS member_name`).
-		Joins("LEFT JOIN artist ON artist.id = credit.artist_id").
+			member.nickname AS member_name`).
 		Joins("LEFT JOIN member ON member.id = credit.member_id").
 		Where("credit.release_id = ?", releaseID).
 		Order("credit.sort_order ASC, credit.created_at ASC, credit.id ASC").Scan(&rows).Error
 	if err != nil {
 		return fmt.Errorf("load release credits: %w", err)
 	}
+	artistIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.ArtistID != nil {
+			artistIDs = append(artistIDs, *row.ArtistID)
+		}
+	}
+	artists, err := s.artists.LoadArtistSummariesWithDB(ctx, tx, artistIDs)
+	if err != nil {
+		return fmt.Errorf("load release credits: %w", err)
+	}
 	response.Credits = make([]*managev1.ReleaseCreditEditorItem, 0, len(rows))
 	for _, row := range rows {
-		response.Credits = append(response.Credits, &managev1.ReleaseCreditEditorItem{
-			Id: row.ID, ArtistId: row.ArtistID, ArtistName: row.ArtistName, ArtistSlug: row.ArtistSlug,
-			MemberId: row.MemberID, MemberName: row.MemberName, CreditedName: row.CreditedName,
-			CreditRole: row.CreditRole, SortOrder: row.SortOrder,
-		})
+		credit := &managev1.ReleaseCreditEditorItem{
+			Id: row.ID, ArtistId: row.ArtistID, MemberId: row.MemberID, MemberName: row.MemberName,
+			CreditedName: row.CreditedName, CreditRole: row.CreditRole, SortOrder: row.SortOrder,
+		}
+		if row.ArtistID != nil {
+			artist := artists[*row.ArtistID]
+			credit.ArtistName, credit.ArtistSlug = &artist.Title, optionalSlug(artist.Slug)
+		}
+		response.Credits = append(response.Credits, credit)
 	}
 	return nil
 }

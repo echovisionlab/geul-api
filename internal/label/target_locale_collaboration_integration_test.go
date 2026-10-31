@@ -9,13 +9,11 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -50,24 +48,11 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	sessionID := testutil.InsertPostIntegrationSession(t, db, identityID)
 	auditWriter := apitelemetry.NewDurableWriter(db)
 	memberCtx := labelTargetMemberContext(t, identityID)
-	internal := NewAuditedInternalLabelService(
-		db, &capturingAsyncPublisher{}, stack.SpiceDBClient,
-		auditWriter,
-		Dependencies{Translation: labeladapter.NewTranslation(), Runtime: labelTargetIntegrationRuntime{}},
-		WithInternalLabelContentBlockStore(store),
-		WithInternalLabelCheckpoints(testcollaboration.NewCheckpoints(db, stack.SpiceDBClient)),
-	)
-	aiService := NewAuditedLabelService(
-		db, stack.SpiceDBClient,
-		&fakeIdentityManager{identity: postIntegrationIdentity(identityID, "en")},
-		&recordingArtistFileDeleter{}, &capturingAsyncPublisher{}, auditWriter,
-		Dependencies{
-			Translation: labeladapter.NewTranslation(),
-			Members:     labeladapter.NewMemberProjection(db, ""),
-			Runtime:     labelTargetIntegrationRuntime{},
-		},
-		WithLabelContentBlockStore(store),
-	)
+	aiService := newTestService(t, Deps{
+		DB: db, SpiceDB: stack.SpiceDBClient, Audit: auditWriter, Publisher: &capturingAsyncPublisher{},
+		ContentBlocks: store, Runtime: labelTargetIntegrationRuntime{},
+	})
+	internal := NewInternalConnectHandler(aiService)
 
 	missing := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ko")
 	require.False(t, missing.Msg.LocaleExists)
@@ -351,7 +336,7 @@ func (labelTargetIntegrationRuntime) RequestCurrentWithDB(context.Context, *gorm
 func executeLabelTargetLifecycleIntegration(
 	t *testing.T,
 	ctx context.Context,
-	service *LabelService,
+	service *Service,
 	labelID string,
 	locale string,
 	documentRevision string,
@@ -381,7 +366,7 @@ func executeLabelTargetLifecycleIntegration(
 func executeLabelTargetValueIntegration(
 	t *testing.T,
 	ctx context.Context,
-	service *LabelService,
+	service *Service,
 	labelID string,
 	locale string,
 	text string,
@@ -416,7 +401,7 @@ func executeLabelTargetValueIntegration(
 
 func loadLabelTargetRoomIntegration(
 	t *testing.T,
-	service *InternalLabelService,
+	service *InternalConnectHandler,
 	sessionID string,
 	labelID string,
 	locale string,

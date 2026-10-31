@@ -13,7 +13,7 @@ import (
 func TestCategoryServiceAdminMethodsRejectUnauthenticatedBeforeDatabase(t *testing.T) {
 	t.Parallel()
 
-	svc := &CategoryService{}
+	svc := NewCategoryConnectHandler(&Service{})
 	ctx := context.Background()
 
 	_, err := svc.ListCategoriesAdmin(ctx, connect.NewRequest(&managev1.ListCategoriesAdminRequest{}))

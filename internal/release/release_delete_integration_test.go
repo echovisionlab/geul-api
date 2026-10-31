@@ -13,11 +13,13 @@ import (
 
 	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	"github.com/echovisionlab/geul-api/internal/testutil/sharelinktest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -48,24 +50,11 @@ func TestDeleteReleaseRejectsOversizedAtomicAuthorizationBatchBeforeMutationInte
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release delete batch boundary admin")
-	ctx := auth.WithUser(context.Background(), &auth.UserInfo{
-		IdentityID: auth.IdentityID(adminID), MemberID: auth.MemberID(testutil.PostIntegrationMemberID(adminID)),
-		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true,
-	})
+	ctx := releaseIntegrationAdminCtx(adminID)
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	files := &recordingReleaseDeleteFileDeleter{}
-	service := releasepkg.NewReleaseService(
-		db,
-		spiceDB,
-		testutil.SetupOryStack(t).KratosClient,
-		releaseadapter.NewTrackFiles(files),
-		releaseadapter.NewAssets("cdn.example.com"),
-		releaseadapter.NewOG("cdn.example.com"),
-		releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
-		noopReleaseDeleteAsyncPublisher{},
-		releasepkg.WithReleaseContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)),
-	)
+	service := releasepkg.NewConnectHandler(newReleaseDeleteUseCases(t, db, spiceDB, files))
 
 	release, err := service.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title:    "Oversized authorization batch",
@@ -141,27 +130,12 @@ func TestReleaseServiceDeleteReleasePreservesLibraryFilesIntegration(t *testing.
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release Delete Admin")
-	ctx := auth.WithUser(context.Background(), &auth.UserInfo{
-		IdentityID:    auth.IdentityID(adminID),
-		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(adminID)),
-		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
-		Authenticated: true,
-	})
+	ctx := releaseIntegrationAdminCtx(adminID)
 
 	fileDeleter := &recordingReleaseDeleteFileDeleter{}
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	releaseSvc := releasepkg.NewReleaseService(
-		db,
-		spiceDB,
-		testutil.SetupOryStack(t).KratosClient,
-		releaseadapter.NewTrackFiles(fileDeleter),
-		releaseadapter.NewAssets("cdn.example.com"),
-		releaseadapter.NewOG("cdn.example.com"),
-		releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
-		noopReleaseDeleteAsyncPublisher{},
-		releasepkg.WithReleaseContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)),
-	)
+	releaseSvc := releasepkg.NewConnectHandler(newReleaseDeleteUseCases(t, db, spiceDB, fileDeleter))
 
 	releaseResp, err := releaseSvc.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title:    "Release Delete Integration",
@@ -196,7 +170,7 @@ func TestReleaseServiceDeleteReleasePreservesLibraryFilesIntegration(t *testing.
 	require.Equal(t, artworkAsset.GetAssetId(), managedRelease.Msg.GetArtworkAsset().GetAssetId())
 	require.Equal(t, artworkAsset.GetAssetId(), managedRelease.Msg.GetOgAsset().GetAssetId())
 
-	trackSvc := releasepkg.NewTrackService(db, releaseadapter.NewTrackTranscodes(releaseIntegrationTranscoderPublisher{}), releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}), spiceDB, releaseadapter.NewTrackFiles(fileDeleter), releaseadapter.NewMemberSummaries(db, "cdn.example.com"), releaseadapter.NewArtistSummaries(db))
+	trackSvc := releasepkg.NewTrackConnectHandler(newReleaseDeleteUseCases(t, db, spiceDB, fileDeleter))
 	trackResp, err := trackSvc.CreateTrack(ctx, connect.NewRequest(&managev1.CreateTrackRequest{
 		ReleaseId: releaseID,
 		Title:     "Delete Cleanup Track",
@@ -241,26 +215,11 @@ func TestReleaseServiceArtworkReplacementAndUnlinkPreserveFilesIntegration(t *te
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release Artwork Admin")
-	ctx := auth.WithUser(context.Background(), &auth.UserInfo{
-		IdentityID:    auth.IdentityID(adminID),
-		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(adminID)),
-		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
-		Authenticated: true,
-	})
+	ctx := releaseIntegrationAdminCtx(adminID)
 
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	releaseSvc := releasepkg.NewReleaseService(
-		db,
-		spiceDB,
-		testutil.SetupOryStack(t).KratosClient,
-		releaseadapter.NewTrackFiles(&recordingReleaseDeleteFileDeleter{}),
-		releaseadapter.NewAssets("cdn.example.com"),
-		releaseadapter.NewOG("cdn.example.com"),
-		releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
-		noopReleaseDeleteAsyncPublisher{},
-		releasepkg.WithReleaseContentBlockStore(newPageIntegrationContentBlockStore(t, spiceDB)),
-	)
+	releaseSvc := releasepkg.NewConnectHandler(newReleaseDeleteUseCases(t, db, spiceDB, &recordingReleaseDeleteFileDeleter{}))
 	releaseResp, err := releaseSvc.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title:    "Release Artwork Lifecycle",
 		Type:     managev1.ReleaseType_RELEASE_TYPE_ALBUM,
@@ -325,4 +284,18 @@ func (publisher noopReleaseDeleteAsyncPublisher) NotifyProtobufWithExecutor(
 	message proto.Message,
 ) error {
 	return publisher.NotifyProtobuf(ctx, signal, message)
+}
+
+// newReleaseDeleteUseCases returns the Release use cases with the CDN the
+// deletion tests read assets from, and in-memory audit.
+func newReleaseDeleteUseCases(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, files releasepkg.TrackFileManager) *releasepkg.Service {
+	t.Helper()
+	return releasetest.NewService(t, releasepkg.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{}, ContentBlocks: newPageIntegrationContentBlockStore(t, spiceDB),
+		ContentSignals: noopReleaseDeleteAsyncPublisher{}, TrackFiles: releaseadapter.NewTrackFiles(files),
+		Transcodes:   releaseadapter.NewTrackTranscodes(releaseIntegrationTranscoderPublisher{}),
+		WaveformJobs: releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
+		Assets:       releaseadapter.NewAssets("cdn.example.com"), OG: releaseadapter.NewOG("cdn.example.com"),
+		Members: releaseadapter.NewMemberSummaries(db, "cdn.example.com"),
+	})
 }

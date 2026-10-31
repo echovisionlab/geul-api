@@ -25,7 +25,7 @@ func TestProgramEventAndSeriesMutationsSynchronouslyApplyAuthorizationIntegratio
 	subject, err := auth.NewAccountIdentitySubject(user.IdentityID)
 	require.NoError(t, err)
 
-	typeResponse, err := NewProgramEventTypeService(db, spiceDB).CreateProgramEventType(
+	typeResponse, err := typeHandlerForTest(t, db, spiceDB).CreateProgramEventType(
 		ctx,
 		connect.NewRequest(&managev1.CreateProgramEventTypeRequest{
 			Slug: "program-event-sync-type-" + testutil.IntegrationUUID(), Locale: "en", Name: "Program Event sync type",
@@ -33,7 +33,7 @@ func TestProgramEventAndSeriesMutationsSynchronouslyApplyAuthorizationIntegratio
 	)
 	require.NoError(t, err)
 
-	seriesService := NewProgramEventSeriesService(db, newProgramEventRuntime(""), spiceDB)
+	seriesService := NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Media: newProgramEventRuntime("")}))
 	seriesResponse, err := seriesService.CreateProgramEventSeries(ctx, connect.NewRequest(&managev1.CreateProgramEventSeriesRequest{
 		Title: "Program Event sync series", Slug: "program-event-sync-series-" + testutil.IntegrationUUID(),
 	}))
@@ -46,8 +46,7 @@ func TestProgramEventAndSeriesMutationsSynchronouslyApplyAuthorizationIntegratio
 	require.NoError(t, err)
 	require.True(t, allowed)
 
-	eventService := NewProgramEventService(db, newProgramEventRuntime(""), spiceDB, newProgramEventCreditMemberSummaries(db, ""))
-	eventService.contentBlocks = contentBlocks
+	eventService := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: contentBlocks, Media: newProgramEventRuntime(""), CreditMembers: newProgramEventCreditMemberSummaries(db, "")}))
 	eventResponse, err := eventService.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title:        "Program Event sync event",
 		Slug:         "program-event-sync-event-" + testutil.IntegrationUUID(),

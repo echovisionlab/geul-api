@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
@@ -30,14 +29,10 @@ func TestWorkServiceListAndMapFeaturesUsePublishedServiceCreatedWorksIntegration
 	ctx := publicLegalAdminCtx(adminMemberID, adminID)
 	suffix := uuid.NewString()
 
-	placeSvc := referencecatalog.NewMapPlaceService(
-		db,
-		referencecatalogadapter.NewAssets("https://cdn.example.com"),
-		referencecatalogadapter.NewMemberSummaries("https://cdn.example.com"),
-		publicIntegrationSpiceDBFor(t, db),
-	)
+	catalog := referenceCatalogForTest(t, db, "https://cdn.example.com", publicIntegrationSpiceDBFor(t, db))
+	placeSvc := referencecatalog.NewMapPlaceConnectHandler(catalog)
 	workPlaceGooglePlaceID := "google-place-work-" + suffix
-	place, err := placeSvc.CreateMapPlace(ctx, connect.NewRequest(&managev1.CreateMapPlaceRequest{
+	place, err := placeSvc.CreateMapPlace(withReferenceAudit(t, ctx), connect.NewRequest(&managev1.CreateMapPlaceRequest{
 		Name:          "Public Work Map Place " + suffix,
 		Address:       "Public Work Road",
 		Lat:           37.539639,
@@ -46,30 +41,26 @@ func TestWorkServiceListAndMapFeaturesUsePublishedServiceCreatedWorksIntegration
 	}))
 	require.NoError(t, err)
 
-	clientSvc := referencecatalog.NewClientService(
-		db,
-		referencecatalogadapter.NewAssets("https://cdn.example.com"),
-		publicIntegrationSpiceDBFor(t, db),
-	)
-	firstClient, err := clientSvc.CreateClient(ctx, connect.NewRequest(&managev1.CreateClientRequest{
+	clientSvc := referencecatalog.NewClientConnectHandler(catalog)
+	firstClient, err := clientSvc.CreateClient(withReferenceAudit(t, ctx), connect.NewRequest(&managev1.CreateClientRequest{
 		Name:    "Public Work Client A " + suffix,
 		Website: stringPtr("https://client-a.example.com"),
 	}))
 	require.NoError(t, err)
-	secondClient, err := clientSvc.CreateClient(ctx, connect.NewRequest(&managev1.CreateClientRequest{
+	secondClient, err := clientSvc.CreateClient(withReferenceAudit(t, ctx), connect.NewRequest(&managev1.CreateClientRequest{
 		Name:    "Public Work Client B " + suffix,
 		Website: stringPtr("https://client-b.example.com"),
 	}))
 	require.NoError(t, err)
 	firstLightLogoID := seedPublicClientLogoFileFixture(t, db, "public-work/"+suffix+"/client-a-light.png", "image/png")
 	firstDarkLogoID := seedPublicClientLogoFileFixture(t, db, "public-work/"+suffix+"/client-a-dark.webp", "image/webp")
-	_, err = clientSvc.SetClientLogo(ctx, connect.NewRequest(&managev1.SetClientLogoRequest{
+	_, err = clientSvc.SetClientLogo(withReferenceAudit(t, ctx), connect.NewRequest(&managev1.SetClientLogoRequest{
 		ClientId: firstClient.Msg.Id,
 		FileId:   firstLightLogoID,
 		Variant:  managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_LIGHT,
 	}))
 	require.NoError(t, err)
-	_, err = clientSvc.SetClientLogo(ctx, connect.NewRequest(&managev1.SetClientLogoRequest{
+	_, err = clientSvc.SetClientLogo(withReferenceAudit(t, ctx), connect.NewRequest(&managev1.SetClientLogoRequest{
 		ClientId: firstClient.Msg.Id,
 		FileId:   firstDarkLogoID,
 		Variant:  managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_DARK,

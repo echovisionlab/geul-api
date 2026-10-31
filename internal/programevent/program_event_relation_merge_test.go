@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -13,15 +12,15 @@ func TestMergeProgramEventArtistsAppliesMembershipDeltaAndPreservesPeerChanges(t
 		{ArtistID: "artist-c", Role: relationRole("peer changed"), SortOrder: 2},
 		{ArtistID: "artist-peer", Role: relationRole("unseen add"), SortOrder: 4},
 	}
-	observed := []*managev1.ProgramEventArtist{
-		{ArtistId: "artist-a", Role: relationRole("removed by user"), SortOrder: 0},
-		{ArtistId: "artist-b", Role: relationRole("concurrent delete"), SortOrder: 1},
-		{ArtistId: "artist-c", Role: relationRole("before peer change"), SortOrder: 2},
+	observed := []Relation{
+		{ID: "artist-a", Role: relationRole("removed by user"), SortOrder: 0},
+		{ID: "artist-b", Role: relationRole("concurrent delete"), SortOrder: 1},
+		{ID: "artist-c", Role: relationRole("before peer change"), SortOrder: 2},
 	}
-	desired := []*managev1.ProgramEventArtist{
-		{ArtistId: "artist-b", Role: relationRole("concurrent delete"), SortOrder: 0},
-		{ArtistId: "artist-c", Role: relationRole("before peer change"), SortOrder: 1},
-		{ArtistId: "artist-new", Role: relationRole("new local row"), SortOrder: 2},
+	desired := []Relation{
+		{ID: "artist-b", Role: relationRole("concurrent delete"), SortOrder: 0},
+		{ID: "artist-c", Role: relationRole("before peer change"), SortOrder: 1},
+		{ID: "artist-new", Role: relationRole("new local row"), SortOrder: 2},
 	}
 
 	merged, err := mergeProgramEventArtists(current, observed, desired)
@@ -38,13 +37,13 @@ func TestMergeProgramEventLabelsAppliesOnlyIntendedRoleDifference(t *testing.T) 
 		{LabelID: "label-edited", Role: relationRole("peer value"), SortOrder: 1},
 		{LabelID: "label-untouched", Role: relationRole("peer update"), SortOrder: 5},
 	}
-	observed := []*managev1.ProgramEventLabel{
-		{LabelId: "label-edited", Role: relationRole("old"), SortOrder: 0},
-		{LabelId: "label-untouched", Role: relationRole("old untouched"), SortOrder: 1},
+	observed := []Relation{
+		{ID: "label-edited", Role: relationRole("old"), SortOrder: 0},
+		{ID: "label-untouched", Role: relationRole("old untouched"), SortOrder: 1},
 	}
-	desired := []*managev1.ProgramEventLabel{
-		{LabelId: "label-edited", Role: relationRole("new intended"), SortOrder: 0},
-		{LabelId: "label-untouched", Role: relationRole("old untouched"), SortOrder: 1},
+	desired := []Relation{
+		{ID: "label-edited", Role: relationRole("new intended"), SortOrder: 0},
+		{ID: "label-untouched", Role: relationRole("old untouched"), SortOrder: 1},
 	}
 
 	merged, err := mergeProgramEventLabels(current, observed, desired)
@@ -59,8 +58,8 @@ func TestMergeProgramEventClientsWithEmptyBaselinePreservesConcurrentRows(t *tes
 	current := []model.ProgramEventClient{
 		{ClientID: "client-peer", Role: relationRole("peer addition"), SortOrder: 3},
 	}
-	desired := []*managev1.ProgramEventClient{
-		{ClientId: "client-local", Role: relationRole("local addition"), SortOrder: 0},
+	desired := []Relation{
+		{ID: "client-local", Role: relationRole("local addition"), SortOrder: 0},
 	}
 
 	merged, err := mergeProgramEventClients(current, nil, desired)
@@ -76,7 +75,7 @@ func TestMergeProgramEventArtistsAllowsExplicitEmptyDesiredSet(t *testing.T) {
 		{ArtistID: "artist-observed", SortOrder: 0},
 		{ArtistID: "artist-peer", SortOrder: 3},
 	}
-	observed := []*managev1.ProgramEventArtist{{ArtistId: "artist-observed"}}
+	observed := []Relation{{ID: "artist-observed"}}
 
 	merged, err := mergeProgramEventArtists(current, observed, nil)
 	require.NoError(t, err)
@@ -85,7 +84,7 @@ func TestMergeProgramEventArtistsAllowsExplicitEmptyDesiredSet(t *testing.T) {
 
 func TestMergeProgramEventRelationRowsRejectsDuplicateObservedIDs(t *testing.T) {
 	_, err := mergeProgramEventArtists(nil,
-		[]*managev1.ProgramEventArtist{{ArtistId: "artist-1"}, {ArtistId: "artist-1"}},
+		[]Relation{{ID: "artist-1"}, {ID: "artist-1"}},
 		nil,
 	)
 	require.Error(t, err)

@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"gorm.io/gorm"
 )
@@ -27,10 +27,10 @@ func LoadTypedTranslationInterchangeTarget(
 	targetLocale string,
 ) (TranslationInterchangeTarget, error) {
 	if tx == nil || store == nil {
-		return TranslationInterchangeTarget{}, errs.Internal(errors.New("artist translation interchange dependencies are not configured"))
+		return TranslationInterchangeTarget{}, errors.New("artist translation interchange dependencies are not configured")
 	}
 	if _, err := canonicalArtistUUID(artistID); err != nil {
-		return TranslationInterchangeTarget{}, errs.InvalidArgument("artist_id", "must be a canonical UUID")
+		return TranslationInterchangeTarget{}, domainerr.InvalidField("artist_id", "must be a canonical UUID")
 	}
 	normalizedLocale, err := normalizeArtistDocumentLocale(targetLocale)
 	if err != nil {
@@ -43,7 +43,7 @@ func LoadTypedTranslationInterchangeTarget(
 		return TranslationInterchangeTarget{}, err
 	}
 	if source.SourceLocale == normalizedLocale {
-		return TranslationInterchangeTarget{}, errs.InvalidArgument("target_locale", "must differ from the Artist source locale")
+		return TranslationInterchangeTarget{}, domainerr.InvalidField("target_locale", "must differ from the Artist source locale")
 	}
 	state, err := loadArtistTargetLocaleState(
 		ctx, tx, store, artistID, snapshot.Document.ID, normalizedLocale, false,

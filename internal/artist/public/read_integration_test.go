@@ -127,10 +127,11 @@ func TestArtistPublicReadsHideDraftsAndExposePublishedRelationsIntegration(t *te
 	require.NoError(t, err)
 	require.Equal(t, draftArtist.Id, adminDraftArtist.Msg.Artist.Id)
 
-	managerArtistSvc := artistpublic.NewArtistService(
-		db, fixture.SpiceDB, fixture.ArtistMedia,
-		artistpublic.WithArtistContentBlockStore(testutil.NewCreativeContentStore(t, fixture.SpiceDB)),
-	)
+	managerArtistService, err := artistpublic.NewService(artistpublic.Deps{
+		DB: db, SpiceDB: fixture.SpiceDB, ContentBlocks: testutil.NewCreativeContentStore(t, fixture.SpiceDB), Media: fixture.ArtistMedia,
+	})
+	require.NoError(t, err)
+	managerArtistSvc := artistpublic.NewConnectHandler(managerArtistService)
 	managerReq := connect.NewRequest(&openv1.GetArtistRequest{Slug: draftArtist.GetSlug()})
 	managerCtx := testutil.PostIntegrationContext(adminID)
 	managerDraftArtist, err := managerArtistSvc.Get(managerCtx, managerReq)

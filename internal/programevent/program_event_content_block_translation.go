@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -23,7 +23,7 @@ func loadProgramEventSourceLocale(
 	lock bool,
 ) (programEventSourceState, error) {
 	if db == nil {
-		return programEventSourceState{}, errs.Internal(errors.New("program Event translation source database is required"))
+		return programEventSourceState{}, errors.New("program Event translation source database is required")
 	}
 	query := db.WithContext(ctx).Table("program_event").
 		Select("source_locale").Where("id = ?", eventID)
@@ -33,12 +33,12 @@ func loadProgramEventSourceLocale(
 	var state programEventSourceState
 	if err := query.Take(&state).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return programEventSourceState{}, errs.FailedPrecondition("Program Event translation source is not initialized")
+			return programEventSourceState{}, domainerr.Precondition("Program Event translation source is not initialized")
 		}
-		return programEventSourceState{}, errs.Internal(err)
+		return programEventSourceState{}, err
 	}
 	if strings.TrimSpace(state.SourceLocale) == "" {
-		return programEventSourceState{}, errs.Internal(fmt.Errorf("program Event %s has invalid source locale", eventID))
+		return programEventSourceState{}, fmt.Errorf("program Event %s has invalid source locale", eventID)
 	}
 	return state, nil
 }
@@ -70,10 +70,10 @@ func loadTranslationSourceMetadata(
 		eventID,
 	).Scan(&row)
 	if result.Error != nil {
-		return programEventTranslationSourceMetadata{}, errs.Internal(result.Error)
+		return programEventTranslationSourceMetadata{}, result.Error
 	}
 	if result.RowsAffected != 1 {
-		return programEventTranslationSourceMetadata{}, errs.FailedPrecondition("Program Event source locale metadata is not initialized")
+		return programEventTranslationSourceMetadata{}, domainerr.Precondition("Program Event source locale metadata is not initialized")
 	}
 	return programEventTranslationSourceMetadata{Title: row.Title, Summary: row.Summary}, nil
 }
@@ -93,9 +93,9 @@ func loadProgramEventBlockLocaleMetadata(
 		Where("id = ?", eventID).
 		Take(&root).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("program event", eventID)
+			return nil, domainerr.ResourceNotFound("program event", eventID)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	var locale struct {
 		Summary *string `gorm:"column:summary"`
@@ -106,9 +106,9 @@ func loadProgramEventBlockLocaleMetadata(
 		Where("entity_id = ? AND locale = ?", eventID, sourceLocale).
 		Take(&locale).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.FailedPrecondition("Program Event source locale metadata is not initialized")
+			return nil, domainerr.Precondition("Program Event source locale metadata is not initialized")
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	title := root.Title
 	return &intrav1.ProgramEventLocaleMetadata{

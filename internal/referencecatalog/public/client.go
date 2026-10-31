@@ -5,17 +5,15 @@ import (
 	"errors"
 	"log/slog"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -29,92 +27,71 @@ var publicClientSortConfig = queryutil.SortConfig{
 	DefaultSort: "name ASC, id ASC",
 }
 
-type ClientService struct {
-	openv1connect.UnimplementedClientServiceHandler
-	db     *gorm.DB
-	assets AssetReader
+// GetClientQuery names a Client.
+type GetClientQuery struct {
+	ID string
 }
 
-func NewClientService(db *gorm.DB, assets AssetReader) *ClientService {
-	if db == nil {
-		panic("db is required")
-	}
-	if assets == nil {
-		panic("assets are required")
-	}
-	return &ClientService{db: db, assets: assets}
+// ListClientsQuery pages Clients.
+type ListClientsQuery struct {
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+	// Limit is 20 when not positive.
+	Limit  int32
+	Offset int32
 }
 
-func (s *ClientService) Get(
-	ctx context.Context,
-	req *connect.Request[openv1.GetClientRequest],
-) (_ *connect.Response[openv1.GetClientResponse], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("client_id", req.Msg.GetId()))
+// GetClient returns the public summary of a Client.
+func (s *Service) GetClient(ctx context.Context, query GetClientQuery) (_ *openv1.ClientSummary, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("client_id", query.ID))
 
 	var client model.Client
-	if err := s.db.WithContext(ctx).First(&client, "id = ?", req.Msg.Id).Error; err != nil {
+	if err := s.db.WithContext(ctx).First(&client, "id = ?", query.ID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("client", req.Msg.Id)
+			return nil, domainerr.ResourceNotFound("client", query.ID)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-
-	return connect.NewResponse(&openv1.GetClientResponse{
-		Client: s.toProtoClientSummary(ctx, &client),
-	}), nil
+	return s.toProtoClientSummary(ctx, &client), nil
 }
 
-func (s *ClientService) List(
-	ctx context.Context,
-	req *connect.Request[openv1.ListClientsRequest],
-) (*connect.Response[openv1.ListClientsResponse], error) {
+// ListClients pages the public Client summaries.
+func (s *Service) ListClients(ctx context.Context, query ListClientsQuery) (referencecatalog.Page[*openv1.ClientSummary], error) {
 	var clients []model.Client
 	var total int64
 
-	query := s.db.WithContext(ctx).Model(&model.Client{})
-	var err error
-	query, err = clientFilterConfig.ApplyFilters(query, req.Msg.Filters)
+	scoped, err := clientFilterConfig.ApplyFilters(s.db.WithContext(ctx).Model(&model.Client{}), query.Filters)
 	if err != nil {
-		return nil, err
+		return referencecatalog.Page[*openv1.ClientSummary]{}, err
 	}
-
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := scoped.Count(&total).Error; err != nil {
+		return referencecatalog.Page[*openv1.ClientSummary]{}, err
 	}
-
-	query, err = publicClientSortConfig.ApplySort(query, req.Msg.Sorts)
+	scoped, err = publicClientSortConfig.ApplySort(scoped, query.Sorts)
 	if err != nil {
-		return nil, err
+		return referencecatalog.Page[*openv1.ClientSummary]{}, err
 	}
-
-	pagination := queryutil.GetPaginationParams(
-		req.Msg.Pagination.GetLimit(),
-		req.Msg.Pagination.GetOffset(),
-		20,
-	)
-	query = queryutil.ApplyPagination(query, pagination)
-
-	if err := query.Find(&clients).Error; err != nil {
-		return nil, errs.Internal(err)
+	pagination := queryutil.GetPaginationParams(query.Limit, query.Offset, 20)
+	if err := queryutil.ApplyPagination(scoped, pagination).Find(&clients).Error; err != nil {
+		return referencecatalog.Page[*openv1.ClientSummary]{}, err
 	}
 
 	summaries := make([]*openv1.ClientSummary, 0, len(clients))
 	for i := range clients {
 		summaries = append(summaries, s.toProtoClientSummary(ctx, &clients[i]))
 	}
-
-	return connect.NewResponse(&openv1.ListClientsResponse{
-		Clients: summaries,
+	return referencecatalog.Page[*openv1.ClientSummary]{
+		Items: summaries,
 		Pagination: &commonv1.PaginationResponse{
 			Total:   int32(total),
 			Limit:   pagination.Limit,
 			Offset:  pagination.Offset,
 			HasMore: pagination.Offset+int32(len(clients)) < int32(total),
 		},
-	}), nil
+	}, nil
 }
 
-func (s *ClientService) toProtoClientSummary(ctx context.Context, client *model.Client) *openv1.ClientSummary {
+func (s *Service) toProtoClientSummary(ctx context.Context, client *model.Client) *openv1.ClientSummary {
 	summary := &openv1.ClientSummary{
 		Id:        client.ID,
 		Name:      client.Name,
@@ -130,7 +107,7 @@ func (s *ClientService) toProtoClientSummary(ctx context.Context, client *model.
 	return summary
 }
 
-func (s *ClientService) getOptionalClientLogoAsset(ctx context.Context, fileID *string) *commonv1.AssetRef {
+func (s *Service) getOptionalClientLogoAsset(ctx context.Context, fileID *string) *commonv1.AssetRef {
 	if fileID == nil {
 		return nil
 	}

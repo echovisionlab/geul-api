@@ -11,7 +11,7 @@ import (
 )
 
 func programEventIntegrationAdminCtx(id string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	return auth.WithUser(requestBackground(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(id),
 		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(id)),
 		SessionID:     auth.SessionID(uuid.NewString()),

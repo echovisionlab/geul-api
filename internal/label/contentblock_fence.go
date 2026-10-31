@@ -5,9 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -22,13 +21,13 @@ func loadLabelContentDocumentID(ctx context.Context, db *gorm.DB, labelID string
 	}
 	result := db.WithContext(ctx).Table("label").Select("content_document_id").Where("id = ?", labelID).Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return uuid.Nil, errs.NotFound("label", labelID)
+		return uuid.Nil, domainerr.ResourceNotFound("label", labelID)
 	}
 	if result.Error != nil {
-		return uuid.Nil, errs.Internal(result.Error)
+		return uuid.Nil, result.Error
 	}
 	if row.DocumentID == nil || *row.DocumentID == uuid.Nil {
-		return uuid.Nil, errs.FailedPrecondition("label content document is not initialized")
+		return uuid.Nil, domainerr.Precondition("label content document is not initialized")
 	}
 	return *row.DocumentID, nil
 }
@@ -39,13 +38,13 @@ func lockLabelContentDocumentRoot(ctx context.Context, tx *gorm.DB, labelID stri
 	}
 	result := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("content_document_id").Where("id = ?", labelID).Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return errs.NotFound("label", labelID)
+		return domainerr.ResourceNotFound("label", labelID)
 	}
 	if result.Error != nil {
-		return errs.Internal(result.Error)
+		return result.Error
 	}
 	if row.DocumentID == nil || *row.DocumentID == uuid.Nil || *row.DocumentID != expectedDocumentID {
-		return errs.FailedPrecondition("label content document changed; reload before saving")
+		return domainerr.Precondition("label content document changed; reload before saving")
 	}
 	return nil
 }
@@ -56,10 +55,10 @@ func lockLabelTranslationSourceContext(ctx context.Context, tx *gorm.DB, labelID
 	}
 	result := tx.WithContext(ctx).Table("label").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("source_locale").Where("id = ?", labelID).Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return contentblock.DomainContext{}, errs.NotFound("label", labelID)
+		return contentblock.DomainContext{}, domainerr.ResourceNotFound("label", labelID)
 	}
 	if result.Error != nil {
-		return contentblock.DomainContext{}, errs.Internal(result.Error)
+		return contentblock.DomainContext{}, result.Error
 	}
 	return contentblock.DomainContext{SourceLocale: row.SourceLocale}, nil
 }
@@ -87,10 +86,10 @@ func internalLabelCollaborationContentFence(
 			Select("id::text AS id", "status", "content_document_id").
 			Where("id = ?::uuid", labelID).
 			Take(&root).Error; err != nil {
-			return contentblock.DomainContext{}, errs.Internal(err)
+			return contentblock.DomainContext{}, err
 		}
 		if !labelAIDocumentLifecycleValid(root.Status) {
-			return contentblock.DomainContext{}, errs.FailedPrecondition("Label lifecycle no longer permits collaboration editing")
+			return contentblock.DomainContext{}, domainerr.Precondition("Label lifecycle no longer permits collaboration editing")
 		}
 		if err := checkpoints.RequireCurrentContributors(
 			ctx,
@@ -105,38 +104,32 @@ func internalLabelCollaborationContentFence(
 	}
 }
 
-func labelContentDocumentFence(labelID string, authorize func(context.Context, *gorm.DB) error) contentblock.DomainFence {
+// labelContentDocumentFence locks the Label row of the document the
+// mutation, already authorized, removes.
+func labelContentDocumentFence(labelID string) contentblock.DomainFence {
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		if err := lockLabelContentDocumentRoot(ctx, tx, labelID, documentID); err != nil {
-			return contentblock.DomainContext{}, err
-		}
-		if authorize == nil {
-			return contentblock.DomainContext{}, errs.Internal(errors.New("label content document authorization is required"))
-		}
-		if err := authorize(ctx, tx); err != nil {
-			return contentblock.DomainContext{}, err
-		}
-		return contentblock.DomainContext{}, nil
+		return contentblock.DomainContext{}, lockLabelContentDocumentRoot(ctx, tx, labelID, documentID)
 	}
 }
 
-func labelContentCreationFence(labelID, sourceLocale string, authorize func(context.Context, *gorm.DB) error) contentblock.DomainFence {
+// labelContentCreationFence locks the new Label row and names its source
+// locale while the creation, already authorized, fills its document.
+func labelContentCreationFence(labelID, sourceLocale string) contentblock.DomainFence {
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		if err := lockLabelContentDocumentRoot(ctx, tx, labelID, documentID); err != nil {
-			return contentblock.DomainContext{}, err
-		}
-		if authorize == nil {
-			return contentblock.DomainContext{}, errs.Internal(errors.New("label content document authorization is required"))
-		}
-		if err := authorize(ctx, tx); err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		return contentblock.DomainContext{SourceLocale: sourceLocale}, nil
 	}
 }
 
+// normalizeLabelContentBlockError gives a raw content document failure its
+// client answer; any other error keeps its own.
 func normalizeLabelContentBlockError(err error) error {
-	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
+	if err == nil {
+		return nil
+	}
+	if _, classified := errors.AsType[*domainerr.Error](err); classified {
 		return err
 	}
 	// A revision conflict carries its current revisions in the conflict
@@ -146,24 +139,24 @@ func normalizeLabelContentBlockError(err error) error {
 	var targetConflict *translation.TargetRevisionConflict
 	switch {
 	case errors.As(err, &targetConflict):
-		return errs.CollaborationConflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			"Label target locale changed since it was loaded; reload before saving", err,
+			"Label target locale changed since it was loaded; reload before saving", domainerr.CollaborationRevisionsOf(err),
 		)
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		return errs.WithCause(errs.NotFoundMsg("label content document not found"), err)
+		return domainerr.New(domainerr.NotFound, "", "label content document not found").WithCause(err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		return errs.CollaborationConflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-			"Label document changed since it was loaded; reload before saving", err,
+			"Label document changed since it was loaded; reload before saving", domainerr.CollaborationRevisionsOf(err),
 		)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
+		return domainerr.InvalidField("blocks", "a Block belongs to another document").WithCause(err)
 	case errors.Is(err, contentblock.ErrFileReference):
-		return errs.WithCause(errs.InvalidArgument("blocks", "compact documents cannot contain File Blocks"), err)
+		return domainerr.InvalidField("blocks", "compact documents cannot contain File Blocks").WithCause(err)
 	case errors.Is(err, contentblock.ErrInvalidMutation):
-		return errs.InvalidArgument("blocks", err.Error())
+		return domainerr.InvalidField("blocks", err.Error())
 	default:
-		return errs.Internal(fmt.Errorf("label content document: %w", err))
+		return fmt.Errorf("label content document: %w", err)
 	}
 }

@@ -5,8 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/label"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/programevent"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -25,15 +26,15 @@ var programEventReferenceTools = []mcpserver.Tool{
 
 // These interfaces consume only the native authorized reference lists.
 type ProgramEventTypeReferenceDiscovery interface {
-	ListProgramEventTypesAdmin(context.Context, *connect.Request[managev1.ListProgramEventTypesAdminRequest]) (*connect.Response[managev1.ListProgramEventTypesAdminResponse], error)
+	ListProgramEventTypesAdmin(context.Context, programevent.ListProgramEventTypesQuery) (programevent.TypeList, error)
 }
 
 type ProgramEventSeriesReferenceDiscovery interface {
-	ListProgramEventSeriesAdmin(context.Context, *connect.Request[managev1.ListProgramEventSeriesAdminRequest]) (*connect.Response[managev1.ListProgramEventSeriesAdminResponse], error)
+	ListProgramEventSeriesAdmin(context.Context, programevent.ListProgramEventSeriesQuery) (programevent.SeriesList, error)
 }
 
 type LabelReferenceDiscovery interface {
-	ListLabelsAdmin(context.Context, *connect.Request[managev1.ListLabelsAdminRequest]) (*connect.Response[managev1.ListLabelsAdminResponse], error)
+	ListLabelsAdmin(context.Context, label.ListLabelsQuery) (label.AdminLabelPage, error)
 }
 
 type ProgramEventReferenceTools struct {
@@ -124,12 +125,12 @@ func (tools *ProgramEventReferenceTools) CallTool(ctx context.Context, _ mcpserv
 	var responsePagination *commonv1.PaginationResponse
 	switch name {
 	case ToolProgramEventTypeList:
-		response, err := tools.types.ListProgramEventTypesAdmin(ctx, connect.NewRequest(&managev1.ListProgramEventTypesAdminRequest{Pagination: pagination, Filters: filters}))
+		list, err := tools.types.ListProgramEventTypesAdmin(ctx, programevent.ListProgramEventTypesQuery{Limit: pagination.Limit, Offset: pagination.Offset, Filters: filters})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Types {
+		responsePagination = list.Pagination
+		for _, item := range list.Types {
 			if item == nil {
 				continue
 			}
@@ -146,28 +147,28 @@ func (tools *ProgramEventReferenceTools) CallTool(ctx context.Context, _ mcpserv
 			items = append(items, map[string]any{"id": item.Id, "slug": item.Slug, "status": item.Status.String(), "requires_place": item.RequiresPlace, "requires_stream_url": item.RequiresStreamUrl, "locales": locales})
 		}
 	case ToolProgramEventSeriesList:
-		response, err := tools.series.ListProgramEventSeriesAdmin(ctx, connect.NewRequest(&managev1.ListProgramEventSeriesAdminRequest{Pagination: pagination, Filters: filters}))
+		list, err := tools.series.ListProgramEventSeriesAdmin(ctx, programevent.ListProgramEventSeriesQuery{Limit: pagination.Limit, Offset: pagination.Offset, Filters: filters})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Series {
+		responsePagination = list.Pagination
+		for _, item := range list.Series {
 			if item != nil {
 				items = append(items, map[string]any{"id": item.Id, "slug": item.Slug, "title": item.Title, "status": item.Status.String()})
 			}
 		}
 	case ToolLabelList:
-		response, err := tools.labels.ListLabelsAdmin(ctx, connect.NewRequest(&managev1.ListLabelsAdminRequest{Pagination: pagination, Filters: filters}))
+		page, err := tools.labels.ListLabelsAdmin(ctx, label.ListLabelsQuery{Limit: pagination.GetLimit(), Offset: pagination.GetOffset(), Filters: filters})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Labels {
+		responsePagination = page.Pagination
+		for _, item := range page.Labels {
 			if item != nil && item.Label != nil {
-				label := item.Label
-				projected := map[string]any{"id": label.Id, "name": label.Name, "status": label.Status, "source_locale": label.SourceLocale}
-				if label.Slug != nil {
-					projected["slug"] = *label.Slug
+				listed := item.Label
+				projected := map[string]any{"id": listed.Id, "name": listed.Name, "status": listed.Status, "source_locale": listed.SourceLocale}
+				if listed.Slug != nil {
+					projected["slug"] = *listed.Slug
 				}
 				items = append(items, projected)
 			}

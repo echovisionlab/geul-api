@@ -165,15 +165,21 @@ func TestAuditsAppendsEveryChangedRecord(t *testing.T) {
 	runner, _ := newTestRunner(t, recorder)
 	var steps []string
 	spec := noteSpec(&steps, "two facets")
-	record := func(action sharedtelemetry.AuditAction) Audit {
-		return RequestAudit(action, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewMemberTagCreatedAuditRecord(metadata, uuid.NewString(), "tag")
+	record := func(targetID string) Audit {
+		return RequestAudit(sharedtelemetry.AuditMemberTagCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewMemberTagCreatedAuditRecord(metadata, targetID, "tag")
 		})
 	}
-	spec.Audit = func(note) Audit {
-		return Audits(record(sharedtelemetry.AuditMemberTagCreated), Unchanged(), record(sharedtelemetry.AuditMemberTagCreated))
-	}
+	first, second := uuid.NewString(), uuid.NewString()
+	spec.Audit = func(note) Audit { return Audits(record(first), Unchanged(), record(second)) }
 	_, err := Run(memberRequestContext(t), runner, spec)
+	require.NoError(t, err)
+	records := recorder.Records()
+	require.Len(t, records, 2)
+	require.Equal(t, []string{first, second}, []string{records[0].TargetID, records[1].TargetID})
+
+	spec.Audit = func(note) Audit { return Audits() }
+	_, err = Run(memberRequestContext(t), runner, spec)
 	require.NoError(t, err)
 	require.Len(t, recorder.Records(), 2)
 
@@ -289,6 +295,36 @@ func TestLockOrderSortsAndDeduplicatesSubjects(t *testing.T) {
 	ordered, err := lockOrder([]string{"b", " a ", "b"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"a", "b"}, ordered)
+}
+
+func TestCheckedRunsTheCheckInsideTheTransaction(t *testing.T) {
+	runner, db := newTestRunner(t, &audittest.Recorder{})
+	denied := errors.New("contributor revoked")
+	var steps []string
+	spec := noteSpec(&steps, "contributed")
+	spec.Access = Checked(func(_ context.Context, tx *gorm.DB) error {
+		steps = append(steps, "check")
+		require.NoError(t, tx.Create(&note{Text: "inside"}).Error)
+		return denied
+	})
+
+	_, err := Run(memberRequestContext(t), runner, spec)
+
+	require.ErrorIs(t, err, denied)
+	require.Equal(t, []string{"check"}, steps)
+	require.Zero(t, noteCount(t, db))
+	_, err = Run(memberRequestContext(t), runner, Spec[note]{Access: Checked(nil), Change: spec.Change, Audit: spec.Audit})
+	require.ErrorContains(t, err, "access check is required")
+}
+
+func TestReadSeesOneSnapshot(t *testing.T) {
+	_, db := newTestRunner(t, &audittest.Recorder{})
+	require.NoError(t, db.Create(&note{Text: "stored"}).Error)
+	var read []note
+	require.NoError(t, Read(context.Background(), db, func(tx *gorm.DB) error { return tx.Find(&read).Error }))
+	require.Len(t, read, 1)
+	readErr := errors.New("read failed")
+	require.ErrorIs(t, Read(context.Background(), db, func(*gorm.DB) error { return readErr }), readErr)
 }
 
 func TestRunTakesDomainLocksBeforeAccess(t *testing.T) {

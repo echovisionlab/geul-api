@@ -10,6 +10,7 @@ import (
 	audiencedomain "github.com/echovisionlab/geul-api/internal/audience"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
@@ -127,7 +128,7 @@ func (a *ProgramEventAttachment) RequireLockedView(
 		return errs.DependencyUnavailable("Program Event access")
 	}
 	return maskPrivateDomainAccess(
-		programevent.RequireLockedView(ctx, tx, spiceDB, eventID),
+		programEventAccessAnswer(programevent.RequireLockedView(ctx, tx, spiceDB, eventID)),
 		"program event",
 		eventID,
 	)
@@ -143,10 +144,20 @@ func (a *ProgramEventAttachment) RequireLockedEdit(
 		return errs.DependencyUnavailable("Program Event access")
 	}
 	return maskPrivateDomainAccess(
-		programevent.RequireLockedSourceLocaleEdit(ctx, tx, spiceDB, eventID),
+		programEventAccessAnswer(programevent.RequireLockedSourceLocaleEdit(ctx, tx, spiceDB, eventID)),
 		"program event",
 		eventID,
 	)
+}
+
+// programEventAccessAnswer gives a Program Event access rejection the
+// Connect form maskPrivateDomainAccess classifies by code; other errors pass
+// unchanged.
+func programEventAccessAnswer(err error) error {
+	if _, rejected := errors.AsType[*domainerr.Error](err); rejected {
+		return errs.Wrap(err)
+	}
+	return err
 }
 
 type AudienceAccess struct{}
@@ -195,7 +206,7 @@ func NewTrackAttachment(audit domainaudit.Appender) *TrackAttachment {
 }
 
 func (a *TrackAttachment) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
-	return a.authority.LockExistsWithDB(ctx, tx, trackID)
+	return releaseConnectError(a.authority.LockExistsWithDB(ctx, tx, trackID))
 }
 
 func (a *TrackAttachment) AttachOriginalWithDB(
@@ -214,7 +225,16 @@ func (a *TrackAttachment) AttachOriginalWithDB(
 		AlreadyApplied: attachment.AlreadyApplied,
 		CurrentFileID:  attachment.CurrentFileID,
 		ReleaseID:      attachment.ReleaseID,
-	}, err
+	}, releaseConnectError(err)
+}
+
+// releaseConnectError gives a Release use-case answer the Connect form the
+// File domain branches on; an unclassified error passes through.
+func releaseConnectError(err error) error {
+	if classified, ok := errs.Classified(err); ok {
+		return classified
+	}
+	return err
 }
 
 // TrackFileManager adapts FileMedia's deletion fence error to the Release-owned

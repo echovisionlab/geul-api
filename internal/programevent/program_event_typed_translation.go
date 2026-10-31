@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -34,7 +35,7 @@ func LoadTranslationSourceDocument(
 		return nil, errors.New("program Event translation content Block store is not configured")
 	}
 	var output *translation.SourceDocument
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := mutation.ReadCurrent(ctx, db, func(tx *gorm.DB) error {
 		if err := lockTranslationEntityRootWithDB(ctx, tx, EntityType, eventID); err != nil {
 			return err
 		}
@@ -85,7 +86,7 @@ func loadProgramEventTypedTranslationContentWithDB(
 		return programEventTypedTranslationContent{}, normalizeProgramEventContentBlockError(err)
 	}
 	if snapshot.Document.Profile != programEventContentProfile {
-		return programEventTypedTranslationContent{}, errs.FailedPrecondition(
+		return programEventTypedTranslationContent{}, domainerr.Precondition(
 			"Program Event translation source requires the Program Event content profile",
 		)
 	}
@@ -124,7 +125,7 @@ func applyProgramEventTypedTranslationCandidateWithDB(
 		return fmt.Errorf("typed Program Event translation received entity type %q", job.EntityType)
 	}
 	if candidate.ContentBlockLocaleOverlay.GetLocale() != job.TargetLocale {
-		return errs.FailedPrecondition("translated Program Event Block overlay locale does not match the target locale")
+		return domainerr.Precondition("translated Program Event Block overlay locale does not match the target locale")
 	}
 	if err := lockTranslationEntityRootWithDB(ctx, tx, EntityType, job.EntityID); err != nil {
 		return err
@@ -156,13 +157,13 @@ func applyProgramEventTypedTranslationCandidateWithDB(
 	if job.TargetLocale == sourceState.SourceLocale {
 		requesterID, parseErr := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
 		if parseErr != nil || requesterID == uuid.Nil || requesterID.String() != strings.TrimSpace(job.RequestedByMemberID) {
-			return errs.WithCause(errs.InternalMsg("Program Event translation audit requires requester Member"), parseErr)
+			return errors.Join(errors.New("program Event translation audit requires requester Member"), parseErr)
 		}
 		batch.ContributorMemberIDs = []uuid.UUID{requesterID}
 		result, applyErr := store.ApplyBatchWithMetadata(
 			ctx, tx, batch, fence,
 			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-				changed, affectsSource, _, metadataErr := applyProgramEventLocaleMetadataMutation(
+				changed, affectsSource, metadataErr := applyProgramEventLocaleMetadataMutation(
 					ctx, tx, job.EntityID, sourceState.SourceLocale,
 					nil, false, candidate.Summary, candidate.ProviderUnitRequested("entity:summary"), entry.Now,
 				)
@@ -176,9 +177,9 @@ func applyProgramEventTypedTranslationCandidateWithDB(
 			return nil
 		}
 		if !result.TranslationSourceChanged {
-			return errs.InternalMsg("provider source Program Event translation did not advance source state")
+			return errors.New("provider source Program Event translation did not advance its source state")
 		}
-		return appendProgramEventMemberLocaleContentAudit(
+		return appendTranslationLocaleContentAudit(
 			ctx, tx, auditWriter, job.RequestedByMemberID, job.EntityID, sourceState.SourceLocale,
 			sharedtelemetry.AuditItemOperationUpdated,
 		)
@@ -203,9 +204,9 @@ func applyProgramEventTypedTranslationCandidateWithDB(
 	targetChanged := output.Result.Changed
 	if targetChanged {
 		if strings.TrimSpace(job.RequestedByMemberID) == "" {
-			return errs.InternalMsg("Program Event translation audit requires requester Member")
+			return errors.New("program Event translation audit requires requester Member")
 		}
-		if err := appendProgramEventMemberLocaleContentAudit(
+		if err := appendTranslationLocaleContentAudit(
 			ctx,
 			tx,
 			auditWriter,
@@ -223,7 +224,7 @@ func applyProgramEventTypedTranslationCandidateWithDB(
 // ApplyTranslationInterchangeCandidateWithDB closes Program Event's typed
 // Block mutation and exact Member locale-content Audit behind the owning-domain
 // service used by XLIFF import.
-func (s *ProgramEventService) ApplyTranslationInterchangeCandidateWithDB(
+func (s *Service) ApplyTranslationInterchangeCandidateWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
 	store *contentblock.Store,
@@ -232,9 +233,6 @@ func (s *ProgramEventService) ApplyTranslationInterchangeCandidateWithDB(
 	entry translation.EntryWrite,
 	expectedTargetRevision *string,
 ) error {
-	if s == nil || s.auditWriter == nil {
-		return errors.New("program event translation interchange dependencies are required")
-	}
 	return applyProgramEventTypedTranslationCandidateWithDB(
 		ctx,
 		tx,
@@ -244,6 +242,35 @@ func (s *ProgramEventService) ApplyTranslationInterchangeCandidateWithDB(
 		entry,
 		expectedTargetRevision,
 		targetlocale.RevisionObserved,
-		s.auditWriter,
+		s.audit,
 	)
+}
+
+// appendTranslationLocaleContentAudit records a translation written into
+// the caller's transaction. The translation pipeline owns that transaction,
+// so the record is appended here rather than through mutation.Run; it is
+// attributed to the Member who requested the translation.
+func appendTranslationLocaleContentAudit(
+	ctx context.Context,
+	tx *gorm.DB,
+	writer domainaudit.Appender,
+	memberID string,
+	eventID string,
+	locale string,
+	operation sharedtelemetry.AuditItemOperation,
+) error {
+	return domainaudit.AppendMember(ctx, tx, writer, memberID, sharedtelemetry.AuditProgramEventUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewProgramEventLocaleContentAuditRecord(metadata, eventID, locale, operation)
+	})
+}
+
+func programEventTargetLocaleContentOperation(create, remove, previouslyExists bool) sharedtelemetry.AuditItemOperation {
+	switch {
+	case remove:
+		return sharedtelemetry.AuditItemOperationDeleted
+	case create || !previouslyExists:
+		return sharedtelemetry.AuditItemOperationCreated
+	default:
+		return sharedtelemetry.AuditItemOperationUpdated
+	}
 }

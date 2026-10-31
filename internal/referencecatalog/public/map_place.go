@@ -3,64 +3,38 @@ package public
 import (
 	"context"
 
-	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
-// MapPlaceService implements the public MapPlaceService
-type MapPlaceService struct {
-	openv1connect.UnimplementedMapPlaceServiceHandler
-	db     *gorm.DB
-	assets AssetReader
+// GetMapPlacesByIDsQuery names Map Places to read.
+type GetMapPlacesByIDsQuery struct {
+	IDs []string
 }
 
-// NewMapPlaceService creates a new public MapPlaceService
-func NewMapPlaceService(db *gorm.DB, assets AssetReader) *MapPlaceService {
-	if db == nil {
-		panic("db is required")
-	}
-	if assets == nil {
-		panic("assets are required")
-	}
-	return &MapPlaceService{db: db, assets: assets}
-}
-
-// GetByIds returns multiple map places by IDs
-func (s *MapPlaceService) GetByIds(
-	ctx context.Context,
-	req *connect.Request[openv1.GetMapPlacesByIdsRequest],
-) (*connect.Response[openv1.GetMapPlacesByIdsResponse], error) {
-	ids := req.Msg.Ids
-	if len(ids) == 0 {
-		return connect.NewResponse(&openv1.GetMapPlacesByIdsResponse{
-			Places: []*openv1.MapPlace{},
-		}), nil
+// GetMapPlacesByIDs returns the public Map Places among IDs.
+func (s *Service) GetMapPlacesByIDs(ctx context.Context, query GetMapPlacesByIDsQuery) ([]*openv1.MapPlace, error) {
+	if len(query.IDs) == 0 {
+		return []*openv1.MapPlace{}, nil
 	}
 
 	var places []model.MapPlace
-	if err := s.db.WithContext(ctx).Where("id IN ?", ids).Find(&places).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := s.db.WithContext(ctx).Where("id IN ?", query.IDs).Find(&places).Error; err != nil {
+		return nil, err
 	}
 
 	protoPlaces := make([]*openv1.MapPlace, 0, len(places))
-	for _, place := range places {
-		protoPlaces = append(protoPlaces, s.toProtoMapPlace(ctx, &place))
+	for i := range places {
+		protoPlaces = append(protoPlaces, s.toProtoMapPlace(ctx, &places[i]))
 	}
-
-	return connect.NewResponse(&openv1.GetMapPlacesByIdsResponse{
-		Places: protoPlaces,
-	}), nil
+	return protoPlaces, nil
 }
 
 // toProtoMapPlace converts a model.MapPlace to openv1.MapPlace
-func (s *MapPlaceService) toProtoMapPlace(ctx context.Context, place *model.MapPlace) *openv1.MapPlace {
+func (s *Service) toProtoMapPlace(ctx context.Context, place *model.MapPlace) *openv1.MapPlace {
 	protoPlace := &openv1.MapPlace{
 		Id:        place.ID,
 		Name:      place.Name,

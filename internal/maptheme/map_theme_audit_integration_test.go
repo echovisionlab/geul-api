@@ -68,7 +68,7 @@ func TestMapThemeContentSaveAuditCommitsWithMutationIntegration(t *testing.T) {
 		connect.NewRequest(validCreateMapThemeRequest("Audit content source")),
 	)
 	require.NoError(t, err)
-	service := NewAuditedInternalMapService(db, apitelemetry.NewDurableWriter(db), spiceDB)
+	service := internalMapHandlerForTest(t, db, spiceDB, apitelemetry.NewDurableWriter(db))
 	ctx := withAuditedRequestContext(t, mapThemeMemberContext(admin))
 	response, err := service.SaveMapThemeSnapshot(ctx, connect.NewRequest(&intrav1.SaveMapThemeSnapshotRequest{
 		ThemeId: created.Msg.Id, Locale: "und", ExpectedRevision: 1,
@@ -78,7 +78,7 @@ func TestMapThemeContentSaveAuditCommitsWithMutationIntegration(t *testing.T) {
 	require.EqualValues(t, 2, response.Msg.Revision)
 	require.Equal(t, "und", response.Msg.Locale)
 
-	loaded, loadErr := NewInternalMapService(db, spiceDB).LoadMapThemeSnapshot(
+	loaded, loadErr := internalMapHandlerForTest(t, db, spiceDB, nil).LoadMapThemeSnapshot(
 		context.Background(), connect.NewRequest(&intrav1.LoadMapThemeSnapshotRequest{ThemeId: created.Msg.Id, Locale: "und"}),
 	)
 	require.NoError(t, loadErr)
@@ -121,7 +121,7 @@ func TestMapThemeContentAuditAppendFailureRollsBackSaveIntegration(t *testing.T)
 	)
 	require.NoError(t, err)
 
-	service := NewAuditedInternalMapService(db, failingDomainAuditAppender{}, spiceDB)
+	service := internalMapHandlerForTest(t, db, spiceDB, failingDomainAuditAppender{})
 	_, err = service.SaveMapThemeSnapshot(
 		withAuditedRequestContext(t, mapThemeMemberContext(admin)),
 		connect.NewRequest(&intrav1.SaveMapThemeSnapshotRequest{
@@ -131,7 +131,7 @@ func TestMapThemeContentAuditAppendFailureRollsBackSaveIntegration(t *testing.T)
 	)
 	require.Error(t, err)
 
-	loaded, loadErr := NewInternalMapService(db, spiceDB).LoadMapThemeSnapshot(
+	loaded, loadErr := internalMapHandlerForTest(t, db, spiceDB, nil).LoadMapThemeSnapshot(
 		context.Background(), connect.NewRequest(&intrav1.LoadMapThemeSnapshotRequest{ThemeId: created.Msg.Id, Locale: "und"}),
 	)
 	require.NoError(t, loadErr)

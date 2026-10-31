@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -30,7 +31,7 @@ func TestPublicReferenceCatalogReadIntegration(t *testing.T) {
 	seedPublicReferencePost(t, db, "POST_STATUS_PUBLISHED", categoryTwo, tagTwo)
 
 	t.Run("categories expose public post counts search sort and pagination", func(t *testing.T) {
-		response, err := NewCategoryService(db).List(context.Background(), connect.NewRequest(&openv1.ListCategoriesRequest{
+		response, err := NewCategoryConnectHandler(publicCatalogForTest(t, db)).List(context.Background(), connect.NewRequest(&openv1.ListCategoriesRequest{
 			Filters: []*commonv1.FilterSpec{{
 				Field: "search", Op: commonv1.FilterOp_FILTER_OP_ILIKE, Value: "Public Ref Category",
 			}},
@@ -47,18 +48,18 @@ func TestPublicReferenceCatalogReadIntegration(t *testing.T) {
 		require.EqualValues(t, 1, response.Msg.Pagination.Limit)
 		require.True(t, response.Msg.Pagination.HasMore)
 
-		_, err = NewCategoryService(db).List(context.Background(), connect.NewRequest(&openv1.ListCategoriesRequest{
+		_, err = NewCategoryConnectHandler(publicCatalogForTest(t, db)).List(context.Background(), connect.NewRequest(&openv1.ListCategoriesRequest{
 			Filters: []*commonv1.FilterSpec{{Field: "unknown", Op: commonv1.FilterOp_FILTER_OP_EQ, Value: "x"}},
 		}))
 		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
-		_, err = NewCategoryService(db).List(context.Background(), connect.NewRequest(&openv1.ListCategoriesRequest{
+		_, err = NewCategoryConnectHandler(publicCatalogForTest(t, db)).List(context.Background(), connect.NewRequest(&openv1.ListCategoriesRequest{
 			Sorts: []*commonv1.SortSpec{{Field: "unknown", Order: commonv1.SortOrder_SORT_ORDER_ASC}},
 		}))
 		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 	})
 
 	t.Run("tags expose public post counts search sort and pagination", func(t *testing.T) {
-		response, err := NewTagService(db).List(context.Background(), connect.NewRequest(&openv1.ListTagsRequest{
+		response, err := NewTagConnectHandler(publicCatalogForTest(t, db)).List(context.Background(), connect.NewRequest(&openv1.ListTagsRequest{
 			Filters: []*commonv1.FilterSpec{{
 				Field: "search", Op: commonv1.FilterOp_FILTER_OP_ILIKE, Value: "Public Ref Tag",
 			}},
@@ -75,15 +76,29 @@ func TestPublicReferenceCatalogReadIntegration(t *testing.T) {
 		require.EqualValues(t, 1, response.Msg.Pagination.Limit)
 		require.True(t, response.Msg.Pagination.HasMore)
 
-		_, err = NewTagService(db).List(context.Background(), connect.NewRequest(&openv1.ListTagsRequest{
+		_, err = NewTagConnectHandler(publicCatalogForTest(t, db)).List(context.Background(), connect.NewRequest(&openv1.ListTagsRequest{
 			Filters: []*commonv1.FilterSpec{{Field: "unknown", Op: commonv1.FilterOp_FILTER_OP_EQ, Value: "x"}},
 		}))
 		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
-		_, err = NewTagService(db).List(context.Background(), connect.NewRequest(&openv1.ListTagsRequest{
+		_, err = NewTagConnectHandler(publicCatalogForTest(t, db)).List(context.Background(), connect.NewRequest(&openv1.ListTagsRequest{
 			Sorts: []*commonv1.SortSpec{{Field: "unknown", Order: commonv1.SortOrder_SORT_ORDER_ASC}},
 		}))
 		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 	})
+}
+
+// publicCatalogForTest builds the public reads; no asset is ready.
+func publicCatalogForTest(t *testing.T, db *gorm.DB) *Service {
+	t.Helper()
+	service, err := NewService(Deps{DB: db, Assets: noPublicAssets{}})
+	require.NoError(t, err)
+	return service
+}
+
+type noPublicAssets struct{}
+
+func (noPublicAssets) ReadyRef(context.Context, *gorm.DB, referencecatalog.AssetSource) *commonv1.AssetRef {
+	return nil
 }
 
 func seedPublicReferenceCategory(t *testing.T, db *gorm.DB, name string, slug string) string {

@@ -3,6 +3,7 @@ package artist
 import (
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -26,7 +27,7 @@ func TestArtistAIDocumentLifecycleUsesExactGeneratedStatus(t *testing.T) {
 		test := test
 		t.Run(test.status, func(t *testing.T) {
 			t.Parallel()
-			published, valid := artistAIDocumentLifecycle(test.status)
+			published, valid := artistAIDocumentLifecycle(model.ArtistStatus(test.status))
 			if published != test.published || valid != test.valid {
 				t.Fatalf("artistAIDocumentLifecycle(%q) = (%t, %t), want (%t, %t)", test.status, published, valid, test.published, test.valid)
 			}

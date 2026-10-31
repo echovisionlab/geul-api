@@ -2,34 +2,29 @@ package public
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
+	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
-)
-
-// Release status constants (model format)
-var (
-	ReleaseStatusDraft     = managev1.ReleaseStatus_RELEASE_STATUS_DRAFT.String()
-	ReleaseStatusPublished = managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String()
 )
 
 var releaseLocalizationSpec = publiccontent.Spec{
@@ -38,9 +33,39 @@ var releaseLocalizationSpec = publiccontent.Spec{
 	SelectClause: "locale, NULL::text AS title, NULL::text AS summary, NULL::jsonb AS content_json, NULL::text AS content_html, NULL::text AS content_text, NULL::uuid AS og_asset_id",
 }
 
-// ReleaseService implements the Release domain's public ReleaseService.
-type ReleaseService struct {
-	openv1connect.UnimplementedReleaseServiceHandler
+// Deps are the collaborators of the public Release reads; all are
+// required.
+type Deps struct {
+	DB            *gorm.DB
+	SpiceDB       *auth.SpiceDBClient
+	ContentBlocks *contentblock.Store
+	Media         MediaRuntime
+	Downloads     DownloadAccessResolver
+	Members       releasepkg.MemberSummaryLoader
+	Artists       releasepkg.ArtistSummaryLoader
+	Labels        releasepkg.LabelSummaryLoader
+}
+
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "ContentBlocks": d.ContentBlocks == nil,
+		"Media": d.Media == nil, "Downloads": d.Downloads == nil, "Members": d.Members == nil,
+		"Artists": d.Artists == nil, "Labels": d.Labels == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("public release dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// Service holds the public Release reads.
+type Service struct {
 	db            *gorm.DB
 	spiceDB       *auth.SpiceDBClient
 	contentBlocks *contentblock.Store
@@ -51,255 +76,242 @@ type ReleaseService struct {
 	labels        releasepkg.LabelSummaryLoader
 }
 
-type ReleaseServiceOption func(*ReleaseService)
-
-func WithReleaseContentBlockStore(store *contentblock.Store) ReleaseServiceOption {
-	return func(service *ReleaseService) { service.contentBlocks = store }
+// NewService validates deps and returns the public Release reads.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
+	}
+	return &Service{
+		db: deps.DB, spiceDB: deps.SpiceDB, contentBlocks: deps.ContentBlocks, media: deps.Media,
+		downloads: deps.Downloads, members: deps.Members, artists: deps.Artists, labels: deps.Labels,
+	}, nil
 }
 
-// NewReleaseService creates a new public ReleaseService
-func NewReleaseService(
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	media MediaRuntime,
-	downloads DownloadAccessResolver,
-	members releasepkg.MemberSummaryLoader,
-	artists releasepkg.ArtistSummaryLoader,
-	labels releasepkg.LabelSummaryLoader,
-	options ...ReleaseServiceOption,
-) *ReleaseService {
-	if db == nil || spiceDB == nil || media == nil || downloads == nil || members == nil || artists == nil || labels == nil {
-		panic("public release service dependencies are required")
-	}
-	service := &ReleaseService{
-		db: db, spiceDB: spiceDB, media: media, downloads: downloads,
-		members: members, artists: artists, labels: labels,
-	}
-	for _, option := range options {
-		if option != nil {
-			option(service)
-		}
-	}
-	return service
+// GetReleaseQuery names a Release by slug or ID. A draft is visible to a
+// caller that can view it or that holds a share link to it.
+type GetReleaseQuery struct {
+	SlugOrID       string
+	ShareToken     string
+	SharePassword  string
+	AcceptLanguage string
 }
 
-// Get retrieves a release by slug or ID
+// ListReleasesQuery pages through published Releases. A Limit of zero takes
+// the default page of 20.
+type ListReleasesQuery struct {
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+	Limit   int32
+	Offset  int32
+}
+
+// ReleasePage is one page of published Release summaries.
+type ReleasePage struct {
+	Releases []*openv1.ReleaseSummary
+	Total    int64
+	Limit    int32
+	Offset   int32
+}
+
+// GetRelease retrieves a release by slug or ID
 // - UUID-first: if input is valid UUID, query by ID; otherwise query by slug
 // - share_token allows access to draft releases
 // - authenticated accounts with the exact SpiceDB view permission can access drafts
-func (s *ReleaseService) Get(
-	ctx context.Context,
-	req *connect.Request[openv1.GetReleaseRequest],
-) (*connect.Response[openv1.GetReleaseResponse], error) {
-	slugOrID := req.Msg.Slug
-	shareToken := req.Msg.ShareToken
-	sharePassword := req.Msg.GetSharePassword()
-
+func (s *Service) GetRelease(ctx context.Context, query GetReleaseQuery) (*openv1.Release, error) {
 	var release model.Release
 	var err error
-
-	// UUID-first approach
-	if releasepkg.IsValidUUID(slugOrID) {
-		err = s.db.WithContext(ctx).First(&release, "id = ?", slugOrID).Error
+	if releasepkg.IsValidUUID(query.SlugOrID) {
+		err = s.db.WithContext(ctx).First(&release, "id = ?", query.SlugOrID).Error
 	} else {
-		err = s.db.WithContext(ctx).First(&release, "slug = ?", slugOrID).Error
+		err = s.db.WithContext(ctx).First(&release, "slug = ?", query.SlugOrID).Error
 	}
-
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, releaseNotFound()
+	}
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFoundMsg("release not found")
-		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	mediaAuthorization := mediaasset.ContentDownloadOwnerAuthorization{
+	mediaAuthorization, err := s.authorizeReleaseMedia(ctx, &release, query)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildRelease(ctx, query.AcceptLanguage, &release, mediaAuthorization)
+}
+
+// authorizeReleaseMedia decides how the caller reaches the Release and its
+// media: a published Release is public, and a draft needs the view
+// permission or a share link.
+func (s *Service) authorizeReleaseMedia(
+	ctx context.Context,
+	release *model.Release,
+	query GetReleaseQuery,
+) (mediaasset.ContentDownloadOwnerAuthorization, error) {
+	authorization := mediaasset.ContentDownloadOwnerAuthorization{
 		ResourceType: "release",
 		ResourceID:   release.ID,
-		Status:       release.Status,
+		Status:       string(release.Status),
 		Mode:         mediaasset.ContentDownloadOwnerAccessPublic,
 	}
 	if release.ContentDocumentID != nil {
-		mediaAuthorization.DocumentID = *release.ContentDocumentID
+		authorization.DocumentID = *release.ContentDocumentID
 	}
-	// Check access for draft releases
-	if release.Status != ReleaseStatusPublished {
-		allowed, permissionErr := hasDraftReleaseView(ctx, s.spiceDB, release.ID)
-		if permissionErr != nil {
-			return nil, errs.Internal(fmt.Errorf("check release draft view permission: %w", permissionErr))
-		}
-		if allowed {
-			mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft
-			if user := auth.GetUser(ctx); user != nil {
-				mediaAuthorization.IdentityID = user.IdentityID.String()
-				mediaAuthorization.MemberID = user.MemberID.String()
-			}
-		} else {
-			link, accessErr := requireDraftShareLinkAccess(
-				ctx, s.db, optionalStringValue(shareToken), sharePassword,
-				managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE, release.ID, "release",
-			)
-			if accessErr != nil {
-				return nil, accessErr
-			}
-			mediaAuthorization.Mode = mediaasset.ContentDownloadOwnerAccessShare
-			mediaAuthorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
-		}
+	if release.Status == model.ReleaseStatusPublished {
+		return authorization, nil
 	}
-
-	return s.buildReleaseResponse(ctx, req.Header().Get("Accept-Language"), &release, mediaAuthorization)
+	allowed, err := hasDraftReleaseView(ctx, s.spiceDB, release.ID)
+	if err != nil {
+		return authorization, fmt.Errorf("check release draft view permission: %w", err)
+	}
+	if allowed {
+		authorization.Mode = mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft
+		if user := auth.GetUser(ctx); user != nil {
+			authorization.IdentityID = user.IdentityID.String()
+			authorization.MemberID = user.MemberID.String()
+		}
+		return authorization, nil
+	}
+	link, err := requireDraftShareLinkAccess(
+		ctx, s.db, query.ShareToken, query.SharePassword,
+		managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE, release.ID, "release",
+	)
+	if err != nil {
+		return authorization, err
+	}
+	authorization.Mode = mediaasset.ContentDownloadOwnerAccessShare
+	authorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
+	return authorization, nil
 }
 
-// List returns published releases
-func (s *ReleaseService) List(
-	ctx context.Context,
-	req *connect.Request[openv1.ListReleasesRequest],
-) (*connect.Response[openv1.ListReleasesResponse], error) {
+// ListReleases returns a page of published releases.
+func (s *Service) ListReleases(ctx context.Context, query ListReleasesQuery) (ReleasePage, error) {
+	filtered, remainingFilters, err := applyReleaseRelationFilters(
+		s.db.WithContext(ctx).Model(&model.Release{}).Where("status = ?", model.ReleaseStatusPublished),
+		query.Filters,
+	)
+	if err != nil {
+		return ReleasePage{}, err
+	}
+	filtered, err = ReleaseFilterConfig.ApplyFilters(filtered, remainingFilters)
+	if err != nil {
+		return ReleasePage{}, err
+	}
+	var page ReleasePage
+	if err := filtered.Count(&page.Total).Error; err != nil {
+		return ReleasePage{}, err
+	}
+	sorted, err := ReleaseSortConfig.ApplySort(filtered, query.Sorts)
+	if err != nil {
+		return ReleasePage{}, err
+	}
+	pagination := queryutil.GetPaginationParams(query.Limit, query.Offset, 20)
+	page.Limit, page.Offset = pagination.Limit, pagination.Offset
 	var releases []model.Release
-	var total int64
+	if err := queryutil.ApplyPagination(sorted, pagination).Find(&releases).Error; err != nil {
+		return ReleasePage{}, err
+	}
+	page.Releases, err = s.releaseSummaries(ctx, releases)
+	return page, err
+}
 
-	query := s.db.WithContext(ctx).Model(&model.Release{}).
-		Where("status = ?", ReleaseStatusPublished)
+// releaseRelationFilters are the list filters on a Release relation, which
+// FilterConfig cannot express: the field and its relation table and column.
+var releaseRelationFilters = map[string]struct{ table, column string }{
+	"label_id":    {"release_label", "label_id"},
+	"artist_id":   {"release_artist", "artist_id"},
+	"category_id": {"release_category", "category_id"},
+}
 
-	// 1. 조인 필터 직접 처리
-	var remainingFilters []*commonv1.FilterSpec
-	for _, f := range req.Msg.Filters {
-		switch f.GetField() {
-		case "label_id":
-			switch f.GetOp() {
-			case commonv1.FilterOp_FILTER_OP_EQ:
-				query = query.Where("id IN (SELECT release_id FROM release_label WHERE label_id = ?)", f.GetValue())
-			case commonv1.FilterOp_FILTER_OP_IN:
-				query = query.Where("id IN (SELECT release_id FROM release_label WHERE label_id IN ?)", f.GetValues())
-			default:
-				return nil, errs.InvalidFilterOp(f.GetField(), f.GetOp().String())
-			}
-		case "artist_id":
-			switch f.GetOp() {
-			case commonv1.FilterOp_FILTER_OP_EQ:
-				query = query.Where("id IN (SELECT release_id FROM release_artist WHERE artist_id = ?)", f.GetValue())
-			case commonv1.FilterOp_FILTER_OP_IN:
-				query = query.Where("id IN (SELECT release_id FROM release_artist WHERE artist_id IN ?)", f.GetValues())
-			default:
-				return nil, errs.InvalidFilterOp(f.GetField(), f.GetOp().String())
-			}
-		case "category_id":
-			switch f.GetOp() {
-			case commonv1.FilterOp_FILTER_OP_EQ:
-				query = query.Where("id IN (SELECT release_id FROM release_category WHERE category_id = ?)", f.GetValue())
-			case commonv1.FilterOp_FILTER_OP_IN:
-				query = query.Where("id IN (SELECT release_id FROM release_category WHERE category_id IN ?)", f.GetValues())
-			default:
-				return nil, errs.InvalidFilterOp(f.GetField(), f.GetOp().String())
-			}
+// applyReleaseRelationFilters narrows query by the relation filters and
+// returns the filters FilterConfig applies.
+func applyReleaseRelationFilters(query *gorm.DB, filters []*commonv1.FilterSpec) (*gorm.DB, []*commonv1.FilterSpec, error) {
+	var remaining []*commonv1.FilterSpec
+	for _, filter := range filters {
+		relation, ok := releaseRelationFilters[filter.GetField()]
+		if !ok {
+			remaining = append(remaining, filter)
+			continue
+		}
+		subquery := "id IN (SELECT release_id FROM " + relation.table + " WHERE " + relation.column
+		switch filter.GetOp() {
+		case commonv1.FilterOp_FILTER_OP_EQ:
+			query = query.Where(subquery+" = ?)", filter.GetValue())
+		case commonv1.FilterOp_FILTER_OP_IN:
+			query = query.Where(subquery+" IN ?)", filter.GetValues())
 		default:
-			remainingFilters = append(remainingFilters, f)
+			return nil, nil, domainerr.New(domainerr.Invalid, filter.GetField(), fmt.Sprintf(
+				"invalid filter operation '%s' for field '%s'", filter.GetOp().String(), filter.GetField(),
+			))
 		}
 	}
+	return query, remaining, nil
+}
 
-	// 2. 나머지 필터 적용
-	query, err := ReleaseFilterConfig.ApplyFilters(query, remainingFilters)
-	if err != nil {
-		return nil, err
-	}
-
-	// Count total before pagination
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// 3. Sort
-	query, err = ReleaseSortConfig.ApplySort(query, req.Msg.Sorts)
-	if err != nil {
-		return nil, err
-	}
-
-	// 4. Pagination
-	pagination := queryutil.GetPaginationParams(
-		req.Msg.Pagination.GetLimit(),
-		req.Msg.Pagination.GetOffset(),
-		20,
-	)
-	query = queryutil.ApplyPagination(query, pagination)
-
-	if err := query.Find(&releases).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	sourceTitles, err := releasepkg.LoadPublicSourceTitles(ctx, s.db, collectReleaseIDs(releases))
+func (s *Service) releaseSummaries(ctx context.Context, releases []model.Release) ([]*openv1.ReleaseSummary, error) {
+	releaseIDs := collectReleaseIDs(releases)
+	sourceTitles, err := releasepkg.LoadPublicSourceTitles(ctx, s.db, releaseIDs)
 	if err != nil {
 		return nil, err
 	}
 	for i := range releases {
 		releases[i].Title = sourceTitles[releases[i].ID]
 	}
-	releaseIDs := collectReleaseIDs(releases)
 	artworkAssets, err := s.loadReleaseArtworkAssets(ctx, releaseIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	artistsByRelease, err := s.loadReleaseArtists(ctx, releaseIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	// Convert to proto summaries
 	summaries := make([]*openv1.ReleaseSummary, 0, len(releases))
-	for _, release := range releases {
-		summaries = append(summaries, s.toReleaseSummary(
-			&release,
-			artworkAssets[release.ID],
-			artistsByRelease[release.ID],
-		))
+	for i := range releases {
+		release := &releases[i]
+		summaries = append(summaries, toReleaseSummary(release, artworkAssets[release.ID], artistsByRelease[release.ID]))
 	}
-
-	return connect.NewResponse(&openv1.ListReleasesResponse{
-		Releases: summaries,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   pagination.Limit,
-			Offset:  pagination.Offset,
-			HasMore: pagination.Offset+int32(len(releases)) < int32(total),
-		},
-	}), nil
+	return summaries, nil
 }
 
-// buildReleaseResponse builds a GetReleaseResponse with the release
-func (s *ReleaseService) buildReleaseResponse(
+func releaseNotFound() *domainerr.Error {
+	return domainerr.New(domainerr.NotFound, "", "release not found")
+}
+
+// buildRelease projects the Release in one snapshot. A Release that was
+// public when it was found must still be published.
+func (s *Service) buildRelease(
 	ctx context.Context,
 	acceptLanguage string,
 	release *model.Release,
 	mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization,
-) (*connect.Response[openv1.GetReleaseResponse], error) {
-	wasPublic := release.Status == ReleaseStatusPublished
-	var response *connect.Response[openv1.GetReleaseResponse]
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+) (*openv1.Release, error) {
+	wasPublic := release.Status == model.ReleaseStatusPublished
+	var projected *openv1.Release
+	err := mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
 		projection := *s
 		projection.db = tx
 		var err error
-		response, err = projection.buildReleaseResponseInTransaction(
-			ctx, acceptLanguage, release, mediaAuthorization, wasPublic,
-		)
+		projected, err = projection.buildReleaseInTransaction(ctx, acceptLanguage, release, mediaAuthorization, wasPublic)
 		return err
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
-	return response, err
+	})
+	return projected, err
 }
 
-func (s *ReleaseService) buildReleaseResponseInTransaction(
+func (s *Service) buildReleaseInTransaction(
 	ctx context.Context,
 	acceptLanguage string,
 	release *model.Release,
 	mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization,
 	wasPublic bool,
-) (*connect.Response[openv1.GetReleaseResponse], error) {
+) (*openv1.Release, error) {
 	releaseID := release.ID
 	var current model.Release
-	if err := s.db.WithContext(ctx).
-		Where("id = ?", releaseID).
-		Take(&current).Error; err != nil {
+	if err := s.db.WithContext(ctx).Where("id = ?", releaseID).Take(&current).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFoundMsg("release not found")
+			return nil, releaseNotFound()
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	if wasPublic && current.Status != ReleaseStatusPublished {
-		return nil, errs.NotFoundMsg("release not found")
+	if wasPublic && current.Status != model.ReleaseStatusPublished {
+		return nil, releaseNotFound()
 	}
 	*release = current
 	localization, err := publiccontent.Resolve(ctx, s.db, releaseLocalizationSpec, releaseID, acceptLanguage)
@@ -317,117 +329,94 @@ func (s *ReleaseService) buildReleaseResponseInTransaction(
 		release.Title = *localization.Title
 	}
 	protoRelease := &openv1.Release{
-		Id:        release.ID,
-		Title:     release.Title,
-		Type:      openv1.ReleaseType(openv1.ReleaseType_value[release.Type]),
-		Document:  content.Document,
-		Status:    openv1.ReleaseStatus(openv1.ReleaseStatus_value[release.Status]),
-		CreatedAt: timestamppb.New(release.CreatedAt),
-		UpdatedAt: timestamppb.New(release.UpdatedAt),
-		Revision:  content.Revision,
+		Id:               release.ID,
+		Title:            release.Title,
+		Type:             releaseTypeToOpen(release.Type),
+		Document:         content.Document,
+		Status:           releaseStatusToOpen(release.Status),
+		CreatedAt:        timestamppb.New(release.CreatedAt),
+		UpdatedAt:        timestamppb.New(release.UpdatedAt),
+		Revision:         content.Revision,
+		Slug:             release.Slug,
+		LocalizationInfo: publiccontent.ToProtoLocalizationInfo(localization),
+		CatalogNumber:    release.CatalogNumber,
+		ReleaseDate:      timestampPtr(release.ReleaseDate),
+		PublishedAt:      timestampPtr(release.PublishedAt),
+		SpotifyUrl:       release.SpotifyURL,
+		AppleMusicUrl:    release.AppleMusicURL,
+		BandcampUrl:      release.BandcampURL,
+		YoutubeMusicUrl:  release.YoutubeMusicURL,
 	}
+	if err := s.projectReleaseRelations(ctx, protoRelease, release, localization, mediaAuthorization); err != nil {
+		return nil, err
+	}
+	return protoRelease, nil
+}
 
-	if release.Slug != nil {
-		protoRelease.Slug = release.Slug
-	}
-	protoRelease.LocalizationInfo = publiccontent.ToProtoLocalizationInfo(localization)
-	if release.CatalogNumber != nil {
-		protoRelease.CatalogNumber = release.CatalogNumber
-	}
-	if release.ReleaseDate != nil {
-		protoRelease.ReleaseDate = timestamppb.New(*release.ReleaseDate)
-	}
-	if release.PublishedAt != nil {
-		protoRelease.PublishedAt = timestamppb.New(*release.PublishedAt)
-	}
-	// Streaming URLs
-	if release.SpotifyURL != nil {
-		protoRelease.SpotifyUrl = release.SpotifyURL
-	}
-	if release.AppleMusicURL != nil {
-		protoRelease.AppleMusicUrl = release.AppleMusicURL
-	}
-	if release.BandcampURL != nil {
-		protoRelease.BandcampUrl = release.BandcampURL
-	}
-	if release.YoutubeMusicURL != nil {
-		protoRelease.YoutubeMusicUrl = release.YoutubeMusicURL
-	}
+// projectReleaseRelations adds the artwork, relations, credits and tracks
+// of release to its projection.
+func (s *Service) projectReleaseRelations(
+	ctx context.Context,
+	protoRelease *openv1.Release,
+	release *model.Release,
+	localization publiccontent.Selection,
+	mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization,
+) error {
 	artworkAssets, err := s.loadReleaseArtworkAssets(ctx, []string{release.ID})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return err
 	}
 	protoRelease.ArtworkAsset = artworkAssets[release.ID]
 	protoRelease.OgAsset = protoRelease.ArtworkAsset
 	artistsByRelease, err := s.loadReleaseArtists(ctx, []string{release.ID})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return err
 	}
 	protoRelease.Artists = artistsByRelease[release.ID]
+	if protoRelease.Labels, err = s.getReleaseLabels(ctx, release.ID); err != nil {
+		return err
+	}
+	if protoRelease.Genres, err = s.getReleaseGenres(ctx, release.ID); err != nil {
+		return err
+	}
+	if protoRelease.Styles, err = s.getReleaseStyles(ctx, release.ID); err != nil {
+		return err
+	}
+	if protoRelease.Formats, err = s.getReleaseFormats(ctx, release.ID); err != nil {
+		return err
+	}
+	protoRelease.Credits, err = s.getReleaseCredits(ctx, release.ID, localization.SourceLocale, localization.DisplayedLocale)
+	if err != nil {
+		return err
+	}
+	protoRelease.Tracks, err = s.getReleaseTracks(ctx, release.ID, string(release.Status), mediaAuthorization)
+	return err
+}
 
-	// Get release relations
-	protoRelease.Labels, err = s.getReleaseLabels(ctx, release.ID)
-	if err != nil {
-		return nil, errs.Internal(err)
+func timestampPtr(value *time.Time) *timestamppb.Timestamp {
+	if value == nil {
+		return nil
 	}
-	protoRelease.Genres, err = s.getReleaseGenres(ctx, release.ID)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	protoRelease.Styles, err = s.getReleaseStyles(ctx, release.ID)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	protoRelease.Formats, err = s.getReleaseFormats(ctx, release.ID)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	protoRelease.Credits, err = s.getReleaseCredits(
-		ctx,
-		release.ID,
-		localization.SourceLocale,
-		localization.DisplayedLocale,
-	)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Get tracks
-	protoRelease.Tracks, err = s.getReleaseTracks(ctx, release.ID, release.Status, mediaAuthorization)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	return connect.NewResponse(&openv1.GetReleaseResponse{
-		Release: protoRelease,
-	}), nil
+	return timestamppb.New(*value)
 }
 
 // toReleaseSummary converts a release to a summary (no tracks)
-func (s *ReleaseService) toReleaseSummary(
+func toReleaseSummary(
 	release *model.Release,
 	artworkAsset *commonv1.AssetRef,
 	artists []*openv1.ReleaseArtist,
 ) *openv1.ReleaseSummary {
-	summary := &openv1.ReleaseSummary{
-		Id:    release.ID,
-		Title: release.Title,
-		Type:  openv1.ReleaseType(openv1.ReleaseType_value[release.Type]),
+	return &openv1.ReleaseSummary{
+		Id:           release.ID,
+		Title:        release.Title,
+		Type:         releaseTypeToOpen(release.Type),
+		Slug:         release.Slug,
+		ReleaseDate:  timestampPtr(release.ReleaseDate),
+		PublishedAt:  timestampPtr(release.PublishedAt),
+		OgAsset:      artworkAsset,
+		ArtworkAsset: artworkAsset,
+		Artists:      artists,
 	}
-
-	if release.Slug != nil {
-		summary.Slug = release.Slug
-	}
-	if release.ReleaseDate != nil {
-		summary.ReleaseDate = timestamppb.New(*release.ReleaseDate)
-	}
-	if release.PublishedAt != nil {
-		summary.PublishedAt = timestamppb.New(*release.PublishedAt)
-	}
-	summary.OgAsset = artworkAsset
-	summary.ArtworkAsset = artworkAsset
-	summary.Artists = artists
-	return summary
 }
 
 func collectReleaseIDs(releases []model.Release) []string {
@@ -438,7 +427,7 @@ func collectReleaseIDs(releases []model.Release) []string {
 	return ids
 }
 
-func (s *ReleaseService) loadReleaseArtworkAssets(
+func (s *Service) loadReleaseArtworkAssets(
 	ctx context.Context,
 	releaseIDs []string,
 ) (map[string]*commonv1.AssetRef, error) {

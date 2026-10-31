@@ -47,11 +47,9 @@ type goldenReleaseDocumentAPI struct {
 
 func (a *goldenReleaseDocumentAPI) ExecuteAIDocumentMutation(
 	ctx context.Context,
-	releaseID, locale string,
-	mode releasedomain.AIDocumentExecutionMode,
-	compiler releasedomain.AIDocumentMutationCompiler,
+	command releasedomain.ExecuteAIDocumentMutationCommand,
 ) (releasedomain.AIDocumentMutationResult, error) {
-	result, err := a.exactReleaseDocumentAPI.ExecuteAIDocumentMutation(ctx, releaseID, locale, mode, compiler)
+	result, err := a.exactReleaseDocumentAPI.ExecuteAIDocumentMutation(ctx, command)
 	if err == nil && a.err != nil {
 		return releasedomain.AIDocumentMutationResult{}, a.err
 	}

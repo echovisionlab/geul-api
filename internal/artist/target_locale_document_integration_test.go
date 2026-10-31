@@ -50,7 +50,7 @@ func TestArtistTargetLocaleBatchUsesExactCASWithoutAdvancingSharedRevisionIntegr
 		},
 	))
 	sharedRevision := attachArtistContentDocument(t, db, store, artistID, "en", "source paragraph")
-	documentID, err := loadCreativeContentDocumentID(t.Context(), db, artistContentEntity, artistID)
+	documentID, err := loadCreativeContentDocumentID(t.Context(), db, artistID)
 	require.NoError(t, err)
 
 	koUpdatedAt := now.Add(time.Second)

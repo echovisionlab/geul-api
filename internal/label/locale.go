@@ -1,7 +1,7 @@
 package label
 
 import (
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/localization"
 )
 
@@ -12,7 +12,7 @@ import (
 func normalizeLabelDocumentLocale(locale string) (string, error) {
 	normalized := localization.NormalizeExactSupportedLocale(locale)
 	if normalized == nil {
-		return "", errs.InvalidArgument("locale", "must be an exact canonical locale")
+		return "", domainerr.InvalidField("locale", "must be an exact canonical locale")
 	}
 	return *normalized, nil
 }

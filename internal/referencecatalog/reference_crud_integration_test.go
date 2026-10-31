@@ -5,7 +5,6 @@ package referencecatalog
 import (
 	"context"
 	"testing"
-	"time"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
@@ -24,11 +23,11 @@ func TestReferenceCatalogCRUDIntegration(t *testing.T) {
 	spiceDB := stack.SpiceDBClient
 	referenceAdmin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	referenceAdminID := referenceAdmin.IdentityID
-	ctx := auth.WithUser(t.Context(), referenceAdmin.AuthUserInfo())
+	ctx := referenceAuditedRequestContext(t, auth.WithUser(t.Context(), referenceAdmin.AuthUserInfo()))
 
 	t.Run("category", func(t *testing.T) {
 		db := testutil.NewIntegrationDB(t)
-		svc := NewCategoryService(db, referenceMenuTargetsForTest(nil), spiceDB)
+		svc := NewCategoryConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB}))
 		description := "News and announcements"
 		suffix := referenceShortSuffix()
 		name := "Integration News " + suffix
@@ -97,7 +96,7 @@ func TestReferenceCatalogCRUDIntegration(t *testing.T) {
 
 	t.Run("category API boundaries reject invalid input and missing resources", func(t *testing.T) {
 		db := testutil.NewIntegrationDB(t)
-		svc := NewCategoryService(db, referenceMenuTargetsForTest(nil), spiceDB)
+		svc := NewCategoryConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB}))
 		suffix := referenceShortSuffix()
 		missingID := testutil.IntegrationUUID()
 
@@ -197,7 +196,7 @@ func TestReferenceCatalogCRUDIntegration(t *testing.T) {
 
 	t.Run("tag", func(t *testing.T) {
 		db := testutil.NewIntegrationDB(t)
-		svc := NewTagService(db, referenceMenuTargetsForTest(nil), spiceDB)
+		svc := NewTagConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB}))
 		suffix := referenceShortSuffix()
 		name := "Integration Tag " + suffix
 		slug := "integration-tag-" + suffix
@@ -260,7 +259,7 @@ func TestReferenceCatalogCRUDIntegration(t *testing.T) {
 
 	t.Run("genre", func(t *testing.T) {
 		db := testutil.NewIntegrationDB(t)
-		svc := NewGenreService(db, spiceDB)
+		svc := NewGenreConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB}))
 		description := "Soulful guitar music"
 		suffix := referenceShortSuffix()
 		name := "Integration Jazz " + suffix
@@ -330,7 +329,7 @@ func TestReferenceCatalogCRUDIntegration(t *testing.T) {
 
 	t.Run("style", func(t *testing.T) {
 		db := testutil.NewIntegrationDB(t)
-		svc := NewStyleService(db, spiceDB)
+		svc := NewStyleConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB}))
 		description := "Percussive and layered"
 		suffix := referenceShortSuffix()
 		name := "Integration Beat " + suffix
@@ -399,7 +398,7 @@ func TestReferenceCatalogCRUDIntegration(t *testing.T) {
 
 	t.Run("format", func(t *testing.T) {
 		db := testutil.NewIntegrationDB(t)
-		svc := NewFormatService(db, spiceDB)
+		svc := NewFormatConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB}))
 		suffix := referenceShortSuffix()
 		name := "Integration Vinyl " + suffix
 		slug := "integration-vinyl-" + suffix
@@ -469,7 +468,7 @@ func TestReferenceCatalogCRUDIntegration(t *testing.T) {
 
 	t.Run("client", func(t *testing.T) {
 		db := testutil.NewIntegrationDB(t)
-		svc := NewClientService(db, referenceCatalogTestAssets{}, spiceDB)
+		svc := NewClientConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB}))
 		website := "https://client.example.com"
 		suffix := referenceShortSuffix()
 		name := "Integration Client " + suffix
@@ -543,16 +542,16 @@ func TestReferenceCategoryMutationsRecheckAdminAfterIdentityLockIntegration(t *t
 	t.Parallel()
 	tests := []struct {
 		name    string
-		prepare func(*testing.T, *CategoryService, context.Context, string) string
-		invoke  func(context.Context, *CategoryService, string, string) error
+		prepare func(*testing.T, *CategoryConnectHandler, context.Context, string) string
+		invoke  func(context.Context, *CategoryConnectHandler, string, string) error
 		assert  func(*testing.T, *gorm.DB, string, string)
 	}{
 		{
 			name: "create",
-			prepare: func(_ *testing.T, _ *CategoryService, _ context.Context, _ string) string {
+			prepare: func(_ *testing.T, _ *CategoryConnectHandler, _ context.Context, _ string) string {
 				return ""
 			},
-			invoke: func(ctx context.Context, service *CategoryService, _ string, suffix string) error {
+			invoke: func(ctx context.Context, service *CategoryConnectHandler, _ string, suffix string) error {
 				_, err := service.CreateCategory(ctx, connect.NewRequest(&managev1.CreateCategoryRequest{
 					Name: "Reference race category " + suffix,
 					Slug: strPtr("reference-race-category-" + suffix),
@@ -567,7 +566,7 @@ func TestReferenceCategoryMutationsRecheckAdminAfterIdentityLockIntegration(t *t
 		},
 		{
 			name: "update",
-			prepare: func(t *testing.T, service *CategoryService, ctx context.Context, suffix string) string {
+			prepare: func(t *testing.T, service *CategoryConnectHandler, ctx context.Context, suffix string) string {
 				created, err := service.CreateCategory(ctx, connect.NewRequest(&managev1.CreateCategoryRequest{
 					Name: "Reference race category original " + suffix,
 					Slug: strPtr("reference-race-category-original-" + suffix),
@@ -575,7 +574,7 @@ func TestReferenceCategoryMutationsRecheckAdminAfterIdentityLockIntegration(t *t
 				require.NoError(t, err)
 				return created.Msg.Id
 			},
-			invoke: func(ctx context.Context, service *CategoryService, id, suffix string) error {
+			invoke: func(ctx context.Context, service *CategoryConnectHandler, id, suffix string) error {
 				name := "Reference race category updated " + suffix
 				_, err := service.UpdateCategory(ctx, connect.NewRequest(&managev1.UpdateCategoryRequest{Id: id, Name: &name}))
 				return err
@@ -588,7 +587,7 @@ func TestReferenceCategoryMutationsRecheckAdminAfterIdentityLockIntegration(t *t
 		},
 		{
 			name: "delete",
-			prepare: func(t *testing.T, service *CategoryService, ctx context.Context, suffix string) string {
+			prepare: func(t *testing.T, service *CategoryConnectHandler, ctx context.Context, suffix string) string {
 				created, err := service.CreateCategory(ctx, connect.NewRequest(&managev1.CreateCategoryRequest{
 					Name: "Reference race category delete " + suffix,
 					Slug: strPtr("reference-race-category-delete-" + suffix),
@@ -596,7 +595,7 @@ func TestReferenceCategoryMutationsRecheckAdminAfterIdentityLockIntegration(t *t
 				require.NoError(t, err)
 				return created.Msg.Id
 			},
-			invoke: func(ctx context.Context, service *CategoryService, id, _ string) error {
+			invoke: func(ctx context.Context, service *CategoryConnectHandler, id, _ string) error {
 				_, err := service.DeleteCategory(ctx, connect.NewRequest(&managev1.DeleteCategoryRequest{Id: id}))
 				return err
 			},
@@ -615,8 +614,8 @@ func TestReferenceCategoryMutationsRecheckAdminAfterIdentityLockIntegration(t *t
 			admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 			identityID := admin.IdentityID
 			spiceDB := stack.SpiceDBClient
-			service := NewCategoryService(db, referenceMenuTargetsForTest(nil), spiceDB)
-			ctx := auth.WithUser(t.Context(), admin.AuthUserInfo())
+			service := NewCategoryConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: spiceDB}))
+			ctx := referenceAuditedRequestContext(t, auth.WithUser(t.Context(), admin.AuthUserInfo()))
 			suffix := referenceShortSuffix()
 			id := test.prepare(t, service, ctx, suffix)
 
@@ -628,22 +627,13 @@ func TestReferenceCategoryMutationsRecheckAdminAfterIdentityLockIntegration(t *t
 			go func() {
 				result <- test.invoke(ctx, service, id, suffix)
 			}()
-			requireReferenceMutationStillWaiting(t, result)
+			testutil.RequireKratosLockWaiters(t, db, 1)
 			testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.User())
 			require.NoError(t, roleChangeTx.Commit().Error)
 
 			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(<-result))
 			test.assert(t, db, id, suffix)
 		})
-	}
-}
-
-func requireReferenceMutationStillWaiting(t *testing.T, result <-chan error) {
-	t.Helper()
-	select {
-	case err := <-result:
-		require.FailNow(t, "reference mutation returned before identity state was released", "error: %v", err)
-	case <-time.After(150 * time.Millisecond):
 	}
 }
 

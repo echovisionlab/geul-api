@@ -11,8 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
-	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -62,8 +61,8 @@ func TestDeleteTrackStopsBeforeMutationWhenAudioUploadIsFinalizing(t *testing.T)
 	require.NoError(t, err)
 	_, err = stack.SpiceDBClient.ApplyRelationships(t.Context(), policy)
 	require.NoError(t, err)
-	service := releasepkg.NewTrackService(db, releaseadapter.NewTrackTranscodes(nil), releaseadapter.NewWaveformJobs(db, nil), stack.SpiceDBClient, releaseadapter.NewTrackFiles(files), releaseadapter.NewMemberSummaries(db, "cdn.example.com"), releaseadapter.NewArtistSummaries(db))
-	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
+	service := releasepkg.NewTrackConnectHandler(newReleaseIntegrationUseCases(t, db, stack.SpiceDBClient, files, &audittest.Recorder{}))
+	ctx := testutil.NewAuditContext(t, admin.IdentityID, admin.MemberID)
 
 	response, err := service.DeleteTrack(ctx, connect.NewRequest(&managev1.DeleteTrackRequest{Id: trackID}))
 	require.Error(t, err)

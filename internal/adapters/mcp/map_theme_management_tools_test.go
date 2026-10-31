@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/maptheme"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -67,30 +67,27 @@ func TestMapThemeManagementCallsExactOwningMethods(t *testing.T) {
 			require.Equal(t, t.Context(), service.ctx)
 			switch test.name {
 			case ToolMapThemeResolve:
-				request := service.request.(*managev1.ResolveMapThemeRequest)
+				request := service.request.(maptheme.ResolveMapThemeQuery)
 				if test.arguments["theme_id"] == nil {
-					require.Nil(t, request.ThemeId)
+					require.Nil(t, request.ThemeID)
 					require.Equal(t, "light", request.Scheme)
 				} else {
-					require.Equal(t, mapThemeTestID, *request.ThemeId)
+					require.Equal(t, mapThemeTestID, *request.ThemeID)
 					require.Equal(t, "dark", request.Scheme)
 				}
-			case ToolMapThemeCreate, ToolMapThemeSettingsUpdate:
-				require.True(t, proto.Equal(mapThemeNativeSnapshotForTest(), service.request.(*managev1.CreateMapThemeRequest)))
-				if test.name == ToolMapThemeSettingsUpdate {
-					require.Equal(t, mapThemeTestID, service.id)
-					require.EqualValues(t, 7, service.revision)
-					require.Equal(t, true, result.StructuredContent["changed"])
-				}
+			case ToolMapThemeCreate:
+				require.Equal(t, maptheme.CreateMapThemeCommand{Snapshot: *mapThemeSnapshotInputForTest()}, service.request)
+			case ToolMapThemeSettingsUpdate:
+				require.Equal(t, maptheme.UpdateMapThemeSnapshotCommand{ThemeID: mapThemeTestID, ExpectedRevision: 7, Snapshot: mapThemeSnapshotInputForTest()}, service.request)
+				require.Equal(t, true, result.StructuredContent["changed"])
 			case ToolMapThemeGet:
-				require.Equal(t, mapThemeTestID, service.request.(*managev1.GetMapThemeRequest).Id)
+				require.Equal(t, maptheme.GetMapThemeQuery{ID: mapThemeTestID}, service.request)
 			case ToolMapThemeDelete:
-				require.Equal(t, mapThemeTestID, service.request.(*managev1.DeleteMapThemeRequest).Id)
+				require.Equal(t, maptheme.DeleteMapThemeCommand{ID: mapThemeTestID}, service.request)
 			case ToolMapThemeCopy:
-				require.Equal(t, mapThemeTestID, service.request.(*managev1.CopyMapThemeRequest).Id)
-				require.Equal(t, "Copied theme", service.request.(*managev1.CopyMapThemeRequest).Name)
+				require.Equal(t, maptheme.CopyMapThemeCommand{ID: mapThemeTestID, Name: "Copied theme"}, service.request)
 			case ToolMapThemeSetDefault:
-				require.Equal(t, mapThemeTestID, service.request.(*managev1.SetDefaultMapThemeRequest).ThemeId)
+				require.Equal(t, maptheme.SetDefaultMapThemeCommand{ThemeID: mapThemeTestID}, service.request)
 			}
 		})
 	}
@@ -112,7 +109,7 @@ func TestMapThemeManagementGetSnapshotRoundtripsFalseAndZero(t *testing.T) {
 	result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMapThemeSettingsUpdate, mapThemeArgumentsForTest(t, map[string]any{"theme_id": mapThemeTestID, "expected_revision": theme["revision"], "snapshot": snapshot}))
 	require.NoError(t, err)
 	require.False(t, result.StructuredContent["changed"].(bool))
-	require.True(t, proto.Equal(mapThemeNativeSnapshotForTest(), service.request.(*managev1.CreateMapThemeRequest)))
+	require.Equal(t, mapThemeSnapshotInputForTest(), service.request.(maptheme.UpdateMapThemeSnapshotCommand).Snapshot)
 }
 
 func TestMapThemeManagementRejectsInvalidShapeBeforeOwner(t *testing.T) {
@@ -196,59 +193,63 @@ func mapThemeForTest(t *testing.T) *managev1.MapTheme {
 	return &managev1.MapTheme{Id: mapThemeTestID, Name: snapshot.Name, Revision: 7, Settings: snapshot.Settings, LightVariant: variant, DarkVariant: proto.Clone(variant).(*managev1.MapThemeVariant), CreatedAt: when, UpdatedAt: when}
 }
 
-type recordingMapThemeManagement struct {
-	managev1connect.UnimplementedMapThemeServiceHandler
-	theme    *managev1.MapTheme
-	err      error
-	changed  bool
-	called   string
-	request  proto.Message
-	ctx      context.Context
-	id       string
-	revision int64
+// mapThemeSnapshotInputForTest is mapThemeNativeSnapshotForTest as the use
+// case receives it.
+func mapThemeSnapshotInputForTest() *maptheme.SnapshotInput {
+	variant := maptheme.Variant{BackgroundColor: "#fff", WaterColor: "#111", LandColor: "#222", RoadColor: "#333", BuildingFillColor: "#444", BuildingStrokeColor: "#555", CalloutLineColor: "#666", CalloutTextColor: "#777", CalloutBackgroundColor: "#888", CalloutDescriptionColor: "#999", AttributionColor: "transparent", LabelTextColor: "#aaa", ClusterColor: "#bbb", ClusterHoverColor: "#ccc", ClusterTextColor: "#ddd", ClusterTextHoverColor: "#eee", CalloutHoverLineColor: "#123", CalloutHoverTextColor: "#456", CalloutHoverDescriptionColor: "#789", CalloutHoverBackgroundColor: "#abc"}
+	dark := variant
+	return &maptheme.SnapshotInput{Name: "Theme", Settings: &maptheme.Settings{CalloutScale: 1.25, CalloutFields: []string{"name", "address"}, AttributionFontSize: 12}, LightVariant: &variant, DarkVariant: &dark}
 }
 
-func (service *recordingMapThemeManagement) record(ctx context.Context, name string, request proto.Message) {
+type recordingMapThemeManagement struct {
+	theme   *managev1.MapTheme
+	err     error
+	changed bool
+	called  string
+	request any
+	ctx     context.Context
+}
+
+func (service *recordingMapThemeManagement) record(ctx context.Context, name string, request any) {
 	service.ctx, service.called, service.request = ctx, name, request
 }
 
-func (service *recordingMapThemeManagement) ListMapThemes(ctx context.Context, request *connect.Request[managev1.ListMapThemesRequest]) (*connect.Response[managev1.ListMapThemesResponse], error) {
-	service.record(ctx, ToolMapThemeList, request.Msg)
-	return connect.NewResponse(&managev1.ListMapThemesResponse{Themes: []*managev1.MapTheme{service.theme}, DefaultMapThemeId: mapThemeTestID}), service.err
+func (service *recordingMapThemeManagement) ListMapThemes(ctx context.Context) (maptheme.ThemeList, error) {
+	service.record(ctx, ToolMapThemeList, nil)
+	return maptheme.ThemeList{Themes: []*managev1.MapTheme{service.theme}, DefaultID: mapThemeTestID}, service.err
 }
 
-func (service *recordingMapThemeManagement) ResolveMapTheme(ctx context.Context, request *connect.Request[managev1.ResolveMapThemeRequest]) (*connect.Response[managev1.ResolvedMapTheme], error) {
-	service.record(ctx, ToolMapThemeResolve, request.Msg)
-	return connect.NewResponse(&managev1.ResolvedMapTheme{ThemeId: mapThemeTestID, Scheme: request.Msg.Scheme, Settings: service.theme.GetSettings(), Variant: service.theme.GetLightVariant()}), service.err
+func (service *recordingMapThemeManagement) ResolveMapTheme(ctx context.Context, query maptheme.ResolveMapThemeQuery) (*managev1.ResolvedMapTheme, error) {
+	service.record(ctx, ToolMapThemeResolve, query)
+	return &managev1.ResolvedMapTheme{ThemeId: mapThemeTestID, Scheme: query.Scheme, Settings: service.theme.GetSettings(), Variant: service.theme.GetLightVariant()}, service.err
 }
 
-func (service *recordingMapThemeManagement) GetMapTheme(ctx context.Context, request *connect.Request[managev1.GetMapThemeRequest]) (*connect.Response[managev1.MapTheme], error) {
-	service.record(ctx, ToolMapThemeGet, request.Msg)
-	return connect.NewResponse(service.theme), service.err
+func (service *recordingMapThemeManagement) GetMapTheme(ctx context.Context, query maptheme.GetMapThemeQuery) (*managev1.MapTheme, error) {
+	service.record(ctx, ToolMapThemeGet, query)
+	return service.theme, service.err
 }
 
-func (service *recordingMapThemeManagement) CreateMapTheme(ctx context.Context, request *connect.Request[managev1.CreateMapThemeRequest]) (*connect.Response[managev1.MapTheme], error) {
-	service.record(ctx, ToolMapThemeCreate, request.Msg)
-	return connect.NewResponse(service.theme), service.err
+func (service *recordingMapThemeManagement) CreateMapTheme(ctx context.Context, command maptheme.CreateMapThemeCommand) (*managev1.MapTheme, error) {
+	service.record(ctx, ToolMapThemeCreate, command)
+	return service.theme, service.err
 }
 
-func (service *recordingMapThemeManagement) CopyMapTheme(ctx context.Context, request *connect.Request[managev1.CopyMapThemeRequest]) (*connect.Response[managev1.MapTheme], error) {
-	service.record(ctx, ToolMapThemeCopy, request.Msg)
-	return connect.NewResponse(service.theme), service.err
+func (service *recordingMapThemeManagement) CopyMapTheme(ctx context.Context, command maptheme.CopyMapThemeCommand) (*managev1.MapTheme, error) {
+	service.record(ctx, ToolMapThemeCopy, command)
+	return service.theme, service.err
 }
 
-func (service *recordingMapThemeManagement) DeleteMapTheme(ctx context.Context, request *connect.Request[managev1.DeleteMapThemeRequest]) (*connect.Response[managev1.DeleteResponse], error) {
-	service.record(ctx, ToolMapThemeDelete, request.Msg)
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), service.err
+func (service *recordingMapThemeManagement) DeleteMapTheme(ctx context.Context, command maptheme.DeleteMapThemeCommand) error {
+	service.record(ctx, ToolMapThemeDelete, command)
+	return service.err
 }
 
-func (service *recordingMapThemeManagement) SetDefaultMapTheme(ctx context.Context, request *connect.Request[managev1.SetDefaultMapThemeRequest]) (*connect.Response[managev1.SetDefaultMapThemeResponse], error) {
-	service.record(ctx, ToolMapThemeSetDefault, request.Msg)
-	return connect.NewResponse(&managev1.SetDefaultMapThemeResponse{DefaultMapThemeId: mapThemeTestID}), service.err
+func (service *recordingMapThemeManagement) SetDefaultMapTheme(ctx context.Context, command maptheme.SetDefaultMapThemeCommand) (string, error) {
+	service.record(ctx, ToolMapThemeSetDefault, command)
+	return mapThemeTestID, service.err
 }
 
-func (service *recordingMapThemeManagement) UpdateMapThemeSnapshot(ctx context.Context, id string, revision int64, request *managev1.CreateMapThemeRequest) (*managev1.MapTheme, bool, error) {
-	service.record(ctx, ToolMapThemeSettingsUpdate, request)
-	service.id, service.revision = id, revision
-	return service.theme, service.changed, service.err
+func (service *recordingMapThemeManagement) UpdateMapThemeSnapshot(ctx context.Context, command maptheme.UpdateMapThemeSnapshotCommand) (maptheme.SnapshotUpdate, error) {
+	service.record(ctx, ToolMapThemeSettingsUpdate, command)
+	return maptheme.SnapshotUpdate{Theme: service.theme, Changed: service.changed}, service.err
 }

@@ -26,13 +26,13 @@ func TestLabelOwnerManagerAuthorityAndDeletionPreviewIntegration(t *testing.T) {
 	adminMemberID := testutil.PostIntegrationMemberID(adminIdentityID)
 	managerMemberID := testutil.PostIntegrationMemberID(managerIdentityID)
 	adminCtx := artistIntegrationAdminCtx(adminIdentityID)
-	managerCtx := auth.WithUser(context.Background(), &auth.UserInfo{
+	managerCtx := auth.WithUser(requestBackground(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(managerIdentityID),
 		MemberID:      auth.MemberID(managerMemberID),
 		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
 		Authenticated: true,
 	})
-	service := newLabelIntegrationService(t, db, adminIdentityID, &recordingArtistFileDeleter{})
+	service := newLabelIntegrationService(t, db, adminIdentityID)
 	slug := "label-owner-manager-" + testutil.IntegrationUUID()
 	created, err := service.CreateLabel(adminCtx, connect.NewRequest(&managev1.CreateLabelRequest{
 		Name: "Label Owner Manager",
@@ -58,21 +58,21 @@ func TestLabelOwnerManagerAuthorityAndDeletionPreviewIntegration(t *testing.T) {
 	for _, action := range []func(string) (policyv1.Can, error){policyv1.Label.View, policyv1.Label.Edit, policyv1.Label.Manage} {
 		can, canErr := action(labelID)
 		require.NoError(t, canErr)
-		allowed, checkErr := service.spiceDB.CheckActorCan(context.Background(), managerActor, can)
+		allowed, checkErr := service.labels.spiceDB.CheckActorCan(context.Background(), managerActor, can)
 		require.NoError(t, checkErr)
 		require.True(t, allowed, "manager must have %s through the generated Label permission expression", can.Action().Permission())
 	}
 	for _, action := range []func(string) (policyv1.Can, error){policyv1.Label.Delete, policyv1.Label.Publish, policyv1.Label.ManageParticipants, policyv1.Label.ManageShareLinks} {
 		can, canErr := action(labelID)
 		require.NoError(t, canErr)
-		allowed, checkErr := service.spiceDB.CheckActorCan(context.Background(), managerActor, can)
+		allowed, checkErr := service.labels.spiceDB.CheckActorCan(context.Background(), managerActor, can)
 		require.NoError(t, checkErr)
 		require.False(t, allowed, "manager must not have %s through the generated Label permission expression", can.Action().Permission())
 	}
 	for _, action := range []func(string) (policyv1.Can, error){policyv1.Label.View, policyv1.Label.Edit, policyv1.Label.Delete, policyv1.Label.Publish, policyv1.Label.Manage, policyv1.Label.ManageParticipants, policyv1.Label.ManageShareLinks} {
 		can, canErr := action(labelID)
 		require.NoError(t, canErr)
-		allowed, checkErr := service.spiceDB.CheckActorCan(context.Background(), adminActor, can)
+		allowed, checkErr := service.labels.spiceDB.CheckActorCan(context.Background(), adminActor, can)
 		require.NoError(t, checkErr)
 		require.True(t, allowed, "admin must have %s through the generated Label permission expression", can.Action().Permission())
 	}
@@ -89,7 +89,7 @@ func TestLabelOwnerManagerAuthorityAndDeletionPreviewIntegration(t *testing.T) {
 	for _, action := range []func(string) (policyv1.Can, error){policyv1.Label.View, policyv1.Label.Edit, policyv1.Label.Delete, policyv1.Label.Publish, policyv1.Label.Manage, policyv1.Label.ManageParticipants, policyv1.Label.ManageShareLinks} {
 		can, canErr := action(labelID)
 		require.NoError(t, canErr)
-		allowed, checkErr := service.spiceDB.CheckActorCan(context.Background(), managerActor, can)
+		allowed, checkErr := service.labels.spiceDB.CheckActorCan(context.Background(), managerActor, can)
 		require.NoError(t, checkErr)
 		require.True(t, allowed, "owner must have %s through the generated Label permission expression", can.Action().Permission())
 	}

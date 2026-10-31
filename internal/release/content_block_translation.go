@@ -6,14 +6,16 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
@@ -94,7 +96,8 @@ func loadReleaseTranslationTitle(
 }
 
 // ApplyTypedTranslationCandidateWithDB persists a translated Release locale
-// overlay and Release-owned credit notes behind the Release document fence.
+// overlay and Release-owned credit notes behind the Release document fence,
+// and records the change for the Member who requested the job.
 func ApplyTypedTranslationCandidateWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -102,22 +105,30 @@ func ApplyTypedTranslationCandidateWithDB(
 	job *model.TranslationJob,
 	candidate *translation.Candidate,
 	metadataInput translation.EntryWrite,
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 ) error {
-	if auditWriter == nil {
-		return errors.New("release translation audit writer is required")
-	}
-	return applyTypedTranslationCandidateWithDB(
+	applied, err := applyTypedTranslationCandidateWithDB(
 		ctx, tx, store, job, candidate, metadataInput, nil,
 		targetlocale.Policy{
 			AllowCreate: true, SeedSource: true, AllowLocaleDeletes: true, RevisionMode: targetlocale.RevisionCurrent,
 		},
-		false, auditWriter,
+		false,
+	)
+	if err != nil || !applied.changed {
+		return err
+	}
+	if strings.TrimSpace(job.RequestedByMemberID) == "" {
+		return errors.New("Release translation audit requires requester Member")
+	}
+	return domainaudit.AppendMember(
+		ctx, tx, audit, job.RequestedByMemberID, sharedtelemetry.AuditReleaseUpdated,
+		releaseLocaleContentRecord(job.EntityID, applied.locale, applied.operation),
 	)
 }
 
 // ApplyTypedTranslationInterchangeCandidateWithDB applies an interactive
 // XLIFF target write with the exact target token observed by the caller.
+// The caller records the change it observes.
 func ApplyTypedTranslationInterchangeCandidateWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -128,11 +139,20 @@ func ApplyTypedTranslationInterchangeCandidateWithDB(
 	expectedTargetRevision *string,
 	allowLocaleDeletes bool,
 ) error {
-	return applyTypedTranslationCandidateWithDB(
+	_, err := applyTypedTranslationCandidateWithDB(
 		ctx, tx, store, job, candidate, metadataInput, expectedTargetRevision,
 		targetlocale.Policy{AllowCreate: true, SeedSource: true, AllowLocaleDeletes: allowLocaleDeletes},
-		true, nil,
+		true,
 	)
+	return err
+}
+
+// releaseTranslationApplied is the locale a translation write changed and
+// how; changed is false when it changed nothing.
+type releaseTranslationApplied struct {
+	changed   bool
+	locale    string
+	operation sharedtelemetry.AuditItemOperation
 }
 
 func applyTypedTranslationCandidateWithDB(
@@ -145,189 +165,256 @@ func applyTypedTranslationCandidateWithDB(
 	expectedTargetRevision *string,
 	policy targetlocale.Policy,
 	allowEmptyCreditNotes bool,
-	auditWriter domainaudit.Appender,
+) (releaseTranslationApplied, error) {
+	if err := validateReleaseTranslationCandidate(store, job, candidate, metadataInput); err != nil {
+		return releaseTranslationApplied{}, err
+	}
+	protectedTitle, err := loadReleaseTranslationTitle(ctx, tx, job.EntityID, job.SourceLocale)
+	if err != nil {
+		return releaseTranslationApplied{}, err
+	}
+	metadataInput.Title = &protectedTitle
+	if err := prepareReleaseTranslationCreditNotes(ctx, tx, job.EntityID, candidate, allowEmptyCreditNotes); err != nil {
+		return releaseTranslationApplied{}, err
+	}
+	apply, err := loadReleaseTranslationApply(ctx, tx, store, job, candidate)
+	if err != nil {
+		return releaseTranslationApplied{}, err
+	}
+	apply.now = metadataInput.Now
+	if candidate.HasProviderUnitPatch() {
+		apply.creditNotePatch = candidate.ReleaseCreditNotes
+	} else {
+		apply.replaceCreditNotes = &candidate.ReleaseCreditNotes
+	}
+	if candidate.HasProviderUnitPatch() && job.TargetLocale == apply.source.SourceLocale {
+		return apply.applySource(ctx, tx)
+	}
+	return apply.applyTarget(ctx, tx, metadataInput.Title, expectedTargetRevision, policy)
+}
+
+func validateReleaseTranslationCandidate(
+	store *contentblock.Store,
+	job *model.TranslationJob,
+	candidate *translation.Candidate,
+	metadataInput translation.EntryWrite,
 ) error {
 	if store == nil || job == nil || candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
 		return errors.New("typed Release translation candidate and content Block store are required")
 	}
 	if job.EntityType != releaseContentEntity {
-		return errs.InvalidArgument("entity_type", "Release translation is required")
+		return domainerr.InvalidField("entity_type", "Release translation is required")
 	}
 	if metadataInput.Summary != nil || len(metadataInput.ContentJSON) != 0 ||
 		metadataInput.ContentHTML != nil || metadataInput.ContentText != nil {
-		return errs.FailedPrecondition("Release translation body is stored as typed Content Blocks")
+		return domainerr.Precondition("Release translation body is stored as typed Content Blocks")
 	}
-	protectedTitle, err := loadReleaseTranslationTitle(
-		ctx,
-		tx,
-		job.EntityID,
-		job.SourceLocale,
-	)
-	if err != nil {
-		return err
-	}
-	metadataInput.Title = &protectedTitle
+	return nil
+}
+
+// prepareReleaseTranslationCreditNotes takes a provider's credit notes from
+// its unit results and checks every note names a credit of the Release.
+func prepareReleaseTranslationCreditNotes(
+	ctx context.Context,
+	tx *gorm.DB,
+	releaseID string,
+	candidate *translation.Candidate,
+	allowEmpty bool,
+) error {
 	if patch, ok := candidate.ProviderPatch(); ok {
-		candidate.ReleaseCreditNotes, err = buildReleaseProviderCreditNotePatch(ctx, tx, job.EntityID, patch)
+		notes, err := buildReleaseProviderCreditNotePatch(ctx, tx, releaseID, patch)
 		if err != nil {
 			return err
 		}
+		candidate.ReleaseCreditNotes = notes
 	}
-	var creditNoteValidationErr error
-	if allowEmptyCreditNotes {
-		creditNoteValidationErr = validateReleaseCreditNoteIdentityMap(ctx, tx, job.EntityID, candidate.ReleaseCreditNotes)
-	} else {
-		creditNoteValidationErr = validateReleaseCreditNoteMap(ctx, tx, job.EntityID, candidate.ReleaseCreditNotes)
+	if allowEmpty {
+		return validateReleaseCreditNoteIdentityMap(ctx, tx, releaseID, candidate.ReleaseCreditNotes)
 	}
-	if creditNoteValidationErr != nil {
-		return creditNoteValidationErr
-	}
+	return validateReleaseCreditNoteMap(ctx, tx, releaseID, candidate.ReleaseCreditNotes)
+}
+
+// releaseTranslationApply writes one validated translation batch against the
+// current source document.
+type releaseTranslationApply struct {
+	store              *contentblock.Store
+	job                *model.TranslationJob
+	documentID         uuid.UUID
+	source             releaseSourceLocale
+	expectedRevision   uuid.UUID
+	batch              contentblock.Batch
+	creditNotePatch    map[string]string
+	replaceCreditNotes *map[string]string
+	now                time.Time
+}
+
+// loadReleaseTranslationApply builds the candidate's batch against the
+// current source document. The response is allowed to arrive after the
+// source document advanced: the job's revision is an artifact observation,
+// not a second source authority. Its shape is validated, and the write is
+// fenced against the current shared document revision so unrelated source
+// edits do not discard a completed target response.
+func loadReleaseTranslationApply(
+	ctx context.Context,
+	tx *gorm.DB,
+	store *contentblock.Store,
+	job *model.TranslationJob,
+	candidate *translation.Candidate,
+) (releaseTranslationApply, error) {
 	documentID, err := loadReleaseContentDocumentID(ctx, tx, job.EntityID)
 	if err != nil {
-		return err
+		return releaseTranslationApply{}, err
 	}
-	currentSource, err := loadReleaseSourceLocaleWithStrength(ctx, tx, job.EntityID, clause.LockingStrengthShare)
+	source, err := loadReleaseSourceLocaleWithStrength(ctx, tx, job.EntityID, clause.LockingStrengthShare)
 	if err != nil {
-		return err
+		return releaseTranslationApply{}, err
 	}
-	// The response is allowed to arrive after the source document advanced.
-	// The job's revision is an artifact observation, not a second source
-	// authority. Validate its shape, then fence this write against the current
-	// shared document revision so unrelated source edits do not discard a
-	// completed target response.
-	if _, err := uuidFromCanonicalString(
-		candidate.ContentDocumentRevision,
-	); err != nil {
-		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
+	if _, err := uuidFromCanonicalString(candidate.ContentDocumentRevision); err != nil {
+		return releaseTranslationApply{}, fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
-	currentSnapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, currentSource.SourceLocale)
+	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, source.SourceLocale)
 	if err != nil {
-		return normalizeReleaseContentBlockError(err)
+		return releaseTranslationApply{}, normalizeReleaseContentBlockError(err)
 	}
-	if currentSnapshot.SourceLocale != currentSource.SourceLocale || currentSnapshot.Document.Profile != releaseContentProfile {
-		return errs.FailedPrecondition("Release content document source or profile is inconsistent")
+	if snapshot.SourceLocale != source.SourceLocale || snapshot.Document.Profile != releaseContentProfile {
+		return releaseTranslationApply{}, domainerr.Precondition("Release content document source or profile is inconsistent")
 	}
-	expectedRevision := currentSnapshot.Document.Revision
 	var batch contentblock.Batch
 	if candidate.HasProviderUnitPatch() {
 		batch, err = translation.BuildProviderTargetRichTextBatch(
-			currentSnapshot, contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT, job.TargetLocale, candidate,
+			snapshot, contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT, job.TargetLocale, candidate,
 		)
 	} else {
-		targetDocument, loadErr := contentblock.SnapshotToLocalizedRichTextDocument(currentSnapshot, job.TargetLocale)
-		if loadErr != nil {
-			return normalizeReleaseContentBlockError(loadErr)
-		}
-		currentBlockIDs := make(map[string]struct{}, len(currentSnapshot.Blocks))
-		for _, block := range currentSnapshot.Blocks {
-			currentBlockIDs[block.ID.String()] = struct{}{}
-		}
-		candidateBlockIDs := make(map[string]struct{}, len(candidate.ContentBlockLocaleOverlay.Blocks))
-		mutations := make([]*contentv1.RichTextBlockLocaleMutation, 0,
-			len(candidate.ContentBlockLocaleOverlay.Blocks)+len(targetDocument.GetLocaleOverlay().GetBlocks()))
-		for _, block := range candidate.ContentBlockLocaleOverlay.Blocks {
-			if _, exists := currentBlockIDs[block.GetBlockId()]; !exists {
-				continue
-			}
-			candidateBlockIDs[block.GetBlockId()] = struct{}{}
-			mutations = append(mutations, &contentv1.RichTextBlockLocaleMutation{Operation: &contentv1.RichTextBlockLocaleMutation_Upsert{
-				Upsert: &contentv1.UpsertRichTextBlockLocale{Block: block},
-			}})
-		}
-		for _, block := range targetDocument.GetLocaleOverlay().GetBlocks() {
-			if _, exists := currentBlockIDs[block.GetBlockId()]; !exists {
-				continue
-			}
-			if _, replaced := candidateBlockIDs[block.GetBlockId()]; replaced {
-				continue
-			}
-			mutations = append(mutations, &contentv1.RichTextBlockLocaleMutation{Operation: &contentv1.RichTextBlockLocaleMutation_Delete{
-				Delete: &contentv1.DeleteRichTextBlockLocale{BlockId: block.GetBlockId()},
-			}})
-		}
-		mutation := &contentv1.RichTextBlockMutationBatch{
-			BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
-			Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT, ExpectedRevision: expectedRevision.String(),
-		}
-		if len(mutations) != 0 {
-			mutation.LocaleMutationGroups = []*contentv1.RichTextLocaleMutationGroup{{Locale: job.TargetLocale, Mutations: mutations}}
-		}
-		batch, err = contentblock.BatchFromRichTextSystemProto(documentID, mutation)
+		batch, err = buildReleaseWholeLocaleBatch(snapshot, documentID, job.TargetLocale, candidate)
 	}
 	if err != nil {
-		return normalizeReleaseContentBlockError(err)
+		return releaseTranslationApply{}, normalizeReleaseContentBlockError(err)
 	}
-	creditNotePatch := map[string]string(nil)
-	replaceCreditNotes := &candidate.ReleaseCreditNotes
-	if candidate.HasProviderUnitPatch() {
-		creditNotePatch = candidate.ReleaseCreditNotes
-		replaceCreditNotes = nil
+	return releaseTranslationApply{
+		store: store, job: job, documentID: documentID, source: source,
+		expectedRevision: snapshot.Document.Revision, batch: batch,
+	}, nil
+}
+
+// buildReleaseWholeLocaleBatch replaces the target locale with the
+// candidate: candidate Blocks the source still has are written, and current
+// target Blocks the candidate omits are deleted.
+func buildReleaseWholeLocaleBatch(
+	snapshot contentblock.Snapshot,
+	documentID uuid.UUID,
+	targetLocale string,
+	candidate *translation.Candidate,
+) (contentblock.Batch, error) {
+	targetDocument, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, targetLocale)
+	if err != nil {
+		return contentblock.Batch{}, err
 	}
-	if candidate.HasProviderUnitPatch() && job.TargetLocale == currentSource.SourceLocale {
-		requesterID, parseErr := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
-		if parseErr != nil || requesterID == uuid.Nil || requesterID.String() != strings.TrimSpace(job.RequestedByMemberID) {
-			return errs.WithCause(errs.InternalMsg("Release translation audit requires canonical requester Member"), parseErr)
-		}
-		batch.ContributorMemberIDs = []uuid.UUID{requesterID}
-		result, applyErr := store.ApplyBatchWithMetadata(
-			ctx, tx, batch, internalReleaseContentFence(job.EntityID),
-			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-				changed, metadataErr := applyReleaseSourceAIDocumentMetadata(ctx, tx, AIDocumentMutation{
-					ReleaseID: job.EntityID, Locale: currentSource.SourceLocale, ExpectedSource: currentSource.SourceLocale,
-					CreditNotePatch: creditNotePatch,
-				}, metadataInput.Now)
-				return contentblock.MetadataEffect{
-					Changed: changed, AffectsTranslationSource: changed, SourceLocale: currentSource.SourceLocale,
-					ChangedLocales: []string{currentSource.SourceLocale},
-				}, metadataErr
-			},
-		)
-		if errors.Is(applyErr, contentblock.ErrStaleRevision) {
-			return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, applyErr)
-		}
-		if applyErr != nil {
-			return normalizeReleaseContentBlockError(applyErr)
-		}
-		if !result.Changed {
-			return nil
-		}
-		if !result.TranslationSourceChanged {
-			return errs.InternalMsg("provider source Release translation did not advance source state")
-		}
-		return appendReleaseMemberTargetLocaleAudit(
-			ctx, tx, auditWriter, job.RequestedByMemberID, job.EntityID, currentSource.SourceLocale,
-			releaseTargetLocaleAuditOperation(false, false, true),
-		)
+	currentBlockIDs := make(map[string]struct{}, len(snapshot.Blocks))
+	for _, block := range snapshot.Blocks {
+		currentBlockIDs[block.ID.String()] = struct{}{}
 	}
-	target, err := applyReleaseTargetLocaleMutation(ctx, tx, store, releaseTargetLocaleMutationInput{
-		ReleaseID: job.EntityID, DocumentID: documentID, Locale: job.TargetLocale,
-		ExpectedDocumentRevision: expectedRevision, ExpectedTargetRevision: expectedTargetRevision,
+	candidateBlockIDs := make(map[string]struct{}, len(candidate.ContentBlockLocaleOverlay.Blocks))
+	mutations := make([]*contentv1.RichTextBlockLocaleMutation, 0,
+		len(candidate.ContentBlockLocaleOverlay.Blocks)+len(targetDocument.GetLocaleOverlay().GetBlocks()))
+	for _, block := range candidate.ContentBlockLocaleOverlay.Blocks {
+		if _, exists := currentBlockIDs[block.GetBlockId()]; !exists {
+			continue
+		}
+		candidateBlockIDs[block.GetBlockId()] = struct{}{}
+		mutations = append(mutations, &contentv1.RichTextBlockLocaleMutation{Operation: &contentv1.RichTextBlockLocaleMutation_Upsert{
+			Upsert: &contentv1.UpsertRichTextBlockLocale{Block: block},
+		}})
+	}
+	for _, block := range targetDocument.GetLocaleOverlay().GetBlocks() {
+		if _, exists := currentBlockIDs[block.GetBlockId()]; !exists {
+			continue
+		}
+		if _, replaced := candidateBlockIDs[block.GetBlockId()]; replaced {
+			continue
+		}
+		mutations = append(mutations, &contentv1.RichTextBlockLocaleMutation{Operation: &contentv1.RichTextBlockLocaleMutation_Delete{
+			Delete: &contentv1.DeleteRichTextBlockLocale{BlockId: block.GetBlockId()},
+		}})
+	}
+	batch := &contentv1.RichTextBlockMutationBatch{
+		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
+		Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT, ExpectedRevision: snapshot.Document.Revision.String(),
+	}
+	if len(mutations) != 0 {
+		batch.LocaleMutationGroups = []*contentv1.RichTextLocaleMutationGroup{{Locale: targetLocale, Mutations: mutations}}
+	}
+	return contentblock.BatchFromRichTextSystemProto(documentID, batch)
+}
+
+// applySource writes a provider result whose target is the source locale:
+// the source Blocks and the credit notes change as one source revision,
+// attributed to the job's requester.
+func (a releaseTranslationApply) applySource(ctx context.Context, tx *gorm.DB) (releaseTranslationApplied, error) {
+	job := a.job
+	requesterID, parseErr := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
+	if parseErr != nil || requesterID == uuid.Nil || requesterID.String() != strings.TrimSpace(job.RequestedByMemberID) {
+		return releaseTranslationApplied{}, errors.Join(errors.New("Release translation audit requires canonical requester Member"), parseErr)
+	}
+	batch := a.batch
+	batch.ContributorMemberIDs = []uuid.UUID{requesterID}
+	sourceLocale := a.source.SourceLocale
+	result, err := a.store.ApplyBatchWithMetadata(
+		ctx, tx, batch, internalReleaseContentFence(job.EntityID),
+		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+			changed, metadataErr := applyReleaseSourceAIDocumentMetadata(ctx, tx, AIDocumentMutation{
+				ReleaseID: job.EntityID, Locale: sourceLocale, ExpectedSource: sourceLocale,
+				CreditNotePatch: a.creditNotePatch,
+			}, a.now)
+			return contentblock.MetadataEffect{
+				Changed: changed, AffectsTranslationSource: changed, SourceLocale: sourceLocale,
+				ChangedLocales: []string{sourceLocale},
+			}, metadataErr
+		},
+	)
+	if errors.Is(err, contentblock.ErrStaleRevision) {
+		return releaseTranslationApplied{}, fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
+	}
+	if err != nil {
+		return releaseTranslationApplied{}, normalizeReleaseContentBlockError(err)
+	}
+	if !result.Changed {
+		return releaseTranslationApplied{}, nil
+	}
+	if !result.TranslationSourceChanged {
+		return releaseTranslationApplied{}, errors.New("provider source Release translation did not advance source state")
+	}
+	return releaseTranslationApplied{
+		changed: true, locale: sourceLocale, operation: releaseTargetLocaleAuditOperation(false, false, true),
+	}, nil
+}
+
+// applyTarget creates or overwrites the target locale and its credit notes.
+func (a releaseTranslationApply) applyTarget(
+	ctx context.Context,
+	tx *gorm.DB,
+	title *string,
+	expectedTargetRevision *string,
+	policy targetlocale.Policy,
+) (releaseTranslationApplied, error) {
+	job := a.job
+	target, err := applyReleaseTargetLocaleMutation(ctx, tx, a.store, releaseTargetLocaleMutationInput{
+		ReleaseID: job.EntityID, DocumentID: a.documentID, Locale: job.TargetLocale,
+		ExpectedDocumentRevision: a.expectedRevision, ExpectedTargetRevision: expectedTargetRevision,
 		Policy: policy,
-		Batch:  batch, SetTitle: true, Title: metadataInput.Title,
-		CreditNotePatch: creditNotePatch, ReplaceCreditNotes: replaceCreditNotes,
-		Now: metadataInput.Now, Fence: internalReleaseContentFence(job.EntityID),
+		Batch:  a.batch, SetTitle: true, Title: title,
+		CreditNotePatch: a.creditNotePatch, ReplaceCreditNotes: a.replaceCreditNotes,
+		Now: a.now, Fence: internalReleaseContentFence(job.EntityID),
 	})
 	if errors.Is(err, contentblock.ErrStaleRevision) {
-		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
+		return releaseTranslationApplied{}, fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	if err != nil {
-		return normalizeReleaseContentBlockError(err)
+		return releaseTranslationApplied{}, normalizeReleaseContentBlockError(err)
 	}
-	if target.Content.Changed && auditWriter != nil {
-		if strings.TrimSpace(job.RequestedByMemberID) == "" {
-			return errs.InternalMsg("Release translation audit requires requester Member")
-		}
-		return appendReleaseMemberTargetLocaleAudit(
-			ctx,
-			tx,
-			auditWriter,
-			job.RequestedByMemberID,
-			job.EntityID,
-			job.TargetLocale,
-			releaseTargetLocaleAuditOperation(target.LocaleCreated, false, !target.LocaleCreated),
-		)
-	}
-	return nil
+	return releaseTranslationApplied{
+		changed: target.Content.Changed, locale: job.TargetLocale,
+		operation: releaseTargetLocaleAuditOperation(target.LocaleCreated, false, !target.LocaleCreated),
+	}, nil
 }
 
 func buildReleaseProviderCreditNotePatch(
@@ -495,10 +582,10 @@ func validateReleaseCreditNoteMap(
 	}
 	for creditID, note := range notes {
 		if _, ok := allowed[creditID]; !ok {
-			return errs.InvalidArgument("credit_notes", "credit_id does not belong to the Release")
+			return domainerr.InvalidField("credit_notes", "credit_id does not belong to the Release")
 		}
 		if strings.TrimSpace(note) == "" {
-			return errs.InvalidArgument("credit_notes", "note must not be empty")
+			return domainerr.InvalidField("credit_notes", "note must not be empty")
 		}
 	}
 	return nil

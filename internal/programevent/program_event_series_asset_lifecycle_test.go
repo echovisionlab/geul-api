@@ -28,7 +28,7 @@ func TestProgramEventSeriesPosterBindingLifecyclePreservesFiles(t *testing.T) {
 	second := readyPoster()
 	third := readyPoster()
 	initialSummary := "Opening weekend"
-	service := NewProgramEventSeriesService(db, newProgramEventRuntime("https://cdn.example.com"), spiceDB)
+	service := NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Media: newProgramEventRuntime("https://cdn.example.com")}))
 
 	created, err := service.CreateProgramEventSeries(ctx, connect.NewRequest(&managev1.CreateProgramEventSeriesRequest{
 		Title:        "Festival",

@@ -146,12 +146,24 @@ type Spec[R any] struct {
 func FreshCan(can policyv1.Can, err error) Access      // identitystate.RequireFreshCan
 func FreshAdminCan(can policyv1.Can, err error) Access // identitystate.RequireFreshAdminCan
 func PrincipalFence(principal *auth.UserInfo) Access   // lock the principal's Identity only
+func Locked(check func(context.Context, *gorm.DB, Require) error) Access // FreshCan of an action the locked state picks
+func Checked(check func(context.Context, *gorm.DB) error) Access         // the domain's own check in the transaction
+
+type Require func(can policyv1.Can) error
+func IsDenied(err error) bool          // a fresh check's permission denial
+func IsUnauthenticated(err error) bool // a missing or stale session
+func IsNotFound(err error) bool        // a shared helper's not-found answer
+func IsClassified(err error) bool      // any client answer, Connect code or use-case error
 
 func RequestAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func VersionAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func Audits(audits ...Audit) Audit
 func Unchanged() Audit
+
+func Read(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error        // one read-only snapshot
+func ReadLocked(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error  // a snapshot that may lock rows
+func ReadCurrent(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error // read committed, locking what it reads
 ```
 
 `FreshCan` and `FreshAdminCan` take a generated descriptor's two results
@@ -175,6 +187,17 @@ Rules for a spec:
   for an administrator-only mutation. `PrincipalFence` is for a principal's
   own lifecycle step that `Change` guards by state, such as onboarding, where
   the principal is not yet active.
+- **Locked.** When the action depends on the locked target's state (Edit,
+  or EditArchived while archived), `Locked` reads that state in `tx` and
+  calls `require` with the action, which runs `FreshCan`'s check. A domain
+  that answers a denial differently (a masked target answers not found)
+  recognizes it with `IsDenied`, `IsUnauthenticated` or `IsNotFound`.
+- **Checked.** An internal caller whose authority is not the request
+  principal, such as a collaboration save attributed to its contributors,
+  re-resolves that authority with `Checked` inside the transaction. A domain
+  whose fresh check answers differently from `FreshCan` in more than the
+  denial (its own unauthenticated, banned or not-found answers, a checker
+  other than the SpiceDB client) runs that check through `Checked` too.
 - **Subjects.** List the Identity of each Member whose state the mutation
   changes, resolved before `Run` (`authorizationtarget.RequireLinkedMember`).
   Re-read the target inside `Change`; `recheckTarget` in
@@ -186,8 +209,9 @@ Rules for a spec:
   when it proceeds, and a missing root answers NotFound before
   authorization. `Change` reads the locked row through the closure.
 - **Audit.** Every mutation names a record or returns `Unchanged()` because
-  nothing changed; `All` names several records of one change, in order. A
-  zero `Audit` fails the mutation. There is no optional writer.
+  nothing changed; `Audits` names several records of one change, in order,
+  and skips the entries that are `Unchanged()`. A zero `Audit` fails the
+  mutation. There is no optional writer.
 - **Outbox.** Enqueue PGMQ commands and schedule `content.updated` in the
   transaction. Get the executor with `contentsignal.TransactionExecutor(tx)`,
   which refuses a pool that is not a live transaction; publish signals with
@@ -199,14 +223,17 @@ Rules for a spec:
   `profileEdit.failure` does.
 
 Work that must happen after the commit, such as a metric or a confirmation
-log, follows `Run` in the use case.
+log, follows `Run` in the use case. A read that needs one snapshot of several
+rows uses `mutation.Read` instead of opening a transaction. PostgreSQL
+refuses row locks in a read-only transaction, so a projection that
+share-locks its root uses `mutation.ReadLocked`, and a check that locks rows
+`FOR UPDATE` to agree with the next mutation of them, such as whether upload
+cleanup is still needed, or an authorized read that locks its target and the
+principal's Identity read committed, uses `mutation.ReadCurrent`. Neither
+writes.
 
-A read that must see one snapshot while it share-locks its root runs in
-`mutation.ReadLocked` (repeatable read; PostgreSQL refuses row locks in a
-read-only transaction), so a migrated domain still opens no transaction
-itself. `mutation.IsClassified` tells a domain that maps only unclassified
-failures, such as content store sentinels, that a shared helper already
-answered.
+`mutation.IsClassified` tells a domain that maps only unclassified failures,
+such as content store sentinels, that a shared helper already answered.
 
 ## Errors
 
@@ -218,6 +245,7 @@ type Error struct {
 	Kind    Kind
 	Field   string
 	Message string
+	Detail  proto.Message // machine-readable reason, such as a collaboration conflict
 }
 func (e *Error) WithCause(cause error) *Error
 
@@ -231,7 +259,30 @@ func Denied(message string) *Error
 func InvalidSession() *Error
 func Retry(message string) *Error
 func DependencyUnavailable(dependency string) *Error   // "dependency unavailable"
+func AuthenticationRequired() *Error
+func AccountBanned() *Error
+func NoPermission(action, resource string) *Error     // "no permission to action this resource"
+func AdminRequired() *Error
+func AuthorRequired() *Error
+func InvalidEntityType(entityType string) *Error
+func InvalidEntityID() *Error
+
+type CollaborationRevisions struct {
+	Document     string
+	Target       string
+	TargetExists *bool
+}
+func CollaborationRevisionsOf(err error) CollaborationRevisions // the revisions a cause in err carries
+func CollaborationConflict(reason intrav1.CollaborationConflictReason, message string, current CollaborationRevisions) *Error
+func CollaborationRejection(reason intrav1.CollaborationMutationRejectionReason, message string) *Error
 ```
+
+A collaboration save that lost a revision race answers `CollaborationConflict`
+(failed precondition with a `CollaborationConflictDetail`); one the room may
+not make answers `CollaborationRejection` (invalid argument with a
+`CollaborationMutationRejectionDetail`). A conflict found while storing
+reports the revisions its cause carries through `CollaborationRevisionsOf`
+and keeps the cause in the chain when the domain branches on it.
 
 Each constructor produces the same message as its `errs` counterpart, so a
 use case can switch without changing a response;

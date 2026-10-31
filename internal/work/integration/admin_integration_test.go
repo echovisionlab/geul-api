@@ -75,7 +75,7 @@ func TestWorkServiceAdminListIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	mapPlaceSvc := mapPlaceServiceForTest(t, db, "cdn.example.com", workSpiceDB)
-	mapPlace, err := mapPlaceSvc.CreateMapPlace(ctx, connect.NewRequest(&managev1.CreateMapPlaceRequest{
+	mapPlace, err := mapPlaceSvc.CreateMapPlace(withReferenceAudit(t, ctx), connect.NewRequest(&managev1.CreateMapPlaceRequest{
 		Name:    "Work Admin List Place " + suffix,
 		Address: "1 Test Road",
 		Lat:     37.5,

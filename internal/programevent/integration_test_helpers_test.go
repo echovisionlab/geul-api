@@ -14,8 +14,11 @@ import (
 
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
+	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
@@ -54,8 +57,63 @@ func newProgramEventCreditMemberSummaries(db *gorm.DB, cdnDomain string) CreditM
 	return programeventadapter.NewCreditMemberSummaries(db, cdnDomain)
 }
 
-func newProgramEventRuntime(cdnDomain string) Runtime {
+func newProgramEventRuntime(cdnDomain string) MediaAssets {
 	return programeventadapter.NewRuntime(cdnDomain)
+}
+
+// newIntegrationService builds the Program Event use cases through
+// NewService. Collaborators left unset in deps get the integration defaults:
+// a recording audit appender, a content Block store, a signal publisher, the
+// public-asset runtime, the File media hydrator, credit Member summaries and
+// collaboration checkpoints.
+func newIntegrationService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, deps Deps) *Service {
+	t.Helper()
+	deps.DB, deps.SpiceDB = db, spiceDB
+	if deps.Audit == nil {
+		deps.Audit = &audittest.Recorder{}
+	}
+	if deps.ContentBlocks == nil {
+		deps.ContentBlocks = newProgramEventIntegrationContentBlockStore(t, spiceDB)
+	}
+	if deps.Signals == nil {
+		deps.Signals = &capturingAsyncPublisher{}
+	}
+	if deps.Media == nil {
+		deps.Media = newProgramEventRuntime("https://cdn.example.com")
+	}
+	if deps.MediaHydrator == nil {
+		deps.MediaHydrator = newProgramEventIntegrationFileService(db, spiceDB)
+	}
+	if deps.CreditMembers == nil {
+		deps.CreditMembers = newProgramEventCreditMemberSummaries(db, "https://cdn.example.com")
+	}
+	if deps.Checkpoints == nil {
+		deps.Checkpoints = programEventIntegrationCheckpoints(db, spiceDB)
+	}
+	if deps.CreditArtists == nil {
+		deps.CreditArtists = artistadapter.CreditArtists{}
+	}
+	if deps.Members == nil {
+		deps.Members = memberadapter.ContentMembers{}
+	}
+	service, err := NewService(deps)
+	require.NoError(t, err)
+	return service
+}
+
+func typeHandlerForTest(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *TypeConnectHandler {
+	t.Helper()
+	return NewTypeConnectHandler(newIntegrationService(t, db, spiceDB, Deps{}))
+}
+
+// requestBackground carries the request context a request-attributed audit
+// record needs; the caller's user becomes its actor.
+func requestBackground() context.Context {
+	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.98")
+	if err != nil {
+		panic(err)
+	}
+	return sharedtelemetry.WithRequestContext(context.Background(), requestContext)
 }
 
 func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient {
@@ -69,7 +127,7 @@ func integrationAdminCtxWithIdentityAndSpiceDB(t *testing.T, db *gorm.DB) (conte
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Program Event integration Admin")
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	return auth.WithUser(requestBackground(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	}), spiceDB
@@ -177,10 +235,6 @@ func (failingDomainAuditAppender) AppendDomainAuditInTransaction(
 ) error {
 	return errors.New("audit unavailable")
 }
-
-type referenceNoopFileDeleter struct{}
-
-func (referenceNoopFileDeleter) DeleteFileByID(context.Context, string) error { return nil }
 
 type capturingAsyncPublisher struct{}
 

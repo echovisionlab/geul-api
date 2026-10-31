@@ -9,9 +9,12 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/artist"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	"github.com/echovisionlab/geul-api/internal/programevent"
+	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -46,15 +49,15 @@ type PageDocumentDiscovery interface {
 }
 
 type ProgramEventDocumentDiscovery interface {
-	ListProgramEventsAdmin(context.Context, *connect.Request[managev1.ListProgramEventsAdminRequest]) (*connect.Response[managev1.ListProgramEventsAdminResponse], error)
+	ListProgramEventsAdmin(context.Context, programevent.ListProgramEventsQuery) (programevent.EventList, error)
 }
 
 type ReleaseDocumentDiscovery interface {
-	ListReleasesAdmin(context.Context, *connect.Request[managev1.ListReleasesAdminRequest]) (*connect.Response[managev1.ListReleasesAdminResponse], error)
+	ListReleasesAdmin(context.Context, releasedomain.ListReleasesQuery) (releasedomain.ReleasePage, error)
 }
 
 type ArtistDocumentDiscovery interface {
-	ListArtistsAdmin(context.Context, *connect.Request[managev1.ListArtistsAdminRequest]) (*connect.Response[managev1.ListArtistsAdminResponse], error)
+	ListArtistsAdmin(context.Context, artist.ListArtistsQuery) (artist.AdminArtistPage, error)
 }
 
 // DocumentDiscoveryTools owns only document selection metadata. DCDP reads
@@ -225,17 +228,16 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 		}
 		return documents, int64(listed.Pagination.GetTotal()), int(listed.Pagination.GetLimit()), nil
 	case "program_event":
-		request := connect.NewRequest(&managev1.ListProgramEventsAdminRequest{
-			Pagination: &commonv1.PaginationRequest{Limit: int32(limit), Offset: int32(offset)},
-			Filters:    discoverySearchFilters(query),
-			Sorts:      []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
+		listed, err := tools.programEvents.ListProgramEventsAdmin(ctx, programevent.ListProgramEventsQuery{
+			Limit: int32(limit), Offset: int32(offset),
+			Filters: discoverySearchFilters(query),
+			Sorts:   []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
 		})
-		listed, err := tools.programEvents.ListProgramEventsAdmin(ctx, request)
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		documents := make([]map[string]any, 0, len(listed.Msg.Events))
-		for _, event := range listed.Msg.Events {
+		documents := make([]map[string]any, 0, len(listed.Events))
+		for _, event := range listed.Events {
 			if event == nil || event.UpdatedAt == nil {
 				continue
 			}
@@ -244,19 +246,17 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 				strings.TrimPrefix(event.Status.String(), "PROGRAM_EVENT_STATUS_"), event.UpdatedAt.AsTime(),
 			))
 		}
-		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
+		return documents, int64(listed.Pagination.GetTotal()), int(listed.Pagination.GetLimit()), nil
 	case "release":
-		request := connect.NewRequest(&managev1.ListReleasesAdminRequest{
-			Pagination: &commonv1.PaginationRequest{Limit: int32(limit), Offset: int32(offset)},
-			Filters:    discoverySearchFilters(query),
-			Sorts:      []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
+		listed, err := tools.releases.ListReleasesAdmin(ctx, releasedomain.ListReleasesQuery{
+			Limit: int32(limit), Offset: int32(offset), Filters: discoverySearchFilters(query),
+			Sorts: []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
 		})
-		listed, err := tools.releases.ListReleasesAdmin(ctx, request)
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		documents := make([]map[string]any, 0, len(listed.Msg.Releases))
-		for _, item := range listed.Msg.Releases {
+		documents := make([]map[string]any, 0, len(listed.Releases))
+		for _, item := range listed.Releases {
 			if item == nil || item.Release == nil || item.Release.UpdatedAt == nil {
 				continue
 			}
@@ -266,29 +266,27 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 				release.Status, release.UpdatedAt.AsTime(),
 			))
 		}
-		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
+		return documents, listed.Total, int(listed.Limit), nil
 	case "artist":
-		request := connect.NewRequest(&managev1.ListArtistsAdminRequest{
-			Pagination: &commonv1.PaginationRequest{Limit: int32(limit), Offset: int32(offset)},
-			Filters:    discoverySearchFilters(query),
-			Sorts:      []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
+		listed, err := tools.artists.ListArtistsAdmin(ctx, artist.ListArtistsQuery{
+			Limit: int32(limit), Offset: int32(offset), Filters: discoverySearchFilters(query),
+			Sorts: []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
 		})
-		listed, err := tools.artists.ListArtistsAdmin(ctx, request)
 		if err != nil {
 			return nil, 0, 0, err
 		}
-		documents := make([]map[string]any, 0, len(listed.Msg.Artists))
-		for _, item := range listed.Msg.Artists {
+		documents := make([]map[string]any, 0, len(listed.Artists))
+		for _, item := range listed.Artists {
 			if item == nil || item.Artist == nil || item.Artist.UpdatedAt == nil {
 				continue
 			}
-			artist := item.Artist
+			listedArtist := item.Artist
 			documents = append(documents, discoveryDocument(
-				"artist", artist.Id, artist.Name, artist.Slug, artist.SourceLocale,
-				artist.Status, artist.UpdatedAt.AsTime(),
+				"artist", listedArtist.Id, listedArtist.Name, listedArtist.Slug, listedArtist.SourceLocale,
+				listedArtist.Status, listedArtist.UpdatedAt.AsTime(),
 			))
 		}
-		return documents, int64(listed.Msg.Pagination.GetTotal()), int(listed.Msg.Pagination.GetLimit()), nil
+		return documents, int64(listed.Pagination.GetTotal()), int(listed.Pagination.GetLimit()), nil
 	default:
 		return nil, 0, 0, fmt.Errorf("p must be post, work, page, program_event, release, or artist")
 	}

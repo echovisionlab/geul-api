@@ -12,7 +12,7 @@ import (
 func TestManageArtistProjectionPreservesSourceLocaleOnWire(t *testing.T) {
 	for _, locale := range []string{"ko", "en", "pt-BR", "zh-TW"} {
 		t.Run(locale, func(t *testing.T) {
-			response := new(ArtistService).toProtoArtist(&model.Artist{SourceLocale: locale}, nil, nil)
+			response := toProtoArtist(&model.Artist{SourceLocale: locale}, artistDocument{}, nil)
 			wire, err := protojson.Marshal(response)
 			require.NoError(t, err)
 			decoded := new(managev1.Artist)

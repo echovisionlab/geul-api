@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/maptheme"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -22,17 +22,18 @@ const (
 	ToolMapThemeSettingsUpdate = "map_theme_settings_update"
 )
 
-// MapThemeManagement consumes management operations only; authorization and
-// request-actor audit remain in MapThemeService, outside collaboration saves.
+// MapThemeManagement consumes the administrator Map Theme use cases;
+// authorization and request-actor audit remain in maptheme.Service, outside
+// collaboration saves.
 type MapThemeManagement interface {
-	ListMapThemes(context.Context, *connect.Request[managev1.ListMapThemesRequest]) (*connect.Response[managev1.ListMapThemesResponse], error)
-	ResolveMapTheme(context.Context, *connect.Request[managev1.ResolveMapThemeRequest]) (*connect.Response[managev1.ResolvedMapTheme], error)
-	GetMapTheme(context.Context, *connect.Request[managev1.GetMapThemeRequest]) (*connect.Response[managev1.MapTheme], error)
-	CreateMapTheme(context.Context, *connect.Request[managev1.CreateMapThemeRequest]) (*connect.Response[managev1.MapTheme], error)
-	DeleteMapTheme(context.Context, *connect.Request[managev1.DeleteMapThemeRequest]) (*connect.Response[managev1.DeleteResponse], error)
-	CopyMapTheme(context.Context, *connect.Request[managev1.CopyMapThemeRequest]) (*connect.Response[managev1.MapTheme], error)
-	SetDefaultMapTheme(context.Context, *connect.Request[managev1.SetDefaultMapThemeRequest]) (*connect.Response[managev1.SetDefaultMapThemeResponse], error)
-	UpdateMapThemeSnapshot(context.Context, string, int64, *managev1.CreateMapThemeRequest) (*managev1.MapTheme, bool, error)
+	ListMapThemes(context.Context) (maptheme.ThemeList, error)
+	ResolveMapTheme(context.Context, maptheme.ResolveMapThemeQuery) (*managev1.ResolvedMapTheme, error)
+	GetMapTheme(context.Context, maptheme.GetMapThemeQuery) (*managev1.MapTheme, error)
+	CreateMapTheme(context.Context, maptheme.CreateMapThemeCommand) (*managev1.MapTheme, error)
+	DeleteMapTheme(context.Context, maptheme.DeleteMapThemeCommand) error
+	CopyMapTheme(context.Context, maptheme.CopyMapThemeCommand) (*managev1.MapTheme, error)
+	SetDefaultMapTheme(context.Context, maptheme.SetDefaultMapThemeCommand) (string, error)
+	UpdateMapThemeSnapshot(context.Context, maptheme.UpdateMapThemeSnapshotCommand) (maptheme.SnapshotUpdate, error)
 }
 
 var mapThemeManagementTools = []mcpserver.Tool{
@@ -67,18 +68,18 @@ func (tools *MapThemeManagementTools) CallTool(ctx context.Context, _ mcpserver.
 		if err := decodeArguments(arguments, &struct{}{}); err != nil {
 			return executionError(err)
 		}
-		response, err := tools.service.ListMapThemes(ctx, connect.NewRequest(&managev1.ListMapThemesRequest{}))
+		list, err := tools.service.ListMapThemes(ctx)
 		if err != nil {
 			return expectedToolError(err)
 		}
-		themes := make([]mapThemeOutput, 0, len(response.Msg.Themes))
-		for _, theme := range response.Msg.Themes {
+		themes := make([]mapThemeOutput, 0, len(list.Themes))
+		for _, theme := range list.Themes {
 			themes = append(themes, projectMapTheme(theme))
 		}
 		return mapThemeResult(struct {
 			Themes    []mapThemeOutput `json:"themes"`
 			DefaultID string           `json:"default_map_theme_id"`
-		}{themes, response.Msg.DefaultMapThemeId})
+		}{themes, list.DefaultID})
 	case ToolMapThemeResolve:
 		if err := rejectNullArguments(arguments, "theme_id", "scheme"); err != nil {
 			return executionError(err)
@@ -101,7 +102,7 @@ func (tools *MapThemeManagementTools) CallTool(ctx context.Context, _ mcpserver.
 		if input.Scheme != "light" && input.Scheme != "dark" {
 			return executionError(errors.New("scheme must be light or dark"))
 		}
-		response, err := tools.service.ResolveMapTheme(ctx, connect.NewRequest(&managev1.ResolveMapThemeRequest{ThemeId: input.ThemeID, Scheme: input.Scheme}))
+		resolved, err := tools.service.ResolveMapTheme(ctx, maptheme.ResolveMapThemeQuery{ThemeID: input.ThemeID, Scheme: input.Scheme})
 		if err != nil {
 			return expectedToolError(err)
 		}
@@ -110,7 +111,7 @@ func (tools *MapThemeManagementTools) CallTool(ctx context.Context, _ mcpserver.
 			Scheme   string           `json:"scheme"`
 			Settings mapThemeSettings `json:"settings"`
 			Variant  mapThemeVariant  `json:"variant"`
-		}{response.Msg.ThemeId, response.Msg.Scheme, projectMapThemeSettings(response.Msg.Settings), projectMapThemeVariant(response.Msg.Variant)})
+		}{resolved.ThemeId, resolved.Scheme, projectMapThemeSettings(resolved.Settings), projectMapThemeVariant(resolved.Variant)})
 	case ToolMapThemeCreate:
 		var snapshot mapThemeSnapshot
 		if err := decodeArguments(arguments, &snapshot); err != nil {
@@ -123,13 +124,13 @@ func (tools *MapThemeManagementTools) CallTool(ctx context.Context, _ mcpserver.
 		if err := validateMapThemeSnapshotShape(raw, &snapshot); err != nil {
 			return executionError(err)
 		}
-		response, err := tools.service.CreateMapTheme(ctx, connect.NewRequest(snapshot.native()))
+		theme, err := tools.service.CreateMapTheme(ctx, maptheme.CreateMapThemeCommand{Snapshot: *snapshot.native()})
 		if err != nil {
 			return expectedToolError(err)
 		}
 		return mapThemeResult(struct {
 			Theme mapThemeOutput `json:"theme"`
-		}{projectMapTheme(response.Msg)})
+		}{projectMapTheme(theme)})
 	case ToolMapThemeSettingsUpdate:
 		if err := rejectNullArguments(arguments, "expected_revision", "snapshot"); err != nil {
 			return executionError(err)
@@ -151,14 +152,16 @@ func (tools *MapThemeManagementTools) CallTool(ctx context.Context, _ mcpserver.
 		if err := validateMapThemeSnapshotShape(arguments["snapshot"], input.Snapshot); err != nil {
 			return executionError(err)
 		}
-		theme, changed, err := tools.service.UpdateMapThemeSnapshot(ctx, input.ThemeID, input.ExpectedRevision, input.Snapshot.native())
+		update, err := tools.service.UpdateMapThemeSnapshot(ctx, maptheme.UpdateMapThemeSnapshotCommand{
+			ThemeID: input.ThemeID, ExpectedRevision: input.ExpectedRevision, Snapshot: input.Snapshot.native(),
+		})
 		if err != nil {
 			return expectedToolError(err)
 		}
 		return mapThemeResult(struct {
 			Theme   mapThemeOutput `json:"theme"`
 			Changed bool           `json:"changed"`
-		}{projectMapTheme(theme), changed})
+		}{projectMapTheme(update.Theme), update.Changed})
 	case ToolMapThemeGet, ToolMapThemeDelete, ToolMapThemeCopy, ToolMapThemeSetDefault:
 		var input struct {
 			ThemeID string `json:"theme_id"`
@@ -180,38 +183,37 @@ func (tools *MapThemeManagementTools) CallTool(ctx context.Context, _ mcpserver.
 		}
 		switch name {
 		case ToolMapThemeGet:
-			response, err := tools.service.GetMapTheme(ctx, connect.NewRequest(&managev1.GetMapThemeRequest{Id: input.ThemeID}))
+			theme, err := tools.service.GetMapTheme(ctx, maptheme.GetMapThemeQuery{ID: input.ThemeID})
 			if err != nil {
 				return expectedToolError(err)
 			}
 			return mapThemeResult(struct {
 				Theme mapThemeOutput `json:"theme"`
-			}{projectMapTheme(response.Msg)})
+			}{projectMapTheme(theme)})
 		case ToolMapThemeDelete:
-			response, err := tools.service.DeleteMapTheme(ctx, connect.NewRequest(&managev1.DeleteMapThemeRequest{Id: input.ThemeID}))
-			if err != nil {
+			if err := tools.service.DeleteMapTheme(ctx, maptheme.DeleteMapThemeCommand{ID: input.ThemeID}); err != nil {
 				return expectedToolError(err)
 			}
 			return mapThemeResult(struct {
 				ThemeID string `json:"theme_id"`
 				Success bool   `json:"success"`
-			}{input.ThemeID, response.Msg.Success})
+			}{input.ThemeID, true})
 		case ToolMapThemeCopy:
-			response, err := tools.service.CopyMapTheme(ctx, connect.NewRequest(&managev1.CopyMapThemeRequest{Id: input.ThemeID, Name: input.Name}))
+			theme, err := tools.service.CopyMapTheme(ctx, maptheme.CopyMapThemeCommand{ID: input.ThemeID, Name: input.Name})
 			if err != nil {
 				return expectedToolError(err)
 			}
 			return mapThemeResult(struct {
 				Theme mapThemeOutput `json:"theme"`
-			}{projectMapTheme(response.Msg)})
+			}{projectMapTheme(theme)})
 		case ToolMapThemeSetDefault:
-			response, err := tools.service.SetDefaultMapTheme(ctx, connect.NewRequest(&managev1.SetDefaultMapThemeRequest{ThemeId: input.ThemeID}))
+			defaultID, err := tools.service.SetDefaultMapTheme(ctx, maptheme.SetDefaultMapThemeCommand{ThemeID: input.ThemeID})
 			if err != nil {
 				return expectedToolError(err)
 			}
 			return mapThemeResult(struct {
 				DefaultID string `json:"default_map_theme_id"`
-			}{response.Msg.DefaultMapThemeId})
+			}{defaultID})
 		}
 	}
 	return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
@@ -263,45 +265,15 @@ type mapThemeVariant struct {
 	CalloutHoverBackgroundColor  string `json:"callout_hover_background_color"`
 }
 
-func (snapshot mapThemeSnapshot) native() *managev1.CreateMapThemeRequest {
-	return &managev1.CreateMapThemeRequest{Name: snapshot.Name, Settings: snapshot.Settings.native(), LightVariant: snapshot.LightVariant.native(), DarkVariant: snapshot.DarkVariant.native()}
-}
-func (input mapThemeSettings) native() *managev1.MapThemeSettings {
-	return &managev1.MapThemeSettings{
-		CalloutScale:        input.CalloutScale,
-		CalloutOffsetX:      input.CalloutOffsetX,
-		CalloutOffsetY:      input.CalloutOffsetY,
-		CalloutFields:       input.CalloutFields,
-		AttributionFontSize: input.AttributionFontSize,
-		ShowAreaLabels:      input.ShowAreaLabels,
-		ShowPoiLabels:       input.ShowPoiLabels,
+// native is the use-case input of snapshot; the MCP settings and variant
+// shapes are the use-case types with JSON names.
+func (snapshot mapThemeSnapshot) native() *maptheme.SnapshotInput {
+	return &maptheme.SnapshotInput{
+		Name: snapshot.Name, Settings: (*maptheme.Settings)(snapshot.Settings),
+		LightVariant: (*maptheme.Variant)(snapshot.LightVariant), DarkVariant: (*maptheme.Variant)(snapshot.DarkVariant),
 	}
 }
-func (input mapThemeVariant) native() *managev1.MapThemeVariantInput {
-	return &managev1.MapThemeVariantInput{
-		BackgroundColor:              input.BackgroundColor,
-		WaterColor:                   input.WaterColor,
-		LandColor:                    input.LandColor,
-		RoadColor:                    input.RoadColor,
-		BuildingFillColor:            input.BuildingFillColor,
-		BuildingStrokeEnabled:        input.BuildingStrokeEnabled,
-		BuildingStrokeColor:          input.BuildingStrokeColor,
-		CalloutLineColor:             input.CalloutLineColor,
-		CalloutTextColor:             input.CalloutTextColor,
-		CalloutBackgroundColor:       input.CalloutBackgroundColor,
-		CalloutDescriptionColor:      input.CalloutDescriptionColor,
-		AttributionColor:             input.AttributionColor,
-		LabelTextColor:               input.LabelTextColor,
-		ClusterColor:                 input.ClusterColor,
-		ClusterHoverColor:            input.ClusterHoverColor,
-		ClusterTextColor:             input.ClusterTextColor,
-		ClusterTextHoverColor:        input.ClusterTextHoverColor,
-		CalloutHoverLineColor:        input.CalloutHoverLineColor,
-		CalloutHoverTextColor:        input.CalloutHoverTextColor,
-		CalloutHoverDescriptionColor: input.CalloutHoverDescriptionColor,
-		CalloutHoverBackgroundColor:  input.CalloutHoverBackgroundColor,
-	}
-}
+
 func projectMapThemeSettings(input *managev1.MapThemeSettings) mapThemeSettings {
 	return mapThemeSettings{
 		CalloutScale:        input.GetCalloutScale(),

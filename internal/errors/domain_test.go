@@ -117,6 +117,19 @@ func TestDomainCollaborationOutcomesKeepTheirDetail(t *testing.T) {
 	)
 	requireSameClientError(t, legacy, domain)
 
+	// A conflict found while storing reports the revisions its cause carries,
+	// as the Connect constructor read them from its causes.
+	for _, cause := range []error{
+		fmt.Errorf("store: %w", CollaborationState{Document: "document-2", TargetExists: &exists}),
+		stderrors.New("store failed without revisions"),
+	} {
+		stale := intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED
+		requireSameClientError(t,
+			CollaborationConflict(stale, "document changed", cause),
+			Wrap(domainerr.CollaborationConflict(stale, "document changed", domainerr.CollaborationRevisionsOf(cause))),
+		)
+	}
+
 	rejection := intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN
 	requireSameClientError(t, CollaborationMutationRejection(rejection, "structure is shared"), Wrap(domainerr.CollaborationRejection(rejection, "structure is shared")))
 }

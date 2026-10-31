@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"gorm.io/gorm"
 )
@@ -48,14 +48,14 @@ func LoadPublicSourceTitles(ctx context.Context, db *gorm.DB, releaseIDs []strin
 		Select("localized.entity_id, localized.title").
 		Joins(`JOIN release AS owner ON owner.id = localized.entity_id AND owner.source_locale = localized.locale`).
 		Where("localized.entity_id IN ?", releaseIDs).Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for _, value := range rows {
 		result[value.EntityID] = value.Title
 	}
 	for _, id := range releaseIDs {
 		if _, ok := result[id]; !ok {
-			return nil, errs.NotFound("release_translation", id)
+			return nil, domainerr.ResourceNotFound("release_translation", id)
 		}
 	}
 	return result, nil

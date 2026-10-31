@@ -8,15 +8,14 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -36,58 +35,52 @@ type creativeManageContentProjection struct {
 	SourceOgAssetID *string
 }
 
+// loadCreativeManageContentProjection reads the Artist's source-locale
+// document, title and OG image in one snapshot, after loadRoot reads the
+// root row.
 func loadCreativeManageContentProjection(
 	ctx context.Context,
 	db *gorm.DB,
 	store *contentblock.Store,
-	entityType string,
 	entityID string,
-	loadRoot ...func(context.Context, *gorm.DB) error,
+	loadRoot func(context.Context, *gorm.DB) error,
 ) (creativeManageContentProjection, error) {
 	var projection creativeManageContentProjection
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for _, load := range loadRoot {
-			if load != nil {
-				if err := load(ctx, tx); err != nil {
-					return err
-				}
-			}
+	err := mutation.ReadLocked(ctx, db, func(tx *gorm.DB) error {
+		if err := loadRoot(ctx, tx); err != nil {
+			return err
 		}
 		snapshot, source, err := loadCreativeContentSnapshotInTransaction(
-			ctx, tx, store, entityType, entityID,
+			ctx, tx, store, artistContentEntity, entityID,
 		)
 		if err != nil {
 			return err
 		}
 		document, err := contentblock.SnapshotToRichTextDocument(snapshot)
 		if err != nil {
-			return normalizeCreativeContentBlockError(entityType, err)
+			return normalizeCreativeContentBlockError(artistContentEntity, err)
 		}
 		title, err := loadCreativeSourceTitle(ctx, tx, entityID, source.SourceLocale)
 		if err != nil {
 			return err
 		}
-		var sourceOgAssetID *string
-		if entityType == artistContentEntity {
-			var row struct {
-				OgAssetID *string `gorm:"column:og_asset_id"`
-			}
-			if queryErr := tx.WithContext(ctx).Table("artist_translation").
-				Select("og_asset_id").
-				Where("entity_id = ? AND locale = ?", entityID, source.SourceLocale).
-				Take(&row).Error; queryErr != nil {
-				return queryErr
-			}
-			sourceOgAssetID = row.OgAssetID
+		var row struct {
+			OgAssetID *string `gorm:"column:og_asset_id"`
+		}
+		if err := tx.WithContext(ctx).Table("artist_translation").
+			Select("og_asset_id").
+			Where("entity_id = ? AND locale = ?", entityID, source.SourceLocale).
+			Take(&row).Error; err != nil {
+			return err
 		}
 		projection = creativeManageContentProjection{
 			Document:        document,
 			Revision:        snapshot.Document.Revision.String(),
 			SourceTitle:     title,
-			SourceOgAssetID: sourceOgAssetID,
+			SourceOgAssetID: row.OgAssetID,
 		}
 		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 	return projection, err
 }
 
@@ -107,9 +100,9 @@ func loadCreativeSourceTitle(
 		Where("entity_id = ? AND locale = ?", entityID, locale).
 		Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", errs.NotFound(table, entityID)
+			return "", domainerr.ResourceNotFound(table, entityID)
 		}
-		return "", errs.Internal(err)
+		return "", err
 	}
 	return row.Title, nil
 }
@@ -122,13 +115,13 @@ func saveCreativeSourceLocaleMetadata(
 	input translationLocaleDocumentSaveInput,
 ) error {
 	if input.Title == nil || strings.TrimSpace(*input.Title) == "" {
-		return errs.InvalidArgument("title", "must not be empty")
+		return domainerr.InvalidField("title", "must not be empty")
 	}
 	if strings.TrimSpace(input.SourceLocale) == "" {
-		return errs.FailedPrecondition("Artist source locale is not initialized")
+		return domainerr.Precondition("Artist source locale is not initialized")
 	}
 	if input.SourceLocale != locale {
-		return errs.FailedPrecondition("source locale metadata must match translation source authority")
+		return domainerr.Precondition("source locale metadata must match translation source authority")
 	}
 	table := "artist_translation"
 	now := input.Now
@@ -171,124 +164,9 @@ func loadCreativeLocaleMetadataState(
 		return nil, nil
 	}
 	if result.Error != nil {
-		return nil, errs.Internal(result.Error)
+		return nil, result.Error
 	}
 	return &row, nil
-}
-
-type creativeLocaleTitleUpdateResult struct {
-	Advance        contentblock.AdvanceResult
-	ChangedLocales []string
-}
-
-func updateCreativeLocaleTitle(
-	ctx context.Context,
-	db *gorm.DB,
-	store *contentblock.Store,
-	runtime Runtime,
-	entityType string,
-	entityID string,
-	locale string,
-	title *string,
-	expectedRevision string,
-	contributors []string,
-	ogEntityType managev1.OgEntityType,
-	translationRuntime Translation,
-	checkpoints persistencecheckpoint.ContributorFence,
-	afterWrite func(*gorm.DB, creativeLocaleTitleUpdateResult) error,
-) (creativeLocaleTitleUpdateResult, error) {
-	if store == nil {
-		return creativeLocaleTitleUpdateResult{}, errs.Internal(errors.New("content Block store is not configured"))
-	}
-	if title == nil {
-		return creativeLocaleTitleUpdateResult{}, errs.InvalidArgument("title", "is required")
-	}
-	normalizedTitle := strings.TrimSpace(*title)
-	if normalizedTitle == "" {
-		return creativeLocaleTitleUpdateResult{}, errs.InvalidArgument("title", "must not be empty")
-	}
-	parsedRevision, err := uuid.Parse(expectedRevision)
-	if err != nil {
-		return creativeLocaleTitleUpdateResult{}, errs.InvalidArgument("expected_revision", "must be a UUID")
-	}
-	documentID, err := loadCreativeContentDocumentID(ctx, db, entityType, entityID)
-	if err != nil {
-		return creativeLocaleTitleUpdateResult{}, err
-	}
-	var output creativeLocaleTitleUpdateResult
-	now := time.Now().UTC()
-	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := translationRuntime.RequireDocumentContributors(ctx, tx, contributors); err != nil {
-			return err
-		}
-		if err := requireArtistCollaborationContributors(ctx, tx, checkpoints, entityID, contributors); err != nil {
-			return err
-		}
-		advanced, err := store.AdvanceRevision(
-			ctx,
-			tx,
-			contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: parsedRevision},
-			artistSourceRoomFence(entityID, locale),
-			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-				sourceAuthority, err := lockCreativeTranslationSourceContext(ctx, tx, entityType, entityID)
-				if err != nil {
-					return contentblock.MetadataEffect{}, err
-				}
-				if sourceAuthority.SourceLocale != locale {
-					return contentblock.MetadataEffect{}, errs.FailedPrecondition("only source locale metadata is editable")
-				}
-				current, err := loadCreativeLocaleMetadataState(ctx, tx, entityID, locale)
-				if err != nil {
-					return contentblock.MetadataEffect{}, err
-				}
-				if current != nil && current.Title != nil && *current.Title == normalizedTitle {
-					return contentblock.MetadataEffect{}, nil
-				}
-				input := translationLocaleDocumentSaveInput{
-					SourceLocale: sourceAuthority.SourceLocale,
-					Title:        &normalizedTitle,
-					Now:          now,
-				}
-				err = saveArtistSourceLocaleDocumentState(ctx, tx, entityID, locale, input)
-				if err != nil {
-					return contentblock.MetadataEffect{}, err
-				}
-				err = touchArtistRootUpdatedAt(ctx, tx, entityID, now)
-				if err != nil {
-					return contentblock.MetadataEffect{}, err
-				}
-				return contentblock.MetadataEffect{
-					Changed:                  true,
-					AffectsTranslationSource: sourceAuthority.SourceLocale == locale,
-				}, nil
-			},
-		)
-		if err != nil {
-			return normalizeCreativeContentBlockError(entityType, err)
-		}
-		output.Advance = advanced
-		if advanced.Changed {
-			output.ChangedLocales = []string{locale}
-		}
-		if advanced.TranslationSourceChanged {
-			if _, err := runtime.RequestCurrentWithDB(
-				ctx, tx, ogEntityType, entityID, "", false,
-				entityType+"_source_title_saved",
-			); err != nil {
-				return err
-			}
-		}
-		if afterWrite == nil {
-			return nil
-		}
-		// afterWrite runs in the mutation transaction so dependent effects,
-		// such as the content.updated signal, commit or roll back with it.
-		return afterWrite(tx, output)
-	})
-	if err != nil {
-		return creativeLocaleTitleUpdateResult{}, err
-	}
-	return output, nil
 }
 
 func requireArtistCollaborationContributors(
@@ -332,7 +210,7 @@ func loadCreativeDocumentAuthorityWithStrength(
 	var state creativeDocumentAuthority
 	table, err := creativeContentRootTable(entityType)
 	if err != nil {
-		return creativeDocumentAuthority{}, errs.Internal(err)
+		return creativeDocumentAuthority{}, err
 	}
 	query := db.WithContext(ctx).
 		Table(table).
@@ -343,13 +221,13 @@ func loadCreativeDocumentAuthorityWithStrength(
 	}
 	err = query.Take(&state).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return creativeDocumentAuthority{}, errs.NotFound(entityType, entityID)
+		return creativeDocumentAuthority{}, domainerr.ResourceNotFound(entityType, entityID)
 	}
 	if err != nil {
-		return creativeDocumentAuthority{}, errs.Internal(err)
+		return creativeDocumentAuthority{}, err
 	}
 	if strings.TrimSpace(state.SourceLocale) == "" {
-		return creativeDocumentAuthority{}, errs.FailedPrecondition(entityType + " source locale is not initialized")
+		return creativeDocumentAuthority{}, domainerr.Precondition(entityType + " source locale is not initialized")
 	}
 	return state, nil
 }
@@ -361,9 +239,6 @@ func loadCreativeContentSnapshotInTransaction(
 	entityType string,
 	entityID string,
 ) (contentblock.Snapshot, creativeDocumentAuthority, error) {
-	if store == nil {
-		return contentblock.Snapshot{}, creativeDocumentAuthority{}, errs.Internal(errors.New("content Block store is not configured"))
-	}
 	documentID, err := loadCreativeContentDocumentIDWithStrength(
 		ctx, tx, entityType, entityID, clause.LockingStrengthShare,
 	)
@@ -381,7 +256,7 @@ func loadCreativeContentSnapshotInTransaction(
 		return contentblock.Snapshot{}, creativeDocumentAuthority{}, normalizeCreativeContentBlockError(entityType, err)
 	}
 	if strings.TrimSpace(snapshot.SourceLocale) != source.SourceLocale {
-		return contentblock.Snapshot{}, creativeDocumentAuthority{}, errs.Internal(errors.New("content document source locale does not match translation authority"))
+		return contentblock.Snapshot{}, creativeDocumentAuthority{}, errors.New("content document source locale does not match translation authority")
 	}
 	return snapshot, source, nil
 }
@@ -390,21 +265,20 @@ func initializeCreativeContentDocument(
 	ctx context.Context,
 	tx *gorm.DB,
 	store *contentblock.Store,
-	entityType string,
 	entityID string,
 	sourceLocale string,
 	created contentblock.Snapshot,
 	input *contentv1.RichTextDocument,
-	authorize func(context.Context, *gorm.DB) error,
 ) (contentblock.Result, error) {
+	entityType := artistContentEntity
 	if input == nil {
 		return contentblock.Result{}, nil
 	}
 	if input.GetProfile() != contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT {
-		return contentblock.Result{}, errs.InvalidArgument("document.profile", "must be compact")
+		return contentblock.Result{}, domainerr.InvalidField("document.profile", "must be compact")
 	}
 	if input.GetSourceLocale() != sourceLocale {
-		return contentblock.Result{}, errs.InvalidArgument("document.source_locale", "must match the server-selected source locale")
+		return contentblock.Result{}, domainerr.InvalidField("document.source_locale", "must match the server-selected source locale")
 	}
 	replace, err := contentblock.ReplaceFromRichTextProto(
 		created.Document.ID,
@@ -418,7 +292,7 @@ func initializeCreativeContentDocument(
 		ctx,
 		tx,
 		replace,
-		creativeContentCreationFence(entityType, entityID, sourceLocale, authorize),
+		creativeContentCreationFence(entityType, entityID, sourceLocale),
 	)
 	if err != nil {
 		return contentblock.Result{}, normalizeCreativeContentBlockError(entityType, err)
@@ -438,55 +312,50 @@ func loadCreativeContentBlockBootstrap(
 	spiceDB *auth.SpiceDBClient,
 	entityType string,
 	entityID string,
-	principalMessage *intrav1.CollaborationPrincipal,
+	sessionID string,
 	loadMetadata func(context.Context, *gorm.DB) error,
 ) (creativeContentBootstrapSnapshot, error) {
-	if principalMessage == nil {
-		return creativeContentBootstrapSnapshot{}, errs.AuthenticationRequired()
-	}
-	if store == nil {
-		return creativeContentBootstrapSnapshot{}, errs.Internal(errors.New("content Block store is not configured"))
+	if sessionID == "" {
+		return creativeContentBootstrapSnapshot{}, errAuthenticationRequired
 	}
 	var output creativeContentBootstrapSnapshot
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := mutation.ReadLocked(ctx, db, func(tx *gorm.DB) error {
 		documentID, err := loadCreativeContentDocumentIDWithStrength(
 			ctx, tx, entityType, entityID, clause.LockingStrengthShare,
 		)
 		if err != nil {
 			return err
 		}
-		principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(
-			ctx, tx, principalMessage.GetSessionId(),
-		)
+		principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, tx, sessionID)
 		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
-			return errs.WithCause(errs.AuthenticationRequired(), err)
+			return errAuthenticationRequired.WithCause(err)
 		}
 		if err != nil {
-			return errs.Internal(fmt.Errorf("resolve %s collaboration principal: %w", entityType, err))
+			return fmt.Errorf("resolve %s collaboration principal: %w", entityType, err)
 		}
 		if principal == nil || !principal.Authenticated {
-			return errs.AuthenticationRequired()
+			return errAuthenticationRequired
 		}
 		if principal.Banned {
-			return errs.AccountBanned()
+			return domainerr.Denied("account is banned")
 		}
 		if !principal.Onboarded {
-			return errs.NoPermission("edit", entityType)
+			return domainerr.Denied(fmt.Sprintf("no permission to %s this %s", "edit", entityType))
 		}
 		can, err := policyv1.Artist.Edit(entityID)
 		if err != nil {
-			return errs.InvalidArgument("artist_id", "must be a canonical Artist UUID")
+			return domainerr.InvalidField("artist_id", "must be a canonical Artist UUID")
 		}
 		decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, principal), can)
 		if err != nil {
-			return errs.WithCause(errs.AuthenticationRequired(), err)
+			return errAuthenticationRequired.WithCause(err)
 		}
 		allowed, err := spiceDB.Can(ctx, decision)
 		if err != nil {
-			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+			return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 		}
 		if !allowed {
-			return errs.NoPermission("edit", "artist")
+			return domainerr.Denied("no permission to edit this artist")
 		}
 		source, err := loadCreativeDocumentAuthorityWithStrength(
 			ctx, tx, entityType, entityID, clause.LockingStrengthShare,
@@ -501,16 +370,14 @@ func loadCreativeContentBlockBootstrap(
 			return normalizeCreativeContentBlockError(entityType, err)
 		}
 		if snapshot.SourceLocale != source.SourceLocale {
-			return errs.Internal(errors.New("content document source locale does not match translation authority"))
+			return errors.New("content document source locale does not match translation authority")
 		}
-		if loadMetadata != nil {
-			if err := loadMetadata(ctx, tx); err != nil {
-				return err
-			}
+		if err := loadMetadata(ctx, tx); err != nil {
+			return err
 		}
 		output = creativeContentBootstrapSnapshot{Snapshot: snapshot, Source: source}
 		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 	return output, err
 }
 
@@ -543,39 +410,19 @@ func internalCreativeContentFence(entityID string) contentblock.DomainFence {
 	}
 }
 
-func creativeContentDocumentFence(
-	entityType string,
-	entityID string,
-	authorize func(context.Context, *gorm.DB) error,
-) contentblock.DomainFence {
+// creativeContentDocumentFence locks the Artist row of the document the
+// mutation, already authorized, removes.
+func creativeContentDocumentFence(entityType string, entityID string) contentblock.DomainFence {
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		if err := lockCreativeContentDocumentRoot(ctx, tx, entityType, entityID, documentID); err != nil {
-			return contentblock.DomainContext{}, err
-		}
-		if authorize == nil {
-			return contentblock.DomainContext{}, errs.Internal(errors.New("content document authorization is required"))
-		}
-		if err := authorize(ctx, tx); err != nil {
-			return contentblock.DomainContext{}, err
-		}
-		return contentblock.DomainContext{}, nil
+		return contentblock.DomainContext{}, lockCreativeContentDocumentRoot(ctx, tx, entityType, entityID, documentID)
 	}
 }
 
-func creativeContentCreationFence(
-	entityType string,
-	entityID string,
-	sourceLocale string,
-	authorize func(context.Context, *gorm.DB) error,
-) contentblock.DomainFence {
+// creativeContentCreationFence locks the new Artist row and names its source
+// locale while the creation, already authorized, fills its document.
+func creativeContentCreationFence(entityType string, entityID string, sourceLocale string) contentblock.DomainFence {
 	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		if err := lockCreativeContentDocumentRoot(ctx, tx, entityType, entityID, documentID); err != nil {
-			return contentblock.DomainContext{}, err
-		}
-		if authorize == nil {
-			return contentblock.DomainContext{}, errs.Internal(errors.New("content document authorization is required"))
-		}
-		if err := authorize(ctx, tx); err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		return contentblock.DomainContext{SourceLocale: sourceLocale}, nil
@@ -593,7 +440,7 @@ func lockCreativeTranslationSourceContext(
 	}
 	table, err := creativeContentRootTable(entityType)
 	if err != nil {
-		return contentblock.DomainContext{}, errs.Internal(err)
+		return contentblock.DomainContext{}, err
 	}
 	if err := tx.WithContext(ctx).
 		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
@@ -602,18 +449,23 @@ func lockCreativeTranslationSourceContext(
 		Where("id = ?", entityID).
 		Take(&source).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return contentblock.DomainContext{}, errs.NotFound(entityType, entityID)
+			return contentblock.DomainContext{}, domainerr.ResourceNotFound(entityType, entityID)
 		}
-		return contentblock.DomainContext{}, errs.Internal(err)
+		return contentblock.DomainContext{}, err
 	}
 	if strings.TrimSpace(source.SourceLocale) == "" {
-		return contentblock.DomainContext{}, errs.FailedPrecondition(entityType + " source locale is not initialized")
+		return contentblock.DomainContext{}, domainerr.Precondition(entityType + " source locale is not initialized")
 	}
 	return contentblock.DomainContext{SourceLocale: source.SourceLocale}, nil
 }
 
+// normalizeCreativeContentBlockError gives a raw content document failure
+// its client answer; any other error keeps its own.
 func normalizeCreativeContentBlockError(entityType string, err error) error {
-	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
+	if err == nil {
+		return nil
+	}
+	if _, classified := errors.AsType[*domainerr.Error](err); classified {
 		return err
 	}
 	// A revision conflict does not keep its cause: callers branch on
@@ -622,25 +474,25 @@ func normalizeCreativeContentBlockError(entityType string, err error) error {
 	var targetConflict *translation.TargetRevisionConflict
 	switch {
 	case errors.As(err, &targetConflict):
-		return errs.CollaborationConflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			entityType+" target locale changed since it was loaded; reload before saving",
+			entityType+" target locale changed since it was loaded; reload before saving", domainerr.CollaborationRevisions{},
 		)
 	case errors.Is(err, contentblock.ErrDocumentNotFound):
-		return errs.WithCause(errs.NotFoundMsg(entityType+" content document not found"), err)
+		return domainerr.New(domainerr.NotFound, "", entityType+" content document not found").WithCause(err)
 	case errors.Is(err, contentblock.ErrStaleRevision):
-		return errs.CollaborationConflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-			entityType+" content revision changed; reload before saving",
+			entityType+" content revision changed; reload before saving", domainerr.CollaborationRevisions{},
 		)
 	case errors.Is(err, contentblock.ErrCrossDocument):
-		return errs.WithCause(errs.InvalidArgument("blocks", "a Block belongs to another document"), err)
+		return domainerr.InvalidField("blocks", "a Block belongs to another document").WithCause(err)
 	case errors.Is(err, contentblock.ErrFileReference):
-		return errs.WithCause(errs.InvalidArgument("blocks", "compact documents cannot contain File Blocks"), err)
+		return domainerr.InvalidField("blocks", "compact documents cannot contain File Blocks").WithCause(err)
 	case errors.Is(err, contentblock.ErrInvalidMutation):
-		return errs.InvalidArgument("blocks", err.Error())
+		return domainerr.InvalidField("blocks", err.Error())
 	default:
-		return errs.Internal(fmt.Errorf("%s content document: %w", entityType, err))
+		return fmt.Errorf("%s content document: %w", entityType, err)
 	}
 }
 
@@ -656,10 +508,9 @@ func creativeContentRootTable(entityType string) (string, error) {
 func loadCreativeContentDocumentID(
 	ctx context.Context,
 	db *gorm.DB,
-	entityType string,
 	entityID string,
 ) (uuid.UUID, error) {
-	return loadCreativeContentDocumentIDWithLock(ctx, db, entityType, entityID, false)
+	return loadCreativeContentDocumentIDWithLock(ctx, db, artistContentEntity, entityID, false)
 }
 
 func lockCreativeContentDocumentRoot(
@@ -680,7 +531,7 @@ func lockCreativeContentDocumentRoot(
 		return err
 	}
 	if expectedDocumentID == uuid.Nil || documentID != expectedDocumentID {
-		return errs.FailedPrecondition("content document ownership changed; reload before saving")
+		return domainerr.Precondition("content document ownership changed; reload before saving")
 	}
 	return nil
 }
@@ -709,11 +560,11 @@ func loadCreativeContentDocumentIDWithStrength(
 	strength string,
 ) (uuid.UUID, error) {
 	if db == nil {
-		return uuid.Nil, errs.Internal(errors.New("content document database is required"))
+		return uuid.Nil, errors.New("content document database is required")
 	}
 	table, err := creativeContentRootTable(entityType)
 	if err != nil {
-		return uuid.Nil, errs.Internal(err)
+		return uuid.Nil, err
 	}
 	query := db.WithContext(ctx).
 		Table(table).
@@ -725,16 +576,16 @@ func loadCreativeContentDocumentIDWithStrength(
 	var root creativeContentDocumentRoot
 	if err := query.Take(&root).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return uuid.Nil, errs.NotFound(entityType, entityID)
+			return uuid.Nil, domainerr.ResourceNotFound(entityType, entityID)
 		}
-		return uuid.Nil, errs.Internal(err)
+		return uuid.Nil, err
 	}
 	if !root.ContentDocumentID.Valid || root.ContentDocumentID.String == "" {
-		return uuid.Nil, errs.FailedPrecondition("content document is not initialized")
+		return uuid.Nil, domainerr.Precondition("content document is not initialized")
 	}
 	documentID, err := uuid.Parse(root.ContentDocumentID.String)
 	if err != nil {
-		return uuid.Nil, errs.Internal(fmt.Errorf("invalid %s content_document_id: %w", entityType, err))
+		return uuid.Nil, fmt.Errorf("invalid %s content_document_id: %w", entityType, err)
 	}
 	return documentID, nil
 }

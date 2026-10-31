@@ -15,7 +15,7 @@ import (
 )
 
 func mapThemeMemberContext(user *testutil.OryUser) context.Context {
-	return auth.WithUser(context.Background(), user.AuthUserInfo())
+	return auth.WithUser(requestBackground(), user.AuthUserInfo())
 }
 
 func TestManageMapThemeRPCsRequireAdmin(t *testing.T) {

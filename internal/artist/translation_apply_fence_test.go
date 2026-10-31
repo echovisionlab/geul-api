@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -41,6 +42,6 @@ func TestArtistTranslationApplyFenceAllowsUnpublishedRootAndRejectsDeletedRoot(t
 	require.NoError(t, applyFence(), "an already-submitted translation job may apply to a draft Artist")
 	require.NoError(t, db.Exec("DELETE FROM artist WHERE id = ?", artistID).Error)
 	err = applyFence()
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err),
+	require.Equal(t, connect.CodeNotFound, errs.Wrap(err).Code(),
 		"a deleted Artist root must reject an existing translation job")
 }

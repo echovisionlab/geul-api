@@ -38,16 +38,12 @@ func TestWorkPublicReadKeepsPublishedRelationsAndBodyAcrossUnpublishIntegration(
 	adminCtx := publicLegalAdminCtx(memberID, identityID)
 	management := newPublicWorkManageService(t, db, identityID)
 	suffix := uuid.NewString()
-	clientService := referencecatalog.NewClientService(
-		db,
-		referencecatalogadapter.NewAssets("https://cdn.example.com"),
-		stack.SpiceDBClient,
-	)
-	publishedClient, err := clientService.CreateClient(adminCtx, connect.NewRequest(&managev1.CreateClientRequest{
+	clientService := referencecatalog.NewClientConnectHandler(referenceCatalogForTest(t, db, "https://cdn.example.com", stack.SpiceDBClient))
+	publishedClient, err := clientService.CreateClient(withReferenceAudit(t, adminCtx), connect.NewRequest(&managev1.CreateClientRequest{
 		Name: "Published client " + suffix,
 	}))
 	require.NoError(t, err)
-	draftClient, err := clientService.CreateClient(adminCtx, connect.NewRequest(&managev1.CreateClientRequest{
+	draftClient, err := clientService.CreateClient(withReferenceAudit(t, adminCtx), connect.NewRequest(&managev1.CreateClientRequest{
 		Name: "Draft client " + suffix,
 	}))
 	require.NoError(t, err)

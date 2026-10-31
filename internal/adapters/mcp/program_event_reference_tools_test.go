@@ -8,7 +8,9 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/label"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	"github.com/echovisionlab/geul-api/internal/programevent"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -235,17 +237,17 @@ func (r *recordingProgramEventReferences) record(pagination *commonv1.Pagination
 	r.filters = filters
 }
 
-func (r *recordingProgramEventReferences) ListProgramEventTypesAdmin(_ context.Context, request *connect.Request[managev1.ListProgramEventTypesAdminRequest]) (*connect.Response[managev1.ListProgramEventTypesAdminResponse], error) {
-	r.record(request.Msg.Pagination, request.Msg.Filters)
-	return connect.NewResponse(&managev1.ListProgramEventTypesAdminResponse{Types: r.types, Pagination: r.pagination}), r.err
+func (r *recordingProgramEventReferences) ListProgramEventTypesAdmin(_ context.Context, query programevent.ListProgramEventTypesQuery) (programevent.TypeList, error) {
+	r.record(&commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset}, query.Filters)
+	return programevent.TypeList{Types: r.types, Pagination: r.pagination}, r.err
 }
 
-func (r *recordingProgramEventReferences) ListProgramEventSeriesAdmin(_ context.Context, request *connect.Request[managev1.ListProgramEventSeriesAdminRequest]) (*connect.Response[managev1.ListProgramEventSeriesAdminResponse], error) {
-	r.record(request.Msg.Pagination, request.Msg.Filters)
-	return connect.NewResponse(&managev1.ListProgramEventSeriesAdminResponse{Series: r.series, Pagination: r.pagination}), r.err
+func (r *recordingProgramEventReferences) ListProgramEventSeriesAdmin(_ context.Context, query programevent.ListProgramEventSeriesQuery) (programevent.SeriesList, error) {
+	r.record(&commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset}, query.Filters)
+	return programevent.SeriesList{Series: r.series, Pagination: r.pagination}, r.err
 }
 
-func (r *recordingProgramEventReferences) ListLabelsAdmin(_ context.Context, request *connect.Request[managev1.ListLabelsAdminRequest]) (*connect.Response[managev1.ListLabelsAdminResponse], error) {
-	r.record(request.Msg.Pagination, request.Msg.Filters)
-	return connect.NewResponse(&managev1.ListLabelsAdminResponse{Labels: r.labels, Pagination: r.pagination}), r.err
+func (r *recordingProgramEventReferences) ListLabelsAdmin(_ context.Context, query label.ListLabelsQuery) (label.AdminLabelPage, error) {
+	r.record(&commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset}, query.Filters)
+	return label.AdminLabelPage{Labels: r.labels, Pagination: r.pagination}, r.err
 }

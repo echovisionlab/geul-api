@@ -4,12 +4,19 @@ package integration
 
 import (
 	"context"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+
+	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
+	referencecatalogmenuadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog/menu"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
@@ -224,4 +231,28 @@ func (publisher publicReferenceAsyncPublisher) NotifyProtobufWithExecutor(
 	message proto.Message,
 ) error {
 	return publisher.NotifyProtobuf(ctx, signal, message)
+}
+
+// referenceCatalogForTest builds the Reference Catalog use cases with the
+// production adapters and in-memory audit.
+func referenceCatalogForTest(t *testing.T, db *gorm.DB, cdnDomain string, spiceDB *auth.SpiceDBClient) *referencecatalog.Service {
+	t.Helper()
+	catalog, err := referencecatalog.NewService(referencecatalog.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{},
+		Assets:      referencecatalogadapter.NewAssets(cdnDomain),
+		Members:     referencecatalogadapter.NewMemberSummaries(cdnDomain),
+		MenuTargets: referencecatalogmenuadapter.NewTargets(nil),
+		ClientWorks: workadapter.ClientWorks{},
+	})
+	require.NoError(t, err)
+	return catalog
+}
+
+// withReferenceAudit adds the request context the Reference Catalog's audited
+// mutations need; the user in ctx becomes their actor.
+func withReferenceAudit(t *testing.T, ctx context.Context) context.Context {
+	t.Helper()
+	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.73")
+	require.NoError(t, err)
+	return auth.WithUser(sharedtelemetry.WithRequestContext(ctx, requestContext), auth.GetUser(ctx))
 }

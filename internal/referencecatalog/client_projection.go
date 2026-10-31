@@ -21,14 +21,7 @@ type clientLogoAssets struct {
 	Dark  *commonv1.AssetRef
 }
 
-func optionalLogoResponseAsset(requested, target managev1.ThemeAssetVariant, asset *commonv1.AssetRef) *commonv1.AssetRef {
-	if requested == target || (requested == managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_UNSPECIFIED && target == managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_LIGHT) {
-		return asset
-	}
-	return nil
-}
-
-func (s *ClientService) getClientLogoAssets(ctx context.Context, clientID string) *clientLogoAssets {
+func (s *Service) getClientLogoAssets(ctx context.Context, clientID string) *clientLogoAssets {
 	var row struct {
 		LightFileID *string `gorm:"column:logo_light_file_id"`
 		DarkFileID  *string `gorm:"column:logo_dark_file_id"`
@@ -60,7 +53,7 @@ func (s *ClientService) getClientLogoAssets(ctx context.Context, clientID string
 }
 
 // toProtoClient converts a model.Client to protobuf Client.
-func (s *ClientService) toProtoClient(c *model.Client, logoAssets *clientLogoAssets) *managev1.Client {
+func (s *Service) toProtoClient(c *model.Client, logoAssets *clientLogoAssets) *managev1.Client {
 	client := &managev1.Client{
 		Id:        c.ID,
 		Name:      c.Name,

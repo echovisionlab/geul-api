@@ -4,95 +4,99 @@ import (
 	"context"
 	"log/slog"
 
-	"connectrpc.com/connect"
-
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
 )
 
+// Participant roles of a Label.
 const (
-	participantRoleOwner   = entityparticipant.RoleOwner
-	participantRoleManager = entityparticipant.RoleManager
+	ParticipantRoleOwner   = entityparticipant.RoleOwner
+	ParticipantRoleManager = entityparticipant.RoleManager
 )
 
-func (s *LabelService) ListLabelParticipants(
-	ctx context.Context,
-	req *connect.Request[managev1.ListLabelParticipantsRequest],
-) (_ *connect.Response[managev1.ListLabelParticipantsResponse], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("label_id", req.Msg.GetLabelId()))
+// ListLabelParticipantsQuery lists a Label's Owners and Managers.
+type ListLabelParticipantsQuery struct {
+	LabelID string
+}
 
-	if err := labelEntity.RequirePermission(ctx, s.spiceDB, req.Msg.LabelId, policyv1.Label.ManageParticipants); err != nil {
+// ListLabelParticipants returns the Label's Owners, then Managers, to a
+// caller who may manage its participants.
+func (s *Service) ListLabelParticipants(ctx context.Context, query ListLabelParticipantsQuery) (_ []*managev1.LabelParticipant, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", query.LabelID))
+
+	if err := labelEntity.RequirePermission(ctx, s.spiceDB, query.LabelID, policyv1.Label.ManageParticipants); err != nil {
 		return nil, err
 	}
-	views, err := labelEntity.ListParticipants(ctx, s.db, s.spiceDB, s.members, req.Msg.LabelId)
+	views, err := labelEntity.ListParticipants(ctx, s.db, s.spiceDB, s.members, query.LabelID)
 	if err != nil {
 		return nil, err
 	}
-	participants := entityparticipant.MapViews(views, labelParticipantFromView)
-	return connect.NewResponse(&managev1.ListLabelParticipantsResponse{Participants: participants}), nil
+	return entityparticipant.MapViews(views, labelParticipantFromView), nil
 }
 
-func (s *LabelService) SetLabelParticipant(
-	ctx context.Context,
-	req *connect.Request[managev1.SetLabelParticipantRequest],
-) (_ *connect.Response[managev1.LabelParticipant], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("label_id", req.Msg.GetLabelId()))
+// SetLabelParticipantCommand gives a Member Role (ParticipantRoleOwner or
+// ParticipantRoleManager) on a Label.
+type SetLabelParticipantCommand struct {
+	LabelID  string
+	MemberID string
+	Role     string
+}
 
-	role, err := labelParticipantRole(req.Msg.Role)
+// SetLabelParticipant gives the Member the role, moving an existing
+// participant between Owner and Manager.
+func (s *Service) SetLabelParticipant(ctx context.Context, command SetLabelParticipantCommand) (_ *managev1.LabelParticipant, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", command.LabelID))
+
+	if command.Role != ParticipantRoleOwner && command.Role != ParticipantRoleManager {
+		return nil, domainerr.InvalidField("role", "must be Owner or Manager")
+	}
+	view, err := s.participants.SetParticipant(ctx, s.members, entityparticipant.ParticipantChange{
+		EntityID: command.LabelID, MemberID: command.MemberID, Role: command.Role,
+		Audit: labelParticipantAudit(command.LabelID, command.MemberID),
+	})
 	if err != nil {
 		return nil, err
 	}
-	view, err := labelEntity.SetParticipant(ctx, s.db, s.spiceDB, s.members, req.Msg.LabelId, req.Msg.MemberId, role, s.labelParticipantAudit(req.Msg.LabelId, req.Msg.MemberId))
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.LabelParticipant{
-		Member: view.Member, Role: req.Msg.Role, CreatedAt: timestamppb.New(view.CreatedAt), HasEffectiveAuthority: view.HasEffectiveAuthority,
-	}), nil
+	return labelParticipantFromView(view), nil
 }
 
-func (s *LabelService) RemoveLabelParticipant(
-	ctx context.Context,
-	req *connect.Request[managev1.RemoveLabelParticipantRequest],
-) (_ *connect.Response[managev1.DeleteResponse], returnErr error) {
-	defer failurecause.Annotate(&returnErr, slog.String("label_id", req.Msg.GetLabelId()))
-
-	if err := labelEntity.RemoveParticipant(ctx, s.db, s.spiceDB, req.Msg.LabelId, req.Msg.MemberId, s.labelParticipantAudit(req.Msg.LabelId, req.Msg.MemberId)); err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+// RemoveLabelParticipantCommand removes a Member from a Label.
+type RemoveLabelParticipantCommand struct {
+	LabelID  string
+	MemberID string
 }
 
-func (s *LabelService) labelParticipantAudit(labelID, memberID string) entityparticipant.Audit {
-	return func(ctx context.Context, tx *gorm.DB, previous, next sharedtelemetry.AuditRelationship) error {
-		return s.appendLabelParticipantAudit(ctx, tx, labelID, memberID, previous, next)
+// RemoveLabelParticipant removes the Member; the Label keeps one Owner.
+func (s *Service) RemoveLabelParticipant(ctx context.Context, command RemoveLabelParticipantCommand) (returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("label_id", command.LabelID))
+
+	return s.participants.RemoveParticipant(ctx, entityparticipant.ParticipantChange{
+		EntityID: command.LabelID, MemberID: command.MemberID,
+		Audit: labelParticipantAudit(command.LabelID, command.MemberID),
+	})
+}
+
+func labelParticipantAudit(labelID, memberID string) entityparticipant.ParticipantAudit {
+	return func(previous, next sharedtelemetry.AuditRelationship) mutation.Audit {
+		return mutation.RequestAudit(sharedtelemetry.AuditLabelUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewLabelParticipantAuditRecord(m, labelID, memberID, previous, next)
+		})
 	}
 }
 
 func labelParticipantFromView(view entityparticipant.View) *managev1.LabelParticipant {
 	role := managev1.LabelParticipantRole_LABEL_PARTICIPANT_ROLE_MANAGER
-	if view.Role == participantRoleOwner {
+	if view.Role == ParticipantRoleOwner {
 		role = managev1.LabelParticipantRole_LABEL_PARTICIPANT_ROLE_OWNER
 	}
 	return &managev1.LabelParticipant{
 		Member: view.Member, Role: role, CreatedAt: timestamppb.New(view.CreatedAt),
 		HasEffectiveAuthority: view.HasEffectiveAuthority,
-	}
-}
-
-func labelParticipantRole(role managev1.LabelParticipantRole) (string, error) {
-	switch role {
-	case managev1.LabelParticipantRole_LABEL_PARTICIPANT_ROLE_OWNER:
-		return participantRoleOwner, nil
-	case managev1.LabelParticipantRole_LABEL_PARTICIPANT_ROLE_MANAGER:
-		return participantRoleManager, nil
-	default:
-		return "", errs.InvalidArgument("role", "must be Owner or Manager")
 	}
 }

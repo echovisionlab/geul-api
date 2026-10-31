@@ -8,6 +8,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
+	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -95,7 +96,7 @@ func TestArtistAllowedActionsChecksEachGeneratedPermissionOnce(t *testing.T) {
 		Authenticated: true,
 	})
 
-	actions, err := artistAllowedActions(ctx, checker, artistID, managev1.ArtistStatus_ARTIST_STATUS_DRAFT.String())
+	actions, err := artistAllowedActions(ctx, checker, artistID, model.ArtistStatusDraft)
 	require.NoError(t, err)
 	require.Equal(t, []managev1.ArtistAction{
 		managev1.ArtistAction_ARTIST_ACTION_EDIT,

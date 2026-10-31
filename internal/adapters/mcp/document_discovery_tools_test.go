@@ -10,12 +10,15 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/stretchr/testify/require"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/artist"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
@@ -149,7 +152,7 @@ func TestNewDocumentDiscoveryToolsRejectsNil(t *testing.T) {
 func TestDocumentDiscoveryListsProgramEvents(t *testing.T) {
 	updatedAt := time.Date(2026, time.August, 28, 1, 2, 3, 0, time.UTC)
 	slug := "live-set"
-	programEvents := &recordingProgramEventDocumentDiscovery{response: &managev1.ListProgramEventsAdminResponse{
+	programEvents := &recordingProgramEventDocumentDiscovery{list: programevent.EventList{
 		Events: []*managev1.ProgramEventSummary{{
 			Id: discoveryDocumentID, Title: "Live Set", Slug: &slug, SourceLocale: "ko",
 			Status:    managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED,
@@ -165,7 +168,7 @@ func TestDocumentDiscoveryListsProgramEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if programEvents.request == nil || len(programEvents.request.Msg.Filters) != 1 || programEvents.request.Msg.Filters[0].Value != "Live" {
+	if programEvents.request == nil || len(programEvents.request.Filters) != 1 || programEvents.request.Filters[0].Value != "Live" || programEvents.request.Limit != 10 {
 		t.Fatalf("Program Event request = %+v", programEvents.request)
 	}
 	documents := result.StructuredContent["documents"].([]any)
@@ -205,20 +208,16 @@ type recordingPageDocumentDiscovery struct {
 }
 
 type recordingProgramEventDocumentDiscovery struct {
-	managev1connect.UnimplementedProgramEventServiceHandler
-	request  *connect.Request[managev1.ListProgramEventsAdminRequest]
-	response *managev1.ListProgramEventsAdminResponse
+	request *programevent.ListProgramEventsQuery
+	list    programevent.EventList
 }
 
 func (discovery *recordingProgramEventDocumentDiscovery) ListProgramEventsAdmin(
 	_ context.Context,
-	request *connect.Request[managev1.ListProgramEventsAdminRequest],
-) (*connect.Response[managev1.ListProgramEventsAdminResponse], error) {
-	discovery.request = request
-	if discovery.response == nil {
-		discovery.response = &managev1.ListProgramEventsAdminResponse{}
-	}
-	return connect.NewResponse(discovery.response), nil
+	query programevent.ListProgramEventsQuery,
+) (programevent.EventList, error) {
+	discovery.request = &query
+	return discovery.list, nil
 }
 
 func (*recordingPageDocumentDiscovery) ListPagesAdmin(
@@ -363,12 +362,19 @@ type recordingReleaseDocumentDiscovery struct {
 	err      error
 }
 
-func (discovery *recordingReleaseDocumentDiscovery) ListReleasesAdmin(ctx context.Context, request *connect.Request[managev1.ListReleasesAdminRequest]) (*connect.Response[managev1.ListReleasesAdminResponse], error) {
-	discovery.ctx, discovery.request = ctx, request
+// ListReleasesAdmin records the query as the Connect request it stands for.
+func (discovery *recordingReleaseDocumentDiscovery) ListReleasesAdmin(ctx context.Context, query releasedomain.ListReleasesQuery) (releasedomain.ReleasePage, error) {
+	discovery.ctx, discovery.request = ctx, connect.NewRequest(&managev1.ListReleasesAdminRequest{
+		Pagination: &commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset},
+		Filters:    query.Filters, Sorts: query.Sorts,
+	})
 	if discovery.response == nil {
 		discovery.response = &managev1.ListReleasesAdminResponse{}
 	}
-	return connect.NewResponse(discovery.response), discovery.err
+	return releasedomain.ReleasePage{
+		Releases: discovery.response.Releases,
+		Total:    int64(discovery.response.Pagination.GetTotal()), Limit: discovery.response.Pagination.GetLimit(),
+	}, discovery.err
 }
 
 type recordingArtistDocumentDiscovery struct {
@@ -378,10 +384,13 @@ type recordingArtistDocumentDiscovery struct {
 	err      error
 }
 
-func (discovery *recordingArtistDocumentDiscovery) ListArtistsAdmin(ctx context.Context, request *connect.Request[managev1.ListArtistsAdminRequest]) (*connect.Response[managev1.ListArtistsAdminResponse], error) {
-	discovery.ctx, discovery.request = ctx, request
+func (discovery *recordingArtistDocumentDiscovery) ListArtistsAdmin(ctx context.Context, query artist.ListArtistsQuery) (artist.AdminArtistPage, error) {
+	discovery.ctx = ctx
+	discovery.request = connect.NewRequest(&managev1.ListArtistsAdminRequest{
+		Pagination: &commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset}, Filters: query.Filters, Sorts: query.Sorts,
+	})
 	if discovery.response == nil {
 		discovery.response = &managev1.ListArtistsAdminResponse{}
 	}
-	return connect.NewResponse(discovery.response), discovery.err
+	return artist.AdminArtistPage{Artists: discovery.response.Artists, Pagination: discovery.response.Pagination}, discovery.err
 }

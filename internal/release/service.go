@@ -1,817 +1,98 @@
 package release
 
 import (
-	"context"
 	"errors"
-	"fmt"
-	"log/slog"
+	"slices"
 	"strings"
-	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
-	"github.com/echovisionlab/geul-api/internal/dbtime"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/pathslug"
-	"github.com/echovisionlab/geul-api/internal/routeregistry"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"google.golang.org/protobuf/types/known/timestamppb"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 )
 
-// A Release cascade writes one policy deletion for the Release itself, leaving
-// the rest of the shared SpiceDB atomic relationship batch for Track policies.
-//
-//lint:ignore U1000 Tests use the named domain limit to verify the atomic authorization boundary.
-const maxReleaseCascadeAuthorizationTracks = maxSpiceDBAtomicRelationshipMutations - 1
-
-func validateReleaseCascadeAuthorizationBatchSize(trackCount int) error {
-	return validateAtomicAuthorizationRelationshipBatchSize(
-		trackCount+1,
-		trackCount+1,
-		"release has too many tracks to delete atomically; delete tracks individually until at most 999 remain",
-	)
+// Deps are the collaborators of the Release, Track, collaboration and AI
+// document use cases; all are required.
+type Deps struct {
+	DB            *gorm.DB
+	SpiceDB       *auth.SpiceDBClient
+	Audit         domainaudit.Appender
+	ContentBlocks *contentblock.Store
+	// Checkpoints proves that collaboration contributors are still current.
+	Checkpoints persistencecheckpoint.ContributorFence
+	// ContentSignals schedules content.updated in a mutation's transaction.
+	ContentSignals contentsignal.Publisher
+	TrackFiles     TrackFileManager
+	Transcodes     TrackTranscodes
+	WaveformJobs   WaveformJobs
+	Assets         Assets
+	OG             OG
+	ContentOG      ContentOG
+	Members        MemberSummaryLoader
+	Artists        ArtistSummaryLoader
+	Labels         LabelSummaryLoader
 }
 
-// ReleaseService implements the ReleaseService Connect handler
-type ReleaseService struct {
-	managev1connect.UnimplementedReleaseServiceHandler
-	db                        *gorm.DB
-	spiceDB                   *auth.SpiceDBClient
-	kratosClient              auth.IdentityManager
-	fileService               TrackFileManager
-	assets                    Assets
-	og                        OG
-	waveformJobs              WaveformJobs
-	asyncPublisher            AsyncPublisher
-	auditWriter               domainaudit.Appender
-	contentBlocks             *contentblock.Store
-	trackUploadSessionCleaner interface {
-		CleanupTrackUploadSessions(context.Context, string, string) error
-	}
-}
-
-type ReleaseServiceOption func(*ReleaseService)
-
-func WithReleaseContentBlockStore(store *contentblock.Store) ReleaseServiceOption {
-	return func(service *ReleaseService) {
-		service.contentBlocks = store
-	}
-}
-
-// NewAuditedReleaseService is the production constructor. It keeps each
-// authoritative Release mutation and its Domain Audit record in one DB tx.
-func NewAuditedReleaseService(db *gorm.DB, spiceDB *auth.SpiceDBClient, kratosClient auth.IdentityManager, fileService TrackFileManager, assets Assets, ogLifecycle OG, waveformJobs WaveformJobs, asyncPublisher AsyncPublisher, auditWriter domainaudit.Appender, options ...ReleaseServiceOption) *ReleaseService {
-	if auditWriter == nil {
-		panic("ReleaseService: audit writer is required")
-	}
-	s := NewReleaseService(db, spiceDB, kratosClient, fileService, assets, ogLifecycle, waveformJobs, asyncPublisher, options...)
-	s.auditWriter = auditWriter
-	return s
-}
-
-// NewReleaseService creates a new ReleaseService
-func NewReleaseService(
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	kratosClient auth.IdentityManager,
-	fileService TrackFileManager,
-	assets Assets,
-	ogLifecycle OG,
-	waveformJobs WaveformJobs,
-	asyncPublisher AsyncPublisher,
-	options ...ReleaseServiceOption,
-) *ReleaseService {
-	if db == nil {
-		panic("ReleaseService: db is required")
-	}
-	if spiceDB == nil {
-		panic("ReleaseService: spiceDB is required")
-	}
-	if kratosClient == nil {
-		panic("ReleaseService: kratosClient is required")
-	}
-	if fileService == nil {
-		panic("ReleaseService: fileService is required")
-	}
-	if assets == nil {
-		panic("ReleaseService: assets are required")
-	}
-	if ogLifecycle == nil {
-		panic("ReleaseService: OG lifecycle is required")
-	}
-	if waveformJobs == nil {
-		panic("ReleaseService: waveform jobs are required")
-	}
-	if asyncPublisher == nil {
-		panic("ReleaseService: asyncPublisher is required")
-	}
-
-	s := &ReleaseService{
-		db:             db,
-		spiceDB:        spiceDB,
-		kratosClient:   kratosClient,
-		fileService:    fileService,
-		assets:         assets,
-		og:             ogLifecycle,
-		waveformJobs:   waveformJobs,
-		asyncPublisher: asyncPublisher,
-	}
-	for _, option := range options {
-		if option != nil {
-			option(s)
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil,
+		"ContentBlocks": d.ContentBlocks == nil, "Checkpoints": d.Checkpoints == nil,
+		"ContentSignals": d.ContentSignals == nil, "TrackFiles": d.TrackFiles == nil,
+		"Transcodes": d.Transcodes == nil, "WaveformJobs": d.WaveformJobs == nil,
+		"Assets": d.Assets == nil, "OG": d.OG == nil, "ContentOG": d.ContentOG == nil,
+		"Members": d.Members == nil, "Artists": d.Artists == nil, "Labels": d.Labels == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
 		}
 	}
-	s.trackUploadSessionCleaner = fileService
-	return s
-}
-
-func classifyReleaseMutationError(err error, releaseID string) error {
-	if connect.CodeOf(err) != connect.CodeUnknown {
-		return err
-	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return errs.NotFound("release", releaseID)
-	}
-	return errs.Internal(err)
-}
-
-// =============================================================================
-// Read Methods
-// =============================================================================
-
-// GetRelease retrieves a release by ID for a Site Admin.
-func (s *ReleaseService) GetRelease(
-	ctx context.Context,
-	req *connect.Request[managev1.GetReleaseRequest],
-) (*connect.Response[managev1.Release], error) {
-	if err := requireReleaseAction(ctx, s.spiceDB, req.Msg.Id, releaseActionView); err != nil {
-		return nil, err
-	}
-
-	var release model.Release
-	if err := s.db.WithContext(ctx).
-		Where("id = ?", req.Msg.Id).
-		First(&release).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("release", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
-	}
-
-	if err := s.overlayReleaseSourceLocaleDocument(ctx, &release); err != nil {
-		return nil, err
-	}
-
-	artworkAsset, err := s.getReleaseArtworkAsset(ctx, release.ID)
-	if err != nil {
-		return nil, err
-	}
-	return s.releaseResponseWithArtworkOg(&release, artworkAsset)
-}
-
-// =============================================================================
-// Admin Methods (all releases, requires admin role)
-// =============================================================================
-
-// ListReleasesAdmin returns a paginated list of all releases with stats
-func (s *ReleaseService) ListReleasesAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListReleasesAdminRequest],
-) (*connect.Response[managev1.ListReleasesAdminResponse], error) {
-	if err := requireReleaseList(ctx, s.spiceDB); err != nil {
-		return nil, err
-	}
-
-	var releases []model.Release
-	var total int64
-
-	query := s.db.WithContext(ctx).Model(&model.Release{})
-
-	// Handle join filters separately (label_id requires subquery)
-	var remainingFilters []*commonv1.FilterSpec
-	for _, f := range req.Msg.Filters {
-		if f == nil {
-			continue
-		}
-		if f.GetField() == "label_id" {
-			if f.GetOp() == commonv1.FilterOp_FILTER_OP_EQ && f.GetValue() != "" {
-				query = query.Where("id IN (SELECT release_id FROM release_label WHERE label_id = ?)", f.GetValue())
-			} else if f.GetOp() == commonv1.FilterOp_FILTER_OP_IN && len(f.GetValues()) > 0 {
-				query = query.Where("id IN (SELECT release_id FROM release_label WHERE label_id IN ?)", f.GetValues())
-			}
-		} else {
-			remainingFilters = append(remainingFilters, f)
-		}
-	}
-
-	// Apply filters using FilterConfig
-	query, err := ReleaseAdminFilterConfig.ApplyFilters(query, remainingFilters)
-	if err != nil {
-		return nil, err
-	}
-
-	// Count total
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Apply pagination
-	limit := int32(20)
-	offset := int32(0)
-	if req.Msg.Pagination != nil {
-		if req.Msg.Pagination.Limit > 0 {
-			limit = req.Msg.Pagination.Limit
-		}
-		offset = req.Msg.Pagination.Offset
-	}
-
-	// Apply sorting
-	query, err = releaseSortConfig.ApplySort(query, req.Msg.Sorts)
-	if err != nil {
-		return nil, err
-	}
-	query = query.Order("release.id ASC")
-
-	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&releases).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	if err := s.overlayReleaseSourceLocaleDocuments(ctx, releases); err != nil {
-		return nil, err
-	}
-	artworkAssets, err := s.loadReadyReleaseArtworkAssets(ctx, releases)
-	if err != nil {
-		return nil, err
-	}
-
-	// Get stats for each release
-	releaseIDs := make([]string, len(releases))
-	for i, r := range releases {
-		releaseIDs[i] = r.ID
-	}
-
-	// Get track counts
-	trackCounts := make(map[string]int32)
-	if len(releaseIDs) > 0 {
-		var trackStats []struct {
-			ReleaseID string
-			Count     int32
-		}
-		if err := s.db.WithContext(ctx).
-			Table("track").
-			Select("release_id, COUNT(*) as count").
-			Where("release_id IN ?", releaseIDs).
-			Group("release_id").
-			Scan(&trackStats).Error; err != nil {
-			return nil, errs.Internal(fmt.Errorf("failed to get track counts: %w", err))
-		}
-		for _, stat := range trackStats {
-			trackCounts[stat.ReleaseID] = stat.Count
-		}
-	}
-
-	// Get credit counts
-	creditCounts := make(map[string]int32)
-	if len(releaseIDs) > 0 {
-		var creditStats []struct {
-			ReleaseID string
-			Count     int32
-		}
-		if err := s.db.WithContext(ctx).
-			Table("release_credit").
-			Select("release_id, COUNT(*) as count").
-			Where("release_id IN ?", releaseIDs).
-			Group("release_id").
-			Scan(&creditStats).Error; err != nil {
-			return nil, errs.Internal(fmt.Errorf("failed to get credit counts: %w", err))
-		}
-		for _, stat := range creditStats {
-			creditCounts[stat.ReleaseID] = stat.Count
-		}
-	}
-
-	// Convert to proto with stats
-	protoReleases := make([]*managev1.ReleaseWithStats, len(releases))
-	for i, release := range releases {
-		protoReleases[i] = &managev1.ReleaseWithStats{
-			Release:     s.toProtoRelease(&release, artworkAssets[release.ID]),
-			TrackCount:  trackCounts[release.ID],
-			CreditCount: creditCounts[release.ID],
-		}
-	}
-
-	return connect.NewResponse(&managev1.ListReleasesAdminResponse{
-		Releases: protoReleases,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   limit,
-			Offset:  offset,
-			HasMore: offset+limit < int32(total),
-		},
-	}), nil
-}
-
-// CreateRelease creates a new release (admin only)
-func (s *ReleaseService) CreateRelease(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateReleaseRequest],
-) (*connect.Response[managev1.Release], error) {
-	if s.contentBlocks == nil {
-		return nil, errs.InternalMsg("Release content Block store is not configured")
-	}
-	// Validate required fields
-	title := strings.TrimSpace(req.Msg.Title)
-	if title == "" {
-		return nil, errs.Required("title")
-	}
-	requestedSourceLocale := req.Msg.SourceLocale
-	if requestedSourceLocale != "" {
-		var err error
-		requestedSourceLocale, err = normalizeReleaseDocumentLocale(requestedSourceLocale)
-		if err != nil {
-			return nil, errs.InvalidArgument("source_locale", "must be a supported canonical locale")
-		}
-	}
-
-	release := model.Release{
-		Type:   releaseTypeToString(req.Msg.Type),
-		Status: managev1.ReleaseStatus_RELEASE_STATUS_DRAFT.String(),
-	}
-
-	if req.Msg.Slug != nil {
-		if err := pathslug.Validate(*req.Msg.Slug); err != nil {
-			return nil, err
-		}
-		if err := routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "release", "releases", *req.Msg.Slug); err != nil {
-			return nil, err
-		}
-		release.Slug = req.Msg.Slug
-	}
-	if req.Msg.ReleaseDate != nil {
-		t := req.Msg.ReleaseDate.AsTime()
-		release.ReleaseDate = &t
-	}
-	if req.Msg.SpotifyUrl != nil {
-		release.SpotifyURL = req.Msg.SpotifyUrl
-	}
-	if req.Msg.AppleMusicUrl != nil {
-		release.AppleMusicURL = req.Msg.AppleMusicUrl
-	}
-	if req.Msg.BandcampUrl != nil {
-		release.BandcampURL = req.Msg.BandcampUrl
-	}
-	if req.Msg.YoutubeMusicUrl != nil {
-		release.YoutubeMusicURL = req.Msg.YoutubeMusicUrl
-	}
-	if req.Msg.CatalogNumber != nil {
-		release.CatalogNumber = req.Msg.CatalogNumber
-	}
-	createCan, err := policyv1.Release.Create()
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(
-		tx *gorm.DB,
-		write authzmutation.WriteRelationships,
-	) error {
-		if release.Slug != nil && *release.Slug != "" {
-			if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "release", "releases", *release.Slug); err != nil {
-				return err
-			}
-		}
-		// A new Release has no row to lock yet. Recheck the canonical principal
-		// immediately before its first durable state change instead.
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, createCan); err != nil {
-			return err
-		}
-		sourceLocale := requestedSourceLocale
-		if sourceLocale == "" {
-			sourceLocale = resolveInitialSourceLocale(ctx, tx, s.kratosClient, req.Header().Get("Accept-Language"))
-		}
-		release.SourceLocale = sourceLocale
-		document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
-			Profile:      releaseContentProfile,
-			SourceLocale: sourceLocale,
-		})
-		if err != nil {
-			return normalizeReleaseContentBlockError(err)
-		}
-		contentDocumentID := document.Document.ID.String()
-		release.ContentDocumentID = &contentDocumentID
-		if err := tx.
-			Clauses(clause.Returning{Columns: []clause.Column{{Name: "id"}, {Name: "created_at"}, {Name: "updated_at"}}}).
-			Create(&release).Error; err != nil {
-			return err
-		}
-		_, err = initializeReleaseContentDocument(
-			ctx,
-			tx,
-			s.contentBlocks,
-			release.ID,
-			sourceLocale,
-			document,
-			req.Msg.Document,
-			func(context.Context, *gorm.DB) error { return nil },
-		)
-		if err != nil {
-			return err
-		}
-		now := time.Now().UTC()
-		if err := saveReleaseSourceLocaleDocumentState(ctx, tx, release.ID, sourceLocale, translationLocaleDocumentSaveInput{
-			Title:               &title,
-			OverwriteNullFields: true,
-			Now:                 now,
-		}); err != nil {
-			return err
-		}
-		if err := touchReleaseSourceLocaleState(ctx, tx, release.ID, now); err != nil {
-			return err
-		}
-		touchPolicy, err := policyv1.Release.TouchPolicy(release.ID)
-		if err != nil {
-			return err
-		}
-		deletePolicy, err := policyv1.Release.DeletePolicy(release.ID)
-		if err != nil {
-			return err
-		}
-		if err := write(
-			[]policyv1.RelationshipMutation{touchPolicy},
-			[]policyv1.RelationshipMutation{deletePolicy},
-		); err != nil {
-			return err
-		}
-		if err := s.appendReleaseCreatedAudit(ctx, tx, release.ID); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		if dberrors.IsUniqueViolation(err) {
-			return nil, errs.WithCause(errs.SlugAlreadyExists("release", "slug"), err)
-		}
-		return nil, errs.Internal(err)
-	}
-	if err := s.overlayReleaseSourceLocaleDocument(ctx, &release); err != nil {
-		return nil, err
-	}
-	return s.releaseResponseWithArtworkOg(&release, nil)
-}
-
-func (s *ReleaseService) cleanupReleaseTrackUploadSessions(ctx context.Context, releaseID string) error {
-	for range MaxTrackUploadCleanupPasses {
-		var trackIDs []string
-		var sessionsRemaining bool
-		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			var err error
-			trackIDs, err = lockReleaseTrackIDs(ctx, tx, releaseID)
-			if err != nil {
-				return err
-			}
-			sessionsRemaining, err = hasTrackUploadSessions(ctx, tx, trackIDs)
-			return err
-		}); err != nil {
-			return err
-		}
-		if !sessionsRemaining {
-			return nil
-		}
-		for _, trackID := range trackIDs {
-			if err := s.trackUploadSessionCleaner.CleanupTrackUploadSessions(ctx, trackID, "Release deleted"); err != nil {
-				return err
-			}
-		}
-	}
-	return ErrTrackUploadSessionsChanged
-}
-
-// lockReleaseTrackIDs locks the Release and its Tracks and returns the Track
-// IDs, which must fit one authorization cascade batch.
-func lockReleaseTrackIDs(ctx context.Context, tx *gorm.DB, releaseID string) ([]string, error) {
-	if _, err := lockReleaseForUpdate(ctx, tx, releaseID); err != nil {
-		return nil, err
-	}
-	var trackIDs []string
-	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Model(&model.Track{}).
-		Where("release_id = ?", releaseID).
-		Pluck("id", &trackIDs).Error; err != nil {
-		return nil, err
-	}
-	if err := validateReleaseCascadeAuthorizationBatchSize(len(trackIDs)); err != nil {
-		return nil, err
-	}
-	return trackIDs, nil
-}
-
-func hasTrackUploadSessions(ctx context.Context, tx *gorm.DB, trackIDs []string) (bool, error) {
-	if len(trackIDs) == 0 {
-		return false, nil
-	}
-	var count int64
-	if err := tx.WithContext(ctx).Model(&model.UploadSession{}).
-		Where("upload_type = ? AND entity_id IN ?", managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(), trackIDs).
-		Count(&count).Error; err != nil {
-		return false, err
-	}
-	return count != 0, nil
-}
-
-// ensureNoTrackUploadSessions fails with ErrTrackUploadSessionsChanged when an
-// upload started after the cleanup pass, so the caller cleans up again.
-func ensureNoTrackUploadSessions(ctx context.Context, tx *gorm.DB, trackIDs []string) error {
-	exists, err := hasTrackUploadSessions(ctx, tx, trackIDs)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return ErrTrackUploadSessionsChanged
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("release dependencies are required: " + strings.Join(missing, ", "))
 	}
 	return nil
 }
 
-// DeleteRelease deletes a Release and every cascade-owned Track (Site Admin only).
-func (s *ReleaseService) DeleteRelease(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteReleaseRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
-	if s.contentBlocks == nil {
-		return nil, errs.InternalMsg("Release content Block store is not configured")
-	}
-	releaseID := req.Msg.Id
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return requireLockedReleaseAction(ctx, tx, s.spiceDB, releaseID, releaseActionDelete)
-	}); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("release", releaseID)
-		}
+// Service holds the Release and Track use cases of administrators, of the
+// collaboration service and of AI document editing. Connect and MCP adapters
+// translate their requests into its commands and queries.
+type Service struct {
+	db             *gorm.DB
+	spiceDB        *auth.SpiceDBClient
+	contentBlocks  *contentblock.Store
+	checkpoints    persistencecheckpoint.ContributorFence
+	contentSignals contentsignal.Publisher
+	trackFiles     TrackFileManager
+	transcodes     TrackTranscodes
+	waveformJobs   WaveformJobs
+	assets         Assets
+	og             OG
+	contentOG      ContentOG
+	members        MemberSummaryLoader
+	artists        ArtistSummaryLoader
+	labels         LabelSummaryLoader
+	mutations      *mutation.Runner
+}
+
+// NewService validates deps and returns the Release use cases.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-
-	// Upload cleanup runs outside the deletion transaction, so an upload can
-	// start in between; the deletion then fails and cleanup runs again.
-	var uploadsChanged error
-	for range MaxTrackUploadCleanupPasses {
-		if err := s.cleanupReleaseTrackUploadSessions(ctx, releaseID); err != nil {
-			return nil, classifyReleaseDeleteError(releaseID, fmt.Errorf("cleanup release track audio uploads: %w", err))
-		}
-		trackIDs, err := s.deleteReleaseOnce(ctx, releaseID)
-		if errors.Is(err, ErrTrackUploadSessionsChanged) {
-			uploadsChanged = err
-			continue
-		}
-		if err != nil {
-			return nil, classifyReleaseDeleteError(releaseID, err)
-		}
-		if err := s.waveformJobs.CancelTracks(
-			ctx,
-			trackIDs,
-			managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_DELETED,
-		); err != nil {
-			slog.ErrorContext(ctx, "Failed to cancel waveform jobs for deleted release", "releaseId", releaseID, failurecause.Attr(err))
-		}
-		return connect.NewResponse(&managev1.DeleteResponse{
-			Success: true,
-		}), nil
-	}
-	return nil, errs.WithCause(errs.FailedPrecondition("track audio uploads changed during deletion; retry the request"), uploadsChanged)
-}
-
-func classifyReleaseDeleteError(releaseID string, err error) error {
-	switch {
-	case errors.Is(err, ErrTrackUploadSessionNotAbortable):
-		return errs.WithCause(errs.FailedPrecondition("track audio upload is finalizing; retry its completion before deleting the release"), err)
-	case errors.Is(err, gorm.ErrRecordNotFound):
-		return errs.NotFound("release", releaseID)
-	default:
-		return errs.Internal(err)
-	}
-}
-
-// deleteReleaseOnce deletes the Release, its owned rows and the Release and
-// Track authorization policies in one transaction, and returns the deleted
-// Track IDs.
-func (s *ReleaseService) deleteReleaseOnce(ctx context.Context, releaseID string) ([]string, error) {
-	var trackIDs []string
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(
-		tx *gorm.DB,
-		write authzmutation.WriteRelationships,
-	) error {
-		var err error
-		trackIDs, err = lockReleaseTrackIDs(ctx, tx, releaseID)
-		if err != nil {
-			return err
-		}
-		if err := ensureNoTrackUploadSessions(ctx, tx, trackIDs); err != nil {
-			return err
-		}
-		if err := s.deleteReleaseCascade(ctx, tx, releaseID); err != nil {
-			return err
-		}
-		apply, compensate, err := releaseAuthzMutations(releaseID, trackIDs)
-		if err != nil {
-			return err
-		}
-		if err := write(apply, compensate); err != nil {
-			return err
-		}
-		return s.appendReleaseDeletedAudit(ctx, tx, releaseID)
-	})
-	return trackIDs, err
-}
-
-// deleteReleaseCascade removes the Release row and what it owns outside the
-// database cascade: share links, OG and artwork assets and its content
-// document.
-func (s *ReleaseService) deleteReleaseCascade(ctx context.Context, tx *gorm.DB, releaseID string) error {
-	if err := tx.
-		Where("entity_type = ? AND entity_id = ?", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE.String(), releaseID).
-		Delete(&model.ShareLink{}).Error; err != nil {
-		return errs.Internal(err)
-	}
-	if err := s.og.CancelAndRelease(ctx, tx, releaseID); err != nil {
-		return err
-	}
-	if err := s.assets.ReleaseArtwork(ctx, tx, releaseID); err != nil {
-		return err
-	}
-	documentID, err := loadReleaseContentDocumentID(ctx, tx, releaseID)
+	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, deps.Audit)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	if err := s.contentBlocks.DeleteDocument(
-		ctx,
-		tx,
-		documentID,
-		releaseContentDocumentFence(releaseID, func(context.Context, *gorm.DB) error { return nil }),
-	); err != nil {
-		return normalizeReleaseContentBlockError(err)
-	}
-	result := tx.Delete(&model.Release{}, "id = ?", releaseID)
-	if result.Error != nil {
-		return errs.Internal(result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return errs.NotFound("release", releaseID)
-	}
-	return nil
+	return &Service{
+		db: deps.DB, spiceDB: deps.SpiceDB, contentBlocks: deps.ContentBlocks,
+		checkpoints: deps.Checkpoints, contentSignals: deps.ContentSignals, trackFiles: deps.TrackFiles,
+		transcodes: deps.Transcodes, waveformJobs: deps.WaveformJobs, assets: deps.Assets, og: deps.OG,
+		contentOG: deps.ContentOG, members: deps.Members, artists: deps.Artists, labels: deps.Labels,
+		mutations: mutations,
+	}, nil
 }
-
-// releaseAuthzMutations deletes the Release and Track policies and, as
-// compensation, restores them.
-func releaseAuthzMutations(releaseID string, trackIDs []string) (apply, compensate []policyv1.RelationshipMutation, err error) {
-	removeReleasePolicy, err := policyv1.Release.DeletePolicy(releaseID)
-	if err != nil {
-		return nil, nil, err
-	}
-	restoreReleasePolicy, err := policyv1.Release.TouchPolicy(releaseID)
-	if err != nil {
-		return nil, nil, err
-	}
-	apply = make([]policyv1.RelationshipMutation, 0, len(trackIDs)+1)
-	compensate = make([]policyv1.RelationshipMutation, 0, len(trackIDs)+1)
-	apply = append(apply, removeReleasePolicy)
-	compensate = append(compensate, restoreReleasePolicy)
-	for _, trackID := range trackIDs {
-		removePolicy, err := policyv1.Track.DeletePolicy(trackID)
-		if err != nil {
-			return nil, nil, err
-		}
-		restorePolicy, err := policyv1.Track.TouchPolicy(trackID)
-		if err != nil {
-			return nil, nil, err
-		}
-		apply = append(apply, removePolicy)
-		compensate = append(compensate, restorePolicy)
-	}
-	return apply, compensate, nil
-}
-
-// =============================================================================
-// Publish/Unpublish (admin only)
-// =============================================================================
-
-// PublishRelease publishes a release (admin only)
-func (s *ReleaseService) PublishRelease(
-	ctx context.Context,
-	req *connect.Request[managev1.PublishReleaseRequest],
-) (*connect.Response[managev1.ReleaseLifecycleMutationResponse], error) {
-	var release model.Release
-	if err := s.db.WithContext(ctx).First(&release, "id = ?", req.Msg.Id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("release", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
-	}
-	now := dbtime.Now()
-	transitioned := false
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		locked, err := lockReleaseForUpdate(ctx, tx, release.ID)
-		if err != nil {
-			return err
-		}
-		if err := requireActiveReleaseAction(ctx, tx, s.spiceDB, release.ID, releaseActionPublish); err != nil {
-			return err
-		}
-		if locked.Status == managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String() {
-			release = *locked
-			return nil
-		}
-		if err := tx.Model(&model.Release{}).Where("id = ?", release.ID).Updates(structured.Fields{"status": managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String(), "published_at": now, "updated_at": now}).Error; err != nil {
-			return err
-		}
-		transitioned = true
-		if err := s.appendReleaseLifecycleAudit(ctx, tx, release.ID, releaseAuditState(locked.Status), sharedtelemetry.AuditStatePublished); err != nil {
-			return err
-		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildReleaseStateTransitionContentUpdatedEvent(
-			release.ID,
-			[]string{"state.status", "state.published_at"},
-		))
-	}); err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	if transitioned {
-		release.Status = managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String()
-		release.PublishedAt = &now
-		release.UpdatedAt = now
-	}
-	return connect.NewResponse(&managev1.ReleaseLifecycleMutationResponse{
-		Id: release.ID, Changed: transitioned,
-		Status:      managev1.ReleaseStatus(managev1.ReleaseStatus_value[release.Status]),
-		PublishedAt: timestampProtoPtr(release.PublishedAt), UpdatedAt: timestamppb.New(release.UpdatedAt),
-	}), nil
-}
-
-// UnpublishRelease unpublishes a release (admin only)
-func (s *ReleaseService) UnpublishRelease(
-	ctx context.Context,
-	req *connect.Request[managev1.UnpublishReleaseRequest],
-) (*connect.Response[managev1.ReleaseLifecycleMutationResponse], error) {
-	var release model.Release
-	if err := s.db.WithContext(ctx).First(&release, "id = ?", req.Msg.Id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("release", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
-	}
-	now := dbtime.Now()
-	transitioned := false
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		locked, err := lockReleaseForUpdate(ctx, tx, release.ID)
-		if err != nil {
-			return err
-		}
-		if err := requireActiveReleaseAction(ctx, tx, s.spiceDB, release.ID, releaseActionPublish); err != nil {
-			return err
-		}
-		if locked.Status == managev1.ReleaseStatus_RELEASE_STATUS_DRAFT.String() {
-			release = *locked
-			return nil
-		}
-		if err := tx.Model(&model.Release{}).Where("id = ?", release.ID).Updates(structured.Fields{"status": managev1.ReleaseStatus_RELEASE_STATUS_DRAFT.String(), "updated_at": now}).Error; err != nil {
-			return err
-		}
-		transitioned = true
-		if err := s.appendReleaseLifecycleAudit(ctx, tx, release.ID, releaseAuditState(locked.Status), sharedtelemetry.AuditStateDraft); err != nil {
-			return err
-		}
-		return publishContentUpdatedEvent(ctx, tx, s.asyncPublisher, buildReleaseStateTransitionContentUpdatedEvent(
-			release.ID,
-			[]string{"state.status"},
-		))
-	}); err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	if transitioned {
-		release.Status = managev1.ReleaseStatus_RELEASE_STATUS_DRAFT.String()
-		release.UpdatedAt = now
-	}
-	return connect.NewResponse(&managev1.ReleaseLifecycleMutationResponse{
-		Id: release.ID, Changed: transitioned,
-		Status:      managev1.ReleaseStatus(managev1.ReleaseStatus_value[release.Status]),
-		PublishedAt: timestampProtoPtr(release.PublishedAt), UpdatedAt: timestamppb.New(release.UpdatedAt),
-	}), nil
-}
-
-// =============================================================================
-// Artwork Management (Site Admin only)
-// =============================================================================
-
-// SetReleaseArtwork sets the release artwork

@@ -87,15 +87,15 @@ func TestReleaseReferenceSettersReplaceAndClearMappingsIntegration(t *testing.T)
 	releaseID := releaseResponse.Msg.Id
 
 	categorySlug := "release-reference-category-" + referenceShortSuffix()
-	category, err := newReferenceCategoryService(db, spiceDB).CreateCategory(ctx, connect.NewRequest(&managev1.CreateCategoryRequest{
+	category, err := newReferenceCategoryService(t, db, spiceDB).CreateCategory(withAuditedRequestContext(t, ctx), connect.NewRequest(&managev1.CreateCategoryRequest{
 		Name: "Release Reference Category", Slug: &categorySlug,
 	}))
 	require.NoError(t, err)
-	genre, err := newReferenceGenreService(db, spiceDB).CreateGenre(ctx, connect.NewRequest(&managev1.CreateGenreRequest{
+	genre, err := newReferenceGenreService(t, db, spiceDB).CreateGenre(withAuditedRequestContext(t, ctx), connect.NewRequest(&managev1.CreateGenreRequest{
 		Name: "Release Reference Genre " + referenceShortSuffix(),
 	}))
 	require.NoError(t, err)
-	style, err := newReferenceStyleService(db, spiceDB).CreateStyle(ctx, connect.NewRequest(&managev1.CreateStyleRequest{
+	style, err := newReferenceStyleService(t, db, spiceDB).CreateStyle(withAuditedRequestContext(t, ctx), connect.NewRequest(&managev1.CreateStyleRequest{
 		Name: "Release Reference Style " + referenceShortSuffix(),
 	}))
 	require.NoError(t, err)
@@ -150,14 +150,14 @@ func TestReleaseCategoryObservedSnapshotPreservesConcurrentAdditionIntegration(t
 	}))
 	require.NoError(t, err)
 
-	categoryService := newReferenceCategoryService(db, spiceDB)
+	categoryService := newReferenceCategoryService(t, db, spiceDB)
 	firstSlug := "observed-category-first-" + referenceShortSuffix()
-	first, err := categoryService.CreateCategory(ctx, connect.NewRequest(&managev1.CreateCategoryRequest{
+	first, err := categoryService.CreateCategory(withAuditedRequestContext(t, ctx), connect.NewRequest(&managev1.CreateCategoryRequest{
 		Name: "Observed Category First", Slug: &firstSlug,
 	}))
 	require.NoError(t, err)
 	peerSlug := "observed-category-peer-" + referenceShortSuffix()
-	peer, err := categoryService.CreateCategory(ctx, connect.NewRequest(&managev1.CreateCategoryRequest{
+	peer, err := categoryService.CreateCategory(withAuditedRequestContext(t, ctx), connect.NewRequest(&managev1.CreateCategoryRequest{
 		Name: "Observed Category Peer", Slug: &peerSlug,
 	}))
 	require.NoError(t, err)
@@ -204,19 +204,19 @@ func TestGetReleaseRelationsReturnsAuthorizedEditorSnapshotIntegration(t *testin
 	require.NoError(t, err)
 
 	categorySlug := "release-relations-category-" + referenceShortSuffix()
-	category, err := newReferenceCategoryService(db, spiceDB).CreateCategory(ctx, connect.NewRequest(&managev1.CreateCategoryRequest{
+	category, err := newReferenceCategoryService(t, db, spiceDB).CreateCategory(withAuditedRequestContext(t, ctx), connect.NewRequest(&managev1.CreateCategoryRequest{
 		Name: "Release Relations Category", Slug: &categorySlug,
 	}))
 	require.NoError(t, err)
-	genre, err := newReferenceGenreService(db, spiceDB).CreateGenre(ctx, connect.NewRequest(&managev1.CreateGenreRequest{
+	genre, err := newReferenceGenreService(t, db, spiceDB).CreateGenre(withAuditedRequestContext(t, ctx), connect.NewRequest(&managev1.CreateGenreRequest{
 		Name: "Release Relations Genre " + referenceShortSuffix(),
 	}))
 	require.NoError(t, err)
-	style, err := newReferenceStyleService(db, spiceDB).CreateStyle(ctx, connect.NewRequest(&managev1.CreateStyleRequest{
+	style, err := newReferenceStyleService(t, db, spiceDB).CreateStyle(withAuditedRequestContext(t, ctx), connect.NewRequest(&managev1.CreateStyleRequest{
 		Name: "Release Relations Style " + referenceShortSuffix(),
 	}))
 	require.NoError(t, err)
-	format, err := referencecatalog.NewFormatService(db, spiceDB).CreateFormat(ctx, connect.NewRequest(&managev1.CreateFormatRequest{
+	format, err := referencecatalog.NewFormatConnectHandler(newReferenceCatalog(t, db, spiceDB)).CreateFormat(withAuditedRequestContext(t, ctx), connect.NewRequest(&managev1.CreateFormatRequest{
 		Name: "Release Relations Format " + referenceShortSuffix(),
 	}))
 	require.NoError(t, err)

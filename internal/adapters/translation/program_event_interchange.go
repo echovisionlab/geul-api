@@ -8,8 +8,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/programevent"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -22,6 +22,7 @@ type ProgramEventInterchange struct {
 }
 
 type programEventTranslationInterchangeDomain interface {
+	LoadInterchangeLocale(context.Context, *gorm.DB, string, string, string) (programevent.InterchangeLocale, error)
 	ApplyTranslationInterchangeCandidateWithDB(
 		context.Context,
 		*gorm.DB,
@@ -45,7 +46,7 @@ type programEventInterchangeTarget struct {
 	localized *contentv1.LocalizedRichTextDocument
 }
 
-func (*ProgramEventInterchange) LoadTranslationInterchangeTarget(
+func (a *ProgramEventInterchange) LoadTranslationInterchangeTarget(
 	ctx context.Context,
 	db *gorm.DB,
 	store *contentblock.Store,
@@ -54,7 +55,7 @@ func (*ProgramEventInterchange) LoadTranslationInterchangeTarget(
 	locale string,
 	plan *core.ExtractionPlan,
 ) (application.TranslationInterchangeTargetState, error) {
-	loaded, err := loadProgramEventInterchangeTarget(ctx, db, store, entityType, entityID, locale, plan)
+	loaded, err := a.loadProgramEventInterchangeTarget(ctx, db, store, entityType, entityID, locale, plan)
 	return loaded.state, err
 }
 
@@ -67,7 +68,7 @@ func (a *ProgramEventInterchange) ApplyTranslationInterchange(
 	if err := validateBlockInterchangeApply(command, string(core.KindProgramEvent)); err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
-	current, err := loadProgramEventInterchangeTarget(
+	current, err := a.loadProgramEventInterchangeTarget(
 		ctx, db, store, command.EntityType, command.EntityID, command.TargetLocale, command.Plan,
 	)
 	if err != nil {
@@ -102,7 +103,7 @@ func (a *ProgramEventInterchange) ApplyTranslationInterchange(
 	); err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
-	after, err := loadProgramEventInterchangeTarget(
+	after, err := a.loadProgramEventInterchangeTarget(
 		ctx, db, store, command.EntityType, command.EntityID, command.TargetLocale, command.Plan,
 	)
 	if err != nil {
@@ -115,7 +116,7 @@ func (a *ProgramEventInterchange) ApplyTranslationInterchange(
 	}, nil
 }
 
-func loadProgramEventInterchangeTarget(
+func (a *ProgramEventInterchange) loadProgramEventInterchangeTarget(
 	ctx context.Context,
 	db *gorm.DB,
 	store *contentblock.Store,
@@ -131,57 +132,23 @@ func loadProgramEventInterchangeTarget(
 		plan.EntityID != entityID || plan.TargetLocale != locale {
 		return programEventInterchangeTarget{}, errs.InvalidArgument("target", "Program Event translation interchange identity does not match the extraction plan")
 	}
-	var root struct {
-		ContentDocumentID *string `gorm:"column:content_document_id"`
-	}
-	if err := db.WithContext(ctx).Table("program_event").Select("content_document_id").
-		Where("id = ?", entityID).Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return programEventInterchangeTarget{}, errs.NotFound("program event", entityID)
-		}
-		return programEventInterchangeTarget{}, errs.Internal(err)
-	}
-	documentID, err := canonicalInterchangeDocumentID(root.ContentDocumentID)
+	loaded, err := a.domain.LoadInterchangeLocale(ctx, db, entityID, plan.SourceLocale, locale)
 	if err != nil {
-		return programEventInterchangeTarget{}, errs.WithCause(errs.FailedPrecondition("Program Event content document identity is invalid"), failurecause.ServerFault(err))
-	}
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, db, documentID, plan.SourceLocale)
-	if err != nil {
-		return programEventInterchangeTarget{}, err
-	}
-	localized, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, locale)
-	if err != nil {
-		return programEventInterchangeTarget{}, err
-	}
-	if localized.GetProfile() != contentv1.RichTextProfile_RICH_TEXT_PROFILE_PROGRAM_EVENT {
-		return programEventInterchangeTarget{}, errs.FailedPrecondition("Program Event translation interchange requires the Program Event content profile")
-	}
-
-	var row struct {
-		Summary *string `gorm:"column:summary"`
-	}
-	query := db.WithContext(ctx).Table("program_event_translation").Select("summary").
-		Where("entity_id = ? AND locale = ?", entityID, locale).Take(&row)
-	if query.Error != nil && !errors.Is(query.Error, gorm.ErrRecordNotFound) {
-		return programEventInterchangeTarget{}, errs.Internal(query.Error)
-	}
-	exists := query.Error == nil
-	if !exists && len(localized.GetLocaleOverlay().GetBlocks()) != 0 {
-		return programEventInterchangeTarget{}, errs.InternalMsg("Program Event target Blocks exist without owning locale metadata")
+		return programEventInterchangeTarget{}, programEventAnswer(err)
 	}
 	targets := make(map[string]core.UnitResult)
-	if exists {
-		targets, err = projectBlockInterchangeTargets(plan, localized)
+	if loaded.Exists {
+		targets, err = projectBlockInterchangeTargets(plan, loaded.Localized)
 		if err != nil {
 			return programEventInterchangeTarget{}, err
 		}
-		addEntityInterchangeTarget(targets, plan, "summary", row.Summary)
+		addEntityInterchangeTarget(targets, plan, "summary", loaded.Summary)
 	}
-	state := application.TranslationInterchangeTargetState{Exists: exists, Targets: targets}
-	if exists {
-		state.Revision = snapshot.Document.Revision.String()
+	state := application.TranslationInterchangeTargetState{Exists: loaded.Exists, Targets: targets}
+	if loaded.Exists {
+		state.Revision = loaded.DocumentRevision
 	}
-	return programEventInterchangeTarget{state: state, localized: localized}, nil
+	return programEventInterchangeTarget{state: state, localized: loaded.Localized}, nil
 }
 
 var _ application.TranslationInterchangeDomains = (*ProgramEventInterchange)(nil)

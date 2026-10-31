@@ -19,6 +19,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -107,7 +108,7 @@ func (connection *releaseListTestConnection) QueryContext(
 			[]driver.Value{
 				"11111111-1111-4111-8111-111111111111",
 				managev1.ReleaseType_RELEASE_TYPE_ALBUM.String(),
-				ReleaseStatusPublished,
+				string(model.ReleaseStatusPublished),
 				time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC),
 				time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC),
 			},
@@ -134,10 +135,10 @@ func requirePublishedReleaseListQuery(query string, args []driver.NamedValue) er
 	}
 	foundPublished := false
 	for _, argument := range args {
-		if argument.Value == ReleaseStatusDraft {
+		if argument.Value == string(model.ReleaseStatusDraft) {
 			return errors.New("Release public list query contains the draft status")
 		}
-		if argument.Value == ReleaseStatusPublished {
+		if argument.Value == string(model.ReleaseStatusPublished) {
 			foundPublished = true
 		}
 	}
@@ -210,7 +211,7 @@ func (releaseListTestArtists) LoadArtistSummariesWithDB(
 	return map[string]releasepkg.ArtistSummary{}, nil
 }
 
-func newReleaseListTestService(t *testing.T) (*ReleaseService, *releaseListTestScenario) {
+func newReleaseListTestService(t *testing.T) (*ConnectHandler, *releaseListTestScenario) {
 	t.Helper()
 	registerReleaseListTestDriver.Do(func() {
 		sql.Register(releaseListTestDriverName, releaseListTestDriver{})
@@ -229,7 +230,7 @@ func newReleaseListTestService(t *testing.T) (*ReleaseService, *releaseListTestS
 		Logger:               logger.Default.LogMode(logger.Silent),
 	})
 	require.NoError(t, err)
-	return &ReleaseService{db: db, media: releaseListTestMedia{}, artists: releaseListTestArtists{}}, scenario
+	return NewConnectHandler(&Service{db: db, media: releaseListTestMedia{}, artists: releaseListTestArtists{}}), scenario
 }
 
 func TestReleaseListDefaultsToPublishedAndReachesDatabase(t *testing.T) {
@@ -253,7 +254,7 @@ func TestReleaseListPreservesCallerStatusValidation(t *testing.T) {
 			Filters: []*commonv1.FilterSpec{{
 				Field: "status",
 				Op:    commonv1.FilterOp_FILTER_OP_EQ,
-				Value: ReleaseStatusPublished,
+				Value: string(model.ReleaseStatusPublished),
 			}},
 		}))
 		require.NoError(t, err)
@@ -266,7 +267,7 @@ func TestReleaseListPreservesCallerStatusValidation(t *testing.T) {
 			Filters: []*commonv1.FilterSpec{{
 				Field: "status",
 				Op:    commonv1.FilterOp_FILTER_OP_EQ,
-				Value: ReleaseStatusDraft,
+				Value: string(model.ReleaseStatusDraft),
 			}},
 		}))
 		require.Error(t, err)
@@ -281,7 +282,7 @@ func TestReleaseListPreservesCallerStatusValidation(t *testing.T) {
 			Filters: []*commonv1.FilterSpec{{
 				Field: "status",
 				Op:    commonv1.FilterOp_FILTER_OP_NEQ,
-				Value: ReleaseStatusPublished,
+				Value: string(model.ReleaseStatusPublished),
 			}},
 		}))
 		require.NoError(t, err)
@@ -297,7 +298,7 @@ func TestReleaseListPreservesCallerStatusValidation(t *testing.T) {
 			Filters: []*commonv1.FilterSpec{{
 				Field:  "status",
 				Op:     commonv1.FilterOp_FILTER_OP_NOT_IN,
-				Values: []string{ReleaseStatusPublished},
+				Values: []string{string(model.ReleaseStatusPublished)},
 			}},
 		}))
 		require.NoError(t, err)

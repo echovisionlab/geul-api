@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/account"
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	aidocumentadapter "github.com/echovisionlab/geul-api/internal/adapters/aidocument"
+	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
 	audienceadapter "github.com/echovisionlab/geul-api/internal/adapters/audience"
 	authenticationadapter "github.com/echovisionlab/geul-api/internal/adapters/authentication"
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
@@ -437,10 +438,29 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		manageOptions: handlerOpts, internalOptions: internalHandlerOpts, publicOptions: publicHandlerOpts,
 		internalTrust: internalRPCTrust, downloadTTL: downloadTTL,
 	}
-	artistService, internalArtistService := music.registerArtist()
-	labelService := music.registerLabel()
-	releaseService, internalReleaseService, trackService := music.registerRelease()
-	genreService, styleService, formatService := music.registerTaxonomy()
+	artistService, err := music.registerArtist()
+	if err != nil {
+		return registeredServices{}, err
+	}
+	labelService, err := music.registerLabel()
+	if err != nil {
+		return registeredServices{}, err
+	}
+	releaseService, err := music.registerRelease()
+	if err != nil {
+		return registeredServices{}, err
+	}
+	referenceCatalog, err := referencecatalog.NewService(referencecatalog.Deps{
+		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter,
+		Assets:      referencecatalogadapter.NewAssets(cfg.CDNURL),
+		Members:     referencecatalogadapter.NewMemberSummaries(cfg.CDNURL),
+		MenuTargets: referencecatalogmenuadapter.NewTargets(telemetryWriter),
+		ClientWorks: workadapter.ClientWorks{},
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize reference catalog service: %w", err)
+	}
+	music.registerTaxonomy(referenceCatalog)
 
 	aiService := ai.NewService(metadataAIJobs)
 	aiPath, aiHandler := managev1connect.NewAIServiceHandler(aiService, handlerOpts...)
@@ -448,7 +468,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered service", "path", aiPath)
 
 	emailAuthoringReferences := emailauthoringadapter.NewCampaignDeliveryReferences()
-	programEventRuntime := programeventadapter.NewRuntime(cfg.CDNURL)
 	translationRegistry := translationadapter.NewDomainRegistry(emailAuthoringReferences, telemetryWriter)
 	memberPath, memberHandler := managev1connect.NewMemberServiceHandler(member.NewConnectHandler(memberService), handlerOpts...)
 	mux.Handle(memberPath, memberHandler)
@@ -493,37 +512,34 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(postPath, postHandler)
 	slog.Info("Registered service", "path", postPath)
 
-	referenceCatalogMenuTargets := referencecatalogmenuadapter.NewTargets(telemetryWriter)
-	categoryService := referencecatalog.NewAuditedCategoryService(db, telemetryWriter, referenceCatalogMenuTargets, spicedbClient)
-	categoryPath, categoryHandler := managev1connect.NewCategoryServiceHandler(categoryService, handlerOpts...)
+	categoryPath, categoryHandler := managev1connect.NewCategoryServiceHandler(referencecatalog.NewCategoryConnectHandler(referenceCatalog), handlerOpts...)
 	mux.Handle(categoryPath, categoryHandler)
 	slog.Info("Registered service", "path", categoryPath)
 
-	programEventTypeService := programevent.NewAuditedProgramEventTypeService(db, telemetryWriter, spicedbClient)
-	programEventTypePath, programEventTypeHandler := managev1connect.NewProgramEventTypeServiceHandler(programEventTypeService, handlerOpts...)
+	programEventService, err := programevent.NewService(programevent.Deps{
+		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, ContentBlocks: contentBlockStore,
+		Signals: servicePublisher, Media: programeventadapter.NewRuntime(cfg.CDNURL),
+		MediaHydrator: programeventadapter.NewFiles(fileService),
+		CreditMembers: programeventadapter.NewCreditMemberSummaries(db, cfg.CDNURL),
+		CreditArtists: artistadapter.CreditArtists{}, Members: memberadapter.ContentMembers{},
+		Checkpoints: collaborationRuntime.Checkpoints,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize program event service: %w", err)
+	}
+	programEventTypePath, programEventTypeHandler := managev1connect.NewProgramEventTypeServiceHandler(programevent.NewTypeConnectHandler(programEventService), handlerOpts...)
 	mux.Handle(programEventTypePath, programEventTypeHandler)
 	slog.Info("Registered service", "path", programEventTypePath)
 
-	programEventSeriesService := programevent.NewAuditedProgramEventSeriesService(
-		db, programEventRuntime, telemetryWriter, spicedbClient,
-	)
-	programEventSeriesPath, programEventSeriesHandler := managev1connect.NewProgramEventSeriesServiceHandler(programEventSeriesService, handlerOpts...)
+	programEventSeriesPath, programEventSeriesHandler := managev1connect.NewProgramEventSeriesServiceHandler(programevent.NewSeriesConnectHandler(programEventService), handlerOpts...)
 	mux.Handle(programEventSeriesPath, programEventSeriesHandler)
 	slog.Info("Registered service", "path", programEventSeriesPath)
 
-	programEventFiles := programeventadapter.NewFiles(fileService)
-	programEventService := programevent.NewAuditedProgramEventService(
-		db, programEventRuntime, programEventFiles, telemetryWriter, spicedbClient,
-		programeventadapter.NewCreditMemberSummaries(db, cfg.CDNURL),
-		programevent.WithProgramEventContentBlockStore(contentBlockStore),
-		programevent.WithProgramEventAsyncPublisher(servicePublisher),
-	)
-	programEventPath, programEventHandler := managev1connect.NewProgramEventServiceHandler(programEventService, handlerOpts...)
+	programEventPath, programEventHandler := managev1connect.NewProgramEventServiceHandler(programevent.NewConnectHandler(programEventService), handlerOpts...)
 	mux.Handle(programEventPath, programEventHandler)
 	slog.Info("Registered service", "path", programEventPath)
 
-	tagService := referencecatalog.NewAuditedTagService(db, telemetryWriter, referenceCatalogMenuTargets, spicedbClient)
-	tagPath, tagHandler := managev1connect.NewTagServiceHandler(tagService, handlerOpts...)
+	tagPath, tagHandler := managev1connect.NewTagServiceHandler(referencecatalog.NewTagConnectHandler(referenceCatalog), handlerOpts...)
 	mux.Handle(tagPath, tagHandler)
 	slog.Info("Registered service", "path", tagPath)
 
@@ -592,10 +608,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(internalPostSeriesPath, internalRPCTrust.collab(internalPostSeriesHandler))
 	slog.Info("Registered internal service", "path", internalPostSeriesPath)
 
-	referenceCatalogAssets := referencecatalogadapter.NewAssets(cfg.CDNURL)
-	referenceCatalogMembers := referencecatalogadapter.NewMemberSummaries(cfg.CDNURL)
-	clientService := referencecatalog.NewAuditedClientService(db, telemetryWriter, referenceCatalogAssets, spicedbClient)
-	clientPath, clientHandler := managev1connect.NewClientServiceHandler(clientService, handlerOpts...)
+	clientPath, clientHandler := managev1connect.NewClientServiceHandler(referencecatalog.NewClientConnectHandler(referenceCatalog), handlerOpts...)
 	mux.Handle(clientPath, clientHandler)
 	slog.Info("Registered service", "path", clientPath)
 
@@ -621,15 +634,15 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(termsPath, termsHandler)
 	slog.Info("Registered service", "path", termsPath)
 
-	mapPlaceService := referencecatalog.NewAuditedMapPlaceService(
-		db, telemetryWriter, referenceCatalogAssets, referenceCatalogMembers, spicedbClient,
-	)
-	mapPlacePath, mapPlaceHandler := managev1connect.NewMapPlaceServiceHandler(mapPlaceService, handlerOpts...)
+	mapPlacePath, mapPlaceHandler := managev1connect.NewMapPlaceServiceHandler(referencecatalog.NewMapPlaceConnectHandler(referenceCatalog), handlerOpts...)
 	mux.Handle(mapPlacePath, mapPlaceHandler)
 	slog.Info("Registered service", "path", mapPlacePath)
 
-	mapThemeService := maptheme.NewAuditedMapThemeService(db, telemetryWriter, spicedbClient)
-	mapThemePath, mapThemeHandler := managev1connect.NewMapThemeServiceHandler(mapThemeService, handlerOpts...)
+	mapThemeService, err := maptheme.NewService(maptheme.Deps{DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize map theme service: %w", err)
+	}
+	mapThemePath, mapThemeHandler := managev1connect.NewMapThemeServiceHandler(maptheme.NewConnectHandler(mapThemeService), handlerOpts...)
 	mux.Handle(mapThemePath, mapThemeHandler)
 	slog.Info("Registered service", "path", mapThemePath)
 
@@ -755,11 +768,12 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		workRuntime:                 workRuntime,
 		fileService:                 fileService,
 		postMedia:                   postMedia,
-		programEventFiles:           programEventFiles,
+		programEvents:               programEventService,
 		emailAuthoringReferences:    emailAuthoringReferences,
 		legalRuntime:                legalRuntime,
 		legalDependencies:           legalDependencies,
 		formDependencies:            formDependencies,
+		mapThemes:                   mapThemeService,
 	}).register()
 	if err != nil {
 		return registeredServices{}, err
@@ -797,10 +811,10 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if aiDocumentRegistrations.programEvent, err = aidocumentadapter.NewProgramEventRegistration(programEventService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Program Event AI document domain: %w", err)
 	}
-	if aiDocumentRegistrations.release, err = aidocumentadapter.NewReleaseRegistration(internalReleaseService); err != nil {
+	if aiDocumentRegistrations.release, err = aidocumentadapter.NewReleaseRegistration(releaseService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Release AI document domain: %w", err)
 	}
-	if aiDocumentRegistrations.artist, err = aidocumentadapter.NewArtistRegistration(internalArtistService); err != nil {
+	if aiDocumentRegistrations.artist, err = aidocumentadapter.NewArtistRegistration(artistService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Artist AI document domain: %w", err)
 	}
 	if aiDocumentRegistrations.label, err = aidocumentadapter.NewLabelRegistration(labelService); err != nil {
@@ -842,22 +856,22 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		artistService,
 		contentMCPApplications{
 			legalPolicies: legalPolicyService,
-			categories:    categoryService,
-			tags:          tagService,
-			clients:       clientService,
-			mapPlaces:     mapPlaceService,
+			categories:    referenceCatalog,
+			tags:          referenceCatalog,
+			clients:       referenceCatalog,
+			mapPlaces:     referenceCatalog,
 			members:       memberService,
 			artists:       artistService,
 			files:         fileService,
-			eventTypes:    programEventTypeService,
-			eventSeries:   programEventSeriesService,
+			eventTypes:    programEventService,
+			eventSeries:   programEventService,
 			labels:        labelService,
-			genres:        genreService,
-			styles:        styleService,
-			formats:       formatService,
+			genres:        referenceCatalog,
+			styles:        referenceCatalog,
+			formats:       referenceCatalog,
 			forms:         formService,
 			postSeries:    seriesService,
-			tracks:        trackService,
+			tracks:        releaseService,
 			mapThemes:     mapThemeService,
 			menus:         menuService,
 			menuSettings:  siteSettingService,

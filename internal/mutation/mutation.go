@@ -274,6 +274,18 @@ func PrincipalFence(principal *auth.UserInfo) Access {
 	}}
 }
 
+// Checked authorizes with check inside the transaction, for a mutation whose
+// authority is not the request principal: an internal collaboration save
+// re-resolves the contributors it is attributed to.
+func Checked(check func(ctx context.Context, tx *gorm.DB) error) Access {
+	if check == nil {
+		return Access{err: errors.New("mutation access check is required")}
+	}
+	return Access{check: func(ctx context.Context, tx *gorm.DB, _ *auth.SpiceDBClient) error {
+		return check(ctx, tx)
+	}}
+}
+
 // Audit names the record a committed change appends.
 type Audit struct {
 	action    sharedtelemetry.AuditAction

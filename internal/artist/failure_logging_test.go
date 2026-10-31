@@ -11,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -42,7 +43,7 @@ func TestPermissionFailureKeepsRedactedCauseOnGenericDependencyError(t *testing.
 		Authenticated: true,
 	})
 	cause := fmt.Errorf("permission check: %w", errors.New(`relation "artist_participant" <view> unavailable: password=private-secret https://user:pass@auth.test/check?token=private-token private@example.test`))
-	err := artistEntity.RequireCreate(ctx, failedPermissionChecker{cause})
+	err := errs.Wrap(artistEntity.RequireCreate(ctx, failedPermissionChecker{cause}))
 	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
 	require.NotContains(t, err.Error(), cause.Error())
 	require.ErrorIs(t, err, cause)
@@ -59,8 +60,8 @@ func TestPermissionFailureKeepsRedactedCauseOnGenericDependencyError(t *testing.
 func TestContentBlockRejectionKeepsWrappedCauseOnStatusMapping(t *testing.T) {
 	output := captureLogs(t)
 	cause := fmt.Errorf(`element <file> in relation "content_block": password=private-secret: %w`, contentblock.ErrFileReference)
-	err := normalizeCreativeContentBlockError(artistContentEntity, cause)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	err := errs.Wrap(normalizeCreativeContentBlockError(artistContentEntity, cause))
+	require.Equal(t, connect.CodeInvalidArgument, err.Code())
 	require.NotContains(t, err.Error(), cause.Error())
 	require.ErrorIs(t, err, contentblock.ErrFileReference)
 	require.Empty(t, output.String())
@@ -74,6 +75,6 @@ func TestContentBlockRejectionKeepsWrappedCauseOnStatusMapping(t *testing.T) {
 func TestContentBlockRevisionConflictDoesNotMatchRawStaleRevision(t *testing.T) {
 	cause := &contentblock.StaleRevisionError{}
 	err := normalizeCreativeContentBlockError(artistContentEntity, cause)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	require.NotErrorIs(t, err, contentblock.ErrStaleRevision)
 }

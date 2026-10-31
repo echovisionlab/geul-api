@@ -3,89 +3,92 @@ package artist
 import (
 	"context"
 
-	"connectrpc.com/connect"
-
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
 )
 
+// Participant roles of an Artist.
 const (
-	participantRoleOwner   = entityparticipant.RoleOwner
-	participantRoleManager = entityparticipant.RoleManager
+	ParticipantRoleOwner   = entityparticipant.RoleOwner
+	ParticipantRoleManager = entityparticipant.RoleManager
 )
 
-// ArtistService implements the ArtistService Connect handler
-func (s *ArtistService) ListArtistParticipants(
-	ctx context.Context,
-	req *connect.Request[managev1.ListArtistParticipantsRequest],
-) (*connect.Response[managev1.ListArtistParticipantsResponse], error) {
-	if err := artistEntity.RequirePermission(ctx, s.spiceDB, req.Msg.ArtistId, policyv1.Artist.ManageParticipants); err != nil {
+// ListArtistParticipantsQuery lists an Artist's Owners and Managers.
+type ListArtistParticipantsQuery struct {
+	ArtistID string
+}
+
+// ListArtistParticipants returns the Artist's Owners, then Managers, to a
+// caller who may manage its participants.
+func (s *Service) ListArtistParticipants(ctx context.Context, query ListArtistParticipantsQuery) ([]*managev1.ArtistParticipant, error) {
+	if err := artistEntity.RequirePermission(ctx, s.spiceDB, query.ArtistID, policyv1.Artist.ManageParticipants); err != nil {
 		return nil, err
 	}
-	views, err := artistEntity.ListParticipants(ctx, s.db, s.spiceDB, s.members, req.Msg.ArtistId)
+	views, err := artistEntity.ListParticipants(ctx, s.db, s.spiceDB, s.members, query.ArtistID)
 	if err != nil {
 		return nil, err
 	}
-	participants := entityparticipant.MapViews(views, artistParticipantFromView)
-	return connect.NewResponse(&managev1.ListArtistParticipantsResponse{Participants: participants}), nil
+	return entityparticipant.MapViews(views, artistParticipantFromView), nil
 }
 
-func (s *ArtistService) SetArtistParticipant(
-	ctx context.Context,
-	req *connect.Request[managev1.SetArtistParticipantRequest],
-) (*connect.Response[managev1.ArtistParticipant], error) {
-	role, err := artistParticipantRole(req.Msg.Role)
+// SetArtistParticipantCommand gives a Member Role (ParticipantRoleOwner or
+// ParticipantRoleManager) on an Artist.
+type SetArtistParticipantCommand struct {
+	ArtistID string
+	MemberID string
+	Role     string
+}
+
+// SetArtistParticipant gives the Member the role, moving an existing
+// participant between Owner and Manager.
+func (s *Service) SetArtistParticipant(ctx context.Context, command SetArtistParticipantCommand) (*managev1.ArtistParticipant, error) {
+	if command.Role != ParticipantRoleOwner && command.Role != ParticipantRoleManager {
+		return nil, domainerr.InvalidField("role", "must be Owner or Manager")
+	}
+	view, err := s.participants.SetParticipant(ctx, s.members, entityparticipant.ParticipantChange{
+		EntityID: command.ArtistID, MemberID: command.MemberID, Role: command.Role,
+		Audit: artistParticipantAudit(command.ArtistID, command.MemberID),
+	})
 	if err != nil {
 		return nil, err
 	}
-	view, err := artistEntity.SetParticipant(ctx, s.db, s.spiceDB, s.members, req.Msg.ArtistId, req.Msg.MemberId, role, s.artistParticipantAudit(req.Msg.ArtistId, req.Msg.MemberId))
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.ArtistParticipant{
-		Member: view.Member, Role: req.Msg.Role, CreatedAt: timestamppb.New(view.CreatedAt), HasEffectiveAuthority: view.HasEffectiveAuthority,
-	}), nil
+	return artistParticipantFromView(view), nil
 }
 
-func (s *ArtistService) RemoveArtistParticipant(
-	ctx context.Context,
-	req *connect.Request[managev1.RemoveArtistParticipantRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
-	if err := artistEntity.RemoveParticipant(ctx, s.db, s.spiceDB, req.Msg.ArtistId, req.Msg.MemberId, s.artistParticipantAudit(req.Msg.ArtistId, req.Msg.MemberId)); err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+// RemoveArtistParticipantCommand removes a Member from an Artist.
+type RemoveArtistParticipantCommand struct {
+	ArtistID string
+	MemberID string
 }
 
-func (s *ArtistService) artistParticipantAudit(artistID, memberID string) entityparticipant.Audit {
-	return func(ctx context.Context, tx *gorm.DB, previous, next sharedtelemetry.AuditRelationship) error {
-		return s.appendArtistParticipantAudit(ctx, tx, artistID, memberID, previous, next)
+// RemoveArtistParticipant removes the Member; the Artist keeps one Owner.
+func (s *Service) RemoveArtistParticipant(ctx context.Context, command RemoveArtistParticipantCommand) error {
+	return s.participants.RemoveParticipant(ctx, entityparticipant.ParticipantChange{
+		EntityID: command.ArtistID, MemberID: command.MemberID,
+		Audit: artistParticipantAudit(command.ArtistID, command.MemberID),
+	})
+}
+
+func artistParticipantAudit(artistID, memberID string) entityparticipant.ParticipantAudit {
+	return func(previous, next sharedtelemetry.AuditRelationship) mutation.Audit {
+		return mutation.RequestAudit(sharedtelemetry.AuditArtistUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewArtistParticipantAuditRecord(m, artistID, memberID, previous, next)
+		})
 	}
 }
 
 func artistParticipantFromView(view entityparticipant.View) *managev1.ArtistParticipant {
 	role := managev1.ArtistParticipantRole_ARTIST_PARTICIPANT_ROLE_MANAGER
-	if view.Role == participantRoleOwner {
+	if view.Role == ParticipantRoleOwner {
 		role = managev1.ArtistParticipantRole_ARTIST_PARTICIPANT_ROLE_OWNER
 	}
 	return &managev1.ArtistParticipant{
 		Member: view.Member, Role: role, CreatedAt: timestamppb.New(view.CreatedAt),
 		HasEffectiveAuthority: view.HasEffectiveAuthority,
-	}
-}
-
-func artistParticipantRole(role managev1.ArtistParticipantRole) (string, error) {
-	switch role {
-	case managev1.ArtistParticipantRole_ARTIST_PARTICIPANT_ROLE_OWNER:
-		return participantRoleOwner, nil
-	case managev1.ArtistParticipantRole_ARTIST_PARTICIPANT_ROLE_MANAGER:
-		return participantRoleManager, nil
-	default:
-		return "", errs.InvalidArgument("role", "must be Owner or Manager")
 	}
 }

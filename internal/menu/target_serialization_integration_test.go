@@ -7,6 +7,12 @@ import (
 	"testing"
 	"time"
 
+	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
+	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"gorm.io/gorm"
+
 	"connectrpc.com/connect"
 	referencecatalogmenuadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog/menu"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -28,9 +34,7 @@ func TestCategoryTargetRewriteWaitsForMenuWriterIntegration(t *testing.T) {
 	spiceDB := testutil.IntegrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	menuService := newMenuIntegrationService(db, apitelemetry.NewDurableWriter(db), spiceDB)
-	categoryService := referencecatalog.NewCategoryService(
-		db, referencecatalogmenuadapter.NewTargets(nil), spiceDB,
-	)
+	categoryService := referencecatalog.NewCategoryConnectHandler(referenceCatalogForTest(t, db, "", spiceDB))
 	suffix := identityID[:8]
 	categorySlug := "menu-lock-category-" + suffix
 	category, err := categoryService.CreateCategory(ctx, connect.NewRequest(&managev1.CreateCategoryRequest{
@@ -94,4 +98,19 @@ func requireMenuCallResult(t *testing.T, result <-chan error) error {
 		require.FailNow(t, "timed out waiting for Menu target update")
 		return nil
 	}
+}
+
+// referenceCatalogForTest builds the Reference Catalog use cases with the
+// production adapters and in-memory audit.
+func referenceCatalogForTest(t *testing.T, db *gorm.DB, cdnDomain string, spiceDB *auth.SpiceDBClient) *referencecatalog.Service {
+	t.Helper()
+	catalog, err := referencecatalog.NewService(referencecatalog.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{},
+		Assets:      referencecatalogadapter.NewAssets(cdnDomain),
+		Members:     referencecatalogadapter.NewMemberSummaries(cdnDomain),
+		MenuTargets: referencecatalogmenuadapter.NewTargets(nil),
+		ClientWorks: workadapter.ClientWorks{},
+	})
+	require.NoError(t, err)
+	return catalog
 }

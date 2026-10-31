@@ -3,32 +3,65 @@
 package referencecatalog_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"testing"
 
 	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
+	referencecatalogmenuadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog/menu"
+	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+// catalogForTest builds the Reference Catalog use cases with the production
+// adapters; a nil writer records audit in memory.
+func catalogForTest(
+	t *testing.T,
+	db *gorm.DB,
+	cdnDomain string,
+	spiceDB *auth.SpiceDBClient,
+	writer domainaudit.Appender,
+) *referencecatalog.Service {
+	t.Helper()
+	if writer == nil {
+		writer = &audittest.Recorder{}
+	}
+	service, err := referencecatalog.NewService(referencecatalog.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: writer,
+		Assets:      referencecatalogadapter.NewAssets(cdnDomain),
+		Members:     referencecatalogadapter.NewMemberSummaries(cdnDomain),
+		MenuTargets: referencecatalogmenuadapter.NewTargets(writer),
+		ClientWorks: workadapter.ClientWorks{},
+	})
+	require.NoError(t, err)
+	return service
+}
+
+// withRequest adds the request context a request-attributed audit record
+// needs; the user already in ctx becomes its actor.
+func withRequest(t *testing.T, ctx context.Context) context.Context {
+	t.Helper()
+	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.72")
+	require.NoError(t, err)
+	return auth.WithUser(sharedtelemetry.WithRequestContext(ctx, requestContext), auth.GetUser(ctx))
+}
 
 func mapPlaceServiceForTest(
 	t *testing.T,
 	db *gorm.DB,
 	cdnDomain string,
 	spiceDB *auth.SpiceDBClient,
-) *referencecatalog.MapPlaceService {
+) *referencecatalog.MapPlaceConnectHandler {
 	t.Helper()
-	return referencecatalog.NewMapPlaceService(
-		db,
-		referencecatalogadapter.NewAssets(cdnDomain),
-		referencecatalogadapter.NewMemberSummaries(cdnDomain),
-		spiceDB,
-	)
+	return referencecatalog.NewMapPlaceConnectHandler(catalogForTest(t, db, cdnDomain, spiceDB, nil))
 }
 
 func auditedMapPlaceServiceForTest(
@@ -37,15 +70,9 @@ func auditedMapPlaceServiceForTest(
 	cdnDomain string,
 	spiceDB *auth.SpiceDBClient,
 	writer domainaudit.Appender,
-) *referencecatalog.MapPlaceService {
+) *referencecatalog.MapPlaceConnectHandler {
 	t.Helper()
-	return referencecatalog.NewAuditedMapPlaceService(
-		db,
-		writer,
-		referencecatalogadapter.NewAssets(cdnDomain),
-		referencecatalogadapter.NewMemberSummaries(cdnDomain),
-		spiceDB,
-	)
+	return referencecatalog.NewMapPlaceConnectHandler(catalogForTest(t, db, cdnDomain, spiceDB, writer))
 }
 
 func seedMapPlaceReadyAsset(

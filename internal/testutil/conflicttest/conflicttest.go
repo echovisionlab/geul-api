@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
@@ -47,11 +48,11 @@ func requireConflict(
 	reason intrav1.CollaborationConflictReason,
 ) *intrav1.CollaborationConflictDetail {
 	t.Helper()
-	if got := connect.CodeOf(err); got != connect.CodeFailedPrecondition {
-		t.Fatalf("code = %v, want %v (%v)", got, connect.CodeFailedPrecondition, err)
+	connectErr, classified := errs.Classified(err)
+	if !classified || connectErr.Code() != connect.CodeFailedPrecondition {
+		t.Fatalf("code = %v, want %v (%v)", errs.CodeOf(err), connect.CodeFailedPrecondition, err)
 	}
-	var connectErr *connect.Error
-	if !errors.As(err, &connectErr) || len(connectErr.Details()) != 1 {
+	if len(connectErr.Details()) != 1 {
 		t.Fatalf("error %v does not carry one conflict detail", err)
 	}
 	value, decodeErr := connectErr.Details()[0].Value()

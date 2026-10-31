@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
@@ -254,7 +255,7 @@ func directTrackAttachmentOption(db *gorm.DB) FileServiceOption {
 }
 
 func (a *directTrackAttachment) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
-	return a.authority.LockExistsWithDB(ctx, tx, trackID)
+	return releaseConnectError(a.authority.LockExistsWithDB(ctx, tx, trackID))
 }
 
 func (a *directTrackAttachment) AttachOriginalWithDB(
@@ -271,7 +272,16 @@ func (a *directTrackAttachment) AttachOriginalWithDB(
 		AlreadyApplied: attachment.AlreadyApplied,
 		CurrentFileID:  attachment.CurrentFileID,
 		ReleaseID:      attachment.ReleaseID,
-	}, err
+	}, releaseConnectError(err)
+}
+
+// releaseConnectError gives a Release answer its Connect form, as the
+// production Track attachment adapter does.
+func releaseConnectError(err error) error {
+	if classified, ok := errs.Classified(err); ok {
+		return classified
+	}
+	return err
 }
 
 type flakyAttachedConfirmPublisher struct {

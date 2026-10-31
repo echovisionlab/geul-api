@@ -5,7 +5,6 @@ import (
 )
 
 type translationLocaleDocumentSaveInput struct {
-	Title               *string
-	OverwriteNullFields bool
-	Now                 time.Time
+	Title *string
+	Now   time.Time
 }

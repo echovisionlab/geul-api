@@ -31,7 +31,7 @@ type artistDocumentAPI interface {
 // NewArtistRegistration binds the already-composed Artist service. The
 // adapter receives no DB/SpiceDB callback bag and owns only compact DCDP
 // projection and compilation.
-func NewArtistRegistration(service *artistdomain.InternalArtistService) (DomainRegistration, error) {
+func NewArtistRegistration(service *artistdomain.Service) (DomainRegistration, error) {
 	if service == nil {
 		return DomainRegistration{}, errors.New("artist AI document service is required")
 	}

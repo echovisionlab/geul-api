@@ -284,7 +284,7 @@ func requireMapPlaceSourceFilesExist(t *testing.T, db *gorm.DB, fileIDs ...strin
 	require.EqualValues(t, len(fileIDs), count)
 }
 
-func createMapPlaceReferenceGuard(t *testing.T, service *referencecatalog.MapPlaceService, ctx context.Context, suffix string) *connect.Response[managev1.MapPlace] {
+func createMapPlaceReferenceGuard(t *testing.T, service *referencecatalog.MapPlaceConnectHandler, ctx context.Context, suffix string) *connect.Response[managev1.MapPlace] {
 	t.Helper()
 	place, err := service.CreateMapPlace(ctx, connect.NewRequest(&managev1.CreateMapPlaceRequest{
 		Name: "Map Place " + suffix + " Reference Guard", Address: suffix + " Reference Road", Lat: 37.7, Lng: 127.2,
@@ -293,7 +293,7 @@ func createMapPlaceReferenceGuard(t *testing.T, service *referencecatalog.MapPla
 	return place
 }
 
-func assertMapPlaceInUseDeleteRejected(t *testing.T, service *referencecatalog.MapPlaceService, ctx context.Context, placeID string) {
+func assertMapPlaceInUseDeleteRejected(t *testing.T, service *referencecatalog.MapPlaceConnectHandler, ctx context.Context, placeID string) {
 	t.Helper()
 	_, err := service.DeleteMapPlace(ctx, connect.NewRequest(&managev1.DeleteMapPlaceRequest{Id: placeID}))
 	require.Error(t, err)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 
 	"connectrpc.com/connect"
@@ -124,9 +125,13 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicWorkPath, publicWorkHandler)
 	slog.Info("Registered public service", "path", publicWorkPath)
 
-	publicReferenceCatalogAssets := referencecatalogadapter.NewPublicAssets(cfg.CDNURL)
-	publicClientService := publicreferencecatalog.NewClientService(db, publicReferenceCatalogAssets)
-	publicClientPath, publicClientHandler := openv1connect.NewClientServiceHandler(publicClientService, publicHandlerOpts...)
+	publicReferenceCatalog, err := publicreferencecatalog.NewService(publicreferencecatalog.Deps{
+		DB: db, Assets: referencecatalogadapter.NewPublicAssets(cfg.CDNURL),
+	})
+	if err != nil {
+		return fmt.Errorf("initialize public reference catalog service: %w", err)
+	}
+	publicClientPath, publicClientHandler := openv1connect.NewClientServiceHandler(publicreferencecatalog.NewClientConnectHandler(publicReferenceCatalog), publicHandlerOpts...)
 	mux.Handle(publicClientPath, publicClientHandler)
 	slog.Info("Registered public service", "path", publicClientPath)
 
@@ -165,8 +170,7 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicTermsPath, publicTermsHandler)
 	slog.Info("Registered public service", "path", publicTermsPath)
 
-	publicCategoryService := publicreferencecatalog.NewCategoryService(db)
-	publicCategoryPath, publicCategoryHandler := openv1connect.NewCategoryServiceHandler(publicCategoryService, publicHandlerOpts...)
+	publicCategoryPath, publicCategoryHandler := openv1connect.NewCategoryServiceHandler(publicreferencecatalog.NewCategoryConnectHandler(publicReferenceCatalog), publicHandlerOpts...)
 	mux.Handle(publicCategoryPath, publicCategoryHandler)
 	slog.Info("Registered public service", "path", publicCategoryPath)
 
@@ -178,8 +182,7 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicSeriesPath, publicSeriesHandler)
 	slog.Info("Registered public service", "path", publicSeriesPath)
 
-	publicTagService := publicreferencecatalog.NewTagService(db)
-	publicTagPath, publicTagHandler := openv1connect.NewTagServiceHandler(publicTagService, publicHandlerOpts...)
+	publicTagPath, publicTagHandler := openv1connect.NewTagServiceHandler(publicreferencecatalog.NewTagConnectHandler(publicReferenceCatalog), publicHandlerOpts...)
 	mux.Handle(publicTagPath, publicTagHandler)
 	slog.Info("Registered public service", "path", publicTagPath)
 
@@ -188,36 +191,35 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicNewsletterPath, publicNewsletterHandler)
 	slog.Info("Registered public service", "path", publicNewsletterPath)
 
-	publicMapPlaceService := publicreferencecatalog.NewMapPlaceService(db, publicReferenceCatalogAssets)
-	publicMapPlacePath, publicMapPlaceHandler := openv1connect.NewMapPlaceServiceHandler(publicMapPlaceService, publicHandlerOpts...)
+	publicMapPlacePath, publicMapPlaceHandler := openv1connect.NewMapPlaceServiceHandler(publicreferencecatalog.NewMapPlaceConnectHandler(publicReferenceCatalog), publicHandlerOpts...)
 	mux.Handle(publicMapPlacePath, publicMapPlaceHandler)
 	slog.Info("Registered public service", "path", publicMapPlacePath)
 
-	publicMapThemeService := mapthemepublic.NewMapThemeService(db)
-	publicMapThemePath, publicMapThemeHandler := openv1connect.NewMapThemeServiceHandler(publicMapThemeService, publicHandlerOpts...)
+	publicMapThemeService, err := mapthemepublic.NewService(mapthemepublic.Deps{DB: db})
+	if err != nil {
+		return fmt.Errorf("initialize public map theme service: %w", err)
+	}
+	publicMapThemePath, publicMapThemeHandler := openv1connect.NewMapThemeServiceHandler(mapthemepublic.NewConnectHandler(publicMapThemeService), publicHandlerOpts...)
 	mux.Handle(publicMapThemePath, publicMapThemeHandler)
 	slog.Info("Registered public service", "path", publicMapThemePath)
 
-	publicProgramEventTypeService := programeventpublic.NewProgramEventTypeService(db)
-	publicProgramEventTypePath, publicProgramEventTypeHandler := openv1connect.NewProgramEventTypeServiceHandler(publicProgramEventTypeService, publicHandlerOpts...)
+	publicProgramEvents, err := programeventpublic.NewService(programeventpublic.Deps{
+		DB: db, Assets: programeventadapter.NewPublicAssets(db, cfg.CDNURL), ContentBlocks: contentBlockStore,
+		Files:         programeventadapter.NewPublicFiles(publicFileService),
+		CreditMembers: programeventadapter.NewPublicCreditMemberSummaries(db, cfg.CDNURL),
+	})
+	if err != nil {
+		return fmt.Errorf("initialize public program event service: %w", err)
+	}
+	publicProgramEventTypePath, publicProgramEventTypeHandler := openv1connect.NewProgramEventTypeServiceHandler(programeventpublic.NewTypeConnectHandler(publicProgramEvents), publicHandlerOpts...)
 	mux.Handle(publicProgramEventTypePath, publicProgramEventTypeHandler)
 	slog.Info("Registered public service", "path", publicProgramEventTypePath)
 
-	publicProgramEventAssets := programeventadapter.NewPublicAssets(db, cfg.CDNURL)
-	publicProgramEventFiles := programeventadapter.NewPublicFiles(publicFileService)
-	publicProgramEventSeriesService := programeventpublic.NewProgramEventSeriesService(db, publicProgramEventAssets)
-	publicProgramEventSeriesPath, publicProgramEventSeriesHandler := openv1connect.NewProgramEventSeriesServiceHandler(publicProgramEventSeriesService, publicHandlerOpts...)
+	publicProgramEventSeriesPath, publicProgramEventSeriesHandler := openv1connect.NewProgramEventSeriesServiceHandler(programeventpublic.NewSeriesConnectHandler(publicProgramEvents), publicHandlerOpts...)
 	mux.Handle(publicProgramEventSeriesPath, publicProgramEventSeriesHandler)
 	slog.Info("Registered public service", "path", publicProgramEventSeriesPath)
 
-	publicProgramEventService := programeventpublic.NewProgramEventService(
-		db,
-		publicProgramEventAssets,
-		programeventadapter.NewPublicCreditMemberSummaries(db, cfg.CDNURL),
-		programeventpublic.WithProgramEventContentBlockStore(contentBlockStore),
-		programeventpublic.WithProgramEventFileService(publicProgramEventFiles),
-	)
-	publicProgramEventPath, publicProgramEventHandler := openv1connect.NewProgramEventServiceHandler(publicProgramEventService, publicHandlerOpts...)
+	publicProgramEventPath, publicProgramEventHandler := openv1connect.NewProgramEventServiceHandler(programeventpublic.NewConnectHandler(publicProgramEvents), publicHandlerOpts...)
 	mux.Handle(publicProgramEventPath, publicProgramEventHandler)
 	slog.Info("Registered public service", "path", publicProgramEventPath)
 
