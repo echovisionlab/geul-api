@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -15,7 +14,6 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type LegalNoticeActivationMode string
@@ -338,114 +336,6 @@ func DispatchCommittedLegalEffectiveNoticeAfterActivation(
 	now time.Time,
 	run *model.CampaignDeliveryRun,
 ) {
-	cancelScheduledLegalUpdateNoticeAfterActivation(ctx, db, referenceType, referenceID, now)
+	notice.CancelUpdateNoticeAfterActivation(ctx, db, referenceType, referenceID, now)
 	dispatchCreatedLegalNoticeRun(ctx, notice, run)
-}
-
-// cancelScheduledLegalUpdateNoticeAfterActivation prevents the dispatcher from
-// selecting an obsolete pre-effective update after the policy is already
-// active. The policy commit is authoritative: cleanup is best-effort, and a
-// concurrently sending or terminal run is never overwritten.
-func cancelScheduledLegalUpdateNoticeAfterActivation(
-	ctx context.Context,
-	db *gorm.DB,
-	referenceType string,
-	referenceID string,
-	now time.Time,
-) {
-	var referenceColumn string
-	var eventKey string
-	switch referenceType {
-	case EmailDeliveryReferenceTypeTerms:
-		referenceColumn = "terms_id"
-		eventKey = email.EventTermsUpdate.String()
-	case EmailDeliveryReferenceTypePrivacy:
-		referenceColumn = "privacy_id"
-		eventKey = email.EventPrivacyUpdate.String()
-	default:
-		slog.WarnContext(ctx,
-			"Legal policy activation committed without update notice cleanup",
-			"reference_type", referenceType,
-			"reference_id", referenceID,
-			"failure_cause", "unsupported legal notice reference type",
-		)
-		return
-	}
-
-	result := db.WithContext(ctx).
-		Model(&model.CampaignDeliveryRun{}).
-		Where("run_kind = ?", EmailDeliveryRunKindLegalNotice).
-		Where(referenceColumn+" = ?", referenceID).
-		Where("template_event_key = ?", eventKey).
-		Where("status = ?", CampaignDeliveryRunStatusScheduled).
-		Updates(structured.Fields{
-			"status":       CampaignDeliveryRunStatusCancelled,
-			"completed_at": now.UTC(),
-		})
-	if result.Error != nil {
-		slog.WarnContext(ctx,
-			"Legal policy activation committed without update notice cleanup",
-			"reference_type", referenceType,
-			"reference_id", referenceID,
-			"event_key", eventKey,
-			failurecause.Attr(result.Error),
-		)
-	}
-}
-
-func cancelActiveLegalNoticeDeliveryRuns(
-	ctx context.Context,
-	tx *gorm.DB,
-	referenceType string,
-	referenceID string,
-) error {
-	var referenceColumn string
-	switch referenceType {
-	case EmailDeliveryReferenceTypeTerms:
-		referenceColumn = "terms_id"
-	case EmailDeliveryReferenceTypePrivacy:
-		referenceColumn = "privacy_id"
-	default:
-		return errs.InvalidArgumentMsg(
-			"unsupported legal notice reference type",
-		)
-	}
-
-	var activeRuns []model.CampaignDeliveryRun
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Where(
-			referenceColumn+" = ? AND status IN ?",
-			referenceID,
-			[]string{
-				CampaignDeliveryRunStatusScheduled,
-				CampaignDeliveryRunStatusSending,
-				CampaignDeliveryRunStatusSent,
-			},
-		).
-		Order("id ASC").
-		Find(&activeRuns).Error; err != nil {
-		return err
-	}
-	for i := range activeRuns {
-		if activeRuns[i].Status == CampaignDeliveryRunStatusSending ||
-			activeRuns[i].Status == CampaignDeliveryRunStatusSent {
-			return errs.FailedPrecondition(
-				"legal notice delivery has already started",
-			)
-		}
-	}
-
-	now := time.Now().UTC()
-	return tx.WithContext(ctx).
-		Model(&model.CampaignDeliveryRun{}).
-		Where(
-			referenceColumn+" = ? AND status = ?",
-			referenceID,
-			CampaignDeliveryRunStatusScheduled,
-		).
-		Updates(structured.Fields{
-			"status":       CampaignDeliveryRunStatusCancelled,
-			"completed_at": now,
-		}).Error
 }

@@ -3,6 +3,8 @@
 package legal_test
 
 import (
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -29,6 +31,7 @@ func newLegalPolicyTestService(
 ) *legaldomain.Service {
 	deps := legaldomain.Deps{
 		DB: db, SpiceDB: spiceDB, OG: dependencies.OG, Notice: dependencies.Notice, Audit: audit, BaseURL: baseURL,
+		PreviewLinks: sharelinkadapter.LegalPreviewLinks{}, Members: memberadapter.PreferredLocales{},
 	}
 	for _, option := range options {
 		option(&deps)

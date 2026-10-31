@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -21,8 +23,10 @@ type EmailDeliveryDispatcher interface {
 
 // NoticeRuntime seals legal-policy source, email-template, and layout
 // revisions in the policy transaction, then delegates post-commit dispatch to
-// Campaign's generic delivery runtime.
+// Campaign's generic delivery runtime. Campaign's adapter reads and stops the
+// runs a policy lifecycle change affects.
 type NoticeRuntime struct {
+	campaignadapter.LegalNoticeRuns
 	dispatcher EmailDeliveryDispatcher
 }
 
@@ -152,7 +156,7 @@ func (*NoticeRuntime) PrepareAutomaticPreviewShareLink(
 	run model.CampaignDeliveryRun,
 	now time.Time,
 ) error {
-	return legaldomain.PrepareAutomaticNoticePreviewShareLink(ctx, tx, run, now)
+	return legaldomain.PrepareAutomaticNoticePreviewShareLink(ctx, tx, sharelinkadapter.LegalPreviewLinks{}, run, now)
 }
 
 func loadNoticeRenderSnapshot(

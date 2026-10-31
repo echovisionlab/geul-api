@@ -3,8 +3,6 @@ package public
 import (
 	"context"
 	"errors"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/crypto"
@@ -12,59 +10,6 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
-
-func IsAutomaticLegalNoticePublicHistoryToken(
-	ctx context.Context,
-	db *gorm.DB,
-	token string,
-	entityType managev1.ShareLinkEntityType,
-	entityID string,
-) (bool, error) {
-	var referenceColumn string
-	var eventKey string
-	switch entityType {
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY:
-		referenceColumn = "privacy_id"
-		eventKey = "privacy_update"
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS:
-		referenceColumn = "terms_id"
-		eventKey = "terms_update"
-	default:
-		return false, nil
-	}
-
-	var previewURLs []string
-	if err := db.WithContext(ctx).
-		Table("email_delivery_run").
-		Select("template_data ->> 'preview_url'").
-		Where("run_kind = ?", "legal_notice").
-		Where("definition_sealed = ?", true).
-		Where(referenceColumn+" = ?", entityID).
-		Where("template_event_key = ?", eventKey).
-		Where("template_data ->> 'preview_url' IS NOT NULL").
-		Pluck("template_data ->> 'preview_url'", &previewURLs).Error; err != nil {
-		return false, err
-	}
-	for _, previewURL := range previewURLs {
-		if legalNoticePreviewURLHasExactToken(previewURL, token) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func legalNoticePreviewURLHasExactToken(previewURL string, token string) bool {
-	parsed, err := url.Parse(strings.TrimSpace(previewURL))
-	if err != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return false
-	}
-	parts := strings.Split(strings.Trim(parsed.EscapedPath(), "/"), "/")
-	if len(parts) != 2 || parts[0] != "s" {
-		return false
-	}
-	previewToken, err := url.PathUnescape(parts[1])
-	return err == nil && previewToken == token
-}
 
 type legalShareLinkAccess struct {
 	status        string

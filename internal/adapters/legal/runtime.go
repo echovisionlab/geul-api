@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -124,7 +125,7 @@ func (*Runtime) PrepareAutomaticPreviewShareLink(
 	run model.CampaignDeliveryRun,
 	now time.Time,
 ) error {
-	return legaldomain.PrepareAutomaticNoticePreviewShareLink(ctx, tx, run, now)
+	return legaldomain.PrepareAutomaticNoticePreviewShareLink(ctx, tx, sharelinkadapter.LegalPreviewLinks{}, run, now)
 }
 
 var _ legaldomain.OG = (*Runtime)(nil)

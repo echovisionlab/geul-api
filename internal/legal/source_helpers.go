@@ -7,7 +7,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"gorm.io/gorm"
 )
@@ -15,15 +14,12 @@ import (
 func resolveInitialSourceLocale(
 	ctx context.Context,
 	db *gorm.DB,
+	members MemberLocales,
 	acceptLanguage string,
 ) string {
 	user := auth.GetUser(ctx)
 	if user != nil && user.Authenticated && db != nil {
-		var preferredLocale *string
-		if err := db.WithContext(ctx).Model(&model.Member{}).
-			Select("preferred_locale").
-			Where("id = ?::uuid AND deleted_at IS NULL", user.MemberID.String()).
-			Scan(&preferredLocale).Error; err != nil {
+		if preferredLocale, err := members.PreferredLocale(ctx, db, user.MemberID.String()); err != nil {
 			slog.ErrorContext(ctx, "Member preferred locale load failed; inferring the source locale from the request", "domain", "legal", "operation", "load_member_locale", "outcome", "failed", failurecause.Attr(err))
 		} else if preferredLocale != nil {
 			if locale := localization.NormalizeSupportedLocale(*preferredLocale); locale != nil {

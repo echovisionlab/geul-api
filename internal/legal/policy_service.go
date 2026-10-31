@@ -37,6 +37,8 @@ type Deps struct {
 	ContentBlocks *contentblock.Store
 	OG            OG
 	Notice        NoticeDelivery
+	PreviewLinks  PreviewLinks
+	Members       MemberLocales
 	Audit         domainaudit.Appender
 	// BaseURL is the site origin of notice links; empty keeps them relative.
 	BaseURL string
@@ -46,7 +48,8 @@ func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
 		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "ContentBlocks": d.ContentBlocks == nil,
-		"OG": d.OG == nil, "Notice": d.Notice == nil, "Audit": d.Audit == nil,
+		"OG": d.OG == nil, "Notice": d.Notice == nil, "PreviewLinks": d.PreviewLinks == nil,
+		"Members": d.Members == nil, "Audit": d.Audit == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -66,6 +69,8 @@ type Service struct {
 	spiceDB       *auth.SpiceDBClient
 	baseURL       string
 	notice        NoticeDelivery
+	previewLinks  PreviewLinks
+	members       MemberLocales
 	auditWriter   domainaudit.Appender
 	contentBlocks *contentblock.Store
 	legalOG       OG
@@ -81,6 +86,8 @@ func NewService(deps Deps) (*Service, error) {
 		spiceDB:       deps.SpiceDB,
 		baseURL:       deps.BaseURL,
 		notice:        deps.Notice,
+		previewLinks:  deps.PreviewLinks,
+		members:       deps.Members,
 		auditWriter:   deps.Audit,
 		contentBlocks: deps.ContentBlocks,
 		legalOG:       deps.OG,
@@ -298,7 +305,7 @@ func (s *Service) createDraftVersion(ctx context.Context, tx *gorm.DB, kind *pol
 		title = *command.Title
 	}
 	now := dbtime.Now()
-	sourceLocale := resolveInitialSourceLocale(ctx, tx, command.AcceptLanguage)
+	sourceLocale := resolveInitialSourceLocale(ctx, tx, s.members, command.AcceptLanguage)
 	created, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
 		Profile: legalContentDocumentProfile, SourceLocale: sourceLocale,
 	})
@@ -307,14 +314,15 @@ func (s *Service) createDraftVersion(ctx context.Context, tx *gorm.DB, kind *pol
 	}
 	// The version follows both the history and the notices sealed for
 	// deleted versions, so a version number is never reused.
+	sealedVersion, err := s.notice.LatestSealedVersion(ctx, tx, kind.entity())
+	if err != nil {
+		return row, err
+	}
 	if err := tx.Raw(`
 		INSERT INTO `+kind.table+` (title, content, status, version, created_at, updated_at, content_document_id, source_locale)
-		VALUES (?, '', ?, (SELECT GREATEST(
-			COALESCE((SELECT MAX(version) FROM `+kind.table+`), 0),
-			COALESCE((SELECT MAX(`+kind.sourceVersionColumn+`) FROM email_delivery_run WHERE `+kind.referenceColumn+` IS NOT NULL), 0)
-		) + 1), ?, ?, ?, ?)
+		VALUES (?, '', ?, GREATEST(COALESCE((SELECT MAX(version) FROM `+kind.table+`), 0), ?::integer) + 1, ?, ?, ?, ?)
 		RETURNING id, version, title, content, status, created_at, updated_at, content_document_id
-	`, title, kind.draft, now, now, created.Document.ID.String(), sourceLocale).Scan(&row).Error; err != nil {
+	`, title, kind.draft, sealedVersion, now, now, created.Document.ID.String(), sourceLocale).Scan(&row).Error; err != nil {
 		return row, err
 	}
 	if command.Document != nil {
@@ -462,10 +470,10 @@ func (s *Service) CancelPolicySchedule(ctx context.Context, kind PolicyKind, com
 		if documentRevision, err = s.policyDocumentRevision(ctx, tx, descriptor, row); err != nil {
 			return err
 		}
-		if err := cancelActiveLegalNoticeDeliveryRuns(ctx, tx, descriptor.entity(), row.ID); err != nil {
+		if err := s.notice.CancelScheduledRuns(ctx, tx, descriptor.entity(), row.ID); err != nil {
 			return err
 		}
-		if err := deleteAutomaticLegalNoticePreviewShareLinks(ctx, tx, descriptor.entity(), row.ID); err != nil {
+		if err := s.deleteAutomaticNoticePreviewLinks(ctx, tx, descriptor, row.ID); err != nil {
 			return err
 		}
 		currentBefore, err := s.legalOG.CurrentForRoute(ctx, tx, descriptor.entity())
@@ -660,7 +668,7 @@ func (s *Service) deletePolicyRow(ctx context.Context, tx *gorm.DB, kind *policy
 	if err != nil {
 		return err
 	}
-	if err := cancelLegalNoticeDeliveryForPolicyDeletion(ctx, tx, kind.entity(), row.ID); err != nil {
+	if err := s.notice.StopRunsForDeletedPolicy(ctx, tx, kind.entity(), row.ID); err != nil {
 		return err
 	}
 	if row.ContentDocumentID == nil {
@@ -673,7 +681,7 @@ func (s *Service) deletePolicyRow(ctx context.Context, tx *gorm.DB, kind *policy
 	if err := s.contentBlocks.DeleteDocument(ctx, tx, documentID, legalDocumentOwnershipFence(kind.entity(), row.ID)); err != nil {
 		return normalizeLegalContentBlockError(kind.entity(), err)
 	}
-	if err := tx.Where("entity_type = ? AND entity_id = ?", kind.shareLinkEntityType, row.ID).Delete(&model.ShareLink{}).Error; err != nil {
+	if err := s.previewLinks.DeleteForEntity(ctx, tx, kind.shareLinkEntityType, row.ID); err != nil {
 		return err
 	}
 	if err := tx.Table(kind.table).Where("id = ?", row.ID).Delete(&policyRow{}).Error; err != nil {
