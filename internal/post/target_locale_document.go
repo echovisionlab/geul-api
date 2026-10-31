@@ -20,6 +20,9 @@ import (
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
 
+// postTargetEntity names the owner in shared target-locale messages.
+const postTargetEntity = "Post"
+
 type postTargetLocaleMutationInput struct {
 	PostID                   string
 	Locale                   string
@@ -252,7 +255,7 @@ func applyPostTargetLocaleMutation(
 	var batch contentblock.Batch
 	if input.Batch != nil {
 		batch = contentblock.CloneBatch(*input.Batch)
-		if err := validatePostTargetBatch(
+		if err := contentblock.ValidateTargetLocaleBatch(postTargetEntity,
 			batch,
 			documentID,
 			input.ExpectedDocumentRevision,
@@ -497,6 +500,9 @@ func deletePostTargetLocale(
 	return result, nil
 }
 
+// validatePostTargetStorage applies contentblock.ValidateTargetLocaleBatch's
+// rules to the storage form, before conversion can reject the same input for
+// another reason.
 func validatePostTargetStorage(
 	storage *contentv1.ContentStorageMutationBatch,
 	expectedDocumentRevision uuid.UUID,
@@ -512,53 +518,26 @@ func validatePostTargetStorage(
 	if len(storage.BaseUpserts) != 0 || len(storage.Deletes) != 0 || len(storage.Moves) != 0 {
 		return errs.CollaborationMutationRejection(
 			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-			"Post target locale cannot mutate the shared Block graph",
+			"Post target locale cannot mutate the shared Block graph or File ownership",
 		)
 	}
 	if len(storage.LocaleGroups) > 1 {
-		return errs.InvalidArgument("batch", "Post target locale contains multiple locale groups")
+		return errs.CollaborationMutationRejection(
+			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
+			"Post target locale contains multiple locale groups",
+		)
 	}
 	for _, group := range storage.LocaleGroups {
 		if group.Locale != locale {
 			return errs.CollaborationMutationRejection(
 				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
-				"Post target locale mutation must match the authenticated room locale",
+				"Post target mutation must match the authorized locale",
 			)
 		}
 		if !allowLocaleValueDeletes && len(group.Deletes) != 0 {
-			return errs.InvalidArgument(
-				"batch",
-				"Post target locale values cannot be cleared; write an explicit empty value or delete the translation",
-			)
-		}
-	}
-	return nil
-}
-
-func validatePostTargetBatch(
-	batch contentblock.Batch,
-	documentID uuid.UUID,
-	expectedDocumentRevision uuid.UUID,
-	locale string,
-	allowLocaleValueDeletes bool,
-) error {
-	if batch.DocumentID != documentID || batch.ExpectedRevision != expectedDocumentRevision {
-		return errs.InvalidArgument("batch", "Post target document identity and revision must match the locked state")
-	}
-	if len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0 {
-		return errs.InvalidArgument("batch", "Post target locale cannot mutate the shared Block graph")
-	}
-	if len(batch.LocaleGroups) > 1 {
-		return errs.InvalidArgument("batch", "Post target locale contains multiple locale groups")
-	}
-	for _, group := range batch.LocaleGroups {
-		if group.Locale != locale {
-			return errs.InvalidArgument("batch", "Post target locale mutation must match the authorized locale")
-		}
-		if !allowLocaleValueDeletes && len(group.Deletes) != 0 {
-			return errs.InvalidArgument(
-				"batch",
-				"Post target locale values cannot be cleared; write an explicit empty value or delete the translation",
+			return errs.CollaborationMutationRejection(
+				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
+				"Post target patch cannot unset locale Blocks; write explicit empty values instead",
 			)
 		}
 	}

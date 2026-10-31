@@ -13,11 +13,13 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// releaseTargetEntity names the owner in shared target-locale messages.
+const releaseTargetEntity = "Release"
 
 type releaseLocaleMetadataRow struct {
 	Locale    string    `gorm:"column:locale"`
@@ -226,7 +228,7 @@ func applyReleaseTargetLocaleMutation(
 			"Release target locale must be explicitly created before collaboration",
 		)
 	}
-	if err := validateReleaseTargetBatch(
+	if err := contentblock.ValidateTargetLocaleBatch(releaseTargetEntity,
 		input.Batch,
 		input.DocumentID,
 		input.ExpectedDocumentRevision,
@@ -338,42 +340,6 @@ func applyReleaseTargetLocaleMutation(
 		return releaseTargetLocaleMutationResult{}, err
 	}
 	return result, nil
-}
-
-func validateReleaseTargetBatch(
-	batch contentblock.Batch,
-	documentID uuid.UUID,
-	expectedRevision uuid.UUID,
-	locale string,
-	allowLocaleDeletes bool,
-) error {
-	if batch.DocumentID != documentID || batch.ExpectedRevision != expectedRevision {
-		return errs.InvalidArgument("batch", "Release target document identity and revision must match the locked state")
-	}
-	if len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0 {
-		return errs.CollaborationMutationRejection(
-			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-			"Release target locale cannot mutate the shared Block graph",
-		)
-	}
-	if len(batch.LocaleGroups) > 1 {
-		return errs.InvalidArgument("batch", "Release target locale contains multiple locale groups")
-	}
-	for _, group := range batch.LocaleGroups {
-		if group.Locale != locale {
-			return errs.CollaborationMutationRejection(
-				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
-				"Release target mutation must match the authorized locale",
-			)
-		}
-		if len(group.Deletes) != 0 && !allowLocaleDeletes {
-			return errs.CollaborationMutationRejection(
-				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-				"Release target locale units cannot be deleted by interactive editing; write an explicit empty value instead",
-			)
-		}
-	}
-	return nil
 }
 
 func validateReleaseCreditNoteIdentityMap(

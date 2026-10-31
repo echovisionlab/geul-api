@@ -16,6 +16,9 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// workTargetEntity names the owner in shared target-locale messages.
+const workTargetEntity = "Work"
+
 type workLocaleMetadataRow struct {
 	Locale    string    `gorm:"column:locale"`
 	Title     *string   `gorm:"column:title"`
@@ -198,36 +201,6 @@ func loadWorkTargetLocaleState(ctx context.Context, tx *gorm.DB, store *contentb
 	return state, nil
 }
 
-func validateWorkTargetBatchAuthority(batch contentblock.Batch, documentID, expectedRevision uuid.UUID, locale string, allowLocaleDeletes bool) error {
-	if batch.DocumentID != documentID || batch.ExpectedRevision != expectedRevision {
-		return errs.InvalidArgument("batch", "Work target document identity and revision must match the locked state")
-	}
-	if len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0 {
-		return errs.CollaborationMutationRejection(
-			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-			"Work target locale cannot mutate the shared Block graph or File ownership",
-		)
-	}
-	if len(batch.LocaleGroups) > 1 {
-		return errs.InvalidArgument("batch", "Work target locale contains multiple locale groups")
-	}
-	for _, group := range batch.LocaleGroups {
-		if group.Locale != locale {
-			return errs.CollaborationMutationRejection(
-				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
-				"Work target mutation must match the authorized locale",
-			)
-		}
-		if len(group.Deletes) != 0 && !allowLocaleDeletes {
-			return errs.CollaborationMutationRejection(
-				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-				"Work target patch cannot unset locale Blocks; write explicit empty values instead",
-			)
-		}
-	}
-	return nil
-}
-
 func applyWorkTargetLocaleBatch(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -259,7 +232,7 @@ func applyWorkTargetLocaleBatch(
 	if state.SourceLocale != domain.SourceLocale {
 		return contentblock.Result{}, nil, errs.FailedPrecondition("Work source locale changed; reload before saving")
 	}
-	if err := validateWorkTargetBatchAuthority(batch, documentID, state.Snapshot.Document.Revision, locale, allowLocaleDeletes); err != nil {
+	if err := contentblock.ValidateTargetLocaleBatch(workTargetEntity, batch, documentID, state.Snapshot.Document.Revision, locale, allowLocaleDeletes); err != nil {
 		return contentblock.Result{}, nil, err
 	}
 	if err := translation.ValidateTargetRevisionWrite(

@@ -4,10 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
@@ -20,6 +21,9 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// campaignTargetEntity names the owner in shared target-locale messages.
+const campaignTargetEntity = "Campaign"
 
 type campaignExactLocaleMetadata struct {
 	Locale    string         `gorm:"column:locale"`
@@ -230,7 +234,7 @@ func applyCampaignTargetMutation(
 			"Campaign target locale presence changed; reload before saving",
 		)
 	}
-	if err := validateCampaignTargetBatch(
+	if err := contentblock.ValidateTargetLocaleBatch(campaignTargetEntity,
 		input.Batch, input.DocumentID, input.ExpectedDocumentRevision, input.Locale, input.AllowLocaleDeletes,
 	); err != nil {
 		return campaignTargetMutationResult{}, err
@@ -454,31 +458,4 @@ func campaignTargetSubjectsEqual(current sql.NullString, next *string) bool {
 		return !current.Valid && next == nil
 	}
 	return current.String == *next
-}
-
-func validateCampaignTargetBatch(
-	batch contentblock.Batch,
-	documentID uuid.UUID,
-	expectedRevision uuid.UUID,
-	locale string,
-	allowLocaleDeletes bool,
-) error {
-	if batch.DocumentID != documentID || batch.ExpectedRevision != expectedRevision {
-		return errs.InvalidArgument("batch", "Campaign target document identity and revision must match the locked state")
-	}
-	if len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0 {
-		return errs.InvalidArgument("batch", "Campaign target locale cannot mutate the shared Block graph")
-	}
-	if len(batch.LocaleGroups) > 1 {
-		return errs.InvalidArgument("batch", "Campaign target locale contains multiple locale groups")
-	}
-	for _, group := range batch.LocaleGroups {
-		if group.Locale != locale {
-			return errs.InvalidArgument("batch", "Campaign target mutation must match the authorized locale")
-		}
-		if len(group.Deletes) != 0 && !allowLocaleDeletes {
-			return errs.InvalidArgument("batch", "Campaign target locale values use explicit empty and cannot be deleted")
-		}
-	}
-	return nil
 }

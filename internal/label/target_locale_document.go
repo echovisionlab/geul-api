@@ -11,11 +11,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// labelTargetEntity names the owner in shared target-locale messages.
+const labelTargetEntity = "Label"
 
 type labelTargetLocaleState struct {
 	Snapshot       contentblock.Snapshot
@@ -204,7 +206,7 @@ func applyLabelTargetLocaleMutation(
 		return labelTargetLocaleMutationResult{}, errs.FailedPrecondition("Label target locale must be explicitly created before collaboration")
 	}
 	batch := contentblock.CloneBatch(input.Batch)
-	if err := validateLabelTargetBatch(batch, documentID, input.ExpectedDocumentRevision, input.Locale, input.AllowLocaleDeletes); err != nil {
+	if err := contentblock.ValidateTargetLocaleBatch(labelTargetEntity, batch, documentID, input.ExpectedDocumentRevision, input.Locale, input.AllowLocaleDeletes); err != nil {
 		return labelTargetLocaleMutationResult{}, err
 	}
 	if state.TargetMetadata == nil && input.SeedSource {
@@ -332,36 +334,6 @@ func deleteLabelTargetLocale(
 			}
 			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
 		})
-}
-
-func validateLabelTargetBatch(batch contentblock.Batch, documentID, expected uuid.UUID, locale string, allowLocaleDeletes bool) error {
-	if batch.DocumentID != documentID || batch.ExpectedRevision != expected {
-		return errs.InvalidArgument("batch", "Label target document identity and revision must match the locked state")
-	}
-	if len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0 {
-		return errs.CollaborationMutationRejection(
-			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-			"Label target locale cannot mutate the shared Block graph",
-		)
-	}
-	if len(batch.LocaleGroups) > 1 {
-		return errs.InvalidArgument("batch", "Label target locale contains multiple locale groups")
-	}
-	for _, group := range batch.LocaleGroups {
-		if group.Locale != locale {
-			return errs.CollaborationMutationRejection(
-				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
-				"Label target locale mutation must match the authenticated room locale",
-			)
-		}
-		if len(group.Deletes) != 0 && !allowLocaleDeletes {
-			return errs.CollaborationMutationRejection(
-				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-				"Label target locale units cannot be deleted by interactive editing; set an explicit empty value instead",
-			)
-		}
-	}
-	return nil
 }
 
 func labelSnapshotContainsLocale(snapshot contentblock.Snapshot, locale string) bool {

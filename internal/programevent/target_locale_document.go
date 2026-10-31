@@ -19,6 +19,9 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// programEventTargetEntity names the owner in shared target-locale messages.
+const programEventTargetEntity = "Program Event"
+
 type programEventLocaleMetadataRow struct {
 	Locale    string    `gorm:"column:locale"`
 	Summary   *string   `gorm:"column:summary"`
@@ -170,33 +173,6 @@ func programEventLocaleMetadataProjection(
 	return projected
 }
 
-func validateProgramEventTargetBatch(
-	batch contentblock.Batch,
-	documentID uuid.UUID,
-	expectedRevision uuid.UUID,
-	locale string,
-	allowLocaleDeletes bool,
-) error {
-	if batch.DocumentID != documentID || batch.ExpectedRevision != expectedRevision {
-		return errs.InvalidArgument("batch", "Program Event target document identity and revision must match the locked state")
-	}
-	if len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0 {
-		return errs.InvalidArgument("batch", "Program Event target locale cannot mutate the shared Block graph")
-	}
-	if len(batch.LocaleGroups) > 1 {
-		return errs.InvalidArgument("batch", "Program Event target locale contains multiple locale groups")
-	}
-	for _, group := range batch.LocaleGroups {
-		if group.Locale != locale {
-			return errs.InvalidArgument("batch", "Program Event target mutation must match the authorized locale")
-		}
-		if len(group.Deletes) != 0 && !allowLocaleDeletes {
-			return errs.InvalidArgument("batch", "Program Event target locale values use explicit empty and cannot be deleted")
-		}
-	}
-	return nil
-}
-
 type programEventTargetMutationInput struct {
 	EventID                  string
 	DocumentID               uuid.UUID
@@ -257,7 +233,7 @@ func applyProgramEventTargetMutation(
 			"Program Event target locale presence changed; reload before saving",
 		)
 	}
-	if err := validateProgramEventTargetBatch(
+	if err := contentblock.ValidateTargetLocaleBatch(programEventTargetEntity,
 		input.Batch, input.DocumentID, input.ExpectedDocumentRevision, input.Locale, input.AllowLocaleDeletes,
 	); err != nil {
 		return programEventTargetMutationResult{}, err

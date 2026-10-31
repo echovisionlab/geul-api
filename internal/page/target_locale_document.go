@@ -10,11 +10,13 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// pageTargetEntity names the owner in shared target-locale messages.
+const pageTargetEntity = "Page"
 
 type pageLocaleMetadataRow struct {
 	Locale        string    `gorm:"column:locale"`
@@ -176,36 +178,6 @@ func loadPageTargetLocaleState(
 	return state, nil
 }
 
-func validatePageTargetBatchAuthority(batch contentblock.Batch, documentID, expectedRevision uuid.UUID, locale string, allowLocaleDeletes bool) error {
-	if batch.DocumentID != documentID || batch.ExpectedRevision != expectedRevision {
-		return errs.InvalidArgument("batch", "Page target document identity and revision must match the locked state")
-	}
-	if len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0 {
-		return errs.CollaborationMutationRejection(
-			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-			"Page target locale cannot mutate the shared section graph or File ownership",
-		)
-	}
-	if len(batch.LocaleGroups) > 1 {
-		return errs.InvalidArgument("batch", "Page target locale contains multiple locale groups")
-	}
-	for _, group := range batch.LocaleGroups {
-		if group.Locale != locale {
-			return errs.CollaborationMutationRejection(
-				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
-				"Page target mutation must match the authorized locale",
-			)
-		}
-		if len(group.Deletes) != 0 && !allowLocaleDeletes {
-			return errs.CollaborationMutationRejection(
-				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-				"Page target patch cannot unset locale Blocks; write explicit empty values instead",
-			)
-		}
-	}
-	return nil
-}
-
 func applyPageTargetLocaleBatch(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -277,7 +249,7 @@ func applyPageTargetLocaleBatchWithRevisionPolicy(
 	if state.SourceLocale != domain.SourceLocale {
 		return contentblock.Result{}, nil, errs.FailedPrecondition("Page source locale changed; reload before saving")
 	}
-	if err := validatePageTargetBatchAuthority(batch, documentID, state.Snapshot.Document.Revision, locale, allowLocaleDeletes); err != nil {
+	if err := contentblock.ValidateTargetLocaleBatch(pageTargetEntity, batch, documentID, state.Snapshot.Document.Revision, locale, allowLocaleDeletes); err != nil {
 		return contentblock.Result{}, nil, err
 	}
 	if err := translation.ValidateTargetRevisionWrite(

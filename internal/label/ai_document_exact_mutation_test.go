@@ -2,7 +2,6 @@ package label
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -10,21 +9,6 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 )
-
-func TestValidateLabelTargetBatchReservesLocaleDeletesForProviderReplacement(t *testing.T) {
-	documentID, revision, blockID := uuid.New(), uuid.New(), uuid.New()
-	batch := contentblock.Batch{
-		DocumentID: documentID, ExpectedRevision: revision,
-		LocaleGroups: []contentblock.LocaleMutationGroup{{Locale: "ko", Deletes: []uuid.UUID{blockID}}},
-	}
-	err := validateLabelTargetBatch(batch, documentID, revision, "ko", false)
-	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "explicit empty") {
-		t.Fatalf("interactive locale delete error = %v", err)
-	}
-	if err := validateLabelTargetBatch(batch, documentID, revision, "ko", true); err != nil {
-		t.Fatalf("provider replacement locale delete rejected: %v", err)
-	}
-}
 
 func TestValidateCompiledLabelAIDocumentMutationKeepsLockedStateAuthoritative(t *testing.T) {
 	labelID, documentID, revision, contributor := uuid.New(), uuid.New(), uuid.New(), uuid.New()

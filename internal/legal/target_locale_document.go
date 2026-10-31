@@ -17,8 +17,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
+
+// legalTargetEntity names the owner in shared target-locale messages.
+const legalTargetEntity = "legal"
 
 type legalTargetLocaleMetadataRow struct {
 	Locale    string    `gorm:"column:locale"`
@@ -183,45 +185,6 @@ func legalSnapshotContainsLocale(snapshot contentblock.Snapshot, locale string) 
 	return false
 }
 
-func validateLegalTargetBatch(
-	batch contentblock.Batch,
-	documentID uuid.UUID,
-	expectedRevision uuid.UUID,
-	locale string,
-	allowLocaleDeletes bool,
-) error {
-	if batch.DocumentID != documentID || batch.ExpectedRevision != expectedRevision {
-		return errs.InvalidArgument("batch", "legal target document identity and revision must match the locked state")
-	}
-	if len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0 {
-		return errs.CollaborationMutationRejection(
-			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-			"legal target locale cannot mutate the shared Block graph or File relations",
-		)
-	}
-	if len(batch.LocaleGroups) > 1 {
-		return errs.CollaborationMutationRejection(
-			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
-			"legal target locale contains multiple locale groups",
-		)
-	}
-	for _, group := range batch.LocaleGroups {
-		if group.Locale != locale {
-			return errs.CollaborationMutationRejection(
-				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
-				"legal target locale mutation must match the authorized room locale",
-			)
-		}
-		if len(group.Deletes) != 0 && !allowLocaleDeletes {
-			return errs.CollaborationMutationRejection(
-				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-				"legal target locale values must be set explicitly; ordinary edits cannot unset or delete locale Blocks",
-			)
-		}
-	}
-	return nil
-}
-
 func applyLegalTargetLocaleMutation(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -262,7 +225,7 @@ func applyLegalTargetLocaleMutation(
 	}
 	documentID := *state.Root.ContentDocumentID
 	batch := input.Batch
-	if err := validateLegalTargetBatch(
+	if err := contentblock.ValidateTargetLocaleBatch(legalTargetEntity,
 		batch, documentID, input.ExpectedDocumentRevision, locale, input.AllowLocaleDeletes,
 	); err != nil {
 		return legalTargetLocaleMutationResult{}, err

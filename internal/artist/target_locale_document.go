@@ -18,6 +18,9 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// artistTargetEntity names the owner in shared target-locale messages.
+const artistTargetEntity = "Artist"
+
 type artistLocaleMetadataRow struct {
 	Locale    string    `gorm:"column:locale"`
 	Title     *string   `gorm:"column:title"`
@@ -195,42 +198,6 @@ func loadArtistTargetLocaleState(
 	return state, nil
 }
 
-func validateArtistTargetBatchAuthority(
-	batch contentblock.Batch,
-	documentID uuid.UUID,
-	expectedRevision uuid.UUID,
-	locale string,
-	allowLocaleDeletes bool,
-) error {
-	if batch.DocumentID != documentID || batch.ExpectedRevision != expectedRevision {
-		return errs.InvalidArgument("batch", "Artist target document identity and revision must match the locked state")
-	}
-	if len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0 {
-		return errs.CollaborationMutationRejection(
-			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-			"Artist target locale cannot mutate the shared Block graph",
-		)
-	}
-	if len(batch.LocaleGroups) > 1 {
-		return errs.InvalidArgument("batch", "Artist target locale contains multiple locale groups")
-	}
-	for _, group := range batch.LocaleGroups {
-		if group.Locale != locale {
-			return errs.CollaborationMutationRejection(
-				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH,
-				"Artist target mutation must match the authorized locale",
-			)
-		}
-		if len(group.Deletes) != 0 && !allowLocaleDeletes {
-			return errs.CollaborationMutationRejection(
-				intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
-				"Artist target patch cannot unset locale Blocks; write explicit empty values instead",
-			)
-		}
-	}
-	return nil
-}
-
 func validateArtistSourceStorage(
 	storage contentv1.ContentStorageMutationBatch,
 	sourceLocale string,
@@ -294,7 +261,7 @@ func applyArtistTargetLocaleBatchAuthority(
 	if state.SourceLocale != domain.SourceLocale {
 		return contentblock.Result{}, "", errs.FailedPrecondition("Artist source locale changed; reload before saving")
 	}
-	if err := validateArtistTargetBatchAuthority(
+	if err := contentblock.ValidateTargetLocaleBatch(artistTargetEntity,
 		batch, documentID, state.Snapshot.Document.Revision, locale, allowLocaleDeletes,
 	); err != nil {
 		return contentblock.Result{}, "", err

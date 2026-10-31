@@ -4,10 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
@@ -20,6 +21,9 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// emailTemplateTargetEntity names the owner in shared target-locale messages.
+const emailTemplateTargetEntity = "Email Template"
 
 type emailTemplateExactLocaleMetadata struct {
 	Locale    string         `gorm:"column:locale"`
@@ -235,7 +239,7 @@ func applyEmailTemplateTargetMutation(
 			"Email Template target locale presence changed; reload before saving",
 		)
 	}
-	if err := validateEmailTemplateTargetBatch(
+	if err := contentblock.ValidateTargetLocaleBatch(emailTemplateTargetEntity,
 		input.Batch, input.DocumentID, input.ExpectedDocumentRevision, input.Locale, input.AllowLocaleDeletes,
 	); err != nil {
 		return emailTemplateTargetMutationResult{}, err
@@ -459,31 +463,4 @@ func emailTemplateTargetSubjectsEqual(current sql.NullString, next *string) bool
 		return !current.Valid && next == nil
 	}
 	return current.String == *next
-}
-
-func validateEmailTemplateTargetBatch(
-	batch contentblock.Batch,
-	documentID uuid.UUID,
-	expectedRevision uuid.UUID,
-	locale string,
-	allowLocaleDeletes bool,
-) error {
-	if batch.DocumentID != documentID || batch.ExpectedRevision != expectedRevision {
-		return errs.InvalidArgument("batch", "Email Template target document identity and revision must match the locked state")
-	}
-	if len(batch.Upserts) != 0 || len(batch.Deletes) != 0 || len(batch.Reorders) != 0 {
-		return errs.InvalidArgument("batch", "Email Template target locale cannot mutate the shared Block graph")
-	}
-	if len(batch.LocaleGroups) > 1 {
-		return errs.InvalidArgument("batch", "Email Template target locale contains multiple locale groups")
-	}
-	for _, group := range batch.LocaleGroups {
-		if group.Locale != locale {
-			return errs.InvalidArgument("batch", "Email Template target mutation must match the authorized locale")
-		}
-		if len(group.Deletes) != 0 && !allowLocaleDeletes {
-			return errs.InvalidArgument("batch", "Email Template target locale values use explicit empty and cannot be deleted")
-		}
-	}
-	return nil
 }
