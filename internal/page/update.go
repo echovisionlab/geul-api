@@ -2,6 +2,8 @@ package page
 
 import (
 	"context"
+	"encoding/json"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -21,11 +23,33 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// pageUpdate is a validated Page configuration update. Each field is set
+// only when the request sets it; slugPresent with a nil normalizedSlug clears
+// the slug.
 type pageUpdate struct {
-	fields         structured.Fields
-	normalizedSlug *string
-	slugPresent    bool
-	accessPolicy   *commonv1.PageAccessPolicy
+	normalizedSlug      *string
+	slugPresent         bool
+	showTitle           *bool
+	accessPolicy        *commonv1.PageAccessPolicy
+	encodedAccessPolicy json.RawMessage
+}
+
+// columns is the Page row update for the fields the request sets.
+func (u pageUpdate) columns(updatedAt time.Time) structured.Fields {
+	columns := structured.Fields{"updated_at": updatedAt}
+	if u.slugPresent {
+		columns["slug"] = nil
+		if u.normalizedSlug != nil {
+			columns["slug"] = *u.normalizedSlug
+		}
+	}
+	if u.showTitle != nil {
+		columns["show_title"] = *u.showTitle
+	}
+	if u.accessPolicy != nil {
+		columns["access_policy"] = u.encodedAccessPolicy
+	}
+	return columns
 }
 
 func (s *PageService) preparePageUpdate(
@@ -39,18 +63,9 @@ func (s *PageService) preparePageUpdate(
 		}
 	}
 	update := pageUpdate{
-		fields:         structured.Fields{},
 		normalizedSlug: normalizedSlug,
 		slugPresent:    slugPresent,
-	}
-	if slugPresent {
-		update.fields["slug"] = nil
-		if normalizedSlug != nil {
-			update.fields["slug"] = *normalizedSlug
-		}
-	}
-	if request.ShowTitle != nil {
-		update.fields["show_title"] = *request.ShowTitle
+		showTitle:      request.ShowTitle,
 	}
 	if request.AccessPolicy != nil {
 		policy, err := pageaccess.Normalize(request.AccessPolicy)
@@ -62,7 +77,7 @@ func (s *PageService) preparePageUpdate(
 			return pageUpdate{}, errs.Internal(err)
 		}
 		update.accessPolicy = policy
-		update.fields["access_policy"] = encoded
+		update.encodedAccessPolicy = encoded
 	}
 	return update, nil
 }
@@ -111,22 +126,18 @@ func (s *PageService) applyPageUpdate(
 		}
 		// PostgreSQL keeps microseconds; respond with the value later reads return.
 		mutationNow := dbtime.Now()
-		update.fields["updated_at"] = mutationNow
-		if err := tx.Model(page).Updates(update.fields).Error; err != nil {
+		if err := tx.Model(page).Updates(update.columns(mutationNow)).Error; err != nil {
 			return err
 		}
 		if update.slugPresent {
 			page.Slug = update.normalizedSlug
 		}
-		if showTitle, ok := update.fields["show_title"].(bool); ok {
-			page.ShowTitle = showTitle
+		if update.showTitle != nil {
+			page.ShowTitle = *update.showTitle
 		}
 		page.UpdatedAt = mutationNow
 		if update.accessPolicy != nil {
-			page.AccessPolicy, err = pageaccess.Encode(update.accessPolicy)
-			if err != nil {
-				return errs.Internal(err)
-			}
+			page.AccessPolicy = update.encodedAccessPolicy
 		}
 		if err := s.updatePageMenuTargetAfterSlugChange(ctx, tx, page.ID, previousSlug, update); err != nil {
 			return err
@@ -149,7 +160,7 @@ func pageUpdateChangedFields(page *lockedPageMenuTargetState, update pageUpdate)
 	if update.slugPresent && !nullableStringEqual(page.Slug, update.normalizedSlug) {
 		fields = append(fields, "slug")
 	}
-	if value, ok := update.fields["show_title"].(bool); ok && value != page.ShowTitle {
+	if update.showTitle != nil && *update.showTitle != page.ShowTitle {
 		fields = append(fields, "show_title")
 	}
 	return fields
