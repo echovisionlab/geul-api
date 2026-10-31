@@ -225,7 +225,7 @@ func (s *Cleanup) CleanupOrphanHLSPrefixes(ctx context.Context, cutoff time.Time
 	if err != nil {
 		return fmt.Errorf("load referenced HLS generations: %w", err)
 	}
-	active, err := s.loadActiveTranscodeFileIDs(ctx, fileIDs)
+	active, err := transcode.ActiveJobFileIDs(ctx, s.db, fileIDs)
 	if err != nil {
 		return fmt.Errorf("load active transcode jobs for HLS cleanup: %w", err)
 	}
@@ -317,23 +317,6 @@ func (s *Cleanup) loadReferencedHLSGenerationIDs(ctx context.Context, generation
 	if err := s.db.WithContext(ctx).Model(&model.FileDerivative{}).
 		Where("type = ? AND media_generation_id IN ?", managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS.String(), generationIDs).
 		Pluck("media_generation_id", &ids).Error; err != nil {
-		return nil, err
-	}
-	for _, id := range ids {
-		result[id] = struct{}{}
-	}
-	return result, nil
-}
-
-func (s *Cleanup) loadActiveTranscodeFileIDs(ctx context.Context, fileIDs []string) (map[string]struct{}, error) {
-	result := make(map[string]struct{})
-	if len(fileIDs) == 0 {
-		return result, nil
-	}
-	var ids []string
-	if err := s.db.WithContext(ctx).Model(&model.TranscodeJob{}).
-		Where("file_id IN ? AND status IN ?", fileIDs, []string{transcode.StatusQueued, transcode.StatusProcessing}).
-		Pluck("file_id", &ids).Error; err != nil {
 		return nil, err
 	}
 	for _, id := range ids {

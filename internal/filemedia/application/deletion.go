@@ -94,26 +94,9 @@ func validatePendingFileDeletionWithDB(
 	if len(event.GetAssets()) != 0 {
 		return fmt.Errorf("%w: full file deletion must not own public asset deletion", ErrInvalidFileDeleteTarget)
 	}
-	var pendingTranscodeResults int64
-	if err := db.WithContext(ctx).
-		Table("transcode_job").
-		Where("file_id = ? AND status IN ?", event.GetFileId(), []string{
-			transcodestate.StatusQueued,
-			transcodestate.StatusProcessing,
-			transcodestate.StatusCancelled,
-		}).
-		Count(&pendingTranscodeResults).Error; err != nil {
+	pendingTranscodeResults, pendingWaveformResults, err := transcodestate.PendingResultCounts(ctx, db, event.GetFileId())
+	if err != nil {
 		return fmt.Errorf("check pending transcode results before file deletion: %w", err)
-	}
-	var pendingWaveformResults int64
-	if err := db.WithContext(ctx).
-		Table("waveform_job").
-		Where("file_id = ? AND status IN ?", event.GetFileId(), []string{
-			transcodestate.WaveformJobStatusQueued,
-			transcodestate.WaveformJobStatusCancelled,
-		}).
-		Count(&pendingWaveformResults).Error; err != nil {
-		return fmt.Errorf("check pending waveform results before file deletion: %w", err)
 	}
 	if pendingTranscodeResults > 0 || pendingWaveformResults > 0 {
 		return fmt.Errorf(

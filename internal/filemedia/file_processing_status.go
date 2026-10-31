@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/transcode"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -13,16 +12,6 @@ import (
 type fileProcessingSnapshot struct {
 	Status     commonv1.MediaProcessingStatus
 	Percentage *int32
-}
-
-type failedTranscodeJobRow struct {
-	FileID string `gorm:"column:file_id"`
-	Count  int64  `gorm:"column:failure_count"`
-}
-
-type failedWaveformJobRow struct {
-	FileID string `gorm:"column:file_id"`
-	Count  int64  `gorm:"column:failure_count"`
 }
 
 func resolveFileProcessingSnapshot(
@@ -116,15 +105,15 @@ func (s *FileService) populateFileProcessingStatus(
 		}
 	}
 
-	audioTranscodeFailures, err := s.loadFailedTranscodeJobsByFileIDs(ctx, audioIDs, eventpkg.QueueTranscoderAudio)
+	audioTranscodeFailures, err := transcode.FailedTranscodeCounts(ctx, s.db, audioIDs, eventpkg.QueueTranscoderAudio)
 	if err != nil {
 		return err
 	}
-	videoTranscodeFailures, err := s.loadFailedTranscodeJobsByFileIDs(ctx, videoIDs, eventpkg.QueueTranscoderVideo)
+	videoTranscodeFailures, err := transcode.FailedTranscodeCounts(ctx, s.db, videoIDs, eventpkg.QueueTranscoderVideo)
 	if err != nil {
 		return err
 	}
-	waveformFailures, err := s.loadFailedWaveformJobsByFileIDs(ctx, audioIDs)
+	waveformFailures, err := transcode.FailedWaveformCounts(ctx, s.db, audioIDs)
 	if err != nil {
 		return err
 	}
@@ -146,55 +135,4 @@ func (s *FileService) populateFileProcessingStatus(
 	}
 
 	return nil
-}
-
-func (s *FileService) loadFailedTranscodeJobsByFileIDs(
-	ctx context.Context,
-	fileIDs []string,
-	queueName string,
-) (map[string]int64, error) {
-	result := make(map[string]int64, len(fileIDs))
-	if len(fileIDs) == 0 {
-		return result, nil
-	}
-
-	var rows []failedTranscodeJobRow
-	if err := s.db.WithContext(ctx).
-		Model(&model.TranscodeJob{}).
-		Select("file_id, COUNT(*) AS failure_count").
-		Where("file_id IN ? AND queue_name = ? AND status = ?", fileIDs, queueName, "TRANSCODE_JOB_STATUS_FAILED_TERMINAL").
-		Group("file_id").
-		Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-
-	for _, row := range rows {
-		result[row.FileID] = row.Count
-	}
-	return result, nil
-}
-
-func (s *FileService) loadFailedWaveformJobsByFileIDs(
-	ctx context.Context,
-	fileIDs []string,
-) (map[string]int64, error) {
-	result := make(map[string]int64, len(fileIDs))
-	if len(fileIDs) == 0 {
-		return result, nil
-	}
-
-	var rows []failedWaveformJobRow
-	if err := s.db.WithContext(ctx).
-		Model(&model.WaveformJob{}).
-		Select("file_id, COUNT(*) AS failure_count").
-		Where("file_id IN ? AND status = ? AND cancel_requested = false", fileIDs, transcode.WaveformJobStatusFailed).
-		Group("file_id").
-		Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-
-	for _, row := range rows {
-		result[row.FileID] = row.Count
-	}
-	return result, nil
 }
