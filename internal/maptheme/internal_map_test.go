@@ -87,7 +87,7 @@ func TestInternalMapServiceLoadsTypedSnapshotAndCASAllowsExactlyOneWriter(t *tes
 		_, _ = themeService.DeleteMapTheme(ctx, connect.NewRequest(&managev1.DeleteMapThemeRequest{Id: created.Msg.Id}))
 	})
 
-	internalService := NewInternalMapService(db, spiceDB)
+	internalService := internalMapHandlerForTest(t, db, spiceDB, nil)
 	loaded, err := internalService.LoadMapThemeSnapshot(context.Background(), connect.NewRequest(&intrav1.LoadMapThemeSnapshotRequest{ThemeId: created.Msg.Id, Locale: "und"}))
 	require.NoError(t, err)
 	require.EqualValues(t, 1, loaded.Msg.Revision)
@@ -137,12 +137,12 @@ func TestInternalMapServiceRejectsIncompleteSnapshotWithoutDBChanges(t *testing.
 
 	snapshot := validDocumentSnapshot("Must not persist")
 	snapshot.DarkVariant = nil
-	_, err = NewInternalMapService(db, spiceDB).SaveMapThemeSnapshot(context.Background(), connect.NewRequest(&intrav1.SaveMapThemeSnapshotRequest{
+	_, err = internalMapHandlerForTest(t, db, spiceDB, nil).SaveMapThemeSnapshot(context.Background(), connect.NewRequest(&intrav1.SaveMapThemeSnapshotRequest{
 		ThemeId: created.Msg.Id, Locale: "und", ExpectedRevision: 1, Snapshot: snapshot,
 	}))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 
-	loaded, loadErr := NewInternalMapService(db, spiceDB).LoadMapThemeSnapshot(context.Background(), connect.NewRequest(&intrav1.LoadMapThemeSnapshotRequest{ThemeId: created.Msg.Id, Locale: "und"}))
+	loaded, loadErr := internalMapHandlerForTest(t, db, spiceDB, nil).LoadMapThemeSnapshot(context.Background(), connect.NewRequest(&intrav1.LoadMapThemeSnapshotRequest{ThemeId: created.Msg.Id, Locale: "und"}))
 	require.NoError(t, loadErr)
 	require.EqualValues(t, 1, loaded.Msg.Revision)
 	require.Equal(t, created.Msg.Name, loaded.Msg.Snapshot.Name)

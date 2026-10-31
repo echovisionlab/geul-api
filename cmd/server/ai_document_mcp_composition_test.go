@@ -20,6 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/maptheme"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/member"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
@@ -517,14 +518,6 @@ type compositionTrackReferences struct {
 	managev1connect.UnimplementedTrackServiceHandler
 }
 
-type compositionMapThemeReferences struct {
-	managev1connect.UnimplementedMapThemeServiceHandler
-}
-
-func (*compositionMapThemeReferences) UpdateMapThemeSnapshot(context.Context, string, int64, *managev1.CreateMapThemeRequest) (*managev1.MapTheme, bool, error) {
-	return nil, false, nil
-}
-
 func compositionContentApplications() contentMCPApplications {
 	return contentMCPApplications{
 		terms:        managev1connect.UnimplementedTermsServiceHandler{},
@@ -545,7 +538,7 @@ func compositionContentApplications() contentMCPApplications {
 		forms:        &compositionFormReferences{},
 		postSeries:   &compositionPostSeriesReferences{},
 		tracks:       &compositionTrackReferences{},
-		mapThemes:    &compositionMapThemeReferences{},
+		mapThemes:    &maptheme.Service{},
 		menus:        managev1connect.UnimplementedMenuServiceHandler{},
 		menuSettings: managev1connect.UnimplementedSiteSettingServiceHandler{},
 		siteSettings: managev1connect.UnimplementedSiteSettingServiceHandler{},

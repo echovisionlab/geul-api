@@ -41,7 +41,7 @@ func TestMapThemeAuthorizationIsSynchronousAndCompensatedIntegration(t *testing.
 	ctx := auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), requestContext), admin.AuthUserInfo())
 	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(admin.IdentityID))
 	require.NoError(t, err)
-	service := NewAuditedMapThemeService(db, apitelemetry.NewDurableWriter(db), stack.SpiceDBClient)
+	service := auditedMapThemeServiceForTest(t, db, stack.SpiceDBClient, apitelemetry.NewDurableWriter(db))
 
 	created, err := service.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Synchronous map theme")))
 	require.NoError(t, err)
@@ -76,7 +76,7 @@ func TestMapThemeAuthorizationIsSynchronousAndCompensatedIntegration(t *testing.
 	)
 
 	failingAudit := &captureFailingMapAuditAppender{}
-	failing := NewAuditedMapThemeService(db, failingAudit, stack.SpiceDBClient)
+	failing := auditedMapThemeServiceForTest(t, db, stack.SpiceDBClient, failingAudit)
 	_, err = failing.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Compensated map theme")))
 	require.Error(t, err)
 	require.NotEmpty(t, failingAudit.targetID)

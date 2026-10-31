@@ -47,6 +47,7 @@ type internalContentServiceRegistration struct {
 	legalRuntime                *legaladapter.Runtime
 	legalDependencies           legal.Dependencies
 	formDependencies            formdomain.Dependencies
+	mapThemes                   *maptheme.Service
 }
 
 // internalContentServices exposes the internal services needed by later AI
@@ -161,8 +162,7 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	mux.Handle(internalWorkPath, internalRPCTrust.collab(internalWorkHandler))
 	slog.Info("Registered internal service", "path", internalWorkPath)
 
-	internalMapService := maptheme.NewAuditedInternalMapService(db, telemetryWriter, spicedbClient)
-	internalMapPath, internalMapHandler := intrav1connect.NewInternalMapServiceHandler(internalMapService, internalHandlerOpts...)
+	internalMapPath, internalMapHandler := intrav1connect.NewInternalMapServiceHandler(maptheme.NewInternalConnectHandler(r.mapThemes), internalHandlerOpts...)
 	mux.Handle(internalMapPath, internalRPCTrust.collab(internalMapHandler))
 	slog.Info("Registered internal service", "path", internalMapPath)
 

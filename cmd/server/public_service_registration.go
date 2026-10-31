@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 
 	"connectrpc.com/connect"
@@ -48,7 +49,7 @@ type publicServiceRegistration struct {
 	formDependencies formdomain.Dependencies
 }
 
-func (r publicServiceRegistration) register() {
+func (r publicServiceRegistration) register() error {
 	deps := r.dependencies
 	mux := deps.mux
 	cfg := deps.cfg
@@ -189,8 +190,11 @@ func (r publicServiceRegistration) register() {
 	mux.Handle(publicMapPlacePath, publicMapPlaceHandler)
 	slog.Info("Registered public service", "path", publicMapPlacePath)
 
-	publicMapThemeService := mapthemepublic.NewMapThemeService(db)
-	publicMapThemePath, publicMapThemeHandler := openv1connect.NewMapThemeServiceHandler(publicMapThemeService, publicHandlerOpts...)
+	publicMapThemeService, err := mapthemepublic.NewService(mapthemepublic.Deps{DB: db})
+	if err != nil {
+		return fmt.Errorf("initialize public map theme service: %w", err)
+	}
+	publicMapThemePath, publicMapThemeHandler := openv1connect.NewMapThemeServiceHandler(mapthemepublic.NewConnectHandler(publicMapThemeService), publicHandlerOpts...)
 	mux.Handle(publicMapThemePath, publicMapThemeHandler)
 	slog.Info("Registered public service", "path", publicMapThemePath)
 
@@ -229,4 +233,5 @@ func (r publicServiceRegistration) register() {
 	publicSitemapPath, publicSitemapHandler := openv1connect.NewSitemapServiceHandler(publicSitemapService, publicHandlerOpts...)
 	mux.Handle(publicSitemapPath, publicSitemapHandler)
 	slog.Info("Registered public service", "path", publicSitemapPath)
+	return nil
 }

@@ -32,7 +32,7 @@ func TestManageMapThemeResolveRejectsMalformedIDBeforeDB(t *testing.T) {
 	t.Parallel()
 	// Nil dependencies make any database or authorization access fail the test.
 	malformed := "not-a-uuid"
-	response, err := (&MapThemeService{}).ResolveMapTheme(context.Background(), connect.NewRequest(&managev1.ResolveMapThemeRequest{
+	response, err := NewConnectHandler(&Service{}).ResolveMapTheme(context.Background(), connect.NewRequest(&managev1.ResolveMapThemeRequest{
 		ThemeId: &malformed,
 		Scheme:  "light",
 	}))
@@ -43,7 +43,7 @@ func TestManageMapThemeResolveRejectsMalformedIDBeforeDB(t *testing.T) {
 func TestManageMapThemeResolveRejectsWhitespaceWrappedCanonicalIDBeforeDB(t *testing.T) {
 	t.Parallel()
 	wrapped := " 550e8400-e29b-41d4-a716-446655440000 "
-	response, err := (&MapThemeService{}).ResolveMapTheme(context.Background(), connect.NewRequest(&managev1.ResolveMapThemeRequest{
+	response, err := NewConnectHandler(&Service{}).ResolveMapTheme(context.Background(), connect.NewRequest(&managev1.ResolveMapThemeRequest{
 		ThemeId: &wrapped,
 		Scheme:  "light",
 	}))

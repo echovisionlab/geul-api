@@ -2,27 +2,49 @@ package public
 
 import (
 	"context"
-	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 
-	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
-type MapThemeService struct {
-	openv1connect.UnimplementedMapThemeServiceHandler
+// Deps are the collaborators of the public Map Theme reads.
+type Deps struct {
+	DB *gorm.DB
+}
+
+// Service holds the public Map Theme reads.
+type Service struct {
 	db *gorm.DB
 }
 
-func NewMapThemeService(db *gorm.DB) *MapThemeService { return &MapThemeService{db: db} }
+// NewService validates deps and returns the public Map Theme reads.
+func NewService(deps Deps) (*Service, error) {
+	if deps.DB == nil {
+		return nil, errors.New("public map theme dependencies are required: DB")
+	}
+	return &Service{db: deps.DB}, nil
+}
+
+// ResolveByIDsQuery names themes to resolve; an empty ID is skipped.
+type ResolveByIDsQuery struct {
+	ThemeIDs []string
+}
+
+// ResolveQuery names a theme to resolve, falling back to the site default,
+// and the color scheme to resolve it in ("light" when empty).
+type ResolveQuery struct {
+	ThemeID *string
+	Scheme  string
+}
 
 func publicMapThemeVariantProto(themeID, scheme string, variant *model.MapThemeVariant) *openv1.MapThemeVariant {
 	proto := &openv1.MapThemeVariant{
@@ -74,7 +96,7 @@ func publicLoadMapThemes(
 ) (string, map[string]*model.MapTheme, error) {
 	var defaultID string
 	var byID map[string]*model.MapTheme
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := mutation.Read(ctx, db, func(tx *gorm.DB) error {
 		var err error
 		defaultID, err = publicDefaultMapThemeID(ctx, tx)
 		if err != nil {
@@ -102,29 +124,29 @@ func publicLoadMapThemes(
 			return fmt.Errorf("default map theme %s is missing", defaultID)
 		}
 		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	})
 	return defaultID, byID, err
 }
 
-func (s *MapThemeService) ResolveByIds(
-	ctx context.Context, req *connect.Request[openv1.ResolveMapThemesByIdsRequest],
-) (*connect.Response[openv1.ResolveMapThemesByIdsResponse], error) {
-	requested := make([]string, 0, len(req.Msg.RequestedThemeIds))
-	for _, id := range req.Msg.RequestedThemeIds {
+// ResolveByIDs resolves each requested theme, falling back to the site
+// default for a missing one.
+func (s *Service) ResolveByIDs(ctx context.Context, query ResolveByIDsQuery) ([]*openv1.ResolveMapThemeByIdResult, error) {
+	requested := make([]string, 0, len(query.ThemeIDs))
+	for _, id := range query.ThemeIDs {
 		if id == "" {
 			continue
 		}
 		if _, err := uuidutil.ParseCanonical(id, "requested_theme_ids"); err != nil {
-			return nil, errs.InvalidArgument("requested_theme_ids", "must contain only canonical UUIDs")
+			return nil, domainerr.InvalidField("requested_theme_ids", "must contain only canonical UUIDs")
 		}
 		requested = append(requested, id)
 	}
 	if len(requested) == 0 {
-		return connect.NewResponse(&openv1.ResolveMapThemesByIdsResponse{Results: []*openv1.ResolveMapThemeByIdResult{}}), nil
+		return []*openv1.ResolveMapThemeByIdResult{}, nil
 	}
 	defaultID, themes, err := publicLoadMapThemes(ctx, s.db, requested)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("resolve map themes: %w", err))
+		return nil, fmt.Errorf("resolve map themes: %w", err)
 	}
 	defaultTheme := themes[defaultID]
 	results := make([]*openv1.ResolveMapThemeByIdResult, 0, len(requested))
@@ -136,31 +158,29 @@ func (s *MapThemeService) ResolveByIds(
 		proto := publicMapThemeProto(resolved)
 		results = append(results, &openv1.ResolveMapThemeByIdResult{RequestedThemeId: requestedID, Theme: proto})
 	}
-	return connect.NewResponse(&openv1.ResolveMapThemesByIdsResponse{Results: results}), nil
+	return results, nil
 }
 
-func (s *MapThemeService) Resolve(
-	ctx context.Context, req *connect.Request[openv1.ResolveMapThemeRequest],
-) (*connect.Response[openv1.ResolvedMapTheme], error) {
-	scheme := req.Msg.Scheme
+func (s *Service) Resolve(ctx context.Context, query ResolveQuery) (*openv1.ResolvedMapTheme, error) {
+	scheme := query.Scheme
 	if scheme == "" {
 		scheme = "light"
 	}
 	if scheme != "light" && scheme != "dark" {
-		return nil, errs.InvalidArgument("scheme", "must be 'light' or 'dark'")
+		return nil, domainerr.InvalidField("scheme", "must be 'light' or 'dark'")
 	}
 	requestedID := ""
-	if req.Msg.ThemeId != nil {
-		requestedID = *req.Msg.ThemeId
+	if query.ThemeID != nil {
+		requestedID = *query.ThemeID
 		if requestedID != "" {
 			if _, err := uuidutil.ParseCanonical(requestedID, "theme_id"); err != nil {
-				return nil, errs.InvalidArgument("theme_id", "must be a canonical UUID")
+				return nil, domainerr.InvalidField("theme_id", "must be a canonical UUID")
 			}
 		}
 	}
 	defaultID, themes, err := publicLoadMapThemes(ctx, s.db, []string{requestedID})
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("resolve map theme: %w", err))
+		return nil, fmt.Errorf("resolve map theme: %w", err)
 	}
 	theme := themes[requestedID]
 	if theme == nil {
@@ -170,7 +190,7 @@ func (s *MapThemeService) Resolve(
 	if scheme == "dark" {
 		variant = &theme.DarkVariant
 	}
-	return connect.NewResponse(&openv1.ResolvedMapTheme{
+	return &openv1.ResolvedMapTheme{
 		ThemeId: theme.ID, Scheme: scheme,
 		Settings: &openv1.MapThemeSettings{
 			CalloutScale: float64(theme.CalloutScale), CalloutOffsetX: int32(theme.CalloutOffsetX),
@@ -178,5 +198,5 @@ func (s *MapThemeService) Resolve(
 			AttributionFontSize: int32(theme.AttributionFontSize), ShowAreaLabels: theme.ShowAreaLabels,
 			ShowPoiLabels: theme.ShowPoiLabels,
 		}, Variant: publicMapThemeVariantProto(theme.ID, scheme, variant),
-	}), nil
+	}, nil
 }

@@ -10,6 +10,7 @@ import (
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestPublicMapThemeResolveByIDsPreservesOrderDuplicatesAndFallsBack(t *testing.T) {
@@ -21,7 +22,7 @@ func TestPublicMapThemeResolveByIDsPreservesOrderDuplicatesAndFallsBack(t *testi
 	unknown := uuid.NewString()
 	requested := []string{settings.DefaultMapThemeID, unknown, settings.DefaultMapThemeID}
 
-	response, err := NewMapThemeService(db).ResolveByIds(t.Context(), connect.NewRequest(&openv1.ResolveMapThemesByIdsRequest{
+	response, err := publicHandler(t, db).ResolveByIds(t.Context(), connect.NewRequest(&openv1.ResolveMapThemesByIdsRequest{
 		RequestedThemeIds: requested,
 	}))
 	require.NoError(t, err)
@@ -41,7 +42,7 @@ func TestPublicMapThemeUnknownResolveFallsBackForBothSchemes(t *testing.T) {
 	require.NoError(t, db.Select("default_map_theme_id").Where("id = ?", 1).Take(&settings).Error)
 	unknown := uuid.NewString()
 	for _, scheme := range []string{"light", "dark"} {
-		response, err := NewMapThemeService(db).Resolve(t.Context(), connect.NewRequest(&openv1.ResolveMapThemeRequest{
+		response, err := publicHandler(t, db).Resolve(t.Context(), connect.NewRequest(&openv1.ResolveMapThemeRequest{
 			ThemeId: &unknown, Scheme: scheme,
 		}))
 		require.NoError(t, err)
@@ -49,4 +50,11 @@ func TestPublicMapThemeUnknownResolveFallsBackForBothSchemes(t *testing.T) {
 		require.Equal(t, scheme, response.Msg.Scheme)
 		require.NotNil(t, response.Msg.Variant)
 	}
+}
+
+func publicHandler(t *testing.T, db *gorm.DB) *ConnectHandler {
+	t.Helper()
+	service, err := NewService(Deps{DB: db})
+	require.NoError(t, err)
+	return NewConnectHandler(service)
 }

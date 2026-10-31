@@ -632,8 +632,11 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(mapPlacePath, mapPlaceHandler)
 	slog.Info("Registered service", "path", mapPlacePath)
 
-	mapThemeService := maptheme.NewAuditedMapThemeService(db, telemetryWriter, spicedbClient)
-	mapThemePath, mapThemeHandler := managev1connect.NewMapThemeServiceHandler(mapThemeService, handlerOpts...)
+	mapThemeService, err := maptheme.NewService(maptheme.Deps{DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize map theme service: %w", err)
+	}
+	mapThemePath, mapThemeHandler := managev1connect.NewMapThemeServiceHandler(maptheme.NewConnectHandler(mapThemeService), handlerOpts...)
 	mux.Handle(mapThemePath, mapThemeHandler)
 	slog.Info("Registered service", "path", mapThemePath)
 
@@ -751,6 +754,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		legalRuntime:                legalRuntime,
 		legalDependencies:           legalDependencies,
 		formDependencies:            formDependencies,
+		mapThemes:                   mapThemeService,
 	}).register()
 	if err != nil {
 		return registeredServices{}, err
@@ -902,7 +906,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	internalOgPath, internalOgHandler := intrav1connect.NewInternalOgServiceHandler(internalOgService, internalHandlerOpts...)
 	mux.Handle(internalOgPath, internalRPCTrust.og(internalOgHandler))
 	slog.Info("Registered internal service", "path", internalOgPath)
-	(publicServiceRegistration{
+	if err := (publicServiceRegistration{
 		dependencies:     deps,
 		handlerOptions:   publicHandlerOpts,
 		fileService:      publicFileService,
@@ -911,7 +915,9 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		workRuntime:      workRuntime,
 		legalRuntime:     legalRuntime,
 		formDependencies: formDependencies,
-	}).register()
+	}).register(); err != nil {
+		return registeredServices{}, err
+	}
 
 	return registeredServices{
 		authInterceptor:             authInterceptor,

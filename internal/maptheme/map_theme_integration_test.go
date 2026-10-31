@@ -290,7 +290,7 @@ func TestMapThemeDetailCopyAndInternalLoadUseOneParentVariantSnapshot(t *testing
 						result.copiedThemeID = response.Msg.Id
 					}
 				case "internal_load":
-					response, readErr := NewInternalMapService(reader, spiceDB).LoadMapThemeSnapshot(context.Background(), connect.NewRequest(&intrav1.LoadMapThemeSnapshotRequest{ThemeId: created.Msg.Id, Locale: "und"}))
+					response, readErr := internalMapHandlerForTest(t, reader, spiceDB, nil).LoadMapThemeSnapshot(context.Background(), connect.NewRequest(&intrav1.LoadMapThemeSnapshotRequest{ThemeId: created.Msg.Id, Locale: "und"}))
 					result.err = readErr
 					if readErr == nil {
 						result.name = response.Msg.Snapshot.Name
@@ -316,7 +316,7 @@ func TestMapThemeDetailCopyAndInternalLoadUseOneParentVariantSnapshot(t *testing
 			updated.DarkVariant.BackgroundColor = "#202020"
 			saveResult := make(chan error, 1)
 			go func() {
-				_, saveErr := NewInternalMapService(db, spiceDB).SaveMapThemeSnapshot(
+				_, saveErr := internalMapHandlerForTest(t, db, spiceDB, nil).SaveMapThemeSnapshot(
 					context.Background(),
 					connect.NewRequest(&intrav1.SaveMapThemeSnapshotRequest{
 						ThemeId:              created.Msg.Id,
@@ -347,7 +347,7 @@ func TestMapThemeDetailCopyAndInternalLoadUseOneParentVariantSnapshot(t *testing
 				require.Equal(t, created.Msg.Name, result.name)
 			}
 
-			persisted, loadErr := NewInternalMapService(db, spiceDB).LoadMapThemeSnapshot(context.Background(), connect.NewRequest(&intrav1.LoadMapThemeSnapshotRequest{ThemeId: created.Msg.Id, Locale: "und"}))
+			persisted, loadErr := internalMapHandlerForTest(t, db, spiceDB, nil).LoadMapThemeSnapshot(context.Background(), connect.NewRequest(&intrav1.LoadMapThemeSnapshotRequest{ThemeId: created.Msg.Id, Locale: "und"}))
 			require.NoError(t, loadErr)
 			require.EqualValues(t, 2, persisted.Msg.Revision)
 			require.Equal(t, updated.Name, persisted.Msg.Snapshot.Name)

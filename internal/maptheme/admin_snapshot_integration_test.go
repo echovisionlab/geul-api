@@ -28,7 +28,7 @@ func TestMapThemeAdminSnapshotUpdateRevisionNoopAndAuditIntegration(t *testing.T
 	service := auditedMapThemeServiceForTest(t, db, spiceDB, apitelemetry.NewDurableWriter(db))
 	input.Name = " Snapshot source "
 	input.LightVariant.BackgroundColor = " #ffffff "
-	noop, changed, err := service.UpdateMapThemeSnapshot(ctx, created.Msg.Id, 1, input)
+	noop, changed, err := service.updateSnapshot(ctx, created.Msg.Id, 1, input)
 	require.NoError(t, err)
 	require.False(t, changed)
 	require.EqualValues(t, 1, noop.Revision)
@@ -39,7 +39,7 @@ func TestMapThemeAdminSnapshotUpdateRevisionNoopAndAuditIntegration(t *testing.T
 	input.Name = " Changed snapshot "
 	input.Settings.ShowAreaLabels = false
 	input.LightVariant.BuildingStrokeEnabled = false
-	updated, changed, err := service.UpdateMapThemeSnapshot(ctx, created.Msg.Id, 1, input)
+	updated, changed, err := service.updateSnapshot(ctx, created.Msg.Id, 1, input)
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.EqualValues(t, 2, updated.Revision)
@@ -49,7 +49,7 @@ func TestMapThemeAdminSnapshotUpdateRevisionNoopAndAuditIntegration(t *testing.T
 	loaded, err := service.GetMapTheme(ctx, connect.NewRequest(&managev1.GetMapThemeRequest{Id: created.Msg.Id}))
 	require.NoError(t, err)
 	require.True(t, proto.Equal(updated, loaded.Msg))
-	_, changed, err = service.UpdateMapThemeSnapshot(ctx, created.Msg.Id, 1, input)
+	_, changed, err = service.updateSnapshot(ctx, created.Msg.Id, 1, input)
 	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
 	require.False(t, changed)
 	var records []struct {
@@ -77,14 +77,14 @@ func TestMapThemeAdminSnapshotUpdateDenialAndAuditRollbackIntegration(t *testing
 	author := mapThemeAdminUser(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, author.IdentityID, policyv1.Role.Author())
 	input.Name = "Unauthorized change"
-	_, changed, err := service.UpdateMapThemeSnapshot(mapThemeMemberContext(author), created.Msg.Id, 1, input)
+	_, changed, err := service.updateSnapshot(mapThemeMemberContext(author), created.Msg.Id, 1, input)
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 	require.False(t, changed)
 	// Permission is checked before CAS: an Author does not learn conflict state.
-	_, _, err = service.UpdateMapThemeSnapshot(mapThemeMemberContext(author), created.Msg.Id, 999, input)
+	_, _, err = service.updateSnapshot(mapThemeMemberContext(author), created.Msg.Id, 999, input)
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 	failing := auditedMapThemeServiceForTest(t, db, spiceDB, failingDomainAuditAppender{})
-	_, changed, err = failing.UpdateMapThemeSnapshot(ctx, created.Msg.Id, 1, input)
+	_, changed, err = failing.updateSnapshot(ctx, created.Msg.Id, 1, input)
 	require.Error(t, err)
 	require.False(t, changed)
 	loaded, err := service.GetMapTheme(ctx, connect.NewRequest(&managev1.GetMapThemeRequest{Id: created.Msg.Id}))

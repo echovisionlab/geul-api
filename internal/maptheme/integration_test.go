@@ -11,7 +11,10 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/testutil"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
@@ -58,11 +61,12 @@ func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient {
 }
 
 func postIntegrationAdminCtx(identityID string, _ *string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	return auth.WithUser(requestBackground(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(identityID),
 		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(identityID)),
 		SessionID:     auth.SessionID(uuid.NewString()),
 		Authenticated: true,
+		Onboarded:     true,
 	})
 }
 
@@ -77,10 +81,10 @@ func (failingDomainAuditAppender) AppendDomainAuditInTransaction(
 }
 
 func adminCtx() context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	return auth.WithUser(requestBackground(), &auth.UserInfo{
 		IdentityID: "018f0d9c-1f54-7d51-8abc-a1b2c3d4e5f7",
 		MemberID:   "018f0d9c-1f54-7d51-8abc-a1b2c3d4e5f6",
-		SessionID:  auth.SessionID(uuid.NewString()), Authenticated: true,
+		SessionID:  auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	})
 }
 
@@ -90,12 +94,32 @@ func mapThemeAdminUser(t *testing.T) *testutil.OryUser {
 }
 
 func mapThemeAdminContext(t *testing.T) context.Context {
-	return auth.WithUser(context.Background(), mapThemeAdminUser(t).AuthUserInfo())
+	return auth.WithUser(requestBackground(), mapThemeAdminUser(t).AuthUserInfo())
 }
 
-func mapThemeServiceForTest(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *MapThemeService {
+// requestBackground carries the request context a request-attributed audit
+// record needs; the caller's user becomes its actor.
+func requestBackground() context.Context {
+	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.98")
+	if err != nil {
+		panic(err)
+	}
+	return sharedtelemetry.WithRequestContext(context.Background(), requestContext)
+}
+
+func newTestService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, writer domainaudit.Appender) *Service {
 	t.Helper()
-	return NewMapThemeService(db, spiceDB)
+	if writer == nil {
+		writer = &audittest.Recorder{}
+	}
+	service, err := NewService(Deps{DB: db, SpiceDB: spiceDB, Audit: writer})
+	require.NoError(t, err)
+	return service
+}
+
+func mapThemeServiceForTest(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *ConnectHandler {
+	t.Helper()
+	return NewConnectHandler(newTestService(t, db, spiceDB, nil))
 }
 
 func auditedMapThemeServiceForTest(
@@ -103,9 +127,26 @@ func auditedMapThemeServiceForTest(
 	db *gorm.DB,
 	spiceDB *auth.SpiceDBClient,
 	writer domainaudit.Appender,
-) *MapThemeService {
+) *ConnectHandler {
 	t.Helper()
-	return NewAuditedMapThemeService(db, writer, spiceDB)
+	return NewConnectHandler(newTestService(t, db, spiceDB, writer))
+}
+
+func internalMapHandlerForTest(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, writer domainaudit.Appender) *InternalConnectHandler {
+	t.Helper()
+	return NewInternalConnectHandler(newTestService(t, db, spiceDB, writer))
+}
+
+// updateSnapshot calls the snapshot update use case the MCP tool calls, with
+// the Connect error mapping the tests assert.
+func (h *ConnectHandler) updateSnapshot(ctx context.Context, id string, revision int64, input *managev1.CreateMapThemeRequest) (*managev1.MapTheme, bool, error) {
+	update, err := h.themes.UpdateMapThemeSnapshot(ctx, UpdateMapThemeSnapshotCommand{
+		ThemeID: id, ExpectedRevision: revision, Snapshot: manageSnapshotInput(input),
+	})
+	if err != nil {
+		return nil, false, errs.Wrap(err)
+	}
+	return update.Theme, update.Changed, nil
 }
 
 func durableAudienceSpiceDB(t *testing.T) *auth.SpiceDBClient {

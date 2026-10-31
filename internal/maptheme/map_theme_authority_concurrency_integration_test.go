@@ -21,7 +21,7 @@ func TestMapThemeMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T)
 	tests := []struct {
 		name      string
 		lock      func(*gorm.DB, string, string) error
-		invoke    func(context.Context, *MapThemeService, *InternalMapService, string, string) error
+		invoke    func(context.Context, *ConnectHandler, *InternalConnectHandler, string, string) error
 		assertion func(*testing.T, *gorm.DB, string)
 	}{
 		{
@@ -29,7 +29,7 @@ func TestMapThemeMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T)
 			lock: func(tx *gorm.DB, _, identityID string) error {
 				return tx.Exec("SELECT id FROM kratos.identities WHERE id = ?::uuid FOR UPDATE", identityID).Error
 			},
-			invoke: func(ctx context.Context, service *MapThemeService, _ *InternalMapService, _, _ string) error {
+			invoke: func(ctx context.Context, service *ConnectHandler, _ *InternalConnectHandler, _, _ string) error {
 				_, err := service.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Role-revoked create")))
 				return err
 			},
@@ -42,7 +42,7 @@ func TestMapThemeMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T)
 		{
 			name: "copy",
 			lock: lockMapThemeAuthorityRaceRoot,
-			invoke: func(ctx context.Context, service *MapThemeService, _ *InternalMapService, themeID, _ string) error {
+			invoke: func(ctx context.Context, service *ConnectHandler, _ *InternalConnectHandler, themeID, _ string) error {
 				_, err := service.CopyMapTheme(ctx, connect.NewRequest(&managev1.CopyMapThemeRequest{Id: themeID, Name: "Role-revoked copy"}))
 				return err
 			},
@@ -55,7 +55,7 @@ func TestMapThemeMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T)
 		{
 			name: "update",
 			lock: lockMapThemeAuthorityRaceRoot,
-			invoke: func(_ context.Context, _ *MapThemeService, internal *InternalMapService, themeID, memberID string) error {
+			invoke: func(_ context.Context, _ *ConnectHandler, internal *InternalConnectHandler, themeID, memberID string) error {
 				_, err := internal.SaveMapThemeSnapshot(context.Background(), connect.NewRequest(&intrav1.SaveMapThemeSnapshotRequest{
 					ThemeId: themeID, Locale: "und", ExpectedRevision: 1, Snapshot: validDocumentSnapshot("Role-revoked update"), ContributorMemberIds: []string{memberID},
 				}))
@@ -74,7 +74,7 @@ func TestMapThemeMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T)
 		{
 			name: "set default",
 			lock: lockMapThemeAuthorityRaceRoot,
-			invoke: func(ctx context.Context, service *MapThemeService, _ *InternalMapService, themeID, _ string) error {
+			invoke: func(ctx context.Context, service *ConnectHandler, _ *InternalConnectHandler, themeID, _ string) error {
 				_, err := service.SetDefaultMapTheme(ctx, connect.NewRequest(&managev1.SetDefaultMapThemeRequest{ThemeId: themeID}))
 				return err
 			},
@@ -87,7 +87,7 @@ func TestMapThemeMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T)
 		{
 			name: "delete",
 			lock: lockMapThemeAuthorityRaceRoot,
-			invoke: func(ctx context.Context, service *MapThemeService, _ *InternalMapService, themeID, _ string) error {
+			invoke: func(ctx context.Context, service *ConnectHandler, _ *InternalConnectHandler, themeID, _ string) error {
 				_, err := service.DeleteMapTheme(ctx, connect.NewRequest(&managev1.DeleteMapThemeRequest{Id: themeID}))
 				return err
 			},
@@ -110,7 +110,7 @@ func TestMapThemeMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T)
 			service := mapThemeServiceForTest(t, db, spiceDB)
 			theme, err := service.CreateMapTheme(ctx, connect.NewRequest(validCreateMapThemeRequest("Role-revoked source "+testutil.IntegrationUUID())))
 			require.NoError(t, err)
-			internal := NewInternalMapService(db, spiceDB)
+			internal := internalMapHandlerForTest(t, db, spiceDB, nil)
 
 			lockTx := db.Begin()
 			require.NoError(t, lockTx.Error)

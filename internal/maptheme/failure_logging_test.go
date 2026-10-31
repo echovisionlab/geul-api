@@ -30,7 +30,7 @@ func TestListMapThemesKeepsCauseForTheRequestRecord(t *testing.T) {
 	require.NoError(t, err)
 	cause := errors.New("transaction backend unavailable")
 	mock.ExpectBegin().WillReturnError(cause)
-	service := &MapThemeService{db: db}
+	service := NewConnectHandler(&Service{db: db})
 	response, err := service.ListMapThemes(t.Context(), connect.NewRequest(&managev1.ListMapThemesRequest{}))
 	require.Nil(t, response)
 	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))

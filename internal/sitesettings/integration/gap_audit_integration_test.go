@@ -10,6 +10,8 @@ import (
 	"connectrpc.com/connect"
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
@@ -53,13 +55,13 @@ func TestSiteSettingsLoaderAndDefaultThemeAuditCommitOnlyActualChangesIntegratio
 	_, err = settings.RemoveSiteLoaderAsset(ctx, connect.NewRequest(&managev1.RemoveSiteLoaderAssetRequest{FileId: loaderFileID}))
 	require.NoError(t, err)
 
-	mapThemes := maptheme.NewMapThemeService(db, spiceDB)
+	mapThemes := mapThemeHandler(t, db, spiceDB, &audittest.Recorder{})
 	theme, err := mapThemes.CreateMapTheme(
 		ctx,
 		connect.NewRequest(serviceMapThemeCreateRequest("Audited default theme")),
 	)
 	require.NoError(t, err)
-	auditedMapThemes := maptheme.NewAuditedMapThemeService(db, writer, spiceDB)
+	auditedMapThemes := mapThemeHandler(t, db, spiceDB, writer)
 	_, err = auditedMapThemes.SetDefaultMapTheme(ctx, connect.NewRequest(&managev1.SetDefaultMapThemeRequest{ThemeId: theme.Msg.Id}))
 	require.NoError(t, err)
 	_, err = auditedMapThemes.SetDefaultMapTheme(ctx, connect.NewRequest(&managev1.SetDefaultMapThemeRequest{ThemeId: theme.Msg.Id}))
@@ -99,12 +101,12 @@ func TestSiteSettingsLoaderAndDefaultThemeAuditFailureRollsBackIntegration(t *te
 
 	var beforeDefault string
 	require.NoError(t, db.Raw(`SELECT default_map_theme_id::text FROM public.site_settings WHERE id = 1`).Scan(&beforeDefault).Error)
-	theme, err := maptheme.NewMapThemeService(db, spiceDB).CreateMapTheme(
+	theme, err := mapThemeHandler(t, db, spiceDB, &audittest.Recorder{}).CreateMapTheme(
 		ctx,
 		connect.NewRequest(serviceMapThemeCreateRequest("Rollback default theme")),
 	)
 	require.NoError(t, err)
-	_, err = maptheme.NewAuditedMapThemeService(db, failingDomainAuditAppender{}, spiceDB).
+	_, err = mapThemeHandler(t, db, spiceDB, failingDomainAuditAppender{}).
 		SetDefaultMapTheme(ctx, connect.NewRequest(&managev1.SetDefaultMapThemeRequest{ThemeId: theme.Msg.Id}))
 	require.Error(t, err)
 	var afterDefault string
@@ -168,4 +170,11 @@ func siteSettingsGapAuditChangedFields(t *testing.T, db *gorm.DB) [][]string {
 		fields = append(fields, attributes.ChangedFields)
 	}
 	return fields
+}
+
+func mapThemeHandler(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, writer domainaudit.Appender) *maptheme.ConnectHandler {
+	t.Helper()
+	service, err := maptheme.NewService(maptheme.Deps{DB: db, SpiceDB: spiceDB, Audit: writer})
+	require.NoError(t, err)
+	return maptheme.NewConnectHandler(service)
 }
