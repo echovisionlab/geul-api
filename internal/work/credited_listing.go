@@ -8,6 +8,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -143,7 +144,7 @@ func (s *Service) projectCreditedWork(
 	if workType == managev1.WorkType_WORK_TYPE_UNSPECIFIED {
 		workType = managev1.WorkType_WORK_TYPE_MUSIC_PROJECT
 	}
-	workStatus := managev1.WorkStatus(managev1.WorkStatus_value[row.Status])
+	workStatus := workStatusToProto(model.WorkStatus(row.Status))
 	if workStatus == managev1.WorkStatus_WORK_STATUS_UNSPECIFIED {
 		workStatus = managev1.WorkStatus_WORK_STATUS_DRAFT
 	}

@@ -291,7 +291,7 @@ func (s *Service) toProtoWork(
 		Month:        w.Month,
 		IsPresent:    w.IsPresent,
 		Featured:     w.Featured,
-		Status:       managev1.WorkStatus(managev1.WorkStatus_value[w.Status]),
+		Status:       workStatusToProto(w.Status),
 		CreatedAt:    timestamppb.New(w.CreatedAt),
 		UpdatedAt:    timestamppb.New(w.UpdatedAt),
 		OgAsset:      ogAsset,

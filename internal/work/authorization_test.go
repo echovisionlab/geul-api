@@ -15,7 +15,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
@@ -195,15 +194,15 @@ func TestWorkLifecyclePermissionSelectsExactSinglePermission(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
-		status string
+		status model.WorkStatus
 		normal workAction
 		use    workAuthorizationUse
 		want   workAction
 	}{
-		{name: "draft publish", status: managev1.WorkStatus_WORK_STATUS_DRAFT.String(), normal: policyv1.Work.Publish, use: workAuthorizationMutation, want: policyv1.Work.Publish},
-		{name: "archived editor read", status: managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(), normal: policyv1.Work.Edit, use: workAuthorizationRead, want: policyv1.Work.ViewArchived},
-		{name: "archived publish mutation", status: managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(), normal: policyv1.Work.Publish, use: workAuthorizationMutation, want: policyv1.Work.EditArchived},
-		{name: "archived manage mutation", status: managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(), normal: policyv1.Work.Manage, use: workAuthorizationMutation, want: policyv1.Work.EditArchived},
+		{name: "draft publish", status: model.WorkStatusDraft, normal: policyv1.Work.Publish, use: workAuthorizationMutation, want: policyv1.Work.Publish},
+		{name: "archived editor read", status: model.WorkStatusArchived, normal: policyv1.Work.Edit, use: workAuthorizationRead, want: policyv1.Work.ViewArchived},
+		{name: "archived publish mutation", status: model.WorkStatusArchived, normal: policyv1.Work.Publish, use: workAuthorizationMutation, want: policyv1.Work.EditArchived},
+		{name: "archived manage mutation", status: model.WorkStatusArchived, normal: policyv1.Work.Manage, use: workAuthorizationMutation, want: policyv1.Work.EditArchived},
 	}
 	for _, test := range tests {
 		test := test

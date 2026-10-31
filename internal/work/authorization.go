@@ -13,7 +13,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -79,8 +78,8 @@ func requireWorkList(ctx context.Context, checker CollaborationPermissionChecker
 	return requireWorkGlobalAction(ctx, checker, can)
 }
 
-func workLifecycleAction(status string, normal workAction, use workAuthorizationUse) workAction {
-	if status != managev1.WorkStatus_WORK_STATUS_ARCHIVED.String() {
+func workLifecycleAction(status model.WorkStatus, normal workAction, use workAuthorizationUse) workAction {
+	if status != model.WorkStatusArchived {
 		return normal
 	}
 	if use == workAuthorizationRead {

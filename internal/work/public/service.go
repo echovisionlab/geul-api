@@ -168,16 +168,12 @@ type workMapPlaceGroup struct {
 	Order            int
 }
 
-func isPublicWorkStatus(status string) bool {
-	return status == managev1.WorkStatus_WORK_STATUS_PUBLISHED.String() ||
-		status == managev1.WorkStatus_WORK_STATUS_ARCHIVED.String()
+func isPublicWorkStatus(status model.WorkStatus) bool {
+	return status == model.WorkStatusPublished || status == model.WorkStatusArchived
 }
 
 func publicWorkStatusValues() []string {
-	return []string{
-		managev1.WorkStatus_WORK_STATUS_PUBLISHED.String(),
-		managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(),
-	}
+	return []string{string(model.WorkStatusPublished), string(model.WorkStatusArchived)}
 }
 
 func applyPublicWorkFilters(query *gorm.DB, filters []*commonv1.FilterSpec) (*gorm.DB, error) {
@@ -407,7 +403,7 @@ func (s *Service) authorizePublicWork(
 	authorization := mediaasset.ContentDownloadOwnerAuthorization{
 		ResourceType: "work",
 		ResourceID:   work.ID,
-		Status:       work.Status,
+		Status:       string(work.Status),
 		Mode:         mediaasset.ContentDownloadOwnerAccessPublic,
 	}
 	if isPublicWorkStatus(work.Status) {
@@ -447,7 +443,7 @@ func (s *Service) projectPublicWork(ctx context.Context, snapshot publicWorkSnap
 		Month:     work.Month,
 		IsPresent: work.IsPresent,
 		Featured:  work.Featured,
-		Status:    openv1.WorkStatus(openv1.WorkStatus_value[work.Status]),
+		Status:    workStatusToProto(work.Status),
 		CreatedAt: timestamppb.New(work.CreatedAt),
 		UpdatedAt: timestamppb.New(work.UpdatedAt),
 		Document:  snapshot.document,
@@ -516,7 +512,7 @@ func (s *Service) toWorkSummary(
 		Month:     work.Month,
 		IsPresent: work.IsPresent,
 		Featured:  work.Featured,
-		Status:    openv1.WorkStatus(openv1.WorkStatus_value[work.Status]),
+		Status:    workStatusToProto(work.Status),
 	}
 
 	if work.Slug != nil {

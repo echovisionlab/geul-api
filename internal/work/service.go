@@ -88,11 +88,7 @@ var myCreditedWorkFilterConfig = &queryutil.FilterConfig{
 			Column:     "w.status",
 			Type:       queryutil.TypeEnum,
 			AllowedOps: queryutil.EnumOps,
-			EnumValues: []string{
-				managev1.WorkStatus_WORK_STATUS_DRAFT.String(),
-				managev1.WorkStatus_WORK_STATUS_PUBLISHED.String(),
-				managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(),
-			},
+			EnumValues: workStatusValues(),
 		},
 	},
 }
@@ -499,7 +495,7 @@ func (s *Service) newWorkFromCreateCommand(
 	work := model.Work{
 		Type: command.Type, Year: command.Year, Month: command.Month,
 		UntilYear: untilYear, UntilMonth: untilMonth, IsPresent: isPresent,
-		Status: managev1.WorkStatus_WORK_STATUS_DRAFT.String(),
+		Status: model.WorkStatusDraft,
 	}
 	if present {
 		work.Slug = slug
@@ -606,7 +602,7 @@ func (s *Service) DeleteWork(ctx context.Context, command DeleteWorkCommand) err
 	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[model.Work]{
 		Access: lockedWork(work.ID, policyv1.Work.Delete, &locked),
 		Change: func(ctx context.Context, tx *gorm.DB) (model.Work, error) {
-			if locked.Status == managev1.WorkStatus_WORK_STATUS_ARCHIVED.String() {
+			if locked.Status == model.WorkStatusArchived {
 				return work, domainerr.Precondition("archived works must be published before deletion")
 			}
 			return work, s.deleteWorkWithDB(ctx, tx, work, documentID)
@@ -670,7 +666,7 @@ func workLifecycleResponse(change workLifecycleChange) *managev1.WorkLifecycleMu
 	work := change.work
 	return &managev1.WorkLifecycleMutationResponse{
 		Id: work.ID, Changed: change.changed,
-		Status:      managev1.WorkStatus(managev1.WorkStatus_value[work.Status]),
+		Status:      workStatusToProto(work.Status),
 		PublishedAt: timestampProtoPtr(work.PublishedAt), UpdatedAt: timestamppb.New(work.UpdatedAt),
 	}
 }
@@ -688,13 +684,13 @@ func (s *Service) PublishWork(ctx context.Context, command PublishWorkCommand) (
 			if err := tx.First(&change.work, "id = ?", command.ID).Error; err != nil {
 				return change, err
 			}
-			if change.work.Status == managev1.WorkStatus_WORK_STATUS_PUBLISHED.String() {
+			if change.work.Status == model.WorkStatusPublished {
 				return change, nil
 			}
 			now := dbtime.Now()
-			updates := structured.Fields{"status": managev1.WorkStatus_WORK_STATUS_PUBLISHED.String(), "updated_at": now}
+			updates := structured.Fields{"status": model.WorkStatusPublished, "updated_at": now}
 			change.previous = sharedtelemetry.AuditStateDraft
-			if change.work.Status == managev1.WorkStatus_WORK_STATUS_ARCHIVED.String() {
+			if change.work.Status == model.WorkStatusArchived {
 				change.previous = sharedtelemetry.AuditStateArchived
 			} else {
 				updates["published_at"] = now
@@ -703,7 +699,7 @@ func (s *Service) PublishWork(ctx context.Context, command PublishWorkCommand) (
 			if err := tx.Model(&change.work).Updates(updates).Error; err != nil {
 				return change, err
 			}
-			change.work.Status = managev1.WorkStatus_WORK_STATUS_PUBLISHED.String()
+			change.work.Status = model.WorkStatusPublished
 			change.work.UpdatedAt = now
 			if change.published {
 				change.work.PublishedAt = &now
@@ -730,20 +726,20 @@ func (s *Service) UnpublishWork(ctx context.Context, command UnpublishWorkComman
 		Access: lockedWork(command.ID, policyv1.Work.Publish, &locked),
 		Change: func(ctx context.Context, tx *gorm.DB) (workLifecycleChange, error) {
 			change := workLifecycleChange{previous: sharedtelemetry.AuditStatePublished, next: sharedtelemetry.AuditStateDraft}
-			if locked.Status == managev1.WorkStatus_WORK_STATUS_ARCHIVED.String() {
+			if locked.Status == model.WorkStatusArchived {
 				return change, domainerr.Precondition("archived works must be published before they can be unpublished")
 			}
 			if err := tx.First(&change.work, "id = ?", command.ID).Error; err != nil {
 				return change, err
 			}
-			if change.work.Status == managev1.WorkStatus_WORK_STATUS_DRAFT.String() {
+			if change.work.Status == model.WorkStatusDraft {
 				return change, nil
 			}
 			now := dbtime.Now()
-			if err := tx.Model(&change.work).Updates(structured.Fields{"status": managev1.WorkStatus_WORK_STATUS_DRAFT.String(), "updated_at": now}).Error; err != nil {
+			if err := tx.Model(&change.work).Updates(structured.Fields{"status": model.WorkStatusDraft, "updated_at": now}).Error; err != nil {
 				return change, err
 			}
-			change.work.Status = managev1.WorkStatus_WORK_STATUS_DRAFT.String()
+			change.work.Status = model.WorkStatusDraft
 			change.work.UpdatedAt = now
 			change.changed = true
 			return change, nil

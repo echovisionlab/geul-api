@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
@@ -71,10 +72,10 @@ func normalizeWorkContentBlockError(err error) error {
 }
 
 type lockedWorkContentRoot struct {
-	ID                string  `gorm:"column:id"`
-	Status            string  `gorm:"column:status"`
-	ContentDocumentID *string `gorm:"column:content_document_id"`
-	SourceLocale      string  `gorm:"column:source_locale"`
+	ID                string           `gorm:"column:id"`
+	Status            model.WorkStatus `gorm:"column:status"`
+	ContentDocumentID *string          `gorm:"column:content_document_id"`
+	SourceLocale      string           `gorm:"column:source_locale"`
 }
 
 func loadWorkContentDocumentID(
