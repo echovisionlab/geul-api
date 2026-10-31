@@ -218,6 +218,7 @@ func TestIsDeniedRecognizesFreshCheckDenials(t *testing.T) {
 	require.False(t, IsDenied(errs.NotFound("post", "id")))
 	require.False(t, IsDenied(domainerr.ResourceNotFound("post", "id")))
 	require.False(t, IsDenied(errors.New("database is down")))
+	require.False(t, IsDenied(domainerr.ResourceNotFound("post", "id").WithCause(errs.NoPermission("edit", "post"))))
 }
 
 func TestNewRunnerRequiresEveryCollaborator(t *testing.T) {

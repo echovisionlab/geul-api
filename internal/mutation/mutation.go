@@ -27,7 +27,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/domainerr"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -220,10 +220,8 @@ func Locked(check func(ctx context.Context, tx *gorm.DB, require Require) error)
 // for a domain that answers it differently (a masked target answers not
 // found).
 func IsDenied(err error) bool {
-	if domainErr, ok := errors.AsType[*domainerr.Error](err); ok {
-		return domainErr.Kind == domainerr.PermissionDenied
-	}
-	return connect.CodeOf(err) == connect.CodePermissionDenied
+	classified, ok := errs.Classified(err)
+	return ok && classified.Code() == connect.CodePermissionDenied
 }
 
 // PrincipalFence locks the authenticated principal's Identity without an

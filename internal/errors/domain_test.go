@@ -64,6 +64,30 @@ func TestDomainErrorCauseStaysServerSide(t *testing.T) {
 	}
 }
 
+// A use case that masks a denial as not found keeps the denial as its cause;
+// the client sees the outer answer.
+func TestClassifiedAnswersTheOutermostClassification(t *testing.T) {
+	denied := NoPermission("manage_share_links", "label")
+	err := fmt.Errorf("create share link: %w", domainerr.ResourceNotFound("label", "id-1").WithCause(denied))
+
+	mapped := Wrap(err)
+	if mapped.Code() != connect.CodeNotFound || mapped.Message() != "label not found: id-1" {
+		t.Fatalf("Wrap() = %s %q", mapped.Code(), mapped.Message())
+	}
+	if !stderrors.Is(mapped, denied) {
+		t.Fatal("mapped error lost the masked denial")
+	}
+
+	masked := fmt.Errorf("lock: %w", WithCause(NotFound("menu", "id-2"), domainerr.NoPermission("edit", "menu")))
+	if mapped := Wrap(masked); mapped.Code() != connect.CodeNotFound {
+		t.Fatalf("Wrap() = %s, want the outer Connect classification", mapped.Code())
+	}
+	joined := stderrors.Join(stderrors.New("rollback failed"), domainerr.Precondition("menu is locked"))
+	if mapped := Wrap(joined); mapped.Code() != connect.CodeFailedPrecondition {
+		t.Fatalf("Wrap() = %s, want the joined use-case classification", mapped.Code())
+	}
+}
+
 func TestClassifiedLeavesUnclassifiedErrorsAlone(t *testing.T) {
 	if _, ok := Classified(stderrors.New("database is down")); ok {
 		t.Fatal("an unclassified error must stay unclassified")
