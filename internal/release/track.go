@@ -272,10 +272,7 @@ func trackUpdateAudit(update trackUpdate) mutation.Audit {
 			return sharedtelemetry.NewReleaseTrackAudioAuditRecord(m, update.after.ReleaseID, update.after.ID, *removed, sharedtelemetry.AuditCollectionOperationRemoved)
 		}))
 	}
-	if len(records) == 0 {
-		return mutation.Unchanged()
-	}
-	return mutation.All(records...)
+	return mutation.Audits(records...)
 }
 
 // DeleteTrack deletes a track (Track editors with delete permission).

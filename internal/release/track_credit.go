@@ -58,7 +58,7 @@ func (s *Service) SetTrackCredits(ctx context.Context, command SetTrackCreditsCo
 			for _, audit := range audits {
 				records = append(records, releaseTrackAudit(track.ReleaseID, audit.creditID, audit.op))
 			}
-			return mutation.All(records...)
+			return mutation.Audits(records...)
 		},
 	}); err != nil {
 		return nil, err

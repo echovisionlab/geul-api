@@ -161,10 +161,7 @@ func mapPlaceUpdateAudit(update mapPlaceUpdatePlan) mutation.Audit {
 			return sharedtelemetry.NewMapPlaceImageUpdatedAuditRecord(metadata, update.place.ID, update.imageOperation, update.imageFileID)
 		}))
 	}
-	if len(audits) == 0 {
-		return mutation.Unchanged()
-	}
-	return mutation.Each(audits...)
+	return mutation.Audits(audits...)
 }
 
 // updateLockedMapPlace applies command to the locked place and moves its

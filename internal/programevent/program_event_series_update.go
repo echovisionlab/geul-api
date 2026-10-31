@@ -98,10 +98,7 @@ func (s *Service) UpdateProgramEventSeries(ctx context.Context, command UpdatePr
 			return s.applyProgramEventSeriesUpdate(ctx, tx, current, update)
 		},
 		Audit: func(records []mutation.Audit) mutation.Audit {
-			if len(records) == 0 {
-				return mutation.Unchanged()
-			}
-			return mutation.All(records...)
+			return mutation.Audits(records...)
 		},
 	}); err != nil {
 		return nil, err

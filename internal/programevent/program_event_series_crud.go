@@ -214,7 +214,7 @@ func (s *Service) DeleteProgramEventSeries(ctx context.Context, command DeletePr
 					return sharedtelemetry.NewProgramEventMetadataAuditRecord(metadata, eventID, []string{"series"})
 				}))
 			}
-			return mutation.All(append(records, mutation.RequestAudit(sharedtelemetry.AuditProgramEventSeriesDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return mutation.Audits(append(records, mutation.RequestAudit(sharedtelemetry.AuditProgramEventSeriesDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 				return sharedtelemetry.NewProgramEventSeriesDeletedAuditRecord(metadata, command.ID)
 			}))...)
 		},

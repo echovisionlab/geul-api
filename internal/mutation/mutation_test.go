@@ -165,15 +165,21 @@ func TestAuditsAppendsEveryChangedRecord(t *testing.T) {
 	runner, _ := newTestRunner(t, recorder)
 	var steps []string
 	spec := noteSpec(&steps, "two facets")
-	record := func(action sharedtelemetry.AuditAction) Audit {
-		return RequestAudit(action, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewMemberTagCreatedAuditRecord(metadata, uuid.NewString(), "tag")
+	record := func(targetID string) Audit {
+		return RequestAudit(sharedtelemetry.AuditMemberTagCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewMemberTagCreatedAuditRecord(metadata, targetID, "tag")
 		})
 	}
-	spec.Audit = func(note) Audit {
-		return Audits(record(sharedtelemetry.AuditMemberTagCreated), Unchanged(), record(sharedtelemetry.AuditMemberTagCreated))
-	}
+	first, second := uuid.NewString(), uuid.NewString()
+	spec.Audit = func(note) Audit { return Audits(record(first), Unchanged(), record(second)) }
 	_, err := Run(memberRequestContext(t), runner, spec)
+	require.NoError(t, err)
+	records := recorder.Records()
+	require.Len(t, records, 2)
+	require.Equal(t, []string{first, second}, []string{records[0].TargetID, records[1].TargetID})
+
+	spec.Audit = func(note) Audit { return Audits() }
+	_, err = Run(memberRequestContext(t), runner, spec)
 	require.NoError(t, err)
 	require.Len(t, recorder.Records(), 2)
 
@@ -322,25 +328,4 @@ func TestRunTakesDomainLocksBeforeAccess(t *testing.T) {
 	require.ErrorIs(t, err, missing)
 	require.Equal(t, []string{"lock"}, steps)
 	require.EqualValues(t, 1, noteCount(t, db))
-}
-
-func TestAllAppendsEveryRecordInOrder(t *testing.T) {
-	recorder := &audittest.Recorder{}
-	runner, _ := newTestRunner(t, recorder)
-	var steps []string
-	spec := noteSpec(&steps, "several")
-	record := func(name string) Audit {
-		return RequestAudit(sharedtelemetry.AuditMemberTagCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewMemberTagCreatedAuditRecord(metadata, uuid.NewString(), name)
-		})
-	}
-	spec.Audit = func(note) Audit { return All(record("first"), Unchanged(), record("second")) }
-
-	_, err := Run(memberRequestContext(t), runner, spec)
-	require.NoError(t, err)
-	require.Len(t, recorder.Records(), 2)
-
-	spec.Audit = func(note) Audit { return All() }
-	_, err = Run(memberRequestContext(t), runner, spec)
-	require.ErrorContains(t, err, "return Unchanged")
 }

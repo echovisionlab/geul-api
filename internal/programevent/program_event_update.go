@@ -195,10 +195,7 @@ func (s *Service) UpdateProgramEvent(ctx context.Context, command UpdateProgramE
 			return s.applyProgramEventUpdate(ctx, tx, current, command, update)
 		},
 		Audit: func(change eventChange) mutation.Audit {
-			if len(change.records) == 0 {
-				return mutation.Unchanged()
-			}
-			return mutation.All(change.records...)
+			return mutation.Audits(change.records...)
 		},
 	})
 	return change.update, err

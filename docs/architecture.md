@@ -152,7 +152,6 @@ func RequestAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder)
 func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func Audits(records ...Audit) Audit                     // several records; skips Unchanged entries
 func Unchanged() Audit
-func Each(audits ...Audit) Audit // several records of one change, in order
 
 func Read(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error // one read-only snapshot
 func ReadLocked(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) error // a snapshot that may lock rows
@@ -196,9 +195,7 @@ Rules for a spec:
 - **Audit.** Every mutation names a record or returns `Unchanged()` because
   nothing changed; `Audits` names several records of one change, in order,
   and skips the entries that are `Unchanged()`. A zero `Audit` fails the
-  mutation. There is no optional writer. A change that
-  alters separately audited aspects at once, such as a Map Place's metadata
-  and its image, names each record with `Each`.
+  mutation. There is no optional writer.
 - **Outbox.** Enqueue PGMQ commands and schedule `content.updated` in the
   transaction. Get the executor with `contentsignal.TransactionExecutor(tx)`,
   which refuses a pool that is not a live transaction; publish signals with

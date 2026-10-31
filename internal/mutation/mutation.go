@@ -284,8 +284,6 @@ type Audit struct {
 	memberID  string
 	unchanged bool
 	all       []Audit
-	each      []Audit
-	records   []Audit
 }
 
 // RequestAudit attributes the record to the request's member actor.
@@ -299,10 +297,10 @@ func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build doma
 	return Audit{action: action, build: build, memberID: memberID}
 }
 
-// Audits names every record of a mutation that changes several audited
-// facets at once, such as a Series update that edits metadata and moves its
-// lifecycle. Unchanged entries are skipped; when every entry is unchanged
-// the mutation declines its record.
+// Audits names every record, in order, of a mutation that changes several
+// audited facets at once, such as a Series update that edits metadata and
+// moves its lifecycle. Unchanged entries are skipped; when every entry is
+// unchanged the mutation declines its record.
 func Audits(audits ...Audit) Audit {
 	changed := make([]Audit, 0, len(audits))
 	for _, audit := range audits {
@@ -321,24 +319,7 @@ func Unchanged() Audit {
 	return Audit{unchanged: true}
 }
 
-// All appends records in order, for one change that updates several audited
-// entities. Each record follows the rules of a single Audit.
-func All(records ...Audit) Audit {
-	if len(records) == 0 {
-		return Audit{}
-	}
-	return Audit{records: records}
-}
-
 func (r *Runner) appendAudit(ctx context.Context, tx *gorm.DB, audit Audit) error {
-	if audit.records != nil {
-		for _, record := range audit.records {
-			if err := r.appendAudit(ctx, tx, record); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
 	switch {
 	case len(audit.all) != 0:
 		for _, each := range audit.all {
@@ -349,8 +330,6 @@ func (r *Runner) appendAudit(ctx context.Context, tx *gorm.DB, audit Audit) erro
 		return nil
 	case audit.unchanged:
 		return nil
-	case len(audit.each) != 0:
-		return r.appendEach(ctx, tx, audit.each)
 	case audit.action == "" || audit.build == nil:
 		return errors.New("mutation audit record is required; return Unchanged when nothing changed")
 	case audit.memberID != "":
