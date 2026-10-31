@@ -19,10 +19,11 @@ func TestManagePostProjectionIncludesSourceLocale(t *testing.T) {
 	for _, locale := range []string{"ko", "en", "pt-BR", "zh-TW"} {
 		t.Run(locale, func(t *testing.T) {
 			service := &PostService{}
-			response := service.toProtoPost(&model.Post{
+			response, err := service.toProtoPost(&model.Post{
 				SourceLocale: locale, DocumentLayout: model.DefaultDocumentLayout(),
 				Series: &model.Series{SourceLocale: "ja"},
 			}, nil)
+			require.NoError(t, err)
 			if response.GetSourceLocale() != locale {
 				t.Fatalf("source locale = %q, want %q", response.GetSourceLocale(), locale)
 			}
@@ -45,6 +46,15 @@ func TestManagePostProjectionIncludesSourceLocale(t *testing.T) {
 	}
 }
 
+func TestManagePostProjectionRejectsInvalidStoredDocumentLayout(t *testing.T) {
+	t.Parallel()
+	require.NotPanics(t, func() {
+		response, err := new(PostService).toProtoPost(&model.Post{ID: "post", SourceLocale: "en"}, nil)
+		require.Error(t, err)
+		require.Nil(t, response)
+	})
+}
+
 func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	id := uuid.NewString()
 	revision, configurationRevision, mapPlaceID := uuid.NewString(), uuid.NewString(), uuid.NewString()
@@ -59,7 +69,7 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	author := &commonv1.MemberSummary{Id: uuid.NewString(), Nickname: "Author"}
 	featured := &commonv1.MediaDelivery{FileId: uuid.NewString()}
 	og := &commonv1.AssetRef{AssetId: uuid.NewString(), Url: "https://cdn.example/og.webp"}
-	response := new(PostService).toProtoPostWithProjection(&model.Post{
+	response, err := new(PostService).toProtoPostWithProjection(&model.Post{
 		ID: id, Title: "Title", Slug: new("post"), Summary: new("Summary"), SourceLocale: "ko",
 		ContentDocument: document, ContentRevision: revision, ConfigurationRevision: configurationRevision,
 		BlockMedia: media, Status: model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()),
@@ -70,6 +80,7 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 		Tags:       []model.Tag{{ID: "tag-1", Name: "Tag", Slug: "tag", CreatedAt: now}},
 		Series:     &model.Series{ID: "series-1", Title: "Series", Slug: "series", SourceLocale: "ja", Status: "published", CreatedAt: now},
 	}, og, []*commonv1.MemberSummary{author}, featured, postAuthority(view, can))
+	require.NoError(t, err)
 	wire, err := protojson.Marshal(response)
 	require.NoError(t, err)
 	decoded := new(managev1.Post)
@@ -86,7 +97,9 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	require.True(t, proto.Equal(author, decoded.AuthorMembers[0]))
 	require.True(t, proto.Equal(featured, decoded.FeaturedImageDelivery))
 	require.True(t, proto.Equal(og, decoded.OgAsset))
-	require.True(t, proto.Equal(layout.Proto(), decoded.DocumentLayout))
+	layoutProto, err := layout.Proto()
+	require.NoError(t, err)
+	require.True(t, proto.Equal(layoutProto, decoded.DocumentLayout))
 	require.True(t, decoded.CommentsEnabled)
 	require.Equal(t, managev1.PostStatus_POST_STATUS_DRAFT, decoded.Status)
 	require.Contains(t, decoded.AllowedActions, managev1.PostAction_POST_ACTION_EDIT)

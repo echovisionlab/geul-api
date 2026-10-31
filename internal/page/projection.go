@@ -188,6 +188,10 @@ func (s *PageService) toProtoPage(
 	if err != nil {
 		return nil, errs.Internal(err)
 	}
+	documentLayout, err := p.DocumentLayout.Proto()
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
 	page := &managev1.Page{
 		AccessPolicy:          accessPolicy,
 		Id:                    p.ID,
@@ -195,7 +199,7 @@ func (s *PageService) toProtoPage(
 		SourceLocale:          p.SourceLocale,
 		Status:                managev1.PageStatus(managev1.PageStatus_value[string(p.Status)]),
 		ShowTitle:             p.ShowTitle,
-		DocumentLayout:        p.DocumentLayout.Proto(),
+		DocumentLayout:        documentLayout,
 		CreatedAt:             timestamppb.New(p.CreatedAt),
 		UpdatedAt:             timestamppb.New(p.UpdatedAt),
 		OgAsset:               ogAsset,

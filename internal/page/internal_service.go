@@ -180,11 +180,15 @@ func (s *InternalPageService) LoadPageBlockDocument(
 	if err != nil {
 		return nil, normalizePageContentBlockError(err)
 	}
+	documentLayoutProto, err := documentLayout.Proto()
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
 	return connect.NewResponse(&intrav1.LoadPageBlockDocumentResponse{
 		Document: document, DocumentRevision: state.Snapshot.Document.Revision.String(),
 		SourceMetadata: &intrav1.PageLocaleMetadata{Locale: state.SourceLocale, Title: state.SourceMetadata.Title, Summary: state.SourceMetadata.Summary},
 		Locale:         locale, LocaleExists: state.TargetMetadata != nil,
-		DocumentLayout:      documentLayout.Proto(),
+		DocumentLayout:      documentLayoutProto,
 		BlockMedia:          blockMedia,
 		LocaleMetadata:      pageLocaleMetadataProto(state.TargetMetadata),
 		TargetRevision:      clonePageTargetRevision(state.TargetRevision),

@@ -200,10 +200,10 @@ func (p *pagePort) project(identity core.DocumentIdentity, locale core.Locale, s
 		return core.Document{}, fmt.Errorf("project Page AI document: %w", err)
 	}
 	metadata := core.Node{ID: pageMetadataBlockID, Kind: pageMetadataBlockKind}
-	if err := state.Page.DocumentLayout.Validate(); err != nil {
+	layout, err := state.Page.DocumentLayout.Proto()
+	if err != nil {
 		return core.Document{}, fmt.Errorf("project Page document layout: %w", err)
 	}
-	layout := state.Page.DocumentLayout.Proto()
 	metadata.Shared = []core.FieldValue{{ID: pageDocumentLayoutField, Value: core.Object(
 		core.ObjectValue("contentHeight", core.Text(layout.ContentHeight.String())),
 		core.ObjectValue("pageChrome", core.Text(layout.PageChrome.String())),
@@ -329,7 +329,11 @@ func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatc
 		if patch.SetDocumentLayout {
 			current = patch.DocumentLayout
 		}
-		next = current.Proto()
+		currentLayout, err := current.Proto()
+		if err != nil {
+			return issue(core.IssueInvalidOperation, "current Page document layout is invalid; set the whole layout")
+		}
+		next = currentLayout
 		fields = []core.ObjectField{core.ObjectValue(target.Path[0].Field, value)}
 	}
 	hideTableOfContentsSet := false

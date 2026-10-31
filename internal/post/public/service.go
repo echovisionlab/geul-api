@@ -782,14 +782,17 @@ func (s *PostService) buildPostResponse(
 	document := projection.document
 	revision := projection.revision
 	ctx = mediaasset.WithContentDownloadOwnerAuthorization(ctx, projection.mediaAuthorization)
-	var err error
+	documentLayout, err := post.DocumentLayout.Proto()
+	if err != nil {
+		return nil, errs.Internal(err)
+	}
 
 	protoPost := &openv1.Post{
 		Id:              post.ID,
 		Title:           post.Title,
 		Status:          s.toProtoStatus(post.Status),
 		CommentsEnabled: post.CommentsEnabled,
-		DocumentLayout:  post.DocumentLayout.Proto(),
+		DocumentLayout:  documentLayout,
 		CreatedAt:       timestamppb.New(post.CreatedAt),
 		UpdatedAt:       timestamppb.New(post.UpdatedAt),
 		Document:        document,

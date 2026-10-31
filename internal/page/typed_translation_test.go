@@ -254,6 +254,56 @@ func TestProviderPageTargetPatchPreservesUnrelatedCurrentImmersiveUnit(t *testin
 	require.NotEqual(t, unrelatedSource, units[1].GetProps().GetTitle())
 }
 
+func TestProviderPageTargetPatchInitializesMissingCurrentRichTextLocale(t *testing.T) {
+	t.Parallel()
+	base := &contentv1.PageSectionGraph{Nodes: []*contentv1.PageSectionNode{{
+		Section: &contentv1.PageSection{Id: "rich", Value: &contentv1.PageSection_RichText{
+			RichText: &contentv1.RichTextSection{Blocks: &contentv1.RichTextBlockGraph{Nodes: []*contentv1.RichTextBlockNode{{
+				Block: &contentv1.RichTextBlock{
+					Id: "paragraph", Value: &contentv1.RichTextBlock_Paragraph{Paragraph: &contentv1.ParagraphBlock{}},
+				},
+				Placement: &contentv1.ContentBlockPlacement{},
+			}}}},
+		}},
+		Placement: &contentv1.PageSectionPlacement{},
+	}}}
+	sourceSection := pageRichTextTranslationSource(pageParagraphLocale("paragraph", "source text")).
+		PageDocument.GetLocaleOverlay().GetSections()[0]
+	source := &contentv1.LocalizedPageDocument{
+		Locale: "en", Base: base,
+		LocaleOverlay: &contentv1.PageLocaleOverlay{Locale: "en", Sections: []*contentv1.PageSectionLocale{sourceSection}},
+	}
+	// The current target locale row exists but carries no Rich Text value yet.
+	current := &contentv1.LocalizedPageDocument{
+		Locale: "ko", Base: base,
+		LocaleOverlay: &contentv1.PageLocaleOverlay{Locale: "ko", Sections: []*contentv1.PageSectionLocale{{SectionId: "rich"}}},
+	}
+	candidate := &contentv1.LocalizedPageDocument{
+		Locale: "ko", Base: base,
+		LocaleOverlay: &contentv1.PageLocaleOverlay{Locale: "ko", Sections: []*contentv1.PageSectionLocale{{SectionId: "rich"}}},
+	}
+	plan, err := BuildTranslationExtractionPlan(&model.TranslationJob{
+		EntityType: "page", EntityID: "page", SourceLocale: "en", TargetLocale: "ko",
+	}, &translation.SourceDocument{PageDocument: source})
+	require.NoError(t, err)
+	require.Len(t, plan.Units, 1)
+	unit := plan.Units[0]
+	var patched *contentv1.LocalizedPageDocument
+	require.NotPanics(t, func() {
+		patched, err = buildProviderPageTargetDocument(source, current, candidate, &translation.ProviderUnitPatch{
+			Units:   []translation.Unit{unit},
+			Results: map[string]translation.UnitResult{unit.UnitID: {UnitID: unit.UnitID, TranslatedText: "번역", OriginalData: unit.OriginalData}},
+		})
+	})
+	require.NoError(t, err)
+	sections := patched.GetLocaleOverlay().GetSections()
+	require.Len(t, sections, 1)
+	require.Equal(t, "rich", sections[0].GetSectionId())
+	blocks := sections[0].GetRichText().GetBlocks().GetBlocks()
+	require.Len(t, blocks, 1)
+	require.Equal(t, "번역", blocks[0].GetParagraph().GetContent()[0].GetText().GetText())
+}
+
 func TestPageProviderResultCannotWritePromotedTargetIntoSource(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
