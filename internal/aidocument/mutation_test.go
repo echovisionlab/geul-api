@@ -131,3 +131,49 @@ func TestDocumentAfterOperationsPreservesEarlierSiblingMoves(t *testing.T) {
 		}
 	}
 }
+
+// Item kinds of one relation may declare the same field with different
+// ownership, so the stored half must follow the target item's kind.
+func TestDocumentAfterOperationsStoresRelationFieldByItemKindOwnership(t *testing.T) {
+	document := Document{
+		Identity: DocumentIdentity{Domain: DomainPost, Reference: "post-a"}, DocumentRevision: "revision-a",
+		SourceLocale: "ko", Locale: "ko", LocaleExists: true,
+		Catalog: Catalog{
+			Fingerprint: "catalog-a", BlockKinds: []BlockKind{"paragraph"},
+			Relations: []RelationRule{{BlockKind: "paragraph", Relation: "links", ItemKinds: []RelationItemKind{"internal", "external"}}},
+			RelationFields: []RelationFieldRule{
+				{BlockKind: "paragraph", Relation: "links", ItemKind: "internal", Field: "label", ValueKind: ValueKindText, Ownership: FieldOwnershipShared},
+				{BlockKind: "paragraph", Relation: "links", ItemKind: "external", Field: "label", ValueKind: ValueKindText, Ownership: FieldOwnershipLocale, Translatable: true},
+			},
+		},
+		Nodes: []Node{{ID: "first", Kind: "paragraph", Relations: []Relation{{ID: "links", Items: []RelationItem{
+			{ID: "home", Kind: "internal"},
+			{ID: "docs", Kind: "external", Order: 1},
+		}}}}},
+	}
+	operations := []Operation{
+		SetRelationFieldOperation("first", "links", "home", "label", Text("Home")),
+		SetRelationFieldOperation("first", "links", "docs", "label", Text("Docs")),
+	}
+	request := ApplyRequest{
+		Protocol: ProtocolVersion, Profile: DomainPost, Document: "post-a", Locale: "ko",
+		ExpectedDocumentRevision: "revision-a", Operations: operations,
+	}
+	if result := ValidateOperations(document, request); !result.Valid() {
+		t.Fatalf("validation = %+v", result)
+	}
+	updated, err := DocumentAfterOperations(document, operations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := updated.Nodes[0].Relations[0].Items
+	if !reflect.DeepEqual(items[0].Shared, []FieldValue{{ID: "label", Value: Text("Home")}}) || len(items[0].Localized) != 0 {
+		t.Fatalf("internal item = %+v", items[0])
+	}
+	if !reflect.DeepEqual(items[1].Localized, []FieldValue{{ID: "label", Value: Text("Docs")}}) || len(items[1].Shared) != 0 {
+		t.Fatalf("external item = %+v", items[1])
+	}
+	if err := updated.validate(); err != nil {
+		t.Fatalf("updated document is invalid: %v", err)
+	}
+}

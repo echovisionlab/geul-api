@@ -171,47 +171,43 @@ func mutateDocumentField(document *Document, target FieldTarget, mutate valueMut
 	if node == nil {
 		return errors.New("block does not exist")
 	}
-	var shared, localized *[]FieldValue
+	shared, localized := &node.Shared, &node.Localized
+	var itemKind RelationItemKind
 	if target.relationItem() {
 		item := mutableRelationItem(node, target.Relation, target.Item)
 		if item == nil {
 			return errors.New("relation item does not exist")
 		}
-		shared, localized = &item.Shared, &item.Localized
-	} else {
-		shared, localized = &node.Shared, &node.Localized
+		shared, localized, itemKind = &item.Shared, &item.Localized, item.Kind
 	}
-	values, err := fieldValueOwner(document.Catalog, node.Kind, target, shared, localized)
-	if err != nil {
-		return err
-	}
-	return mutateFieldValues(values, target.Field, target.Path, mutate, set)
-}
-
-func fieldValueOwner(catalog Catalog, blockKind BlockKind, target FieldTarget, shared, localized *[]FieldValue) (*[]FieldValue, error) {
-	ownership := FieldOwnership("")
-	if target.relationItem() {
-		for _, rule := range catalog.RelationFields {
-			if rule.BlockKind == blockKind && rule.Relation == target.Relation && rule.Field == target.Field {
-				ownership = rule.Ownership
-				break
-			}
-		}
-	} else {
-		for _, rule := range catalog.Fields {
-			if rule.BlockKind == blockKind && rule.Field == target.Field {
-				ownership = rule.Ownership
-				break
-			}
-		}
-	}
-	if ownership == "" {
-		return nil, errors.New("field is not in the catalog")
+	ownership, ok := fieldOwnership(document.Catalog, node.Kind, itemKind, target)
+	if !ok {
+		return errors.New("field is not in the catalog")
 	}
 	if ownership == FieldOwnershipLocale {
-		return localized, nil
+		return mutateFieldValues(localized, target.Field, target.Path, mutate, set)
 	}
-	return shared, nil
+	return mutateFieldValues(shared, target.Field, target.Path, mutate, set)
+}
+
+// fieldOwnership finds the ownership of a block field, or of a relation item
+// field for the item's kind, since item kinds of one relation may declare the
+// same field differently.
+func fieldOwnership(catalog Catalog, blockKind BlockKind, itemKind RelationItemKind, target FieldTarget) (FieldOwnership, bool) {
+	if target.relationItem() {
+		for _, rule := range catalog.RelationFields {
+			if rule.BlockKind == blockKind && rule.Relation == target.Relation && rule.ItemKind == itemKind && rule.Field == target.Field {
+				return rule.Ownership, true
+			}
+		}
+		return "", false
+	}
+	for _, rule := range catalog.Fields {
+		if rule.BlockKind == blockKind && rule.Field == target.Field {
+			return rule.Ownership, true
+		}
+	}
+	return "", false
 }
 
 func mutateFieldValues(values *[]FieldValue, field FieldID, path []FieldPathSegment, mutate valueMutation, set bool) error {
