@@ -356,10 +356,11 @@ func InternalMsg(msg string) *connect.Error {
 	return connect.NewError(connect.CodeInternal, fmt.Errorf("%s", msg))
 }
 
-// OperationLogLevel selects the severity for an operation-level failure log.
-// The request log already records every failed request once, with its status
-// and failure cause. Expected client outcomes therefore stay at Debug here,
-// server faults stay at Error, and the remaining client rejections stay at Warn.
+// OperationLogLevel grades a failure for a sink whose record has no HTTP
+// status to grade it by: the boundary fallback without a request log, the
+// MCP tool record, and degraded fallbacks that log and continue. Expected
+// client outcomes are Debug, server faults Error, and the remaining client
+// rejections Warn.
 func OperationLogLevel(err error) slog.Level {
 	switch connect.CodeOf(err) {
 	case connect.CodeNotFound, connect.CodeInvalidArgument, connect.CodeUnauthenticated, connect.CodeCanceled:
