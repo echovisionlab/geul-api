@@ -31,10 +31,10 @@ var (
 // It stores derivative files (thumbnails, HLS manifests, audio sidecars) in the file_derivative table.
 func (h *Handlers) HandleTranscodeComplete(ctx context.Context, body []byte) (resultErr error) {
 	event, err := parseTranscodeCompleteEvent(body)
+	// The queue consumer logs the failure; the event names its object.
 	defer func() {
-		if resultErr != nil {
-			slog.ErrorContext(ctx, "Media result handler failed", failurecause.Attr(resultErr), "operation", "HandleTranscodeComplete", "event_id", event.GetEventId(), "file_id", event.GetFileId(), "entity_type", event.GetEntityType().String(), "entity_id", event.GetEntityId())
-		}
+		resultErr = failurecause.WithAttrs(resultErr, slog.String("event_id", event.GetEventId()), slog.String("file_id", event.GetFileId()),
+			slog.String("entity_type", event.GetEntityType().String()), slog.String("entity_id", event.GetEntityId()))
 	}()
 	if err != nil {
 		return err

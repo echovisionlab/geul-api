@@ -183,6 +183,19 @@ func Attr(err error, private ...string) slog.Attr {
 	return slog.String("failure_cause", Message(err, private...))
 }
 
+// Args returns the failure_cause attribute followed by the identifier
+// attributes err carries, as arguments for a sink that logs a failure itself
+// (a queue consumer, a scheduler loop).
+func Args(err error, private ...string) []any {
+	failure := Of(err, private...)
+	args := make([]any, 0, len(failure.Attrs)+1)
+	args = append(args, slog.String("failure_cause", failure.Cause))
+	for _, attr := range failure.Attrs {
+		args = append(args, attr)
+	}
+	return args
+}
+
 // Panic returns the recovered value as a cause and a stack without rendered
 // call arguments, which can contain request data.
 func Panic(recovered any, private ...string) (cause string, stack string) {

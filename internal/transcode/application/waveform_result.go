@@ -22,10 +22,10 @@ import (
 
 func (h *Handlers) HandleWaveformProgress(ctx context.Context, body []byte) (resultErr error) {
 	var event managev1.WaveformProgressEvent
+	// The queue consumer logs the failure; the event names its object.
 	defer func() {
-		if resultErr != nil {
-			slog.ErrorContext(ctx, "Media result handler failed", failurecause.Attr(resultErr), "operation", "HandleWaveformProgress", "event_id", event.GetEventId(), "file_id", event.GetFileId(), "entity_type", event.GetEntityType().String(), "entity_id", event.GetEntityId())
-		}
+		resultErr = failurecause.WithAttrs(resultErr, slog.String("event_id", event.GetEventId()), slog.String("file_id", event.GetFileId()),
+			slog.String("entity_type", event.GetEntityType().String()), slog.String("entity_id", event.GetEntityId()))
 	}()
 	if err := proto.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("failed to unmarshal waveform progress event: %w", err)
@@ -115,10 +115,10 @@ WHERE event_id = ?
 // HandleWaveformComplete stores a waveform sidecar derivative when the current track source still matches.
 func (h *Handlers) HandleWaveformComplete(ctx context.Context, body []byte) (resultErr error) {
 	var event managev1.WaveformCompleteEvent
+	// The queue consumer logs the failure; the event names its object.
 	defer func() {
-		if resultErr != nil {
-			slog.ErrorContext(ctx, "Media result handler failed", failurecause.Attr(resultErr), "operation", "HandleWaveformComplete", "event_id", event.GetEventId(), "file_id", event.GetFileId(), "entity_type", event.GetEntityType().String(), "entity_id", event.GetEntityId())
-		}
+		resultErr = failurecause.WithAttrs(resultErr, slog.String("event_id", event.GetEventId()), slog.String("file_id", event.GetFileId()),
+			slog.String("entity_type", event.GetEntityType().String()), slog.String("entity_id", event.GetEntityId()))
 	}()
 	if err := proto.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("failed to unmarshal waveform complete event: %w", err)
@@ -303,10 +303,10 @@ func waveformResultAlreadyRetired(
 // HandleWaveformFail clears stale waveform state only when the current track source still matches.
 func (h *Handlers) HandleWaveformFail(ctx context.Context, body []byte) (resultErr error) {
 	var event managev1.WaveformFailEvent
+	// The queue consumer logs the failure; the event names its object.
 	defer func() {
-		if resultErr != nil {
-			slog.ErrorContext(ctx, "Media result handler failed", failurecause.Attr(resultErr), "operation", "HandleWaveformFail", "event_id", event.GetEventId(), "file_id", event.GetFileId(), "entity_type", event.GetEntityType().String(), "entity_id", event.GetEntityId())
-		}
+		resultErr = failurecause.WithAttrs(resultErr, slog.String("event_id", event.GetEventId()), slog.String("file_id", event.GetFileId()),
+			slog.String("entity_type", event.GetEntityType().String()), slog.String("entity_id", event.GetEntityId()))
 	}()
 	if err := proto.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("failed to unmarshal waveform fail event: %w", err)
