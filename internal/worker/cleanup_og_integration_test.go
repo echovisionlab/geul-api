@@ -348,7 +348,11 @@ func TestTerminalOgGenerationCleanupProtectsActiveBoundAndPointedAssetsIntegrati
 		workerOGRequest(managev1.OgEntityType_OG_ENTITY_TYPE_WORK, pointedWork.ID, "replacement", nil, nil),
 	})
 	require.NoError(t, err)
-	require.NoError(t, db.Model(&model.Work{}).Where("id = ?", pointedWork.ID).Update("og_asset_id", pointed.GenerationIDs[0]).Error)
+	// Work OG pointers live on the translation rows; the base column is legacy.
+	require.NoError(t, db.Exec(
+		`INSERT INTO work_translation (entity_id, locale, og_asset_id) VALUES (?, 'en', ?)`,
+		pointedWork.ID, pointed.GenerationIDs[0],
+	).Error)
 
 	require.NoError(t, ogCleanupForIntegration(&Handlers{db: db}).MarkExpiredTerminalGenerationAssets(t.Context(), now.Add(-unreadyAssetRetention), now))
 	for _, assetID := range []string{bound.GenerationIDs[0], pointed.GenerationIDs[0]} {
