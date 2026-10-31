@@ -64,30 +64,12 @@ func (p Projection) validate() error {
 	if p.LocaleRole != deriveLocaleRole(p.SourceLocale, p.Locale) {
 		return errors.New("locale role does not match source and requested locales")
 	}
-	if p.LocaleRole == LocaleRoleSource && !p.LocaleExists {
-		return errors.New("source locale must exist")
-	}
-	if p.LocaleRole == LocaleRoleSource && p.TargetRevision != nil {
-		return errors.New("source locale cannot carry a target revision")
-	}
-	if p.LocaleRole == LocaleRoleNonSource && p.LocaleExists && p.TargetRevision == nil {
-		return errors.New("existing target locale requires a target revision")
-	}
-	if p.LocaleRole == LocaleRoleNonSource && !p.LocaleExists && p.TargetRevision != nil {
-		return errors.New("absent target locale cannot carry a target revision")
+	if err := validateLocaleState(p.LocaleRole, p.LocaleExists, p.TargetRevision); err != nil {
+		return err
 	}
 	if p.LocaleRole == LocaleRoleNonSource && !p.LocaleExists {
-		for _, node := range p.Nodes {
-			if len(node.Localized) != 0 {
-				return errors.New("absent translation locale cannot contain locale-owned values")
-			}
-			for _, relation := range node.Relations {
-				for _, item := range relation.Items {
-					if len(item.Localized) != 0 {
-						return errors.New("absent translation locale cannot contain relation-item locale-owned values")
-					}
-				}
-			}
+		if err := validateAbsentLocaleValues(p.Nodes); err != nil {
+			return err
 		}
 	}
 	if !p.Mode.valid() {

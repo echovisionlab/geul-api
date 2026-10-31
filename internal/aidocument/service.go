@@ -89,19 +89,7 @@ func (m OpenMetadata) validate() error {
 	if m.LocaleRole != deriveLocaleRole(m.SourceLocale, m.Locale) {
 		return errors.New("locale role does not match source and requested locales")
 	}
-	if m.LocaleRole == LocaleRoleSource && !m.LocaleExists {
-		return errors.New("source locale must exist")
-	}
-	if m.LocaleRole == LocaleRoleSource && m.TargetRevision != nil {
-		return errors.New("source locale cannot carry a target revision")
-	}
-	if m.LocaleRole == LocaleRoleNonSource && m.LocaleExists && m.TargetRevision == nil {
-		return errors.New("existing target locale requires a target revision")
-	}
-	if m.LocaleRole == LocaleRoleNonSource && !m.LocaleExists && m.TargetRevision != nil {
-		return errors.New("absent target locale cannot carry a target revision")
-	}
-	return nil
+	return validateLocaleState(m.LocaleRole, m.LocaleExists, m.TargetRevision)
 }
 
 type ReadRequest struct {

@@ -92,35 +92,17 @@ func (d Document) validate() error {
 	if err := validateLocale(d.Locale); err != nil {
 		return fmt.Errorf("requested locale: %w", err)
 	}
-	if d.Role() == LocaleRoleSource && !d.LocaleExists {
-		return errors.New("source locale must exist")
+	if err := validateLocaleState(d.Role(), d.LocaleExists, d.TargetRevision); err != nil {
+		return err
 	}
-	if d.Role() == LocaleRoleSource && d.TargetRevision != nil {
-		return errors.New("source locale cannot carry a target revision")
-	}
-	if d.Role() == LocaleRoleNonSource && d.LocaleExists {
-		if d.TargetRevision == nil {
-			return errors.New("existing target locale requires a target revision")
-		}
+	if d.TargetRevision != nil {
 		if err := validateOpaque("target revision", string(*d.TargetRevision), 256); err != nil {
 			return err
 		}
 	}
-	if d.Role() == LocaleRoleNonSource && !d.LocaleExists && d.TargetRevision != nil {
-		return errors.New("absent target locale cannot carry a target revision")
-	}
 	if d.Role() == LocaleRoleNonSource && !d.LocaleExists {
-		for _, node := range d.Nodes {
-			if len(node.Localized) != 0 {
-				return errors.New("absent translation locale cannot contain locale-owned values")
-			}
-			for _, relation := range node.Relations {
-				for _, item := range relation.Items {
-					if len(item.Localized) != 0 {
-						return errors.New("absent translation locale cannot contain relation-item locale-owned values")
-					}
-				}
-			}
+		if err := validateAbsentLocaleValues(d.Nodes); err != nil {
+			return err
 		}
 	}
 	if err := d.Catalog.validate(); err != nil {
@@ -130,6 +112,42 @@ func (d Document) validate() error {
 		return err
 	}
 	return validateDocumentCatalogValues(d.Catalog, d.Nodes)
+}
+
+// validateLocaleState checks the locale existence and target revision
+// combination that a locale role permits.
+func validateLocaleState(role LocaleRole, exists bool, target *Revision) error {
+	if role == LocaleRoleSource && !exists {
+		return errors.New("source locale must exist")
+	}
+	if role == LocaleRoleSource && target != nil {
+		return errors.New("source locale cannot carry a target revision")
+	}
+	if role == LocaleRoleNonSource && exists && target == nil {
+		return errors.New("existing target locale requires a target revision")
+	}
+	if role == LocaleRoleNonSource && !exists && target != nil {
+		return errors.New("absent target locale cannot carry a target revision")
+	}
+	return nil
+}
+
+// validateAbsentLocaleValues rejects locale-owned values in nodes read for a
+// translation locale that does not exist yet.
+func validateAbsentLocaleValues(nodes []Node) error {
+	for _, node := range nodes {
+		if len(node.Localized) != 0 {
+			return errors.New("absent translation locale cannot contain locale-owned values")
+		}
+		for _, relation := range node.Relations {
+			for _, item := range relation.Items {
+				if len(item.Localized) != 0 {
+					return errors.New("absent translation locale cannot contain relation-item locale-owned values")
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // validateNodes extends the projected shape checks, which already reject
