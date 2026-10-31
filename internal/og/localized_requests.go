@@ -32,6 +32,36 @@ func NewLocalizedRequests(spec LocalizedRequestSpec) *LocalizedRequests {
 	return &LocalizedRequests{spec: spec}
 }
 
+// LocalizedSource is the RequestSource of one localized entity family.
+type LocalizedSource struct {
+	requests *LocalizedRequests
+}
+
+func NewLocalizedSource(spec LocalizedRequestSpec) *LocalizedSource {
+	return &LocalizedSource{requests: NewLocalizedRequests(spec)}
+}
+
+func (s *LocalizedSource) Handles(entityType string) bool {
+	return entityType == s.requests.spec.EntityType
+}
+
+func (s *LocalizedSource) Resolve(
+	ctx context.Context,
+	db *gorm.DB,
+	entityType string,
+	entityID string,
+	selection *managev1.OgTargetSelection,
+) ([]Request, error) {
+	if !s.Handles(entityType) {
+		return nil, errs.InvalidEntityType(entityType)
+	}
+	return s.requests.Resolve(ctx, db, entityID, selection)
+}
+
+func (s *LocalizedSource) All(ctx context.Context, db *gorm.DB) ([]Request, error) {
+	return s.requests.All(ctx, db)
+}
+
 func (r *LocalizedRequests) Resolve(
 	ctx context.Context,
 	db *gorm.DB,
@@ -101,7 +131,7 @@ func (r *LocalizedRequests) All(ctx context.Context, db *gorm.DB) ([]Request, er
 		}
 		sourceLocale := strings.TrimSpace(*row.SourceLocale)
 		base := localizedSnapshot{
-			title: row.Title, featuredImageFileID: optionalLocalizedFileID(row.FeaturedImageFileID),
+			title: row.Title, featuredImageFileID: optionalFileID(row.FeaturedImageFileID),
 		}
 		requests = append(requests, r.request(row.ID, sourceLocale, base))
 		translations, err := r.translations(ctx, db, row.ID)
@@ -153,12 +183,12 @@ func (r *LocalizedRequests) base(
 	}
 	if row.SourceLocale == nil || strings.TrimSpace(*row.SourceLocale) == "" {
 		return localizedSnapshot{
-			title: row.Title, featuredImageFileID: optionalLocalizedFileID(row.FeaturedImageFileID),
+			title: row.Title, featuredImageFileID: optionalFileID(row.FeaturedImageFileID),
 		}, nil, nil
 	}
 	return localizedSnapshot{
 		title:               row.Title,
-		featuredImageFileID: optionalLocalizedFileID(row.FeaturedImageFileID),
+		featuredImageFileID: optionalFileID(row.FeaturedImageFileID),
 	}, &localizedSourceState{SourceLocale: strings.TrimSpace(*row.SourceLocale)}, nil
 }
 
@@ -248,7 +278,7 @@ func (r *LocalizedRequests) request(entityID, locale string, snapshot localizedS
 	}
 }
 
-func optionalLocalizedFileID(value *string) *string {
+func optionalFileID(value *string) *string {
 	if value == nil || strings.TrimSpace(*value) == "" {
 		return nil
 	}
