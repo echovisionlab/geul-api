@@ -15,7 +15,6 @@
 16 internal/filemedia/public
 15 internal/label
 12 internal/label/public
-16 internal/legal/public
 13 internal/page
 3 internal/page/public
 50 internal/post

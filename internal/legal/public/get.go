@@ -5,232 +5,149 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
+	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-type publicLegalSpec[Document structured.Value, Proto structured.Value] struct {
-	entityName      string
-	shareEntityType managev1.ShareLinkEntityType
-	activeStatus    string
-	archivedStatus  string
-	scheduledStatus string
-	id              func(*Document) string
-	title           func(*Document) string
-	setTitle        func(*Document, string)
-	toProto         func(*Document, *publiccontent.Selection, *commonv1.AssetRef, publicLegalContentProjection) *Proto
-	toScheduled     func(*Document) *Proto
-}
-
-type publicLegalContentProjection struct {
-	document *contentv1.LocalizedRichTextDocument
-	revision string
-}
-
-type publicLegalResult[Proto interface{}] struct {
-	current   *Proto
-	scheduled *Proto
-}
-
-type publicLegalRequest struct {
-	requestedID    string
-	shareToken     string
-	sharePassword  string
-	acceptLanguage string
-	now            time.Time
-}
-
-func getPublicLegalDocument[Document structured.Value, Proto structured.Value](
-	ctx context.Context,
-	db *gorm.DB,
-	contentBlocks *contentblock.Store,
-	media legaldomain.PublicMedia,
-	spec publicLegalSpec[Document, Proto],
-	request publicLegalRequest,
-) (publicLegalResult[Proto], error) {
-	if request.requestedID != "" && request.shareToken == "" {
-		return loadPublicLegalHistory(ctx, db, contentBlocks, media, spec, request)
-	}
-	if request.shareToken != "" {
-		return loadSharedPublicLegalDocument(ctx, db, contentBlocks, media, spec, request)
-	}
-	return loadCurrentPublicLegalDocuments(ctx, db, contentBlocks, media, spec, request)
-}
-
-func loadPublicLegalHistory[Document structured.Value, Proto structured.Value](
-	ctx context.Context,
-	db *gorm.DB,
-	contentBlocks *contentblock.Store,
-	media legaldomain.PublicMedia,
-	spec publicLegalSpec[Document, Proto],
-	request publicLegalRequest,
-) (publicLegalResult[Proto], error) {
-	var document Document
-	err := db.WithContext(ctx).
-		Where("id = ?", request.requestedID).
-		Where("status IN ?", []string{spec.activeStatus, spec.archivedStatus}).
-		First(&document).Error
+// loadHistory reads an active or archived version by ID; any other
+// version is absent.
+func (s *Service) loadHistory(ctx context.Context, kind publicKind, query GetPolicyQuery) (PublicPolicies, error) {
+	var row publicPolicyRow
+	err := s.db.WithContext(ctx).Table(kind.table).
+		Where("id = ?", query.ID).
+		Where("status IN ?", []model.LegalPolicyStatus{kind.active, kind.archived}).
+		First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return publicLegalResult[Proto]{}, nil
+		return PublicPolicies{}, nil
 	}
 	if err != nil {
-		return publicLegalResult[Proto]{}, errs.Internal(err)
+		return PublicPolicies{}, err
 	}
-	projected, err := projectPublicLegalDocument(ctx, db, contentBlocks, media, spec, &document, request.acceptLanguage)
-	return publicLegalResult[Proto]{current: projected}, err
+	projected, err := s.project(ctx, kind, row, query.AcceptLanguage)
+	return PublicPolicies{Current: projected}, err
 }
 
-func loadSharedPublicLegalDocument[Document structured.Value, Proto structured.Value](
-	ctx context.Context,
-	db *gorm.DB,
-	contentBlocks *contentblock.Store,
-	media legaldomain.PublicMedia,
-	spec publicLegalSpec[Document, Proto],
-	request publicLegalRequest,
-) (publicLegalResult[Proto], error) {
-	if request.requestedID == "" {
-		return publicLegalResult[Proto]{}, nil
+// loadShared reads the version a valid Share Link opens: a published
+// version as the current one, a version scheduled for later as the
+// scheduled one. Anything else is absent.
+func (s *Service) loadShared(ctx context.Context, kind publicKind, query GetPolicyQuery) (PublicPolicies, error) {
+	if query.ID == "" {
+		return PublicPolicies{}, nil
 	}
-	access, valid, err := resolveLegalShareLinkAccess(
-		ctx, db, request.shareToken, request.sharePassword,
-		spec.shareEntityType, request.requestedID, request.now,
-	)
-	if err != nil {
-		return publicLegalResult[Proto]{}, errs.Internal(err)
+	access, valid, err := resolveLegalShareLinkAccess(ctx, s.db, kind, query.ShareToken, query.SharePassword, query.ID, query.Now)
+	if err != nil || !valid {
+		return PublicPolicies{}, err
 	}
-	if !valid {
-		return publicLegalResult[Proto]{}, nil
-	}
-	var document Document
-	err = db.WithContext(ctx).
-		Where("id = ? AND status = ?", request.requestedID, access.status).
-		First(&document).Error
+	var row publicPolicyRow
+	err = s.db.WithContext(ctx).Table(kind.table).
+		Where("id = ? AND status = ?", query.ID, access.status).
+		First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return publicLegalResult[Proto]{}, nil
+		return PublicPolicies{}, nil
 	}
 	if err != nil {
-		return publicLegalResult[Proto]{}, errs.Internal(err)
+		return PublicPolicies{}, err
 	}
-	projected, err := projectPublicLegalDocument(ctx, db, contentBlocks, media, spec, &document, request.acceptLanguage)
+	projected, err := s.project(ctx, kind, row, query.AcceptLanguage)
 	if err != nil {
-		return publicLegalResult[Proto]{}, err
+		return PublicPolicies{}, err
 	}
 	if access.publicHistory {
-		return publicLegalResult[Proto]{current: projected}, nil
+		return PublicPolicies{Current: projected}, nil
 	}
-	return publicLegalResult[Proto]{scheduled: projected}, nil
+	return PublicPolicies{Scheduled: projected}, nil
 }
 
-func loadCurrentPublicLegalDocuments[Document structured.Value, Proto structured.Value](
-	ctx context.Context,
-	db *gorm.DB,
-	contentBlocks *contentblock.Store,
-	media legaldomain.PublicMedia,
-	spec publicLegalSpec[Document, Proto],
-	request publicLegalRequest,
-) (publicLegalResult[Proto], error) {
-	result := publicLegalResult[Proto]{}
-	var active Document
-	err := db.WithContext(ctx).
-		Where("status = ?", spec.activeStatus).
-		Where("effective_from <= ?", request.now).
-		Where("effective_until IS NULL OR effective_until > ?", request.now).
+// loadCurrent reads the effective active version and announces the next
+// scheduled one. A failed scheduled lookup serves the current version
+// alone.
+func (s *Service) loadCurrent(ctx context.Context, kind publicKind, query GetPolicyQuery) (PublicPolicies, error) {
+	result := PublicPolicies{}
+	var active publicPolicyRow
+	err := s.db.WithContext(ctx).Table(kind.table).
+		Where("status = ?", kind.active).
+		Where("effective_from <= ?", query.Now).
+		Where("effective_until IS NULL OR effective_until > ?", query.Now).
 		Order("version DESC").
 		First(&active).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return result, errs.Internal(err)
+		return result, err
 	}
 	if err == nil {
-		result.current, err = projectPublicLegalDocument(ctx, db, contentBlocks, media, spec, &active, request.acceptLanguage)
-		if err != nil {
-			return publicLegalResult[Proto]{}, err
+		if result.Current, err = s.project(ctx, kind, active, query.AcceptLanguage); err != nil {
+			return PublicPolicies{}, err
 		}
 	}
 
-	var scheduled Document
-	err = db.WithContext(ctx).
-		Where("status = ?", spec.scheduledStatus).
-		Where("effective_from > ?", request.now).
+	var scheduled publicPolicyRow
+	err = s.db.WithContext(ctx).Table(kind.table).
+		Where("status = ?", kind.scheduled).
+		Where("effective_from > ?", query.Now).
 		Order("effective_from ASC").
 		First(&scheduled).Error
 	if err == nil {
-		result.scheduled = spec.toScheduled(&scheduled)
+		result.Scheduled = &PublicPolicy{
+			ID: scheduled.ID, Version: int32(scheduled.Version),
+			Title:         resolveCanonicalLegalPublicTitle(scheduled.Title, nil),
+			EffectiveFrom: scheduled.EffectiveFrom, EffectiveUntil: scheduled.EffectiveUntil,
+		}
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		slog.ErrorContext(ctx, "Scheduled legal document lookup failed; serving the current version only", "domain", "legal", "operation", "load_scheduled_document", "outcome", "failed", "entity_type", spec.entityName, failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Scheduled legal document lookup failed; serving the current version only", "domain", "legal", "operation", "load_scheduled_document", "outcome", "failed", "entity_type", kind.entity, failurecause.Attr(err))
 	}
 	return result, nil
 }
 
-func projectPublicLegalDocument[Document structured.Value, Proto structured.Value](
-	ctx context.Context,
-	db *gorm.DB,
-	contentBlocks *contentblock.Store,
-	media legaldomain.PublicMedia,
-	spec publicLegalSpec[Document, Proto],
-	document *Document,
-	acceptLanguage string,
-) (*Proto, error) {
-	localization, selectionErr := publiccontent.Resolve(
-		ctx, db, legalLocalizationSpec(spec.entityName), spec.id(document), acceptLanguage,
-	)
-	if selectionErr != nil {
-		return nil, selectionErr
-	}
-	localization, ogAsset, err := resolvePublicLegalOgConsistency(
-		ctx,
-		db,
-		media,
-		spec.entityName,
-		spec.id(document),
-		localization,
-	)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	selection := &localization
-	spec.setTitle(document, resolveCanonicalLegalPublicTitle(spec.title(document), selection))
-	content, err := loadPublicLegalContentProjection(
-		ctx, db, contentBlocks, spec.entityName, spec.id(document), selection,
-	)
+// project localizes row for acceptLanguage, keeping the displayed locale
+// consistent with its OG image, and loads its document in that locale.
+func (s *Service) project(ctx context.Context, kind publicKind, row publicPolicyRow, acceptLanguage string) (*PublicPolicy, error) {
+	localization, err := publiccontent.Resolve(ctx, s.db, kind.localization, row.ID, acceptLanguage)
 	if err != nil {
 		return nil, err
 	}
-	return spec.toProto(document, selection, ogAsset, content), nil
+	localization, ogAsset, err := s.resolveOGConsistency(ctx, kind, row.ID, localization)
+	if err != nil {
+		return nil, err
+	}
+	content, err := s.loadContentProjection(ctx, kind, row.ID, &localization)
+	if err != nil {
+		return nil, err
+	}
+	return &PublicPolicy{
+		ID: row.ID, Version: int32(row.Version),
+		Title:    resolveCanonicalLegalPublicTitle(row.Title, &localization),
+		Document: content.document, Revision: content.revision,
+		EffectiveFrom: row.EffectiveFrom, EffectiveUntil: row.EffectiveUntil,
+		Localization: &localization, OGAsset: ogAsset,
+	}, nil
 }
 
-func resolvePublicLegalOgConsistency(
+// resolveOGConsistency serves the displayed locale only once its OG image
+// is ready; a locale whose image failed falls back to the source locale.
+func (s *Service) resolveOGConsistency(
 	ctx context.Context,
-	db *gorm.DB,
-	media legaldomain.PublicMedia,
-	entityType string,
+	kind publicKind,
 	entityID string,
 	selection publiccontent.Selection,
 ) (publiccontent.Selection, *commonv1.AssetRef, error) {
-	if media == nil {
-		return selection, nil, errs.InternalMsg(entityType + " public media is not configured")
-	}
-	routeID := media.RouteID(entityType)
+	routeID := s.media.RouteID(kind.entity)
 	loadExactAsset := func(locale string) (*commonv1.AssetRef, error) {
-		return media.ReadyLocalizedOGAsset(ctx, db, entityType, routeID, locale)
+		return s.media.ReadyLocalizedOGAsset(ctx, s.db, kind.entity, routeID, locale)
 	}
 	if selection.DisplayedLocale == selection.SourceLocale {
 		asset, err := loadExactAsset(selection.SourceLocale)
 		return selection, asset, err
 	}
-	disposition, err := media.LocalizedOGDisposition(ctx, db, entityType, routeID, selection.DisplayedLocale)
+	disposition, err := s.media.LocalizedOGDisposition(ctx, s.db, kind.entity, routeID, selection.DisplayedLocale)
 	if err != nil {
 		return selection, nil, err
 	}
@@ -246,9 +163,7 @@ func resolvePublicLegalOgConsistency(
 			return selection, asset, nil
 		}
 	}
-	fallback, err := publiccontent.FallbackToSource(
-		ctx, db, legalLocalizationSpec(entityType), entityID, selection,
-	)
+	fallback, err := publiccontent.FallbackToSource(ctx, s.db, kind.localization, entityID, selection)
 	if err != nil {
 		return selection, nil, err
 	}
@@ -256,65 +171,57 @@ func resolvePublicLegalOgConsistency(
 	return fallback, asset, err
 }
 
-func loadPublicLegalContentProjection(
+type publicLegalContentProjection struct {
+	document *contentv1.LocalizedRichTextDocument
+	revision string
+}
+
+// loadContentProjection loads the version's document in the selected
+// locale. A version deleted after it was selected answers NotFound.
+func (s *Service) loadContentProjection(
 	ctx context.Context,
-	db *gorm.DB,
-	contentBlocks *contentblock.Store,
-	entityType string,
+	kind publicKind,
 	entityID string,
 	selection *publiccontent.Selection,
 ) (publicLegalContentProjection, error) {
-	if contentBlocks == nil {
-		return publicLegalContentProjection{}, errs.InternalMsg(entityType + " content Block store is not configured")
+	var root struct {
+		ContentDocumentID *uuid.UUID `gorm:"column:content_document_id;type:uuid"`
+		SourceLocale      string     `gorm:"column:source_locale"`
 	}
-	var snapshot contentblock.Snapshot
-	var source struct {
-		Locale string `gorm:"column:source_locale"`
+	if err := s.db.WithContext(ctx).Table(kind.table).
+		Select("content_document_id", "source_locale").
+		Where("id = ?", entityID).
+		Take(&root).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return publicLegalContentProjection{}, domainerr.ResourceNotFound(kind.entity, entityID)
+		}
+		return publicLegalContentProjection{}, err
 	}
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var root struct {
-			ContentDocumentID *uuid.UUID `gorm:"column:content_document_id;type:uuid"`
-			SourceLocale      string     `gorm:"column:source_locale"`
-		}
-		if err := tx.Table(entityType+"_history").
-			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-			Select("content_document_id", "source_locale").
-			Where("id = ?", entityID).
-			Take(&root).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound(entityType, entityID)
-			}
-			return errs.Internal(err)
-		}
-		if root.ContentDocumentID == nil || *root.ContentDocumentID == uuid.Nil {
-			return errs.FailedPrecondition(entityType + " content document has not been populated")
-		}
-		source.Locale = root.SourceLocale
-		if strings.TrimSpace(source.Locale) == "" {
-			return errs.FailedPrecondition(entityType + " source locale is missing")
-		}
-		var loadErr error
-		snapshot, loadErr = contentBlocks.LoadSnapshotInTransaction(
-			ctx, tx, *root.ContentDocumentID, source.Locale,
-		)
-		if loadErr == nil && snapshot.SourceLocale != source.Locale {
-			return errs.FailedPrecondition(entityType + " source locale does not match its content document")
-		}
-		return loadErr
-	})
+	if root.ContentDocumentID == nil || *root.ContentDocumentID == uuid.Nil {
+		return publicLegalContentProjection{}, domainerr.Precondition(kind.entity + " content document has not been populated")
+	}
+	if strings.TrimSpace(root.SourceLocale) == "" {
+		return publicLegalContentProjection{}, domainerr.Precondition(kind.entity + " source locale is missing")
+	}
+	// A version's document and source locale never change, and the
+	// snapshot reads in its own repeatable-read transaction.
+	snapshot, err := s.contentBlocks.LoadSnapshot(ctx, s.db, *root.ContentDocumentID, root.SourceLocale)
+	if errors.Is(err, contentblock.ErrDocumentNotFound) {
+		return publicLegalContentProjection{}, domainerr.ResourceNotFound(kind.entity, entityID).WithCause(err)
+	}
 	if err != nil {
-		return publicLegalContentProjection{}, errs.Wrap(err)
+		return publicLegalContentProjection{}, err
 	}
-	locale := source.Locale
+	if snapshot.SourceLocale != root.SourceLocale {
+		return publicLegalContentProjection{}, domainerr.Precondition(kind.entity + " source locale does not match its content document")
+	}
+	locale := root.SourceLocale
 	if selection != nil && strings.TrimSpace(selection.DisplayedLocale) != "" {
 		locale = selection.DisplayedLocale
 	}
 	document, err := contentblock.MaterializeSnapshotRichTextLocale(snapshot, locale)
 	if err != nil {
-		return publicLegalContentProjection{}, errs.Internal(err)
+		return publicLegalContentProjection{}, err
 	}
-	return publicLegalContentProjection{
-		document: document,
-		revision: snapshot.Document.Revision.String(),
-	}, nil
+	return publicLegalContentProjection{document: document, revision: snapshot.Document.Revision.String()}, nil
 }

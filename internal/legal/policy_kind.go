@@ -85,6 +85,16 @@ func (k PolicyKind) descriptor() (*policyKind, error) {
 
 func (k *policyKind) entity() string { return string(k.kind) }
 
+// ShareLinkEntityType returns the stored entity type of the kind's Share
+// Links.
+func (k PolicyKind) ShareLinkEntityType() (string, bool) {
+	descriptor, ok := policyKinds[k]
+	if !ok {
+		return "", false
+	}
+	return descriptor.shareLinkEntityType, true
+}
+
 // PolicyStatus returns the stored status of kind in lifecycle state, one of
 // draft, scheduled, active and archived.
 func PolicyStatus(kind PolicyKind, state string) (model.LegalPolicyStatus, bool) {

@@ -154,13 +154,15 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicAccountPath, publicAccountHandler)
 	slog.Info("Registered public service", "path", publicAccountPath)
 
-	publicPrivacyService := legalpublic.NewPrivacyServiceWithContentBlocks(db, contentBlockStore, legalRuntime)
-	publicPrivacyPath, publicPrivacyHandler := openv1connect.NewPrivacyServiceHandler(publicPrivacyService, publicHandlerOpts...)
+	publicLegalService, err := legalpublic.NewService(legalpublic.Deps{DB: db, ContentBlocks: contentBlockStore, Media: legalRuntime})
+	if err != nil {
+		return err
+	}
+	publicPrivacyPath, publicPrivacyHandler := openv1connect.NewPrivacyServiceHandler(legalpublic.NewPrivacyConnectHandler(publicLegalService), publicHandlerOpts...)
 	mux.Handle(publicPrivacyPath, publicPrivacyHandler)
 	slog.Info("Registered public service", "path", publicPrivacyPath)
 
-	publicTermsService := legalpublic.NewTermsServiceWithContentBlocks(db, contentBlockStore, legalRuntime)
-	publicTermsPath, publicTermsHandler := openv1connect.NewTermsServiceHandler(publicTermsService, publicHandlerOpts...)
+	publicTermsPath, publicTermsHandler := openv1connect.NewTermsServiceHandler(legalpublic.NewTermsConnectHandler(publicLegalService), publicHandlerOpts...)
 	mux.Handle(publicTermsPath, publicTermsHandler)
 	slog.Info("Registered public service", "path", publicTermsPath)
 
