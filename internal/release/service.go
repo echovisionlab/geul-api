@@ -693,7 +693,7 @@ func (s *ReleaseService) DeleteRelease(
 // Publish/Unpublish (admin only)
 // =============================================================================
 
-// PublishRelease publishes a release (admin or owner only)
+// PublishRelease publishes a release (admin only)
 func (s *ReleaseService) PublishRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.PublishReleaseRequest],
@@ -753,7 +753,7 @@ func (s *ReleaseService) PublishRelease(
 	}), nil
 }
 
-// UnpublishRelease unpublishes a release (admin or owner only)
+// UnpublishRelease unpublishes a release (admin only)
 func (s *ReleaseService) UnpublishRelease(
 	ctx context.Context,
 	req *connect.Request[managev1.UnpublishReleaseRequest],
