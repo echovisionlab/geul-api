@@ -55,7 +55,7 @@ func (p *videoProcessor) transcode(
 	if err != nil {
 		return nil, err
 	}
-	defer p.sources.cleanupJobWorkDir(job.GetEventId())
+	defer p.sources.cleanupJobWorkDir(ctx, job.GetEventId())
 
 	transcodeCtx, cancel := p.sources.withTranscodeTimeout(ctx, job.GetEventId(), source.probe.DurationSeconds*1.5)
 	defer cancel()

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/transcoding/jobregistry"
 	"github.com/echovisionlab/geul-api/internal/transcoding/jobresult"
 	telemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
@@ -56,4 +57,32 @@ func TestConsumerLogsOriginalCauseBeforeSettlement(t *testing.T) {
 			require.NoError(t, mock.ExpectationsWereMet())
 		})
 	}
+}
+
+func TestConsumerLogsExplicitCancellationAtWarn(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	connection, mock := mockConnection(t)
+	consumer, err := NewConsumer(connection, queueConfig(), func(context.Context, []byte) error {
+		return jobresult.Terminal(jobregistry.ErrExplicitCancellation)
+	})
+	require.NoError(t, err)
+	expectBoolean(mock, "delete", true)
+
+	consumer.process(context.Background(), validMessage(t, 1))
+
+	var entry map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		var candidate map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &candidate))
+		if candidate["msg"] == "PGMQ handler failed" {
+			entry = candidate
+		}
+	}
+	require.NotNil(t, entry)
+	require.Equal(t, "WARN", entry["level"])
+	require.Contains(t, entry["failure_cause"], jobregistry.ErrExplicitCancellation.Error())
+	require.NoError(t, mock.ExpectationsWereMet())
 }

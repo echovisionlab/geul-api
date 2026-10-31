@@ -15,7 +15,7 @@ func (h *Handlers) handleCleanupStaleMeshOptimizationCandidates(ctx context.Cont
 		return err
 	}
 	if count > 0 {
-		slog.Info("Cleaned up stale mesh optimization candidates", "count", count)
+		slog.InfoContext(ctx, "Cleaned up stale mesh optimization candidates", "count", count)
 	}
 	return nil
 }

@@ -128,7 +128,7 @@ func (p *Processor) processJob(ctx context.Context, job *apiv1.MeshOptimizationJ
 		apptelemetry.SystemMetadata(ctx, startedAt),
 		sharedtelemetry.JobContext{JobKind: sharedtelemetry.JobKindMeshOptimization, JobID: jobID},
 	)
-	_ = apptelemetry.EmitSystem(ctx, startedRecord, startedRecordErr)
+	apptelemetry.EmitSystem(ctx, startedRecord, startedRecordErr)
 
 	spec, err := newMeshJobSpec(job)
 	if err != nil {
@@ -151,7 +151,7 @@ func (p *Processor) processJob(ctx context.Context, job *apiv1.MeshOptimizationJ
 		sharedtelemetry.JobContext{JobKind: sharedtelemetry.JobKindMeshOptimization, JobID: jobID},
 		time.Since(startedAt).Milliseconds(),
 	)
-	_ = apptelemetry.EmitSystem(ctx, succeededRecord, succeededRecordErr)
+	apptelemetry.EmitSystem(ctx, succeededRecord, succeededRecordErr)
 	return nil
 }
 

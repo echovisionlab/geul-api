@@ -49,7 +49,7 @@ func (c *Consumer) Start(ctx context.Context) error {
 		c.wg.Add(1)
 		go c.worker(ctx, workerID)
 	}
-	slog.Info("Started PGMQ consumer", "queue", c.config.Name, "workers", c.config.Workers)
+	slog.InfoContext(ctx, "Started PGMQ consumer", "queue", c.config.Name, "workers", c.config.Workers)
 	return nil
 }
 
@@ -104,8 +104,9 @@ func (c *Consumer) process(parent context.Context, message eventpkg.Message) {
 	jobCtx, cancel := context.WithTimeout(parent, c.config.Timeout)
 	err = c.handler(jobCtx, body)
 	if err != nil {
+		// A worker shutdown is an expected outcome; a job timeout is not.
 		level := slog.LevelError
-		if jobCtx.Err() != nil {
+		if parent.Err() != nil {
 			level = slog.LevelWarn
 		}
 		slog.Log(jobCtx, level, "PGMQ handler failed", append(failurecause.Args(err), "queue", c.config.Name, "message_id", messageID, "command_id", commandID, "transport_id", message.TransportID, "retry_count", max(0, message.ReadCount-1))...)

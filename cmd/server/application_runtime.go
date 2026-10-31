@@ -92,16 +92,15 @@ func (r *applicationRuntime) startRequiredConsumers(
 ) error {
 	ready := make(chan error, 1)
 	r.wg.Go(func() {
-		slog.Info("Consumer manager starting")
+		slog.InfoContext(ctx, "Consumer manager starting")
 		if err := r.consumerManager.StartWithReady(ctx, ready); err != nil {
-			slog.Error("Consumer manager error", "failure_cause", failurecause.Message(err))
 			reportRuntimeFailure(runtimeFailures, fmt.Errorf("consumer manager: %w", err))
 		}
 	})
 	if err := <-ready; err != nil {
 		return fmt.Errorf("PGMQ consumer readiness: %w", err)
 	}
-	slog.Info("Required PGMQ queues ready", "queues", r.consumerManager.QueueNames())
+	slog.InfoContext(ctx, "Required PGMQ queues ready", "queues", r.consumerManager.QueueNames())
 	return nil
 }
 
@@ -189,7 +188,7 @@ func (r *applicationRuntime) startHTTPServer(ctx context.Context, name string, s
 		return false
 	}
 	r.wg.Go(func() {
-		slog.Info(name+" starting", "address", server.Addr)
+		slog.InfoContext(ctx, name+" starting", "address", server.Addr)
 		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			reportRuntimeFailure(runtimeFailures, fmt.Errorf("%s: %w", name, err))
 		}
@@ -227,9 +226,9 @@ func (r *applicationRuntime) startSubscriber(
 	subscriber *mq.BroadcastSubscriber,
 ) {
 	r.wg.Go(func() {
-		slog.Info(name + " subscriber starting")
+		slog.InfoContext(ctx, name+" subscriber starting")
 		if err := subscriber.Start(ctx); err != nil {
-			slog.Error(name+" subscriber error", "failure_cause", failurecause.Message(err))
+			slog.ErrorContext(ctx, name+" subscriber error", "failure_cause", failurecause.Message(err))
 		}
 	})
 }
@@ -241,12 +240,12 @@ func (r *applicationRuntime) Shutdown(
 ) bool {
 	if r.ogProcess != nil {
 		if err := r.ogProcess.Shutdown(ctx); err != nil {
-			slog.Error("OG shutdown error", "failure_cause", failurecause.Message(err))
+			slog.ErrorContext(ctx, "OG shutdown error", "failure_cause", failurecause.Message(err))
 		}
 	}
 	if r.mediaWorkers != nil {
 		if err := r.mediaWorkers.Close(); err != nil {
-			slog.Error("Media workers close failed", "failure_cause", failurecause.Message(err))
+			slog.ErrorContext(ctx, "Media workers close failed", "failure_cause", failurecause.Message(err))
 		}
 	}
 	if r.mediaServer != nil {
@@ -259,7 +258,7 @@ func (r *applicationRuntime) Shutdown(
 	}
 	if r.consumerManager != nil {
 		if err := r.consumerManager.Close(); err != nil {
-			slog.Error("Consumer manager close failed", "failure_cause", failurecause.Message(err))
+			slog.ErrorContext(ctx, "Consumer manager close failed", "failure_cause", failurecause.Message(err))
 		}
 	}
 	closeSubscriber(r.transcodeProgressSubscriber)
@@ -271,7 +270,7 @@ func (r *applicationRuntime) Shutdown(
 
 func shutdownHTTPServer(ctx context.Context, name string, server *http.Server) {
 	if err := server.Shutdown(ctx); err != nil {
-		slog.Error(name+" shutdown error", "failure_cause", failurecause.Message(err))
+		slog.ErrorContext(ctx, name+" shutdown error", "failure_cause", failurecause.Message(err))
 	}
 }
 

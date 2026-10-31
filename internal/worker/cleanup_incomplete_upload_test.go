@@ -1,9 +1,13 @@
 package worker
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -282,7 +286,7 @@ func TestExpiredFileIngestFailedEventBuildsIdentityForUploadKinds(t *testing.T) 
 			t.Parallel()
 
 			entityType := expiredUploadEntityType(tt.session)
-			require.True(t, isExpiredFileIngestLifecyclePublishable(tt.session))
+			require.NoError(t, expiredFileIngestLifecycleIdentityError(tt.session))
 
 			got, err := expiredFileIngestFailedEvent(tt.session, entityType, expiredAt)
 			require.NoError(t, err)
@@ -524,4 +528,38 @@ func TestPublishExpiredFileIngestRequiresPublisher(t *testing.T) {
 	require.False(t, published)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "file ingest lifecycle publisher is not configured")
+}
+
+func TestHandleCleanupIncompleteUploadsLogsEachFailedSessionOnce(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	session := expiredUploadSession{
+		UploadType:    managev1.UploadType_UPLOAD_TYPE_USER_AVATAR.String(),
+		UploadID:      randomWorkerTestID("abort-failure"),
+		FileID:        uuid.NewString(),
+		RequestedMime: "image/jpeg",
+		EntityID:      uuid.NewString(),
+	}
+	db, _ := newExpiredUploadCleanupDB(t, session)
+	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+	}))
+	handlers := &Handlers{db: db, config: &config.Config{S3Bucket: "media"}, s3Client: s3Client}
+
+	err := handlers.handleCleanupIncompleteUploads(context.Background())
+
+	// The scheduler logs the returned summary; the cause is logged per session.
+	require.EqualError(t, err, "1 of 1 expired upload sessions were not cleaned up")
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	require.Len(t, lines, 1)
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &entry))
+	require.Equal(t, "ERROR", entry["level"])
+	require.Equal(t, "Expired upload session cleanup failed", entry["msg"])
+	require.Equal(t, session.UploadID, entry["upload_id"])
+	require.Equal(t, session.FileID, entry["file_id"])
+	require.Contains(t, entry["failure_cause"], "abort expired multipart upload "+session.UploadID)
 }

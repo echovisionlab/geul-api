@@ -16,7 +16,7 @@ func (h *Handlers) handleCleanupAuthCodeIssuance(ctx context.Context) error {
 		return err
 	}
 	if deleted > 0 {
-		slog.Info("Cleaned expired auth code issuance rows", "count", deleted)
+		slog.InfoContext(ctx, "Cleaned expired auth code issuance rows", "count", deleted)
 	}
 	return nil
 }
@@ -33,7 +33,7 @@ func (h *Handlers) handleCleanupPGMQArchives(ctx context.Context) error {
 	}
 	for _, result := range results {
 		if result.DeletedCount > 0 {
-			slog.Info("Purged expired PGMQ archive rows", "queue", result.QueueName, "count", result.DeletedCount)
+			slog.InfoContext(ctx, "Purged expired PGMQ archive rows", "queue", result.QueueName, "count", result.DeletedCount)
 		}
 	}
 	return nil

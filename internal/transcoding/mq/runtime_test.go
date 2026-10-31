@@ -463,16 +463,16 @@ func TestCancelSubscriberStartupFailures(t *testing.T) {
 
 func TestHandleCancelSignal(t *testing.T) {
 	var got string
-	handleCancelSignal(cancelEnvelope(t, &apiv1.TranscodeCancelEvent{FileId: "file"}, "cancel", "api.manage.v1.TranscodeCancelEvent"), decodeTranscodeCancel, func(id string) bool { got = id; return true })
+	handleCancelSignal(context.Background(), cancelEnvelope(t, &apiv1.TranscodeCancelEvent{FileId: "file"}, "cancel", "api.manage.v1.TranscodeCancelEvent"), decodeTranscodeCancel, func(id string) bool { got = id; return true })
 	require.Equal(t, "file", got)
-	handleCancelSignal(cancelEnvelope(t, &apiv1.WaveformCancelEvent{EventId: "event"}, "wave", "api.manage.v1.WaveformCancelEvent"), decodeWaveformCancel, func(id string) bool { got = id; return true })
+	handleCancelSignal(context.Background(), cancelEnvelope(t, &apiv1.WaveformCancelEvent{EventId: "event"}, "wave", "api.manage.v1.WaveformCancelEvent"), decodeWaveformCancel, func(id string) bool { got = id; return true })
 	require.Equal(t, "event", got)
-	handleCancelSignal([]byte("invalid"), decodeTranscodeCancel, func(string) bool { t.Fatal("called"); return true })
+	handleCancelSignal(context.Background(), []byte("invalid"), decodeTranscodeCancel, func(string) bool { t.Fatal("called"); return true })
 	invalidPayload, err := json.Marshal(eventpkg.Envelope{MessageID: "bad", MessageType: "bad", SchemaVersion: 1, CreatedAt: time.Now().Format(time.RFC3339Nano), PayloadBase64: "%%%"})
 	require.NoError(t, err)
-	handleCancelSignal(invalidPayload, decodeTranscodeCancel, func(string) bool { t.Fatal("called"); return true })
+	handleCancelSignal(context.Background(), invalidPayload, decodeTranscodeCancel, func(string) bool { t.Fatal("called"); return true })
 	badDecode := cancelEnvelope(t, &apiv1.TranscodeCancelEvent{}, "bad", "api.manage.v1.TranscodeCancelEvent")
-	handleCancelSignal(badDecode, func([]byte) (string, error) { return "", errors.New("decode") }, func(string) bool { t.Fatal("called"); return true })
+	handleCancelSignal(context.Background(), badDecode, func([]byte) (string, error) { return "", errors.New("decode") }, func(string) bool { t.Fatal("called"); return true })
 }
 
 func TestCancelDecoders(t *testing.T) {

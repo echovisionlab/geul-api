@@ -26,8 +26,8 @@ func parseTranscodeCompleteEvent(body []byte) (*managev1.TranscodeCompleteEvent,
 	return &event, nil
 }
 
-func logTranscodeComplete(event *managev1.TranscodeCompleteEvent) {
-	slog.Info("Processing transcode complete event",
+func logTranscodeComplete(ctx context.Context, event *managev1.TranscodeCompleteEvent) {
+	slog.InfoContext(ctx, "Processing transcode complete event",
 		"fileId", event.FileId,
 		"entityType", event.EntityType.String(),
 		"entityId", event.EntityId,
@@ -47,7 +47,7 @@ func (h *Handlers) skipUnavailableTranscodeSource(
 	if acceptsResults {
 		return false, nil
 	}
-	slog.Debug(
+	slog.DebugContext(ctx,
 		"Skipped transcode completion for deleted or pending-deletion source file",
 		"fileId",
 		event.FileId,
@@ -105,7 +105,7 @@ func (h *Handlers) handleSuccessfulTranscodeComplete(
 		return fmt.Errorf("load tracked transcode allocation: %w", err)
 	}
 	if trackedJob == nil {
-		logUntrackedTranscodeComplete(event)
+		logUntrackedTranscodeComplete(ctx, event)
 		return nil
 	}
 	if !transcodeJobAcceptsCompletion(trackedJob.Status) {
@@ -119,8 +119,8 @@ func (h *Handlers) handleSuccessfulTranscodeComplete(
 	return h.publishSuccessfulTranscodeComplete(ctx, event, trackStateApplied)
 }
 
-func logUntrackedTranscodeComplete(event *managev1.TranscodeCompleteEvent) {
-	slog.Warn(
+func logUntrackedTranscodeComplete(ctx context.Context, event *managev1.TranscodeCompleteEvent) {
+	slog.WarnContext(ctx, 
 		"Skipped untracked transcode completion",
 		"fileId",
 		event.FileId,

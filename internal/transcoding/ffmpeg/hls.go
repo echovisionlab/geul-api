@@ -95,7 +95,7 @@ func (e *Executor) GenerateHLSWithProgress(
 	defer func() { _ = os.Remove(socketPath) }()
 
 	args := buildHLSArgs(inputPath, outputDir, socketPath, opts, resolutions, probe.HasAudio)
-	slog.Info("Generating HLS streams with progress",
+	slog.InfoContext(ctx, "Generating HLS streams with progress",
 		"input", inputPath,
 		"output_dir", outputDir,
 		"resolutions", len(resolutions),
@@ -106,7 +106,7 @@ func (e *Executor) GenerateHLSWithProgress(
 	}
 
 	result := buildHLSResult(outputDir, resolutions)
-	slog.Info("HLS generation completed",
+	slog.InfoContext(ctx, "HLS generation completed",
 		"master_playlist", result.MasterPlaylist,
 		"variants", len(result.VariantPlaylists),
 	)

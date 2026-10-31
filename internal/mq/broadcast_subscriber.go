@@ -79,7 +79,7 @@ func (s *BroadcastSubscriber) Start(ctx context.Context) error {
 		if attempt > 1 {
 			emitPostgreSQLSignalDependencyRecovered(ctx)
 		}
-		slog.Info("PostgreSQL signal subscriber started", "signal", s.signal)
+		slog.InfoContext(ctx, "PostgreSQL signal subscriber started", "signal", s.signal)
 		attempt = 0
 		for ctx.Err() == nil && !isClosed(s.closed) {
 			notification, waitErr := conn.WaitForNotification(ctx)

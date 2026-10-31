@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -12,7 +12,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Recovery catches panics and converts them to errors
+// Recovery catches panics and converts them to errors. The returned error
+// carries the sanitized panic value and stack, so the consumer's single
+// "PGMQ handler failed" record holds them.
 func Recovery() mq.Middleware {
 	return func(next mq.Handler) mq.Handler {
 		return func(ctx context.Context, msg mq.Message) (err error) {
@@ -28,8 +30,10 @@ func Recovery() mq.Middleware {
 						}
 					}
 					cause, stack := failurecause.Panic(value, private...)
-					slog.ErrorContext(ctx, "Queue handler panic", "queue", msg.Queue, "message_id", msg.MessageID, "command_id", msg.CorrelationID, "failure_cause", cause, "panic_stack", stack)
-					err = errors.New("queue handler panic")
+					err = failurecause.WithAttrs(
+						failurecause.WithPrivate(fmt.Errorf("queue handler panic: %s", cause), private...),
+						slog.String("panic_stack", stack),
+					)
 				}
 			}()
 			return next(ctx, msg)

@@ -17,15 +17,15 @@ func SystemMetadata(ctx context.Context, occurredAt time.Time) sharedtelemetry.S
 	}
 }
 
-// EmitSystem emits a valid shared System record through the active logger.
-func EmitSystem(ctx context.Context, record sharedtelemetry.SystemRecord, buildErr error) error {
+// EmitSystem emits a valid shared System record through the active logger. A
+// record that cannot be built or emitted is logged here; callers have nothing
+// to add to it.
+func EmitSystem(ctx context.Context, record sharedtelemetry.SystemRecord, buildErr error) {
 	if buildErr != nil {
 		slog.ErrorContext(ctx, "Failed to build media system telemetry", failurecause.Attr(buildErr))
-		return buildErr
+		return
 	}
-	err := sharedtelemetry.EmitSystem(ctx, slog.Default().Handler(), record)
-	if err != nil {
+	if err := sharedtelemetry.EmitSystem(ctx, slog.Default().Handler(), record); err != nil {
 		slog.ErrorContext(ctx, "Failed to emit media system telemetry", failurecause.Attr(err))
 	}
-	return err
 }

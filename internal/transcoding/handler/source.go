@@ -39,7 +39,7 @@ func (p *sourcePreparer) prepareJobSource(
 	}
 	sourcePath, probe, err := p.prepareSource(ctx, workDir, objectKey, reportProgress, validate)
 	if err != nil {
-		p.cleanupJobWorkDir(jobID)
+		p.cleanupJobWorkDir(ctx, jobID)
 		return nil, err
 	}
 	return &preparedSource{workDir: workDir, path: sourcePath, probe: probe}, nil
@@ -75,7 +75,7 @@ func (p *sourcePreparer) withTranscodeTimeout(
 	durationSeconds float64,
 ) (context.Context, context.CancelFunc) {
 	timeout := ffmpeg.CalculateTimeout(durationSeconds, p.jobTimeoutMinutes)
-	slog.Debug("Applied dynamic timeout",
+	slog.DebugContext(ctx, "Applied dynamic timeout",
 		"job_id", jobID,
 		"media_duration", durationSeconds,
 		"timeout", timeout,
@@ -83,8 +83,8 @@ func (p *sourcePreparer) withTranscodeTimeout(
 	return context.WithTimeout(ctx, timeout)
 }
 
-func (p *sourcePreparer) cleanupJobWorkDir(jobID string) {
+func (p *sourcePreparer) cleanupJobWorkDir(ctx context.Context, jobID string) {
 	if err := p.workDirs.CleanupJobWorkDir(jobID); err != nil {
-		slog.Error("Failed to clean transcoder work directory", "job_id", jobID, failurecause.Attr(err))
+		slog.ErrorContext(ctx, "Failed to clean transcoder work directory", "job_id", jobID, failurecause.Attr(err))
 	}
 }
