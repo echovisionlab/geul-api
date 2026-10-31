@@ -700,7 +700,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize audience service: %w", err)
 	}
-	audiencePath, audienceHandler := managev1connect.NewAudienceServiceHandler(audienceService, handlerOpts...)
+	audiencePath, audienceHandler := managev1connect.NewAudienceServiceHandler(audience.NewConnectHandler(audienceService), handlerOpts...)
 	mux.Handle(audiencePath, audienceHandler)
 	slog.Info("Registered service", "path", audiencePath)
 

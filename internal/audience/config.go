@@ -13,7 +13,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -157,53 +156,57 @@ func sortSegmentConfig(config *model.AudienceSegmentConfig) {
 	config.ExcludeMemberIDs = sliceutil.SortedUniqueTrimmed(config.ExcludeMemberIDs)
 }
 
-func toModelSegmentConfig(config *managev1.SegmentConfig) (model.AudienceSegmentConfig, error) {
-	if config == nil {
+// SegmentConfigInput is a requested segment filter before validation.
+type SegmentConfigInput struct {
+	MemberTagIDs []string
+	// AccountRoles are role IDs (policyv1.Role); an empty ID stands for an
+	// API role the domain does not support.
+	AccountRoles     []string
+	CreatedAfter     *time.Time
+	CreatedBefore    *time.Time
+	ExcludeMemberIDs []string
+	// malformedTime names a time bound whose wire value is not a valid
+	// timestamp; validation rejects it after the identifier checks.
+	malformedTime string
+}
+
+// normalizeSegmentConfig validates a requested filter and returns it with
+// canonical, sorted and deduplicated identifiers. A nil input is the empty
+// filter.
+func normalizeSegmentConfig(input *SegmentConfigInput) (model.AudienceSegmentConfig, error) {
+	if input == nil {
 		return model.AudienceSegmentConfig{}, nil
 	}
-	roles, err := normalizeAccountPermissions(config.AccountRoles)
+	roles, err := normalizeAccountRoles(input.AccountRoles)
 	if err != nil {
 		return model.AudienceSegmentConfig{}, err
 	}
-	memberTagIDs, err := canonicalUUIDs(config.MemberTagIds, "member_tag_ids")
+	memberTagIDs, err := canonicalUUIDs(input.MemberTagIDs, "member_tag_ids")
 	if err != nil {
 		return model.AudienceSegmentConfig{}, err
 	}
-	excludeMemberIDs, err := canonicalUUIDs(config.ExcludeMemberIds, "exclude_member_ids")
+	excludeMemberIDs, err := canonicalUUIDs(input.ExcludeMemberIDs, "exclude_member_ids")
 	if err != nil {
 		return model.AudienceSegmentConfig{}, err
+	}
+	if input.malformedTime != "" {
+		return model.AudienceSegmentConfig{}, fmt.Errorf("%s is invalid", input.malformedTime)
 	}
 	result := model.AudienceSegmentConfig{
 		MemberTagIDs: memberTagIDs, AccountRoles: roles,
-		CreatedAfter: protoTime(config.CreatedAfter), CreatedBefore: protoTime(config.CreatedBefore),
+		CreatedAfter: utcTime(input.CreatedAfter), CreatedBefore: utcTime(input.CreatedBefore),
 		ExcludeMemberIDs: excludeMemberIDs,
 	}
 	sortSegmentConfig(&result)
-	if config.CreatedAfter != nil {
-		if err := config.CreatedAfter.CheckValid(); err != nil {
-			return model.AudienceSegmentConfig{}, fmt.Errorf("created_after is invalid")
-		}
-	}
-	if config.CreatedBefore != nil {
-		if err := config.CreatedBefore.CheckValid(); err != nil {
-			return model.AudienceSegmentConfig{}, fmt.Errorf("created_before is invalid")
-		}
-	}
 	return result, nil
 }
 
-func normalizeAccountPermissions(values []policyv1.AuthorizationRole) ([]string, error) {
+func normalizeAccountRoles(values []string) ([]string, error) {
 	result := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		var role string
-		switch value {
-		case policyv1.AuthorizationRole_ADMIN:
-			role = policyv1.Role.Admin().ID()
-		case policyv1.AuthorizationRole_AUTHOR:
-			role = policyv1.Role.Author().ID()
-		case policyv1.AuthorizationRole_USER:
-			role = policyv1.Role.User().ID()
+	for _, role := range values {
+		switch role {
+		case policyv1.Role.Admin().ID(), policyv1.Role.Author().ID(), policyv1.Role.User().ID():
 		default:
 			return nil, fmt.Errorf("account_roles contains an unsupported role")
 		}
@@ -217,11 +220,11 @@ func normalizeAccountPermissions(values []policyv1.AuthorizationRole) ([]string,
 	return result, nil
 }
 
-func protoTime(value *timestamppb.Timestamp) *time.Time {
+func utcTime(value *time.Time) *time.Time {
 	if value == nil {
 		return nil
 	}
-	parsed := value.AsTime().UTC()
+	parsed := value.UTC()
 	return &parsed
 }
 
@@ -252,9 +255,9 @@ func canonicalUUIDs(values []string, field string) ([]string, error) {
 }
 
 // ValidateSegmentConfigForType validates a normalized segment configuration.
-func ValidateSegmentConfigForType(segmentType string, config model.AudienceSegmentConfig) error {
-	switch strings.TrimSpace(segmentType) {
-	case managev1.SegmentType_SEGMENT_TYPE_ALL_MEMBERS.String():
+func ValidateSegmentConfigForType(segmentType model.AudienceSegmentType, config model.AudienceSegmentConfig) error {
+	switch model.AudienceSegmentType(strings.TrimSpace(string(segmentType))) {
+	case model.AudienceSegmentAllMembers:
 		if len(config.MemberTagIDs) > 0 ||
 			len(config.AccountRoles) > 0 ||
 			config.CreatedAfter != nil ||
@@ -262,7 +265,7 @@ func ValidateSegmentConfigForType(segmentType string, config model.AudienceSegme
 			len(config.ExcludeMemberIDs) > 0 {
 			return fmt.Errorf("all-members segments do not accept filters")
 		}
-	case managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String():
+	case model.AudienceSegmentMemberTags:
 		if len(config.MemberTagIDs) == 0 {
 			return fmt.Errorf("member-tag segments require member_tag_ids")
 		}
@@ -272,7 +275,7 @@ func ValidateSegmentConfigForType(segmentType string, config model.AudienceSegme
 			len(config.ExcludeMemberIDs) > 0 {
 			return fmt.Errorf("member-tag segments only accept member_tag_ids")
 		}
-	case managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String():
+	case model.AudienceSegmentMembersByFilter:
 		if len(config.MemberTagIDs) > 0 {
 			return fmt.Errorf("member-filter segments do not accept tag ids")
 		}

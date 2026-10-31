@@ -63,7 +63,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func newAudienceServiceForTest(db *gorm.DB, spiceDB *auth.SpiceDBClient) *audiencedomain.Service {
+func newAudienceServiceForTest(db *gorm.DB, spiceDB *auth.SpiceDBClient) *audiencedomain.ConnectHandler {
 	return newAuditedAudienceServiceForTest(db, &audittest.Recorder{}, spiceDB)
 }
 
@@ -71,7 +71,7 @@ func newAuditedAudienceServiceForTest(
 	db *gorm.DB,
 	writer domainaudit.Appender,
 	spiceDB *auth.SpiceDBClient,
-) *audiencedomain.Service {
+) *audiencedomain.ConnectHandler {
 	service, err := audiencedomain.NewService(audiencedomain.Deps{
 		DB:               db,
 		SpiceDB:          spiceDB,
@@ -82,7 +82,7 @@ func newAuditedAudienceServiceForTest(
 	if err != nil {
 		panic(err)
 	}
-	return service
+	return audiencedomain.NewConnectHandler(service)
 }
 
 func newAudienceIntegrationDB(t *testing.T) *gorm.DB {

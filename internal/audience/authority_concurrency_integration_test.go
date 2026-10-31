@@ -52,12 +52,12 @@ func TestAudienceMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		restore bool
-		invoke  func(context.Context, *audiencedomain.Service, string) error
+		invoke  func(context.Context, *audiencedomain.ConnectHandler, string) error
 		assert  func(*testing.T, *gorm.DB, string)
 	}{
 		{
 			name: "audience update",
-			invoke: func(ctx context.Context, service *audiencedomain.Service, segmentID string) error {
+			invoke: func(ctx context.Context, service *audiencedomain.ConnectHandler, segmentID string) error {
 				name := "must not update"
 				_, err := service.UpdateSegment(ctx, connect.NewRequest(&managev1.UpdateSegmentRequest{Id: segmentID, Name: &name}))
 				return err
@@ -70,7 +70,7 @@ func TestAudienceMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 		},
 		{
 			name: "audience archive",
-			invoke: func(ctx context.Context, service *audiencedomain.Service, segmentID string) error {
+			invoke: func(ctx context.Context, service *audiencedomain.ConnectHandler, segmentID string) error {
 				_, err := service.ArchiveSegment(ctx, connect.NewRequest(&managev1.ArchiveSegmentRequest{Id: segmentID}))
 				return err
 			},
@@ -82,7 +82,7 @@ func TestAudienceMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 		},
 		{
 			name: "audience restore", restore: true,
-			invoke: func(ctx context.Context, service *audiencedomain.Service, segmentID string) error {
+			invoke: func(ctx context.Context, service *audiencedomain.ConnectHandler, segmentID string) error {
 				_, err := service.RestoreSegment(ctx, connect.NewRequest(&managev1.RestoreSegmentRequest{Id: segmentID}))
 				return err
 			},

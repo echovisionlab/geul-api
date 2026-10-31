@@ -85,7 +85,7 @@ func (campaignAudienceMemberReferences) EligibleIDs(
 func newCampaignAudienceService(
 	db *gorm.DB,
 	spiceDB *auth.SpiceDBClient,
-) *audience.Service {
+) *audience.ConnectHandler {
 	service, err := audience.NewService(audience.Deps{
 		DB:               db,
 		SpiceDB:          spiceDB,
@@ -96,7 +96,7 @@ func newCampaignAudienceService(
 	if err != nil {
 		panic(err)
 	}
-	return service
+	return audience.NewConnectHandler(service)
 }
 
 func publishCampaignSourceBlocksForIntegration(

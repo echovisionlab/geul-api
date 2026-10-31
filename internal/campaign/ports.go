@@ -94,7 +94,7 @@ type CampaignDeliveryMetrics interface {
 type CampaignAudienceTarget struct {
 	Archived          bool
 	Valid             bool
-	SegmentType       string
+	SegmentType       model.AudienceSegmentType
 	CreatedAfter      *time.Time
 	CreatedBefore     *time.Time
 	MemberTagIDs      []string

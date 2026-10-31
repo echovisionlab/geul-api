@@ -200,7 +200,7 @@ func (fileTestAudienceMemberReferences) EligibleIDs(_ context.Context, _ *gorm.D
 	return memberIDs, nil
 }
 
-func newAudienceServiceForTest(db *gorm.DB, spiceDB *auth.SpiceDBClient) *audience.Service {
+func newAudienceServiceForTest(db *gorm.DB, spiceDB *auth.SpiceDBClient) *audience.ConnectHandler {
 	service, err := audience.NewService(audience.Deps{
 		DB: db, SpiceDB: spiceDB, RecipientCounter: fileTestAudienceRecipientCounter{},
 		MemberReferences: fileTestAudienceMemberReferences{}, Audit: &audittest.Recorder{},
@@ -208,7 +208,7 @@ func newAudienceServiceForTest(db *gorm.DB, spiceDB *auth.SpiceDBClient) *audien
 	if err != nil {
 		panic(err)
 	}
-	return service
+	return audience.NewConnectHandler(service)
 }
 
 func seedAudiencePostFileAttachment(t *testing.T, db *gorm.DB, postID, fileID string) {

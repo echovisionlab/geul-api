@@ -5,7 +5,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 )
 
@@ -110,19 +110,19 @@ func ensureSegmentMutableForActiveDelivery(tx *gorm.DB, segmentID string) error 
 	if err := tx.Model(&model.Campaign{}).Where("segment_id = ? AND status IN ?", segmentID, []string{
 		manageCampaignScheduled, manageCampaignSending,
 	}).Count(&activeCampaignCount).Error; err != nil {
-		return errors.Internal(err)
+		return err
 	}
 	if activeCampaignCount > 0 {
-		return errors.FailedPrecondition("audience segment is used by a scheduled or sending campaign")
+		return domainerr.Precondition("audience segment is used by a scheduled or sending campaign")
 	}
 	var activeRunCount int64
 	if err := tx.Model(&model.CampaignDeliveryRun{}).Where("audience_segment_id = ? AND status IN ?", segmentID, []string{
 		deliveryRunScheduled, deliveryRunSending,
 	}).Count(&activeRunCount).Error; err != nil {
-		return errors.Internal(err)
+		return err
 	}
 	if activeRunCount > 0 {
-		return errors.FailedPrecondition("audience segment is frozen by an active delivery run")
+		return domainerr.Precondition("audience segment is frozen by an active delivery run")
 	}
 	return nil
 }

@@ -6,14 +6,13 @@ import (
 	"fmt"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -26,13 +25,19 @@ const maxArchiveAttempts = 3
 
 var errArchiveRetry = errors.New("audience archive relationship changed while acquiring locks")
 
-func (s *Service) ArchiveSegment(
-	ctx context.Context,
-	req *connect.Request[managev1.ArchiveSegmentRequest],
-) (*connect.Response[managev1.Segment], error) {
-	can, err := policyv1.AudienceSegment.Edit(req.Msg.Id)
+// ArchiveSegmentCommand archives a segment.
+type ArchiveSegmentCommand struct {
+	ID string
+}
+
+// ArchiveSegment archives the segment: scheduled campaigns that target it
+// return to draft, its scheduled delivery runs are cancelled, and download
+// policies stop granting through it. Archiving an archived segment returns
+// it unchanged.
+func (s *Service) ArchiveSegment(ctx context.Context, command ArchiveSegmentCommand) (*managev1.Segment, error) {
+	can, err := policyv1.AudienceSegment.Edit(command.ID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
 		return nil, err
@@ -40,7 +45,7 @@ func (s *Service) ArchiveSegment(
 	var segment model.AudienceSegment
 	for range maxArchiveAttempts {
 		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			return archiveSegmentOnce(ctx, tx, s.spiceDB, s.auditWriter, req.Msg.Id, can, &segment)
+			return archiveSegmentOnce(ctx, tx, s.spiceDB, s.auditWriter, command.ID, can, &segment)
 		})
 		if errors.Is(err, errArchiveRetry) {
 			continue
@@ -48,40 +53,35 @@ func (s *Service) ArchiveSegment(
 		if err != nil {
 			return nil, err
 		}
-		return connect.NewResponse(toProtoSegment(&segment)), nil
+		return toProtoSegment(&segment), nil
 	}
-	return nil, connect.NewError(
-		connect.CodeAborted,
-		fmt.Errorf("audience segment changed while it was being archived; retry"),
-	)
+	return nil, domainerr.Retry("audience segment changed while it was being archived; retry")
 }
 
-func (s *Service) RestoreSegment(
-	ctx context.Context,
-	req *connect.Request[managev1.RestoreSegmentRequest],
-) (*connect.Response[managev1.Segment], error) {
-	can, err := policyv1.AudienceSegment.Edit(req.Msg.Id)
+// RestoreSegmentCommand restores an archived segment.
+type RestoreSegmentCommand struct {
+	ID string
+}
+
+// RestoreSegment makes an archived segment active again.
+func (s *Service) RestoreSegment(ctx context.Context, command RestoreSegmentCommand) (*managev1.Segment, error) {
+	can, err := policyv1.AudienceSegment.Edit(command.ID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
 		return nil, err
 	}
 	var segment model.AudienceSegment
 	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			First(&segment, "id = ?", req.Msg.Id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFoundMsg("segment not found")
-			}
-			return errs.Internal(err)
+		if err := lockSegmentForUpdate(ctx, tx, command.ID, &segment); err != nil {
+			return err
 		}
 		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
 			return err
 		}
 		if segment.ArchivedAt == nil {
-			return errs.FailedPrecondition("audience segment is not archived")
+			return domainerr.Precondition("audience segment is not archived")
 		}
 		now := time.Now().UTC()
 		result := tx.WithContext(ctx).
@@ -92,10 +92,10 @@ func (s *Service) RestoreSegment(
 				"updated_at":  now,
 			})
 		if result.Error != nil {
-			return errs.Internal(result.Error)
+			return result.Error
 		}
 		if result.RowsAffected != 1 {
-			return errs.FailedPrecondition("audience segment is not archived")
+			return domainerr.Precondition("audience segment is not archived")
 		}
 		if err := domainaudit.AppendRequest(
 			ctx,
@@ -117,7 +117,7 @@ func (s *Service) RestoreSegment(
 	}); err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(toProtoSegment(&segment)), nil
+	return toProtoSegment(&segment), nil
 }
 
 func archiveSegmentOnce(
@@ -132,9 +132,9 @@ func archiveSegmentOnce(
 	var observed model.AudienceSegment
 	if err := tx.WithContext(ctx).Select("id", "archived_at").First(&observed, "id = ?", segmentID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFoundMsg("segment not found")
+			return errSegmentNotFound()
 		}
-		return errs.Internal(err)
+		return err
 	}
 	if observed.ArchivedAt != nil {
 		var locked model.AudienceSegment
@@ -142,7 +142,7 @@ func archiveSegmentOnce(
 			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("id", "archived_at").
 			First(&locked, "id = ?", segmentID).Error; err != nil {
-			return errs.Internal(err)
+			return err
 		}
 		if locked.ArchivedAt == nil {
 			return errArchiveRetry
@@ -179,9 +179,9 @@ func archiveSegmentOnce(
 		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		First(&segment, "id = ?", segmentID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFoundMsg("segment not found")
+			return errSegmentNotFound()
 		}
-		return errs.Internal(err)
+		return err
 	}
 	if segment.ArchivedAt != nil {
 		return loadSegmentForResponse(ctx, tx, segmentID, result)
@@ -216,7 +216,7 @@ func archiveSegmentOnce(
 			"completed_at": now,
 			"updated_at":   now,
 		}).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if err := tx.WithContext(ctx).
 		Model(&model.Campaign{}).
@@ -226,17 +226,17 @@ func archiveSegmentOnce(
 			"scheduled_at": nil,
 			"updated_at":   now,
 		}).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if err := tx.WithContext(ctx).
 		Where("audience_segment_id = ?", segmentID).
 		Delete(&model.ContentBlockAttachmentDownloadAudienceSegment{}).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if err := tx.WithContext(ctx).
 		Where("audience_segment_id = ?", segmentID).
 		Delete(&model.TrackDownloadAudienceSegment{}).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	archived := tx.WithContext(ctx).
 		Model(&model.AudienceSegment{}).
@@ -246,7 +246,7 @@ func archiveSegmentOnce(
 			"updated_at":  now,
 		})
 	if archived.Error != nil {
-		return errs.Internal(archived.Error)
+		return archived.Error
 	}
 	if archived.RowsAffected != 1 {
 		return errArchiveRetry
@@ -314,11 +314,11 @@ func lockDownloadPolicyArchivePlans(
 		ORDER BY attachment.block_id, attachment.reference_path
 		FOR UPDATE OF attachment
 	`, segmentID).Scan(&attachments).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for _, attachment := range attachments {
 		if attachment.Domain == "" || attachment.OwnerID == "" || attachment.FileID == "" {
-			return nil, errs.Internal(fmt.Errorf("download policy attachment %s/%s has no supported owner or active file", attachment.BlockID, attachment.ReferencePath))
+			return nil, fmt.Errorf("download policy attachment %s/%s has no supported owner or active file", attachment.BlockID, attachment.ReferencePath)
 		}
 	}
 	var tracks []trackDownloadPolicyTarget
@@ -334,11 +334,11 @@ func lockDownloadPolicyArchivePlans(
 		ORDER BY track.id
 		FOR UPDATE OF track
 	`, segmentID).Scan(&tracks).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for _, track := range tracks {
 		if track.ReleaseID == "" || track.FileID == "" {
-			return nil, errs.Internal(fmt.Errorf("track download policy %s has no Release or original File", track.TrackID))
+			return nil, fmt.Errorf("track download policy %s has no Release or original File", track.TrackID)
 		}
 	}
 
@@ -398,7 +398,7 @@ func lockedScheduledCampaignIDs(
 		Where("segment_id = ? AND status = ?", segmentID, manageCampaignScheduled).
 		Order("id ASC").
 		Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	ids := make([]string, len(rows))
 	for i := range rows {
@@ -419,7 +419,7 @@ func attachmentDownloadPolicySegmentIDs(
 		Where("block_id = ? AND reference_path = ?", blockID, referencePath).
 		Order("audience_segment_id ASC").
 		Pluck("audience_segment_id", &segmentIDs).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return segmentIDs, nil
 }
@@ -431,7 +431,7 @@ func trackDownloadPolicySegmentIDs(ctx context.Context, tx *gorm.DB, trackID str
 		Where("track_id = ?", trackID).
 		Order("audience_segment_id ASC").
 		Pluck("audience_segment_id", &segmentIDs).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return segmentIDs, nil
 }
@@ -559,7 +559,7 @@ func downloadPolicyArchiveAudit(
 			return sharedtelemetry.NewReleaseTrackDownloadPolicyAuditRecord(metadata, plan.ownerID, plan.itemID, plan.fileID, previousAudience, newAudience, previousSegmentIDs, segmentIDs)
 		}, nil
 	default:
-		return "", nil, errs.Internal(fmt.Errorf("unsupported download policy owner %q", plan.domain))
+		return "", nil, fmt.Errorf("unsupported download policy owner %q", plan.domain)
 	}
 }
 
@@ -578,7 +578,7 @@ func lockActiveDeliveryRuns(
 		Where("audience_segment_id = ? AND status IN ?", segmentID, []string{deliveryRunScheduled, deliveryRunSending}).
 		Order("id ASC").
 		Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	ids := make([]string, len(rows))
 	for i := range rows {
@@ -602,7 +602,7 @@ func lockAudienceCampaigns(
 		Where("segment_id = ?", segmentID).
 		Order("id ASC").
 		Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	ids := make([]string, len(rows))
 	for i := range rows {
@@ -621,7 +621,7 @@ func audienceCampaignsChanged(ctx context.Context, tx *gorm.DB, segmentID string
 		Where("segment_id = ?", segmentID).
 		Order("id ASC").
 		Scan(&rows).Error; err != nil {
-		return false, errs.Internal(err)
+		return false, err
 	}
 	if len(rows) != len(lockedIDs) {
 		return true, nil
@@ -644,7 +644,7 @@ func audienceActiveRunsChanged(ctx context.Context, tx *gorm.DB, segmentID strin
 		Where("audience_segment_id = ? AND status IN ?", segmentID, []string{deliveryRunScheduled, deliveryRunSending}).
 		Order("id ASC").
 		Scan(&rows).Error; err != nil {
-		return false, errs.Internal(err)
+		return false, err
 	}
 	if len(rows) != len(lockedIDs) {
 		return true, nil

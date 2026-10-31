@@ -7,13 +7,12 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRestrictedFileDownloadMemberMatchesAllMembersSegment(t *testing.T) {
 	segment := &model.AudienceSegment{
-		SegmentType: managev1.SegmentType_SEGMENT_TYPE_ALL_MEMBERS.String(),
+		SegmentType: model.AudienceSegmentAllMembers,
 	}
 
 	require.True(t, restrictedFileDownloadMemberMatchesSegment(
@@ -28,7 +27,7 @@ func TestRestrictedFileDownloadMemberMatchesAllMembersSegment(t *testing.T) {
 func TestResolveRestrictedFileDownloadPermissionsRejectsCorruptStoredRolesAsInternal(t *testing.T) {
 	segments := []model.AudienceSegment{{
 		ID:          "4b0d7b8e-34f4-4c44-8f5f-4f3a3c8f2d10",
-		SegmentType: managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String(),
+		SegmentType: model.AudienceSegmentMembersByFilter,
 		Config:      model.AudienceSegmentConfig{AccountRoles: []string{"superuser"}},
 	}}
 

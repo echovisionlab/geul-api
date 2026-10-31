@@ -12,7 +12,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 const (
@@ -68,9 +67,9 @@ func (d Deps) validate() error {
 	return nil
 }
 
-// Service implements the Audience Connect handler.
+// Service holds the Audience use cases. The Connect adapter translates its
+// requests into their commands and queries.
 type Service struct {
-	managev1connect.UnimplementedAudienceServiceHandler
 	db               *gorm.DB
 	spiceDB          *auth.SpiceDBClient
 	recipientCounter RecipientCounter
