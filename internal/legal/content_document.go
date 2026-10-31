@@ -310,7 +310,7 @@ func verifyLegalExpectedRevisionWithDB(
 	if err != nil {
 		return err
 	}
-	revision, err := loadLegalDocumentRevisionWithDB(ctx, db, *root.ContentDocumentID)
+	revision, err := contentblock.LoadRevision(ctx, db, *root.ContentDocumentID)
 	if err != nil {
 		return normalizeLegalContentBlockError(kind, err)
 	}
@@ -318,22 +318,4 @@ func verifyLegalExpectedRevisionWithDB(
 		return normalizeLegalContentBlockError(kind, &contentblock.StaleRevisionError{CurrentRevision: revision})
 	}
 	return nil
-}
-
-func loadLegalDocumentRevisionWithDB(ctx context.Context, db *gorm.DB, documentID uuid.UUID) (uuid.UUID, error) {
-	var row struct {
-		Revision uuid.UUID `gorm:"column:revision"`
-	}
-	if err := db.WithContext(ctx).
-		Table("content_document").
-		Select("revision").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-		Where("id = ?", documentID).
-		Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return uuid.Nil, contentblock.ErrDocumentNotFound
-		}
-		return uuid.Nil, err
-	}
-	return row.Revision, nil
 }

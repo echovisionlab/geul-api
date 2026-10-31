@@ -10,6 +10,7 @@ import (
 
 	"gorm.io/gorm"
 
+	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/localization"
@@ -59,7 +60,7 @@ func (*Requests) Resolve(
 	if current == nil {
 		return nil, errs.NotFound(kind, RouteID(kind))
 	}
-	backgroundFileID, err := BackgroundFileID(ctx, db, kind)
+	backgroundFileID, err := sitesettingsadapter.LegalOGBackgroundFileID(ctx, db, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +83,7 @@ func (*Requests) Resolve(
 func (*Requests) All(ctx context.Context, db *gorm.DB) ([]og.Request, error) {
 	requests := make([]og.Request, 0)
 	for _, kind := range []string{"privacy", "terms"} {
-		backgroundFileID, err := BackgroundFileID(ctx, db, kind)
+		backgroundFileID, err := sitesettingsadapter.LegalOGBackgroundFileID(ctx, db, kind)
 		if err != nil {
 			return nil, err
 		}
@@ -161,24 +162,6 @@ func Title(
 		return *translated.Title, nil
 	}
 	return strings.TrimSpace(fallback), nil
-}
-
-// BackgroundFileID reads the Site Settings slot that supplies a legal route's
-// optional source image.
-func BackgroundFileID(ctx context.Context, db *gorm.DB, kind string) (*string, error) {
-	column := backgroundColumn(kind)
-	if column == "" {
-		return nil, fmt.Errorf("unsupported legal OG entity type %q", kind)
-	}
-
-	var result struct {
-		FileID *string `gorm:"column:file_id"`
-	}
-	if err := db.WithContext(ctx).Table("site_settings").
-		Select(column + " AS file_id").Where("site_settings.id = 1").Scan(&result).Error; err != nil {
-		return nil, err
-	}
-	return optionalString(result.FileID), nil
 }
 
 // LoadRequests builds locale-scoped Open Graph target snapshots from one canonical
@@ -295,7 +278,7 @@ func RequestSaved(
 	if err != nil || current == nil || current.ID != documentID {
 		return nil, err
 	}
-	backgroundFileID, err := BackgroundFileID(ctx, tx, kind)
+	backgroundFileID, err := sitesettingsadapter.LegalOGBackgroundFileID(ctx, tx, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +309,7 @@ func RequestSaved(
 			if reloaded == nil || reloaded.ID != documentID {
 				return nil, fmt.Errorf("canonical %s OG content changed while taking its snapshot", kind)
 			}
-			reloadedBackgroundFileID, backgroundErr := BackgroundFileID(reloadCtx, reloadTx, kind)
+			reloadedBackgroundFileID, backgroundErr := sitesettingsadapter.LegalOGBackgroundFileID(reloadCtx, reloadTx, kind)
 			if backgroundErr != nil {
 				return nil, backgroundErr
 			}
@@ -442,17 +425,6 @@ func historySpec(kind string) (table, active, scheduled string, err error) {
 		return "", "", "", fmt.Errorf("unsupported legal OG entity type %q", kind)
 	}
 	return kind + "_history", string(activeStatus), string(scheduledStatus), nil
-}
-
-func backgroundColumn(kind string) string {
-	switch strings.TrimSpace(kind) {
-	case "privacy":
-		return "privacy_og_background_file_id"
-	case "terms":
-		return "terms_og_background_file_id"
-	default:
-		return ""
-	}
 }
 
 func enabledLocales(ctx context.Context, db *gorm.DB) ([]string, error) {

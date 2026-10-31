@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
@@ -94,25 +95,11 @@ func (r *Runtime) ReadyLocalizedOGAsset(
 	db *gorm.DB,
 	kind, routeID, locale string,
 ) (*commonv1.AssetRef, error) {
-	var binding struct {
-		AssetID string `gorm:"column:asset_id"`
-	}
-	err := db.WithContext(ctx).Table("public_asset_binding").
-		Select("asset_id").
-		Where(
-			"owner_type = ? AND owner_id = ? AND binding_key = ?",
-			kind,
-			routeID,
-			"og_"+strings.TrimSpace(locale),
-		).
-		Take(&binding).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if err != nil {
+	assetID, bound, err := mediaassetadapter.BoundPublicAssetID(ctx, db, kind, routeID, "og_"+strings.TrimSpace(locale))
+	if err != nil || !bound {
 		return nil, err
 	}
-	ref, err := mediaasset.NewLifecycle(db, r.cdnDomain).ReadyAssetRef(ctx, binding.AssetID)
+	ref, err := mediaasset.NewLifecycle(db, r.cdnDomain).ReadyAssetRef(ctx, assetID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

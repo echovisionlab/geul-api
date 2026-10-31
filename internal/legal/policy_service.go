@@ -544,7 +544,7 @@ func (s *Service) policyDocumentRevision(ctx context.Context, tx *gorm.DB, kind 
 	if err != nil {
 		return "", err
 	}
-	revision, err := loadLegalDocumentRevisionWithDB(ctx, tx, documentID)
+	revision, err := contentblock.LoadRevision(ctx, tx, documentID)
 	if err != nil {
 		return "", normalizeLegalContentBlockError(kind.entity(), err)
 	}
