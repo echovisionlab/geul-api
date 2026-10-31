@@ -146,11 +146,9 @@ func (s *ProgramEventSeriesService) applyProgramEventSeriesUpdate(
 		}
 		changedFields := programEventSeriesMetadataChangedFields(current, update)
 		statusChanged := update.status != nil && *update.status != current.Status
-		posterChanged := update.posterChanged && !sameNullableString(current.PosterFileID, update.posterFileID)
-		if posterChanged && update.posterFileID != nil {
-			if err := s.runtime.LockAttachableFilesForUpdate(ctx, tx, []string{*update.posterFileID}); err != nil {
-				return err
-			}
+		posterChanged, err := s.lockChangedProgramEventSeriesPoster(ctx, tx, current, update)
+		if err != nil {
+			return err
 		}
 		if len(changedFields) == 0 && !statusChanged && !posterChanged {
 			return nil
@@ -164,36 +162,82 @@ func (s *ProgramEventSeriesService) applyProgramEventSeriesUpdate(
 			return errs.Internal(err)
 		}
 		if posterChanged {
-			if err := s.syncProgramEventSeriesPoster(ctx, tx, series.ID, update); err != nil {
-				return err
-			}
-			if update.posterFileID != nil {
-				if err := appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-					return sharedtelemetry.NewProgramEventSeriesPosterAuditRecord(metadata, current.ID, *update.posterFileID, sharedtelemetry.AuditCollectionOperationAdded)
-				}); err != nil {
-					return err
-				}
-			} else if previousPosterFileID != nil {
-				if err := appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-					return sharedtelemetry.NewProgramEventSeriesPosterAuditRecord(metadata, current.ID, *previousPosterFileID, sharedtelemetry.AuditCollectionOperationRemoved)
-				}); err != nil {
-					return err
-				}
-			}
-		}
-		if len(changedFields) > 0 {
-			if err := appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewProgramEventSeriesMetadataAuditRecord(metadata, current.ID, changedFields)
-			}); err != nil {
+			if err := s.applyProgramEventSeriesPosterChange(ctx, tx, current.ID, previousPosterFileID, update); err != nil {
 				return err
 			}
 		}
+		var nextStatus *string
 		if statusChanged {
-			return appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewProgramEventSeriesLifecycleAuditRecord(metadata, current.ID, programEventSeriesAuditState(previousStatus), programEventSeriesAuditState(*update.status))
-			})
+			nextStatus = update.status
 		}
+		return s.appendProgramEventSeriesUpdateAudit(ctx, tx, current.ID, changedFields, previousStatus, nextStatus)
+	})
+}
+
+// appendProgramEventSeriesUpdateAudit audits the changed metadata fields and,
+// when nextStatus is set, the lifecycle transition from previousStatus.
+func (s *ProgramEventSeriesService) appendProgramEventSeriesUpdateAudit(
+	ctx context.Context,
+	tx *gorm.DB,
+	seriesID string,
+	changedFields []string,
+	previousStatus string,
+	nextStatus *string,
+) error {
+	if len(changedFields) > 0 {
+		if err := appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewProgramEventSeriesMetadataAuditRecord(metadata, seriesID, changedFields)
+		}); err != nil {
+			return err
+		}
+	}
+	if nextStatus == nil {
 		return nil
+	}
+	return appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewProgramEventSeriesLifecycleAuditRecord(metadata, seriesID, programEventSeriesAuditState(previousStatus), programEventSeriesAuditState(*nextStatus))
+	})
+}
+
+// lockChangedProgramEventSeriesPoster reports whether update changes the
+// series poster and locks a new poster file for attachment.
+func (s *ProgramEventSeriesService) lockChangedProgramEventSeriesPoster(
+	ctx context.Context,
+	tx *gorm.DB,
+	current model.ProgramEventSeries,
+	update programEventSeriesUpdate,
+) (bool, error) {
+	if !update.posterChanged || sameNullableString(current.PosterFileID, update.posterFileID) {
+		return false, nil
+	}
+	if update.posterFileID == nil {
+		return true, nil
+	}
+	return true, s.runtime.LockAttachableFilesForUpdate(ctx, tx, []string{*update.posterFileID})
+}
+
+// applyProgramEventSeriesPosterChange binds the poster a series update set,
+// or releases the removed one, and audits the change.
+func (s *ProgramEventSeriesService) applyProgramEventSeriesPosterChange(
+	ctx context.Context,
+	tx *gorm.DB,
+	seriesID string,
+	previousPosterFileID *string,
+	update programEventSeriesUpdate,
+) error {
+	if err := s.syncProgramEventSeriesPoster(ctx, tx, seriesID, update); err != nil {
+		return err
+	}
+	posterFileID := update.posterFileID
+	fileID, operation := posterFileID, sharedtelemetry.AuditCollectionOperationAdded
+	if posterFileID == nil {
+		fileID, operation = previousPosterFileID, sharedtelemetry.AuditCollectionOperationRemoved
+	}
+	if fileID == nil {
+		return nil
+	}
+	return appendOptionalProgramEventAudit(ctx, tx, s.auditWriter, sharedtelemetry.AuditProgramEventSeriesUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewProgramEventSeriesPosterAuditRecord(metadata, seriesID, *fileID, operation)
 	})
 }
 

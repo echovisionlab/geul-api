@@ -271,80 +271,21 @@ func (s *ProgramEventService) applyProgramEventUpdate(
 ) (bool, error) {
 	changed := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var current model.ProgramEvent
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&current, "id = ?", event.ID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("program event", event.ID)
-			}
-			return errs.Internal(err)
-		}
-		*event = current
-		if err := requireActiveProgramEventPrincipal(ctx, tx, "edit", false); err != nil {
+		changedFields, err := s.writeProgramEventMetadata(ctx, tx, event, r, update)
+		if err != nil {
 			return err
 		}
-		if err := requireProgramEventPermission(
-			ctx, s.spiceDB, current.ID,
-			programEventMutationAction(current.Status, policyv1.ProgramEvent.Edit),
-		); err != nil {
-			return err
-		}
-		if err := applyProgramEventTimeAndLocationUpdates(&update, &current, r); err != nil {
-			return err
-		}
-		if err := validateProgramEventSeriesRelationForUpdate(tx, current, update); err != nil {
-			return err
-		}
-		if update.slug != nil {
-			if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "program event", "events", *update.slug); err != nil {
-				return err
-			}
-		}
-		changedFields := programEventMetadataChangedFields(current, update)
 		metadataChanged := len(changedFields) > 0
-		if metadataChanged {
-			if err := tx.Model(&current).Updates(update.columns(update.now)).Error; err != nil {
-				if dberrors.IsUniqueViolation(err) && r.Slug != nil {
-					return errs.WithCause(errs.SlugAlreadyExists("program event", r.GetSlug()), err)
-				}
-				return errs.Internal(err)
-			}
-		}
-		posterBefore, err := loadProgramEventPrimaryMediaFileID(ctx, tx, event.ID, "poster")
+		posterChanged, err := s.applyProgramEventPosterChange(ctx, tx, event.ID, r)
 		if err != nil {
 			return err
-		}
-		if err := applyProgramEventPosterUpdate(ctx, tx, s.runtime, event.ID, r); err != nil {
-			return err
-		}
-		posterAfter, err := loadProgramEventPrimaryMediaFileID(ctx, tx, event.ID, "poster")
-		if err != nil {
-			return err
-		}
-		posterChanged := posterBefore != posterAfter
-		if posterChanged {
-			if posterAfter != "" {
-				if err := s.appendProgramEventPosterAudit(ctx, tx, event.ID, posterAfter, sharedtelemetry.AuditCollectionOperationAdded); err != nil {
-					return err
-				}
-			} else if posterBefore != "" {
-				if err := s.appendProgramEventPosterAudit(ctx, tx, event.ID, posterBefore, sharedtelemetry.AuditCollectionOperationRemoved); err != nil {
-					return err
-				}
-			}
 		}
 		relationFields, creditReplacement, err := replaceProgramEventUpdateRelations(ctx, tx, event.ID, r)
 		if err != nil {
 			return err
 		}
-		for _, change := range creditReplacement.changes {
-			if err := s.appendProgramEventChildAudit(ctx, tx, event.ID, "credits", change.id, change.operation); err != nil {
-				return err
-			}
-		}
-		if creditReplacement.orderChanged {
-			if err := s.appendProgramEventChildOrderAudit(ctx, tx, event.ID, "credits", creditReplacement.orderedIDs); err != nil {
-				return err
-			}
+		if err := s.appendProgramEventCreditReplacementAudit(ctx, tx, event.ID, creditReplacement); err != nil {
+			return err
 		}
 		changedFields = append(changedFields, relationFields...)
 		creditsChanged := len(creditReplacement.changes) > 0 || creditReplacement.orderChanged
@@ -366,6 +307,103 @@ func (s *ProgramEventService) applyProgramEventUpdate(
 		})
 	})
 	return changed, err
+}
+
+// writeProgramEventMetadata locks the event into *event, recomputes update
+// against it and writes the metadata columns that change. It returns the
+// changed audit fields.
+func (s *ProgramEventService) writeProgramEventMetadata(
+	ctx context.Context,
+	tx *gorm.DB,
+	event *model.ProgramEvent,
+	r *managev1.UpdateProgramEventRequest,
+	update programEventUpdate,
+) ([]string, error) {
+	var current model.ProgramEvent
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&current, "id = ?", event.ID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errs.NotFound("program event", event.ID)
+		}
+		return nil, errs.Internal(err)
+	}
+	*event = current
+	if err := requireActiveProgramEventPrincipal(ctx, tx, "edit", false); err != nil {
+		return nil, err
+	}
+	if err := requireProgramEventPermission(
+		ctx, s.spiceDB, current.ID,
+		programEventMutationAction(current.Status, policyv1.ProgramEvent.Edit),
+	); err != nil {
+		return nil, err
+	}
+	if err := applyProgramEventTimeAndLocationUpdates(&update, &current, r); err != nil {
+		return nil, err
+	}
+	if err := validateProgramEventSeriesRelationForUpdate(tx, current, update); err != nil {
+		return nil, err
+	}
+	if update.slug != nil {
+		if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "program event", "events", *update.slug); err != nil {
+			return nil, err
+		}
+	}
+	changedFields := programEventMetadataChangedFields(current, update)
+	if len(changedFields) == 0 {
+		return nil, nil
+	}
+	if err := tx.Model(&current).Updates(update.columns(update.now)).Error; err != nil {
+		if dberrors.IsUniqueViolation(err) && r.Slug != nil {
+			return nil, errs.WithCause(errs.SlugAlreadyExists("program event", r.GetSlug()), err)
+		}
+		return nil, errs.Internal(err)
+	}
+	return changedFields, nil
+}
+
+// applyProgramEventPosterChange applies the requested poster and audits the
+// primary poster it added or removed. It reports whether the poster changed.
+func (s *ProgramEventService) applyProgramEventPosterChange(
+	ctx context.Context,
+	tx *gorm.DB,
+	eventID string,
+	r *managev1.UpdateProgramEventRequest,
+) (bool, error) {
+	posterBefore, err := loadProgramEventPrimaryMediaFileID(ctx, tx, eventID, "poster")
+	if err != nil {
+		return false, err
+	}
+	if err := applyProgramEventPosterUpdate(ctx, tx, s.runtime, eventID, r); err != nil {
+		return false, err
+	}
+	posterAfter, err := loadProgramEventPrimaryMediaFileID(ctx, tx, eventID, "poster")
+	if err != nil {
+		return false, err
+	}
+	switch {
+	case posterBefore == posterAfter:
+		return false, nil
+	case posterAfter != "":
+		return true, s.appendProgramEventPosterAudit(ctx, tx, eventID, posterAfter, sharedtelemetry.AuditCollectionOperationAdded)
+	default:
+		return true, s.appendProgramEventPosterAudit(ctx, tx, eventID, posterBefore, sharedtelemetry.AuditCollectionOperationRemoved)
+	}
+}
+
+func (s *ProgramEventService) appendProgramEventCreditReplacementAudit(
+	ctx context.Context,
+	tx *gorm.DB,
+	eventID string,
+	replacement programEventCreditReplacement,
+) error {
+	for _, change := range replacement.changes {
+		if err := s.appendProgramEventChildAudit(ctx, tx, eventID, "credits", change.id, change.operation); err != nil {
+			return err
+		}
+	}
+	if !replacement.orderChanged {
+		return nil
+	}
+	return s.appendProgramEventChildOrderAudit(ctx, tx, eventID, "credits", replacement.orderedIDs)
 }
 
 func programEventMetadataChangedFields(event model.ProgramEvent, update programEventUpdate) []string {
