@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.7](https://github.com/echovisionlab/geul-api/compare/v4.1.6...v4.1.7) (2026-10-31)
+
+
+### Bug Fixes
+
+* lint and isolated parallel integration tests in CI, and the bugs they found ([#208](https://github.com/echovisionlab/geul-api/issues/208)) ([790acfe](https://github.com/echovisionlab/geul-api/commit/790acfe8940e1b6008f7388acd62f62210cefc50))
+
 ## [4.1.6](https://github.com/echovisionlab/geul-api/compare/v4.1.5...v4.1.6) (2026-10-30)
 
 

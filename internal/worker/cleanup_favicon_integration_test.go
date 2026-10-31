@@ -84,6 +84,7 @@ func TestFaviconCleanupAndBindingSerializeOnPostgresAssetRow(t *testing.T) {
 			t.Fatalf("cleanup did not wait for binding transaction: changed=%v err=%v", result.changed, result.err)
 		case <-time.After(100 * time.Millisecond):
 		}
+		requireLockWaiters(t, pg.DB, 1)
 		require.NoError(t, tx.Commit().Error)
 		cleanup := <-cleanupDone
 		require.NoError(t, cleanup.err)
