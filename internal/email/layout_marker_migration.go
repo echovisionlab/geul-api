@@ -6,7 +6,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/translation"
 	"golang.org/x/net/html"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -118,10 +117,10 @@ func layoutMigrationShape(content string) string {
 		if kind == html.TextToken && strings.TrimSpace(token.Data) == "" {
 			continue
 		}
-		if kind == html.StartTagToken && translation.IsExcludedHTMLElement(token.DataAtom) {
+		if kind == html.StartTagToken && layoutTextExcludedElement(token.DataAtom) {
 			excludedDepth++
 		}
-		if kind == html.EndTagToken && translation.IsExcludedHTMLElement(token.DataAtom) && excludedDepth > 0 {
+		if kind == html.EndTagToken && layoutTextExcludedElement(token.DataAtom) && excludedDepth > 0 {
 			excludedDepth--
 		}
 		fmt.Fprintf(&shape, "%d:%s\n", kind, token.String())

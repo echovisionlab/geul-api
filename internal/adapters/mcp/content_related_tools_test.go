@@ -288,7 +288,7 @@ func TestWorkCreditSchemasHaveNoRootCombinators(t *testing.T) {
 	}
 }
 
-func TestWorkCreditMutationsRejectInvalidSubjectsBeforeOwner(t *testing.T) {
+func TestWorkCreditMutationsRejectInvalidArgumentsBeforeOwner(t *testing.T) {
 	const creditID = "77777777-7777-4777-8777-777777777777"
 	artistID, memberID := "88888888-8888-4888-8888-888888888888", "99999999-9999-4999-8999-999999999999"
 	for _, test := range []struct{ tool, arguments, message string }{
@@ -296,6 +296,12 @@ func TestWorkCreditMutationsRejectInvalidSubjectsBeforeOwner(t *testing.T) {
 		{ToolWorkCreditAdd, `{"document_id":"` + managementWorkID + `","artist_id":"` + artistID + `","name":"Sound designer"}`, "exactly one of artist_id, member_id, or name is required"},
 		{ToolWorkCreditAdd, `{"document_id":"` + managementWorkID + `","artist_id":"` + artistID + `","member_id":"` + memberID + `"}`, "exactly one of artist_id, member_id, or name is required"},
 		{ToolWorkCreditUpdate, `{"credit_id":"` + creditID + `"}`, "at least one of group_id or credit_role is required"},
+		{ToolWorkCreditAdd, `{"document_id":"` + managementWorkID + `","credit_id":"` + creditID + `","name":"Sound designer"}`, `unexpected argument "credit_id"`},
+		{ToolWorkCreditUpdate, `{"credit_id":"` + creditID + `","credit_role":"sound","artist_id":"` + artistID + `"}`, `unexpected argument "artist_id"`},
+		{ToolWorkCreditDelete, `{"credit_id":"` + creditID + `","name":"Sound designer"}`, `unexpected argument "name"`},
+		{ToolWorkCreditGroupCreate, `{"document_id":"` + managementWorkID + `","name":"Sound","group_id":"` + creditID + `"}`, `unexpected argument "group_id"`},
+		{ToolWorkCreditGroupUpdate, `{"group_id":"` + creditID + `","name":"Sound","document_id":"` + managementWorkID + `"}`, `unexpected argument "document_id"`},
+		{ToolWorkCreditGroupDelete, `{"group_id":"` + creditID + `","name":"Sound"}`, `unexpected argument "name"`},
 	} {
 		t.Run(test.tool+"/"+test.arguments, func(t *testing.T) {
 			works := &recordingWorkRelated{}

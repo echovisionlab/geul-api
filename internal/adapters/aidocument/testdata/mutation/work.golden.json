@@ -1,0 +1,393 @@
+{
+  "domain": "work",
+  "operation_handles": [
+    {
+      "operation": "set field",
+      "kind": "fs",
+      "handles": [
+        "block-a",
+        "field-a"
+      ]
+    },
+    {
+      "operation": "set nested field",
+      "kind": "fs",
+      "handles": [
+        "block-a",
+        "field-a"
+      ]
+    },
+    {
+      "operation": "set relation field",
+      "kind": "fs",
+      "handles": [
+        "block-a",
+        "field-a"
+      ]
+    },
+    {
+      "operation": "unset field",
+      "kind": "fu",
+      "handles": [
+        "block-a",
+        "field-a"
+      ]
+    },
+    {
+      "operation": "insert block",
+      "kind": "bi",
+      "handles": [
+        "block-b"
+      ]
+    },
+    {
+      "operation": "delete block",
+      "kind": "bd",
+      "handles": [
+        "block-a"
+      ]
+    },
+    {
+      "operation": "move block",
+      "kind": "bm",
+      "handles": [
+        "block-a"
+      ]
+    },
+    {
+      "operation": "replace block kind",
+      "kind": "bk",
+      "handles": [
+        "block-a"
+      ]
+    },
+    {
+      "operation": "insert relation item",
+      "kind": "ri",
+      "handles": null
+    },
+    {
+      "operation": "delete relation item",
+      "kind": "rd",
+      "handles": null
+    },
+    {
+      "operation": "move relation item",
+      "kind": "rm",
+      "handles": null
+    },
+    {
+      "operation": "attach file",
+      "kind": "fa",
+      "handles": [
+        "block-a",
+        "file-field",
+        "0f000000-0000-4000-8000-000000000001"
+      ]
+    },
+    {
+      "operation": "detach file",
+      "kind": "fd",
+      "handles": [
+        "block-a",
+        "file-field"
+      ]
+    },
+    {
+      "operation": "create translation",
+      "kind": "lc",
+      "handles": [
+        "locale"
+      ]
+    },
+    {
+      "operation": "delete translation",
+      "kind": "ld",
+      "handles": [
+        "locale"
+      ]
+    }
+  ],
+  "scenarios": [
+    {
+      "name": "source edit",
+      "locale": "en",
+      "operations": [
+        "fs",
+        "fs"
+      ],
+      "validate": {
+        "error": {
+          "type": "*connect.Error",
+          "message": "invalid_argument: operations: invalid content block mutation: flatten Rich Text mutation: $.shared.props.attachment: field is required (required)",
+          "connect_code": "invalid_argument"
+        }
+      },
+      "apply": {
+        "error": {
+          "type": "*connect.Error",
+          "message": "invalid_argument: operations: invalid content block mutation: flatten Rich Text mutation: $.shared.props.attachment: field is required (required)",
+          "connect_code": "invalid_argument"
+        }
+      }
+    },
+    {
+      "name": "source edit unchanged",
+      "locale": "en",
+      "operations": [
+        "fs",
+        "fs"
+      ],
+      "validate": {
+        "error": {
+          "type": "*connect.Error",
+          "message": "invalid_argument: operations: invalid content block mutation: flatten Rich Text mutation: $.shared.props.attachment: field is required (required)",
+          "connect_code": "invalid_argument"
+        }
+      },
+      "apply": {
+        "error": {
+          "type": "*connect.Error",
+          "message": "invalid_argument: operations: invalid content block mutation: flatten Rich Text mutation: $.shared.props.attachment: field is required (required)",
+          "connect_code": "invalid_argument"
+        }
+      }
+    },
+    {
+      "name": "source structure",
+      "locale": "en",
+      "operations": [
+        "bi",
+        "bm",
+        "bd"
+      ],
+      "validate": {
+        "error": {
+          "type": "*connect.Error",
+          "message": "invalid_argument: operations: invalid content block mutation: flatten Rich Text mutation: $.shared.props.attachment: field is required (required)",
+          "connect_code": "invalid_argument"
+        }
+      },
+      "apply": {
+        "error": {
+          "type": "*connect.Error",
+          "message": "invalid_argument: operations: invalid content block mutation: flatten Rich Text mutation: $.shared.props.attachment: field is required (required)",
+          "connect_code": "invalid_argument"
+        }
+      }
+    },
+    {
+      "name": "target edit",
+      "locale": "ko",
+      "operations": [
+        "fs",
+        "fs"
+      ],
+      "validate": {
+        "validation": {
+          "valid": true,
+          "normalized": [
+            "fs",
+            "fs"
+          ]
+        }
+      },
+      "apply": {
+        "result": {
+          "document_revision": "0a000000-0000-4000-8000-000000000001",
+          "target_revision": "tr1_golden-next",
+          "changed": true,
+          "changes": [
+            {
+              "operation": 0,
+              "kind": "fs",
+              "affected_handles": [
+                "document",
+                "title"
+              ]
+            },
+            {
+              "operation": 1,
+              "kind": "fs",
+              "affected_handles": [
+                "0b000000-0000-4000-8000-000000000001",
+                "content"
+              ]
+            }
+          ],
+          "normalized": [
+            "fs",
+            "fs"
+          ]
+        }
+      }
+    },
+    {
+      "name": "document revision conflict",
+      "locale": "en",
+      "operations": [
+        "fs",
+        "fs"
+      ],
+      "domain_error": "*work.AIDocumentRevisionConflictError: Work AI document revision changed: current revision is 0a000000-0000-4000-8000-000000000003",
+      "validate": {
+        "error": {
+          "type": "*connect.Error",
+          "message": "invalid_argument: operations: invalid content block mutation: flatten Rich Text mutation: $.shared.props.attachment: field is required (required)",
+          "connect_code": "invalid_argument"
+        }
+      },
+      "apply": {
+        "error": {
+          "type": "*connect.Error",
+          "message": "invalid_argument: operations: invalid content block mutation: flatten Rich Text mutation: $.shared.props.attachment: field is required (required)",
+          "connect_code": "invalid_argument"
+        }
+      }
+    },
+    {
+      "name": "target revision conflict",
+      "locale": "ko",
+      "operations": [
+        "fs",
+        "fs"
+      ],
+      "domain_error": "*work.AIDocumentRevisionConflictError: Work AI document revision changed: current revision is 0a000000-0000-4000-8000-000000000001",
+      "validate": {
+        "error": {
+          "type": "*aidocument.ConflictError",
+          "message": "target_revision_conflict: current document revision is \"0a000000-0000-4000-8000-000000000001\"",
+          "conflict": {
+            "code": "target_revision_conflict",
+            "currentDocumentRevision": "0a000000-0000-4000-8000-000000000001",
+            "currentTargetRevision": "tr1_golden-current",
+            "affectedHandles": [
+              "field:0b000000-0000-4000-8000-000000000001/content",
+              "field:document/title"
+            ]
+          }
+        }
+      },
+      "apply": {
+        "error": {
+          "type": "*aidocument.ConflictError",
+          "message": "target_revision_conflict: current document revision is \"0a000000-0000-4000-8000-000000000001\"",
+          "conflict": {
+            "code": "target_revision_conflict",
+            "currentDocumentRevision": "0a000000-0000-4000-8000-000000000001",
+            "currentTargetRevision": "tr1_golden-current",
+            "affectedHandles": [
+              "field:0b000000-0000-4000-8000-000000000001/content",
+              "field:document/title"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "domain invalid mutation error",
+      "locale": "en",
+      "operations": [
+        "fs",
+        "fs"
+      ],
+      "domain_error": "*fmt.wrapError: golden domain rejection: invalid content block mutation",
+      "validate": {
+        "error": {
+          "type": "*connect.Error",
+          "message": "invalid_argument: operations: invalid content block mutation: flatten Rich Text mutation: $.shared.props.attachment: field is required (required)",
+          "connect_code": "invalid_argument"
+        }
+      },
+      "apply": {
+        "error": {
+          "type": "*connect.Error",
+          "message": "invalid_argument: operations: invalid content block mutation: flatten Rich Text mutation: $.shared.props.attachment: field is required (required)",
+          "connect_code": "invalid_argument"
+        }
+      }
+    },
+    {
+      "name": "domain File reference error",
+      "locale": "en",
+      "operations": [
+        "fs",
+        "fs"
+      ],
+      "domain_error": "*fmt.wrapError: golden File rejection: invalid content block file reference",
+      "validate": {
+        "error": {
+          "type": "*connect.Error",
+          "message": "invalid_argument: operations: invalid content block mutation: flatten Rich Text mutation: $.shared.props.attachment: field is required (required)",
+          "connect_code": "invalid_argument"
+        }
+      },
+      "apply": {
+        "error": {
+          "type": "*connect.Error",
+          "message": "invalid_argument: operations: invalid content block mutation: flatten Rich Text mutation: $.shared.props.attachment: field is required (required)",
+          "connect_code": "invalid_argument"
+        }
+      }
+    },
+    {
+      "name": "domain InvalidArgument error",
+      "locale": "en",
+      "operations": [
+        "fs",
+        "fs"
+      ],
+      "domain_error": "*connect.Error: invalid_argument: batch: golden domain rejection",
+      "validate": {
+        "error": {
+          "type": "*connect.Error",
+          "message": "invalid_argument: operations: invalid content block mutation: flatten Rich Text mutation: $.shared.props.attachment: field is required (required)",
+          "connect_code": "invalid_argument"
+        }
+      },
+      "apply": {
+        "error": {
+          "type": "*connect.Error",
+          "message": "invalid_argument: operations: invalid content block mutation: flatten Rich Text mutation: $.shared.props.attachment: field is required (required)",
+          "connect_code": "invalid_argument"
+        }
+      }
+    },
+    {
+      "name": "domain File reference error on attach",
+      "locale": "en",
+      "operations": [
+        "fa"
+      ],
+      "domain_error": "*fmt.wrapError: golden File rejection: invalid content block file reference",
+      "validate": {
+        "validation": {
+          "valid": false,
+          "normalized": [
+            "fa"
+          ],
+          "issues": [
+            {
+              "operation": 0,
+              "code": "invalid_file_reference",
+              "message": "golden File rejection: invalid content block file reference"
+            }
+          ]
+        }
+      },
+      "apply": {
+        "error": {
+          "type": "*aidocument.ValidationError",
+          "message": "document operation validation failed with 1 issue(s)",
+          "issues": [
+            {
+              "operation": 0,
+              "code": "invalid_file_reference",
+              "message": "golden File rejection: invalid content block file reference"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
@@ -132,7 +133,7 @@ func CanonicalizeLayoutSourceMarkers(content string) (string, error) {
 				output.WriteString(formatLayoutUnitMarker(*marker))
 			}
 			output.WriteString(raw)
-			if tokenType == html.StartTagToken && isExcluded {
+			if tokenType == html.StartTagToken && layoutTextExcludedElement(token.DataAtom) {
 				excludedDepth++
 			}
 		case html.EndTagToken:
@@ -140,7 +141,7 @@ func CanonicalizeLayoutSourceMarkers(content string) (string, error) {
 				return "", err
 			}
 			token := tokenizer.Token()
-			if translation.IsExcludedHTMLElement(token.DataAtom) && excludedDepth > 0 {
+			if layoutTextExcludedElement(token.DataAtom) && excludedDepth > 0 {
 				excludedDepth--
 			}
 			output.WriteString(raw)
@@ -297,7 +298,7 @@ func ExtractLayoutContentUnits(content string) ([]LayoutContentUnit, error) {
 			pending = nil
 			if tokenType == html.StartTagToken {
 				stack = append(stack, token.Data)
-				if isExcluded {
+				if layoutTextExcludedElement(token.DataAtom) {
 					excludedDepth++
 				}
 			}
@@ -306,7 +307,7 @@ func ExtractLayoutContentUnits(content string) ([]LayoutContentUnit, error) {
 				return nil, err
 			}
 			token := tokenizer.Token()
-			if translation.IsExcludedHTMLElement(token.DataAtom) && excludedDepth > 0 {
+			if layoutTextExcludedElement(token.DataAtom) && excludedDepth > 0 {
 				excludedDepth--
 			}
 			stack = popLayoutHTMLElementStack(stack, token.Data)
@@ -351,6 +352,19 @@ func layoutTranslatableAttributesForMarker(token html.Token, preserveEmpty bool)
 		values = append(values, layoutAttributeValue{Name: name, Value: attribute.Val})
 	}
 	return values
+}
+
+// layoutTextExcludedElement reports elements whose text never becomes a unit:
+// Translation exclusions, plus raw-text and RCDATA elements where the HTML
+// tokenizer reads a marker comment as literal text, so a marker placed there
+// could never be found again.
+func layoutTextExcludedElement(element atom.Atom) bool {
+	switch element {
+	case atom.Iframe, atom.Noembed, atom.Noframes, atom.Plaintext, atom.Textarea, atom.Xmp:
+		return true
+	default:
+		return translation.IsExcludedHTMLElement(element)
+	}
 }
 
 func layoutTextIsTranslatable(text string) bool {
@@ -554,6 +568,15 @@ func ExtractLayoutLocaleValues(content string) (map[string]string, error) {
 				valueMarkers = append(valueMarkers, valueMarker)
 				continue
 			}
+			if unit != nil && unit.Kind == layoutTextMarker && len(valueMarkers) != 0 {
+				// An ordinary comment also ends an explicit empty text value.
+				if err := flushEmptyText(); err != nil {
+					return nil, err
+				}
+				unit = nil
+				valueMarkers = valueMarkers[:0]
+				continue
+			}
 			if len(valueMarkers) != 0 {
 				return nil, errors.New("Email Layout target value marker is detached from its value")
 			}
@@ -573,6 +596,15 @@ func ExtractLayoutLocaleValues(content string) (map[string]string, error) {
 			unit = nil
 			valueMarkers = valueMarkers[:0]
 		case html.StartTagToken, html.SelfClosingTagToken:
+			// An explicit empty text value has no text token, so the next
+			// inline element is what ends it (as in the source extractor).
+			if unit != nil && unit.Kind == layoutTextMarker {
+				if err := flushEmptyText(); err != nil {
+					return nil, err
+				}
+				unit = nil
+				valueMarkers = valueMarkers[:0]
+			}
 			if unit != nil && unit.Kind == layoutElementMarker {
 				token := tokenizer.Token()
 				attributes := make(map[string]string, len(token.Attr))
