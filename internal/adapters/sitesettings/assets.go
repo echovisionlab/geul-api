@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/favicon"
+
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
 	"gorm.io/gorm"
@@ -150,7 +152,7 @@ func (a Assets) ReplaceFavicon(ctx context.Context, db *gorm.DB, fileID *string)
 		})
 		return err
 	}
-	for _, binding := range siteSettingsFaviconBindings(set) {
+	for _, binding := range siteSettingsFaviconBindings(favicon.SetProto(set)) {
 		if binding.asset == nil || strings.TrimSpace(binding.asset.GetAssetId()) == "" {
 			return errs.FailedPrecondition("generated favicon bundle is missing " + binding.key)
 		}
@@ -210,5 +212,6 @@ func (a Assets) ProjectFavicon(
 	db *gorm.DB,
 	fileID string,
 ) (*commonv1.AssetRef, *commonv1.FaviconAssetSet) {
-	return faviconpostgres.Projection(ctx, db, a.cdnDomain, fileID)
+	ref, set := faviconpostgres.Projection(ctx, db, a.cdnDomain, fileID)
+	return mediaasset.ReferenceProto(ref), favicon.SetProto(set)
 }

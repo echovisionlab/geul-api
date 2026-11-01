@@ -17,7 +17,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // NewUnits returns the favicon unit of work over db.
@@ -31,13 +30,13 @@ func Bind(db *gorm.DB, cdnDomain string) favicon.Store {
 }
 
 // LoadSet returns the generated favicon set of a source File in db.
-func LoadSet(ctx context.Context, db *gorm.DB, cdnDomain, sourceFileID string) (*commonv1.FaviconAssetSet, error) {
+func LoadSet(ctx context.Context, db *gorm.DB, cdnDomain, sourceFileID string) (*favicon.Set, error) {
 	return favicon.LoadSet(ctx, Bind(db, cdnDomain), sourceFileID)
 }
 
 // Projection returns the legacy favicon and generated set of a source File
 // in db.
-func Projection(ctx context.Context, db *gorm.DB, cdnDomain, sourceFileID string) (*commonv1.AssetRef, *commonv1.FaviconAssetSet) {
+func Projection(ctx context.Context, db *gorm.DB, cdnDomain, sourceFileID string) (*mediaasset.Reference, *favicon.Set) {
 	return favicon.Projection(ctx, Bind(db, cdnDomain), sourceFileID)
 }
 
@@ -113,8 +112,8 @@ func (s store) NewestReadySourceAsset(ctx context.Context, fileID string) (favic
 	return assetFromRow(asset), true, nil
 }
 
-func (s store) AssetRef(asset favicon.DerivativeAsset) (*commonv1.AssetRef, error) {
-	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.db), s.cdnDomain).AssetRef(mediaassetpostgres.Asset(model.PublicAsset{
+func (s store) AssetRef(asset favicon.DerivativeAsset) (*mediaasset.Reference, error) {
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.db), s.cdnDomain).AssetRef(mediaassetpostgres.Asset(model.PublicAsset{
 		ID:               asset.ID,
 		SourceFileID:     asset.SourceFileID,
 		Kind:             asset.Kind,
@@ -126,7 +125,7 @@ func (s store) AssetRef(asset favicon.DerivativeAsset) (*commonv1.AssetRef, erro
 		Disposition:      asset.Disposition,
 		DownloadFilename: asset.DownloadFilename,
 		Status:           asset.Status,
-	})))
+	}))
 }
 
 func (s store) FaviconDerivativeCount(ctx context.Context, fileID string) (int64, error) {

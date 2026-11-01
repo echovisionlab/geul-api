@@ -78,10 +78,10 @@ func TestFaviconLoadSetRequiresExactReadyDerivatives(t *testing.T) {
 	set, err := faviconpostgres.LoadSet(t.Context(), db, "https://cdn.example.com", fileID)
 	require.NoError(t, err)
 	require.NotNil(t, set)
-	require.Equal(t, assets[managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_PNG_32.String()], set.GetIconPng_32().GetAssetId())
-	require.Equal(t, "image/vnd.microsoft.icon", set.GetIconIco().GetMimeType())
-	require.Equal(t, "image/png", set.GetAppleTouchIcon_180().GetMimeType())
-	require.Nil(t, set.GetIconSvg())
+	require.Equal(t, assets[managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_PNG_32.String()], set.IconPNG32.AssetID)
+	require.Equal(t, "image/vnd.microsoft.icon", set.IconICO.MimeType)
+	require.Equal(t, "image/png", set.AppleTouch180.MimeType)
+	require.Nil(t, set.IconSVG)
 
 	require.NoError(t, db.Where("file_id = ? AND type = ?", fileID, managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_PNG_48.String()).Delete(&model.FileDerivative{}).Error)
 	set, err = faviconpostgres.LoadSet(t.Context(), db, "https://cdn.example.com", fileID)
@@ -109,8 +109,8 @@ func TestFaviconLoadSetUsesReadySVGSourceAsset(t *testing.T) {
 
 	set, err := faviconpostgres.LoadSet(t.Context(), db, "https://cdn.example.com", fileID)
 	require.NoError(t, err)
-	require.NotNil(t, set.GetIconSvg())
-	require.Equal(t, "image/svg+xml", set.GetIconSvg().GetMimeType())
+	require.NotNil(t, set.IconSVG)
+	require.Equal(t, "image/svg+xml", set.IconSVG.MimeType)
 }
 
 func TestFaviconLoadSetReturnsNilForLegacySource(t *testing.T) {
@@ -127,13 +127,13 @@ func TestFaviconProjectUsesPNG32ForGeneratedAndSourceForLegacy(t *testing.T) {
 	assets := seedCompleteFaviconDerivatives(t, db, generatedFileID)
 	legacy, set := faviconpostgres.Projection(t.Context(), db, "https://cdn.example.com", generatedFileID)
 	require.NotNil(t, set)
-	require.Equal(t, assets[managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_PNG_32.String()], legacy.GetAssetId())
+	require.Equal(t, assets[managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_PNG_32.String()], legacy.AssetID)
 
 	legacyFileID := seedFaviconSource(t, db, "image/png")
 	legacyAssetID := seedReadyFaviconAsset(t, db, &legacyFileID, "png", "image/png")
 	legacy, set = faviconpostgres.Projection(t.Context(), db, "https://cdn.example.com", legacyFileID)
 	require.Nil(t, set)
-	require.Equal(t, legacyAssetID, legacy.GetAssetId())
+	require.Equal(t, legacyAssetID, legacy.AssetID)
 }
 
 func TestFaviconAssetSetAssetIDsIncludesCommittedSVG(t *testing.T) {
@@ -481,7 +481,7 @@ func TestGenerateFaviconBundlePublishesVerifiedSVGSourceRef(t *testing.T) {
 	require.NoError(t, err)
 	set, err := faviconpostgres.LoadSet(t.Context(), db, svc.cdnDomain, fileID)
 	require.NoError(t, err)
-	require.Equal(t, "image/svg+xml", set.GetIconSvg().GetMimeType())
+	require.Equal(t, "image/svg+xml", set.IconSVG.MimeType)
 	require.Len(t, store.writtenKeys(), 8)
 }
 

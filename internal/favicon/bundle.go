@@ -11,14 +11,13 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // LoadSet returns nil for a legacy favicon source without generated derivatives.
 // A generated set must be complete and have verified ready public assets.
-func LoadSet(ctx context.Context, store Store, sourceFileID string) (*commonv1.FaviconAssetSet, error) {
+func LoadSet(ctx context.Context, store Store, sourceFileID string) (*Set, error) {
 	sourceFileID = strings.TrimSpace(sourceFileID)
 	if sourceFileID == "" {
 		return nil, nil
@@ -54,10 +53,10 @@ func LoadSet(ctx context.Context, store Store, sourceFileID string) (*commonv1.F
 		if err != nil {
 			return nil, fmt.Errorf("SVG favicon source asset is not ready: %w", err)
 		}
-		if normalizedMimeType(iconSVG.GetMimeType()) != "image/svg+xml" || iconSVG.GetExtension() != "svg" {
+		if normalizedMimeType(iconSVG.MimeType) != "image/svg+xml" || iconSVG.Extension != "svg" {
 			return nil, fmt.Errorf("SVG favicon source asset has invalid metadata")
 		}
-		set.IconSvg = iconSVG
+		set.IconSVG = iconSVG
 	}
 	return set, nil
 }
@@ -74,8 +73,8 @@ func validateDerivativeRefs(
 	store Store,
 	rows []DerivativeAsset,
 	expected map[string]Spec,
-) (map[string]*commonv1.AssetRef, error) {
-	refs := make(map[string]*commonv1.AssetRef, len(rows))
+) (map[string]*mediaasset.Reference, error) {
+	refs := make(map[string]*mediaasset.Reference, len(rows))
 	for _, row := range rows {
 		spec, ok := expected[row.Type]
 		if !ok {
@@ -107,24 +106,24 @@ func validDerivativeMetadata(row DerivativeAsset, spec Spec) bool {
 		row.Status == AssetReady
 }
 
-func setFromRefs(refs map[string]*commonv1.AssetRef) (*commonv1.FaviconAssetSet, error) {
-	required := func(derivativeType managev1.FileDerivativeType) (*commonv1.AssetRef, error) {
+func setFromRefs(refs map[string]*mediaasset.Reference) (*Set, error) {
+	required := func(derivativeType DerivativeType) (*mediaasset.Reference, error) {
 		ref := refs[derivativeType.String()]
 		if ref == nil {
 			return nil, fmt.Errorf("favicon derivative set is missing %s", derivativeType.String())
 		}
 		return ref, nil
 	}
-	types := []managev1.FileDerivativeType{
-		managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_ICO,
-		managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_PNG_16,
-		managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_PNG_32,
-		managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_PNG_48,
-		managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_APPLE_TOUCH_180,
-		managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_MANIFEST_192,
-		managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_FAVICON_MANIFEST_512,
+	types := []DerivativeType{
+		ICO,
+		PNG16,
+		PNG32,
+		PNG48,
+		AppleTouch180,
+		Manifest192,
+		Manifest512,
 	}
-	resolved := make([]*commonv1.AssetRef, len(types))
+	resolved := make([]*mediaasset.Reference, len(types))
 	for index, derivativeType := range types {
 		ref, err := required(derivativeType)
 		if err != nil {
@@ -132,27 +131,27 @@ func setFromRefs(refs map[string]*commonv1.AssetRef) (*commonv1.FaviconAssetSet,
 		}
 		resolved[index] = ref
 	}
-	return &commonv1.FaviconAssetSet{
-		IconIco:            resolved[0],
-		IconPng_16:         resolved[1],
-		IconPng_32:         resolved[2],
-		IconPng_48:         resolved[3],
-		AppleTouchIcon_180: resolved[4],
-		ManifestIcon_192:   resolved[5],
-		ManifestIcon_512:   resolved[6],
+	return &Set{
+		IconICO:       resolved[0],
+		IconPNG16:     resolved[1],
+		IconPNG32:     resolved[2],
+		IconPNG48:     resolved[3],
+		AppleTouch180: resolved[4],
+		Manifest192:   resolved[5],
+		Manifest512:   resolved[6],
 	}, nil
 }
 
 // Projection selects generated PNG32 for the legacy browser field while
 // returning the modern generated set. It falls back to the ready source asset.
-func Projection(ctx context.Context, store Store, sourceFileID string) (*commonv1.AssetRef, *commonv1.FaviconAssetSet) {
+func Projection(ctx context.Context, store Store, sourceFileID string) (*mediaasset.Reference, *Set) {
 	set, err := LoadSet(ctx, store, sourceFileID)
 	if err != nil {
 		slog.WarnContext(ctx, "Generated favicon set is invalid; serving no favicon", "domain", "favicon", "operation", "load_favicon_set", "outcome", "failed", "file_id", sourceFileID, failurecause.Attr(err))
 		return nil, nil
 	}
 	if set != nil {
-		return set.GetIconPng_32(), set
+		return set.IconPNG32, set
 	}
 	legacy, err := readySourceAssetRef(ctx, store, sourceFileID)
 	if err != nil {
@@ -162,7 +161,7 @@ func Projection(ctx context.Context, store Store, sourceFileID string) (*commonv
 	return legacy, nil
 }
 
-func readySourceAssetRef(ctx context.Context, store Store, sourceFileID string) (*commonv1.AssetRef, error) {
+func readySourceAssetRef(ctx context.Context, store Store, sourceFileID string) (*mediaasset.Reference, error) {
 	asset, found, err := store.NewestReadySourceAsset(ctx, strings.TrimSpace(sourceFileID))
 	if err != nil {
 		return nil, err
@@ -174,24 +173,24 @@ func readySourceAssetRef(ctx context.Context, store Store, sourceFileID string) 
 }
 
 // AssetIDs returns generated asset identities for cleanup preservation.
-func AssetIDs(set *commonv1.FaviconAssetSet) map[string]struct{} {
+func AssetIDs(set *Set) map[string]struct{} {
 	ids := make(map[string]struct{})
 	if set == nil {
 		return ids
 	}
-	assets := []*commonv1.AssetRef{
-		set.GetIconIco(),
-		set.GetIconPng_16(),
-		set.GetIconPng_32(),
-		set.GetIconPng_48(),
-		set.GetAppleTouchIcon_180(),
-		set.GetManifestIcon_192(),
-		set.GetManifestIcon_512(),
-		set.GetIconSvg(),
+	assets := []*mediaasset.Reference{
+		set.IconICO,
+		set.IconPNG16,
+		set.IconPNG32,
+		set.IconPNG48,
+		set.AppleTouch180,
+		set.Manifest192,
+		set.Manifest512,
+		set.IconSVG,
 	}
 	for _, asset := range assets {
-		if asset != nil && strings.TrimSpace(asset.GetAssetId()) != "" {
-			ids[asset.GetAssetId()] = struct{}{}
+		if asset != nil && strings.TrimSpace(asset.AssetID) != "" {
+			ids[asset.AssetID] = struct{}{}
 		}
 	}
 	return ids

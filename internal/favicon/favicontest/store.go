@@ -10,8 +10,9 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/favicon"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/mediaasset/mediaassettest"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 // Store is an in-memory favicon.Store.
@@ -121,10 +122,13 @@ func (s *Store) NewestReadySourceAsset(_ context.Context, fileID string) (favico
 	return newest, found, nil
 }
 
-func (s *Store) AssetRef(asset favicon.DerivativeAsset) (*commonv1.AssetRef, error) {
-	return &commonv1.AssetRef{
-		AssetId: asset.ID, Url: "https://cdn.example.com/" + asset.ObjectKey, Extension: asset.Extension, MimeType: asset.MimeType,
-	}, nil
+func (s *Store) AssetRef(asset favicon.DerivativeAsset) (*mediaasset.Reference, error) {
+	_, units := mediaassettest.New()
+	return mediaasset.NewLifecycle(units, "https://cdn.example.com").AssetRef(mediaasset.Asset{
+		ID: asset.ID, SourceFileID: asset.SourceFileID, Kind: asset.Kind, ObjectKey: asset.ObjectKey,
+		Extension: asset.Extension, MimeType: asset.MimeType, FileSize: asset.FileSize, SHA256: asset.SHA256,
+		Disposition: asset.Disposition, DownloadFilename: asset.DownloadFilename, Status: mediaasset.AssetStatus(asset.Status),
+	})
 }
 
 func (s *Store) FaviconDerivativeCount(_ context.Context, fileID string) (int64, error) {

@@ -47,9 +47,9 @@ func TestLoadSetReturnsACompleteVerifiedSetOrNothing(t *testing.T) {
 
 	set, err := favicon.LoadSet(t.Context(), store, " "+generated+" ")
 	require.NoError(t, err)
-	require.Equal(t, assets["FILE_DERIVATIVE_TYPE_FAVICON_PNG_32"].ID, set.GetIconPng_32().GetAssetId())
-	require.Equal(t, assets["FILE_DERIVATIVE_TYPE_FAVICON_MANIFEST_512"].ID, set.GetManifestIcon_512().GetAssetId())
-	require.Nil(t, set.GetIconSvg())
+	require.Equal(t, assets["FILE_DERIVATIVE_TYPE_FAVICON_PNG_32"].ID, set.IconPNG32.AssetID)
+	require.Equal(t, assets["FILE_DERIVATIVE_TYPE_FAVICON_MANIFEST_512"].ID, set.Manifest512.AssetID)
+	require.Nil(t, set.IconSVG)
 
 	for _, fileID := range []string{legacy, uuid.NewString(), " "} {
 		set, err = favicon.LoadSet(t.Context(), store, fileID)
@@ -100,10 +100,10 @@ func TestLoadSetOfAnSVGSourceAddsItsReadySourceAsset(t *testing.T) {
 	store.SeedAsset(fileID, "", svg)
 	set, err := favicon.LoadSet(t.Context(), store, fileID)
 	require.NoError(t, err)
-	require.Equal(t, svg.ID, set.GetIconSvg().GetAssetId())
+	require.Equal(t, svg.ID, set.IconSVG.AssetID)
 
 	legacy, generated := favicon.Projection(t.Context(), store, fileID)
-	require.Equal(t, set.GetIconPng_32().GetAssetId(), legacy.GetAssetId())
+	require.Equal(t, set.IconPNG32.AssetID, legacy.AssetID)
 	require.NotNil(t, generated)
 }
 
@@ -118,7 +118,7 @@ func TestProjectionFallsBackToTheReadySourceAsset(t *testing.T) {
 
 	legacy, set := favicon.Projection(t.Context(), store, fileID)
 	require.Nil(t, set)
-	require.Equal(t, newer.ID, legacy.GetAssetId())
+	require.Equal(t, newer.ID, legacy.AssetID)
 	legacy, set = favicon.Projection(t.Context(), store, uuid.NewString())
 	require.Nil(t, legacy)
 	require.Nil(t, set)
