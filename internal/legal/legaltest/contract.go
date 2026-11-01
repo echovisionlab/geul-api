@@ -174,11 +174,11 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 				require.ErrorIs(t, store.Activate(ctx, kind, version.ID, []legal.Status{statusOf(kind, "scheduled")}, nil, at),
 					legal.ErrPolicyNotFound, "a version in another status does not activate")
 				require.NoError(t, store.Activate(ctx, kind, other.ID, []legal.Status{statusOf(kind, "draft")}, &at, at))
-				require.NoError(t, store.Activate(ctx, kind, version.ID, []legal.Status{statusOf(kind, "draft"), statusOf(kind, "scheduled")}, &at, at))
 				active, err := store.LockActiveVersions(ctx, kind, version.ID)
 				require.NoError(t, err)
 				require.Equal(t, []legal.VersionRef{{ID: other.ID, Version: other.Version}}, active)
-				require.NoError(t, store.Archive(ctx, kind, other.ID, at))
+				require.NoError(t, store.Archive(ctx, kind, other.ID, at), "one version of a kind is active at a time")
+				require.NoError(t, store.Activate(ctx, kind, version.ID, []legal.Status{statusOf(kind, "draft"), statusOf(kind, "scheduled")}, &at, at))
 				archived, err := store.Version(ctx, kind, other.ID, legal.ShareLock)
 				require.NoError(t, err)
 				require.Equal(t, statusOf(kind, "archived"), archived.Status)
