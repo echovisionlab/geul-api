@@ -39,8 +39,39 @@ func (s *Service) RequestAccountRecovery(ctx context.Context, command RequestAcc
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC()
 	tokenHash := crypto.HashToken(token)
+	request, err := s.startRecovery(ctx, requestedEmail, tokenHash)
+	if err != nil {
+		return err
+	}
+	if request.ID == "" {
+		return nil
+	}
+
+	name := strings.TrimSpace(ptrStringValue(request.NotificationName))
+	job := &managev1.SendEmailEvent{
+		Recipient:    requestedEmail,
+		TemplateType: emailpkg.EventAccountRecoveryConfirm.String(),
+		TemplateData: map[string]string{
+			"name":        name,
+			"confirm_url": fmt.Sprintf("%s/account/recovery/confirm?token=%s", s.baseURL, token),
+			"expires_in":  "24 hours",
+		},
+		RecipientContext: emailpkg.SystemDirectEmailContext("account_recovery_confirm"),
+		ReferenceId:      &tokenHash,
+		Locale:           request.NotificationLocale,
+	}
+	if err := emailpkg.PublishCommand(ctx, s.publisher, job, "account-recovery-confirm:"+tokenHash); err != nil {
+		return emailPublishFailure(err, job, "account-recovery-confirm:"+tokenHash, token)
+	}
+	return nil
+}
+
+// startRecovery moves the pending deletion recorded for requestedEmail to
+// recovery confirmation under tokenHash. It returns the zero request when no
+// deletion of that address is pending.
+func (s *Service) startRecovery(ctx context.Context, requestedEmail, tokenHash string) (model.UserDeletionRequest, error) {
+	now := time.Now().UTC()
 	pending := func(db *gorm.DB) *gorm.DB {
 		return db.Where("lifecycle_state IN ? AND scheduled_at > ?", []string{
 			accountLifecycleStateScheduled,
@@ -50,9 +81,9 @@ func (s *Service) RequestAccountRecovery(ctx context.Context, command RequestAcc
 	var candidate model.UserDeletionRequest
 	if err := pending(s.db.WithContext(ctx)).Select("identity_id").Take(&candidate).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
+			return model.UserDeletionRequest{}, nil
 		}
-		return err
+		return model.UserDeletionRequest{}, err
 	}
 	var request model.UserDeletionRequest
 	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
@@ -80,29 +111,9 @@ func (s *Service) RequestAccountRecovery(ctx context.Context, command RequestAcc
 		// Only a confirmed recovery is a lifecycle transition worth a record.
 		Audit: func(struct{}) mutation.Audit { return mutation.Unchanged() },
 	}); err != nil {
-		return err
+		return model.UserDeletionRequest{}, err
 	}
-	if request.ID == "" {
-		return nil
-	}
-
-	name := strings.TrimSpace(ptrStringValue(request.NotificationName))
-	job := &managev1.SendEmailEvent{
-		Recipient:    requestedEmail,
-		TemplateType: emailpkg.EventAccountRecoveryConfirm.String(),
-		TemplateData: map[string]string{
-			"name":        name,
-			"confirm_url": fmt.Sprintf("%s/account/recovery/confirm?token=%s", s.baseURL, token),
-			"expires_in":  "24 hours",
-		},
-		RecipientContext: emailpkg.SystemDirectEmailContext("account_recovery_confirm"),
-		ReferenceId:      &tokenHash,
-		Locale:           request.NotificationLocale,
-	}
-	if err := emailpkg.PublishCommand(ctx, s.publisher, job, "account-recovery-confirm:"+tokenHash); err != nil {
-		return emailPublishFailure(err, job, "account-recovery-confirm:"+tokenHash, token)
-	}
-	return nil
+	return request, nil
 }
 
 // ConfirmAccountRecovery cancels the pending deletion the token names and

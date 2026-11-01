@@ -291,29 +291,7 @@ func (s *Service) ConfirmAccountDeletion(ctx context.Context, command ConfirmAcc
 	request, err := s.transitionByToken(ctx, tokenTransition{
 		token: command.Token,
 		from:  []string{accountLifecycleStateConfirmationPending, accountLifecycleStateScheduled},
-		apply: func(ctx context.Context, tx *gorm.DB, request *model.UserDeletionRequest) (bool, error) {
-			if request.LifecycleState == accountLifecycleStateScheduled {
-				return false, nil
-			}
-			if err := ValidateLastActiveAdminDeletionWithAuthorization(ctx, tx, request.MemberID, request.IdentityID, s.spicedb); err != nil {
-				return false, err
-			}
-			scheduledAt := now.Add(DeletionGracePeriod)
-			if err := tx.Model(request).Updates(structured.Fields{
-				"confirmed_at":     now,
-				"scheduled_at":     scheduledAt,
-				"token_expires_at": scheduledAt,
-				"lifecycle_state":  accountLifecycleStateScheduled,
-				"updated_at":       now,
-			}).Error; err != nil {
-				return false, err
-			}
-			request.ConfirmedAt = &now
-			request.ScheduledAt = &scheduledAt
-			request.TokenExpiresAt = scheduledAt
-			request.LifecycleState = accountLifecycleStateScheduled
-			return true, nil
-		},
+		apply: s.scheduleConfirmedDeletion(now),
 		audit: func(memberID string) mutation.Audit {
 			return accountDeletionMemberAudit(memberID, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 				return sharedtelemetry.NewAccountDeletionScheduledAuditRecord(metadata, memberID, sharedtelemetry.AuditStateConfirmationPending)
@@ -351,6 +329,35 @@ func (s *Service) ConfirmAccountDeletion(ctx context.Context, command ConfirmAcc
 		return AccountDeletionScheduledResult{}, emailPublishFailure(err, job, "account-deletion-scheduled:"+request.ID, strings.TrimSpace(command.Token))
 	}
 	return AccountDeletionScheduledResult{ScheduledAt: *request.ScheduledAt}, nil
+}
+
+// scheduleConfirmedDeletion schedules a confirmation-pending request for the
+// end of the grace period; a request already scheduled is unchanged. The
+// last-admin fence keeps the last active admin from confirming.
+func (s *Service) scheduleConfirmedDeletion(now time.Time) func(context.Context, *gorm.DB, *model.UserDeletionRequest) (bool, error) {
+	return func(ctx context.Context, tx *gorm.DB, request *model.UserDeletionRequest) (bool, error) {
+		if request.LifecycleState == accountLifecycleStateScheduled {
+			return false, nil
+		}
+		if err := ValidateLastActiveAdminDeletionWithAuthorization(ctx, tx, request.MemberID, request.IdentityID, s.spicedb); err != nil {
+			return false, err
+		}
+		scheduledAt := now.Add(DeletionGracePeriod)
+		if err := tx.Model(request).Updates(structured.Fields{
+			"confirmed_at":     now,
+			"scheduled_at":     scheduledAt,
+			"token_expires_at": scheduledAt,
+			"lifecycle_state":  accountLifecycleStateScheduled,
+			"updated_at":       now,
+		}).Error; err != nil {
+			return false, err
+		}
+		request.ConfirmedAt = &now
+		request.ScheduledAt = &scheduledAt
+		request.TokenExpiresAt = scheduledAt
+		request.LifecycleState = accountLifecycleStateScheduled
+		return true, nil
+	}
 }
 
 // CancelAccountDeletion cancels a scheduled deletion and reactivates the
