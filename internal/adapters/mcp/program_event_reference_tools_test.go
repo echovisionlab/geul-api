@@ -63,7 +63,7 @@ func TestProgramEventReferenceNativeRequestsAndProjection(t *testing.T) {
 	fixture := &recordingProgramEventReferences{
 		types:      []*managev1.ProgramEventType{{Id: managementWorkID, Slug: "concert", Status: managev1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_ACTIVE, RequiresPlace: true, RequiresStreamUrl: true, Locales: []*managev1.ProgramEventTypeLocale{{Locale: "en", Name: "Concert", Description: &description}, {Locale: "ko", Name: "공연"}}}},
 		series:     []*managev1.ProgramEventSeries{{Id: managementWorkID, Slug: "first-play", Title: "FIRST PLAY", Status: managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_PUBLISHED}},
-		labels:     []*managev1.LabelWithStats{{Label: &managev1.Label{Id: managementWorkID, Slug: &slug, Name: "Sound", Status: "LABEL_STATUS_DRAFT", SourceLocale: "en"}}},
+		labels:     []label.AdminView{{Label: label.View{Label: label.Label{ID: managementWorkID, Slug: &slug, Status: label.StatusDraft, SourceLocale: "en"}, Name: "Sound"}}},
 		pagination: &commonv1.PaginationResponse{Total: 31, HasMore: true},
 	}
 	tools := newProgramEventReferenceFixture(t, fixture)
@@ -223,7 +223,7 @@ func newProgramEventReferenceFixture(t *testing.T, fixture *recordingProgramEven
 type recordingProgramEventReferences struct {
 	types             []*managev1.ProgramEventType
 	series            []*managev1.ProgramEventSeries
-	labels            []*managev1.LabelWithStats
+	labels            []label.AdminView
 	pagination        *commonv1.PaginationResponse
 	requestPagination *commonv1.PaginationRequest
 	filters           []*commonv1.FilterSpec
@@ -249,5 +249,7 @@ func (r *recordingProgramEventReferences) ListProgramEventSeriesAdmin(_ context.
 
 func (r *recordingProgramEventReferences) ListLabelsAdmin(_ context.Context, query label.ListLabelsQuery) (label.AdminLabelPage, error) {
 	r.record(&commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset}, query.Filters)
-	return label.AdminLabelPage{Labels: r.labels, Pagination: r.pagination}, r.err
+	return label.AdminLabelPage{Labels: r.labels, Pagination: label.Pagination{
+		Total: r.pagination.GetTotal(), Limit: r.pagination.GetLimit(), Offset: r.pagination.GetOffset(), HasMore: r.pagination.GetHasMore(),
+	}}, r.err
 }

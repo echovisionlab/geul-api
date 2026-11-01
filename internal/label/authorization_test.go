@@ -8,8 +8,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -102,15 +100,9 @@ func TestLabelAllowedActionsChecksEachGeneratedPermissionOnce(t *testing.T) {
 		Authenticated: true,
 	})
 
-	actions, err := labelAllowedActions(ctx, checker, labelID, model.LabelStatusDraft)
+	actions, err := labelAllowedActions(ctx, checker, labelID, StatusDraft)
 	require.NoError(t, err)
-	require.Equal(t, []managev1.LabelAction{
-		managev1.LabelAction_LABEL_ACTION_EDIT,
-		managev1.LabelAction_LABEL_ACTION_MANAGE_SHARE_LINKS,
-		managev1.LabelAction_LABEL_ACTION_DELETE,
-		managev1.LabelAction_LABEL_ACTION_MANAGE_PARTICIPANTS,
-		managev1.LabelAction_LABEL_ACTION_PUBLISH,
-	}, actions)
+	require.Equal(t, []Action{ActionEdit, ActionManageShareLinks, ActionDelete, ActionManageParticipants, ActionPublish}, actions)
 	expectedPermissions := make([]string, 0, len(allowedActions)+1)
 	for _, action := range allowedActions {
 		can, err := action(labelID)

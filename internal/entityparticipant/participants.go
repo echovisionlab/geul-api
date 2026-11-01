@@ -3,10 +3,7 @@ package entityparticipant
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
-
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
@@ -34,15 +31,6 @@ type View struct {
 	HasEffectiveAuthority bool
 }
 
-// participantRow is one Owner or Manager relation; IdentityID is the
-// Identity the Member may act through, empty when it may not.
-type participantRow struct {
-	MemberID   string    `gorm:"column:member_id"`
-	Role       string    `gorm:"column:role"`
-	CreatedAt  time.Time `gorm:"column:created_at"`
-	IdentityID string    `gorm:"-"`
-}
-
 // MapViews projects participant views into the domain's response type.
 func MapViews[T any](views []View, project func(View) T) []T {
 	result := make([]T, len(views))
@@ -52,24 +40,17 @@ func MapViews[T any](views []View, project func(View) T) []T {
 	return result
 }
 
-// ListParticipants returns the entity's Owners, then Managers, oldest first.
-// HasEffectiveAuthority is true only for an active Member that SpiceDB still
-// lets manage the entity.
-func (s Spec) ListParticipants(ctx context.Context, db *gorm.DB, spiceDB *auth.SpiceDBClient, members Members, entityID string) ([]View, error) {
-	rows, err := s.listParticipantRows(ctx, db, entityID)
-	if err != nil {
-		return nil, err
-	}
-	memberIDs := make([]string, 0, len(rows))
-	for _, row := range rows {
-		memberIDs = append(memberIDs, row.MemberID)
+// Views projects the entity's participants, as Store.ListParticipants
+// lists them, with their Member summaries. HasEffectiveAuthority is true
+// only for an active Member that SpiceDB still lets manage the entity.
+func (s Spec) Views(ctx context.Context, checker ActorChecker, members Members, entityID string, participants []Participant) ([]View, error) {
+	memberIDs := make([]string, 0, len(participants))
+	for _, participant := range participants {
+		memberIDs = append(memberIDs, participant.MemberID)
 	}
 	identities, err := members.LoadAuthorizationEligibleIdentities(ctx, memberIDs)
 	if err != nil {
 		return nil, err
-	}
-	for i := range rows {
-		rows[i].IdentityID = identities[rows[i].MemberID]
 	}
 	summaries, err := members.LoadMemberSummaries(ctx, memberIDs)
 	if err != nil {
@@ -79,71 +60,56 @@ func (s Spec) ListParticipants(ctx context.Context, db *gorm.DB, spiceDB *auth.S
 	if err != nil {
 		return nil, err
 	}
-	views := make([]View, 0, len(rows))
-	for _, row := range rows {
-		summary := summaries[row.MemberID]
+	views := make([]View, 0, len(participants))
+	for _, participant := range participants {
+		summary := summaries[participant.MemberID]
 		if summary == nil {
 			return nil, errors.New(s.Title + " participant Member was not found")
 		}
-		hasEffectiveAuthority, err := hasEffectiveAuthority(ctx, spiceDB, row, manageCan)
+		hasEffectiveAuthority, err := hasEffectiveAuthority(ctx, checker, identities[participant.MemberID], manageCan)
 		if err != nil {
 			return nil, err
 		}
 		views = append(views, View{
-			Member: summary, Role: row.Role, CreatedAt: row.CreatedAt,
+			Member: summary, Role: participant.Role, CreatedAt: participant.CreatedAt,
 			HasEffectiveAuthority: hasEffectiveAuthority,
 		})
 	}
 	return views, nil
 }
 
-func hasEffectiveAuthority(ctx context.Context, spiceDB *auth.SpiceDBClient, row participantRow, manageCan policyv1.Can) (bool, error) {
-	if row.IdentityID == "" {
+// hasEffectiveAuthority reports whether identityID, the Identity a
+// participant may act through (empty when it may not), may manage the
+// entity.
+func hasEffectiveAuthority(ctx context.Context, checker ActorChecker, identityID string, manageCan policyv1.Can) (bool, error) {
+	if identityID == "" {
 		return false, nil
 	}
-	actor, err := policyv1.NewAccountIdentityActor(row.IdentityID)
+	actor, err := policyv1.NewAccountIdentityActor(identityID)
 	if err != nil {
 		return false, err
 	}
-	allowed, err := spiceDB.CheckActorCan(ctx, actor, manageCan)
+	allowed, err := checker.CheckActorCan(ctx, actor, manageCan)
 	if err != nil {
 		return false, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	return allowed, nil
 }
 
-// listParticipantRows lists the entity's Owners, then Managers, oldest
-// first.
-func (s Spec) listParticipantRows(ctx context.Context, db *gorm.DB, entityID string) ([]participantRow, error) {
-	query := fmt.Sprintf(`
-		SELECT relation.member_id::text, relation.role, relation.created_at
-		FROM (
-			SELECT %s, member_id, created_at, 'owner'::text AS role FROM %s WHERE %s = ?::uuid
-			UNION ALL
-			SELECT %s, member_id, created_at, 'manager'::text AS role FROM %s WHERE %s = ?::uuid
-		) AS relation
-		ORDER BY CASE relation.role WHEN 'owner' THEN 0 ELSE 1 END,
-		         relation.created_at ASC,
-		         relation.member_id ASC
-	`, s.IDColumn, s.OwnerTable, s.IDColumn, s.IDColumn, s.ManagerTable, s.IDColumn)
-	var rows []participantRow
-	return rows, db.WithContext(ctx).Raw(query, entityID, entityID).Scan(&rows).Error
-}
-
 // participantMutation is one participant change inside its authorization
 // mutation transaction.
 type participantMutation struct {
 	spec     Spec
-	spiceDB  *auth.SpiceDBClient
-	tx       *gorm.DB
+	checker  PermissionChecker
+	store    Store
 	entityID string
 	memberID string
 }
 
 // lockPrincipal locks the principal and answers not found once the principal
 // is no longer active.
-func (m participantMutation) lockPrincipal(ctx context.Context) (*auth.UserInfo, error) {
-	principal, err := m.spec.LockActivePrincipal(ctx, m.tx)
+func (m participantMutation) lockPrincipal(ctx context.Context, lockActive func(*auth.UserInfo) (bool, error)) (*auth.UserInfo, error) {
+	principal, err := m.spec.LockActivePrincipal(ctx, lockActive)
 	if err != nil {
 		return nil, err
 	}
@@ -153,23 +119,8 @@ func (m participantMutation) lockPrincipal(ctx context.Context) (*auth.UserInfo,
 	return principal, nil
 }
 
-func (m participantMutation) currentRole() (string, error) {
-	for _, role := range []string{RoleOwner, RoleManager} {
-		var row struct {
-			CreatedAt time.Time `gorm:"column:created_at"`
-		}
-		err := m.tx.Table(m.spec.relationTable(role)).
-			Select("created_at").
-			Where(m.spec.IDColumn+" = ?::uuid AND member_id = ?::uuid", m.entityID, m.memberID).
-			Scan(&row).Error
-		if err != nil {
-			return RoleNone, err
-		}
-		if !row.CreatedAt.IsZero() {
-			return role, nil
-		}
-	}
-	return RoleNone, nil
+func (m participantMutation) currentRole(ctx context.Context) (string, error) {
+	return m.store.ParticipantRole(ctx, m.entityID, m.memberID)
 }
 
 // requireManage requires ManageParticipants, or RemoveOwner to demote an
@@ -190,7 +141,7 @@ func (m participantMutation) alreadyHasRole() error {
 // ManageParticipants otherwise, and returns the role the Member holds as far
 // as the owner table tells.
 func (m participantMutation) requireRemove(ctx context.Context, principal *auth.UserInfo) (string, error) {
-	ownerCount, err := m.countOwners(m.memberID)
+	ownerCount, err := m.store.CountOwners(ctx, m.entityID, m.memberID)
 	if err != nil {
 		return RoleNone, err
 	}
@@ -202,25 +153,26 @@ func (m participantMutation) requireRemove(ctx context.Context, principal *auth.
 
 // deleteForRemoval deletes the relation requireRemove found. An Owner must
 // leave another Owner; a missing Manager relation answers not found.
-func (m participantMutation) deleteForRemoval(role string) error {
+func (m participantMutation) deleteForRemoval(ctx context.Context, role string) error {
 	if role == RoleOwner {
-		if err := m.requireAnotherOwner(); err != nil {
+		if err := m.requireAnotherOwner(ctx); err != nil {
 			return err
 		}
-		return m.deleteRelation(RoleOwner)
+		_, err := m.store.DeleteParticipant(ctx, m.entityID, m.memberID, RoleOwner)
+		return err
 	}
-	result := m.tx.Exec(m.spec.deleteRelationSQL(RoleManager), m.entityID, m.memberID)
-	if result.Error != nil {
-		return result.Error
+	deleted, err := m.store.DeleteParticipant(ctx, m.entityID, m.memberID, RoleManager)
+	if err != nil {
+		return err
 	}
-	if result.RowsAffected == 0 {
+	if !deleted {
 		return domainerr.New(domainerr.NotFound, "", m.spec.Title+" participant not found")
 	}
 	return nil
 }
 
-func (m participantMutation) requireAnotherOwner() error {
-	totalOwners, err := m.countOwners("")
+func (m participantMutation) requireAnotherOwner(ctx context.Context) error {
+	totalOwners, err := m.store.CountOwners(ctx, m.entityID, "")
 	if err != nil {
 		return err
 	}
@@ -230,25 +182,9 @@ func (m participantMutation) requireAnotherOwner() error {
 	return nil
 }
 
-func (m participantMutation) countOwners(memberID string) (int64, error) {
-	query := m.tx.Table(m.spec.OwnerTable).Where(m.spec.IDColumn+" = ?::uuid", m.entityID)
-	if memberID != "" {
-		query = query.Where("member_id = ?::uuid", memberID)
-	}
-	var count int64
-	return count, query.Count(&count).Error
-}
-
-func (m participantMutation) deleteRelation(role string) error {
-	return m.tx.Exec(m.spec.deleteRelationSQL(role), m.entityID, m.memberID).Error
-}
-
-func (m participantMutation) insertRelation(role string) (time.Time, error) {
+func (m participantMutation) insertRelation(ctx context.Context, role string) (time.Time, error) {
 	createdAt := dbtime.Now()
-	return createdAt, m.tx.Exec(
-		fmt.Sprintf("INSERT INTO %s (%s, member_id, created_at) VALUES (?::uuid, ?::uuid, ?)", m.spec.relationTable(role), m.spec.IDColumn),
-		m.entityID, m.memberID, createdAt,
-	).Error
+	return createdAt, m.store.InsertParticipant(ctx, m.entityID, m.memberID, role, createdAt)
 }
 
 func (m participantMutation) requirePermission(ctx context.Context, action auth.ResourceAction, principal *auth.UserInfo) error {
@@ -260,7 +196,7 @@ func (m participantMutation) requirePermission(ctx context.Context, action auth.
 	if err != nil {
 		return domainerr.ResourceNotFound(m.spec.Name, m.entityID).WithCause(err)
 	}
-	allowed, err := m.spiceDB.Can(ctx, decision)
+	allowed, err := m.checker.Can(ctx, decision)
 	if err != nil {
 		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
@@ -268,17 +204,6 @@ func (m participantMutation) requirePermission(ctx context.Context, action auth.
 		return domainerr.ResourceNotFound(m.spec.Name, m.entityID)
 	}
 	return nil
-}
-
-func (s Spec) relationTable(role string) string {
-	if role == RoleOwner {
-		return s.OwnerTable
-	}
-	return s.ManagerTable
-}
-
-func (s Spec) deleteRelationSQL(role string) string {
-	return fmt.Sprintf("DELETE FROM %s WHERE %s = ?::uuid AND member_id = ?::uuid", s.relationTable(role), s.IDColumn)
 }
 
 func auditRelationship(role string) sharedtelemetry.AuditRelationship {

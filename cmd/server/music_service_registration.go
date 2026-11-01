@@ -18,7 +18,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/artist"
 	artistpublic "github.com/echovisionlab/geul-api/internal/artist/public"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/label"
+	labelpostgres "github.com/echovisionlab/geul-api/internal/label/postgres"
 	labelpublic "github.com/echovisionlab/geul-api/internal/label/public"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
@@ -89,16 +91,21 @@ func (m musicServiceRegistration) registerArtist() (*artist.Service, error) {
 
 func (m musicServiceRegistration) registerLabel() (*label.Service, error) {
 	deps := m.dependencies
-	labelService, err := label.NewService(label.Deps{
-		DB: deps.db, SpiceDB: deps.spicedbClient, Audit: deps.telemetryWriter, Publisher: deps.servicePublisher,
-		ContentBlocks: deps.contentBlockStore, Checkpoints: m.checkpoints,
+	labelUnits, err := labelpostgres.NewUnits(deps.db, labelpostgres.Deps{
+		ContentBlocks: deps.contentBlockStore, Publisher: deps.servicePublisher, Checkpoints: m.checkpoints,
 		Translation:   labeladapter.NewTranslation(),
-		Members:       labeladapter.NewMemberProjection(deps.db, deps.cfg.CDNURL),
 		Runtime:       labeladapter.NewRuntime(deps.cfg.CDNURL, deps.og.refresher),
 		Artists:       artistadapter.NewLabelRelations(),
 		Releases:      releaseadapter.NewLabelRelations(),
 		ProgramEvents: programeventadapter.NewLabelRelations(),
 		ShareLinks:    sharelinkadapter.NewCatalogLinks(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize label store: %w", err)
+	}
+	labelService, err := label.NewService(label.Deps{
+		Units: labelUnits, SpiceDB: deps.spicedbClient, Fence: identitystate.PostgresFence{}, Audit: deps.telemetryWriter,
+		Members: labeladapter.NewMemberProjection(deps.db, deps.cfg.CDNURL),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize label service: %w", err)

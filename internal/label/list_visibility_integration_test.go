@@ -1,6 +1,6 @@
 //go:build integration
 
-package label
+package label_test
 
 import (
 	"context"

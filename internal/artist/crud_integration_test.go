@@ -330,7 +330,7 @@ func TestArtistDeleteSerializesRelationshipSnapshotWithReparentIntegration(t *te
 	graphBlocker := db.WithContext(ctx).Begin()
 	require.NoError(t, graphBlocker.Error)
 	t.Cleanup(func() { _ = graphBlocker.Rollback().Error })
-	require.NoError(t, artistEntity.LockParentGraph(ctx, graphBlocker))
+	require.NoError(t, artistEntity.LegacyLockParentGraph(ctx, graphBlocker))
 
 	deleteDone := make(chan error, 1)
 	go func() {

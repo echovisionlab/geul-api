@@ -29,7 +29,7 @@ func (s *Service) ListArtistParticipants(ctx context.Context, query ListArtistPa
 	if err := artistEntity.RequirePermission(ctx, s.spiceDB, query.ArtistID, policyv1.Artist.ManageParticipants); err != nil {
 		return nil, err
 	}
-	views, err := artistEntity.ListParticipants(ctx, s.db, s.spiceDB, s.members, query.ArtistID)
+	views, err := artistEntity.LegacyListParticipants(ctx, s.db, s.spiceDB, s.members, query.ArtistID)
 	if err != nil {
 		return nil, err
 	}

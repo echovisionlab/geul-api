@@ -163,7 +163,7 @@ func (s *Service) replaceArtistImages(
 			}
 			return nil
 		},
-		Access: artistEntity.LockedAccess(s.spiceDB, artistID, policyv1.Artist.Manage),
+		Access: artistEntity.LegacyLockedAccess(s.spiceDB, artistID, policyv1.Artist.Manage),
 		Change: func(ctx context.Context, tx *gorm.DB) (*artistImageChange, error) {
 			return s.bindArtistImages(ctx, tx, artistID, fileIDs, expectedRevision)
 		},

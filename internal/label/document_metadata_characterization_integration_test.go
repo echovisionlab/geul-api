@@ -1,10 +1,11 @@
 //go:build integration
 
-package label
+package label_test
 
 import (
 	"context"
 	"errors"
+	label "github.com/echovisionlab/geul-api/internal/label"
 	"sort"
 	"testing"
 	"time"
@@ -35,7 +36,7 @@ const (
 )
 
 type documentMetadataCharacterizationService struct {
-	service *InternalConnectHandler
+	service *label.InternalConnectHandler
 }
 
 func newDocumentMetadataCharacterizationService(
@@ -46,16 +47,14 @@ func newDocumentMetadataCharacterizationService(
 	publisher *participantCharacterizationPublisher,
 ) documentMetadataCharacterizationService {
 	t.Helper()
-	return documentMetadataCharacterizationService{service: NewInternalConnectHandler(newTestService(t, Deps{
+	return documentMetadataCharacterizationService{service: label.NewInternalConnectHandler(newTestService(t, integrationDeps{
 		DB: db, SpiceDB: spiceDB, Audit: apitelemetry.NewDurableWriter(db), Publisher: publisher, ContentBlocks: store,
 	}))}
 }
 
 func saveDocumentMetadataCharacterizationTitle(t *testing.T, db *gorm.DB, entityID, title string, now time.Time) {
 	t.Helper()
-	require.NoError(t, saveLabelSourceLocaleDocumentState(t.Context(), db, entityID, "en", translationLocaleDocumentSaveInput{
-		Title: &title, OverwriteNullFields: true, Now: now,
-	}))
+	require.NoError(t, seedLabelLocaleTitle(t.Context(), db, entityID, "en", title, now))
 }
 
 func documentMetadataCharacterizationParentMutation(t *testing.T, entityID, parentID string) policyv1.RelationshipMutation {

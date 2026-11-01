@@ -28,7 +28,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	labeldomain "github.com/echovisionlab/geul-api/internal/label"
+	labelpostgres "github.com/echovisionlab/geul-api/internal/label/postgres"
 	labelpublic "github.com/echovisionlab/geul-api/internal/label/public"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -114,16 +116,19 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	artistRuntime := artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher(db))
 
 	manageArtist := artistdomain.NewConnectHandler(newFixtureArtistService(t, db, spiceDB, contentBlocks, publisher))
-	labelService, err := labeldomain.NewService(labeldomain.Deps{
-		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{}, Publisher: publisher,
-		ContentBlocks: contentBlocks, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
+	labelUnits, err := labelpostgres.NewUnits(db, labelpostgres.Deps{
+		ContentBlocks: contentBlocks, Publisher: publisher, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
 		Translation:   labeladapter.NewTranslation(),
-		Members:       labeladapter.NewMemberProjection(db, artistLabelPublicCDN),
 		Runtime:       labeladapter.NewRuntime(artistLabelPublicCDN, labelFixtureOGRefresher(db)),
 		Artists:       artistadapter.NewLabelRelations(),
 		Releases:      releaseadapter.NewLabelRelations(),
 		ProgramEvents: programeventadapter.NewLabelRelations(),
 		ShareLinks:    sharelinkadapter.NewCatalogLinks(),
+	})
+	require.NoError(t, err)
+	labelService, err := labeldomain.NewService(labeldomain.Deps{
+		Units: labelUnits, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: &audittest.Recorder{},
+		Members: labeladapter.NewMemberProjection(db, artistLabelPublicCDN),
 	})
 	require.NoError(t, err)
 	manageLabel := labeldomain.NewConnectHandler(labelService)

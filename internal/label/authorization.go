@@ -6,15 +6,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 var labelEntity = entityparticipant.Spec{
 	Name: "label", Title: "Label", Article: "a Label",
-	Table: "label", IDColumn: "label_id", OwnerTable: "label_owner", ManagerTable: "label_manager",
-	ParentColumn: "parent_label_id", ParentGraphLock: "label_parent_graph",
+	IDColumn: "label_id", ParentColumn: "parent_label_id",
 	Policy: policyv1.Label,
 }
 
@@ -24,18 +21,18 @@ func requireLabelView(ctx context.Context, checker entityparticipant.PermissionC
 	return labelEntity.RequirePrincipalPermission(ctx, checker, labelID, policyv1.Label.View, auth.GetUser(ctx))
 }
 
-func labelAllowedActions(ctx context.Context, checker entityparticipant.PermissionChecker, labelID string, status model.LabelStatus) ([]managev1.LabelAction, error) {
-	publishAction := managev1.LabelAction_LABEL_ACTION_PUBLISH
-	if status == model.LabelStatusPublished {
-		publishAction = managev1.LabelAction_LABEL_ACTION_UNPUBLISH
+func labelAllowedActions(ctx context.Context, checker entityparticipant.PermissionChecker, labelID string, status Status) ([]Action, error) {
+	publishAction := ActionPublish
+	if status == StatusPublished {
+		publishAction = ActionUnpublish
 	}
-	return entityparticipant.AllowedActions(ctx, labelEntity, checker, labelID, []entityparticipant.ActionCheck[managev1.LabelAction]{
-		{Can: policyv1.Label.Edit, Action: managev1.LabelAction_LABEL_ACTION_EDIT},
-		{Can: policyv1.Label.ManageShareLinks, Action: managev1.LabelAction_LABEL_ACTION_MANAGE_SHARE_LINKS},
-		{Can: policyv1.Label.Delete, Action: managev1.LabelAction_LABEL_ACTION_DELETE},
-		{Can: policyv1.Label.ManageParticipants, Action: managev1.LabelAction_LABEL_ACTION_MANAGE_PARTICIPANTS},
+	return entityparticipant.AllowedActions(ctx, labelEntity, checker, labelID, []entityparticipant.ActionCheck[Action]{
+		{Can: policyv1.Label.Edit, Action: ActionEdit},
+		{Can: policyv1.Label.ManageShareLinks, Action: ActionManageShareLinks},
+		{Can: policyv1.Label.Delete, Action: ActionDelete},
+		{Can: policyv1.Label.ManageParticipants, Action: ActionManageParticipants},
 		{Can: policyv1.Label.Publish, Action: publishAction},
-		{Can: policyv1.Label.RemoveOwner, Action: managev1.LabelAction_LABEL_ACTION_REMOVE_OWNER},
+		{Can: policyv1.Label.RemoveOwner, Action: ActionRemoveOwner},
 	})
 }
 

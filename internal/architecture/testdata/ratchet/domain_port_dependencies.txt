@@ -34,7 +34,7 @@
 7 internal/emaildelivery model
 2 internal/emaildelivery spicedb client
 2 internal/entityparticipant generated contracts
-5 internal/entityparticipant gorm
+1 internal/entityparticipant gorm
 5 internal/entityparticipant spicedb client
 17 internal/form generated contracts
 23 internal/form gorm
@@ -45,10 +45,7 @@
 3 internal/form/public gorm
 6 internal/form/public model
 2 internal/form/public spicedb client
-18 internal/label generated contracts
-19 internal/label gorm
-12 internal/label model
-5 internal/label spicedb client
+12 internal/label generated contracts
 3 internal/label/public generated contracts
 1 internal/label/public gorm
 3 internal/label/public model

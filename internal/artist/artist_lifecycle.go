@@ -138,7 +138,7 @@ func (s *Service) createArtistWithDB(
 		return "", err
 	}
 	if artist.ParentArtistID != nil {
-		if err := artistEntity.ValidateParentTransition(ctx, tx, artist.ID, *artist.ParentArtistID); err != nil {
+		if err := artistEntity.LegacyValidateParentTransition(ctx, tx, artist.ID, *artist.ParentArtistID); err != nil {
 			return "", err
 		}
 	}
@@ -206,15 +206,15 @@ func (s *Service) DeleteArtist(ctx context.Context, command DeleteArtistCommand)
 	}
 	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[artistDeletion]{
 		Lock: func(ctx context.Context, tx *gorm.DB) error {
-			if err := artistEntity.LockRoot(ctx, tx, command.ID); err != nil {
+			if err := artistEntity.LegacyLockRoot(ctx, tx, command.ID); err != nil {
 				return err
 			}
 			// Serialize the SpiceDB relationship snapshot with every Artist
 			// reparent. The root lock is acquired first everywhere to avoid a
 			// delete/reparent lock-order inversion for the same Artist.
-			return artistEntity.LockParentGraph(ctx, tx)
+			return artistEntity.LegacyLockParentGraph(ctx, tx)
 		},
-		Access: artistEntity.LockedAccess(s.spiceDB, command.ID, policyv1.Artist.Delete),
+		Access: artistEntity.LegacyLockedAccess(s.spiceDB, command.ID, policyv1.Artist.Delete),
 		Change: func(ctx context.Context, tx *gorm.DB) (artistDeletion, error) {
 			return s.deleteArtistWithDB(ctx, tx, command, snapshotPlan)
 		},
@@ -335,9 +335,9 @@ func (s *Service) transitionArtist(ctx context.Context, id string, transition ar
 	now := dbtime.Now()
 	changed, err := mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
 		Lock: func(ctx context.Context, tx *gorm.DB) error {
-			return artistEntity.LockRoot(ctx, tx, id)
+			return artistEntity.LegacyLockRoot(ctx, tx, id)
 		},
-		Access: artistEntity.LockedAccess(s.spiceDB, id, policyv1.Artist.Publish),
+		Access: artistEntity.LegacyLockedAccess(s.spiceDB, id, policyv1.Artist.Publish),
 		Change: func(_ context.Context, tx *gorm.DB) (bool, error) {
 			if err := tx.First(&artist, "id = ?", id).Error; err != nil {
 				return false, err

@@ -269,10 +269,10 @@ func applyProviderSourceArtistTranslation(
 }
 
 func RequireLockedSourceLocaleEdit(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, artistID string) error {
-	if err := artistEntity.LockRoot(ctx, tx, artistID); err != nil {
+	if err := artistEntity.LegacyLockRoot(ctx, tx, artistID); err != nil {
 		return err
 	}
-	return artistEntity.RequireLockedPermission(ctx, tx, spiceDB, artistID, policyv1.Artist.Edit)
+	return artistEntity.LegacyRequireLockedPermission(ctx, tx, spiceDB, artistID, policyv1.Artist.Edit)
 }
 
 func canonicalArtistUUID(value string) (uuid.UUID, error) {

@@ -7,15 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -31,16 +25,14 @@ const (
 	LogoVariantDark
 )
 
-// labelLogoSlot is the column, public asset binding and audit slot of a
-// logo variant.
+// labelLogoSlot is the variant and audit slot of a logo.
 type labelLogoSlot struct {
-	column     string
-	bindingKey string
-	audit      sharedtelemetry.AuditAssetSlot
+	variant LogoVariant
+	audit   sharedtelemetry.AuditAssetSlot
 }
 
-func (slot labelLogoSlot) fileID(label *model.Label) *string {
-	if slot.column == "logo_dark_file_id" {
+func (slot labelLogoSlot) fileID(label *Label) *string {
+	if slot.variant == LogoVariantDark {
 		return label.LogoDarkFileID
 	}
 	return label.LogoLightFileID
@@ -49,9 +41,9 @@ func (slot labelLogoSlot) fileID(label *model.Label) *string {
 func labelLogoSlotFor(variant LogoVariant) (labelLogoSlot, error) {
 	switch variant {
 	case LogoVariantLight:
-		return labelLogoSlot{column: "logo_light_file_id", bindingKey: "logo_light", audit: sharedtelemetry.AuditAssetSlotLight}, nil
+		return labelLogoSlot{variant: variant, audit: sharedtelemetry.AuditAssetSlotLight}, nil
 	case LogoVariantDark:
-		return labelLogoSlot{column: "logo_dark_file_id", bindingKey: "logo_dark", audit: sharedtelemetry.AuditAssetSlotDark}, nil
+		return labelLogoSlot{variant: variant, audit: sharedtelemetry.AuditAssetSlotDark}, nil
 	default:
 		return labelLogoSlot{}, domainerr.InvalidField("variant", "unsupported theme asset variant")
 	}
@@ -64,46 +56,50 @@ func effectiveLabelLogoFileID(lightFileID *string, darkFileID *string) *string {
 	return normalizedOptionalString(darkFileID)
 }
 
-func sameNormalizedOptionalString(left *string, right *string) bool {
-	left = normalizedOptionalString(left)
-	right = normalizedOptionalString(right)
+func normalizedOptionalString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	normalized := strings.TrimSpace(*value)
+	if normalized == "" {
+		return nil
+	}
+	return &normalized
+}
+
+func sameOptionalString(left, right *string) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}
 	return *left == *right
 }
 
-func refreshLabelOgForEffectiveLogoChangeWithDB(
-	ctx context.Context,
-	tx *gorm.DB,
-	runtime Runtime,
-	labelID string,
-	previousEffectiveLogoFileID *string,
-	reason string,
-) (*string, error) {
-	var row struct {
-		FileID *string `gorm:"column:file_id"`
-	}
-	if err := tx.WithContext(ctx).
-		Raw(`SELECT COALESCE(logo_light_file_id, logo_dark_file_id) AS file_id FROM label WHERE id = ? LIMIT 1`, labelID).
-		Scan(&row).Error; err != nil {
+func sameNormalizedOptionalString(left *string, right *string) bool {
+	return sameOptionalString(normalizedOptionalString(left), normalizedOptionalString(right))
+}
+
+// refreshLabelOgForEffectiveLogoChange regenerates the OG image when the
+// effective logo changed: a Label left without a logo loses its OG image,
+// otherwise a new generation run starts.
+func refreshLabelOgForEffectiveLogoChange(ctx context.Context, store Store, labelID string, previousEffectiveLogoFileID *string, reason string) (*string, error) {
+	current, err := store.EffectiveLogoFileID(ctx, labelID)
+	if err != nil {
 		return nil, err
 	}
-	currentEffectiveLogoFileID := normalizedOptionalString(row.FileID)
+	currentEffectiveLogoFileID := normalizedOptionalString(current)
 	if sameNormalizedOptionalString(previousEffectiveLogoFileID, currentEffectiveLogoFileID) {
 		return nil, nil
 	}
 	if currentEffectiveLogoFileID == nil {
-		if err := tx.WithContext(ctx).Table("label").
-			Where("id = ?", labelID).Update("og_asset_id", nil).Error; err != nil {
+		if err := store.ClearOgAsset(ctx, labelID); err != nil {
 			return nil, err
 		}
-		if err := runtime.CancelAndReleaseOGWithDB(ctx, tx, labelID); err != nil {
+		if err := store.CancelOG(ctx, labelID); err != nil {
 			return nil, err
 		}
 		return nil, nil
 	}
-	runID, err := runtime.RequestCurrentWithDB(ctx, tx, labelID, reason)
+	runID, err := store.RequestOG(ctx, labelID, reason)
 	if err != nil || strings.TrimSpace(runID) == "" {
 		return nil, err
 	}
@@ -142,37 +138,34 @@ func (s *Service) SetLabelImage(ctx context.Context, command SetLabelImageComman
 	if err != nil {
 		return LogoUpdate{}, err
 	}
-	var label model.Label
+	var label Label
 	change, err := s.changeLabelLogo(ctx, command.LabelID, &label, slot, sharedtelemetry.AuditCollectionOperationAdded,
-		func(ctx context.Context, tx *gorm.DB) (logoChange, error) {
+		func(ctx context.Context, store Store) (logoChange, error) {
 			previousEffectiveLogoFileID := effectiveLabelLogoFileID(label.LogoLightFileID, label.LogoDarkFileID)
 			if sameOptionalString(slot.fileID(&label), &command.FileID) {
 				return logoChange{}, nil
 			}
-			if err := s.runtime.LockAttachableFilesForUpdate(ctx, tx, []string{command.FileID}); err != nil {
+			if err := store.LockAttachableFiles(ctx, []string{command.FileID}); err != nil {
 				return logoChange{}, err
 			}
-			result := tx.Model(&label).Updates(structured.Fields{slot.column: command.FileID, "updated_at": time.Now()})
-			if result.Error != nil {
-				return logoChange{}, result.Error
-			}
-			if result.RowsAffected == 0 {
-				return logoChange{}, gorm.ErrRecordNotFound
-			}
-			if _, err := s.runtime.BindReadyAssetForSourceFile(ctx, tx, command.FileID, "label", command.LabelID, slot.bindingKey, "logo"); err != nil {
+			fileID := command.FileID
+			if err := store.SetLabelLogo(ctx, command.LabelID, slot.variant, &fileID, time.Now()); err != nil {
 				return logoChange{}, err
 			}
-			ogRunID, err := refreshLabelOgForEffectiveLogoChangeWithDB(ctx, tx, s.runtime, command.LabelID, previousEffectiveLogoFileID, "label_logo_updated")
+			if err := store.BindLogo(ctx, command.FileID, command.LabelID, slot.variant); err != nil {
+				return logoChange{}, err
+			}
+			ogRunID, err := refreshLabelOgForEffectiveLogoChange(ctx, store, command.LabelID, previousEffectiveLogoFileID, "label_logo_updated")
 			return logoChange{changed: true, ogRunID: ogRunID, fileID: command.FileID, signalID: label.ID}, err
 		})
 	if err != nil {
 		return LogoUpdate{}, err
 	}
-	imageAssets := s.getLabelImageAssets(ctx, label.ID)
+	logos := s.getLabelImageAssets(ctx, label.ID)
 	if _, err := s.overlayLabelSourceLocaleDocument(ctx, &label); err != nil {
 		return LogoUpdate{}, err
 	}
-	return LogoUpdate{Light: imageAssets.Light, Dark: imageAssets.Dark, OgGenerationRunID: change.ogRunID}, nil
+	return LogoUpdate{Light: logos.Light, Dark: logos.Dark, OgGenerationRunID: change.ogRunID}, nil
 }
 
 // DeleteLabelImageCommand clears a Label logo slot without deleting its file.
@@ -190,21 +183,21 @@ func (s *Service) DeleteLabelImage(ctx context.Context, command DeleteLabelImage
 	if err != nil {
 		return nil, err
 	}
-	var label model.Label
+	var label Label
 	change, err := s.changeLabelLogo(ctx, command.LabelID, &label, slot, sharedtelemetry.AuditCollectionOperationRemoved,
-		func(ctx context.Context, tx *gorm.DB) (logoChange, error) {
+		func(ctx context.Context, store Store) (logoChange, error) {
 			previousEffectiveLogoFileID := effectiveLabelLogoFileID(label.LogoLightFileID, label.LogoDarkFileID)
 			oldFileID := slot.fileID(&label)
 			if oldFileID == nil {
 				return logoChange{}, nil
 			}
-			if err := tx.Model(&label).Updates(structured.Fields{slot.column: nil, "updated_at": time.Now()}).Error; err != nil {
+			if err := store.SetLabelLogo(ctx, command.LabelID, slot.variant, nil, time.Now()); err != nil {
 				return logoChange{}, err
 			}
-			if err := s.runtime.ReleasePublicAssetBindings(ctx, tx, "label", command.LabelID, slot.bindingKey); err != nil {
+			if err := store.ReleaseLogoBinding(ctx, command.LabelID, slot.variant); err != nil {
 				return logoChange{}, err
 			}
-			ogRunID, err := refreshLabelOgForEffectiveLogoChangeWithDB(ctx, tx, s.runtime, command.LabelID, previousEffectiveLogoFileID, "label_logo_removed")
+			ogRunID, err := refreshLabelOgForEffectiveLogoChange(ctx, store, command.LabelID, previousEffectiveLogoFileID, "label_logo_removed")
 			return logoChange{changed: true, ogRunID: ogRunID, fileID: *oldFileID, signalID: command.LabelID}, err
 		})
 	if err != nil {
@@ -219,14 +212,16 @@ func (s *Service) DeleteLabelImage(ctx context.Context, command DeleteLabelImage
 func (s *Service) changeLabelLogo(
 	ctx context.Context,
 	labelID string,
-	label *model.Label,
+	label *Label,
 	slot labelLogoSlot,
 	operation sharedtelemetry.AuditCollectionOperation,
-	change func(context.Context, *gorm.DB) (logoChange, error),
+	change func(context.Context, Store) (logoChange, error),
 ) (logoChange, error) {
-	result, err := mutation.Run(ctx, s.mutations, mutation.Spec[logoChange]{
-		Lock: func(_ context.Context, tx *gorm.DB) error {
-			return tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(label, "id = ?", labelID).Error
+	result, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[logoChange, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			var err error
+			*label, err = store.LockLabel(ctx, labelID)
+			return err
 		},
 		Access: labelEntity.LockedAccess(s.spiceDB, labelID, policyv1.Label.Manage),
 		Change: change,
@@ -238,14 +233,14 @@ func (s *Service) changeLabelLogo(
 				return sharedtelemetry.NewLabelLogoAuditRecord(m, label.ID, slot.audit, operation, change.fileID)
 			})
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, change logoChange) error {
+		Outbox: func(ctx context.Context, store Store, change logoChange) error {
 			if !change.changed {
 				return nil
 			}
-			return contentsignal.PublishInTransaction(ctx, tx, s.publisher, buildLabelMediaMutationContentUpdatedEvent(change.signalID))
+			return store.PublishContentUpdate(ctx, ContentUpdate{LabelID: change.signalID, Kind: MediaUpdate})
 		},
 	})
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	if errors.Is(err, ErrLabelNotFound) {
 		return logoChange{}, domainerr.ResourceNotFound("label", labelID)
 	}
 	return result, err

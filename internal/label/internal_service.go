@@ -7,10 +7,9 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	"gorm.io/gorm"
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // LoadLabelBlockDocumentQuery opens the Label document of a collaboration
@@ -21,33 +20,52 @@ type LoadLabelBlockDocumentQuery struct {
 	SessionID string
 }
 
-// LoadLabelBlockDocument returns the room's document: the current source
+// LocaleMetadata is the title of one Label locale a room shows.
+type LocaleMetadata struct {
+	Locale string
+	Title  *string
+}
+
+// RoomDocument is a collaboration room's Label document: the current source
 // graph with the room locale's values overlaid, its locale metadata and the
 // Label's document metadata.
-func (s *Service) LoadLabelBlockDocument(ctx context.Context, query LoadLabelBlockDocumentQuery) (*intrav1.LoadLabelBlockDocumentResponse, error) {
+type RoomDocument struct {
+	Document            *contentv1.LocalizedRichTextDocument
+	DocumentRevision    string
+	Metadata            DocumentMetadata
+	SourceMetadata      LocaleMetadata
+	Locale              string
+	LocaleExists        bool
+	LocaleMetadata      *LocaleMetadata
+	TargetRevision      *string
+	PresentLocaleValues []*managev1.AIDocumentFieldTarget
+}
+
+// LoadLabelBlockDocument returns the room's document.
+func (s *Service) LoadLabelBlockDocument(ctx context.Context, query LoadLabelBlockDocumentQuery) (RoomDocument, error) {
 	if strings.TrimSpace(query.Locale) == "" {
-		return nil, domainerr.Required("locale")
+		return RoomDocument{}, domainerr.Required("locale")
 	}
 	requestedLocale, err := normalizeLabelDocumentLocale(query.Locale)
 	if err != nil {
-		return nil, err
+		return RoomDocument{}, err
 	}
-	var locales []labelLocaleTitle
-	var metadata *intrav1.LabelDocumentMetadata
-	bootstrap, err := loadLabelContentBlockBootstrap(
-		ctx, s.db, s.contentBlocks, s.spiceDB, query.LabelID, query.SessionID,
-		func(ctx context.Context, tx *gorm.DB) error {
-			var err error
-			locales, err = loadLabelLocaleTitles(ctx, tx, query.LabelID)
-			if err != nil {
-				return err
-			}
-			metadata, err = loadLabelDocumentMetadata(ctx, tx, query.LabelID)
+	var locales []LocaleTitle
+	var metadata DocumentMetadata
+	bootstrap, err := s.loadLabelContentBlockBootstrap(ctx, query.LabelID, query.SessionID, func(ctx context.Context, store Store) error {
+		var err error
+		locales, err = store.LocaleTitles(ctx, query.LabelID)
+		if err != nil {
 			return err
-		},
-	)
+		}
+		metadata, err = store.DocumentMetadata(ctx, query.LabelID)
+		if errors.Is(err, ErrLabelNotFound) {
+			return domainerr.ResourceNotFound("label", query.LabelID)
+		}
+		return err
+	})
 	if err != nil {
-		return nil, err
+		return RoomDocument{}, err
 	}
 	// Collaboration rooms render the current source graph with sparse target
 	// values overlaid. Missing target units must therefore remain visible via
@@ -55,72 +73,48 @@ func (s *Service) LoadLabelBlockDocument(ctx context.Context, query LoadLabelBlo
 	// translation/DCDP presence reads.
 	document, err := contentblock.MaterializeSnapshotRichTextLocale(bootstrap.Snapshot, requestedLocale)
 	if err != nil {
-		return nil, normalizeLabelContentBlockError(err)
+		return RoomDocument{}, normalizeLabelContentBlockError(err)
 	}
-	response := &intrav1.LoadLabelBlockDocumentResponse{
+	room := RoomDocument{
 		Document: document, DocumentRevision: bootstrap.Snapshot.Document.Revision.String(),
-		SourceMetadata: &intrav1.LabelLocaleMetadata{Locale: bootstrap.Source.SourceLocale},
+		SourceMetadata: LocaleMetadata{Locale: bootstrap.SourceLocale},
 		Metadata:       metadata, Locale: requestedLocale,
 	}
-	if err := overlayLabelRoomLocales(response, locales, bootstrap); err != nil {
-		return nil, err
+	if err := overlayLabelRoomLocales(&room, locales, bootstrap); err != nil {
+		return RoomDocument{}, err
 	}
-	if !response.LocaleExists && targetlocale.SnapshotHasLocale(bootstrap.Snapshot, requestedLocale) {
-		return nil, domainerr.Precondition("Label target locale Blocks exist without owning metadata")
+	if !room.LocaleExists && targetlocale.SnapshotHasLocale(bootstrap.Snapshot, requestedLocale) {
+		return RoomDocument{}, domainerr.Precondition("Label target locale Blocks exist without owning metadata")
 	}
-	if response.PresentLocaleValues, err = contentblock.PresentRichTextLocaleValues(bootstrap.Snapshot, requestedLocale); err != nil {
-		return nil, err
+	if room.PresentLocaleValues, err = contentblock.PresentRichTextLocaleValues(bootstrap.Snapshot, requestedLocale); err != nil {
+		return RoomDocument{}, err
 	}
-	return response, nil
+	return room, nil
 }
 
 // overlayLabelRoomLocales fills the source title and, when the room locale
 // has metadata, its title and target revision.
-func overlayLabelRoomLocales(response *intrav1.LoadLabelBlockDocumentResponse, locales []labelLocaleTitle, bootstrap labelContentBootstrap) error {
-	sourceLocale := bootstrap.Source.SourceLocale
+func overlayLabelRoomLocales(room *RoomDocument, locales []LocaleTitle, bootstrap labelContentBootstrap) error {
+	sourceLocale := bootstrap.SourceLocale
 	for _, locale := range locales {
 		if locale.Locale == sourceLocale {
-			response.SourceMetadata.Title = locale.Title
+			room.SourceMetadata.Title = locale.Title
 		}
-		if locale.Locale != response.Locale {
+		if locale.Locale != room.Locale {
 			continue
 		}
-		response.LocaleExists = true
-		response.LocaleMetadata = &intrav1.LabelLocaleMetadata{Locale: response.Locale, Title: locale.Title}
-		if response.Locale != sourceLocale {
+		room.LocaleExists = true
+		room.LocaleMetadata = &LocaleMetadata{Locale: room.Locale, Title: locale.Title}
+		if room.Locale != sourceLocale {
 			revision, err := deriveLabelTargetRevision(bootstrap.Snapshot.Document.Revision.String(), locale.UpdatedAt)
 			if err != nil {
 				return err
 			}
-			response.TargetRevision = &revision
+			room.TargetRevision = &revision
 		}
 	}
-	if response.Locale == sourceLocale && !response.LocaleExists {
+	if room.Locale == sourceLocale && !room.LocaleExists {
 		return errors.New("Label source locale metadata is missing")
 	}
 	return nil
-}
-
-func loadLabelDocumentMetadata(
-	ctx context.Context,
-	db *gorm.DB,
-	labelID string,
-) (*intrav1.LabelDocumentMetadata, error) {
-	var label model.Label
-	if err := db.WithContext(ctx).
-		Select("id", "slug", "country_code", "website", "social_links", "parent_label_id").
-		Where("id = ?", labelID).
-		Take(&label).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, domainerr.ResourceNotFound("label", labelID)
-		}
-		return nil, err
-	}
-	return &intrav1.LabelDocumentMetadata{
-		Slug:          label.Slug,
-		CountryCode:   label.CountryCode,
-		Website:       label.Website,
-		SocialLinks:   label.SocialLinks,
-		ParentLabelId: label.ParentLabelID,
-	}, nil
 }

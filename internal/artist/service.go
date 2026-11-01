@@ -78,7 +78,7 @@ type Service struct {
 	works         WorkRelations
 	shareLinks    ShareLinks
 	mutations     *mutation.Runner
-	participants  entityparticipant.Mutations
+	participants  entityparticipant.LegacyMutations
 }
 
 // NewService validates deps and returns the Artist use cases.
@@ -94,7 +94,7 @@ func NewService(deps Deps) (*Service, error) {
 		db: deps.DB, spiceDB: deps.SpiceDB, publisher: deps.Publisher, contentBlocks: deps.ContentBlocks,
 		checkpoints: deps.Checkpoints, translation: deps.Translation, members: deps.Members, runtime: deps.Runtime,
 		labels: deps.Labels, releases: deps.Releases, programEvents: deps.ProgramEvents, works: deps.Works,
-		shareLinks: deps.ShareLinks, mutations: mutations, participants: artistEntity.Mutations(mutations, deps.SpiceDB),
+		shareLinks: deps.ShareLinks, mutations: mutations, participants: artistEntity.LegacyMutations(mutations, deps.SpiceDB),
 	}, nil
 }
 

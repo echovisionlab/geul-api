@@ -7,13 +7,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -104,11 +100,11 @@ func (s Spec) RequirePrincipalPermission(ctx context.Context, checker Permission
 	return nil
 }
 
-// RequireLockedPermission locks the request principal's identity state and
-// then requires action on the entity, so a concurrent ban or deletion of the
-// principal cannot race the mutation.
-func (s Spec) RequireLockedPermission(ctx context.Context, tx *gorm.DB, checker PermissionChecker, entityID string, action auth.ResourceAction) error {
-	principal, err := s.LockActivePrincipal(ctx, tx)
+// RequireLockedPermission locks the request principal's identity state
+// through lockActive and then requires action on the entity, so a
+// concurrent ban or deletion of the principal cannot race the mutation.
+func (s Spec) RequireLockedPermission(ctx context.Context, lockActive func(*auth.UserInfo) (bool, error), checker PermissionChecker, entityID string, action auth.ResourceAction) error {
+	principal, err := s.LockActivePrincipal(ctx, lockActive)
 	if err != nil {
 		return err
 	}
@@ -119,18 +115,16 @@ func (s Spec) RequireLockedPermission(ctx context.Context, tx *gorm.DB, checker 
 // principal is locked inside the mutation transaction and a denial answers
 // not found, as the entity's read paths do.
 func (s Spec) LockedAccess(checker PermissionChecker, entityID string, action auth.ResourceAction) mutation.Access {
-	return mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-		return s.RequireLockedPermission(ctx, tx, checker, entityID, action)
+	return mutation.Fenced(func(ctx context.Context, _ Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+		return s.RequireLockedPermission(ctx, lockActive, checker, entityID, action)
 	})
 }
 
-// LockRoot locks the entity row for update.
-func (s Spec) LockRoot(ctx context.Context, tx *gorm.DB, entityID string) error {
-	var row struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := tx.WithContext(ctx).Table(s.Table).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id").Where("id = ?::uuid", entityID).Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+// LockRoot locks the entity row for update; a missing entity answers not
+// found.
+func (s Spec) LockRoot(ctx context.Context, store Store, entityID string) error {
+	if err := store.LockEntity(ctx, entityID); err != nil {
+		if errors.Is(err, ErrEntityNotFound) {
 			return domainerr.ResourceNotFound(s.Name, entityID)
 		}
 		return err
@@ -138,11 +132,12 @@ func (s Spec) LockRoot(ctx context.Context, tx *gorm.DB, entityID string) error 
 	return nil
 }
 
-// LockActivePrincipal locks the request principal's identity state. It
-// returns nil without an error when the principal is no longer active.
-func (s Spec) LockActivePrincipal(ctx context.Context, tx *gorm.DB) (*auth.UserInfo, error) {
+// LockActivePrincipal locks the request principal's identity state through
+// lockActive. It returns nil without an error when the principal is no
+// longer active.
+func (s Spec) LockActivePrincipal(ctx context.Context, lockActive func(*auth.UserInfo) (bool, error)) (*auth.UserInfo, error) {
 	principal := auth.GetUser(ctx)
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	active, err := lockActive(principal)
 	if err != nil {
 		return nil, fmt.Errorf("lock %s mutation principal: %w", s.Title, err)
 	}
@@ -186,9 +181,6 @@ func (s Spec) MapMutationError(err error) error {
 	}
 	if strings.Contains(err.Error(), lastOwnerConstraint) {
 		return domainerr.Precondition(s.Article + " " + lastOwnerConstraint).WithCause(err)
-	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return domainerr.New(domainerr.NotFound, "", s.Title+" participant not found")
 	}
 	return err
 }

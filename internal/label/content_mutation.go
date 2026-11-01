@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -14,7 +13,6 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 // ApplyLabelBlockBatchCommand applies a collaboration room's Block batch to
@@ -48,15 +46,15 @@ func (s *Service) ApplyLabelBlockBatch(ctx context.Context, command ApplyLabelBl
 	if input == nil {
 		return BlockBatchResult{}, domainerr.Required("batch")
 	}
-	doc, err := loadLabelContentDocumentID(ctx, s.db, command.LabelID)
+	doc, err := s.readLabelContentDocumentID(ctx, command.LabelID)
 	if err != nil {
 		return BlockBatchResult{}, err
 	}
 	contributors := input.GetContributorMemberIds()
-	return mutation.Run(ctx, s.mutations, mutation.Spec[BlockBatchResult]{
-		Access: s.contributorAccess(contributors),
-		Change: func(ctx context.Context, tx *gorm.DB) (BlockBatchResult, error) {
-			domain, err := internalLabelCollaborationContentFence(s.checkpoints, command.LabelID, contributors)(ctx, tx, doc)
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[BlockBatchResult, Store]{
+		Access: contributorAccess(contributors),
+		Change: func(ctx context.Context, store Store) (BlockBatchResult, error) {
+			domain, err := internalLabelCollaborationContentFence(command.LabelID, contributors)(ctx, store, doc)
 			if err != nil {
 				return BlockBatchResult{}, err
 			}
@@ -65,9 +63,9 @@ func (s *Service) ApplyLabelBlockBatch(ctx context.Context, command ApplyLabelBl
 				expectedTargetRevision: command.ExpectedTargetRevision, input: input,
 			}
 			if locale != domain.SourceLocale {
-				return s.applyLabelTargetRoomBatch(ctx, tx, batch, command.AffectedLocaleValues)
+				return applyLabelTargetRoomBatch(ctx, store, batch, command.AffectedLocaleValues)
 			}
-			return s.applyLabelSourceRoomBatch(ctx, tx, batch, command.AffectedLocaleValues)
+			return applyLabelSourceRoomBatch(ctx, store, batch, command.AffectedLocaleValues)
 		},
 		Audit: func(result BlockBatchResult) mutation.Audit {
 			if !result.Content.Changed {
@@ -75,21 +73,20 @@ func (s *Service) ApplyLabelBlockBatch(ctx context.Context, command ApplyLabelBl
 			}
 			return labelRequestLocaleAudit(command.LabelID, locale, sharedtelemetry.AuditItemOperationUpdated)
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, result BlockBatchResult) error {
+		Outbox: func(ctx context.Context, store Store, result BlockBatchResult) error {
 			if !result.Content.Changed {
 				return nil
 			}
-			return contentsignal.PublishInTransaction(ctx, tx, s.publisher, buildLabelLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-				EntityID:             command.LabelID,
+			return store.PublishContentUpdate(ctx, ContentUpdate{LabelID: command.LabelID, Kind: LocaleUpdate, Locale: LocaleChange{
 				Fields:               []string{"content"},
 				DocumentRevision:     result.Content.DocumentRevision.String(),
 				Contributors:         contributors,
-				Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				Source:               SourceCollaboration,
 				Locale:               locale,
 				LocaleDeleted:        !result.LocaleExists,
 				TargetRevision:       result.TargetRevision,
 				DocumentStateChanged: locale == result.SourceLocale,
-			}))
+			}})
 		},
 	})
 }
@@ -97,9 +94,9 @@ func (s *Service) ApplyLabelBlockBatch(ctx context.Context, command ApplyLabelBl
 // contributorAccess authorizes a collaboration save by its contributors.
 // The content fence rechecks their current room authority under the Label
 // lock.
-func (s *Service) contributorAccess(contributors []string) mutation.Access {
-	return mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-		return s.translation.RequireDocumentContributors(ctx, tx, contributors)
+func contributorAccess(contributors []string) mutation.Access {
+	return mutation.Checked(func(ctx context.Context, store Store) error {
+		return store.RequireDocumentContributors(ctx, contributors)
 	})
 }
 
@@ -125,14 +122,14 @@ func (b labelRoomBatch) storage(affectedLocaleValues []*managev1.AIDocumentField
 	return storage, nil
 }
 
-func (b labelRoomBatch) fence() contentblock.DomainFence {
-	return contentblock.LockedFence(labelEntityName, b.documentID, b.domain)
+func (b labelRoomBatch) fence() ContentFence {
+	return lockedContentFence(b.documentID, b.domain)
 }
 
 // applyLabelTargetRoomBatch applies a target-locale room's batch, which may
 // change only that locale's values of the shared Blocks.
-func (s *Service) applyLabelTargetRoomBatch(ctx context.Context, tx *gorm.DB, b labelRoomBatch, affectedLocaleValues []*managev1.AIDocumentFieldTarget) (BlockBatchResult, error) {
-	snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, b.documentID, b.domain.SourceLocale)
+func applyLabelTargetRoomBatch(ctx context.Context, store Store, b labelRoomBatch, affectedLocaleValues []*managev1.AIDocumentFieldTarget) (BlockBatchResult, error) {
+	snapshot, err := store.LockedContentSnapshot(ctx, b.documentID, b.domain.SourceLocale)
 	if err != nil {
 		return BlockBatchResult{}, normalizeLabelContentBlockError(err)
 	}
@@ -147,7 +144,7 @@ func (s *Service) applyLabelTargetRoomBatch(ctx context.Context, tx *gorm.DB, b 
 	if err != nil {
 		return BlockBatchResult{}, normalizeLabelContentBlockError(err)
 	}
-	target, err := applyLabelTargetLocaleMutation(ctx, tx, s.contentBlocks, labelTargetLocaleMutationInput{
+	target, err := applyLabelTargetLocaleMutation(ctx, store, labelTargetLocaleMutationInput{
 		LabelID: b.labelID, Locale: b.locale, ExpectedDocumentRevision: batch.ExpectedRevision,
 		ExpectedTargetRevision: b.expectedTargetRevision, Batch: batch, Fence: b.fence(),
 	})
@@ -162,7 +159,7 @@ func (s *Service) applyLabelTargetRoomBatch(ctx context.Context, tx *gorm.DB, b 
 
 // applyLabelSourceRoomBatch applies the source room's batch and refreshes
 // the OG image when the translation source changed.
-func (s *Service) applyLabelSourceRoomBatch(ctx context.Context, tx *gorm.DB, b labelRoomBatch, affectedLocaleValues []*managev1.AIDocumentFieldTarget) (BlockBatchResult, error) {
+func applyLabelSourceRoomBatch(ctx context.Context, store Store, b labelRoomBatch, affectedLocaleValues []*managev1.AIDocumentFieldTarget) (BlockBatchResult, error) {
 	storage, err := b.storage(affectedLocaleValues)
 	if err != nil {
 		return BlockBatchResult{}, err
@@ -182,12 +179,12 @@ func (s *Service) applyLabelSourceRoomBatch(ctx context.Context, tx *gorm.DB, b 
 			)
 		}
 	}
-	result, err := s.contentBlocks.ApplyBatch(ctx, tx, batch, b.fence())
+	result, err := store.ApplyContentBatch(ctx, batch, b.fence())
 	if err != nil {
 		return BlockBatchResult{}, normalizeLabelContentBlockError(err)
 	}
 	if result.TranslationSourceChanged {
-		if _, err := s.runtime.RequestCurrentWithDB(ctx, tx, b.labelID, "label_source_document_saved"); err != nil {
+		if _, err := store.RequestOG(ctx, b.labelID, "label_source_document_saved"); err != nil {
 			return BlockBatchResult{}, err
 		}
 	}
@@ -278,14 +275,14 @@ type labelSourceTitle struct {
 	expected   uuid.UUID
 }
 
-// saveLabelSourceTitle advances the document revision with the new title and
+// saveLabelRoomTitle advances the document revision with the new title and
 // refreshes the OG image when the translation source changed.
-func (s *Service) saveLabelSourceTitle(ctx context.Context, tx *gorm.DB, title labelSourceTitle, domain contentblock.DomainContext) (TitleUpdate, error) {
-	advanced, err := s.contentBlocks.AdvanceRevision(ctx, tx, contentblock.AdvanceInput{DocumentID: title.documentID, ExpectedRevision: title.expected}, contentblock.LockedFence(labelEntityName, title.documentID, domain), func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-		if err := saveLabelSourceLocaleDocumentState(ctx, tx, title.labelID, domain.SourceLocale, translationLocaleDocumentSaveInput{Title: &title.name, OverwriteNullFields: true, Now: time.Now().UTC()}); err != nil {
+func saveLabelRoomTitle(ctx context.Context, store Store, title labelSourceTitle, domain contentblock.DomainContext) (TitleUpdate, error) {
+	advanced, err := store.AdvanceContentRevision(ctx, contentblock.AdvanceInput{DocumentID: title.documentID, ExpectedRevision: title.expected}, lockedContentFence(title.documentID, domain), func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
+		if err := saveLabelSourceTitle(ctx, store, title.labelID, domain.SourceLocale, &title.name, time.Now().UTC()); err != nil {
 			return contentblock.MetadataEffect{}, err
 		}
-		if err := touchLabelRootUpdatedAt(ctx, tx, title.labelID, time.Now().UTC()); err != nil {
+		if err := touchLabel(ctx, store, title.labelID, time.Now().UTC()); err != nil {
 			return contentblock.MetadataEffect{}, err
 		}
 		return contentblock.MetadataEffect{Changed: true, AffectsTranslationSource: true}, nil
@@ -299,7 +296,7 @@ func (s *Service) saveLabelSourceTitle(ctx context.Context, tx *gorm.DB, title l
 	}
 	update.ChangedLocales = []string{domain.SourceLocale}
 	if advanced.TranslationSourceChanged {
-		_, err = s.runtime.RequestCurrentWithDB(ctx, tx, title.labelID, "label_source_title_saved")
+		_, err = store.RequestOG(ctx, title.labelID, "label_source_title_saved")
 	}
 	return update, err
 }
@@ -325,15 +322,15 @@ func (s *Service) UpdateLabelLocaleMetadata(ctx context.Context, command UpdateL
 	if err != nil {
 		return TitleUpdate{}, domainerr.InvalidField("expected_revision", "must be a UUID")
 	}
-	doc, err := loadLabelContentDocumentID(ctx, s.db, command.LabelID)
+	doc, err := s.readLabelContentDocumentID(ctx, command.LabelID)
 	if err != nil {
 		return TitleUpdate{}, err
 	}
 	title := labelSourceTitle{labelID: command.LabelID, locale: locale, name: strings.TrimSpace(*command.Title), documentID: doc, expected: expected}
-	return mutation.Run(ctx, s.mutations, mutation.Spec[TitleUpdate]{
-		Access: s.contributorAccess(command.ContributorMemberIDs),
-		Change: func(ctx context.Context, tx *gorm.DB) (TitleUpdate, error) {
-			domain, err := internalLabelCollaborationContentFence(s.checkpoints, command.LabelID, command.ContributorMemberIDs)(ctx, tx, doc)
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[TitleUpdate, Store]{
+		Access: contributorAccess(command.ContributorMemberIDs),
+		Change: func(ctx context.Context, store Store) (TitleUpdate, error) {
+			domain, err := internalLabelCollaborationContentFence(command.LabelID, command.ContributorMemberIDs)(ctx, store, doc)
 			if err != nil {
 				return TitleUpdate{}, err
 			}
@@ -346,7 +343,7 @@ func (s *Service) UpdateLabelLocaleMetadata(ctx context.Context, command UpdateL
 			if command.ExpectedTargetRevision != nil {
 				return TitleUpdate{}, domainerr.InvalidField("expected_target_revision", "source Label metadata mutation cannot carry a target revision")
 			}
-			return s.saveLabelSourceTitle(ctx, tx, title, domain)
+			return saveLabelRoomTitle(ctx, store, title, domain)
 		},
 		Audit: func(update TitleUpdate) mutation.Audit {
 			if !update.Advance.Changed {
@@ -354,19 +351,18 @@ func (s *Service) UpdateLabelLocaleMetadata(ctx context.Context, command UpdateL
 			}
 			return labelRequestLocaleAudit(command.LabelID, update.ChangedLocales[0], sharedtelemetry.AuditItemOperationUpdated)
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, update TitleUpdate) error {
+		Outbox: func(ctx context.Context, store Store, update TitleUpdate) error {
 			if !update.Advance.Changed {
 				return nil
 			}
-			return contentsignal.PublishInTransaction(ctx, tx, s.publisher, buildLabelLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-				EntityID:             command.LabelID,
+			return store.PublishContentUpdate(ctx, ContentUpdate{LabelID: command.LabelID, Kind: LocaleUpdate, Locale: LocaleChange{
 				Fields:               []string{"title"},
 				DocumentRevision:     update.Advance.DocumentRevision.String(),
 				Contributors:         command.ContributorMemberIDs,
-				Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				Source:               SourceCollaboration,
 				Locale:               locale,
 				DocumentStateChanged: true,
-			}))
+			}})
 		},
 	})
 }

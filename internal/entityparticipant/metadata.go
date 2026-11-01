@@ -6,16 +6,20 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
+
+// StringMutation is one document-metadata string mutation as a collaboration
+// room sends it: Set a value, Clear it, or, when both are nil, name neither.
+type StringMutation struct {
+	Set   *string
+	Clear *bool
+}
 
 // NullableStringUpdate is a parsed document-metadata string mutation. Present
 // is false when the field is left alone; a nil Value clears it.
@@ -25,20 +29,20 @@ type NullableStringUpdate struct {
 }
 
 // ParseNullableStringUpdate trims a set value and rejects an empty set, a
-// false clear and an empty mutation.
-func ParseNullableStringUpdate(field string, input *intrav1.NullableStringMutation) (NullableStringUpdate, error) {
+// false clear and an empty mutation. A nil input leaves the field alone.
+func ParseNullableStringUpdate(field string, input *StringMutation) (NullableStringUpdate, error) {
 	if input == nil {
 		return NullableStringUpdate{}, nil
 	}
-	switch operation := input.Operation.(type) {
-	case *intrav1.NullableStringMutation_Set:
-		value := strings.TrimSpace(operation.Set)
+	switch {
+	case input.Set != nil:
+		value := strings.TrimSpace(*input.Set)
 		if value == "" {
 			return NullableStringUpdate{}, domainerr.InvalidField(field, "set value must not be empty; use clear instead")
 		}
 		return NullableStringUpdate{Present: true, Value: &value}, nil
-	case *intrav1.NullableStringMutation_Clear:
-		if !operation.Clear {
+	case input.Clear != nil:
+		if !*input.Clear {
 			return NullableStringUpdate{}, domainerr.InvalidField(field, "clear must be true")
 		}
 		return NullableStringUpdate{Present: true}, nil
@@ -52,16 +56,19 @@ func (u NullableStringUpdate) Changes(current *string) bool {
 	return u.Present && !sameOptionalString(current, u.Value)
 }
 
-// Assign stores the update under column when it changes current.
-func (u NullableStringUpdate) Assign(fields structured.Fields, column string, current *string) bool {
+// Assignment is the new value of one nullable column a save changes; Value
+// nil clears it.
+type Assignment struct {
+	Changed bool
+	Value   *string
+}
+
+// Assign records the update in target when it changes current.
+func (u NullableStringUpdate) Assign(target *Assignment, current *string) bool {
 	if !u.Changes(current) {
 		return false
 	}
-	if u.Value == nil {
-		fields[column] = nil
-	} else {
-		fields[column] = *u.Value
-	}
+	*target = Assignment{Changed: true, Value: u.Value}
 	return true
 }
 
@@ -118,34 +125,46 @@ type MetadataRow struct {
 	SocialLinks map[string]string
 }
 
-// AssignColumns checks the planned parent against the row, adds every
-// changed shared column to fields and has slugAvailable check a changed slug.
-// It reports whether a shared column changed.
+// MetadataChange is what a document-metadata save changes of the shared
+// columns.
+type MetadataChange struct {
+	Slug        Assignment
+	CountryCode Assignment
+	Website     Assignment
+	Parent      Assignment
+	// SocialLinks replaces the social links when SetSocialLinks is set.
+	SocialLinks    map[string]string
+	SetSocialLinks bool
+}
+
+// AssignColumns checks the planned parent against the row, records every
+// changed shared column in change and has slugAvailable check a changed
+// slug. It reports whether a shared column changed.
 func (s Spec) AssignColumns(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	entityID string,
 	columns MetadataColumns,
 	parent ParentUpdate,
 	writesParent bool,
 	current MetadataRow,
-	fields structured.Fields,
-	slugAvailable func(context.Context, *gorm.DB, string) error,
+	change *MetadataChange,
+	slugAvailable func(ctx context.Context, slug string) error,
 ) (bool, error) {
-	if _, err := s.CheckParent(ctx, tx, entityID, parent, current.Parent, writesParent); err != nil {
+	if _, err := s.CheckParent(ctx, store, entityID, parent, current.Parent, writesParent); err != nil {
 		return false, err
 	}
-	slugChanged := columns.Slug.Assign(fields, "slug", current.Slug)
+	slugChanged := columns.Slug.Assign(&change.Slug, current.Slug)
 	changed := slugChanged
-	changed = columns.CountryCode.Assign(fields, "country_code", current.CountryCode) || changed
-	changed = columns.Website.Assign(fields, "website", current.Website) || changed
-	changed = columns.Parent.Assign(fields, s.ParentColumn, current.Parent) || changed
+	changed = columns.CountryCode.Assign(&change.CountryCode, current.CountryCode) || changed
+	changed = columns.Website.Assign(&change.Website, current.Website) || changed
+	changed = columns.Parent.Assign(&change.Parent, current.Parent) || changed
 	if columns.SetSocialLinks && !maps.Equal(current.SocialLinks, columns.SocialLinks) {
-		fields["social_links"] = columns.SocialLinks
+		change.SocialLinks, change.SetSocialLinks = columns.SocialLinks, true
 		changed = true
 	}
 	if slugChanged && columns.Slug.Value != nil {
-		if err := slugAvailable(ctx, tx, *columns.Slug.Value); err != nil {
+		if err := slugAvailable(ctx, *columns.Slug.Value); err != nil {
 			return false, err
 		}
 	}
@@ -159,10 +178,10 @@ type ParentUpdate struct {
 	previous *string
 }
 
-// PlanParentUpdate reads the entity's parent outside the transaction, which
-// decides whether the save needs an authorization mutation.
-func (s Spec) PlanParentUpdate(ctx context.Context, db *gorm.DB, entityID string, update NullableStringUpdate) (ParentUpdate, error) {
-	previous, err := s.LoadParent(ctx, db, entityID)
+// PlanParentUpdate reads the entity's parent before the save's transaction,
+// which decides whether the save needs an authorization mutation.
+func (s Spec) PlanParentUpdate(ctx context.Context, store Store, entityID string, update NullableStringUpdate) (ParentUpdate, error) {
+	previous, err := s.LoadParent(ctx, store, entityID)
 	if err != nil {
 		return ParentUpdate{}, err
 	}
@@ -178,7 +197,7 @@ func (p ParentUpdate) RequiresWrite() bool {
 // CheckParent validates the planned parent change against current, the
 // parent read under the transaction, and reports whether it changes. writes
 // is false when the save runs without an authorization mutation.
-func (s Spec) CheckParent(ctx context.Context, tx *gorm.DB, entityID string, plan ParentUpdate, current *string, writes bool) (bool, error) {
+func (s Spec) CheckParent(ctx context.Context, store Store, entityID string, plan ParentUpdate, current *string, writes bool) (bool, error) {
 	changed := plan.Update.Changes(current)
 	if plan.Update.Present && (!sameOptionalString(current, plan.previous) || changed != plan.RequiresWrite()) {
 		return false, s.parentChangedConcurrently()
@@ -193,58 +212,38 @@ func (s Spec) CheckParent(ctx context.Context, tx *gorm.DB, entityID string, pla
 	if plan.Update.Value != nil {
 		parentID = *plan.Update.Value
 	}
-	return true, s.ValidateParentTransition(ctx, tx, entityID, parentID)
+	return true, s.ValidateParentTransition(ctx, store, entityID, parentID)
 }
 
 func (s Spec) parentChangedConcurrently() error {
 	return domainerr.Precondition(s.Title + " parent changed concurrently; reload before saving")
 }
 
-// MetadataSave is one document-metadata save of the entity: it advances the
-// entity's content document under Fence and moves the SpiceDB parent when
-// the planned parent changes.
-type MetadataSave struct {
-	EntityID         string
-	Documents        *contentblock.Store
-	DocumentID       uuid.UUID
-	ExpectedRevision uuid.UUID
-	Parent           ParentUpdate
+// MetadataSave is one document-metadata save of the entity: Save advances
+// the entity's content document and writes its metadata row, and the save
+// moves the SpiceDB parent when the planned parent changes.
+type MetadataSave[S Store] struct {
+	EntityID string
+	Parent   ParentUpdate
 	// Access authorizes the save's contributors.
 	Access mutation.Access
-	Fence  contentblock.DomainFence
-	// Apply writes the entity's metadata row under the fence. writesParent
-	// tells CheckParent whether the save moves the SpiceDB parent.
-	Apply func(ctx context.Context, tx *gorm.DB, writesParent bool) (MetadataApplied, error)
-	// NormalizeError gives a content document failure the domain's answer.
-	NormalizeError func(error) error
-}
-
-// MetadataApplied is what Apply changed and the parent it read under the
-// lock, which the SpiceDB parent move starts from.
-type MetadataApplied struct {
-	Changed       bool
-	CurrentParent *string
+	// Save advances the content document under the entity's fence and
+	// writes the metadata row. writesParent tells CheckParent whether the
+	// save moves the SpiceDB parent; currentParent is the parent Save read
+	// under the lock, which the move starts from.
+	Save func(ctx context.Context, store S, writesParent bool) (advanced contentblock.AdvanceResult, currentParent *string, err error)
 }
 
 // SaveMetadata runs save through the mutation pipeline.
-func (m Mutations) SaveMetadata(ctx context.Context, save MetadataSave) (contentblock.AdvanceResult, error) {
+func (m Mutations[S]) SaveMetadata(ctx context.Context, save MetadataSave[S]) (contentblock.AdvanceResult, error) {
 	writesParent := save.Parent.RequiresWrite()
 	var currentParent *string
-	spec := mutation.Spec[contentblock.AdvanceResult]{
+	spec := mutation.StoreSpec[contentblock.AdvanceResult, S]{
 		Access: save.Access,
-		Change: func(ctx context.Context, tx *gorm.DB) (contentblock.AdvanceResult, error) {
-			advanced, err := save.Documents.AdvanceRevision(
-				ctx, tx, contentblock.AdvanceInput{DocumentID: save.DocumentID, ExpectedRevision: save.ExpectedRevision}, save.Fence,
-				func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-					applied, err := save.Apply(ctx, tx, writesParent)
-					currentParent = applied.CurrentParent
-					return contentblock.MetadataEffect{Changed: applied.Changed}, err
-				},
-			)
-			if err != nil {
-				return contentblock.AdvanceResult{}, save.NormalizeError(err)
-			}
-			return advanced, nil
+		Change: func(ctx context.Context, store S) (contentblock.AdvanceResult, error) {
+			advanced, parent, err := save.Save(ctx, store, writesParent)
+			currentParent = parent
+			return advanced, err
 		},
 		// Telemetry has no document-metadata record; these saves have never
 		// been audited.

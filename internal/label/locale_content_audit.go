@@ -6,7 +6,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
 )
 
 func labelLocaleContentRecord(labelID, locale string, operation sharedtelemetry.AuditItemOperation) domainaudit.Builder {
@@ -30,12 +29,12 @@ func labelMemberLocaleAudit(memberID, labelID, locale string, operation sharedte
 // which runs in the translation domain's transaction.
 func appendLabelMemberLocaleAudit(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	writer domainaudit.Appender,
 	memberID string,
 	labelID string,
 	locale string,
 	operation sharedtelemetry.AuditItemOperation,
 ) error {
-	return domainaudit.AppendMember(ctx, tx, writer, memberID, sharedtelemetry.AuditLabelUpdated, labelLocaleContentRecord(labelID, locale, operation))
+	return store.AppendMemberAudit(ctx, writer, memberID, sharedtelemetry.AuditLabelUpdated, labelLocaleContentRecord(labelID, locale, operation))
 }

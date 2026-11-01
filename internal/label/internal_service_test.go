@@ -1,9 +1,10 @@
 //go:build integration
 
-package label
+package label_test
 
 import (
 	"context"
+	label "github.com/echovisionlab/geul-api/internal/label"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func seedInternalLabel(t *testing.T, db *gorm.DB, contentBlocks *contentblock.St
 	now := time.Now().UTC()
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		document, err := contentBlocks.CreateDocument(t.Context(), tx, contentblock.CreateInput{
-			Profile: creativeContentProfile, SourceLocale: "en",
+			Profile: "compact", SourceLocale: "en",
 		})
 		if err != nil {
 			return err
@@ -69,13 +70,9 @@ func TestInternalLabelSourceNameSaveQueuesOgGeneration(t *testing.T) {
 		Update("logo_light_file_id", logoFileID).Error)
 	now := time.Now().UTC()
 	initialName := "Initial Label"
-	require.NoError(t, saveLabelSourceLocaleDocumentState(
-		context.Background(), db, labelID, "en", translationLocaleDocumentSaveInput{
-			Title: &initialName, OverwriteNullFields: true, Now: now,
-		},
-	))
+	require.NoError(t, seedLabelLocaleTitle(context.Background(), db, labelID, "en", initialName, now))
 	revision := attachCreativeContentIntegrationDocument(
-		t, db, contentBlocks, labelContentEntity, labelID, "en", "Initial description",
+		t, db, contentBlocks, "label", labelID, "en", "Initial description",
 	)
 	require.NoError(t, db.Exec(`INSERT INTO label_translation (
 		entity_id, locale, title, created_at, updated_at
@@ -115,7 +112,7 @@ func TestInternalLabelSourceNameSaveQueuesOgGeneration(t *testing.T) {
 	jobsBefore := loadJobs()
 	require.Len(t, jobsBefore, 1)
 	require.Equal(t, jobID, jobsBefore[0].ID)
-	service := NewInternalConnectHandler(newTestService(t, Deps{
+	service := label.NewInternalConnectHandler(newTestService(t, integrationDeps{
 		DB: db, SpiceDB: stack.SpiceDBClient, Audit: apitelemetry.NewDurableWriter(db), Publisher: &capturingAsyncPublisher{},
 		ContentBlocks: contentBlocks,
 	}))

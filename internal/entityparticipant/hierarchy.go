@@ -3,27 +3,17 @@ package entityparticipant
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 )
 
-// LockParentGraph serializes every change to the entity hierarchy for the
-// rest of the transaction.
-func (s Spec) LockParentGraph(ctx context.Context, tx *gorm.DB) error {
-	return tx.WithContext(ctx).
-		Exec("SELECT pg_advisory_xact_lock(hashtext(?))", s.ParentGraphLock).
-		Error
-}
-
 // ValidateParentTransition locks the hierarchy and checks that parentID, when
 // set, names another existing entity that is not a descendant of entityID.
-func (s Spec) ValidateParentTransition(ctx context.Context, tx *gorm.DB, entityID, parentID string) error {
-	if err := s.LockParentGraph(ctx, tx); err != nil {
+func (s Spec) ValidateParentTransition(ctx context.Context, store Store, entityID, parentID string) error {
+	if err := store.LockParentGraph(ctx); err != nil {
 		return err
 	}
 	if parentID == "" {
@@ -35,24 +25,15 @@ func (s Spec) ValidateParentTransition(ctx context.Context, tx *gorm.DB, entityI
 	if _, err := uuid.Parse(parentID); err != nil {
 		return domainerr.InvalidField(s.ParentColumn, "must be a valid "+s.Title+" ID")
 	}
-	var parentExists bool
-	if err := tx.WithContext(ctx).Raw(fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE id = ?::uuid)`, s.Table), parentID).Scan(&parentExists).Error; err != nil {
+	parentExists, err := store.EntityExists(ctx, parentID)
+	if err != nil {
 		return err
 	}
 	if !parentExists {
 		return domainerr.InvalidField(s.ParentColumn, s.Name+" does not exist")
 	}
-	var cycle bool
-	if err := tx.WithContext(ctx).Raw(fmt.Sprintf(`
-		WITH RECURSIVE descendants(id) AS (
-			SELECT id FROM %[1]s WHERE %[2]s = ?::uuid
-			UNION
-			SELECT child.id
-			FROM %[1]s child
-			JOIN descendants parent ON child.%[2]s = parent.id
-		)
-		SELECT EXISTS(SELECT 1 FROM descendants WHERE id = ?::uuid)
-	`, s.Table, s.ParentColumn), entityID, parentID).Scan(&cycle).Error; err != nil {
+	cycle, err := store.IsDescendant(ctx, entityID, parentID)
+	if err != nil {
 		return err
 	}
 	if cycle {
@@ -62,20 +43,10 @@ func (s Spec) ValidateParentTransition(ctx context.Context, tx *gorm.DB, entityI
 }
 
 // LoadParent returns the entity's current parent ID.
-func (s Spec) LoadParent(ctx context.Context, db *gorm.DB, entityID string) (*string, error) {
-	var row struct {
-		ParentID *string `gorm:"column:parent_id"`
-	}
-	result := db.WithContext(ctx).
-		Table(s.Table).
-		Select(s.ParentColumn+" AS parent_id").
-		Where("id = ?", entityID).
-		Take(&row)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+func (s Spec) LoadParent(ctx context.Context, store Store, entityID string) (*string, error) {
+	parent, err := store.EntityParent(ctx, entityID)
+	if errors.Is(err, ErrEntityNotFound) {
 		return nil, domainerr.ResourceNotFound(s.Name, entityID)
 	}
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	return row.ParentID, nil
+	return parent, err
 }

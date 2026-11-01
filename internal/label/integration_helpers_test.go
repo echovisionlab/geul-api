@@ -1,6 +1,6 @@
 //go:build integration
 
-package label
+package label_test
 
 import (
 	"context"
@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
+
+	label "github.com/echovisionlab/geul-api/internal/label"
 
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
@@ -20,10 +23,15 @@ import (
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+	labelpostgres "github.com/echovisionlab/geul-api/internal/label/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -68,10 +76,28 @@ func requestBackground() context.Context {
 	return sharedtelemetry.WithRequestContext(context.Background(), requestContext)
 }
 
+// integrationDeps are the collaborators an integration test may set; the
+// rest take the integration defaults.
+type integrationDeps struct {
+	DB            *gorm.DB
+	SpiceDB       *auth.SpiceDBClient
+	Audit         domainaudit.Appender
+	Publisher     contentsignal.Publisher
+	ContentBlocks *contentblock.Store
+	Checkpoints   persistencecheckpoint.ContributorFence
+	Translation   labelpostgres.Translation
+	Members       label.MemberProjection
+	Runtime       labelpostgres.Runtime
+	Artists       labelpostgres.ArtistRelations
+	Releases      labelpostgres.ReleaseRelations
+	ProgramEvents labelpostgres.ProgramEventRelations
+	ShareLinks    labelpostgres.ShareLinks
+}
+
 // newTestService fills the collaborators deps leaves unset with the
 // integration defaults: an audit recorder, a no-op signal publisher, the
 // creative content store and the real Label adapters.
-func newTestService(t *testing.T, deps Deps) *Service {
+func newTestService(t *testing.T, deps integrationDeps) *label.Service {
 	t.Helper()
 	if deps.Audit == nil {
 		deps.Audit = &audittest.Recorder{}
@@ -106,7 +132,15 @@ func newTestService(t *testing.T, deps Deps) *Service {
 	if deps.ShareLinks == nil {
 		deps.ShareLinks = sharelinkadapter.NewCatalogLinks()
 	}
-	service, err := NewService(deps)
+	units, err := labelpostgres.NewUnits(deps.DB, labelpostgres.Deps{
+		ContentBlocks: deps.ContentBlocks, Publisher: deps.Publisher, Checkpoints: deps.Checkpoints,
+		Translation: deps.Translation, Runtime: deps.Runtime, Artists: deps.Artists, Releases: deps.Releases,
+		ProgramEvents: deps.ProgramEvents, ShareLinks: deps.ShareLinks,
+	})
+	require.NoError(t, err)
+	service, err := label.NewService(label.Deps{
+		Units: units, SpiceDB: deps.SpiceDB, Fence: identitystate.PostgresFence{}, Audit: deps.Audit, Members: deps.Members,
+	})
 	require.NoError(t, err)
 	return service
 }
@@ -150,7 +184,7 @@ func newOGRefresherForTest(db *gorm.DB, cdnDomain string) *og.Refresher {
 	return og.NewRefresher(planner, og.NewResolver(labeladapter.NewRequests()))
 }
 
-func newLabelRuntimeForTest(db *gorm.DB, cdnDomain string) Runtime {
+func newLabelRuntimeForTest(db *gorm.DB, cdnDomain string) labelpostgres.Runtime {
 	return labeladapter.NewRuntime(cdnDomain, newOGRefresherForTest(db, cdnDomain))
 }
 
@@ -184,7 +218,7 @@ func attachCreativeContentIntegrationDocument(t *testing.T, db *gorm.DB, store *
 	t.Helper()
 	var revision string
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		created, err := store.CreateDocument(t.Context(), tx, contentblock.CreateInput{Profile: creativeContentProfile, SourceLocale: sourceLocale})
+		created, err := store.CreateDocument(t.Context(), tx, contentblock.CreateInput{Profile: "compact", SourceLocale: sourceLocale})
 		if err != nil {
 			return err
 		}
@@ -207,7 +241,7 @@ func attachCreativeContentIntegrationDocument(t *testing.T, db *gorm.DB, store *
 	return revision
 }
 
-func createIntegrationLabel(t *testing.T, service *ConnectHandler, ctx context.Context, name, slug string) string {
+func createIntegrationLabel(t *testing.T, service *label.ConnectHandler, ctx context.Context, name, slug string) string {
 	t.Helper()
 	response, err := service.CreateLabel(ctx, connect.NewRequest(&managev1.CreateLabelRequest{Name: name, Slug: &slug, Document: creativeContentIntegrationDocument("en", name)}))
 	require.NoError(t, err)
@@ -269,4 +303,29 @@ func (publisher noopArtistAsyncPublisher) NotifyProtobufWithExecutor(
 	message proto.Message,
 ) error {
 	return publisher.NotifyProtobuf(ctx, signal, message)
+}
+
+// seedLabelLocaleTitle stores a Label locale title as the source title save
+// does.
+func seedLabelLocaleTitle(ctx context.Context, db *gorm.DB, labelID, locale, title string, now time.Time) error {
+	return db.WithContext(ctx).Exec(`
+		INSERT INTO label_translation (entity_id, locale, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (entity_id, locale) DO UPDATE SET title = EXCLUDED.title, updated_at = EXCLUDED.updated_at`,
+		labelID, locale, title, now, now).Error
+}
+func labelTargetMemberContext(t *testing.T, identityID string) context.Context {
+	t.Helper()
+	base := artistIntegrationAdminCtx(identityID)
+	user := auth.GetUser(base)
+	require.NotNil(t, user)
+	requestContext, err := sharedtelemetry.NewPropagatedRequestContext(
+		uuid.NewString(),
+		sharedtelemetry.MemberActor{
+			IdentityID: identityID,
+			MemberID:   testutil.PostIntegrationMemberID(identityID),
+			SessionID:  uuid.NewString(),
+		},
+	)
+	require.NoError(t, err)
+	return auth.WithUser(sharedtelemetry.WithRequestContext(base, requestContext), user)
 }

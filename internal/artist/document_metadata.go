@@ -34,19 +34,19 @@ func buildArtistDocumentMetadataPlan(
 	}
 	var plan artistDocumentMetadataPlan
 	var err error
-	if plan.realName, err = entityparticipant.ParseNullableStringUpdate("real_name", input.RealName); err != nil {
+	if plan.realName, err = entityparticipant.LegacyParseNullableStringUpdate("real_name", input.RealName); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
-	if plan.columns.CountryCode, err = entityparticipant.ParseNullableStringUpdate("country_code", input.CountryCode); err != nil {
+	if plan.columns.CountryCode, err = entityparticipant.LegacyParseNullableStringUpdate("country_code", input.CountryCode); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
-	if plan.columns.Website, err = entityparticipant.ParseNullableStringUpdate("website", input.Website); err != nil {
+	if plan.columns.Website, err = entityparticipant.LegacyParseNullableStringUpdate("website", input.Website); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
-	if plan.columns.Slug, err = entityparticipant.ParseNullableStringUpdate("slug", input.Slug); err != nil {
+	if plan.columns.Slug, err = entityparticipant.LegacyParseNullableStringUpdate("slug", input.Slug); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
-	if plan.columns.Parent, err = entityparticipant.ParseNullableStringUpdate("parent_artist_id", input.ParentArtistId); err != nil {
+	if plan.columns.Parent, err = entityparticipant.LegacyParseNullableStringUpdate("parent_artist_id", input.ParentArtistId); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
 	if err := artistEntity.Complete(&plan.columns, input.SocialLinks != nil, input.SocialLinks.GetValues()); err != nil {
@@ -174,15 +174,15 @@ func (s *Service) UpdateArtistDocumentMetadata(ctx context.Context, command Upda
 	if err != nil {
 		return MetadataUpdate{}, err
 	}
-	parent, err := artistEntity.PlanParentUpdate(ctx, s.db, command.ArtistID, plan.columns.Parent)
+	parent, err := artistEntity.LegacyPlanParentUpdate(ctx, s.db, command.ArtistID, plan.columns.Parent)
 	if err != nil {
 		return MetadataUpdate{}, err
 	}
-	advanced, err := s.participants.SaveMetadata(ctx, entityparticipant.MetadataSave{
+	advanced, err := s.participants.LegacySaveMetadata(ctx, entityparticipant.LegacyMetadataSave{
 		EntityID: command.ArtistID, Documents: s.contentBlocks, DocumentID: documentID, ExpectedRevision: expectedRevision,
 		Parent: parent, Access: s.contributorAccess(command.ArtistID, command.ContributorMemberIDs),
 		Fence: artistSourceRoomFence(command.ArtistID, locale),
-		Apply: func(ctx context.Context, tx *gorm.DB, writesParent bool) (entityparticipant.MetadataApplied, error) {
+		Apply: func(ctx context.Context, tx *gorm.DB, writesParent bool) (entityparticipant.LegacyMetadataApplied, error) {
 			return s.applyArtistDocumentMetadata(ctx, tx, command.ArtistID, plan, parent, writesParent)
 		},
 		NormalizeError: func(err error) error { return normalizeCreativeContentBlockError(artistContentEntity, err) },
@@ -192,18 +192,18 @@ func (s *Service) UpdateArtistDocumentMetadata(ctx context.Context, command Upda
 
 // applyArtistDocumentMetadata writes the changed metadata columns of the
 // Artist row and replaces its Labels under the content fence.
-func (s *Service) applyArtistDocumentMetadata(ctx context.Context, tx *gorm.DB, artistID string, plan artistDocumentMetadataPlan, parent entityparticipant.ParentUpdate, writesParent bool) (entityparticipant.MetadataApplied, error) {
+func (s *Service) applyArtistDocumentMetadata(ctx context.Context, tx *gorm.DB, artistID string, plan artistDocumentMetadataPlan, parent entityparticipant.ParentUpdate, writesParent bool) (entityparticipant.LegacyMetadataApplied, error) {
 	var current model.Artist
 	if err := tx.WithContext(ctx).
 		Select("id", "real_name", "country_code", "website", "social_links", "slug", "parent_artist_id").
 		Where("id = ?", artistID).
 		Take(&current).Error; err != nil {
-		return entityparticipant.MetadataApplied{}, err
+		return entityparticipant.LegacyMetadataApplied{}, err
 	}
-	applied := entityparticipant.MetadataApplied{CurrentParent: current.ParentArtistID}
+	applied := entityparticipant.LegacyMetadataApplied{CurrentParent: current.ParentArtistID}
 	fields := structured.Fields{}
-	realNameChanged := plan.realName.Assign(fields, "real_name", current.RealName)
-	changed, err := artistEntity.AssignColumns(ctx, tx, artistID, plan.columns, parent, writesParent, entityparticipant.MetadataRow{
+	realNameChanged := plan.realName.LegacyAssign(fields, "real_name", current.RealName)
+	changed, err := artistEntity.LegacyAssignColumns(ctx, tx, artistID, plan.columns, parent, writesParent, entityparticipant.MetadataRow{
 		Slug: current.Slug, CountryCode: current.CountryCode, Website: current.Website,
 		Parent: current.ParentArtistID, SocialLinks: current.SocialLinks,
 	}, fields, func(ctx context.Context, tx *gorm.DB, slug string) error {
