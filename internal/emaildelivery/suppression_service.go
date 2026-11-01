@@ -3,21 +3,14 @@ package emaildelivery
 import (
 	"context"
 	"errors"
-	"time"
-
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // GetEmailSuppressionQuery reads the active suppression of an address.
@@ -27,7 +20,7 @@ type GetEmailSuppressionQuery struct {
 
 // GetEmailSuppression returns the active suppression of the address, or nil
 // when deliveries to it are not suppressed.
-func (s *Service) GetEmailSuppression(ctx context.Context, query GetEmailSuppressionQuery) (*managev1.EmailSuppression, error) {
+func (s *Service) GetEmailSuppression(ctx context.Context, query GetEmailSuppressionQuery) (*Suppression, error) {
 	// A suppression names an address and its delivery failure; only
 	// administrators may read it.
 	if _, err := authorizationtarget.RequireGlobalAdmin(ctx, s.spiceDB); err != nil {
@@ -36,11 +29,12 @@ func (s *Service) GetEmailSuppression(ctx context.Context, query GetEmailSuppres
 	if query.Email == "" {
 		return nil, domainerr.Required("email")
 	}
-	suppression, err := GetActiveEmailSuppression(ctx, s.db, query.Email)
-	if err != nil || suppression == nil {
-		return nil, err
-	}
-	return toProtoEmailSuppression(suppression), nil
+	var suppression *Suppression
+	err := s.units.Read(ctx, func(store Store) (err error) {
+		suppression, err = FindActiveSuppression(ctx, store, query.Email)
+		return err
+	})
+	return suppression, err
 }
 
 // ReleaseEmailSuppressionCommand releases the active suppression of an
@@ -59,35 +53,29 @@ func (s *Service) ReleaseEmailSuppression(ctx context.Context, command ReleaseEm
 		releasedBy = &memberID
 	}
 	normalized := emailutil.NormalizeAddressForDelivery(command.Email)
-	var suppression model.EmailSuppression
+	var suppression Suppression
 	found := false
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[bool, Store]{
+		Lock: func(ctx context.Context, store Store) error {
 			if normalized == "" {
 				return nil
 			}
-			err := tx.WithContext(ctx).
-				Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-				Where("LOWER(email) = ? AND released_at IS NULL", normalized).
-				First(&suppression).Error
-			if errors.Is(err, gorm.ErrRecordNotFound) {
+			locked, err := store.LockActiveSuppression(ctx, normalized)
+			if errors.Is(err, ErrSuppressionNotFound) {
 				return nil
 			}
-			found = err == nil
+			suppression, found = locked, err == nil
 			return err
 		},
 		Access: freshAdmin(policyv1.EmailSuppression.Release()),
-		Change: func(_ context.Context, tx *gorm.DB) (bool, error) {
+		Change: func(ctx context.Context, store Store) (bool, error) {
 			if normalized == "" {
 				return false, domainerr.Required("email")
 			}
 			if !found {
 				return false, nil
 			}
-			return true, tx.Model(&suppression).Updates(map[string]any{
-				"released_at": time.Now().UTC(),
-				"released_by": releasedBy,
-			}).Error
+			return true, store.ReleaseSuppression(ctx, suppression.ID, s.now().UTC(), releasedBy)
 		},
 		Audit: func(released bool) mutation.Audit {
 			if !released {
@@ -99,29 +87,4 @@ func (s *Service) ReleaseEmailSuppression(ctx context.Context, command ReleaseEm
 		},
 	})
 	return err
-}
-
-func toProtoEmailSuppression(s *model.EmailSuppression) *managev1.EmailSuppression {
-	proto := &managev1.EmailSuppression{
-		Id:           s.ID,
-		Email:        s.Email,
-		Reason:       s.Reason,
-		Source:       s.Source,
-		SuppressedAt: timestamppb.New(s.SuppressedAt),
-		CreatedAt:    timestamppb.New(s.CreatedAt),
-		UpdatedAt:    timestamppb.New(s.UpdatedAt),
-	}
-	if s.ReferenceID != nil {
-		proto.ReferenceId = s.ReferenceID
-	}
-	if s.LastError != nil {
-		proto.LastError = s.LastError
-	}
-	if s.ReleasedAt != nil {
-		proto.ReleasedAt = timestamppb.New(*s.ReleasedAt)
-	}
-	if s.ReleasedBy != nil {
-		proto.ReleasedBy = s.ReleasedBy
-	}
-	return proto
 }

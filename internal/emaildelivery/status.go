@@ -1,41 +1,22 @@
 package emaildelivery
 
-import (
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+// AdapterType is the provider of a mail adapter. The values are the strings
+// the mail_adapter_type column holds; connect_handler.go maps them to and
+// from the API enum.
+type AdapterType string
+
+const (
+	AdapterTypeLogging AdapterType = "MAIL_ADAPTER_TYPE_LOGGING"
+	AdapterTypeSES     AdapterType = "MAIL_ADAPTER_TYPE_SES"
+	AdapterTypeSMTP    AdapterType = "MAIL_ADAPTER_TYPE_SMTP"
 )
 
-// mailAdapterTypeToProto maps a stored mail adapter type to the API enum. A
-// value the API does not know is UNSPECIFIED.
-func mailAdapterTypeToProto(adapterType model.MailAdapterType) managev1.MailAdapterType {
-	switch adapterType {
-	case model.MailAdapterTypeLogging:
-		return managev1.MailAdapterType_MAIL_ADAPTER_TYPE_LOGGING
-	case model.MailAdapterTypeSES:
-		return managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES
-	case model.MailAdapterTypeSMTP:
-		return managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SMTP
+// Known reports whether the API names t; a client may set only a known type.
+func (t AdapterType) Known() bool {
+	switch t {
+	case AdapterTypeLogging, AdapterTypeSES, AdapterTypeSMTP:
+		return true
 	default:
-		return managev1.MailAdapterType_MAIL_ADAPTER_TYPE_UNSPECIFIED
+		return false
 	}
-}
-
-// mailAdapterTypeFromProto maps an API mail adapter type to the stored value.
-// It reports false for UNSPECIFIED and unknown values, which a client may
-// not set.
-func mailAdapterTypeFromProto(adapterType managev1.MailAdapterType) (model.MailAdapterType, bool) {
-	switch adapterType {
-	case managev1.MailAdapterType_MAIL_ADAPTER_TYPE_LOGGING:
-		return model.MailAdapterTypeLogging, true
-	case managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES:
-		return model.MailAdapterTypeSES, true
-	case managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SMTP:
-		return model.MailAdapterTypeSMTP, true
-	default:
-		return "", false
-	}
-}
-
-func knownMailAdapterType(adapterType model.MailAdapterType) bool {
-	return mailAdapterTypeToProto(adapterType) != managev1.MailAdapterType_MAIL_ADAPTER_TYPE_UNSPECIFIED
 }

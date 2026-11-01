@@ -14,8 +14,6 @@ import (
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -129,7 +127,7 @@ func TestSiteSettingsSchemaAndRuntimeAllowlistAgree(t *testing.T) {
 func TestMailAdapterListPaginationAndCredentialExclusion(t *testing.T) {
 	for _, arguments := range []string{`{}`, `{"limit":1,"offset":2}`} {
 		t.Run(arguments, func(t *testing.T) {
-			owner := &recordingAdminSettingsApplication{adapters: []*managev1.MailAdapter{adminSettingsSESAdapter(), adminSettingsSMTPAdapter()}, total: 7}
+			owner := &recordingAdminSettingsApplication{adapters: []emaildelivery.MailAdapter{adminSettingsSESAdapter(), adminSettingsSMTPAdapter()}, total: 7}
 			tools, err := NewAdminSettingsTools(owner, owner)
 			require.NoError(t, err)
 			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMailAdapterList, toolArguments(t, arguments))
@@ -221,13 +219,13 @@ func TestMailAdapterSenderUpdateAllowsOnlyActivationOrPriority(t *testing.T) {
 func TestMailAdapterListStopsAtLastPageAndInt32OffsetBoundary(t *testing.T) {
 	for _, test := range []struct {
 		arguments string
-		total     int32
+		total     int64
 	}{
 		{`{"limit":1,"offset":2}`, 3},
 		{`{"limit":1,"offset":2147483647}`, 2147483647},
 	} {
 		t.Run(test.arguments, func(t *testing.T) {
-			owner := &recordingAdminSettingsApplication{adapters: []*managev1.MailAdapter{adminSettingsSESAdapter()}, total: test.total}
+			owner := &recordingAdminSettingsApplication{adapters: []emaildelivery.MailAdapter{adminSettingsSESAdapter()}, total: test.total}
 			tools, err := NewAdminSettingsTools(owner, owner)
 			require.NoError(t, err)
 			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMailAdapterList, toolArguments(t, test.arguments))
@@ -354,14 +352,14 @@ func adminSettingsArguments(t *testing.T, name string) mcpserver.ToolArguments {
 
 func adminSettingsPointer[T any](value T) *T { return &value }
 
-func adminSettingsSESAdapter() *managev1.MailAdapter {
-	return &managev1.MailAdapter{Id: adminSettingsTestID, Name: "SES", Type: managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SES, IsActive: true, Priority: 3,
-		Config: &managev1.MailAdapter_SesConfig{SesConfig: &managev1.SESConfig{Region: "ap-northeast-2", FromName: adminSettingsPointer("Sender"), FromEmail: "sender@example.test", AccessKeyId: "private-access-key", SecretAccessKey: "private-secret-key"}}}
+func adminSettingsSESAdapter() emaildelivery.MailAdapter {
+	return emaildelivery.MailAdapter{ID: adminSettingsTestID, Name: "SES", Type: emaildelivery.AdapterTypeSES, IsActive: true, Priority: 3,
+		Config: []byte(`{"region":"ap-northeast-2","from_name":"Sender","from_email":"sender@example.test","access_key_id":"private-access-key","secret_access_key":"private-secret-key"}`)}
 }
 
-func adminSettingsSMTPAdapter() *managev1.MailAdapter {
-	return &managev1.MailAdapter{Id: adminSettingsTestID, Name: "SMTP", Type: managev1.MailAdapterType_MAIL_ADAPTER_TYPE_SMTP,
-		Config: &managev1.MailAdapter_SmtpConfig{SmtpConfig: &managev1.SMTPConfig{Host: "smtp.example.test", Port: 587, FromEmail: "sender@example.test", User: "private-username", Password: "private-password"}}}
+func adminSettingsSMTPAdapter() emaildelivery.MailAdapter {
+	return emaildelivery.MailAdapter{ID: adminSettingsTestID, Name: "SMTP", Type: emaildelivery.AdapterTypeSMTP,
+		Config: []byte(`{"host":"smtp.example.test","port":587,"from_email":"sender@example.test","user":"private-username","password":"private-password"}`)}
 }
 
 func assertAdminSettingsNoSecrets(t *testing.T, result mcpserver.ToolResult) {
@@ -375,9 +373,9 @@ func assertAdminSettingsNoSecrets(t *testing.T, result mcpserver.ToolResult) {
 
 type recordingAdminSettingsApplication struct {
 	settings   sitesettings.AdminSettings
-	adapters   []*managev1.MailAdapter
-	adapter    *managev1.MailAdapter
-	total      int32
+	adapters   []emaildelivery.MailAdapter
+	adapter    emaildelivery.MailAdapter
+	total      int64
 	err        error
 	bindingErr error
 	ctx        context.Context
@@ -414,10 +412,10 @@ func (owner *recordingAdminSettingsApplication) SetManySettings(ctx context.Cont
 func (owner *recordingAdminSettingsApplication) ListMailAdapters(ctx context.Context, query emaildelivery.ListMailAdaptersQuery) (emaildelivery.MailAdapterPage, error) {
 	owner.ctx, owner.listQuery = ctx, query
 	owner.calls++
-	return emaildelivery.MailAdapterPage{Adapters: owner.adapters, Pagination: &commonv1.PaginationResponse{Total: owner.total, Limit: query.Limit, Offset: query.Offset}}, owner.err
+	return emaildelivery.MailAdapterPage{Adapters: owner.adapters, Total: owner.total}, owner.err
 }
 
-func (owner *recordingAdminSettingsApplication) UpdateMailAdapterSender(ctx context.Context, input emaildelivery.MailAdapterSenderUpdate) (*managev1.MailAdapter, error) {
+func (owner *recordingAdminSettingsApplication) UpdateMailAdapterSender(ctx context.Context, input emaildelivery.MailAdapterSenderUpdate) (emaildelivery.MailAdapter, error) {
 	owner.ctx, owner.sender = ctx, input
 	owner.calls++
 	return owner.adapter, owner.err

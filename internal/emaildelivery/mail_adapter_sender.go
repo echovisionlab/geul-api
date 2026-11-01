@@ -9,9 +9,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // MailAdapterSenderUpdate cannot carry credentials or replace provider config.
@@ -28,19 +26,19 @@ type MailAdapterSenderUpdate struct {
 // authorization, provider verification, audit append, and invalidation as
 // UpdateMailAdapter. Merge only after locking so concurrent credential
 // rotations are preserved.
-func (s *Service) UpdateMailAdapterSender(ctx context.Context, input MailAdapterSenderUpdate) (*managev1.MailAdapter, error) {
+func (s *Service) UpdateMailAdapterSender(ctx context.Context, input MailAdapterSenderUpdate) (MailAdapter, error) {
 	if err := authz.RequireAuthenticatedPrincipal(ctx); err != nil {
-		return nil, err
+		return MailAdapter{}, err
 	}
 	return s.updateMailAdapter(ctx, UpdateMailAdapterCommand{
 		ID: input.ID, IsActive: input.IsActive, Priority: input.Priority,
 	}, &input)
 }
 
-func senderConfig(adapter *model.MailAdapter, input MailAdapterSenderUpdate) (model.MailAdapterConfig, structured.Value, error) {
+func senderConfig(adapter MailAdapter, input MailAdapterSenderUpdate) (json.RawMessage, structured.Value, error) {
 	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(adapter.Config.RawMessage, &fields); err != nil || fields == nil {
-		return model.MailAdapterConfig{}, nil, errors.New("stored mail adapter configuration is invalid")
+	if err := json.Unmarshal(adapter.Config, &fields); err != nil || fields == nil {
+		return nil, nil, errors.New("stored mail adapter configuration is invalid")
 	}
 	if input.FromName != nil {
 		// Provider configs omit empty names. Clearing an already absent name
@@ -54,38 +52,38 @@ func senderConfig(adapter *model.MailAdapter, input MailAdapterSenderUpdate) (mo
 	}
 	encoded, err := json.Marshal(fields)
 	if err != nil {
-		return model.MailAdapterConfig{}, nil, errors.New("could not encode mail adapter sender configuration")
+		return nil, nil, errors.New("could not encode mail adapter sender configuration")
 	}
-	candidate := *adapter
-	candidate.Config = model.MailAdapterConfig{RawMessage: encoded}
+	candidate := adapter
+	candidate.Config = encoded
 	var config structured.Value
 	switch adapter.Type {
-	case model.MailAdapterTypeSES:
-		stored, err := candidate.GetSESConfig()
+	case AdapterTypeSES:
+		stored, err := candidate.SESConfig()
 		if err != nil {
-			return model.MailAdapterConfig{}, nil, errors.New("stored SES configuration is invalid")
+			return nil, nil, errors.New("stored SES configuration is invalid")
 		}
 		config, err = buildConfig(adapter.Type, &SESConfigInput{
 			Region: stored.Region, AccessKeyID: stored.AccessKeyID, SecretAccessKey: stored.SecretAccessKey,
 			FromEmail: stored.FromEmail, FromName: &stored.FromName,
 		}, nil)
 		if err != nil {
-			return model.MailAdapterConfig{}, nil, invalidMailAdapter(err.Error())
+			return nil, nil, invalidMailAdapter(err.Error())
 		}
-	case model.MailAdapterTypeSMTP:
-		stored, err := candidate.GetSMTPConfig()
+	case AdapterTypeSMTP:
+		stored, err := candidate.SMTPConfig()
 		if err != nil {
-			return model.MailAdapterConfig{}, nil, errors.New("stored SMTP configuration is invalid")
+			return nil, nil, errors.New("stored SMTP configuration is invalid")
 		}
 		config, err = buildConfig(adapter.Type, nil, &SMTPConfigInput{
 			Host: stored.Host, Port: int32(stored.Port), Secure: stored.Secure, User: stored.User, Password: stored.Password,
 			FromEmail: stored.FromEmail, FromName: &stored.FromName,
 		})
 		if err != nil {
-			return model.MailAdapterConfig{}, nil, invalidMailAdapter(err.Error())
+			return nil, nil, invalidMailAdapter(err.Error())
 		}
 	default:
-		return model.MailAdapterConfig{}, nil, domainerr.InvalidField("type", "sender configuration requires an SES or SMTP adapter")
+		return nil, nil, domainerr.InvalidField("type", "sender configuration requires an SES or SMTP adapter")
 	}
 	// Retain the raw fields, including credentials and any future provider keys.
 	return candidate.Config, config, nil
@@ -97,28 +95,28 @@ func senderConfig(adapter *model.MailAdapter, input MailAdapterSenderUpdate) (mo
 // return, and stored keys this service does not model are retained, as
 // senderConfig retains them. A provider switch replaces the config whole.
 func replacementConfig(
-	adapter *model.MailAdapter,
-	adapterType model.MailAdapterType,
+	adapter MailAdapter,
+	adapterType AdapterType,
 	typeChanged bool,
 	command UpdateMailAdapterCommand,
-) (model.MailAdapterConfig, structured.Value, error) {
+) (json.RawMessage, structured.Value, error) {
 	sesConfig, smtpConfig := command.SES, command.SMTP
 	fields := map[string]json.RawMessage{}
 	if !typeChanged {
 		// An unreadable stored config has nothing to keep; the request
 		// replaces it whole.
-		if err := json.Unmarshal(adapter.Config.RawMessage, &fields); err != nil || fields == nil {
+		if err := json.Unmarshal(adapter.Config, &fields); err != nil || fields == nil {
 			fields = map[string]json.RawMessage{}
 		}
 		switch adapterType {
-		case model.MailAdapterTypeSES:
-			if stored, err := adapter.GetSESConfig(); err == nil && sesConfig != nil && sesConfig.SecretAccessKey == "" {
+		case AdapterTypeSES:
+			if stored, err := adapter.SESConfig(); err == nil && sesConfig != nil && sesConfig.SecretAccessKey == "" {
 				withSecret := *sesConfig
 				withSecret.SecretAccessKey = stored.SecretAccessKey
 				sesConfig = &withSecret
 			}
-		case model.MailAdapterTypeSMTP:
-			if stored, err := adapter.GetSMTPConfig(); err == nil && smtpConfig != nil && smtpConfig.Password == "" {
+		case AdapterTypeSMTP:
+			if stored, err := adapter.SMTPConfig(); err == nil && smtpConfig != nil && smtpConfig.Password == "" {
 				withPassword := *smtpConfig
 				withPassword.Password = stored.Password
 				smtpConfig = &withPassword
@@ -130,30 +128,30 @@ func replacementConfig(
 	}
 	config, err := buildConfig(adapterType, sesConfig, smtpConfig)
 	if err != nil {
-		return model.MailAdapterConfig{}, nil, invalidMailAdapter(err.Error())
+		return nil, nil, invalidMailAdapter(err.Error())
 	}
 	encoded, err := json.Marshal(config)
 	if err != nil {
-		return model.MailAdapterConfig{}, nil, fmt.Errorf("failed to set config: %w", err)
+		return nil, nil, fmt.Errorf("failed to set config: %w", err)
 	}
 	var requested map[string]json.RawMessage
 	if err := json.Unmarshal(encoded, &requested); err != nil {
-		return model.MailAdapterConfig{}, nil, fmt.Errorf("failed to set config: %w", err)
+		return nil, nil, fmt.Errorf("failed to set config: %w", err)
 	}
 	maps.Copy(fields, requested)
 	if encoded, err = json.Marshal(fields); err != nil {
-		return model.MailAdapterConfig{}, nil, fmt.Errorf("failed to set config: %w", err)
+		return nil, nil, fmt.Errorf("failed to set config: %w", err)
 	}
-	return model.MailAdapterConfig{RawMessage: encoded}, config, nil
+	return encoded, config, nil
 }
 
-func mailAdapterPrivateValues(adapter *model.MailAdapter) []string {
-	if config, err := adapter.GetSESConfig(); err == nil {
-		if adapter.Type == model.MailAdapterTypeSES {
+func mailAdapterPrivateValues(adapter MailAdapter) []string {
+	if config, err := adapter.SESConfig(); err == nil {
+		if adapter.Type == AdapterTypeSES {
 			return []string{config.AccessKeyID, config.SecretAccessKey}
 		}
 	}
-	if config, err := adapter.GetSMTPConfig(); err == nil {
+	if config, err := adapter.SMTPConfig(); err == nil {
 		return []string{config.User, config.Password}
 	}
 	return nil
