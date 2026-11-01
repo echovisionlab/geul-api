@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"gorm.io/gorm"
 )
 
 // LegalNoticeDeliveryRunDefinition carries source-owned immutable facts into
@@ -43,9 +41,9 @@ func ValidateLegalNoticeDeliveryTemplateData(
 // Authoring snapshots in Campaign-owned delivery history.
 func SealLegalNoticeDeliveryRun(
 	ctx context.Context,
-	tx *gorm.DB,
+	joined Joined,
 	definition LegalNoticeDeliveryRunDefinition,
-) (*model.CampaignDeliveryRun, error) {
+) (*DeliveryRun, error) {
 	eventKey := strings.TrimSpace(definition.TemplateEventKey)
 	if eventKey == "" {
 		return nil, domainerr.Required("template_event_key")
@@ -68,7 +66,7 @@ func SealLegalNoticeDeliveryRun(
 	if err != nil {
 		return nil, domainerr.New(domainerr.Invalid, "", err.Error())
 	}
-	sealedTemplateData := model.JSONFields{}
+	sealedTemplateData := map[string]any{}
 	if templateData.PolicyTitle != nil {
 		sealedTemplateData["policy_title"] = *templateData.PolicyTitle
 	}
@@ -86,7 +84,7 @@ func SealLegalNoticeDeliveryRun(
 	}
 	templateID := strings.TrimSpace(definition.SourceTemplateID)
 	templateUpdatedAt := definition.SourceTemplateUpdatedAt.UTC()
-	run := &model.CampaignDeliveryRun{
+	run := &DeliveryRun{
 		RunKind:                 EmailDeliveryRunKindLegalNotice,
 		TermsID:                 definition.TermsID,
 		PrivacyID:               definition.PrivacyID,
@@ -106,7 +104,7 @@ func SealLegalNoticeDeliveryRun(
 		TargetMode:              CampaignDeliveryTargetModeAllUsers,
 		TargetRecipientScope:    campaignRecipientScopeAllMatchingUsers,
 	}
-	if err := sealCampaignOwnedEmailDeliveryRun(ctx, tx, run, nil); err != nil {
+	if err := joined.Store.InsertSealedRun(ctx, run, nil); err != nil {
 		return nil, err
 	}
 	return run, nil

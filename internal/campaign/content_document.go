@@ -2,7 +2,6 @@ package campaign
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"sort"
@@ -11,18 +10,14 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
-	"github.com/echovisionlab/geul-api/internal/model"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -32,7 +27,7 @@ const (
 )
 
 // campaignContent is the Campaign owner of shared email content.
-var campaignContent = emailcontent.Owner[contentStore]{
+var campaignContent = emailcontent.Owner[Store]{
 	Name: "Campaign", Entity: campaignContentEntity, IDField: "campaign_id",
 	FileBlocksRejected:        "Campaign documents cannot contain File Blocks",
 	TranslatedSubjectRequired: "translated Campaign subject is required",
@@ -46,81 +41,58 @@ var campaignContent = emailcontent.Owner[contentStore]{
 // campaignContentRows reads the Campaign rows beside its email content.
 type campaignContentRows struct{}
 
-func (campaignContentRows) DocumentID(ctx context.Context, store contentStore, id string) (uuid.UUID, error) {
-	return loadCampaignEmailContentDocumentRoot(ctx, store.tx, id, false)
+func (campaignContentRows) DocumentID(ctx context.Context, store Store, id string) (uuid.UUID, error) {
+	return loadCampaignEmailContentDocumentRoot(ctx, store, id, false)
 }
 
-func (campaignContentRows) SourceContext(ctx context.Context, store contentStore, id string, lock bool) (contentblock.DomainContext, error) {
-	return loadCampaignSourceContext(ctx, store.tx, id, lock)
+func (campaignContentRows) SourceContext(ctx context.Context, store Store, id string, lock bool) (contentblock.DomainContext, error) {
+	return loadCampaignSourceContext(ctx, store, id, lock)
 }
 
 // ProjectSource rebuilds the source locale's materialized content; a
 // Campaign's targets keep theirs until they are written.
-func (campaignContentRows) ProjectSource(ctx context.Context, store contentStore, id string, snapshot contentblock.Snapshot, _ bool, now time.Time) error {
-	return projectCampaignEmailMaterializedContent(ctx, store.tx, id, snapshot, []string{snapshot.SourceLocale}, now)
-}
-
-type campaignEmailContentRoot struct {
-	ID                string         `gorm:"column:id"`
-	ContentDocumentID sql.NullString `gorm:"column:content_document_id"`
-}
-
-type campaignEmailLocaleMetadata struct {
-	Locale  string  `gorm:"column:locale"`
-	Subject *string `gorm:"column:subject"`
+func (campaignContentRows) ProjectSource(ctx context.Context, store Store, id string, snapshot contentblock.Snapshot, _ bool, now time.Time) error {
+	return projectCampaignEmailMaterializedContent(ctx, store, id, snapshot, []string{snapshot.SourceLocale}, now)
 }
 
 // loadCampaignEmailContentDocumentRoot reads the Campaign's content
 // document, locking the Campaign row when lock is set.
-func loadCampaignEmailContentDocumentRoot(
-	ctx context.Context,
-	db *gorm.DB,
-	entityID string,
-	lock bool,
-) (uuid.UUID, error) {
-	query := db.WithContext(ctx).
-		Table("campaign").
-		Select("id", "content_document_id").
-		Where("id = ?", entityID)
-	if lock {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
+func loadCampaignEmailContentDocumentRoot(ctx context.Context, store Store, entityID string, lock bool) (uuid.UUID, error) {
+	document, err := store.CampaignDocumentID(ctx, entityID, lock)
+	if errors.Is(err, ErrCampaignNotFound) {
+		return uuid.Nil, domainerr.ResourceNotFound(campaignContentEntity, entityID)
 	}
-	var root campaignEmailContentRoot
-	if err := query.Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return uuid.Nil, domainerr.ResourceNotFound(campaignContentEntity, entityID)
-		}
+	if err != nil {
 		return uuid.Nil, err
 	}
-	if !root.ContentDocumentID.Valid || strings.TrimSpace(root.ContentDocumentID.String) == "" {
+	if document == nil || strings.TrimSpace(*document) == "" {
 		return uuid.Nil, domainerr.Precondition("Campaign content document is not initialized")
 	}
-	documentID, err := uuid.Parse(root.ContentDocumentID.String)
+	id, err := uuid.Parse(*document)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("invalid Campaign content_document_id: %w", err)
 	}
-	return documentID, nil
+	return id, nil
 }
 
-func campaignEmailContentFence(entityID string) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		currentDocumentID, err := loadCampaignEmailContentDocumentRoot(ctx, tx, entityID, true)
+func campaignEmailContentFence(store Store, entityID string) emailcontent.Fence {
+	return func(ctx context.Context, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		currentDocumentID, err := loadCampaignEmailContentDocumentRoot(ctx, store, entityID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if currentDocumentID != documentID {
 			return contentblock.DomainContext{}, domainerr.Precondition("Campaign content document ownership changed; reload before saving")
 		}
-		var row struct {
-			Status string `gorm:"column:status"`
-		}
-		if err := tx.WithContext(ctx).Table("campaign").Select("status").Where("id = ?", entityID).Take(&row).Error; err != nil {
+
+		status, err := store.CampaignStatus(ctx, entityID)
+		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		if !campaignStatusAllowsEdit(row.Status) {
+		if !campaignStatusAllowsEdit(status) {
 			return contentblock.DomainContext{}, domainerr.Precondition(msgCampaignCannotUpdateSent)
 		}
-		return loadCampaignSourceContext(ctx, tx, entityID, true)
+		return loadCampaignSourceContext(ctx, store, entityID, true)
 	}
 }
 
@@ -128,38 +100,37 @@ func campaignEmailContentFence(entityID string) contentblock.DomainFence {
 // to finish against any still-existing Campaign root. Current Campaign
 // lifecycle controls new requests and interactive edits; it does not revoke a
 // durable job whose request-time authorization was accepted.
-func campaignTranslationJobApplyFence(entityID string) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		currentDocumentID, err := loadCampaignEmailContentDocumentRoot(ctx, tx, entityID, true)
+func campaignTranslationJobApplyFence(store Store, entityID string) emailcontent.Fence {
+	return func(ctx context.Context, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		currentDocumentID, err := loadCampaignEmailContentDocumentRoot(ctx, store, entityID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if currentDocumentID != documentID {
 			return contentblock.DomainContext{}, domainerr.Precondition("Campaign content document ownership changed; translation job cannot be applied")
 		}
-		return loadCampaignSourceContext(ctx, tx, entityID, true)
+		return loadCampaignSourceContext(ctx, store, entityID, true)
 	}
 }
 
-func campaignEmailDeleteContentFence(entityID string) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		currentDocumentID, err := loadCampaignEmailContentDocumentRoot(ctx, tx, entityID, true)
+func campaignEmailDeleteContentFence(store Store, entityID string) emailcontent.Fence {
+	return func(ctx context.Context, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		currentDocumentID, err := loadCampaignEmailContentDocumentRoot(ctx, store, entityID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if currentDocumentID != documentID {
 			return contentblock.DomainContext{}, domainerr.Precondition("Campaign content document ownership changed; reload before saving")
 		}
-		var row struct {
-			Status string `gorm:"column:status"`
-		}
-		if err := tx.WithContext(ctx).Table("campaign").Select("status").Where("id = ?", entityID).Take(&row).Error; err != nil {
+
+		status, err := store.CampaignStatus(ctx, entityID)
+		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		if model.CampaignStatus(row.Status) != model.CampaignStatusDraft {
+		if CampaignStatus(status) != CampaignStatusDraft {
 			return contentblock.DomainContext{}, domainerr.Precondition("only draft campaigns can be deleted")
 		}
-		return loadCampaignSourceContext(ctx, tx, entityID, true)
+		return loadCampaignSourceContext(ctx, store, entityID, true)
 	}
 }
 
@@ -167,17 +138,17 @@ func campaignEmailDeleteContentFence(entityID string) contentblock.DomainFence {
 // of a room load to edit the draft Campaign.
 func requireCampaignEmailDocumentLoad(
 	ctx context.Context,
-	db *gorm.DB,
+	db Store,
 	checker CollaborationPermissionChecker,
-	principal *intrav1.CollaborationPrincipal,
+	principal *CollaborationPrincipal,
 	resourceID string,
 ) error {
-	if principal == nil || strings.TrimSpace(principal.GetSessionId()) == "" {
+	if principal == nil || strings.TrimSpace(principal.SessionID) == "" {
 		return domainerr.AuthenticationRequired()
 	}
-	resolved, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, db, principal.GetSessionId())
+	resolved, err := db.ResolveSessionPrincipal(ctx, principal.SessionID)
 	// The boundary keeps *_id request fields; this one is a session secret.
-	err = failurecause.WithPrivate(err, principal.GetSessionId())
+	err = failurecause.WithPrivate(err, principal.SessionID)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
 		return domainerr.AuthenticationRequired().WithCause(err)
 	}
@@ -215,17 +186,15 @@ func requireCampaignEmailDocumentLoad(
 	return nil
 }
 
-func requireCampaignEmailDocumentEditable(ctx context.Context, db *gorm.DB, entityID string) error {
-	var row struct {
-		Status string `gorm:"column:status"`
+func requireCampaignEmailDocumentEditable(ctx context.Context, store Store, entityID string) error {
+	status, err := store.CampaignStatus(ctx, entityID)
+	if errors.Is(err, ErrCampaignNotFound) {
+		return domainerr.ResourceNotFound("campaign", entityID)
 	}
-	if err := db.WithContext(ctx).Table("campaign").Select("status").Where("id = ?", entityID).Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return domainerr.ResourceNotFound("campaign", entityID)
-		}
+	if err != nil {
 		return err
 	}
-	if !campaignStatusAllowsEdit(row.Status) {
+	if !campaignStatusAllowsEdit(status) {
 		return domainerr.Precondition(msgCampaignCannotUpdateSent)
 	}
 	return nil
@@ -233,84 +202,56 @@ func requireCampaignEmailDocumentEditable(ctx context.Context, db *gorm.DB, enti
 
 // loadCampaignSourceContext reads the Campaign's translation source locale,
 // locking the Campaign row when lock is set.
-func loadCampaignSourceContext(ctx context.Context, db *gorm.DB, entityID string, lock bool) (contentblock.DomainContext, error) {
-	var state struct {
-		SourceLocale string `gorm:"column:source_locale"`
+func loadCampaignSourceContext(ctx context.Context, store Store, entityID string, lock bool) (contentblock.DomainContext, error) {
+	locale, err := store.CampaignSourceLocale(ctx, entityID, lock)
+	if errors.Is(err, ErrCampaignNotFound) {
+		return contentblock.DomainContext{}, domainerr.ResourceNotFound(campaignContentEntity, entityID)
 	}
-	query := db.WithContext(ctx).
-		Table("campaign").
-		Select("source_locale").
-		Where("id = ?", entityID)
-	if lock {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
-	}
-	if err := query.Take(&state).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return contentblock.DomainContext{}, domainerr.ResourceNotFound(campaignContentEntity, entityID)
-		}
+	if err != nil {
 		return contentblock.DomainContext{}, err
 	}
-	sourceLocale := strings.TrimSpace(state.SourceLocale)
-	if sourceLocale == "" {
+	locale = strings.TrimSpace(locale)
+	if locale == "" {
 		return contentblock.DomainContext{}, domainerr.Precondition("Campaign translation source is not initialized")
 	}
-	normalized, err := emailcontent.NormalizeLocale(sourceLocale)
+	normalized, err := emailcontent.NormalizeLocale(locale)
 	if err != nil {
 		return contentblock.DomainContext{}, domainerr.Precondition("Campaign translation source locale is invalid").WithCause(failurecause.ServerFault(err))
 	}
 	return contentblock.DomainContext{SourceLocale: normalized}, nil
 }
 
-func loadCampaignEmailSourceSubject(
-	ctx context.Context,
-	db *gorm.DB,
-	entityID string,
-	sourceLocale string,
-) (string, error) {
-	var row struct {
-		Subject sql.NullString `gorm:"column:subject"`
-	}
-	if err := db.WithContext(ctx).
-		Table("campaign_translation").
-		Select("subject").
-		Where("entity_id = ? AND locale = ?", entityID, sourceLocale).
-		Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", domainerr.Precondition("Campaign source locale metadata is not initialized")
-		}
+func loadCampaignEmailSourceSubject(ctx context.Context, store Store, entityID, sourceLocale string) (string, error) {
+	subject, exists, err := store.CampaignLocaleSubject(ctx, entityID, sourceLocale, false)
+	if err != nil {
 		return "", err
 	}
-	subject := strings.TrimSpace(row.Subject.String)
-	if !row.Subject.Valid || subject == "" {
+	if !exists {
+		return "", domainerr.Precondition("Campaign source locale metadata is not initialized")
+	}
+	if subject == nil || strings.TrimSpace(*subject) == "" {
 		return "", domainerr.Precondition("Campaign source locale subject is not initialized")
 	}
-	return subject, nil
+	return strings.TrimSpace(*subject), nil
 }
 
-func loadCampaignEmailLocaleMetadata(
-	ctx context.Context,
-	db *gorm.DB,
-	entityID string,
-) ([]campaignEmailLocaleMetadata, string, error) {
-	domain, err := loadCampaignSourceContext(ctx, db, entityID, false)
+func loadCampaignEmailLocaleMetadata(ctx context.Context, store Store, entityID string) ([]CampaignLocaleMetadata, string, error) {
+	domain, err := loadCampaignSourceContext(ctx, store, entityID, false)
 	if err != nil {
 		return nil, "", err
 	}
-	var locales []campaignEmailLocaleMetadata
-	if err := db.WithContext(ctx).
-		Table("campaign_translation").
-		Select("locale", "subject").
-		Where("entity_id = ?", entityID).
-		Order("locale ASC").
-		Find(&locales).Error; err != nil {
+
+	locales, err := store.CampaignLocaleMetadata(ctx, entityID)
+	if err != nil {
 		return nil, "", err
 	}
+
 	return locales, domain.SourceLocale, nil
 }
 
 func updateCampaignEmailLocaleSubject(
 	ctx context.Context,
-	tx *gorm.DB,
+	tx Store,
 	entityID string,
 	locale string,
 	subject string,
@@ -334,42 +275,22 @@ func updateCampaignEmailLocaleSubject(
 	if locale != domain.SourceLocale {
 		return contentblock.MetadataEffect{}, domainerr.Precondition("target Campaign locale metadata is read-only")
 	}
-	var current struct {
-		Subject sql.NullString `gorm:"column:subject"`
-	}
-	result := tx.WithContext(ctx).
-		Table("campaign_translation").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Select("subject").
-		Where("entity_id = ? AND locale = ?", entityID, locale).
-		Take(&current)
-	if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return contentblock.MetadataEffect{}, result.Error
-	}
-	if result.Error == nil && current.Subject.Valid && current.Subject.String == subject {
-		return contentblock.MetadataEffect{}, nil
-	}
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		if err := tx.WithContext(ctx).Exec(
-			`INSERT INTO campaign_translation (
-				entity_id, locale, subject, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?)`,
-			entityID, locale, subject, now, now,
-		).Error; err != nil {
-			return contentblock.MetadataEffect{}, err
-		}
-	} else if err := tx.WithContext(ctx).
-		Table("campaign_translation").
-		Where("entity_id = ? AND locale = ?", entityID, locale).
-		Updates(map[string]any{
-			"subject": subject, "updated_at": now,
-		}).Error; err != nil {
+
+	current, exists, err := tx.CampaignLocaleSubject(ctx, entityID, locale, true)
+	if err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
-	if err := tx.WithContext(ctx).
-		Table("campaign").
-		Where("id = ?", entityID).
-		Updates(map[string]any{"subject": subject, "updated_at": now}).Error; err != nil {
+	if exists && current != nil && *current == subject {
+		return contentblock.MetadataEffect{}, nil
+	}
+	if !exists {
+		if err := tx.InsertSourceSubject(ctx, entityID, locale, subject, now); err != nil {
+			return contentblock.MetadataEffect{}, err
+		}
+	} else if err := tx.UpdateSourceSubject(ctx, entityID, locale, subject, now); err != nil {
+		return contentblock.MetadataEffect{}, err
+	}
+	if err := tx.SetSourceSubject(ctx, entityID, subject, now); err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
 	return contentblock.MetadataEffect{Changed: true, AffectsTranslationSource: true}, nil
@@ -377,7 +298,7 @@ func updateCampaignEmailLocaleSubject(
 
 func projectCampaignEmailMaterializedContent(
 	ctx context.Context,
-	tx *gorm.DB,
+	tx Store,
 	entityID string,
 	snapshot contentblock.Snapshot,
 	changedLocales []string,
@@ -416,21 +337,15 @@ func projectCampaignEmailMaterializedContent(
 		if err != nil {
 			return campaignContent.NormalizeContentBlockError(err)
 		}
-		updates := map[string]any{
-			"content_html": projection.HTML,
-			"content_text": projection.Text,
-			"updated_at":   now,
+
+		exists, err := tx.ProjectLocale(ctx, entityID, locale, emailcontent.LocaleProjection{HTML: projection.HTML, Text: projection.Text, UpdatedAt: &now})
+		if err != nil {
+			return err
 		}
-		result := tx.WithContext(ctx).
-			Table("campaign_translation").
-			Where("entity_id = ? AND locale = ?", entityID, locale).
-			Updates(updates)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
+		if !exists {
 			return domainerr.Precondition("Campaign locale metadata is not initialized")
 		}
+
 	}
 	return nil
 }

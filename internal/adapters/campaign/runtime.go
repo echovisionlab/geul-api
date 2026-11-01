@@ -3,9 +3,10 @@ package campaign
 import (
 	"context"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
 	"gorm.io/gorm"
 
-	campaigndomain "github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/securityaccess"
@@ -65,4 +66,5 @@ func (r *Runtime) AppendCampaignRecipientsAccess(ctx context.Context, campaignID
 	return r.personalDataAccess.AppendCampaignRecipients(ctx, campaignID)
 }
 
-var _ campaigndomain.Runtime = (*Runtime)(nil)
+var _ campaignpostgres.Publisher = (*Runtime)(nil)
+var _ campaignpostgres.Routes = (*Runtime)(nil)

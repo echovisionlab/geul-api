@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/crypto"
@@ -43,7 +45,7 @@ func (s *CampaignDeliveryStore) NeedsDelivery(ctx context.Context, recipientID s
 	if s == nil || s.db == nil {
 		return false, fmt.Errorf("campaign delivery database is required")
 	}
-	return campaign.CampaignDeliveryRecipientNeedsDelivery(ctx, s.db, recipientID)
+	return campaign.CampaignDeliveryRecipientNeedsDelivery(ctx, campaignpostgres.Bind(s.db, campaignpostgres.Ports{}, nil), recipientID)
 }
 
 func (s *CampaignDeliveryStore) ClaimDelivery(ctx context.Context, recipientID string) (string, bool, error) {
@@ -54,7 +56,7 @@ func (s *CampaignDeliveryStore) ClaimDelivery(ctx context.Context, recipientID s
 	claimed := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
-		claimed, err = campaign.ClaimCampaignDeliveryRecipient(ctx, tx, recipientID, claimID)
+		claimed, err = campaign.ClaimCampaignDeliveryRecipient(ctx, campaignpostgres.Bind(tx, campaignpostgres.Ports{}, nil), recipientID, claimID)
 		return err
 	})
 	if err != nil || !claimed {
@@ -68,7 +70,7 @@ func (s *CampaignDeliveryStore) ReleaseDeliveryClaim(ctx context.Context, recipi
 		return fmt.Errorf("campaign delivery database is required")
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return campaign.ReleaseCampaignDeliveryRecipientClaim(ctx, tx, recipientID, claimID)
+		return campaign.ReleaseCampaignDeliveryRecipientClaim(ctx, campaignpostgres.Bind(tx, campaignpostgres.Ports{}, nil), recipientID, claimID)
 	})
 }
 
@@ -85,7 +87,7 @@ func (s *CampaignDeliveryStore) MarkClaimedResult(
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return campaign.MarkClaimedCampaignDeliveryRecipientResultWithAudit(
-			ctx, tx, s.audit, recipientID, claimID, status, providerMessageID, errorType, s.metrics,
+			ctx, campaignpostgres.Bind(tx, campaignpostgres.Ports{}, s.audit), recipientID, claimID, status, providerMessageID, errorType, s.metrics,
 		)
 	})
 }
@@ -106,7 +108,7 @@ func (s *CampaignDeliveryStore) MarkResult(
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return campaign.MarkCampaignDeliveryRecipientResultWithAudit(
-			ctx, tx, s.audit, recipientID, status, providerMessageID, errorType, s.metrics,
+			ctx, campaignpostgres.Bind(tx, campaignpostgres.Ports{}, s.audit), recipientID, status, providerMessageID, errorType, s.metrics,
 		)
 	})
 }
@@ -153,7 +155,7 @@ func (s *BulkCampaignStore) Materialize(ctx context.Context, runID string) error
 		return fmt.Errorf("bulk campaign materialization dependencies are required")
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return campaign.MaterializeCampaignDeliveryRun(ctx, tx, s.spiceDB, runID)
+		return campaign.MaterializeCampaignDeliveryRun(ctx, campaignpostgres.Bind(tx, campaignpostgres.Ports{SpiceDB: s.spiceDB}, s.audit), runID)
 	})
 }
 
@@ -166,7 +168,7 @@ func (s *BulkCampaignStore) ListPending(
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("bulk campaign delivery database is required")
 	}
-	jobs, err := campaign.ListPendingCampaignDeliveryRecipients(ctx, s.db, runID, afterID, batchSize)
+	jobs, err := campaign.ListPendingCampaignDeliveryRecipients(ctx, campaignpostgres.Bind(s.db, campaignpostgres.Ports{}, nil), runID, afterID, batchSize)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +197,7 @@ func (s *BulkCampaignStore) MarkResult(
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return campaign.MarkCampaignDeliveryRecipientResultWithAudit(
-			ctx, tx, s.audit, recipientID, status, "", errorType, s.metrics,
+			ctx, campaignpostgres.Bind(tx, campaignpostgres.Ports{}, s.audit), recipientID, status, "", errorType, s.metrics,
 		)
 	})
 }
@@ -351,7 +353,7 @@ func (r *Renderer) renderTemplate(
 		First(&run, "id = ?", recipient.RunID).Error; err != nil {
 		return nil, err
 	}
-	if err := campaign.ValidateEmailDeliveryRenderDefinition(run); err != nil {
+	if err := campaign.ValidateEmailDeliveryRenderDefinition(campaignpostgres.DeliveryRunFromRow(run)); err != nil {
 		return nil, fmt.Errorf("invalid durable email delivery definition: %w", err)
 	}
 	rendered, err := email.RenderCampaignSnapshotForLocale(run.RenderSnapshot, targetLocale, templateData)

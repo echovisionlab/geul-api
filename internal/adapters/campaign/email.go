@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -18,7 +20,6 @@ import (
 	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // EmailAuthoring adapts Email Layout reads and locks to Campaign's narrow
@@ -118,20 +119,6 @@ func (EmailRendering) WrapWithLayout(
 	return wrapped, err
 }
 
-func (EmailRendering) RenderVariables(value string, data map[string]string) string {
-	return email.RenderVars(value, data)
-}
-
-func (EmailRendering) NormalizeHTML(value string) string {
-	return email.NormalizeRenderedHTML(value)
-}
-
-func (EmailRendering) PlainText(value string) string { return email.StripHTML(value) }
-
-func (EmailRendering) TestRecipientContext(actorMemberID string) *managev1.SendEmailEvent_TestEmail {
-	return email.TestEmailContext(actorMemberID)
-}
-
 // LiveEmailRenderer composes Campaign's current Content Block projection with
 // generic Email variable and Layout rendering for non-durable test sends.
 type LiveEmailRenderer struct {
@@ -160,7 +147,7 @@ func (renderer *LiveEmailRenderer) RenderCampaignEmail(
 		return nil, fmt.Errorf("load Campaign email root: %w", err)
 	}
 	localized, campaignLocale, err := campaigndomain.ResolveLocalizedCampaign(
-		ctx, db, renderer.contentBlocks, root, requestedLocale,
+		ctx, campaignpostgres.NewStore(db, campaignpostgres.Ports{ContentBlocks: renderer.contentBlocks}), campaignpostgres.CampaignFromRow(root), requestedLocale,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("resolve Campaign email locale: %w", err)
@@ -218,5 +205,5 @@ func stringValue(value *string) string {
 	return *value
 }
 
-var _ campaigndomain.CampaignEmailAuthoringPort = EmailAuthoring{}
-var _ campaigndomain.CampaignEmailRenderingPort = EmailRendering{}
+var _ campaignpostgres.CampaignEmailAuthoringPort = EmailAuthoring{}
+var _ campaignpostgres.CampaignEmailRenderingPort = EmailRendering{}

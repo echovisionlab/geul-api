@@ -7,28 +7,15 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
-
-type campaignRenderSnapshotTranslationRow struct {
-	Locale         string  `gorm:"column:locale"`
-	Subject        *string `gorm:"column:subject"`
-	IsSourceLocale bool    `gorm:"column:is_source_locale"`
-}
 
 func campaignRenderSnapshot(
 	ctx context.Context,
-	db *gorm.DB,
-	contentBlocks *contentblock.Store,
-	campaign model.Campaign,
-	emailAuthoring CampaignEmailAuthoringPort,
+	db Store,
+	campaign Campaign,
 ) (CampaignDeliverySnapshot, error) {
-	if contentBlocks == nil {
-		return CampaignDeliverySnapshot{}, domainerr.DependencyUnavailable("Campaign content Block store")
-	}
+
 	snapshot := CampaignDeliverySnapshot{
 		Subject: campaign.Subject,
 		Translations: make(
@@ -37,16 +24,11 @@ func campaignRenderSnapshot(
 		),
 	}
 
-	var campaignRows []campaignRenderSnapshotTranslationRow
-	if err := db.WithContext(ctx).
-		Table("campaign_translation AS translation").
-		Select("translation.locale, translation.subject, translation.locale = source.source_locale AS is_source_locale").
-		Joins("JOIN campaign AS source ON source.id = translation.entity_id").
-		Where("translation.entity_id = ?", campaign.ID).
-		Order("is_source_locale DESC, locale ASC").
-		Scan(&campaignRows).Error; err != nil {
+	campaignRows, err := db.CampaignRenderLocales(ctx, campaign.ID)
+	if err != nil {
 		return CampaignDeliverySnapshot{}, err
 	}
+
 	if len(campaignRows) == 0 {
 		return CampaignDeliverySnapshot{}, domainerr.Precondition(
 			"campaign has no source content",
@@ -71,7 +53,7 @@ func campaignRenderSnapshot(
 	if err != nil {
 		return CampaignDeliverySnapshot{}, err
 	}
-	contentSnapshot, err := contentBlocks.LoadSnapshotInTransaction(ctx, db, documentID, sourceLocale)
+	contentSnapshot, err := db.LockedContentSnapshot(ctx, documentID, sourceLocale)
 	if err != nil {
 		return CampaignDeliverySnapshot{}, campaignContent.NormalizeContentBlockError(err)
 	}
@@ -111,7 +93,6 @@ func campaignRenderSnapshot(
 		db,
 		ptrStringValue(campaign.LayoutID),
 		"campaign email layout",
-		emailAuthoring,
 		&snapshot,
 	); err != nil {
 		return CampaignDeliverySnapshot{}, err
@@ -122,10 +103,9 @@ func campaignRenderSnapshot(
 
 func applyEmailDeliveryLayoutSnapshot(
 	ctx context.Context,
-	db *gorm.DB,
+	db Store,
 	layoutID string,
 	label string,
-	emailAuthoring CampaignEmailAuthoringPort,
 	snapshot *CampaignDeliverySnapshot,
 ) error {
 	layoutID = strings.TrimSpace(layoutID)
@@ -133,10 +113,7 @@ func applyEmailDeliveryLayoutSnapshot(
 		return nil
 	}
 
-	if emailAuthoring == nil {
-		return domainerr.DependencyUnavailable("Email Authoring")
-	}
-	rows, err := emailAuthoring.LoadLayoutSnapshot(ctx, db, layoutID)
+	rows, err := db.LayoutSnapshot(ctx, layoutID)
 	if err != nil {
 		return err
 	}

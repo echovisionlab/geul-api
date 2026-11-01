@@ -54,7 +54,7 @@ func TestBuildMaterializedCampaignEmailJobBuildsRecipientContexts(t *testing.T) 
 
 	tests := []struct {
 		name      string
-		recipient model.CampaignDeliveryRecipient
+		recipient campaign.DeliveryRecipient
 		assert    func(t *testing.T, job *managev1.SendEmailEvent)
 	}{
 		{
@@ -88,7 +88,7 @@ func TestBuildMaterializedCampaignEmailJobBuildsRecipientContexts(t *testing.T) 
 
 			job, ok := handlers.buildMaterializedCampaignEmailJob(campaign.CampaignDeliveryRecipientJob{
 				Recipient: tt.recipient,
-				Run: model.CampaignDeliveryRun{
+				Run: campaign.DeliveryRun{
 					ID:           "run-1",
 					RunKind:      campaign.EmailDeliveryRunKindCampaign,
 					CampaignID:   &campaignID,
@@ -115,7 +115,7 @@ func TestBuildMaterializedCampaignEmailJobRejectsMissingRecipientContext(t *test
 
 	tests := []struct {
 		name      string
-		recipient model.CampaignDeliveryRecipient
+		recipient campaign.DeliveryRecipient
 	}{
 		{
 			name:      "newsletter subscription context without identity id",
@@ -140,7 +140,7 @@ func TestBuildMaterializedCampaignEmailJobRejectsMissingRecipientContext(t *test
 		t.Run(tt.name, func(t *testing.T) {
 			job, ok := handlers.buildMaterializedCampaignEmailJob(campaign.CampaignDeliveryRecipientJob{
 				Recipient: tt.recipient,
-				Run: model.CampaignDeliveryRun{
+				Run: campaign.DeliveryRun{
 					ID:               "run-missing",
 					RunKind:          campaign.EmailDeliveryRunKindLegalNotice,
 					TemplateEventKey: new("terms_update"),
@@ -175,7 +175,7 @@ func TestBuildMaterializedCampaignEmailJobRejectsPersistedRecipientTemplateData(
 				&identityID,
 				campaign.BulkEmailContextNewsletterSubscription,
 			),
-			Run: model.CampaignDeliveryRun{
+			Run: campaign.DeliveryRun{
 				ID:         "run-persisted-recipient-data",
 				RunKind:    campaign.EmailDeliveryRunKindCampaign,
 				CampaignID: &campaignID,
@@ -189,8 +189,8 @@ func TestBuildMaterializedCampaignEmailJobRejectsPersistedRecipientTemplateData(
 	require.Nil(t, job)
 }
 
-func materializedBulkEmailRecipient(id string, email string, locale *string, memberID *string, identityID *string, contextType string) model.CampaignDeliveryRecipient {
-	return model.CampaignDeliveryRecipient{
+func materializedBulkEmailRecipient(id string, email string, locale *string, memberID *string, identityID *string, contextType string) campaign.DeliveryRecipient {
+	return campaign.DeliveryRecipient{
 		ID:                       id,
 		RunID:                    "run-1",
 		RecipientEmail:           email,

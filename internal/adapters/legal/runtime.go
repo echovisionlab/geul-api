@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/campaign"
@@ -14,7 +16,6 @@ import (
 	legalpublic "github.com/echovisionlab/geul-api/internal/legal/public"
 	legalpublicpostgres "github.com/echovisionlab/geul-api/internal/legal/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
@@ -110,11 +111,11 @@ func (r *Runtime) ReadyLocalizedOGAsset(
 func (*Runtime) PrepareAutomaticPreviewShareLink(
 	ctx context.Context,
 	tx *gorm.DB,
-	run model.CampaignDeliveryRun,
+	run campaign.DeliveryRun,
 	now time.Time,
 ) error {
 	links := legalpostgres.Bind(tx, legalpostgres.Ports{PreviewLinks: sharelinkadapter.LegalPreviewLinks{}}, nil)
-	return legaldomain.PrepareAutomaticNoticePreviewShareLink(ctx, links.Store, legalpostgres.NoticeRun(run), now)
+	return legaldomain.PrepareAutomaticNoticePreviewShareLink(ctx, links.Store, legalpostgres.NoticeRun(campaignpostgres.DeliveryRunToRow(run)), now)
 }
 
 // OGAssets releases, on db, the OG images of a deleted version.
@@ -134,5 +135,5 @@ func (a OGAssets) ReleaseOGAssets(ctx context.Context, kind legaldomain.PolicyKi
 
 var _ legalpostgres.Routes = (*Runtime)(nil)
 var _ legalpublicpostgres.Media = (*Runtime)(nil)
-var _ campaign.LegalNoticeDeliveryPort = (*Runtime)(nil)
+var _ campaignpostgres.LegalNoticeDeliveryPort = (*Runtime)(nil)
 var _ legaldomain.OGAssets = OGAssets{}

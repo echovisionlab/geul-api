@@ -8,15 +8,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 type localizedCampaignContentRow struct {
-	Subject *string `gorm:"column:subject"`
+	Subject *string
 }
 
 // ResolveLocalizedCampaign applies the exact requested Campaign target when a
@@ -24,28 +21,20 @@ type localizedCampaignContentRow struct {
 // The source row remains authoritative even when target rows exist.
 func ResolveLocalizedCampaign(
 	ctx context.Context,
-	db *gorm.DB,
-	contentBlocks *contentblock.Store,
-	campaign model.Campaign,
+	db Store,
+	campaign Campaign,
 	requestedLocale string,
-) (model.Campaign, string, error) {
-	if contentBlocks == nil {
-		return campaign, "", domainerr.DependencyUnavailable("Campaign content Block store")
+) (Campaign, string, error) {
+
+	sourceState, err := db.CampaignSourceLocale(ctx, campaign.ID, false)
+	if errors.Is(err, ErrCampaignNotFound) {
+		return campaign, "", domainerr.ResourceNotFound("campaign source translation", campaign.ID)
 	}
-	var sourceState struct {
-		SourceLocale string `gorm:"column:source_locale"`
-	}
-	if err := db.WithContext(ctx).
-		Table("campaign").
-		Select("source_locale").
-		Where("id = ?", campaign.ID).
-		Take(&sourceState).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return campaign, "", domainerr.ResourceNotFound("campaign source translation", campaign.ID)
-		}
+	if err != nil {
 		return campaign, "", err
 	}
-	sourceLocale := normalizeCampaignLocale(sourceState.SourceLocale)
+
+	sourceLocale := normalizeCampaignLocale(sourceState)
 	if sourceLocale == "" {
 		return campaign, "", domainerr.Precondition("Campaign source locale is unavailable")
 	}
@@ -82,46 +71,37 @@ func ResolveLocalizedCampaign(
 	if err != nil {
 		return campaign, selectedLocale, err
 	}
-	materialized, err := contentBlocks.LoadAndMaterializeRichTextLocale(
-		ctx,
-		db,
-		documentID,
-		sourceLocale,
-		selectedLocale,
-		nil, sitevariable.TemplateContext(),
-	)
+
+	snapshot, err := db.ContentSnapshot(ctx, documentID, sourceLocale)
 	if err != nil {
 		return campaign, selectedLocale, campaignContent.NormalizeContentBlockError(err)
 	}
+	document, err := contentblock.MaterializeSnapshotRichTextLocale(snapshot, selectedLocale)
+	if err != nil {
+		return campaign, selectedLocale, campaignContent.NormalizeContentBlockError(err)
+	}
+	materialized, err := contentblock.MaterializeLocalizedRichTextDocument(ctx, document, nil, sitevariable.TemplateContext())
+	if err != nil {
+		return campaign, selectedLocale, campaignContent.NormalizeContentBlockError(err)
+	}
+
 	return applyCampaignLocalizedContent(campaign, source, target, materialized), selectedLocale, nil
 }
 
-func loadCampaignLocalizedContentRow(
-	ctx context.Context,
-	db *gorm.DB,
-	campaignID string,
-	locale string,
-) (*localizedCampaignContentRow, error) {
-	var row localizedCampaignContentRow
-	if err := db.WithContext(ctx).
-		Table("campaign_translation").
-		Select("subject").
-		Where("entity_id = ? AND locale = ?", campaignID, locale).
-		Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
+func loadCampaignLocalizedContentRow(ctx context.Context, db Store, campaignID, locale string) (*localizedCampaignContentRow, error) {
+	subject, exists, err := db.CampaignLocaleSubject(ctx, campaignID, locale, false)
+	if err != nil || !exists {
 		return nil, err
 	}
-	return &row, nil
+	return &localizedCampaignContentRow{Subject: subject}, nil
 }
 
 func applyCampaignLocalizedContent(
-	campaign model.Campaign,
+	campaign Campaign,
 	source *localizedCampaignContentRow,
 	target *localizedCampaignContentRow,
 	materialized contentblock.MaterializedContent,
-) model.Campaign {
+) Campaign {
 	campaign.Subject = ptrStringValue(source.Subject)
 	if target != nil && target.Subject != nil {
 		campaign.Subject = *target.Subject

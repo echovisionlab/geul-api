@@ -2,16 +2,14 @@ package campaign
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
+
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -22,13 +20,13 @@ import (
 type ScheduleCampaignCommand struct {
 	ID             string
 	ScheduledAt    *time.Time
-	RecipientScope managev1.CampaignRecipientScope
+	RecipientScope RecipientScope
 }
 
 // CampaignLifecycle is the lifecycle state a schedule, cancel or send left.
 type CampaignLifecycle struct {
 	ID             string
-	Status         model.CampaignStatus
+	Status         CampaignStatus
 	ScheduledAt    *time.Time
 	RecipientCount int64
 	UpdatedAt      time.Time
@@ -37,8 +35,8 @@ type CampaignLifecycle struct {
 
 // lockCampaignForDelivery locks the Campaign's layout and then the Campaign,
 // and rejects a layout assignment that moved in between.
-func (s *Service) lockCampaignForDelivery(ctx context.Context, tx *gorm.DB, campaignID string, campaign *model.Campaign, lock func(context.Context, *gorm.DB, string, *model.Campaign) error) error {
-	observedLayoutID, _, err := observeAndLockCampaignLayouts(ctx, tx, s.emailAuthoring, campaignID, nil)
+func (s *Service) lockCampaignForDelivery(ctx context.Context, tx Store, campaignID string, campaign *Campaign, lock func(context.Context, Store, string, *Campaign) error) error {
+	observedLayoutID, _, err := observeAndLockCampaignLayouts(ctx, tx, campaignID, nil)
 	if err != nil {
 		return err
 	}
@@ -56,10 +54,10 @@ func (s *Service) lockCampaignForDelivery(ctx context.Context, tx *gorm.DB, camp
 func (s *Service) runCampaignLifecycle(
 	ctx context.Context,
 	access mutation.Access,
-	lock func(ctx context.Context, tx *gorm.DB) error,
-	change func(ctx context.Context, tx *gorm.DB) (CampaignLifecycle, error),
+	lock func(ctx context.Context, tx Store) error,
+	change func(ctx context.Context, tx Store) (CampaignLifecycle, error),
 ) (CampaignLifecycle, error) {
-	return mutation.Run(ctx, s.mutations, mutation.Spec[CampaignLifecycle]{
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[CampaignLifecycle, Store]{
 		Lock:   lock,
 		Access: access,
 		Change: change,
@@ -73,24 +71,24 @@ func (s *Service) ScheduleCampaign(ctx context.Context, command ScheduleCampaign
 	if err != nil {
 		return CampaignLifecycle{}, err
 	}
-	var campaign model.Campaign
-	return s.runCampaignLifecycle(ctx, access, func(ctx context.Context, tx *gorm.DB) error {
+	var campaign Campaign
+	return s.runCampaignLifecycle(ctx, access, func(ctx context.Context, tx Store) error {
 		return s.lockCampaignForDelivery(ctx, tx, command.ID, &campaign, lockCampaign)
-	}, func(ctx context.Context, tx *gorm.DB) (CampaignLifecycle, error) {
+	}, func(ctx context.Context, tx Store) (CampaignLifecycle, error) {
 		scheduledAt, err := s.requireSchedulable(ctx, tx, campaign, command)
 		if err != nil {
 			return CampaignLifecycle{}, err
 		}
-		campaign.Status = string(model.CampaignStatusScheduled)
+		campaign.Status = CampaignStatusScheduled
 		campaign.ScheduledAt = &scheduledAt
-		if err := tx.WithContext(ctx).Save(&campaign).Error; err != nil {
+		if err := tx.SaveCampaign(ctx, &campaign); err != nil {
 			return CampaignLifecycle{}, err
 		}
 		if _, err := s.createDeliveryRun(ctx, tx, campaign, scheduledAt, 0); err != nil {
 			return CampaignLifecycle{}, err
 		}
 		return CampaignLifecycle{
-			ID: campaign.ID, Status: model.CampaignStatusScheduled, ScheduledAt: campaign.ScheduledAt, UpdatedAt: campaign.UpdatedAt,
+			ID: campaign.ID, Status: CampaignStatusScheduled, ScheduledAt: campaign.ScheduledAt, UpdatedAt: campaign.UpdatedAt,
 			record: mutation.RequestAudit(sharedtelemetry.AuditCampaignUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 				return sharedtelemetry.NewCampaignScheduleLifecycleAuditRecord(metadata, campaign.ID, sharedtelemetry.AuditStateDraft, sharedtelemetry.AuditStateScheduled, scheduledAt)
 			}),
@@ -101,12 +99,12 @@ func (s *Service) ScheduleCampaign(ctx context.Context, command ScheduleCampaign
 // requireSchedulable checks the requested time and scope against the locked
 // draft and its current content and audience, and returns the scheduled
 // time at storage precision.
-func (s *Service) requireSchedulable(ctx context.Context, tx *gorm.DB, campaign model.Campaign, command ScheduleCampaignCommand) (time.Time, error) {
+func (s *Service) requireSchedulable(ctx context.Context, tx Store, campaign Campaign, command ScheduleCampaignCommand) (time.Time, error) {
 	if command.ScheduledAt == nil {
 		return time.Time{}, domainerr.Required("scheduled_at")
 	}
 	scheduledAt := command.ScheduledAt.UTC().Truncate(dbtime.Precision)
-	if scheduledAt.Before(time.Now()) {
+	if scheduledAt.Before(s.now()) {
 		return time.Time{}, domainerr.InvalidField("scheduled_at", "must be in the future")
 	}
 	if !campaignStatusAllowsSchedule(campaign.Status) {
@@ -115,14 +113,14 @@ func (s *Service) requireSchedulable(ctx context.Context, tx *gorm.DB, campaign 
 	if err := requireCurrentCampaignRenderableContent(ctx, tx, campaign.ID); err != nil {
 		return time.Time{}, err
 	}
-	recipientScope, err := campaignRecipientScopeFromProto(command.RecipientScope)
+	recipientScope, err := campaignRecipientScopeValue(command.RecipientScope)
 	if err != nil {
 		return time.Time{}, domainerr.InvalidField("recipient_scope", err.Error())
 	}
 	if campaign.RecipientScope != recipientScope {
 		return time.Time{}, domainerr.Precondition("campaign recipient scope changed; reload before scheduling")
 	}
-	_, err = deriveCampaignDeliveryTarget(ctx, tx, campaign, s.audienceTargets)
+	_, err = deriveCampaignDeliveryTarget(ctx, tx, campaign)
 	return scheduledAt, err
 }
 
@@ -141,23 +139,23 @@ func (s *Service) CancelCampaign(ctx context.Context, command CancelCampaignComm
 	if command.ID == "" {
 		return CampaignLifecycle{}, domainerr.Required("id")
 	}
-	var campaign model.Campaign
-	return s.runCampaignLifecycle(ctx, access, func(ctx context.Context, tx *gorm.DB) error {
+	var campaign Campaign
+	return s.runCampaignLifecycle(ctx, access, func(ctx context.Context, tx Store) error {
 		return lockCampaign(ctx, tx, command.ID, &campaign)
-	}, func(ctx context.Context, tx *gorm.DB) (CampaignLifecycle, error) {
-		if model.CampaignStatus(campaign.Status) != model.CampaignStatusScheduled {
+	}, func(ctx context.Context, tx Store) (CampaignLifecycle, error) {
+		if CampaignStatus(campaign.Status) != CampaignStatusScheduled {
 			return CampaignLifecycle{}, domainerr.Precondition(msgCampaignOnlyCancelScheduled)
 		}
-		campaign.Status = string(model.CampaignStatusDraft)
+		campaign.Status = CampaignStatusDraft
 		campaign.ScheduledAt = nil
-		if err := tx.WithContext(ctx).Save(&campaign).Error; err != nil {
+		if err := tx.SaveCampaign(ctx, &campaign); err != nil {
 			return CampaignLifecycle{}, err
 		}
-		if err := s.emailDelivery.CancelActiveRuns(ctx, tx, campaign.ID, time.Now().UTC()); err != nil {
+		if err := cancelActiveCampaignRuns(ctx, tx, campaign.ID, s.now().UTC()); err != nil {
 			return CampaignLifecycle{}, err
 		}
 		return CampaignLifecycle{
-			ID: campaign.ID, Status: model.CampaignStatusDraft, UpdatedAt: campaign.UpdatedAt,
+			ID: campaign.ID, Status: CampaignStatusDraft, UpdatedAt: campaign.UpdatedAt,
 			record: campaignStatusAudit(campaign.ID, sharedtelemetry.AuditStateScheduled, sharedtelemetry.AuditStateDraft),
 		}, nil
 	})
@@ -173,7 +171,7 @@ func campaignStatusAudit(campaignID string, previous, next sharedtelemetry.Audit
 // schedule, RecipientScope must equal the stored scope.
 type SendCampaignNowCommand struct {
 	ID             string
-	RecipientScope managev1.CampaignRecipientScope
+	RecipientScope RecipientScope
 }
 
 // SendCampaignNow seals and starts the draft Campaign's delivery run for its
@@ -186,11 +184,11 @@ func (s *Service) SendCampaignNow(ctx context.Context, command SendCampaignNowCo
 	if command.ID == "" {
 		return CampaignLifecycle{}, domainerr.Required("id")
 	}
-	var campaign model.Campaign
-	return s.runCampaignLifecycle(ctx, access, func(ctx context.Context, tx *gorm.DB) error {
+	var campaign Campaign
+	return s.runCampaignLifecycle(ctx, access, func(ctx context.Context, tx Store) error {
 		return s.lockCampaignForDelivery(ctx, tx, command.ID, &campaign, lockCampaignForSendNow)
-	}, func(ctx context.Context, tx *gorm.DB) (CampaignLifecycle, error) {
-		recipientScope, err := campaignRecipientScopeFromProto(command.RecipientScope)
+	}, func(ctx context.Context, tx Store) (CampaignLifecycle, error) {
+		recipientScope, err := campaignRecipientScopeValue(command.RecipientScope)
 		if err != nil {
 			return CampaignLifecycle{}, domainerr.InvalidField("recipient_scope", err.Error())
 		}
@@ -198,23 +196,23 @@ func (s *Service) SendCampaignNow(ctx context.Context, command SendCampaignNowCo
 		if campaign.RecipientScope != recipientScope {
 			return CampaignLifecycle{}, domainerr.Precondition("campaign recipient scope changed; reload before sending")
 		}
-		target, err := deriveCampaignDeliveryTarget(ctx, tx, campaign, s.audienceTargets)
+		target, err := deriveCampaignDeliveryTarget(ctx, tx, campaign)
 		if err != nil {
 			return CampaignLifecycle{}, err
 		}
-		recipientCount, err := s.emailDelivery.CountRecipients(ctx, tx, target)
+		recipientCount, err := tx.CountRecipients(ctx, target)
 		if err != nil {
 			return CampaignLifecycle{}, err
 		}
 		if recipientCount == 0 {
 			return CampaignLifecycle{}, domainerr.Precondition(msgCampaignNoRecipients)
 		}
-		run, err := s.startCampaignSendNow(ctx, tx, &campaign, recipientCount, time.Now())
+		run, err := s.startCampaignSendNow(ctx, tx, &campaign, recipientCount, s.now())
 		if err != nil {
 			return CampaignLifecycle{}, err
 		}
 		return CampaignLifecycle{
-			ID: campaign.ID, Status: model.CampaignStatusSending, RecipientCount: recipientCount, UpdatedAt: campaign.UpdatedAt,
+			ID: campaign.ID, Status: CampaignStatusSending, RecipientCount: recipientCount, UpdatedAt: campaign.UpdatedAt,
 			record: mutation.RequestAudit(sharedtelemetry.AuditCampaignUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 				return sharedtelemetry.NewCampaignDeliveryRunLifecycleAuditRecord(metadata, campaign.ID, campaignAuditState(previousStatus), sharedtelemetry.AuditStateSending, run.ID)
 			}),
@@ -224,7 +222,7 @@ func (s *Service) SendCampaignNow(ctx context.Context, command SendCampaignNowCo
 
 // lockCampaignForSendNow locks a draft Campaign with renderable source
 // content.
-func lockCampaignForSendNow(ctx context.Context, tx *gorm.DB, campaignID string, campaign *model.Campaign) error {
+func lockCampaignForSendNow(ctx context.Context, tx Store, campaignID string, campaign *Campaign) error {
 	if err := lockCampaign(ctx, tx, campaignID, campaign); err != nil {
 		return err
 	}
@@ -234,16 +232,13 @@ func lockCampaignForSendNow(ctx context.Context, tx *gorm.DB, campaignID string,
 	return requireCurrentCampaignRenderableContent(ctx, tx, campaign.ID)
 }
 
-func requireCurrentCampaignRenderableContent(ctx context.Context, db *gorm.DB, campaignID string) error {
-	var count int64
-	if err := db.WithContext(ctx).
-		Table("campaign_translation AS translation").
-		Joins("JOIN campaign AS source ON source.id = translation.entity_id AND source.source_locale = translation.locale").
-		Where("translation.entity_id = ?", campaignID).
-		Where("translation.content_html IS NOT NULL AND btrim(translation.content_html) <> ''").
-		Count(&count).Error; err != nil {
+func requireCurrentCampaignRenderableContent(ctx context.Context, db Store, campaignID string) error {
+
+	count, err := db.RenderableCampaignContentCount(ctx, campaignID)
+	if err != nil {
 		return err
 	}
+
 	if count != 1 {
 		return domainerr.Precondition(msgCampaignNeedsContent)
 	}
@@ -252,21 +247,29 @@ func requireCurrentCampaignRenderableContent(ctx context.Context, db *gorm.DB, c
 
 // startCampaignSendNow moves the Campaign to sending, cancels its other
 // active runs and seals and starts the run for recipientCount recipients.
-func (s *Service) startCampaignSendNow(ctx context.Context, tx *gorm.DB, campaign *model.Campaign, recipientCount int64, now time.Time) (CampaignDeliveryRunRef, error) {
-	campaign.Status = string(model.CampaignStatusSending)
+func (s *Service) startCampaignSendNow(ctx context.Context, tx Store, campaign *Campaign, recipientCount int64, now time.Time) (CampaignDeliveryRunRef, error) {
+	campaign.Status = CampaignStatusSending
 	campaign.ScheduledAt = nil
 	campaign.SentAt = nil
 	campaign.SentCount = 0
-	if err := tx.WithContext(ctx).Save(campaign).Error; err != nil {
+	if err := tx.SaveCampaign(ctx, campaign); err != nil {
 		return CampaignDeliveryRunRef{}, err
 	}
-	if err := s.emailDelivery.CancelActiveRuns(ctx, tx, campaign.ID, now.UTC()); err != nil {
+	if err := cancelActiveCampaignRuns(ctx, tx, campaign.ID, now.UTC()); err != nil {
 		return CampaignDeliveryRunRef{}, err
 	}
 	return s.createDeliveryRun(ctx, tx, *campaign, now, recipientCount)
 }
 
 // createDeliveryRun seals the Campaign's delivery run.
-func (s *Service) createDeliveryRun(ctx context.Context, tx *gorm.DB, campaign model.Campaign, scheduledAt time.Time, targetCount int64) (CampaignDeliveryRunRef, error) {
-	return createCampaignDeliveryRun(ctx, tx, campaign, scheduledAt, targetCount, s.audienceTargets, s.contentBlocks, s.emailAuthoring, s.emailDelivery)
+func (s *Service) createDeliveryRun(ctx context.Context, tx Store, campaign Campaign, scheduledAt time.Time, targetCount int64) (CampaignDeliveryRunRef, error) {
+	return createCampaignDeliveryRun(ctx, tx, campaign, scheduledAt, targetCount)
+}
+
+func cancelActiveCampaignRuns(ctx context.Context, store Store, campaignID string, now time.Time) error {
+	err := store.CancelActiveRuns(ctx, campaignID, now)
+	if errors.Is(err, ErrDeliveryStarted) {
+		return domainerr.Precondition("campaign delivery has already started")
+	}
+	return err
 }

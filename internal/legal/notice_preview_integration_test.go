@@ -19,6 +19,7 @@ import (
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	"github.com/echovisionlab/geul-api/internal/campaign"
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/email"
@@ -100,7 +101,7 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 		email.EventTermsUpdate.String(),
 	).Take(&run).Error)
 	require.WithinDuration(t, now, run.ScheduledAt, time.Second)
-	data, err := campaign.CampaignDeliveryRunTemplateData(run)
+	data, err := campaign.CampaignDeliveryRunTemplateData(campaignpostgres.DeliveryRunFromRow(run))
 	require.NoError(t, err)
 	require.Equal(t, "September contributor terms", data["policy_title"])
 	require.Equal(t, effectiveAt.Format("2006-01-02"), data["effective_date"])
@@ -108,24 +109,14 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 	require.Zero(t, countAutomaticLegalPreviewLinks(t, db, automaticToken))
 
 	failingPublisher := &failingLegalNoticeBulkPublisher{}
-	err = campaignadapter.NewDeliveryDispatcher(db, campaign.NewAuditedCampaignDeliveryDispatcher(
-		spiceDB,
-		failingPublisher,
-		&audittest.Recorder{},
-		campaign.WithLegalNoticeDeliveryPort(legaladapter.NewRuntime()),
-	)).
+	err = campaignadapter.NewDeliveryDispatcher(db, spiceDB, failingPublisher, &audittest.Recorder{}, legaladapter.NewRuntime()).
 		DispatchEmailDeliveryRun(t.Context(), run.ID)
 	require.NoError(t, err)
 	require.Zero(t, failingPublisher.calls)
 	require.Equal(t, int64(1), countAutomaticLegalPreviewLinks(t, db, automaticToken))
 
 	retryPublisher := &recordingLegalEmailPublisher{}
-	resumed, err := campaignadapter.NewDeliveryDispatcher(db, campaign.NewAuditedCampaignDeliveryDispatcher(
-		spiceDB,
-		retryPublisher,
-		&audittest.Recorder{},
-		campaign.WithLegalNoticeDeliveryPort(legaladapter.NewRuntime()),
-	)).
+	resumed, err := campaignadapter.NewDeliveryDispatcher(db, spiceDB, retryPublisher, &audittest.Recorder{}, legaladapter.NewRuntime()).
 		ResumeActiveEmailDeliveryRuns(t.Context(), 25)
 	require.NoError(t, err)
 	require.Equal(t, 1, resumed)

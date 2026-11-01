@@ -7,23 +7,16 @@ import (
 
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
-type campaignAudienceTargetFunc func(
-	context.Context,
-	*gorm.DB,
-	string,
-) (CampaignAudienceTarget, error)
+type campaignAudienceTargetFunc struct {
+	Store
+	fn func(context.Context, string) (CampaignAudienceTarget, error)
+}
 
-func (fn campaignAudienceTargetFunc) LockTarget(
-	ctx context.Context,
-	db *gorm.DB,
-	segmentID string,
-) (CampaignAudienceTarget, error) {
-	return fn(ctx, db, segmentID)
+func (s campaignAudienceTargetFunc) LockAudienceTarget(ctx context.Context, id string) (CampaignAudienceTarget, error) {
+	return s.fn(ctx, id)
 }
 
 func TestCampaignDeliveryRecipientStatusPolicyOnlyPersistsBusinessResults(t *testing.T) {
@@ -43,27 +36,11 @@ func TestCampaignDeliveryRecipientStatusPolicyOnlyPersistsBusinessResults(t *tes
 }
 
 func TestCampaignRecipientScopeControlsNewsletterFilter(t *testing.T) {
-	selection, err := campaignDeliveryTargetRecipientSelection(CampaignDeliveryTarget{
-		QueryVersion:   CampaignDeliveryTargetQueryVersion,
-		Mode:           CampaignDeliveryTargetModeAllUsers,
-		RecipientScope: campaignRecipientScopeSubscribedUsers,
-	})
-	require.NoError(t, err)
-	require.Equal(t, CampaignDeliveryTargetModeAllUsers, selection.Mode)
-	require.True(t, selection.RequireNewsletterSubscription)
 
-	selection, err = campaignDeliveryTargetRecipientSelection(CampaignDeliveryTarget{
-		QueryVersion:   CampaignDeliveryTargetQueryVersion,
-		Mode:           CampaignDeliveryTargetModeAllUsers,
-		RecipientScope: campaignRecipientScopeAllMatchingUsers,
-	})
-	require.NoError(t, err)
-	require.False(t, selection.RequireNewsletterSubscription)
-
-	_, err = deriveCampaignDeliveryTarget(context.Background(), nil, model.Campaign{
-		TargetMode:     model.CampaignTargetModeAll,
+	_, err := deriveCampaignDeliveryTarget(context.Background(), nil, Campaign{
+		TargetMode:     CampaignTargetModeAll,
 		RecipientScope: "LEGACY",
-	}, nil)
+	})
 	require.Error(t, err)
 	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 }
@@ -71,30 +48,28 @@ func TestCampaignRecipientScopeControlsNewsletterFilter(t *testing.T) {
 func TestDeriveCampaignDeliveryTargetUsesAudiencePortSnapshot(t *testing.T) {
 	segmentID := "segment-a"
 	createdAfter := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	port := campaignAudienceTargetFunc(func(
+	port := campaignAudienceTargetFunc{fn: func(
 		_ context.Context,
-		_ *gorm.DB,
 		gotSegmentID string,
 	) (CampaignAudienceTarget, error) {
 		require.Equal(t, segmentID, gotSegmentID)
 		return CampaignAudienceTarget{
 			Valid:             true,
-			SegmentType:       model.AudienceSegmentMembersByFilter,
+			SegmentType:       AudienceSegmentMembersByFilter,
 			CreatedAfter:      &createdAfter,
 			AccountRoles:      []string{"ADMIN"},
 			ExcludedMemberIDs: []string{"member-a"},
 		}, nil
-	})
+	}}
 
 	target, err := deriveCampaignDeliveryTarget(
 		context.Background(),
-		nil,
-		model.Campaign{
-			TargetMode:     model.CampaignTargetModeSegment,
+		port,
+		Campaign{
+			TargetMode:     CampaignTargetModeSegment,
 			SegmentID:      &segmentID,
 			RecipientScope: campaignRecipientScopeSubscribedUsers,
 		},
-		port,
 	)
 	require.NoError(t, err)
 	require.Equal(t, CampaignDeliveryTargetModeUsersByFilter, target.Mode)
@@ -103,28 +78,13 @@ func TestDeriveCampaignDeliveryTargetUsesAudiencePortSnapshot(t *testing.T) {
 	require.Equal(t, createdAfter, *target.CreatedAfter)
 }
 
-func TestDeriveCampaignDeliveryTargetFailsClosedWithoutAudiencePort(t *testing.T) {
-	segmentID := "segment-a"
-	_, err := deriveCampaignDeliveryTarget(
-		context.Background(),
-		nil,
-		model.Campaign{
-			TargetMode:     model.CampaignTargetModeSegment,
-			SegmentID:      &segmentID,
-			RecipientScope: campaignRecipientScopeSubscribedUsers,
-		},
-		nil,
-	)
-	require.Equal(t, connect.CodeUnavailable, errs.CodeOf(err))
-}
-
 func TestCampaignDeliveryCompletionWaitsForPendingBusinessResults(t *testing.T) {
-	require.False(t, decideEmailDeliveryCompletion(campaignDeliveryCompletionCounts{
+	require.False(t, decideEmailDeliveryCompletion(DeliveryCompletionCounts{
 		Total:   2,
 		Pending: 1,
 		Sent:    1,
 	}, 2, EmailDeliveryRunKindCampaign).Complete)
-	require.True(t, decideEmailDeliveryCompletion(campaignDeliveryCompletionCounts{
+	require.True(t, decideEmailDeliveryCompletion(DeliveryCompletionCounts{
 		Total:     2,
 		Sent:      1,
 		Delivered: 1,

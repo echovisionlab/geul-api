@@ -3,6 +3,11 @@ package campaign
 import (
 	"context"
 	"log/slog"
+	"time"
+
+	"github.com/echovisionlab/geul-api/internal/auth"
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 
 	"gorm.io/gorm"
 
@@ -15,16 +20,26 @@ import (
 // no transaction, so each run's dispatch and recipient materialization
 // commits here in a transaction of its own.
 type DeliveryDispatcher struct {
-	db   *gorm.DB
-	runs *campaigndomain.CampaignDeliveryDispatcher
+	db    *gorm.DB
+	runs  *campaigndomain.CampaignDeliveryDispatcher
+	ports campaignpostgres.Ports
+	audit domainaudit.Appender
+}
+
+type BulkPublisher interface {
+	campaigndomain.CampaignBulkPublisher
+	campaignpostgres.Publisher
 }
 
 // NewDeliveryDispatcher returns the dispatcher of runs over db.
-func NewDeliveryDispatcher(db *gorm.DB, runs *campaigndomain.CampaignDeliveryDispatcher) *DeliveryDispatcher {
-	if db == nil || runs == nil {
+func NewDeliveryDispatcher(db *gorm.DB, spiceDB *auth.SpiceDBClient, publisher BulkPublisher, audit domainaudit.Appender, legalNotice campaignpostgres.LegalNoticeDeliveryPort) *DeliveryDispatcher {
+	if db == nil || spiceDB == nil || audit == nil {
 		panic("campaign delivery dispatcher dependencies are required")
 	}
-	return &DeliveryDispatcher{db: db, runs: runs}
+	return &DeliveryDispatcher{db: db, runs: campaigndomain.NewCampaignDeliveryDispatcher(publisher, time.Now), ports: campaignpostgres.Ports{SpiceDB: spiceDB, Publisher: publisher, LegalNotice: legalNotice}, audit: audit}
+}
+func (d *DeliveryDispatcher) joined(tx *gorm.DB) campaigndomain.Joined {
+	return campaignpostgres.Bind(tx, d.ports, d.audit)
 }
 
 // DispatchEmailDeliveryRun dispatches the run if it is due, waiting for a
@@ -38,7 +53,7 @@ func (d *DeliveryDispatcher) dispatch(ctx context.Context, runID string, skipLoc
 	published := false
 	err := d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
-		published, err = d.runs.DispatchEmailDeliveryRun(ctx, tx, runID, skipLocked)
+		published, err = d.runs.DispatchEmailDeliveryRun(ctx, d.joined(tx), runID, skipLocked)
 		return err
 	})
 	if err != nil {
@@ -51,7 +66,7 @@ func (d *DeliveryDispatcher) dispatch(ctx context.Context, runID string, skipLoc
 // another dispatcher holds, and returns how many it handed to delivery. A
 // run that fails is logged and left for the next tick.
 func (d *DeliveryDispatcher) DispatchDueEmailDeliveryRuns(ctx context.Context, limit int) (int, error) {
-	runs, err := d.runs.DueEmailDeliveryRuns(ctx, d.db, limit)
+	runs, err := d.runs.DueEmailDeliveryRuns(ctx, d.joined(d.db), limit)
 	if err != nil {
 		return 0, err
 	}
@@ -73,22 +88,22 @@ func (d *DeliveryDispatcher) DispatchDueEmailDeliveryRuns(ctx context.Context, l
 // hands those with pending recipients back to bulk delivery, returning how
 // many it resumed. A run that fails is logged and left for the next tick.
 func (d *DeliveryDispatcher) ResumeActiveEmailDeliveryRuns(ctx context.Context, limit int) (int, error) {
-	runs, err := d.runs.ActiveEmailDeliveryRuns(ctx, d.db, limit)
+	runs, err := d.runs.ActiveEmailDeliveryRuns(ctx, d.joined(d.db), limit)
 	if err != nil {
 		return 0, err
 	}
 	resumed := 0
 	for _, run := range runs {
-		if !d.runs.ResumableEmailDeliveryRun(ctx, d.db, run) {
+		if !d.runs.ResumableEmailDeliveryRun(ctx, d.joined(d.db), run) {
 			continue
 		}
 		if err := d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			return d.runs.MaterializeEmailDeliveryRun(ctx, tx, run.ID)
+			return d.runs.MaterializeEmailDeliveryRun(ctx, d.joined(tx), run.ID)
 		}); err != nil {
 			slog.ErrorContext(ctx, "failed to recover campaign delivery materialization", "run_id", run.ID, failurecause.Attr(err))
 			continue
 		}
-		if d.runs.PublishResumedEmailDeliveryRun(ctx, d.db, run.ID) {
+		if d.runs.PublishResumedEmailDeliveryRun(ctx, d.joined(d.db), run.ID) {
 			resumed++
 		}
 	}

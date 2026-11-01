@@ -4,12 +4,13 @@ package audience
 import (
 	"context"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
 	"gorm.io/gorm"
 
 	audiencedomain "github.com/echovisionlab/geul-api/internal/audience"
 	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/campaign"
 )
 
 // RecipientCounter adapts the delivery-owned recipient selection query to the
@@ -30,5 +31,5 @@ func (c RecipientCounter) Count(
 	segment audiencedomain.Segment,
 ) (int64, error) {
 	row := audiencepostgres.SegmentRow(segment)
-	return campaign.CountBulkEmailRecipientsForAudienceSegment(ctx, c.db, c.spiceDB, &row)
+	return campaignpostgres.CountBulkEmailRecipientsForAudienceSegment(ctx, c.db, c.spiceDB, &row)
 }

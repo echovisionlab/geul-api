@@ -3,7 +3,7 @@ package memberadapter
 import (
 	"context"
 
-	"github.com/echovisionlab/geul-api/internal/campaign"
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
 	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -13,8 +13,8 @@ import (
 type ContributorMembers struct{}
 
 var (
-	_ campaign.ContributorMembers    = ContributorMembers{}
-	_ emailauthoringpostgres.Members = ContributorMembers{}
+	_ campaignpostgres.ContributorMembers = ContributorMembers{}
+	_ emailauthoringpostgres.Members      = ContributorMembers{}
 )
 
 // LockMembers takes a KEY SHARE lock on each existing Member of memberIDs,

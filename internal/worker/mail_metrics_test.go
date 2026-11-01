@@ -8,7 +8,6 @@ import (
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 func TestMailTemplateClassUsesEmailAuthoringClassifier(t *testing.T) {
@@ -50,5 +49,5 @@ func TestMailMetricsRecordMethodsTolerateNilCounters(t *testing.T) {
 	metrics.RecordSendAttempt(ctx, "campaign:announcement")
 	metrics.RecordSendResult(ctx, "campaign:announcement", "success")
 	metrics.RecordRecipientStatus(ctx, "campaign:announcement", campaign.CampaignDeliveryRecipientStatusSent)
-	metrics.RecordRunDuration(ctx, model.CampaignDeliveryRun{}, time.Now().UTC())
+	metrics.RecordRunDuration(ctx, campaign.DeliveryRun{}, time.Now().UTC())
 }

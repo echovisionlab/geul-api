@@ -1,0 +1,5 @@
+package campaign
+
+var TranslationJobFence = campaignTranslationJobApplyFence
+var EditorContentFence = campaignEmailContentFence
+var LocaleContentChange = campaignContent.LocaleContentChange

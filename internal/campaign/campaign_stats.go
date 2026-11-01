@@ -2,12 +2,8 @@ package campaign
 
 import (
 	"context"
-	"strings"
-
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -18,7 +14,7 @@ type GetCampaignStatsQuery struct {
 
 // GetCampaignStats returns the latest delivery run's counts, or the stored
 // sent count before any run.
-func (s *Service) GetCampaignStats(ctx context.Context, query GetCampaignStatsQuery) (*managev1.CampaignStats, error) {
+func (s *Service) GetCampaignStats(ctx context.Context, query GetCampaignStatsQuery) (*CampaignStats, error) {
 	can, canErr := policyv1.Campaign.View(query.ID)
 	if err := s.requireAdminCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -30,8 +26,8 @@ func (s *Service) GetCampaignStats(ctx context.Context, query GetCampaignStatsQu
 	if err != nil {
 		return nil, err
 	}
-	stats := &managev1.CampaignStats{TotalSent: int32(campaign.SentCount)}
-	deliveryStats, err := s.emailDelivery.LatestStats(ctx, s.db, query.ID)
+	stats := &CampaignStats{TotalSent: int32(campaign.SentCount)}
+	deliveryStats, err := s.deliveryStats(ctx, query.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -56,7 +52,7 @@ type GetCampaignRecipientsQuery struct {
 
 // CampaignRecipientPage is one page of a Campaign's recipients.
 type CampaignRecipientPage struct {
-	Recipients []*managev1.CampaignRecipient
+	Recipients []CampaignDeliveryRecipient
 	Total      int32
 }
 
@@ -75,38 +71,32 @@ func (s *Service) GetCampaignRecipients(ctx context.Context, query GetCampaignRe
 		limit = 50
 	}
 	limit = min(limit, 1000)
-	page, err := s.emailDelivery.ListRecipients(ctx, s.db, query.ID, limit, int(query.Offset))
+	page, err := s.recipientPage(ctx, query.ID, limit, int(query.Offset))
 	if err != nil {
 		return CampaignRecipientPage{}, err
 	}
 	if page.Total == 0 && len(page.Recipients) == 0 {
 		return CampaignRecipientPage{}, nil
 	}
-	recipients := make([]*managev1.CampaignRecipient, len(page.Recipients))
-	for i, row := range page.Recipients {
-		recipients[i] = campaignRecipientMessage(row)
-	}
+	recipients := make([]CampaignDeliveryRecipient, len(page.Recipients))
+	copy(recipients, page.Recipients)
 	if err := s.runtime.AppendCampaignRecipientsAccess(ctx, query.ID); err != nil {
 		return CampaignRecipientPage{}, err
 	}
 	return CampaignRecipientPage{Recipients: recipients, Total: int32(page.Total)}, nil
 }
 
-func campaignRecipientMessage(row CampaignDeliveryRecipient) *managev1.CampaignRecipient {
-	recipient := &managev1.CampaignRecipient{
-		Email:    row.Email,
-		Status:   row.Status,
-		MemberId: strings.TrimSpace(row.MemberID),
-	}
-	if row.TerminalAt != nil {
-		recipient.TerminalAt = timestamppb.New(*row.TerminalAt)
-		if row.Status == CampaignDeliveryRecipientStatusSent ||
-			row.Status == CampaignDeliveryRecipientStatusDelivered {
-			recipient.SentAt = timestamppb.New(*row.TerminalAt)
-		}
-	}
-	if row.ErrorType != nil {
-		recipient.ErrorType = row.ErrorType
-	}
-	return recipient
+func (s *Service) deliveryStats(ctx context.Context, id string) (*CampaignDeliveryStats, error) {
+	var result *CampaignDeliveryStats
+	err := s.units.Read(ctx, func(store Store) error { var err error; result, err = store.LatestStats(ctx, id); return err })
+	return result, err
+}
+func (s *Service) recipientPage(ctx context.Context, id string, limit, offset int) (CampaignDeliveryRecipientPage, error) {
+	var result CampaignDeliveryRecipientPage
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		result, err = store.ListRecipients(ctx, id, limit, offset)
+		return err
+	})
+	return result, err
 }

@@ -2,27 +2,18 @@ package campaign
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -47,7 +38,7 @@ const (
 	CampaignDeliveryRecipientStatusComplained      = "complained"
 )
 
-type campaignDeliveryCompletionCounts struct {
+type DeliveryCompletionCounts struct {
 	Total         int64
 	Pending       int64
 	Sent          int64
@@ -63,10 +54,10 @@ type campaignDeliveryCompletionCounts struct {
 type campaignDeliveryCompletionDecision struct {
 	Complete       bool
 	RunStatus      string
-	CampaignStatus string
+	CampaignStatus CampaignStatus
 }
 
-func decideEmailDeliveryCompletion(counts campaignDeliveryCompletionCounts, targetCount int, runKind string) campaignDeliveryCompletionDecision {
+func decideEmailDeliveryCompletion(counts DeliveryCompletionCounts, targetCount int, runKind string) campaignDeliveryCompletionDecision {
 	if counts.Total < int64(targetCount) ||
 		counts.Pending > 0 {
 		return campaignDeliveryCompletionDecision{}
@@ -94,59 +85,38 @@ func decideEmailDeliveryCompletion(counts campaignDeliveryCompletionCounts, targ
 	}
 }
 
-func campaignStatusForCompletedRun(runStatus string, runKind string) string {
+func campaignStatusForCompletedRun(runStatus string, runKind string) CampaignStatus {
 	if runKind != EmailDeliveryRunKindCampaign {
 		return ""
 	}
 	switch runStatus {
 	case CampaignDeliveryRunStatusSent:
-		return string(model.CampaignStatusSent)
+		return CampaignStatusSent
 	case CampaignDeliveryRunStatusFailed:
-		return string(model.CampaignStatusFailed)
+		return CampaignStatusFailed
 	default:
 		return ""
 	}
 }
 
 type CampaignBulkPublisher interface {
-	EnqueueProtobufWithExecutor(context.Context, eventpkg.DBTX, string, string, proto.Message) error
 	PublishSendBulkEmail(ctx context.Context, job *managev1.SendBulkEmailBatchEvent) error
 }
 
 // CampaignDeliveryDispatcher moves due delivery runs to sending and resumes
 // active ones. The delivery worker has no request principal to run
 // mutation.Run for, so the dispatcher opens no transaction: its caller
-// (internal/adapters/campaign) passes the database for reads and one
-// transaction per run for each write.
+// (internal/adapters/campaign) passes a Joined Store for each read and
+// transaction. Each write commits in the caller's transaction.
 type CampaignDeliveryDispatcher struct {
-	spiceDB     *auth.SpiceDBClient
-	publisher   CampaignBulkPublisher
-	auditWriter domainaudit.Appender
-	legalNotice LegalNoticeDeliveryPort
-	// now is the dispatcher's clock: which runs are due and when they start.
-	now func() time.Time
+	publisher CampaignBulkPublisher
+	now       func() time.Time
 }
 
-type CampaignDeliveryDispatcherOption func(*CampaignDeliveryDispatcher)
-
-func WithLegalNoticeDeliveryPort(port LegalNoticeDeliveryPort) CampaignDeliveryDispatcherOption {
-	return func(dispatcher *CampaignDeliveryDispatcher) {
-		dispatcher.legalNotice = port
-	}
-}
-
-// NewAuditedCampaignDeliveryDispatcher is used by API and worker production
-// paths.
-func NewAuditedCampaignDeliveryDispatcher(spiceDB *auth.SpiceDBClient, publisher CampaignBulkPublisher, auditWriter domainaudit.Appender, options ...CampaignDeliveryDispatcherOption) *CampaignDeliveryDispatcher {
-	if auditWriter == nil {
-		panic("CampaignDeliveryDispatcher: audit writer is required")
-	}
-	dependencycheck.MustNotNil(spiceDB, "spiceDB")
-	dispatcher := &CampaignDeliveryDispatcher{spiceDB: spiceDB, publisher: publisher, auditWriter: auditWriter, now: time.Now}
-	for _, option := range options {
-		option(dispatcher)
-	}
-	return dispatcher
+func NewCampaignDeliveryDispatcher(publisher CampaignBulkPublisher, now func() time.Time) *CampaignDeliveryDispatcher {
+	dependencycheck.MustNotNil(publisher, "publisher")
+	dependencycheck.MustNotNil(now, "clock")
+	return &CampaignDeliveryDispatcher{publisher: publisher, now: now}
 }
 
 // enqueueStartedCampaignDeliveryRun records the first email.campaign command
@@ -155,9 +125,8 @@ func NewAuditedCampaignDeliveryDispatcher(spiceDB *auth.SpiceDBClient, publisher
 // handoff commits.
 func enqueueStartedCampaignDeliveryRun(
 	ctx context.Context,
-	tx *gorm.DB,
-	publisher CampaignBulkPublisher,
-	run *model.CampaignDeliveryRun,
+	tx Store,
+	run *DeliveryRun,
 	now time.Time,
 ) error {
 	if run == nil || strings.TrimSpace(run.ID) == "" {
@@ -168,12 +137,12 @@ func enqueueStartedCampaignDeliveryRun(
 	}
 	run.Status = CampaignDeliveryRunStatusSending
 	run.StartedAt = &now
-	if err := tx.Model(&model.CampaignDeliveryRun{}).Where("id = ? AND status = ?", run.ID, CampaignDeliveryRunStatusScheduled).Updates(structured.Fields{
-		"status": run.Status, "started_at": now, "target_count": run.TargetCount,
-	}).Error; err != nil {
+
+	if err := tx.StartRun(ctx, *run, now); err != nil {
 		return err
 	}
-	if err := publishCampaignDurableProtoInTransaction(ctx, publisher, tx, eventpkg.QueueEmailCampaign, run.ID, newEmailDeliveryBulkJob(run.ID)); err != nil {
+
+	if err := tx.Enqueue(ctx, eventpkg.QueueEmailCampaign, run.ID, newEmailDeliveryBulkJob(run.ID)); err != nil {
 		return fmt.Errorf("enqueue email campaign %s: %w", run.ID, err)
 	}
 	return nil
@@ -181,44 +150,31 @@ func enqueueStartedCampaignDeliveryRun(
 
 // DueEmailDeliveryRuns lists up to limit scheduled runs whose time has come,
 // earliest first.
-func (d *CampaignDeliveryDispatcher) DueEmailDeliveryRuns(ctx context.Context, db *gorm.DB, limit int) ([]model.CampaignDeliveryRun, error) {
+func (d *CampaignDeliveryDispatcher) DueEmailDeliveryRuns(ctx context.Context, joined Joined, limit int) ([]DeliveryRun, error) {
 	if limit <= 0 {
 		limit = 25
 	}
-	var runs []model.CampaignDeliveryRun
-	err := db.WithContext(ctx).
-		Where("status = ? AND scheduled_at <= ?", CampaignDeliveryRunStatusScheduled, d.now()).
-		Order("scheduled_at ASC, id ASC").
-		Limit(limit).
-		Find(&runs).Error
-	return runs, err
+	return joined.Store.DueRuns(ctx, d.now(), limit)
 }
 
 // ActiveEmailDeliveryRuns lists up to limit sending runs that have not
 // completed, least recently updated first.
-func (*CampaignDeliveryDispatcher) ActiveEmailDeliveryRuns(ctx context.Context, db *gorm.DB, limit int) ([]model.CampaignDeliveryRun, error) {
+func (*CampaignDeliveryDispatcher) ActiveEmailDeliveryRuns(ctx context.Context, joined Joined, limit int) ([]DeliveryRun, error) {
 	if limit <= 0 {
 		limit = 25
 	}
-	var runs []model.CampaignDeliveryRun
-	err := db.WithContext(ctx).
-		Where("status = ?", CampaignDeliveryRunStatusSending).
-		Where("completed_at IS NULL").
-		Order("updated_at ASC, id ASC").
-		Limit(limit).
-		Find(&runs).Error
-	return runs, err
+	return joined.Store.ActiveRuns(ctx, limit)
 }
 
 // ResumableEmailDeliveryRun reports whether the active run's frozen target
 // still reconstructs, and logs why when it does not.
-func (*CampaignDeliveryDispatcher) ResumableEmailDeliveryRun(ctx context.Context, db *gorm.DB, run model.CampaignDeliveryRun) bool {
-	target, err := loadCampaignDeliveryTarget(ctx, db, run)
+func (*CampaignDeliveryDispatcher) ResumableEmailDeliveryRun(ctx context.Context, joined Joined, run DeliveryRun) bool {
+	target, err := loadCampaignDeliveryTarget(ctx, joined.Store, run)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to load campaign delivery target", "run_id", run.ID, failurecause.Attr(err))
 		return false
 	}
-	if _, err := campaignDeliveryTargetRecipientSelection(target); err != nil {
+	if err := ValidateCampaignDeliveryTarget(target); err != nil {
 		slog.ErrorContext(ctx, "failed to reconstruct campaign delivery target", "run_id", run.ID, failurecause.Attr(err))
 		return false
 	}
@@ -226,15 +182,15 @@ func (*CampaignDeliveryDispatcher) ResumableEmailDeliveryRun(ctx context.Context
 }
 
 // MaterializeEmailDeliveryRun materializes the run's recipients in tx.
-func (d *CampaignDeliveryDispatcher) MaterializeEmailDeliveryRun(ctx context.Context, tx *gorm.DB, runID string) error {
-	return MaterializeCampaignDeliveryRun(ctx, tx, d.spiceDB, runID)
+func (d *CampaignDeliveryDispatcher) MaterializeEmailDeliveryRun(ctx context.Context, joined Joined, runID string) error {
+	return MaterializeCampaignDeliveryRun(ctx, joined, runID)
 }
 
 // PublishResumedEmailDeliveryRun hands a materialized run that still has
 // pending recipients back to bulk delivery. It reports whether it did, and
 // logs a failure.
-func (d *CampaignDeliveryDispatcher) PublishResumedEmailDeliveryRun(ctx context.Context, db *gorm.DB, runID string) bool {
-	pending, err := HasPendingCampaignDeliveryRecipients(ctx, db, runID)
+func (d *CampaignDeliveryDispatcher) PublishResumedEmailDeliveryRun(ctx context.Context, joined Joined, runID string) bool {
+	pending, err := HasPendingCampaignDeliveryRecipients(ctx, joined, runID)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to inspect pending campaign recipients", "run_id", runID, failurecause.Attr(err))
 		return false
@@ -253,13 +209,10 @@ func (d *CampaignDeliveryDispatcher) PublishResumedEmailDeliveryRun(ctx context.
 // its first batch beside it; skipLocked passes over a run another
 // dispatcher holds. It reports whether the run was handed to delivery,
 // which holds once tx commits.
-func (d *CampaignDeliveryDispatcher) DispatchEmailDeliveryRun(ctx context.Context, tx *gorm.DB, runID string, skipLocked bool) (bool, error) {
-	tx = tx.WithContext(ctx)
-	lockOptions := ""
-	if skipLocked {
-		lockOptions = clause.LockingOptionsSkipLocked
-	}
-	locked, skipped, err := lockEmailDeliveryRunForMutation(ctx, tx, runID, lockOptions)
+func (d *CampaignDeliveryDispatcher) DispatchEmailDeliveryRun(ctx context.Context, joined Joined, runID string, skipLocked bool) (bool, error) {
+	tx := joined.Store
+
+	locked, skipped, err := tx.LockDeliveryRun(ctx, runID, skipLocked)
 	if err != nil || skipped {
 		return false, err
 	}
@@ -275,26 +228,23 @@ func (d *CampaignDeliveryDispatcher) DispatchEmailDeliveryRun(ctx context.Contex
 	if err != nil {
 		return false, err
 	}
-	selection, err := campaignDeliveryTargetRecipientSelection(target)
-	if err != nil {
-		return false, err
-	}
-	count, err := countBulkEmailRecipients(ctx, tx, d.spiceDB, selection)
+
+	count, err := tx.CountRecipients(ctx, target)
 	if err != nil {
 		return false, err
 	}
 	switch strings.TrimSpace(run.RunKind) {
 	case EmailDeliveryRunKindCampaign:
-		err = transitionCampaignDeliveryRunToDispatch(ctx, tx, d.auditWriter, locked.Campaign, &run, count, now)
+		err = transitionCampaignDeliveryRunToDispatch(ctx, joined, locked.Campaign, &run, count, now)
 	case EmailDeliveryRunKindLegalNotice:
-		err = transitionLegalNoticeDeliveryRunToDispatch(ctx, tx, d.legalNotice, &run, count, now)
+		err = transitionLegalNoticeDeliveryRunToDispatch(ctx, tx, &run, count, now)
 	default:
 		err = fmt.Errorf("unsupported email delivery run kind: %s", run.RunKind)
 	}
 	if err != nil || run.Status != CampaignDeliveryRunStatusSending {
 		return false, err
 	}
-	if err := publishCampaignDurableProtoInTransaction(ctx, d.publisher, tx, eventpkg.QueueEmailCampaign, run.ID, newEmailDeliveryBulkJob(run.ID)); err != nil {
+	if err := tx.Enqueue(ctx, eventpkg.QueueEmailCampaign, run.ID, newEmailDeliveryBulkJob(run.ID)); err != nil {
 		return false, fmt.Errorf("enqueue email campaign %s: %w", run.ID, err)
 	}
 	return true, nil
@@ -302,66 +252,58 @@ func (d *CampaignDeliveryDispatcher) DispatchEmailDeliveryRun(ctx context.Contex
 
 func transitionCampaignDeliveryRunToDispatch(
 	ctx context.Context,
-	tx *gorm.DB,
-	auditWriter domainaudit.Appender,
-	lockedCampaign *model.Campaign,
-	run *model.CampaignDeliveryRun,
+	joined Joined,
+	lockedCampaign *Campaign,
+	run *DeliveryRun,
 	count int64,
 	now time.Time,
 ) error {
+	tx := joined.Store
 	campaignID := strings.TrimSpace(ptrStringValue(run.CampaignID))
 	if campaignID == "" {
 		return fmt.Errorf("campaign delivery run missing campaign id")
 	}
 	if count == 0 {
-		if err := tx.Model(&model.CampaignDeliveryRun{}).Where("id = ?", run.ID).Updates(structured.Fields{
-			"status": CampaignDeliveryRunStatusFailed, "last_error": "campaign has no recipients", "completed_at": now,
-		}).Error; err != nil {
+
+		if err := tx.FailRun(ctx, run.ID, now); err != nil {
 			return err
 		}
+
 		if lockedCampaign == nil || lockedCampaign.ID != campaignID {
 			return fmt.Errorf("campaign delivery run campaign lock is missing")
 		}
 		previousStatus := lockedCampaign.Status
-		if err := tx.Model(lockedCampaign).Update("status", string(model.CampaignStatusFailed)).Error; err != nil {
+		if err := tx.UpdateCampaignStatus(ctx, *lockedCampaign, CampaignStatusFailed); err != nil {
 			return err
 		}
-		lockedCampaign.Status = string(model.CampaignStatusFailed)
+		lockedCampaign.Status = CampaignStatusFailed
 		run.Status = CampaignDeliveryRunStatusFailed
 		run.CompletedAt = &now
-		return appendCampaignTerminalStatusAudit(ctx, tx, auditWriter, campaignID, campaignAuditState(previousStatus), sharedtelemetry.AuditStateFailed)
+		return appendCampaignTerminalStatusAudit(ctx, joined, campaignID, campaignAuditState(previousStatus), sharedtelemetry.AuditStateFailed)
 	}
 	run.Status = CampaignDeliveryRunStatusSending
 	run.StartedAt = &now
 	run.TargetCount = int(count)
-	if err := tx.Model(&model.CampaignDeliveryRun{}).Where("id = ?", run.ID).Updates(structured.Fields{
-		"status": run.Status, "started_at": now, "target_count": run.TargetCount,
-	}).Error; err != nil {
+
+	if err := tx.DispatchRun(ctx, *run, now); err != nil {
 		return err
 	}
-	result := tx.Model(&model.Campaign{}).
-		Where("id = ? AND status IN ?", campaignID, []string{
-			string(model.CampaignStatusScheduled),
-			string(model.CampaignStatusSending),
-		}).
-		Updates(structured.Fields{
-			"status": string(model.CampaignStatusSending), "scheduled_at": nil,
-			"sent_at": nil, "sent_count": 0, "recipient_scope": run.TargetRecipientScope,
-		})
-	if result.Error != nil {
-		return result.Error
+	changed, err := tx.DispatchCampaign(ctx, campaignID, run.TargetRecipientScope)
+	if err != nil {
+		return err
 	}
-	if result.RowsAffected == 0 {
+
+	if !changed {
 		return fmt.Errorf("campaign delivery lifecycle is no longer dispatchable")
 	}
+
 	return nil
 }
 
 func transitionLegalNoticeDeliveryRunToDispatch(
 	ctx context.Context,
-	tx *gorm.DB,
-	legalNotice LegalNoticeDeliveryPort,
-	run *model.CampaignDeliveryRun,
+	tx Store,
+	run *DeliveryRun,
 	count int64,
 	now time.Time,
 ) error {
@@ -369,111 +311,16 @@ func transitionLegalNoticeDeliveryRunToDispatch(
 	if count == 0 {
 		run.Status = CampaignDeliveryRunStatusSkipped
 		run.CompletedAt = &now
-		return tx.Model(&model.CampaignDeliveryRun{}).Where("id = ?", run.ID).Updates(structured.Fields{
-			"status": run.Status, "target_count": run.TargetCount, "completed_at": now,
-		}).Error
+
+		return tx.DispatchRun(ctx, *run, now)
 	}
-	if legalNotice == nil {
-		return domainerr.DependencyUnavailable("Legal notice delivery")
-	}
-	if err := legalNotice.PrepareAutomaticPreviewShareLink(ctx, tx, *run, now); err != nil {
+	if err := tx.PrepareLegalNoticePreview(ctx, *run, now); err != nil {
 		return err
 	}
+
 	run.Status = CampaignDeliveryRunStatusSending
 	run.StartedAt = &now
-	return tx.Model(&model.CampaignDeliveryRun{}).Where("id = ?", run.ID).Updates(structured.Fields{
-		"status": run.Status, "started_at": now, "target_count": run.TargetCount,
-	}).Error
-}
-
-type lockedEmailDeliveryRun struct {
-	Run      model.CampaignDeliveryRun
-	Campaign *model.Campaign
-}
-
-// lockEmailDeliveryRunForMutation enforces the campaign -> run lock order for
-// every transaction that mutates both rows. The preliminary run read only
-// resolves the immutable campaign relationship; it does not acquire a row
-// lock.
-func lockEmailDeliveryRunForMutation(
-	ctx context.Context,
-	tx *gorm.DB,
-	runID string,
-	lockOptions string,
-) (lockedEmailDeliveryRun, bool, error) {
-	runID = strings.TrimSpace(runID)
-	if runID == "" {
-		return lockedEmailDeliveryRun{}, false, gorm.ErrRecordNotFound
-	}
-
-	var identity struct {
-		RunKind    string  `gorm:"column:run_kind"`
-		CampaignID *string `gorm:"column:campaign_id"`
-	}
-	if err := tx.WithContext(ctx).
-		Model(&model.CampaignDeliveryRun{}).
-		Select("run_kind", "campaign_id").
-		First(&identity, "id = ?", runID).Error; err != nil {
-		return lockedEmailDeliveryRun{}, false, err
-	}
-
-	lock := clause.Locking{Strength: clause.LockingStrengthUpdate, Options: lockOptions}
-	locked := lockedEmailDeliveryRun{}
-	campaignID := strings.TrimSpace(ptrStringValue(identity.CampaignID))
-	campaign, skipped, err := lockEmailDeliveryCampaign(
-		ctx,
-		tx,
-		lock,
-		identity.RunKind,
-		campaignID,
-		lockOptions,
-	)
-	if err != nil || skipped {
-		return lockedEmailDeliveryRun{}, skipped, err
-	}
-	locked.Campaign = campaign
-
-	if err := tx.WithContext(ctx).
-		Clauses(lock).
-		First(&locked.Run, "id = ?", runID).Error; err != nil {
-		if lockOptions != "" && errors.Is(err, gorm.ErrRecordNotFound) {
-			return lockedEmailDeliveryRun{}, true, nil
-		}
-		return lockedEmailDeliveryRun{}, false, err
-	}
-	if locked.Run.RunKind != identity.RunKind ||
-		strings.TrimSpace(ptrStringValue(locked.Run.CampaignID)) != campaignID {
-		return lockedEmailDeliveryRun{}, false, fmt.Errorf(
-			"email delivery run relationship changed while acquiring locks",
-		)
-	}
-	return locked, false, nil
-}
-
-func lockEmailDeliveryCampaign(
-	ctx context.Context,
-	tx *gorm.DB,
-	lock clause.Locking,
-	runKind string,
-	campaignID string,
-	lockOptions string,
-) (*model.Campaign, bool, error) {
-	if runKind != EmailDeliveryRunKindCampaign {
-		return nil, false, nil
-	}
-	if campaignID == "" {
-		return nil, false, fmt.Errorf("campaign delivery run missing campaign id")
-	}
-
-	var campaign model.Campaign
-	err := tx.WithContext(ctx).Clauses(lock).First(&campaign, "id = ?", campaignID).Error
-	if err == nil {
-		return &campaign, false, nil
-	}
-	if lockOptions != "" && errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, true, nil
-	}
-	return nil, false, err
+	return tx.DispatchRun(ctx, *run, now)
 }
 
 func newEmailDeliveryBulkJob(runID string) *managev1.SendBulkEmailBatchEvent {

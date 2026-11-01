@@ -1,158 +1,103 @@
 //go:build integration
 
-package campaign
+package campaign_test
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/campaign"
+	"github.com/echovisionlab/geul-api/internal/campaign/campaigntest"
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
-	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
+// Real concurrent workers must produce one lease owner, and a stale worker must not finalize it.
 func TestCampaignDeliveryRecipientClaimFencesConcurrentAndExpiredWorkersIntegration(t *testing.T) {
 	t.Parallel()
-	stack := newCampaignLocalKratosStack(t)
-	db := openCampaignIntegrationDB(t, stack)
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := campaignMemberContext(t, admin.AuthUserInfo())
-	contentBlocks := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)
-	var campaignID, runID, identityID string
-	t.Cleanup(func() {
-		cleanupConcurrentCampaignDeliveryFixture(t, db, runID, campaignID, identityID, "")
+	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	units := mutation.Postgres(db, func(tx *gorm.DB) campaign.Store {
+		return campaignpostgres.NewStore(tx, campaignpostgres.Ports{ContentBlocks: testutil.NewEmailContentBlockStore(t, nil)})
 	})
-	ensureBulkEmailAudienceKratosIdentityColumns(t, db)
-
-	now := time.Now().UTC()
-	campaignService := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, nil), SpiceDB: stack.SpiceDBClient, ContentBlocks: contentBlocks}))
-	created, err := campaignService.CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{
-		Name:         "Campaign delivery claim " + uuid.NewString(),
-		Subject:      "Campaign delivery claim",
-		SourceLocale: "en",
-		Target:       campaignAllTarget(),
-	}))
-	require.NoError(t, err)
-	campaignID = created.Msg.Campaign.Id
-	publishCampaignSourceBlocksForIntegration(t, db, stack.SpiceDBClient, campaignID, email.StripHTML("<p>Claim test</p>"))
-	require.NoError(t, db.Model(&model.Campaign{}).
-		Where("id = ?", campaignID).
-		Updates(structured.Fields{"status": managev1.CampaignStatus_CAMPAIGN_STATUS_SENDING.String()}).Error)
-	var campaign model.Campaign
-	require.NoError(t, db.First(&campaign, "id = ?", campaignID).Error)
-
-	identityID = seedBulkEmailAudienceIdentity(t, db, "claim-"+uuid.NewString()+"@example.test", now)
-	memberID := memberIDForCampaignLockTest(t, db, identityID)
-	var run *model.CampaignDeliveryRun
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		ref, createErr := createCampaignDeliveryRun(
-			ctx,
-			tx,
-			campaign,
-			now,
-			0,
-			campaignAudienceTargets{},
-			contentBlocks,
-			nil,
-			NewCampaignDeliveryRuntime(stack.SpiceDBClient, nil),
-		)
-		if createErr != nil {
-			return createErr
-		}
-		var persisted model.CampaignDeliveryRun
-		if err := tx.First(&persisted, "id = ?", ref.ID).Error; err != nil {
-			return err
-		}
-		run = &persisted
-		return tx.Model(&model.CampaignDeliveryRun{}).
-			Where("id = ?", ref.ID).
-			Updates(structured.Fields{"status": CampaignDeliveryRunStatusSending, "target_count": 1, "started_at": now}).Error
-	}))
-	require.NotNil(t, run)
-	runID = run.ID
-	recipient := model.CampaignDeliveryRecipient{
-		ID:                   uuid.NewString(),
-		RunID:                run.ID,
-		RecipientEmail:       identityEmailForCampaignLockTest(t, db, identityID),
-		IdentityID:           &identityID,
-		MemberID:             &memberID,
-		RecipientContextType: BulkEmailContextNewsletterSubscription,
-		Status:               CampaignDeliveryRecipientStatusPending,
-		CreatedAt:            now,
-		UpdatedAt:            now,
+	h := campaigntest.Harness{Harness: mutationtest.PostgresHarness(db, units)}
+	c := campaigntest.SeedCampaign(t, h)
+	run := campaigntest.SeedRun(t, h, c, "sending")
+	identityID := uuid.NewString()
+	require.NoError(t, db.Exec("INSERT INTO account_identity (id) VALUES (?)", identityID).Error)
+	member := model.Member{Nickname: "Claim worker", AccountIdentityID: &identityID}
+	require.NoError(t, db.Create(&member).Error)
+	r := model.CampaignDeliveryRecipient{RunID: run.ID, RecipientEmail: "claim@example.test", MemberID: &member.ID, IdentityID: &identityID, RecipientContextType: campaign.BulkEmailContextAccountCurrent, Status: "pending"}
+	require.NoError(t, db.Create(&r).Error)
+	joined := func(tx *gorm.DB) campaign.Joined {
+		return campaignpostgres.Bind(tx, campaignpostgres.Ports{}, &audittest.Recorder{})
 	}
-	recipient.NormalizedRecipientEmail = email.NormalizeAddressForDelivery(recipient.RecipientEmail)
-	require.NoError(t, db.Create(&recipient).Error)
-
-	claimOne, claimTwo := uuid.NewString(), uuid.NewString()
-	start := make(chan struct{})
-	type claimResult struct {
+	type result struct {
 		id      string
 		claimed bool
 		err     error
 	}
-	results := make(chan claimResult, 2)
-	var workers sync.WaitGroup
-	workers.Add(2)
-	for _, claimID := range []string{claimOne, claimTwo} {
-		claimID := claimID
+	start := make(chan struct{})
+	done := make(chan result, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
 		go func() {
-			defer workers.Done()
+			defer wg.Done()
 			<-start
-			claimed, claimErr := claimRecipient(ctx, db, recipient.ID, claimID)
-			results <- claimResult{id: claimID, claimed: claimed, err: claimErr}
+			id := uuid.NewString()
+			claimed := false
+			err := db.Transaction(func(tx *gorm.DB) error {
+				var err error
+				claimed, err = campaign.ClaimCampaignDeliveryRecipient(t.Context(), joined(tx), r.ID, id)
+				return err
+			})
+			done <- result{id, claimed, err}
 		}()
 	}
 	close(start)
-	workers.Wait()
-	close(results)
+	wg.Wait()
+	close(done)
 	winner := ""
-	winners := 0
-	for result := range results {
-		require.NoError(t, result.err)
-		if result.claimed {
-			winner = result.id
-			winners++
+	n := 0
+	for got := range done {
+		require.NoError(t, got.err)
+		if got.claimed {
+			n++
+			winner = got.id
 		}
 	}
-	require.Equal(t, 1, winners)
-	pending, err := ListPendingCampaignDeliveryRecipients(ctx, db, run.ID, "", 10)
+	require.Equal(t, 1, n)
+	pending, err := campaign.ListPendingCampaignDeliveryRecipients(t.Context(), joined(db), run.ID, "", 10)
 	require.NoError(t, err)
-	require.Empty(t, pending, "an unexpired claim must keep the recipient out of pending dispatch")
-	require.ErrorIs(t, markRecipientResult(
-		ctx, db, &audittest.Recorder{}, recipient.ID, CampaignDeliveryRecipientStatusSent, "provider-message", "", nil,
-	), ErrCampaignDeliveryRecipientClaimed)
-
-	reclaimedID := uuid.NewString()
-	require.NoError(t, db.Model(&model.CampaignDeliveryRecipient{}).
-		Where("id = ?", recipient.ID).
-		Update("delivery_claim_expires_at", time.Now().UTC().Add(-time.Second)).Error)
-	claimed, err := claimRecipient(ctx, db, recipient.ID, reclaimedID)
-	require.NoError(t, err)
-	require.True(t, claimed, "an expired claim must be reclaimable")
-	require.NoError(t, releaseRecipientClaim(ctx, db, recipient.ID, winner))
-	require.ErrorIs(t, markClaimedRecipientResult(
-		ctx, db, &audittest.Recorder{}, recipient.ID, winner,
-		CampaignDeliveryRecipientStatusPermanentFailed, "", "stale_worker", nil,
-	), ErrCampaignDeliveryClaimLost)
-
-	require.NoError(t, markClaimedRecipientResult(
-		ctx, db, &audittest.Recorder{}, recipient.ID, reclaimedID,
-		CampaignDeliveryRecipientStatusSent, "provider-message", "", nil,
-	))
+	require.Empty(t, pending)
+	require.NoError(t, db.Model(&model.CampaignDeliveryRecipient{}).Where("id = ?", r.ID).Update("delivery_claim_expires_at", time.Now().UTC().Add(-time.Second)).Error)
+	next := uuid.NewString()
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		claimed, err := campaign.ClaimCampaignDeliveryRecipient(t.Context(), joined(tx), r.ID, next)
+		require.True(t, claimed)
+		return err
+	}))
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		return campaign.ReleaseCampaignDeliveryRecipientClaim(t.Context(), joined(tx), r.ID, winner)
+	}))
+	require.ErrorIs(t, db.Transaction(func(tx *gorm.DB) error {
+		return campaign.MarkClaimedCampaignDeliveryRecipientResultWithAudit(t.Context(), joined(tx), r.ID, winner, "permanent_failed", "", "stale_worker", nil)
+	}), campaign.ErrCampaignDeliveryClaimLost)
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		return campaign.MarkClaimedCampaignDeliveryRecipientResultWithAudit(context.Background(), joined(tx), r.ID, next, "sent", "provider-message", "", nil)
+	}))
 	var stored model.CampaignDeliveryRecipient
-	require.NoError(t, db.First(&stored, "id = ?", recipient.ID).Error)
-	require.Equal(t, CampaignDeliveryRecipientStatusSent, stored.Status)
+	require.NoError(t, db.First(&stored, "id = ?", r.ID).Error)
+	require.Equal(t, "sent", stored.Status)
 	require.Nil(t, stored.DeliveryClaimID)
 	require.Nil(t, stored.DeliveryClaimExpiresAt)
 }

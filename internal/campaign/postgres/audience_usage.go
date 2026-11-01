@@ -1,4 +1,4 @@
-package campaign
+package campaignpostgres
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	campaigndomain "github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
@@ -16,7 +17,7 @@ import (
 // target an audience segment, for Audience. Campaign owns those rows.
 type SegmentUsage struct{}
 
-var activeSegmentRunStatuses = []string{CampaignDeliveryRunStatusScheduled, CampaignDeliveryRunStatusSending}
+var activeSegmentRunStatuses = []string{campaigndomain.CampaignDeliveryRunStatusScheduled, campaigndomain.CampaignDeliveryRunStatusSending}
 
 // CountSegmentUsage counts the campaigns and delivery runs of each segment.
 // A segment nothing uses is absent from both maps.
@@ -138,9 +139,9 @@ func (SegmentUsage) ReleaseSegmentForArchive(ctx context.Context, tx *gorm.DB, s
 	}
 	if err := tx.WithContext(ctx).
 		Model(&model.CampaignDeliveryRun{}).
-		Where("audience_segment_id = ? AND status = ?", segmentID, CampaignDeliveryRunStatusScheduled).
+		Where("audience_segment_id = ? AND status = ?", segmentID, campaigndomain.CampaignDeliveryRunStatusScheduled).
 		Updates(structured.Fields{
-			"status":       CampaignDeliveryRunStatusCancelled,
+			"status":       campaigndomain.CampaignDeliveryRunStatusCancelled,
 			"completed_at": now,
 			"updated_at":   now,
 		}).Error; err != nil {

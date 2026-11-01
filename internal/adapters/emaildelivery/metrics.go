@@ -5,9 +5,10 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/campaign"
+
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -82,7 +83,7 @@ func (m Metrics) RecordRecipientStatus(ctx context.Context, templateType string,
 	}
 }
 
-func (m Metrics) RecordRunDuration(ctx context.Context, run model.CampaignDeliveryRun, completedAt time.Time) {
+func (m Metrics) RecordRunDuration(ctx context.Context, run campaign.DeliveryRun, completedAt time.Time) {
 	if m.runDurationHistogram == nil {
 		return
 	}

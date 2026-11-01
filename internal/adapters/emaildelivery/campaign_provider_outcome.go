@@ -3,6 +3,8 @@ package emaildeliveryadapter
 import (
 	"context"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"gorm.io/gorm"
@@ -25,7 +27,7 @@ func (s *CampaignProviderOutcomeStore) ApplySESProviderOutcome(
 ) (emaildelivery.SESProviderOutcomeResult, error) {
 	application, err := campaign.PrepareSESProviderOutcome(
 		ctx,
-		s.db,
+		campaignpostgres.Bind(s.db, campaignpostgres.Ports{}, nil),
 		event.ProviderMessageID,
 		campaign.SESProviderOutcome(event.Outcome),
 		event.EventAt,
@@ -39,7 +41,7 @@ func (s *CampaignProviderOutcomeStore) ApplySESProviderOutcome(
 		var outcome campaign.SESProviderRunOutcome
 		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			var err error
-			outcome, err = application.ApplyToRun(ctx, tx, runID)
+			outcome, err = application.ApplyToRun(ctx, campaignpostgres.Bind(tx, campaignpostgres.Ports{}, nil), runID)
 			return err
 		}); err != nil {
 			return emaildelivery.SESProviderOutcomeResult{}, err

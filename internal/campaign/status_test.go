@@ -3,7 +3,6 @@ package campaign
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -17,11 +16,11 @@ func TestCampaignStatusMappingCoversEveryAPIStatus(t *testing.T) {
 		if status == managev1.CampaignStatus_CAMPAIGN_STATUS_UNSPECIFIED {
 			continue
 		}
-		if mapped := campaignStatusToProto(model.CampaignStatus(name)); mapped != status {
+		if mapped := campaignStatusToProto(CampaignStatus(name)); mapped != status {
 			t.Fatalf("stored %s maps to %s", name, mapped)
 		}
 	}
-	if mapped := campaignStatusToProto(model.CampaignStatus("CAMPAIGN_STATUS_RETIRED")); mapped != managev1.CampaignStatus_CAMPAIGN_STATUS_UNSPECIFIED {
+	if mapped := campaignStatusToProto(CampaignStatus("CAMPAIGN_STATUS_RETIRED")); mapped != managev1.CampaignStatus_CAMPAIGN_STATUS_UNSPECIFIED {
 		t.Fatalf("unknown stored status maps to %s", mapped)
 	}
 }

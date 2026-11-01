@@ -7,24 +7,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
+
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -49,47 +41,30 @@ func normalizeCampaignNameAndSubject(rawName, rawSubject string) (string, string
 // field except CDNDomain and SiteOrigin is required; NewService rejects a
 // missing one.
 type Deps struct {
-	DB            *gorm.DB
-	SpiceDB       *auth.SpiceDBClient
-	ContentBlocks *contentblock.Store
-	// Runtime queues test sends, reserves a Campaign's route, normalizes
-	// locales and records recipient list access.
-	Runtime         Runtime
-	EmailAuthoring  CampaignEmailAuthoringPort
-	EmailRendering  CampaignEmailRenderingPort
-	EmailDelivery   CampaignDeliveryPort
-	AudienceTargets CampaignAudienceTargetPort
-	Audit           domainaudit.Appender
-	// CDNDomain is the asset host of preview render data; empty keeps
-	// asset links relative.
-	CDNDomain string
-	// SiteOrigin is the site origin of previews and test sends; empty
-	// keeps their links on the example host.
+	Units      Units
+	SpiceDB    mutation.Authorizer
+	Fence      identitystate.Fence
+	Audit      domainaudit.Appender
+	Runtime    Runtime
+	Clock      func() time.Time
+	CDNDomain  string
 	SiteOrigin string
 }
 
 func (d Deps) validate() error {
 	return requireDependencies("campaign", map[string]bool{
-		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "ContentBlocks": d.ContentBlocks == nil,
-		"Runtime": d.Runtime == nil, "EmailAuthoring": d.EmailAuthoring == nil, "EmailRendering": d.EmailRendering == nil,
-		"EmailDelivery": d.EmailDelivery == nil, "AudienceTargets": d.AudienceTargets == nil, "Audit": d.Audit == nil,
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil, "Runtime": d.Runtime == nil, "Clock": d.Clock == nil,
 	})
 }
 
-// Service holds the Campaign management use cases. The Connect adapter
-// translates its requests into their commands and queries.
 type Service struct {
-	db              *gorm.DB
-	spiceDB         *auth.SpiceDBClient
-	contentBlocks   *contentblock.Store
-	runtime         Runtime
-	emailAuthoring  CampaignEmailAuthoringPort
-	emailRendering  CampaignEmailRenderingPort
-	emailDelivery   CampaignDeliveryPort
-	audienceTargets CampaignAudienceTargetPort
-	mutations       *mutation.Runner
-	cdnDomain       string
-	siteOrigin      string
+	units      Units
+	spiceDB    mutation.Authorizer
+	runtime    Runtime
+	mutations  *mutation.StoreRunner[Store]
+	now        func() time.Time
+	cdnDomain  string
+	siteOrigin string
 }
 
 // NewService validates deps and returns the Campaign management use cases.
@@ -97,16 +72,11 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
-	return &Service{
-		db: deps.DB, spiceDB: deps.SpiceDB, contentBlocks: deps.ContentBlocks, runtime: deps.Runtime,
-		emailAuthoring: deps.EmailAuthoring, emailRendering: deps.EmailRendering, emailDelivery: deps.EmailDelivery,
-		audienceTargets: deps.AudienceTargets, mutations: mutations,
-		cdnDomain: deps.CDNDomain, siteOrigin: strings.TrimRight(strings.TrimSpace(deps.SiteOrigin), "/"),
-	}, nil
+	return &Service{units: deps.Units, spiceDB: deps.SpiceDB, runtime: deps.Runtime, mutations: mutations, now: deps.Clock, cdnDomain: deps.CDNDomain, siteOrigin: strings.TrimRight(strings.TrimSpace(deps.SiteOrigin), "/")}, nil
 }
 
 // requireAdminCan authorizes an administrator read; an ID that cannot name
@@ -132,15 +102,13 @@ func errCampaignNotFound() error {
 }
 
 // lockCampaign locks the Campaign row for update.
-func lockCampaign(ctx context.Context, tx *gorm.DB, campaignID string, campaign *model.Campaign) error {
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		First(campaign, "id = ?", campaignID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errCampaignNotFound()
-		}
-		return err
+func lockCampaign(ctx context.Context, store Store, campaignID string, campaign *Campaign) error {
+	row, err := store.LockCampaign(ctx, campaignID)
+	if errors.Is(err, ErrCampaignNotFound) {
+		return errCampaignNotFound()
 	}
-	return nil
+	*campaign = row
+	return err
 }
 
 // GetCampaignQuery reads one Campaign.
@@ -149,7 +117,7 @@ type GetCampaignQuery struct {
 }
 
 // GetCampaign returns the Campaign with its source document.
-func (s *Service) GetCampaign(ctx context.Context, query GetCampaignQuery) (*managev1.Campaign, error) {
+func (s *Service) GetCampaign(ctx context.Context, query GetCampaignQuery) (*CampaignDocument, error) {
 	can, canErr := policyv1.Campaign.View(query.ID)
 	if err := s.requireAdminCan(ctx, can, canErr); err != nil {
 		return nil, err
@@ -161,32 +129,16 @@ func (s *Service) GetCampaign(ctx context.Context, query GetCampaignQuery) (*man
 	if err != nil {
 		return nil, err
 	}
-	return s.toProtoCampaign(ctx, &campaign)
+	return s.campaignDocument(ctx, &campaign)
 }
 
-func (s *Service) loadCampaign(ctx context.Context, campaignID string) (model.Campaign, error) {
-	var campaign model.Campaign
-	if err := s.db.WithContext(ctx).First(&campaign, "id = ?", campaignID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return campaign, errCampaignNotFound()
-		}
-		return campaign, err
+func (s *Service) loadCampaign(ctx context.Context, campaignID string) (Campaign, error) {
+	var row Campaign
+	err := s.units.Read(ctx, func(store Store) error { var err error; row, err = store.FindCampaign(ctx, campaignID); return err })
+	if errors.Is(err, ErrCampaignNotFound) {
+		return row, errCampaignNotFound()
 	}
-	return campaign, nil
-}
-
-// campaignSortConfig defines allowed sort fields for campaigns
-var campaignSortConfig = queryutil.SortConfig{
-	AllowedFields: map[string]string{
-		"name":       "name",
-		"subject":    "subject",
-		"status":     "status",
-		"sent_count": "sent_count",
-		"sentCount":  "sent_count", // camelCase alias
-		"created_at": "created_at",
-		"updated_at": "updated_at",
-	},
-	DefaultSort: "created_at DESC, id ASC",
+	return row, err
 }
 
 // ListCampaignsQuery pages through Campaigns for administrators.
@@ -200,8 +152,8 @@ type ListCampaignsQuery struct {
 
 // CampaignPage is one page of Campaigns.
 type CampaignPage struct {
-	Campaigns  []*managev1.Campaign
-	Pagination *commonv1.PaginationResponse
+	Campaigns  []CampaignDocument
+	Pagination Pagination
 }
 
 // ListCampaigns returns one page of Campaigns without their documents.
@@ -210,43 +162,37 @@ func (s *Service) ListCampaigns(ctx context.Context, query ListCampaignsQuery) (
 	if err := s.requireAdminCan(ctx, can, canErr); err != nil {
 		return CampaignPage{}, err
 	}
-	list, err := campaignFilterConfig.ApplyFilters(s.db.WithContext(ctx).Model(&model.Campaign{}), query.Filters)
-	if err != nil {
-		return CampaignPage{}, err
-	}
-	var total int64
-	if err := list.Count(&total).Error; err != nil {
-		return CampaignPage{}, err
-	}
 	limit, offset := int32(20), query.Offset
 	if query.Limit > 0 {
 		limit = query.Limit
 	}
-	list, err = campaignSortConfig.ApplySort(list, query.Sorts)
-	if err != nil {
+	var rows []Campaign
+	var total int64
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		rows, total, err = store.ListCampaigns(ctx, CampaignList{Filters: query.Filters, Sorts: query.Sorts, Limit: int(limit), Offset: int(offset)})
+		return err
+	}); err != nil {
 		return CampaignPage{}, err
 	}
-	var campaigns []model.Campaign
-	if err := list.Limit(int(limit)).Offset(int(offset)).Find(&campaigns).Error; err != nil {
+	var locales map[string]string
+
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		locales, err = loadCampaignSourceLocales(ctx, store, rows)
+		return err
+	}); err != nil {
 		return CampaignPage{}, err
 	}
-	sourceLocales, err := loadCampaignSourceLocales(ctx, s.db, campaigns)
-	if err != nil {
-		return CampaignPage{}, err
-	}
-	protoCampaigns := make([]*managev1.Campaign, len(campaigns))
-	for i := range campaigns {
-		if protoCampaigns[i], err = toProtoCampaignBase(&campaigns[i]); err != nil {
+	result := make([]CampaignDocument, len(rows))
+	for i, row := range rows {
+		if err := validateCampaignRecipientScope(row.RecipientScope); err != nil {
 			return CampaignPage{}, err
 		}
-		protoCampaigns[i].SourceLocale = sourceLocales[campaigns[i].ID]
+		row.SourceLocale = locales[row.ID]
+		result[i] = CampaignDocument{Campaign: row}
 	}
-	return CampaignPage{
-		Campaigns: protoCampaigns,
-		Pagination: &commonv1.PaginationResponse{
-			Total: int32(total), Limit: limit, Offset: offset, HasMore: offset+limit < int32(total),
-		},
-	}, nil
+	return CampaignPage{Campaigns: result, Pagination: Pagination{Total: int32(total), Limit: limit, Offset: offset, HasMore: offset+limit < int32(total)}}, nil
 }
 
 // CreateCampaignTarget is a new Campaign's recipients: every eligible
@@ -269,84 +215,82 @@ type CreateCampaignCommand struct {
 
 // CreateCampaign creates a draft Campaign with its source subject and an
 // empty source document, reserves its route and grants its policy.
-func (s *Service) CreateCampaign(ctx context.Context, command CreateCampaignCommand) (*managev1.Campaign, error) {
-	campaign, err := mutation.Run(ctx, s.mutations, mutation.Spec[model.Campaign]{
+func (s *Service) CreateCampaign(ctx context.Context, command CreateCampaignCommand) (*CampaignDocument, error) {
+	campaign, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[Campaign, Store]{
 		Access: mutation.FreshAdminCan(policyv1.Campaign.Create()),
-		Change: func(ctx context.Context, tx *gorm.DB) (model.Campaign, error) {
+		Change: func(ctx context.Context, tx Store) (Campaign, error) {
 			campaign, err := s.newCampaign(command)
 			if err != nil {
-				return model.Campaign{}, err
+				return Campaign{}, err
 			}
 			if campaign.SegmentID != nil {
 				if err := s.requireAssignableSegment(ctx, tx, *campaign.SegmentID); err != nil {
-					return model.Campaign{}, err
+					return Campaign{}, err
 				}
 			}
 			return campaign, s.persistNewCampaign(ctx, tx, &campaign)
 		},
-		Audit: func(campaign model.Campaign) mutation.Audit {
+		Audit: func(campaign Campaign) mutation.Audit {
 			return mutation.RequestAudit(sharedtelemetry.AuditCampaignCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 				return sharedtelemetry.NewCampaignCreatedAuditRecord(metadata, campaign.ID)
 			})
 		},
-		Relationships: func(campaign model.Campaign) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+		Relationships: func(campaign Campaign) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
 			return campaignPolicyLifecycle(campaign.ID)
 		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	return s.toProtoCampaign(ctx, &campaign)
+	return s.campaignDocument(ctx, &campaign)
 }
 
 // newCampaign validates the command and returns the draft it creates.
-func (s *Service) newCampaign(command CreateCampaignCommand) (model.Campaign, error) {
+func (s *Service) newCampaign(command CreateCampaignCommand) (Campaign, error) {
 	name, subject, err := normalizeCampaignNameAndSubject(command.Name, command.Subject)
 	if err != nil {
-		return model.Campaign{}, err
+		return Campaign{}, err
 	}
 	sourceLocale, err := normalizeCampaignCreateSourceLocale(s.runtime, command.SourceLocale)
 	if err != nil {
-		return model.Campaign{}, err
+		return Campaign{}, err
 	}
 	targetMode, segmentID, err := createCampaignTargetDefinition(command.Target)
 	if err != nil {
-		return model.Campaign{}, err
+		return Campaign{}, err
 	}
-	return model.Campaign{
-		Name: name, Subject: subject, SourceLocale: sourceLocale, Status: string(model.CampaignStatusDraft),
+	return Campaign{
+		Name: name, Subject: subject, SourceLocale: sourceLocale, Status: CampaignStatusDraft,
 		TargetMode: targetMode, SegmentID: segmentID,
 	}, nil
 }
 
 // persistNewCampaign stores the draft with its content document, route and
 // source subject.
-func (s *Service) persistNewCampaign(ctx context.Context, tx *gorm.DB, campaign *model.Campaign) error {
-	now := dbtime.Now()
+func (s *Service) persistNewCampaign(ctx context.Context, store Store, campaign *Campaign) error {
+	now := s.now().UTC().Truncate(dbtime.Precision)
 	campaign.CreatedAt, campaign.UpdatedAt = now, now
-	document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
-		Profile: emailContentProfile, SourceLocale: campaign.SourceLocale,
-	})
+	document, err := store.CreateContentDocument(ctx, contentblock.CreateInput{Profile: emailContentProfile, SourceLocale: campaign.SourceLocale})
 	if err != nil {
 		return campaignContent.NormalizeContentBlockError(err)
 	}
 	documentID := document.Document.ID.String()
 	campaign.ContentDocumentID = &documentID
-	if err := tx.WithContext(ctx).Create(campaign).Error; err != nil {
+	if err := store.InsertCampaign(ctx, campaign); err != nil {
 		return err
 	}
-	if err := s.runtime.EnsureResourceRouteAvailableInTx(ctx, tx, "campaign", "campaigns", campaign.ID); err != nil {
+	if err := store.EnsureCampaignRoute(ctx, campaign.ID); err != nil {
 		return err
 	}
-	_, err = updateCampaignEmailLocaleSubject(ctx, tx, campaign.ID, campaign.SourceLocale, campaign.Subject, now)
+	_, err = updateCampaignEmailLocaleSubject(ctx, store, campaign.ID, campaign.SourceLocale, campaign.Subject, now)
 	return err
 }
 
 // requireAssignableSegment locks the audience segment a Campaign is
 // assigned to and rejects a missing or archived one.
-func (s *Service) requireAssignableSegment(ctx context.Context, tx *gorm.DB, segmentID string) error {
-	target, err := s.audienceTargets.LockTarget(ctx, tx, segmentID)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+func (s *Service) requireAssignableSegment(ctx context.Context, tx Store, segmentID string) error {
+	target, err := tx.LockAudienceTarget(ctx, segmentID)
+	if errors.Is(err, ErrAudienceNotFound) {
 		return domainerr.ResourceNotFound("audience_segment", segmentID)
 	}
 	if err != nil {
@@ -377,7 +321,7 @@ func createCampaignTargetDefinition(target CreateCampaignTarget) (string, *strin
 	case target.allMissing:
 		return "", nil, domainerr.InvalidField("target", "all target is required")
 	case target.All:
-		return model.CampaignTargetModeAll, nil, nil
+		return CampaignTargetModeAll, nil, nil
 	case target.SegmentID != nil:
 		segmentID := strings.TrimSpace(*target.SegmentID)
 		if segmentID == "" {
@@ -386,7 +330,7 @@ func createCampaignTargetDefinition(target CreateCampaignTarget) (string, *strin
 		if _, err := uuid.Parse(segmentID); err != nil {
 			return "", nil, domainerr.InvalidField("target", "segment_id must be a UUID")
 		}
-		return model.CampaignTargetModeSegment, &segmentID, nil
+		return CampaignTargetModeSegment, &segmentID, nil
 	default:
 		return "", nil, domainerr.InvalidField("target", "target is required")
 	}
@@ -425,13 +369,13 @@ func (s *Service) UpdateCampaignName(ctx context.Context, command UpdateCampaign
 	if err != nil {
 		return CampaignNameUpdate{}, err
 	}
-	var campaign model.Campaign
-	return mutation.Run(ctx, s.mutations, mutation.Spec[CampaignNameUpdate]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	var campaign Campaign
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[CampaignNameUpdate, Store]{
+		Lock: func(ctx context.Context, tx Store) error {
 			return lockCampaign(ctx, tx, command.ID, &campaign)
 		},
 		Access: access,
-		Change: func(ctx context.Context, tx *gorm.DB) (CampaignNameUpdate, error) {
+		Change: func(ctx context.Context, tx Store) (CampaignNameUpdate, error) {
 			update := CampaignNameUpdate{ID: campaign.ID, Name: campaign.Name, UpdatedAt: campaign.UpdatedAt}
 			name := strings.TrimSpace(command.Name)
 			if name == "" {
@@ -443,8 +387,8 @@ func (s *Service) UpdateCampaignName(ctx context.Context, command UpdateCampaign
 			if campaign.Name == name {
 				return update, nil
 			}
-			now := dbtime.Now()
-			if err := tx.WithContext(ctx).Model(&campaign).Updates(structured.Fields{"name": name, "updated_at": now}).Error; err != nil {
+			now := s.now().UTC().Truncate(dbtime.Precision)
+			if err := tx.UpdateCampaign(ctx, campaign, CampaignChange{Name: &name, UpdatedAt: now}); err != nil {
 				return update, err
 			}
 			return CampaignNameUpdate{ID: campaign.ID, Changed: true, Name: name, UpdatedAt: now}, nil
@@ -478,13 +422,13 @@ func (s *Service) DeleteCampaign(ctx context.Context, command DeleteCampaignComm
 	if err != nil {
 		return err
 	}
-	var campaign model.Campaign
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[string]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	var campaign Campaign
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[string, Store]{
+		Lock: func(ctx context.Context, tx Store) error {
 			return lockCampaign(ctx, tx, command.ID, &campaign)
 		},
 		Access: access,
-		Change: func(ctx context.Context, tx *gorm.DB) (string, error) {
+		Change: func(ctx context.Context, tx Store) (string, error) {
 			return campaign.ID, s.deleteLockedCampaign(ctx, tx, &campaign)
 		},
 		Audit: func(campaignID string) mutation.Audit {
@@ -500,11 +444,11 @@ func (s *Service) DeleteCampaign(ctx context.Context, command DeleteCampaignComm
 	return err
 }
 
-func (s *Service) deleteLockedCampaign(ctx context.Context, tx *gorm.DB, campaign *model.Campaign) error {
-	if model.CampaignStatus(campaign.Status) != model.CampaignStatusDraft {
+func (s *Service) deleteLockedCampaign(ctx context.Context, tx Store, campaign *Campaign) error {
+	if CampaignStatus(campaign.Status) != CampaignStatusDraft {
 		return domainerr.Precondition("only draft campaigns can be deleted")
 	}
-	hasHistory, err := s.emailDelivery.HasHistory(ctx, tx, campaign.ID)
+	hasHistory, err := tx.HasHistory(ctx, campaign.ID)
 	if err != nil {
 		return err
 	}
@@ -515,11 +459,11 @@ func (s *Service) deleteLockedCampaign(ctx context.Context, tx *gorm.DB, campaig
 	if err != nil {
 		return err
 	}
-	if err := s.contentBlocks.DeleteDocument(ctx, tx, documentID, campaignEmailDeleteContentFence(campaign.ID)); err != nil {
+	if err := tx.DeleteContentDocument(ctx, documentID, campaignEmailDeleteContentFence(tx, campaign.ID)); err != nil {
 		return campaignContent.NormalizeContentBlockError(err)
 	}
-	if err := tx.WithContext(ctx).Delete(campaign).Error; err != nil {
-		if dberrors.IsForeignKeyViolation(err) {
+	if err := tx.DeleteCampaign(ctx, *campaign); err != nil {
+		if errors.Is(err, ErrDurableReference) {
 			return domainerr.Precondition("campaign delivery history or another durable reference exists").WithCause(err)
 		}
 		return err
@@ -527,50 +471,23 @@ func (s *Service) deleteLockedCampaign(ctx context.Context, tx *gorm.DB, campaig
 	return nil
 }
 
-func (s *Service) toProtoCampaign(ctx context.Context, c *model.Campaign) (*managev1.Campaign, error) {
-	campaign, err := toProtoCampaignBase(c)
+func (s *Service) campaignDocument(ctx context.Context, c *Campaign) (*CampaignDocument, error) {
+	if err := validateCampaignRecipientScope(c.RecipientScope); err != nil {
+		return nil, err
+	}
+	var projection campaignEmailEditorProjection
+	err := s.units.ReadLocked(ctx, func(store Store) error {
+		var err error
+		projection, err = loadCampaignEmailEditorProjection(ctx, store, c.ID)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	projection, err := loadCampaignEmailEditorProjection(ctx, s.db, s.contentBlocks, c.ID)
-	if err != nil {
-		return nil, err
-	}
-	campaign.Document = projection.Document
-	campaign.DocumentRevision = projection.Revision
-	campaign.SourceLocale = projection.SourceLocale
-	return campaign, nil
+	row := *c
+	row.SourceLocale = projection.SourceLocale
+	return &CampaignDocument{Campaign: row, Document: projection.Document, DocumentRevision: projection.Revision}, nil
 }
 
 // toProtoCampaignBase keeps list projections bounded. The editor fetches the
 // aggregate through GetCampaign or the internal LoadDocument bootstrap.
-func toProtoCampaignBase(c *model.Campaign) (*managev1.Campaign, error) {
-	recipientScope, err := campaignRecipientScopeToProto(c.RecipientScope)
-	if err != nil {
-		return nil, err
-	}
-	campaign := &managev1.Campaign{
-		Id:         c.ID,
-		Name:       c.Name,
-		Subject:    c.Subject,
-		Status:     campaignStatusToProto(model.CampaignStatus(c.Status)),
-		TargetMode: campaignTargetModeToProto(c.TargetMode),
-		SentCount:  int32(c.SentCount),
-		CreatedAt:  timestamppb.New(c.CreatedAt),
-		UpdatedAt:  timestamppb.New(c.UpdatedAt),
-	}
-	if c.ScheduledAt != nil {
-		campaign.ScheduledAt = timestamppb.New(*c.ScheduledAt)
-	}
-	if c.SentAt != nil {
-		campaign.SentAt = timestamppb.New(*c.SentAt)
-	}
-	if c.SegmentID != nil {
-		campaign.SegmentId = c.SegmentID
-	}
-	if c.LayoutID != nil {
-		campaign.LayoutId = c.LayoutID
-	}
-	campaign.RecipientScope = recipientScope
-	return campaign, nil
-}
