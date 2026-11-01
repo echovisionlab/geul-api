@@ -60,9 +60,9 @@ func prepareDirectEditorImageMultipart(
 		CDNDomain:      stack.CDNURL,
 		MediaDomain:    stack.MediaURL,
 		MediaSecret:    stack.MediaSigningSecret,
-		Transcoder:     &recordingFileTranscoderPublisher{},
-		SpiceDB:        stack.SpiceDBClient,
-	}, stack.DB, nativeFilePorts{})
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
@@ -207,9 +207,9 @@ func TestDeleteTrackGuardsFinalizingUploadSessionDirectIntegration(t *testing.T)
 		CDNDomain:      stack.CDNURL,
 		MediaDomain:    stack.MediaURL,
 		MediaSecret:    stack.MediaSigningSecret,
-		Transcoder:     &recordingFileTranscoderPublisher{},
-		SpiceDB:        stack.SpiceDBClient,
-	}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB)})
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB), Transcoder: &recordingFileTranscoderPublisher{}})
 	// The Track deletion records an audit entry for its request actor.
 	ctx := releaseAuditContext(t, manager.IdentityID, manager.MemberID)
 	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK
@@ -280,9 +280,9 @@ func TestConcurrentTrackInitiateAndDeleteLeavesNoMultipartOrSessionDirectIntegra
 				CDNDomain:      stack.CDNURL,
 				MediaDomain:    stack.MediaURL,
 				MediaSecret:    stack.MediaSigningSecret,
-				Transcoder:     &recordingFileTranscoderPublisher{},
-				SpiceDB:        stack.SpiceDBClient,
-			}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB)})
+
+				SpiceDB: stack.SpiceDBClient,
+			}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB), Transcoder: &recordingFileTranscoderPublisher{}})
 			trackService := newDirectTrackService(t, stack, fileService)
 			// The Track deletion records an audit entry for its request actor.
 			ctx := releaseAuditContext(t, manager.IdentityID, manager.MemberID)
@@ -490,9 +490,9 @@ func TestCompleteMultipartUploadRestoresDedicatedAssetAfterResponseLossDirectInt
 		CDNDomain:      stack.CDNURL,
 		MediaDomain:    stack.MediaURL,
 		MediaSecret:    stack.MediaSigningSecret,
-		Transcoder:     &recordingFileTranscoderPublisher{},
-		SpiceDB:        stack.SpiceDBClient,
-	}, stack.DB, nativeFilePorts{})
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	body, err := base64.StdEncoding.DecodeString("UklGRiwAAABXRUJQVlA4ICAAAAAwAQCdASoBAAEAAAAGJZwAA3AA/u4KZ/9qflZ7vuAAAA==")
 	require.NoError(t, err)
@@ -554,9 +554,9 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 		CDNDomain:      stack.CDNURL,
 		MediaDomain:    stack.MediaURL,
 		MediaSecret:    stack.MediaSigningSecret,
-		Transcoder:     &recordingFileTranscoderPublisher{},
-		SpiceDB:        stack.SpiceDBClient,
-	}, stack.DB, nativeFilePorts{})
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	fileName := fmt.Sprintf("editor-image-%d.jpg", time.Now().UnixNano())
 	lastModified := time.Now().UnixMilli()
@@ -685,9 +685,9 @@ func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectInt
 		CDNDomain:      stack.CDNURL,
 		MediaDomain:    stack.MediaURL,
 		MediaSecret:    stack.MediaSigningSecret,
-		Transcoder:     &recordingFileTranscoderPublisher{},
-		SpiceDB:        stack.SpiceDBClient,
-	}, stack.DB, nativeFilePorts{})
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
 	starterCtx := auditedUserContext(context.Background(), starter.AuthUserInfo())
 	initiated, err := NewConnectHandler(svc).InitiateMultipartUpload(starterCtx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,

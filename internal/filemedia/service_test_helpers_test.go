@@ -50,7 +50,7 @@ func newTestService(deps Deps, db *gorm.DB, ports nativeFilePorts) *Service {
 	if ports.Tracks == nil {
 		ports.Tracks = unusedFilePorts{}
 	}
-	native := withNativeFileUnits(&Service{publisher: deps.Transcoder, asyncPublisher: deps.AsyncPublisher, spiceDB: deps.SpiceDB}, db, ports)
+	native := withNativeFileUnits(&Service{asyncPublisher: deps.AsyncPublisher, spiceDB: deps.SpiceDB}, db, ports)
 	if deps.IngestLocks == nil {
 		deps.IngestLocks = native.ingestLocks
 	}
@@ -60,7 +60,7 @@ func newTestService(deps Deps, db *gorm.DB, ports nativeFilePorts) *Service {
 	if deps.Units == nil {
 		deps.Units = native.units
 	} else {
-		deps.Units = nativeFileUnits{deps.Units, db, testFilePorts(native)}
+		deps.Units = nativeFileUnits{deps.Units, db, testFilePorts(native), ports.Transcoder}
 	}
 	service, err := NewService(deps)
 	if err != nil {

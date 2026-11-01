@@ -96,9 +96,9 @@ func TestAttachTrackOriginalAudioAppliesCASThenUsesStableTranscodeCommand(t *tes
 		CDNDomain:      stack.CDNURL,
 		MediaDomain:    stack.MediaURL,
 		MediaSecret:    stack.MediaSigningSecret,
-		Transcoder:     transcoder,
-		SpiceDB:        stack.SpiceDBClient,
-	}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB)})
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB), Transcoder: transcoder})
 	request := &intrav1.AttachTrackOriginalAudioRequest{
 		TrackId:               trackID,
 		VerifiedFileId:        newFile.ID,
@@ -166,9 +166,9 @@ func TestAttachTrackOriginalAudioRejectsStaleCASWithoutSideEffects(t *testing.T)
 		CDNDomain:      stack.CDNURL,
 		MediaDomain:    stack.MediaURL,
 		MediaSecret:    stack.MediaSigningSecret,
-		Transcoder:     transcoder,
-		SpiceDB:        stack.SpiceDBClient,
-	}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB)})
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB), Transcoder: transcoder})
 
 	response, err := NewInternalConnectHandler(files).AttachTrackOriginalAudio(
 		t.Context(),

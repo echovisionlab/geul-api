@@ -9,7 +9,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -97,11 +96,4 @@ func RequestFileDeletion(ctx context.Context, units mutation.UnitOfWork[Store], 
 		}
 		return domain.PublishFileDeletionMutation(ctx, store, d, now)
 	})
-}
-func (s *Service) DeleteEditorFileByID(ctx context.Context, id string, kind managev1.TranscodeEntityType, owner string, reason managev1.TranscodeCancelReason) error {
-	if strings.TrimSpace(id) == "" {
-		return nil
-	}
-	s.publishTranscodeCancelIfSupported(ctx, id, kind, owner, reason)
-	return s.DeleteFileByID(ctx, id)
 }
