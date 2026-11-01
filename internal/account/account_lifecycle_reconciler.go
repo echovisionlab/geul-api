@@ -9,6 +9,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/postgreslock"
@@ -18,7 +19,7 @@ import (
 // Start restores the external identity state implied by terminal cancellation
 // and recovery facts. It does not publish notifications or persist broker
 // progress; explicit requests remain the only notification trigger.
-func (s *AccountLifecycleService) Start(ctx context.Context) {
+func (s *Service) Start(ctx context.Context) {
 	reconcile := func() error {
 		return postgreslock.WithAdvisoryLeader(
 			ctx,
@@ -52,22 +53,14 @@ func (s *AccountLifecycleService) Start(ctx context.Context) {
 // ReconcileScheduledIdentityStates repairs the external deactivation and
 // session-revocation consequences of a committed deletion deadline. Starting
 // recovery does not cancel or pause that deadline; only confirmed recovery does.
-func (s *AccountLifecycleService) ReconcileScheduledIdentityStates(ctx context.Context) error {
+func (s *Service) ReconcileScheduledIdentityStates(ctx context.Context) error {
 	var candidates []model.UserDeletionRequest
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT request.*
 		FROM user_deletion_request AS request
-		JOIN kratos.identities AS identity ON identity.id = request.identity_id
+		`+identityread.Join("request.identity_id", "identity")+`
 		WHERE request.lifecycle_state IN ('scheduled', 'recovery_confirmation_pending')
-		  AND (
-		    identity.state = 'active'
-		    OR EXISTS (
-		      SELECT 1
-		      FROM kratos.sessions AS session
-		      WHERE session.identity_id = request.identity_id
-		        AND session.active = TRUE
-		    )
-		  )
+		  AND (identity.state = 'active' OR `+identityread.ActiveSessionSQL("request.identity_id")+`)
 		ORDER BY request.updated_at ASC, request.id ASC
 		LIMIT ?
 	`, accountLifecycleReconcileBatchSize).Scan(&candidates).Error; err != nil {
@@ -83,12 +76,12 @@ func (s *AccountLifecycleService) ReconcileScheduledIdentityStates(ctx context.C
 	return errors.Join(reconcileErrors...)
 }
 
-func (s *AccountLifecycleService) ensureScheduledIdentityInactive(
+func (s *Service) ensureScheduledIdentityInactive(
 	ctx context.Context,
 	requestID string,
 	identityID string,
 ) error {
-	return ensureScheduledIdentityInactive(ctx, s.db, s.kratosClient, requestID, identityID)
+	return ensureScheduledIdentityInactive(ctx, s.db, s.identity, requestID, identityID)
 }
 
 func ensureScheduledIdentityInactive(
@@ -126,12 +119,12 @@ func ensureScheduledIdentityInactive(
 // ReconcileTerminalIdentityStates activates identities whose durable deletion
 // lifecycle fact is cancelled or recovered but whose Kratos state is still
 // inactive. The cross-schema predicate keeps each pass bounded to actual drift.
-func (s *AccountLifecycleService) ReconcileTerminalIdentityStates(ctx context.Context) error {
+func (s *Service) ReconcileTerminalIdentityStates(ctx context.Context) error {
 	var candidates []model.UserDeletionRequest
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT request.*
 		FROM user_deletion_request AS request
-		JOIN kratos.identities AS identity ON identity.id = request.identity_id
+		`+identityread.Join("request.identity_id", "identity")+`
 		WHERE request.lifecycle_state IN ('cancelled', 'recovered')
 		  AND identity.state = 'inactive'
 		  AND request.updated_at > identity.updated_at
@@ -152,7 +145,7 @@ func (s *AccountLifecycleService) ReconcileTerminalIdentityStates(ctx context.Co
 	return errors.Join(reconcileErrors...)
 }
 
-func (s *AccountLifecycleService) ensureTerminalIdentityActive(
+func (s *Service) ensureTerminalIdentityActive(
 	ctx context.Context,
 	requestID string,
 	identityID string,
@@ -169,7 +162,7 @@ func (s *AccountLifecycleService) ensureTerminalIdentityActive(
 			}
 			return err
 		}
-		identity, err := s.kratosClient.GetIdentity(mutationCtx, current.IdentityID)
+		identity, err := s.identity.GetIdentity(mutationCtx, current.IdentityID)
 		if err != nil {
 			return err
 		}
@@ -182,7 +175,7 @@ func (s *AccountLifecycleService) ensureTerminalIdentityActive(
 		if !current.UpdatedAt.After(identity.UpdatedAt) || identityMetadataBanned(identity) {
 			return nil
 		}
-		return s.kratosClient.SetIdentityState(mutationCtx, current.IdentityID, auth.KratosStateActive)
+		return s.identity.SetIdentityState(mutationCtx, current.IdentityID, auth.KratosStateActive)
 	})
 }
 

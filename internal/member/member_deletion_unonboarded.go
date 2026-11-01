@@ -54,12 +54,12 @@ func (DeletionLifecycle) PrepareUnonboardedHardDelete(
 	return target, nil
 }
 
-func (DeletionLifecycle) FinalizeUnonboardedHardDelete(
+// RevokeUnonboardedAuthorization deletes the Member resource relationships of
+// a hard-delete target and proves them gone, before its rows are removed.
+func (DeletionLifecycle) RevokeUnonboardedAuthorization(
 	ctx context.Context,
-	db *gorm.DB,
 	spicedb *auth.SpiceDBClient,
 	target UnonboardedDeletionTarget,
-	appendAudit DeletionAudit,
 ) error {
 	if target.MemberID == "" {
 		return nil
@@ -86,35 +86,51 @@ func (DeletionLifecycle) FinalizeUnonboardedHardDelete(
 	if err := spicedb.VerifyResourceRelationshipsDeleted(ctx, memberSnapshotPlan, deletedAt); err != nil {
 		return fmt.Errorf("prove unonboarded Member SpiceDB relationship deletion: %w", err)
 	}
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var current model.Member
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?::uuid", target.MemberID).Take(&current).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil
-			}
-			return err
-		}
-		if current.Onboarded || current.DeletedAt != nil {
+	return nil
+}
+
+// FinalizeUnonboardedHardDelete removes the Member rows of a hard-delete
+// target whose authorization is revoked, in the caller's transaction tx,
+// which also holds the Account audit appendAudit writes.
+func (DeletionLifecycle) FinalizeUnonboardedHardDelete(
+	ctx context.Context,
+	tx *gorm.DB,
+	target UnonboardedDeletionTarget,
+	appendAudit DeletionAudit,
+) error {
+	if target.MemberID == "" {
+		return nil
+	}
+	if err := requireCallerTransaction(tx); err != nil {
+		return err
+	}
+	var current model.Member
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?::uuid", target.MemberID).Take(&current).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
-		if current.AccountIdentityID != nil {
-			if strings.TrimSpace(*current.AccountIdentityID) != target.IdentityID {
-				return fmt.Errorf("unonboarded hard deletion identity changed during cleanup")
-			}
-			return fmt.Errorf("unonboarded Member identity anchor still exists after cleanup")
+		return err
+	}
+	if current.Onboarded || current.DeletedAt != nil {
+		return nil
+	}
+	if current.AccountIdentityID != nil {
+		if strings.TrimSpace(*current.AccountIdentityID) != target.IdentityID {
+			return fmt.Errorf("unonboarded hard deletion identity changed during cleanup")
 		}
-		if err := deleteUnonboardedReferences(ctx, tx, target.MemberID); err != nil {
-			return err
-		}
-		result := tx.Where("id = ?::uuid AND onboarded = FALSE AND deleted_at IS NULL AND account_identity_id IS NULL", target.MemberID).Delete(&model.Member{})
-		if result.Error != nil || result.RowsAffected == 0 {
-			return result.Error
-		}
-		if appendAudit == nil {
-			return nil
-		}
-		return appendAudit(ctx, tx, target.MemberID)
-	})
+		return fmt.Errorf("unonboarded Member identity anchor still exists after cleanup")
+	}
+	if err := deleteUnonboardedReferences(ctx, tx, target.MemberID); err != nil {
+		return err
+	}
+	result := tx.Where("id = ?::uuid AND onboarded = FALSE AND deleted_at IS NULL AND account_identity_id IS NULL", target.MemberID).Delete(&model.Member{})
+	if result.Error != nil || result.RowsAffected == 0 {
+		return result.Error
+	}
+	if appendAudit == nil {
+		return nil
+	}
+	return appendAudit(ctx, tx, target.MemberID)
 }
 
 func memberAuthorizationSnapshotDeletions(

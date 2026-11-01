@@ -57,15 +57,7 @@ func TestSetAccountRoleConcurrentPeerDemotionKeepsOneActiveAdminIntegration(t *t
 	stack := testutil.SetupOryStack(t)
 	first := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	second := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	service := NewAuditedAccountService(
-		stack.DB,
-		stack.KratosClient,
-		stack.SpiceDBClient,
-		"https://www.example.test",
-		accountRoleNoopLifecyclePublisher{},
-		apitelemetry.NewDurableWriter(stack.DB),
-		WithMemberEmailProjection(memberEmailProjectionIntegration{}),
-	)
+	service := newTestHandler(t, Deps{DB: stack.DB, Identity: stack.KratosClient, SpiceDB: stack.SpiceDBClient, Publisher: accountRoleNoopLifecyclePublisher{}, Audit: apitelemetry.NewDurableWriter(stack.DB), MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 
 	start := make(chan struct{})
 	results := make(chan error, 2)

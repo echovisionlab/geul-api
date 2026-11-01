@@ -69,12 +69,11 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 	hookPublisher := &controlledHookEmailPublisher{delegate: publisher}
 	telemetryWriter := apitelemetry.NewDurableWriter(stack.Postgres.DB)
 	directRoles := accountadapter.AccountDirectRoleTransition{}
-	accountEmailChangeLifecycle := account.NewAuditedAccountEmailChangeLifecycle(
+	accountEmailChangeLifecycle := account.NewAccountEmailChangeLifecycle(
 		stack.Postgres.DB,
 		stack.KratosClient,
 		hookPublisher,
 		accountadapter.MemberEmailProjection{},
-		telemetryWriter,
 	)
 	_, rawCourierHandler := intrav1connect.NewEmailCourierServiceHandler(
 		emaildelivery.NewCourierConnectHandler(emaildelivery.NewEmailCourierService(

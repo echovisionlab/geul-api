@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	"gorm.io/gorm"
 )
@@ -41,11 +42,8 @@ func revokeOtherSessions(
 	var sessionIDs []string
 	if err := db.WithContext(ctx).Raw(`
 		SELECT id::text
-		FROM kratos.sessions
-		WHERE identity_id = ?::uuid
+		FROM `+identityread.LiveSessionsSQL+`
 		  AND id <> ?::uuid
-		  AND active = TRUE
-		  AND expires_at > NOW()
 		ORDER BY id
 	`, identityID, currentSessionID).Scan(&sessionIDs).Error; err != nil {
 		return nil, err

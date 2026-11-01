@@ -50,16 +50,25 @@ func (MemberDeletion) PrepareUnonboardedHardDelete(
 	}, err
 }
 
+func (MemberDeletion) RevokeUnonboardedAuthorization(
+	ctx context.Context,
+	spicedb *auth.SpiceDBClient,
+	target account.MemberUnonboardedDeletionTarget,
+) error {
+	return (member.DeletionLifecycle{}).RevokeUnonboardedAuthorization(ctx, spicedb, unonboardedTarget(target))
+}
+
 func (MemberDeletion) FinalizeUnonboardedHardDelete(
 	ctx context.Context,
-	db *gorm.DB,
-	spicedb *auth.SpiceDBClient,
+	tx *gorm.DB,
 	target account.MemberUnonboardedDeletionTarget,
 	appendAudit account.MemberDeletionAudit,
 ) error {
-	return (member.DeletionLifecycle{}).FinalizeUnonboardedHardDelete(ctx, db, spicedb, member.UnonboardedDeletionTarget{
-		MemberID: target.MemberID, IdentityID: target.IdentityID, IdentityLinked: target.IdentityLinked,
-	}, member.DeletionAudit(appendAudit))
+	return (member.DeletionLifecycle{}).FinalizeUnonboardedHardDelete(ctx, tx, unonboardedTarget(target), member.DeletionAudit(appendAudit))
+}
+
+func unonboardedTarget(target account.MemberUnonboardedDeletionTarget) member.UnonboardedDeletionTarget {
+	return member.UnonboardedDeletionTarget{MemberID: target.MemberID, IdentityID: target.IdentityID, IdentityLinked: target.IdentityLinked}
 }
 
 func (MemberDeletion) CleanupAvatar(ctx context.Context, db *gorm.DB, memberID, avatarAssetID string) error {

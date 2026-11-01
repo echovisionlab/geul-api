@@ -6,16 +6,13 @@ import (
 	"fmt"
 	"math"
 
-	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -29,114 +26,103 @@ func safeInt32(n int64) int32 {
 	return int32(n)
 }
 
-// MemberService owns public Member profile reads. Member stores profile data;
-// SpiceDB is the authority for the extended-profile visibility gate.
-type MemberService struct {
-	openv1connect.UnimplementedMemberServiceHandler
-	db        *gorm.DB
-	cdnDomain string
-	spiceDB   *auth.SpiceDBClient
+// GetPublicMemberQuery reads one onboarded Member's public profile.
+type GetPublicMemberQuery struct{ MemberID string }
+
+// ListAuthorsQuery lists post authors: the top contributors up to Limit, or
+// the effective authors among MemberIDs in their order when it is set.
+type ListAuthorsQuery struct {
+	Limit     int32
+	MemberIDs []string
 }
 
-func NewMemberService(db *gorm.DB, cdnDomain string, spiceDB *auth.SpiceDBClient) *MemberService {
-	if db == nil || spiceDB == nil {
-		panic("public member service dependencies are required")
-	}
-	return &MemberService{db: db, cdnDomain: cdnDomain, spiceDB: spiceDB}
-}
-
-func (s *MemberService) GetPublicMember(
-	ctx context.Context,
-	req *connect.Request[openv1.GetPublicMemberRequest],
-) (*connect.Response[openv1.GetPublicMemberResponse], error) {
-	memberID, err := uuidutil.ParseCanonical(req.Msg.GetMemberId(), "member_id")
+// GetPublicMember returns the public profile of an onboarded Member, or nil
+// when there is none. Bio, website and social links show only while the
+// Member's Identity holds the author role.
+func (s *Service) GetPublicMember(ctx context.Context, query GetPublicMemberQuery) (*openv1.PublicMemberProfile, error) {
+	memberID, err := uuidutil.ParseCanonical(query.MemberID, "member_id")
 	if err != nil {
-		return nil, errs.InvalidArgument("member_id", "must be a canonical UUID")
+		return nil, domainerr.InvalidField("member_id", "must be a canonical UUID")
 	}
-
-	type publicMemberRow struct {
-		model.Member
-		CanExposeExtendedProfile bool `gorm:"column:can_expose_extended_profile"`
-	}
-	var row publicMemberRow
+	var member model.Member
 	if err := s.db.WithContext(ctx).
 		Table("member AS m").
-		Select("m.*, FALSE AS can_expose_extended_profile").
+		Select("m.*").
 		Where("m.id = ? AND m.onboarded = TRUE", memberID.String()).
-		Take(&row).Error; err != nil {
+		Take(&member).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return connect.NewResponse(&openv1.GetPublicMemberResponse{}), nil
+			return nil, nil
 		}
-		return nil, errs.Internal(fmt.Errorf("load public member: %w", err))
+		return nil, fmt.Errorf("load public member: %w", err)
 	}
-	member := row.Member
-	if member.AccountIdentityID != nil && member.DeletedAt == nil {
-		actor, err := policyv1.NewAccountIdentityActor(*member.AccountIdentityID)
-		if err != nil {
-			return nil, errs.Internal(fmt.Errorf("parse public member account identity: %w", err))
-		}
-		can, err := policyv1.Platform.IsAuthor()
-		if err != nil {
-			return nil, errs.Internal(fmt.Errorf("build public member visibility permission: %w", err))
-		}
-		canExpose, err := s.spiceDB.CheckActorCan(ctx, actor, can)
-		if err != nil {
-			return nil, errs.Internal(fmt.Errorf("check public member visibility permission: %w", err))
-		}
-		row.CanExposeExtendedProfile = canExpose
+	canExposeExtendedProfile, err := s.canExposeExtendedProfile(ctx, member)
+	if err != nil {
+		return nil, err
 	}
 	avatars, err := loadPublicMemberAvatars(ctx, s.db, s.cdnDomain, []string{member.ID})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	summary := projectPublicMemberSummary(member, avatars[member.ID])
-
 	profile := &openv1.PublicMemberProfile{
-		Summary:     summary,
+		Summary:     projectPublicMemberSummary(member, avatars[member.ID]),
 		SocialLinks: map[string]string{},
 		CreatedAt:   timestamppb.New(member.CreatedAt),
 	}
-	if row.CanExposeExtendedProfile {
+	if canExposeExtendedProfile {
 		profile.Bio = member.Bio
 		profile.Website = member.Website
 		profile.SocialLinks = member.SocialLinks
 	}
-	return connect.NewResponse(&openv1.GetPublicMemberResponse{Member: profile}), nil
+	return profile, nil
 }
 
-// ListAuthors returns top post contributors with Member summaries in a fixed
-// three-query budget (counts, Member rows, avatar bindings/assets).
-func (s *MemberService) ListAuthors(
-	ctx context.Context,
-	req *connect.Request[openv1.ListAuthorsRequest],
-) (*connect.Response[openv1.ListAuthorsResponse], error) {
-	if len(req.Msg.MemberIds) != 0 {
-		return s.listSelectedAuthors(ctx, req.Msg.MemberIds)
+// canExposeExtendedProfile reports whether a live Member's Identity is an
+// author, read from SpiceDB.
+func (s *Service) canExposeExtendedProfile(ctx context.Context, member model.Member) (bool, error) {
+	if member.AccountIdentityID == nil || member.DeletedAt != nil {
+		return false, nil
 	}
+	actor, err := policyv1.NewAccountIdentityActor(*member.AccountIdentityID)
+	if err != nil {
+		return false, fmt.Errorf("parse public member account identity: %w", err)
+	}
+	can, err := policyv1.Platform.IsAuthor()
+	if err != nil {
+		return false, fmt.Errorf("build public member visibility permission: %w", err)
+	}
+	canExpose, err := s.spiceDB.CheckActorCan(ctx, actor, can)
+	if err != nil {
+		return false, fmt.Errorf("check public member visibility permission: %w", err)
+	}
+	return canExpose, nil
+}
 
-	limit := req.Msg.GetLimit()
+// authorRow is one Member's published or archived post count.
+type authorRow struct {
+	MemberID          string  `gorm:"column:member_id"`
+	AccountIdentityID *string `gorm:"column:account_identity_id"`
+	PostCount         int64   `gorm:"column:post_count"`
+	Bio               *string `gorm:"column:bio"`
+}
+
+// ListAuthors returns post authors with Member summaries in a fixed
+// three-query budget (counts, Member rows, avatar bindings/assets).
+func (s *Service) ListAuthors(ctx context.Context, query ListAuthorsQuery) ([]*openv1.PublicAuthorSummary, error) {
+	if len(query.MemberIDs) != 0 {
+		return s.listSelectedAuthors(ctx, query.MemberIDs)
+	}
+	limit := query.Limit
 	if limit <= 0 {
 		limit = 10
 	}
 	if limit > 100 {
 		limit = 100
 	}
-
-	type authorCount struct {
-		MemberID          string  `gorm:"column:member_id"`
-		AccountIdentityID *string `gorm:"column:account_identity_id"`
-		PostCount         int64   `gorm:"column:post_count"`
-		Bio               *string `gorm:"column:bio"`
-	}
-	authorSubjects, err := s.spiceDB.LookupGlobalSubjects(ctx, policyv1.Platform.LookupAuthorSubjects())
+	authorIdentityIDs, err := s.authorIdentityIDs(ctx, "public")
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("lookup public author identities: %w", err))
+		return nil, err
 	}
-	authorIdentityIDs := make(map[string]struct{}, len(authorSubjects))
-	for _, subject := range authorSubjects {
-		authorIdentityIDs[subject.ID.String()] = struct{}{}
-	}
-	var rows []authorCount
+	var rows []authorRow
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT
 			pa.member_id,
@@ -152,18 +138,16 @@ func (s *MemberService) ListAuthors(
 		ORDER BY post_count DESC, pa.member_id ASC
 		LIMIT ?
 	`, "POST_STATUS_PUBLISHED", "POST_STATUS_ARCHIVED", limit).Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("list top post contributors: %w", err))
+		return nil, fmt.Errorf("list top post contributors: %w", err)
 	}
-
 	memberIDs := make([]string, 0, len(rows))
 	for _, row := range rows {
 		memberIDs = append(memberIDs, row.MemberID)
 	}
 	summaries, err := LoadPublicMemberSummaries(ctx, s.db, s.cdnDomain, memberIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-
 	authors := make([]*openv1.PublicAuthorSummary, 0, len(rows))
 	for _, row := range rows {
 		summary := summaries[row.MemberID]
@@ -177,39 +161,17 @@ func (s *MemberService) ListAuthors(
 		}
 		authors = append(authors, author)
 	}
-	return connect.NewResponse(&openv1.ListAuthorsResponse{Authors: authors}), nil
+	return authors, nil
 }
 
-func (s *MemberService) listSelectedAuthors(
-	ctx context.Context,
-	requestedMemberIDs []string,
-) (*connect.Response[openv1.ListAuthorsResponse], error) {
-	if len(requestedMemberIDs) > 24 {
-		return nil, errs.InvalidArgument("member_ids", "must contain at most 24 unique Member IDs")
+// listSelectedAuthors returns the effective authors among requested, in
+// request order.
+func (s *Service) listSelectedAuthors(ctx context.Context, requested []string) ([]*openv1.PublicAuthorSummary, error) {
+	memberIDs, err := selectedAuthorIDs(requested)
+	if err != nil {
+		return nil, err
 	}
-
-	memberIDs := make([]string, 0, len(requestedMemberIDs))
-	seen := make(map[string]struct{}, len(requestedMemberIDs))
-	for _, value := range requestedMemberIDs {
-		memberID, err := uuidutil.ParseCanonical(value, "member_ids")
-		if err != nil {
-			return nil, errs.InvalidArgument("member_ids", "must contain canonical UUIDs")
-		}
-		canonical := memberID.String()
-		if _, duplicate := seen[canonical]; duplicate {
-			return nil, errs.InvalidArgument("member_ids", "must contain unique Member IDs")
-		}
-		seen[canonical] = struct{}{}
-		memberIDs = append(memberIDs, canonical)
-	}
-
-	type selectedAuthorRow struct {
-		MemberID          string  `gorm:"column:member_id"`
-		AccountIdentityID *string `gorm:"column:account_identity_id"`
-		PostCount         int64   `gorm:"column:post_count"`
-		Bio               *string `gorm:"column:bio"`
-	}
-	var rows []selectedAuthorRow
+	var rows []authorRow
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT
 			m.id::text AS member_id,
@@ -225,46 +187,68 @@ func (s *MemberService) listSelectedAuthors(
 		  AND m.account_identity_id IS NOT NULL
 		GROUP BY m.id, m.account_identity_id, m.bio
 	`, "POST_STATUS_PUBLISHED", "POST_STATUS_ARCHIVED", memberIDs).Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("load selected authors: %w", err))
+		return nil, fmt.Errorf("load selected authors: %w", err)
 	}
-
-	authorSubjects, err := s.spiceDB.LookupGlobalSubjects(ctx, policyv1.Platform.LookupAuthorSubjects())
+	authorIdentityIDs, err := s.authorIdentityIDs(ctx, "selected")
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("lookup selected author identities: %w", err))
+		return nil, err
 	}
-	authorIdentityIDs := make(map[string]struct{}, len(authorSubjects))
-	for _, subject := range authorSubjects {
-		authorIdentityIDs[subject.ID.String()] = struct{}{}
-	}
-	rowsByMemberID := make(map[string]selectedAuthorRow, len(rows))
+	rowsByMemberID := make(map[string]authorRow, len(rows))
 	eligibleMemberIDs := make([]string, 0, len(rows))
 	for _, row := range rows {
-		if _, eligible := authorIdentityIDs[optionalStringValue(row.AccountIdentityID)]; !eligible {
-			continue
+		if _, eligible := authorIdentityIDs[optionalStringValue(row.AccountIdentityID)]; eligible {
+			rowsByMemberID[row.MemberID] = row
+			eligibleMemberIDs = append(eligibleMemberIDs, row.MemberID)
 		}
-		rowsByMemberID[row.MemberID] = row
-		eligibleMemberIDs = append(eligibleMemberIDs, row.MemberID)
 	}
-
 	summaries, err := LoadPublicMemberSummaries(ctx, s.db, s.cdnDomain, eligibleMemberIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	authors := make([]*openv1.PublicAuthorSummary, 0, len(eligibleMemberIDs))
 	for _, memberID := range memberIDs {
 		row, eligible := rowsByMemberID[memberID]
-		if !eligible {
-			continue
-		}
 		summary := summaries[memberID]
-		if summary == nil || summary.Deleted {
+		if !eligible || summary == nil || summary.Deleted {
 			continue
 		}
-		authors = append(authors, &openv1.PublicAuthorSummary{
-			Member:    summary,
-			PostCount: safeInt32(row.PostCount),
-			Bio:       row.Bio,
-		})
+		authors = append(authors, &openv1.PublicAuthorSummary{Member: summary, PostCount: safeInt32(row.PostCount), Bio: row.Bio})
 	}
-	return connect.NewResponse(&openv1.ListAuthorsResponse{Authors: authors}), nil
+	return authors, nil
+}
+
+// selectedAuthorIDs canonicalizes at most 24 unique requested Member IDs.
+func selectedAuthorIDs(requested []string) ([]string, error) {
+	if len(requested) > 24 {
+		return nil, domainerr.InvalidField("member_ids", "must contain at most 24 unique Member IDs")
+	}
+	memberIDs := make([]string, 0, len(requested))
+	seen := make(map[string]struct{}, len(requested))
+	for _, value := range requested {
+		memberID, err := uuidutil.ParseCanonical(value, "member_ids")
+		if err != nil {
+			return nil, domainerr.InvalidField("member_ids", "must contain canonical UUIDs")
+		}
+		canonical := memberID.String()
+		if _, duplicate := seen[canonical]; duplicate {
+			return nil, domainerr.InvalidField("member_ids", "must contain unique Member IDs")
+		}
+		seen[canonical] = struct{}{}
+		memberIDs = append(memberIDs, canonical)
+	}
+	return memberIDs, nil
+}
+
+// authorIdentityIDs is the set of Identities that hold the author role;
+// purpose names the list in a lookup failure.
+func (s *Service) authorIdentityIDs(ctx context.Context, purpose string) (map[string]struct{}, error) {
+	subjects, err := s.spiceDB.LookupGlobalSubjects(ctx, policyv1.Platform.LookupAuthorSubjects())
+	if err != nil {
+		return nil, fmt.Errorf("lookup %s author identities: %w", purpose, err)
+	}
+	identityIDs := make(map[string]struct{}, len(subjects))
+	for _, subject := range subjects {
+		identityIDs[subject.ID.String()] = struct{}{}
+	}
+	return identityIDs, nil
 }

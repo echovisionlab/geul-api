@@ -12,6 +12,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -62,41 +63,53 @@ func DispatchScheduledUserDeletion(
 			}
 			return err
 		}
-		if err := ValidateLastActiveAdminDeletionWithAuthorization(ctx, tx, request.MemberID, request.IdentityID, spicedb); err != nil {
-			return err
-		}
-		var identityState string
-		if err := tx.Raw("SELECT state FROM kratos.identities WHERE id = ?::uuid FOR UPDATE", request.IdentityID).
-			Scan(&identityState).Error; err != nil {
-			return err
-		}
-		if identityState == "" {
-			return fmt.Errorf("scheduled deletion identity is missing before dispatch")
-		}
-		if identityState == auth.KratosStateActive {
-			return ErrScheduledDeletionIdentityActive
-		}
-		command, err := buildUserDeleteIdentityCommand(ctx, tx, members, &request)
-		if err != nil {
-			return err
-		}
-		avatarCommand := buildUserDeleteAvatarCommand(command)
-		executor, err := contentsignal.TransactionExecutor(tx)
-		if err != nil {
-			return err
-		}
-		transactionalPublisher, ok := publisher.(transactionalUserDeletionDispatchPublisher)
-		if !ok {
-			return fmt.Errorf("scheduled user deletion publisher does not support transactional dispatch")
-		}
-		if err := transactionalPublisher.PublishUserDeleteIdentityWithExecutor(ctx, executor, command); err != nil {
-			return err
-		}
-		if err := transactionalPublisher.PublishUserDeleteAvatarWithExecutor(ctx, executor, avatarCommand); err != nil {
-			return err
-		}
-		return tx.Delete(&request).Error
+		return dispatchLockedUserDeletion(ctx, tx, publisher, spicedb, members, &request)
 	})
+}
+
+// dispatchLockedUserDeletion enqueues the deletion commands of a due request
+// whose Identity fence tx holds, and removes the request in the same
+// transaction.
+func dispatchLockedUserDeletion(
+	ctx context.Context,
+	tx *gorm.DB,
+	publisher UserDeletionDispatchPublisher,
+	spicedb *auth.SpiceDBClient,
+	members MemberDeletionLifecycle,
+	request *model.UserDeletionRequest,
+) error {
+	if err := ValidateLastActiveAdminDeletionWithAuthorization(ctx, tx, request.MemberID, request.IdentityID, spicedb); err != nil {
+		return err
+	}
+	identityState, err := identityread.LockedState(ctx, tx, request.IdentityID)
+	if err != nil {
+		return err
+	}
+	if identityState == "" {
+		return fmt.Errorf("scheduled deletion identity is missing before dispatch")
+	}
+	if identityState == auth.KratosStateActive {
+		return ErrScheduledDeletionIdentityActive
+	}
+	command, err := buildUserDeleteIdentityCommand(ctx, tx, members, request)
+	if err != nil {
+		return err
+	}
+	executor, err := contentsignal.TransactionExecutor(tx)
+	if err != nil {
+		return err
+	}
+	transactionalPublisher, ok := publisher.(transactionalUserDeletionDispatchPublisher)
+	if !ok {
+		return fmt.Errorf("scheduled user deletion publisher does not support transactional dispatch")
+	}
+	if err := transactionalPublisher.PublishUserDeleteIdentityWithExecutor(ctx, executor, command); err != nil {
+		return err
+	}
+	if err := transactionalPublisher.PublishUserDeleteAvatarWithExecutor(ctx, executor, buildUserDeleteAvatarCommand(command)); err != nil {
+		return err
+	}
+	return tx.Delete(request).Error
 }
 
 func buildUserDeleteAvatarCommand(command *managev1.UserDeleteIdentityCommand) *managev1.UserDeleteAvatarCommand {

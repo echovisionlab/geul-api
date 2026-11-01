@@ -70,12 +70,11 @@ func main() {
 	}
 	telemetryWriter := apitelemetry.NewDurableWriter(stack.Postgres.DB)
 	directRoles := accountadapter.AccountDirectRoleTransition{}
-	accountEmailChangeLifecycle := account.NewAuditedAccountEmailChangeLifecycle(
+	accountEmailChangeLifecycle := account.NewAccountEmailChangeLifecycle(
 		stack.Postgres.DB,
 		stack.KratosClient,
 		publisher,
 		accountadapter.MemberEmailProjection{},
-		telemetryWriter,
 	)
 	go accountEmailChangeLifecycle.Start(ctx)
 	registrationMembers := member.NewMemberProvisioner(

@@ -27,17 +27,19 @@ func TestFinalizeTombstoneRollsBackMemberStateWhenAccountAuditFails(t *testing.T
 	require.NoError(t, db.Exec(`DELETE FROM account_identity WHERE id = ?::uuid`, identityID).Error)
 
 	auditFailure := errors.New("account audit failed")
-	err := (DeletionLifecycle{}).FinalizeTombstone(
-		t.Context(),
-		db,
-		DeletionSnapshot{
-			MemberID:             memberID,
-			IdentityID:           identityID,
-			PrimaryEmailSnapshot: email,
-		},
-		now,
-		func(context.Context, *gorm.DB, string) error { return auditFailure },
-	)
+	err := db.Transaction(func(tx *gorm.DB) error {
+		return (DeletionLifecycle{}).FinalizeTombstone(
+			t.Context(),
+			tx,
+			DeletionSnapshot{
+				MemberID:             memberID,
+				IdentityID:           identityID,
+				PrimaryEmailSnapshot: email,
+			},
+			now,
+			func(context.Context, *gorm.DB, string) error { return auditFailure },
+		)
+	})
 	require.ErrorIs(t, err, auditFailure)
 
 	var member model.Member
@@ -66,32 +68,36 @@ func TestFinalizeTombstoneDeletesMemberPersonalAccessTokensAndReplayIsNoOp(t *te
 		IdentityID:           identityID,
 		PrimaryEmailSnapshot: email,
 	}
-	require.NoError(t, (DeletionLifecycle{}).FinalizeTombstone(
-		t.Context(),
-		db,
-		request,
-		now,
-		func(context.Context, *gorm.DB, string) error {
-			auditCalls++
-			return nil
-		},
-	))
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		return (DeletionLifecycle{}).FinalizeTombstone(
+			t.Context(),
+			tx,
+			request,
+			now,
+			func(context.Context, *gorm.DB, string) error {
+				auditCalls++
+				return nil
+			},
+		)
+	}))
 	require.Equal(t, 1, auditCalls)
 	require.Zero(t, memberPersonalAccessTokenCount(t, db, memberID))
 	require.Equal(t, int64(1), memberPersonalAccessTokenCount(t, db, otherMemberID))
 
 	request.AlreadyTombstoned = true
 	replayAuditCalls := 0
-	require.NoError(t, (DeletionLifecycle{}).FinalizeTombstone(
-		t.Context(),
-		db,
-		request,
-		now.Add(time.Minute),
-		func(context.Context, *gorm.DB, string) error {
-			replayAuditCalls++
-			return errors.New("replay must not append an account audit")
-		},
-	))
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		return (DeletionLifecycle{}).FinalizeTombstone(
+			t.Context(),
+			tx,
+			request,
+			now.Add(time.Minute),
+			func(context.Context, *gorm.DB, string) error {
+				replayAuditCalls++
+				return errors.New("replay must not append an account audit")
+			},
+		)
+	}))
 	require.Zero(t, replayAuditCalls)
 	require.Zero(t, memberPersonalAccessTokenCount(t, db, memberID))
 	require.Equal(t, int64(1), memberPersonalAccessTokenCount(t, db, otherMemberID))

@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/require"
@@ -34,7 +35,7 @@ func (getter accountBanTargetIdentityGetter) GetIdentityWithIncludeCredential(
 func TestEnsureAccountBanTargetIsNonAdminUsesIdentityRoleAuthority(t *testing.T) {
 	t.Parallel()
 	stack := testutil.SetupOryStack(t)
-	service := &AccountService{spicedb: stack.SpiceDBClient}
+	service := &Service{spicedb: stack.SpiceDBClient}
 	author := stack.CreateUser(t, policyv1.Role.Author().ID())
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	t.Run("ordinary identity is bannable", func(t *testing.T) {
@@ -50,7 +51,7 @@ func TestEnsureAccountBanTargetIsNonAdminUsesIdentityRoleAuthority(t *testing.T)
 			identity: &auth.Identity{ID: admin.IdentityID},
 		}, admin.IdentityID)
 
-		require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+		require.Equal(t, connect.CodeFailedPrecondition, errs.Wrap(err).Code())
 		require.ErrorContains(t, err, "admin accounts cannot be banned")
 	})
 
@@ -59,12 +60,12 @@ func TestEnsureAccountBanTargetIsNonAdminUsesIdentityRoleAuthority(t *testing.T)
 			err: errors.New("identity unavailable"),
 		}, author.IdentityID)
 
-		require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
+		require.Equal(t, connect.CodeInternal, errs.Wrap(err).Code())
 	})
 
 	t.Run("missing identity is fail closed", func(t *testing.T) {
 		_, err := service.accountBanTargetIdentity(t.Context(), accountBanTargetIdentityGetter{}, author.IdentityID)
 
-		require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
+		require.Equal(t, connect.CodeInternal, errs.Wrap(err).Code())
 	})
 }

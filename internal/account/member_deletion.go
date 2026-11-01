@@ -10,13 +10,15 @@ import (
 
 // MemberDeletionLifecycle is the Account-owned consumer boundary for the
 // Member aggregate portions of account deletion. Account owns the durable
-// command, Kratos, account-identity subject cleanup, and anchor; Member owns
-// its resource relationships, profile lifecycle, and avatar binding state.
+// command, Kratos, account-identity subject cleanup, and anchor, and the
+// transaction its Finalize steps run in; Member owns its resource
+// relationships, profile lifecycle, and avatar binding state.
 type MemberDeletionLifecycle interface {
 	PrepareTombstone(context.Context, *gorm.DB, string, string, string) (MemberDeletionSnapshot, error)
 	FinalizeTombstone(context.Context, *gorm.DB, MemberDeletionSnapshot, time.Time, MemberDeletionAudit) error
 	PrepareUnonboardedHardDelete(context.Context, *gorm.DB, string, string) (MemberUnonboardedDeletionTarget, error)
-	FinalizeUnonboardedHardDelete(context.Context, *gorm.DB, *auth.SpiceDBClient, MemberUnonboardedDeletionTarget, MemberDeletionAudit) error
+	RevokeUnonboardedAuthorization(context.Context, *auth.SpiceDBClient, MemberUnonboardedDeletionTarget) error
+	FinalizeUnonboardedHardDelete(context.Context, *gorm.DB, MemberUnonboardedDeletionTarget, MemberDeletionAudit) error
 	CleanupAvatar(context.Context, *gorm.DB, string, string) error
 	NotificationSnapshot(context.Context, *gorm.DB, string, string) (MemberDeletionNotification, error)
 	CompletionEligible(context.Context, *gorm.DB, string) (bool, error)

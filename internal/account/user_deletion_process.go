@@ -78,13 +78,9 @@ func processUserDeleteIdentity(
 		if err := deleteAccountIdentityAuthorizationAndAnchor(mutationCtx, connection, spicedb, request.IdentityID); err != nil {
 			return err
 		}
-		if err := members.FinalizeTombstone(
-			mutationCtx,
-			connection,
-			request,
-			time.Now().UTC(),
-			accountDeletedAudit(auditWriter),
-		); err != nil {
+		if err := connection.Transaction(func(tx *gorm.DB) error {
+			return members.FinalizeTombstone(mutationCtx, tx, request, time.Now().UTC(), accountDeletedAudit(auditWriter))
+		}); err != nil {
 			return fmt.Errorf("finalize member tombstone: %w", err)
 		}
 		// Avatar cleanup was durably enqueued with the scheduled lifecycle

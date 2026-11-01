@@ -231,19 +231,10 @@ func (s *Service) replaceMemberTags(ctx context.Context, memberID string, rawTag
 	if _, err := uuidutil.ParseCanonical(memberID, "member_id"); err != nil {
 		return nil, domainerr.InvalidField("member_id", "must be a canonical UUID")
 	}
-	tagIDs := make([]string, 0, len(rawTagIDs))
-	seen := make(map[string]struct{}, len(rawTagIDs))
-	for _, tagID := range rawTagIDs {
-		if _, err := uuidutil.ParseCanonical(tagID, "tag_id"); err != nil {
-			return nil, domainerr.InvalidField("tag_ids", "must contain canonical UUIDs")
-		}
-		if _, exists := seen[tagID]; exists {
-			continue
-		}
-		seen[tagID] = struct{}{}
-		tagIDs = append(tagIDs, tagID)
+	tagIDs, err := memberTagIDs(rawTagIDs)
+	if err != nil {
+		return nil, err
 	}
-	sort.Strings(tagIDs)
 	target, err := authorizationtarget.RequireLinkedMember(ctx, s.db, memberID, false)
 	if err != nil {
 		return nil, err
@@ -255,34 +246,7 @@ func (s *Service) replaceMemberTags(ctx context.Context, memberID string, rawTag
 			if err := recheckTarget(tx, memberID, target, linkedMember(false)); err != nil {
 				return false, err
 			}
-			if len(tagIDs) != 0 {
-				var count int64
-				if err := tx.Model(&model.UserTag{}).Where("id IN ?", tagIDs).Count(&count).Error; err != nil {
-					return false, err
-				}
-				if count != int64(len(tagIDs)) {
-					return false, domainerr.InvalidField("tag_ids", "contains an unknown member tag")
-				}
-			}
-			var currentTagIDs []string
-			if err := tx.Model(&model.UserTagMapping{}).
-				Where("member_id = ?", memberID).
-				Order("tag_id ASC").
-				Pluck("tag_id", &currentTagIDs).Error; err != nil {
-				return false, err
-			}
-			if slices.Equal(currentTagIDs, tagIDs) {
-				return false, nil
-			}
-			if err := tx.Where("member_id = ?", memberID).Delete(&model.UserTagMapping{}).Error; err != nil {
-				return false, err
-			}
-			for _, tagID := range tagIDs {
-				if err := tx.Create(&model.UserTagMapping{MemberID: memberID, TagID: tagID}).Error; err != nil {
-					return false, err
-				}
-			}
-			return true, nil
+			return storeMemberTags(tx, memberID, tagIDs)
 		},
 		Audit: func(changed bool) mutation.Audit {
 			if !changed {
@@ -297,4 +261,55 @@ func (s *Service) replaceMemberTags(ctx context.Context, memberID string, rawTag
 		return nil, err
 	}
 	return tagIDs, nil
+}
+
+// memberTagIDs validates requested tag IDs and returns them deduplicated
+// and sorted, the order the mapping is compared in.
+func memberTagIDs(rawTagIDs []string) ([]string, error) {
+	tagIDs := make([]string, 0, len(rawTagIDs))
+	seen := make(map[string]struct{}, len(rawTagIDs))
+	for _, tagID := range rawTagIDs {
+		if _, err := uuidutil.ParseCanonical(tagID, "tag_id"); err != nil {
+			return nil, domainerr.InvalidField("tag_ids", "must contain canonical UUIDs")
+		}
+		if _, exists := seen[tagID]; !exists {
+			seen[tagID] = struct{}{}
+			tagIDs = append(tagIDs, tagID)
+		}
+	}
+	sort.Strings(tagIDs)
+	return tagIDs, nil
+}
+
+// storeMemberTags replaces the Member's tag mapping with the existing tags
+// tagIDs and reports whether it changed.
+func storeMemberTags(tx *gorm.DB, memberID string, tagIDs []string) (bool, error) {
+	if len(tagIDs) != 0 {
+		var count int64
+		if err := tx.Model(&model.UserTag{}).Where("id IN ?", tagIDs).Count(&count).Error; err != nil {
+			return false, err
+		}
+		if count != int64(len(tagIDs)) {
+			return false, domainerr.InvalidField("tag_ids", "contains an unknown member tag")
+		}
+	}
+	var currentTagIDs []string
+	if err := tx.Model(&model.UserTagMapping{}).
+		Where("member_id = ?", memberID).
+		Order("tag_id ASC").
+		Pluck("tag_id", &currentTagIDs).Error; err != nil {
+		return false, err
+	}
+	if slices.Equal(currentTagIDs, tagIDs) {
+		return false, nil
+	}
+	if err := tx.Where("member_id = ?", memberID).Delete(&model.UserTagMapping{}).Error; err != nil {
+		return false, err
+	}
+	for _, tagID := range tagIDs {
+		if err := tx.Create(&model.UserTagMapping{MemberID: memberID, TagID: tagID}).Error; err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }

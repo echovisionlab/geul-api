@@ -1,8 +1,5 @@
 # Package -> table crossings of table ownership (see tableOwners), with
 # their occurrence counts. Lower with -update; never add a line.
-7 internal/account -> kratos.identities
-1 internal/account -> kratos.identity_verifiable_addresses
-4 internal/account -> kratos.sessions
 3 internal/account -> member
 1 internal/adapters/artist -> public_asset
 1 internal/adapters/artist -> public_asset_binding

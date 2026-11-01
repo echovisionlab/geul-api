@@ -5,20 +5,37 @@ import (
 	"errors"
 	"net/http"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-func (s *AccountService) SetMyCanonicalEmail(
-	ctx context.Context,
-	req *connect.Request[managev1.SetMyCanonicalEmailRequest],
-) (*connect.Response[managev1.AccountSecurityMutationResponse], error) {
+// SetMyCanonicalEmailCommand makes a proven address the principal's
+// canonical account email.
+type SetMyCanonicalEmailCommand struct{ Email string }
+
+// RequestEmailChangeCommand checks whether the principal may change to
+// NewEmail.
+type RequestEmailChangeCommand struct{ NewEmail string }
+
+// RevokeMySessionCommand ends one of the principal's other sessions.
+type RevokeMySessionCommand struct{ SessionID string }
+
+// EmailChangeAvailability answers whether an email change can continue, and
+// why not when it cannot.
+type EmailChangeAvailability struct {
+	Available bool
+	Message   string
+}
+
+// freshSecurityPrincipal is the authenticated principal of a security
+// settings mutation, which requires a recent authentication.
+func (s *Service) freshSecurityPrincipal(ctx context.Context) (*auth.UserInfo, error) {
 	p, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
 		return nil, err
@@ -26,27 +43,32 @@ func (s *AccountService) SetMyCanonicalEmail(
 	if err := s.requireFreshSecuritySession(ctx, p.IdentityID.String(), p.SessionID.String()); err != nil {
 		return nil, err
 	}
-	previous, current, changed, err := s.setIdentityCanonicalEmail(ctx, p.IdentityID.String(), req.Msg.Email)
+	return p, nil
+}
+
+// SetMyCanonicalEmail makes a proven address the principal's canonical
+// account email and returns the security settings it leaves.
+func (s *Service) SetMyCanonicalEmail(ctx context.Context, command SetMyCanonicalEmailCommand) (*managev1.AccountSecurity, error) {
+	p, err := s.freshSecurityPrincipal(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if changed {
-		if err := s.appendAccountUpdatedAudit(
-			ctx,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewAccountCanonicalEmailUpdatedAuditRecord(
-					metadata, p.MemberID.String(), previous, current,
-				)
-			},
-		); err != nil {
-			return nil, errs.Internal(err)
-		}
-	}
-	security, err := s.securityForIdentity(ctx, p.MemberID.String(), p.IdentityID.String(), p.SessionID.String())
-	if err != nil {
+	if err := s.changeCanonicalEmail(ctx, p.MemberID.String(), p.IdentityID.String(), command.Email); err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.AccountSecurityMutationResponse{Security: security}), nil
+	return s.securityForIdentity(ctx, p.MemberID.String(), p.IdentityID.String(), p.SessionID.String())
+}
+
+// changeCanonicalEmail moves the canonical email through the email change
+// lifecycle, which holds the Identity fence, and records an actual change.
+func (s *Service) changeCanonicalEmail(ctx context.Context, memberID, identityID, email string) error {
+	previous, current, changed, err := s.setIdentityCanonicalEmail(ctx, identityID, email)
+	if err != nil || !changed {
+		return err
+	}
+	return s.appendAccountUpdatedAudit(ctx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewAccountCanonicalEmailUpdatedAuditRecord(metadata, memberID, previous, current)
+	})
 }
 
 // accountIdentityLookupError keeps the diagnostic cause available to callers
@@ -64,157 +86,108 @@ func (e accountIdentityLookupError) OperationContext() (rendered, operation stri
 	return msgAccountIdentityLookupFailed, msgAccountIdentityLookupFailed + ": " + e.cause.Error()
 }
 
-func (s *AccountService) RequestEmailChange(
-	ctx context.Context,
-	req *connect.Request[managev1.RequestEmailChangeRequest],
-) (*connect.Response[managev1.RequestEmailChangeResponse], error) {
-	p, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
+// RequestEmailChange checks that the principal may change to an address no
+// other account uses; the change itself continues in Kratos settings.
+func (s *Service) RequestEmailChange(ctx context.Context, command RequestEmailChangeCommand) (EmailChangeAvailability, error) {
+	p, err := s.freshSecurityPrincipal(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if err := s.requireFreshSecuritySession(ctx, p.IdentityID.String(), p.SessionID.String()); err != nil {
-		return nil, err
+		return EmailChangeAvailability{}, err
 	}
 	identity, err := s.identity.GetIdentity(ctx, p.IdentityID.String())
 	if err != nil {
 		var upstreamError *auth.KratosHTTPError
 		if errors.As(err, &upstreamError) && upstreamError.StatusCode == http.StatusNotFound {
-			return nil, errs.WithCause(errs.NotFound("identity", p.IdentityID.String()), err)
+			return EmailChangeAvailability{}, domainerr.ResourceNotFound("identity", p.IdentityID.String()).WithCause(err)
 		}
-		return nil, errs.Internal(accountIdentityLookupError{cause: err})
+		return EmailChangeAvailability{}, accountIdentityLookupError{cause: err}
 	}
 	if identity == nil {
-		return nil, errs.NotFound("identity", p.IdentityID.String())
+		return EmailChangeAvailability{}, domainerr.ResourceNotFound("identity", p.IdentityID.String())
 	}
-	normalized, ok := normalizeAccountEmailInput(req.Msg.NewEmail)
+	normalized, ok := normalizeAccountEmailInput(command.NewEmail)
 	if !ok {
-		return connect.NewResponse(&managev1.RequestEmailChangeResponse{Success: false, Message: "Enter a valid email address."}), nil
+		return EmailChangeAvailability{Message: "Enter a valid email address."}, nil
 	}
 	if normalized == emailutil.NormalizeAddressForDelivery(identity.CurrentEmail()) {
-		return connect.NewResponse(&managev1.RequestEmailChangeResponse{Success: false, Message: "This is already the current email for this account."}), nil
+		return EmailChangeAvailability{Message: "This is already the current email for this account."}, nil
 	}
 	used, err := emailCodeAddressUsedByAnotherIdentity(ctx, s.identity, p.IdentityID.String(), normalized)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return EmailChangeAvailability{}, err
 	}
 	if used {
-		return connect.NewResponse(&managev1.RequestEmailChangeResponse{Success: false, Message: "An account with this email already exists."}), nil
+		return EmailChangeAvailability{Message: "An account with this email already exists."}, nil
 	}
-	return connect.NewResponse(&managev1.RequestEmailChangeResponse{Success: true, Message: "Email change can continue in account settings."}), nil
+	return EmailChangeAvailability{Available: true, Message: "Email change can continue in account settings."}, nil
 }
 
-func (s *AccountService) RevokeMySession(
-	ctx context.Context,
-	req *connect.Request[managev1.RevokeMySessionRequest],
-) (*connect.Response[managev1.AccountSecurityMutationResponse], error) {
-	p, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
+// RevokeMySession ends one of the principal's other active sessions.
+func (s *Service) RevokeMySession(ctx context.Context, command RevokeMySessionCommand) (*managev1.AccountSecurity, error) {
+	p, err := s.freshSecurityPrincipal(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.requireFreshSecuritySession(ctx, p.IdentityID.String(), p.SessionID.String()); err != nil {
-		return nil, err
+	if _, err := uuidutil.ParseCanonical(command.SessionID, "session_id"); err != nil {
+		return nil, domainerr.InvalidField("session_id", "must be a canonical UUID")
 	}
-	if _, err := uuidutil.ParseCanonical(req.Msg.SessionId, "session_id"); err != nil {
-		return nil, errs.InvalidArgument("session_id", "must be a canonical UUID")
-	}
-	if req.Msg.SessionId == p.SessionID.String() {
-		return nil, errs.FailedPrecondition("the current session can only be ended through logout")
+	if command.SessionID == p.SessionID.String() {
+		return nil, domainerr.Precondition("the current session can only be ended through logout")
 	}
 	var owned bool
-	if err := s.db.WithContext(ctx).Raw(`SELECT EXISTS(SELECT 1 FROM kratos.sessions WHERE id=?::uuid AND identity_id=?::uuid AND active=TRUE AND expires_at>NOW())`, req.Msg.SessionId, p.IdentityID.String()).Scan(&owned).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := s.db.WithContext(ctx).Raw(`SELECT EXISTS(SELECT 1 FROM `+identityread.LiveSessionsSQL+` AND id = ?::uuid)`, p.IdentityID.String(), command.SessionID).Scan(&owned).Error; err != nil {
+		return nil, err
 	}
 	if !owned {
-		return nil, errs.NotFound("session", req.Msg.SessionId)
+		return nil, domainerr.ResourceNotFound("session", command.SessionID)
 	}
-	if err := s.identity.DeleteSession(ctx, req.Msg.SessionId); err != nil {
-		return nil, errs.Internal(err)
-	}
-	if err := s.appendAccountUpdatedAudit(
-		ctx,
-		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewAccountSessionRevokedAuditRecord(
-				metadata,
-				p.MemberID.String(),
-				sharedtelemetry.AccountSessionScopeOne,
-				[]string{req.Msg.SessionId},
-			)
-		},
-	); err != nil {
-		return nil, errs.Internal(err)
-	}
-	security, err := s.securityForIdentity(ctx, p.MemberID.String(), p.IdentityID.String(), p.SessionID.String())
-	if err != nil {
+	if err := s.identity.DeleteSession(ctx, command.SessionID); err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.AccountSecurityMutationResponse{Security: security, SessionsRevoked: true}), nil
+	if err := s.appendAccountUpdatedAudit(ctx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewAccountSessionRevokedAuditRecord(
+			metadata, p.MemberID.String(), sharedtelemetry.AccountSessionScopeOne, []string{command.SessionID},
+		)
+	}); err != nil {
+		return nil, err
+	}
+	return s.securityForIdentity(ctx, p.MemberID.String(), p.IdentityID.String(), p.SessionID.String())
 }
-func (s *AccountService) RevokeMyOtherSessions(
-	ctx context.Context,
-	_ *connect.Request[managev1.RevokeMyOtherSessionsRequest],
-) (*connect.Response[managev1.AccountSecurityMutationResponse], error) {
-	p, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
+
+// RevokeMyOtherSessions ends every active session of the principal except
+// the current one.
+func (s *Service) RevokeMyOtherSessions(ctx context.Context) (*managev1.AccountSecurity, error) {
+	p, err := s.freshSecurityPrincipal(ctx)
 	if err != nil {
-		return nil, err
-	}
-	if err := s.requireFreshSecuritySession(ctx, p.IdentityID.String(), p.SessionID.String()); err != nil {
 		return nil, err
 	}
 	if p.SessionID == "" {
-		return nil, errs.InvalidSession()
+		return nil, domainerr.InvalidSession()
 	}
 	revokedSessionIDs, err := revokeOtherSessions(ctx, s.db, s.identity, p.IdentityID.String(), p.SessionID.String())
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if len(revokedSessionIDs) > 0 {
-		if err := s.appendAccountUpdatedAudit(
-			ctx,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewAccountSessionRevokedAuditRecord(
-					metadata,
-					p.MemberID.String(),
-					sharedtelemetry.AccountSessionScopeOthers,
-					revokedSessionIDs,
-				)
-			},
-		); err != nil {
-			return nil, errs.Internal(err)
+		if err := s.appendAccountUpdatedAudit(ctx, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewAccountSessionRevokedAuditRecord(
+				metadata, p.MemberID.String(), sharedtelemetry.AccountSessionScopeOthers, revokedSessionIDs,
+			)
+		}); err != nil {
+			return nil, err
 		}
 	}
-	security, err := s.securityForIdentity(ctx, p.MemberID.String(), p.IdentityID.String(), p.SessionID.String())
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.AccountSecurityMutationResponse{Security: security, SessionsRevoked: true}), nil
+	return s.securityForIdentity(ctx, p.MemberID.String(), p.IdentityID.String(), p.SessionID.String())
 }
 
-func (s *AccountService) RequestAccountDeletion(
-	ctx context.Context,
-	_ *connect.Request[managev1.RequestAccountDeletionRequest],
-) (*connect.Response[managev1.RequestAccountDeletionResponse], error) {
-	p, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
+// RequestAccountDeletion emails the principal a deletion confirmation link.
+func (s *Service) RequestAccountDeletion(ctx context.Context) (AccountDeletionRequestResult, error) {
+	p, err := s.freshSecurityPrincipal(ctx)
 	if err != nil {
-		return nil, err
+		return AccountDeletionRequestResult{}, err
 	}
-	if err := s.requireFreshSecuritySession(ctx, p.IdentityID.String(), p.SessionID.String()); err != nil {
-		return nil, err
-	}
-	lifecycle := NewAccountLifecycleService(
-		s.db, s.identity, s.spicedb, s.baseURL, s.publisher, WithLifecycleMemberDeletion(s.memberDeletion), WithLifecycleMemberEmailProjection(s.memberEmails),
-	)
-	if s.auditWriter != nil {
-		lifecycle = NewAuditedAccountLifecycleService(
-			s.db, s.identity, s.spicedb, s.baseURL, s.publisher, s.auditWriter, WithLifecycleMemberDeletion(s.memberDeletion), WithLifecycleMemberEmailProjection(s.memberEmails),
-		)
-	}
-	result, err := lifecycle.RequestDeletion(ctx, p.MemberID.String(), p.IdentityID.String())
+	result, err := s.requestDeletion(ctx, p)
 	if err != nil {
-		return nil, err
+		return AccountDeletionRequestResult{}, err
 	}
-	message := "A confirmation email has been sent. Please check your email to confirm account deletion."
-	if result.AlreadyScheduled {
-		message = "Account deletion is already scheduled. Check your email for the confirmation link."
-	}
-	return connect.NewResponse(&managev1.RequestAccountDeletionResponse{Success: true, Message: message}), nil
+	return *result, nil
 }

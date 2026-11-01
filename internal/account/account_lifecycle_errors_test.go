@@ -9,6 +9,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
@@ -61,10 +62,10 @@ func TestRequestDeletionPreservesLinkResolutionFailure(t *testing.T) {
 			} else {
 				query.WillReturnError(lookupErr)
 			}
-			service := &AccountLifecycleService{db: db, memberDeletion: deletionSnapshotErrorLifecycle{}}
-			result, err := service.RequestDeletion(t.Context(), "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222")
+			service := &Service{db: db, memberDeletion: deletionSnapshotErrorLifecycle{}}
+			result, err := requestDeletionFor(t.Context(), service, "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222")
 			require.Nil(t, result)
-			require.Equal(t, want, connect.CodeOf(err))
+			require.Equal(t, want, errs.Wrap(err).Code())
 			if !missing {
 				require.ErrorIs(t, err, lookupErr)
 			}
@@ -95,10 +96,10 @@ func TestRequestDeletionPreservesRecipientAndSnapshotFailures(t *testing.T) {
 				lifecycle.err = gorm.ErrRecordNotFound
 				want = connect.CodeFailedPrecondition
 			}
-			service := &AccountLifecycleService{db: db, kratosClient: accountSecurityIdentityManager{identity: identity}, memberEmails: projection, memberDeletion: lifecycle}
-			result, err := service.RequestDeletion(t.Context(), memberID, identityID)
+			service := &Service{db: db, identity: accountSecurityIdentityManager{identity: identity}, memberEmails: projection, memberDeletion: lifecycle}
+			result, err := requestDeletionFor(t.Context(), service, memberID, identityID)
 			require.Nil(t, result)
-			require.Equal(t, want, connect.CodeOf(err))
+			require.Equal(t, want, errs.Wrap(err).Code())
 			if want == connect.CodeInternal {
 				require.ErrorIs(t, err, lookupErr)
 			}
@@ -132,10 +133,10 @@ func TestRequestDeletionDoesNotExposeRecipientIdentityFailureBody(t *testing.T) 
 		Traits: structured.Fields{"email": "member@example.test"}, Credentials: map[string]auth.Credential{"code": {Type: "code", Identifiers: []string{"member@example.test"}}}}
 	lookupErr := &auth.KratosHTTPError{StatusCode: http.StatusServiceUnavailable, Body: "private-upstream-response session_token=private-token"}
 	manager := &deletionRecipientIdentityFailure{accountSecurityIdentityManager: accountSecurityIdentityManager{identity: identity}, lookupErr: lookupErr}
-	service := &AccountLifecycleService{db: db, kratosClient: manager, memberEmails: deletionPrimaryEmailProjection{}, memberDeletion: deletionSnapshotErrorLifecycle{}}
-	result, err := service.RequestDeletion(t.Context(), memberID, identityID)
+	service := &Service{db: db, identity: manager, memberEmails: deletionPrimaryEmailProjection{}, memberDeletion: deletionSnapshotErrorLifecycle{}}
+	result, err := requestDeletionFor(t.Context(), service, memberID, identityID)
 	require.Nil(t, result)
-	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInternal, errs.Wrap(err).Code())
 	require.ErrorIs(t, err, lookupErr)
 	require.NotContains(t, err.Error(), "private-upstream-response")
 	require.NotContains(t, err.Error(), "private-token")

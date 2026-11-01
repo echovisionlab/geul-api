@@ -32,8 +32,12 @@ func (memberDeletionIntegrationAdapter) PrepareUnonboardedHardDelete(ctx context
 	return MemberUnonboardedDeletionTarget{MemberID: target.MemberID, IdentityID: target.IdentityID, IdentityLinked: target.IdentityLinked}, err
 }
 
-func (memberDeletionIntegrationAdapter) FinalizeUnonboardedHardDelete(ctx context.Context, db *gorm.DB, spicedb *auth.SpiceDBClient, target MemberUnonboardedDeletionTarget, appendAudit MemberDeletionAudit) error {
-	return (member.DeletionLifecycle{}).FinalizeUnonboardedHardDelete(ctx, db, spicedb, member.UnonboardedDeletionTarget{MemberID: target.MemberID, IdentityID: target.IdentityID, IdentityLinked: target.IdentityLinked}, member.DeletionAudit(appendAudit))
+func (memberDeletionIntegrationAdapter) RevokeUnonboardedAuthorization(ctx context.Context, spicedb *auth.SpiceDBClient, target MemberUnonboardedDeletionTarget) error {
+	return (member.DeletionLifecycle{}).RevokeUnonboardedAuthorization(ctx, spicedb, member.UnonboardedDeletionTarget{MemberID: target.MemberID, IdentityID: target.IdentityID, IdentityLinked: target.IdentityLinked})
+}
+
+func (memberDeletionIntegrationAdapter) FinalizeUnonboardedHardDelete(ctx context.Context, tx *gorm.DB, target MemberUnonboardedDeletionTarget, appendAudit MemberDeletionAudit) error {
+	return (member.DeletionLifecycle{}).FinalizeUnonboardedHardDelete(ctx, tx, member.UnonboardedDeletionTarget{MemberID: target.MemberID, IdentityID: target.IdentityID, IdentityLinked: target.IdentityLinked}, member.DeletionAudit(appendAudit))
 }
 
 func (memberDeletionIntegrationAdapter) CleanupAvatar(ctx context.Context, db *gorm.DB, memberID, assetID string) error {

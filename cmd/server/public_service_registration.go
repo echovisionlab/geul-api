@@ -5,8 +5,8 @@ import (
 	"log/slog"
 
 	"connectrpc.com/connect"
+	accountdomain "github.com/echovisionlab/geul-api/internal/account"
 	accountpublic "github.com/echovisionlab/geul-api/internal/account/public"
-	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	pageruntime "github.com/echovisionlab/geul-api/internal/adapters/page/runtime"
@@ -48,6 +48,7 @@ type publicServiceRegistration struct {
 	workRuntime    *workadapter.Runtime
 	legalRuntime   *legaladapter.Runtime
 	formAssets     formdomain.PublicAssets
+	accounts       *accountdomain.Service
 }
 
 func (r publicServiceRegistration) register() error {
@@ -56,8 +57,6 @@ func (r publicServiceRegistration) register() error {
 	cfg := deps.cfg
 	db := deps.db
 	spicedbClient := deps.spicedbClient
-	kratosClient := deps.kratosClient
-	workerPublisher := deps.workerPublisher
 	passwordHasher := deps.passwordHasher
 	telemetryWriter := deps.telemetryWriter
 	contentBlockStore := deps.contentBlockStore
@@ -145,21 +144,16 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicFormPath, publicFormHandler)
 	slog.Info("Registered public service", "path", publicFormPath)
 
-	publicMemberService := memberpublic.NewMemberService(db, cfg.CDNURL, spicedbClient)
-	publicMemberPath, publicMemberHandler := openv1connect.NewMemberServiceHandler(publicMemberService, publicHandlerOpts...)
+	publicMembers, err := memberpublic.NewService(memberpublic.Deps{
+		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, TokenSecret: cfg.TokenSigningSecret, CDNDomain: cfg.CDNURL,
+	})
+	if err != nil {
+		return fmt.Errorf("initialize public member service: %w", err)
+	}
+	publicMemberPath, publicMemberHandler := openv1connect.NewMemberServiceHandler(memberpublic.NewMemberConnectHandler(publicMembers), publicHandlerOpts...)
 	mux.Handle(publicMemberPath, publicMemberHandler)
 	slog.Info("Registered public service", "path", publicMemberPath)
-	publicAccountService := accountpublic.NewAuditedAccountService(
-		db,
-		kratosClient,
-		spicedbClient,
-		cfg.SiteOrigin,
-		workerPublisher,
-		accountadapter.MemberDeletion{},
-		accountadapter.MemberEmailProjection{},
-		telemetryWriter,
-	)
-	publicAccountPath, publicAccountHandler := openv1connect.NewAccountServiceHandler(publicAccountService, publicHandlerOpts...)
+	publicAccountPath, publicAccountHandler := openv1connect.NewAccountServiceHandler(accountpublic.NewConnectHandler(r.accounts), publicHandlerOpts...)
 	mux.Handle(publicAccountPath, publicAccountHandler)
 	slog.Info("Registered public service", "path", publicAccountPath)
 
@@ -191,8 +185,7 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicTagPath, publicTagHandler)
 	slog.Info("Registered public service", "path", publicTagPath)
 
-	publicNewsletterService := memberpublic.NewAuditedNewsletterService(db, cfg.TokenSigningSecret, telemetryWriter)
-	publicNewsletterPath, publicNewsletterHandler := openv1connect.NewNewsletterServiceHandler(publicNewsletterService, publicHandlerOpts...)
+	publicNewsletterPath, publicNewsletterHandler := openv1connect.NewNewsletterServiceHandler(memberpublic.NewNewsletterConnectHandler(publicMembers), publicHandlerOpts...)
 	mux.Handle(publicNewsletterPath, publicNewsletterHandler)
 	slog.Info("Registered public service", "path", publicNewsletterPath)
 

@@ -36,7 +36,7 @@ func TestRequestEmailChangePreservesIdentityLookupFailures(t *testing.T) {
 		{"deadline", context.DeadlineExceeded, connect.CodeDeadlineExceeded},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			service := &AccountService{identity: emailChangeLookupIdentityManager{lookupErr: tt.err}}
+			service := NewConnectHandler(&Service{identity: emailChangeLookupIdentityManager{lookupErr: tt.err}})
 			ctx := auth.WithUser(t.Context(), &auth.UserInfo{IdentityID: "11111111-1111-4111-8111-111111111111", MemberID: "22222222-2222-4222-8222-222222222222", SessionID: "33333333-3333-4333-8333-333333333333", Authenticated: true, AuthenticatedAt: time.Now().UTC()})
 			response, err := service.RequestEmailChange(ctx, connect.NewRequest(&managev1.RequestEmailChangeRequest{NewEmail: "next@example.test"}))
 			require.Nil(t, response)

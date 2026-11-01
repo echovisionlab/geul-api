@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -17,6 +16,12 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 )
+
+// newTestHandler is the Connect adapter of newTestService(t, deps).
+func newTestHandler(t *testing.T, deps Deps) *ConnectHandler {
+	t.Helper()
+	return NewConnectHandler(newTestService(t, deps))
+}
 
 func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient {
 	t.Helper()
@@ -41,10 +46,6 @@ func (memberNewsletterSubscriptionIntegration) Mutate(ctx context.Context, db *g
 
 func (memberNewsletterSubscriptionIntegration) State(ctx context.Context, db *gorm.DB, identityID string) (*managev1.NewsletterSubscriptionState, error) {
 	return member.SubscriptionState(ctx, db, identityID)
-}
-
-func (memberNewsletterSubscriptionIntegration) AppendRequestAudit(ctx context.Context, db *gorm.DB, writer domainaudit.Appender, memberID string, previous, next sharedtelemetry.AuditState) error {
-	return member.AppendNewsletterSubscriptionRequestAudit(ctx, db, writer, memberID, previous, next)
 }
 
 func (memberNewsletterSubscriptionIntegration) AuditStates(subscribed bool) (sharedtelemetry.AuditState, sharedtelemetry.AuditState) {

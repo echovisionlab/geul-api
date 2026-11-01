@@ -79,48 +79,9 @@ func NewsletterAuditStates(subscribed bool) (sharedtelemetry.AuditState, sharedt
 	return newsletterSubscriptionAuditStates(subscribed)
 }
 
-func appendNewsletterSubscriptionRequestAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	writer domainaudit.Appender,
-	memberID string,
-	previous, next sharedtelemetry.AuditState,
-) error {
-	return domainaudit.AppendRequest(
-		ctx,
-		tx,
-		writer,
-		sharedtelemetry.AuditAccountUpdated,
-		newsletterSubscriptionAuditBuilder(memberID, previous, next),
-	)
-}
-
-// AppendNewsletterSubscriptionRequestAudit appends the owning Member fact
-// transition through its authenticated Account transport.
-func AppendNewsletterSubscriptionRequestAudit(ctx context.Context, tx *gorm.DB, writer domainaudit.Appender, memberID string, previous, next sharedtelemetry.AuditState) error {
-	return appendNewsletterSubscriptionRequestAudit(ctx, tx, writer, memberID, previous, next)
-}
-
-// AppendNewsletterSubscriptionMemberAudit records a capability-authenticated
-// token opt-out with the exact linked Member as its actor and account target.
-func AppendNewsletterSubscriptionMemberAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	writer domainaudit.Appender,
-	memberID string,
-	previous, next sharedtelemetry.AuditState,
-) error {
-	return domainaudit.AppendMember(
-		ctx,
-		tx,
-		writer,
-		memberID,
-		sharedtelemetry.AuditAccountUpdated,
-		newsletterSubscriptionAuditBuilder(memberID, previous, next),
-	)
-}
-
-func newsletterSubscriptionAuditBuilder(
+// NewsletterSubscriptionAuditBuilder builds the account record of a
+// newsletter subscription transition of memberID.
+func NewsletterSubscriptionAuditBuilder(
 	memberID string,
 	previous, next sharedtelemetry.AuditState,
 ) domainaudit.Builder {

@@ -20,10 +20,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
 type lifecycleIdentityManager struct {
-	auth.IdentityManager
+	accountIdentityManager
 	db           *gorm.DB
 	identity     *auth.Identity
 	stateUpdates []string
@@ -79,27 +80,36 @@ func (p *lifecycleDeletionPublisher) PublishUserDeleteAvatar(_ context.Context, 
 	return nil
 }
 
+// lifecyclePublishers joins the email and deletion fakes into one Account
+// publisher.
+type lifecyclePublishers struct {
+	*lifecycleEmailPublisher
+	*lifecycleDeletionPublisher
+}
+
+func (lifecyclePublishers) PublishUserDeleteIdentityWithExecutor(context.Context, eventpkg.DBTX, *managev1.UserDeleteIdentityCommand) error {
+	return errUnusedTestDependency
+}
+
 func TestAccountLifecycleDeletionCanCancelAndRecoverCurrentPair(t *testing.T) {
 	t.Parallel()
 	t.Run("cancel", func(t *testing.T) {
 		db, manager, spiceDB, memberID, identityID, email := setupAccountLifecyclePair(t, policyv1.Role.User())
 		publisher := &lifecycleEmailPublisher{}
-		lifecycle := NewAuditedAccountLifecycleService(
-			db, manager, spiceDB, "https://www.example.test", publisher, apitelemetry.NewDurableWriter(db), WithLifecycleMemberDeletion(memberDeletionIntegrationAdapter{}), WithLifecycleMemberEmailProjection(memberEmailProjectionIntegration{}),
-		)
+		lifecycle := newTestService(t, Deps{DB: db, Identity: manager, SpiceDB: spiceDB, Publisher: lifecyclePublishers{lifecycleEmailPublisher: publisher, lifecycleDeletionPublisher: &lifecycleDeletionPublisher{}}, Audit: apitelemetry.NewDurableWriter(db), MemberDeletion: memberDeletionIntegrationAdapter{}, MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 		ctx := accountLifecycleAuditContext(t, memberID)
 
-		_, err := lifecycle.RequestDeletion(ctx, memberID, identityID)
+		_, err := requestDeletionFor(ctx, lifecycle, memberID, identityID)
 		require.NoError(t, err)
 		require.Len(t, publisher.jobs, 1)
 		confirmToken := lifecycleURLToken(t, publisher.jobs[0].GetTemplateData()["confirm_url"])
-		_, err = lifecycle.ConfirmDeletion(ctx, confirmToken)
+		_, err = lifecycle.ConfirmAccountDeletion(ctx, ConfirmAccountDeletionCommand{Token: confirmToken})
 		require.NoError(t, err)
 		require.Equal(t, auth.KratosStateInactive, manager.identity.State)
 		require.Equal(t, 1, manager.sessionCalls)
 
 		cancelToken := lifecycleURLToken(t, publisher.jobs[1].GetTemplateData()["cancel_url"])
-		require.NoError(t, lifecycle.CancelDeletion(ctx, cancelToken))
+		require.NoError(t, lifecycle.CancelAccountDeletion(ctx, CancelAccountDeletionCommand{Token: cancelToken}))
 		require.Equal(t, auth.KratosStateActive, manager.identity.State)
 		var request model.UserDeletionRequest
 		require.NoError(t, db.Where("member_id = ?::uuid", memberID).Take(&request).Error)
@@ -116,18 +126,16 @@ func TestAccountLifecycleDeletionCanCancelAndRecoverCurrentPair(t *testing.T) {
 	t.Run("recover", func(t *testing.T) {
 		db, manager, spiceDB, memberID, identityID, email := setupAccountLifecyclePair(t, policyv1.Role.User())
 		publisher := &lifecycleEmailPublisher{}
-		lifecycle := NewAuditedAccountLifecycleService(
-			db, manager, spiceDB, "https://www.example.test", publisher, apitelemetry.NewDurableWriter(db), WithLifecycleMemberDeletion(memberDeletionIntegrationAdapter{}), WithLifecycleMemberEmailProjection(memberEmailProjectionIntegration{}),
-		)
+		lifecycle := newTestService(t, Deps{DB: db, Identity: manager, SpiceDB: spiceDB, Publisher: lifecyclePublishers{lifecycleEmailPublisher: publisher, lifecycleDeletionPublisher: &lifecycleDeletionPublisher{}}, Audit: apitelemetry.NewDurableWriter(db), MemberDeletion: memberDeletionIntegrationAdapter{}, MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 		ctx := accountLifecycleAuditContext(t, memberID)
-		_, err := lifecycle.RequestDeletion(ctx, memberID, identityID)
+		_, err := requestDeletionFor(ctx, lifecycle, memberID, identityID)
 		require.NoError(t, err)
-		_, err = lifecycle.ConfirmDeletion(ctx, lifecycleURLToken(t, publisher.jobs[0].GetTemplateData()["confirm_url"]))
+		_, err = lifecycle.ConfirmAccountDeletion(ctx, ConfirmAccountDeletionCommand{Token: lifecycleURLToken(t, publisher.jobs[0].GetTemplateData()["confirm_url"])})
 		require.NoError(t, err)
 
-		require.NoError(t, lifecycle.RequestRecovery(ctx, email))
+		require.NoError(t, lifecycle.RequestAccountRecovery(ctx, RequestAccountRecoveryCommand{Email: email}))
 		recoveryToken := lifecycleURLToken(t, publisher.jobs[2].GetTemplateData()["confirm_url"])
-		require.NoError(t, lifecycle.ConfirmRecovery(ctx, recoveryToken))
+		require.NoError(t, lifecycle.ConfirmAccountRecovery(ctx, ConfirmAccountRecoveryCommand{Token: recoveryToken}))
 		require.Equal(t, auth.KratosStateActive, manager.identity.State)
 		var request model.UserDeletionRequest
 		require.NoError(t, db.Where("member_id = ?::uuid", memberID).Take(&request).Error)
@@ -189,8 +197,18 @@ func TestScheduleImmediateUserDeletionRejectsLastActiveAdmin(t *testing.T) {
 	t.Parallel()
 	db, manager, spiceDB, memberID, identityID, _ := setupAccountLifecyclePair(t, policyv1.Role.Admin())
 	publisher := &lifecycleDeletionPublisher{}
+	service := newTestService(t, Deps{
+		DB: db, Identity: manager, SpiceDB: spiceDB, Publisher: lifecyclePublishers{lifecycleEmailPublisher: &lifecycleEmailPublisher{}, lifecycleDeletionPublisher: publisher},
+		MemberDeletion: memberDeletionIntegrationAdapter{}, MemberEmails: memberEmailProjectionIntegration{},
+	})
+	// The last admin deleting itself passes the administrator fence and stops
+	// at the last-admin fence.
+	ctx := auth.WithUser(accountLifecycleAuditContext(t, memberID), &auth.UserInfo{
+		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID), SessionID: auth.SessionID(uuid.NewString()),
+		Authenticated: true, Onboarded: true,
+	})
 
-	err := scheduleImmediateUserDeletion(t.Context(), db, manager, publisher, spiceDB, memberDeletionIntegrationAdapter{}, memberID, identityID, nil, memberEmailProjectionIntegration{})
+	err := service.scheduleImmediateDeletion(ctx, memberID, identityID)
 
 	require.ErrorIs(t, err, ErrLastActiveAdminDeletion)
 	require.Empty(t, publisher.commands)
@@ -209,9 +227,9 @@ func TestRequestDeletionSynchronizesRemovedPrimaryBeforeSnapshot(t *testing.T) {
 		"code": {Type: "code", Identifiers: []string{fallbackEmail}},
 	}
 	publisher := &lifecycleEmailPublisher{}
-	lifecycle := NewAccountLifecycleService(db, manager, spiceDB, "https://www.example.test", publisher, WithLifecycleMemberDeletion(memberDeletionIntegrationAdapter{}), WithLifecycleMemberEmailProjection(memberEmailProjectionIntegration{}))
+	lifecycle := newTestService(t, Deps{DB: db, Identity: manager, SpiceDB: spiceDB, Publisher: lifecyclePublishers{lifecycleEmailPublisher: publisher, lifecycleDeletionPublisher: &lifecycleDeletionPublisher{}}, MemberDeletion: memberDeletionIntegrationAdapter{}, MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 
-	_, err := lifecycle.RequestDeletion(t.Context(), memberID, identityID)
+	_, err := requestDeletionFor(accountLifecycleAuditContext(t, memberID), lifecycle, memberID, identityID)
 	require.NoError(t, err)
 	require.Len(t, publisher.jobs, 1)
 	require.Equal(t, fallbackEmail, publisher.jobs[0].GetRecipient())

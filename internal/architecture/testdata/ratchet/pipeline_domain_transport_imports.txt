@@ -1,7 +1,2 @@
 # Connect or internal/errors imports outside connect_handler*.go in
 # pipelineDomains. Lower with -update.
-1 internal/member/member_deletion_avatar.go imports connectrpc.com/connect
-1 internal/member/public/member.go imports connectrpc.com/connect
-1 internal/member/public/member.go imports github.com/echovisionlab/geul-api/internal/errors
-1 internal/member/public/newsletter.go imports connectrpc.com/connect
-1 internal/member/public/newsletter.go imports github.com/echovisionlab/geul-api/internal/errors

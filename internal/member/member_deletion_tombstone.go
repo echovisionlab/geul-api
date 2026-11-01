@@ -54,45 +54,49 @@ func (DeletionLifecycle) PrepareTombstone(ctx context.Context, db *gorm.DB, memb
 	return result, nil
 }
 
-func (DeletionLifecycle) FinalizeTombstone(ctx context.Context, db *gorm.DB, request DeletionSnapshot, deletedAt time.Time, appendAudit DeletionAudit) error {
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		identityExists, err := identityread.Exists(ctx, tx, request.IdentityID)
-		if err != nil {
+// FinalizeTombstone tombstones the Member once its Identity is gone, in the
+// caller's transaction tx, which also holds the Account audit appendAudit
+// writes.
+func (DeletionLifecycle) FinalizeTombstone(ctx context.Context, tx *gorm.DB, request DeletionSnapshot, deletedAt time.Time, appendAudit DeletionAudit) error {
+	if err := requireCallerTransaction(tx); err != nil {
+		return err
+	}
+	identityExists, err := identityread.Exists(ctx, tx, request.IdentityID)
+	if err != nil {
+		return err
+	}
+	if identityExists {
+		return fmt.Errorf("exact Kratos identity still exists after deletion")
+	}
+	var member model.Member
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?::uuid", request.MemberID).Take(&member).Error; err != nil {
+		return err
+	}
+	if member.AccountIdentityID != nil {
+		return fmt.Errorf("member reverse pointer was not cleared by exact identity deletion")
+	}
+	if err := tx.Exec(
+		`DELETE FROM member_personal_access_token WHERE member_id = ?::uuid`,
+		request.MemberID,
+	).Error; err != nil {
+		return fmt.Errorf("delete Member personal access tokens: %w", err)
+	}
+	if member.DeletedAt == nil {
+		if err := tx.Model(&model.Member{}).Where("id = ?::uuid AND account_identity_id IS NULL AND deleted_at IS NULL", member.ID).Updates(structured.Fields{"bio": nil, "website": nil, "social_links": gorm.Expr(`'{}'::jsonb`), "preferred_locale": nil, "deleted_at": deletedAt, "updated_at": deletedAt}).Error; err != nil {
 			return err
 		}
-		if identityExists {
-			return fmt.Errorf("exact Kratos identity still exists after deletion")
-		}
-		var member model.Member
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?::uuid", request.MemberID).Take(&member).Error; err != nil {
-			return err
-		}
-		if member.AccountIdentityID != nil {
-			return fmt.Errorf("member reverse pointer was not cleared by exact identity deletion")
-		}
-		if err := tx.Exec(
-			`DELETE FROM member_personal_access_token WHERE member_id = ?::uuid`,
-			request.MemberID,
-		).Error; err != nil {
-			return fmt.Errorf("delete Member personal access tokens: %w", err)
-		}
-		if member.DeletedAt == nil {
-			if err := tx.Model(&model.Member{}).Where("id = ?::uuid AND account_identity_id IS NULL AND deleted_at IS NULL", member.ID).Updates(structured.Fields{"bio": nil, "website": nil, "social_links": gorm.Expr(`'{}'::jsonb`), "preferred_locale": nil, "deleted_at": deletedAt, "updated_at": deletedAt}).Error; err != nil {
-				return err
-			}
-			member.DeletedAt = &deletedAt
-		}
-		if member.DeletedAt == nil {
-			return fmt.Errorf("member tombstone was not established")
-		}
-		if !request.AlreadyTombstoned && (member.PrimaryEmail == nil || !memberEmailsEqual(*member.PrimaryEmail, request.PrimaryEmailSnapshot) || !slices.Contains(member.AvailableEmails, request.PrimaryEmailSnapshot)) {
-			return fmt.Errorf("member email projection changed during identity deletion")
-		}
-		if !request.AlreadyTombstoned && appendAudit != nil {
-			return appendAudit(ctx, tx, request.MemberID)
-		}
-		return nil
-	})
+		member.DeletedAt = &deletedAt
+	}
+	if member.DeletedAt == nil {
+		return fmt.Errorf("member tombstone was not established")
+	}
+	if !request.AlreadyTombstoned && (member.PrimaryEmail == nil || !memberEmailsEqual(*member.PrimaryEmail, request.PrimaryEmailSnapshot) || !slices.Contains(member.AvailableEmails, request.PrimaryEmailSnapshot)) {
+		return fmt.Errorf("member email projection changed during identity deletion")
+	}
+	if !request.AlreadyTombstoned && appendAudit != nil {
+		return appendAudit(ctx, tx, request.MemberID)
+	}
+	return nil
 }
 
 func (DeletionLifecycle) NotificationSnapshot(ctx context.Context, db *gorm.DB, memberID, identityID string) (DeletionNotification, error) {
