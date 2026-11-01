@@ -136,3 +136,9 @@ type slugTakenError struct{ error }
 
 func (err slugTakenError) Is(target error) bool { return target == post.ErrSlugTaken }
 func (err slugTakenError) Unwrap() error        { return err.error }
+
+// ProcessDueScheduledPosts publishes the due Posts in tx, the scheduler
+// job's transaction (post.ProcessDueScheduledPosts).
+func ProcessDueScheduledPosts(ctx context.Context, tx *gorm.DB, limit int) ([]string, error) {
+	return post.ProcessDueScheduledPosts(ctx, Bind(tx, Deps{}), limit)
+}

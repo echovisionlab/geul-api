@@ -8,7 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
@@ -64,7 +64,7 @@ func processDueScheduledPosts(t *testing.T, db *gorm.DB) ([]string, error) {
 	var published []string
 	err := db.WithContext(t.Context()).Transaction(func(tx *gorm.DB) error {
 		var err error
-		published, err = postdomain.ProcessDueScheduledPosts(t.Context(), tx, 100)
+		published, err = postpostgres.ProcessDueScheduledPosts(t.Context(), tx, 100)
 		return err
 	})
 	return published, err
