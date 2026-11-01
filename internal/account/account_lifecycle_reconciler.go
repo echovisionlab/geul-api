@@ -9,6 +9,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/postgreslock"
@@ -57,17 +58,9 @@ func (s *Service) ReconcileScheduledIdentityStates(ctx context.Context) error {
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT request.*
 		FROM user_deletion_request AS request
-		JOIN kratos.identities AS identity ON identity.id = request.identity_id
+		`+identityread.Join("request.identity_id", "identity")+`
 		WHERE request.lifecycle_state IN ('scheduled', 'recovery_confirmation_pending')
-		  AND (
-		    identity.state = 'active'
-		    OR EXISTS (
-		      SELECT 1
-		      FROM kratos.sessions AS session
-		      WHERE session.identity_id = request.identity_id
-		        AND session.active = TRUE
-		    )
-		  )
+		  AND (identity.state = 'active' OR `+identityread.ActiveSessionSQL("request.identity_id")+`)
 		ORDER BY request.updated_at ASC, request.id ASC
 		LIMIT ?
 	`, accountLifecycleReconcileBatchSize).Scan(&candidates).Error; err != nil {
@@ -131,7 +124,7 @@ func (s *Service) ReconcileTerminalIdentityStates(ctx context.Context) error {
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT request.*
 		FROM user_deletion_request AS request
-		JOIN kratos.identities AS identity ON identity.id = request.identity_id
+		`+identityread.Join("request.identity_id", "identity")+`
 		WHERE request.lifecycle_state IN ('cancelled', 'recovered')
 		  AND identity.state = 'inactive'
 		  AND request.updated_at > identity.updated_at

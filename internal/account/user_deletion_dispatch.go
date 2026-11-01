@@ -12,6 +12,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -80,9 +81,8 @@ func dispatchLockedUserDeletion(
 	if err := ValidateLastActiveAdminDeletionWithAuthorization(ctx, tx, request.MemberID, request.IdentityID, spicedb); err != nil {
 		return err
 	}
-	var identityState string
-	if err := tx.Raw("SELECT state FROM kratos.identities WHERE id = ?::uuid FOR UPDATE", request.IdentityID).
-		Scan(&identityState).Error; err != nil {
+	identityState, err := identityread.LockedState(ctx, tx, request.IdentityID)
+	if err != nil {
 		return err
 	}
 	if identityState == "" {

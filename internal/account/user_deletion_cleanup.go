@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/crypto"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -108,7 +109,7 @@ func ValidateLastActiveAdminDeletionWithAuthorization(
 	if err := tx.Raw(`
 		SELECT COUNT(*)
 		FROM member
-		JOIN kratos.identities AS identity ON identity.id = member.account_identity_id
+		`+identityread.Join("member.account_identity_id", "identity")+`
 		WHERE member.account_identity_id IN ?
 		  AND member.deleted_at IS NULL
 		  AND member.onboarded = TRUE

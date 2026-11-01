@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -133,7 +134,7 @@ func (s *Service) RevokeMySession(ctx context.Context, command RevokeMySessionCo
 		return nil, domainerr.Precondition("the current session can only be ended through logout")
 	}
 	var owned bool
-	if err := s.db.WithContext(ctx).Raw(`SELECT EXISTS(SELECT 1 FROM kratos.sessions WHERE id=?::uuid AND identity_id=?::uuid AND active=TRUE AND expires_at>NOW())`, command.SessionID, p.IdentityID.String()).Scan(&owned).Error; err != nil {
+	if err := s.db.WithContext(ctx).Raw(`SELECT EXISTS(SELECT 1 FROM `+identityread.LiveSessionsSQL+` AND id = ?::uuid)`, p.IdentityID.String(), command.SessionID).Scan(&owned).Error; err != nil {
 		return nil, err
 	}
 	if !owned {

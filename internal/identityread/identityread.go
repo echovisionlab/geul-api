@@ -51,3 +51,52 @@ func Exists(ctx context.Context, db *gorm.DB, identityID string) (bool, error) {
 	err := db.WithContext(ctx).Raw(`SELECT `+ExistsSQL, identityID).Scan(&exists).Error
 	return exists, err
 }
+
+// Join returns the JOIN of the Identity whose id is the column identityID,
+// aliased alias, for a row that names its Identity without the Member link.
+func Join(identityID, alias string) string {
+	return fmt.Sprintf("JOIN %s AS %s ON %s.id = %s", table, alias, alias, identityID)
+}
+
+// EmailVerifiedSQL is true when the Identity aliased alias has verified the
+// email address its traits carry.
+func EmailVerifiedSQL(alias string) string {
+	return fmt.Sprintf(`COALESCE(EXISTS (
+	SELECT 1 FROM %s AS address
+	WHERE address.identity_id = %s.id
+	  AND address.via = 'email'
+	  AND address.verified
+	  AND lower(btrim(address.value)) = lower(btrim(%s.traits ->> 'email'))
+), false)`, verifiableAddresses, alias, alias)
+}
+
+// LockedState returns the state of the Identity identityID, locking its row
+// until the transaction ends; it is empty when the Identity is missing.
+func LockedState(ctx context.Context, tx *gorm.DB, identityID string) (string, error) {
+	var state string
+	err := tx.WithContext(ctx).Raw(`SELECT state FROM `+table+` WHERE id = ?::uuid FOR UPDATE`, identityID).Scan(&state).Error
+	return state, err
+}
+
+const (
+	sessions            = "kratos.sessions"
+	verifiableAddresses = "kratos.identity_verifiable_addresses"
+)
+
+// ActiveSessionSQL is true when the Identity whose id is the column
+// identityID has a session Kratos still marks active, expired or not.
+func ActiveSessionSQL(identityID string) string {
+	return fmt.Sprintf(`EXISTS (
+	SELECT 1 FROM %s AS session
+	WHERE session.identity_id = %s
+	  AND session.active = TRUE
+)`, sessions, identityID)
+}
+
+// LiveSessionsSQL selects from the active, unexpired sessions of the
+// Identity bound to its one parameter; a query appends further conditions
+// with AND.
+const LiveSessionsSQL = sessions + `
+	WHERE identity_id = ?
+	  AND active = TRUE
+	  AND expires_at > CURRENT_TIMESTAMP`

@@ -9,6 +9,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -41,7 +42,7 @@ func processUnonboardedHardDelete(
 			return err
 		}
 		if !target.IdentityLinked {
-			exists, err := userDeletionIdentityExists(mutationCtx, connection, identityID)
+			exists, err := identityread.Exists(mutationCtx, connection, identityID)
 			if err != nil {
 				return fmt.Errorf("confirm unonboarded identity absence: %w", err)
 			}
@@ -77,7 +78,7 @@ func deleteOrConfirmUserIdentity(
 		}
 		return nil
 	}
-	exists, err := userDeletionIdentityExists(ctx, db, request.IdentityID)
+	exists, err := identityread.Exists(ctx, db, request.IdentityID)
 	if err != nil {
 		return fmt.Errorf("confirm replay identity absence: %w", err)
 	}
@@ -85,12 +86,4 @@ func deleteOrConfirmUserIdentity(
 		return fmt.Errorf("unlinked Member deletion replay cannot target an existing identity")
 	}
 	return nil
-}
-
-func userDeletionIdentityExists(ctx context.Context, db *gorm.DB, identityID string) (bool, error) {
-	var exists bool
-	err := db.WithContext(ctx).Raw(
-		`SELECT EXISTS (SELECT 1 FROM kratos.identities WHERE id = ?::uuid)`, identityID,
-	).Scan(&exists).Error
-	return exists, err
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -101,10 +102,7 @@ func (s *Service) securityForIdentity(
 	var sessions []sessionRow
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT CAST(id AS text) AS id, active, authenticated_at, expires_at
-		FROM kratos.sessions
-		WHERE identity_id = ?
-		  AND active = TRUE
-		  AND expires_at > CURRENT_TIMESTAMP
+		FROM `+identityread.LiveSessionsSQL+`
 		ORDER BY authenticated_at DESC, id DESC
 	`, identityID).Scan(&sessions).Error; err != nil {
 		return nil, err

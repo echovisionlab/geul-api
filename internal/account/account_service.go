@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -159,13 +160,7 @@ func loadAccountSummaryRows(ctx context.Context, db *gorm.DB, memberIDs []string
 			m.id::text AS member_id,
 			i.id::text AS identity_id,
 			NULLIF(btrim(i.traits ->> 'email'), '') AS email,
-			COALESCE(EXISTS (
-				SELECT 1 FROM kratos.identity_verifiable_addresses AS address
-				WHERE address.identity_id = i.id
-				  AND address.via = 'email'
-				  AND address.verified
-				  AND lower(btrim(address.value)) = lower(btrim(i.traits ->> 'email'))
-			), false) AS email_verified,
+			`+identityread.EmailVerifiedSQL("i")+` AS email_verified,
 			i.state::text AS identity_state,
 			COALESCE((i.metadata_admin ->> 'banned')::boolean, false) AS metadata_banned,
 			NULLIF(i.metadata_admin ->> 'ban_reason', '') AS ban_reason,
@@ -178,9 +173,7 @@ func loadAccountSummaryRows(ctx context.Context, db *gorm.DB, memberIDs []string
 				  AND d.scheduled_at IS NOT NULL
 			) AS pending_delete
 		FROM member AS m
-		LEFT JOIN kratos.identities AS i
-		  ON i.id = m.account_identity_id
-		 AND i.external_id = m.id::text
+		`+identityread.LeftJoinLinked("m", "i")+`
 		WHERE m.id IN ?
 	`, memberIDs).Scan(&rows).Error; err != nil {
 		return nil, err
@@ -266,9 +259,7 @@ func sessionSummaryForMember(ctx context.Context, db *gorm.DB, spicedb *auth.Spi
 				  AND d.scheduled_at IS NOT NULL
 			) AS pending_delete
 		FROM member AS m
-		LEFT JOIN kratos.identities AS i
-		  ON i.id = m.account_identity_id
-		 AND i.external_id = m.id::text
+		`+identityread.LeftJoinLinked("m", "i")+`
 		WHERE m.id = ?::uuid
 	`, memberID).Scan(&row)
 	if result.Error != nil {
