@@ -4,29 +4,14 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-
-	"gorm.io/gorm"
+	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
-
-// clientSortConfig defines allowed sort fields for clients
-var clientSortConfig = queryutil.SortConfig{
-	AllowedFields: map[string]string{
-		"id":         "id",
-		"name":       "name",
-		"website":    "website",
-		"created_at": "created_at",
-	},
-	DefaultSort: "name ASC, id ASC",
-}
 
 // GetClientQuery names a Client.
 type GetClientQuery struct {
@@ -52,118 +37,168 @@ type SearchClientsQuery struct {
 	Limit int32
 }
 
+// ClientView is a Client with the ready assets of its logos; a logo that is
+// unset or cannot be resolved is nil.
+type ClientView struct {
+	Client    Client
+	LightLogo *commonv1.AssetRef
+	DarkLogo  *commonv1.AssetRef
+}
+
+// ClientWorkCount is a Client with how many Works name it.
+type ClientWorkCount struct {
+	Client    ClientView
+	WorkCount int32
+}
+
 // GetClient retrieves a client by ID
-func (s *Service) GetClient(ctx context.Context, query GetClientQuery) (_ *managev1.Client, returnErr error) {
+func (s *Service) GetClient(ctx context.Context, query GetClientQuery) (_ ClientView, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("client_id", query.ID))
 
-	var client model.Client
-	if err := s.db.WithContext(ctx).First(&client, "id = ?", query.ID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, domainerr.ResourceNotFound("client", query.ID)
+	var view ClientView
+	err := s.units.Read(ctx, func(store Store) error {
+		client, err := store.Client(ctx, query.ID)
+		if errors.Is(err, ErrClientNotFound) {
+			return domainerr.ResourceNotFound("client", query.ID)
 		}
-		return nil, err
-	}
-	return s.toProtoClient(&client, s.getClientLogoAssets(ctx, client.ID)), nil
+		if err != nil {
+			return err
+		}
+		view = clientView(ctx, store, client)
+		return nil
+	})
+	return view, err
 }
 
 // ListClients returns a paginated list of clients
-func (s *Service) ListClients(ctx context.Context, query ListClientsQuery) (Page[*managev1.Client], error) {
-	clients, pagination, err := s.listClients(ctx, query)
-	if err != nil {
-		return Page[*managev1.Client]{}, err
-	}
-	items := make([]*managev1.Client, len(clients))
-	for i := range clients {
-		items[i] = s.toProtoClient(&clients[i], s.getClientLogoAssets(ctx, clients[i].ID))
-	}
-	return Page[*managev1.Client]{Items: items, Pagination: pagination}, nil
+func (s *Service) ListClients(ctx context.Context, query ListClientsQuery) (Page[ClientView], error) {
+	var listed Page[ClientView]
+	err := s.units.Read(ctx, func(store Store) error {
+		clients, pagination, err := listClients(ctx, store, query)
+		if err != nil {
+			return err
+		}
+		listed = Page[ClientView]{Items: clientViews(ctx, store, clients), Pagination: pagination}
+		return nil
+	})
+	return listed, err
 }
 
 // SearchClients searches clients by name for quick lookup
-func (s *Service) SearchClients(ctx context.Context, query SearchClientsQuery) ([]*managev1.Client, error) {
+func (s *Service) SearchClients(ctx context.Context, query SearchClientsQuery) ([]ClientView, error) {
 	limit := int(query.Limit)
 	if limit <= 0 || limit > 50 {
 		limit = 10
 	}
-
-	var clients []model.Client
-	scoped := s.db.WithContext(ctx).Model(&model.Client{})
-	if query.Query != "" {
-		scoped = scoped.Where("name ILIKE ?", "%"+query.Query+"%")
-	}
-	if err := scoped.Order("name ASC").Limit(limit).Find(&clients).Error; err != nil {
-		return nil, err
-	}
-
-	items := make([]*managev1.Client, len(clients))
-	for i := range clients {
-		items[i] = s.toProtoClient(&clients[i], s.getClientLogoAssets(ctx, clients[i].ID))
-	}
-	return items, nil
+	var found []ClientView
+	err := s.units.Read(ctx, func(store Store) error {
+		clients, err := store.SearchClients(ctx, query.Query, limit)
+		if err != nil {
+			return err
+		}
+		found = clientViews(ctx, store, clients)
+		return nil
+	})
+	return found, err
 }
 
 // ListClientsAdmin returns a paginated list of all clients with stats
-func (s *Service) ListClientsAdmin(ctx context.Context, query ListClientsAdminQuery) (Page[*managev1.ClientWithStats], error) {
+func (s *Service) ListClientsAdmin(ctx context.Context, query ListClientsAdminQuery) (Page[ClientWorkCount], error) {
 	can, err := policyv1.Client.List()
 	if err != nil {
-		return Page[*managev1.ClientWithStats]{}, err
+		return Page[ClientWorkCount]{}, err
 	}
 	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return Page[*managev1.ClientWithStats]{}, err
+		return Page[ClientWorkCount]{}, err
 	}
-	clients, pagination, err := s.listClients(ctx, query)
-	if err != nil {
-		return Page[*managev1.ClientWithStats]{}, err
-	}
-
-	workCounts := map[string]int32{}
-	if len(clients) > 0 {
-		clientIDs := make([]string, len(clients))
+	var listed Page[ClientWorkCount]
+	err = s.units.Read(ctx, func(store Store) error {
+		clients, pagination, err := listClients(ctx, store, query)
+		if err != nil {
+			return err
+		}
+		workCounts := map[string]int32{}
+		if len(clients) > 0 {
+			clientIDs := make([]string, len(clients))
+			for i := range clients {
+				clientIDs[i] = clients[i].ID
+			}
+			if workCounts, err = store.CountClientWorks(ctx, clientIDs); err != nil {
+				return err
+			}
+		}
+		items := make([]ClientWorkCount, len(clients))
 		for i := range clients {
-			clientIDs[i] = clients[i].ID
+			items[i] = ClientWorkCount{Client: clientView(ctx, store, clients[i]), WorkCount: workCounts[clients[i].ID]}
 		}
-		if workCounts, err = s.clientWorks.CountByClient(ctx, s.db, clientIDs); err != nil {
-			return Page[*managev1.ClientWithStats]{}, err
-		}
-	}
-
-	items := make([]*managev1.ClientWithStats, len(clients))
-	for i := range clients {
-		items[i] = &managev1.ClientWithStats{
-			Client:    s.toProtoClient(&clients[i], s.getClientLogoAssets(ctx, clients[i].ID)),
-			WorkCount: workCounts[clients[i].ID],
-		}
-	}
-	return Page[*managev1.ClientWithStats]{Items: items, Pagination: pagination}, nil
+		listed = Page[ClientWorkCount]{Items: items, Pagination: pagination}
+		return nil
+	})
+	return listed, err
 }
 
-func (s *Service) listClients(ctx context.Context, query ListClientsQuery) ([]model.Client, *commonv1.PaginationResponse, error) {
-	scoped, err := clientFilterConfig.ApplyFilters(s.db.WithContext(ctx).Model(&model.Client{}), query.Filters)
-	if err != nil {
-		return nil, nil, err
-	}
-	var total int64
-	if err := scoped.Count(&total).Error; err != nil {
-		return nil, nil, err
-	}
-
-	limit, offset := int32(20), query.Offset
+func listClients(ctx context.Context, store Store, query ListClientsQuery) ([]Client, Pagination, error) {
+	page := ListPage{Filters: query.Filters, Sorts: query.Sorts, Limit: 20, Offset: query.Offset}
 	if query.Limit > 0 {
-		limit = query.Limit
+		page.Limit = query.Limit
 	}
-	scoped, err = clientSortConfig.ApplySort(scoped, query.Sorts)
+	clients, total, err := store.ListClients(ctx, page)
 	if err != nil {
-		return nil, nil, err
+		return nil, Pagination{}, err
 	}
-
-	var clients []model.Client
-	if err := scoped.Limit(int(limit)).Offset(int(offset)).Find(&clients).Error; err != nil {
-		return nil, nil, err
-	}
-	return clients, &commonv1.PaginationResponse{
+	return clients, Pagination{
 		Total:   int32(total),
-		Limit:   limit,
-		Offset:  offset,
-		HasMore: offset+limit < int32(total),
+		Limit:   page.Limit,
+		Offset:  page.Offset,
+		HasMore: page.Offset+page.Limit < int32(total),
 	}, nil
+}
+
+func clientViews(ctx context.Context, store Store, clients []Client) []ClientView {
+	views := make([]ClientView, len(clients))
+	for i := range clients {
+		views[i] = clientView(ctx, store, clients[i])
+	}
+	return views
+}
+
+// clientView resolves the logos the client row selects. A logo that cannot
+// be resolved is logged and left out rather than failing the read.
+func clientView(ctx context.Context, store Store, client Client) ClientView {
+	return ClientView{
+		Client:    client,
+		LightLogo: clientLogo(ctx, store, client.ID, client.LogoLightFileID),
+		DarkLogo:  clientLogo(ctx, store, client.ID, client.LogoDarkFileID),
+	}
+}
+
+func clientLogo(ctx context.Context, store Store, clientID string, fileID *string) *commonv1.AssetRef {
+	if fileID == nil || strings.TrimSpace(*fileID) == "" {
+		return nil
+	}
+	asset, err := store.ReadyAsset(ctx, AssetSource{FileID: *fileID, Kind: "logo"})
+	if err != nil {
+		slog.ErrorContext(ctx, "Client logo asset lookup failed; serving the client without this logo", "domain", "referencecatalog", "operation", "resolve_client_logo_asset", "outcome", "failed", failurecause.Attr(err), "client_id", clientID, "file_id", *fileID)
+		return nil
+	}
+	return asset
+}
+
+// clientLogos reads the logos a Client selects after a mutation committed,
+// in its own snapshot. A Client that cannot be read is served without logos.
+func (s *Service) clientLogos(ctx context.Context, clientID string) (light, dark *commonv1.AssetRef) {
+	err := s.units.Read(ctx, func(store Store) error {
+		lightFileID, darkFileID, err := store.ClientLogoFiles(ctx, clientID)
+		if err != nil {
+			return err
+		}
+		light = clientLogo(ctx, store, clientID, lightFileID)
+		dark = clientLogo(ctx, store, clientID, darkFileID)
+		return nil
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "Client logo lookup failed; serving the client without logos", "domain", "referencecatalog", "operation", "load_client_logo_assets", "outcome", "failed", failurecause.Attr(err), "client_id", clientID)
+		return nil, nil
+	}
+	return light, dark
 }

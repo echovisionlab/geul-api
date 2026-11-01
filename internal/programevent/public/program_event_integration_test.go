@@ -24,9 +24,11 @@ import (
 	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	eventdomain "github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -677,12 +679,15 @@ func (publicProgramEventSignals) NotifyProtobufWithExecutor(context.Context, eve
 // production adapters and in-memory audit.
 func referenceCatalogForTest(t *testing.T, db *gorm.DB, cdnDomain string, spiceDB *auth.SpiceDBClient) *referencecatalog.Service {
 	t.Helper()
-	catalog, err := referencecatalog.NewService(referencecatalog.Deps{
-		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{},
+	units, err := referencecatalogpostgres.NewUnits(db, referencecatalogpostgres.Ports{
 		Assets:      referencecatalogadapter.NewAssets(cdnDomain),
 		Members:     referencecatalogadapter.NewMemberSummaries(cdnDomain),
 		MenuTargets: referencecatalogmenuadapter.NewTargets(nil),
 		ClientWorks: workadapter.ClientWorks{},
+	})
+	require.NoError(t, err)
+	catalog, err := referencecatalog.NewService(referencecatalog.Deps{
+		Units: units, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: &audittest.Recorder{},
 	})
 	require.NoError(t, err)
 	return catalog

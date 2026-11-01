@@ -3,4 +3,3 @@
 # domain (docs/architecture.md); lower with -update.
 10 internal/adapters/mcp
 3 internal/programevent/public
-2 internal/referencecatalog/public

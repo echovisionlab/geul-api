@@ -27,9 +27,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
@@ -236,12 +238,15 @@ func newReleaseIntegrationUseCases(
 // withAuditedRequestContext.
 func newReferenceCatalog(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *referencecatalog.Service {
 	t.Helper()
-	catalog, err := referencecatalog.NewService(referencecatalog.Deps{
-		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{},
+	units, err := referencecatalogpostgres.NewUnits(db, referencecatalogpostgres.Ports{
 		Assets:      referencecatalogadapter.NewAssets(""),
 		Members:     referencecatalogadapter.NewMemberSummaries(""),
 		MenuTargets: referencecatalogmenuadapter.NewTargets(nil),
 		ClientWorks: workadapter.ClientWorks{},
+	})
+	require.NoError(t, err)
+	catalog, err := referencecatalog.NewService(referencecatalog.Deps{
+		Units: units, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: &audittest.Recorder{},
 	})
 	require.NoError(t, err)
 	return catalog

@@ -1,4 +1,4 @@
-package public
+package referencecatalogadapter
 
 import (
 	"testing"
@@ -8,11 +8,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 )
 
-func TestToProtoMapPlaceBasic(t *testing.T) {
-	require.Nil(t, ToProtoMapPlaceBasic(nil))
+func TestPublicMapPlacesBasic(t *testing.T) {
+	require.Nil(t, PublicMapPlaces{}.Basic(nil))
 
 	googlePlaceID := "google-place-1"
-	result := ToProtoMapPlaceBasic(&model.MapPlace{
+	result := PublicMapPlaces{}.Basic(&model.MapPlace{
 		ID:            "place-1",
 		Name:          "Polarfront Lab",
 		Address:       "Seoul",

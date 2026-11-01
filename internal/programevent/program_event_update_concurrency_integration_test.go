@@ -14,8 +14,10 @@ import (
 
 	"connectrpc.com/connect"
 	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
@@ -193,12 +195,15 @@ func TestProgramEventUpdateRevalidatesTimeAndLocationAfterRootLockIntegration(t 
 // production adapters and in-memory audit.
 func referenceCatalogForTest(t *testing.T, db *gorm.DB, cdnDomain string, spiceDB *auth.SpiceDBClient) *referencecatalog.Service {
 	t.Helper()
-	catalog, err := referencecatalog.NewService(referencecatalog.Deps{
-		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{},
+	units, err := referencecatalogpostgres.NewUnits(db, referencecatalogpostgres.Ports{
 		Assets:      referencecatalogadapter.NewAssets(cdnDomain),
 		Members:     referencecatalogadapter.NewMemberSummaries(cdnDomain),
 		MenuTargets: referencecatalogmenuadapter.NewTargets(nil),
 		ClientWorks: workadapter.ClientWorks{},
+	})
+	require.NoError(t, err)
+	catalog, err := referencecatalog.NewService(referencecatalog.Deps{
+		Units: units, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: &audittest.Recorder{},
 	})
 	require.NoError(t, err)
 	return catalog

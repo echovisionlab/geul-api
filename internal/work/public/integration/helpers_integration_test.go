@@ -17,10 +17,12 @@ import (
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
@@ -208,12 +210,15 @@ func (publisher publicReferenceAsyncPublisher) NotifyProtobufWithExecutor(
 // production adapters and in-memory audit.
 func referenceCatalogForTest(t *testing.T, db *gorm.DB, cdnDomain string, spiceDB *auth.SpiceDBClient) *referencecatalog.Service {
 	t.Helper()
-	catalog, err := referencecatalog.NewService(referencecatalog.Deps{
-		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{},
+	units, err := referencecatalogpostgres.NewUnits(db, referencecatalogpostgres.Ports{
 		Assets:      referencecatalogadapter.NewAssets(cdnDomain),
 		Members:     referencecatalogadapter.NewMemberSummaries(cdnDomain),
 		MenuTargets: referencecatalogmenuadapter.NewTargets(nil),
 		ClientWorks: workadapter.ClientWorks{},
+	})
+	require.NoError(t, err)
+	catalog, err := referencecatalog.NewService(referencecatalog.Deps{
+		Units: units, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: &audittest.Recorder{},
 	})
 	require.NoError(t, err)
 	return catalog

@@ -11,7 +11,6 @@ import (
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestMusicReferenceDescriptors(t *testing.T) {
@@ -69,10 +68,10 @@ func TestMusicReferenceRequestsProjectionAndContinuation(t *testing.T) {
 	description := "Electronic music"
 	emptyDescription := ""
 	fixture := &recordingMusicReferences{
-		genres:     []*managev1.GenreWithStats{{Genre: &managev1.Genre{Id: managementWorkID, Name: "Electronic", Slug: "electronic", Description: &description}, ReleaseCount: 99}},
-		styles:     []*managev1.StyleWithStats{{Style: &managev1.Style{Id: managementWorkID, Name: "Techno", Slug: "techno", Description: &emptyDescription}}},
-		formats:    []*managev1.FormatWithStats{{Format: &managev1.Format{Id: managementWorkID, Name: "Vinyl", Slug: "vinyl"}}},
-		pagination: &commonv1.PaginationResponse{Total: 25, HasMore: true},
+		genres:     []referencecatalog.ReferenceUsage{{Reference: referencecatalog.Reference{ID: managementWorkID, Name: "Electronic", Slug: "electronic", Description: &description}, Count: 99}},
+		styles:     []referencecatalog.ReferenceUsage{{Reference: referencecatalog.Reference{ID: managementWorkID, Name: "Techno", Slug: "techno", Description: &emptyDescription}}},
+		formats:    []referencecatalog.ReferenceUsage{{Reference: referencecatalog.Reference{ID: managementWorkID, Name: "Vinyl", Slug: "vinyl"}}},
+		pagination: referencecatalog.Pagination{Total: 25, HasMore: true},
 	}
 	tools := newMusicReferenceFixture(t, fixture)
 	for _, test := range []struct{ name, title, slug string }{
@@ -217,10 +216,10 @@ func newMusicReferenceFixture(t *testing.T, fixture *recordingMusicReferences) *
 }
 
 type recordingMusicReferences struct {
-	genres     []*managev1.GenreWithStats
-	styles     []*managev1.StyleWithStats
-	formats    []*managev1.FormatWithStats
-	pagination *commonv1.PaginationResponse
+	genres     []referencecatalog.ReferenceUsage
+	styles     []referencecatalog.ReferenceUsage
+	formats    []referencecatalog.ReferenceUsage
+	pagination referencecatalog.Pagination
 	request    referencecatalog.ReferenceListQuery
 	calls      int
 	err        error
@@ -231,17 +230,17 @@ func (r *recordingMusicReferences) record(query referencecatalog.ReferenceListQu
 	r.request = query
 }
 
-func (r *recordingMusicReferences) ListGenresAdmin(_ context.Context, query referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.GenreWithStats], error) {
+func (r *recordingMusicReferences) ListGenresAdmin(_ context.Context, query referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.ReferenceUsage], error) {
 	r.record(query)
-	return referencecatalog.Page[*managev1.GenreWithStats]{Items: r.genres, Pagination: r.pagination}, r.err
+	return referencecatalog.Page[referencecatalog.ReferenceUsage]{Items: r.genres, Pagination: r.pagination}, r.err
 }
 
-func (r *recordingMusicReferences) ListStylesAdmin(_ context.Context, query referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.StyleWithStats], error) {
+func (r *recordingMusicReferences) ListStylesAdmin(_ context.Context, query referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.ReferenceUsage], error) {
 	r.record(query)
-	return referencecatalog.Page[*managev1.StyleWithStats]{Items: r.styles, Pagination: r.pagination}, r.err
+	return referencecatalog.Page[referencecatalog.ReferenceUsage]{Items: r.styles, Pagination: r.pagination}, r.err
 }
 
-func (r *recordingMusicReferences) ListFormatsAdmin(_ context.Context, query referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.FormatWithStats], error) {
+func (r *recordingMusicReferences) ListFormatsAdmin(_ context.Context, query referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.ReferenceUsage], error) {
 	r.record(query)
-	return referencecatalog.Page[*managev1.FormatWithStats]{Items: r.formats, Pagination: r.pagination}, r.err
+	return referencecatalog.Page[referencecatalog.ReferenceUsage]{Items: r.formats, Pagination: r.pagination}, r.err
 }

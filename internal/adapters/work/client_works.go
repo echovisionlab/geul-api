@@ -5,13 +5,13 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
 )
 
 // ClientWorks counts the Work relations of Reference Catalog Clients.
 type ClientWorks struct{}
 
-var _ referencecatalog.ClientWorks = ClientWorks{}
+var _ referencecatalogpostgres.ClientWorks = ClientWorks{}
 
 func (ClientWorks) CountByClient(ctx context.Context, db *gorm.DB, clientIDs []string) (map[string]int32, error) {
 	var rows []struct {

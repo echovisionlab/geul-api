@@ -4,8 +4,11 @@ import (
 	"context"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
@@ -30,14 +33,14 @@ func NewClientConnectHandler(catalog *Service) *ClientConnectHandler {
 
 func (h *ClientConnectHandler) Get(ctx context.Context, req *connect.Request[openv1.GetClientRequest]) (*connect.Response[openv1.GetClientResponse], error) {
 	client, err := h.catalog.GetClient(ctx, GetClientQuery{ID: req.Msg.Id})
-	return respond(&openv1.GetClientResponse{Client: client}, err)
+	return respond(&openv1.GetClientResponse{Client: clientSummaryMessage(client)}, err)
 }
 
 func (h *ClientConnectHandler) List(ctx context.Context, req *connect.Request[openv1.ListClientsRequest]) (*connect.Response[openv1.ListClientsResponse], error) {
 	page, err := h.catalog.ListClients(ctx, ListClientsQuery{
 		Filters: req.Msg.Filters, Sorts: req.Msg.Sorts, Limit: req.Msg.Pagination.GetLimit(), Offset: req.Msg.Pagination.GetOffset(),
 	})
-	return respond(&openv1.ListClientsResponse{Clients: page.Items, Pagination: page.Pagination}, err)
+	return respond(&openv1.ListClientsResponse{Clients: messages(page.Items, clientSummaryMessage), Pagination: paginationMessage(page.Pagination)}, err)
 }
 
 // CategoryConnectHandler serves the public Category RPCs.
@@ -55,7 +58,7 @@ func (h *CategoryConnectHandler) List(ctx context.Context, req *connect.Request[
 	page, err := h.catalog.ListCategories(ctx, ListCategoriesQuery{
 		Filters: req.Msg.Filters, Sorts: req.Msg.Sorts, Limit: req.Msg.Pagination.GetLimit(), Offset: req.Msg.Pagination.GetOffset(),
 	})
-	return respond(&openv1.ListCategoriesResponse{Categories: page.Items, Pagination: page.Pagination}, err)
+	return respond(&openv1.ListCategoriesResponse{Categories: messages(page.Items, categoryMessage), Pagination: paginationMessage(page.Pagination)}, err)
 }
 
 // TagConnectHandler serves the public Tag RPCs.
@@ -73,7 +76,7 @@ func (h *TagConnectHandler) List(ctx context.Context, req *connect.Request[openv
 	page, err := h.catalog.ListTags(ctx, ListTagsQuery{
 		Filters: req.Msg.Filters, Sorts: req.Msg.Sorts, Limit: req.Msg.Pagination.GetLimit(), Offset: req.Msg.Pagination.GetOffset(),
 	})
-	return respond(&openv1.ListTagsResponse{Tags: page.Items, Pagination: page.Pagination}, err)
+	return respond(&openv1.ListTagsResponse{Tags: messages(page.Items, tagMessage), Pagination: paginationMessage(page.Pagination)}, err)
 }
 
 // MapPlaceConnectHandler serves the public Map Place RPCs.
@@ -89,5 +92,81 @@ func NewMapPlaceConnectHandler(catalog *Service) *MapPlaceConnectHandler {
 
 func (h *MapPlaceConnectHandler) GetByIds(ctx context.Context, req *connect.Request[openv1.GetMapPlacesByIdsRequest]) (*connect.Response[openv1.GetMapPlacesByIdsResponse], error) {
 	places, err := h.catalog.GetMapPlacesByIDs(ctx, GetMapPlacesByIDsQuery{IDs: req.Msg.Ids})
-	return respond(&openv1.GetMapPlacesByIdsResponse{Places: places}, err)
+	return respond(&openv1.GetMapPlacesByIdsResponse{Places: messages(places, mapPlaceMessage)}, err)
+}
+
+func messages[T, M any](items []T, message func(T) M) []M {
+	result := make([]M, 0, len(items))
+	for _, item := range items {
+		result = append(result, message(item))
+	}
+	return result
+}
+
+func paginationMessage(pagination referencecatalog.Pagination) *commonv1.PaginationResponse {
+	return &commonv1.PaginationResponse{
+		Total: pagination.Total, Limit: pagination.Limit, Offset: pagination.Offset, HasMore: pagination.HasMore,
+	}
+}
+
+func categoryMessage(category Category) *openv1.Category {
+	return &openv1.Category{
+		Id:          category.ID,
+		Name:        category.Name,
+		Slug:        category.Slug,
+		Description: category.Description,
+		PostCount:   category.PostCount,
+	}
+}
+
+func tagMessage(tag Tag) *openv1.Tag {
+	return &openv1.Tag{
+		Id:        tag.ID,
+		Name:      tag.Name,
+		Slug:      tag.Slug,
+		PostCount: tag.PostCount,
+	}
+}
+
+func clientSummaryMessage(view referencecatalog.ClientView) *openv1.ClientSummary {
+	client := view.Client
+	summary := &openv1.ClientSummary{
+		Id:        client.ID,
+		Name:      client.Name,
+		CreatedAt: timestamppb.New(client.CreatedAt),
+	}
+	if client.Website != nil {
+		summary.Website = client.Website
+	}
+	summary.LogoLightAsset = view.LightLogo
+	summary.LogoDarkAsset = view.DarkLogo
+	return summary
+}
+
+func mapPlaceMessage(public MapPlace) *openv1.MapPlace {
+	place := public.Place
+	protoPlace := &openv1.MapPlace{
+		Id:        place.ID,
+		Name:      place.Name,
+		Address:   place.Address,
+		Lat:       place.Lat,
+		Lng:       place.Lng,
+		CreatedAt: timestamppb.New(place.CreatedAt),
+	}
+
+	if place.AddressComponents != nil {
+		protoPlace.AddressComponents = &openv1.AddressComponents{
+			Street:     place.AddressComponents.Street,
+			City:       place.AddressComponents.City,
+			Region:     place.AddressComponents.Region,
+			Country:    place.AddressComponents.Country,
+			PostalCode: place.AddressComponents.PostalCode,
+		}
+	}
+
+	if place.GooglePlaceID != nil && *place.GooglePlaceID != "" {
+		protoPlace.GooglePlaceId = place.GooglePlaceID
+	}
+	protoPlace.ImageAsset = public.Image
+	return protoPlace
 }

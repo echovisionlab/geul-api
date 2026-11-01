@@ -5,14 +5,10 @@ import (
 	"errors"
 	"log/slog"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -26,9 +22,8 @@ const (
 	ClientLogoDark  ClientLogoSlot = "dark"
 )
 
-// clientLogoSlot is the column, binding key and audit slot of a logo slot.
+// clientLogoSlot is the binding key and audit slot of a logo slot.
 type clientLogoSlot struct {
-	column     string
 	bindingKey string
 	audit      sharedtelemetry.AuditAssetSlot
 }
@@ -36,9 +31,9 @@ type clientLogoSlot struct {
 func clientLogoSlotFor(slot ClientLogoSlot) (clientLogoSlot, error) {
 	switch slot {
 	case ClientLogoLight:
-		return clientLogoSlot{column: "logo_light_file_id", bindingKey: "logo_light", audit: sharedtelemetry.AuditAssetSlotLight}, nil
+		return clientLogoSlot{bindingKey: "logo_light", audit: sharedtelemetry.AuditAssetSlotLight}, nil
 	case ClientLogoDark:
-		return clientLogoSlot{column: "logo_dark_file_id", bindingKey: "logo_dark", audit: sharedtelemetry.AuditAssetSlotDark}, nil
+		return clientLogoSlot{bindingKey: "logo_dark", audit: sharedtelemetry.AuditAssetSlotDark}, nil
 	default:
 		return clientLogoSlot{}, domainerr.InvalidField("variant", "unsupported theme asset variant")
 	}
@@ -59,34 +54,22 @@ type DeleteClientLogoCommand struct {
 }
 
 // lockClientLogo takes the Client row for a logo change and returns the file
-// selected in column.
-func lockClientLogo(ctx context.Context, tx *gorm.DB, clientID, column string) (*string, error) {
-	var current struct {
-		SelectedFileID *string `gorm:"column:selected_file_id"`
+// selected in slot.
+func lockClientLogo(ctx context.Context, store Store, clientID string, slot ClientLogoSlot) (*string, error) {
+	selected, err := store.LockClientLogo(ctx, clientID, slot)
+	if errors.Is(err, ErrClientNotFound) {
+		return nil, domainerr.ResourceNotFound("client", clientID)
 	}
-	if err := tx.WithContext(ctx).Table("client").
-		Select(column+" AS selected_file_id").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Where("id = ?", clientID).
-		Take(&current).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, domainerr.ResourceNotFound("client", clientID)
-		}
-		return nil, err
-	}
-	return current.SelectedFileID, nil
+	return selected, err
 }
 
-// writeClientLogo stores fileID (nil clears it) in the locked Client's column.
-func writeClientLogo(tx *gorm.DB, clientID, column string, fileID any) error {
-	result := tx.Table("client").Where("id = ?", clientID).Updates(structured.Fields{column: fileID})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
+// writeClientLogo stores fileID (nil clears it) in the locked Client's slot.
+func writeClientLogo(ctx context.Context, store Store, clientID string, slot ClientLogoSlot, fileID *string) error {
+	err := store.SetClientLogo(ctx, clientID, slot, fileID)
+	if errors.Is(err, ErrClientNotFound) {
 		return domainerr.ResourceNotFound("client", clientID)
 	}
-	return nil
+	return err
 }
 
 // SetClientLogo selects a ready logo for one slot and returns its asset.
@@ -106,23 +89,23 @@ func (s *Service) SetClientLogo(ctx context.Context, command SetClientLogoComman
 	}
 
 	var selected *string
-	logoAsset, err := mutation.Run(ctx, s.mutations, mutation.Spec[*commonv1.AssetRef]{
-		Lock: func(ctx context.Context, tx *gorm.DB) (err error) {
-			selected, err = lockClientLogo(ctx, tx, command.ClientID, slot.column)
+	logoAsset, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[*commonv1.AssetRef, Store]{
+		Lock: func(ctx context.Context, store Store) (err error) {
+			selected, err = lockClientLogo(ctx, store, command.ClientID, command.Slot)
 			return err
 		},
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(ctx context.Context, tx *gorm.DB) (*commonv1.AssetRef, error) {
+		Change: func(ctx context.Context, store Store) (*commonv1.AssetRef, error) {
 			if selected != nil && *selected == command.FileID {
 				return nil, nil
 			}
-			if err := s.assets.LockForAttachment(ctx, tx, []string{command.FileID}); err != nil {
+			if err := store.LockFilesForAttachment(ctx, []string{command.FileID}); err != nil {
 				return nil, err
 			}
-			if err := writeClientLogo(tx, command.ClientID, slot.column, command.FileID); err != nil {
+			if err := writeClientLogo(ctx, store, command.ClientID, command.Slot, &command.FileID); err != nil {
 				return nil, err
 			}
-			return s.assets.BindReady(ctx, tx, AssetBinding{
+			return store.BindReadyAsset(ctx, AssetBinding{
 				SourceFileID: command.FileID,
 				Owner:        AssetOwner{Type: "client", ID: command.ClientID},
 				Key:          slot.bindingKey,
@@ -143,14 +126,11 @@ func (s *Service) SetClientLogo(ctx context.Context, command SetClientLogoComman
 	}
 	if selected != nil && *selected == command.FileID {
 		// The unchanged selection answers its current asset.
-		assets := s.getClientLogoAssets(ctx, command.ClientID)
-		if assets == nil {
-			return nil, nil
-		}
+		light, dark := s.clientLogos(ctx, command.ClientID)
 		if command.Slot == ClientLogoDark {
-			return assets.Dark, nil
+			return dark, nil
 		}
-		return assets.Light, nil
+		return light, nil
 	}
 	return logoAsset, nil
 }
@@ -172,20 +152,20 @@ func (s *Service) DeleteClientLogo(ctx context.Context, command DeleteClientLogo
 	}
 
 	var selected *string
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
-		Lock: func(ctx context.Context, tx *gorm.DB) (err error) {
-			selected, err = lockClientLogo(ctx, tx, command.ClientID, slot.column)
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
+		Lock: func(ctx context.Context, store Store) (err error) {
+			selected, err = lockClientLogo(ctx, store, command.ClientID, command.Slot)
 			return err
 		},
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) {
+		Change: func(ctx context.Context, store Store) (struct{}, error) {
 			if selected == nil {
 				return struct{}{}, nil
 			}
-			if err := writeClientLogo(tx, command.ClientID, slot.column, nil); err != nil {
+			if err := writeClientLogo(ctx, store, command.ClientID, command.Slot, nil); err != nil {
 				return struct{}{}, err
 			}
-			return struct{}{}, s.assets.Release(ctx, tx, AssetRelease{
+			return struct{}{}, store.ReleaseAssets(ctx, AssetRelease{
 				Owner:         AssetOwner{Type: "client", ID: command.ClientID},
 				BindingPrefix: slot.bindingKey,
 			})
