@@ -79,6 +79,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/scheduler",
 			"./internal/series/postgres",
 			"./internal/sharelink/postgres",
+			"./internal/sitemap/public",
 			"./internal/telemetry",
 			"./internal/transcode",
 			"./internal/transcode/application",
@@ -86,6 +87,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/translation",
 			"./internal/work/postgres",
 			"./internal/work/public/postgres",
+			"./internal/worker/postgres",
 		},
 	},
 	{
@@ -132,7 +134,6 @@ var integrationCatalog = []integrationBand{
 			"./internal/series",
 			"./internal/series/public",
 			"./internal/sharelink",
-			"./internal/sitemap/public",
 			"./internal/sitesettings/integration",
 			"./internal/sitesettings/public/integration",
 			"./internal/translation/application",

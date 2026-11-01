@@ -25,12 +25,3 @@ func newWorkerIntegrationDB(t *testing.T) *gorm.DB {
 
 	return newWorkerIntegrationPostgres(t).DB
 }
-
-// newCommittedWorkerIntegrationDB is used by code paths that own a real
-// top-level transaction. The database belongs to the test, so committed rows
-// never reach another test.
-func newCommittedWorkerIntegrationDB(t *testing.T) *gorm.DB {
-	t.Helper()
-
-	return newWorkerIntegrationPostgres(t).DB
-}

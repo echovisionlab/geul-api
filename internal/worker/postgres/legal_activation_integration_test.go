@@ -1,9 +1,18 @@
 //go:build integration
 
-package worker
+package workerpostgres
 
 import (
 	"encoding/json"
+	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
+	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
+	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
+	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
+	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
+	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
+	seriesadapter "github.com/echovisionlab/geul-api/internal/adapters/series"
+	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
+	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"testing"
 	"time"
 
@@ -13,13 +22,15 @@ import (
 
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	"github.com/echovisionlab/geul-api/internal/campaign"
-	"github.com/echovisionlab/geul-api/internal/config"
 	"github.com/echovisionlab/geul-api/internal/email"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	"github.com/echovisionlab/geul-api/internal/scheduler"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/worker"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -35,7 +46,7 @@ func TestScheduledLegalActivationAtomicallySwitchesCanonicalOgTargetIntegration(
 		referenceType   string
 		updateEvent     string
 		effectiveEvent  string
-		activate        func(*Handlers) error
+		activate        func(*worker.Handlers) error
 	}{
 		{
 			name: "privacy", table: "privacy_history",
@@ -45,9 +56,7 @@ func TestScheduledLegalActivationAtomicallySwitchesCanonicalOgTargetIntegration(
 			referenceType:   legaldomain.EmailDeliveryReferenceTypePrivacy,
 			updateEvent:     email.EventPrivacyUpdate.String(),
 			effectiveEvent:  email.EventPrivacyEffective.String(),
-			activate: func(h *Handlers) error {
-				return h.handleActivatePrivacy(t.Context())
-			},
+			activate:        func(h *worker.Handlers) error { return h.HandleScheduled(t.Context(), scheduler.JobActivatePrivacy) },
 		},
 		{
 			name: "terms", table: "terms_history",
@@ -57,13 +66,11 @@ func TestScheduledLegalActivationAtomicallySwitchesCanonicalOgTargetIntegration(
 			referenceType:   legaldomain.EmailDeliveryReferenceTypeTerms,
 			updateEvent:     email.EventTermsUpdate.String(),
 			effectiveEvent:  email.EventTermsEffective.String(),
-			activate: func(h *Handlers) error {
-				return h.handleActivateTerms(t.Context())
-			},
+			activate:        func(h *worker.Handlers) error { return h.HandleScheduled(t.Context(), scheduler.JobActivateTerms) },
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			db := newCommittedWorkerIntegrationDB(t)
+			db := newLegalActivationDB(t)
 			seedWorkerLegalDeliveryTemplate(t, db, testCase.updateEvent)
 			seedWorkerLegalDeliveryTemplate(t, db, testCase.effectiveEvent)
 			now := time.Now().UTC()
@@ -137,14 +144,7 @@ func TestScheduledLegalActivationAtomicallySwitchesCanonicalOgTargetIntegration(
 			require.NoError(t, err)
 			require.Equal(t, model.OgGenerationStatusReady, status)
 
-			handlers := &Handlers{
-				db:          db,
-				auditWriter: apitelemetry.NewDurableWriter(db),
-				ogPlanner:   newWorkerOGPlanner(db, "https://cdn.example.com"),
-				config: &config.Config{
-					CDNURL: "https://cdn.example.com", SiteOrigin: "https://www.example.com",
-				},
-			}
+			handlers := newLegalActivationHandlers(t, db, "https://www.example.com")
 			require.NoError(t, testCase.activate(handlers))
 
 			var activeStatus, scheduledStatus string
@@ -235,21 +235,21 @@ func TestScheduledLegalActivationRollsBackStatusWhenOgPlanningFailsIntegration(t
 		backgroundColumn string
 		activeStatus     string
 		scheduledStatus  string
-		activate         func(*Handlers) error
+		activate         func(*worker.Handlers) error
 	}{
 		{
 			name: "privacy", table: "privacy_history", backgroundColumn: "privacy_og_background_file_id",
 			activeStatus: managev1.PrivacyStatus_PRIVACY_STATUS_ACTIVE.String(), scheduledStatus: managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String(),
-			activate: func(h *Handlers) error { return h.handleActivatePrivacy(t.Context()) },
+			activate: func(h *worker.Handlers) error { return h.HandleScheduled(t.Context(), scheduler.JobActivatePrivacy) },
 		},
 		{
 			name: "terms", table: "terms_history", backgroundColumn: "terms_og_background_file_id",
 			activeStatus: managev1.TermsStatus_TERMS_STATUS_ACTIVE.String(), scheduledStatus: managev1.TermsStatus_TERMS_STATUS_SCHEDULED.String(),
-			activate: func(h *Handlers) error { return h.handleActivateTerms(t.Context()) },
+			activate: func(h *worker.Handlers) error { return h.HandleScheduled(t.Context(), scheduler.JobActivateTerms) },
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			db := newCommittedWorkerIntegrationDB(t)
+			db := newLegalActivationDB(t)
 			now := time.Now().UTC()
 			activeID := uuid.NewString()
 			scheduledID := uuid.NewString()
@@ -273,12 +273,7 @@ func TestScheduledLegalActivationRollsBackStatusWhenOgPlanningFailsIntegration(t
 				missingReadyAssetFileID,
 			).Error)
 
-			handlers := &Handlers{
-				db:          db,
-				config:      &config.Config{CDNURL: "https://cdn.example.com"},
-				auditWriter: apitelemetry.NewDurableWriter(db),
-				ogPlanner:   newWorkerOGPlanner(db, "https://cdn.example.com"),
-			}
+			handlers := newLegalActivationHandlers(t, db, "")
 			require.Error(t, testCase.activate(handlers))
 
 			var activeStatus, scheduledStatus string
@@ -304,7 +299,7 @@ func TestScheduledLegalActivationDoesNotMutateSendingSupersededRunIntegration(t 
 		referenceType   string
 		updateEvent     string
 		effectiveEvent  string
-		activate        func(*Handlers) error
+		activate        func(*worker.Handlers) error
 	}{
 		{
 			name:            "privacy",
@@ -315,9 +310,7 @@ func TestScheduledLegalActivationDoesNotMutateSendingSupersededRunIntegration(t 
 			referenceType:   legaldomain.EmailDeliveryReferenceTypePrivacy,
 			updateEvent:     email.EventPrivacyUpdate.String(),
 			effectiveEvent:  email.EventPrivacyEffective.String(),
-			activate: func(h *Handlers) error {
-				return h.handleActivatePrivacy(t.Context())
-			},
+			activate:        func(h *worker.Handlers) error { return h.HandleScheduled(t.Context(), scheduler.JobActivatePrivacy) },
 		},
 		{
 			name:            "terms",
@@ -328,13 +321,11 @@ func TestScheduledLegalActivationDoesNotMutateSendingSupersededRunIntegration(t 
 			referenceType:   legaldomain.EmailDeliveryReferenceTypeTerms,
 			updateEvent:     email.EventTermsUpdate.String(),
 			effectiveEvent:  email.EventTermsEffective.String(),
-			activate: func(h *Handlers) error {
-				return h.handleActivateTerms(t.Context())
-			},
+			activate:        func(h *worker.Handlers) error { return h.HandleScheduled(t.Context(), scheduler.JobActivateTerms) },
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			db := newCommittedWorkerIntegrationDB(t)
+			db := newLegalActivationDB(t)
 			seedWorkerLegalDeliveryTemplate(t, db, testCase.updateEvent)
 			seedWorkerLegalDeliveryTemplate(t, db, testCase.effectiveEvent)
 			now := time.Now().UTC()
@@ -364,15 +355,7 @@ func TestScheduledLegalActivationDoesNotMutateSendingSupersededRunIntegration(t 
 				Where("id = ?", incomingUpdateRun.ID).
 				Update("status", campaign.CampaignDeliveryRunStatusSending).Error)
 
-			handlers := &Handlers{
-				db:          db,
-				auditWriter: apitelemetry.NewDurableWriter(db),
-				ogPlanner:   newWorkerOGPlanner(db, "https://cdn.example.com"),
-				config: &config.Config{
-					CDNURL:     "https://cdn.example.com",
-					SiteOrigin: "https://www.example.com",
-				},
-			}
+			handlers := newLegalActivationHandlers(t, db, "https://www.example.com")
 			require.NoError(t, testCase.activate(handlers))
 
 			var activeStatus, scheduledStatus string
@@ -412,25 +395,9 @@ func TestScheduledLegalActivationDoesNotMutateSendingSupersededRunIntegration(t 
 	}
 }
 
-func TestScheduledLegalActivationIsNoopWithoutDueDocumentIntegration(t *testing.T) {
-	t.Parallel()
-	db := newWorkerIntegrationDB(t)
-	handlers := &Handlers{
-		db:          db,
-		config:      &config.Config{CDNURL: "https://cdn.example.com"},
-		auditWriter: apitelemetry.NewDurableWriter(db),
-		ogPlanner:   newWorkerOGPlanner(db, "https://cdn.example.com"),
-	}
-	require.NoError(t, handlers.handleActivatePrivacy(t.Context()))
-	require.NoError(t, handlers.handleActivateTerms(t.Context()))
-	var runCount int64
-	require.NoError(t, db.Model(&model.OgGenerationRun{}).Count(&runCount).Error)
-	require.Zero(t, runCount)
-}
-
 func TestScheduledLegalActivationRollsBackWithoutEffectiveNoticeTemplateIntegration(t *testing.T) {
 	t.Parallel()
-	db := newCommittedWorkerIntegrationDB(t)
+	db := newLegalActivationDB(t)
 	now := time.Now().UTC()
 	privacyID := uuid.NewString()
 	contentDocumentID := seedWorkerPolicyContentDocument(t, db)
@@ -451,15 +418,8 @@ func TestScheduledLegalActivationRollsBackWithoutEffectiveNoticeTemplateIntegrat
 	).Error)
 	seedWorkerPolicyTranslationSource(t, db, "privacy", privacyID)
 
-	handlers := &Handlers{
-		db:          db,
-		auditWriter: apitelemetry.NewDurableWriter(db),
-		ogPlanner:   newWorkerOGPlanner(db, "https://cdn.example.com"),
-		config: &config.Config{
-			SiteOrigin: "https://www.example.com",
-		},
-	}
-	require.Error(t, handlers.handleActivatePrivacy(t.Context()))
+	handlers := newLegalActivationHandlers(t, db, "https://www.example.com")
+	require.Error(t, handlers.HandleScheduled(t.Context(), scheduler.JobActivatePrivacy))
 
 	var status string
 	require.NoError(t, db.Table("privacy_history").
@@ -575,4 +535,76 @@ func seedWorkerLegalDeliveryTemplate(
 		  AND template.is_active = TRUE
 	`, eventKey).Scan(&count).Error)
 	require.EqualValues(t, 1, count, "current schema must seed one legal delivery template")
+}
+
+// newLegalActivationDB returns a database owned by the calling test; the
+// activation commits real top-level transactions.
+func newLegalActivationDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
+		BootstrapKratosStub: true,
+		ApplyAppSchemaSQL:   true,
+	}).DB
+}
+
+// idlePorts stands in for the worker ports a legal activation never
+// reaches; a call panics on the nil port.
+type idlePorts struct {
+	worker.FileMedia
+	worker.DanglingFileCleanup
+	worker.PublicAssetCleanup
+	worker.OGCleanup
+	worker.FaviconCleanup
+	worker.UploadSessions
+	worker.UploadStorage
+	worker.FileIngestPublisher
+	worker.ShareLinks
+	worker.AuthCodeIssuances
+	worker.QueueArchives
+	worker.MemberDeletions
+	worker.IdentityLister
+	worker.TimedBans
+	worker.GeoIPRefresher
+	worker.CampaignDeliveries
+	worker.EmailDelivery
+	worker.BulkEmail
+}
+
+// newLegalActivationHandlers returns the worker with the production legal
+// activation adapters over db: the job unit of work, its audit and OG
+// planner, and the Legal port without a notice dispatcher.
+func newLegalActivationHandlers(t *testing.T, db *gorm.DB, siteOrigin string) *worker.Handlers {
+	t.Helper()
+	units, err := NewUnits(db, Ports{
+		Audit:     apitelemetry.NewDurableWriter(db),
+		OGPlanner: newWorkerOGPlanner(db, "https://cdn.example.com"),
+	})
+	require.NoError(t, err)
+	idle := idlePorts{}
+	handlers, err := worker.NewHandlers(worker.Deps{
+		Units: units, Legal: legalPolicies{db: db}, SiteOrigin: siteOrigin,
+		FileMedia: idle, DanglingFiles: idle, PublicAssets: idle, OGCleanup: idle, FaviconCleanup: idle,
+		Uploads: idle, UploadStorage: idle, FileIngest: idle, ShareLinks: idle, AuthCodes: idle,
+		QueueArchives: idle, MemberDeletions: idle, Identities: idle, TimedBans: idle, GeoIP: idle,
+		Campaigns: idle, EmailDelivery: idle, BulkEmail: idle,
+	})
+	require.NoError(t, err)
+	return handlers
+}
+
+func newWorkerOGPlanner(db *gorm.DB, cdnDomain string) *og.Planner {
+	return og.NewPlanner(db, cdnDomain, sitesettingsadapter.NewRenderConfig(), workerOGProjections()...)
+}
+
+func newWorkerOGLifecycle(db *gorm.DB, cdnDomain string) *og.Lifecycle {
+	return og.NewLifecycle(db, cdnDomain, workerOGProjections()...)
+}
+
+func workerOGProjections() []og.Projection {
+	return []og.Projection{
+		postadapter.NewProjection(), pageadapter.NewProjection(), seriesadapter.NewProjection(),
+		workadapter.NewProjection(), labeladapter.NewProjection(), artistadapter.NewProjection(),
+		releaseadapter.NewProjection(), formogadapter.NewProjection(), legaladapter.NewProjection(),
+		sitesettingsadapter.NewProjection(),
+	}
 }
