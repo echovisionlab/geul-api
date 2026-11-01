@@ -194,9 +194,14 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		secret:                    cfg.TokenSigningSecret,
 		internalServiceHeaderName: cfg.InternalServiceHeaderName,
 	}
-	gatewayAuthorizationService := authentication.NewGatewayAuthorizationService(db, spicedbClient)
+	authenticationService, err := authentication.NewService(authentication.Deps{
+		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, Roles: accountadapter.AccountDirectRoleTransition{},
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize authentication service: %w", err)
+	}
 	gatewayAuthorizationPath, gatewayAuthorizationHandler := intrav1connect.NewInternalGatewayAuthorizationServiceHandler(
-		gatewayAuthorizationService,
+		authentication.NewConnectHandler(authenticationService),
 		internalHandlerOpts...,
 	)
 	mux.Handle(gatewayAuthorizationPath, internalRPCTrust.identity(gatewayAuthorizationHandler))
@@ -368,7 +373,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	loginHooks := authentication.NewLoginHookService(
 		kratosClient,
 		authenticationadapter.NewLoginMemberProvisioner(registrationMembers),
-		authentication.NewAuthBootstrapService(db, spicedbClient, telemetryWriter, directRoles),
+		authenticationService,
 	)
 	registrationHooks := authentication.NewRegistrationHookPolicy(
 		authenticationadapter.NewRegistrationReuseHoldChecker(db),

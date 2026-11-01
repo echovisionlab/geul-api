@@ -28,15 +28,14 @@ func TestRegistrationLoginHookDoesNotPublishWelcomeIntegration(t *testing.T) {
 		memberadapter.AccountEmailProjection{},
 		roles,
 	)
+	loginRoles, err := authentication.NewService(authentication.Deps{
+		DB: stack.DB, SpiceDB: stack.SpiceDBClient, Audit: apitelemetry.NewDurableWriter(stack.DB), Roles: roles,
+	})
+	require.NoError(t, err)
 	lifecycle := authentication.NewLoginHookService(
 		stack.KratosClient,
 		authenticationadapter.NewLoginMemberProvisioner(members),
-		authentication.NewAuthBootstrapService(
-			stack.DB,
-			stack.SpiceDBClient,
-			apitelemetry.NewDurableWriter(stack.DB),
-			roles,
-		),
+		loginRoles,
 	)
 
 	result, err := lifecycle.Process(t.Context(), authentication.LoginHookInput{
