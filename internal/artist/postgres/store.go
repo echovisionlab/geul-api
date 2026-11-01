@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/artist"
@@ -161,4 +163,10 @@ func notFound(err error, sentinel error) error {
 		return notFoundError{error: err, sentinel: sentinel}
 	}
 	return err
+}
+
+// Bind joins the Store and audit to the caller's transaction. A nil audit
+// keeps the joined step unaudited.
+func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) artist.Joined {
+	return artist.Joined{Store: NewStore(tx, ports), Audit: domainaudit.Bind(tx, audit)}
 }

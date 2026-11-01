@@ -24,7 +24,7 @@ func artistDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			if store == nil {
 				return nil, errors.New("artist translation content block store is not configured")
 			}
-			return artist.LoadTypedTranslationSourceDocument(ctx, artistStore(db, store), artistID)
+			return artist.LoadTypedTranslationSourceDocument(ctx, artistJoined(db, store, nil), artistID)
 		},
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
 			if job == nil || job.EntityType != string(core.KindArtist) {
@@ -42,7 +42,7 @@ func artistDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			if store == nil || job == nil {
 				return errors.New("typed Artist translation candidate and content Block store are required")
 			}
-			return artist.ApplyTypedTranslationCandidate(ctx, artistStore(tx, store), artistTranslationJob(job), candidate, input, audit)
+			return artist.ApplyTypedTranslationCandidate(ctx, artistJoined(tx, store, audit), artistTranslationJob(job), candidate, input)
 		},
 		requestLocaleOG:   localeAwareOG(core.KindArtist),
 		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditArtistUpdated, sharedtelemetry.NewArtistSourceLocaleAuditRecord),
@@ -55,7 +55,7 @@ func artistDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			"",
 		),
 		requireSourceLocaleEdit: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, artistID string) error {
-			return artist.RequireLockedSourceLocaleEdit(ctx, artistStore(tx, nil), spiceDB, func(principal *auth.UserInfo) (bool, error) {
+			return artist.RequireLockedSourceLocaleEdit(ctx, artistJoined(tx, nil, nil), spiceDB, func(principal *auth.UserInfo) (bool, error) {
 				return identitystate.LockActivePrincipal(ctx, tx, principal)
 			}, artistID)
 		},
@@ -63,10 +63,10 @@ func artistDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	})
 }
 
-// artistStore binds the Artist Store to the translation domain's database
+// artistJoined binds the Artist Store to the translation domain's database
 // handle, with the content store it hands the delivery.
-func artistStore(db *gorm.DB, contents *contentblock.Store) artist.Store {
-	return artistpostgres.NewStore(db, artistpostgres.Ports{ContentBlocks: contents})
+func artistJoined(db *gorm.DB, contents *contentblock.Store, audit domainaudit.Appender) artist.Joined {
+	return artistpostgres.Bind(db, artistpostgres.Ports{ContentBlocks: contents}, audit)
 }
 
 func artistTranslationJob(job *model.TranslationJob) artist.TranslationJob {

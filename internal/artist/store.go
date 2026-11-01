@@ -228,3 +228,10 @@ func (c MetadataChange) Empty() bool {
 	return !c.Slug.Changed && !c.CountryCode.Changed && !c.Website.Changed && !c.Parent.Changed &&
 		!c.SetSocialLinks && !c.RealName.Changed
 }
+
+// Joined carries the Store and audit bound to another pipeline's transaction.
+// Read-only and explicitly unaudited steps leave Audit nil.
+type Joined struct {
+	Store Store
+	Audit domainaudit.Appender
+}

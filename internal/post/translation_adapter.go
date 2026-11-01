@@ -29,7 +29,9 @@ type TranslationJob struct {
 // LoadTypedTranslationSourceDocument reads the Post's source-locale title,
 // summary and content document for translation, through store bound to the
 // translation domain's database handle.
-func LoadTypedTranslationSourceDocument(ctx context.Context, store Store, postID string) (*translation.SourceDocument, error) {
+func LoadTypedTranslationSourceDocument(ctx context.Context, joined Joined, postID string) (*translation.SourceDocument, error) {
+	store := joined.Store
+
 	sourceLocale, err := store.SourceLocale(ctx, postID)
 	if err != nil {
 		return nil, err
@@ -60,12 +62,14 @@ func LoadTypedTranslationSourceDocument(ctx context.Context, store Store, postID
 // translation domain's transaction, which store is bound to.
 func ApplyTypedTranslationCandidate(
 	ctx context.Context,
-	store Store,
+	joined Joined,
 	job TranslationJob,
 	candidate *translation.Candidate,
 	metadata translation.EntryWrite,
-	auditWriter domainaudit.Appender,
 ) error {
+	store := joined.Store
+	auditWriter := joined.Audit
+
 	return applyTypedTranslationCandidate(
 		ctx, store, job, candidate, metadata, postTranslationCandidateRequireTitle, auditWriter,
 	)

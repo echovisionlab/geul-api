@@ -75,7 +75,7 @@ func (a *ArtistInterchange) ApplyTranslationInterchange(
 		TargetLocale: command.TargetLocale, RequestedByMemberID: memberID,
 	}
 	if err := artistdomain.ApplyTypedTranslationInterchangeCandidate(
-		ctx, artistStore(db, store), job, candidate, core.EntryWrite{Now: command.Now.UTC()}, command.ExpectedRevision,
+		ctx, artistJoined(db, store, nil), job, candidate, core.EntryWrite{Now: command.Now.UTC()}, command.ExpectedRevision,
 	); err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
@@ -112,7 +112,7 @@ func loadArtistInterchangeTarget(
 	if err := validateCreativeInterchangeLoad(db, store, entityType, entityID, locale, plan, string(core.KindArtist)); err != nil {
 		return creativeInterchangeTarget{}, err
 	}
-	target, err := artistdomain.LoadTypedTranslationInterchangeTarget(ctx, artistStore(db, store), entityID, locale)
+	target, err := artistdomain.LoadTypedTranslationInterchangeTarget(ctx, artistJoined(db, store, nil), entityID, locale)
 	if err != nil {
 		return creativeInterchangeTarget{}, err
 	}

@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -160,4 +162,10 @@ func localeNotFound(err error) error {
 		return notFoundError{error: err, sentinel: label.ErrLocaleNotFound}
 	}
 	return err
+}
+
+// Bind joins the Store and audit to the caller's transaction. A nil audit
+// keeps the joined step unaudited.
+func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) label.Joined {
+	return label.Joined{Store: NewStore(tx, ports), Audit: domainaudit.Bind(tx, audit)}
 }

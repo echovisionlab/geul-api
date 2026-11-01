@@ -69,8 +69,8 @@ type jobs struct {
 	ports Ports
 }
 
-func (j jobs) ScheduledPosts() post.Store {
-	return postpostgres.NewStore(j.tx, postpostgres.Ports{})
+func (j jobs) ScheduledPosts() post.Joined {
+	return postpostgres.Bind(j.tx, postpostgres.Ports{}, nil)
 }
 
 func (j jobs) MetadataAIRecovery() worker.MetadataAIRecovery {

@@ -19,10 +19,12 @@ type TranslationInterchangeTarget struct {
 
 func LoadTypedTranslationInterchangeTarget(
 	ctx context.Context,
-	store Store,
+	joined Joined,
 	artistID string,
 	targetLocale string,
 ) (TranslationInterchangeTarget, error) {
+	store := joined.Store
+
 	if store == nil {
 		return TranslationInterchangeTarget{}, errors.New("artist translation interchange dependencies are not configured")
 	}

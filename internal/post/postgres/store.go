@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
@@ -140,5 +142,11 @@ func (err slugTakenError) Unwrap() error        { return err.error }
 // ProcessDueScheduledPosts publishes the due Posts in tx, the scheduler
 // job's transaction (post.ProcessDueScheduledPosts).
 func ProcessDueScheduledPosts(ctx context.Context, tx *gorm.DB, limit int) ([]string, error) {
-	return post.ProcessDueScheduledPosts(ctx, NewStore(tx, Ports{}), limit)
+	return post.ProcessDueScheduledPosts(ctx, Bind(tx, Ports{}, nil), limit)
+}
+
+// Bind joins the Store and audit to the caller's transaction. A nil audit
+// keeps the joined step unaudited.
+func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) post.Joined {
+	return post.Joined{Store: NewStore(tx, ports), Audit: domainaudit.Bind(tx, audit)}
 }

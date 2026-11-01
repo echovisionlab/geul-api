@@ -181,7 +181,7 @@ func (s store) ResolveOGConsistency(ctx context.Context, artistID string, select
 }
 
 func (s store) Document(ctx context.Context, artistID, locale string) (artist.PublicCreativeContentDocument, error) {
-	return artist.LoadCreativeContentDocumentForPublic(ctx, s.artists, artistID, locale)
+	return artist.LoadCreativeContentDocumentForPublic(ctx, artist.Joined{Store: s.artists}, artistID, locale)
 }
 
 func (s store) IsGroup(ctx context.Context, artistID string) (bool, error) {

@@ -188,3 +188,10 @@ type LabelCollaboration interface {
 	// ResolveInitialSourceLocale picks a new Label's source locale.
 	ResolveInitialSourceLocale(ctx context.Context, acceptLanguage string) string
 }
+
+// Joined carries the Store and audit bound to another pipeline's transaction.
+// Read-only and explicitly unaudited steps leave Audit nil.
+type Joined struct {
+	Store Store
+	Audit domainaudit.Appender
+}

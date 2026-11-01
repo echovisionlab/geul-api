@@ -331,7 +331,7 @@ func TestProcessDueScheduledPostsPublishesOnlyDuePosts(t *testing.T) {
 	later := h.seedPost("Later", "", func(value *post.Post) { value.Status, value.ScheduledAt = post.StatusScheduled, &future })
 	h.seedPost("Draft", "")
 
-	published, err := post.ProcessDueScheduledPosts(t.Context(), h.store, 10)
+	published, err := post.ProcessDueScheduledPosts(t.Context(), post.Joined{Store: h.store}, 10)
 
 	require.NoError(t, err)
 	require.Equal(t, []string{due.ID}, published)

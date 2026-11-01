@@ -285,7 +285,9 @@ func (f *fakeJobs) Savepoint() func() {
 	}
 }
 
-func (f *fakeJobs) ScheduledPosts() post.Store { return fakeScheduledPosts{jobs: f} }
+func (f *fakeJobs) ScheduledPosts() post.Joined {
+	return post.Joined{Store: fakeScheduledPosts{jobs: f}}
+}
 
 func (f *fakeJobs) MetadataAIRecovery() MetadataAIRecovery { return fakeMetadataAIRecovery{jobs: f} }
 

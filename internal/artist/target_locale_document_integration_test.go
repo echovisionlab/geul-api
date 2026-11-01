@@ -112,7 +112,7 @@ func TestArtistTargetLocaleBatchUsesExactCASWithoutAdvancingSharedRevisionIntegr
 	replacementJob := artist.TranslationJob{EntityType: "artist", EntityID: artistID, TargetLocale: "ko"}
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		return artist.ApplyTypedTranslationInterchangeCandidate(
-			t.Context(), artistpostgres.NewStore(tx, artistpostgres.Ports{ContentBlocks: store}), replacementJob, replacement,
+			t.Context(), artist.Joined{Store: artistpostgres.NewStore(tx, artistpostgres.Ports{ContentBlocks: store})}, replacementJob, replacement,
 			translation.EntryWrite{Now: now.Add(4 * time.Second)}, &nextKOToken,
 		)
 	}))
@@ -157,8 +157,8 @@ func TestArtistTargetLocaleBatchUsesExactCASWithoutAdvancingSharedRevisionIntegr
 	audit := &artistTranslationAuditAppender{}
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		return artist.ApplyTypedTranslationCandidate(
-			t.Context(), artistpostgres.NewStore(tx, artistpostgres.Ports{ContentBlocks: store}), providerJob, providerCandidate,
-			translation.EntryWrite{Now: now.Add(5 * time.Second)}, audit,
+			t.Context(), artist.Joined{Store: artistpostgres.NewStore(tx, artistpostgres.Ports{ContentBlocks: store}), Audit: audit}, providerJob, providerCandidate,
+			translation.EntryWrite{Now: now.Add(5 * time.Second)},
 		)
 	}))
 	require.Len(t, audit.records, 1)
@@ -173,7 +173,7 @@ func TestArtistTargetLocaleBatchUsesExactCASWithoutAdvancingSharedRevisionIntegr
 func artistTargetRevisionForIntegration(t *testing.T, db *gorm.DB, store *contentblock.Store, artistID, locale string) string {
 	t.Helper()
 	target, err := artist.LoadTypedTranslationInterchangeTarget(
-		t.Context(), artistpostgres.NewStore(db, artistpostgres.Ports{ContentBlocks: store}), artistID, locale,
+		t.Context(), artist.Joined{Store: artistpostgres.NewStore(db, artistpostgres.Ports{ContentBlocks: store})}, artistID, locale,
 	)
 	require.NoError(t, err)
 	return target.Revision

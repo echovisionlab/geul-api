@@ -542,3 +542,10 @@ type Comment struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// Joined carries the Store and audit bound to another pipeline's transaction.
+// Read-only and explicitly unaudited steps leave Audit nil.
+type Joined struct {
+	Store Store
+	Audit domainaudit.Appender
+}

@@ -21,10 +21,12 @@ type TranslationInterchangeTarget struct {
 // to.
 func LoadTypedTranslationInterchangeTarget(
 	ctx context.Context,
-	store Store,
+	joined Joined,
 	labelID string,
 	targetLocale string,
 ) (TranslationInterchangeTarget, error) {
+	store := joined.Store
+
 	if store == nil {
 		return TranslationInterchangeTarget{}, errors.New("label translation interchange dependencies are not configured")
 	}
