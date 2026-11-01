@@ -7,9 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/work"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -32,6 +34,9 @@ type Harness struct {
 	// SeedArtist stores an Artist with its source-locale name, owned by
 	// ownerMemberID when set, and returns its ID.
 	SeedArtist func(t *testing.T, name string, ownerMemberID string) string
+	// SeedCreditMember stores an onboarded Member, linked to an account
+	// Identity when linked is set, and returns its ID.
+	SeedCreditMember func(t *testing.T, linked bool) string
 }
 
 // FakeHarness is the Harness of the fake Store.
@@ -62,6 +67,11 @@ func FakeHarness() Harness {
 				members = append(members, ownerMemberID)
 			}
 			store.PutArtist(work.CreditArtistRow{ID: id, Name: name}, members...)
+			return id
+		},
+		SeedCreditMember: func(_ *testing.T, linked bool) string {
+			id := uuid.NewString()
+			store.PutMember(id, Member{Nickname: "Credited", Unlinked: !linked})
 			return id
 		},
 	}
@@ -732,6 +742,41 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			require.False(t, exists)
 			return nil
 		})
+	},
+	"a credited Member locks through its Identity and an unknown or unlinked one is not found": func(t *testing.T, h Harness) {
+		linked, unlinked, unknown := h.SeedCreditMember(t, true), h.SeedCreditMember(t, false), uuid.NewString()
+		transact(t, h, func(ctx context.Context, store work.Store) error {
+			return store.LockCreditMember(ctx, linked)
+		})
+		for name, memberID := range map[string]string{"unlinked": unlinked, "unknown": unknown} {
+			err := mutationtest.Transact(t, h.Harness, func(ctx context.Context, store work.Store) error {
+				return store.LockCreditMember(ctx, memberID)
+			})
+			require.Error(t, err, name)
+			wrapped := errs.Wrap(err)
+			require.Equal(t, connect.CodeInvalidArgument, wrapped.Code(), name)
+			require.Equal(t, "member_id: not found: "+memberID, wrapped.Message(), name)
+		}
+		err := mutationtest.Transact(t, h.Harness, func(ctx context.Context, store work.Store) error {
+			return store.LockCreditMember(ctx, "not-a-uuid")
+		})
+		require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
+
+		var waited atomic.Bool
+		lock := func(ctx context.Context, store work.Store) error { return store.LockCreditMember(ctx, linked) }
+		err = mutationtest.RequireSecondWaits(t, h.Harness, lock,
+			func(context.Context, work.Store) error { waited.Store(true); return nil },
+			func(ctx context.Context, store work.Store) error {
+				if err := lock(ctx, store); err != nil {
+					return err
+				}
+				if !waited.Load() {
+					return errors.New("the second credit Member lock did not wait for the first commit")
+				}
+				return nil
+			},
+		)
+		require.NoError(t, err)
 	},
 	"each row lock makes a second writer wait for the first commit": func(t *testing.T, h Harness) {
 		value := insert(t, h, nil)

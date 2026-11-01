@@ -51,6 +51,9 @@ type Member struct {
 	PreferredLocale *string
 	Deleted         bool
 	Unonboarded     bool
+	// Unlinked is a Member no account Identity names, which cannot be
+	// credited.
+	Unlinked bool
 }
 
 // OGRequest is one OG generation the Store started.
@@ -1456,7 +1459,7 @@ func (s *Store) LockCreditMember(_ context.Context, memberID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	member, ok := s.members[memberID]
-	if !ok || member.Deleted || member.Unonboarded {
+	if !ok || member.Deleted || member.Unonboarded || member.Unlinked {
 		return domainerr.InvalidField("member_id", "not found: "+memberID)
 	}
 	return nil
