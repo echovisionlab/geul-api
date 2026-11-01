@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	menuadapter "github.com/echovisionlab/geul-api/internal/adapters/menu"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -54,22 +55,8 @@ func prepareMenuSourceLocale(
 	requestedLocale string,
 	now time.Time,
 ) error {
-	empty, err := menu.EncodeTranslationLabelValues(nil)
-	if err != nil {
+	if err := menuadapter.EnsureTranslationLocale(ctx, db, entityID, requestedLocale, now); err != nil {
 		return errs.Internal(err)
-	}
-	result := db.WithContext(ctx).Exec(
-		`INSERT INTO menu_translation (entity_id, locale, items_json, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT (entity_id, locale) DO NOTHING`,
-		entityID,
-		requestedLocale,
-		string(empty),
-		now.UTC(),
-		now.UTC(),
-	)
-	if result.Error != nil {
-		return errs.Internal(result.Error)
 	}
 	return nil
 }

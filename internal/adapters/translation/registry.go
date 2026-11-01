@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	core "github.com/echovisionlab/geul-api/internal/translation"
@@ -135,15 +135,14 @@ func loadProviderLocaleFence(
 		)
 	}
 	var row struct {
-		SourceLocale     string     `gorm:"column:source_locale"`
-		DocumentRevision string     `gorm:"column:document_revision"`
-		LocaleUpdatedAt  *time.Time `gorm:"column:locale_updated_at"`
+		SourceLocale    string     `gorm:"column:source_locale"`
+		DocumentID      uuid.UUID  `gorm:"column:content_document_id"`
+		LocaleUpdatedAt *time.Time `gorm:"column:locale_updated_at"`
 	}
 	result := tx.WithContext(ctx).Raw(
-		"SELECT root.source_locale AS source_locale, "+
-			"CAST(document.revision AS text) AS document_revision, locale_entry.updated_at AS locale_updated_at "+
+		"SELECT root.source_locale AS source_locale, root.content_document_id, "+
+			"locale_entry.updated_at AS locale_updated_at "+
 			"FROM "+definition.RootTable+" AS root "+
-			"JOIN content_document AS document ON document.id = root.content_document_id "+
 			"LEFT JOIN "+definition.EntryTable+" AS locale_entry "+
 			"ON locale_entry.entity_id = root.id AND locale_entry.locale = ? "+
 			"WHERE root.id = ?",
@@ -153,8 +152,16 @@ func loadProviderLocaleFence(
 	if result.Error != nil {
 		return providerLocaleFence{}, errs.Internal(result.Error)
 	}
-	if result.RowsAffected != 1 {
+	// A root without its Content Document is as absent as a missing root.
+	if result.RowsAffected != 1 || row.DocumentID == uuid.Nil {
 		return providerLocaleFence{}, errs.NotFound(job.EntityType, job.EntityID)
+	}
+	revision, err := contentblock.CurrentRevision(ctx, tx, row.DocumentID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return providerLocaleFence{}, errs.NotFound(job.EntityType, job.EntityID)
+	}
+	if err != nil {
+		return providerLocaleFence{}, errs.Internal(err)
 	}
 	sourceLocale := strings.TrimSpace(row.SourceLocale)
 	if sourceLocale == "" || sourceLocale != row.SourceLocale {
@@ -162,12 +169,9 @@ func loadProviderLocaleFence(
 			"Translation source locale is not canonical",
 		)
 	}
-	documentRevision := strings.TrimSpace(row.DocumentRevision)
-	parsedRevision, err := uuid.Parse(documentRevision)
-	if err != nil || parsedRevision == uuid.Nil || parsedRevision.String() != documentRevision {
-		return providerLocaleFence{}, errs.WithCause(errs.FailedPrecondition(
-			"Content Document revision is not a canonical UUID",
-		), failurecause.ServerFault(err))
+	documentRevision := revision.String()
+	if revision == uuid.Nil {
+		return providerLocaleFence{}, errs.FailedPrecondition("Content Document revision is not a canonical UUID")
 	}
 	fence := providerLocaleFence{
 		sourceLocale: sourceLocale, documentRevision: documentRevision,
@@ -479,14 +483,8 @@ func (*DomainRegistry) RequireDocumentContributors(
 			return errs.InvalidArgument("contributor_member_ids", "collaboration mutation requires sorted unique Member UUIDs")
 		}
 	}
-	var locked []struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := tx.WithContext(ctx).Table("member").
-		Clauses(clause.Locking{Strength: "KEY SHARE"}).
-		Select("id::text").
-		Where("id IN ?", contributors).
-		Find(&locked).Error; err != nil {
+	locked, err := memberadapter.ContributorMembers{}.LockMembers(ctx, tx, contributors)
+	if err != nil {
 		return errs.Internal(err)
 	}
 	if len(locked) != len(contributors) {
