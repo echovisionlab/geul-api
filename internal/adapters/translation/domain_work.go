@@ -9,7 +9,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/work"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
@@ -22,7 +21,7 @@ func workDomainRegistration(audit domainaudit.Appender) domainRegistration {
 		viewArchived: policyv1.Work.ViewArchived,
 		editArchived: policyv1.Work.EditArchived,
 	}
-	archivedStatus := managev1.WorkStatus_WORK_STATUS_ARCHIVED.String()
+	archivedStatus := string(model.WorkStatusArchived)
 	return newConfiguredDomainPort(core.KindWork, domainPortFunctions{
 		loadSourceDocument: work.LoadTypedTranslationSourceDocument,
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
