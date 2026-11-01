@@ -7,7 +7,7 @@ import (
 
 	"gorm.io/gorm"
 
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	seriesdomain "github.com/echovisionlab/geul-api/internal/series"
 )
 
@@ -16,7 +16,7 @@ import (
 type SeriesMembership struct{}
 
 func (SeriesMembership) ListSeriesPosts(ctx context.Context, db *gorm.DB, seriesID string) ([]seriesdomain.SeriesPost, error) {
-	posts, err := postdomain.ListSeriesPosts(ctx, db, seriesID)
+	posts, err := postpostgres.ListSeriesPosts(ctx, db, seriesID)
 	if err != nil {
 		return nil, err
 	}
@@ -28,43 +28,43 @@ func (SeriesMembership) ListSeriesPosts(ctx context.Context, db *gorm.DB, series
 }
 
 func (SeriesMembership) SeriesPostIDs(ctx context.Context, tx *gorm.DB, seriesID string) ([]string, error) {
-	return postdomain.SeriesPostIDs(ctx, tx, seriesID)
+	return postpostgres.SeriesPostIDs(ctx, tx, seriesID)
 }
 
 func (SeriesMembership) ReadSeriesRelation(ctx context.Context, db *gorm.DB, postID string) (*string, error) {
-	return postdomain.ReadSeriesRelation(ctx, db, postID)
+	return postpostgres.ReadSeriesRelation(ctx, db, postID)
 }
 
 func (SeriesMembership) LockSeriesRelation(ctx context.Context, tx *gorm.DB, postID string) (*string, error) {
-	return postdomain.LockSeriesRelation(ctx, tx, postID)
+	return postpostgres.LockSeriesRelation(ctx, tx, postID)
 }
 
 func (SeriesMembership) LockSeriesPosts(ctx context.Context, tx *gorm.DB, postIDs []string) (int, error) {
-	return postdomain.LockSeriesPosts(ctx, tx, postIDs)
+	return postpostgres.LockSeriesPosts(ctx, tx, postIDs)
 }
 
 func (SeriesMembership) NextSeriesOrder(ctx context.Context, tx *gorm.DB, seriesID string) (int, error) {
-	return postdomain.NextSeriesOrder(ctx, tx, seriesID)
+	return postpostgres.NextSeriesOrder(ctx, tx, seriesID)
 }
 
 func (SeriesMembership) AssignSeries(ctx context.Context, tx *gorm.DB, postID, seriesID string, order int, now time.Time) error {
-	return postdomain.AssignSeries(ctx, tx, postID, seriesID, order, now)
+	return postpostgres.AssignSeries(ctx, tx, postID, seriesID, order, now)
 }
 
 func (SeriesMembership) ClearSeries(ctx context.Context, tx *gorm.DB, postID, seriesID string, now time.Time) error {
-	return seriesRelationError(postdomain.ClearSeries(ctx, tx, postID, seriesID, now))
+	return seriesRelationError(postpostgres.ClearSeries(ctx, tx, postID, seriesID, now))
 }
 
 func (SeriesMembership) ClearAllSeries(ctx context.Context, tx *gorm.DB, seriesID string, now time.Time) error {
-	return postdomain.ClearAllSeries(ctx, tx, seriesID, now)
+	return postpostgres.ClearAllSeries(ctx, tx, seriesID, now)
 }
 
 func (SeriesMembership) OrderSeries(ctx context.Context, tx *gorm.DB, seriesID string, postIDs []string, now time.Time) error {
-	return seriesRelationError(postdomain.OrderSeries(ctx, tx, seriesID, postIDs, now))
+	return seriesRelationError(postpostgres.OrderSeries(ctx, tx, seriesID, postIDs, now))
 }
 
 func seriesRelationError(err error) error {
-	if errors.Is(err, postdomain.ErrSeriesRelationChanged) {
+	if errors.Is(err, postpostgres.ErrSeriesRelationChanged) {
 		return seriesdomain.ErrPostRelationChanged
 	}
 	return err

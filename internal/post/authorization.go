@@ -7,18 +7,12 @@ import (
 	"log/slog"
 	"strings"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identityread"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -64,7 +58,7 @@ func (a PostAuthority) allowsAction(postID string, action postAction) bool {
 
 const archivedPostAdminEditMessage = "archived posts may only be edited by a site Admin"
 
-func requirePostList(ctx context.Context, checker CollaborationPermissionChecker) error {
+func requirePostList(ctx context.Context, checker authz.AuthorizationDecisionChecker) error {
 	if checker == nil {
 		return domainerr.DependencyUnavailable("SpiceDB")
 	}
@@ -92,7 +86,7 @@ func requirePostList(ctx context.Context, checker CollaborationPermissionChecker
 
 func checkPostPermissionForPrincipal(
 	ctx context.Context,
-	spiceDB CollaborationPermissionChecker,
+	checker authz.AuthorizationDecisionChecker,
 	postID string,
 	principal *auth.UserInfo,
 	action postAction,
@@ -108,10 +102,10 @@ func checkPostPermissionForPrincipal(
 	if err != nil {
 		return false, err
 	}
-	return spiceDB.Can(ctx, decision)
+	return checker.Can(ctx, decision)
 }
 
-func requirePostContributorsExist(ctx context.Context, db *gorm.DB, memberIDs []string) error {
+func requirePostContributorsExist(ctx context.Context, store Store, memberIDs []string) error {
 	if len(memberIDs) == 0 {
 		return domainerr.InvalidField("contributor_member_ids", "must contain at least one Member UUID")
 	}
@@ -136,18 +130,11 @@ func requirePostContributorsExist(ctx context.Context, db *gorm.DB, memberIDs []
 	// Per-frame collaboration authorization is the linearization point. The
 	// persistence boundary only preserves durable Member attribution and must
 	// not reinterpret a later role, Identity, tombstone, or archive transition.
-	var lockedMembers []struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := db.WithContext(ctx).
-		Table("member").
-		Clauses(clause.Locking{Strength: "KEY SHARE"}).
-		Select("id::text").
-		Where("id IN ?", unique).
-		Find(&lockedMembers).Error; err != nil {
+	locked, err := store.LockContributorMembers(ctx, unique)
+	if err != nil {
 		return fmt.Errorf("lock Post save contributor Members: %w", err)
 	}
-	if len(lockedMembers) != len(unique) {
+	if locked != len(unique) {
 		return domainerr.InvalidField("contributor_member_ids", "contains a Member that does not exist")
 	}
 	return nil
@@ -161,35 +148,21 @@ func requirePostContributorsExist(ctx context.Context, db *gorm.DB, memberIDs []
 // the one permission selected from that locked lifecycle state.
 func requirePostContributorsPermission(
 	ctx context.Context,
-	tx *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
+	store Store,
+	spiceDB Authorizer,
 	postID string,
-	status model.PostStatus,
+	status Status,
 	memberIDs []string,
 ) error {
-	if err := requirePostContributorsExist(ctx, tx, memberIDs); err != nil {
+	if err := requirePostContributorsExist(ctx, store, memberIDs); err != nil {
 		return err
 	}
 	if spiceDB == nil {
 		return domainerr.DependencyUnavailable("SpiceDB")
 	}
-	type contributorRow struct {
-		MemberID   string `gorm:"column:member_id"`
-		IdentityID string `gorm:"column:identity_id"`
-	}
-	var rows []contributorRow
-	if err := tx.WithContext(ctx).
-		Table("member AS member").
-		Joins(identityread.JoinLinked("member", "identity")).
-		Select("member.id::text AS member_id, member.account_identity_id::text AS identity_id").
-		Where("identity.state = ?", "active").
-		Where("member.id IN ? AND member.deleted_at IS NULL AND member.onboarded = TRUE AND member.account_identity_id IS NOT NULL AND COALESCE((identity.metadata_admin ->> 'banned')::boolean, false) = FALSE", memberIDs).
-		Find(&rows).Error; err != nil {
+	identities, err := store.ActiveContributorIdentities(ctx, memberIDs)
+	if err != nil {
 		return fmt.Errorf("load Post collaboration contributors: %w", err)
-	}
-	identities := make(map[string]string, len(rows))
-	for _, row := range rows {
-		identities[row.MemberID] = row.IdentityID
 	}
 	if len(identities) != len(memberIDs) {
 		return postContributorPermissionDenied(status)
@@ -215,19 +188,19 @@ func requirePostContributorsPermission(
 	return nil
 }
 
-func postContributorPermissionDenied(status model.PostStatus) *domainerr.Error {
-	if status == model.PostStatusArchived {
+func postContributorPermissionDenied(status Status) *domainerr.Error {
+	if status == StatusArchived {
 		return domainerr.Precondition(archivedPostAdminEditMessage)
 	}
 	return domainerr.NoPermission("edit", "post contributor")
 }
 
 func postActionForStatus(
-	status model.PostStatus,
+	status Status,
 	ordinary postAction,
 	archived postAction,
 ) postAction {
-	if status == model.PostStatusArchived {
+	if status == StatusArchived {
 		return archived
 	}
 	return ordinary
@@ -235,7 +208,7 @@ func postActionForStatus(
 
 func requirePostPermissionForPrincipal(
 	ctx context.Context,
-	spiceDB CollaborationPermissionChecker,
+	checker authz.AuthorizationDecisionChecker,
 	postID string,
 	principal *auth.UserInfo,
 	action postAction,
@@ -251,7 +224,7 @@ func requirePostPermissionForPrincipal(
 	if canErr != nil {
 		return PostAuthority{}, domainerr.InvalidField("post_id", "must be a canonical UUID").WithCause(canErr)
 	}
-	allowed, err := checkPostPermissionForPrincipal(ctx, spiceDB, postID, principal, action)
+	allowed, err := checkPostPermissionForPrincipal(ctx, checker, postID, principal, action)
 	if err != nil {
 		return PostAuthority{}, failurecause.WithAttrs(domainerr.DependencyUnavailable("SpiceDB").WithCause(err), slog.String("post_id", postID))
 	}
@@ -266,51 +239,51 @@ func requirePostPermissionForPrincipal(
 
 func requirePostViewForStatus(
 	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
+	checker authz.AuthorizationDecisionChecker,
 	postID string,
-	status model.PostStatus,
+	status Status,
 ) (PostAuthority, error) {
-	return requirePostViewPermissionForPrincipal(ctx, spiceDB, postID, auth.GetUser(ctx), status)
+	return requirePostViewPermissionForPrincipal(ctx, checker, postID, auth.GetUser(ctx), status)
 }
 
 func requirePostViewPermissionForPrincipal(
 	ctx context.Context,
-	spiceDB CollaborationPermissionChecker,
+	checker authz.AuthorizationDecisionChecker,
 	postID string,
 	principal *auth.UserInfo,
-	status model.PostStatus,
+	status Status,
 ) (PostAuthority, error) {
 	action := postActionForStatus(status, policyv1.Post.View, policyv1.Post.ViewArchived)
-	return requirePostPermissionForPrincipal(ctx, spiceDB, postID, principal, action, true)
+	return requirePostPermissionForPrincipal(ctx, checker, postID, principal, action, true)
 }
 
 func requirePostActionForStatus(
 	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
+	checker authz.AuthorizationDecisionChecker,
 	postID string,
-	status model.PostStatus,
+	status Status,
 	ordinary postAction,
 ) (PostAuthority, error) {
-	return requirePostActionPermissionForPrincipal(ctx, spiceDB, postID, auth.GetUser(ctx), status, ordinary, false)
+	return requirePostActionPermissionForPrincipal(ctx, checker, postID, auth.GetUser(ctx), status, ordinary, false)
 }
 
 func requirePostActionPermissionForPrincipal(
 	ctx context.Context,
-	spiceDB CollaborationPermissionChecker,
+	checker authz.AuthorizationDecisionChecker,
 	postID string,
 	principal *auth.UserInfo,
-	status model.PostStatus,
+	status Status,
 	ordinary postAction,
 	maskNotFound bool,
 ) (PostAuthority, error) {
 	action := postActionForStatus(status, ordinary, policyv1.Post.EditArchived)
-	return requirePostPermissionForPrincipal(ctx, spiceDB, postID, principal, action, maskNotFound)
+	return requirePostPermissionForPrincipal(ctx, checker, postID, principal, action, maskNotFound)
 }
 
 // postCreatorAccess requires the fresh create permission; a caller without
 // it is not an author.
 func postCreatorAccess() mutation.Access {
-	return mutation.Locked(func(_ context.Context, _ *gorm.DB, require mutation.Require) error {
+	return mutation.Locked(func(_ context.Context, _ Store, require mutation.Require) error {
 		can, err := policyv1.Post.Create()
 		if err != nil {
 			return err
@@ -323,12 +296,6 @@ func postCreatorAccess() mutation.Access {
 		}
 		return nil
 	})
-}
-
-func freshRequire(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient) mutation.Require {
-	return func(can policyv1.Can) error {
-		return identitystate.RequireFreshCan(ctx, tx, identitystate.PostgresFence{}, spiceDB, can)
-	}
 }
 
 func requireLockedPostPermission(
@@ -352,7 +319,7 @@ func requireLockedPostPermission(
 func requireLockedPostActionForStatus(
 	require mutation.Require,
 	postID string,
-	status model.PostStatus,
+	status Status,
 	ordinary postAction,
 ) (PostAuthority, error) {
 	action := postActionForStatus(status, ordinary, policyv1.Post.EditArchived)
@@ -362,9 +329,9 @@ func requireLockedPostActionForStatus(
 // lockedPost is the access of a Post mutation: the root is locked before
 // the one action its lifecycle selects from ordinary is checked. status,
 // when set, receives the locked lifecycle.
-func lockedPost(postID string, ordinary postAction, status *model.PostStatus) mutation.Access {
-	return mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
-		locked, err := lockPostAuthorizationRoot(ctx, tx, postID)
+func lockedPost(postID string, ordinary postAction, status *Status) mutation.Access {
+	return mutation.Locked(func(ctx context.Context, store Store, require mutation.Require) error {
+		locked, err := lockPostAuthorizationRoot(ctx, store, postID)
 		if err != nil {
 			return err
 		}
@@ -376,40 +343,34 @@ func lockedPost(postID string, ordinary postAction, status *model.PostStatus) mu
 	})
 }
 
-func lockPostAuthorizationRoot(ctx context.Context, tx *gorm.DB, postID string) (model.PostStatus, error) {
-	var row struct {
-		Status model.PostStatus `gorm:"column:status"`
+func lockPostAuthorizationRoot(ctx context.Context, store Store, postID string) (Status, error) {
+	status, err := store.LockPostStatus(ctx, postID)
+	if errors.Is(err, ErrPostNotFound) {
+		return "", domainerr.ResourceNotFound("post", postID)
 	}
-	if err := tx.WithContext(ctx).
-		Table("post").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Select("status").
-		Where("id = ?::uuid", postID).
-		Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", domainerr.ResourceNotFound("post", postID)
-		}
-		return "", err
-	}
-	return row.Status, nil
+	return status, err
 }
 
-// RequireLockedView locks the Post lifecycle and current principal before one
-// exact view/view_archived decision. Callers must keep tx open for the entire
-// Post-owned read. Missing and unauthorized Posts share the same not-found
-// result.
-func RequireLockedView(
-	ctx context.Context,
-	tx *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	postID string,
-) error {
-	status, err := lockPostAuthorizationRoot(ctx, tx, postID)
+func lockPostParticipantRoot(ctx context.Context, store Store, postID string) (Status, error) {
+	status, err := store.LockParticipantRoot(ctx, postID)
+	if errors.Is(err, ErrPostNotFound) {
+		return "", domainerr.ResourceNotFound("post", postID)
+	}
+	return status, err
+}
+
+// RequireLockedView locks the Post lifecycle before one exact
+// view/view_archived decision require makes with the principal it locks.
+// store is bound to the caller's transaction, which must stay open for the
+// entire Post-owned read. Missing and unauthorized Posts share the same
+// not-found result.
+func RequireLockedView(ctx context.Context, store Store, require mutation.Require, postID string) error {
+	status, err := lockPostAuthorizationRoot(ctx, store, postID)
 	if err != nil {
 		return err
 	}
 	action := postActionForStatus(status, policyv1.Post.View, policyv1.Post.ViewArchived)
-	if _, err := requireLockedPostPermission(freshRequire(ctx, tx, spiceDB), postID, action); err != nil {
+	if _, err := requireLockedPostPermission(require, postID, action); err != nil {
 		if mutation.IsUnauthenticated(err) || mutation.IsDenied(err) {
 			return domainerr.ResourceNotFound("post", postID).WithCause(err)
 		}
@@ -418,23 +379,21 @@ func RequireLockedView(
 	return nil
 }
 
-func RequireLockedSourceLocaleEdit(
-	ctx context.Context,
-	tx *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	postID string,
-) error {
-	status, err := lockPostAuthorizationRoot(ctx, tx, postID)
+// RequireLockedSourceLocaleEdit locks the Post lifecycle, then requires the
+// edit action it selects, for a change another domain makes to the Post in
+// its transaction, which store is bound to.
+func RequireLockedSourceLocaleEdit(ctx context.Context, store Store, require mutation.Require, postID string) error {
+	status, err := lockPostAuthorizationRoot(ctx, store, postID)
 	if err != nil {
 		return err
 	}
-	_, err = requireLockedPostActionForStatus(freshRequire(ctx, tx, spiceDB), postID, status, policyv1.Post.Edit)
+	_, err = requireLockedPostActionForStatus(require, postID, status, policyv1.Post.Edit)
 	return err
 }
 
-func postAllowedActions(postID string, status model.PostStatus, authority PostAuthority) []managev1.PostAction {
-	actions := make([]managev1.PostAction, 0, 15)
-	archived := status == model.PostStatusArchived
+func postAllowedActions(postID string, status Status, authority PostAuthority) []Action {
+	actions := make([]Action, 0, 15)
+	archived := status == StatusArchived
 	viewAction := policyv1.Post.View
 	if archived {
 		viewAction = policyv1.Post.ViewArchived
@@ -442,55 +401,55 @@ func postAllowedActions(postID string, status model.PostStatus, authority PostAu
 	if !authority.allowsAction(postID, viewAction) {
 		return actions
 	}
-	actions = append(actions, managev1.PostAction_POST_ACTION_VIEW_VERSIONS)
+	actions = append(actions, ActionViewVersions)
 	if archived {
 		if authority.allowsAction(postID, policyv1.Post.EditArchived) {
 			actions = append(actions,
-				managev1.PostAction_POST_ACTION_EDIT,
-				managev1.PostAction_POST_ACTION_ADD_AUTHOR,
-				managev1.PostAction_POST_ACTION_REMOVE_AUTHOR,
-				managev1.PostAction_POST_ACTION_MANAGE_COLLABORATORS,
-				managev1.PostAction_POST_ACTION_MANAGE_SHARE_LINKS,
-				managev1.PostAction_POST_ACTION_MODERATE_COMMENTS,
-				managev1.PostAction_POST_ACTION_RESTORE_VERSION,
-				managev1.PostAction_POST_ACTION_REPUBLISH,
-				managev1.PostAction_POST_ACTION_UNPUBLISH,
+				ActionEdit,
+				ActionAddAuthor,
+				ActionRemoveAuthor,
+				ActionManageCollaborators,
+				ActionManageShareLinks,
+				ActionModerateComments,
+				ActionRestoreVersion,
+				ActionRepublish,
+				ActionUnpublish,
 			)
 		}
 		return actions
 	}
 	if authority.allowsAction(postID, policyv1.Post.Edit) {
-		actions = append(actions, managev1.PostAction_POST_ACTION_EDIT)
+		actions = append(actions, ActionEdit)
 	}
 	if authority.allowsAction(postID, policyv1.Post.Delete) {
-		actions = append(actions, managev1.PostAction_POST_ACTION_DELETE)
+		actions = append(actions, ActionDelete)
 	}
 	if authority.allowsAction(postID, policyv1.Post.ManageParticipants) {
 		actions = append(actions,
-			managev1.PostAction_POST_ACTION_ADD_AUTHOR,
-			managev1.PostAction_POST_ACTION_MANAGE_COLLABORATORS,
+			ActionAddAuthor,
+			ActionManageCollaborators,
 		)
 	}
 	if authority.allowsAction(postID, policyv1.Post.RemoveAuthor) {
-		actions = append(actions, managev1.PostAction_POST_ACTION_REMOVE_AUTHOR)
+		actions = append(actions, ActionRemoveAuthor)
 	}
 	if authority.allowsAction(postID, policyv1.Post.ManageShareLinks) {
-		actions = append(actions, managev1.PostAction_POST_ACTION_MANAGE_SHARE_LINKS)
+		actions = append(actions, ActionManageShareLinks)
 	}
 	if authority.allowsAction(postID, policyv1.Post.Manage) {
 		actions = append(actions,
-			managev1.PostAction_POST_ACTION_MODERATE_COMMENTS,
-			managev1.PostAction_POST_ACTION_RESTORE_VERSION,
+			ActionModerateComments,
+			ActionRestoreVersion,
 		)
 	}
 	if authority.allowsAction(postID, policyv1.Post.Publish) {
 		switch status {
-		case model.PostStatusDraft:
-			actions = append(actions, managev1.PostAction_POST_ACTION_PUBLISH_NOW, managev1.PostAction_POST_ACTION_SCHEDULE)
-		case model.PostStatusScheduled:
-			actions = append(actions, managev1.PostAction_POST_ACTION_PUBLISH_NOW, managev1.PostAction_POST_ACTION_SCHEDULE, managev1.PostAction_POST_ACTION_CANCEL_SCHEDULE)
-		case model.PostStatusPublished:
-			actions = append(actions, managev1.PostAction_POST_ACTION_UNPUBLISH, managev1.PostAction_POST_ACTION_ARCHIVE)
+		case StatusDraft:
+			actions = append(actions, ActionPublishNow, ActionSchedule)
+		case StatusScheduled:
+			actions = append(actions, ActionPublishNow, ActionSchedule, ActionCancelSchedule)
+		case StatusPublished:
+			actions = append(actions, ActionUnpublish, ActionArchive)
 		}
 	}
 	return actions
@@ -503,19 +462,6 @@ func isPostLastAuthorConstraint(err error) bool {
 	return strings.Contains(err.Error(), "must retain at least one durable author")
 }
 
-func postRelationExists(ctx context.Context, db *gorm.DB, table, postID, memberID string) (bool, error) {
-	if table != "post_author" && table != "post_collaborator" {
-		return false, fmt.Errorf("unsupported post participant table %q", table)
-	}
-	var count int64
-	if err := db.WithContext(ctx).Table(table).
-		Where("post_id = ? AND member_id = ?", postID, memberID).
-		Count(&count).Error; err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
 func mapPostParticipantMutationError(err error) error {
 	if err == nil {
 		return nil
@@ -526,7 +472,7 @@ func mapPostParticipantMutationError(err error) error {
 	if isPostLastAuthorConstraint(err) {
 		return domainerr.Precondition("a post must retain at least one durable author").WithCause(err)
 	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	if errors.Is(err, ErrPostNotFound) {
 		return domainerr.New(domainerr.NotFound, "", "post participant not found")
 	}
 	return err

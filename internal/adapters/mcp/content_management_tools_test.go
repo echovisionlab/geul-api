@@ -120,17 +120,21 @@ func TestWorkCreateRejectsInvalidDateRangeBeforeOwner(t *testing.T) {
 }
 
 func TestContentManagementPostAndPageSettingsReadReturnSourceState(t *testing.T) {
-	layout := &commonv1.DocumentLayout{ContentHeight: commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_VIEWPORT, PageChrome: commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED, Footer: commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_FLOW, HideTableOfContents: true}
 	slug, summary, zone := "source-slug", "source-summary", "Asia/Seoul"
 	mapPlaceID := managementPageID
-	stamp := timestamppb.New(time.Date(2026, 10, 5, 1, 2, 3, 0, time.UTC))
+	moment := time.Date(2026, 10, 5, 1, 2, 3, 0, time.UTC)
+	stamp := timestamppb.New(moment)
 	seriesOrder := int32(4)
-	posts := &recordingPostManagement{getResponse: &managev1.Post{
-		Id: managementPostID, Title: "Source Post", Summary: &summary, Slug: &slug, SourceLocale: "ko", Status: managev1.PostStatus_POST_STATUS_SCHEDULED,
-		Revision: "actual-source-post-revision", ConfigurationRevision: managementPostConfigurationRevision, CommentsEnabled: false, MapPlaceId: &mapPlaceID,
-		DocumentLayout: layout, Categories: []*managev1.Category{{Id: managementWorkID}}, Tags: []*managev1.Tag{{Id: managementPageID}}, Series: &managev1.Series{Id: managementWorkID}, SeriesOrder: &seriesOrder,
-		AllowedActions: []managev1.PostAction{managev1.PostAction_POST_ACTION_EDIT, managev1.PostAction_POST_ACTION_CANCEL_SCHEDULE}, ScheduledAt: stamp, ScheduledTimeZone: &zone, PublishedAt: stamp, CreatedAt: stamp, UpdatedAt: stamp,
-		Document: &contentv1.RichTextDocument{}, FeaturedImageDelivery: &commonv1.MediaDelivery{FileId: managementWorkID},
+	posts := &recordingPostManagement{getResponse: postdomain.View{
+		Post: postdomain.Post{
+			ID: managementPostID, Title: "Source Post", Summary: &summary, Slug: &slug, SourceLocale: "ko", Status: postdomain.StatusScheduled,
+			ContentRevision: "actual-source-post-revision", ConfigurationRevision: managementPostConfigurationRevision, CommentsEnabled: false, MapPlaceID: &mapPlaceID,
+			DocumentLayout: postdomain.DocumentLayout{ContentHeight: postdomain.ContentHeightViewport, PageChrome: postdomain.PlacementPinned, Footer: postdomain.PlacementFlow, HideTableOfContents: true},
+			Categories:     []postdomain.Category{{ID: managementWorkID}}, Tags: []postdomain.Tag{{ID: managementPageID}}, Series: &postdomain.Series{ID: managementWorkID}, SeriesOrder: &seriesOrder,
+			ScheduledAt: &moment, ScheduledTimeZone: &zone, PublishedAt: &moment, CreatedAt: moment, UpdatedAt: moment,
+		},
+		Actions:  []postdomain.Action{postdomain.ActionEdit, postdomain.ActionCancelSchedule},
+		Document: &contentv1.RichTextDocument{}, FeaturedImage: &commonv1.MediaDelivery{FileId: managementWorkID},
 	}}
 	published := stamp.AsTime()
 	pages := &recordingPageManagement{getResponse: pagedomain.Detail{
@@ -305,9 +309,9 @@ func TestPostSettingsUpdatePassesExactRevisionAndAcknowledgesPersistedRevision(t
 
 func TestPostSettingsLayoutUsesExactNativeEnumsAndAuthoritativeResponse(t *testing.T) {
 	storedSlug, storedPlace := "stored-slug", managementWorkID
-	storedLayout := &commonv1.DocumentLayout{ContentHeight: commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_CONTENT, PageChrome: commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_FLOW, Footer: commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_FLOW}
-	posts := &recordingPostManagement{updateResponse: &managev1.UpdatePostResponse{
-		Id: managementPostID, Changed: false, Slug: &storedSlug, CommentsEnabled: false, MapPlaceId: &storedPlace, DocumentLayout: storedLayout, ConfigurationRevision: managementPostConfigurationRevision,
+	posts := &recordingPostManagement{updateResponse: &postdomain.SettingsUpdate{
+		ID: managementPostID, Changed: false, Slug: &storedSlug, CommentsEnabled: false, MapPlaceID: &storedPlace,
+		DocumentLayout: postdomain.DocumentLayout{ContentHeight: postdomain.ContentHeightContent, PageChrome: postdomain.PlacementFlow, Footer: postdomain.PlacementFlow}, ConfigurationRevision: managementPostConfigurationRevision,
 	}}
 	tools, err := NewContentManagementTools(posts, &recordingWorkManagement{}, &recordingPageManagement{})
 	if err != nil {
@@ -318,7 +322,7 @@ func TestPostSettingsLayoutUsesExactNativeEnumsAndAuthoritativeResponse(t *testi
 		t.Fatal(err)
 	}
 	request := posts.update
-	if request.ExpectedConfigurationRevision != managementPostConfigurationRevision || request.DocumentLayout.ContentHeight != commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_VIEWPORT || request.DocumentLayout.PageChrome != commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED || request.DocumentLayout.Footer != commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_PINNED || !request.DocumentLayout.HideTableOfContents {
+	if request.ExpectedConfigurationRevision != managementPostConfigurationRevision || request.DocumentLayout.ContentHeight != postdomain.ContentHeightViewport || request.DocumentLayout.PageChrome != postdomain.PlacementPinned || request.DocumentLayout.Footer != postdomain.PlacementPinned || !request.DocumentLayout.HideTableOfContents {
 		t.Fatalf("layout request=%+v", request)
 	}
 	if result.StructuredContent["changed"] != false || result.StructuredContent["comments_enabled"] != false || result.StructuredContent["slug"] != storedSlug || result.StructuredContent["map_place_id"] != storedPlace || result.StructuredContent["configuration_revision"] != managementPostConfigurationRevision {
@@ -568,40 +572,46 @@ type recordingPostManagement struct {
 	updateErr      error
 	updateCalls    int
 	get            *postdomain.GetPostQuery
-	getResponse    *managev1.Post
+	getResponse    postdomain.View
 	getErr         error
-	updateResponse *managev1.UpdatePostResponse
+	updateResponse *postdomain.SettingsUpdate
 }
 
-func (r *recordingPostManagement) GetPost(_ context.Context, query postdomain.GetPostQuery) (*managev1.Post, error) {
+func (r *recordingPostManagement) GetPost(_ context.Context, query postdomain.GetPostQuery) (postdomain.View, error) {
 	r.get = &query
 	if r.getErr != nil {
-		return nil, r.getErr
+		return postdomain.View{}, r.getErr
 	}
 	return r.getResponse, nil
 }
 
-func (r *recordingPostManagement) CreatePost(_ context.Context, command postdomain.CreatePostCommand) (*managev1.Post, error) {
+func (r *recordingPostManagement) CreatePost(_ context.Context, command postdomain.CreatePostCommand) (postdomain.View, error) {
 	r.create = &command
-	return &managev1.Post{Id: managementPostID, Title: command.Title, SourceLocale: command.SourceLocale, Status: managev1.PostStatus_POST_STATUS_DRAFT, Revision: "post-revision", ConfigurationRevision: managementPostConfigurationRevision}, nil
+	return postdomain.View{Post: postdomain.Post{
+		ID: managementPostID, Title: command.Title, SourceLocale: command.SourceLocale, Status: postdomain.StatusDraft,
+		ContentRevision: "post-revision", ConfigurationRevision: managementPostConfigurationRevision,
+		DocumentLayout: postdomain.DefaultDocumentLayout(),
+	}}, nil
 }
-func (r *recordingPostManagement) UpdatePost(_ context.Context, command postdomain.UpdatePostCommand) (*managev1.UpdatePostResponse, error) {
+func (r *recordingPostManagement) UpdatePost(_ context.Context, command postdomain.UpdatePostCommand) (postdomain.SettingsUpdate, error) {
 	r.updateCalls++
 	r.update = &command
 	if r.updateErr != nil {
-		return nil, r.updateErr
+		return postdomain.SettingsUpdate{}, r.updateErr
 	}
 	if r.updateResponse != nil {
-		return r.updateResponse, nil
+		return *r.updateResponse, nil
 	}
-	return &managev1.UpdatePostResponse{
-		Id: command.ID, Changed: true, Slug: command.Slug,
+	return postdomain.SettingsUpdate{
+		ID: command.ID, Changed: true, Slug: command.Slug,
 		ConfigurationRevision: managementPostConfigurationRevisionNext,
+		DocumentLayout:        postdomain.DefaultDocumentLayout(),
 	}, nil
 }
-func (r *recordingPostManagement) SchedulePost(_ context.Context, command postdomain.SchedulePostCommand) (*managev1.PostLifecycleMutationResponse, error) {
+func (r *recordingPostManagement) SchedulePost(_ context.Context, command postdomain.SchedulePostCommand) (postdomain.Lifecycle, error) {
 	r.schedule = &command
-	return &managev1.PostLifecycleMutationResponse{Id: command.ID, Changed: true, Status: managev1.PostStatus_POST_STATUS_SCHEDULED, ScheduledAt: timestamppb.New(*command.ScheduledAt), ScheduledTimeZone: &command.TimeZone, UpdatedAt: timestamppb.Now()}, nil
+	scheduledAt := command.ScheduledAt.UTC()
+	return postdomain.Lifecycle{ID: command.ID, Status: postdomain.StatusScheduled, ScheduledAt: &scheduledAt, ScheduledTimeZone: &command.TimeZone, UpdatedAt: time.Now()}, nil
 }
 
 type recordingWorkManagement struct {

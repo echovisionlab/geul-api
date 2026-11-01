@@ -29,6 +29,7 @@ import (
 	pagepublic "github.com/echovisionlab/geul-api/internal/page/public"
 	pagepublicpostgres "github.com/echovisionlab/geul-api/internal/page/public/postgres"
 	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
+	postpublicpostgres "github.com/echovisionlab/geul-api/internal/post/public/postgres"
 	programeventpublic "github.com/echovisionlab/geul-api/internal/programevent/public"
 	programeventpublicpostgres "github.com/echovisionlab/geul-api/internal/programevent/public/postgres"
 	publicreferencecatalog "github.com/echovisionlab/geul-api/internal/referencecatalog/public"
@@ -108,10 +109,17 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicPagePath, publicPageHandler)
 	slog.Info("Registered public service", "path", publicPagePath)
 
+	postLocalization := postadapter.NewLocalization()
+	publicPostUnits, err := postpublicpostgres.NewUnits(db, postpublicpostgres.Deps{
+		ContentBlocks: contentBlockStore, Localization: postLocalization,
+		MapPlaces: referencecatalogadapter.PublicMapPlaces{}, ShareLinks: postShareLinks, CDNDomain: cfg.CDNURL,
+	})
+	if err != nil {
+		return fmt.Errorf("initialize public Post store: %w", err)
+	}
 	publicPostService, err := postpublic.NewService(postpublic.Deps{
-		DB: db, CDNDomain: cfg.CDNURL, SpiceDB: spicedbClient, Files: postadapter.NewPublicFiles(db, publicFileService),
-		ContentBlocks: contentBlockStore, Localizer: postadapter.NewLocalization(),
-		MapPlaces: referencecatalogadapter.PublicMapPlaces{}, Members: postMembers, ShareLinks: postShareLinks,
+		Units: publicPostUnits, SpiceDB: spicedbClient, Files: postadapter.NewPublicFiles(db, publicFileService),
+		Localizer: postpublicpostgres.NewLocalizer(db, postLocalization), Members: postMembers,
 	})
 	if err != nil {
 		return fmt.Errorf("initialize public Post service: %w", err)

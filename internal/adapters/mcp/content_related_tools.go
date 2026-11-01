@@ -58,16 +58,16 @@ var contentRelatedTools = []mcpserver.Tool{
 }
 
 type PostRelatedApplication interface {
-	SetPostFeaturedImage(context.Context, postdomain.SetPostFeaturedImageCommand) (*managev1.SetPostFeaturedImageResponse, error)
-	DeletePostFeaturedImage(context.Context, postdomain.DeletePostFeaturedImageCommand) (*managev1.OgAssetDeleteResponse, error)
-	ListPostParticipants(context.Context, postdomain.PostParticipantsQuery) (*managev1.ListPostParticipantsResponse, error)
-	AddPostAuthor(context.Context, postdomain.PostParticipantCommand) (*managev1.PostParticipant, error)
+	SetPostFeaturedImage(context.Context, postdomain.SetPostFeaturedImageCommand) (postdomain.FeaturedImage, error)
+	DeletePostFeaturedImage(context.Context, postdomain.DeletePostFeaturedImageCommand) (*string, error)
+	ListPostParticipants(context.Context, postdomain.PostParticipantsQuery) ([]postdomain.Participant, error)
+	AddPostAuthor(context.Context, postdomain.PostParticipantCommand) (postdomain.Participant, error)
 	RemovePostAuthor(context.Context, postdomain.PostParticipantCommand) error
-	AddPostCollaborator(context.Context, postdomain.PostParticipantCommand) (*managev1.PostParticipant, error)
+	AddPostCollaborator(context.Context, postdomain.PostParticipantCommand) (postdomain.Participant, error)
 	RemovePostCollaborator(context.Context, postdomain.PostParticipantCommand) error
-	ListPostVersions(context.Context, postdomain.ListPostVersionsQuery) (*managev1.ListPostVersionsResponse, error)
-	RestorePostVersion(context.Context, postdomain.RestorePostVersionCommand) (*managev1.Post, error)
-	CheckSlugAvailable(context.Context, postdomain.CheckSlugAvailableQuery) (*managev1.CheckSlugAvailableResponse, error)
+	ListPostVersions(context.Context, postdomain.ListPostVersionsQuery) (postdomain.VersionPage, error)
+	RestorePostVersion(context.Context, postdomain.RestorePostVersionCommand) (postdomain.View, error)
+	CheckSlugAvailable(context.Context, postdomain.CheckSlugAvailableQuery) (bool, error)
 }
 
 type WorkRelatedApplication interface {
@@ -156,11 +156,11 @@ func (tools *ContentRelatedTools) featuredImage(ctx context.Context, name string
 		var runID *string
 		switch input.DocumentType {
 		case "post":
-			response, err := tools.posts.SetPostFeaturedImage(ctx, postdomain.SetPostFeaturedImageCommand{PostID: input.DocumentID, FileID: input.FileID})
+			featured, err := tools.posts.SetPostFeaturedImage(ctx, postdomain.SetPostFeaturedImageCommand{PostID: input.DocumentID, FileID: input.FileID})
 			if err != nil {
 				return expectedToolError(err)
 			}
-			runID = response.OgGenerationRunId
+			runID = featured.OgRunID
 		case "work":
 			response, err := tools.works.SetWorkFeaturedImage(ctx, work.SetWorkFeaturedImageCommand{WorkID: input.DocumentID, FileID: input.FileID})
 			if err != nil {
@@ -182,11 +182,11 @@ func (tools *ContentRelatedTools) featuredImage(ctx context.Context, name string
 	var err error
 	switch input.DocumentType {
 	case "post":
-		deleted, err := tools.posts.DeletePostFeaturedImage(ctx, postdomain.DeletePostFeaturedImageCommand{PostID: input.DocumentID})
+		runID, err := tools.posts.DeletePostFeaturedImage(ctx, postdomain.DeletePostFeaturedImageCommand{PostID: input.DocumentID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		return featuredImageDeleted(input, deleted)
+		return featuredImageDeleted(input, postdomain.FeaturedImageDeletedMessage(runID))
 	case "work":
 		runID, err := tools.works.DeleteWorkFeaturedImage(ctx, work.DeleteWorkFeaturedImageCommand{WorkID: input.DocumentID})
 		if err != nil {
@@ -218,10 +218,11 @@ func (tools *ContentRelatedTools) listPostParticipants(ctx context.Context, argu
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
-	response, err := tools.posts.ListPostParticipants(ctx, postdomain.PostParticipantsQuery{PostID: input.DocumentID})
+	listed, err := tools.posts.ListPostParticipants(ctx, postdomain.PostParticipantsQuery{PostID: input.DocumentID})
 	if err != nil {
 		return expectedToolError(err)
 	}
+	response := postdomain.ParticipantsMessage(listed)
 	participants := make([]map[string]any, 0, len(response.Participants))
 	for _, participant := range response.Participants {
 		if participant == nil || participant.Member == nil {
@@ -475,10 +476,11 @@ func (tools *ContentRelatedTools) listDocumentVersions(ctx context.Context, argu
 	var page *commonv1.PaginationResponse
 	switch input.DocumentType {
 	case "post":
-		response, err := tools.posts.ListPostVersions(ctx, postdomain.ListPostVersionsQuery{PostID: input.DocumentID, Page: postdomain.Page{Limit: input.Limit, Offset: input.Offset}})
+		listed, err := tools.posts.ListPostVersions(ctx, postdomain.ListPostVersionsQuery{PostID: input.DocumentID, Page: postdomain.Page{Limit: input.Limit, Offset: input.Offset}})
 		if err != nil {
 			return expectedToolError(err)
 		}
+		response := postdomain.VersionsMessage(listed)
 		page = response.Pagination
 		for _, version := range response.Versions {
 			if version != nil {
@@ -559,10 +561,11 @@ func (tools *ContentRelatedTools) restoreDocumentVersion(ctx context.Context, ar
 	output := map[string]any{"resource_type": "document", "resource_id": input.DocumentID, "document_type": input.DocumentType, "document_id": input.DocumentID, "changed": true}
 	switch input.DocumentType {
 	case "post":
-		response, err := tools.posts.RestorePostVersion(ctx, postdomain.RestorePostVersionCommand{PostID: input.DocumentID, VersionID: input.VersionID})
+		restored, err := tools.posts.RestorePostVersion(ctx, postdomain.RestorePostVersionCommand{PostID: input.DocumentID, VersionID: input.VersionID})
 		if err != nil {
 			return expectedToolError(err)
 		}
+		response := postdomain.PostMessage(restored)
 		output["title"], output["document_revision"], output["status"] = response.Title, response.Revision, contentStatus(response.Status.String(), "POST_STATUS_")
 	case "work":
 		restored, err := tools.works.RestoreWorkVersion(ctx, work.RestoreWorkVersionCommand{WorkID: input.DocumentID, VersionID: input.VersionID})
@@ -597,11 +600,11 @@ func (tools *ContentRelatedTools) checkDocumentSlug(ctx context.Context, argumen
 	var available bool
 	switch input.DocumentType {
 	case "post":
-		response, err := tools.posts.CheckSlugAvailable(ctx, postdomain.CheckSlugAvailableQuery{Slug: input.Slug, ExcludePostID: input.ExcludeDocumentID})
+		postAvailable, err := tools.posts.CheckSlugAvailable(ctx, postdomain.CheckSlugAvailableQuery{Slug: input.Slug, ExcludePostID: input.ExcludeDocumentID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		available = response.Available
+		available = postAvailable
 	case "work":
 		workAvailable, err := tools.works.CheckWorkSlugAvailable(ctx, work.CheckWorkSlugAvailableQuery{Slug: input.Slug, ExcludeWorkID: input.ExcludeDocumentID})
 		if err != nil {

@@ -104,11 +104,3 @@ func validatePostVersionLocalizedDocument(
 	}
 	return contentv1.ValidateRichTextDocument(&contentv1.RichTextDocument{BlockCatalogFingerprint: document.GetBlockCatalogFingerprint(), Profile: document.GetProfile(), SourceLocale: sourceLocale, Base: document.GetBase(), LocaleOverlays: []*contentv1.RichTextLocaleOverlay{document.GetLocaleOverlay()}}, contentv1.ContentValidationMode_CONTENT_VALIDATION_MODE_RESTORE_SNAPSHOT)
 }
-
-func cloneNullableString(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
-}

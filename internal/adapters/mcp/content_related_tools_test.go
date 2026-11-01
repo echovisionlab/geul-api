@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/work"
@@ -14,8 +15,6 @@ import (
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestContentRelatedToolDescriptors(t *testing.T) {
@@ -258,22 +257,23 @@ type recordingPostRelated struct {
 	slug         *postdomain.CheckSlugAvailableQuery
 }
 
-func (r *recordingPostRelated) AddPostCollaborator(_ context.Context, command postdomain.PostParticipantCommand) (*managev1.PostParticipant, error) {
+func (r *recordingPostRelated) AddPostCollaborator(_ context.Context, command postdomain.PostParticipantCommand) (postdomain.Participant, error) {
 	r.collaborator = &command
-	return &managev1.PostParticipant{Member: &commonv1.MemberSummary{Id: command.MemberID, Nickname: "Member"}, Role: managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_COLLABORATOR, CreatedAt: timestamppb.Now()}, nil
+	return postdomain.Participant{Member: &commonv1.MemberSummary{Id: command.MemberID, Nickname: "Member"}, Role: postdomain.RoleCollaborator, CreatedAt: time.Now()}, nil
 }
 
-func (r *recordingPostRelated) ListPostVersions(_ context.Context, query postdomain.ListPostVersionsQuery) (*managev1.ListPostVersionsResponse, error) {
+func (r *recordingPostRelated) ListPostVersions(_ context.Context, query postdomain.ListPostVersionsQuery) (postdomain.VersionPage, error) {
 	r.versions = &query
-	return &managev1.ListPostVersionsResponse{
-		Versions:   []*managev1.PostVersion{{Id: "66666666-6666-4666-8666-666666666666", Version: 1, Title: "Version", CanonicalHash: "hash", SourceLocale: "ko", CreatedAt: timestamppb.Now()}},
-		Pagination: (queryutil.Pagination{Limit: query.Page.Limit, Offset: query.Page.Offset}).BuildResponse(6),
+	pagination := (queryutil.Pagination{Limit: query.Page.Limit, Offset: query.Page.Offset}).BuildResponse(6)
+	return postdomain.VersionPage{
+		Versions:   []postdomain.Version{{ID: "66666666-6666-4666-8666-666666666666", Version: 1, Title: "Version", CanonicalHash: "hash", SourceLocale: "ko", CreatedAt: time.Now()}},
+		Pagination: postdomain.Pagination{Total: pagination.Total, Limit: pagination.Limit, Offset: pagination.Offset, HasMore: pagination.HasMore},
 	}, nil
 }
 
-func (r *recordingPostRelated) CheckSlugAvailable(_ context.Context, query postdomain.CheckSlugAvailableQuery) (*managev1.CheckSlugAvailableResponse, error) {
+func (r *recordingPostRelated) CheckSlugAvailable(_ context.Context, query postdomain.CheckSlugAvailableQuery) (bool, error) {
 	r.slug = &query
-	return &managev1.CheckSlugAvailableResponse{Available: true}, nil
+	return true, nil
 }
 
 func TestWorkCreditSchemasHaveNoRootCombinators(t *testing.T) {

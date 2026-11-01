@@ -7,6 +7,6 @@ import (
 )
 
 func TestNewServiceNamesEveryMissingDependency(t *testing.T) {
-	_, err := NewService(Deps{CDNDomain: "cdn.example"})
-	require.EqualError(t, err, "public Post dependencies are required: ContentBlocks, DB, Files, Localizer, MapPlaces, Members, ShareLinks, SpiceDB")
+	_, err := NewService(Deps{})
+	require.EqualError(t, err, "public Post dependencies are required: Files, Localizer, Members, SpiceDB, Units")
 }

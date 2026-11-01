@@ -357,9 +357,9 @@ func newPostVersionRestoreFixture(t *testing.T) *postVersionRestoreFixture {
 	writer := apitelemetry.NewDurableWriter(db)
 	contentBlocks, err := contentblock.NewGeneratedStore(filemedia.NewContentBlockFileReuseAuthorizer(spiceDB))
 	require.NoError(t, err)
-	service := postintegration.NewService(t, postdomain.Deps{
+	service := postintegration.NewService(t, postintegration.Deps{
 		DB: db, SpiceDB: spiceDB, Files: postAuditFiles{}, Signals: publisher,
-		ShareLinks: postruntime.ShareLinks{}, MediaLoader: postruntime.ContentBlockMedia{},
+		MediaLoader:    postruntime.ContentBlockMedia{},
 		VersionRestore: postruntime.VersionRestore{}, ContentBlocks: contentBlocks, Audit: writer,
 	})
 	return &postVersionRestoreFixture{

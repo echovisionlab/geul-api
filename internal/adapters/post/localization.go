@@ -8,6 +8,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/model"
 	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
+	postpublicpostgres "github.com/echovisionlab/geul-api/internal/post/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 )
 
@@ -128,4 +129,4 @@ func fromPostSelection(selection postpublic.LocalizedContentSelection) publiccon
 	}
 }
 
-var _ postpublic.LocalizationService = (*Localization)(nil)
+var _ postpublicpostgres.LocalizationService = (*Localization)(nil)

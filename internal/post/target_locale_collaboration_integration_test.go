@@ -15,6 +15,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -213,8 +214,8 @@ func TestPostTargetLocaleCollaborationCASAndSourceSeedIntegration(t *testing.T) 
 	require.Equal(t, "edited-fr", postLocalizedParagraphText(t, frAfterSource.Msg.Document, blockIDs[0]))
 	require.Equal(t, "source-fallback-changed", postLocalizedParagraphText(t, frAfterSource.Msg.Document, blockIDs[1]))
 	requirePostTargetBlockAbsent(t, db, created.Msg.Id, "fr", blockIDs[1])
-	publicFR, publicRevision, err := postdomain.LoadLocalizedPostContentProjectionForPublic(
-		t.Context(), db, store, created.Msg.Id, "fr",
+	publicFR, publicRevision, err := postdomain.LoadLocalizedContent(
+		t.Context(), postpostgres.Bind(db, postpostgres.Deps{ContentBlocks: store}), created.Msg.Id, "fr",
 	)
 	require.NoError(t, err)
 	require.Equal(t, sourceSecondWrite.Msg.DocumentRevision, publicRevision)

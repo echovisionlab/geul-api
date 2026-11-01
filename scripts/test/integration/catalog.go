@@ -67,6 +67,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/page/postgres",
 			"./internal/page/public/postgres",
 			"./internal/pageaccess/postgres",
+			"./internal/post/postgres",
 			"./internal/postgreslock",
 			"./internal/programevent/postgres",
 			"./internal/programevent/public/postgres",

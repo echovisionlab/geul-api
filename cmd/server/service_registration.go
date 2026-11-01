@@ -78,6 +78,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/page"
 	pagepostgres "github.com/echovisionlab/geul-api/internal/page/postgres"
 	"github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
@@ -498,12 +499,17 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	postMedia := postruntime.ContentBlockMedia{}
 	postFiles := postadapter.NewFiles(fileService, publicFileService)
 	postVersionRestore := postruntime.VersionRestore{}
-	postService, err := post.NewService(post.Deps{
-		DB: db, SpiceDB: spicedbClient, CDNDomain: cfg.CDNURL, OG: ogDeps.refresher, Files: postFiles,
-		Signals: servicePublisher, ShareLinks: postShareLinks,
+	postUnits, err := postpostgres.NewUnits(db, postpostgres.Deps{
+		ContentBlocks: contentBlockStore, Signals: servicePublisher, OG: ogDeps.refresher,
 		ShareLinkCleanup: sharelinkadapter.EntityLinks{Type: sharelink.EntityPost},
-		MediaLoader:      postMedia, Media: fileService, Members: postMembers, VersionRestore: postVersionRestore,
-		ContentBlocks: contentBlockStore, Audit: telemetryWriter,
+		MediaLoader:      postMedia, Media: fileService, VersionRestore: postVersionRestore, CDNDomain: cfg.CDNURL,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Post store: %w", err)
+	}
+	postService, err := post.NewService(post.Deps{
+		Units: postUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
+		Files: postFiles, Members: postMembers,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize Post service: %w", err)
@@ -718,7 +724,9 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(emailSuppressionPath, emailSuppressionHandler)
 	slog.Info("Registered service", "path", emailSuppressionPath)
 
-	commentService, err := post.NewCommentService(post.CommentDeps{DB: db, SpiceDB: spicedbClient, Members: postMembers, Audit: telemetryWriter})
+	commentService, err := post.NewCommentService(post.CommentDeps{
+		Units: postUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Members: postMembers, Audit: telemetryWriter,
+	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize Post comment service: %w", err)
 	}

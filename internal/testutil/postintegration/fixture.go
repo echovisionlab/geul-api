@@ -17,15 +17,18 @@ import (
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/og"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
@@ -45,19 +48,6 @@ type asyncPublisher struct{}
 
 func (asyncPublisher) NotifyProtobufWithExecutor(context.Context, eventpkg.DBTX, string, proto.Message) error {
 	return nil
-}
-
-type shareLinks struct{}
-
-func (shareLinks) ValidateShareLinkForEntity(
-	context.Context,
-	*gorm.DB,
-	string,
-	string,
-	managev1.ShareLinkEntityType,
-	string,
-) (*model.ShareLink, error) {
-	return nil, nil
 }
 
 type mediaLoader struct{}
@@ -112,15 +102,40 @@ type Posts struct {
 	Service *postdomain.Service
 }
 
-// NewService fills the collaborators deps leaves unset with integration-only
-// stubs and the durable audit writer.
-func NewService(t *testing.T, deps postdomain.Deps) *postdomain.Service {
+// Deps are the collaborators of a Post integration service. NewService
+// fills the ones a test leaves unset with integration-only stubs and the
+// durable audit writer.
+type Deps struct {
+	DB             *gorm.DB
+	CDNDomain      string
+	SpiceDB        *auth.SpiceDBClient
+	Files          postdomain.FileService
+	Signals        contentsignal.Publisher
+	MediaLoader    postpostgres.ContentBlockMediaLoader
+	Media          postpostgres.ContentBlockMediaHydrator
+	VersionRestore postpostgres.VersionRestoreSupport
+	ContentBlocks  *contentblock.Store
+	Audit          domainaudit.Appender
+}
+
+// NewUnits returns the Post unit of work over deps.DB with the runtimes
+// deps names, filling the unset ones.
+func NewUnits(t *testing.T, deps Deps) mutation.UnitOfWork[postdomain.Store] {
+	t.Helper()
+	deps = withDefaults(t, deps)
+	units, err := postpostgres.NewUnits(deps.DB, postpostgres.Deps{
+		ContentBlocks: deps.ContentBlocks, Signals: deps.Signals, OG: NewPostOGRefresher(deps.DB, deps.CDNDomain),
+		ShareLinkCleanup: sharelinkadapter.EntityLinks{Type: sharelink.EntityPost},
+		MediaLoader:      deps.MediaLoader, Media: deps.Media, VersionRestore: deps.VersionRestore, CDNDomain: deps.CDNDomain,
+	})
+	require.NoError(t, err)
+	return units
+}
+
+func withDefaults(t *testing.T, deps Deps) Deps {
 	t.Helper()
 	if deps.SpiceDB == nil {
 		deps.SpiceDB = testutil.PostIntegrationSpiceDB(t)
-	}
-	if deps.OG == nil {
-		deps.OG = NewPostOGRefresher(deps.DB, deps.CDNDomain)
 	}
 	if deps.Files == nil {
 		deps.Files = fileService{}
@@ -128,20 +143,11 @@ func NewService(t *testing.T, deps postdomain.Deps) *postdomain.Service {
 	if deps.Signals == nil {
 		deps.Signals = asyncPublisher{}
 	}
-	if deps.ShareLinks == nil {
-		deps.ShareLinks = shareLinks{}
-	}
-	if deps.ShareLinkCleanup == nil {
-		deps.ShareLinkCleanup = sharelinkadapter.EntityLinks{Type: sharelink.EntityPost}
-	}
 	if deps.MediaLoader == nil {
 		deps.MediaLoader = mediaLoader{}
 	}
 	if deps.Media == nil {
 		deps.Media = MediaHydrator{}
-	}
-	if deps.Members == nil {
-		deps.Members = postadapter.NewMemberSummaries(deps.DB, deps.CDNDomain)
 	}
 	if deps.VersionRestore == nil {
 		deps.VersionRestore = versionRestore{}
@@ -152,7 +158,17 @@ func NewService(t *testing.T, deps postdomain.Deps) *postdomain.Service {
 	if deps.Audit == nil {
 		deps.Audit = apitelemetry.NewDurableWriter(deps.DB)
 	}
-	service, err := postdomain.NewService(deps)
+	return deps
+}
+
+// NewService composes the Post use cases over deps.
+func NewService(t *testing.T, deps Deps) *postdomain.Service {
+	t.Helper()
+	deps = withDefaults(t, deps)
+	service, err := postdomain.NewService(postdomain.Deps{
+		Units: NewUnits(t, deps), SpiceDB: deps.SpiceDB, Fence: identitystate.PostgresFence{}, Audit: deps.Audit,
+		Files: deps.Files, Members: postadapter.NewMemberSummaries(deps.DB, deps.CDNDomain),
+	})
 	require.NoError(t, err)
 	return service
 }
@@ -179,7 +195,7 @@ func NewPostDomainServiceWithFileService(
 	files postdomain.FileService,
 ) Posts {
 	t.Helper()
-	service := NewService(t, postdomain.Deps{DB: db, CDNDomain: cdnDomain, SpiceDB: spiceDB, ContentBlocks: store, Files: files})
+	service := NewService(t, Deps{DB: db, CDNDomain: cdnDomain, SpiceDB: spiceDB, ContentBlocks: store, Files: files})
 	return Posts{ConnectHandler: postdomain.NewConnectHandler(service), Service: service}
 }
 
@@ -192,7 +208,7 @@ func NewInternalPostDomainService(
 	store *contentblock.Store,
 ) *postdomain.InternalConnectHandler {
 	t.Helper()
-	return postdomain.NewInternalConnectHandler(NewService(t, postdomain.Deps{
+	return postdomain.NewInternalConnectHandler(NewService(t, Deps{
 		DB: db, CDNDomain: cdnDomain, SpiceDB: spiceDB, ContentBlocks: store,
 	}))
 }
@@ -210,7 +226,8 @@ func NewPostCommentService(
 		spiceDB = testutil.PostIntegrationSpiceDB(t)
 	}
 	comments, err := postdomain.NewCommentService(postdomain.CommentDeps{
-		DB: db, SpiceDB: spiceDB, Members: postadapter.NewMemberSummaries(db, cdnDomain),
+		Units: NewUnits(t, Deps{DB: db, CDNDomain: cdnDomain, SpiceDB: spiceDB}), SpiceDB: spiceDB,
+		Fence: identitystate.PostgresFence{}, Members: postadapter.NewMemberSummaries(db, cdnDomain),
 		Audit: apitelemetry.NewDurableWriter(db),
 	})
 	require.NoError(t, err)

@@ -22,7 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/og"
-	"github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/scheduler"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -238,7 +238,7 @@ func (h *Handlers) HandleScheduled(ctx context.Context, job scheduler.Job) error
 		return err
 	case scheduler.JobProcessScheduledPosts:
 		return h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			_, err := post.ProcessDueScheduledPosts(ctx, tx, 0)
+			_, err := postpostgres.ProcessDueScheduledPosts(ctx, tx, 0)
 			return err
 		})
 	case scheduler.JobRecoverMetadataAI:

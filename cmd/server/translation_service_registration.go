@@ -11,7 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/legal"
-	"github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/series"
 	translationcore "github.com/echovisionlab/geul-api/internal/translation"
 	translationapplication "github.com/echovisionlab/geul-api/internal/translation/application"
@@ -49,7 +49,7 @@ func (r translationServiceRegistration) register() (*translationapplication.Serv
 	internalFormService := r.internalFormService
 	seriesService := r.seriesService
 	fileService := r.fileService
-	postInterchange, err := post.NewTranslationInterchange(telemetryWriter)
+	postInterchange, err := postpostgres.NewTranslationInterchange(telemetryWriter)
 	if err != nil {
 		return nil, fmt.Errorf("initialize Post translation interchange: %w", err)
 	}

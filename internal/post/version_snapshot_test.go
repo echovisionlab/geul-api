@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -35,23 +34,20 @@ func TestPostVersionProtoFormatting(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	version, err := (&Service{}).toProtoPostVersion(&model.PostVersion{
+	version, err := postVersion(StoredVersion{
 		ID: "post-version-1", Version: 2, ContentSnapshot: snapshot,
 		ContributorMemberIDs: []string{"member-2", "member-1", "member-2"},
 		CreatedAt:            createdAt,
 	}, map[string]string{"member-1": "Mina", "member-2": "Jules"})
 	require.NoError(t, err)
-	require.Equal(t, "post-version-1", version.Id)
+	require.Equal(t, "post-version-1", version.ID)
 	require.Equal(t, int32(2), version.Version)
 	require.Equal(t, "en", version.SourceLocale)
 	require.Equal(t, title, version.Title)
 	require.Equal(t, &summary, version.Summary)
 	require.Equal(t, canonicalHash, version.CanonicalHash)
-	require.Equal(t, []string{"member-1", "member-2"}, []string{
-		version.Contributors[0].MemberId,
-		version.Contributors[1].MemberId,
-	})
-	require.Equal(t, createdAt.Unix(), version.CreatedAt.AsTime().Unix())
+	require.Equal(t, []VersionContributor{{MemberID: "member-1", Nickname: "Mina"}, {MemberID: "member-2", Nickname: "Jules"}}, version.Contributors)
+	require.Equal(t, createdAt, version.CreatedAt)
 }
 
 func TestPostVersionProtoFormattingRejectsMissingContributorNickname(t *testing.T) {
@@ -59,8 +55,8 @@ func TestPostVersionProtoFormattingRejectsMissingContributorNickname(t *testing.
 		testPostVersionLocalizedDocument(), "en", nil, nil,
 	)
 	require.NoError(t, err)
-	_, err = (&Service{}).toProtoPostVersion(
-		&model.PostVersion{ContentSnapshot: snapshot, ContributorMemberIDs: []string{"member-1"}},
+	_, err = postVersion(
+		StoredVersion{ContentSnapshot: snapshot, ContributorMemberIDs: []string{"member-1"}},
 		map[string]string{},
 	)
 	require.ErrorContains(t, err, "member-1 is unresolved")

@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"github.com/stretchr/testify/require"
 )
@@ -23,7 +22,7 @@ func TestPostSummaryFeaturedImagesUsePublicDisplayOnly(t *testing.T) {
 	}
 	service := &Service{fileService: files}
 
-	got, err := service.loadPostPublicFeaturedImageDeliveries(t.Context(), []model.Post{{
+	got, err := service.loadPostPublicFeaturedImageDeliveries(t.Context(), []Post{{
 		ID:                  "22222222-2222-4222-8222-222222222222",
 		FeaturedImageFileID: &fileID,
 	}})
@@ -40,7 +39,7 @@ func TestPostSingularFeaturedImageAlwaysUsesExactOwnerBoundary(t *testing.T) {
 	files := &recordingPostFeaturedFiles{}
 	service := &Service{fileService: files}
 
-	delivery, err := service.resolveAuthorizedPostFeaturedImage(t.Context(), &model.Post{
+	delivery, err := service.resolveAuthorizedPostFeaturedImage(t.Context(), &Post{
 		ID: "22222222-2222-4222-8222-222222222222",
 	})
 	require.NoError(t, err)

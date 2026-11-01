@@ -8,14 +8,10 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"gorm.io/gorm"
 )
 
 var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
@@ -24,7 +20,7 @@ func isValidUUID(value string) bool { return uuidPattern.MatchString(value) }
 
 func hasDraftResourceView(
 	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
+	checker authz.AuthorizationDecisionChecker,
 	resourceID string,
 ) (bool, error) {
 	user := auth.GetUser(ctx)
@@ -39,56 +35,26 @@ func hasDraftResourceView(
 	if err != nil {
 		return false, err
 	}
-	return spiceDB.Can(ctx, decision)
+	return checker.Can(ctx, decision)
 }
 
 func requireDraftShareLinkAccess(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	shareToken string,
 	sharePassword string,
-	entityType managev1.ShareLinkEntityType,
 	entityID string,
 	entityName string,
-	validator postdomain.ShareLinkValidator,
-) (*model.ShareLink, error) {
+) (*mediaasset.ContentDownloadShareLinkWitness, error) {
 	if shareToken == "" {
 		return nil, domainerr.New(domainerr.NotFound, "", entityName+" not found")
 	}
-	link, err := validator.ValidateShareLinkForEntity(ctx, db, shareToken, sharePassword, entityType, entityID)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	link, err := store.ShareLink(ctx, shareToken, sharePassword, entityID)
+	if errors.Is(err, ErrShareLinkNotFound) {
 		return nil, domainerr.New(domainerr.NotFound, "", entityName+" not found")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("validate %s share link: %w", entityName, err)
 	}
 	return link, nil
-}
-
-func resolvedOgAssetRef(
-	ctx context.Context,
-	db *gorm.DB,
-	cdnDomain string,
-	sourceAssetID *string,
-	localizedAssetID *string,
-) (*commonv1.AssetRef, error) {
-	for _, candidate := range []*string{localizedAssetID, sourceAssetID} {
-		if candidate == nil || strings.TrimSpace(*candidate) == "" {
-			continue
-		}
-		var asset model.PublicAsset
-		if err := db.WithContext(ctx).
-			Where("id = ? AND status = ?", strings.TrimSpace(*candidate), model.PublicAssetStatusReady).
-			Take(&asset).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				continue
-			}
-			return nil, err
-		}
-		if asset.FileSize == nil || len(asset.SHA256) != 32 {
-			continue
-		}
-		return mediaasset.NewLifecycle(db, cdnDomain).AssetRef(asset)
-	}
-	return nil, nil
 }

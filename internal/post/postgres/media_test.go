@@ -1,4 +1,4 @@
-package post
+package postpostgres
 
 import (
 	"context"
@@ -45,7 +45,7 @@ func TestPostMediaProjectionReturnsDeliveryForAuthorizedOwner(t *testing.T) {
 		require.Equal(t, references, items)
 		return []*contentv1.ContentBlockMediaItem{{Attachment: items[0].Attachment, Delivery: delivery}}, nil
 	})
-	items, err := loadPostBlockMedia(t.Context(), tx, postID, documentID, principal, loader, hydrator)
+	items, err := Bind(tx, Deps{MediaLoader: loader, Media: hydrator}).BlockMedia(t.Context(), postID, documentID, principal)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	require.Equal(t, fileID, items[0].GetAttachment().GetActiveFileId())
@@ -66,10 +66,8 @@ func TestPostMediaProjectionDoesNotReturnReferencesAfterDeliveryFailure(t *testi
 			require.False(t, failLoading, "failed reference reads must stop before signing")
 			return nil, failure
 		})
-		items, err := loadPostBlockMedia(t.Context(), new(gorm.DB), uuid.NewString(), uuid.New(), new(auth.UserInfo), loader, hydrator)
+		items, err := Bind(new(gorm.DB), Deps{MediaLoader: loader, Media: hydrator}).BlockMedia(t.Context(), uuid.NewString(), uuid.New(), new(auth.UserInfo))
 		require.ErrorIs(t, err, failure)
 		require.Nil(t, items)
 	}
-	_, err := loadPostBlockMedia(t.Context(), new(gorm.DB), uuid.NewString(), uuid.New(), new(auth.UserInfo), nil, nil)
-	require.ErrorContains(t, err, "hydrator is not configured")
 }

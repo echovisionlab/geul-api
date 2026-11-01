@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/post"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
@@ -40,7 +40,7 @@ func TestLoadPostFeaturedImageDeliveriesKeepsOnlyPublicDisplayProjection(t *test
 		},
 	}}}
 
-	got, err := service.loadPostFeaturedImageDeliveries(t.Context(), []model.Post{{
+	got, err := service.loadPostFeaturedImageDeliveries(t.Context(), []post.Post{{
 		ID: uuid.NewString(), FeaturedImageFileID: &fileID,
 	}})
 	require.NoError(t, err)

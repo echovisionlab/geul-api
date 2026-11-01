@@ -8,12 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -22,7 +19,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -135,12 +131,12 @@ func (s *Service) ExecuteAIDocumentMutation(
 	if err != nil {
 		return AIDocumentMutationResult{}, err
 	}
-	var root aiDocumentPostRoot
+	var root AIDocumentRoot
 	var compiled AIDocumentMutation
 	var validated AIDocumentMutationResult
-	access := mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
+	access := mutation.Locked(func(ctx context.Context, store Store, require mutation.Require) error {
 		var err error
-		if root, err = loadPostAIDocumentRoot(ctx, tx, postID, clause.LockingStrengthUpdate); err != nil {
+		if root, err = loadPostAIDocumentRoot(ctx, store, postID, UpdateLock); err != nil {
 			return err
 		}
 		if _, err := requireLockedPostActionForStatus(require, postID, root.Status, policyv1.Post.Edit); err != nil {
@@ -151,13 +147,13 @@ func (s *Service) ExecuteAIDocumentMutation(
 		}
 		return nil
 	})
-	result, _, err := runPostMutation(ctx, s, mutation.Spec[AIDocumentMutationResult]{Access: access},
-		func(ctx context.Context, tx *gorm.DB, effects *postEffects) (AIDocumentMutationResult, error) {
+	result, _, err := runPostMutation(ctx, s, mutation.StoreSpec[AIDocumentMutationResult, Store]{Access: access},
+		func(ctx context.Context, store Store, effects *postEffects) (AIDocumentMutationResult, error) {
 			principal := auth.GetUser(ctx)
 			if principal == nil || principal.MemberID == "" {
 				return AIDocumentMutationResult{}, domainerr.ResourceNotFound("post", postID)
 			}
-			state, err := s.loadAIDocumentStateAfterAuthorization(ctx, tx, root, normalizedLocale, principal.MemberID.String())
+			state, err := loadAIDocumentStateAfterAuthorization(ctx, store, root, normalizedLocale, principal.MemberID.String())
 			if err != nil {
 				return AIDocumentMutationResult{}, err
 			}
@@ -169,8 +165,8 @@ func (s *Service) ExecuteAIDocumentMutation(
 				return AIDocumentMutationResult{}, err
 			}
 			aiEffects := &postAIDocumentMutationEffects{operation: sharedtelemetry.AuditItemOperationUpdated}
-			result, err := s.applyAIDocumentMutationInTransaction(
-				ctx, tx, compiled, aiEffects, effects,
+			result, err := applyAIDocumentMutationInTransaction(
+				ctx, store, compiled, aiEffects, effects,
 				postAuthorizedAIDocumentFence(root, documentID, contentblock.DomainContext{SourceLocale: state.SourceLocale}),
 			)
 			if err != nil {
@@ -205,8 +201,8 @@ func recordPostAIDocumentEdit(
 			compiled.ContributorMemberID.String(), compiled.PostID, compiled.Locale, aiEffects.operation,
 		))
 	}
-	if event := postAIDocumentUpdatedEvent(compiled, result.Result, aiEffects); event != nil {
-		effects.signal(event)
+	if update := postAIDocumentUpdatedEvent(compiled, result.Result, aiEffects); update != nil {
+		effects.signal(*update)
 	}
 }
 
@@ -268,7 +264,7 @@ func postAIDocumentUpdatedEvent(
 	mutation AIDocumentMutation,
 	result contentblock.Result,
 	effects *postAIDocumentMutationEffects,
-) *managev1.ContentUpdatedEvent {
+) *ContentUpdate {
 	if !result.Changed || !result.TranslationSourceChanged {
 		return nil
 	}
@@ -279,44 +275,44 @@ func postAIDocumentUpdatedEvent(
 	if result.ContentChanged && !slices.Contains(fields, "content") {
 		fields = append(fields, "content")
 	}
-	return buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-		EntityID:             mutation.PostID,
+	return &ContentUpdate{
+		PostID:               mutation.PostID,
 		Fields:               fields,
 		DocumentRevision:     result.DocumentRevision.String(),
 		Contributors:         []string{mutation.ContributorMemberID.String()},
-		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+		Source:               SourceAI,
 		Locale:               mutation.Locale,
 		DocumentStateChanged: true,
-	})
+	}
 }
 
-func (s *Service) applyAIDocumentMutationInTransaction(
+func applyAIDocumentMutationInTransaction(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	compiled AIDocumentMutation,
 	aiEffects *postAIDocumentMutationEffects,
 	effects *postEffects,
-	fence contentblock.DomainFence,
+	fence ContentFence,
 ) (AIDocumentMutationResult, error) {
 	if err := validatePostAIDocumentMutation(compiled); err != nil {
 		return AIDocumentMutationResult{}, err
 	}
 	now := dbtime.Now()
 	if compiled.Locale != compiled.ObservedSourceLocale {
-		return s.applyPostAIDocumentTarget(ctx, tx, compiled, aiEffects, effects, fence, now)
+		return applyPostAIDocumentTarget(ctx, store, compiled, aiEffects, effects, fence, now)
 	}
 	if compiled.ExpectedTargetRevision != nil {
 		return AIDocumentMutationResult{}, domainerr.InvalidField("expected_target_revision", "source Post mutation cannot carry a target revision")
 	}
-	result, err := s.contentBlocks.ApplyBatchWithMetadata(ctx, tx, compiled.Batch, fence,
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-			return applyPostAIDocumentMetadata(ctx, tx, compiled, compiled.ObservedSourceLocale, now, aiEffects)
+	result, err := store.ApplyContentBatchWithMetadata(ctx, compiled.Batch, fence,
+		func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
+			return applyPostAIDocumentMetadata(ctx, store, compiled, compiled.ObservedSourceLocale, now, aiEffects)
 		},
 	)
 	if err != nil || !result.Changed {
 		return AIDocumentMutationResult{Result: result}, err
 	}
-	if err := touchPost(ctx, tx, compiled.PostID, now); err != nil {
+	if err := store.TouchPost(ctx, compiled.PostID, now); err != nil {
 		return AIDocumentMutationResult{}, err
 	}
 	if aiEffects.titleChanged {
@@ -366,13 +362,13 @@ func validatePostAIDocumentTargetBatch(compiled AIDocumentMutation) error {
 	return nil
 }
 
-func (s *Service) applyPostAIDocumentTarget(
+func applyPostAIDocumentTarget(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	compiled AIDocumentMutation,
 	aiEffects *postAIDocumentMutationEffects,
 	effects *postEffects,
-	fence contentblock.DomainFence,
+	fence ContentFence,
 	now time.Time,
 ) (AIDocumentMutationResult, error) {
 	if !compiled.ObservedLocaleExists && !compiled.Metadata.EnsureLocale &&
@@ -381,7 +377,7 @@ func (s *Service) applyPostAIDocumentTarget(
 		return AIDocumentMutationResult{Result: contentblock.Result{DocumentRevision: compiled.ExpectedRevision}}, nil
 	}
 	if compiled.DeleteTranslation {
-		result, err := deletePostTargetLocale(ctx, tx, s.contentBlocks, postTargetLocaleDeleteInput{
+		result, err := deletePostTargetLocale(ctx, store, postTargetLocaleDeleteInput{
 			PostID: compiled.PostID, Locale: compiled.Locale,
 			ExpectedDocumentRevision: compiled.ExpectedRevision,
 			ExpectedTargetRevision:   compiled.ExpectedTargetRevision,
@@ -392,7 +388,7 @@ func (s *Service) applyPostAIDocumentTarget(
 		aiEffects.operation = sharedtelemetry.AuditItemOperationDeleted
 		return AIDocumentMutationResult{Result: result}, err
 	}
-	target, err := applyPostTargetLocaleMutation(ctx, tx, s.contentBlocks, postTargetLocaleMutationInput{
+	target, err := applyPostTargetLocaleMutation(ctx, store, postTargetLocaleMutationInput{
 		PostID: compiled.PostID, Locale: compiled.Locale,
 		ExpectedDocumentRevision: compiled.ExpectedRevision,
 		ExpectedTargetRevision:   compiled.ExpectedTargetRevision,
@@ -441,11 +437,11 @@ func (s *Service) applyPostAIDocumentTarget(
 }
 
 func postAuthorizedAIDocumentFence(
-	root aiDocumentPostRoot,
+	root AIDocumentRoot,
 	documentID uuid.UUID,
 	domain contentblock.DomainContext,
-) contentblock.DomainFence {
-	return func(_ context.Context, _ *gorm.DB, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {
+) ContentFence {
+	return func(_ context.Context, _ Store, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {
 		if root.ID == "" || root.ContentDocumentID == nil || requestedDocumentID != documentID ||
 			strings.TrimSpace(*root.ContentDocumentID) != documentID.String() {
 			return contentblock.DomainContext{}, domainerr.Precondition("Post content document changed; reload before saving")
@@ -454,16 +450,13 @@ func postAuthorizedAIDocumentFence(
 	}
 }
 
-func postAIDocumentConflict(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) error {
-	var document contentblock.Document
-	if err := tx.WithContext(ctx).Table("content_document").
-		Select("revision").
-		Where("id = ?", documentID).
-		Take(&document).Error; err != nil {
+func postAIDocumentConflict(ctx context.Context, store Store, documentID uuid.UUID) error {
+	revision, err := store.ContentRevision(ctx, documentID)
+	if err != nil {
 		return err
 	}
 	return &AIDocumentRevisionConflictError{
-		Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: document.Revision.String(),
+		Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: revision.String(),
 	}
 }
 
@@ -475,30 +468,9 @@ func postAIDocumentTargetConflictRevision(conflict *translation.TargetRevisionCo
 	return &revision
 }
 
-func loadPostAIDocumentMetadataForUpdate(
-	ctx context.Context,
-	tx *gorm.DB,
-	postID, locale string,
-) (AIDocumentLocaleMetadata, bool, error) {
-	var row aiDocumentMetadataRow
-	err := tx.WithContext(ctx).
-		Table("post_translation").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Select("title", "summary").
-		Where("entity_id = ?::uuid AND locale = ?", postID, locale).
-		Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return AIDocumentLocaleMetadata{}, false, nil
-	}
-	if err != nil {
-		return AIDocumentLocaleMetadata{}, false, err
-	}
-	return AIDocumentLocaleMetadata(row), true, nil
-}
-
 func applyPostAIDocumentMetadata(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	compiled AIDocumentMutation,
 	sourceLocale string,
 	now time.Time,
@@ -507,12 +479,12 @@ func applyPostAIDocumentMetadata(
 	if strings.TrimSpace(sourceLocale) == "" {
 		return contentblock.MetadataEffect{}, domainerr.Precondition("Post source locale is not initialized")
 	}
-	current, exists, err := loadPostAIDocumentMetadataForUpdate(ctx, tx, compiled.PostID, compiled.Locale)
+	current, exists, err := store.LocaleText(ctx, compiled.PostID, compiled.Locale, true)
 	if err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
 	if exists != compiled.ObservedLocaleExists {
-		return contentblock.MetadataEffect{}, postAIDocumentConflict(ctx, tx, compiled.Batch.DocumentID)
+		return contentblock.MetadataEffect{}, postAIDocumentConflict(ctx, store, compiled.Batch.DocumentID)
 	}
 	if compiled.Locale == sourceLocale && !exists {
 		return contentblock.MetadataEffect{}, domainerr.Precondition("Post source locale metadata is missing")
@@ -526,23 +498,18 @@ func applyPostAIDocumentMetadata(
 	}
 	localeChanged := false
 	if !exists && patch.EnsureLocale {
-		if err := tx.WithContext(ctx).Exec(
-			`INSERT INTO post_translation (
-				entity_id, locale, created_at, updated_at
-			) VALUES (?::uuid, ?, ?, ?)`,
-			compiled.PostID, compiled.Locale, now, now,
-		).Error; err != nil {
+		if err := store.InsertEmptyLocale(ctx, compiled.PostID, compiled.Locale, now); err != nil {
 			return contentblock.MetadataEffect{}, err
 		}
 		exists, localeChanged = true, true
 	}
 	textChanged := false
 	if exists {
-		if textChanged, err = applyPostAIDocumentText(ctx, tx, compiled, current, sourceLocale, now, effects); err != nil {
+		if textChanged, err = applyPostAIDocumentText(ctx, store, compiled, current, sourceLocale, now, effects); err != nil {
 			return contentblock.MetadataEffect{}, err
 		}
 	}
-	taxonomyChanged, err := applyPostAIDocumentTaxonomy(ctx, tx, compiled, effects)
+	taxonomyChanged, err := applyPostAIDocumentTaxonomy(ctx, store, compiled, effects)
 	if err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
@@ -560,7 +527,7 @@ func applyPostAIDocumentMetadata(
 // mutation's locale and reports whether they changed.
 func applyPostAIDocumentText(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	compiled AIDocumentMutation,
 	current AIDocumentLocaleMetadata,
 	sourceLocale string,
@@ -568,34 +535,32 @@ func applyPostAIDocumentText(
 	effects *postAIDocumentMutationEffects,
 ) (bool, error) {
 	patch := compiled.Metadata
-	updates := map[string]any{}
+	change := LocaleChange{UpdatedAt: now}
 	if patch.SetTitle {
 		if compiled.Locale == sourceLocale && (patch.Title == nil || strings.TrimSpace(*patch.Title) == "") {
 			return false, domainerr.InvalidField("title", "source title must not be empty")
 		}
-		if !postAIDocumentNullableEqual(current.Title, patch.Title) {
-			updates["title"] = patch.Title
+		if !nullableStringEqual(current.Title, patch.Title) {
+			change.SetTitle, change.Title = true, patch.Title
 			effects.addField("title")
 			effects.titleChanged = true
 		}
 	}
-	if patch.SetSummary && !postAIDocumentNullableEqual(current.Summary, patch.Summary) {
-		updates["summary"] = patch.Summary
+	if patch.SetSummary && !nullableStringEqual(current.Summary, patch.Summary) {
+		change.SetSummary, change.Summary = true, patch.Summary
 		effects.addField("summary")
 	}
-	if len(updates) == 0 {
+	if !change.SetTitle && !change.SetSummary {
 		return false, nil
 	}
-	updates["updated_at"] = now
-	return true, tx.WithContext(ctx).Table("post_translation").
-		Where("entity_id = ?::uuid AND locale = ?", compiled.PostID, compiled.Locale).
-		Updates(updates).Error
+	_, err := store.UpdateLocaleMetadata(ctx, compiled.PostID, compiled.Locale, change)
+	return true, err
 }
 
 // applyPostAIDocumentTaxonomy replaces the requested Categories and Tags and
 // reports whether either changed.
-func applyPostAIDocumentTaxonomy(ctx context.Context, tx *gorm.DB, compiled AIDocumentMutation, effects *postAIDocumentMutationEffects) (bool, error) {
-	currentCategories, currentTags, err := loadPostTaxonomyIDs(ctx, tx, compiled.PostID)
+func applyPostAIDocumentTaxonomy(ctx context.Context, store Store, compiled AIDocumentMutation, effects *postAIDocumentMutationEffects) (bool, error) {
+	currentCategories, currentTags, err := store.TaxonomyIDs(ctx, compiled.PostID)
 	if err != nil {
 		return false, err
 	}
@@ -604,13 +569,11 @@ func applyPostAIDocumentTaxonomy(ctx context.Context, tx *gorm.DB, compiled AIDo
 		set      bool
 		ids      []string
 		current  []string
-		table    string
-		junction string
-		column   string
+		taxonomy Taxonomy
 		field    string
 	}{
-		{compiled.Metadata.SetCategories, compiled.Metadata.CategoryIDs, currentCategories, "category", "post_category", "category_id", "categoryIds"},
-		{compiled.Metadata.SetTags, compiled.Metadata.TagIDs, currentTags, "tag", "post_tag", "tag_id", "tagIds"},
+		{compiled.Metadata.SetCategories, compiled.Metadata.CategoryIDs, currentCategories, Categories, "categoryIds"},
+		{compiled.Metadata.SetTags, compiled.Metadata.TagIDs, currentTags, Tags, "tagIds"},
 	} {
 		if !taxonomy.set {
 			continue
@@ -620,7 +583,7 @@ func applyPostAIDocumentTaxonomy(ctx context.Context, tx *gorm.DB, compiled AIDo
 		if slices.Equal(taxonomy.current, next) {
 			continue
 		}
-		if err := replacePostTaxonomyLinks(ctx, tx, taxonomy.table, taxonomy.junction, taxonomy.column, compiled.PostID, next); err != nil {
+		if err := replacePostTaxonomyLinks(ctx, store, taxonomy.taxonomy, compiled.PostID, next); err != nil {
 			return false, err
 		}
 		changed = true
@@ -635,11 +598,4 @@ func hasPostAIDocumentBatchChanges(batch contentblock.Batch) bool {
 
 func hasPostAIDocumentMetadataPatch(patch AIDocumentMetadataPatch) bool {
 	return patch.EnsureLocale || patch.SetTitle || patch.SetSummary || patch.SetCategories || patch.SetTags
-}
-
-func postAIDocumentNullableEqual(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
 }

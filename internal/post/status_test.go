@@ -3,7 +3,6 @@ package post
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -16,11 +15,11 @@ func TestPostStatusMappingCoversEveryAPIStatus(t *testing.T) {
 		if status == managev1.PostStatus_POST_STATUS_UNSPECIFIED {
 			continue
 		}
-		if got := postStatusToProto(model.PostStatus(name)); got != status {
+		if got := postStatusToProto(Status(name)); got != status {
 			t.Fatalf("%s maps to %s", name, got)
 		}
 	}
-	if got := postStatusToProto(model.PostStatus("POST_STATUS_DELETED")); got != managev1.PostStatus_POST_STATUS_UNSPECIFIED {
+	if got := postStatusToProto(Status("POST_STATUS_DELETED")); got != managev1.PostStatus_POST_STATUS_UNSPECIFIED {
 		t.Fatalf("unknown stored status mapped to %s", got)
 	}
 }

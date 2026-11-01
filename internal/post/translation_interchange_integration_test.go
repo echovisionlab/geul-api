@@ -12,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	translationcore "github.com/echovisionlab/geul-api/internal/translation"
@@ -70,7 +71,7 @@ func TestPostTranslationInterchangeUsesDerivedTargetRevisionAndStrictTimestampIn
 	require.NoError(t, err)
 
 	capture := &postInterchangeIntegrationAuditCapture{}
-	interchange, err := postdomain.NewTranslationInterchange(capture)
+	interchange, err := postpostgres.NewTranslationInterchange(capture)
 	require.NoError(t, err)
 	job := &model.TranslationJob{
 		EntityType: "post", EntityID: created.Msg.Id, SourceLocale: "en", TargetLocale: "ko",

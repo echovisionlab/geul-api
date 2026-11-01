@@ -9,9 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	"gorm.io/gorm"
 )
 
 func ptrStringValue(value *string) string {
@@ -32,13 +30,9 @@ func normalizeOptionalNullableString(raw *string) (*string, bool) {
 	return &trimmed, true
 }
 
-func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, acceptLanguage string) string {
-	if user := auth.GetUser(ctx); user != nil && user.Authenticated && db != nil {
-		var preferredLocale *string
-		if err := db.WithContext(ctx).Model(&model.Member{}).
-			Select("preferred_locale").
-			Where("id = ?::uuid AND deleted_at IS NULL", user.MemberID.String()).
-			Scan(&preferredLocale).Error; err == nil && preferredLocale != nil {
+func resolveInitialSourceLocale(ctx context.Context, store Store, acceptLanguage string) string {
+	if user := auth.GetUser(ctx); user != nil && user.Authenticated {
+		if preferredLocale, err := store.MemberPreferredLocale(ctx, user.MemberID.String()); err == nil && preferredLocale != nil {
 			if locale := localization.NormalizeSupportedLocale(*preferredLocale); locale != nil {
 				return *locale
 			}
@@ -49,8 +43,8 @@ func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, acceptLanguage
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(acceptLanguage); locale != nil {
 		return *locale
 	}
-	if settings, err := translation.LoadRuntimeSettings(ctx, db); err == nil {
-		if locale := localization.NormalizeSupportedLocale(settings.DefaultLocale); locale != nil {
+	if defaultLocale, err := store.DefaultTranslationLocale(ctx); err == nil {
+		if locale := localization.NormalizeSupportedLocale(defaultLocale); locale != nil {
 			return *locale
 		}
 	} else {
@@ -59,12 +53,27 @@ func resolveInitialSourceLocale(ctx context.Context, db *gorm.DB, acceptLanguage
 	return translation.DefaultLocale
 }
 
-func resolveCreateSourceLocale(ctx context.Context, db *gorm.DB, requestedLocale, acceptLanguage string) (string, error) {
+func resolveCreateSourceLocale(ctx context.Context, store Store, requestedLocale, acceptLanguage string) (string, error) {
 	if requestedLocale != "" {
 		if locale := localization.NormalizeExactSupportedLocale(requestedLocale); locale != nil {
 			return *locale, nil
 		}
 		return "", domainerr.InvalidField("source_locale", "must be a supported canonical locale")
 	}
-	return resolveInitialSourceLocale(ctx, db, acceptLanguage), nil
+	return resolveInitialSourceLocale(ctx, store, acceptLanguage), nil
+}
+
+func nullableStringEqual(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func cloneNullableString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }

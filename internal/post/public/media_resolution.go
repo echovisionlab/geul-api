@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/post"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -22,7 +22,7 @@ func publicDisplayOnlyDelivery(delivery *commonv1.MediaDelivery) *commonv1.Media
 
 func (s *Service) loadPostFeaturedImageDeliveries(
 	ctx context.Context,
-	posts []model.Post,
+	posts []post.Post,
 ) (map[string]*commonv1.MediaDelivery, error) {
 	result := make(map[string]*commonv1.MediaDelivery, len(posts))
 	fileIDs := make([]string, 0, len(posts))

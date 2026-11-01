@@ -17,7 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
@@ -59,14 +59,14 @@ func (a *PostAccess) RequireLockedView(ctx context.Context, tx *gorm.DB, postID 
 	if a == nil || tx == nil || a.spiceDB == nil {
 		return errs.DependencyUnavailable("Post access")
 	}
-	return maskPrivatePostAccess(postdomain.RequireLockedView(ctx, tx, a.spiceDB, postID), postID)
+	return maskPrivatePostAccess(postpostgres.RequireLockedView(ctx, tx, a.spiceDB, postID), postID)
 }
 
 func (a *PostAccess) RequireLockedEdit(ctx context.Context, tx *gorm.DB, postID string) error {
 	if a == nil || tx == nil || a.spiceDB == nil {
 		return errs.DependencyUnavailable("Post access")
 	}
-	return maskPrivatePostAccess(postdomain.RequireLockedSourceLocaleEdit(ctx, tx, a.spiceDB, postID), postID)
+	return maskPrivatePostAccess(postpostgres.RequireLockedSourceLocaleEdit(ctx, tx, a.spiceDB, postID), postID)
 }
 
 func maskPrivatePostAccess(err error, postID string) error {

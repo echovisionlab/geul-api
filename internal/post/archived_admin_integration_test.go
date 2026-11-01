@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -173,11 +173,11 @@ func TestArchivedPostAllowsOnlyAdminMutationsAndAuthorReadOnlyEditorIntegration(
 	require.Equal(t, "en", postWithTargetOverlay.Msg.Document.LocaleOverlay.Locale)
 
 	err = db.WithContext(authorCtx).Transaction(func(tx *gorm.DB) error {
-		return postdomain.RequireLockedSourceLocaleEdit(authorCtx, tx, spiceDB, created.Msg.Id)
+		return postpostgres.RequireLockedSourceLocaleEdit(authorCtx, tx, spiceDB, created.Msg.Id)
 	})
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 	require.NoError(t, db.WithContext(adminCtx).Transaction(func(tx *gorm.DB) error {
-		return postdomain.RequireLockedSourceLocaleEdit(adminCtx, tx, spiceDB, created.Msg.Id)
+		return postpostgres.RequireLockedSourceLocaleEdit(adminCtx, tx, spiceDB, created.Msg.Id)
 	}))
 }
 

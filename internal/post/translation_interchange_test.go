@@ -61,7 +61,7 @@ func TestPostTranslationInterchangeAuditIsExactMemberLocaleContent(t *testing.T)
 		t.Run(test.name, func(t *testing.T) {
 			capture := &postTranslationInterchangeAuditCapture{}
 			require.NoError(t, appendPostTranslationInterchangeAudit(
-				t.Context(), nil, capture, memberID, "post-1", "ko", test.previously,
+				t.Context(), &stubStore{}, capture, memberID, "post-1", "ko", test.previously,
 			))
 			require.NoError(t, capture.record.Validate())
 			require.Equal(t, sharedtelemetry.AuditPostUpdated, capture.record.Action)
@@ -81,7 +81,7 @@ func TestPostSourceLocaleContentAuditUsesOriginMember(t *testing.T) {
 	memberID := uuid.NewString()
 	capture := &postTranslationInterchangeAuditCapture{}
 	require.NoError(t, appendPostMemberLocaleContentAudit(
-		t.Context(), nil, capture, memberID, "post-1", "en",
+		t.Context(), &stubStore{}, capture, memberID, "post-1", "en",
 		sharedtelemetry.AuditItemOperationUpdated,
 	))
 	require.NoError(t, capture.record.Validate())

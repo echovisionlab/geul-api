@@ -1,4 +1,4 @@
-package post
+package postpostgres
 
 import (
 	"context"
@@ -15,7 +15,8 @@ import (
 )
 
 // The Series relation of a Post is Post data: the Series aggregate decides
-// membership and order, and these functions write the Post rows. Every
+// membership and order, and these functions, which the Series membership
+// port runs in the Series transaction, write the Post rows. Every
 // write that changes a Post's series or position advances its updated_at,
 // as every other Post change does, so listings ordered by it and the
 // sitemap lastmod see the change.

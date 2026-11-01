@@ -1,15 +1,15 @@
-package public
+package postpublicpostgres
 
 import (
 	"github.com/echovisionlab/geul-api/internal/model"
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 var PostFilterConfig = &queryutil.FilterConfig{
 	Fields: map[string]queryutil.FieldDef{
-		"search": {Type: queryutil.TypeText, AllowedOps: queryutil.SearchOps, SearchColumns: []string{postdomain.PostSourceTitleSQL}},
+		"search": {Type: queryutil.TypeText, AllowedOps: queryutil.SearchOps, SearchColumns: []string{postpostgres.PostSourceTitleSQL}},
 		"status": {
 			Column: "status", Type: queryutil.TypeEnum, AllowedOps: queryutil.EnumOps,
 			EnumValues: []string{
@@ -30,7 +30,7 @@ var PostFilterConfig = &queryutil.FilterConfig{
 
 var PostSortConfig = &queryutil.SortConfig{
 	AllowedFields: map[string]string{
-		"title": postdomain.PostSourceTitleSQL, "published_at": "published_at", "series_order": "series_order",
+		"title": postpostgres.PostSourceTitleSQL, "published_at": "published_at", "series_order": "series_order",
 	},
 	DefaultSort: "published_at DESC",
 }
