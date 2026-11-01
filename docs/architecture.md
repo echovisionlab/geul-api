@@ -713,8 +713,10 @@ domain's integration tests stay the check until step 9 replaces them.
 5. **PostgreSQL store.** In `internal/<domain>/postgres`, implement the Store
    over `*gorm.DB` with the old queries moved verbatim (same `WithContext`,
    lock clauses, `Returning`, error texts) and export
-   `NewUnits(db) mutation.UnitOfWork[<domain>.Store]` built with
-   `mutation.Postgres`. Map rows to domain types with explicit functions and
+   `NewUnits(db, ports) mutation.UnitOfWork[<domain>.Store]` built with
+   `mutation.Postgres` (`ports` only when the Store calls other domains in
+   the transaction; see [recurring cases](#recurring-cases)). The directory
+   is `postgres` and the package is `<domain>postgres`. Map rows to domain types with explicit functions and
    constraint violations to the sentinels (Is plus Unwrap, as above). Move
    SQL-only unit tests (constraint-code recognition) with it.
 6. **Wiring.** `cmd/server` passes `<domain>postgres.NewUnits(db)`, the
@@ -762,3 +764,75 @@ domain's integration tests stay the check until step 9 replaces them.
     `internal/<domain>`, `internal/<domain>/postgres` and every package whose
     wiring changed (`internal/adapters/mcp` and `cmd/server` unit tests at
     least).
+
+### Recurring cases
+
+The first six domains moved (audience, sharelink, menu, series, maptheme,
+label with artist) met these cases. Follow the rule given here; where an
+earlier domain used another name for the same thing, the final wave aligns
+it.
+
+- **Other domains in the transaction.** When the Store must call another
+  domain inside its transaction (Site Settings slot clearing, the
+  collaboration checkpoint, media, OG, Menu targets, Post membership),
+  `<domain>postgres.NewUnits(db, Ports{...})` takes those adapters in one
+  `Ports` struct, and `NewUnits` returns an error naming any nil field. The
+  domain sees each call as a Store method in its own words
+  (`RemoveMenuTargets`); when it makes several calls to one owner, a Store
+  method may return a port interface the domain declares (`Posts()`).
+- **Joining another pipeline's transaction.** A step that runs inside a
+  transaction another domain opened (translation apply and interchange, the
+  source-locale switch, an owner's target rewrite, an owner's cleanup
+  adapter) binds the Store to that transaction:
+  `<domain>postgres.Bind(tx, ports) <domain>.Joined`, where
+  `type Joined struct { Store Store; Audit domainaudit.Appender }` carries an
+  appender bound to the same transaction. The domain function takes
+  `Joined` and never sees `*gorm.DB`.
+- **Reads that write.** `units.Read` is a read-only snapshot. A read that
+  writes (`publiccontent.Resolve*` and `translation.LoadRuntimeSettings`
+  insert default settings) runs under `units.ReadLocked`, or goes through a
+  port outside the snapshot when it must not hold locks.
+- **The fence in a domain check.** A `Checked` step of a Store domain reaches
+  the identity fence through `mutation.Fenced`. Inside `Locked`,
+  `errors.Is(err, identitystate.ErrInactivePrincipal)` tells an inactive
+  principal from a denied action without a second fence lock.
+- **Stored statuses on ports.** The domain declares its own status type whose
+  values are the stored strings; the Store maps the `internal/model`
+  constants to it. The `internal/model` constants stay for code that has not
+  moved. The mapping to the API enum stays in `connect_handler.go`.
+- **Generated vocabulary the ratchet still counts.** Besides policy
+  descriptors and `domainerr` enum payloads, a domain may keep generated
+  types that are the vocabulary of a port it calls: the `commonv1` query
+  language (`FilterSpec`, `SortSpec`), the content store's rich-text and
+  `contentblock` types, `managev1.AIDocumentFieldTarget`. A value the domain
+  branches on (an asset's disposition, a member summary's fields) gets a
+  domain type instead. The `generated contracts` lines left in
+  `domain_port_dependencies.txt` are these uses; the final wave exempts them
+  in the ratchet.
+- **Undecodable stored values.** When use cases answer a corrupt stored JSON
+  value differently (skip, fail, require Manage), the domain type keeps it
+  encoded and the domain decodes it.
+- **Public packages.** A public package may take a narrower read-only port
+  that `mutation.UnitOfWork[Store]` satisfies.
+- **Contract fixtures.** Rows the Store does not own but needs (Members,
+  files, content documents, a parent Label) are seeded through hooks on a
+  domain harness that embeds `mutationtest.Harness[S]`
+  (`SeedMember`, `SeedTarget`, ...); `RunStoreContract` then runs the cases
+  with its own `t.Run` and `t.Parallel` loop.
+- **Errors inside a contract case.** A failed statement aborts a PostgreSQL
+  transaction, so a case that expects an error ends that transaction before
+  it goes on, and the fake returns the same error rather than `false`.
+- **Fake hooks and rollback.** A hook that plays a concurrent writer inside
+  the fake's transaction is rolled back with it. Assert the retry sequence
+  and the answer, not the rows that writer left.
+- **Lock order counts implicit locks.** A foreign-key check takes KEY SHARE
+  on the referenced row, and advisory locks (the participant parent graph)
+  are locks too. Every path that takes an advisory lock takes it before any
+  row lock on the same entities (`entityparticipant/hierarchy.go`).
+- **Lock waiters on Kratos rows.** In a database cloned with Kratos,
+  `kratos.*` are `postgres_fdw` foreign tables: a wait on an Identity row
+  shows as `pg_stat_activity.wait_event = 'PostgresFdwGetResult'`, not in
+  `pg_locks`. A lock-wait assertion on such a row counts both.
+- **The catalog.** Add `./internal/<domain>/postgres` to the `db` band in
+  `scripts/test/integration/catalog.go`, and remove a package whose last
+  integration test is gone; the catalog drift test fails otherwise.
