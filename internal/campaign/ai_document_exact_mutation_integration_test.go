@@ -8,15 +8,14 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/emailcontent"
-
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	githubtelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -29,13 +28,10 @@ func TestCampaignAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBackVali
 	stack := newCampaignLocalKratosStack(t)
 	db := stack.DB
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
+	ctx := campaignMemberContext(t, admin.AuthUserInfo())
 	store := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)
 	writer := githubtelemetry.NewDurableWriter(db)
-	created, err := NewCampaignService(
-		db, newCampaignRuntimeFixture(nil, nil), "", "", stack.SpiceDBClient,
-		WithCampaignContentBlockStore(store),
-	).CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{
+	created, err := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, nil), SpiceDB: stack.SpiceDBClient, ContentBlocks: store})).CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{
 		Name: "AI document exact Campaign", Subject: "Campaign before Validate",
 		SourceLocale: "en", Target: campaignAllTarget(),
 	}))
@@ -43,13 +39,7 @@ func TestCampaignAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBackVali
 	campaignID := created.Msg.Campaign.Id
 
 	checker := &countingCampaignAIDocumentPermissionChecker{allowed: true}
-	application, err := NewAIDocumentService(NewAuditedInternalCampaignService(
-		db, writer, campaignTestContributorMembers{},
-		WithInternalCampaignSpiceDB(checker),
-		WithInternalCampaignContentBlockStore(store),
-		WithInternalCampaignCheckpoints(testcollaboration.NewCheckpoints(db, stack.SpiceDBClient)),
-	))
-	require.NoError(t, err)
+	application := newTestInternalService(t, InternalDeps{DB: db, Audit: writer, Members: campaignTestContributorMembers{}, Permissions: checker, ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, stack.SpiceDBClient)}).AIDocuments()
 	compilerFailure := errors.New("stop after authorized Campaign compiler")
 	compilerCalls := 0
 	_, err = application.ExecuteAIDocumentMutation(
@@ -160,7 +150,7 @@ func TestCampaignAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBackVali
 			return emailcontent.AIDocumentMutation{}, nil
 		},
 	)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
 	require.Zero(t, compilerCalls)
 	checker.requireOne(t, campaignID)
 	requireCampaignAIDocumentLocaleAudits(t, db, campaignID, "en", 1)

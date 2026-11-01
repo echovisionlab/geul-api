@@ -3,7 +3,6 @@
 package campaign
 
 import (
-	"context"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -27,7 +26,7 @@ func TestCampaignDeliveryRecipientClaimFencesConcurrentAndExpiredWorkersIntegrat
 	stack := newCampaignLocalKratosStack(t)
 	db := openCampaignIntegrationDB(t, stack)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
+	ctx := campaignMemberContext(t, admin.AuthUserInfo())
 	contentBlocks := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)
 	var campaignID, runID, identityID string
 	t.Cleanup(func() {
@@ -36,14 +35,7 @@ func TestCampaignDeliveryRecipientClaimFencesConcurrentAndExpiredWorkersIntegrat
 	ensureBulkEmailAudienceKratosIdentityColumns(t, db)
 
 	now := time.Now().UTC()
-	campaignService := NewCampaignService(
-		db,
-		newCampaignRuntimeFixture(nil, nil),
-		"",
-		"",
-		stack.SpiceDBClient,
-		WithCampaignContentBlockStore(contentBlocks),
-	)
+	campaignService := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, nil), SpiceDB: stack.SpiceDBClient, ContentBlocks: contentBlocks}))
 	created, err := campaignService.CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{
 		Name:         "Campaign delivery claim " + uuid.NewString(),
 		Subject:      "Campaign delivery claim",
@@ -117,7 +109,7 @@ func TestCampaignDeliveryRecipientClaimFencesConcurrentAndExpiredWorkersIntegrat
 		go func() {
 			defer workers.Done()
 			<-start
-			claimed, claimErr := ClaimCampaignDeliveryRecipient(ctx, db, recipient.ID, claimID)
+			claimed, claimErr := claimRecipient(ctx, db, recipient.ID, claimID)
 			results <- claimResult{id: claimID, claimed: claimed, err: claimErr}
 		}()
 	}
@@ -137,25 +129,25 @@ func TestCampaignDeliveryRecipientClaimFencesConcurrentAndExpiredWorkersIntegrat
 	pending, err := ListPendingCampaignDeliveryRecipients(ctx, db, run.ID, "", 10)
 	require.NoError(t, err)
 	require.Empty(t, pending, "an unexpired claim must keep the recipient out of pending dispatch")
-	require.ErrorIs(t, MarkCampaignDeliveryRecipientResultWithAudit(
-		ctx, db, nil, recipient.ID, CampaignDeliveryRecipientStatusSent, "provider-message", "", nil,
+	require.ErrorIs(t, markRecipientResult(
+		ctx, db, &audittest.Recorder{}, recipient.ID, CampaignDeliveryRecipientStatusSent, "provider-message", "", nil,
 	), ErrCampaignDeliveryRecipientClaimed)
 
 	reclaimedID := uuid.NewString()
 	require.NoError(t, db.Model(&model.CampaignDeliveryRecipient{}).
 		Where("id = ?", recipient.ID).
 		Update("delivery_claim_expires_at", time.Now().UTC().Add(-time.Second)).Error)
-	claimed, err := ClaimCampaignDeliveryRecipient(ctx, db, recipient.ID, reclaimedID)
+	claimed, err := claimRecipient(ctx, db, recipient.ID, reclaimedID)
 	require.NoError(t, err)
 	require.True(t, claimed, "an expired claim must be reclaimable")
-	require.NoError(t, ReleaseCampaignDeliveryRecipientClaim(ctx, db, recipient.ID, winner))
-	require.ErrorIs(t, MarkClaimedCampaignDeliveryRecipientResultWithAudit(
-		ctx, db, nil, recipient.ID, winner,
+	require.NoError(t, releaseRecipientClaim(ctx, db, recipient.ID, winner))
+	require.ErrorIs(t, markClaimedRecipientResult(
+		ctx, db, &audittest.Recorder{}, recipient.ID, winner,
 		CampaignDeliveryRecipientStatusPermanentFailed, "", "stale_worker", nil,
 	), ErrCampaignDeliveryClaimLost)
 
-	require.NoError(t, MarkClaimedCampaignDeliveryRecipientResultWithAudit(
-		ctx, db, nil, recipient.ID, reclaimedID,
+	require.NoError(t, markClaimedRecipientResult(
+		ctx, db, &audittest.Recorder{}, recipient.ID, reclaimedID,
 		CampaignDeliveryRecipientStatusSent, "provider-message", "", nil,
 	))
 	var stored model.CampaignDeliveryRecipient

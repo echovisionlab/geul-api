@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
 
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/email"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"gorm.io/gorm"
@@ -45,9 +45,6 @@ func LoadEmailLayoutTranslationInterchangeTarget(
 	layoutID string,
 	targetLocale string,
 ) (EmailLayoutTranslationInterchangeTarget, error) {
-	if tx == nil {
-		return EmailLayoutTranslationInterchangeTarget{}, errs.Internal(errors.New("email layout translation interchange transaction is not configured"))
-	}
 	layoutID, err := emailcontent.CanonicalID("email_layout_id", layoutID)
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, err
@@ -61,7 +58,7 @@ func LoadEmailLayoutTranslationInterchangeTarget(
 		return EmailLayoutTranslationInterchangeTarget{}, err
 	}
 	if targetLocale == authority.SourceLocale {
-		return EmailLayoutTranslationInterchangeTarget{}, errs.InvalidArgument("target_locale", "must differ from the Email Layout source locale")
+		return EmailLayoutTranslationInterchangeTarget{}, domainerr.InvalidField("target_locale", "must differ from the Email Layout source locale")
 	}
 	entry, err := loadEmailLayoutInterchangeEntry(ctx, tx, layoutID, targetLocale, clause.LockingStrengthShare)
 	if err != nil {
@@ -80,9 +77,6 @@ func ApplyEmailLayoutTranslationInterchange(
 	sourceLocale string,
 	input EmailLayoutTranslationInterchangeMutation,
 ) (EmailLayoutTranslationInterchangeTarget, bool, error) {
-	if tx == nil || references == nil {
-		return EmailLayoutTranslationInterchangeTarget{}, false, errs.Internal(errors.New("email layout translation interchange dependencies are not configured"))
-	}
 	layoutID, err := emailcontent.CanonicalID("email_layout_id", layoutID)
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
@@ -96,12 +90,12 @@ func ApplyEmailLayoutTranslationInterchange(
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
 	if input.TargetLocale == sourceLocale {
-		return EmailLayoutTranslationInterchangeTarget{}, false, errs.InvalidArgument("target_locale", "must be a non-source Email Layout locale")
+		return EmailLayoutTranslationInterchangeTarget{}, false, domainerr.InvalidField("target_locale", "must be a non-source Email Layout locale")
 	}
 	if err := lockEmailLayoutAIDocumentRoot(ctx, tx, layoutID, clause.LockingStrengthUpdate); err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
-	if err := ensureEmailLayoutMutableForActiveDelivery(ctx, tx, references, layoutID); err != nil {
+	if err := references.RequireLayoutMutable(ctx, tx, layoutID); err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
 	authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, layoutID, clause.LockingStrengthUpdate)
@@ -109,7 +103,7 @@ func ApplyEmailLayoutTranslationInterchange(
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
 	if authority.SourceLocale != sourceLocale {
-		return EmailLayoutTranslationInterchangeTarget{}, false, errs.FailedPrecondition("Email Layout source locale changed; reload before importing")
+		return EmailLayoutTranslationInterchangeTarget{}, false, domainerr.Precondition("Email Layout source locale changed; reload before importing")
 	}
 	source, err := email.LoadCanonicalLayoutTranslationDocument(ctx, tx, layoutID, sourceLocale)
 	if err != nil {
@@ -150,25 +144,15 @@ func ApplyEmailLayoutTranslationInterchange(
 	} else {
 		input.Now = input.Now.UTC()
 	}
-	contentHTML, contentText, err := email.ApplyLayoutLocaleValues(derefString(source.ContentHTML), nextValues)
+	updatedAt, err := saveEmailLayoutTarget(ctx, tx, layoutID, input.TargetLocale, derefString(source.ContentHTML), nextValues, input.Now, emailLayoutInterchangeUpdatedAt(entry))
 	if err != nil {
-		return EmailLayoutTranslationInterchangeTarget{}, false, errs.InvalidArgument("content", err.Error())
-	}
-	updatedAt := translation.NextTargetUpdatedAt(input.Now, emailLayoutInterchangeUpdatedAt(entry))
-	if err := email.UpsertLayoutTranslationEntry(
-		ctx,
-		tx,
-		layoutID,
-		input.TargetLocale,
-		translation.EntryWrite{ContentHTML: contentHTML, ContentText: contentText, Now: updatedAt},
-	); err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
 	revision, err := translation.DeriveTargetRevision(translation.TargetRevisionFacts{
 		LocaleExists: true, DocumentRevision: authority.DocumentRevision.String(), LocaleUpdatedAt: &updatedAt,
 	})
 	if err != nil {
-		return EmailLayoutTranslationInterchangeTarget{}, false, errs.Internal(err)
+		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
 	return EmailLayoutTranslationInterchangeTarget{
 		Exists: true, Revision: revision, Values: nextValues,
@@ -198,7 +182,7 @@ func loadEmailLayoutInterchangeEntry(
 		return nil, nil
 	}
 	if result.Error != nil {
-		return nil, errs.Internal(result.Error)
+		return nil, result.Error
 	}
 	entry := &email.LayoutTranslationEntry{LayoutTranslationDocument: email.LayoutTranslationDocument{
 		UpdatedAt: row.UpdatedAt,
@@ -226,7 +210,7 @@ func projectEmailLayoutInterchangeTarget(
 	if entry.ContentHTML != nil {
 		values, err = email.ExtractLayoutStoredLocaleValues(*entry.ContentHTML)
 		if err != nil {
-			return EmailLayoutTranslationInterchangeTarget{}, errs.WithCause(errs.FailedPrecondition("Email Layout target unit markers require backfill before interchange"), failurecause.ServerFault(err))
+			return EmailLayoutTranslationInterchangeTarget{}, domainerr.Precondition("Email Layout target unit markers require backfill before interchange").WithCause(failurecause.ServerFault(err))
 		}
 	}
 	updatedAt := entry.UpdatedAt
@@ -234,7 +218,7 @@ func projectEmailLayoutInterchangeTarget(
 		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &updatedAt,
 	})
 	if err != nil {
-		return EmailLayoutTranslationInterchangeTarget{}, errs.Internal(err)
+		return EmailLayoutTranslationInterchangeTarget{}, err
 	}
 	return EmailLayoutTranslationInterchangeTarget{
 		Exists: true, Revision: revision, Values: values,

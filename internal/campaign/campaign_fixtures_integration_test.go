@@ -109,13 +109,9 @@ func publishCampaignSourceBlocksForIntegration(
 ) {
 	t.Helper()
 	store := testutil.NewEmailContentBlockStore(t, spiceDB)
-	documentID, err := loadCampaignEmailContentDocumentID(
-		t.Context(), db, campaignContentEntity, campaignID,
-	)
+	documentID, err := loadCampaignEmailContentDocumentRoot(t.Context(), db, campaignID, false)
 	require.NoError(t, err)
-	domain, err := loadCampaignEmailSourceContext(
-		t.Context(), db, campaignContentEntity, campaignID,
-	)
+	domain, err := loadCampaignSourceContext(t.Context(), db, campaignID, false)
 	require.NoError(t, err)
 	snapshot, err := store.LoadSnapshot(t.Context(), db, documentID, domain.SourceLocale)
 	require.NoError(t, err)
@@ -123,12 +119,7 @@ func publishCampaignSourceBlocksForIntegration(
 	require.NoError(t, err)
 	contributorID := testutil.IntegrationUUID()
 	testutil.InsertAuthorizedDocumentContributor(t, db, spiceDB, contributorID)
-	_, err = NewInternalCampaignService(
-		db, campaignTestContributorMembers{},
-		WithInternalCampaignContentBlockStore(store),
-		WithInternalCampaignSpiceDB(spiceDB),
-		WithInternalCampaignCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
-	).ApplyBlockBatch(t.Context(), connect.NewRequest(&intrav1.ApplyCampaignBlockBatchRequest{
+	_, err = NewInternalConnectHandler(newTestInternalService(t, InternalDeps{DB: db, Members: campaignTestContributorMembers{}, ContentBlocks: store, Permissions: spiceDB, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB)})).ApplyBlockBatch(t.Context(), connect.NewRequest(&intrav1.ApplyCampaignBlockBatchRequest{
 		CampaignId: campaignID,
 		Locale:     domain.SourceLocale,
 		Batch: testutil.NewParagraphBatch(

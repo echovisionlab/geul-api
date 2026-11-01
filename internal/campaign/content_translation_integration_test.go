@@ -3,11 +3,8 @@
 package campaign
 
 import (
-	"context"
 	"testing"
 	"time"
-
-	"github.com/echovisionlab/geul-api/internal/emailcontent"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -15,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
 	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
@@ -34,14 +32,7 @@ func TestCampaignAIReplacementUsesCurrentTargetRevisionIntegration(t *testing.T)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auth.WithUser(campaignRequestContext(t), admin.AuthUserInfo())
 	store := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)
-	created, err := NewCampaignService(
-		db,
-		newCampaignRuntimeFixture(nil, nil),
-		"",
-		"",
-		stack.SpiceDBClient,
-		WithCampaignContentBlockStore(store),
-	).CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{
+	created, err := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, nil), SpiceDB: stack.SpiceDBClient, ContentBlocks: store})).CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{
 		Name: "AI target replacement", Subject: "Source subject", SourceLocale: "en",
 		Target: campaignAllTarget(),
 	}))
@@ -49,12 +40,7 @@ func TestCampaignAIReplacementUsesCurrentTargetRevisionIntegration(t *testing.T)
 
 	contributorID := testutil.IntegrationUUID()
 	testutil.InsertAuthorizedDocumentContributor(t, db, stack.SpiceDBClient, contributorID)
-	internal := NewAuditedInternalCampaignService(
-		db, apitelemetry.NewDurableWriter(db), campaignTestContributorMembers{},
-		WithInternalCampaignContentBlockStore(store),
-		WithInternalCampaignSpiceDB(stack.SpiceDBClient),
-		WithInternalCampaignCheckpoints(testcollaboration.NewCheckpoints(db, stack.SpiceDBClient)),
-	)
+	internal := NewInternalConnectHandler(newTestInternalService(t, InternalDeps{DB: db, Audit: apitelemetry.NewDurableWriter(db), Members: campaignTestContributorMembers{}, ContentBlocks: store, Permissions: stack.SpiceDBClient, Checkpoints: testcollaboration.NewCheckpoints(db, stack.SpiceDBClient)}))
 	sourceWrite, err := internal.ApplyBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyCampaignBlockBatchRequest{
 		CampaignId: created.Msg.Campaign.Id,
 		Locale:     "en",
@@ -98,7 +84,7 @@ func TestCampaignAIReplacementUsesCurrentTargetRevisionIntegration(t *testing.T)
 		VALUES (?, 'ko', NULL, NOW(), NOW())`,
 		created.Msg.Campaign.Id,
 	).Error)
-	documentID, err := loadCampaignEmailContentDocumentID(ctx, db, campaignContentEntity, created.Msg.Campaign.Id)
+	documentID, err := loadCampaignEmailContentDocumentRoot(ctx, db, created.Msg.Campaign.Id, false)
 	require.NoError(t, err)
 	targetState, err := campaignContent.LoadExactLocaleState(
 		ctx, db, store, created.Msg.Campaign.Id, documentID, "ko", false,
@@ -293,16 +279,9 @@ func TestCampaignSharedPresentationEditProjectsSourceLocaleIntegration(t *testin
 	stack := newCampaignLocalKratosStack(t)
 	db := stack.DB
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
+	ctx := campaignMemberContext(t, admin.AuthUserInfo())
 	store := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)
-	created, err := NewCampaignService(
-		db,
-		newCampaignRuntimeFixture(nil, nil),
-		"",
-		"",
-		stack.SpiceDBClient,
-		WithCampaignContentBlockStore(store),
-	).CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{
+	created, err := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, nil), SpiceDB: stack.SpiceDBClient, ContentBlocks: store})).CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{
 		Name: "Shared presentation edit", Subject: "Source subject", SourceLocale: "en",
 		Target: campaignAllTarget(),
 	}))
@@ -310,12 +289,7 @@ func TestCampaignSharedPresentationEditProjectsSourceLocaleIntegration(t *testin
 
 	contributorID := testutil.IntegrationUUID()
 	testutil.InsertAuthorizedDocumentContributor(t, db, stack.SpiceDBClient, contributorID)
-	internal := NewInternalCampaignService(
-		db, campaignTestContributorMembers{},
-		WithInternalCampaignContentBlockStore(store),
-		WithInternalCampaignSpiceDB(stack.SpiceDBClient),
-		WithInternalCampaignCheckpoints(testcollaboration.NewCheckpoints(db, stack.SpiceDBClient)),
-	)
+	internal := NewInternalConnectHandler(newTestInternalService(t, InternalDeps{DB: db, Members: campaignTestContributorMembers{}, ContentBlocks: store, Permissions: stack.SpiceDBClient, Checkpoints: testcollaboration.NewCheckpoints(db, stack.SpiceDBClient)}))
 	seeded, err := internal.ApplyBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyCampaignBlockBatchRequest{
 		CampaignId: created.Msg.Campaign.Id,
 		Locale:     "en",

@@ -6,6 +6,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -14,12 +15,12 @@ import (
 
 func TestApplyTemplateTranslationCandidateRejectsAnotherDomain(t *testing.T) {
 	err := ApplyTemplateTranslationCandidate(
-		context.Background(), nil, &contentblock.Store{}, nil,
+		context.Background(), nil, &contentblock.Store{},
 		&model.TranslationJob{EntityType: "campaign"},
 		&translation.Candidate{ContentBlockLocaleOverlay: &contentv1.RichTextLocaleOverlay{}},
 		translation.EntryWrite{}, nil,
 	)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 }
 
 func TestEmailTemplateTranslationPlanAndCandidateOwnSubjectAndBlockValues(t *testing.T) {

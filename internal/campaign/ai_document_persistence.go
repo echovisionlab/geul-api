@@ -3,14 +3,13 @@ package campaign
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 )
 
 type campaignAIDocumentRoot struct {
@@ -32,53 +31,16 @@ func loadCampaignAIDocumentRoot(
 	}
 	if err := query.Take(&root).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return campaignAIDocumentRoot{}, uuid.Nil, errs.NotFound("campaign", campaignID)
+			return campaignAIDocumentRoot{}, uuid.Nil, domainerr.ResourceNotFound("campaign", campaignID)
 		}
-		return campaignAIDocumentRoot{}, uuid.Nil, errs.Internal(err)
+		return campaignAIDocumentRoot{}, uuid.Nil, err
 	}
 	if root.ContentDocumentID == nil {
-		return campaignAIDocumentRoot{}, uuid.Nil, errs.FailedPrecondition("Campaign content document is not initialized")
+		return campaignAIDocumentRoot{}, uuid.Nil, domainerr.Precondition("Campaign content document is not initialized")
 	}
 	documentID, err := uuid.Parse(strings.TrimSpace(*root.ContentDocumentID))
 	if err != nil || documentID == uuid.Nil {
-		return campaignAIDocumentRoot{}, uuid.Nil, errs.WithCause(errs.InternalMsg("Campaign content document ID is invalid"), err)
+		return campaignAIDocumentRoot{}, uuid.Nil, fmt.Errorf("Campaign content document ID %q is invalid", *root.ContentDocumentID)
 	}
 	return root, documentID, nil
-}
-
-func requireCampaignAIDocumentAuthority(
-	ctx context.Context,
-	checker CollaborationPermissionChecker,
-	campaignID string,
-) (uuid.UUID, error) {
-	principal := auth.GetUser(ctx)
-	if principal == nil || !principal.Authenticated {
-		return uuid.Nil, errs.AuthenticationRequired()
-	}
-	if principal.Banned {
-		return uuid.Nil, errs.AccountBanned()
-	}
-	if !principal.Onboarded {
-		return uuid.Nil, errs.NoPermission("edit", "campaign")
-	}
-	memberID, err := uuid.Parse(principal.MemberID.String())
-	if err != nil || memberID == uuid.Nil || memberID.String() != principal.MemberID.String() {
-		return uuid.Nil, errs.AuthenticationRequired()
-	}
-	can, err := campaignEditCan(campaignID)
-	if err != nil {
-		return uuid.Nil, errs.InvalidArgument("campaign_id", "must be a canonical UUID")
-	}
-	decision, err := auth.AuthorizationDecision(ctx, can)
-	if err != nil {
-		return uuid.Nil, errs.WithCause(errs.AuthenticationRequired(), err)
-	}
-	allowed, err := checker.Can(ctx, decision)
-	if err != nil {
-		return uuid.Nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
-	}
-	if !allowed {
-		return uuid.Nil, errs.NoPermission("edit", "campaign")
-	}
-	return memberID, nil
 }

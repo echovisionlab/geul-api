@@ -10,30 +10,24 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authz"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/dependencycheck"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/email"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -88,49 +82,10 @@ func lockEmailLayoutsForRelationMutation(
 	return locked, nil
 }
 
-// EmailLayoutService implements the EmailLayoutService Connect handler
-type EmailLayoutService struct {
-	managev1connect.UnimplementedEmailLayoutServiceHandler
-	db            *gorm.DB
-	spiceDB       *auth.SpiceDBClient
-	cdnDomain     string
-	siteOrigin    string
-	auditWriter   domainaudit.Appender
-	renderData    EmailRenderDataBuilder
-	references    CampaignDeliveryReferences
-	contentBlocks *contentblock.Store
-}
-
 // EmailRenderDataBuilder is the delivery-runtime boundary used only to render
 // an admin preview. Email delivery owns the site-default projection itself.
 type EmailRenderDataBuilder interface {
 	BuildEmailRenderData(context.Context, *gorm.DB, string, string, string, map[string]string) map[string]string
-}
-
-type EmailLayoutServiceOption func(*EmailLayoutService)
-
-func WithEmailLayoutRenderDataBuilder(builder EmailRenderDataBuilder) EmailLayoutServiceOption {
-	return func(service *EmailLayoutService) { service.renderData = builder }
-}
-
-func WithEmailLayoutCampaignDeliveryReferences(references CampaignDeliveryReferences) EmailLayoutServiceOption {
-	return func(service *EmailLayoutService) { service.references = references }
-}
-
-func WithEmailLayoutContentBlockStore(store *contentblock.Store) EmailLayoutServiceOption {
-	return func(service *EmailLayoutService) { service.contentBlocks = store }
-}
-
-// NewAuditedEmailLayoutService creates an EmailLayoutService whose
-// authoritative authoring mutations append Domain Audit in the same database
-// transaction.
-func NewAuditedEmailLayoutService(db *gorm.DB, cdnDomain, siteOrigin string, auditWriter domainaudit.Appender, spiceDB *auth.SpiceDBClient, options ...EmailLayoutServiceOption) *EmailLayoutService {
-	if auditWriter == nil {
-		panic("email layout audit writer is required")
-	}
-	service := NewEmailLayoutService(db, cdnDomain, siteOrigin, spiceDB, options...)
-	service.auditWriter = auditWriter
-	return service
 }
 
 type emailLayoutBaseRow struct {
@@ -184,7 +139,7 @@ func overlayEmailLayoutCanonicalSourceContent(
 		return err
 	}
 	if !found {
-		return errs.FailedPrecondition("Email Layout source locale is not initialized")
+		return domainerr.Precondition("Email Layout source locale is not initialized")
 	}
 	state, err := email.LoadCanonicalLayoutTranslationDocument(ctx, db, layout.ID, sourceLocale)
 	if err != nil {
@@ -206,7 +161,7 @@ func persistNewEmailLayoutCanonicalSource(
 	normalizedHTMLContent := email.NormalizeTemplatePlaceholders(htmlContent)
 	canonicalHTMLContent, err := email.CanonicalizeLayoutSourceMarkers(normalizedHTMLContent)
 	if err != nil {
-		return errs.InvalidArgument("html_content", err.Error())
+		return domainerr.InvalidField("html_content", err.Error())
 	}
 	normalizedHTMLContent = canonicalHTMLContent
 	contentText := email.StripHTML(normalizedHTMLContent)
@@ -223,125 +178,94 @@ func persistNewEmailLayoutCanonicalSource(
 	)
 }
 
-// NewEmailLayoutService creates a new EmailLayoutService
-func NewEmailLayoutService(db *gorm.DB, cdnDomain, siteOrigin string, spiceDB *auth.SpiceDBClient, options ...EmailLayoutServiceOption) *EmailLayoutService {
-	if db == nil {
-		panic("db is required")
-	}
-	dependencycheck.MustNotNil(spiceDB, "spiceDB")
-	service := &EmailLayoutService{
-		db:         db,
-		spiceDB:    spiceDB,
-		cdnDomain:  cdnDomain,
-		siteOrigin: strings.TrimRight(strings.TrimSpace(siteOrigin), "/"),
-	}
-	for _, option := range options {
-		option(service)
-	}
-	return service
+// GetEmailLayoutQuery reads one Email Layout.
+type GetEmailLayoutQuery struct {
+	ID string
 }
 
-func (s *EmailLayoutService) requireEmailLayoutCan(
-	ctx context.Context,
-	can policyv1.Can,
-	canErr error,
-) error {
-	if canErr != nil {
-		return errs.InvalidArgument("id", canErr.Error())
-	}
-	return authz.RequireAdminCan(ctx, s.spiceDB, can)
-}
-
-// GetEmailLayout retrieves an email layout by ID (admin only)
-func (s *EmailLayoutService) GetEmailLayout(
-	ctx context.Context,
-	req *connect.Request[managev1.GetEmailLayoutRequest],
-) (*connect.Response[managev1.EmailLayout], error) {
-	can, canErr := policyv1.EmailLayout.View(req.Msg.Id)
-	if err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
+// GetEmailLayout returns the layout with its source HTML and reference
+// counts.
+func (s *Service) GetEmailLayout(ctx context.Context, query GetEmailLayoutQuery) (*managev1.EmailLayout, error) {
+	can, canErr := policyv1.EmailLayout.View(query.ID)
+	if err := s.requireAdminCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
+	layout, err := s.loadEmailLayout(ctx, query.ID)
+	if err != nil {
+		return nil, err
+	}
+	if err := loadEmailLayoutReferenceCounts(ctx, s.db, s.references, []*model.EmailLayout{&layout}); err != nil {
+		return nil, err
+	}
+	return toProtoEmailLayout(&layout), nil
+}
 
+// loadEmailLayout reads the layout with its canonical source HTML.
+func (s *Service) loadEmailLayout(ctx context.Context, layoutID string) (model.EmailLayout, error) {
 	var layout model.EmailLayout
-	if err := s.db.WithContext(ctx).First(&layout, "id = ?", req.Msg.Id).Error; err != nil {
+	if err := s.db.WithContext(ctx).First(&layout, "id = ?", layoutID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("email layout", req.Msg.Id)
+			return layout, domainerr.ResourceNotFound("email layout", layoutID)
 		}
-		return nil, errs.Internal(err)
+		return layout, err
 	}
-	if err := overlayEmailLayoutCanonicalSourceContent(ctx, s.db, &layout); err != nil {
-		return nil, err
-	}
-	if err := loadEmailLayoutReferenceCounts(
-		ctx,
-		s.db,
-		s.references,
-		[]*model.EmailLayout{&layout},
-	); err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	return connect.NewResponse(toProtoEmailLayout(&layout)), nil
+	return layout, overlayEmailLayoutCanonicalSourceContent(ctx, s.db, &layout)
 }
 
-// ListEmailLayoutsAdmin returns a paginated list of email layouts (admin only)
-func (s *EmailLayoutService) ListEmailLayoutsAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListEmailLayoutsAdminRequest],
-) (*connect.Response[managev1.ListEmailLayoutsAdminResponse], error) {
+// ListEmailLayoutsQuery pages through Email Layouts for administrators.
+type ListEmailLayoutsQuery struct {
+	// Limit defaults to 20 and is capped at 100.
+	Limit   int32
+	Offset  int32
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+}
+
+// EmailLayoutPage is one page of Email Layouts.
+type EmailLayoutPage struct {
+	Layouts    []*managev1.EmailLayout
+	Pagination *commonv1.PaginationResponse
+}
+
+// ListEmailLayouts returns one page of layouts with their source HTML and
+// reference counts.
+func (s *Service) ListEmailLayouts(ctx context.Context, query ListEmailLayoutsQuery) (EmailLayoutPage, error) {
 	can, canErr := policyv1.EmailLayout.List()
-	if err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
-		return nil, err
+	if err := s.requireAdminCan(ctx, can, canErr); err != nil {
+		return EmailLayoutPage{}, err
 	}
-
-	var layouts []model.EmailLayout
+	list, err := emailLayoutFilterConfig.ApplyFilters(s.db.WithContext(ctx).Model(&model.EmailLayout{}), query.Filters)
+	if err != nil {
+		return EmailLayoutPage{}, err
+	}
 	var total int64
-
-	query := s.db.WithContext(ctx).Model(&model.EmailLayout{})
-
-	// Apply filters
-	query, err := EmailLayoutFilterConfig.ApplyFilters(query, req.Msg.Filters)
+	if err := list.Count(&total).Error; err != nil {
+		return EmailLayoutPage{}, err
+	}
+	list, err = emailLayoutSortConfig.ApplySort(list, query.Sorts)
 	if err != nil {
-		return nil, err
+		return EmailLayoutPage{}, err
 	}
-
-	// Count total after filters
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	pg := queryutil.ExtractPaginationRaw(query.Limit, query.Offset, queryutil.DefaultPaginationConfig)
+	var layouts []model.EmailLayout
+	if err := pg.Apply(list).Find(&layouts).Error; err != nil {
+		return EmailLayoutPage{}, err
 	}
-
-	// Apply sorting
-	query, err = emailLayoutSortConfig.ApplySort(query, req.Msg.Sorts)
-	if err != nil {
-		return nil, err
-	}
-
-	// Apply pagination
-	pg := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.DefaultPaginationConfig)
-
-	if err := pg.Apply(query).Find(&layouts).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	layoutPointers := make([]*model.EmailLayout, 0, len(layouts))
+	pointers := make([]*model.EmailLayout, 0, len(layouts))
 	for i := range layouts {
-		layoutPointers = append(layoutPointers, &layouts[i])
+		pointers = append(pointers, &layouts[i])
 	}
-	if err := loadEmailLayoutReferenceCounts(ctx, s.db, s.references, layoutPointers); err != nil {
-		return nil, errs.Internal(err)
+	if err := loadEmailLayoutReferenceCounts(ctx, s.db, s.references, pointers); err != nil {
+		return EmailLayoutPage{}, err
 	}
 	if err := overlayCanonicalEmailLayoutSourcesForList(ctx, s.db, layouts); err != nil {
-		return nil, errs.Internal(err)
+		return EmailLayoutPage{}, err
 	}
-
 	protoLayouts := make([]*managev1.EmailLayout, len(layouts))
 	for i := range layouts {
 		protoLayouts[i] = toProtoEmailLayout(&layouts[i])
 	}
-
-	return connect.NewResponse(&managev1.ListEmailLayoutsAdminResponse{
-		Layouts:    protoLayouts,
-		Pagination: pg.BuildResponse(total),
-	}), nil
+	return EmailLayoutPage{Layouts: protoLayouts, Pagination: pg.BuildResponse(total)}, nil
 }
 
 func overlayCanonicalEmailLayoutSourcesForList(
@@ -404,164 +328,159 @@ func validateLayoutHTMLContent(content string) error {
 	return email.ValidateLayoutHTMLContentError(content)
 }
 
-// CreateEmailLayout creates a new email layout (admin only)
-func (s *EmailLayoutService) CreateEmailLayout(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateEmailLayoutRequest],
-) (*connect.Response[managev1.EmailLayout], error) {
-	layoutCan, err := policyv1.EmailLayout.Create()
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
+// CreateEmailLayoutCommand creates an Email Layout from its source HTML.
+type CreateEmailLayoutCommand struct {
+	Name         string
+	Key          string
+	HTMLContent  string
+	SourceLocale string
+}
 
-	var layout *model.EmailLayout
-	var normalizedHTMLContent string
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, layoutCan); err != nil {
-			return err
-		}
-		if err := validateLayoutKey(req.Msg.Key); err != nil {
-			return errs.InvalidArgument("key", err.Error())
-		}
-		if err := validateLayoutName(req.Msg.Name); err != nil {
-			return errs.InvalidArgument("name", err.Error())
-		}
-		if err := validateLayoutHTMLContent(req.Msg.HtmlContent); err != nil {
-			return errs.InvalidArgument("html_content", err.Error())
-		}
-		normalizedHTMLContent = email.NormalizeTemplatePlaceholders(req.Msg.HtmlContent)
-		canonicalHTMLContent, err := email.CanonicalizeLayoutSourceMarkers(normalizedHTMLContent)
-		if err != nil {
-			return errs.InvalidArgument("html_content", err.Error())
-		}
-		normalizedHTMLContent = canonicalHTMLContent
-		if s.contentBlocks == nil {
-			return errs.InternalMsg("Email Layout Content Document store is not configured")
-		}
-		sourceLocale, err := canonicalEmailLayoutRoomLocale(req.Msg.SourceLocale)
-		if err != nil {
-			return err
-		}
-		now := dbtime.Now()
-		document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
-			Profile: emailLayoutContentProfile, SourceLocale: sourceLocale,
-		})
-		if err != nil {
-			return errs.Internal(err)
-		}
-		layout = &model.EmailLayout{
-			ContentDocumentID: document.Document.ID.String(),
-			SourceLocale:      sourceLocale,
-			Name:              strings.TrimSpace(req.Msg.Name),
-			Key:               req.Msg.Key,
-			CreatedAt:         now,
-			UpdatedAt:         now,
-		}
-		if err := createEmailLayoutBaseRow(ctx, tx, layout); err != nil {
-			if dberrors.IsUniqueViolation(err) {
-				return errs.AlreadyExists("email layout", "key", req.Msg.Key)
+// newEmailLayout validates the command and returns the layout it creates
+// with its canonical source HTML.
+func newEmailLayout(command CreateEmailLayoutCommand) (*model.EmailLayout, error) {
+	if err := validateLayoutKey(command.Key); err != nil {
+		return nil, domainerr.InvalidField("key", err.Error())
+	}
+	if err := validateLayoutName(command.Name); err != nil {
+		return nil, domainerr.InvalidField("name", err.Error())
+	}
+	if err := validateLayoutHTMLContent(command.HTMLContent); err != nil {
+		return nil, domainerr.InvalidField("html_content", err.Error())
+	}
+	htmlContent, err := email.CanonicalizeLayoutSourceMarkers(email.NormalizeTemplatePlaceholders(command.HTMLContent))
+	if err != nil {
+		return nil, domainerr.InvalidField("html_content", err.Error())
+	}
+	sourceLocale, err := canonicalEmailLayoutRoomLocale(command.SourceLocale)
+	if err != nil {
+		return nil, err
+	}
+	now := dbtime.Now()
+	return &model.EmailLayout{
+		SourceLocale: sourceLocale, Name: strings.TrimSpace(command.Name), Key: command.Key,
+		HTMLContent: htmlContent, CreatedAt: now, UpdatedAt: now,
+	}, nil
+}
+
+// CreateEmailLayout creates the layout with its source locale document and
+// grants its policy.
+func (s *Service) CreateEmailLayout(ctx context.Context, command CreateEmailLayoutCommand) (*managev1.EmailLayout, error) {
+	layout, err := mutation.Run(ctx, s.mutations, mutation.Spec[*model.EmailLayout]{
+		Access: mutation.FreshAdminCan(policyv1.EmailLayout.Create()),
+		Change: func(ctx context.Context, tx *gorm.DB) (*model.EmailLayout, error) {
+			layout, err := newEmailLayout(command)
+			if err != nil {
+				return nil, err
 			}
-			return errs.Internal(err)
-		}
-		if err := persistNewEmailLayoutCanonicalSource(ctx, tx, layout.ID, sourceLocale, normalizedHTMLContent, now); err != nil {
-			return err
-		}
-		if err := appendEmailLayoutCreatedAudit(ctx, tx, s.auditWriter, layout.ID); err != nil {
-			return err
-		}
-		touchPolicy, err := policyv1.EmailLayout.TouchPolicy(layout.ID)
-		if err != nil {
-			return err
-		}
-		deletePolicy, err := policyv1.EmailLayout.DeletePolicy(layout.ID)
-		if err != nil {
-			return err
-		}
-		return write(
-			[]policyv1.RelationshipMutation{touchPolicy},
-			[]policyv1.RelationshipMutation{deletePolicy},
-		)
+			document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
+				Profile: emailLayoutContentProfile, SourceLocale: layout.SourceLocale,
+			})
+			if err != nil {
+				return nil, err
+			}
+			layout.ContentDocumentID = document.Document.ID.String()
+			if err := createEmailLayoutBaseRow(ctx, tx, layout); err != nil {
+				if dberrors.IsUniqueViolation(err) {
+					return nil, domainerr.Duplicate("email layout", "key", command.Key)
+				}
+				return nil, err
+			}
+			return layout, persistNewEmailLayoutCanonicalSource(ctx, tx, layout.ID, layout.SourceLocale, layout.HTMLContent, layout.CreatedAt)
+		},
+		Audit: func(layout *model.EmailLayout) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditEmailLayoutCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewEmailLayoutCreatedAuditRecord(metadata, layout.ID)
+			})
+		},
+		Relationships: func(layout *model.EmailLayout) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return policyLifecycle(policyv1.EmailLayout.TouchPolicy, policyv1.EmailLayout.DeletePolicy, layout.ID)
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	layout.HTMLContent = normalizedHTMLContent
-	return connect.NewResponse(toProtoEmailLayout(layout)), nil
+	return toProtoEmailLayout(layout), nil
 }
 
-// UpdateEmailLayout updates an email layout (admin only)
-func (s *EmailLayoutService) UpdateEmailLayout(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateEmailLayoutRequest],
-) (*connect.Response[managev1.EmailLayout], error) {
-	layoutCan, err := policyv1.EmailLayout.Edit(req.Msg.Id)
+// UpdateEmailLayoutCommand renames an Email Layout or changes its key; a nil
+// field keeps its value.
+type UpdateEmailLayoutCommand struct {
+	ID   string
+	Name *string
+	Key  *string
+}
+
+// emailLayoutUpdate is the layout an update left and the metadata fields it
+// changed.
+type emailLayoutUpdate struct {
+	layout model.EmailLayout
+	fields []string
+}
+
+func (u emailLayoutUpdate) audit() mutation.Audit {
+	if len(u.fields) == 0 {
+		return mutation.Unchanged()
+	}
+	return mutation.RequestAudit(sharedtelemetry.AuditEmailLayoutUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewEmailLayoutMetadataAuditRecord(metadata, u.layout.ID, u.fields)
+	})
+}
+
+// UpdateEmailLayout changes the layout's name and key while no active
+// delivery renders it.
+func (s *Service) UpdateEmailLayout(ctx context.Context, command UpdateEmailLayoutCommand) (*managev1.EmailLayout, error) {
+	access, err := adminAccess(policyv1.EmailLayout.Edit(command.ID))
 	if err != nil {
-		return nil, errs.InvalidArgument("id", err.Error())
+		return nil, err
 	}
 	updatedAt := dbtime.Now()
 	var layout model.EmailLayout
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		updated, err := s.updateEmailLayoutWithDB(ctx, tx, req.Msg, updatedAt, s.auditWriter, layoutCan)
-		layout = updated
-		return err
-	}); err != nil {
-		return nil, errs.Internal(err)
+	update, err := mutation.Run(ctx, s.mutations, mutation.Spec[emailLayoutUpdate]{
+		Lock: func(ctx context.Context, tx *gorm.DB) error {
+			var err error
+			layout, err = lockMutableEmailLayout(ctx, tx, s.references, command.ID)
+			return err
+		},
+		Access: access,
+		Change: func(ctx context.Context, tx *gorm.DB) (emailLayoutUpdate, error) {
+			updates, err := buildEmailLayoutUpdates(command)
+			if err != nil {
+				return emailLayoutUpdate{}, err
+			}
+			update := emailLayoutUpdate{fields: emailLayoutMetadataChangedFields(layout, updates)}
+			if len(update.fields) > 0 {
+				updates["updated_at"] = updatedAt
+				if err := applyEmailLayoutUpdates(ctx, tx, &layout, command.Key, updates); err != nil {
+					return emailLayoutUpdate{}, err
+				}
+			}
+			update.layout = layout
+			return update, loadEmailLayoutForResponse(ctx, tx, s.references, &update.layout)
+		},
+		Audit: emailLayoutUpdate.audit,
+	})
+	if err != nil {
+		return nil, err
 	}
-	return connect.NewResponse(toProtoEmailLayout(&layout)), nil
+	return toProtoEmailLayout(&update.layout), nil
 }
 
-func buildEmailLayoutUpdates(
-	request *managev1.UpdateEmailLayoutRequest,
-) (structured.Fields, error) {
+func buildEmailLayoutUpdates(command UpdateEmailLayoutCommand) (structured.Fields, error) {
 	updates := structured.Fields{}
-	if request.Name != nil {
-		if err := validateLayoutName(*request.Name); err != nil {
-			return nil, errs.InvalidArgument("name", err.Error())
+	if command.Name != nil {
+		if err := validateLayoutName(*command.Name); err != nil {
+			return nil, domainerr.InvalidField("name", err.Error())
 		}
-		updates["name"] = strings.TrimSpace(*request.Name)
+		updates["name"] = strings.TrimSpace(*command.Name)
 	}
-	if request.Key != nil {
-		if err := validateLayoutKey(*request.Key); err != nil {
-			return nil, errs.InvalidArgument("key", err.Error())
+	if command.Key != nil {
+		if err := validateLayoutKey(*command.Key); err != nil {
+			return nil, domainerr.InvalidField("key", err.Error())
 		}
-		updates["key"] = *request.Key
+		updates["key"] = *command.Key
 	}
 	return updates, nil
-}
-
-func (s *EmailLayoutService) updateEmailLayoutWithDB(
-	ctx context.Context,
-	tx *gorm.DB,
-	request *managev1.UpdateEmailLayoutRequest,
-	updatedAt time.Time,
-	auditWriter domainaudit.Appender,
-	layoutCan policyv1.Can,
-) (model.EmailLayout, error) {
-	layout, err := lockMutableEmailLayout(ctx, tx, s.references, request.Id)
-	if err != nil {
-		return model.EmailLayout{}, err
-	}
-	if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, layoutCan); err != nil {
-		return model.EmailLayout{}, err
-	}
-	updates, err := buildEmailLayoutUpdates(request)
-	if err != nil {
-		return model.EmailLayout{}, err
-	}
-	metadataFields := emailLayoutMetadataChangedFields(layout, updates)
-	if len(metadataFields) > 0 {
-		updates["updated_at"] = updatedAt
-		if err := applyEmailLayoutUpdates(ctx, tx, &layout, request.Key, updates); err != nil {
-			return model.EmailLayout{}, err
-		}
-	}
-	if err := appendEmailLayoutMetadataAudit(ctx, tx, auditWriter, layout.ID, metadataFields); err != nil {
-		return model.EmailLayout{}, err
-	}
-	if err := loadEmailLayoutForResponse(ctx, tx, s.references, &layout); err != nil {
-		return model.EmailLayout{}, err
-	}
-	return layout, nil
 }
 
 func emailLayoutMetadataChangedFields(layout model.EmailLayout, updates structured.Fields) []string {
@@ -585,16 +504,21 @@ func lockMutableEmailLayout(
 	references CampaignDeliveryReferences,
 	layoutID string,
 ) (model.EmailLayout, error) {
+	layout, err := lockEmailLayout(ctx, tx, layoutID)
+	if err != nil {
+		return model.EmailLayout{}, err
+	}
+	return layout, references.RequireLayoutMutable(ctx, tx, layout.ID)
+}
+
+func lockEmailLayout(ctx context.Context, tx *gorm.DB, layoutID string) (model.EmailLayout, error) {
 	var layout model.EmailLayout
 	if err := tx.WithContext(ctx).
 		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		First(&layout, "id = ?", layoutID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return model.EmailLayout{}, errs.NotFound("email layout", layoutID)
+			return model.EmailLayout{}, domainerr.ResourceNotFound("email layout", layoutID)
 		}
-		return model.EmailLayout{}, err
-	}
-	if err := ensureEmailLayoutMutableForActiveDelivery(ctx, tx, references, layout.ID); err != nil {
 		return model.EmailLayout{}, err
 	}
 	return layout, nil
@@ -613,9 +537,9 @@ func applyEmailLayoutUpdates(
 			if requestedKey != nil {
 				key = *requestedKey
 			}
-			return errs.AlreadyExists("email layout", "key", key)
+			return domainerr.Duplicate("email layout", "key", key)
 		}
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }
@@ -635,185 +559,149 @@ func loadEmailLayoutForResponse(
 	return loadEmailLayoutReferenceCounts(ctx, tx, references, []*model.EmailLayout{layout})
 }
 
+// DeleteEmailLayoutCommand deletes an Email Layout.
+type DeleteEmailLayoutCommand struct {
+	ID string
+}
+
 // DeleteEmailLayout permanently deletes a layout that has no current authoring
 // references or scheduled/sending work. Terminal delivery history keeps its
 // immutable render snapshot and source-version metadata while detaching the
 // mutable authoring-row identity.
-func (s *EmailLayoutService) DeleteEmailLayout(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteEmailLayoutRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
-	layoutCan, err := policyv1.EmailLayout.Delete(req.Msg.Id)
+func (s *Service) DeleteEmailLayout(ctx context.Context, command DeleteEmailLayoutCommand) error {
+	access, err := adminAccess(policyv1.EmailLayout.Delete(command.ID))
 	if err != nil {
-		return nil, errs.InvalidArgument("id", err.Error())
+		return err
 	}
-
-	_, err = authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		var layout model.EmailLayout
-		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			First(&layout, "id = ?", req.Msg.Id).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("email layout", req.Msg.Id)
-			}
+	var layout model.EmailLayout
+	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[string]{
+		Lock: func(ctx context.Context, tx *gorm.DB) error {
+			var err error
+			layout, err = lockEmailLayout(ctx, tx, command.ID)
 			return err
-		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, layoutCan); err != nil {
-			return err
-		}
-		if err := loadEmailLayoutReferenceCounts(
-			ctx,
-			tx,
-			s.references,
-			[]*model.EmailLayout{&layout},
-		); err != nil {
-			return err
-		}
-		if layout.CampaignCount > 0 || layout.TemplateCount > 0 {
-			return errs.FailedPrecondition(
-				"email layout must be unreferenced by campaigns and templates before deletion",
-			)
-		}
-		if err := ensureEmailLayoutMutableForActiveDelivery(ctx, tx, s.references, layout.ID); err != nil {
-			return err
-		}
-		if err := s.references.DetachLayoutHistory(ctx, tx, layout.ID); err != nil {
-			return err
-		}
-		if s.contentBlocks == nil {
-			return errs.InternalMsg("Email Layout Content Document store is not configured")
-		}
-		documentID, parseErr := uuid.Parse(layout.ContentDocumentID)
-		if parseErr != nil || documentID == uuid.Nil {
-			return errs.WithCause(errs.FailedPrecondition("Email Layout Content Document is not initialized"), failurecause.ServerFault(failurecause.WithAttrs(parseErr, slog.String("layout_id", layout.ID))))
-		}
-		if err := s.contentBlocks.DeleteDocument(
-			ctx, tx, documentID, emailLayoutContentFence(s.references, layout.ID),
-		); err != nil {
-			return err
-		}
-		if err := tx.WithContext(ctx).Delete(&layout).Error; err != nil {
-			return err
-		}
-		if err := appendEmailLayoutDeletedAudit(ctx, tx, s.auditWriter, layout.ID); err != nil {
-			return err
-		}
-		deletePolicy, err := policyv1.EmailLayout.DeletePolicy(layout.ID)
-		if err != nil {
-			return err
-		}
-		touchPolicy, err := policyv1.EmailLayout.TouchPolicy(layout.ID)
-		if err != nil {
-			return err
-		}
-		return write(
-			[]policyv1.RelationshipMutation{deletePolicy},
-			[]policyv1.RelationshipMutation{touchPolicy},
-		)
+		},
+		Access: access,
+		Change: func(ctx context.Context, tx *gorm.DB) (string, error) {
+			return layout.ID, s.deleteLockedEmailLayout(ctx, tx, &layout)
+		},
+		Audit: func(layoutID string) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditEmailLayoutDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewEmailLayoutDeletedAuditRecord(metadata, layoutID)
+			})
+		},
+		Relationships: func(layoutID string) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			apply, compensate, err := policyLifecycle(policyv1.EmailLayout.TouchPolicy, policyv1.EmailLayout.DeletePolicy, layoutID)
+			return compensate, apply, err
+		},
 	})
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+	return err
 }
 
-// PreviewEmailLayout renders a preview of the layout with sample content (admin only)
-func (s *EmailLayoutService) PreviewEmailLayout(
-	ctx context.Context,
-	req *connect.Request[managev1.PreviewEmailLayoutRequest],
-) (*connect.Response[managev1.PreviewEmailLayoutResponse], error) {
-	can, canErr := policyv1.EmailLayout.View(req.Msg.Id)
-	if err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
-		return nil, err
+func (s *Service) deleteLockedEmailLayout(ctx context.Context, tx *gorm.DB, layout *model.EmailLayout) error {
+	if err := loadEmailLayoutReferenceCounts(ctx, tx, s.references, []*model.EmailLayout{layout}); err != nil {
+		return err
 	}
+	if layout.CampaignCount > 0 || layout.TemplateCount > 0 {
+		return domainerr.Precondition("email layout must be unreferenced by campaigns and templates before deletion")
+	}
+	if err := s.references.RequireLayoutMutable(ctx, tx, layout.ID); err != nil {
+		return err
+	}
+	if err := s.references.DetachLayoutHistory(ctx, tx, layout.ID); err != nil {
+		return err
+	}
+	documentID, parseErr := uuid.Parse(layout.ContentDocumentID)
+	if parseErr != nil || documentID == uuid.Nil {
+		return domainerr.Precondition("Email Layout Content Document is not initialized").WithCause(failurecause.ServerFault(failurecause.WithAttrs(parseErr, slog.String("layout_id", layout.ID))))
+	}
+	if err := s.contentBlocks.DeleteDocument(ctx, tx, documentID, emailLayoutContentFence(s.references, layout.ID)); err != nil {
+		return err
+	}
+	return tx.WithContext(ctx).Delete(layout).Error
+}
 
-	var layout model.EmailLayout
-	if err := s.db.WithContext(ctx).First(&layout, "id = ?", req.Msg.Id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("email layout", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
-	}
-	if err := overlayEmailLayoutCanonicalSourceContent(ctx, s.db, &layout); err != nil {
-		return nil, err
-	}
+// PreviewEmailLayoutQuery renders an Email Layout around sample content.
+type PreviewEmailLayoutQuery struct {
+	ID            string
+	SampleContent *string
+	Locale        *string
+}
 
-	// Use sample content or default
+// PreviewEmailLayout renders the layout, localized when a locale is set,
+// around the sample content or a default body.
+func (s *Service) PreviewEmailLayout(ctx context.Context, query PreviewEmailLayoutQuery) (string, error) {
+	can, canErr := policyv1.EmailLayout.View(query.ID)
+	if err := s.requireAdminCan(ctx, can, canErr); err != nil {
+		return "", err
+	}
+	layout, err := s.loadEmailLayout(ctx, query.ID)
+	if err != nil {
+		return "", err
+	}
 	sampleContent := "<p>This is sample email content that would appear inside the layout.</p>"
-	if req.Msg.SampleContent != nil && *req.Msg.SampleContent != "" {
-		sampleContent = *req.Msg.SampleContent
+	if query.SampleContent != nil && *query.SampleContent != "" {
+		sampleContent = *query.SampleContent
 	}
-
-	sampleData := s.sampleLayoutPreviewData(ctx, sampleContent, req.Msg.Locale)
-
+	sampleData := s.sampleLayoutPreviewData(ctx, sampleContent, query.Locale)
 	layoutHTML := layout.HTMLContent
-	if req.Msg.Locale != nil && strings.TrimSpace(*req.Msg.Locale) != "" {
-		localizedHTML, _, err := email.ResolveLocalizedEmailLayoutHTML(ctx, s.db, layout.ID, *req.Msg.Locale)
+	if query.Locale != nil && strings.TrimSpace(*query.Locale) != "" {
+		localizedHTML, _, err := email.ResolveLocalizedEmailLayoutHTML(ctx, s.db, layout.ID, *query.Locale)
 		if err != nil {
-			return nil, errs.Internal(err)
+			return "", err
 		}
 		layoutHTML = localizedHTML
 	}
-
 	renderedHTML, err := renderLayoutPreviewHTML(layoutHTML, sampleContent, sampleData)
 	if err != nil {
-		return nil, errs.FailedPrecondition("email layout preview failed: " + err.Error())
+		return "", domainerr.Precondition("email layout preview failed: " + err.Error())
 	}
-
-	return connect.NewResponse(&managev1.PreviewEmailLayoutResponse{
-		Html: renderedHTML,
-	}), nil
+	return renderedHTML, nil
 }
 
-// PreviewEmailLayoutContent renders a preview of raw HTML content with validation (admin only)
-// This is used for live preview in the editor before saving.
-func (s *EmailLayoutService) PreviewEmailLayoutContent(
-	ctx context.Context,
-	req *connect.Request[managev1.PreviewEmailLayoutContentRequest],
-) (*connect.Response[managev1.PreviewEmailLayoutContentResponse], error) {
+// PreviewEmailLayoutContentQuery validates and renders unsaved layout HTML
+// for the editor's live preview.
+type PreviewEmailLayoutContentQuery struct {
+	HTMLContent   string
+	SampleContent *string
+	Locale        *string
+}
+
+// LayoutContentPreview is the rendered live preview, or the validation
+// issues that kept it from rendering.
+type LayoutContentPreview struct {
+	Valid  bool
+	HTML   string
+	Errors []*managev1.EmailLayoutValidationError
+}
+
+// PreviewEmailLayoutContent validates the HTML and, when it is valid,
+// renders it around the sample content or a default body.
+func (s *Service) PreviewEmailLayoutContent(ctx context.Context, query PreviewEmailLayoutContentQuery) (LayoutContentPreview, error) {
 	can, canErr := policyv1.EmailLayout.PreviewContent()
-	if err := s.requireEmailLayoutCan(ctx, can, canErr); err != nil {
-		return nil, err
+	if err := s.requireAdminCan(ctx, can, canErr); err != nil {
+		return LayoutContentPreview{}, err
 	}
-
-	htmlContent := req.Msg.HtmlContent
-	htmlContent = email.NormalizeTemplatePlaceholders(htmlContent)
+	htmlContent := email.NormalizeTemplatePlaceholders(query.HTMLContent)
 	var validationErrors []*managev1.EmailLayoutValidationError
-
 	for _, issue := range email.ValidateLayoutHTMLContent(htmlContent) {
 		validationErrors = append(validationErrors, &managev1.EmailLayoutValidationError{
 			Code:    issue.Code,
 			Message: issue.Message,
 		})
 	}
-
-	// If there are validation errors, return them
 	if len(validationErrors) > 0 {
-		return connect.NewResponse(&managev1.PreviewEmailLayoutContentResponse{
-			Valid:  false,
-			Html:   "",
-			Errors: validationErrors,
-		}), nil
+		return LayoutContentPreview{Errors: validationErrors}, nil
 	}
-
-	// Use sample content or default
 	sampleContent := "<h1>Welcome!</h1><p>This is sample email content that would appear inside the layout.</p><p>Thank you for subscribing.</p>"
-	if req.Msg.SampleContent != nil && *req.Msg.SampleContent != "" {
-		sampleContent = *req.Msg.SampleContent
+	if query.SampleContent != nil && *query.SampleContent != "" {
+		sampleContent = *query.SampleContent
 	}
-
-	sampleData := s.sampleLayoutPreviewData(ctx, sampleContent, req.Msg.Locale)
-
+	sampleData := s.sampleLayoutPreviewData(ctx, sampleContent, query.Locale)
 	renderedHTML, err := renderLayoutPreviewHTML(htmlContent, sampleContent, sampleData)
 	if err != nil {
-		return nil, errs.InvalidArgument("html_content", err.Error())
+		return LayoutContentPreview{}, domainerr.InvalidField("html_content", err.Error())
 	}
-
-	return connect.NewResponse(&managev1.PreviewEmailLayoutContentResponse{
-		Valid:  true,
-		Html:   renderedHTML,
-		Errors: nil,
-	}), nil
+	return LayoutContentPreview{Valid: true, HTML: renderedHTML}, nil
 }
 
 // Helper functions
@@ -828,7 +716,7 @@ func renderLayoutPreviewHTML(layoutHTML, contentHTML string, data map[string]str
 	return email.RenderEmailHTML(contentHTML, prepared, data)
 }
 
-func (s *EmailLayoutService) sampleLayoutPreviewData(
+func (s *Service) sampleLayoutPreviewData(
 	ctx context.Context,
 	sampleContent string,
 	locale *string,
@@ -847,14 +735,6 @@ func (s *EmailLayoutService) sampleLayoutPreviewData(
 	return s.buildEmailRenderData(ctx, requestedLocale, input)
 }
 
-func (s *EmailLayoutService) buildEmailRenderData(ctx context.Context, requestedLocale string, input map[string]string) map[string]string {
-	if s.renderData != nil {
-		return s.renderData.BuildEmailRenderData(ctx, s.db, s.cdnDomain, s.siteOrigin, requestedLocale, input)
-	}
-	input["site_origin"] = s.siteOrigin
-	return input
-}
-
 func toProtoEmailLayout(l *model.EmailLayout) *managev1.EmailLayout {
 	proto := &managev1.EmailLayout{
 		Id:               l.ID,
@@ -871,8 +751,8 @@ func toProtoEmailLayout(l *model.EmailLayout) *managev1.EmailLayout {
 	return proto
 }
 
-// EmailLayoutFilterConfig defines filter fields for ListEmailLayouts
-var EmailLayoutFilterConfig = &queryutil.FilterConfig{
+// emailLayoutFilterConfig defines filter fields for ListEmailLayouts.
+var emailLayoutFilterConfig = &queryutil.FilterConfig{
 	Fields: map[string]queryutil.FieldDef{
 		"search": {
 			Type:          queryutil.TypeText,
@@ -880,35 +760,4 @@ var EmailLayoutFilterConfig = &queryutil.FilterConfig{
 			SearchColumns: []string{"name", "key"},
 		},
 	},
-}
-
-// ListEmailLayoutsPaginated returns layouts with proper pagination response
-func (s *EmailLayoutService) ListEmailLayoutsPaginated(
-	ctx context.Context,
-	pg *queryutil.Pagination,
-) ([]*model.EmailLayout, *commonv1.PaginationResponse, error) {
-	var layouts []model.EmailLayout
-	var total int64
-
-	query := s.db.WithContext(ctx).Model(&model.EmailLayout{})
-
-	if err := query.Count(&total).Error; err != nil {
-		return nil, nil, errs.Internal(err)
-	}
-
-	query = query.Order("name ASC")
-
-	if err := pg.Apply(query).Find(&layouts).Error; err != nil {
-		return nil, nil, errs.Internal(err)
-	}
-	if err := overlayCanonicalEmailLayoutSourcesForList(ctx, s.db, layouts); err != nil {
-		return nil, nil, errs.Internal(err)
-	}
-
-	result := make([]*model.EmailLayout, len(layouts))
-	for i := range layouts {
-		result[i] = &layouts[i]
-	}
-
-	return result, pg.BuildResponse(total), nil
 }

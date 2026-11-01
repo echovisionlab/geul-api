@@ -56,13 +56,13 @@ func validateCampaignTargetDefinition(campaign model.Campaign) error {
 }
 
 func campaignStatusAllowsEdit(status string) bool {
-	return status == managev1.CampaignStatus_CAMPAIGN_STATUS_DRAFT.String()
+	return model.CampaignStatus(status) == model.CampaignStatusDraft
 }
 
 func campaignStatusAllowsSchedule(status string) bool {
-	return status == managev1.CampaignStatus_CAMPAIGN_STATUS_DRAFT.String()
+	return model.CampaignStatus(status) == model.CampaignStatusDraft
 }
 
 func campaignStatusAllowsSendNow(status string) bool {
-	return status == managev1.CampaignStatus_CAMPAIGN_STATUS_DRAFT.String()
+	return model.CampaignStatus(status) == model.CampaignStatusDraft
 }

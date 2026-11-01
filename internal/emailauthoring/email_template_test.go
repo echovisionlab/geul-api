@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -21,13 +22,9 @@ import (
 func TestEmailTemplateServiceCreateEmailTemplateSeedsCanonicalSourceLocaleRowIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
-	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+	ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 	contentBlocks := testutil.NewEmailContentBlockStore(t, spiceDB)
-	svc := NewEmailTemplateService(
-		db, nil, emailTemplateRuntimeFixture{}, "https://cdn.example.com", "https://example.com", spiceDB,
-		WithEmailTemplateContentBlockStore(contentBlocks),
-		WithEmailTemplateCampaignDeliveryReferences(integrationCampaignDeliveryReferences{}),
-	)
+	svc := NewTemplateConnectHandler(newTestService(t, Deps{DB: db, Runtime: emailTemplateRuntimeFixture{}, CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, ContentBlocks: contentBlocks, References: integrationCampaignDeliveryReferences{}}))
 	subject := "Welcome to {{site_name}}"
 
 	resp, err := svc.CreateEmailTemplate(ctx, connect.NewRequest(&managev1.CreateEmailTemplateRequest{
@@ -68,12 +65,8 @@ func TestEmailTemplateServiceCreateEmailTemplateSeedsCanonicalSourceLocaleRowInt
 func TestEmailTemplateServiceCreateEmailTemplateRejectsInvalidSourceLocaleWithoutPersistenceIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
-	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
-	service := NewEmailTemplateService(
-		db, nil, emailTemplateRuntimeFixture{}, "", "", spiceDB,
-		WithEmailTemplateContentBlockStore(testutil.NewEmailContentBlockStore(t, spiceDB)),
-		WithEmailTemplateCampaignDeliveryReferences(integrationCampaignDeliveryReferences{}),
-	)
+	ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
+	service := NewTemplateConnectHandler(newTestService(t, Deps{DB: db, Runtime: emailTemplateRuntimeFixture{}, SpiceDB: spiceDB, ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB), References: integrationCampaignDeliveryReferences{}}))
 
 	var documentsBefore int64
 	require.NoError(t, db.Table("content_document").Count(&documentsBefore).Error)
@@ -89,7 +82,7 @@ func TestEmailTemplateServiceCreateEmailTemplateRejectsInvalidSourceLocaleWithou
 			_, err := service.CreateEmailTemplate(ctx, connect.NewRequest(&managev1.CreateEmailTemplateRequest{
 				Key: test.key, Name: "Invalid source locale", Subject: "Subject", SourceLocale: test.sourceLocale,
 			}))
-			require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+			require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 
 			var templates int64
 			require.NoError(t, db.Table("email_template").Where("key = ?", test.key).Count(&templates).Error)
@@ -104,12 +97,8 @@ func TestEmailTemplateServiceCreateEmailTemplateRejectsInvalidSourceLocaleWithou
 func TestEmailTemplateServiceCreateEmailTemplatePersistsRootDocumentAndSourceSubjectAtomicallyIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
-	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
-	service := NewEmailTemplateService(
-		db, nil, emailTemplateRuntimeFixture{}, "", "", spiceDB,
-		WithEmailTemplateContentBlockStore(testutil.NewEmailContentBlockStore(t, spiceDB)),
-		WithEmailTemplateCampaignDeliveryReferences(integrationCampaignDeliveryReferences{}),
-	)
+	ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
+	service := NewTemplateConnectHandler(newTestService(t, Deps{DB: db, Runtime: emailTemplateRuntimeFixture{}, SpiceDB: spiceDB, ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB), References: integrationCampaignDeliveryReferences{}}))
 
 	var templatesBefore, translationsBefore, documentsBefore int64
 	require.NoError(t, db.Table("email_template").Count(&templatesBefore).Error)
@@ -144,7 +133,7 @@ func TestEmailTemplateServiceCreateEmailTemplatePersistsRootDocumentAndSourceSub
 func TestEmailTemplateServiceListDoesNotRequireTranslationSourceStateIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
-	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+	ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 	now := time.Now().UTC()
 	templateID := uuid.NewString()
 	documentID := uuid.NewString()
@@ -158,15 +147,7 @@ func TestEmailTemplateServiceListDoesNotRequireTranslationSourceStateIntegration
 		) VALUES (?, ?, ?, '[]'::jsonb, FALSE, TRUE, ?, ?, ?)
 	`, templateID, "missing_source_"+uuid.NewString(), "Missing source", documentID, now, now).Error)
 
-	service := NewEmailTemplateService(
-		db,
-		nil,
-		emailTemplateRuntimeFixture{},
-		"https://cdn.example.com",
-		"https://example.com",
-		spiceDB,
-		WithEmailTemplateCampaignDeliveryReferences(integrationCampaignDeliveryReferences{}),
-	)
+	service := NewTemplateConnectHandler(newTestService(t, Deps{DB: db, Runtime: emailTemplateRuntimeFixture{}, CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, References: integrationCampaignDeliveryReferences{}}))
 	response, err := service.ListEmailTemplatesAdmin(
 		ctx,
 		connect.NewRequest(&managev1.ListEmailTemplatesAdminRequest{}),
@@ -194,13 +175,9 @@ func TestEmailTemplateServiceListDoesNotRequireTranslationSourceStateIntegration
 func TestCustomEmailTemplateVariablesFollowTypedSourceBlocksIntegration(t *testing.T) {
 	t.Parallel()
 	db := newEmailAuthoringLocalKratosIntegrationDB(t)
-	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+	ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 	store := testutil.NewEmailContentBlockStore(t, spiceDB)
-	templateService := NewEmailTemplateService(
-		db, nil, emailTemplateRuntimeFixture{}, "https://cdn.example.com", "https://example.com", spiceDB,
-		WithEmailTemplateContentBlockStore(store),
-		WithEmailTemplateCampaignDeliveryReferences(integrationCampaignDeliveryReferences{}),
-	)
+	templateService := NewTemplateConnectHandler(newTestService(t, Deps{DB: db, Runtime: emailTemplateRuntimeFixture{}, CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, ContentBlocks: store, References: integrationCampaignDeliveryReferences{}}))
 	created, err := templateService.CreateEmailTemplate(ctx, connect.NewRequest(&managev1.CreateEmailTemplateRequest{
 		Key:          "variable_catalog_" + strings.ReplaceAll(uuid.NewString(), "-", ""),
 		Name:         "Variable catalog",

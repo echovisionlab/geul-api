@@ -52,16 +52,13 @@ type emailLayoutAIDocumentDomain interface {
 
 type emailLayoutPort struct{ service emailLayoutAIDocumentDomain }
 
-func NewEmailLayoutRegistration(
-	layouts *emailauthoring.EmailLayoutService,
-) (DomainRegistration, error) {
-	service, err := emailauthoring.NewEmailLayoutAIDocumentService(layouts)
-	if err != nil {
-		return DomainRegistration{}, err
+func NewEmailLayoutRegistration(internal *emailauthoring.InternalService) (DomainRegistration, error) {
+	if internal == nil {
+		return DomainRegistration{}, errors.New("email layout AI document owner is required")
 	}
 	return DomainRegistration{
 		Domain: core.DomainEmailLayout,
-		Port:   &emailLayoutPort{service: service},
+		Port:   &emailLayoutPort{service: internal.LayoutAIDocuments()},
 	}, nil
 }
 

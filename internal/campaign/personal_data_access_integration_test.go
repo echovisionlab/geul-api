@@ -69,10 +69,7 @@ func TestCampaignRecipientPersonalDataAccessPersistsExactScopeIntegration(t *tes
 	}).Error)
 
 	writer := apitelemetry.NewDurableWriter(db)
-	service := NewAuditedCampaignService(
-		db, newCampaignRuntimeFixture(nil, writer), "", "", writer, stack.SpiceDBClient,
-		WithCampaignEmailDelivery(NewCampaignDeliveryRuntime(stack.SpiceDBClient, nil)),
-	)
+	service := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, writer), Audit: writer, SpiceDB: stack.SpiceDBClient, EmailDelivery: NewCampaignDeliveryRuntime(stack.SpiceDBClient, nil)}))
 	ctx := campaignPersonalAccessAdminContext(t, admin)
 	_, err := service.GetCampaignRecipients(
 		ctx,

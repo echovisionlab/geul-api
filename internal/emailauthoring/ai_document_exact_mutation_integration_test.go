@@ -11,8 +11,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/emailcontent"
-
 	"connectrpc.com/connect"
 	authzedv1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
@@ -22,6 +20,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	githubtelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -32,40 +32,26 @@ import (
 func TestEmailAuthoringAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBackValidateIntegration(t *testing.T) {
 	t.Parallel()
 	db := newEmailAuthoringLocalKratosIntegrationDB(t)
-	ctx, realSpiceDB := testutil.IntegrationAdminContext(t, db)
+	ctx, realSpiceDB := testutil.IntegrationAdminAuditContext(t, db)
 	store := testutil.NewEmailContentBlockStore(t, realSpiceDB)
 	writer := githubtelemetry.NewDurableWriter(db)
 	references := integrationCampaignDeliveryReferences{}
 
-	template, err := NewEmailTemplateService(
-		db, nil, emailTemplateRuntimeFixture{}, "", "", realSpiceDB,
-		WithEmailTemplateContentBlockStore(store),
-		WithEmailTemplateCampaignDeliveryReferences(references),
-	).CreateEmailTemplate(ctx, connect.NewRequest(&managev1.CreateEmailTemplateRequest{
+	template, err := NewTemplateConnectHandler(newTestService(t, Deps{DB: db, Runtime: emailTemplateRuntimeFixture{}, SpiceDB: realSpiceDB, ContentBlocks: store, References: references})).CreateEmailTemplate(ctx, connect.NewRequest(&managev1.CreateEmailTemplateRequest{
 		Key: "ai_document_exact_template_" + strings.ReplaceAll(testutil.IntegrationUUID(), "-", ""), Name: "AI document exact Template",
 		Subject: "Template before Validate", SourceLocale: "en",
 	}))
 	require.NoError(t, err)
 
-	layout, err := NewEmailLayoutService(
-		db, "", "", realSpiceDB,
-		WithEmailLayoutCampaignDeliveryReferences(references),
-		WithEmailLayoutContentBlockStore(store),
-	).CreateEmailLayout(ctx, connect.NewRequest(&managev1.CreateEmailLayoutRequest{
+	layout, err := NewLayoutConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: realSpiceDB, References: references, ContentBlocks: store})).CreateEmailLayout(ctx, connect.NewRequest(&managev1.CreateEmailLayoutRequest{
 		Key: "ai_document_exact_layout_" + strings.ReplaceAll(testutil.IntegrationUUID(), "-", ""), Name: "AI document exact Layout",
 		HtmlContent: "<html><body><p>Layout before Validate</p>{{content}}</body></html>", SourceLocale: "en",
 	}))
 	require.NoError(t, err)
 
 	allowedSpiceDB, allowedRecorder := newEmailAuthoringAIDocumentPermissionServer(t, true)
-	templateOwner := NewAuditedInternalEmailTemplateService(
-		db, writer, allowedSpiceDB,
-		WithInternalEmailTemplateContentBlockStore(store),
-		WithInternalEmailTemplateCheckpoints(testcollaboration.NewCheckpoints(db, realSpiceDB)),
-		WithInternalEmailTemplateCampaignDeliveryReferences(references),
-	)
-	templateApplication, err := NewAIDocumentService(templateOwner)
-	require.NoError(t, err)
+	owner := newTestInternalService(t, InternalDeps{DB: db, Audit: writer, SpiceDB: allowedSpiceDB, ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, realSpiceDB), References: references})
+	templateApplication := owner.TemplateAIDocuments()
 
 	compilerFailure := errors.New("stop after authorized Email Template compiler")
 	compilerCalls := 0
@@ -176,13 +162,7 @@ func TestEmailAuthoringAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBa
 	)
 	requireEmailAuthoringAIDocumentLocaleAudits(t, db, "email_template", template.Msg.Id, "en", 1)
 
-	layoutOwner := NewAuditedEmailLayoutService(
-		db, "", "", writer, allowedSpiceDB,
-		WithEmailLayoutCampaignDeliveryReferences(references),
-		WithEmailLayoutContentBlockStore(store),
-	)
-	layoutApplication, err := NewEmailLayoutAIDocumentService(layoutOwner)
-	require.NoError(t, err)
+	layoutApplication := owner.LayoutAIDocuments()
 	compilerFailure = errors.New("stop after authorized Email Layout compiler")
 	compilerCalls = 0
 	_, err = layoutApplication.ExecuteAIDocumentMutation(
@@ -279,13 +259,8 @@ func TestEmailAuthoringAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBa
 	requireEmailAuthoringAIDocumentLocaleAudits(t, db, "email_layout", layout.Msg.Id, "en", 1)
 
 	deniedSpiceDB, deniedRecorder := newEmailAuthoringAIDocumentPermissionServer(t, false)
-	deniedTemplateApplication, err := NewAIDocumentService(NewAuditedInternalEmailTemplateService(
-		db, writer, deniedSpiceDB,
-		WithInternalEmailTemplateContentBlockStore(store),
-		WithInternalEmailTemplateCheckpoints(testcollaboration.NewCheckpoints(db, realSpiceDB)),
-		WithInternalEmailTemplateCampaignDeliveryReferences(references),
-	))
-	require.NoError(t, err)
+	deniedOwner := newTestInternalService(t, InternalDeps{DB: db, Audit: writer, SpiceDB: deniedSpiceDB, ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, realSpiceDB), References: references})
+	deniedTemplateApplication := deniedOwner.TemplateAIDocuments()
 	compilerCalls = 0
 	_, err = deniedTemplateApplication.ExecuteAIDocumentMutation(
 		ctx, template.Msg.Id, "en", emailcontent.AIDocumentExecutionApply,
@@ -294,18 +269,13 @@ func TestEmailAuthoringAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBa
 			return emailcontent.AIDocumentMutation{}, nil
 		},
 	)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
 	require.Zero(t, compilerCalls)
 	requireEmailAuthoringAIDocumentPermissionRequest(
 		t, deniedRecorder.take(), policyv1.EmailTemplate.Edit, template.Msg.Id,
 	)
 	requireEmailAuthoringAIDocumentLocaleAudits(t, db, "email_template", template.Msg.Id, "en", 1)
-	deniedLayoutApplication, err := NewEmailLayoutAIDocumentService(NewAuditedEmailLayoutService(
-		db, "", "", writer, deniedSpiceDB,
-		WithEmailLayoutCampaignDeliveryReferences(references),
-		WithEmailLayoutContentBlockStore(store),
-	))
-	require.NoError(t, err)
+	deniedLayoutApplication := deniedOwner.LayoutAIDocuments()
 	compilerCalls = 0
 	_, err = deniedLayoutApplication.ExecuteAIDocumentMutation(
 		ctx, layout.Msg.Id, "en", EmailLayoutAIDocumentExecutionApply,
@@ -314,7 +284,7 @@ func TestEmailAuthoringAIDocumentExactMutationAuthorizesBeforeCompilerAndRollsBa
 			return EmailLayoutAIDocumentMutation{}, nil
 		},
 	)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
 	require.Zero(t, compilerCalls)
 	requireEmailAuthoringAIDocumentPermissionRequest(
 		t, deniedRecorder.take(), policyv1.EmailLayout.Edit, layout.Msg.Id,

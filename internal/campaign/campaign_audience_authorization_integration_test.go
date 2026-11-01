@@ -46,15 +46,7 @@ func TestCampaignAuthorizationIsSynchronousIntegration(t *testing.T) {
 	require.NoError(t, err)
 	ctx := auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), requestContext), admin.AuthUserInfo())
 	contentBlocks := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)
-	campaigns := NewCampaignService(
-		db,
-		newCampaignRuntimeFixture(nil, nil),
-		"",
-		"",
-		stack.SpiceDBClient,
-		WithCampaignContentBlockStore(contentBlocks),
-		WithCampaignEmailDelivery(NewCampaignDeliveryRuntime(stack.SpiceDBClient, nil)),
-	)
+	campaigns := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, nil), SpiceDB: stack.SpiceDBClient, ContentBlocks: contentBlocks, EmailDelivery: NewCampaignDeliveryRuntime(stack.SpiceDBClient, nil)}))
 	campaign, err := campaigns.CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{
 		Name: "Synchronous campaign authorization", Subject: "subject", SourceLocale: "en", Target: campaignAllTarget(),
 	}))
@@ -67,16 +59,7 @@ func TestCampaignAuthorizationIsSynchronousIntegration(t *testing.T) {
 		true,
 	)
 	failingCampaignAudit := &captureFailingCampaignAuditAppender{}
-	failingCampaigns := NewAuditedCampaignService(
-		db,
-		newCampaignRuntimeFixture(nil, apitelemetry.NewDurableWriter(db)),
-		"",
-		"",
-		failingCampaignAudit,
-		stack.SpiceDBClient,
-		WithCampaignContentBlockStore(contentBlocks),
-		WithCampaignEmailDelivery(NewCampaignDeliveryRuntime(stack.SpiceDBClient, nil)),
-	)
+	failingCampaigns := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, apitelemetry.NewDurableWriter(db)), Audit: failingCampaignAudit, SpiceDB: stack.SpiceDBClient, ContentBlocks: contentBlocks, EmailDelivery: NewCampaignDeliveryRuntime(stack.SpiceDBClient, nil)}))
 	_, err = failingCampaigns.DeleteCampaign(ctx, connect.NewRequest(&managev1.DeleteCampaignRequest{Id: campaign.Msg.Campaign.Id}))
 	require.Error(t, err)
 	require.Equal(t, campaign.Msg.Campaign.Id, failingCampaignAudit.targetID)

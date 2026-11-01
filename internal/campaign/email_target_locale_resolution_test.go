@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/stretchr/testify/require"
 )
@@ -34,5 +35,5 @@ func TestResolveCampaignRequestedLocaleRejectsUnsupportedExplicitLocale(t *testi
 	locale, err := resolveCampaignRequestedLocale(campaignLocaleNormalizerFunc(localization.NormalizeSupportedLocale), &explicit)
 	require.Empty(t, locale)
 	require.Error(t, err)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 }

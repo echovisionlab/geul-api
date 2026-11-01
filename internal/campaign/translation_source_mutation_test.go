@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -31,7 +32,7 @@ func TestRequireTranslationSourceMutableOwnsCampaignAndDeliveryFences(t *testing
 		managev1.CampaignStatus_CAMPAIGN_STATUS_SCHEDULED.String(),
 	))
 	err := RequireTranslationSourceMutable(ctx, db, "scheduled-campaign")
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 
 	require.NoError(t, insertCampaignTranslationMutationRoot(
 		db,
@@ -45,7 +46,7 @@ func TestRequireTranslationSourceMutableOwnsCampaignAndDeliveryFences(t *testing
 		CampaignDeliveryRunStatusScheduled,
 	).Error)
 	err = RequireTranslationSourceMutable(ctx, db, "active-run")
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 
 	require.NoError(t, insertCampaignTranslationMutationRoot(
 		db,
@@ -61,7 +62,7 @@ func TestRequireTranslationSourceMutableOwnsCampaignAndDeliveryFences(t *testing
 	require.NoError(t, RequireTranslationSourceMutable(ctx, db, "terminal-run"))
 
 	err = RequireTranslationSourceMutable(ctx, db, "missing")
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 }
 
 func newCampaignTranslationMutationTestDB(t *testing.T) *gorm.DB {

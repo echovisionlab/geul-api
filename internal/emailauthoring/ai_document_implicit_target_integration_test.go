@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/emailcontent"
-
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -15,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -25,20 +24,15 @@ import (
 func TestEmailTemplateAIDocumentImplicitTargetWriteIntegration(t *testing.T) {
 	t.Parallel()
 	db := newEmailAuthoringLocalKratosIntegrationDB(t)
-	baseContext, spiceDB := testutil.IntegrationAdminContext(t, db)
+	baseContext, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 	admin := auth.GetUser(baseContext)
 	require.NotNil(t, admin)
 	ctx := testutil.NewAuditContext(t, string(admin.IdentityID), string(admin.MemberID))
 	store := testutil.NewEmailContentBlockStore(t, spiceDB)
 	references := integrationCampaignDeliveryReferences{}
-	owner := NewAuditedInternalEmailTemplateService(
-		db, apitelemetry.NewDurableWriter(db), spiceDB,
-		WithInternalEmailTemplateContentBlockStore(store),
-		WithInternalEmailTemplateCheckpoints(testcollaboration.NewCheckpoints(db, spiceDB)),
-		WithInternalEmailTemplateCampaignDeliveryReferences(references),
-	)
-	application, err := NewAIDocumentService(owner)
-	require.NoError(t, err)
+	internal := newTestInternalService(t, InternalDeps{DB: db, Audit: apitelemetry.NewDurableWriter(db), SpiceDB: spiceDB, ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB), References: references})
+	owner := NewInternalTemplateConnectHandler(internal)
+	application := internal.TemplateAIDocuments()
 
 	for _, test := range []struct {
 		name       string
@@ -50,11 +44,7 @@ func TestEmailTemplateAIDocumentImplicitTargetWriteIntegration(t *testing.T) {
 		{name: "subject and body", setSubject: true, setBody: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			template, err := NewEmailTemplateService(
-				db, nil, emailTemplateRuntimeFixture{}, "", "", spiceDB,
-				WithEmailTemplateContentBlockStore(store),
-				WithEmailTemplateCampaignDeliveryReferences(references),
-			).CreateEmailTemplate(ctx, connect.NewRequest(&managev1.CreateEmailTemplateRequest{
+			template, err := NewTemplateConnectHandler(newTestService(t, Deps{DB: db, Runtime: emailTemplateRuntimeFixture{}, SpiceDB: spiceDB, ContentBlocks: store, References: references})).CreateEmailTemplate(ctx, connect.NewRequest(&managev1.CreateEmailTemplateRequest{
 				Key:  "implicit_target_" + strings.ReplaceAll(uuid.NewString(), "-", ""),
 				Name: "Implicit target Template", Subject: "Source subject", SourceLocale: "en",
 			}))

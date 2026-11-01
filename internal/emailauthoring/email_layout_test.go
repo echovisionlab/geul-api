@@ -18,13 +18,11 @@ import (
 func TestEmailLayoutPreviewContentValidation(t *testing.T) {
 	t.Parallel()
 
-	svc := &EmailLayoutService{
-		cdnDomain:  "https://cdn.example.com",
-		siteOrigin: "https://example.com",
-	}
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	svc.spiceDB = stack.SpiceDBClient
+	svc := NewLayoutConnectHandler(newTestService(t, Deps{
+		DB: stack.DB, SpiceDB: stack.SpiceDBClient, CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com",
+	}))
 	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
 
 	validPreview, err := svc.PreviewEmailLayoutContent(ctx, connect.NewRequest(&managev1.PreviewEmailLayoutContentRequest{

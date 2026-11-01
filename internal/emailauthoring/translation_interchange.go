@@ -35,6 +35,6 @@ func ApplyTemplateTranslationInterchange(
 ) (emailcontent.InterchangeMutationResult, error) {
 	return emailTemplateContent.ApplyInterchange(
 		ctx, tx, store, templateID, sourceLocale, input,
-		campaignEmailContentFence(references, emailTemplateContentEntity, templateID),
+		emailTemplateContentFence(references, templateID),
 	)
 }

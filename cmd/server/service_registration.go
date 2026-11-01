@@ -223,13 +223,12 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		filepublic.WithDownloadSegmentConfigs(mediaassetadapter.NewSegmentConfigs()),
 	)
 	legalRuntime := legaladapter.NewOGRuntime(cfg.CDNURL, ogDeps.planner)
-	campaignDeliveryDispatcher := campaign.NewAuditedCampaignDeliveryDispatcher(
-		db,
+	campaignDeliveryDispatcher := campaignadapter.NewDeliveryDispatcher(db, campaign.NewAuditedCampaignDeliveryDispatcher(
 		spicedbClient,
 		workerPublisher,
 		telemetryWriter,
 		campaign.WithLegalNoticeDeliveryPort(legalRuntime),
-	)
+	))
 	legalDependencies := legal.Dependencies{
 		OG:     legalRuntime,
 		Notice: legaladapter.NewNoticeRuntime(campaignDeliveryDispatcher),
@@ -662,27 +661,19 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered service", "path", mapThemePath)
 
 	emailAuthoringRuntime := emailauthoringadapter.NewRuntime()
-	emailTemplateService := emailauthoring.NewAuditedEmailTemplateService(
-		db, workerPublisher, emailAuthoringRuntime, cfg.CDNURL, cfg.SiteOrigin, telemetryWriter, spicedbClient,
-		emailauthoring.WithEmailTemplateContentBlockStore(contentBlockStore),
-		emailauthoring.WithEmailTemplateRenderDataBuilder(emailAuthoringRuntime),
-		emailauthoring.WithEmailTemplateCampaignDeliveryReferences(emailAuthoringReferences),
-	)
-	emailTemplatePath, emailTemplateHandler := managev1connect.NewEmailTemplateServiceHandler(emailTemplateService, handlerOpts...)
+	emailAuthoringService, err := emailauthoring.NewService(emailauthoring.Deps{
+		DB: db, SpiceDB: spicedbClient, ContentBlocks: contentBlockStore, Publisher: workerPublisher,
+		Runtime: emailAuthoringRuntime, RenderData: emailAuthoringRuntime, References: emailAuthoringReferences,
+		Audit: telemetryWriter, CDNDomain: cfg.CDNURL, SiteOrigin: cfg.SiteOrigin,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize email authoring service: %w", err)
+	}
+	emailTemplatePath, emailTemplateHandler := managev1connect.NewEmailTemplateServiceHandler(emailauthoring.NewTemplateConnectHandler(emailAuthoringService), handlerOpts...)
 	mux.Handle(emailTemplatePath, emailTemplateHandler)
 	slog.Info("Registered service", "path", emailTemplatePath)
 
-	emailLayoutService := emailauthoring.NewAuditedEmailLayoutService(
-		db,
-		cfg.CDNURL,
-		cfg.SiteOrigin,
-		telemetryWriter,
-		spicedbClient,
-		emailauthoring.WithEmailLayoutRenderDataBuilder(emailAuthoringRuntime),
-		emailauthoring.WithEmailLayoutCampaignDeliveryReferences(emailAuthoringReferences),
-		emailauthoring.WithEmailLayoutContentBlockStore(contentBlockStore),
-	)
-	emailLayoutPath, emailLayoutHandler := managev1connect.NewEmailLayoutServiceHandler(emailLayoutService, handlerOpts...)
+	emailLayoutPath, emailLayoutHandler := managev1connect.NewEmailLayoutServiceHandler(emailauthoring.NewLayoutConnectHandler(emailAuthoringService), handlerOpts...)
 	mux.Handle(emailLayoutPath, emailLayoutHandler)
 	slog.Info("Registered service", "path", emailLayoutPath)
 
@@ -713,15 +704,17 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered service", "path", commentPath)
 
 	campaignRuntime := campaignadapter.NewRuntime(workerPublisher, telemetryWriter)
-	campaignService := campaign.NewAuditedCampaignService(
-		db, campaignRuntime, cfg.CDNURL, cfg.SiteOrigin, telemetryWriter, spicedbClient,
-		campaign.WithCampaignContentBlockStore(contentBlockStore),
-		campaign.WithCampaignEmailAuthoring(campaignadapter.NewEmailAuthoring()),
-		campaign.WithCampaignEmailRendering(campaignadapter.NewEmailRendering()),
-		campaign.WithCampaignEmailDelivery(campaign.NewCampaignDeliveryRuntime(spicedbClient, workerPublisher)),
-		campaign.WithCampaignAudienceTargets(campaignadapter.NewAudienceTargets()),
-	)
-	campaignPath, campaignHandler := managev1connect.NewCampaignServiceHandler(campaignService, handlerOpts...)
+	campaignService, err := campaign.NewService(campaign.Deps{
+		DB: db, SpiceDB: spicedbClient, ContentBlocks: contentBlockStore, Runtime: campaignRuntime,
+		EmailAuthoring: campaignadapter.NewEmailAuthoring(), EmailRendering: campaignadapter.NewEmailRendering(),
+		EmailDelivery:   campaign.NewCampaignDeliveryRuntime(spicedbClient, workerPublisher),
+		AudienceTargets: campaignadapter.NewAudienceTargets(), Audit: telemetryWriter,
+		CDNDomain: cfg.CDNURL, SiteOrigin: cfg.SiteOrigin,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize campaign service: %w", err)
+	}
+	campaignPath, campaignHandler := managev1connect.NewCampaignServiceHandler(campaign.NewConnectHandler(campaignService), handlerOpts...)
 	mux.Handle(campaignPath, campaignHandler)
 	slog.Info("Registered service", "path", campaignPath)
 
@@ -796,7 +789,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if err != nil {
 		return registeredServices{}, err
 	}
-	internalEmailTemplateService := internalServices.emailTemplate
+	internalEmailAuthoringService := internalServices.emailAuthoring
 	internalCampaignService := internalServices.campaign
 	legalAIDocumentService := internalServices.legalDocuments
 	translationService, err := (translationServiceRegistration{
@@ -839,10 +832,10 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if aiDocumentRegistrations.menu, err = aidocumentadapter.NewMenuRegistration(menuService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Menu AI document domain: %w", err)
 	}
-	if aiDocumentRegistrations.emailTemplate, err = aidocumentadapter.NewEmailTemplateRegistration(internalEmailTemplateService); err != nil {
+	if aiDocumentRegistrations.emailTemplate, err = aidocumentadapter.NewEmailTemplateRegistration(internalEmailAuthoringService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Email Template AI document domain: %w", err)
 	}
-	if aiDocumentRegistrations.emailLayout, err = aidocumentadapter.NewEmailLayoutRegistration(emailLayoutService); err != nil {
+	if aiDocumentRegistrations.emailLayout, err = aidocumentadapter.NewEmailLayoutRegistration(internalEmailAuthoringService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Email Layout AI document domain: %w", err)
 	}
 	if aiDocumentRegistrations.campaign, err = aidocumentadapter.NewCampaignRegistration(internalCampaignService); err != nil {

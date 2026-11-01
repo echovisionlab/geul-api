@@ -3,8 +3,7 @@
 19 internal/account
 1 internal/account/public
 11 internal/adapters/translation
-4 internal/campaign
-8 internal/emailauthoring
+1 internal/campaign
 2 internal/member/public
 2 internal/menu
 2 internal/series

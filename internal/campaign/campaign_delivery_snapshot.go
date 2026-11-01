@@ -4,12 +4,12 @@ import (
 	"context"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 )
 
@@ -27,7 +27,7 @@ func campaignRenderSnapshot(
 	emailAuthoring CampaignEmailAuthoringPort,
 ) (CampaignDeliverySnapshot, error) {
 	if contentBlocks == nil {
-		return CampaignDeliverySnapshot{}, errs.DependencyUnavailable("Campaign content Block store")
+		return CampaignDeliverySnapshot{}, domainerr.DependencyUnavailable("Campaign content Block store")
 	}
 	snapshot := CampaignDeliverySnapshot{
 		Subject: campaign.Subject,
@@ -48,7 +48,7 @@ func campaignRenderSnapshot(
 		return CampaignDeliverySnapshot{}, err
 	}
 	if len(campaignRows) == 0 {
-		return CampaignDeliverySnapshot{}, errs.FailedPrecondition(
+		return CampaignDeliverySnapshot{}, domainerr.Precondition(
 			"campaign has no source content",
 		)
 	}
@@ -63,16 +63,11 @@ func campaignRenderSnapshot(
 		break
 	}
 	if sourceLocale == "" {
-		return CampaignDeliverySnapshot{}, errs.FailedPrecondition(
+		return CampaignDeliverySnapshot{}, domainerr.Precondition(
 			"campaign source locale is unavailable",
 		)
 	}
-	documentID, err := loadCampaignEmailContentDocumentID(
-		ctx,
-		db,
-		campaignContentEntity,
-		campaign.ID,
-	)
+	documentID, err := loadCampaignEmailContentDocumentRoot(ctx, db, campaign.ID, false)
 	if err != nil {
 		return CampaignDeliverySnapshot{}, err
 	}
@@ -83,7 +78,7 @@ func campaignRenderSnapshot(
 	for _, row := range campaignRows {
 		locale := normalizeCampaignLocale(row.Locale)
 		if locale == "" {
-			return CampaignDeliverySnapshot{}, errs.FailedPrecondition(
+			return CampaignDeliverySnapshot{}, domainerr.Precondition(
 				"campaign target locale is unavailable",
 			)
 		}
@@ -139,14 +134,14 @@ func applyEmailDeliveryLayoutSnapshot(
 	}
 
 	if emailAuthoring == nil {
-		return errs.DependencyUnavailable("Email Authoring")
+		return domainerr.DependencyUnavailable("Email Authoring")
 	}
 	rows, err := emailAuthoring.LoadLayoutSnapshot(ctx, db, layoutID)
 	if err != nil {
 		return err
 	}
 	if len(rows) == 0 {
-		return errs.FailedPrecondition(label + " has no source content")
+		return domainerr.Precondition(label + " has no source content")
 	}
 
 	translations := make([]CampaignDeliverySnapshotLayout, 0, len(rows))
@@ -161,7 +156,7 @@ func applyEmailDeliveryLayoutSnapshot(
 		})
 	}
 	if strings.TrimSpace(sourceLocale) == "" {
-		return errs.FailedPrecondition(label + " source locale is unavailable")
+		return domainerr.Precondition(label + " source locale is unavailable")
 	}
 	snapshot.LayoutSourceLocale = &sourceLocale
 	snapshot.LayoutTranslations = &translations

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -26,12 +26,12 @@ func RequireTranslationSourceMutable(
 		Select("id", "status").
 		First(&campaign, "id = ?", campaignID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFound("campaign", campaignID)
+			return domainerr.ResourceNotFound("campaign", campaignID)
 		}
 		return err
 	}
 	if !campaignStatusAllowsEdit(campaign.Status) {
-		return errs.FailedPrecondition(errs.MsgCampaignCannotUpdateSent)
+		return domainerr.Precondition(msgCampaignCannotUpdateSent)
 	}
 
 	var activeRunCount int64
@@ -49,7 +49,7 @@ func RequireTranslationSourceMutable(
 		return err
 	}
 	if activeRunCount > 0 {
-		return errs.FailedPrecondition(
+		return domainerr.Precondition(
 			"campaign is frozen by an active delivery run",
 		)
 	}

@@ -5,13 +5,12 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 )
 
 type frozenTemplateTranslationReferences struct{}
@@ -59,24 +58,14 @@ func TestEmailTemplateTranslationJobApplyFenceUsesRootExistenceOnly(t *testing.T
 		templateID, documentID,
 	).Error)
 
-	domain, err := emailTemplateTranslationJobApplyFence(
-		emailTemplateContentEntity,
-		templateID,
-	)(t.Context(), db, documentID)
+	domain, err := emailTemplateTranslationJobApplyFence(templateID)(t.Context(), db, documentID)
 	require.NoError(t, err, "an unpublished Template keeps an already-accepted job")
 	require.Equal(t, "en", domain.SourceLocale)
 
-	_, editErr := campaignEmailContentFence(
-		frozenTemplateTranslationReferences{},
-		emailTemplateContentEntity,
-		templateID,
-	)(t.Context(), db, documentID)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(editErr), "direct edits retain the delivery freeze")
+	_, editErr := emailTemplateContentFence(frozenTemplateTranslationReferences{}, templateID)(t.Context(), db, documentID)
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(editErr), "direct edits retain the delivery freeze")
 
 	require.NoError(t, db.Exec("DELETE FROM email_template WHERE id = ?", templateID).Error)
-	_, err = emailTemplateTranslationJobApplyFence(
-		emailTemplateContentEntity,
-		templateID,
-	)(t.Context(), db, documentID)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	_, err = emailTemplateTranslationJobApplyFence(templateID)(t.Context(), db, documentID)
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 }

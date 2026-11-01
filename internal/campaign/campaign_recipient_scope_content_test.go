@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,7 +19,7 @@ func TestValidateCampaignRecipientScopeContentRejectsUnsubscribeForAllMembers(t 
 
 	for _, snapshot := range []CampaignDeliverySnapshot{inLayout, inTranslation} {
 		err := validateCampaignRecipientScopeContent(campaignRecipientScopeAllMatchingUsers, snapshot)
-		require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+		require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 		require.NoError(t, validateCampaignRecipientScopeContent(campaignRecipientScopeSubscribedUsers, snapshot))
 	}
 	require.NoError(t, validateCampaignRecipientScopeContent(campaignRecipientScopeAllMatchingUsers, plain))

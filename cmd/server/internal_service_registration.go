@@ -41,8 +41,8 @@ type internalContentServiceRegistration struct {
 // internalContentServices exposes the internal services needed by later AI
 // document registration; other services are owned by their registered routes.
 type internalContentServices struct {
-	emailTemplate  *emailauthoring.InternalEmailTemplateService
-	campaign       *campaign.InternalCampaignService
+	emailAuthoring *emailauthoring.InternalService
+	campaign       *campaign.InternalService
 	legalDocuments *legal.AIDocumentService
 }
 
@@ -92,38 +92,29 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	mux.Handle(internalMapPath, internalRPCTrust.collab(internalMapHandler))
 	slog.Info("Registered internal service", "path", internalMapPath)
 
-	internalCampaignService := campaign.NewAuditedInternalCampaignService(
-		db,
-		telemetryWriter,
-		memberadapter.ContributorMembers{},
-		campaign.WithInternalCampaignContentBlockStore(contentBlockStore),
-		campaign.WithInternalCampaignSpiceDB(spicedbClient),
-		campaign.WithInternalCampaignCheckpoints(collaborationRuntime.Checkpoints),
-	)
-	internalCampaignPath, internalCampaignHandler := intrav1connect.NewInternalCampaignServiceHandler(internalCampaignService, internalHandlerOpts...)
+	internalCampaignService, err := campaign.NewInternalService(campaign.InternalDeps{
+		DB: db, SpiceDB: spicedbClient, Permissions: spicedbClient, ContentBlocks: contentBlockStore,
+		Checkpoints: collaborationRuntime.Checkpoints, Members: memberadapter.ContributorMembers{}, Audit: telemetryWriter,
+	})
+	if err != nil {
+		return internalContentServices{}, fmt.Errorf("initialize internal campaign service: %w", err)
+	}
+	internalCampaignPath, internalCampaignHandler := intrav1connect.NewInternalCampaignServiceHandler(campaign.NewInternalConnectHandler(internalCampaignService), internalHandlerOpts...)
 	mux.Handle(internalCampaignPath, internalRPCTrust.collab(internalCampaignHandler))
 	slog.Info("Registered internal service", "path", internalCampaignPath)
 
-	internalEmailTemplateService := emailauthoring.NewAuditedInternalEmailTemplateService(
-		db,
-		telemetryWriter,
-		spicedbClient,
-		emailauthoring.WithInternalEmailTemplateCheckpoints(collaborationRuntime.Checkpoints),
-		emailauthoring.WithInternalEmailTemplateContentBlockStore(contentBlockStore),
-		emailauthoring.WithInternalEmailTemplateCampaignDeliveryReferences(emailAuthoringReferences),
-	)
-	internalEmailTemplatePath, internalEmailTemplateHandler := intrav1connect.NewInternalEmailTemplateServiceHandler(internalEmailTemplateService, internalHandlerOpts...)
+	internalEmailAuthoringService, err := emailauthoring.NewInternalService(emailauthoring.InternalDeps{
+		DB: db, SpiceDB: spicedbClient, ContentBlocks: contentBlockStore, Checkpoints: collaborationRuntime.Checkpoints,
+		References: emailAuthoringReferences, Members: memberadapter.ContributorMembers{}, Audit: telemetryWriter,
+	})
+	if err != nil {
+		return internalContentServices{}, fmt.Errorf("initialize internal email authoring service: %w", err)
+	}
+	internalEmailTemplatePath, internalEmailTemplateHandler := intrav1connect.NewInternalEmailTemplateServiceHandler(emailauthoring.NewInternalTemplateConnectHandler(internalEmailAuthoringService), internalHandlerOpts...)
 	mux.Handle(internalEmailTemplatePath, internalRPCTrust.collab(internalEmailTemplateHandler))
 	slog.Info("Registered internal service", "path", internalEmailTemplatePath)
 
-	internalEmailLayoutService := emailauthoring.NewAuditedInternalEmailLayoutService(
-		db,
-		telemetryWriter,
-		emailauthoring.WithInternalEmailLayoutCheckpoints(collaborationRuntime.Checkpoints),
-		emailauthoring.WithInternalEmailLayoutCampaignDeliveryReferences(emailAuthoringReferences),
-		emailauthoring.WithInternalEmailLayoutContentBlockStore(contentBlockStore),
-	)
-	internalEmailLayoutPath, internalEmailLayoutHandler := intrav1connect.NewInternalEmailLayoutServiceHandler(internalEmailLayoutService, internalHandlerOpts...)
+	internalEmailLayoutPath, internalEmailLayoutHandler := intrav1connect.NewInternalEmailLayoutServiceHandler(emailauthoring.NewInternalLayoutConnectHandler(internalEmailAuthoringService), internalHandlerOpts...)
 	mux.Handle(internalEmailLayoutPath, internalRPCTrust.collab(internalEmailLayoutHandler))
 	slog.Info("Registered internal service", "path", internalEmailLayoutPath)
 
@@ -153,7 +144,7 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 		return internalContentServices{}, fmt.Errorf("initialize Legal AI document service: %w", err)
 	}
 	return internalContentServices{
-		emailTemplate:  internalEmailTemplateService,
+		emailAuthoring: internalEmailAuthoringService,
 		campaign:       internalCampaignService,
 		legalDocuments: legalAIDocumentService,
 	}, nil

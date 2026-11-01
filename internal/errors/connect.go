@@ -66,20 +66,6 @@ const (
 	MsgLimitExceeded      = "limit must be <= %d"
 )
 
-// Failed precondition messages - Campaign
-const (
-	MsgCampaignCannotUpdateSent    = "only draft campaigns can be edited"
-	MsgCampaignCannotDeleteSending = "cannot delete campaign that is currently sending"
-	MsgCampaignOnlyScheduleDraft   = "only draft campaigns can be scheduled"
-	MsgCampaignNeedsContent        = "campaign must have content before scheduling"
-	MsgCampaignOnlyCancelScheduled = "can only cancel scheduled campaigns"
-	MsgCampaignAlreadySent         = "only draft campaigns can be sent"
-	MsgCampaignNoRecipients        = "no eligible recipients to send to"
-	MsgCampaignSegmentNotFound     = "campaign segment not found"
-	MsgCampaignOnlySetSegmentDraft = "only draft campaigns can change audience"
-	MsgCampaignOnlySetLayoutDraft  = "only draft campaigns can change layout"
-)
-
 // Failed precondition messages - Form
 const (
 	MsgFormNotAccepting     = "form is not accepting submissions"

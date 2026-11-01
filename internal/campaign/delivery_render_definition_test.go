@@ -9,6 +9,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 )
 
@@ -95,7 +96,7 @@ func TestSealLegalNoticeDeliveryRunValidatesCampaignOwnedAuthorityBeforeWrite(t 
 		)
 		return err
 	}()
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 }
 
 func TestDecodeCampaignDeliverySnapshotRequiresClosedCompleteTranslations(t *testing.T) {

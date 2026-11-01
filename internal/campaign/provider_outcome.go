@@ -25,39 +25,61 @@ type SESProviderOutcomeResult struct {
 	UpdatedRecipients      int
 }
 
-// ApplySESProviderOutcome applies an authenticated later SES outcome to
-// campaign business history. It never changes the provider-acceptance decision
-// and intentionally creates no callback/transport ledger.
-func ApplySESProviderOutcome(
+// SESProviderOutcomeApplication applies an authenticated later SES outcome
+// to campaign business history. It never changes the provider-acceptance
+// decision and intentionally creates no callback/transport ledger. The
+// caller applies it to each of RunIDs in its own transaction and records each
+// committed run.
+type SESProviderOutcomeApplication struct {
+	// RunIDs are the delivery runs that sent the message, in lock order.
+	RunIDs            []string
+	providerMessageID string
+	outcome           SESProviderOutcome
+	eventAt           time.Time
+	errorType         string
+	result            SESProviderOutcomeResult
+	seenEmails        map[string]struct{}
+}
+
+// PrepareSESProviderOutcome validates the outcome and finds the runs that
+// sent providerMessageID.
+func PrepareSESProviderOutcome(
 	ctx context.Context,
 	db *gorm.DB,
 	providerMessageID string,
 	outcome SESProviderOutcome,
 	eventAt time.Time,
 	errorType string,
-) (SESProviderOutcomeResult, error) {
+) (*SESProviderOutcomeApplication, error) {
 	providerMessageID, eventAt, errorType, err := normalizeSESProviderOutcomeInput(
 		providerMessageID, outcome, eventAt, errorType,
 	)
 	if err != nil {
-		return SESProviderOutcomeResult{}, err
+		return nil, err
 	}
 	runIDs, err := loadSESProviderOutcomeRunIDs(ctx, db, providerMessageID)
 	if err != nil {
-		return SESProviderOutcomeResult{}, err
+		return nil, err
 	}
-	result := SESProviderOutcomeResult{}
-	seenEmails := map[string]struct{}{}
-	for _, runID := range runIDs {
-		runResult, err := applySESProviderOutcomeToRun(
-			ctx, db, runID, providerMessageID, outcome, eventAt, errorType,
-		)
-		if err != nil {
-			return SESProviderOutcomeResult{}, err
-		}
-		mergeSESProviderRunOutcome(&result, seenEmails, runResult)
-	}
-	return result, nil
+	return &SESProviderOutcomeApplication{
+		RunIDs: runIDs, providerMessageID: providerMessageID, outcome: outcome,
+		eventAt: eventAt, errorType: errorType, seenEmails: map[string]struct{}{},
+	}, nil
+}
+
+// ApplyToRun applies the outcome to the run's recipients in tx.
+func (a *SESProviderOutcomeApplication) ApplyToRun(ctx context.Context, tx *gorm.DB, runID string) (SESProviderRunOutcome, error) {
+	return applySESProviderOutcomeToRun(ctx, tx, runID, a.providerMessageID, a.outcome, a.eventAt, a.errorType)
+}
+
+// Record adds a committed run's outcome to the result.
+func (a *SESProviderOutcomeApplication) Record(run SESProviderRunOutcome) {
+	mergeSESProviderRunOutcome(&a.result, a.seenEmails, run)
+}
+
+// Result is the outcome of every recorded run.
+func (a *SESProviderOutcomeApplication) Result() SESProviderOutcomeResult {
+	return a.result
 }
 
 func normalizeSESProviderOutcomeInput(
@@ -90,41 +112,40 @@ func loadSESProviderOutcomeRunIDs(ctx context.Context, db *gorm.DB, providerMess
 	return runIDs, err
 }
 
-type sesProviderRunOutcome struct {
+// SESProviderRunOutcome is what an outcome changed in one run.
+type SESProviderRunOutcome struct {
 	emails  []string
 	updated int
 }
 
 func applySESProviderOutcomeToRun(
 	ctx context.Context,
-	db *gorm.DB,
+	tx *gorm.DB,
 	runID string,
 	providerMessageID string,
 	outcome SESProviderOutcome,
 	eventAt time.Time,
 	errorType string,
-) (sesProviderRunOutcome, error) {
-	var result sesProviderRunOutcome
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		locked, _, err := lockEmailDeliveryRunForMutation(ctx, tx, runID, "")
+) (SESProviderRunOutcome, error) {
+	tx = tx.WithContext(ctx)
+	var result SESProviderRunOutcome
+	locked, _, err := lockEmailDeliveryRunForMutation(ctx, tx, runID, "")
+	if err != nil {
+		return SESProviderRunOutcome{}, err
+	}
+	recipients, err := lockSESProviderOutcomeRecipients(ctx, tx, locked.Run.ID, providerMessageID)
+	if err != nil {
+		return SESProviderRunOutcome{}, err
+	}
+	for _, recipient := range recipients {
+		updated, err := applySESProviderRecipientOutcome(tx, recipient, outcome, eventAt, errorType)
 		if err != nil {
-			return err
+			return SESProviderRunOutcome{}, err
 		}
-		recipients, err := lockSESProviderOutcomeRecipients(ctx, tx, locked.Run.ID, providerMessageID)
-		if err != nil {
-			return err
-		}
-		for _, recipient := range recipients {
-			updated, err := applySESProviderRecipientOutcome(tx, recipient, outcome, eventAt, errorType)
-			if err != nil {
-				return err
-			}
-			result.updated += updated
-			result.emails = appendNormalizedEmail(result.emails, recipient.RecipientEmail)
-		}
-		return refreshEmailDeliveryRunBusinessCounts(ctx, tx, locked.Run.ID)
-	})
-	return result, err
+		result.updated += updated
+		result.emails = appendNormalizedEmail(result.emails, recipient.RecipientEmail)
+	}
+	return result, refreshEmailDeliveryRunBusinessCounts(ctx, tx, locked.Run.ID)
 }
 
 func lockSESProviderOutcomeRecipients(
@@ -181,7 +202,7 @@ func appendNormalizedEmail(emails []string, candidate string) []string {
 func mergeSESProviderRunOutcome(
 	result *SESProviderOutcomeResult,
 	seen map[string]struct{},
-	runResult sesProviderRunOutcome,
+	runResult SESProviderRunOutcome,
 ) {
 	result.UpdatedRecipients += runResult.updated
 	for _, email := range runResult.emails {

@@ -2,9 +2,9 @@ package campaign
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -12,7 +12,6 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
@@ -45,17 +44,17 @@ func loadCampaignSourceLocales(
 		Select("id AS entity_id, source_locale").
 		Where("id IN ?", ids).
 		Find(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for _, row := range rows {
 		locale, normalizeErr := emailcontent.NormalizeLocale(row.SourceLocale)
 		if normalizeErr != nil {
-			return nil, errs.WithCause(errs.FailedPrecondition("Campaign source locale is invalid"), failurecause.ServerFault(failurecause.WithAttrs(normalizeErr, slog.String("campaign_id", row.EntityID))))
+			return nil, domainerr.Precondition("Campaign source locale is invalid").WithCause(failurecause.ServerFault(failurecause.WithAttrs(normalizeErr, slog.String("campaign_id", row.EntityID))))
 		}
 		locales[row.EntityID] = locale
 	}
 	if len(locales) != len(campaigns) {
-		return nil, errs.FailedPrecondition("Campaign translation source is not initialized")
+		return nil, domainerr.Precondition("Campaign translation source is not initialized")
 	}
 	return locales, nil
 }
@@ -64,20 +63,13 @@ func loadCampaignEmailEditorProjection(
 	ctx context.Context,
 	db *gorm.DB,
 	store *contentblock.Store,
-	entityType string,
-	entityID string,
+	campaignID string,
 ) (campaignEmailEditorProjection, error) {
-	if store == nil {
-		return campaignEmailEditorProjection{}, errs.Internal(errors.New("campaign content block store is not configured"))
-	}
-	if err := requireCampaignContentEntity(entityType); err != nil {
-		return campaignEmailEditorProjection{}, errs.Internal(err)
-	}
-	documentID, err := loadCampaignEmailContentDocumentID(ctx, db, entityType, entityID)
+	documentID, err := loadCampaignEmailContentDocumentRoot(ctx, db, campaignID, false)
 	if err != nil {
 		return campaignEmailEditorProjection{}, err
 	}
-	domain, err := loadCampaignEmailSourceContext(ctx, db, entityType, entityID)
+	domain, err := loadCampaignSourceContext(ctx, db, campaignID, false)
 	if err != nil {
 		return campaignEmailEditorProjection{}, err
 	}
@@ -89,7 +81,7 @@ func loadCampaignEmailEditorProjection(
 	if err != nil {
 		return campaignEmailEditorProjection{}, campaignContent.NormalizeContentBlockError(err)
 	}
-	if _, _, err := loadCampaignEmailLocaleMetadata(ctx, db, entityType, entityID); err != nil {
+	if _, _, err := loadCampaignEmailLocaleMetadata(ctx, db, campaignID); err != nil {
 		return campaignEmailEditorProjection{}, err
 	}
 	return campaignEmailEditorProjection{

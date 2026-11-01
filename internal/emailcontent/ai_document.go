@@ -14,9 +14,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -100,12 +100,13 @@ func (e *AIDocumentRevisionConflictError) Error() string {
 // contributor. It returns the owner's content document and the Member.
 type AIDocumentAuthority func(ctx context.Context, tx *gorm.DB, id string, forUpdate bool) (uuid.UUID, uuid.UUID, error)
 
-// AIDocuments is the AI document seam of one owner.
+// AIDocuments is the AI document seam of one owner. Its writes run through
+// the owner's mutation pipeline.
 type AIDocuments struct {
 	Owner     Owner
 	DB        *gorm.DB
 	Store     *contentblock.Store
-	Audit     domainaudit.Appender
+	Mutations *mutation.Runner
 	Authorize AIDocumentAuthority
 }
 
@@ -120,7 +121,7 @@ func (d AIDocuments) Load(ctx context.Context, id, locale string) (AIDocumentSta
 		return AIDocumentState{}, err
 	}
 	var state AIDocumentState
-	err = d.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = mutation.ReadLocked(ctx, d.DB, func(tx *gorm.DB) error {
 		documentID, memberID, err := d.Authorize(ctx, tx, id, false)
 		if err != nil {
 			return err
@@ -137,7 +138,7 @@ var errRollbackAIDocumentValidation = errors.New("rollback email content AI docu
 // locks and authorizes the owner's root and lifecycle, locks the current
 // source, locale and contributor facts, and only then invokes the adapter
 // compiler; the write, its projections, Audit and signal share the
-// transaction. Validate rolls the same transaction back.
+// transaction. Validate rolls the transaction back before Audit and signal.
 func (d AIDocuments) ExecuteAIDocumentMutation(
 	ctx context.Context,
 	id string,
@@ -159,20 +160,29 @@ func (d AIDocuments) ExecuteAIDocumentMutation(
 	if err != nil {
 		return AIDocumentMutationResult{}, err
 	}
-	var output AIDocumentMutationResult
-	var currentDocumentRevision string
-	err = d.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var mutation AIDocumentMutation
-		var err error
-		mutation, output, currentDocumentRevision, err = d.execute(ctx, tx, id, locale, compiler)
-		if err != nil {
+	var documentID, memberID uuid.UUID
+	var applied aiDocumentApply
+	_, err = mutation.Run(ctx, d.Mutations, mutation.Spec[aiDocumentApply]{
+		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, _ mutation.Require) error {
+			var err error
+			documentID, memberID, err = d.Authorize(ctx, tx, id, true)
 			return err
-		}
-		if mode == AIDocumentExecutionValidate {
-			return errRollbackAIDocumentValidation
-		}
-		return contentsignal.PublishInteractive(ctx, tx, d.Owner.ContentEntityType, mutation.Reference, mutation.Locale, output.DocumentRevision, output.TargetRevision, output.Changed, mutation.DeleteTranslation, mutation.ContributorMember.String())
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (aiDocumentApply, error) {
+			var err error
+			applied, err = d.execute(ctx, tx, id, locale, documentID, memberID, compiler)
+			if err == nil && mode == AIDocumentExecutionValidate {
+				err = errRollbackAIDocumentValidation
+			}
+			return applied, err
+		},
+		Audit: func(applied aiDocumentApply) mutation.Audit { return applied.record },
+		Outbox: func(ctx context.Context, tx *gorm.DB, applied aiDocumentApply) error {
+			m, output := applied.mutation, applied.output
+			return contentsignal.PublishInteractive(ctx, tx, d.Owner.ContentEntityType, m.Reference, m.Locale, output.DocumentRevision, output.TargetRevision, output.Changed, m.DeleteTranslation, m.ContributorMember.String())
+		},
 	})
+	output, currentDocumentRevision := applied.output, applied.currentDocumentRevision
 	if errors.Is(err, errRollbackAIDocumentValidation) {
 		return output, nil
 	}
@@ -188,43 +198,53 @@ func (d AIDocuments) ExecuteAIDocumentMutation(
 	return output, nil
 }
 
-// execute authorizes, compiles and applies one mutation in tx.
+// aiDocumentApply is one applied mutation, the record it names and the
+// document revision the compiler saw.
+type aiDocumentApply struct {
+	mutation                AIDocumentMutation
+	output                  AIDocumentMutationResult
+	record                  mutation.Audit
+	currentDocumentRevision string
+}
+
+// execute compiles and applies one mutation in tx after the owner locked and
+// authorized documentID for memberID.
 func (d AIDocuments) execute(
 	ctx context.Context,
 	tx *gorm.DB,
 	id string,
 	locale string,
+	documentID uuid.UUID,
+	memberID uuid.UUID,
 	compiler AIDocumentMutationCompiler,
-) (AIDocumentMutation, AIDocumentMutationResult, string, error) {
-	documentID, memberID, err := d.Authorize(ctx, tx, id, true)
-	if err != nil {
-		return AIDocumentMutation{}, AIDocumentMutationResult{}, "", err
-	}
+) (aiDocumentApply, error) {
 	domain, err := d.Owner.Rows.SourceContext(ctx, tx, id, true)
 	if err != nil {
-		return AIDocumentMutation{}, AIDocumentMutationResult{}, "", err
+		return aiDocumentApply{}, err
 	}
 	state, err := d.loadState(ctx, tx, id, locale, documentID, memberID, true)
 	if err != nil {
-		return AIDocumentMutation{}, AIDocumentMutationResult{}, "", err
+		return aiDocumentApply{}, err
 	}
-	mutation, err := compiler(state)
+	applied := aiDocumentApply{currentDocumentRevision: state.DocumentRevision}
+	compiled, err := compiler(state)
 	if err != nil {
-		return AIDocumentMutation{}, AIDocumentMutationResult{}, state.DocumentRevision, &compilerError{cause: err}
+		return applied, &compilerError{cause: err}
 	}
-	mutation, expected, err := d.Owner.normalizeAIDocumentMutation(mutation)
+	compiled, expected, err := d.Owner.normalizeAIDocumentMutation(compiled)
 	if err != nil {
-		return AIDocumentMutation{}, AIDocumentMutationResult{}, state.DocumentRevision, err
+		return applied, err
 	}
-	if err := d.Owner.validateCompiledAIDocumentMutation(state, mutation, expected); err != nil {
-		return AIDocumentMutation{}, AIDocumentMutationResult{}, state.DocumentRevision, err
+	if err := d.Owner.validateCompiledAIDocumentMutation(state, compiled, expected); err != nil {
+		return applied, err
 	}
 	write := aiDocumentWrite{
-		mutation: mutation, expected: expected, documentID: documentID,
+		mutation: compiled, expected: expected, documentID: documentID,
 		fence: d.Owner.authorizedAIDocumentFence(documentID, domain), now: dbtime.Now(),
 	}
-	output, err := d.apply(ctx, tx, write)
-	return mutation, output, state.DocumentRevision, err
+	applied.mutation = compiled
+	applied.output, applied.record, err = d.apply(ctx, tx, write)
+	return applied, err
 }
 
 // aiDocumentWrite is one validated mutation of the locked document.
@@ -242,8 +262,8 @@ func (w aiDocumentWrite) contributors() []uuid.UUID {
 
 // apply writes the mutation: a created or deleted translation, a source
 // edit with its subject, or a target edit. A changed source refreshes the
-// owner's projections; every change records the locale content audit.
-func (d AIDocuments) apply(ctx context.Context, tx *gorm.DB, w aiDocumentWrite) (AIDocumentMutationResult, error) {
+// owner's projections; every change names the locale content record.
+func (d AIDocuments) apply(ctx context.Context, tx *gorm.DB, w aiDocumentWrite) (AIDocumentMutationResult, mutation.Audit, error) {
 	m := w.mutation
 	var result contentblock.Result
 	var targetRevision *string
@@ -262,19 +282,18 @@ func (d AIDocuments) apply(ctx context.Context, tx *gorm.DB, w aiDocumentWrite) 
 		result, targetRevision = target.Result, &target.TargetRevision
 	}
 	if err != nil {
-		return AIDocumentMutationResult{}, err
+		return AIDocumentMutationResult{}, mutation.Audit{}, err
 	}
+	record := mutation.Unchanged()
 	if result.Changed {
-		if err := d.Owner.appendLocaleContentAudit(
-			ctx, tx, d.Audit, m.ContributorMember.String(), m.Reference, m.Locale,
+		record = d.Owner.LocaleContentChange(
+			m.ContributorMember.String(), m.Reference, m.Locale,
 			LocaleContentOperation(m.Locale == m.ExpectedSource, m.CreateTranslation, m.DeleteTranslation, m.ExpectedPresence),
-		); err != nil {
-			return AIDocumentMutationResult{}, err
-		}
+		)
 	}
 	return AIDocumentMutationResult{
 		DocumentRevision: result.DocumentRevision.String(), TargetRevision: targetRevision, Changed: result.Changed,
-	}, nil
+	}, record, nil
 }
 
 // targetMutation is the target write of a created translation or a target

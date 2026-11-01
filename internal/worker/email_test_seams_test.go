@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"gorm.io/gorm"
 )
 
 func (h *Handlers) buildMaterializedCampaignEmailJob(
@@ -115,10 +116,7 @@ func (h *Handlers) enforceEmailRecipientContext(
 	if err != nil || !decision.Blocked {
 		return false, err
 	}
-	if err := campaign.MarkCampaignDeliveryRecipientResultWithAudit(
-		ctx, h.db, h.auditWriter, job.GetDeliveryRecipientId(),
-		campaign.CampaignDeliveryRecipientStatusBlocked, "", decision.Reason, h.mailMetrics,
-	); err != nil {
+	if err := h.markRecipientContextBlocked(ctx, job.GetDeliveryRecipientId(), decision.Reason); err != nil {
 		return false, fmt.Errorf("persist recipient context block: %w", err)
 	}
 	logEmailLifecycle(
@@ -206,4 +204,18 @@ func (m mailMetrics) recordRecipientStatus(ctx context.Context, templateType str
 
 func mailTemplateClass(templateType string) string {
 	return emaildeliveryadapter.TemplateClass(templateType)
+}
+
+// markRecipientContextBlocked records a blocked Campaign recipient; a direct
+// send has none to record.
+func (h *Handlers) markRecipientContextBlocked(ctx context.Context, recipientID, reason string) error {
+	if strings.TrimSpace(recipientID) == "" {
+		return nil
+	}
+	return h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return campaign.MarkCampaignDeliveryRecipientResultWithAudit(
+			ctx, tx, h.auditWriter, recipientID,
+			campaign.CampaignDeliveryRecipientStatusBlocked, "", reason, h.mailMetrics,
+		)
+	})
 }
