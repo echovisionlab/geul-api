@@ -11,10 +11,10 @@ import (
 
 	"gorm.io/gorm"
 
+	menuadapter "github.com/echovisionlab/geul-api/internal/adapters/menu"
 	seriesadapter "github.com/echovisionlab/geul-api/internal/adapters/series"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	menudomain "github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -83,8 +83,8 @@ func requireFileRowExists(t *testing.T, db *gorm.DB, fileID string) {
 	require.EqualValues(t, 1, count)
 }
 
-func seriesIntegrationMenuTargets() menudomain.TargetLifecycle {
-	return menudomain.NewTargetLifecycle(nil)
+func seriesIntegrationMenuTargets() menuadapter.TargetLifecycle {
+	return menuadapter.NewTargetLifecycle(nil)
 }
 
 func seedSeriesActor(t *testing.T, db *gorm.DB, identityID, nickname string) {

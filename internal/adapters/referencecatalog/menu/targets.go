@@ -7,20 +7,20 @@ import (
 
 	"gorm.io/gorm"
 
+	menuadapter "github.com/echovisionlab/geul-api/internal/adapters/menu"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	menudomain "github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 )
 
 // Targets adapts menu-owned reference maintenance to the Reference Catalog boundary.
 type Targets struct {
-	lifecycle menudomain.TargetLifecycle
+	lifecycle menuadapter.TargetLifecycle
 }
 
 var _ referencecatalog.MenuTargets = Targets{}
 
 func NewTargets(auditWriter domainaudit.Appender) Targets {
-	return Targets{lifecycle: menudomain.NewTargetLifecycle(auditWriter)}
+	return Targets{lifecycle: menuadapter.NewTargetLifecycle(auditWriter)}
 }
 
 func (m Targets) UpdateSlug(

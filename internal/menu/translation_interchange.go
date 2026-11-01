@@ -9,12 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -26,6 +23,15 @@ type TranslationInterchangeTarget struct {
 	Targets  map[string]translation.UnitResult
 }
 
+// InterchangeMode is how an XLIFF import treats the current target values.
+type InterchangeMode uint8
+
+// Patch keeps the target values the import leaves out; Replace drops them.
+const (
+	InterchangePatch InterchangeMode = iota + 1
+	InterchangeReplace
+)
+
 // TranslationInterchangeMutation is one application-validated XLIFF target
 // import. Menu revalidates identity, locale role and target CAS under its own
 // root and locale-row locks before persisting values-only labels and Audit.
@@ -33,7 +39,7 @@ type TranslationInterchangeMutation struct {
 	MenuID           string
 	SourceLocale     string
 	TargetLocale     string
-	Mode             managev1.TranslationInterchangeMode
+	Mode             InterchangeMode
 	ExpectedRevision *string
 	Plan             *translation.ExtractionPlan
 	Targets          map[string]translation.UnitResult
@@ -49,9 +55,9 @@ type TranslationInterchangeResult struct {
 
 // LoadTranslationInterchangeTarget loads only target-owned values. It never
 // materializes source fallback into an absent Menu locale row.
-func (s *Service) LoadTranslationInterchangeTarget(
+func LoadTranslationInterchangeTarget(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	menuID string,
 	locale string,
 	plan *translation.ExtractionPlan,
@@ -59,7 +65,7 @@ func (s *Service) LoadTranslationInterchangeTarget(
 	if err := validateMenuInterchangeIdentity(menuID, locale, plan); err != nil {
 		return TranslationInterchangeTarget{}, err
 	}
-	snapshot, err := loadMenuAIDocumentSnapshot(ctx, tx, menuID, locale, false)
+	snapshot, err := loadMenuAIDocumentSnapshot(ctx, store, menuID, locale, false)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}
@@ -79,44 +85,22 @@ func (s *Service) LoadTranslationInterchangeTarget(
 }
 
 // ApplyTranslationInterchange owns Menu target CAS, sparse persistence and
-// Audit in the caller's already-authorized transaction. It never changes the
-// source-owned item graph.
-func (s *Service) ApplyTranslationInterchange(
+// Audit in the translation pipeline's already-authorized joined
+// transaction. It never changes the source-owned item graph.
+func ApplyTranslationInterchange(
 	ctx context.Context,
-	tx *gorm.DB,
+	joined Joined,
 	mutation TranslationInterchangeMutation,
 ) (TranslationInterchangeResult, error) {
-	if s == nil || tx == nil || s.auditWriter == nil {
+	if joined.Store == nil || joined.Audit == nil {
 		return TranslationInterchangeResult{}, domainerr.DependencyUnavailable("Menu translation interchange")
 	}
 	if err := validateMenuInterchangeMutation(mutation); err != nil {
 		return TranslationInterchangeResult{}, err
 	}
-	root, err := lockMenuForUpdate(ctx, tx, mutation.MenuID)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return TranslationInterchangeResult{}, domainerr.ResourceNotFound("menu", mutation.MenuID)
-	}
+	store := joined.Store
+	root, current, currentRevision, err := lockMenuInterchangeTarget(ctx, store, mutation)
 	if err != nil {
-		return TranslationInterchangeResult{}, err
-	}
-	current, err := loadMenuAIDocumentSnapshotFromRoot(
-		ctx, tx, *root, mutation.TargetLocale, true,
-	)
-	if err != nil {
-		return TranslationInterchangeResult{}, err
-	}
-	if current.SourceLocale != mutation.SourceLocale || mutation.TargetLocale == current.SourceLocale {
-		return TranslationInterchangeResult{}, domainerr.InvalidField(
-			"target_locale", "Menu XLIFF locale role no longer matches the owning document",
-		)
-	}
-	currentRevision, err := menuInterchangeRevision(current)
-	if err != nil {
-		return TranslationInterchangeResult{}, err
-	}
-	if err := translation.ValidateExpectedTargetRevision(
-		mutation.ExpectedRevision, currentRevision, current.LocaleExists,
-	); err != nil {
 		return TranslationInterchangeResult{}, err
 	}
 
@@ -146,7 +130,7 @@ func (s *Service) ApplyTranslationInterchange(
 	next := cloneMenuAIDocumentSnapshot(current)
 	next.LocaleExists = true
 	next.Labels = nextLabels
-	if err := persistMenuAIDocumentTarget(ctx, tx, current, next, false, now); err != nil {
+	if err := persistMenuAIDocumentTarget(ctx, store, current, next, false, now); err != nil {
 		return TranslationInterchangeResult{}, err
 	}
 	operation := sharedtelemetry.AuditItemOperationUpdated
@@ -154,7 +138,7 @@ func (s *Service) ApplyTranslationInterchange(
 		operation = sharedtelemetry.AuditItemOperationCreated
 	}
 	if err := domainaudit.AppendRequest(
-		ctx, tx, s.auditWriter, sharedtelemetry.AuditMenuUpdated,
+		ctx, nil, joined.Audit, sharedtelemetry.AuditMenuUpdated,
 		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewMenuLocaleContentAuditRecord(
 				metadata, mutation.MenuID, mutation.TargetLocale, operation,
@@ -163,9 +147,7 @@ func (s *Service) ApplyTranslationInterchange(
 	); err != nil {
 		return TranslationInterchangeResult{}, err
 	}
-	reloaded, err := loadMenuAIDocumentSnapshotFromRoot(
-		ctx, tx, *root, mutation.TargetLocale, true,
-	)
+	reloaded, err := loadMenuAIDocumentSnapshotFromRoot(ctx, store, root, mutation.TargetLocale, true)
 	if err != nil {
 		return TranslationInterchangeResult{}, err
 	}
@@ -180,6 +162,36 @@ func (s *Service) ApplyTranslationInterchange(
 		Revision: revision, Changed: true,
 		AffectedUnitHandles: affected,
 	}, nil
+}
+
+// lockMenuInterchangeTarget locks the Menu and the imported locale, checks
+// the locale role and the expected target revision, and returns the locked
+// target and its revision.
+func lockMenuInterchangeTarget(ctx context.Context, store Store, mutation TranslationInterchangeMutation) (Root, AIDocumentSnapshot, string, error) {
+	root, err := store.LockMenu(ctx, mutation.MenuID)
+	if errors.Is(err, ErrMenuNotFound) {
+		return Root{}, AIDocumentSnapshot{}, "", domainerr.ResourceNotFound("menu", mutation.MenuID)
+	}
+	if err != nil {
+		return Root{}, AIDocumentSnapshot{}, "", err
+	}
+	current, err := loadMenuAIDocumentSnapshotFromRoot(ctx, store, root, mutation.TargetLocale, true)
+	if err != nil {
+		return Root{}, AIDocumentSnapshot{}, "", err
+	}
+	if current.SourceLocale != mutation.SourceLocale || mutation.TargetLocale == current.SourceLocale {
+		return Root{}, AIDocumentSnapshot{}, "", domainerr.InvalidField(
+			"target_locale", "Menu XLIFF locale role no longer matches the owning document",
+		)
+	}
+	revision, err := menuInterchangeRevision(current)
+	if err != nil {
+		return Root{}, AIDocumentSnapshot{}, "", err
+	}
+	if err := translation.ValidateExpectedTargetRevision(mutation.ExpectedRevision, revision, current.LocaleExists); err != nil {
+		return Root{}, AIDocumentSnapshot{}, "", err
+	}
+	return root, current, revision, nil
 }
 
 func validateMenuInterchangeIdentity(menuID, locale string, plan *translation.ExtractionPlan) error {
@@ -200,8 +212,7 @@ func validateMenuInterchangeMutation(mutation TranslationInterchangeMutation) er
 	if mutation.SourceLocale != mutation.Plan.SourceLocale || mutation.Targets == nil {
 		return domainerr.InvalidField("target", "Menu XLIFF identity does not match the current plan")
 	}
-	if mutation.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH &&
-		mutation.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
+	if mutation.Mode != InterchangePatch && mutation.Mode != InterchangeReplace {
 		return domainerr.InvalidField("mode", "PATCH or REPLACE is required")
 	}
 	known := make(map[string]struct{}, len(mutation.Plan.Units))
@@ -268,12 +279,12 @@ func projectMenuInterchangeTargets(
 }
 
 func mergeMenuInterchangeTargets(
-	mode managev1.TranslationInterchangeMode,
+	mode InterchangeMode,
 	current map[string]translation.UnitResult,
 	imported map[string]translation.UnitResult,
 ) map[string]translation.UnitResult {
 	result := make(map[string]translation.UnitResult, len(current)+len(imported))
-	if mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH {
+	if mode == InterchangePatch {
 		maps.Copy(result, current)
 	}
 	for handle, target := range imported {
@@ -303,13 +314,13 @@ func menuInterchangeLabels(
 }
 
 func changedMenuInterchangeHandles(
-	mode managev1.TranslationInterchangeMode,
+	mode InterchangeMode,
 	current map[string]translation.UnitResult,
 	incoming map[string]translation.UnitResult,
 	handles []string,
 ) []string {
 	candidates := append([]string(nil), handles...)
-	if mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
+	if mode == InterchangeReplace {
 		for handle := range current {
 			if _, present := incoming[handle]; !present {
 				candidates = append(candidates, handle)

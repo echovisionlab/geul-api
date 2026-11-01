@@ -73,10 +73,7 @@
 4 internal/member/public gorm
 3 internal/member/public model
 2 internal/member/public spicedb client
-7 internal/menu generated contracts
-12 internal/menu gorm
-9 internal/menu model
-4 internal/menu spicedb client
+1 internal/menu generated contracts
 20 internal/page generated contracts
 23 internal/page gorm
 14 internal/page model

@@ -11,7 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	menudomain "github.com/echovisionlab/geul-api/internal/menu"
+	menupostgres "github.com/echovisionlab/geul-api/internal/menu/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -22,7 +22,7 @@ type SiteSettingsReferences struct {
 	auditWriter domainaudit.Appender
 }
 
-var _ menudomain.SiteSettingsReferences = SiteSettingsReferences{}
+var _ menupostgres.SiteSettings = SiteSettingsReferences{}
 
 func NewSiteSettingsReferences(auditWriter domainaudit.Appender) SiteSettingsReferences {
 	return SiteSettingsReferences{auditWriter: auditWriter}

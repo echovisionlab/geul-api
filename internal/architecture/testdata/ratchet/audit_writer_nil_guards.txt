@@ -2,5 +2,4 @@
 # -update.
 3 internal/account
 1 internal/campaign
-2 internal/menu
 2 internal/series

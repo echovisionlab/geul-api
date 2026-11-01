@@ -71,6 +71,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/member"
 	memberpat "github.com/echovisionlab/geul-api/internal/member/pat"
 	"github.com/echovisionlab/geul-api/internal/menu"
+	menupostgres "github.com/echovisionlab/geul-api/internal/menu/postgres"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/page"
@@ -539,7 +540,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	pageService, err := page.NewService(page.Deps{
 		DB: db, SpiceDB: spicedbClient, Runtime: pageRuntime, Files: pageruntime.NewFiles(fileService),
 		Signals: servicePublisher, ContentBlocks: contentBlockStore, MediaHydrator: fileService,
-		MenuTargets: menu.NewTargetLifecycle(telemetryWriter), Members: memberadapter.PageMembers{},
+		MenuTargets: menuadapter.NewTargetLifecycle(telemetryWriter), Members: memberadapter.PageMembers{},
 		ShareLinks: sharelinkadapter.PageLinks{}, Audit: telemetryWriter,
 	})
 	if err != nil {
@@ -555,11 +556,11 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered internal service", "path", internalPagePath)
 
 	menuService, err := menu.NewService(menu.Deps{
-		DB: db, SpiceDB: spicedbClient,
-		SiteSettings: menuadapter.NewSiteSettingsReferences(telemetryWriter),
-		Targets:      menuadapter.NewTargetReferences(),
-		Checkpoints:  collaborationRuntime.Checkpoints,
-		Audit:        telemetryWriter,
+		Units: menupostgres.NewUnits(db, menupostgres.Ports{
+			SiteSettings: menuadapter.NewSiteSettingsReferences(telemetryWriter),
+			Checkpoints:  collaborationRuntime.Checkpoints,
+		}),
+		SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
 	})
 	if err != nil {
 		return registeredServices{}, err
@@ -593,7 +594,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 
 	// Phase 3: Reference Data Services
 	seriesRuntime := seriesadapter.NewRuntime(db, cfg.CDNURL, ogDeps.refresher)
-	seriesMenuTargets := menu.NewTargetLifecycle(telemetryWriter)
+	seriesMenuTargets := menuadapter.NewTargetLifecycle(telemetryWriter)
 	seriesPostAccess := seriesadapter.PostAccess{}
 	seriesService, err := series.NewService(series.Deps{
 		DB: db, SpiceDB: spicedbClient, Identity: kratosClient,
@@ -788,7 +789,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		handlerOptions:           handlerOpts,
 		domainRegistry:           translationRegistry,
 		emailAuthoringReferences: emailAuthoringReferences,
-		menuService:              menuService,
 		legalDocuments:           legalAIDocumentService,
 		internalFormService:      formService,
 		programEventService:      programEventService,

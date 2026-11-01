@@ -11,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/legal"
-	"github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/series"
@@ -28,7 +27,6 @@ type translationServiceRegistration struct {
 	handlerOptions           []connect.HandlerOption
 	domainRegistry           *translationadapter.DomainRegistry
 	emailAuthoringReferences emailauthoring.CampaignDeliveryReferences
-	menuService              *menu.Service
 	legalDocuments           *legal.AIDocumentService
 	internalFormService      *formdomain.Service
 	programEventService      *programevent.Service
@@ -49,7 +47,6 @@ func (r translationServiceRegistration) register() (*translationapplication.Serv
 	handlerOpts := r.handlerOptions
 	translationRegistry := r.domainRegistry
 	emailAuthoringReferences := r.emailAuthoringReferences
-	menuService := r.menuService
 	legalAIDocumentService := r.legalDocuments
 	internalFormService := r.internalFormService
 	programEventService := r.programEventService
@@ -94,7 +91,7 @@ func (r translationServiceRegistration) register() (*translationapplication.Serv
 		},
 		{
 			Domain: translationcore.KindMenu,
-			Port:   translationadapter.NewMenuInterchange(menuService),
+			Port:   translationadapter.NewMenuInterchange(telemetryWriter),
 		},
 		{
 			Domain: translationcore.KindEmailTemplate,

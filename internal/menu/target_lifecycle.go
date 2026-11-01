@@ -6,12 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -21,19 +16,11 @@ type menuTargetReference struct {
 	slug     string
 }
 
-// TargetLifecycle keeps Menu targets consistent with changes in owning domains.
-type TargetLifecycle struct {
-	auditWriter domainaudit.Appender
-}
-
-func NewTargetLifecycle(auditWriter domainaudit.Appender) TargetLifecycle {
-	return TargetLifecycle{auditWriter: auditWriter}
-}
-
-// UpdateSlug rewrites Menu targets after an owning domain changes a slug.
-func (l TargetLifecycle) UpdateSlug(
+// UpdateTargetSlug rewrites Menu targets in an owning domain's joined
+// transaction after it changes a target's slug.
+func UpdateTargetSlug(
 	ctx context.Context,
-	tx *gorm.DB,
+	joined Joined,
 	linkType string,
 	targetID string,
 	oldSlug string,
@@ -49,15 +36,16 @@ func (l TargetLifecycle) UpdateSlug(
 		return nil
 	}
 
-	return l.rewriteMenusForTarget(ctx, tx, func(items []model.MenuItem) ([]model.MenuItem, bool) {
+	return rewriteMenusForTarget(ctx, joined, func(items []Item) ([]Item, bool) {
 		return rewriteMenuTargetSlug(items, ref, nextSlug)
 	})
 }
 
-// Remove removes Menu targets after an owning domain deletes a target.
-func (l TargetLifecycle) Remove(
+// RemoveTarget removes Menu targets in an owning domain's joined transaction
+// after it deletes a target.
+func RemoveTarget(
 	ctx context.Context,
-	tx *gorm.DB,
+	joined Joined,
 	linkType string,
 	targetID string,
 	targetSlug string,
@@ -71,86 +59,78 @@ func (l TargetLifecycle) Remove(
 		return nil
 	}
 
-	return l.rewriteMenusForTarget(ctx, tx, func(items []model.MenuItem) ([]model.MenuItem, bool) {
+	return rewriteMenusForTarget(ctx, joined, func(items []Item) ([]Item, bool) {
 		return removeMenuTargetItems(items, ref)
 	})
 }
 
-func (l TargetLifecycle) rewriteMenusForTarget(
+// rewriteMenusForTarget locks every Menu and rewrites the ones whose items
+// reference the target. A joined transaction without an audit appender is
+// an explicitly unaudited caller.
+func rewriteMenusForTarget(
 	ctx context.Context,
-	tx *gorm.DB,
-	rewrite func([]model.MenuItem) ([]model.MenuItem, bool),
+	joined Joined,
+	rewrite func([]Item) ([]Item, bool),
 ) error {
 	now := time.Now().UTC()
-	var menus []model.Menu
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Order("id ASC").
-		Find(&menus).Error; err != nil {
+	roots, err := joined.Store.LockMenus(ctx)
+	if err != nil {
 		return err
 	}
-
-	for index := range menus {
-		var items []model.MenuItem
-		if len(menus[index].Items) > 0 {
-			if err := json.Unmarshal(menus[index].Items, &items); err != nil {
-				// Target rename/delete and every affected menu are one product
-				// transaction. Silently skipping malformed source JSON would commit
-				// a dangling menu reference with no recovery authority.
-				return err
-			}
+	for _, root := range roots {
+		// Target rename/delete and every affected menu are one product
+		// transaction. Silently skipping malformed source JSON would commit
+		// a dangling menu reference with no recovery authority.
+		items, err := decodeSourceItems(root.ItemsJSON)
+		if err != nil {
+			return err
 		}
-
 		nextItems, changed := rewrite(items)
 		if !changed {
 			continue
 		}
-		nextJSON, err := json.Marshal(nextItems)
-		if err != nil {
-			return err
-		}
-		document, err := loadMenuContentDocumentStateFromRoot(ctx, tx, menus[index], true)
-		if err != nil {
-			return err
-		}
-		if err := tx.WithContext(ctx).Model(&model.Menu{}).
-			Where("id = ?", menus[index].ID).
-			Updates(structured.Fields{
-				"items":      nextJSON,
-				"updated_at": now,
-			}).Error; err != nil {
-			return err
-		}
-		if err := ReconcileTranslationRowsWithSourceItems(ctx, tx, menus[index].ID, nextItems, now); err != nil {
-			return err
-		}
-		if err := advanceMenuContentDocument(
-			ctx, tx, menus[index].ID, document.ID, document.Revision, now,
-		); err != nil {
+		if err := rewriteMenuItems(ctx, joined.Store, root, nextItems, now); err != nil {
 			return err
 		}
 		if err := domainaudit.AppendOptionalRequest(
-			ctx,
-			tx,
-			l.auditWriter,
-			sharedtelemetry.AuditMenuUpdated,
+			ctx, nil, joined.Audit, sharedtelemetry.AuditMenuUpdated,
 			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewMenuSourceUpdatedAuditRecord(metadata, menus[index].ID, []string{"items"})
+				return sharedtelemetry.NewMenuSourceUpdatedAuditRecord(metadata, root.ID, []string{"items"})
 			},
 		); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 
+// rewriteMenuItems stores the rewritten items of root, prunes the labels of
+// removed items and advances the content document.
+func rewriteMenuItems(ctx context.Context, store Store, root Root, nextItems []Item, now time.Time) error {
+	nextJSON, err := json.Marshal(nextItems)
+	if err != nil {
+		return err
+	}
+	document, err := loadMenuContentDocumentState(ctx, store, root, true)
+	if err != nil {
+		return err
+	}
+	if err := store.UpdateMenu(ctx, root.ID, RootChange{ItemsJSON: nextJSON, UpdatedAt: now}); err != nil {
+		return err
+	}
+	if err := reconcileTranslationRowsWithSourceItems(ctx, store, root.ID, nextItems, now); err != nil {
+		return err
+	}
+	return advanceMenuContentDocument(ctx, store, root.ID, document.ID, document.Revision, now)
+}
+
 func rewriteMenuTargetSlug(
-	items []model.MenuItem,
+	items []Item,
 	ref menuTargetReference,
 	nextSlug string,
-) ([]model.MenuItem, bool) {
+) ([]Item, bool) {
 	changed := false
-	next := make([]model.MenuItem, len(items))
+	next := make([]Item, len(items))
 	for index := range items {
 		item := items[index]
 		if menuItemReferencesTarget(&item, ref) {
@@ -172,9 +152,9 @@ func rewriteMenuTargetSlug(
 	return next, changed
 }
 
-func removeMenuTargetItems(items []model.MenuItem, ref menuTargetReference) ([]model.MenuItem, bool) {
+func removeMenuTargetItems(items []Item, ref menuTargetReference) ([]Item, bool) {
 	changed := false
-	next := make([]model.MenuItem, 0, len(items))
+	next := make([]Item, 0, len(items))
 	for index := range items {
 		item := items[index]
 		if menuItemReferencesTarget(&item, ref) {
@@ -193,8 +173,8 @@ func removeMenuTargetItems(items []model.MenuItem, ref menuTargetReference) ([]m
 	return next, changed
 }
 
-func menuItemReferencesTarget(item *model.MenuItem, ref menuTargetReference) bool {
-	if item == nil || strings.TrimSpace(item.LinkType) != ref.linkType {
+func menuItemReferencesTarget(item *Item, ref menuTargetReference) bool {
+	if item == nil || strings.TrimSpace(string(item.LinkType)) != ref.linkType {
 		return false
 	}
 
