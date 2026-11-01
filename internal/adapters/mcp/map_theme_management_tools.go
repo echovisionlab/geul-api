@@ -8,7 +8,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/maptheme"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -27,11 +27,11 @@ const (
 // collaboration saves.
 type MapThemeManagement interface {
 	ListMapThemes(context.Context) (maptheme.ThemeList, error)
-	ResolveMapTheme(context.Context, maptheme.ResolveMapThemeQuery) (*managev1.ResolvedMapTheme, error)
-	GetMapTheme(context.Context, maptheme.GetMapThemeQuery) (*managev1.MapTheme, error)
-	CreateMapTheme(context.Context, maptheme.CreateMapThemeCommand) (*managev1.MapTheme, error)
+	ResolveMapTheme(context.Context, maptheme.ResolveMapThemeQuery) (maptheme.ResolvedTheme, error)
+	GetMapTheme(context.Context, maptheme.GetMapThemeQuery) (maptheme.Theme, error)
+	CreateMapTheme(context.Context, maptheme.CreateMapThemeCommand) (maptheme.Theme, error)
 	DeleteMapTheme(context.Context, maptheme.DeleteMapThemeCommand) error
-	CopyMapTheme(context.Context, maptheme.CopyMapThemeCommand) (*managev1.MapTheme, error)
+	CopyMapTheme(context.Context, maptheme.CopyMapThemeCommand) (maptheme.Theme, error)
 	SetDefaultMapTheme(context.Context, maptheme.SetDefaultMapThemeCommand) (string, error)
 	UpdateMapThemeSnapshot(context.Context, maptheme.UpdateMapThemeSnapshotCommand) (maptheme.SnapshotUpdate, error)
 }
@@ -111,7 +111,7 @@ func (tools *MapThemeManagementTools) CallTool(ctx context.Context, _ mcpserver.
 			Scheme   string           `json:"scheme"`
 			Settings mapThemeSettings `json:"settings"`
 			Variant  mapThemeVariant  `json:"variant"`
-		}{resolved.ThemeId, resolved.Scheme, projectMapThemeSettings(resolved.Settings), projectMapThemeVariant(resolved.Variant)})
+		}{resolved.ThemeID, resolved.Scheme, mapThemeSettings(resolved.Settings), mapThemeVariant(resolved.Variant)})
 	case ToolMapThemeCreate:
 		var snapshot mapThemeSnapshot
 		if err := decodeArguments(arguments, &snapshot); err != nil {
@@ -274,46 +274,9 @@ func (snapshot mapThemeSnapshot) native() *maptheme.SnapshotInput {
 	}
 }
 
-func projectMapThemeSettings(input *managev1.MapThemeSettings) mapThemeSettings {
-	return mapThemeSettings{
-		CalloutScale:        input.GetCalloutScale(),
-		CalloutOffsetX:      input.GetCalloutOffsetX(),
-		CalloutOffsetY:      input.GetCalloutOffsetY(),
-		CalloutFields:       input.GetCalloutFields(),
-		AttributionFontSize: input.GetAttributionFontSize(),
-		ShowAreaLabels:      input.GetShowAreaLabels(),
-		ShowPoiLabels:       input.GetShowPoiLabels(),
-	}
-}
-func projectMapThemeVariant(input *managev1.MapThemeVariant) mapThemeVariant {
-	return mapThemeVariant{
-		BackgroundColor:              input.GetBackgroundColor(),
-		WaterColor:                   input.GetWaterColor(),
-		LandColor:                    input.GetLandColor(),
-		RoadColor:                    input.GetRoadColor(),
-		BuildingFillColor:            input.GetBuildingFillColor(),
-		BuildingStrokeEnabled:        input.GetBuildingStrokeEnabled(),
-		BuildingStrokeColor:          input.GetBuildingStrokeColor(),
-		CalloutLineColor:             input.GetCalloutLineColor(),
-		CalloutTextColor:             input.GetCalloutTextColor(),
-		CalloutBackgroundColor:       input.GetCalloutBackgroundColor(),
-		CalloutDescriptionColor:      input.GetCalloutDescriptionColor(),
-		AttributionColor:             input.GetAttributionColor(),
-		LabelTextColor:               input.GetLabelTextColor(),
-		ClusterColor:                 input.GetClusterColor(),
-		ClusterHoverColor:            input.GetClusterHoverColor(),
-		ClusterTextColor:             input.GetClusterTextColor(),
-		ClusterTextHoverColor:        input.GetClusterTextHoverColor(),
-		CalloutHoverLineColor:        input.GetCalloutHoverLineColor(),
-		CalloutHoverTextColor:        input.GetCalloutHoverTextColor(),
-		CalloutHoverDescriptionColor: input.GetCalloutHoverDescriptionColor(),
-		CalloutHoverBackgroundColor:  input.GetCalloutHoverBackgroundColor(),
-	}
-}
-
-func projectMapTheme(theme *managev1.MapTheme) mapThemeOutput {
-	settings, light, dark := projectMapThemeSettings(theme.GetSettings()), projectMapThemeVariant(theme.GetLightVariant()), projectMapThemeVariant(theme.GetDarkVariant())
-	return mapThemeOutput{ID: theme.GetId(), Revision: theme.GetRevision(), Snapshot: mapThemeSnapshot{Name: theme.GetName(), Settings: &settings, LightVariant: &light, DarkVariant: &dark}, CreatedAt: timestampString(theme.GetCreatedAt()), UpdatedAt: timestampString(theme.GetUpdatedAt())}
+func projectMapTheme(theme maptheme.Theme) mapThemeOutput {
+	settings, light, dark := mapThemeSettings(theme.Snapshot.Settings), mapThemeVariant(theme.Snapshot.LightVariant), mapThemeVariant(theme.Snapshot.DarkVariant)
+	return mapThemeOutput{ID: theme.ID, Revision: theme.Revision, Snapshot: mapThemeSnapshot{Name: theme.Snapshot.Name, Settings: &settings, LightVariant: &light, DarkVariant: &dark}, CreatedAt: timestampString(timestamppb.New(theme.CreatedAt)), UpdatedAt: timestampString(timestamppb.New(theme.UpdatedAt))}
 }
 
 // Native validation owns values and bounds. This shape check prevents JSON null

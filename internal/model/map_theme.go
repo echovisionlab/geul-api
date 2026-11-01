@@ -16,11 +16,13 @@ type MapTheme struct {
 	CalloutOffsetY      int            `gorm:"column:callout_offset_y;not null;default:0"`
 	CalloutFields       pq.StringArray `gorm:"column:callout_fields;type:text[];not null;default:ARRAY['name', 'address']"`
 	AttributionFontSize int            `gorm:"column:attribution_font_size;not null;default:11"`
-	ShowAreaLabels      bool           `gorm:"column:show_area_labels;not null;default:true"`
-	ShowPoiLabels       bool           `gorm:"column:show_poi_labels;not null;default:false"`
-	EditVersion         int64          `gorm:"column:edit_version;not null;default:1"`
-	CreatedAt           time.Time      `gorm:"column:created_at;not null;default:now()"`
-	UpdatedAt           time.Time      `gorm:"column:updated_at;not null;default:now()"`
+	// No default tag: gorm would insert the column default true in place of
+	// a false value.
+	ShowAreaLabels bool      `gorm:"column:show_area_labels;not null"`
+	ShowPoiLabels  bool      `gorm:"column:show_poi_labels;not null;default:false"`
+	EditVersion    int64     `gorm:"column:edit_version;not null;default:1"`
+	CreatedAt      time.Time `gorm:"column:created_at;not null;default:now()"`
+	UpdatedAt      time.Time `gorm:"column:updated_at;not null;default:now()"`
 
 	// A Theme is one durable aggregate. Light and dark are fixed fields of that
 	// aggregate, not independently addressable rows.

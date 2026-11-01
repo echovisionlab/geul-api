@@ -68,6 +68,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/legal"
 	llmproviders "github.com/echovisionlab/geul-api/internal/llm/providers"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
+	mapthemepostgres "github.com/echovisionlab/geul-api/internal/maptheme/postgres"
 	"github.com/echovisionlab/geul-api/internal/member"
 	memberpat "github.com/echovisionlab/geul-api/internal/member/pat"
 	"github.com/echovisionlab/geul-api/internal/menu"
@@ -655,7 +656,9 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(mapPlacePath, mapPlaceHandler)
 	slog.Info("Registered service", "path", mapPlacePath)
 
-	mapThemeService, err := maptheme.NewService(maptheme.Deps{DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter})
+	mapThemeService, err := maptheme.NewService(maptheme.Deps{
+		Units: mapthemepostgres.NewUnits(db), SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
+	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize map theme service: %w", err)
 	}

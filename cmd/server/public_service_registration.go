@@ -23,6 +23,7 @@ import (
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	publicform "github.com/echovisionlab/geul-api/internal/form/public"
 	legalpublic "github.com/echovisionlab/geul-api/internal/legal/public"
+	mapthemepostgres "github.com/echovisionlab/geul-api/internal/maptheme/postgres"
 	mapthemepublic "github.com/echovisionlab/geul-api/internal/maptheme/public"
 	memberpublic "github.com/echovisionlab/geul-api/internal/member/public"
 	pagepublic "github.com/echovisionlab/geul-api/internal/page/public"
@@ -194,7 +195,7 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicMapPlacePath, publicMapPlaceHandler)
 	slog.Info("Registered public service", "path", publicMapPlacePath)
 
-	publicMapThemeService, err := mapthemepublic.NewService(mapthemepublic.Deps{DB: db})
+	publicMapThemeService, err := mapthemepublic.NewService(mapthemepublic.Deps{Units: mapthemepostgres.NewUnits(db)})
 	if err != nil {
 		return fmt.Errorf("initialize public map theme service: %w", err)
 	}

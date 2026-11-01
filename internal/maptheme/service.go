@@ -7,29 +7,25 @@ import (
 	"slices"
 	"strings"
 
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // Deps are the collaborators of the Map Theme use cases; all are required.
 type Deps struct {
-	DB      *gorm.DB
-	SpiceDB *auth.SpiceDBClient
+	Units   mutation.UnitOfWork[Store] // mapthemepostgres.NewUnits(db)
+	SpiceDB Authorizer
+	Fence   identitystate.Fence // identitystate.PostgresFence{}
 	Audit   domainaudit.Appender
 }
 
 func (d Deps) validate() error {
 	var missing []string
-	for name, absent := range map[string]bool{"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil} {
+	for name, absent := range map[string]bool{
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
+	} {
 		if absent {
 			missing = append(missing, name)
 		}
@@ -45,9 +41,9 @@ func (d Deps) validate() error {
 // collaboration service. Connect and MCP adapters translate their requests
 // into its commands and queries.
 type Service struct {
-	db        *gorm.DB
-	spiceDB   *auth.SpiceDBClient
-	mutations *mutation.Runner
+	units     mutation.UnitOfWork[Store]
+	spiceDB   Authorizer
+	mutations *mutation.StoreRunner[Store]
 }
 
 // NewService validates deps and returns the Map Theme use cases.
@@ -55,89 +51,39 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
-	return &Service{db: deps.DB, spiceDB: deps.SpiceDB, mutations: mutations}, nil
+	return &Service{units: deps.Units, spiceDB: deps.SpiceDB, mutations: mutations}, nil
 }
 
-func lockMapThemeRoot(ctx context.Context, tx *gorm.DB, themeID string) (*model.MapTheme, error) {
-	var theme model.MapTheme
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Where("id = ?", themeID).
-		Take(&theme).Error; err != nil {
-		if stderrors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, domainerr.ResourceNotFound("theme", themeID)
-		}
-		return nil, err
+// lockThemeRoot locks the theme a mutation changes or copies; a missing
+// theme answers NotFound before authorization.
+func lockThemeRoot(ctx context.Context, store Store, themeID string) (Theme, error) {
+	theme, err := store.LockTheme(ctx, themeID)
+	if stderrors.Is(err, ErrThemeNotFound) {
+		return Theme{}, domainerr.ResourceNotFound("theme", themeID)
 	}
-	return &theme, nil
+	return theme, err
 }
 
-func variantToProto(themeID, scheme string, v *model.MapThemeVariant) *managev1.MapThemeVariant {
-	return &managev1.MapThemeVariant{
-		// The transport keeps a stable conceptual variant id for clients, but
-		// variants are not independently persisted rows.
-		Id: themeID + ":" + scheme, BackgroundColor: v.BackgroundColor, WaterColor: v.WaterColor,
-		LandColor: v.LandColor, RoadColor: v.RoadColor, BuildingFillColor: v.BuildingFillColor,
-		BuildingStrokeEnabled: v.BuildingStrokeEnabled, BuildingStrokeColor: v.BuildingStrokeColor,
-		CalloutLineColor: v.CalloutLineColor, CalloutTextColor: v.CalloutTextColor,
-		CalloutBackgroundColor: v.CalloutBackgroundColor, CalloutDescriptionColor: v.CalloutDescriptionColor,
-		AttributionColor: v.AttributionColor, LabelTextColor: v.LabelTextColor,
-		ClusterColor: v.ClusterColor, ClusterHoverColor: v.ClusterHoverColor,
-		ClusterTextColor: v.ClusterTextColor, ClusterTextHoverColor: v.ClusterTextHoverColor,
-		CalloutHoverLineColor: v.CalloutHoverLineColor, CalloutHoverTextColor: v.CalloutHoverTextColor,
-		CalloutHoverDescriptionColor: v.CalloutHoverDescriptionColor,
-		CalloutHoverBackgroundColor:  v.CalloutHoverBackgroundColor,
-	}
+// readTheme reads one theme in its own snapshot.
+func (s *Service) readTheme(ctx context.Context, id string) (Theme, error) {
+	var theme Theme
+	err := s.units.Read(ctx, func(store Store) (err error) {
+		theme, err = store.Theme(ctx, id)
+		return err
+	})
+	return theme, err
 }
 
-func settingsToProto(theme *model.MapTheme) *managev1.MapThemeSettings {
-	return &managev1.MapThemeSettings{
-		CalloutScale: float64(theme.CalloutScale), CalloutOffsetX: int32(theme.CalloutOffsetX),
-		CalloutOffsetY: int32(theme.CalloutOffsetY), CalloutFields: theme.CalloutFields,
-		AttributionFontSize: int32(theme.AttributionFontSize), ShowAreaLabels: theme.ShowAreaLabels,
-		ShowPoiLabels: theme.ShowPoiLabels,
-	}
-}
-
-func toProto(theme *model.MapTheme) *managev1.MapTheme {
-	return &managev1.MapTheme{
-		Id: theme.ID, Name: theme.Name, Revision: theme.EditVersion,
-		CreatedAt: timestamppb.New(theme.CreatedAt), UpdatedAt: timestamppb.New(theme.UpdatedAt),
-		Settings:     settingsToProto(theme),
-		LightVariant: variantToProto(theme.ID, "light", &theme.LightVariant),
-		DarkVariant:  variantToProto(theme.ID, "dark", &theme.DarkVariant),
-	}
-}
-
-func loadDefaultMapThemeID(ctx context.Context, db *gorm.DB) (string, error) {
-	var settings model.SiteSettings
-	if err := db.WithContext(ctx).Select("default_map_theme_id").Where("id = ?", 1).Take(&settings).Error; err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(settings.DefaultMapThemeID) == "" {
-		return "", fmt.Errorf("site settings default map theme is empty")
-	}
-	return settings.DefaultMapThemeID, nil
-}
-
-func loadMapThemeSnapshotByID(ctx context.Context, db *gorm.DB, id string) (*model.MapTheme, error) {
-	var theme model.MapTheme
-	if err := mutation.Read(ctx, db, func(tx *gorm.DB) error {
-		return tx.Where("id = ?", id).Take(&theme).Error
-	}); err != nil {
-		return nil, err
-	}
-	return &theme, nil
-}
-
-func loadResolvedMapTheme(ctx context.Context, db *gorm.DB, requestedID string) (*model.MapTheme, error) {
-	var resolved model.MapTheme
-	err := mutation.Read(ctx, db, func(tx *gorm.DB) error {
-		defaultID, err := loadDefaultMapThemeID(ctx, tx)
+// resolvedTheme reads the requested theme, or the site default when it is
+// empty or missing, in one snapshot.
+func (s *Service) resolvedTheme(ctx context.Context, requestedID string) (Theme, error) {
+	var resolved Theme
+	err := s.units.Read(ctx, func(store Store) error {
+		defaultID, err := store.DefaultThemeID(ctx)
 		if err != nil {
 			return err
 		}
@@ -145,11 +91,11 @@ func loadResolvedMapTheme(ctx context.Context, db *gorm.DB, requestedID string) 
 		if requestedID != "" && requestedID != defaultID {
 			ids = append(ids, requestedID)
 		}
-		var themes []model.MapTheme
-		if err := tx.Where("id IN ?", ids).Find(&themes).Error; err != nil {
+		themes, err := store.ThemesByID(ctx, ids)
+		if err != nil {
 			return err
 		}
-		var fallback *model.MapTheme
+		var fallback *Theme
 		for i := range themes {
 			if themes[i].ID == requestedID {
 				resolved = themes[i]
@@ -165,8 +111,5 @@ func loadResolvedMapTheme(ctx context.Context, db *gorm.DB, requestedID string) 
 		resolved = *fallback
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return &resolved, nil
+	return resolved, err
 }

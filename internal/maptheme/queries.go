@@ -4,26 +4,18 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
-	"time"
-
-	"github.com/jackc/pgx/v5/pgconn"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // ThemeList is every Map Theme and the site default.
 type ThemeList struct {
-	Themes    []*managev1.MapTheme
+	Themes    []Theme
 	DefaultID string
 }
 
@@ -62,124 +54,91 @@ type SetDefaultMapThemeCommand struct {
 
 func (s *Service) ListMapThemes(ctx context.Context) (ThemeList, error) {
 	var defaultID string
-	var themes []model.MapTheme
-	err := mutation.Read(ctx, s.db, func(tx *gorm.DB) error {
+	var themes []Theme
+	err := s.units.Read(ctx, func(store Store) error {
 		var err error
-		defaultID, err = loadDefaultMapThemeID(ctx, tx)
-		if err != nil {
+		if defaultID, err = store.DefaultThemeID(ctx); err != nil {
 			return err
 		}
-		return tx.Order("name ASC, id ASC").Find(&themes).Error
+		themes, err = store.Themes(ctx)
+		return err
 	})
 	if err != nil {
 		return ThemeList{}, err
 	}
-	result := make([]*managev1.MapTheme, 0, len(themes))
 	defaultIncluded := false
 	for i := range themes {
 		defaultIncluded = defaultIncluded || themes[i].ID == defaultID
-		result = append(result, toProto(&themes[i]))
 	}
 	if !defaultIncluded {
 		return ThemeList{}, fmt.Errorf("default map theme %s is missing", defaultID)
 	}
-	return ThemeList{Themes: result, DefaultID: defaultID}, nil
+	return ThemeList{Themes: themes, DefaultID: defaultID}, nil
 }
 
-func (s *Service) ResolveMapTheme(ctx context.Context, query ResolveMapThemeQuery) (*managev1.ResolvedMapTheme, error) {
+func (s *Service) ResolveMapTheme(ctx context.Context, query ResolveMapThemeQuery) (ResolvedTheme, error) {
 	scheme := query.Scheme
 	if scheme == "" {
 		scheme = "light"
 	}
 	if scheme != "light" && scheme != "dark" {
-		return nil, domainerr.InvalidField("scheme", "must be 'light' or 'dark'")
+		return ResolvedTheme{}, domainerr.InvalidField("scheme", "must be 'light' or 'dark'")
 	}
 	requestedID := ""
 	if query.ThemeID != nil && *query.ThemeID != "" {
 		var err error
 		if requestedID, err = normalizeMapThemeID(*query.ThemeID, "theme_id"); err != nil {
-			return nil, err
+			return ResolvedTheme{}, err
 		}
 	}
-	theme, err := loadResolvedMapTheme(ctx, s.db, requestedID)
+	theme, err := s.resolvedTheme(ctx, requestedID)
 	if err != nil {
-		return nil, fmt.Errorf("resolve map theme: %w", err)
+		return ResolvedTheme{}, fmt.Errorf("resolve map theme: %w", err)
 	}
-	variant := &theme.LightVariant
-	if scheme == "dark" {
-		variant = &theme.DarkVariant
-	}
-	return &managev1.ResolvedMapTheme{
-		ThemeId: theme.ID, Scheme: scheme, Settings: settingsToProto(theme),
-		Variant: variantToProto(theme.ID, scheme, variant),
-	}, nil
+	return theme.Resolve(scheme), nil
 }
 
-func (s *Service) GetMapTheme(ctx context.Context, query GetMapThemeQuery) (*managev1.MapTheme, error) {
+func (s *Service) GetMapTheme(ctx context.Context, query GetMapThemeQuery) (Theme, error) {
 	id, err := normalizeMapThemeID(query.ID, "id")
 	if err != nil {
-		return nil, err
+		return Theme{}, err
 	}
 	can, err := policyv1.MapTheme.View(id)
 	if err != nil {
-		return nil, domainerr.InvalidField("id", err.Error())
+		return Theme{}, domainerr.InvalidField("id", err.Error())
 	}
 	if user := auth.GetUser(ctx); user == nil || user.Banned {
-		return nil, domainerr.Denied("admin access required")
+		return Theme{}, domainerr.Denied("admin access required")
 	}
 	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return nil, err
+		return Theme{}, err
 	}
-	theme, err := loadMapThemeSnapshotByID(ctx, s.db, id)
-	if err != nil {
-		if stderrors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, domainerr.ResourceNotFound("theme", id)
-		}
-		return nil, err
+	theme, err := s.readTheme(ctx, id)
+	if stderrors.Is(err, ErrThemeNotFound) {
+		return Theme{}, domainerr.ResourceNotFound("theme", id)
 	}
-	return toProto(theme), nil
-}
-
-func createMapThemeFromSnapshot(tx *gorm.DB, snapshot Snapshot) (*model.MapTheme, error) {
-	theme := &model.MapTheme{
-		Name: snapshot.Name, EditVersion: 1,
-		CalloutScale: float32(snapshot.Settings.CalloutScale), CalloutOffsetX: int(snapshot.Settings.CalloutOffsetX),
-		CalloutOffsetY:      int(snapshot.Settings.CalloutOffsetY),
-		CalloutFields:       append([]string(nil), snapshot.Settings.CalloutFields...),
-		AttributionFontSize: int(snapshot.Settings.AttributionFontSize), ShowAreaLabels: snapshot.Settings.ShowAreaLabels,
-		ShowPoiLabels: snapshot.Settings.ShowPoiLabels,
-		LightVariant:  mapThemeVariantModel(snapshot.LightVariant),
-		DarkVariant:   mapThemeVariantModel(snapshot.DarkVariant),
-	}
-	if err := tx.Clauses(clause.Returning{}).Create(theme).Error; err != nil {
-		return nil, err
-	}
-	return theme, nil
+	return theme, err
 }
 
 // createdTheme is the mutation spec shared by create and copy: lock takes
 // the source row, build makes the theme, and the theme's policy relationship
 // is written with it.
 func (s *Service) createdTheme(
-	ctx context.Context, lock func(context.Context, *gorm.DB) error, build func(context.Context, *gorm.DB) (*model.MapTheme, error),
-) (*managev1.MapTheme, error) {
-	theme, err := mutation.Run(ctx, s.mutations, mutation.Spec[*model.MapTheme]{
+	ctx context.Context, lock func(context.Context, Store) error, build func(context.Context, Store) (Theme, error),
+) (Theme, error) {
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[Theme, Store]{
 		Lock:   lock,
 		Access: mutation.FreshAdminCan(policyv1.MapTheme.Create()),
 		Change: build,
-		Audit: func(theme *model.MapTheme) mutation.Audit {
+		Audit: func(theme Theme) mutation.Audit {
 			return mutation.RequestAudit(sharedtelemetry.AuditMapThemeCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 				return sharedtelemetry.NewMapThemeCreatedAuditRecord(metadata, theme.ID)
 			})
 		},
-		Relationships: func(theme *model.MapTheme) (apply, compensate []policyv1.RelationshipMutation, err error) {
+		Relationships: func(theme Theme) (apply, compensate []policyv1.RelationshipMutation, err error) {
 			return policyRelationships(theme.ID, true)
 		},
 	})
-	if err != nil {
-		return nil, err
-	}
-	return toProto(theme), nil
 }
 
 // policyRelationships is the policy write of a created (touch) or deleted
@@ -199,22 +158,14 @@ func policyRelationships(themeID string, created bool) (apply, compensate []poli
 	return []policyv1.RelationshipMutation{remove}, []policyv1.RelationshipMutation{touch}, nil
 }
 
-func (s *Service) CreateMapTheme(ctx context.Context, command CreateMapThemeCommand) (*managev1.MapTheme, error) {
+func (s *Service) CreateMapTheme(ctx context.Context, command CreateMapThemeCommand) (Theme, error) {
 	snapshot, err := command.Snapshot.snapshot("")
 	if err != nil {
-		return nil, err
+		return Theme{}, err
 	}
-	return s.createdTheme(ctx, nil, func(_ context.Context, tx *gorm.DB) (*model.MapTheme, error) {
-		return createMapThemeFromSnapshot(tx, *snapshot)
+	return s.createdTheme(ctx, nil, func(ctx context.Context, store Store) (Theme, error) {
+		return store.InsertTheme(ctx, *snapshot)
 	})
-}
-
-func isMapThemeDefaultDeleteViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	if !stderrors.As(err, &pgErr) || pgErr.ConstraintName != "site_settings_default_map_theme_id_fkey" {
-		return false
-	}
-	return pgErr.Code == "23001" || pgErr.Code == "23503"
 }
 
 func (s *Service) DeleteMapTheme(ctx context.Context, command DeleteMapThemeCommand) error {
@@ -226,21 +177,18 @@ func (s *Service) DeleteMapTheme(ctx context.Context, command DeleteMapThemeComm
 	if err != nil {
 		return domainerr.InvalidField("id", err.Error())
 	}
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[string]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
-			_, err := lockMapThemeRoot(ctx, tx, id)
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[string, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			_, err := lockThemeRoot(ctx, store, id)
 			return err
 		},
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(_ context.Context, tx *gorm.DB) (string, error) {
-			result := tx.Where("id = ?", id).Delete(&model.MapTheme{})
-			if result.Error != nil {
-				return "", result.Error
-			}
-			if result.RowsAffected == 0 {
+		Change: func(ctx context.Context, store Store) (string, error) {
+			err := store.DeleteTheme(ctx, id)
+			if stderrors.Is(err, ErrThemeNotFound) {
 				return "", domainerr.ResourceNotFound("theme", id)
 			}
-			return id, nil
+			return id, err
 		},
 		Audit: func(id string) mutation.Audit {
 			return mutation.RequestAudit(sharedtelemetry.AuditMapThemeDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
@@ -251,36 +199,34 @@ func (s *Service) DeleteMapTheme(ctx context.Context, command DeleteMapThemeComm
 			return policyRelationships(id, false)
 		},
 	})
-	if isMapThemeDefaultDeleteViolation(err) {
+	if stderrors.Is(err, ErrDefaultTheme) {
 		return domainerr.Precondition("the current default or last map theme cannot be deleted; select another default first").WithCause(err)
 	}
 	return err
 }
 
-func (s *Service) CopyMapTheme(ctx context.Context, command CopyMapThemeCommand) (*managev1.MapTheme, error) {
+func (s *Service) CopyMapTheme(ctx context.Context, command CopyMapThemeCommand) (Theme, error) {
 	id, err := normalizeMapThemeID(command.ID, "id")
 	if err != nil {
-		return nil, err
+		return Theme{}, err
 	}
 	name, err := normalizeMapThemeName(command.Name)
 	if err != nil {
-		return nil, err
+		return Theme{}, err
 	}
-	var source *model.MapTheme
-	lock := func(ctx context.Context, tx *gorm.DB) (err error) {
-		source, err = lockMapThemeRoot(ctx, tx, id)
+	var source Theme
+	lock := func(ctx context.Context, store Store) (err error) {
+		source, err = lockThemeRoot(ctx, store, id)
 		return err
 	}
-	return s.createdTheme(ctx, lock, func(_ context.Context, tx *gorm.DB) (*model.MapTheme, error) {
-		snapshot := Snapshot{
-			Name: name, Settings: settingsFromModel(source),
-			LightVariant: variantFromModel(source.LightVariant),
-			DarkVariant:  variantFromModel(source.DarkVariant),
-		}
+	return s.createdTheme(ctx, lock, func(ctx context.Context, store Store) (Theme, error) {
+		snapshot := source.Snapshot
+		snapshot.Name = name
+		snapshot.Settings.CalloutFields = append([]string(nil), source.Snapshot.Settings.CalloutFields...)
 		if err := validateMapThemeSnapshot(&snapshot); err != nil {
-			return nil, fmt.Errorf("stored source map theme is invalid: %w", err)
+			return Theme{}, fmt.Errorf("stored source map theme is invalid: %w", err)
 		}
-		return createMapThemeFromSnapshot(tx, snapshot)
+		return store.InsertTheme(ctx, snapshot)
 	})
 }
 
@@ -293,24 +239,21 @@ func (s *Service) SetDefaultMapTheme(ctx context.Context, command SetDefaultMapT
 	if err != nil {
 		return "", domainerr.InvalidField("theme_id", err.Error())
 	}
-	var settings model.SiteSettings
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
-			if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&settings, "id = 1").Error; err != nil {
+	var currentDefaultID string
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[bool, Store]{
+		Lock: func(ctx context.Context, store Store) (err error) {
+			if currentDefaultID, err = store.LockDefaultThemeID(ctx); err != nil {
 				return err
 			}
-			_, err := lockMapThemeRoot(ctx, tx, themeID)
+			_, err = lockThemeRoot(ctx, store, themeID)
 			return err
 		},
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(_ context.Context, tx *gorm.DB) (bool, error) {
-			if settings.DefaultMapThemeID == themeID {
+		Change: func(ctx context.Context, store Store) (bool, error) {
+			if currentDefaultID == themeID {
 				return false, nil
 			}
-			return true, tx.Model(settings).Updates(structured.Fields{
-				"default_map_theme_id": themeID,
-				"updated_at":           time.Now(),
-			}).Error
+			return true, store.SetDefaultThemeID(ctx, themeID)
 		},
 		Audit: func(changed bool) mutation.Audit {
 			if !changed {
