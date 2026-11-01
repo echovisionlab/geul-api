@@ -9,8 +9,8 @@ import (
 
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sharelink"
 	sharelinkpublic "github.com/echovisionlab/geul-api/internal/sharelink/public"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type PublicTargetResolver struct {
@@ -26,12 +26,12 @@ func NewPublicTargetResolver(db *gorm.DB) *PublicTargetResolver {
 
 // IsAutomaticPublicHistoryToken reports whether token is the preview link a
 // Terms or Privacy update notice mailed out for entityID.
-func (r *PublicTargetResolver) IsAutomaticPublicHistoryToken(ctx context.Context, token string, entityType managev1.ShareLinkEntityType, entityID string) (bool, error) {
+func (r *PublicTargetResolver) IsAutomaticPublicHistoryToken(ctx context.Context, token string, entityType sharelink.EntityType, entityID string) (bool, error) {
 	var kind string
 	switch entityType {
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY:
+	case sharelink.EntityPrivacy:
 		kind = "privacy"
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS:
+	case sharelink.EntityTerms:
 		kind = "terms"
 	default:
 		return false, nil
@@ -39,7 +39,7 @@ func (r *PublicTargetResolver) IsAutomaticPublicHistoryToken(ctx context.Context
 	return campaignadapter.LegalNoticeRuns{}.IsUpdateNoticePreviewToken(ctx, r.db, kind, entityID, token)
 }
 
-func (r *PublicTargetResolver) Resolve(ctx context.Context, entityType managev1.ShareLinkEntityType, entityID string, now time.Time) (sharelinkpublic.Target, error) {
+func (r *PublicTargetResolver) Resolve(ctx context.Context, entityType sharelink.EntityType, entityID string, now time.Time) (sharelinkpublic.Target, error) {
 	table, legal := publicTargetTable(entityType)
 	if table == "" {
 		return sharelinkpublic.Target{}, nil
@@ -59,7 +59,7 @@ func (r *PublicTargetResolver) Resolve(ctx context.Context, entityType managev1.
 	return sharelinkpublic.Target{Slug: row.Slug, Exists: true}, nil
 }
 
-func (r *PublicTargetResolver) resolveLegal(ctx context.Context, entityType managev1.ShareLinkEntityType, table, entityID string, now time.Time) (sharelinkpublic.Target, error) {
+func (r *PublicTargetResolver) resolveLegal(ctx context.Context, entityType sharelink.EntityType, table, entityID string, now time.Time) (sharelinkpublic.Target, error) {
 	var row struct {
 		Status        string     `gorm:"column:status"`
 		EffectiveFrom *time.Time `gorm:"column:effective_from"`
@@ -80,33 +80,33 @@ func (r *PublicTargetResolver) resolveLegal(ctx context.Context, entityType mana
 	return sharelinkpublic.Target{Exists: true}, nil
 }
 
-func publicTargetTable(entityType managev1.ShareLinkEntityType) (string, bool) {
+func publicTargetTable(entityType sharelink.EntityType) (string, bool) {
 	switch entityType {
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_POST:
+	case sharelink.EntityPost:
 		return "post", false
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE:
+	case sharelink.EntityPage:
 		return "page", false
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK:
+	case sharelink.EntityWork:
 		return "work", false
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE:
+	case sharelink.EntityRelease:
 		return "release", false
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD:
+	case sharelink.EntityForm, sharelink.EntityFormDashboard:
 		return "form", false
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL:
+	case sharelink.EntityLabel:
 		return "label", false
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST:
+	case sharelink.EntityArtist:
 		return "artist", false
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY:
+	case sharelink.EntityPrivacy:
 		return "privacy_history", true
-	case managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS:
+	case sharelink.EntityTerms:
 		return "terms_history", true
 	default:
 		return "", false
 	}
 }
 
-func legalStatuses(entityType managev1.ShareLinkEntityType) (string, string, string) {
-	if entityType == managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS {
+func legalStatuses(entityType sharelink.EntityType) (string, string, string) {
+	if entityType == sharelink.EntityTerms {
 		return string(model.TermsStatusScheduled), string(model.TermsStatusActive), string(model.TermsStatusArchived)
 	}
 	return string(model.PrivacyStatusScheduled), string(model.PrivacyStatusActive), string(model.PrivacyStatusArchived)

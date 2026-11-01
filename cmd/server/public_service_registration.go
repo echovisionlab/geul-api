@@ -30,6 +30,7 @@ import (
 	programeventpublic "github.com/echovisionlab/geul-api/internal/programevent/public"
 	publicreferencecatalog "github.com/echovisionlab/geul-api/internal/referencecatalog/public"
 	seriespublic "github.com/echovisionlab/geul-api/internal/series/public"
+	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
 	sharelinkpublic "github.com/echovisionlab/geul-api/internal/sharelink/public"
 	sitemappublic "github.com/echovisionlab/geul-api/internal/sitemap/public"
 	publicsitesettings "github.com/echovisionlab/geul-api/internal/sitesettings/public"
@@ -221,7 +222,7 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicProgramEventPath, publicProgramEventHandler)
 	slog.Info("Registered public service", "path", publicProgramEventPath)
 
-	publicShareLinkService, err := sharelinkpublic.NewService(sharelinkpublic.Deps{DB: db, Targets: sharelinkadapter.NewPublicTargetResolver(db)})
+	publicShareLinkService, err := sharelinkpublic.NewService(sharelinkpublic.Deps{Units: sharelinkpostgres.NewUnits(db), Targets: sharelinkadapter.NewPublicTargetResolver(db)})
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -14,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/sharelink"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -143,7 +143,7 @@ func (runtime *PublicRuntime) Require(ctx context.Context, labelID, token, passw
 	if strings.TrimSpace(token) == "" {
 		return errs.NotFoundMsg("label not found")
 	}
-	_, err := sharelink.ValidateForEntity(ctx, runtime.db, token, password, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL, labelID)
+	_, err := sharelinkadapter.ValidateForEntity(ctx, runtime.db, token, password, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL, labelID)
 	if err != nil {
 		return errs.WithCause(errs.NotFoundMsg("label not found"), failurecause.WithPrivate(err, token, password))
 	}

@@ -1,92 +1,73 @@
 package sharelinkadapter
 
 import (
-	"context"
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/crypto"
+	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sharelink"
 	sharelinkpublic "github.com/echovisionlab/geul-api/internal/sharelink/public"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func TestShareLinkValidateRequiresContractedExistingTarget(t *testing.T) {
+func TestPublicTargetResolverFindsContractedExistingTargets(t *testing.T) {
 	t.Parallel()
-
-	db := newShareLinkValidationUnitDB(t)
-	links, err := sharelinkpublic.NewService(sharelinkpublic.Deps{DB: db, Targets: NewPublicTargetResolver(db)})
-	require.NoError(t, err)
-	service := sharelinkpublic.NewConnectHandler(links)
-
+	db := newShareLinkAdapterUnitDB(t)
+	resolver := NewPublicTargetResolver(db)
+	now := time.Now()
 	artistID := uuid.NewString()
 	require.NoError(t, db.Exec(`INSERT INTO artist (id, slug) VALUES (?, ?)`, artistID, "artist-slug").Error)
-	insertShareLinkValidationFixture(t, db, "artist-token", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST.String(), artistID)
-	artist := validateShareLinkUnit(t, service, "artist-token")
-	require.True(t, artist.Valid)
-	require.Equal(t, "artist-slug", artist.GetSlug())
+	scheduledID, activeID, pastID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	require.NoError(t, db.Exec(`INSERT INTO privacy_history (id, status, effective_from) VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)`,
+		scheduledID, model.PrivacyStatusScheduled, now.Add(time.Hour),
+		activeID, model.PrivacyStatusActive, now.Add(-time.Hour),
+		pastID, model.PrivacyStatusScheduled, now.Add(-time.Hour)).Error)
 
-	privacyID := uuid.NewString()
-	require.NoError(t, db.Exec(`INSERT INTO privacy_history (id, status, effective_from) VALUES (?, ?, ?)`, privacyID, managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String(), time.Now().Add(time.Hour)).Error)
-	insertShareLinkValidationFixture(t, db, "privacy-token", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY.String(), privacyID)
-	privacy := validateShareLinkUnit(t, service, "privacy-token")
-	require.True(t, privacy.Valid)
-	require.Nil(t, privacy.Slug)
-
-	protectedPrivacyID := uuid.NewString()
-	require.NoError(t, db.Exec(`INSERT INTO privacy_history (id, status, effective_from) VALUES (?, ?, ?)`, protectedPrivacyID, managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String(), time.Now().Add(time.Hour)).Error)
-	passwordHash, err := crypto.NewPasswordHasher(nil).Hash("secret")
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`
-		INSERT INTO share_link (
-			id, token, entity_type, entity_id, password_hash, expires_at, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-	`, uuid.NewString(), "protected-privacy-token", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY.String(), protectedPrivacyID, passwordHash, time.Now().Add(time.Hour)).Error)
-	protected := validateShareLinkUnit(t, service, "protected-privacy-token")
-	require.False(t, protected.Valid)
-	require.True(t, protected.PasswordRequired)
-	require.Equal(t, protectedPrivacyID, protected.GetEntityId())
-	require.Equal(t, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY, protected.GetEntityType())
-	password := "secret"
-	opened, err := service.Validate(context.Background(), connect.NewRequest(&openv1.ValidateShareLinkRequest{
-		Token: "protected-privacy-token", Password: &password,
-	}))
-	require.NoError(t, err)
-	require.True(t, opened.Msg.Valid)
-
-	insertShareLinkValidationFixture(t, db, "dangling-token", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE.String(), uuid.NewString())
-	require.False(t, validateShareLinkUnit(t, service, "dangling-token").Valid)
-
-	insertShareLinkValidationFixture(t, db, "unsupported-token", "SHARE_LINK_ENTITY_TYPE_UNSPECIFIED", uuid.NewString())
-	require.False(t, validateShareLinkUnit(t, service, "unsupported-token").Valid)
-
-	insertShareLinkValidationFixture(t, db, "corrupt-token", "not-an-enum", uuid.NewString())
-	require.False(t, validateShareLinkUnit(t, service, "corrupt-token").Valid)
+	for name, tc := range map[string]struct {
+		entityType sharelink.EntityType
+		entityID   string
+		want       sharelinkpublic.Target
+	}{
+		"an existing artist":            {sharelink.EntityArtist, artistID, sharelinkpublic.Target{Exists: true, Slug: stringPointer("artist-slug")}},
+		"a missing page":                {sharelink.EntityPage, uuid.NewString(), sharelinkpublic.Target{}},
+		"a future scheduled version":    {sharelink.EntityPrivacy, scheduledID, sharelinkpublic.Target{Exists: true}},
+		"an active version":             {sharelink.EntityPrivacy, activeID, sharelinkpublic.Target{Exists: true, PublicHistory: true}},
+		"a schedule that already began": {sharelink.EntityPrivacy, pastID, sharelinkpublic.Target{}},
+		"an unknown target kind":        {"not-an-enum", artistID, sharelinkpublic.Target{}},
+	} {
+		target, err := resolver.Resolve(t.Context(), tc.entityType, tc.entityID, now)
+		require.NoError(t, err, name)
+		require.Equal(t, tc.want, target, name)
+	}
 }
 
-func validateShareLinkUnit(t *testing.T, service *sharelinkpublic.ConnectHandler, token string) *openv1.ValidateShareLinkResponse {
-	t.Helper()
-	response, err := service.Validate(context.Background(), connect.NewRequest(&openv1.ValidateShareLinkRequest{Token: token}))
+// ValidateForEntity keeps the not-found answer the private reads of other
+// domains branch on.
+func TestValidateForEntityAnswersEveryUnopenedProofAsRecordNotFound(t *testing.T) {
+	t.Parallel()
+	db := newShareLinkAdapterUnitDB(t)
+	labelID := uuid.NewString()
+	require.NoError(t, db.Exec(`INSERT INTO share_link (id, token, entity_type, entity_id, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		uuid.NewString(), "label-token", string(sharelink.EntityLabel), labelID, time.Now().Add(time.Hour), time.Now()).Error)
+
+	link, err := ValidateForEntity(t.Context(), db, "label-token", "", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_LABEL, labelID)
 	require.NoError(t, err)
-	return response.Msg
+	require.Equal(t, "label-token", link.Token)
+	require.Equal(t, string(sharelink.EntityLabel), link.EntityType)
+	_, err = ValidateForEntity(t.Context(), db, "label-token", "", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST, labelID)
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	_, err = ValidateForEntity(t.Context(), db, "label-token", "", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_UNSPECIFIED, labelID)
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
 }
 
-func insertShareLinkValidationFixture(t *testing.T, db *gorm.DB, token, entityType, entityID string) {
-	t.Helper()
-	require.NoError(t, db.Exec(`
-		INSERT INTO share_link (
-			id, token, entity_type, entity_id, expires_at, created_at
-		) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-	`, uuid.NewString(), token, entityType, entityID, time.Now().Add(time.Hour)).Error)
-}
+func stringPointer(value string) *string { return &value }
 
-func newShareLinkValidationUnitDB(t *testing.T) *gorm.DB {
+func newShareLinkAdapterUnitDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)

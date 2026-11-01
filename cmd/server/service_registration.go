@@ -79,6 +79,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/series"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
+	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/transcode"
@@ -755,7 +756,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered service", "path", adminPath)
 
 	shareLinkService, err := sharelink.NewService(sharelink.Deps{
-		DB: db, SpiceDB: spicedbClient, Targets: sharelinkadapter.NewAuthority(db, spicedbClient), Audit: telemetryWriter,
+		Units: sharelinkpostgres.NewUnits(db), SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
 	})
 	if err != nil {
 		return registeredServices{}, err

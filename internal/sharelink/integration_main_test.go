@@ -1,10 +1,9 @@
 //go:build integration
 
-package public_test
+package sharelink_test
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"testing"
@@ -13,17 +12,16 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	flag.Parse()
 	suite, err := testutil.StartOryIntegrationSuite(context.Background())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "start ShareLink public integration suite: %v\n", err)
+		fmt.Fprintln(os.Stderr, "start Share Link Ory integration suite:", err)
 		os.Exit(1)
 	}
 	testutil.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
 	testutil.DeactivateOryIntegrationSuite(suite)
-	if err := suite.Close(); err != nil && code == 0 {
-		fmt.Fprintf(os.Stderr, "close ShareLink public integration suite: %v\n", err)
+	if closeErr := suite.Close(); closeErr != nil && code == 0 {
+		fmt.Fprintln(os.Stderr, "cleanup Share Link Ory integration suite:", closeErr)
 		code = 1
 	}
 	os.Exit(code)

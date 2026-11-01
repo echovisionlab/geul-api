@@ -3,11 +3,11 @@ package runtime
 import (
 	"context"
 
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
-	"github.com/echovisionlab/geul-api/internal/sharelink"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -26,7 +26,7 @@ func (ShareLinks) ValidateShareLinkForEntity(
 	entityType managev1.ShareLinkEntityType,
 	entityID string,
 ) (*model.ShareLink, error) {
-	return sharelink.ValidateForEntity(ctx, db, token, password, entityType, entityID)
+	return sharelinkadapter.ValidateForEntity(ctx, db, token, password, entityType, entityID)
 }
 
 // ContentBlockMedia loads persisted attachment references after Post has

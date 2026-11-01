@@ -14,11 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/sharelink"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -292,7 +292,7 @@ func (publicPageAccessFixture) RequirePageShareLinkAccess(
 	if strings.TrimSpace(token) == "" {
 		return nil, errs.NotFoundMsg("page not found")
 	}
-	link, err := sharelink.ValidateForEntity(
+	link, err := sharelinkadapter.ValidateForEntity(
 		ctx, db, token, password,
 		managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE, pageID,
 	)

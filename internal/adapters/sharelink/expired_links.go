@@ -6,12 +6,11 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
 )
 
 // DeleteExpiredLinks deletes the share links that expired before now and
 // returns how many it deleted.
 func DeleteExpiredLinks(ctx context.Context, db *gorm.DB, now time.Time) (int64, error) {
-	result := db.WithContext(ctx).Where("expires_at < ?", now).Delete(&model.ShareLink{})
-	return result.RowsAffected, result.Error
+	return sharelinkpostgres.NewStore(db).DeleteExpiredLinks(ctx, now)
 }

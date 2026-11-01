@@ -20,3 +20,11 @@ func TestEveryAPIEntityTypeMapsToItsStoredValue(t *testing.T) {
 		require.Equal(t, entityType, EntityTypeToProto(stored))
 	}
 }
+
+func TestEveryLinkKindHasAnAPIEntityType(t *testing.T) {
+	for _, entityType := range EntityTypes() {
+		require.True(t, entityType.Known(), entityType)
+		require.NotEqual(t, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_UNSPECIFIED, EntityTypeToProto(entityType), entityType)
+	}
+	require.Len(t, EntityTypes(), len(managev1.ShareLinkEntityType_name)-1)
+}
