@@ -173,6 +173,9 @@ func RunUploadContract(t *testing.T, open func(*testing.T) UploadHarness) {
 	for name, run := range uploadFailureCases() {
 		cases[name] = run
 	}
+	for name, run := range uploadBundleCases() {
+		cases[name] = run
+	}
 	for name, run := range cases {
 		t.Run(name, func(t *testing.T) { t.Parallel(); run(t, open(t)) })
 	}
