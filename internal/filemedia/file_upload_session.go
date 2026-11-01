@@ -7,12 +7,10 @@ import (
 	"log/slog"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -41,17 +39,10 @@ func (s *Service) recordInterruptedMultipartUpload(
 	defer cancel()
 
 	now := time.Now()
-	if err := s.db.WithContext(cleanupCtx).
-		Model(&model.UploadSession{}).
-		Where("upload_id = ? AND file_id = ? AND status IN ?",
-			session.UploadID,
-			session.FileID,
-			activeUploadSessionStatuses(),
-		).
-		Updates(structured.Fields{
-			"last_activity_at": now,
-			"updated_at":       now,
-		}).Error; err != nil {
+	if err := s.units.Transaction(cleanupCtx, false, func(unit mutation.Tx[Store]) error {
+		_, err := unit.Store().RenewActiveUploadActivity(cleanupCtx, session.UploadID, session.FileID, false, now)
+		return err
+	}); err != nil {
 		slog.ErrorContext(ctx, "Failed to refresh upload session activity after interruption",
 			failurecause.Attr(err),
 			"fileKey", fileKey,
@@ -91,16 +82,11 @@ func uploadSessionEntityTypeToEnum(entityType *string) managev1.TranscodeEntityT
 
 func (s *Service) nextUploadSessionIngestSequence(ctx context.Context, uploadID string) (int64, error) {
 	var sequence int64
-	if err := s.db.WithContext(ctx).
-		Raw(
-			`UPDATE upload_session
-			 SET ingest_sequence = ingest_sequence + 1
-			 WHERE upload_id = ?
-			 RETURNING ingest_sequence`,
-			uploadID,
-		).
-		Row().
-		Scan(&sequence); err != nil {
+	if err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		var err error
+		sequence, err = unit.Store().NextUploadIngestSequence(ctx, uploadID)
+		return err
+	}); err != nil {
 		return 0, fmt.Errorf("failed to allocate upload session ingest sequence: %w", err)
 	}
 	return sequence, nil
@@ -144,14 +130,6 @@ func uploadSessionStatusToProto(status model.UploadSessionStatus) managev1.Uploa
 	}
 }
 
-func activeUploadSessionStatuses() []model.UploadSessionStatus {
-	return []model.UploadSessionStatus{
-		model.UploadSessionStatusInitiated,
-		model.UploadSessionStatusUploading,
-		model.UploadSessionStatusFinalizing,
-	}
-}
-
 func uploadPartWritableSessionStatuses() []model.UploadSessionStatus {
 	return []model.UploadSessionStatus{
 		model.UploadSessionStatusInitiated,
@@ -165,22 +143,13 @@ func (s *Service) claimUploadPartActivity(
 	fileID string,
 	now time.Time,
 ) (bool, error) {
-	result := s.db.WithContext(ctx).
-		Model(&model.UploadSession{}).
-		Where(
-			"upload_id = ? AND file_id = ? AND status IN ?",
-			uploadID,
-			fileID,
-			uploadPartWritableSessionStatuses(),
-		).
-		Updates(structured.Fields{
-			"last_activity_at": now,
-			"updated_at":       now,
-		})
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected == 1, nil
+	var claimed bool
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		var err error
+		claimed, err = unit.Store().RenewActiveUploadActivity(ctx, uploadID, fileID, true, now)
+		return err
+	})
+	return claimed, err
 }
 
 func (s *Service) recordRetryableMultipartPartFailure(
@@ -188,18 +157,10 @@ func (s *Service) recordRetryableMultipartPartFailure(
 	session model.UploadSession,
 	now time.Time,
 ) error {
-	return s.db.WithContext(ctx).
-		Model(&model.UploadSession{}).
-		Where(
-			"upload_id = ? AND file_id = ? AND status IN ?",
-			session.UploadID,
-			session.FileID,
-			uploadPartWritableSessionStatuses(),
-		).
-		Updates(structured.Fields{
-			"last_activity_at": now,
-			"updated_at":       now,
-		}).Error
+	return s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		_, err := unit.Store().RenewActiveUploadActivity(ctx, session.UploadID, session.FileID, true, now)
+		return err
+	})
 }
 
 func (s *Service) claimMultipartCompletion(
@@ -209,67 +170,38 @@ func (s *Service) claimMultipartCompletion(
 ) (bool, []model.UploadPart, error) {
 	var claimed bool
 	var uploadedParts []model.UploadPart
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		_, parts, lockedClaimed, err := claimLockedMultipartCompletion(ctx, tx, session, now)
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		store := unit.Store()
+		locked, err := store.UploadSession(ctx, session.UploadID, session.FileID, true)
+		if errors.Is(err, domain.ErrUploadSessionNotFound) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
-		claimed = lockedClaimed
+		if locked.Status != domain.UploadSessionStatusInitiated && locked.Status != domain.UploadSessionStatusUploading && locked.Status != domain.UploadSessionStatusFinalizing {
+			return nil
+		}
+		rows, err := store.UploadParts(ctx, locked.UploadID)
+		if err != nil {
+			return err
+		}
+		parts := make([]model.UploadPart, len(rows))
+		for i, row := range rows {
+			parts[i] = model.UploadPart(row)
+		}
+		if err := validateMultipartCompletionParts(locked.FileSize, effectiveMultipartChunkSize(locked.ChunkSize), locked.TotalParts, parts); err != nil {
+			return err
+		}
+		changed, err := store.ClaimUploadFinalizing(ctx, locked.UploadID, locked.FileID, now)
+		if err != nil {
+			return err
+		}
+		claimed = changed
 		uploadedParts = parts
 		return nil
 	})
 	return claimed, uploadedParts, err
-}
-
-func claimLockedMultipartCompletion(
-	ctx context.Context,
-	tx *gorm.DB,
-	session model.UploadSession,
-	now time.Time,
-) (model.UploadSession, []model.UploadPart, bool, error) {
-	var locked model.UploadSession
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Where("upload_id = ? AND file_id = ?", session.UploadID, session.FileID).
-		Take(&locked).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return model.UploadSession{}, nil, false, nil
-		}
-		return model.UploadSession{}, nil, false, err
-	}
-	if locked.Status != model.UploadSessionStatusInitiated &&
-		locked.Status != model.UploadSessionStatusUploading &&
-		locked.Status != model.UploadSessionStatusFinalizing {
-		return locked, nil, false, nil
-	}
-
-	var uploadedParts []model.UploadPart
-	if err := tx.WithContext(ctx).
-		Where("upload_id = ?", locked.UploadID).
-		Order("part_number ASC").
-		Find(&uploadedParts).Error; err != nil {
-		return locked, nil, false, err
-	}
-	if err := validateMultipartCompletionParts(locked, uploadedParts); err != nil {
-		return locked, uploadedParts, false, err
-	}
-
-	result := tx.Model(&model.UploadSession{}).
-		Where(
-			"upload_id = ? AND file_id = ? AND status IN ?",
-			locked.UploadID,
-			locked.FileID,
-			activeUploadSessionStatuses(),
-		).
-		Updates(structured.Fields{
-			"status":           model.UploadSessionStatusFinalizing,
-			"last_activity_at": now,
-			"updated_at":       now,
-		})
-	if result.Error != nil {
-		return locked, uploadedParts, false, result.Error
-	}
-	return locked, uploadedParts, result.RowsAffected == 1, nil
 }
 
 func uploadSessionMatchesSelection(
@@ -313,20 +245,14 @@ func multipartInitiateResponseFromSession(
 }
 
 func (s *Service) loadUploadPartInfos(ctx context.Context, uploadID string) ([]*managev1.UploadPartInfo, error) {
-	return loadUploadPartInfosWithDB(ctx, s.db, uploadID)
-}
-
-func loadUploadPartInfosWithDB(
-	ctx context.Context,
-	db *gorm.DB,
-	uploadID string,
-) ([]*managev1.UploadPartInfo, error) {
-	var uploadedParts []model.UploadPart
-	if err := db.WithContext(ctx).
-		Where("upload_id = ?", uploadID).
-		Order("part_number ASC").
-		Find(&uploadedParts).Error; err != nil {
+	var rows []domain.UploadPart
+	err := s.units.Read(ctx, func(store Store) error { var err error; rows, err = store.UploadParts(ctx, uploadID); return err })
+	if err != nil {
 		return nil, err
 	}
-	return uploadPartInfos(uploadedParts), nil
+	parts := make([]model.UploadPart, len(rows))
+	for i, row := range rows {
+		parts[i] = model.UploadPart(row)
+	}
+	return uploadPartInfos(parts), nil
 }

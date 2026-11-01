@@ -18,8 +18,11 @@ import (
 )
 
 func multipartSessionChunkSize(session model.UploadSession) int64 {
-	if session.ChunkSize > 0 {
-		return int64(session.ChunkSize)
+	return effectiveMultipartChunkSize(session.ChunkSize)
+}
+func effectiveMultipartChunkSize(size int32) int64 {
+	if size > 0 {
+		return int64(size)
 	}
 	return int64(chunkSize)
 }
@@ -52,12 +55,11 @@ func validateMultipartPartContentLength(session model.UploadSession, partNumber 
 	return nil
 }
 
-func validateMultipartCompletionParts(session model.UploadSession, parts []model.UploadPart) error {
-	if session.TotalParts <= 0 || int32(len(parts)) != session.TotalParts {
+func validateMultipartCompletionParts(fileSize, partSize int64, totalParts int32, parts []model.UploadPart) error {
+	if totalParts <= 0 || int32(len(parts)) != totalParts {
 		return domainerr.Precondition("uploaded part count does not match expected multipart count")
 	}
 
-	chunkSize := multipartSessionChunkSize(session)
 	for i, part := range parts {
 		expectedPartNumber := int32(i + 1)
 		if part.PartNumber != expectedPartNumber {
@@ -66,7 +68,7 @@ func validateMultipartCompletionParts(session model.UploadSession, parts []model
 		if strings.TrimSpace(part.ETag) == "" {
 			return domainerr.Precondition("uploaded part is missing its object-store identity")
 		}
-		expectedSize := expectedMultipartPartSize(session.FileSize, chunkSize, part.PartNumber)
+		expectedSize := expectedMultipartPartSize(fileSize, partSize, part.PartNumber)
 		if expectedSize <= 0 || part.Size != expectedSize {
 			return domainerr.Precondition(fmt.Sprintf("uploaded part %d size does not match expected multipart size", part.PartNumber))
 		}

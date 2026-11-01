@@ -510,7 +510,7 @@ func (s *Service) completeMultipartObject(
 			fmt.Errorf("failed to reconcile multipart parts before completion: %w", err),
 		)
 	}
-	if err := validateMultipartCompletionParts(completion.session, storedParts); err != nil {
+	if err := validateMultipartCompletionParts(completion.session.FileSize, multipartSessionChunkSize(completion.session), completion.session.TotalParts, storedParts); err != nil {
 		return completion.publishFailure(err)
 	}
 	// S3 owns the actual bytes and ETags. A still-valid presigned URL can
