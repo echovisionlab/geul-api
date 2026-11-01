@@ -2,26 +2,12 @@ package transcode
 
 import (
 	"context"
-	"reflect"
 	"testing"
-	"time"
 
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"github.com/stretchr/testify/require"
 )
-
-func TestTranscodeJobModelOmitsBrokerTransportState(t *testing.T) {
-	t.Parallel()
-
-	modelType := reflect.TypeFor[model.TranscodeJob]()
-	for _, fieldName := range []string{"Attempts", "LastHeartbeat"} {
-		_, found := modelType.FieldByName(fieldName)
-		require.False(t, found, "transcode_job must not mirror queue transport field %s", fieldName)
-	}
-}
 
 func TestApplyTranscodeComponentProgressAggregatesAudioHLSAfterSpectrogram(t *testing.T) {
 	hlsProgress, spectrogramProgress := applyTranscodeComponentProgress(
@@ -62,13 +48,12 @@ func TestApplyTranscodeComponentProgressRoundsStageProgress(t *testing.T) {
 	require.Equal(t, 60, hlsProgress)
 }
 
-func TestTranscodeProgressUpdatesApplyFreshSequenceOnlyToComponentState(t *testing.T) {
+func TestTranscodeProgressAppliesAFreshSequenceOnlyToComponentState(t *testing.T) {
 	t.Parallel()
 
-	now := time.Unix(1_700_000_000, 0).UTC()
 	initialSequence := int64(5)
 	initialStage := managev1.TranscodeStage_TRANSCODE_STAGE_DOWNLOADING.String()
-	job := model.TranscodeJob{
+	job := Job{
 		QueueName:           eventpkg.QueueTranscoderAudio,
 		Status:              StatusQueued,
 		Progress:            20,
@@ -79,47 +64,31 @@ func TestTranscodeProgressUpdatesApplyFreshSequenceOnlyToComponentState(t *testi
 	}
 
 	staleStage := managev1.TranscodeStage_TRANSCODE_STAGE_HLS_UPLOADING
-	staleUpdates := transcodeProgressUpdates(job, &managev1.TranscodeProgressEvent{
+	stale := transcodeProgress(job, &managev1.TranscodeProgressEvent{
 		SequenceNumber: 4,
 		Progress:       99,
 		Stage:          &staleStage,
-	}, now)
-
-	require.Equal(t, StatusProcessing, staleUpdates["status"])
-	require.Equal(t, 99, staleUpdates["progress"])
-	require.Equal(t, 20, staleUpdates["hls_progress"])
-	require.Equal(t, 20, staleUpdates["spectrogram_progress"])
-	require.NotContains(t, staleUpdates, "last_heartbeat")
-	require.Equal(t, now, staleUpdates["updated_at"])
-	require.NotContains(t, staleUpdates, "last_sequence")
-	require.NotContains(t, staleUpdates, "last_stage")
+	})
+	require.Equal(t, Progress{Progress: 99, HLSProgress: 20, SpectrogramProgress: 20}, stale)
 
 	job.Progress = 99
 	freshStage := managev1.TranscodeStage_TRANSCODE_STAGE_SPECTROGRAM_PROCESSING
-	freshUpdates := transcodeProgressUpdates(job, &managev1.TranscodeProgressEvent{
+	fresh := transcodeProgress(job, &managev1.TranscodeProgressEvent{
 		SequenceNumber: 6,
 		Progress:       50,
 		Stage:          &freshStage,
-	}, now)
-
-	require.Equal(t, 99, freshUpdates["progress"])
-	require.Equal(t, 20, freshUpdates["hls_progress"])
-	require.Equal(t, 48, freshUpdates["spectrogram_progress"])
-	require.Equal(t, int64(6), freshUpdates["last_sequence"])
-	require.Equal(t, freshStage.String(), freshUpdates["last_stage"])
+	})
+	require.Equal(t, 99, fresh.Progress)
+	require.Equal(t, 20, fresh.HLSProgress)
+	require.Equal(t, 48, fresh.SpectrogramProgress)
+	require.Equal(t, int64(6), *fresh.LastSequence)
+	require.Equal(t, freshStage.String(), *fresh.LastStage)
 }
 
-func TestTranscodeCancelledUpdatesMarkTerminalState(t *testing.T) {
+func TestCancelReasonNamesTheCancelReason(t *testing.T) {
 	t.Parallel()
-
-	now := time.Unix(1_700_000_000, 0).UTC()
-
-	require.Equal(t, structured.Fields{
-		"status":       StatusCancelled,
-		"last_error":   "cancelled: TRANSCODE_CANCEL_REASON_USER_CANCELLED",
-		"updated_at":   now,
-		"completed_at": now,
-	}, transcodeCancelledUpdates(managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_CANCELLED, now))
+	require.Equal(t, "cancelled: TRANSCODE_CANCEL_REASON_USER_CANCELLED",
+		CancelReason(managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_CANCELLED))
 }
 
 func TestTrackerCancelForwardingUsesUnderlyingPublisher(t *testing.T) {

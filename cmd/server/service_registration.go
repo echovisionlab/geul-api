@@ -88,7 +88,7 @@ import (
 	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/transcode"
+	transcodepostgres "github.com/echovisionlab/geul-api/internal/transcode/postgres"
 	"github.com/echovisionlab/geul-api/internal/work"
 	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
@@ -108,7 +108,7 @@ type serviceRegistrationDependencies struct {
 	workerPublisher         *mq.Publisher
 	hooksPublisher          *mq.Publisher
 	ogPublisher             *mq.Publisher
-	transcodeTracker        *transcode.Tracker
+	transcodeTracker        *transcodepostgres.Tracker
 	spicedbClient           *auth.SpiceDBClient
 	kratosClient            *auth.KratosClient
 	passwordHasher          *crypto.PasswordHasher

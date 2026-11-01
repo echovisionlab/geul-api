@@ -39,7 +39,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/og"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/transcode"
+	transcodepostgres "github.com/echovisionlab/geul-api/internal/transcode/postgres"
 	translationapplication "github.com/echovisionlab/geul-api/internal/translation/application"
 	"github.com/echovisionlab/geul-api/internal/worker"
 )
@@ -58,7 +58,7 @@ type applicationDependencies struct {
 	s3Client                *s3.Client
 	s3PresignClient         *s3.PresignClient
 	workerPublisher         *mq.Publisher
-	transcodeTracker        *transcode.Tracker
+	transcodeTracker        *transcodepostgres.Tracker
 	adapterLoader           *email.AdapterLoader
 	metadataAIJobs          *ai.MetadataJobManager
 	contentBlockStore       *contentblock.Store
@@ -128,7 +128,7 @@ func initializeApplicationDependencies(
 	}
 	deps.s3PresignClient = s3.NewPresignClient(publicS3Client)
 	deps.workerPublisher = deps.hooksPublisher
-	deps.transcodeTracker = transcode.NewTracker(deps.db, deps.workerPublisher)
+	deps.transcodeTracker = transcodepostgres.NewTracker(deps.db, deps.workerPublisher)
 	deps.adapterLoader = email.NewAdapterLoader(deps.db, nil)
 	deps.metadataAIJobs, err = ai.NewMetadataJobManager(deps.db, cfg.GoogleAIAPIKey, deps.servicePublisher)
 	if err != nil {
