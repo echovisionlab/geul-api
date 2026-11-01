@@ -2,16 +2,14 @@ package filemedia
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -106,124 +104,22 @@ func (s *Service) findMultipartUploadCandidate(
 	ctx context.Context,
 	search multipartCandidateSearch,
 ) (model.UploadSession, bool, error) {
-	var session model.UploadSession
-	found, err := queryMultipartUploadCandidate(ctx, s.db, search, false, &session)
-	return session, found, err
-}
-
-func queryMultipartUploadCandidate(
-	ctx context.Context,
-	db *gorm.DB,
-	search multipartCandidateSearch,
-	lockRows bool,
-	result *model.UploadSession,
-) (bool, error) {
-	query := db.WithContext(ctx).
-		Model(&model.UploadSession{}).
-		Where(
-			"upload_type = ? AND (status = ? OR (status IN ? AND last_activity_at >= ? AND chunk_size = ?))",
-			search.uploadType.String(),
-			model.UploadSessionStatusFinalizing,
-			uploadPartWritableSessionStatuses(),
-			time.Now().Add(-multipartResumeWindow),
-			int32(chunkSize),
-		)
-	query = applyMultipartCandidateEntityFilters(query, search)
-	var err error
-	query, err = applyMultipartCandidateProjectionFilters(query, search)
-	if err != nil {
-		return false, err
+	if search.projectionIdentity.mode == fileIngestTargetModeUnknown {
+		return model.UploadSession{}, false, fmt.Errorf("upload target classification is missing")
 	}
-	query = applyMultipartCandidateRequestFilters(query, search)
-	if lockRows {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
-	}
-	err = query.
-		Order("CASE WHEN status = 'finalizing' THEN 0 ELSE 1 END").
-		Order("last_activity_at DESC").
-		First(result).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return false, nil
-	}
-	return err == nil, err
-}
-
-func applyMultipartCandidateEntityFilters(
-	query *gorm.DB,
-	search multipartCandidateSearch,
-) *gorm.DB {
-	if search.uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE ||
-		isEditorFileIngestUploadType(search.uploadType) {
-		query = query.Where("entity_id IS NULL")
-	} else {
-		query = query.Where("entity_id = ?", search.entityID)
-	}
+	var entityType *string
 	if search.request.EntityType != nil {
-		query = query.Where("entity_type = ?", search.request.EntityType.String())
+		entityType = new(search.request.EntityType.String())
 	}
-	return query
-}
-
-func applyMultipartCandidateProjectionFilters(
-	query *gorm.DB,
-	search multipartCandidateSearch,
-) (*gorm.DB, error) {
-	identity := search.projectionIdentity
-	switch identity.mode {
-	case fileIngestTargetModeEditorFile:
-		query = query.Where("slot_id IS NULL")
-	case fileIngestTargetModeTrackProjection:
-		query = query.Where("slot_id IS NULL")
-	case fileIngestTargetModeGeneral:
-		query = applyGeneralMultipartCandidateSlot(query, search.uploadType, identity.slotID)
-	case fileIngestTargetModeUnknown:
-		return nil, fmt.Errorf("upload target classification is missing")
-	}
-	if identity.expectedCurrentFileID == nil {
-		return query.Where("expected_current_file_id IS NULL"), nil
-	}
-	return query.Where("expected_current_file_id = ?", *identity.expectedCurrentFileID), nil
-}
-
-func applyGeneralMultipartCandidateSlot(
-	query *gorm.DB,
-	uploadType managev1.UploadType,
-	slotID string,
-) *gorm.DB {
-	if uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE {
-		return query.Where("slot_id IS NULL")
-	}
-	if slotID != "" {
-		return query.Where("slot_id = ?", slotID)
-	}
-	return query
-}
-
-func applyMultipartCandidateRequestFilters(
-	query *gorm.DB,
-	search multipartCandidateSearch,
-) *gorm.DB {
-	request := search.request
-	if fileID := derefString(request.FileID); fileID != "" {
-		query = query.Where("file_id = ?", fileID)
-	}
-	if uploadID := derefString(request.UploadID); uploadID != "" {
-		query = query.Where("upload_id = ?", uploadID)
-	}
-	if search.fileName != "" {
-		query = query.Where("file_name = ?", search.fileName)
-	}
-	if request.FileSize != nil && *request.FileSize > 0 {
-		fileSize := *request.FileSize
-		query = query.Where("file_size = ?", fileSize)
-	}
-	if mimeType := derefString(request.MimeType); mimeType != "" {
-		query = query.Where("requested_mime = ?", mimeType)
-	}
-	if request.FileLastModified != nil {
-		query = query.Where("file_last_modified = ?", *request.FileLastModified)
-	}
-	return query
+	filter := domain.UploadSearch{UploadType: search.uploadType.String(), EntityID: search.entityID, EntityType: entityType, Mode: search.projectionIdentity.mode, SlotID: search.projectionIdentity.slotID, ExpectedCurrentFileID: search.projectionIdentity.expectedCurrentFileID, FileID: derefString(search.request.FileID), UploadID: derefString(search.request.UploadID), FileName: search.fileName, FileSize: search.request.FileSize, MimeType: derefString(search.request.MimeType), FileLastModified: search.request.FileLastModified, ActiveAfter: time.Now().Add(-multipartResumeWindow), ChunkSize: int32(chunkSize)}
+	var row domain.UploadSession
+	var found bool
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		row, found, err = store.FindUploadCandidate(ctx, filter)
+		return err
+	})
+	return uploadSessionFromStore(row), found, err
 }
 
 func multipartCandidateResponse(session model.UploadSession) *managev1.FindMultipartUploadCandidateResponse {
@@ -253,14 +149,11 @@ func (s *Service) prepareMultipartCandidateResponse(
 ) (*managev1.FindMultipartUploadCandidateResponse, error) {
 	response := multipartCandidateResponse(session)
 	if session.Status == model.UploadSessionStatusFinalizing {
-		var parts []model.UploadPart
-		if err := s.db.WithContext(ctx).
-			Where("upload_id = ?", session.UploadID).
-			Order("part_number ASC").
-			Find(&parts).Error; err != nil {
+		parts, err := s.loadUploadPartInfos(ctx, session.UploadID)
+		if err != nil {
 			return nil, err
 		}
-		response.UploadedParts = uploadPartInfos(parts)
+		response.UploadedParts = parts
 		return response, nil
 	}
 	reconciliation, err := s.reconcileWritableMultipartResumeParts(ctx, session)

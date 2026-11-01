@@ -17,7 +17,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -202,42 +201,4 @@ func TestRecordUploadedPartCannotOverwriteFinalizingOrAbortedState(t *testing.T)
 	require.False(t, recorded)
 	require.NoError(t, db.Model(&model.UploadPart{}).Where("upload_id = ?", session.UploadID).Count(&count).Error)
 	require.Zero(t, count)
-}
-
-func TestFindActiveUploadSessionsAlwaysReturnsStaleFinalizing(t *testing.T) {
-	t.Parallel()
-
-	service, db, _, _, session, _ := newAbortMultipartUploadRPCFixture(t, model.UploadSessionStatusFinalizing)
-	slotID := "avatar"
-	oldActivity := time.Now().UTC().Add(-multipartResumeWindow - time.Hour)
-	require.NoError(t, db.Model(&model.UploadSession{}).Where("upload_id = ?", session.UploadID).
-		Updates(structured.Fields{
-			"slot_id":          slotID,
-			"chunk_size":       int32(1),
-			"last_activity_at": oldActivity,
-			"updated_at":       oldActivity,
-		}).Error)
-
-	sessions, err := service.findActiveUploadSessionsForSurface(
-		context.Background(),
-		managev1.UploadType_UPLOAD_TYPE_USER_AVATAR,
-		session.EntityID,
-		nil,
-		fileIngestProjectionIdentity{mode: fileIngestTargetModeGeneral, slotID: slotID},
-	)
-	require.NoError(t, err)
-	require.Len(t, sessions, 1)
-	require.Equal(t, model.UploadSessionStatusFinalizing, sessions[0].Status)
-
-	require.NoError(t, db.Model(&model.UploadSession{}).Where("upload_id = ?", session.UploadID).
-		Update("status", model.UploadSessionStatusUploading).Error)
-	sessions, err = service.findActiveUploadSessionsForSurface(
-		context.Background(),
-		managev1.UploadType_UPLOAD_TYPE_USER_AVATAR,
-		session.EntityID,
-		nil,
-		fileIngestProjectionIdentity{mode: fileIngestTargetModeGeneral, slotID: slotID},
-	)
-	require.NoError(t, err)
-	require.Empty(t, sessions)
 }

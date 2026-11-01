@@ -256,3 +256,7 @@ func (s *Service) loadUploadPartInfos(ctx context.Context, uploadID string) ([]*
 	}
 	return uploadPartInfos(parts), nil
 }
+
+func uploadSessionFromStore(r domain.UploadSession) model.UploadSession {
+	return model.UploadSession{UploadID: r.UploadID, ClientMediaBundleID: r.ClientMediaBundleID, ClientMediaManifest: r.ClientMediaManifest, FileID: r.FileID, UploadType: r.UploadType, EntityID: r.EntityID, EntityType: r.EntityType, FileName: r.FileName, FileSize: r.FileSize, FileLastModified: r.FileLastModified, SlotID: r.SlotID, AttemptID: r.AttemptID, ExpectedFileID: r.ExpectedFileID, IngestSequence: r.IngestSequence, RequestedMime: r.RequestedMime, DetectedMime: r.DetectedMime, TotalParts: r.TotalParts, ChunkSize: r.ChunkSize, Status: model.UploadSessionStatus(r.Status), VerifiedAt: r.VerifiedAt, LastActivityAt: r.LastActivityAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
+}

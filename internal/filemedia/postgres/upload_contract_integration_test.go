@@ -20,7 +20,11 @@ func TestPostgresUploadStoreContractIntegration(t *testing.T) {
 		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		return filemediatest.UploadHarness{Harness: mutationtest.PostgresHarness(db, filemediapostgres.NewUnits(db, filemediapostgres.Ports{})), Seed: func(t *testing.T, row domain.UploadSession, parts []domain.UploadPart) {
 			r := filemediapostgres.UploadSessionRow(row)
-			require.NoError(t, db.Omit("EntityID").Create(&r).Error)
+			q := db
+			if row.EntityID == "" {
+				q = q.Omit("EntityID")
+			}
+			require.NoError(t, q.Create(&r).Error)
 			for _, part := range parts {
 				p := model.UploadPart(part)
 				require.NoError(t, db.Create(&p).Error)
