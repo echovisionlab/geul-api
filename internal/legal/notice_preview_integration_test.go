@@ -19,13 +19,13 @@ import (
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	"github.com/echovisionlab/geul-api/internal/campaign"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
@@ -64,8 +64,7 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 ) {
 	t.Parallel()
 	db := newLegalLocalKratosIntegrationDB(t)
-	ensureBulkEmailAudienceKratosIdentityColumns(t, db)
-	seedLegalDeliveryTemplateIntegration(t, db, email.EventTermsUpdate.String())
+	testutil.EnsureKratosIdentityFixtureColumns(t, db)
 	now := time.Now().UTC()
 	seedBulkEmailAudienceIdentity(
 		t,
@@ -74,15 +73,7 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 		now,
 	)
 	ctx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
-	store, err := contentblock.NewGeneratedStore(filemedia.NewContentBlockFileReuseAuthorizer(spiceDB))
-	require.NoError(t, err)
-	service := newTermsServiceForLegalIntegrationTest(
-		db,
-		"https://example.test",
-		"https://cdn.example.test",
-		spiceDB,
-		withLegalContentBlocks(store),
-	)
+	service := newLegalIntegration(t, db, spiceDB, &audittest.Recorder{}).terms()
 	draft, err := service.CreateTermsVersion(
 		ctx,
 		connect.NewRequest(&managev1.CreateTermsVersionRequest{
@@ -120,7 +111,7 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 	err = campaignadapter.NewDeliveryDispatcher(db, campaign.NewAuditedCampaignDeliveryDispatcher(
 		spiceDB,
 		failingPublisher,
-		noopDomainAuditAppender{},
+		&audittest.Recorder{},
 		campaign.WithLegalNoticeDeliveryPort(legaladapter.NewRuntime()),
 	)).
 		DispatchEmailDeliveryRun(t.Context(), run.ID)
@@ -132,7 +123,7 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 	resumed, err := campaignadapter.NewDeliveryDispatcher(db, campaign.NewAuditedCampaignDeliveryDispatcher(
 		spiceDB,
 		retryPublisher,
-		noopDomainAuditAppender{},
+		&audittest.Recorder{},
 		campaign.WithLegalNoticeDeliveryPort(legaladapter.NewRuntime()),
 	)).
 		ResumeActiveEmailDeliveryRuns(t.Context(), 25)

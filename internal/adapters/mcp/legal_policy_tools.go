@@ -200,12 +200,11 @@ func (tools *LegalPolicyTools) list(ctx context.Context, arguments mcpserver.Too
 	for _, policy := range listed.Versions {
 		policies = append(policies, policyOutput(kind, policy))
 	}
-	page := listed.Pagination
 	var nextOffset any
-	if page.GetHasMore() {
-		nextOffset = int64(page.GetOffset()) + int64(page.GetLimit())
+	if listed.HasMore {
+		nextOffset = int64(listed.Offset) + int64(listed.Limit)
 	}
-	return contentResult(map[string]any{"policies": policies, "total": page.GetTotal(), "next_offset": nextOffset})
+	return contentResult(map[string]any{"policies": policies, "total": listed.Total, "next_offset": nextOffset})
 }
 
 func (tools *LegalPolicyTools) callPolicy(ctx context.Context, name string, kind legal.PolicyKind, input policyArguments, effectiveFrom *time.Time) (mcpserver.ToolResult, error) {

@@ -5,59 +5,35 @@ package legal_test
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"testing"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 
-	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/legal"
+	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
-	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
-
-type failingDomainAuditAppender struct{}
-
-var _ domainaudit.Appender = failingDomainAuditAppender{}
-
-func (failingDomainAuditAppender) AppendDomainAuditInTransaction(
-	context.Context,
-	*gorm.DB,
-	sharedtelemetry.AuditRecord,
-) error {
-	return errors.New("audit unavailable")
-}
-
-type noopDomainAuditAppender struct{}
-
-var _ domainaudit.Appender = noopDomainAuditAppender{}
-
-func (noopDomainAuditAppender) AppendDomainAuditInTransaction(
-	context.Context,
-	*gorm.DB,
-	sharedtelemetry.AuditRecord,
-) error {
-	return nil
-}
 
 func TestMain(m *testing.M) {
 	flag.Parse()
@@ -76,16 +52,11 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func newLegalIntegrationDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	return testutil.NewIntegrationDB(t)
-}
-
-// newLegalLocalKratosIntegrationDB is for tests that write legal or email
-// template blocks. The collaboration contributor fence locks member JOIN
-// kratos.identities FOR SHARE; through postgres_fdw that becomes a REPEATABLE
-// READ lock on every active identity in the shared Kratos, so identity updates
-// by concurrent tests fail it with serialization errors.
+// newLegalLocalKratosIntegrationDB is for tests that write legal blocks. The
+// collaboration contributor fence locks member JOIN kratos.identities FOR
+// SHARE; through postgres_fdw that becomes a REPEATABLE READ lock on every
+// active identity in the shared Kratos, so identity updates by concurrent
+// tests fail it with serialization errors.
 func newLegalLocalKratosIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	return testutil.SetupOryStackWithLocalKratos(t).DB
@@ -98,8 +69,61 @@ func (legalTestRenderConfig) Snapshot(context.Context, *gorm.DB, string) ([]byte
 	return payload, fmt.Sprintf("%x", sha256.Sum256(payload)), nil
 }
 
-func newOGPlannerForTest(db *gorm.DB, cdnDomain string) *og.Planner {
-	return og.NewPlanner(db, cdnDomain, legalTestRenderConfig{}, legaladapter.NewProjection())
+// legalIntegration is the production composition of the Terms and Privacy
+// use cases over one database: the PostgreSQL Store with its real OG,
+// notice, Share Link, Member and contributor adapters.
+type legalIntegration struct {
+	policies  *legal.Service
+	internal  *legal.InternalService
+	documents *legal.AIDocumentService
+}
+
+func newLegalIntegration(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, audit domainaudit.Appender) legalIntegration {
+	t.Helper()
+	const cdnDomain = "https://cdn.example.test"
+	contents, err := contentblock.NewGeneratedStore(filemedia.NewContentBlockFileReuseAuthorizer(spiceDB))
+	require.NoError(t, err)
+	units, err := legalpostgres.NewUnits(db, legalpostgres.Ports{
+		ContentBlocks: contents,
+		Routes:        legaladapter.NewOGRuntime(cdnDomain, og.NewPlanner(db, cdnDomain, legalTestRenderConfig{}, legaladapter.NewProjection())),
+		Notices:       legaladapter.NewNoticeRuntime(),
+		PreviewLinks:  sharelinkadapter.LegalPreviewLinks{},
+		Members:       memberadapter.PreferredLocales{},
+		Checkpoints:   testcollaboration.NewCheckpoints(db, spiceDB),
+	})
+	require.NoError(t, err)
+	var integration legalIntegration
+	integration.policies, err = legal.NewService(legal.Deps{
+		Units: units, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: audit,
+		Dispatch: legaladapter.NewNoticeDispatch(db, nil), OGAssets: legaladapter.NewOGAssets(db, cdnDomain),
+		BaseURL: "https://example.test",
+	})
+	require.NoError(t, err)
+	integration.internal, err = legal.NewInternalService(legal.InternalDeps{
+		Units: units, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: audit,
+	})
+	require.NoError(t, err)
+	integration.documents, err = legal.NewAIDocumentService(legal.AIDocumentDeps{
+		Units: units, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: audit,
+	})
+	require.NoError(t, err)
+	return integration
+}
+
+func (l legalIntegration) terms() *legal.TermsConnectHandler {
+	return legal.NewTermsConnectHandler(l.policies)
+}
+
+func (l legalIntegration) privacy() *legal.PrivacyConnectHandler {
+	return legal.NewPrivacyConnectHandler(l.policies)
+}
+
+func (l legalIntegration) internalTerms() *legal.InternalTermsConnectHandler {
+	return legal.NewInternalTermsConnectHandler(l.internal)
+}
+
+func (l legalIntegration) internalPrivacy() *legal.InternalPrivacyConnectHandler {
+	return legal.NewInternalPrivacyConnectHandler(l.internal)
 }
 
 func legalIntegrationAdminCtxWithIdentityAndSpiceDB(
@@ -117,53 +141,6 @@ func legalIntegrationAdminCtxWithIdentityAndSpiceDB(
 
 func ptrString(value string) *string { return &value }
 
-func ptrStringValue(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
-}
-
-func publishEmailTemplateSourceBlocksForIntegration(
-	t *testing.T,
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	templateID string,
-	text string,
-) {
-	t.Helper()
-	store := testutil.NewEmailContentBlockStore(t, spiceDB)
-	var template struct {
-		ContentDocumentID string `gorm:"column:content_document_id"`
-		SourceLocale      string `gorm:"column:source_locale"`
-	}
-	require.NoError(t, db.Table("email_template").Select("content_document_id", "source_locale").Where(
-		"id = ?", templateID,
-	).Take(&template).Error)
-	documentID, err := uuid.Parse(template.ContentDocumentID)
-	require.NoError(t, err)
-	snapshot, err := store.LoadSnapshot(
-		t.Context(), db, documentID, template.SourceLocale,
-	)
-	require.NoError(t, err)
-	document, err := contentblock.SnapshotToRichTextDocument(snapshot)
-	require.NoError(t, err)
-	contributorID := testutil.IntegrationUUID()
-	testutil.InsertAuthorizedDocumentContributor(t, db, spiceDB, contributorID)
-	_, err = emailauthoring.NewInternalTemplateConnectHandler(newInternalEmailAuthoringService(t, emailauthoring.InternalDeps{DB: db, Audit: apitelemetry.NewDurableWriter(db), SpiceDB: spiceDB, ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB), References: emailauthoringadapter.NewCampaignDeliveryReferences()})).ApplyBlockBatch(t.Context(), connect.NewRequest(&intrav1.ApplyEmailTemplateBlockBatchRequest{
-		EmailTemplateId: templateID,
-		Locale:          template.SourceLocale,
-		Batch: testutil.NewParagraphBatch(
-			document,
-			snapshot.Document.Revision.String(),
-			template.SourceLocale,
-			text,
-			[]string{contributorID},
-		),
-	}))
-	require.NoError(t, err)
-}
-
 func requireRelationWhereCount(
 	t *testing.T,
 	db *gorm.DB,
@@ -179,11 +156,8 @@ func requireRelationWhereCount(
 	require.Equal(t, want, count)
 }
 
-func ensureBulkEmailAudienceKratosIdentityColumns(t *testing.T, db *gorm.DB) {
-	t.Helper()
-	testutil.EnsureKratosIdentityFixtureColumns(t, db)
-}
-
+// seedBulkEmailAudienceIdentity stores a newsletter subscriber a legal
+// notice reaches.
 func seedBulkEmailAudienceIdentity(
 	t *testing.T,
 	db *gorm.DB,
