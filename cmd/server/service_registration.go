@@ -61,6 +61,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filepublic "github.com/echovisionlab/geul-api/internal/filemedia/public"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
@@ -713,11 +714,13 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered service", "path", emailLayoutPath)
 
 	mailAdapterService, err := emaildelivery.NewService(emaildelivery.Deps{
-		DB:             db,
+		Units:          emaildeliverypostgres.NewUnits(db),
 		SpiceDB:        spicedbClient,
-		AdapterCache:   adapterLoader,
-		AdapterChanges: ogPublisher,
+		Fence:          identitystate.PostgresFence{},
 		Audit:          telemetryWriter,
+		Providers:      emaildeliveryadapter.MailProviders{},
+		AdapterCache:   adapterLoader,
+		AdapterChanges: emaildeliveryadapter.NewMailAdapterChanges(ogPublisher),
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize email delivery service: %w", err)

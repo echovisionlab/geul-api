@@ -8,6 +8,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/email"
 	emailauthoringdomain "github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 )
@@ -45,7 +46,7 @@ func (*Runtime) BuildEmailRenderData(
 	locale string,
 	input map[string]string,
 ) map[string]string {
-	return emaildelivery.BuildEmailRenderData(ctx, db, cdnDomain, siteOrigin, locale, input)
+	return emaildelivery.BuildEmailRenderData(ctx, emaildeliverypostgres.Bind(db), cdnDomain, siteOrigin, locale, input)
 }
 
 var _ emailauthoringdomain.EmailTemplateRuntime = (*Runtime)(nil)

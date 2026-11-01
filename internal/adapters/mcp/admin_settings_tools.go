@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
@@ -39,7 +40,7 @@ type SiteSettingsAdminApplication interface {
 
 type MailAdapterAdminApplication interface {
 	ListMailAdapters(context.Context, emaildelivery.ListMailAdaptersQuery) (emaildelivery.MailAdapterPage, error)
-	UpdateMailAdapterSender(context.Context, emaildelivery.MailAdapterSenderUpdate) (*managev1.MailAdapter, error)
+	UpdateMailAdapterSender(context.Context, emaildelivery.MailAdapterSenderUpdate) (emaildelivery.MailAdapter, error)
 }
 
 type AdminSettingsTools struct {
@@ -143,12 +144,12 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 		}
 		adapters := make([]mailAdapterAdminOutput, 0, len(page.Adapters))
 		for _, adapter := range page.Adapters {
-			adapters = append(adapters, projectMailAdapterAdmin(adapter))
+			adapters = append(adapters, projectMailAdapterAdmin(ctx, adapter))
 		}
-		pagination := page.Pagination
+		total := int32(page.Total)
 		next := int64(input.Offset) + int64(len(adapters))
-		hasMore := len(adapters) > 0 && next < int64(pagination.GetTotal()) && next <= 1<<31-1
-		output := map[string]any{"adapters": adapters, "total": pagination.GetTotal(), "limit": limit, "offset": input.Offset, "has_more": hasMore}
+		hasMore := len(adapters) > 0 && next < int64(total) && next <= 1<<31-1
+		output := map[string]any{"adapters": adapters, "total": total, "limit": limit, "offset": input.Offset, "has_more": hasMore}
 		if hasMore {
 			output["next_offset"] = next
 		}
@@ -179,7 +180,7 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 		if err != nil {
 			return mcpserver.ToolResult{}, err
 		}
-		return adminSettingsResult(map[string]any{"adapter": projectMailAdapterAdmin(adapter)})
+		return adminSettingsResult(map[string]any{"adapter": projectMailAdapterAdmin(ctx, adapter)})
 	default:
 		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
 	}
@@ -247,15 +248,23 @@ type mailAdapterAdminOutput struct {
 	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
-func projectMailAdapterAdmin(adapter *managev1.MailAdapter) mailAdapterAdminOutput {
-	output := mailAdapterAdminOutput{ID: adapter.GetId(), Name: adapter.GetName(), Type: strings.ToLower(strings.TrimPrefix(adapter.GetType().String(), "MAIL_ADAPTER_TYPE_")),
-		IsActive: adapter.GetIsActive(), Priority: adapter.GetPriority(), CreatedAt: adapter.GetCreatedAt(), UpdatedAt: adapter.GetUpdatedAt()}
-	if config := adapter.GetSesConfig(); config != nil {
-		output.FromName, output.FromEmail, output.Region = config.GetFromName(), config.GetFromEmail(), config.GetRegion()
+func projectMailAdapterAdmin(ctx context.Context, adapter emaildelivery.MailAdapter) mailAdapterAdminOutput {
+	adapterType := "unspecified"
+	if adapter.Type.Known() {
+		adapterType = strings.ToLower(strings.TrimPrefix(string(adapter.Type), "MAIL_ADAPTER_TYPE_"))
 	}
-	if config := adapter.GetSmtpConfig(); config != nil {
-		output.FromName, output.FromEmail, output.Host, output.Port = config.GetFromName(), config.GetFromEmail(), config.GetHost(), config.GetPort()
-		secure := config.GetSecure()
+	output := mailAdapterAdminOutput{ID: adapter.ID, Name: adapter.Name, Type: adapterType,
+		IsActive: adapter.IsActive, Priority: int32(adapter.Priority), CreatedAt: adapter.CreatedAt.Format(time.RFC3339)}
+	if adapter.UpdatedAt != nil {
+		output.UpdatedAt = adapter.UpdatedAt.Format(time.RFC3339)
+	}
+	ses, smtp := adapter.ProviderConfig(ctx)
+	if ses != nil {
+		output.FromName, output.FromEmail, output.Region = ses.FromName, ses.FromEmail, ses.Region
+	}
+	if smtp != nil {
+		output.FromName, output.FromEmail, output.Host, output.Port = smtp.FromName, smtp.FromEmail, smtp.Host, int32(smtp.Port)
+		secure := smtp.Secure
 		output.Secure = &secure
 	}
 	return output

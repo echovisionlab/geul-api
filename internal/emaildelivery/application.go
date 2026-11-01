@@ -65,10 +65,6 @@ type DeliveryCampaignStore interface {
 	MarkClaimedResult(context.Context, string, string, string, string, string) error
 }
 
-type Suppression struct {
-	Reason string
-}
-
 type DeliverySuppressionStore interface {
 	Find(context.Context, string) (*Suppression, error)
 	Suppress(context.Context, SuppressionRequest) error

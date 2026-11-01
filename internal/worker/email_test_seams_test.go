@@ -10,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -44,7 +45,7 @@ func (h *Handlers) resolveEmailTargetLocale(ctx context.Context, job *managev1.S
 }
 
 func (h *Handlers) lookupRecipientLocale(ctx context.Context, recipient string) string {
-	return emaildelivery.LookupEmailRecipientLocale(ctx, h.db, strings.TrimSpace(recipient))
+	return emaildelivery.LookupEmailRecipientLocale(ctx, emaildeliverypostgres.Bind(h.db), strings.TrimSpace(recipient))
 }
 
 func normalizeEmailTargetLocale(locale *string) string {
