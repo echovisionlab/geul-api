@@ -52,6 +52,7 @@ import (
 	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authentication"
+	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/collaboration"
 	"github.com/echovisionlab/geul-api/internal/config"
@@ -204,7 +205,8 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		internalServiceHeaderName: cfg.InternalServiceHeaderName,
 	}
 	authenticationService, err := authentication.NewService(authentication.Deps{
-		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, Roles: accountadapter.AccountDirectRoleTransition{},
+		Units: authenticationpostgres.NewUnits(db), SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{},
+		Audit: telemetryWriter, Roles: accountadapter.AccountDirectRoleTransition{}, Sessions: authenticationpostgres.NewSessions(db),
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize authentication service: %w", err)

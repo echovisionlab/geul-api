@@ -27,6 +27,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/ai"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authentication"
+	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
 	"github.com/echovisionlab/geul-api/internal/config"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/crypto"
@@ -221,7 +222,7 @@ func newAuthCodeIssuanceLimiter(
 	db *gorm.DB,
 ) *authentication.AuthCodeIssuanceLimiter {
 	return authentication.NewAuthCodeIssuanceLimiter(
-		db,
+		authenticationpostgres.NewUnits(db),
 		[]byte(cfg.TokenSigningSecret),
 		authentication.AuthCodeIssuanceLimits{
 			Cooldown:        time.Duration(cfg.AuthCodeResendCooldownSeconds) * time.Second,
@@ -273,7 +274,7 @@ func registerAuthenticationRoutes(
 	}
 	authenticationAccess, err := authentication.NewAuthenticationAccessRecorder(
 		cfg.KratosPublicURL,
-		deps.db,
+		authenticationpostgres.NewSessions(deps.db),
 		deps.telemetryWriter,
 	)
 	if err != nil {

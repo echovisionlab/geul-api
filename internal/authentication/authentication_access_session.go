@@ -25,7 +25,7 @@ func (recorder *AuthenticationAccessRecorder) resolveIncomingMember(request *htt
 		}
 		return nil
 	}
-	principal, err := recorder.resolvePrincipal(request.Context(), sessionID)
+	principal, err := recorder.sessions.Principal(request.Context(), sessionID)
 	if err != nil || principal == nil || principal.Banned {
 		if err != nil {
 			level := slog.LevelError
