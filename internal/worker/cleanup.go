@@ -3,12 +3,12 @@ package worker
 import (
 	"context"
 	stderrors "errors"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"log/slog"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	mediaassetdomain "github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 )
 
@@ -28,12 +28,12 @@ func (h *Handlers) handleCleanupDanglingFiles(ctx context.Context) error {
 }
 
 func (h *Handlers) handleCleanupShareLinks(ctx context.Context) error {
-	result := h.db.WithContext(ctx).Where("expires_at < ?", time.Now()).Delete(&model.ShareLink{})
-	if result.Error != nil {
-		return result.Error
+	deleted, err := sharelinkadapter.DeleteExpiredLinks(ctx, h.db, time.Now())
+	if err != nil {
+		return err
 	}
-	if result.RowsAffected > 0 {
-		slog.InfoContext(ctx, "Cleaned up expired share links", "count", result.RowsAffected)
+	if deleted > 0 {
+		slog.InfoContext(ctx, "Cleaned up expired share links", "count", deleted)
 	}
 	return nil
 }

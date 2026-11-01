@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -92,7 +93,7 @@ func TestFindExpiredUploadSessionsLoadsIndependentFileAndTrackIdentity(t *testin
 	sessions, err := handlers.findExpiredUploadSessions(context.Background(), time.Now().UTC().Add(-7*24*time.Hour))
 	require.NoError(t, err)
 	require.Len(t, sessions, 3)
-	byUploadID := make(map[string]expiredUploadSession, len(sessions))
+	byUploadID := make(map[string]filemediaadapter.ExpiredUploadSession, len(sessions))
 	for _, session := range sessions {
 		byUploadID[session.UploadID] = session
 	}
@@ -111,7 +112,7 @@ func TestPublishExpiredFileIngestPublishesIndependentEditorFileIdentity(t *testi
 	publisher := &recordingUnitFileIngestPublisher{}
 	handlers.fileIngest = publisher
 
-	published, err := handlers.publishExpiredFileIngest(context.Background(), expiredUploadSession{
+	published, err := handlers.publishExpiredFileIngest(context.Background(), filemediaadapter.ExpiredUploadSession{
 		UploadType:    managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO.String(),
 		UploadID:      uploadID,
 		FileID:        fileID,
@@ -190,7 +191,7 @@ func TestPublishExpiredFileIngestPublishesIndependentEditorMeshIdentity(t *testi
 	publisher := &recordingUnitFileIngestPublisher{}
 	handlers.fileIngest = publisher
 
-	published, err := handlers.publishExpiredFileIngest(context.Background(), expiredUploadSession{
+	published, err := handlers.publishExpiredFileIngest(context.Background(), filemediaadapter.ExpiredUploadSession{
 		UploadType:    managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH.String(),
 		UploadID:      uploadID,
 		FileID:        fileID,
@@ -213,13 +214,13 @@ func TestExpiredFileIngestFailedEventBuildsIdentityForUploadKinds(t *testing.T) 
 
 	tests := []struct {
 		name          string
-		session       expiredUploadSession
+		session       filemediaadapter.ExpiredUploadSession
 		wantEntity    managev1.TranscodeEntityType
 		wantMediaKind managev1.FileIngestMediaKind
 	}{
 		{
 			name: "independent editor image",
-			session: expiredUploadSession{
+			session: filemediaadapter.ExpiredUploadSession{
 				UploadType:    managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE.String(),
 				UploadID:      randomWorkerTestID("editor-image"),
 				FileID:        uuid.NewString(),
@@ -231,7 +232,7 @@ func TestExpiredFileIngestFailedEventBuildsIdentityForUploadKinds(t *testing.T) 
 		},
 		{
 			name: "independent editor audio",
-			session: expiredUploadSession{
+			session: filemediaadapter.ExpiredUploadSession{
 				UploadType:    managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO.String(),
 				UploadID:      randomWorkerTestID("editor-audio"),
 				FileID:        uuid.NewString(),
@@ -243,7 +244,7 @@ func TestExpiredFileIngestFailedEventBuildsIdentityForUploadKinds(t *testing.T) 
 		},
 		{
 			name: "independent editor attachment",
-			session: expiredUploadSession{
+			session: filemediaadapter.ExpiredUploadSession{
 				UploadType:    managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT.String(),
 				UploadID:      randomWorkerTestID("editor-attachment"),
 				FileID:        uuid.NewString(),
@@ -255,7 +256,7 @@ func TestExpiredFileIngestFailedEventBuildsIdentityForUploadKinds(t *testing.T) 
 		},
 		{
 			name: "independent editor mesh",
-			session: expiredUploadSession{
+			session: filemediaadapter.ExpiredUploadSession{
 				UploadType:    managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH.String(),
 				UploadID:      randomWorkerTestID("editor-mesh"),
 				FileID:        uuid.NewString(),
@@ -267,7 +268,7 @@ func TestExpiredFileIngestFailedEventBuildsIdentityForUploadKinds(t *testing.T) 
 		},
 		{
 			name: "track audio",
-			session: expiredUploadSession{
+			session: filemediaadapter.ExpiredUploadSession{
 				UploadType:            managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(),
 				UploadID:              randomWorkerTestID("track-audio"),
 				FileID:                uuid.NewString(),
@@ -316,7 +317,7 @@ func TestPublishExpiredFileIngestAcceptsIndependentEditorFileIdentity(t *testing
 	publisher := &recordingUnitFileIngestPublisher{}
 	handlers := &Handlers{fileIngest: publisher}
 
-	published, err := handlers.publishExpiredFileIngest(context.Background(), expiredUploadSession{
+	published, err := handlers.publishExpiredFileIngest(context.Background(), filemediaadapter.ExpiredUploadSession{
 		UploadType:    managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO.String(),
 		UploadID:      randomWorkerTestID("upload"),
 		FileID:        uuid.NewString(),
@@ -332,13 +333,13 @@ func TestCleanupExpiredUploadSessionAbortsStorageBeforeDeletingSession(t *testin
 
 	tests := []struct {
 		name             string
-		session          expiredUploadSession
+		session          filemediaadapter.ExpiredUploadSession
 		wantPublished    bool
 		publisherFailure error
 	}{
 		{
 			name: "independent editor image",
-			session: expiredUploadSession{
+			session: filemediaadapter.ExpiredUploadSession{
 				UploadType:    managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE.String(),
 				UploadID:      randomWorkerTestID("editor-image"),
 				FileID:        uuid.NewString(),
@@ -348,7 +349,7 @@ func TestCleanupExpiredUploadSessionAbortsStorageBeforeDeletingSession(t *testin
 		},
 		{
 			name: "independent editor audio",
-			session: expiredUploadSession{
+			session: filemediaadapter.ExpiredUploadSession{
 				UploadType:    managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO.String(),
 				UploadID:      randomWorkerTestID("editor-audio"),
 				FileID:        uuid.NewString(),
@@ -358,7 +359,7 @@ func TestCleanupExpiredUploadSessionAbortsStorageBeforeDeletingSession(t *testin
 		},
 		{
 			name: "track",
-			session: expiredUploadSession{
+			session: filemediaadapter.ExpiredUploadSession{
 				UploadType:    managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(),
 				UploadID:      randomWorkerTestID("track"),
 				FileID:        uuid.NewString(),
@@ -369,7 +370,7 @@ func TestCleanupExpiredUploadSessionAbortsStorageBeforeDeletingSession(t *testin
 		},
 		{
 			name: "ordinary upload",
-			session: expiredUploadSession{
+			session: filemediaadapter.ExpiredUploadSession{
 				UploadType:    managev1.UploadType_UPLOAD_TYPE_USER_AVATAR.String(),
 				UploadID:      randomWorkerTestID("ordinary"),
 				FileID:        uuid.NewString(),
@@ -379,7 +380,7 @@ func TestCleanupExpiredUploadSessionAbortsStorageBeforeDeletingSession(t *testin
 		},
 		{
 			name: "realtime projection failure is best effort",
-			session: expiredUploadSession{
+			session: filemediaadapter.ExpiredUploadSession{
 				UploadType:    managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT.String(),
 				UploadID:      randomWorkerTestID("publisher-failure"),
 				FileID:        uuid.NewString(),
@@ -427,7 +428,7 @@ func TestCleanupExpiredUploadSessionAbortsStorageBeforeDeletingSession(t *testin
 func TestCleanupExpiredUploadSessionRetainsClaimWhenStorageAbortFails(t *testing.T) {
 	t.Parallel()
 
-	session := expiredUploadSession{
+	session := filemediaadapter.ExpiredUploadSession{
 		UploadType:    managev1.UploadType_UPLOAD_TYPE_USER_AVATAR.String(),
 		UploadID:      randomWorkerTestID("abort-failure"),
 		FileID:        uuid.NewString(),
@@ -451,7 +452,7 @@ func TestCleanupExpiredUploadSessionRetainsClaimWhenStorageAbortFails(t *testing
 func TestCleanupExpiredUploadSessionTreatsMissingMultipartUploadAsClean(t *testing.T) {
 	t.Parallel()
 
-	session := expiredUploadSession{
+	session := filemediaadapter.ExpiredUploadSession{
 		UploadType:    managev1.UploadType_UPLOAD_TYPE_USER_AVATAR.String(),
 		UploadID:      randomWorkerTestID("already-missing"),
 		FileID:        uuid.NewString(),
@@ -471,7 +472,7 @@ func TestCleanupExpiredUploadSessionTreatsMissingMultipartUploadAsClean(t *testi
 	require.True(t, removed)
 }
 
-func newExpiredUploadCleanupDB(t *testing.T, session expiredUploadSession) (*gorm.DB, time.Time) {
+func newExpiredUploadCleanupDB(t *testing.T, session filemediaadapter.ExpiredUploadSession) (*gorm.DB, time.Time) {
 	t.Helper()
 
 	db, err := gorm.Open(sqlite.Open("file:expired-upload-cleanup-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
@@ -518,7 +519,7 @@ func TestPublishExpiredFileIngestRequiresPublisher(t *testing.T) {
 	fileID := uuid.NewString()
 	releaseID := uuid.NewString()
 
-	published, err := handlers.publishExpiredFileIngest(context.Background(), expiredUploadSession{
+	published, err := handlers.publishExpiredFileIngest(context.Background(), filemediaadapter.ExpiredUploadSession{
 		UploadType:    managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(),
 		UploadID:      uploadID,
 		FileID:        fileID,
@@ -536,7 +537,7 @@ func TestHandleCleanupIncompleteUploadsLogsEachFailedSessionOnce(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 
-	session := expiredUploadSession{
+	session := filemediaadapter.ExpiredUploadSession{
 		UploadType:    managev1.UploadType_UPLOAD_TYPE_USER_AVATAR.String(),
 		UploadID:      randomWorkerTestID("abort-failure"),
 		FileID:        uuid.NewString(),
