@@ -59,7 +59,6 @@ func TestEditorFileRemoteImportIsIndependentDirectIntegration(t *testing.T) {
 	confirmedPublisher, err := mq.NewPublisher(sqlDB)
 	require.NoError(t, err)
 	fileService := newTestService(Deps{
-		DB:             stack.DB,
 		S3:             runtimeS3Client(t, stack),
 		AsyncPublisher: confirmedPublisher,
 		S3Bucket:       stack.S3MediaBucket,
@@ -68,7 +67,7 @@ func TestEditorFileRemoteImportIsIndependentDirectIntegration(t *testing.T) {
 		MediaSecret:    stack.MediaSigningSecret,
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
-	})
+	}, stack.DB, nativeFilePorts{})
 	fileService.remoteImportResolver = runtimeRemoteImportResolver{ip: net.ParseIP("8.8.8.8")}
 	fileService.remoteImportDialer = func(ctx context.Context, network, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, network, remoteServerURL.Host)

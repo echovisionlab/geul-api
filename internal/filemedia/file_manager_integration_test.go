@@ -30,11 +30,14 @@ func TestFileManagerCatalogUsageAndDeletionIntegration(t *testing.T) {
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
 	publisher := &capturingAsyncPublisher{}
-	service := withTestMutations(withTestStorage(&Service{
-		db: db, cdnDomain: "https://cdn.example.test", mediaSecret: "file-manager-integration-secret",
-		downloadTTL: time.Hour, asyncPublisher: publisher, spiceDB: spiceDB,
+	service := withTestMutations(withNativeFileUnits(&Service{
+		cdnDomain:       "https://cdn.example.test",
+		mediaSecret:     "file-manager-integration-secret",
+		downloadTTL:     time.Hour,
+		asyncPublisher:  publisher,
+		spiceDB:         spiceDB,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}))
+	}, db, nativeFilePorts{}))
 
 	root, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Library"}))
 	require.NoError(t, err)
@@ -141,11 +144,13 @@ func TestFileManagerSiteWideSearchIncludesFoldersPathsAndPaginationIntegration(t
 	db := testutil.NewIntegrationDB(t)
 	adminCtx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(adminCtx).MemberID.String()
-	service := withTestMutations(withTestStorage(&Service{
-		db: db, cdnDomain: "https://cdn.example.test", mediaSecret: "file-search-integration-secret",
-		downloadTTL: time.Hour, spiceDB: spiceDB,
+	service := withTestMutations(withNativeFileUnits(&Service{
+		cdnDomain:       "https://cdn.example.test",
+		mediaSecret:     "file-search-integration-secret",
+		downloadTTL:     time.Hour,
+		spiceDB:         spiceDB,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}))
+	}, db, nativeFilePorts{}))
 
 	root, err := NewConnectHandler(service).CreateFileFolder(adminCtx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Library"}))
 	require.NoError(t, err)
@@ -220,11 +225,13 @@ func TestFileManagerGetFileIncludesGeneratedOutputsIntegration(t *testing.T) {
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
 	now := time.Now().UTC()
-	service := withTestMutations(withTestStorage(&Service{
-		db: db, cdnDomain: "https://cdn.example.test", mediaSecret: "generated-output-secret",
-		downloadTTL: time.Hour, spiceDB: spiceDB,
+	service := withTestMutations(withNativeFileUnits(&Service{
+		cdnDomain:       "https://cdn.example.test",
+		mediaSecret:     "generated-output-secret",
+		downloadTTL:     time.Hour,
+		spiceDB:         spiceDB,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}))
+	}, db, nativeFilePorts{}))
 
 	folder, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Generated"}))
 	require.NoError(t, err)
@@ -280,11 +287,14 @@ func TestFileManagerFolderDeletionIsAllOrNothingIntegration(t *testing.T) {
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
 	publisher := &capturingAsyncPublisher{}
-	service := withTestMutations(withTestStorage(&Service{
-		db: db, cdnDomain: "https://cdn.example.test", mediaSecret: "folder-delete-integration-secret",
-		downloadTTL: time.Hour, asyncPublisher: publisher, spiceDB: spiceDB,
+	service := withTestMutations(withNativeFileUnits(&Service{
+		cdnDomain:       "https://cdn.example.test",
+		mediaSecret:     "folder-delete-integration-secret",
+		downloadTTL:     time.Hour,
+		asyncPublisher:  publisher,
+		spiceDB:         spiceDB,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}))
+	}, db, nativeFilePorts{}))
 
 	root, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Tree"}))
 	require.NoError(t, err)
@@ -321,10 +331,7 @@ func TestFileManagerListsEverySiteSettingsUsageSlotIntegration(t *testing.T) {
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
-	service := withTestMutations(withTestStorage(&Service{
-		db: db, spiceDB: spiceDB,
-		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}))
+	service := withTestMutations(withNativeFileUnits(&Service{spiceDB: spiceDB, memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test")}, db, nativeFilePorts{}))
 
 	folder, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Settings"}))
 	require.NoError(t, err)
@@ -377,11 +384,13 @@ func TestFileManagerFiltersAuthorUsageProjectionIntegration(t *testing.T) {
 	memberID := principal.MemberID.String()
 	identitySubject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
 	require.NoError(t, err)
-	service := withTestMutations(withTestStorage(&Service{
-		db: db, spiceDB: spiceDB, cdnDomain: "https://cdn.example.test",
-		mediaSecret: "file-manager-author-secret", downloadTTL: time.Hour,
+	service := withTestMutations(withNativeFileUnits(&Service{
+		spiceDB:         spiceDB,
+		cdnDomain:       "https://cdn.example.test",
+		mediaSecret:     "file-manager-author-secret",
+		downloadTTL:     time.Hour,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}))
+	}, db, nativeFilePorts{}))
 	folder, err := NewConnectHandler(service).CreateFileFolder(adminCtx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Author Files"}))
 	require.NoError(t, err)
 	fileID := seedFileManagerFile(t, db, folder.Msg.Folder.Id, memberID, "shared", "png", "image/png")

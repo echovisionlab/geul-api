@@ -29,11 +29,15 @@ func TestFileManagerDomainAuditIntegration(t *testing.T) {
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := releaseAuditContext(t, identityID, memberID)
 	writer := apitelemetry.NewDurableWriter(db)
-	service := withTestMutations(withTestStorage(&Service{
-		db: db, spiceDB: spiceDB, cdnDomain: "https://cdn.example.test", mediaSecret: "file-audit",
-		downloadTTL: time.Hour, asyncPublisher: &capturingAsyncPublisher{}, auditWriter: writer,
+	service := withTestMutations(withNativeFileUnits(&Service{
+		spiceDB:         spiceDB,
+		cdnDomain:       "https://cdn.example.test",
+		mediaSecret:     "file-audit",
+		downloadTTL:     time.Hour,
+		asyncPublisher:  &capturingAsyncPublisher{},
+		auditWriter:     writer,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}))
+	}, db, nativeFilePorts{}))
 
 	root, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Library"}))
 	require.NoError(t, err)
@@ -68,10 +72,7 @@ func TestFileManagerDomainAuditIntegration(t *testing.T) {
 	}
 	require.Equal(t, []string{"file_folder.created", "file_folder.created", "file_folder.updated", "file_folder.updated", "file.updated", "file.updated", "file.deleted"}, []string{rows[0].Action, rows[1].Action, rows[2].Action, rows[3].Action, rows[4].Action, rows[5].Action, rows[6].Action})
 
-	failing := withTestMutations(withTestStorage(&Service{
-		db: db, spiceDB: spiceDB, auditWriter: fileFailingAuditAppender{},
-		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}))
+	failing := withTestMutations(withNativeFileUnits(&Service{spiceDB: spiceDB, auditWriter: fileFailingAuditAppender{}, memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test")}, db, nativeFilePorts{}))
 	_, err = NewConnectHandler(failing).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "must rollback"}))
 	require.Error(t, err)
 	var count int64
@@ -89,10 +90,7 @@ func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *t
 	ctx := releaseAuditContext(t, identityID, memberID)
 	writer := apitelemetry.NewDurableWriter(db)
 	publisher := &capturingAsyncPublisher{}
-	service := withTestMutations(withTestStorage(&Service{
-		db: db, spiceDB: spiceDB, asyncPublisher: publisher, auditWriter: writer,
-		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}))
+	service := withTestMutations(withNativeFileUnits(&Service{spiceDB: spiceDB, asyncPublisher: publisher, auditWriter: writer, memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test")}, db, nativeFilePorts{}))
 
 	createdID := testutil.IntegrationUUID()
 	err := service.createVerifiedFileIngestRecord(ctx, fileIngestRecord{
@@ -109,7 +107,7 @@ func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *t
 	require.JSONEq(t, `{}`, string(createdRows[0].Attributes))
 
 	failingIngestID := testutil.IntegrationUUID()
-	failingIngest := withTestMutations(withTestStorage(&Service{db: db, spiceDB: spiceDB, auditWriter: fileFailingAuditAppender{}}))
+	failingIngest := withTestMutations(withNativeFileUnits(&Service{spiceDB: spiceDB, auditWriter: fileFailingAuditAppender{}}, db, nativeFilePorts{}))
 	err = failingIngest.createVerifiedFileIngestRecord(ctx, fileIngestRecord{
 		id: failingIngestID, fileName: "must-rollback", mimeType: "image/jpeg", fileSize: 1024, extension: "jpg", sha256: make([]byte, 32), ingestAttemptID: testutil.IntegrationUUID(),
 	}, managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, "", trustedSystemFileIngestAuthority{})
@@ -144,10 +142,7 @@ func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *t
 	rollbackChild, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{ParentId: &rollbackRoot.Msg.Folder.Id, Name: "Rollback child"}))
 	require.NoError(t, err)
 	rollbackFileID := seedFileManagerFile(t, db, rollbackChild.Msg.Folder.Id, memberID, "rollback-file", "jpg", "image/jpeg")
-	failingDelete := withTestMutations(withTestStorage(&Service{
-		db: db, spiceDB: spiceDB, asyncPublisher: &capturingAsyncPublisher{}, auditWriter: fileFailingAuditAppender{},
-		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}))
+	failingDelete := withTestMutations(withNativeFileUnits(&Service{spiceDB: spiceDB, asyncPublisher: &capturingAsyncPublisher{}, auditWriter: fileFailingAuditAppender{}, memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test")}, db, nativeFilePorts{}))
 	_, err = NewConnectHandler(failingDelete).DeleteFileFolder(ctx, connect.NewRequest(&managev1.DeleteFileFolderRequest{FolderId: rollbackRoot.Msg.Folder.Id}))
 	require.Error(t, err)
 	var folderCount int64

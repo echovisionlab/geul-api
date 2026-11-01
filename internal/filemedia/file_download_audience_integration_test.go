@@ -93,13 +93,7 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	_, err = stack.SpiceDBClient.ApplyRelationships(t.Context(), postPolicy)
 	require.NoError(t, err)
 
-	fileSvc := withTestMutations(withTestStorage(&Service{
-		db:             db,
-		spiceDB:        stack.SpiceDBClient,
-		auditWriter:    apitelemetry.NewDurableWriter(db),
-		asyncPublisher: &policySignalPublisher{},
-	}))
-	fileSvc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
+	fileSvc := withTestMutations(withNativeFileUnits(&Service{spiceDB: stack.SpiceDBClient, auditWriter: apitelemetry.NewDurableWriter(db), asyncPublisher: &policySignalPublisher{}}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, stack.SpiceDBClient)}))
 
 	updated, err := NewConnectHandler(fileSvc).UpdateFileDownloadPolicy(
 		authorCtx,
@@ -213,9 +207,7 @@ func TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegratio
 	_, err = stack.SpiceDBClient.ApplyRelationships(t.Context(), eventPolicy)
 	require.NoError(t, err)
 
-	svc := withTestMutations(withTestStorage(&Service{db: db, spiceDB: stack.SpiceDBClient}))
-	svc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
-	svc.programEventAttachment = newIntegrationProgramEventAccess(db)
+	svc := withTestMutations(withNativeFileUnits(&Service{spiceDB: stack.SpiceDBClient}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, stack.SpiceDBClient), Events: newIntegrationProgramEventAccess(db)}))
 
 	for _, request := range []*managev1.GetFileDownloadPolicyRequest{
 		{EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST, EntityId: postID, BlockId: managePolicyString(postBlockID), ReferencePath: managePolicyString("file")},

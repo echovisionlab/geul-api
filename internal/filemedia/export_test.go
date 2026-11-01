@@ -113,7 +113,7 @@ func ExportClaimTrackUploadCleanup(s *Service, ctx context.Context, id string) (
 	return result, err
 }
 
-func ExportAbortService(units mutation.UnitOfWork[Store], storage *s3.Client, checker *auth.SpiceDBClient) *Service {
+func ExportAbortService(units mutation.UnitOfWork[Store], storage *s3.Client, checker mutation.Authorizer) *Service {
 	return &Service{units: units, s3Client: storage, s3Bucket: "media", spiceDB: checker, asyncPublisher: &hardCutAsyncPublisher{}}
 }
 
@@ -150,7 +150,7 @@ func ExportClientBundleFixture(t *testing.T, kind string) (domain.UploadSession,
 	return row, command, plan.MemberID
 }
 
-func ExportIngestChecker(s *Service, checker *auth.SpiceDBClient) { s.spiceDB = checker }
+func ExportIngestChecker(s *Service, checker mutation.Authorizer) { s.spiceDB = checker }
 
 func ExportCreateVerifiedFile(s *Service, ctx context.Context, file File, uploadType, entityType int32, entityID string, session *domain.UploadSession) error {
 	var authority verifiedFileIngestAuthority = requestFileIngestAuthority{}
@@ -231,6 +231,6 @@ func ExportFaviconTimeout(service *Service, timeout time.Duration) {
 
 var ExportDeleteMeshCandidateAndOutput = (*MeshOptimizationService).deleteCandidateAndOutput
 
-func ExportMeshFileService(units mutation.UnitOfWork[Store], authorizer *auth.SpiceDBClient) *Service {
+func ExportMeshFileService(units mutation.UnitOfWork[Store], authorizer mutation.Authorizer) *Service {
 	return &Service{units: units, spiceDB: authorizer}
 }

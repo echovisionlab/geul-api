@@ -15,6 +15,7 @@ import (
 	"github.com/aws/smithy-go"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
@@ -620,7 +621,7 @@ func checkUploadPrincipalPolicy(
 	entityID string,
 	userID string,
 	user *auth.UserInfo,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB authz.AuthorizationDecisionChecker,
 ) (bool, error) {
 	adminCan, err := policyv1.File.ManageLibrary()
 	if err != nil {

@@ -109,7 +109,7 @@ func TestTriggerFileScopedProcessingPublishesAudioWithoutManualOptions(t *testin
 	publisher := &recordingFileTranscoderPublisher{}
 	db := newTranscodeTargetUnitDB(t)
 	fileID := seedTranscodeTargetSource(t, db, "mp3", "audio/mpeg")
-	svc := withTestStorage(&Service{db: db, publisher: publisher, asyncPublisher: publisher})
+	svc := withNativeFileUnits(&Service{publisher: publisher, asyncPublisher: publisher}, db, nativeFilePorts{})
 	err := svc.triggerFileScopedProcessingIfNeeded(context.Background(), fileID)
 	require.NoError(t, err)
 
@@ -147,7 +147,7 @@ func TestTriggerFileScopedProcessingPublishesVideo(t *testing.T) {
 	publisher := &recordingFileTranscoderPublisher{}
 	db := newTranscodeTargetUnitDB(t)
 	fileID := seedTranscodeTargetSource(t, db, "mp4", "video/mp4")
-	svc := withTestStorage(&Service{db: db, publisher: publisher, asyncPublisher: publisher})
+	svc := withNativeFileUnits(&Service{publisher: publisher, asyncPublisher: publisher}, db, nativeFilePorts{})
 	err := svc.triggerFileScopedProcessingIfNeeded(context.Background(), fileID)
 	require.NoError(t, err)
 
@@ -181,7 +181,7 @@ func TestTriggerFileScopedProcessingRejectsPendingDelete(t *testing.T) {
 	publisher := &recordingFileTranscoderPublisher{}
 	db := newTranscodeTargetUnitDB(t)
 	fileID := seedTranscodeTargetSource(t, db, "mp3", "audio/mpeg")
-	svc := withTestStorage(&Service{db: db, publisher: publisher, asyncPublisher: publisher})
+	svc := withNativeFileUnits(&Service{publisher: publisher, asyncPublisher: publisher}, db, nativeFilePorts{})
 	now := time.Now().UTC()
 	require.NoError(t, db.Model(&model.File{}).Where("id = ?", fileID).Update("delete_requested_at", now).Error)
 	err := svc.triggerFileScopedProcessingIfNeeded(context.Background(), fileID)
@@ -198,7 +198,7 @@ func TestTriggerFileScopedProcessingRetriesSameStableCommandAfterPublishError(t 
 	publisher := &recordingFileTranscoderPublisher{err: errors.New("confirm unavailable")}
 	db := newTranscodeTargetUnitDB(t)
 	fileID := seedTranscodeTargetSource(t, db, "mp3", "audio/mpeg")
-	svc := withTestStorage(&Service{db: db, publisher: publisher, asyncPublisher: publisher})
+	svc := withNativeFileUnits(&Service{publisher: publisher, asyncPublisher: publisher}, db, nativeFilePorts{})
 	err := svc.triggerFileScopedProcessingIfNeeded(context.Background(), fileID)
 	require.ErrorContains(t, err, "enqueue File audio transcode job")
 

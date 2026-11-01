@@ -20,7 +20,7 @@ func TestAuthorizeManageFileDeliveriesUsesCurrentPostAttachmentCurrentSchemaInte
 	})
 	postID, fileID := seedCurrentSchemaPostFileDelivery(t, pg.DB)
 
-	svc := withTestStorage(&Service{db: pg.DB})
+	svc := withNativeFileUnits(&Service{}, pg.DB, nativeFilePorts{})
 	usages, err := svc.currentManageFileDeliveryUsages(t.Context(), []string{fileID})
 	require.NoError(t, err)
 	require.Len(t, usages[fileID], 1)

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -503,7 +504,7 @@ func relationFileDownloadPolicyAudit(
 	return mutation.RequestAudit(action, build), nil
 }
 
-func requireFileDownloadAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient) error {
+func requireFileDownloadAuthor(ctx context.Context, spiceDB authz.AuthorizationDecisionChecker) error {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || strings.TrimSpace(user.MemberID.String()) == "" {
 		return domainerr.AuthenticationRequired()

@@ -149,7 +149,7 @@ func TestMultipartPartReplacementRequiresFreshConfirmationDirectIntegration(t *t
 	presignReq := httptest.NewRequest(http.MethodPost, "/upload/part/presign?"+query.Encode(), nil)
 	testutil.ApplyAuthHeaders(presignReq.Header, manager)
 	presignRec := httptest.NewRecorder()
-	auth.RequireGatewaySession(baseService.db, http.HandlerFunc(baseService.HandlePresignUploadPart)).ServeHTTP(presignRec, presignReq)
+	auth.RequireGatewaySession(testFileDB(baseService), http.HandlerFunc(baseService.HandlePresignUploadPart)).ServeHTTP(presignRec, presignReq)
 	require.Equal(t, http.StatusOK, presignRec.Code, presignRec.Body.String())
 	var presigned multipartPresignResponse
 	require.NoError(t, json.NewDecoder(presignRec.Body).Decode(&presigned))
@@ -179,7 +179,7 @@ func TestMultipartPartReplacementRequiresFreshConfirmationDirectIntegration(t *t
 	confirmReq := httptest.NewRequest(http.MethodPost, "/upload/part/confirm?"+query.Encode(), nil)
 	testutil.ApplyAuthHeaders(confirmReq.Header, manager)
 	confirmRec := httptest.NewRecorder()
-	auth.RequireGatewaySession(baseService.db, http.HandlerFunc(baseService.HandleConfirmUploadPart)).ServeHTTP(confirmRec, confirmReq)
+	auth.RequireGatewaySession(testFileDB(baseService), http.HandlerFunc(baseService.HandleConfirmUploadPart)).ServeHTTP(confirmRec, confirmReq)
 	require.Equal(t, http.StatusOK, confirmRec.Code, confirmRec.Body.String())
 	var replacement uploadPartResponse
 	require.NoError(t, json.NewDecoder(confirmRec.Body).Decode(&replacement))
@@ -521,7 +521,7 @@ func verifyDirectMultipartPrefix(
 	testutil.ApplyAuthHeaders(req.Header, user)
 	req.ContentLength = int64(prefixSize)
 	rec := httptest.NewRecorder()
-	auth.RequireGatewaySession(service.db, http.HandlerFunc(service.HandleVerifyUploadPrefix)).ServeHTTP(rec, req)
+	auth.RequireGatewaySession(testFileDB(service), http.HandlerFunc(service.HandleVerifyUploadPrefix)).ServeHTTP(rec, req)
 	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 }
 
@@ -542,7 +542,7 @@ func presignDirectMultipartPart(
 	req := httptest.NewRequest(http.MethodPost, "/upload/part/presign?"+query.Encode(), nil)
 	testutil.ApplyAuthHeaders(req.Header, user)
 	rec := httptest.NewRecorder()
-	auth.RequireGatewaySession(service.db, http.HandlerFunc(service.HandlePresignUploadPart)).ServeHTTP(rec, req)
+	auth.RequireGatewaySession(testFileDB(service), http.HandlerFunc(service.HandlePresignUploadPart)).ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var payload multipartPresignResponse
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&payload))
@@ -578,7 +578,7 @@ func confirmDirectMultipartPart(
 	req := httptest.NewRequest(http.MethodPost, "/upload/part/confirm?"+query.Encode(), nil)
 	testutil.ApplyAuthHeaders(req.Header, user)
 	rec := httptest.NewRecorder()
-	auth.RequireGatewaySession(service.db, http.HandlerFunc(service.HandleConfirmUploadPart)).ServeHTTP(rec, req)
+	auth.RequireGatewaySession(testFileDB(service), http.HandlerFunc(service.HandleConfirmUploadPart)).ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 

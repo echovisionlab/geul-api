@@ -21,7 +21,7 @@ func verifiedIngestFile() filemedia.File {
 
 func TestVerifiedIngestStoresReceiptAuditAndExactRelationshipAfterFreshAuthority(t *testing.T) {
 	f := newLibraryFixture(t)
-	filemedia.ExportIngestChecker(f.files, f.checker.Client(t))
+	filemedia.ExportIngestChecker(f.files, f.checker)
 	file := verifiedIngestFile()
 	err := filemedia.ExportCreateVerifiedFile(f.files, f.ctx, file, int32(managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE), 0, "", nil)
 	require.NoError(t, err)
@@ -48,7 +48,7 @@ func TestVerifiedIngestFailuresRestoreFileBindingAndFolders(t *testing.T) {
 		t.Run(failure, func(t *testing.T) {
 			t.Parallel()
 			f := newLibraryFixture(t)
-			filemedia.ExportIngestChecker(f.files, f.checker.Client(t))
+			filemedia.ExportIngestChecker(f.files, f.checker)
 			file := verifiedIngestFile()
 			switch failure {
 			case "inactive":
@@ -78,7 +78,7 @@ func TestVerifiedMultipartIngestRejectsChangedStoredAuthorityBeforeCreation(t *t
 		t.Run(state, func(t *testing.T) {
 			t.Parallel()
 			f := newLibraryFixture(t)
-			filemedia.ExportIngestChecker(f.files, f.checker.Client(t))
+			filemedia.ExportIngestChecker(f.files, f.checker)
 			file := verifiedIngestFile()
 			expected := domain.UploadSession{UploadID: uuid.NewString(), FileID: file.ID, UploadType: "UPLOAD_TYPE_EDITOR_IMAGE", Status: domain.UploadSessionStatusFinalizing}
 			stored := expected
@@ -108,7 +108,7 @@ func TestVerifiedMultipartIngestRejectsChangedStoredAuthorityBeforeCreation(t *t
 
 func TestVerifiedIngestDelegatesMaskedPostAuthorizationToOwnerBeforeFileState(t *testing.T) {
 	f := newLibraryFixture(t)
-	filemedia.ExportIngestChecker(f.files, f.checker.Client(t))
+	filemedia.ExportIngestChecker(f.files, f.checker)
 	owner := uuid.NewString()
 	denied := domainerr.ResourceNotFound("post", owner)
 	f.store.PolicyDenied["post\x00"+owner] = denied

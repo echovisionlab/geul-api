@@ -146,7 +146,7 @@ func TestDeleteFaviconSourceMarksAssetsAndFilePendingBeforeWorkerFinalization(t 
 	createFileAttachmentReferenceTablesForServiceTests(t, db)
 	fileID := seedFaviconSource(t, db, "image/png")
 	seedCompleteFaviconDerivatives(t, db, fileID)
-	svc := withTestStorage(&Service{db: db, asyncPublisher: noopAsyncPublisher{}})
+	svc := withNativeFileUnits(&Service{asyncPublisher: noopAsyncPublisher{}}, db, nativeFilePorts{})
 	require.NoError(t, svc.deleteFileRecordByID(t.Context(), fileID))
 	var file model.File
 	require.NoError(t, db.First(&file, "id = ?", fileID).Error)

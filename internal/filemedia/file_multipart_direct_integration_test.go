@@ -54,7 +54,6 @@ func prepareDirectEditorImageMultipart(
 	t.Helper()
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
 	service := newTestService(Deps{
-		DB:             stack.DB,
 		S3:             s3Client,
 		AsyncPublisher: asyncPublisher,
 		S3Bucket:       stack.S3MediaBucket,
@@ -63,7 +62,7 @@ func prepareDirectEditorImageMultipart(
 		MediaSecret:    stack.MediaSigningSecret,
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
-	})
+	}, stack.DB, nativeFilePorts{})
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
@@ -202,17 +201,15 @@ func TestDeleteTrackGuardsFinalizingUploadSessionDirectIntegration(t *testing.T)
 	requireTrackPolicyFixture(t, stack.SpiceDBClient, trackID)
 	asyncPublisher := &hardCutAsyncPublisher{}
 	fileService := newTestService(Deps{
-		DB:              stack.DB,
-		S3:              runtimeS3Client(t, stack),
-		AsyncPublisher:  asyncPublisher,
-		S3Bucket:        stack.S3MediaBucket,
-		CDNDomain:       stack.CDNURL,
-		MediaDomain:     stack.MediaURL,
-		MediaSecret:     stack.MediaSigningSecret,
-		Transcoder:      &recordingFileTranscoderPublisher{},
-		SpiceDB:         stack.SpiceDBClient,
-		TrackAttachment: newDirectTrackAttachment(stack.DB),
-	})
+		S3:             runtimeS3Client(t, stack),
+		AsyncPublisher: asyncPublisher,
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+		Transcoder:     &recordingFileTranscoderPublisher{},
+		SpiceDB:        stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB)})
 	// The Track deletion records an audit entry for its request actor.
 	ctx := releaseAuditContext(t, manager.IdentityID, manager.MemberID)
 	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK
@@ -277,17 +274,15 @@ func TestConcurrentTrackInitiateAndDeleteLeavesNoMultipartOrSessionDirectIntegra
 			asyncPublisher := &hardCutAsyncPublisher{}
 			s3Client := runtimeS3Client(t, stack)
 			fileService := newTestService(Deps{
-				DB:              stack.DB,
-				S3:              s3Client,
-				AsyncPublisher:  asyncPublisher,
-				S3Bucket:        stack.S3MediaBucket,
-				CDNDomain:       stack.CDNURL,
-				MediaDomain:     stack.MediaURL,
-				MediaSecret:     stack.MediaSigningSecret,
-				Transcoder:      &recordingFileTranscoderPublisher{},
-				SpiceDB:         stack.SpiceDBClient,
-				TrackAttachment: newDirectTrackAttachment(stack.DB),
-			})
+				S3:             s3Client,
+				AsyncPublisher: asyncPublisher,
+				S3Bucket:       stack.S3MediaBucket,
+				CDNDomain:      stack.CDNURL,
+				MediaDomain:    stack.MediaURL,
+				MediaSecret:    stack.MediaSigningSecret,
+				Transcoder:     &recordingFileTranscoderPublisher{},
+				SpiceDB:        stack.SpiceDBClient,
+			}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB)})
 			trackService := newDirectTrackService(t, stack, fileService)
 			// The Track deletion records an audit entry for its request actor.
 			ctx := releaseAuditContext(t, manager.IdentityID, manager.MemberID)
@@ -489,7 +484,6 @@ func TestCompleteMultipartUploadRestoresDedicatedAssetAfterResponseLossDirectInt
 	manager := stack.CreateUser(t, policyv1.Role.User().ID())
 	asyncPublisher := &hardCutAsyncPublisher{}
 	service := newTestService(Deps{
-		DB:             stack.DB,
 		S3:             runtimeS3Client(t, stack),
 		AsyncPublisher: asyncPublisher,
 		S3Bucket:       stack.S3MediaBucket,
@@ -498,7 +492,7 @@ func TestCompleteMultipartUploadRestoresDedicatedAssetAfterResponseLossDirectInt
 		MediaSecret:    stack.MediaSigningSecret,
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
-	})
+	}, stack.DB, nativeFilePorts{})
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	body, err := base64.StdEncoding.DecodeString("UklGRiwAAABXRUJQVlA4ICAAAAAwAQCdASoBAAEAAAAGJZwAA3AA/u4KZ/9qflZ7vuAAAA==")
 	require.NoError(t, err)
@@ -554,7 +548,6 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 	require.NotEmpty(t, imageBody)
 	asyncPublisher := &hardCutAsyncPublisher{}
 	svc := newTestService(Deps{
-		DB:             stack.DB,
 		S3:             runtimeS3Client(t, stack),
 		AsyncPublisher: asyncPublisher,
 		S3Bucket:       stack.S3MediaBucket,
@@ -563,7 +556,7 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 		MediaSecret:    stack.MediaSigningSecret,
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
-	})
+	}, stack.DB, nativeFilePorts{})
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	fileName := fmt.Sprintf("editor-image-%d.jpg", time.Now().UnixNano())
 	lastModified := time.Now().UnixMilli()
@@ -686,7 +679,6 @@ func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectInt
 	require.NoError(t, err)
 
 	svc := newTestService(Deps{
-		DB:             stack.DB,
 		S3:             runtimeS3Client(t, stack),
 		AsyncPublisher: &hardCutAsyncPublisher{},
 		S3Bucket:       stack.S3MediaBucket,
@@ -695,7 +687,7 @@ func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectInt
 		MediaSecret:    stack.MediaSigningSecret,
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
-	})
+	}, stack.DB, nativeFilePorts{})
 	starterCtx := auditedUserContext(context.Background(), starter.AuthUserInfo())
 	initiated, err := NewConnectHandler(svc).InitiateMultipartUpload(starterCtx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
@@ -790,7 +782,7 @@ func handleMultipartPartRelayed(
 	testutil.ApplyAuthHeaders(req.Header, user)
 	req.ContentLength = int64(len(body))
 	rec := httptest.NewRecorder()
-	auth.RequireGatewaySession(svc.db, http.HandlerFunc(svc.HandleUploadPart)).ServeHTTP(rec, req)
+	auth.RequireGatewaySession(testFileDB(svc), http.HandlerFunc(svc.HandleUploadPart)).ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	var payload uploadPartResponse
@@ -817,7 +809,7 @@ func requireMultipartPartRelayRejected(
 	testutil.ApplyAuthHeaders(req.Header, user)
 	req.ContentLength = int64(len(body))
 	rec := httptest.NewRecorder()
-	auth.RequireGatewaySession(svc.db, http.HandlerFunc(svc.HandleUploadPart)).ServeHTTP(rec, req)
+	auth.RequireGatewaySession(testFileDB(svc), http.HandlerFunc(svc.HandleUploadPart)).ServeHTTP(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
 
@@ -838,7 +830,7 @@ func requireDirectMultipartPrefixRejected(
 	testutil.ApplyAuthHeaders(req.Header, user)
 	req.ContentLength = int64(prefixSize)
 	rec := httptest.NewRecorder()
-	auth.RequireGatewaySession(svc.db, http.HandlerFunc(svc.HandleVerifyUploadPrefix)).ServeHTTP(rec, req)
+	auth.RequireGatewaySession(testFileDB(svc), http.HandlerFunc(svc.HandleVerifyUploadPrefix)).ServeHTTP(rec, req)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 }
 

@@ -90,17 +90,15 @@ func TestAttachTrackOriginalAudioAppliesCASThenUsesStableTranscodeCommand(t *tes
 	asyncPublisher := &hardCutAsyncPublisher{}
 	transcoder := &fileIngestFinalizerRecordingTranscoder{}
 	files := newTestService(Deps{
-		DB:              stack.DB,
-		S3:              runtimeS3Client(t, stack),
-		AsyncPublisher:  asyncPublisher,
-		S3Bucket:        stack.S3MediaBucket,
-		CDNDomain:       stack.CDNURL,
-		MediaDomain:     stack.MediaURL,
-		MediaSecret:     stack.MediaSigningSecret,
-		Transcoder:      transcoder,
-		SpiceDB:         stack.SpiceDBClient,
-		TrackAttachment: newDirectTrackAttachment(stack.DB),
-	})
+		S3:             runtimeS3Client(t, stack),
+		AsyncPublisher: asyncPublisher,
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+		Transcoder:     transcoder,
+		SpiceDB:        stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB)})
 	request := &intrav1.AttachTrackOriginalAudioRequest{
 		TrackId:               trackID,
 		VerifiedFileId:        newFile.ID,
@@ -162,17 +160,15 @@ func TestAttachTrackOriginalAudioRejectsStaleCASWithoutSideEffects(t *testing.T)
 	}).Error)
 	transcoder := &fileIngestFinalizerRecordingTranscoder{}
 	files := newTestService(Deps{
-		DB:              stack.DB,
-		S3:              runtimeS3Client(t, stack),
-		AsyncPublisher:  &hardCutAsyncPublisher{},
-		S3Bucket:        stack.S3MediaBucket,
-		CDNDomain:       stack.CDNURL,
-		MediaDomain:     stack.MediaURL,
-		MediaSecret:     stack.MediaSigningSecret,
-		Transcoder:      transcoder,
-		SpiceDB:         stack.SpiceDBClient,
-		TrackAttachment: newDirectTrackAttachment(stack.DB),
-	})
+		S3:             runtimeS3Client(t, stack),
+		AsyncPublisher: &hardCutAsyncPublisher{},
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+		Transcoder:     transcoder,
+		SpiceDB:        stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Tracks: newDirectTrackAttachment(stack.DB)})
 
 	response, err := NewInternalConnectHandler(files).AttachTrackOriginalAudio(
 		t.Context(),

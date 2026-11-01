@@ -431,10 +431,7 @@ func seedScopedPostFeaturedFixture(t *testing.T, db *gorm.DB) scopedFeaturedFixt
 	).Error)
 	seedFileDeliveryContentPolicy(t, spiceDB, "post", postID)
 	seedFileDeliveryPostAuthority(t, spiceDB, postID, identityID)
-	service := withTestStorage(&Service{
-		db: db, spiceDB: spiceDB, mediaDomain: "https://media.example.test", mediaSecret: "scoped-featured-secret",
-	})
-	service.postAccess = newIntegrationPostAccess(db, spiceDB)
+	service := withNativeFileUnits(&Service{spiceDB: spiceDB, mediaDomain: "https://media.example.test", mediaSecret: "scoped-featured-secret"}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB)})
 	return scopedFeaturedFixture{
 		db: db, service: service, ctx: ctx, ownerID: postID, fileID: fileID, replacementFileID: replacementFileID,
 	}
@@ -498,9 +495,7 @@ func seedScopedContentBlockFixture(t *testing.T, db *gorm.DB, owner scopedConten
 		blockID, fileID,
 	).Error)
 	return scopedBlockFixture{
-		service: withTestStorage(&Service{
-			db: db, mediaDomain: "https://media.example.test", mediaSecret: "scoped-block-secret",
-		}),
+		service: withNativeFileUnits(&Service{mediaDomain: "https://media.example.test", mediaSecret: "scoped-block-secret"}, db, nativeFilePorts{}),
 		principal: &auth.UserInfo{
 			IdentityID: auth.IdentityID(uuid.NewString()), MemberID: auth.MemberID(memberID),
 			SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,

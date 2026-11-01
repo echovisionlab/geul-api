@@ -250,32 +250,34 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	}
 	legalRuntime := legaladapter.NewOGRuntime(cfg.CDNURL, ogDeps.planner)
 	campaignDeliveryDispatcher := campaignadapter.NewDeliveryDispatcher(db, spicedbClient, workerPublisher, telemetryWriter, legalRuntime)
-	filePostAccess := filemediaadapter.NewPostAccess(db, spicedbClient)
+	filePostAccess := filemediaadapter.NewPostAccess(spicedbClient)
 	filePageAccess := pageadapter.NewPolicyAccess(page.NewPolicyAuthority(spicedbClient))
 	fileWorkAccess := workadapter.NewPolicyAccess(spicedbClient)
-	fileEventAccess := filemediaadapter.NewProgramEventAttachment(db)
+	fileEventAccess := &filemediaadapter.ProgramEventAttachment{}
 	fileReleaseAccess := releaseadapter.NewPolicyAccess(spicedbClient)
 	fileTrackAttachment := filemediaadapter.NewTrackAttachment(telemetryWriter)
 	filePolicyOwners := filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: filePostAccess, Pages: filePageAccess, Works: fileWorkAccess, Events: fileEventAccess, Releases: fileReleaseAccess, SpiceDB: spicedbClient})
 
 	fileMediaPorts := filemediapostgres.Ports{UploadWorks: filemediapolicy.WorkExistence{}, MeshJobs: filemediaqueue.Mesh(transcodeTracker, servicePublisher), IngestTranscodes: filemediaqueue.Transcodes(transcodeTracker, servicePublisher), UploadTracks: fileTrackAttachment, DeletionQueue: filemediaqueue.Async(servicePublisher), PolicyOwners: filePolicyOwners, PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(servicePublisher)}
 	fileService, err := filemedia.NewService(filemedia.Deps{
-		IngestLocks:    filemediapostgres.NewIngestLocks(db, fileMediaPorts),
-		FaviconCommits: filemediapostgres.NewFaviconCommits(db, fileMediaPorts),
-		Units:          filemediapostgres.NewUnits(db, fileMediaPorts), Fence: identitystate.PostgresFence{},
-		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, S3: s3Client, Presigner: s3PresignClient,
-		AsyncPublisher: servicePublisher, Transcoder: transcodeTracker, S3Bucket: cfg.S3Bucket,
-		CDNDomain: cfg.CDNURL, MediaDomain: cfg.MediaURL, MediaSecret: cfg.MediaSigningSecret,
-		DownloadTTL: downloadTTL, EditorImageMaxSize: cfg.EditorImageMaxSize, LegalRoutes: legalRuntime,
-		PostAccess:             filePostAccess,
-		PagePolicyAccess:       filePageAccess,
-		WorkAttachment:         filemediaadapter.NewWorkAttachment(db),
-		WorkPolicyAccess:       fileWorkAccess,
-		ProgramEventAttachment: fileEventAccess,
-		TrackAttachment:        fileTrackAttachment,
-		ReleasePolicyAccess:    fileReleaseAccess,
-
-		MemberSummaries: filemediaadapter.NewMemberSummaries(db, cfg.CDNURL),
+		IngestLocks:        filemediapostgres.NewIngestLocks(db, fileMediaPorts),
+		FaviconCommits:     filemediapostgres.NewFaviconCommits(db, fileMediaPorts),
+		Units:              filemediapostgres.NewUnits(db, fileMediaPorts),
+		Fence:              identitystate.PostgresFence{},
+		SpiceDB:            spicedbClient,
+		Audit:              telemetryWriter,
+		S3:                 s3Client,
+		Presigner:          s3PresignClient,
+		AsyncPublisher:     servicePublisher,
+		Transcoder:         transcodeTracker,
+		S3Bucket:           cfg.S3Bucket,
+		CDNDomain:          cfg.CDNURL,
+		MediaDomain:        cfg.MediaURL,
+		MediaSecret:        cfg.MediaSigningSecret,
+		DownloadTTL:        downloadTTL,
+		EditorImageMaxSize: cfg.EditorImageMaxSize,
+		LegalRoutes:        legalRuntime,
+		MemberSummaries:    filemediaadapter.NewMemberSummaries(db, cfg.CDNURL),
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize file service: %w", err)

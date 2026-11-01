@@ -6,9 +6,6 @@ import (
 	"context"
 	"errors"
 
-	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
-	"github.com/echovisionlab/geul-api/internal/mutation"
-
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 
 	"gorm.io/gorm"
@@ -23,54 +20,49 @@ var errUnusedTestDependency = errors.New("test did not configure this File depen
 // newTestService builds the File use cases through NewService. Ports left
 // unset in deps get stand-ins that fail if a test reaches them, and a
 // recording audit appender.
-func newTestService(deps Deps) *Service {
+func newTestService(deps Deps, db *gorm.DB, ports nativeFilePorts) *Service {
 	if deps.Fence == nil {
 		deps.Fence = identitystate.PostgresFence{}
 	}
 	if deps.Audit == nil {
 		deps.Audit = &audittest.Recorder{}
 	}
-
 	if deps.LegalRoutes == nil {
 		deps.LegalRoutes = unusedFilePorts{}
 	}
-	if deps.PostAccess == nil {
-		deps.PostAccess = unusedFilePorts{}
-	}
-	if deps.PagePolicyAccess == nil {
-		deps.PagePolicyAccess = unusedFilePorts{}
-	}
-	if deps.WorkAttachment == nil {
-		deps.WorkAttachment = unusedFilePorts{}
-	}
-	if deps.WorkPolicyAccess == nil {
-		deps.WorkPolicyAccess = unusedFilePorts{}
-	}
-	if deps.ProgramEventAttachment == nil {
-		deps.ProgramEventAttachment = unusedProgramEventAttachment{}
-	}
-	if deps.TrackAttachment == nil {
-		deps.TrackAttachment = unusedFilePorts{}
-	}
-	if deps.ReleasePolicyAccess == nil {
-		deps.ReleasePolicyAccess = unusedFilePorts{}
-	}
-
 	if deps.MemberSummaries == nil {
 		deps.MemberSummaries = unusedFilePorts{}
 	}
+	if ports.Posts == nil {
+		ports.Posts = unusedFilePorts{}
+	}
+	if ports.Pages == nil {
+		ports.Pages = unusedFilePorts{}
+	}
+	if ports.Works == nil {
+		ports.Works = unusedFilePorts{}
+	}
+	if ports.Releases == nil {
+		ports.Releases = unusedFilePorts{}
+	}
+	if ports.Events == nil {
+		ports.Events = unusedProgramEventAttachment{}
+	}
+	if ports.Tracks == nil {
+		ports.Tracks = unusedFilePorts{}
+	}
+	native := withNativeFileUnits(&Service{publisher: deps.Transcoder, asyncPublisher: deps.AsyncPublisher, spiceDB: deps.SpiceDB}, db, ports)
 	if deps.IngestLocks == nil {
-		deps.IngestLocks = filemediapostgres.NewIngestLocks(deps.DB, testFilePorts(&Service{publisher: deps.Transcoder, trackAttachment: deps.TrackAttachment, asyncPublisher: deps.AsyncPublisher, postAccess: deps.PostAccess, pagePolicyAccess: deps.PagePolicyAccess, workPolicyAccess: deps.WorkPolicyAccess, programEventAttachment: deps.ProgramEventAttachment, releasePolicyAccess: deps.ReleasePolicyAccess, spiceDB: deps.SpiceDB}))
+		deps.IngestLocks = native.ingestLocks
 	}
 	if deps.FaviconCommits == nil {
-		deps.FaviconCommits = filemediapostgres.NewFaviconCommits(deps.DB, filemediapostgres.Ports{})
+		deps.FaviconCommits = native.faviconCommits
 	}
 	if deps.Units == nil {
-		deps.Units = mutation.Postgres(deps.DB, func(tx *gorm.DB) Store {
-			return testFileStore(&Service{publisher: deps.Transcoder, trackAttachment: deps.TrackAttachment, asyncPublisher: deps.AsyncPublisher, postAccess: deps.PostAccess, pagePolicyAccess: deps.PagePolicyAccess, workPolicyAccess: deps.WorkPolicyAccess, programEventAttachment: deps.ProgramEventAttachment, releasePolicyAccess: deps.ReleasePolicyAccess, spiceDB: deps.SpiceDB}, tx)
-		})
+		deps.Units = native.units
+	} else {
+		deps.Units = nativeFileUnits{deps.Units, db, testFilePorts(native)}
 	}
-
 	service, err := NewService(deps)
 	if err != nil {
 		panic(err)
