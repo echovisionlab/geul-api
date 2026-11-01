@@ -9,6 +9,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -30,7 +31,7 @@ func TestRunWritesRelationshipsWithTheChangeIntegration(t *testing.T) {
 	ctx := auth.WithUser(sharedtelemetry.WithRequestContext(t.Context(), requestContext), admin.AuthUserInfo())
 
 	run := func(recorder *audittest.Recorder) (string, error) {
-		runner, err := NewRunner(stack.DB, stack.SpiceDBClient, recorder)
+		runner, err := NewRunner(stack.DB, stack.SpiceDBClient, identitystate.PostgresFence{}, recorder)
 		require.NoError(t, err)
 		resourceID := uuid.NewString()
 		_, err = Run(ctx, runner, Spec[model.UserTag]{

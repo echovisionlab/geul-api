@@ -9,6 +9,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -100,14 +101,14 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, deps.Audit)
+	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
 	return &Service{
 		db: deps.DB, spicedb: deps.SpiceDB, identity: deps.Identity, publisher: deps.Publisher,
 		newsletter: deps.Newsletter, memberDeletion: deps.MemberDeletion, memberEmails: deps.MemberEmails,
-		audit: deps.Audit, credentials: NewAccountCredentialMutationService(deps.DB, deps.Identity, deps.MemberEmails),
+		audit: deps.Audit, credentials: NewAccountCredentialMutationService(deps.DB, identitystate.PostgresFence{}, deps.Identity, deps.MemberEmails),
 		mutations: mutations, baseURL: strings.TrimRight(deps.SiteOrigin, "/"), interval: accountLifecycleReconcileInterval,
 	}, nil
 }

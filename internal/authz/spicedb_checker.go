@@ -21,11 +21,7 @@ type SpiceDBResourceChecker struct {
 	tableName string
 }
 
-func NewSpiceDBResourceChecker(client *auth.SpiceDBClient, db *gorm.DB, tableName string) *SpiceDBResourceChecker {
-	return newSpiceDBResourceChecker(client, db, tableName)
-}
-
-func newSpiceDBResourceChecker(client AuthorizationDecisionChecker, db *gorm.DB, tableName string) *SpiceDBResourceChecker {
+func NewSpiceDBResourceChecker(client AuthorizationDecisionChecker, db *gorm.DB, tableName string) *SpiceDBResourceChecker {
 	if client == nil {
 		panic("SpiceDB client is required")
 	}

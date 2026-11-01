@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/dbtime"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -77,7 +78,7 @@ func NewTranslationJobManager(deps JobManagerDeps) (*TranslationJobManager, erro
 	}); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, deps.Audit)
+	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
 	if err != nil {
 		return nil, err
 	}

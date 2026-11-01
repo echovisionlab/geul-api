@@ -13,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -72,7 +73,7 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, deps.Audit)
+	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
 	if err != nil {
 		return nil, err
 	}

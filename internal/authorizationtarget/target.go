@@ -10,6 +10,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
@@ -49,7 +50,7 @@ func RequireAuthenticatedPrincipal(ctx context.Context) (*auth.UserInfo, error) 
 
 // RequireGlobalAdmin applies the shared authenticated-principal boundary and
 // then checks the current global administrator permission in SpiceDB.
-func RequireGlobalAdmin(ctx context.Context, spicedb *auth.SpiceDBClient) (*auth.UserInfo, error) {
+func RequireGlobalAdmin(ctx context.Context, spicedb authz.AuthorizationDecisionChecker) (*auth.UserInfo, error) {
 	principal, err := RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
 		return nil, err

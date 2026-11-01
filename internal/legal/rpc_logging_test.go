@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 
 	"connectrpc.com/connect"
@@ -36,7 +37,7 @@ func TestTermsRPCKeepsDatabaseCauseForTheRequestRecord(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectQuery(`SELECT .* FROM "terms_history"`).WillReturnError(errors.New(`store failed: column "title" <policy> {constraint detail} reader@example.test password=private-password`))
 	mock.ExpectRollback()
-	mutations, err := mutation.NewRunner(db, &auth.SpiceDBClient{}, &audittest.Recorder{})
+	mutations, err := mutation.NewRunner(db, &auth.SpiceDBClient{}, identitystate.PostgresFence{}, &audittest.Recorder{})
 	require.NoError(t, err)
 	service := NewTermsConnectHandler(&Service{db: db, mutations: mutations})
 	_, err = service.GetTermsVersion(t.Context(), connect.NewRequest(&managev1.GetTermsVersionRequest{Id: "terms-1"}))

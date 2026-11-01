@@ -149,7 +149,7 @@ func requireMenuPermissionAndLock(
 		return err
 	}
 	return requireFreshMenuPermission(ctx, tx, func(can policyv1.Can) error {
-		return identitystate.RequireFreshCan(ctx, tx, spiceDB, can)
+		return identitystate.RequireFreshCan(ctx, tx, identitystate.PostgresFence{}, spiceDB, can)
 	}, menuID, action)
 }
 

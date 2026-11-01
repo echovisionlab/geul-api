@@ -163,13 +163,41 @@ func LockActivePrincipal(ctx context.Context, tx *gorm.DB, principal *auth.UserI
 	return member.Active && member.Onboarded && identity.State == auth.KratosStateActive && !identity.Banned, nil
 }
 
-// RequireFreshCan locks the authenticated principal lifecycle and checks one
-// generated domain action with fully-consistent authorization before a domain
-// mutation. The caller owns the action; this lifecycle fence does not replace
-// it with a generic platform role check.
+// Fence is the Identity lifecycle fence a use case takes: Lock,
+// LockActivePrincipal and WithMutation. PostgresFence is the production
+// fence; identitystatetest.Fence stands in for it in unit tests.
+type Fence interface {
+	Lock(tx *gorm.DB, identityID string) error
+	LockActivePrincipal(ctx context.Context, tx *gorm.DB, principal *auth.UserInfo) (bool, error)
+	WithMutation(ctx context.Context, db *gorm.DB, identityID string, work func(context.Context, *gorm.DB) error) error
+}
+
+// PostgresFence is the production Fence: this package's functions, which
+// take PostgreSQL advisory locks and share-lock the Member and its Kratos
+// Identity.
+type PostgresFence struct{}
+
+// Lock calls Lock.
+func (PostgresFence) Lock(tx *gorm.DB, identityID string) error { return Lock(tx, identityID) }
+
+// LockActivePrincipal calls LockActivePrincipal.
+func (PostgresFence) LockActivePrincipal(ctx context.Context, tx *gorm.DB, principal *auth.UserInfo) (bool, error) {
+	return LockActivePrincipal(ctx, tx, principal)
+}
+
+// WithMutation calls WithMutation.
+func (PostgresFence) WithMutation(ctx context.Context, db *gorm.DB, identityID string, work func(context.Context, *gorm.DB) error) error {
+	return WithMutation(ctx, db, identityID, work)
+}
+
+// RequireFreshCan locks the authenticated principal lifecycle through fence
+// and checks one generated domain action with fully-consistent authorization
+// before a domain mutation. The caller owns the action; this lifecycle fence
+// does not replace it with a generic platform role check.
 func RequireFreshCan(
 	ctx context.Context,
 	tx *gorm.DB,
+	fence Fence,
 	spiceDB authz.AuthorizationDecisionChecker,
 	can policyv1.Can,
 ) error {
@@ -177,7 +205,7 @@ func RequireFreshCan(
 	if principal == nil || !principal.Authenticated {
 		return errs.AuthenticationRequired()
 	}
-	active, err := LockActivePrincipal(ctx, tx, principal)
+	active, err := fence.LockActivePrincipal(ctx, tx, principal)
 	if err != nil {
 		return errs.Internal(fmt.Errorf("lock active principal: %w", err))
 	}
@@ -195,10 +223,11 @@ func RequireFreshCan(
 func RequireFreshAdminCan(
 	ctx context.Context,
 	tx *gorm.DB,
+	fence Fence,
 	spiceDB authz.AuthorizationDecisionChecker,
 	can policyv1.Can,
 ) error {
-	err := RequireFreshCan(ctx, tx, spiceDB, can)
+	err := RequireFreshCan(ctx, tx, fence, spiceDB, can)
 	if connect.CodeOf(err) == connect.CodePermissionDenied {
 		return errs.AdminRequired()
 	}
