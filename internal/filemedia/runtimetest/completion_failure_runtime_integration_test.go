@@ -1,6 +1,6 @@
 //go:build integration
 
-package filemedia
+package runtimetest
 
 import (
 	"context"
@@ -76,7 +76,7 @@ func TestRuntimeReleaseTrackCompleteMultipartFailureIntegration(t *testing.T) {
 		t,
 		stack.DB,
 		result.uploadID,
-		managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FAILED,
+		model.UploadSessionStatusFailed,
 	)
 	require.EqualValues(t, 1, stack.MultipartCompletionFailureCount(t, result.uploadID))
 
@@ -130,7 +130,7 @@ func TestRuntimeEditorMediaCompleteMultipartFailureIntegration(t *testing.T) {
 				t,
 				stack.DB,
 				result.uploadID,
-				managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FAILED,
+				model.UploadSessionStatusFailed,
 			)
 			require.EqualValues(t, 1, stack.MultipartCompletionFailureCount(t, result.uploadID))
 
@@ -256,12 +256,9 @@ func prepareRuntimeCompletionFailureMediaBundle(
 ) string {
 	t.Helper()
 
-	// Reuse the sealed-plan fixture, but prepare and stage it through the real
-	// browser API before injecting failure of the original S3 multipart object.
-	session, objects := clientMediaTestBundle(t, kind)
-	plan, err := decodeClientMediaPlan(session)
-	require.NoError(t, err)
-	return uploadRuntimeClientMediaBundle(t, fileClient, backendURL, user, upload, plan, objects)
+	// Prepare and stage a minimal sealed bundle through the real browser API
+	// before injecting failure of the original S3 multipart object.
+	return uploadRuntimeClientMediaBundle(t, fileClient, backendURL, user, upload, kind, 6, clientMediaTestObjects(t, kind))
 }
 
 func uploadRuntimeMultipartBody(

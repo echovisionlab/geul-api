@@ -146,7 +146,7 @@ func TestSelectedPackageTestConcurrencyMatchesOwnedResources(t *testing.T) {
 		{packagePath: "./internal/telemetry", wantParallel: "2"},
 		{packagePath: "./internal/transcode/application", wantParallel: "2"},
 		{packagePath: "./internal/member", wantParallel: "2"},
-		{packagePath: "./internal/filemedia", wantParallel: "1"},
+		{packagePath: "./internal/filemedia/runtimetest", wantParallel: "1"},
 		{packagePath: "./internal/testutil", wantParallel: "1"},
 	} {
 		t.Run(testCase.packagePath, func(t *testing.T) {
