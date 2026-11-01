@@ -134,7 +134,6 @@ type InternalService struct {
 	checkpoints   persistencecheckpoint.ContributorFence
 	references    CampaignDeliveryReferences
 	members       ContributorMembers
-	audit         domainaudit.Appender
 	mutations     *mutation.Runner
 }
 
@@ -151,7 +150,7 @@ func NewInternalService(deps InternalDeps) (*InternalService, error) {
 	return &InternalService{
 		db: deps.DB, spiceDB: deps.SpiceDB, contentBlocks: deps.ContentBlocks,
 		checkpoints: deps.Checkpoints, references: deps.References, members: deps.Members,
-		audit: deps.Audit, mutations: mutations,
+		mutations: mutations,
 	}, nil
 }
 

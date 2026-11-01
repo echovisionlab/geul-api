@@ -18,7 +18,7 @@ type AIDocumentService struct{ emailcontent.AIDocuments }
 func (s *InternalService) TemplateAIDocuments() *AIDocumentService {
 	return &AIDocumentService{emailcontent.AIDocuments{
 		Owner: emailTemplateContent, DB: s.db, Store: s.contentBlocks,
-		Audit: s.audit, Authorize: s.authorizeTemplateAIDocument,
+		Mutations: s.mutations, Authorize: s.authorizeTemplateAIDocument,
 	}}
 }
 
