@@ -8,10 +8,9 @@ import (
 	"strings"
 
 	"google.golang.org/protobuf/proto"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	transcodestate "github.com/echovisionlab/geul-api/internal/transcode"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -100,7 +99,11 @@ func (h *Handlers) handleSuccessfulTranscodeComplete(
 	if err := validateTranscodeCompletionOutputs(event); err != nil {
 		return err
 	}
-	trackedJob, err := h.trackedTranscodeAllocationForCompletion(ctx, event)
+	var trackedJob *transcodestate.Job
+	err := h.read(ctx, func(store Store) (err error) {
+		trackedJob, err = trackedTranscodeAllocationForCompletion(ctx, store, event, false)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("load tracked transcode allocation: %w", err)
 	}
@@ -146,19 +149,19 @@ func (h *Handlers) completeAllocatedTranscodeOutputs(
 	event *managev1.TranscodeCompleteEvent,
 ) (bool, bool, error) {
 	trackStateApplied := false
-	err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		acceptsResults, err := lockFileAcceptingProcessingResults(ctx, tx, event.FileId)
+	err := h.transaction(ctx, func(store Store) error {
+		acceptsResults, err := lockFileAcceptingProcessingResults(ctx, store, event.FileId)
 		if err != nil {
 			return err
 		}
 		if !acceptsResults {
 			return errProcessingSourceUnavailable
 		}
-		if err := h.requireAcceptingTranscodeAllocation(ctx, tx, event); err != nil {
+		if err := requireAcceptingTranscodeAllocation(ctx, store, event); err != nil {
 			return err
 		}
 		if event.EntityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK {
-			trackStateApplied, err = h.finalizeTrackTranscodeStateWithDB(ctx, tx, event)
+			trackStateApplied, err = finalizeTrackTranscodeState(ctx, store, event)
 			if err != nil {
 				return err
 			}
@@ -166,7 +169,7 @@ func (h *Handlers) completeAllocatedTranscodeOutputs(
 				return errTranscodeAllocationUnavailable
 			}
 		}
-		return completeTranscodeDerivatives(ctx, tx, event)
+		return completeTranscodeDerivatives(ctx, store, event)
 	})
 	if err == nil {
 		return trackStateApplied, true, nil
@@ -174,12 +177,12 @@ func (h *Handlers) completeAllocatedTranscodeOutputs(
 	return false, false, h.handleAllocatedTranscodeOutputError(ctx, event, err)
 }
 
-func (h *Handlers) requireAcceptingTranscodeAllocation(
+func requireAcceptingTranscodeAllocation(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	event *managev1.TranscodeCompleteEvent,
 ) error {
-	job, err := h.trackedTranscodeAllocationForCompletionDB(ctx, tx, event, true)
+	job, err := trackedTranscodeAllocationForCompletion(ctx, store, event, true)
 	if err != nil {
 		return err
 	}
@@ -191,15 +194,13 @@ func (h *Handlers) requireAcceptingTranscodeAllocation(
 
 func completeTranscodeDerivatives(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	event *managev1.TranscodeCompleteEvent,
 ) error {
-	lifecycle := mediaasset.NewLifecycle(tx, "")
 	if event.EventType == managev1.TranscodeEventType_TRANSCODE_EVENT_TYPE_VIDEO {
 		if err := completeAssetDerivative(
 			ctx,
-			tx,
-			lifecycle,
+			store,
 			event.FileId,
 			managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_THUMBNAIL,
 			"thumbnail",
@@ -211,8 +212,7 @@ func completeTranscodeDerivatives(
 	if event.EventType == managev1.TranscodeEventType_TRANSCODE_EVENT_TYPE_AUDIO {
 		if err := completeAssetDerivative(
 			ctx,
-			tx,
-			lifecycle,
+			store,
 			event.FileId,
 			managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_SPECTROGRAM,
 			"spectrogram",
@@ -223,8 +223,7 @@ func completeTranscodeDerivatives(
 	}
 	return completeGenerationDerivative(
 		ctx,
-		tx,
-		lifecycle,
+		store,
 		event.FileId,
 		managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS,
 		event.Outputs.GetHls(),

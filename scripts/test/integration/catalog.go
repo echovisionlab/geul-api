@@ -81,6 +81,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/sharelink/postgres",
 			"./internal/telemetry",
 			"./internal/transcode/application",
+			"./internal/transcode/application/postgres",
 			"./internal/transcode/postgres",
 			"./internal/transcoding/mq",
 			"./internal/translation",
