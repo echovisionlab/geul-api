@@ -16,7 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func menuDomainRegistration(auditWriter domainaudit.Appender) domainRegistration {
+func menuDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	return newConfiguredDomainPort(core.KindMenu, domainPortFunctions{
 		loadSourceDocument: func(ctx context.Context, db *gorm.DB, _ *contentblock.Store, entityID string) (*core.SourceDocument, error) {
 			return menu.LoadTranslationSourceDocument(ctx, db, entityID)
@@ -33,9 +33,9 @@ func menuDomainRegistration(auditWriter domainaudit.Appender) domainRegistration
 			input.ContentJSON = candidate.ContentJSON
 			input.ContentHTML = candidate.ContentHTML
 			input.ContentText = candidate.ContentText
-			return menu.ApplyProviderTranslationCandidateWithDB(ctx, tx, job, candidate, input, auditWriter)
+			return menu.ApplyProviderTranslationCandidateWithDB(ctx, tx, job, candidate, input, audit)
 		},
-		appendSourceLocaleAudit: sourceLocaleAudit(auditWriter, sharedtelemetry.AuditMenuUpdated, sharedtelemetry.NewMenuSourceLocaleAuditRecord),
+		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditMenuUpdated, sharedtelemetry.NewMenuSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
 			return fmt.Sprintf(`SELECT locale, NULL::text AS title, NULL::text AS summary, NULL::text AS content_html, NULL::text AS content_text, items_json AS content_json, updated_at, NULL::uuid AS og_asset_id FROM %s`, table)
 		},

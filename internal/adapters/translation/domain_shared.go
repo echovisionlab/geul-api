@@ -8,12 +8,12 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/og"
 	core "github.com/echovisionlab/geul-api/internal/translation"
+	"github.com/echovisionlab/geul-api/internal/translation/application"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
@@ -28,20 +28,16 @@ type sourceLocaleAuditBuilder func(
 ) (sharedtelemetry.AuditRecord, error)
 
 func sourceLocaleAudit(
-	auditWriter domainaudit.Appender,
 	action sharedtelemetry.AuditAction,
 	builder sourceLocaleAuditBuilder,
-) func(context.Context, *gorm.DB, string, string, string) error {
+) func(context.Context, *gorm.DB, string, string, string) (application.SourceLocaleAudit, error) {
 	if builder == nil {
 		panic("translation source-locale Audit builder is required")
 	}
-	return func(ctx context.Context, tx *gorm.DB, entityID string, previousLocale string, newLocale string) error {
-		if auditWriter == nil {
-			return errs.InternalMsg("translation source-locale Audit writer is required")
-		}
-		return domainaudit.AppendRequest(ctx, tx, auditWriter, action, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+	return func(_ context.Context, _ *gorm.DB, entityID string, previousLocale string, newLocale string) (application.SourceLocaleAudit, error) {
+		return application.SourceLocaleAudit{Action: action, Build: func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return builder(metadata, entityID, previousLocale, newLocale)
-		})
+		}}, nil
 	}
 }
 
@@ -53,19 +49,17 @@ type legalSourceLocaleAuditBuilder func(
 	string,
 ) (sharedtelemetry.AuditRecord, error)
 
+// legalSourceLocaleAudit records the switch against the policy version it
+// changed, read under the history row's lock.
 func legalSourceLocaleAudit(
-	auditWriter domainaudit.Appender,
 	table string,
 	entityType string,
 	builder legalSourceLocaleAuditBuilder,
-) func(context.Context, *gorm.DB, string, string, string) error {
+) func(context.Context, *gorm.DB, string, string, string) (application.SourceLocaleAudit, error) {
 	if table == "" || entityType == "" || builder == nil {
 		panic("legal source-locale Audit dependencies are required")
 	}
-	return func(ctx context.Context, tx *gorm.DB, entityID string, previousLocale string, newLocale string) error {
-		if auditWriter == nil {
-			return errs.InternalMsg("translation source-locale Audit writer is required")
-		}
+	return func(ctx context.Context, tx *gorm.DB, entityID string, previousLocale string, newLocale string) (application.SourceLocaleAudit, error) {
 		var row struct {
 			Version int64 `gorm:"column:version"`
 		}
@@ -73,13 +67,13 @@ func legalSourceLocaleAudit(
 			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 			Select("version").Where("id = ?", entityID).Take(&row).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound(entityType, entityID)
+				return application.SourceLocaleAudit{}, errs.NotFound(entityType, entityID)
 			}
-			return errs.Internal(err)
+			return application.SourceLocaleAudit{}, errs.Internal(err)
 		}
-		return domainaudit.AppendRequest(ctx, tx, auditWriter, sharedtelemetry.AuditLegalPolicyUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return application.SourceLocaleAudit{Action: sharedtelemetry.AuditLegalPolicyUpdated, Build: func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return builder(metadata, entityID, row.Version, previousLocale, newLocale)
-		})
+		}}, nil
 	}
 }
 

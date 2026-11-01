@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func pageDomainRegistration(auditWriter domainaudit.Appender) domainRegistration {
+func pageDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	return newConfiguredDomainPort(core.KindPage, domainPortFunctions{
 		loadSourceDocument: page.LoadTranslationSourceDocument,
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
@@ -22,10 +22,10 @@ func pageDomainRegistration(auditWriter domainaudit.Appender) domainRegistration
 		},
 		buildCandidate: page.BuildTranslationCandidate,
 		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			return page.ApplyTranslationCandidateWithDB(ctx, tx, store, job, candidate, input, auditWriter)
+			return page.ApplyTranslationCandidateWithDB(ctx, tx, store, job, candidate, input, audit)
 		},
-		requestLocaleOG:         localeAwareOG(core.KindPage),
-		appendSourceLocaleAudit: sourceLocaleAudit(auditWriter, sharedtelemetry.AuditPageUpdated, sharedtelemetry.NewPageSourceLocaleAuditRecord),
+		requestLocaleOG:   localeAwareOG(core.KindPage),
+		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditPageUpdated, sharedtelemetry.NewPageSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
 			return fmt.Sprintf(`SELECT locale, title, summary, NULL::text AS content_html, NULL::text AS content_text, NULL::jsonb AS content_json, updated_at, og_asset_id FROM %s`, table)
 		},

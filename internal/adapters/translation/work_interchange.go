@@ -16,18 +16,18 @@ import (
 // WorkInterchangePort maps Translation application's generic XLIFF command to
 // the Work-owned lock, lifecycle-aware CAS and exact locale mutation boundary.
 type WorkInterchangePort struct {
-	auditWriter  domainaudit.Appender
+	audit        domainaudit.Appender
 	auditBuilder LocaleContentAuditBuilder
 }
 
 func NewWorkInterchangePort(
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 	auditBuilder LocaleContentAuditBuilder,
 ) *WorkInterchangePort {
-	if auditWriter == nil || auditBuilder == nil {
+	if audit == nil || auditBuilder == nil {
 		panic("Work translation interchange Audit dependencies are required")
 	}
-	return &WorkInterchangePort{auditWriter: auditWriter, auditBuilder: auditBuilder}
+	return &WorkInterchangePort{audit: audit, auditBuilder: auditBuilder}
 }
 
 func (*WorkInterchangePort) LoadTranslationInterchangeTarget(
@@ -86,7 +86,7 @@ func (p *WorkInterchangePort) ApplyTranslationInterchange(
 	}
 	if result.Changed {
 		if err := appendLocaleContentInterchangeAudit(
-			ctx, db, p.auditWriter, p.auditBuilder, sharedtelemetry.AuditWorkUpdated,
+			ctx, db, p.audit, p.auditBuilder, sharedtelemetry.AuditWorkUpdated,
 			memberID, command.EntityID, command.TargetLocale, result.TargetPreviouslyExists,
 		); err != nil {
 			return application.TranslationInterchangeApplyResult{}, err

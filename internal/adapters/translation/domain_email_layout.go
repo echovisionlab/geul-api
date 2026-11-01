@@ -19,7 +19,7 @@ import (
 
 func emailLayoutDomainRegistration(
 	references emailauthoring.CampaignDeliveryReferences,
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 ) domainRegistration {
 	return newConfiguredDomainPort(core.KindEmailLayout, domainPortFunctions{
 		loadSourceDocument: func(
@@ -57,10 +57,10 @@ func emailLayoutDomainRegistration(
 			input.ContentHTML = candidate.ContentHTML
 			input.ContentText = candidate.ContentText
 			return emailauthoring.ApplyEmailLayoutProviderTranslationCandidate(
-				ctx, tx, store, references, job, candidate, input, auditWriter,
+				ctx, tx, store, references, job, candidate, input, audit,
 			)
 		},
-		appendSourceLocaleAudit: sourceLocaleAudit(auditWriter, sharedtelemetry.AuditEmailLayoutUpdated, sharedtelemetry.NewEmailLayoutSourceLocaleAuditRecord),
+		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditEmailLayoutUpdated, sharedtelemetry.NewEmailLayoutSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
 			return email.LayoutTranslationEntrySelectSQL()
 		},

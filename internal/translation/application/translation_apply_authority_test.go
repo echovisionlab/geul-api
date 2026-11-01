@@ -85,13 +85,13 @@ func TestTranslationApplyUsesAcceptedRequestAuthorityAfterRequesterDisappears(t 
 		Update("requested_by_member_id", requestedBy).Error)
 	domains := &requestTimeAuthorityTestDomains{}
 	publisher := &appliedContentUpdatePublisher{}
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db:        db,
 		publisher: publisher,
 		now:       func() time.Time { return now },
 		metrics:   newTranslationMetrics(),
 		domains:   domains,
-	}
+	})
 
 	err := manager.applyTranslationDelivery(context.Background(), &translationDeliveryExecution{
 		job:       job,
@@ -116,13 +116,13 @@ func TestTranslationApplyDoesNotMutateDeletedRootAndDeletesTransportJob(t *testi
 	job := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "deleted-root", uuid.NewString())
 	domains := &requestTimeAuthorityTestDomains{rootErr: gorm.ErrRecordNotFound}
 	publisher := &appliedContentUpdatePublisher{}
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db:        db,
 		publisher: publisher,
 		now:       func() time.Time { return now },
 		metrics:   newTranslationMetrics(),
 		domains:   domains,
-	}
+	})
 
 	err := manager.applyTranslationDelivery(context.Background(), &translationDeliveryExecution{
 		job:       job,
@@ -145,10 +145,10 @@ func TestTranslationApplySkipsAlreadyCancelledJobWithoutSignal(t *testing.T) {
 	require.NoError(t, db.Delete(&model.TranslationJob{}, "id = ?", job.ID).Error)
 	domains := &requestTimeAuthorityTestDomains{}
 	publisher := &appliedContentUpdatePublisher{}
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db: db, publisher: publisher, now: time.Now,
 		metrics: newTranslationMetrics(), domains: domains,
-	}
+	})
 
 	applied, err := manager.applyAppliedTranslationResult(
 		t.Context(),
@@ -176,10 +176,10 @@ func TestTranslationApplyKeepsTransactionalInvalidationWhenLifecycleHintFails(t 
 		Changed: true, DocumentRevision: uuid.NewString(), TargetRevision: "tr1_exact",
 	}}
 	publisher := &appliedContentUpdatePublisher{lifecycleErr: errors.New("lifecycle notify failed")}
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db: db, publisher: publisher, now: func() time.Time { return now },
 		metrics: newTranslationMetrics(), domains: domains,
-	}
+	})
 
 	err := manager.applyTranslationDelivery(t.Context(), &translationDeliveryExecution{
 		job:       job,

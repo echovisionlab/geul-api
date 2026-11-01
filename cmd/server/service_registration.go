@@ -468,7 +468,10 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered service", "path", aiPath)
 
 	emailAuthoringReferences := emailauthoringadapter.NewCampaignDeliveryReferences()
-	translationRegistry := translationadapter.NewDomainRegistry(emailAuthoringReferences, telemetryWriter)
+	translationRegistry, err := translationadapter.NewDomainRegistry(emailAuthoringReferences, telemetryWriter)
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize translation domain registry: %w", err)
+	}
 	memberPath, memberHandler := managev1connect.NewMemberServiceHandler(member.NewConnectHandler(memberService), handlerOpts...)
 	mux.Handle(memberPath, memberHandler)
 	slog.Info("Registered service", "path", memberPath)

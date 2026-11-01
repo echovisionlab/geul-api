@@ -23,18 +23,18 @@ import (
 // ReleaseInterchange keeps Release-owned credit notes and typed Content Blocks
 // in one XLIFF target mutation and one caller-owned transaction.
 type ReleaseInterchange struct {
-	auditWriter  domainaudit.Appender
+	audit        domainaudit.Appender
 	auditBuilder LocaleContentAuditBuilder
 }
 
 func NewReleaseInterchange(
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 	auditBuilder LocaleContentAuditBuilder,
 ) *ReleaseInterchange {
-	if auditWriter == nil || auditBuilder == nil {
+	if audit == nil || auditBuilder == nil {
 		panic("Release translation interchange Audit dependencies are required")
 	}
-	return &ReleaseInterchange{auditWriter: auditWriter, auditBuilder: auditBuilder}
+	return &ReleaseInterchange{audit: audit, auditBuilder: auditBuilder}
 }
 
 type releaseInterchangeTarget struct {
@@ -111,7 +111,7 @@ func (a *ReleaseInterchange) ApplyTranslationInterchange(
 	changed := after.state.Revision != current.state.Revision
 	if changed {
 		if err := appendLocaleContentInterchangeAudit(
-			ctx, db, a.auditWriter, a.auditBuilder, sharedtelemetry.AuditReleaseUpdated,
+			ctx, db, a.audit, a.auditBuilder, sharedtelemetry.AuditReleaseUpdated,
 			memberID, command.EntityID, command.TargetLocale, current.state.Exists,
 		); err != nil {
 			return application.TranslationInterchangeApplyResult{}, err

@@ -38,7 +38,7 @@ type domainPortFunctions struct {
 	requireJobRead            func(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error
 	requireSourceLocaleEdit   func(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error
 	prepareSourceLocale       func(context.Context, *gorm.DB, string, string, string, time.Time) error
-	appendSourceLocaleAudit   func(context.Context, *gorm.DB, string, string, string) error
+	sourceLocaleAudit         func(context.Context, *gorm.DB, string, string, string) (application.SourceLocaleAudit, error)
 	requireRegeneration       func(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error
 	requireSourceMutable      func(context.Context, *gorm.DB, string) error
 }
@@ -48,7 +48,7 @@ func newConfiguredDomainPort(domain core.Kind, functions domainPortFunctions) do
 		functions.buildCandidate == nil || functions.applyCandidate == nil ||
 		functions.translationEntrySelectSQL == nil || functions.requireInterchangeView == nil ||
 		functions.requireSourceLocaleEdit == nil || functions.requireJobRead == nil ||
-		functions.appendSourceLocaleAudit == nil {
+		functions.sourceLocaleAudit == nil {
 		panic(fmt.Sprintf("translation domain %q port is incomplete", domain))
 	}
 	if functions.requestLocaleOG == nil {

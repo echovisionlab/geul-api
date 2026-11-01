@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func seriesDomainRegistration(auditWriter domainaudit.Appender) domainRegistration {
+func seriesDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	return newConfiguredDomainPort(core.KindPostSeries, domainPortFunctions{
 		loadSourceDocument: func(ctx context.Context, db *gorm.DB, _ *contentblock.Store, entityID string) (*core.SourceDocument, error) {
 			return series.LoadTranslationSourceDocument(ctx, db, entityID)
@@ -30,11 +30,11 @@ func seriesDomainRegistration(auditWriter domainaudit.Appender) domainRegistrati
 			input.ContentJSON = candidate.ContentJSON
 			input.ContentHTML = candidate.ContentHTML
 			input.ContentText = candidate.ContentText
-			return series.ApplyProviderTranslationCandidateWithDB(ctx, tx, job, candidate, input, auditWriter)
+			return series.ApplyProviderTranslationCandidateWithDB(ctx, tx, job, candidate, input, audit)
 		},
 		requestLocaleOG: localeAwareOG(core.KindPostSeries),
-		appendSourceLocaleAudit: sourceLocaleAudit(
-			auditWriter, sharedtelemetry.AuditPostSeriesUpdated, sharedtelemetry.NewPostSeriesSourceLocaleAuditRecord,
+		sourceLocaleAudit: sourceLocaleAudit(
+			sharedtelemetry.AuditPostSeriesUpdated, sharedtelemetry.NewPostSeriesSourceLocaleAuditRecord,
 		),
 		translationEntrySelectSQL: func(table string) string {
 			return fmt.Sprintf(`SELECT locale, title, summary, content_html, content_text, content_json, updated_at, og_asset_id FROM %s`, table)

@@ -18,10 +18,10 @@ func TestTranslationProviderDocumentHandleLifecycleIntegration(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(1_700_001_000, 0).UTC()
 	job, _ := seedRunningMenuTranslationJob(t, db, now)
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db:  db,
 		now: func() time.Time { return now.Add(time.Minute) },
-	}
+	})
 	generator := namedStubTranslationGenerator{providerName: "deepl", modelName: "document-v2.1"}
 	require.NoError(t, manager.updateRunningJobProvider(ctx, job.ID, generator))
 

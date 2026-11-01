@@ -1,8 +1,9 @@
 package application
 
 import (
-	"github.com/echovisionlab/geul-api/internal/translation"
 	"testing"
+
+	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/stretchr/testify/assert"
 )

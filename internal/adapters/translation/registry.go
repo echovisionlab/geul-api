@@ -29,18 +29,20 @@ type DomainRegistry struct {
 	ports map[core.Kind]domainPortFunctions
 }
 
+// NewDomainRegistry routes every catalog domain to its owning adapter; the
+// owners append their locale-content records to audit.
 func NewDomainRegistry(
 	emailReferences emailauthoring.CampaignDeliveryReferences,
-	auditWriter domainaudit.Appender,
-) *DomainRegistry {
-	if emailReferences == nil || auditWriter == nil {
-		panic("translation domain registry dependencies are required")
+	audit domainaudit.Appender,
+) (*DomainRegistry, error) {
+	if emailReferences == nil || audit == nil {
+		return nil, errors.New("translation domain registry dependencies are required: EmailReferences, Audit")
 	}
-	ports, err := buildDomainPorts(defaultDomainRegistrations(emailReferences, auditWriter))
+	ports, err := buildDomainPorts(defaultDomainRegistrations(emailReferences, audit))
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	return &DomainRegistry{ports: ports}
+	return &DomainRegistry{ports: ports}, nil
 }
 
 func (r *DomainRegistry) LoadSourceDocument(
@@ -387,19 +389,21 @@ func (r *DomainRegistry) PrepareSourceLocale(
 	return port.prepareSourceLocale(ctx, db, entityID, currentSourceLocale, requestedLocale, now)
 }
 
-func (r *DomainRegistry) AppendSourceLocaleAudit(
+// SourceLocaleAudit returns the owning domain's record of a source-locale
+// switch from previousLocale to newLocale.
+func (r *DomainRegistry) SourceLocaleAudit(
 	ctx context.Context,
 	tx *gorm.DB,
 	entityType string,
 	entityID string,
 	previousLocale string,
 	newLocale string,
-) error {
+) (application.SourceLocaleAudit, error) {
 	port, err := r.domainPort(entityType)
 	if err != nil {
-		return errs.InvalidArgument("target.entity_type", err.Error())
+		return application.SourceLocaleAudit{}, errs.InvalidArgument("target.entity_type", err.Error())
 	}
-	return port.appendSourceLocaleAudit(ctx, tx, entityID, previousLocale, newLocale)
+	return port.sourceLocaleAudit(ctx, tx, entityID, previousLocale, newLocale)
 }
 
 func (r *DomainRegistry) RequireSourceLocaleEdit(

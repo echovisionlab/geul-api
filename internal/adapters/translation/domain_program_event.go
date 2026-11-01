@@ -18,7 +18,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func programEventDomainRegistration(auditWriter domainaudit.Appender) domainRegistration {
+func programEventDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	return newConfiguredDomainPort(core.KindProgramEvent, domainPortFunctions{
 		loadSourceDocument: programevent.LoadTranslationSourceDocument,
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
@@ -26,9 +26,9 @@ func programEventDomainRegistration(auditWriter domainaudit.Appender) domainRegi
 		},
 		buildCandidate: core.BuildRichTextCandidate,
 		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			return programevent.ApplyTypedTranslationCandidateWithDB(ctx, tx, store, job, candidate, input, auditWriter)
+			return programevent.ApplyTypedTranslationCandidateWithDB(ctx, tx, store, job, candidate, input, audit)
 		},
-		appendSourceLocaleAudit: sourceLocaleAudit(auditWriter, sharedtelemetry.AuditProgramEventUpdated, sharedtelemetry.NewProgramEventSourceLocaleAuditRecord),
+		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditProgramEventUpdated, sharedtelemetry.NewProgramEventSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
 			return fmt.Sprintf(`SELECT locale, NULL::text AS title, summary, NULL::text AS content_html, NULL::text AS content_text, NULL::jsonb AS content_json, updated_at, NULL::uuid AS og_asset_id FROM %s`, table)
 		},

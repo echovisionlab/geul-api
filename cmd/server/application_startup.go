@@ -141,18 +141,18 @@ func initializeApplicationDependencies(
 		return nil, fmt.Errorf("initialize Content Block store: %w", err)
 	}
 	deps.og = newOGDependencies(deps.db, cfg.CDNURL)
-	translationRegistry := translationadapter.NewDomainRegistry(
+	translationRegistry, err := translationadapter.NewDomainRegistry(
 		emailauthoringadapter.NewCampaignDeliveryReferences(),
 		deps.telemetryWriter,
 	)
-	deps.translationJobs, err = translationapplication.NewTranslationJobManager(
-		deps.db,
-		deps.workerPublisher,
-		deps.og.planner,
-		deps.og.refresher,
-		translationapplication.WithTranslationJobContentBlockStore(deps.contentBlockStore),
-		translationapplication.WithTranslationJobDomainRegistry(translationRegistry),
-	)
+	if err != nil {
+		return nil, fmt.Errorf("initialize translation domain registry: %w", err)
+	}
+	deps.translationJobs, err = translationapplication.NewTranslationJobManager(translationapplication.JobManagerDeps{
+		DB: deps.db, SpiceDB: deps.spicedbClient, Audit: deps.telemetryWriter, Publisher: deps.workerPublisher,
+		ContentBlocks: deps.contentBlockStore, OGPlanner: deps.og.planner, OGRefresher: deps.og.refresher,
+		Domains: translationRegistry,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize translation job manager: %w", err)
 	}

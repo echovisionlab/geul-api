@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -44,7 +43,7 @@ type translationEntityHealthRow struct {
 	LastSourceUpdateAt sql.NullTime `gorm:"column:last_source_update_at"`
 }
 
-func (s *TranslationService) getTranslationOverviewStats(
+func (s *Service) getTranslationOverviewStats(
 	ctx context.Context,
 ) (*managev1.TranslationOverviewStats, error) {
 	query := fmt.Sprintf(`
@@ -93,7 +92,7 @@ CROSS JOIN job_totals
 
 	var row translationOverviewStatsRow
 	if err := s.db.WithContext(ctx).Raw(query).Scan(&row).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	stats := &managev1.TranslationOverviewStats{
@@ -108,7 +107,7 @@ CROSS JOIN job_totals
 	return stats, nil
 }
 
-func (s *TranslationService) listTranslationLocaleHealth(
+func (s *Service) listTranslationLocaleHealth(
 	ctx context.Context,
 ) ([]*managev1.TranslationLocaleHealth, error) {
 	query := fmt.Sprintf(`
@@ -154,7 +153,7 @@ ORDER BY l.sort_order ASC, l.code ASC
 
 	var rows []translationLocaleHealthRow
 	if err := s.db.WithContext(ctx).Raw(query).Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	resp := make([]*managev1.TranslationLocaleHealth, 0, len(rows))
@@ -184,7 +183,7 @@ ORDER BY l.sort_order ASC, l.code ASC
 	return resp, nil
 }
 
-func (s *TranslationService) listTranslationEntityHealth(
+func (s *Service) listTranslationEntityHealth(
 	ctx context.Context,
 ) ([]*managev1.TranslationEntityHealth, error) {
 	query := fmt.Sprintf(`
@@ -239,7 +238,7 @@ ORDER BY entity_types.sort_order ASC
 
 	var rows []translationEntityHealthRow
 	if err := s.db.WithContext(ctx).Raw(query).Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	resp := make([]*managev1.TranslationEntityHealth, 0, len(rows))

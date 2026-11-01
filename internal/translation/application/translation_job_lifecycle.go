@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -117,7 +118,7 @@ func (m *TranslationJobManager) updateRunningJobProvider(
 	if generator == nil {
 		return errTranslationProviderUnavailable
 	}
-	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return runRunningJobStep(ctx, m.mutations, jobID, func(ctx context.Context, tx *gorm.DB) error {
 		job, err := lockTranslationProviderDocumentJob(ctx, tx, jobID)
 		if err != nil {
 			return err
@@ -226,4 +227,18 @@ func (m *TranslationJobManager) failQueuedJob(
 	m.metrics.recordJobDuration(ctx, job, translationJobStatusFailed, startedAt, now)
 	emitTranslationJobTerminal(ctx, job, translationJobTerminalOutcomeFailed, reason, startedAt, now)
 	return nil
+}
+
+// runRunningJobStep runs one bookkeeping step of a running job in a
+// mutation authorized by that job.
+func runRunningJobStep(ctx context.Context, mutations *mutation.Runner, jobID string, step func(context.Context, *gorm.DB) error) error {
+	_, err := mutation.Run(ctx, mutations, mutation.Spec[struct{}]{
+		Access: runningJobAccess(jobID),
+		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) {
+			return struct{}{}, step(ctx, tx)
+		},
+		// Translation jobs are operational queue rows, not audited content.
+		Audit: func(struct{}) mutation.Audit { return mutation.Unchanged() },
+	})
+	return err
 }

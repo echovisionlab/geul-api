@@ -20,7 +20,7 @@ func TestTranslationTerminalMappingLogsOriginalCause(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			db := newTranslationRetryTestDB(t)
 			job := seedTranslationRetryTestJob(t, db, status, "operation-1", generateUUID())
-			manager := &TranslationJobManager{db: db, publisher: stubTranslationJobPublisher{}, now: time.Now, metrics: newTranslationMetrics()}
+			manager := withTestMutations(t, &TranslationJobManager{db: db, publisher: stubTranslationJobPublisher{}, now: time.Now, metrics: newTranslationMetrics()})
 			var output bytes.Buffer
 			previous := slog.Default()
 			slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
@@ -60,7 +60,7 @@ func TestTranslationDeliveryLoadFailureReturnsCauseToQueueConsumer(t *testing.T)
 	db := newTranslationRetryTestDB(t)
 	cause := errors.New(`relation "translation_job" unavailable: connection reset token=private-token`)
 	db.AddError(cause)
-	manager := &TranslationJobManager{db: db}
+	manager := withTestMutations(t, &TranslationJobManager{db: db})
 	var output bytes.Buffer
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))

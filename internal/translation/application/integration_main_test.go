@@ -12,7 +12,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/stretchr/testify/require"
@@ -93,21 +92,17 @@ func requireStringValue(t *testing.T, value *string) string {
 	return *value
 }
 
+// newTranslationServiceForOGTest serves the Translation use cases over db
+// through their Connect adapter.
 func newTranslationServiceForOGTest(
+	t *testing.T,
 	db *gorm.DB,
-	publisher translationServicePublisher,
+	publisher Publisher,
 	cdnDomain string,
 	spiceDB *auth.SpiceDBClient,
-	options ...TranslationServiceOption,
-) *TranslationService {
-	options = append(options, WithTranslationServiceDomainRegistry(testTranslationDomains{}))
-	return NewTranslationService(
-		db,
-		publisher,
-		cdnDomain,
-		spiceDB,
-		&og.Planner{},
-		&og.Refresher{},
-		options...,
-	)
+) *ConnectHandler {
+	t.Helper()
+	return NewConnectHandler(newTestService(t, Deps{
+		DB: db, Publisher: publisher, CDNDomain: cdnDomain, SpiceDB: spiceDB,
+	}))
 }

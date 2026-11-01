@@ -5,89 +5,87 @@ import (
 	"errors"
 	"strings"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
-func (s *TranslationService) CancelTranslationJob(
-	ctx context.Context,
-	req *connect.Request[managev1.CancelTranslationJobRequest],
-) (*connect.Response[managev1.CancelTranslationJobResponse], error) {
+// CancelTranslationJobCommand cancels a queued or running translation job.
+type CancelTranslationJobCommand struct {
+	JobID string
+}
+
+// CancelTranslationJob cancels an in-flight job under the entity's
+// regeneration authority.
+func (s *Service) CancelTranslationJob(ctx context.Context, command CancelTranslationJobCommand) error {
 	outcome := "failed"
 	defer func() { s.metrics.recordAdminAction(ctx, "cancel", outcome) }()
 	if _, err := requireAuthenticatedTranslationRequester(ctx); err != nil {
-		return nil, err
+		return err
 	}
-	jobID := strings.TrimSpace(req.Msg.GetJobId())
+	jobID := strings.TrimSpace(command.JobID)
 	if jobID == "" {
-		return nil, errs.InvalidArgument("job_id", "job_id is required")
+		return domainerr.InvalidField("job_id", "job_id is required")
 	}
-	var job model.TranslationJob
-	changed := false
 	now := s.now().UTC()
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		candidate, err := loadTranslationJobForCommand(ctx, tx, jobID, false)
-		if err != nil {
-			return err
-		}
-		if err := s.validateTranslationRegenerationWithDB(
-			ctx, tx, candidate.EntityType, candidate.EntityID,
-		); err != nil {
-			return err
-		}
-		job, err = loadTranslationJobForCommand(ctx, tx, jobID, true)
-		if err != nil {
-			return err
-		}
-		result := tx.WithContext(ctx).
-			Where("id = ? AND status IN ?", job.ID, []string{translationJobStatusQueued, translationJobStatusRunning}).
-			Delete(&model.TranslationJob{})
-		if result.Error != nil {
-			return errs.Internal(result.Error)
-		}
-		if result.RowsAffected != 1 {
-			return errs.FailedPrecondition("translation job is already terminal")
-		}
-		job.Status = translationJobStatusCancelled
-		job.CompletedAt = &now
-		job.UpdatedAt = now
-		changed = true
-		return nil
-	}); err != nil {
-		return nil, err
+	var candidate model.TranslationJob
+	job, err := mutation.Run(ctx, s.mutations, mutation.Spec[model.TranslationJob]{
+		Lock: func(ctx context.Context, tx *gorm.DB) error {
+			var err error
+			if candidate, err = loadTranslationJobForCommand(ctx, tx, jobID, false); err != nil {
+				return err
+			}
+			return s.domains.LockRoot(ctx, tx, candidate.EntityType, candidate.EntityID)
+		},
+		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+			return s.requireTranslationRegenerationAuthority(ctx, tx, candidate.EntityType, candidate.EntityID)
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (model.TranslationJob, error) {
+			job, err := loadTranslationJobForCommand(ctx, tx, jobID, true)
+			if err != nil {
+				return model.TranslationJob{}, err
+			}
+			result := tx.WithContext(ctx).
+				Where("id = ? AND status IN ?", job.ID, []string{translationJobStatusQueued, translationJobStatusRunning}).
+				Delete(&model.TranslationJob{})
+			if result.Error != nil {
+				return model.TranslationJob{}, result.Error
+			}
+			if result.RowsAffected != 1 {
+				return model.TranslationJob{}, domainerr.Precondition("translation job is already terminal")
+			}
+			job.Status = translationJobStatusCancelled
+			job.CompletedAt = &now
+			job.UpdatedAt = now
+			return job, nil
+		},
+		// Translation jobs are operational queue rows, not audited content.
+		Audit: func(model.TranslationJob) mutation.Audit { return mutation.Unchanged() },
+	})
+	if err != nil {
+		return err
 	}
-	if changed {
-		emitTranslationJobTerminal(
-			ctx,
-			&job,
-			translationJobTerminalOutcomeCancelled,
-			"",
-			translationJobStartedAt(&job, now),
-			now,
-		)
-		outcome = "succeeded"
-	} else {
-		outcome = "unchanged"
-	}
-	return connect.NewResponse(&managev1.CancelTranslationJobResponse{}), nil
+	emitTranslationJobTerminal(
+		ctx, &job, translationJobTerminalOutcomeCancelled, "", translationJobStartedAt(&job, now), now,
+	)
+	outcome = "succeeded"
+	return nil
 }
 
 func requireAuthenticatedTranslationRequester(ctx context.Context) (string, error) {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || strings.TrimSpace(user.MemberID.String()) == "" {
-		return "", errs.AuthenticationRequired()
+		return "", domainerr.AuthenticationRequired()
 	}
 	if user.Banned {
-		return "", errs.AccountBanned()
+		return "", domainerr.AccountBanned()
 	}
 	if !user.Onboarded {
-		return "", errs.NoPermission("edit", "translation")
+		return "", domainerr.NoPermission("edit", "translation")
 	}
 	return user.MemberID.String(), nil
 }
@@ -99,7 +97,7 @@ func loadTranslationJobForCommand(
 	locked bool,
 ) (model.TranslationJob, error) {
 	if jobID == "" {
-		return model.TranslationJob{}, errs.InvalidArgument("job_id", "job_id is required")
+		return model.TranslationJob{}, domainerr.InvalidField("job_id", "job_id is required")
 	}
 	query := db.WithContext(ctx)
 	if locked {
@@ -108,23 +106,23 @@ func loadTranslationJobForCommand(
 	var job model.TranslationJob
 	if err := query.First(&job, "id = ?", jobID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return model.TranslationJob{}, errs.NotFound("translation_job", jobID)
+			return model.TranslationJob{}, domainerr.ResourceNotFound("translation_job", jobID)
 		}
-		return model.TranslationJob{}, errs.Internal(err)
+		return model.TranslationJob{}, err
 	}
 	if err := validateTranslationJobRequester(&job); err != nil {
-		return model.TranslationJob{}, errs.Internal(err)
+		return model.TranslationJob{}, err
 	}
 	return job, nil
 }
 
-func (s *TranslationService) requireAvailableTranslationProvider(ctx context.Context) error {
+func (s *Service) requireAvailableTranslationProvider(ctx context.Context) error {
 	available, err := hasAvailableTranslationProvider(ctx, s.db)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if !available {
-		return errs.FailedPrecondition(translationProviderUnavailableMessage)
+		return domainerr.Precondition(translationProviderUnavailableMessage)
 	}
 	return nil
 }

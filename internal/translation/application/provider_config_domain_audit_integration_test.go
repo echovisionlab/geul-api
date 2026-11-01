@@ -70,7 +70,7 @@ func testTranslationProviderUpdatesAuditExactChangesAndSkipSemanticNoOps(
 
 	writeTime := time.Date(2026, time.October, 2, 3, 4, 5, 123456789, time.UTC)
 	serviceDB := db.Session(&gorm.Session{NowFunc: func() time.Time { return writeTime }})
-	service := newAuditedTranslationProviderService(
+	service := newAuditedTranslationProviderService(t,
 		serviceDB, apitelemetry.NewDurableWriter(db), spiceDB,
 	)
 	provider := insertedAuditedTranslationProvider(t, db)
@@ -146,7 +146,7 @@ func testTranslationProviderAuditFailureRollsBackMutation(
 	ctx := translationProviderAuditedMemberContext(t, admin)
 	grantTranslationProviderIntegrationAdmin(t, spiceDB, admin)
 	provider := insertedAuditedTranslationProvider(t, db)
-	failing := newAuditedTranslationProviderService(
+	failing := newAuditedTranslationProviderService(t,
 		db, failingTranslationProviderAuditAppender{}, spiceDB,
 	)
 
@@ -202,7 +202,7 @@ func testTranslationProviderConfigUsesLockedLatestSource(
 	admin := seedTranslationProviderAuditAdmin(t, db)
 	grantTranslationProviderIntegrationAdmin(t, spiceDB, admin)
 	provider := insertedAuditedTranslationProvider(t, db)
-	service := newAuditedTranslationProviderService(
+	service := newAuditedTranslationProviderService(t,
 		db, apitelemetry.NewDurableWriter(db), spiceDB,
 	)
 
@@ -332,19 +332,22 @@ func translationProviderAuditedMemberContext(t *testing.T, admin translationProv
 }
 
 func newAuditedTranslationProviderService(
+	t *testing.T,
 	db *gorm.DB,
 	auditWriter domainaudit.Appender,
 	spiceDB *auth.SpiceDBClient,
-) *TranslationService {
+) *ConnectHandler {
+	t.Helper()
 	planner := og.NewPlanner(
 		db, "", translationProviderOGRenderConfig{}, sitesettingsadapter.NewProjection(),
 	)
 	refresher := og.NewRefresher(
 		planner, og.NewResolver(sitesettingsadapter.NewRequests()),
 	)
-	return NewAuditedTranslationService(
-		db, &translationProviderPublisherStub{}, "", auditWriter, spiceDB, planner, refresher,
-	)
+	return NewConnectHandler(newTestService(t, Deps{
+		DB: db, Publisher: &translationProviderPublisherStub{}, Audit: auditWriter, SpiceDB: spiceDB,
+		OGPlanner: planner, OGRefresher: refresher,
+	}))
 }
 
 type translationProviderOGRenderConfig struct{}

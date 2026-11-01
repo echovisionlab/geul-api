@@ -6,4 +6,3 @@
 1 internal/adapters/mcp/menu_discovery_tools.go
 1 internal/adapters/mcp/page_reference_tools.go
 1 internal/adapters/mcp/reference_discovery_tools.go
-7 internal/adapters/mcp/translation_calls.go

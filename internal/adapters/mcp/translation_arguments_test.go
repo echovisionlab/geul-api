@@ -49,7 +49,7 @@ func TestTranslationJobListRequiresProfileAndDocumentTogether(t *testing.T) {
 		if err := decodeArguments(toolArguments(t, arguments), &input); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := translationJobsListRequest(input); err == nil {
+		if _, err := translationJobsListQuery(input); err == nil {
 			t.Fatalf("partial document filter was accepted: %s", arguments)
 		}
 	}
@@ -61,7 +61,7 @@ func TestTranslationJobSortDirectionRequiresExplicitField(t *testing.T) {
 		if err := decodeArguments(toolArguments(t, arguments), &input); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := translationJobsListRequest(input); err == nil {
+		if _, err := translationJobsListQuery(input); err == nil {
 			t.Fatalf("sort direction without its field was accepted: %s", arguments)
 		}
 	}
@@ -77,9 +77,9 @@ func TestTranslationJobSortDirectionRequiresExplicitField(t *testing.T) {
 		if err := decodeArguments(toolArguments(t, test.arguments), &input); err != nil {
 			t.Fatal(err)
 		}
-		request, err := translationJobsListRequest(input)
-		if err != nil || len(request.GetSorts()) != 1 || request.Sorts[0].Order != test.order {
-			t.Fatalf("sort request for %s = %+v, %v", test.arguments, request, err)
+		query, err := translationJobsListQuery(input)
+		if err != nil || len(query.Sorts) != 1 || query.Sorts[0].Order != test.order {
+			t.Fatalf("sort query for %s = %+v, %v", test.arguments, query, err)
 		}
 	}
 }

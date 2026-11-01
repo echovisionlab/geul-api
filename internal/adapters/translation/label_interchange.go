@@ -16,14 +16,14 @@ import (
 // LabelInterchange adapts XLIFF target projection and exact sparse mutation
 // to Label's existing typed Content Block transaction seam.
 type LabelInterchange struct {
-	auditWriter domainaudit.Appender
+	audit domainaudit.Appender
 }
 
-func NewLabelInterchange(auditWriter domainaudit.Appender) *LabelInterchange {
-	if auditWriter == nil {
+func NewLabelInterchange(audit domainaudit.Appender) *LabelInterchange {
+	if audit == nil {
 		panic("Label translation interchange Audit writer is required")
 	}
-	return &LabelInterchange{auditWriter: auditWriter}
+	return &LabelInterchange{audit: audit}
 }
 
 func (*LabelInterchange) LoadTranslationInterchangeTarget(
@@ -75,7 +75,7 @@ func (a *LabelInterchange) ApplyTranslationInterchange(
 		expectedTargetRevision = command.ExpectedRevision
 	}
 	if err := labeldomain.ApplyTypedTranslationCandidateWithTargetRevision(
-		ctx, db, store, job, candidate, core.EntryWrite{Now: command.Now.UTC()}, a.auditWriter,
+		ctx, db, store, job, candidate, core.EntryWrite{Now: command.Now.UTC()}, a.audit,
 		expectedTargetRevision,
 	); err != nil {
 		return application.TranslationInterchangeApplyResult{}, err

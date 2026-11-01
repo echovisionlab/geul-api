@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -15,21 +15,21 @@ import (
 
 func parseTranslationTarget(target *managev1.TranslationTarget) (string, string, error) {
 	if target == nil {
-		return "", "", errs.InvalidArgument("target", "target is required")
+		return "", "", domainerr.InvalidField("target", "target is required")
 	}
 	definition, ok := translation.DefinitionForProto(target.EntityType)
 	if !ok {
-		return "", "", errs.InvalidArgument("target.entity_type", "unsupported translation entity type")
+		return "", "", domainerr.InvalidField("target.entity_type", "unsupported translation entity type")
 	}
 	entityType := string(definition.Kind)
 	entityID := strings.TrimSpace(target.EntityId)
 	if entityID == "" {
-		return "", "", errs.InvalidArgument("target.entity_id", "entity id is required")
+		return "", "", domainerr.InvalidField("target.entity_id", "entity id is required")
 	}
 	return entityType, entityID, nil
 }
 
-func (s *TranslationService) scanTranslationEntryRow(
+func (s *Service) scanTranslationEntryRow(
 	ctx context.Context,
 	rows *sql.Rows,
 	entityType string,

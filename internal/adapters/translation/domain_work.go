@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func workDomainRegistration(auditWriter domainaudit.Appender) domainRegistration {
+func workDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	permissions := translationCanSet{
 		view:         policyv1.Work.View,
 		edit:         policyv1.Work.Edit,
@@ -30,10 +30,10 @@ func workDomainRegistration(auditWriter domainaudit.Appender) domainRegistration
 		},
 		buildCandidate: work.BuildTranslationCandidate,
 		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			return work.ApplyTypedTranslationCandidateWithDB(ctx, tx, store, job, candidate, input, auditWriter)
+			return work.ApplyTypedTranslationCandidateWithDB(ctx, tx, store, job, candidate, input, audit)
 		},
-		requestLocaleOG:         localeAwareOG(core.KindWork),
-		appendSourceLocaleAudit: sourceLocaleAudit(auditWriter, sharedtelemetry.AuditWorkUpdated, sharedtelemetry.NewWorkSourceLocaleAuditRecord),
+		requestLocaleOG:   localeAwareOG(core.KindWork),
+		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditWorkUpdated, sharedtelemetry.NewWorkSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
 			return fmt.Sprintf(`SELECT locale, title, summary, NULL::text AS content_html, NULL::text AS content_text, NULL::jsonb AS content_json, updated_at, NULL::uuid AS og_asset_id FROM %s`, table)
 		},

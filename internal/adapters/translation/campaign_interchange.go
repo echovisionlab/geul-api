@@ -18,18 +18,18 @@ import (
 // CampaignInterchange adapts the shared Rich Text XLIFF codec to Campaign's
 // draft lifecycle, Content Document CAS, projection and Audit seams.
 type CampaignInterchange struct {
-	auditWriter  domainaudit.Appender
+	audit        domainaudit.Appender
 	auditBuilder LocaleContentAuditBuilder
 }
 
 func NewCampaignInterchange(
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 	auditBuilder LocaleContentAuditBuilder,
 ) *CampaignInterchange {
-	if auditWriter == nil || auditBuilder == nil {
+	if audit == nil || auditBuilder == nil {
 		panic("Campaign translation interchange Audit dependencies are required")
 	}
-	return &CampaignInterchange{auditWriter: auditWriter, auditBuilder: auditBuilder}
+	return &CampaignInterchange{audit: audit, auditBuilder: auditBuilder}
 }
 
 func (*CampaignInterchange) LoadTranslationInterchangeTarget(
@@ -92,7 +92,7 @@ func (a *CampaignInterchange) ApplyTranslationInterchange(
 	}
 	if result.Changed {
 		if err := appendLocaleContentInterchangeAudit(
-			ctx, db, a.auditWriter, a.auditBuilder, sharedtelemetry.AuditCampaignUpdated,
+			ctx, db, a.audit, a.auditBuilder, sharedtelemetry.AuditCampaignUpdated,
 			memberID, command.EntityID, command.TargetLocale, current.state.Exists,
 		); err != nil {
 			return application.TranslationInterchangeApplyResult{}, err

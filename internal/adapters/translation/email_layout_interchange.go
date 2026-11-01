@@ -21,20 +21,20 @@ import (
 // owning domain retains source wrapper, sparse target and lifecycle authority.
 type EmailLayoutInterchange struct {
 	references   emaildomain.CampaignDeliveryReferences
-	auditWriter  domainaudit.Appender
+	audit        domainaudit.Appender
 	auditBuilder LocaleContentAuditBuilder
 }
 
 func NewEmailLayoutInterchange(
 	references emaildomain.CampaignDeliveryReferences,
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 	auditBuilder LocaleContentAuditBuilder,
 ) *EmailLayoutInterchange {
-	if references == nil || auditWriter == nil || auditBuilder == nil {
+	if references == nil || audit == nil || auditBuilder == nil {
 		panic("Email Layout translation interchange dependencies are required")
 	}
 	return &EmailLayoutInterchange{
-		references: references, auditWriter: auditWriter, auditBuilder: auditBuilder,
+		references: references, audit: audit, auditBuilder: auditBuilder,
 	}
 }
 
@@ -107,7 +107,7 @@ func (a *EmailLayoutInterchange) ApplyTranslationInterchange(
 	}
 	if changed {
 		if err := appendLocaleContentInterchangeAudit(
-			ctx, db, a.auditWriter, a.auditBuilder, sharedtelemetry.AuditEmailLayoutUpdated,
+			ctx, db, a.audit, a.auditBuilder, sharedtelemetry.AuditEmailLayoutUpdated,
 			memberID, command.EntityID, command.TargetLocale, current.Exists,
 		); err != nil {
 			return application.TranslationInterchangeApplyResult{}, err

@@ -54,11 +54,11 @@ func TestReloadTranslationDeliveryKeepsRequestPlanAcrossSourceLocaleSwitch(t *te
 		},
 	}
 	current := &translation.SourceDocument{SourceLocale: "ko", Title: ""}
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db: db, domains: sourceLocaleSwitchDeliveryDomains{source: current},
 		publisher: stubTranslationJobPublisher{}, now: time.Now,
 		metrics: newTranslationMetrics(),
-	}
+	})
 	execution := &translationDeliveryExecution{job: job, plan: plan}
 
 	proceed, err := manager.reloadTranslationDeliveryForApply(context.Background(), execution)
@@ -74,12 +74,12 @@ func TestTranslationRunningProviderFailureIsImmediatelyTerminal(t *testing.T) {
 	db := newTranslationRetryTestDB(t)
 	now := time.Unix(1_700_000_100, 0).UTC()
 	job := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "operation", uuid.NewString())
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db:        db,
 		publisher: stubTranslationJobPublisher{},
 		now:       func() time.Time { return now },
 		metrics:   newTranslationMetrics(),
-	}
+	})
 	cause := errors.New("provider unavailable")
 
 	err := manager.handleRunningDeliveryFailure(context.Background(), job, now, cause)
@@ -99,7 +99,7 @@ func TestValidatedTranslationKeepsProviderResponseInMemoryUntilTerminal(t *testi
 		request,
 		translation.UnitResult{UnitID: "unit-1", TranslatedText: "Bonjour"},
 	)
-	manager := &TranslationJobManager{db: db}
+	manager := withTestMutations(t, &TranslationJobManager{db: db})
 	generator := &scriptedTranslationGenerator{session: &scriptedTranslationGeneratorSession{
 		initialResponses: []*translation.ProviderResponse{response},
 	}}
@@ -125,7 +125,7 @@ func TestInvalidTranslationDoesNotPersistProviderResponse(t *testing.T) {
 		request,
 		translation.UnitResult{UnitID: "unit-1", TranslatedText: "Bonjour monde"},
 	)
-	manager := &TranslationJobManager{db: db}
+	manager := withTestMutations(t, &TranslationJobManager{db: db})
 	generator := &scriptedTranslationGenerator{session: &scriptedTranslationGeneratorSession{
 		initialResponses: []*translation.ProviderResponse{response},
 	}}
@@ -143,12 +143,12 @@ func TestTranslationRunningTargetApplyFailureUsesBoundedTerminalReason(t *testin
 	db := newTranslationRetryTestDB(t)
 	now := time.Unix(1_700_000_125, 0).UTC()
 	job := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "operation", uuid.NewString())
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db:        db,
 		publisher: stubTranslationJobPublisher{},
 		now:       func() time.Time { return now },
 		metrics:   newTranslationMetrics(),
-	}
+	})
 	cause := markTranslationTargetApplyFailure(errors.New("sensitive target persistence detail"))
 
 	err := manager.handleRunningDeliveryFailure(context.Background(), job, now, cause)
@@ -179,12 +179,12 @@ func TestTranslationCandidateBuildFailureUsesTargetApplyReason(t *testing.T) {
 	response := translationProviderResponseForPlanTest(t, plan, translation.UnitResult{
 		UnitID: plan.Units[0].UnitID, TranslatedText: "안녕하세요 세계",
 	})
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db:        db,
 		publisher: stubTranslationJobPublisher{},
 		now:       func() time.Time { return now },
 		metrics:   newTranslationMetrics(),
-	}
+	})
 
 	err = manager.applyTranslationDelivery(context.Background(), &translationDeliveryExecution{
 		job: job, startedAt: now, sourceDoc: source, plan: plan, response: response,
@@ -199,12 +199,12 @@ func TestTranslationTransportShutdownLeavesRunningStateForRedelivery(t *testing.
 	db := newTranslationRetryTestDB(t)
 	now := time.Unix(1_700_000_150, 0).UTC()
 	job := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "operation", uuid.NewString())
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db:        db,
 		publisher: stubTranslationJobPublisher{},
 		now:       func() time.Time { return now },
 		metrics:   newTranslationMetrics(),
-	}
+	})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -221,12 +221,12 @@ func TestTranslationProviderTimeoutDeletesJobAndArtifacts(t *testing.T) {
 	db := newTranslationRetryTestDB(t)
 	now := time.Unix(1_700_000_160, 0).UTC()
 	job := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "provider-timeout", uuid.NewString())
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db:        db,
 		publisher: stubTranslationJobPublisher{},
 		now:       func() time.Time { return now },
 		metrics:   newTranslationMetrics(),
-	}
+	})
 
 	err := manager.handleRunningDeliveryFailure(
 		context.Background(),
@@ -245,10 +245,10 @@ func TestTranslationProviderTimeoutDeletesJobAndArtifacts(t *testing.T) {
 func TestTranslationRedeliveryResumesRunningJob(t *testing.T) {
 	db := newTranslationRetryTestDB(t)
 	job := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "operation", uuid.NewString())
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db:  db,
 		now: func() time.Time { return time.Unix(1_700_000_200, 0).UTC() },
-	}
+	})
 
 	resumed, err := manager.resumeTranslationJob(context.Background(), job.ID, namedStubTranslationGenerator{
 		providerName: "provider",
@@ -265,13 +265,13 @@ func TestTranslationRedeliveryResumesRunningJob(t *testing.T) {
 func TestTranslationProcessDeliveryResumesRunningJobFromPersistedState(t *testing.T) {
 	db := newTranslationRetryTestDB(t)
 	job := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "operation", uuid.NewString())
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db:                db,
 		generatorResolver: unavailableTranslationGeneratorResolver{},
 		publisher:         stubTranslationJobPublisher{},
 		now:               func() time.Time { return time.Unix(1_700_000_300, 0).UTC() },
 		metrics:           newTranslationMetrics(),
-	}
+	})
 
 	err := manager.ProcessDelivery(context.Background(), job.ID)
 	require.ErrorIs(t, err, errTranslationProviderUnavailable)
@@ -284,13 +284,13 @@ func TestTranslationProviderResolverInfrastructureFailureKeepsJobRetryable(t *te
 			db := newTranslationRetryTestDB(t)
 			job := seedTranslationRetryTestJob(t, db, status, "resolver-temporary", uuid.NewString())
 			cause := errors.New("temporary provider configuration database failure")
-			manager := &TranslationJobManager{
+			manager := withTestMutations(t, &TranslationJobManager{
 				db:                db,
 				generatorResolver: failingTranslationGeneratorResolver{err: cause},
 				publisher:         stubTranslationJobPublisher{},
 				now:               func() time.Time { return time.Unix(1_700_000_300, 0).UTC() },
 				metrics:           newTranslationMetrics(),
-			}
+			})
 
 			err := manager.ProcessDelivery(context.Background(), job.ID)
 			require.ErrorIs(t, err, cause)
@@ -321,13 +321,13 @@ func TestTranslationSQLProviderResolverFailureKeepsQueuedJobRetryable(t *testing
 		WithArgs(true).
 		WillReturnError(cause)
 
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db:                queueDB,
 		generatorResolver: newDBTranslationGeneratorResolver(providerDB),
 		publisher:         stubTranslationJobPublisher{},
 		now:               time.Now,
 		metrics:           newTranslationMetrics(),
-	}
+	})
 	err = manager.ProcessDelivery(context.Background(), job.ID)
 	require.ErrorIs(t, err, cause)
 	_, terminal := mq.TerminalDeliveryErrorClass(err)
@@ -353,11 +353,11 @@ func TestPrepareTranslationDeliveryUsesPersistedRequestArtifact(t *testing.T) {
 		artifact.XLIFF, artifact.Manifest, artifact.Digest, job.ID,
 	).Error)
 	job.RequestArtifactDigest = artifact.Digest
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db: db, publisher: stubTranslationJobPublisher{},
 		now:     func() time.Time { return time.Unix(1_700_000_300, 0).UTC() },
 		metrics: newTranslationMetrics(),
-	}
+	})
 	execution := &translationDeliveryExecution{job: job, startedAt: manager.now()}
 
 	proceed, err := manager.prepareTranslationDelivery(context.Background(), execution)

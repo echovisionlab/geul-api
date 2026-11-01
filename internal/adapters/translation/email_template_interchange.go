@@ -22,20 +22,20 @@ import (
 // Template's lifecycle, Content Document CAS, projection and Audit seams.
 type EmailTemplateInterchange struct {
 	references   emaildomain.CampaignDeliveryReferences
-	auditWriter  domainaudit.Appender
+	audit        domainaudit.Appender
 	auditBuilder LocaleContentAuditBuilder
 }
 
 func NewEmailTemplateInterchange(
 	references emaildomain.CampaignDeliveryReferences,
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 	auditBuilder LocaleContentAuditBuilder,
 ) *EmailTemplateInterchange {
-	if references == nil || auditWriter == nil || auditBuilder == nil {
+	if references == nil || audit == nil || auditBuilder == nil {
 		panic("Email Template translation interchange dependencies are required")
 	}
 	return &EmailTemplateInterchange{
-		references: references, auditWriter: auditWriter, auditBuilder: auditBuilder,
+		references: references, audit: audit, auditBuilder: auditBuilder,
 	}
 }
 
@@ -105,7 +105,7 @@ func (a *EmailTemplateInterchange) ApplyTranslationInterchange(
 	}
 	if result.Changed {
 		if err := appendLocaleContentInterchangeAudit(
-			ctx, db, a.auditWriter, a.auditBuilder, sharedtelemetry.AuditEmailTemplateUpdated,
+			ctx, db, a.audit, a.auditBuilder, sharedtelemetry.AuditEmailTemplateUpdated,
 			memberID, command.EntityID, command.TargetLocale, current.state.Exists,
 		); err != nil {
 			return application.TranslationInterchangeApplyResult{}, err

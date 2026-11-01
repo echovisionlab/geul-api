@@ -31,7 +31,7 @@ func (m *TranslationJobManager) persistTranslationProviderDocumentHandle(
 		return fmt.Errorf("translation provider document handle requires document identity and submission time")
 	}
 
-	return m.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return runRunningJobStep(ctx, m.mutations, jobID, func(ctx context.Context, tx *gorm.DB) error {
 		job, err := lockRunningTranslationProviderDocumentJob(ctx, tx, jobID, provider, modelName)
 		if err != nil {
 			return err

@@ -2,6 +2,7 @@ package application
 
 import (
 	"errors"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"testing"
 	"time"
 
@@ -17,7 +18,7 @@ func (translationEntryQueryTestDomains) TranslationEntrySelectSQL(string, string
 	return "SELECT locale,title,summary,content_html,content_text,content_json,updated_at,og_asset_id FROM post_translation", nil
 }
 
-func newTranslationEntryQueryTestService(t *testing.T) (*TranslationService, sqlmock.Sqlmock) {
+func newTranslationEntryQueryTestService(t *testing.T) (*Service, sqlmock.Sqlmock) {
 	t.Helper()
 	sqlDB, mock, err := sqlmock.New()
 	if err != nil {
@@ -28,7 +29,7 @@ func newTranslationEntryQueryTestService(t *testing.T) (*TranslationService, sql
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &TranslationService{db: db, domains: translationEntryQueryTestDomains{}}, mock
+	return &Service{db: db, domains: translationEntryQueryTestDomains{}}, mock
 }
 
 func translationEntryQueryTestRows(locales ...string) *sqlmock.Rows {
@@ -61,7 +62,7 @@ func TestListEntityTranslationsDistinguishesRowErrorsFromEmptyResults(t *testing
 			mock.ExpectQuery("SELECT locale").WithArgs("post-a").WillReturnRows(rows)
 			entries, err := service.listEntityTranslations(t.Context(), "post", "post-a")
 			if test.wantError {
-				if connect.CodeOf(err) != connect.CodeInternal || !errors.Is(err, cause) || entries != nil {
+				if errs.Wrap(err).Code() != connect.CodeInternal || !errors.Is(err, cause) || entries != nil {
 					t.Fatalf("row error returned entries=%v, error=%v", entries, err)
 				}
 			} else if err != nil || entries == nil || len(entries) != len(test.locales) {
@@ -95,7 +96,7 @@ func TestGetEntityTranslationDistinguishesRowErrorsFromNotFound(t *testing.T) {
 			mock.ExpectQuery("SELECT locale").WithArgs("post-a", "en").WillReturnRows(rows)
 			entry, err := service.getEntityTranslation(t.Context(), "post", "post-a", "en")
 			if test.wantError != 0 {
-				if connect.CodeOf(err) != test.wantError || entry != nil || (test.rowError && !errors.Is(err, cause)) {
+				if errs.Wrap(err).Code() != test.wantError || entry != nil || (test.rowError && !errors.Is(err, cause)) {
 					t.Fatalf("query returned entry=%v, error=%v; want %s", entry, err, test.wantError)
 				}
 			} else if err != nil || entry == nil || entry.Locale != "en" {
