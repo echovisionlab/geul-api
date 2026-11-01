@@ -11,6 +11,8 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/echovisionlab/geul-api/internal/adapters/filemedia"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 )
 
@@ -434,14 +436,30 @@ func fileToolCallError(err error) (mcpserver.ToolResult, error) {
 	if errors.Is(err, filemedia.ErrInvalidMCPFileInput) {
 		return executionError(err)
 	}
-	switch connect.CodeOf(err) {
+	switch errs.CodeOf(err) {
 	case connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodeAlreadyExists,
 		connect.CodePermissionDenied, connect.CodeUnauthenticated,
 		connect.CodeFailedPrecondition, connect.CodeAborted, connect.CodeOutOfRange:
-		return executionError(err)
+		return mcpserver.ToolResult{}, &mcpserver.ToolExecutionError{Message: fileToolErrorText(err), Cause: err}
 	default:
 		return mcpserver.ToolResult{}, err
 	}
+}
+
+// fileToolErrorText is err's text with a use-case error in it read as its
+// Connect form ("invalid_argument: ..."), the text File tools answered when
+// File use cases returned Connect errors.
+func fileToolErrorText(err error) string {
+	text := err.Error()
+	var useCase *domainerr.Error
+	if !errors.As(err, &useCase) {
+		return text
+	}
+	classified, ok := errs.Classified(useCase)
+	if !ok {
+		return text
+	}
+	return strings.Replace(text, useCase.Error(), classified.Error(), 1)
 }
 
 var (

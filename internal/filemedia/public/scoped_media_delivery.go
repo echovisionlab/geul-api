@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
@@ -61,7 +60,7 @@ func (s *Service) buildScopedMediaURLsWithDB(
 		Select("id, extension, mime_type, file_size, file_name, duration_seconds").
 		Where("id IN ? AND delete_requested_at IS NULL", allowedFileIDs).
 		Find(&files).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	fileMap := make(map[string]scopedMediaFile, len(files))
@@ -75,7 +74,7 @@ func (s *Service) buildScopedMediaURLsWithDB(
 		Select("file_id, type, asset_id, media_generation_id").
 		Where("file_id IN ?", allowedFileIDs).
 		Find(&derivatives).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	assetIDs := make([]string, 0, len(derivatives))
 	generationIDs := make([]string, 0, len(derivatives))
@@ -89,11 +88,11 @@ func (s *Service) buildScopedMediaURLsWithDB(
 	}
 	assetsByID, err := loadReadyPublicAssetsByIDs(ctx, db, assetIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	generationsByID, err := loadReadyMediaGenerationsByIDs(ctx, db, generationIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	publicAssetsByFileID, err := loadReadyPublicAssetsForSourceFiles(
 		ctx,
@@ -102,7 +101,7 @@ func (s *Service) buildScopedMediaURLsWithDB(
 		"image", "mesh", "texture", "gallery", "artwork", "poster", "map_image",
 	)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	derivativeMap := make(map[string]map[string]scopedMediaDerivative, len(allowedFileIDs))
@@ -132,7 +131,7 @@ func (s *Service) buildScopedMediaURLsWithDB(
 			publicAssetsByFileID[fileID],
 		)
 		if err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 		result[fileID] = urls
 	}
@@ -166,13 +165,13 @@ func (s *Service) ResolvePublicDisplayMedia(
 		Select("id, extension, mime_type, file_size, file_name, duration_seconds").
 		Where("id IN ? AND delete_requested_at IS NULL", requested).
 		Find(&files).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	assets, err := loadReadyPublicAssetsForSourceFiles(
 		ctx, s.db, requested, "image", "gallery", "artwork", "poster", "map_image",
 	)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for _, file := range files {
 		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(file.MimeType)), "image/") {
@@ -184,7 +183,7 @@ func (s *Service) ResolvePublicDisplayMedia(
 		}
 		ref, projectErr := projectReadyPublicAsset(s.cdnDomain, asset)
 		if projectErr != nil {
-			return nil, errs.Internal(projectErr)
+			return nil, projectErr
 		}
 		delivery := &commonv1.MediaDelivery{
 			FileId: file.ID, Extension: file.Extension, MimeType: file.MimeType,

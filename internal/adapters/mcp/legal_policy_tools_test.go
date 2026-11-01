@@ -11,7 +11,6 @@ import (
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -35,18 +34,18 @@ func (owner *recordingLegalPolicies) record(name string, request proto.Message) 
 	return owner.err
 }
 func policyTestPolicy(kind legal.PolicyKind) legal.Policy {
-	status := model.TermsStatusDraft
+	status := legal.TermsDraft
 	if kind == legal.Privacy {
-		status = model.PrivacyStatusDraft
+		status = legal.PrivacyDraft
 	}
 	now := time.Now()
 	return legal.Policy{ID: policyTestID, Version: 2, Title: "Policy title", SourceLocale: "ko", Revision: policyTestRevision, Status: status, Document: &contentv1.RichTextDocument{SourceLocale: "body must not leak"}, CreatedAt: now, UpdatedAt: now}
 }
 
 func policyTestLifecycle(kind legal.PolicyKind) legal.PolicyLifecycle {
-	status := model.TermsStatusScheduled
+	status := legal.TermsScheduled
 	if kind == legal.Privacy {
-		status = model.PrivacyStatusScheduled
+		status = legal.PrivacyScheduled
 	}
 	return legal.PolicyLifecycle{ID: policyTestID, Changed: true, DocumentRevision: policyTestRevision, Status: status, UpdatedAt: time.Now()}
 }
@@ -81,7 +80,7 @@ func (owner *recordingLegalPolicies) ListPolicyVersions(_ context.Context, kind 
 	if err != nil {
 		return legal.PolicyPage{}, err
 	}
-	return legal.PolicyPage{Versions: []legal.Policy{policyTestPolicy(kind)}, Pagination: &commonv1.PaginationResponse{Total: 4, Limit: query.Limit, Offset: query.Offset, HasMore: true}}, nil
+	return legal.PolicyPage{Versions: []legal.Policy{policyTestPolicy(kind)}, Total: 4, Limit: query.Limit, Offset: query.Offset, HasMore: true}, nil
 }
 func (owner *recordingLegalPolicies) GetPolicyVersion(_ context.Context, kind legal.PolicyKind, query legal.GetPolicyVersionQuery) (legal.Policy, error) {
 	var err error

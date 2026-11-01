@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
+	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
 )
@@ -15,7 +16,7 @@ import (
 // Legal domain.
 type LegalPreviewLinks struct{}
 
-var _ legaldomain.PreviewLinks = LegalPreviewLinks{}
+var _ legalpostgres.PreviewLinks = LegalPreviewLinks{}
 
 // CreateAutomaticPreview stores the password-free preview link a scheduled
 // update notice mails out. A retry finds the link it already stored; a token

@@ -8,6 +8,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
@@ -171,7 +172,7 @@ func (s *Service) newCampaignTestSend(ctx context.Context, tx *gorm.DB, command 
 	if !campaignEmailRegex.MatchString(command.Email) {
 		return nil, domainerr.InvalidField("email", "invalid format")
 	}
-	if err := email.CheckTestSendReadiness(ctx, tx, command.Email); err != nil {
+	if err := email.CheckTestSendReadiness(ctx, emailpostgres.Bind(tx), command.Email); err != nil {
 		if message := email.TestSendReadinessMessage(err); message != "" {
 			return nil, domainerr.Precondition(message)
 		}

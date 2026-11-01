@@ -4,9 +4,9 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -34,9 +34,9 @@ const (
 	legalActionManageShareLinks
 )
 
-func legalCanSetForKind(kind intrav1.CollaborationResourceType) (legalCanSet, error) {
+func legalCanSetForKind(kind PolicyKind) (legalCanSet, error) {
 	switch kind {
-	case intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_TERMS_HISTORY:
+	case Terms:
 		return legalCanSet{
 			view:             policyv1.TermsHistory.View,
 			edit:             policyv1.TermsHistory.Edit,
@@ -47,7 +47,7 @@ func legalCanSetForKind(kind intrav1.CollaborationResourceType) (legalCanSet, er
 			manage:           policyv1.TermsHistory.Manage,
 			manageShareLinks: policyv1.TermsHistory.ManageShareLinks,
 		}, nil
-	case intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_PRIVACY_HISTORY:
+	case Privacy:
 		return legalCanSet{
 			view:             policyv1.PrivacyHistory.View,
 			edit:             policyv1.PrivacyHistory.Edit,
@@ -64,7 +64,7 @@ func legalCanSetForKind(kind intrav1.CollaborationResourceType) (legalCanSet, er
 }
 
 func legalCanForAction(
-	kind intrav1.CollaborationResourceType,
+	kind PolicyKind,
 	resourceID string,
 	action legalAction,
 ) (policyv1.Can, error) {
@@ -99,8 +99,8 @@ func legalCanForAction(
 
 func requireLegalPermissionForPrincipal(
 	ctx context.Context,
-	checker CollaborationPermissionChecker,
-	kind intrav1.CollaborationResourceType,
+	checker authz.AuthorizationDecisionChecker,
+	kind PolicyKind,
 	resourceID string,
 	action legalAction,
 	principal *auth.UserInfo,

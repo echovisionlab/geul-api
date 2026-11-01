@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -122,14 +122,14 @@ func (s *Service) ImportRemoteFile(ctx context.Context, input RemoteFileImportIn
 	}()
 
 	if input.UploadType != managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE && !isEditorFileIngestUploadType(input.UploadType) {
-		return nil, errs.InvalidArgument("upload_type", "standalone File import requires a File library upload kind")
+		return nil, domainerr.InvalidField("upload_type", "standalone File import requires a File library upload kind")
 	}
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired()
 	}
 	if strings.TrimSpace(input.CorrelationID) == "" {
-		return nil, errs.InvalidArgument("correlation_id", "standalone File import requires a stable correlation UUID")
+		return nil, domainerr.InvalidField("correlation_id", "standalone File import requires a stable correlation UUID")
 	}
 	fileName := strings.TrimSpace(input.FileName)
 	if fileName != "" {

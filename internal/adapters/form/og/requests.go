@@ -4,7 +4,7 @@ import (
 	"context"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	formdomain "github.com/echovisionlab/geul-api/internal/form"
+	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
 	"github.com/echovisionlab/geul-api/internal/og"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -19,7 +19,7 @@ func NewRequests() *Requests {
 		EntityType:            "form",
 		Table:                 "form",
 		TranslationTable:      "form_translation",
-		SourceTitleExpression: formdomain.FormSourceTitleSQL("form"),
+		SourceTitleExpression: formpostgres.FormSourceTitleSQL("form"),
 	})}
 }
 

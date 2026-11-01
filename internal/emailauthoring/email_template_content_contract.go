@@ -2,21 +2,17 @@ package emailauthoring
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -27,11 +23,10 @@ const (
 )
 
 // emailTemplateContent is the Email Template owner of shared email content.
-var emailTemplateContent = emailcontent.Owner{
+var emailTemplateContent = emailcontent.Owner[Store]{
 	Name: "Email Template", Entity: emailTemplateContentEntity, IDField: "email_template_id",
 	FileBlocksRejected:        "email documents cannot contain File Blocks",
 	TranslatedSubjectRequired: "translated email subject is required",
-	ContentEntityType:         managev1.ContentEntityType_CONTENT_ENTITY_TYPE_EMAIL_TEMPLATE,
 	Rows:                      emailTemplateContentRows{},
 	LocaleContentAudit: emailcontent.LocaleContentAudit{
 		Action: sharedtelemetry.AuditEmailTemplateUpdated,
@@ -43,31 +38,28 @@ var emailTemplateContent = emailcontent.Owner{
 // content.
 type emailTemplateContentRows struct{}
 
-func (emailTemplateContentRows) DocumentID(ctx context.Context, db *gorm.DB, id string) (uuid.UUID, error) {
-	return loadEmailTemplateContentDocument(ctx, db, id, false)
+func (emailTemplateContentRows) DocumentID(ctx context.Context, store Store, id string) (uuid.UUID, error) {
+	return loadTemplateContentDocument(ctx, store, id, false)
 }
 
-func (emailTemplateContentRows) SourceContext(ctx context.Context, db *gorm.DB, id string, lock bool) (contentblock.DomainContext, error) {
-	return loadEmailTemplateSourceContext(ctx, db, id, lock)
+func (emailTemplateContentRows) SourceContext(ctx context.Context, store Store, id string, lock bool) (contentblock.DomainContext, error) {
+	sourceLocale, err := loadTemplateSourceLocale(ctx, store, id, lock)
+	return contentblock.DomainContext{SourceLocale: sourceLocale}, err
 }
 
-// ProjectSource rebuilds the source locale's materialized content. A changed
-// translation source can alter the fallback output of every target row, so
-// each keeps its sparse values but has its projection refreshed, and the
-// template's custom variables follow the new source HTML.
-func (emailTemplateContentRows) ProjectSource(ctx context.Context, tx *gorm.DB, id string, snapshot contentblock.Snapshot, sourceChanged bool, now time.Time) error {
+// ProjectSource rebuilds the source locale's materialized content; a change
+// of the translation source rebuilds every locale and the custom variables.
+func (emailTemplateContentRows) ProjectSource(ctx context.Context, store Store, id string, snapshot contentblock.Snapshot, sourceChanged bool, now time.Time) error {
 	if !sourceChanged {
-		return projectEmailTemplateMaterializedContent(ctx, tx, id, snapshot, []string{snapshot.SourceLocale}, now)
+		return projectEmailTemplateMaterializedContent(ctx, store, id, snapshot, []string{snapshot.SourceLocale}, now)
 	}
-	if err := projectEmailTemplateMaterializedContent(ctx, tx, id, snapshot, nil, now); err != nil {
+	if err := projectEmailTemplateMaterializedContent(ctx, store, id, snapshot, nil, now); err != nil {
 		return err
 	}
-	return syncSourceEmailTemplateVariables(ctx, tx, id, snapshot)
+	return syncSourceEmailTemplateVariables(ctx, store, id, snapshot)
 }
 
-// syncSourceEmailTemplateVariables stores the custom variables the source
-// HTML of snapshot names.
-func syncSourceEmailTemplateVariables(ctx context.Context, tx *gorm.DB, id string, snapshot contentblock.Snapshot) error {
+func syncSourceEmailTemplateVariables(ctx context.Context, store Store, id string, snapshot contentblock.Snapshot) error {
 	localized, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, snapshot.SourceLocale)
 	if err != nil {
 		return emailTemplateContent.NormalizeContentBlockError(err)
@@ -76,84 +68,60 @@ func syncSourceEmailTemplateVariables(ctx context.Context, tx *gorm.DB, id strin
 	if err != nil {
 		return emailTemplateContent.NormalizeContentBlockError(err)
 	}
-	return syncCustomEmailTemplateVariables(ctx, tx, id, projection.HTML)
+	return store.SetCustomTemplateVariables(ctx, id, customEmailTemplateVariables(projection.HTML))
 }
 
-type emailTemplateContentRoot struct {
-	ID                string         `gorm:"column:id"`
-	ContentDocumentID sql.NullString `gorm:"column:content_document_id"`
-	SourceLocale      string         `gorm:"column:source_locale"`
-}
-
-// loadEmailTemplateContentDocument reads the template's content document,
+// loadTemplateContentDocument reads the template's content document,
 // locking the template row when forUpdate is set.
-func loadEmailTemplateContentDocument(ctx context.Context, db *gorm.DB, templateID string, forUpdate bool) (uuid.UUID, error) {
-	var root emailTemplateContentRoot
-	query := db.WithContext(ctx).
-		Table("email_template").
-		Select("id", "content_document_id", "source_locale").
-		Where("id = ?", templateID)
-	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
-	}
-	result := query.Take(&root)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+func loadTemplateContentDocument(ctx context.Context, store Store, templateID string, forUpdate bool) (uuid.UUID, error) {
+	documentID, err := store.TemplateDocument(ctx, templateID, forUpdate)
+	if errors.Is(err, ErrTemplateNotFound) {
 		return uuid.Nil, domainerr.ResourceNotFound("email template", templateID)
 	}
-	if result.Error != nil {
-		return uuid.Nil, result.Error
+	if err != nil {
+		return uuid.Nil, err
 	}
-	if !root.ContentDocumentID.Valid || strings.TrimSpace(root.ContentDocumentID.String) == "" {
+	if documentID == nil || strings.TrimSpace(*documentID) == "" {
 		return uuid.Nil, domainerr.Precondition("content document is not initialized")
 	}
-	documentID, err := uuid.Parse(root.ContentDocumentID.String)
+	parsed, err := uuid.Parse(*documentID)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("invalid email template content_document_id: %w", err)
 	}
-	return documentID, nil
+	return parsed, nil
 }
 
-// loadEmailTemplateSourceContext reads the template's translation source
-// locale, locking the template row when lock is set.
-func loadEmailTemplateSourceContext(ctx context.Context, db *gorm.DB, templateID string, lock bool) (contentblock.DomainContext, error) {
-	var state struct {
-		SourceLocale string `gorm:"column:source_locale"`
+// loadTemplateSourceLocale reads the template's translation source locale,
+// locking the template row when lock is set.
+func loadTemplateSourceLocale(ctx context.Context, store Store, templateID string, lock bool) (string, error) {
+	sourceLocale, err := store.TemplateSourceLocale(ctx, templateID, lock)
+	if errors.Is(err, ErrTemplateNotFound) {
+		return "", domainerr.ResourceNotFound("email template", templateID)
 	}
-	query := db.WithContext(ctx).Table("email_template").Select("source_locale").Where("id = ?", templateID)
-	if lock {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
+	if err != nil {
+		return "", err
 	}
-	result := query.Take(&state)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return contentblock.DomainContext{}, domainerr.ResourceNotFound("email template", templateID)
+	if strings.TrimSpace(sourceLocale) == "" {
+		return "", domainerr.Precondition("translation source locale is not initialized")
 	}
-	if result.Error != nil {
-		return contentblock.DomainContext{}, result.Error
-	}
-	if strings.TrimSpace(state.SourceLocale) == "" {
-		return contentblock.DomainContext{}, domainerr.Precondition("translation source locale is not initialized")
-	}
-	return contentblock.DomainContext{SourceLocale: state.SourceLocale}, nil
+	return sourceLocale, nil
 }
 
-func loadEmailTemplateSourceSubject(ctx context.Context, db *gorm.DB, templateID, sourceLocale string) (string, error) {
-	var row struct{ Subject sql.NullString }
-	result := db.WithContext(ctx).Table("email_template_translation").Select("subject").Where("entity_id = ? AND locale = ?", templateID, sourceLocale).Take(&row)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+func loadTemplateSourceSubject(ctx context.Context, store Store, templateID, sourceLocale string) (string, error) {
+	row, exists, err := store.LocaleRow(ctx, templateID, sourceLocale, emailcontent.Unlocked)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
 		return "", domainerr.Precondition("source locale metadata is not initialized")
 	}
-	if result.Error != nil {
-		return "", result.Error
-	}
-	if !row.Subject.Valid || strings.TrimSpace(row.Subject.String) == "" {
+	if row.Subject == nil || strings.TrimSpace(*row.Subject) == "" {
 		return "", domainerr.Precondition("source locale subject is not initialized")
 	}
-	return strings.TrimSpace(row.Subject.String), nil
+	return strings.TrimSpace(*row.Subject), nil
 }
 
-// updateEmailTemplateSourceSubject stores subject as the source locale's
-// subject; an equal subject changes nothing.
-func updateEmailTemplateSourceSubject(ctx context.Context, tx *gorm.DB, templateID, locale, subject string, now time.Time) (contentblock.MetadataEffect, error) {
+func updateEmailTemplateSourceSubject(ctx context.Context, store Store, templateID, locale, subject string, now time.Time) (contentblock.MetadataEffect, error) {
 	subject = strings.TrimSpace(subject)
 	if strings.TrimSpace(locale) == "" {
 		return contentblock.MetadataEffect{}, domainerr.Required("locale")
@@ -164,30 +132,28 @@ func updateEmailTemplateSourceSubject(ctx context.Context, tx *gorm.DB, template
 	if len(subject) > 500 {
 		return contentblock.MetadataEffect{}, domainerr.InvalidField("subject", "must be at most 500 characters")
 	}
-	domain, err := loadEmailTemplateSourceContext(ctx, tx, templateID, true)
+	sourceLocale, err := loadTemplateSourceLocale(ctx, store, templateID, true)
 	if err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
-	if locale != domain.SourceLocale {
+	if locale != sourceLocale {
 		return contentblock.MetadataEffect{}, domainerr.Precondition("target email locale metadata is read-only")
 	}
-	current, exists, err := emailTemplateContent.LoadLocaleMetadata(ctx, tx, templateID, locale, true)
+	current, exists, err := emailTemplateContent.LoadLocaleMetadata(ctx, store, templateID, locale, true)
 	if err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
 	if !exists {
 		return contentblock.MetadataEffect{}, domainerr.Precondition("source locale metadata is not initialized")
 	}
-	if current.Subject.Valid && current.Subject.String == subject {
+	if current.Subject != nil && *current.Subject == subject {
 		return contentblock.MetadataEffect{}, nil
 	}
-	result := tx.WithContext(ctx).Table("email_template_translation").
-		Where("entity_id = ? AND locale = ?", templateID, locale).
-		Updates(map[string]any{"subject": subject, "updated_at": now})
-	if result.Error != nil {
-		return contentblock.MetadataEffect{}, result.Error
+	updated, err := store.UpdateLocale(ctx, templateID, locale, &subject, now)
+	if err != nil {
+		return contentblock.MetadataEffect{}, err
 	}
-	if result.RowsAffected != 1 {
+	if !updated {
 		return contentblock.MetadataEffect{}, domainerr.Precondition("source locale metadata disappeared while saving")
 	}
 	return contentblock.MetadataEffect{
@@ -195,37 +161,36 @@ func updateEmailTemplateSourceSubject(ctx context.Context, tx *gorm.DB, template
 	}, nil
 }
 
-// emailTemplateContentFence admits a content write while the template still
-// owns documentID and no active delivery renders it.
-func emailTemplateContentFence(references CampaignDeliveryReferences, templateID string) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		current, err := loadEmailTemplateContentDocument(ctx, tx, templateID, true)
+// emailTemplateContentFence is the fence of an editor's or administrator's
+// content write: the template keeps its document, and no active delivery
+// renders it.
+func emailTemplateContentFence(store Store, templateID string) emailcontent.Fence {
+	return func(ctx context.Context, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		current, err := loadTemplateContentDocument(ctx, store, templateID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if current != documentID {
 			return contentblock.DomainContext{}, domainerr.Precondition("content document ownership changed; reload before saving")
 		}
-		if err := references.RequireTemplateMutable(ctx, tx, templateID); err != nil {
+		if err := store.RequireTemplateMutable(ctx, templateID); err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		return loadEmailTemplateSourceContext(ctx, tx, templateID, true)
+		return emailTemplateContentRows{}.SourceContext(ctx, store, templateID, true)
 	}
 }
 
-// emailTemplateTranslationJobApplyFence permits an already-accepted
-// TranslationJob to finish while the Email Template root still exists. Current
-// publication and delivery lifecycle controls new authoring mutations, not the
-// completion of a previously authorized job.
-func emailTemplateTranslationJobApplyFence(templateID string) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		current, err := loadEmailTemplateContentDocument(ctx, tx, templateID, true)
+// emailTemplateTranslationJobApplyFence lets an accepted translation job
+// finish while the template exists, whatever delivery renders it now.
+func emailTemplateTranslationJobApplyFence(store Store, templateID string) emailcontent.Fence {
+	return func(ctx context.Context, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		current, err := loadTemplateContentDocument(ctx, store, templateID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if current != documentID {
 			return contentblock.DomainContext{}, domainerr.Precondition("content document ownership changed; translation job cannot be applied")
 		}
-		return loadEmailTemplateSourceContext(ctx, tx, templateID, true)
+		return emailTemplateContentRows{}.SourceContext(ctx, store, templateID, true)
 	}
 }

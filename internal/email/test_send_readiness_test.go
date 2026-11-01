@@ -1,31 +1,46 @@
 package email
 
 import (
+	"context"
+	"strings"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
+
+// readinessRows answers the two counts the readiness check reads; any other
+// Store call panics on the nil Store.
+type readinessRows struct {
+	Store
+	activeAdapters int64
+	suppressed     map[string]bool // lower-cased address: released
+}
+
+func (r *readinessRows) ActiveMailAdapterCount(context.Context) (int64, error) {
+	return r.activeAdapters, nil
+}
+
+func (r *readinessRows) ActiveSuppressionCount(_ context.Context, address string) (int64, error) {
+	if released, ok := r.suppressed[strings.ToLower(address)]; ok && !released {
+		return 1, nil
+	}
+	return 0, nil
+}
 
 func TestCheckTestSendReadinessReportsDroppedTestEmails(t *testing.T) {
 	t.Parallel()
-	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE mail_adapter (id TEXT PRIMARY KEY, is_active BOOLEAN NOT NULL)`).Error)
-	require.NoError(t, db.Exec(`CREATE TABLE email_suppression (id TEXT PRIMARY KEY, email TEXT NOT NULL, released_at DATETIME)`).Error)
+	store := &readinessRows{suppressed: map[string]bool{}}
 	ctx := t.Context()
 
-	require.ErrorIs(t, CheckTestSendReadiness(ctx, db, "admin@example.test"), ErrNoActiveMailAdapter)
-	require.NoError(t, db.Exec(`INSERT INTO mail_adapter (id, is_active) VALUES ('ses', TRUE)`).Error)
-	require.NoError(t, CheckTestSendReadiness(ctx, db, "admin@example.test"))
+	require.ErrorIs(t, CheckTestSendReadiness(ctx, store, "admin@example.test"), ErrNoActiveMailAdapter)
+	store.activeAdapters = 1
+	require.NoError(t, CheckTestSendReadiness(ctx, store, "admin@example.test"))
 
-	require.NoError(t, db.Exec(`INSERT INTO email_suppression (id, email) VALUES ('s1', 'bounced@example.test')`).Error)
-	err = CheckTestSendReadiness(ctx, db, " Bounced@Example.test ")
+	store.suppressed["bounced@example.test"] = false
+	err := CheckTestSendReadiness(ctx, store, " Bounced@Example.test ")
 	require.ErrorIs(t, err, ErrTestRecipientSuppressed)
 	require.Contains(t, TestSendReadinessMessage(err), "suppression list")
 
-	require.NoError(t, db.Exec(`UPDATE email_suppression SET released_at = CURRENT_TIMESTAMP`).Error)
-	require.NoError(t, CheckTestSendReadiness(ctx, db, "bounced@example.test"), "a released suppression no longer blocks")
+	store.suppressed["bounced@example.test"] = true
+	require.NoError(t, CheckTestSendReadiness(ctx, store, "bounced@example.test"), "a released suppression no longer blocks")
 }

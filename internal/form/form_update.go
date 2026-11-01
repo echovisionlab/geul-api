@@ -7,16 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/pathslug"
-	"github.com/lib/pq"
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
 )
 
 type formUpdatePlan struct {
@@ -27,8 +20,8 @@ type formUpdatePlan struct {
 	needsOg             bool
 	refreshAllOgLocales bool
 	settingsAuditFields []string
-	previousStatus      model.FormStatus
-	nextStatus          model.FormStatus
+	previousStatus      Status
+	nextStatus          Status
 }
 
 // UpdateFormCommand changes a Form's source title and schema and its
@@ -47,7 +40,7 @@ type UpdateFormCommand struct {
 	MaxSubmissions           *int32
 	OpensAt                  *time.Time
 	ClosesAt                 *time.Time
-	Status                   *model.FormStatus
+	Status                   *Status
 	AllowedRoles             []string
 	ReplaceAllowedRoles      bool
 	ClearSlug                bool
@@ -57,19 +50,21 @@ type UpdateFormCommand struct {
 }
 
 // UpdateForm applies command to a Form the caller may edit.
-func (s *Service) UpdateForm(ctx context.Context, command UpdateFormCommand) (*managev1.Form, error) {
-	var form model.Form
-	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[formUpdatePlan]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
-			return lockFormRoot(ctx, tx, command.ID, &form, domainerr.ResourceNotFound("form", command.ID))
+func (s *Service) UpdateForm(ctx context.Context, command UpdateFormCommand) (View, error) {
+	var form Form
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[formUpdatePlan, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			var err error
+			form, err = store.LockForm(ctx, command.ID)
+			return formNotFound(err, domainerr.ResourceNotFound("form", command.ID))
 		},
 		Access: s.freshFormAction(command.ID, formActionEdit),
-		Change: func(ctx context.Context, tx *gorm.DB) (formUpdatePlan, error) {
-			plan, err := s.prepareFormUpdate(ctx, tx, &form, command)
+		Change: func(ctx context.Context, store Store) (formUpdatePlan, error) {
+			plan, err := s.prepareFormUpdate(ctx, store, &form, command)
 			if err != nil {
 				return formUpdatePlan{}, err
 			}
-			return plan, s.applyFormUpdate(ctx, tx, &form, &plan)
+			return plan, applyFormUpdate(ctx, store, &form, &plan)
 		},
 		Audit: func(plan formUpdatePlan) mutation.Audit {
 			return mutation.Audits(
@@ -77,26 +72,31 @@ func (s *Service) UpdateForm(ctx context.Context, command UpdateFormCommand) (*m
 				formLifecycleAudit(form.ID, plan.previousStatus, plan.nextStatus),
 			)
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, plan formUpdatePlan) error {
+		Outbox: func(ctx context.Context, store Store, plan formUpdatePlan) error {
 			if !plan.needsOg {
 				return nil
 			}
-			_, err := s.og.RequestAfterMutation(ctx, tx, form.ID, form.SourceLocale, plan.refreshAllOgLocales, "form_updated")
+			_, err := store.RequestOG(ctx, form.ID, form.SourceLocale, plan.refreshAllOgLocales, "form_updated")
 			return err
 		},
 	}); err != nil {
-		return nil, err
+		return View{}, err
 	}
-	if err := s.db.WithContext(ctx).First(&form, "id = ?", command.ID).Error; err != nil {
-		return nil, err
+	var updated Form
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		updated, err = store.FindForm(ctx, ByID, command.ID)
+		return err
+	}); err != nil {
+		return View{}, err
 	}
-	return s.toProtoForm(ctx, &form)
+	return s.view(ctx, updated)
 }
 
 func (s *Service) prepareFormUpdate(
 	ctx context.Context,
-	db *gorm.DB,
-	form *model.Form,
+	store Store,
+	form *Form,
 	r UpdateFormCommand,
 ) (formUpdatePlan, error) {
 	if err := validateFormUpdateFieldConflicts(r); err != nil {
@@ -107,11 +107,11 @@ func (s *Service) prepareFormUpdate(
 			return formUpdatePlan{}, domainerr.New(domainerr.Invalid, "", err.Error())
 		}
 	}
-	normalizedSlug, err := s.normalizeFormUpdateSlug(ctx, db, form.ID, r)
+	normalizedSlug, err := normalizeFormUpdateSlug(ctx, store, form.ID, r)
 	if err != nil {
 		return formUpdatePlan{}, err
 	}
-	currentSourceState, err := LoadFormCanonicalSourceDocumentState(ctx, db, form.ID, form.SourceLocale)
+	currentSourceState, err := LoadFormCanonicalSourceDocumentState(ctx, store, form.ID, form.SourceLocale)
 	if err != nil {
 		return formUpdatePlan{}, err
 	}
@@ -150,8 +150,8 @@ func (s *Service) prepareFormUpdate(
 		if err != nil {
 			return formUpdatePlan{}, err
 		}
-		row.next.AllowedRoles = pq.StringArray(allowedRoles)
-		row.set(formColumnAllowedRoles)
+		row.next.AllowedRoles = allowedRoles
+		row.set(SettingAllowedRoles)
 	}
 	if err := validateFormSettings(&row.next); err != nil {
 		return formUpdatePlan{}, err
@@ -164,64 +164,16 @@ func (s *Service) prepareFormUpdate(
 	return plan, nil
 }
 
-// formRowUpdate is the Form row an update leads to and the settings columns
-// the request sets on it; only those columns and updated_at are written.
+// formRowUpdate is the Form row an update leads to and the settings the
+// request sets on it; only those settings and updated_at are written.
 type formRowUpdate struct {
-	next      model.Form
-	columns   []formColumn
+	next      Form
+	settings  []Setting
 	updatedAt time.Time
 }
 
-type formColumn string
-
-const (
-	formColumnSlug                     formColumn = "slug"
-	formColumnIsPublic                 formColumn = "is_public"
-	formColumnRequireAuth              formColumn = "require_auth"
-	formColumnAllowDuplicateSubmission formColumn = "allow_duplicate_submission"
-	formColumnAccessPassword           formColumn = "access_password"
-	formColumnMaxSubmissions           formColumn = "max_submissions"
-	formColumnOpensAt                  formColumn = "opens_at"
-	formColumnClosesAt                 formColumn = "closes_at"
-	formColumnStatus                   formColumn = "status"
-	formColumnAllowedRoles             formColumn = "allowed_roles"
-)
-
-func (u *formRowUpdate) set(column formColumn) {
-	u.columns = append(u.columns, column)
-}
-
-// values is the column map for the row write.
-func (u formRowUpdate) values() structured.Fields {
-	values := structured.Fields{"updated_at": u.updatedAt}
-	next := u.next
-	for _, column := range u.columns {
-		var value any
-		switch column {
-		case formColumnSlug:
-			value = next.Slug
-		case formColumnIsPublic:
-			value = next.IsPublic
-		case formColumnRequireAuth:
-			value = next.RequireAuth
-		case formColumnAllowDuplicateSubmission:
-			value = next.AllowDuplicateSubmission
-		case formColumnAccessPassword:
-			value = next.AccessPassword
-		case formColumnMaxSubmissions:
-			value = next.MaxSubmissions
-		case formColumnOpensAt:
-			value = next.OpensAt
-		case formColumnClosesAt:
-			value = next.ClosesAt
-		case formColumnStatus:
-			value = string(next.Status)
-		case formColumnAllowedRoles:
-			value = next.AllowedRoles
-		}
-		values[string(column)] = value
-	}
-	return values
+func (u *formRowUpdate) set(setting Setting) {
+	u.settings = append(u.settings, setting)
 }
 
 func validateFormUpdateFieldConflicts(r UpdateFormCommand) error {
@@ -242,9 +194,9 @@ func validateFormUpdateFieldConflicts(r UpdateFormCommand) error {
 	return nil
 }
 
-func (s *Service) normalizeFormUpdateSlug(
+func normalizeFormUpdateSlug(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	formID string,
 	r UpdateFormCommand,
 ) (*string, error) {
@@ -255,10 +207,7 @@ func (s *Service) normalizeFormUpdateSlug(
 	if err := pathslug.Validate(slug); err != nil {
 		return nil, err
 	}
-	if err := ensureSlugAvailable(ctx, db, slug, formID); err != nil {
-		return nil, err
-	}
-	if err := s.routes.EnsureAvailable(ctx, db, slug, formID); err != nil {
+	if err := ensureSlugAvailable(ctx, store, slug, formID); err != nil {
 		return nil, err
 	}
 	return &slug, nil
@@ -268,25 +217,25 @@ func applyFormSlugUpdate(row *formRowUpdate, r UpdateFormCommand, slug *string) 
 	switch {
 	case r.ClearSlug || r.Slug != nil && strings.TrimSpace(*r.Slug) == "":
 		row.next.Slug = nil
-		row.set(formColumnSlug)
+		row.set(SettingSlug)
 	case slug != nil:
 		row.next.Slug = slug
-		row.set(formColumnSlug)
+		row.set(SettingSlug)
 	}
 }
 
 func applyFormAccessUpdates(row *formRowUpdate, r UpdateFormCommand) {
 	if r.IsPublic != nil {
 		row.next.IsPublic = *r.IsPublic
-		row.set(formColumnIsPublic)
+		row.set(SettingIsPublic)
 	}
 	if r.RequireAuth != nil {
 		row.next.RequireAuth = r.RequireAuth
-		row.set(formColumnRequireAuth)
+		row.set(SettingRequireAuth)
 	}
 	if r.AllowDuplicateSubmission != nil {
 		row.next.AllowDuplicateSubmission = r.AllowDuplicateSubmission
-		row.set(formColumnAllowDuplicateSubmission)
+		row.set(SettingAllowDuplicateSubmission)
 	}
 }
 
@@ -300,7 +249,7 @@ func (s *Service) applyFormPasswordUpdate(row *formRowUpdate, password *string) 
 			return false, nil
 		}
 		row.next.AccessPassword = nil
-		row.set(formColumnAccessPassword)
+		row.set(SettingAccessPassword)
 		return true, nil
 	}
 	if currentHash != nil {
@@ -317,7 +266,7 @@ func (s *Service) applyFormPasswordUpdate(row *formRowUpdate, password *string) 
 		return false, err
 	}
 	row.next.AccessPassword = &hash
-	row.set(formColumnAccessPassword)
+	row.set(SettingAccessPassword)
 	return true, nil
 }
 
@@ -325,18 +274,18 @@ func applyFormLimitAndScheduleUpdates(row *formRowUpdate, r UpdateFormCommand) {
 	switch {
 	case r.ClearMaxSubmissions:
 		row.next.MaxSubmissions = nil
-		row.set(formColumnMaxSubmissions)
+		row.set(SettingMaxSubmissions)
 	case r.MaxSubmissions != nil:
 		row.next.MaxSubmissions = r.MaxSubmissions
-		row.set(formColumnMaxSubmissions)
+		row.set(SettingMaxSubmissions)
 	}
 	if update, ok := formTimestampUpdate(r.ClearOpensAt, r.OpensAt); ok {
 		row.next.OpensAt = update
-		row.set(formColumnOpensAt)
+		row.set(SettingOpensAt)
 	}
 	if update, ok := formTimestampUpdate(r.ClearClosesAt, r.ClosesAt); ok {
 		row.next.ClosesAt = update
-		row.set(formColumnClosesAt)
+		row.set(SettingClosesAt)
 	}
 }
 
@@ -351,7 +300,7 @@ func formTimestampUpdate(clear bool, value *time.Time) (*time.Time, bool) {
 
 func applyFormStatusUpdate(
 	row *formRowUpdate,
-	current *model.Form,
+	current *Form,
 	r UpdateFormCommand,
 	plan *formUpdatePlan,
 ) error {
@@ -362,13 +311,13 @@ func applyFormStatusUpdate(
 	switch status {
 	case current.Status:
 		return nil
-	case model.FormStatusDraft, model.FormStatusPublished:
+	case StatusDraft, StatusPublished:
 	default:
 		return domainerr.InvalidField("status", "must be draft or published")
 	}
 	row.next.Status = status
-	row.set(formColumnStatus)
-	if current.Status != model.FormStatusPublished && row.next.Status == model.FormStatusPublished {
+	row.set(SettingStatus)
+	if current.Status != StatusPublished && row.next.Status == StatusPublished {
 		plan.needsOg = true
 		plan.refreshAllOgLocales = true
 	}
@@ -377,18 +326,18 @@ func applyFormStatusUpdate(
 
 // applyFormUpdate writes plan's row update and source locale document. A
 // changed source title marks the plan for an OG request.
-func (s *Service) applyFormUpdate(
+func applyFormUpdate(
 	ctx context.Context,
-	tx *gorm.DB,
-	form *model.Form,
+	store Store,
+	form *Form,
 	plan *formUpdatePlan,
 ) error {
 	if plan.normalizedSlug != nil {
-		if err := s.routes.EnsureAvailableLocked(ctx, tx, *plan.normalizedSlug, form.ID); err != nil {
+		if err := store.LockRoute(ctx, *plan.normalizedSlug); err != nil {
 			return err
 		}
 	}
-	if err := tx.WithContext(ctx).Model(form).Updates(plan.row.values()).Error; err != nil {
+	if err := store.UpdateSettings(ctx, plan.row.next, plan.row.settings, plan.row.updatedAt); err != nil {
 		return err
 	}
 	if plan.nextSourceTitle == nil && plan.nextSourceSchema == nil {
@@ -398,13 +347,13 @@ func (s *Service) applyFormUpdate(
 	if err != nil {
 		return err
 	}
-	documentRevision, err := contentblock.CurrentRevision(ctx, tx, documentID)
+	documentRevision, err := store.DocumentRevision(ctx, documentID)
 	if err != nil {
 		return err
 	}
-	advance, err := advanceFormSourceLocale(ctx, tx, s.contentBlocks, form.ContentDocumentID, documentRevision, form.SourceLocale,
-		func(ctx context.Context, tx *gorm.DB) (bool, error) {
-			return true, saveFormSourceLocaleDocumentState(ctx, tx, form.ID, form.SourceLocale, TranslationDocumentSaveInput{
+	advance, err := advanceFormSourceLocale(ctx, store, form.ContentDocumentID, documentRevision, form.SourceLocale,
+		func(ctx context.Context, store Store) (bool, error) {
+			return true, saveFormSourceLocaleDocumentState(ctx, store, form.ID, form.SourceLocale, TranslationDocumentSaveInput{
 				Title: plan.nextSourceTitle, ContentJSON: plan.nextSourceSchema, Now: time.Now().UTC(),
 			})
 		})
@@ -417,7 +366,7 @@ func (s *Service) applyFormUpdate(
 	return nil
 }
 
-func formSettingsAuditFields(current, next *model.Form, passwordChanged bool) []string {
+func formSettingsAuditFields(current, next *Form, passwordChanged bool) []string {
 	fields := make([]string, 0, 8)
 	if !sameOptionalString(current.Slug, next.Slug) {
 		fields = append(fields, "slug")
@@ -437,7 +386,7 @@ func formSettingsAuditFields(current, next *model.Form, passwordChanged bool) []
 	if !sameOptionalTime(current.OpensAt, next.OpensAt) || !sameOptionalTime(current.ClosesAt, next.ClosesAt) {
 		fields = append(fields, "access_period")
 	}
-	if !slices.Equal([]string(current.AllowedRoles), []string(next.AllowedRoles)) {
+	if !slices.Equal(current.AllowedRoles, next.AllowedRoles) {
 		fields = append(fields, "required_role")
 	}
 	if passwordChanged {

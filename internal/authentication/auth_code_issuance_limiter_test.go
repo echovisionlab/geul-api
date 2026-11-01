@@ -1,9 +1,6 @@
-//go:build integration
-
-package authentication
+package authentication_test
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,87 +11,98 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/authentication"
+	"github.com/echovisionlab/geul-api/internal/authentication/authenticationtest"
 	"github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 )
 
-func newIntegrationAuthCodeIssuanceLimiter(
-	t *testing.T,
-	limits AuthCodeIssuanceLimits,
-) (*AuthCodeIssuanceLimiter, *gorm.DB) {
-	t.Helper()
-	db := newAuthenticationIntegrationDB(t)
-	limiter := NewAuthCodeIssuanceLimiter(db, []byte("test-key-secret"), limits)
-	return limiter, db
+func issuanceLimits() authentication.AuthCodeIssuanceLimits {
+	return authentication.AuthCodeIssuanceLimits{Cooldown: time.Minute, AddressHourly: 6, IPTenMinute: 20, GlobalPerMinute: 100}
+}
+
+// newLimiter returns a limiter over a fresh in-memory ledger whose clock
+// reads *now.
+func newLimiter(limits authentication.AuthCodeIssuanceLimits, now *time.Time) (*authentication.AuthCodeIssuanceLimiter, *authenticationtest.Store, *mutationtest.UnitOfWork[authentication.Store]) {
+	store, units := authenticationtest.New()
+	limiter := authentication.NewAuthCodeIssuanceLimiter(units, []byte("test-key-secret"), limits)
+	if now != nil {
+		authentication.SetAuthCodeIssuanceClock(limiter, func() time.Time { return *now })
+	}
+	return limiter, store, units
 }
 
 func TestAuthCodeIssuanceLimiterRejectsBeforeSecondIssuance(t *testing.T) {
-	t.Parallel()
-	limiter, db := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
 	now := time.Date(2026, time.July, 31, 10, 0, 0, 0, time.UTC)
-	limiter.now = func() time.Time { return now }
-	request := AuthCodeIssuanceRequest{
-		EventKey:  email.EventLoginCode,
-		Recipient: " Person@Example.COM ",
-		FlowID:    "login-flow",
-		ClientIP:  "203.0.113.10:443",
+	limiter, store, units := newLimiter(issuanceLimits(), &now)
+	request := authentication.AuthCodeIssuanceRequest{
+		EventKey: email.EventLoginCode, Recipient: " Person@Example.COM ", FlowID: "login-flow", ClientIP: "203.0.113.10:443",
 	}
 
-	reservation, allowed, retryAfter, err := limiter.Reserve(context.Background(), request)
+	reservation, allowed, retryAfter, err := limiter.Reserve(t.Context(), request)
 	require.NoError(t, err)
 	require.True(t, allowed)
 	require.Zero(t, retryAfter)
-	require.NotEmpty(t, reservation.token)
-	require.Equal(t, int64(defaultAuthCodeIssuanceLimits().IPTenMinute-1), reservation.quota.remaining)
-	require.Equal(t, int64(600), reservation.quota.windowSeconds)
+	require.Len(t, reservation.IssuanceID(), 64)
+	require.Equal(t, now, reservation.IssuedAt())
+	limit, remaining, window := authentication.AuthCodeQuotaOf(reservation)
+	require.Equal(t, []int64{20, 19, 600}, []int64{limit, remaining, window})
 
-	rejected, allowed, retryAfter, err := limiter.Reserve(context.Background(), request)
-	require.Equal(t, reservation.quota, rejected.quota)
-	require.Empty(t, rejected.token)
+	rejected, allowed, retryAfter, err := limiter.Reserve(t.Context(), request)
 	require.NoError(t, err)
 	require.False(t, allowed)
 	require.Equal(t, time.Minute, retryAfter)
+	require.Empty(t, rejected.IssuanceID())
+	rejectedLimit, rejectedRemaining, rejectedWindow := authentication.AuthCodeQuotaOf(rejected)
+	require.Equal(t, []int64{limit, remaining, window}, []int64{rejectedLimit, rejectedRemaining, rejectedWindow})
+	require.Equal(t, []mutation.Step{mutation.StepCommit, mutation.StepCommit}, units.Steps(), "a rejection commits nothing it wrote")
 
-	var persisted string
-	require.NoError(t, db.Raw(`
-		SELECT recipient_digest || subject_digest || client_ip_digest
-		FROM public.auth_code_issuance
-		LIMIT 1`).Scan(&persisted).Error)
+	issuances := store.Issuances()
+	require.Len(t, issuances, 1)
+	stored := issuances[0]
+	require.Equal(t, reservation.IssuanceID(), stored.Token)
+	require.Equal(t, email.EventLoginCode, stored.Purpose)
+	require.Equal(t, now.Add(time.Hour), stored.ExpiresAt, "a row outlives the longest budget window")
+	persisted := stored.RecipientDigest + stored.SubjectDigest + stored.ClientIPDigest
 	require.NotContains(t, persisted, "person@example.com")
 	require.NotContains(t, persisted, "203.0.113.10")
 	require.NotContains(t, persisted, "login-flow")
+	require.Equal(t, stored.RecipientDigest, stored.SubjectDigest, "a recipient is its own budget subject")
 }
 
 func TestAuthCodeIssuanceLimiterReleaseRestoresAllBudgets(t *testing.T) {
-	t.Parallel()
-	limits := defaultAuthCodeIssuanceLimits()
+	limits := issuanceLimits()
 	limits.GlobalPerMinute = 1
-	limiter, _ := newIntegrationAuthCodeIssuanceLimiter(t, limits)
-	request := AuthCodeIssuanceRequest{
-		EventKey:  email.EventVerificationCode,
-		Recipient: "person@example.com",
-		FlowID:    "verification-flow",
-		ClientIP:  "2001:db8::1",
+	limiter, store, _ := newLimiter(limits, nil)
+	request := authentication.AuthCodeIssuanceRequest{
+		EventKey: email.EventVerificationCode, Recipient: "person@example.com", FlowID: "verification-flow", ClientIP: "2001:db8::1",
 	}
 
-	reservation, allowed, _, err := limiter.Reserve(context.Background(), request)
+	reservation, allowed, _, err := limiter.Reserve(t.Context(), request)
 	require.NoError(t, err)
 	require.True(t, allowed)
-	require.NoError(t, limiter.Release(context.Background(), reservation))
+	require.NoError(t, limiter.Release(t.Context(), reservation))
+	require.Empty(t, store.Issuances())
 
-	_, allowed, _, err = limiter.Reserve(context.Background(), request)
+	_, allowed, _, err = limiter.Reserve(t.Context(), request)
 	require.NoError(t, err)
 	require.True(t, allowed)
 }
 
-func TestAuthCodeIssuanceLimiterSerializesConcurrentGlobalLimit(t *testing.T) {
-	t.Parallel()
-	limits := defaultAuthCodeIssuanceLimits()
+func TestAuthCodeIssuanceLimiterReleaseRejectsAForgedReservation(t *testing.T) {
+	limiter, _, units := newLimiter(issuanceLimits(), nil)
+
+	require.ErrorContains(t, limiter.Release(t.Context(), authentication.AuthCodeIssuanceReservation{}), "reservation is invalid")
+	require.Empty(t, units.Steps())
+}
+
+func TestAuthCodeIssuanceLimiterAdmitsOneOfManyWithinTheGlobalLimit(t *testing.T) {
+	limits := issuanceLimits()
 	limits.GlobalPerMinute = 1
-	limiter, db := newIntegrationAuthCodeIssuanceLimiter(t, limits)
 	now := time.Date(2026, time.July, 31, 10, 0, 0, 0, time.UTC)
-	limiter.now = func() time.Time { return now }
+	limiter, store, _ := newLimiter(limits, &now)
 
 	type outcome struct {
 		allowed    bool
@@ -102,25 +110,17 @@ func TestAuthCodeIssuanceLimiterSerializesConcurrentGlobalLimit(t *testing.T) {
 		err        error
 	}
 	const contenders = 8
-	start := make(chan struct{})
 	results := make(chan outcome, contenders)
 	var workers sync.WaitGroup
-	for index := 0; index < contenders; index++ {
-		workers.Add(1)
-		go func(index int) {
-			defer workers.Done()
-			<-start
-			_, allowed, retryAfter, err := limiter.Reserve(t.Context(), AuthCodeIssuanceRequest{
-				EventKey:  email.EventLoginCode,
-				Recipient: fmt.Sprintf("person-%d@example.com", index),
-				FlowID:    fmt.Sprintf("flow-%d", index),
-				ClientIP:  fmt.Sprintf("203.0.113.%d", index+1),
+	for index := range contenders {
+		workers.Go(func() {
+			_, allowed, retryAfter, err := limiter.Reserve(t.Context(), authentication.AuthCodeIssuanceRequest{
+				EventKey: email.EventLoginCode, Recipient: fmt.Sprintf("person-%d@example.com", index),
+				FlowID: fmt.Sprintf("flow-%d", index), ClientIP: fmt.Sprintf("203.0.113.%d", index+1),
 			})
 			results <- outcome{allowed: allowed, retryAfter: retryAfter, err: err}
-		}(index)
+		})
 	}
-
-	close(start)
 	workers.Wait()
 	close(results)
 
@@ -135,261 +135,165 @@ func TestAuthCodeIssuanceLimiterSerializesConcurrentGlobalLimit(t *testing.T) {
 		require.Equal(t, time.Minute, result.retryAfter)
 	}
 	require.Equal(t, 1, allowedCount)
-
-	var persisted int64
-	require.NoError(t, db.Model(&struct{}{}).
-		Table("public.auth_code_issuance").
-		Count(&persisted).Error)
-	require.Equal(t, int64(1), persisted)
-}
-
-func TestDeleteExpiredAuthCodeIssuancesIsBounded(t *testing.T) {
-	t.Parallel()
-	_, db := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
-	now := time.Date(2026, time.July, 31, 10, 0, 0, 0, time.UTC)
-	require.NoError(t, db.Exec(`
-		INSERT INTO public.auth_code_issuance (
-			token, purpose, recipient_digest, subject_digest,
-			client_ip_digest, issued_at, expires_at
-		)
-		SELECT
-			lpad(to_hex(sequence), 64, '0'),
-			'login_code',
-			repeat('a', 64),
-			repeat('b', 64),
-			repeat('c', 64),
-			?,
-			?
-		FROM generate_series(1, ?) AS generated(sequence)`,
-		now.Add(-2*time.Minute),
-		now.Add(-time.Minute),
-		authCodeIssuanceCleanupBatchSize+1,
-	).Error)
-	require.NoError(t, db.Exec(`
-		INSERT INTO public.auth_code_issuance (
-			token, purpose, recipient_digest, subject_digest,
-			client_ip_digest, issued_at, expires_at
-		) VALUES (?, 'login_code', ?, ?, ?, ?, ?)`,
-		fmt.Sprintf("%064x", authCodeIssuanceCleanupBatchSize+2),
-		fmt.Sprintf("%064x", 4),
-		fmt.Sprintf("%064x", 5),
-		fmt.Sprintf("%064x", 6),
-		now,
-		now.Add(time.Hour),
-	).Error)
-
-	deleted, err := deleteExpiredAuthCodeIssuances(db, now, authCodeIssuanceCleanupBatchSize)
-	require.NoError(t, err)
-	require.Equal(t, int64(authCodeIssuanceCleanupBatchSize), deleted)
-
-	var expired int64
-	require.NoError(t, db.Model(&struct{}{}).
-		Table("public.auth_code_issuance").
-		Where("expires_at <= ?", now).
-		Count(&expired).Error)
-	require.Equal(t, int64(1), expired)
-
-	deleted, err = deleteExpiredAuthCodeIssuances(db, now, authCodeIssuanceCleanupBatchSize)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), deleted)
-
-	var total int64
-	require.NoError(t, db.Model(&struct{}{}).
-		Table("public.auth_code_issuance").
-		Count(&total).Error)
-	require.Equal(t, int64(1), total)
+	require.Len(t, store.Issuances(), 1)
 }
 
 func TestAuthCodeIssuanceLimiterCurrentReservationIsPurposeAndRecipientBound(t *testing.T) {
-	t.Parallel()
-	limiter, _ := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
 	issuedAt := time.Date(2026, time.July, 31, 10, 0, 0, 123456789, time.UTC)
-	limiter.now = func() time.Time { return issuedAt }
-	request := AuthCodeIssuanceRequest{
-		EventKey:  email.EventVerificationCode,
-		Recipient: " Person@Example.COM ",
-		FlowID:    "settings-flow",
-		ClientIP:  "203.0.113.10",
+	limiter, _, _ := newLimiter(issuanceLimits(), &issuedAt)
+	request := authentication.AuthCodeIssuanceRequest{
+		EventKey: email.EventVerificationCode, Recipient: " Person@Example.COM ", FlowID: "settings-flow", ClientIP: "203.0.113.10",
 	}
 
 	reserved, allowed, _, err := limiter.Reserve(t.Context(), request)
 	require.NoError(t, err)
 	require.True(t, allowed)
-	current, found, err := limiter.CurrentReservation(
-		t.Context(), email.EventVerificationCode, "person@example.com",
-	)
+	require.Equal(t, issuedAt.Truncate(time.Microsecond), reserved.IssuedAt())
+	current, found, err := limiter.CurrentReservation(t.Context(), email.EventVerificationCode, "person@example.com")
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, reserved.token, current.token)
-	require.Equal(t, reserved.issuedAt, current.issuedAt)
+	require.Equal(t, reserved.IssuanceID(), current.IssuanceID())
+	require.Equal(t, reserved.IssuedAt(), current.IssuedAt())
 
-	_, _, err = limiter.CurrentReservation(
-		t.Context(), email.EventLoginCode, "person@example.com",
-	)
+	_, _, err = limiter.CurrentReservation(t.Context(), email.EventLoginCode, "person@example.com")
 	require.ErrorContains(t, err, "reservation is invalid")
-	_, found, err = limiter.CurrentReservation(
-		t.Context(), email.EventVerificationCode, "other@example.com",
-	)
+	_, found, err = limiter.CurrentReservation(t.Context(), email.EventVerificationCode, "other@example.com")
 	require.NoError(t, err)
 	require.False(t, found)
 
 	require.NoError(t, limiter.Release(t.Context(), reserved))
-	_, found, err = limiter.CurrentReservation(
-		t.Context(), email.EventVerificationCode, "person@example.com",
-	)
+	_, found, err = limiter.CurrentReservation(t.Context(), email.EventVerificationCode, "person@example.com")
 	require.NoError(t, err)
 	require.False(t, found)
 }
 
-func TestAuthCodeIssuanceLimiterCurrentReservationRejectsTamperedAndMissingRecord(t *testing.T) {
-	t.Parallel()
-	limiter, db := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
-	request := AuthCodeIssuanceRequest{
-		EventKey:  email.EventVerificationCode,
-		Recipient: "person@example.com",
-		FlowID:    "settings-flow",
-		ClientIP:  "203.0.113.10",
-	}
-	reserved, allowed, _, err := limiter.Reserve(t.Context(), request)
+func TestAuthCodeIssuanceLimiterCurrentReservationRejectsATamperedRecord(t *testing.T) {
+	now := time.Date(2026, time.July, 31, 10, 0, 0, 0, time.UTC)
+	limiter, store, _ := newLimiter(issuanceLimits(), &now)
+	reserved, allowed, _, err := limiter.Reserve(t.Context(), authentication.AuthCodeIssuanceRequest{
+		EventKey: email.EventVerificationCode, Recipient: "person@example.com", FlowID: "settings-flow", ClientIP: "203.0.113.10",
+	})
 	require.NoError(t, err)
 	require.True(t, allowed)
+	stored := store.Issuances()[0]
 
-	require.NoError(t, db.Exec(
-		"UPDATE public.auth_code_issuance SET purpose = ? WHERE token = ?",
-		email.EventLoginCode.String(), reserved.token,
-	).Error)
-	_, _, err = limiter.CurrentReservation(
-		t.Context(), email.EventVerificationCode, request.Recipient,
-	)
-	require.ErrorContains(t, err, "reservation is invalid")
+	for name, tamper := range map[string]func(*authentication.Issuance){
+		"purpose":     func(issuance *authentication.Issuance) { issuance.Purpose = email.EventLoginCode },
+		"token":       func(issuance *authentication.Issuance) { issuance.Token = strings.ToUpper(issuance.Token) },
+		"issued time": func(issuance *authentication.Issuance) { issuance.IssuedAt = time.Time{} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			tampered := stored
+			tamper(&tampered)
+			replace(t, store, reserved.IssuanceID(), tampered)
+			_, found, err := limiter.CurrentReservation(t.Context(), email.EventVerificationCode, "person@example.com")
+			require.Error(t, err)
+			require.False(t, found)
+			replace(t, store, tampered.Token, stored)
+		})
+	}
+}
 
-	require.NoError(t, db.Exec(
-		"DELETE FROM public.auth_code_issuance WHERE token = ?",
-		reserved.token,
-	).Error)
-	_, found, err := limiter.CurrentReservation(
-		t.Context(), email.EventVerificationCode, request.Recipient,
-	)
-	require.NoError(t, err)
-	require.False(t, found)
+// replace swaps the ledger row token for issuance, as a writer outside the
+// limiter would.
+func replace(t *testing.T, store *authenticationtest.Store, token string, issuance authentication.Issuance) {
+	t.Helper()
+	require.NoError(t, store.DeleteIssuance(t.Context(), token))
+	require.NoError(t, store.InsertIssuance(t.Context(), issuance))
 }
 
 func TestAuthCodeIssuanceLimiterEnforcesAddressBudgetAcrossPurposes(t *testing.T) {
-	t.Parallel()
-	limits := defaultAuthCodeIssuanceLimits()
+	limits := issuanceLimits()
 	limits.Cooldown = time.Millisecond
 	limits.AddressHourly = 2
-	limiter, _ := newIntegrationAuthCodeIssuanceLimiter(t, limits)
 	now := time.Date(2026, time.July, 31, 10, 0, 0, 0, time.UTC)
-	limiter.now = func() time.Time { return now }
-	base := AuthCodeIssuanceRequest{
-		Recipient: "person@example.com",
-		FlowID:    "flow-1",
-		ClientIP:  "203.0.113.10",
+	limiter, _, _ := newLimiter(limits, &now)
+	request := authentication.AuthCodeIssuanceRequest{Recipient: "person@example.com", FlowID: "flow-1", ClientIP: "203.0.113.10"}
+
+	for _, eventKey := range []email.EventKey{email.EventLoginCode, email.EventVerificationCode} {
+		request.EventKey = eventKey
+		_, allowed, _, err := limiter.Reserve(t.Context(), request)
+		require.NoError(t, err)
+		require.True(t, allowed)
+		now = now.Add(time.Millisecond)
 	}
 
-	base.EventKey = email.EventLoginCode
-	_, allowed, _, err := limiter.Reserve(context.Background(), base)
-	require.NoError(t, err)
-	require.True(t, allowed)
-	now = now.Add(time.Millisecond)
-
-	base.EventKey = email.EventVerificationCode
-	_, allowed, _, err = limiter.Reserve(context.Background(), base)
-	require.NoError(t, err)
-	require.True(t, allowed)
-	now = now.Add(time.Millisecond)
-
-	base.EventKey = email.EventRegistrationCode
-	_, allowed, retryAfter, err := limiter.Reserve(context.Background(), base)
+	request.EventKey = email.EventRegistrationCode
+	_, allowed, retryAfter, err := limiter.Reserve(t.Context(), request)
 	require.NoError(t, err)
 	require.False(t, allowed)
-	require.Greater(t, retryAfter, 59*time.Minute)
+	require.Equal(t, time.Hour-2*time.Millisecond, retryAfter, "the oldest issuance of the hour leaves the window first")
 }
 
 func TestAuthCodeIssuanceLimiterUsesOneCooldownForLoginAndRegistration(t *testing.T) {
-	t.Parallel()
-	limiter, _ := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
 	now := time.Date(2026, time.July, 31, 10, 0, 0, 0, time.UTC)
-	limiter.now = func() time.Time { return now }
-	request := AuthCodeIssuanceRequest{
-		EventKey:  email.EventLoginCode,
-		Recipient: "person@example.com",
-		FlowID:    "login-flow",
-		ClientIP:  "203.0.113.10",
+	limiter, _, _ := newLimiter(issuanceLimits(), &now)
+	request := authentication.AuthCodeIssuanceRequest{
+		EventKey: email.EventLoginCode, Recipient: "person@example.com", FlowID: "login-flow", ClientIP: "203.0.113.10",
 	}
 
-	_, allowed, _, err := limiter.Reserve(context.Background(), request)
+	_, allowed, _, err := limiter.Reserve(t.Context(), request)
 	require.NoError(t, err)
 	require.True(t, allowed)
 
-	request.EventKey = email.EventRegistrationCode
-	request.FlowID = "registration-flow"
-	_, allowed, retryAfter, err := limiter.Reserve(context.Background(), request)
+	now = now.Add(20 * time.Second)
+	request.EventKey, request.FlowID = email.EventRegistrationCode, "registration-flow"
+	_, allowed, retryAfter, err := limiter.Reserve(t.Context(), request)
 	require.NoError(t, err)
 	require.False(t, allowed)
-	require.Equal(t, time.Minute, retryAfter)
+	require.Equal(t, 40*time.Second, retryAfter)
 }
 
-func TestAuthCodeIssuanceLimiterAcceptsFlowWhenRecipientIsUnavailable(t *testing.T) {
-	t.Parallel()
-	limiter, _ := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
+func TestAuthCodeIssuanceLimiterLimitsAFlowWithoutRecipientByTheFlow(t *testing.T) {
+	now := time.Date(2026, time.July, 31, 10, 0, 0, 0, time.UTC)
+	limiter, store, _ := newLimiter(issuanceLimits(), &now)
+	request := authentication.AuthCodeIssuanceRequest{EventKey: email.EventRegistrationCode, FlowID: "registration-flow", ClientIP: "203.0.113.11"}
 
-	_, allowed, _, err := limiter.Reserve(context.Background(), AuthCodeIssuanceRequest{
-		EventKey: email.EventRegistrationCode,
-		FlowID:   "registration-flow",
-		ClientIP: "203.0.113.11",
-	})
+	_, allowed, _, err := limiter.Reserve(t.Context(), request)
 	require.NoError(t, err)
 	require.True(t, allowed)
+	_, allowed, _, err = limiter.Reserve(t.Context(), request)
+	require.NoError(t, err)
+	require.False(t, allowed, "the flow is the cooldown subject")
+	request.FlowID = "other-flow"
+	_, allowed, _, err = limiter.Reserve(t.Context(), request)
+	require.NoError(t, err)
+	require.True(t, allowed)
+
+	issuances := store.Issuances()
+	require.NotEqual(t, issuances[0].SubjectDigest, issuances[1].SubjectDigest)
+	require.Equal(t, issuances[0].RecipientDigest, issuances[1].RecipientDigest, "both digest the missing recipient alike")
 }
 
-func TestAuthCodeIssuanceLimiterRejectsInvalidRequest(t *testing.T) {
-	t.Parallel()
-	limiter, _ := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
+func TestAuthCodeIssuanceLimiterValidatesConfigurationAndRequests(t *testing.T) {
+	limits := issuanceLimits()
+	_, units := authenticationtest.New()
+	require.Panics(t, func() { authentication.NewAuthCodeIssuanceLimiter(nil, []byte("secret"), limits) })
+	require.Panics(t, func() { authentication.NewAuthCodeIssuanceLimiter(units, nil, limits) })
+	invalid := limits
+	invalid.GlobalPerMinute = 0
+	require.Panics(t, func() { authentication.NewAuthCodeIssuanceLimiter(units, []byte("secret"), invalid) })
 
-	_, _, _, err := limiter.Reserve(context.Background(), AuthCodeIssuanceRequest{
-		EventKey:  email.EventWelcome,
-		Recipient: "person@example.com",
-		ClientIP:  "203.0.113.11",
-	})
-	require.ErrorContains(t, err, "unsupported auth code event")
-
-	_, _, _, err = limiter.Reserve(context.Background(), AuthCodeIssuanceRequest{
-		EventKey: email.EventLoginCode,
-		ClientIP: "203.0.113.11",
-	})
-	require.ErrorContains(t, err, "recipient or flow")
-
-	_, _, _, err = limiter.Reserve(context.Background(), AuthCodeIssuanceRequest{
-		EventKey:  email.EventLoginCode,
-		Recipient: "person@example.com",
-		ClientIP:  "not-an-ip",
-	})
-	require.ErrorContains(t, err, "client IP")
+	limiter := authentication.NewAuthCodeIssuanceLimiter(units, []byte("secret"), limits)
+	for message, request := range map[string]authentication.AuthCodeIssuanceRequest{
+		"unsupported auth code event": {EventKey: email.EventWelcome, Recipient: "person@example.com", ClientIP: "203.0.113.10"},
+		"recipient or flow":           {EventKey: email.EventLoginCode, ClientIP: "203.0.113.10"},
+		"client IP":                   {EventKey: email.EventLoginCode, Recipient: "person@example.com", ClientIP: "not-an-ip"},
+	} {
+		_, _, _, err := limiter.Reserve(t.Context(), request)
+		require.ErrorContains(t, err, message)
+	}
+	require.Empty(t, units.Steps(), "an invalid request opens no transaction")
 }
 
-func TestNewAuthCodeIssuanceLimiterRejectsInvalidConfiguration(t *testing.T) {
-	t.Parallel()
-	db := newAuthenticationIntegrationDB(t)
-	valid := defaultAuthCodeIssuanceLimits()
-
-	require.Panics(t, func() { NewAuthCodeIssuanceLimiter(nil, []byte("secret"), valid) })
-	require.Panics(t, func() { NewAuthCodeIssuanceLimiter(db, nil, valid) })
-	invalid := valid
-	invalid.IPTenMinute = 0
-	require.Panics(t, func() { NewAuthCodeIssuanceLimiter(db, []byte("secret"), invalid) })
-}
-
-func TestAuthCodeAdmissionHeadersEndToEnd(t *testing.T) {
-	t.Parallel()
-	limiter, _ := newIntegrationAuthCodeIssuanceLimiter(t, defaultAuthCodeIssuanceLimits())
+func TestAuthCodeAdmissionHeadersDiscloseOnlyTheClientIPBudget(t *testing.T) {
+	limiter, _, _ := newLimiter(issuanceLimits(), nil)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"state":"sent_email"}`)
 	}))
 	defer upstream.Close()
-	proxy, err := NewKratosPublicProxy(upstream.URL, limiter, testAuthIssuanceProvenanceKey)
+	proxy, err := authentication.NewKratosPublicProxy(upstream.URL, limiter, []byte("auth-issuance-provenance-key"))
 	require.NoError(t, err)
 	for _, status := range []int{http.StatusOK, http.StatusTooManyRequests} {
 		request := httptest.NewRequest(http.MethodPost, "/self-service/login?flow=login-flow", strings.NewReader(`{"method":"code","identifier":"person@example.com"}`))

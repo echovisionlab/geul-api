@@ -2,15 +2,12 @@ package email
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"strings"
 	"time"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	"gorm.io/gorm"
 )
 
 // LayoutTranslationDocument is the locale-owned raw wrapper state for one
@@ -41,43 +38,26 @@ type LayoutLocaleSnapshot struct {
 	IsSourceLocale bool
 }
 
-// LayoutTranslationEntrySelectSQL returns the canonical management projection
-// for the Email Layout translation table.
-func LayoutTranslationEntrySelectSQL() string {
-	return `SELECT locale, NULL::text AS title, NULL::text AS summary,
-		html_content AS content_html, content_text, NULL::jsonb AS content_json,
-		updated_at,
-		NULL::uuid AS og_asset_id FROM email_layout_translation`
-}
-
 // LoadCanonicalLayoutProjections loads the exact source row for every requested
 // layout. Missing source rows are omitted.
 func LoadCanonicalLayoutProjections(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	layoutIDs []string,
 ) (map[string]CanonicalLayoutProjection, error) {
 	if len(layoutIDs) == 0 {
 		return map[string]CanonicalLayoutProjection{}, nil
 	}
-	var rows []struct {
-		LayoutID string  `gorm:"column:entity_id"`
-		HTML     *string `gorm:"column:html_content"`
-	}
-	if err := db.WithContext(ctx).
-		Table("email_layout_translation AS layout").
-		Select("layout.entity_id, layout.html_content").
-		Joins("JOIN email_layout AS root ON root.id = layout.entity_id AND root.source_locale = layout.locale").
-		Where("layout.entity_id IN ?", layoutIDs).
-		Find(&rows).Error; err != nil {
+	rows, err := store.SourceLayouts(ctx, layoutIDs)
+	if err != nil {
 		return nil, errs.Internal(err)
 	}
 	projections := make(map[string]CanonicalLayoutProjection, len(rows))
 	for _, row := range rows {
-		if row.HTML == nil {
+		if row.HTMLContent == nil {
 			continue
 		}
-		canonical, _, err := MaterializeLayoutSourceLocale(*row.HTML)
+		canonical, _, err := MaterializeLayoutSourceLocale(*row.HTMLContent)
 		if err != nil {
 			return nil, errs.Internal(err)
 		}
@@ -92,27 +72,17 @@ func LoadCanonicalLayoutProjections(
 // deterministic order used to seal delivery snapshots.
 func LoadLayoutLocaleSnapshots(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	layoutID string,
 ) ([]LayoutLocaleSnapshot, error) {
-	var rows []struct {
-		Locale         string  `gorm:"column:locale"`
-		ContentHTML    *string `gorm:"column:html_content"`
-		IsSourceLocale bool    `gorm:"column:is_source_locale"`
-	}
-	if err := db.WithContext(ctx).
-		Table("email_layout_translation AS entry").
-		Select("entry.locale, entry.html_content, entry.locale = root.source_locale AS is_source_locale").
-		Joins("JOIN email_layout AS root ON root.id = entry.entity_id").
-		Where("entry.entity_id = ?", layoutID).
-		Order("is_source_locale DESC, locale ASC").
-		Scan(&rows).Error; err != nil {
+	rows, err := store.LayoutLocales(ctx, layoutID)
+	if err != nil {
 		return nil, err
 	}
 	var storedSourceHTML *string
 	for _, row := range rows {
 		if row.IsSourceLocale {
-			storedSourceHTML = row.ContentHTML
+			storedSourceHTML = row.HTMLContent
 			break
 		}
 	}
@@ -129,7 +99,7 @@ func LoadLayoutLocaleSnapshots(
 			if row.IsSourceLocale {
 				return nil
 			}
-			return row.ContentHTML
+			return row.HTMLContent
 		}())
 		if err != nil {
 			return nil, errs.Internal(err)
@@ -145,27 +115,15 @@ func LoadLayoutLocaleSnapshots(
 // LoadLayoutTranslationEntry loads one locale row, returning nil when absent.
 func LoadLayoutTranslationEntry(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	layoutID string,
 	locale string,
 ) (*LayoutTranslationEntry, error) {
-	var row struct {
-		ContentHTML sql.NullString `gorm:"column:html_content"`
-		ContentText sql.NullString `gorm:"column:content_text"`
-		UpdatedAt   time.Time      `gorm:"column:updated_at"`
+	row, err := store.LayoutEntry(ctx, layoutID, locale)
+	if err != nil {
+		return nil, errs.Internal(err)
 	}
-	result := db.WithContext(ctx).Raw(
-		`SELECT html_content, content_text, updated_at
-		 FROM email_layout_translation
-		 WHERE entity_id = ? AND locale = ?
-		 LIMIT 1`,
-		layoutID,
-		locale,
-	).Scan(&row)
-	if result.Error != nil {
-		return nil, errs.Internal(result.Error)
-	}
-	if result.RowsAffected == 0 {
+	if row == nil {
 		return nil, nil
 	}
 
@@ -174,12 +132,12 @@ func LoadLayoutTranslationEntry(
 			UpdatedAt: row.UpdatedAt,
 		},
 	}
-	if row.ContentHTML.Valid {
-		normalized := NormalizeTemplatePlaceholders(row.ContentHTML.String)
+	if row.HTMLContent != nil {
+		normalized := NormalizeTemplatePlaceholders(*row.HTMLContent)
 		entry.ContentHTML = &normalized
 	}
-	if row.ContentText.Valid {
-		entry.ContentText = stringPointer(row.ContentText.String)
+	if row.ContentText != nil {
+		entry.ContentText = stringPointer(*row.ContentText)
 	}
 	return entry, nil
 }
@@ -187,11 +145,11 @@ func LoadLayoutTranslationEntry(
 // LoadLayoutTranslationDocument returns one required locale document.
 func LoadLayoutTranslationDocument(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	layoutID string,
 	locale string,
 ) (*LayoutTranslationDocument, error) {
-	entry, err := LoadLayoutTranslationEntry(ctx, db, layoutID, locale)
+	entry, err := LoadLayoutTranslationEntry(ctx, store, layoutID, locale)
 	if err != nil {
 		return nil, err
 	}
@@ -209,24 +167,15 @@ func LoadLayoutTranslationDocument(
 // authority. The caller owns fallback policy when no persisted authority exists.
 func ResolveLayoutTranslationSourceLocale(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	layoutID string,
 ) (string, bool, error) {
-	var sourceRow struct {
-		Locale string `gorm:"column:locale"`
+	locale, found, err := store.LayoutSourceLocale(ctx, layoutID)
+	if err != nil {
+		return "", false, errs.Internal(err)
 	}
-	result := db.WithContext(ctx).Raw(
-		`SELECT source_locale AS locale
-		 FROM email_layout
-		 WHERE id = ?
-		 LIMIT 1`,
-		layoutID,
-	).Scan(&sourceRow)
-	if result.Error != nil {
-		return "", false, errs.Internal(result.Error)
-	}
-	if result.RowsAffected > 0 && strings.TrimSpace(sourceRow.Locale) != "" {
-		return sourceRow.Locale, true, nil
+	if found && strings.TrimSpace(locale) != "" {
+		return locale, true, nil
 	}
 	return "", false, nil
 }
@@ -234,7 +183,7 @@ func ResolveLayoutTranslationSourceLocale(
 // LoadCanonicalLayoutTranslationDocument loads the required source-locale row.
 func LoadCanonicalLayoutTranslationDocument(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	layoutID string,
 	sourceLocale string,
 ) (*LayoutTranslationDocument, error) {
@@ -242,7 +191,7 @@ func LoadCanonicalLayoutTranslationDocument(
 	if sourceLocale == "" {
 		return nil, errs.NotFound("email layout source translation", layoutID)
 	}
-	document, err := LoadLayoutTranslationDocument(ctx, db, layoutID, sourceLocale)
+	document, err := LoadLayoutTranslationDocument(ctx, store, layoutID, sourceLocale)
 	if err != nil {
 		return nil, err
 	}
@@ -261,11 +210,11 @@ func LoadCanonicalLayoutTranslationDocument(
 // LoadLayoutTranslationSourceDocument returns the provider-visible source.
 func LoadLayoutTranslationSourceDocument(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	layoutID string,
 	sourceLocale string,
 ) (*translation.SourceDocument, error) {
-	document, err := LoadCanonicalLayoutTranslationDocument(ctx, db, layoutID, sourceLocale)
+	document, err := LoadCanonicalLayoutTranslationDocument(ctx, store, layoutID, sourceLocale)
 	if err != nil {
 		return nil, err
 	}
@@ -277,24 +226,17 @@ func LoadLayoutTranslationSourceDocument(
 
 func loadLayoutSourceLocaleFlag(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	layoutID string,
 ) (string, bool, error) {
-	var row struct {
-		Locale string `gorm:"column:locale"`
-	}
-	err := db.WithContext(ctx).
-		Table("email_layout").
-		Select("source_locale AS locale").
-		Where("id = ?", layoutID).
-		Take(&row).Error
+	locale, found, err := store.LayoutSourceLocale(ctx, layoutID)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", false, nil
-		}
 		return "", false, errs.Internal(err)
 	}
-	locale := strings.TrimSpace(row.Locale)
+	if !found {
+		return "", false, nil
+	}
+	locale = strings.TrimSpace(locale)
 	return locale, locale != "", nil
 }
 

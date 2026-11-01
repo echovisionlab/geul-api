@@ -13,7 +13,7 @@ import (
 	menupostgres "github.com/echovisionlab/geul-api/internal/menu/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 )
 
 // MenuInterchange joins the Menu XLIFF steps to the translation pipeline's
@@ -79,15 +79,15 @@ func (a *MenuInterchange) ApplyTranslationInterchange(
 
 // menuInterchangeMode leaves a mode outside PATCH and REPLACE zero, which
 // the Menu rejects.
-func menuInterchangeMode(mode managev1.TranslationInterchangeMode) menudomain.InterchangeMode {
+func menuInterchangeMode(mode application.InterchangeMode) menudomain.InterchangeMode {
 	switch mode {
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH:
+	case application.InterchangeModePatch:
 		return menudomain.InterchangePatch
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE:
+	case application.InterchangeModeReplace:
 		return menudomain.InterchangeReplace
 	default:
 		return 0
 	}
 }
 
-var _ application.TranslationInterchangeDomains = (*MenuInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*MenuInterchange)(nil)

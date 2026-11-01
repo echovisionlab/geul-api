@@ -14,7 +14,6 @@ import (
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func validateBlockInterchangeApply(command application.TranslationInterchangeApply, entityType string) error {
@@ -24,8 +23,8 @@ func validateBlockInterchangeApply(command application.TranslationInterchangeApp
 		command.Plan.TargetLocale != command.TargetLocale {
 		return errs.InvalidArgument("target", fmt.Sprintf("%s translation interchange identity does not match the validated source", entityType))
 	}
-	if command.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH &&
-		command.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
+	if command.Mode != application.InterchangeModePatch &&
+		command.Mode != application.InterchangeModeReplace {
 		return errs.InvalidArgument("mode", "PATCH or REPLACE is required")
 	}
 	return nil
@@ -52,7 +51,7 @@ func buildBlockInterchangeCandidate(
 	current *contentv1.LocalizedRichTextDocument,
 	targets map[string]core.UnitResult,
 ) (*core.Candidate, error) {
-	if command.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
+	if command.Mode == application.InterchangeModeReplace {
 		return core.BuildRichTextCandidate(command.Plan, command.Source, targets)
 	}
 	overlay, err := buildBlockInterchangePatch(
@@ -71,16 +70,16 @@ func buildBlockInterchangeCandidate(
 }
 
 func interchangeCandidateTargets(
-	mode managev1.TranslationInterchangeMode,
+	mode application.InterchangeMode,
 	current map[string]core.UnitResult,
 	imported map[string]core.UnitResult,
 ) map[string]core.UnitResult {
 	capacity := len(imported)
-	if mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH {
+	if mode == application.InterchangeModePatch {
 		capacity += len(current)
 	}
 	result := make(map[string]core.UnitResult, capacity)
-	if mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH {
+	if mode == application.InterchangeModePatch {
 		for handle, value := range current {
 			result[handle] = value
 		}

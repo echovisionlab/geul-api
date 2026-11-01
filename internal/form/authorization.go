@@ -5,14 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -74,16 +69,16 @@ func (s *Service) requireVisibleFormAction(ctx context.Context, formID string, a
 	return nil
 }
 
-// requireFreshFormAction keeps principal lifecycle locking inside a mutation
-// transaction, then performs the action's single Form permission check. An
-// inactive principal answers "no permission to access this form", Form's own
-// wording, which is why Form checks through mutation.Checked.
-func (s *Service) requireFreshFormAction(ctx context.Context, tx *gorm.DB, formID string, action formObjectAction) error {
+// requireFreshFormAction locks the principal's Identity through the fence,
+// then performs the action's single Form permission check. An inactive
+// principal answers "no permission to access this form", Form's own
+// wording, which is why Form checks through mutation.Fenced.
+func (s *Service) requireFreshFormAction(ctx context.Context, lockActive func(*auth.UserInfo) (bool, error), formID string, action formObjectAction) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil {
 		return domainerr.AuthenticationRequired()
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	active, err := lockActive(principal)
 	if err != nil {
 		return err
 	}
@@ -100,8 +95,8 @@ func (s *Service) requireFreshFormAction(ctx context.Context, tx *gorm.DB, formI
 // freshFormAction is the access of a Form mutation whose root Lock already
 // holds.
 func (s *Service) freshFormAction(formID string, action formObjectAction) mutation.Access {
-	return mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-		return s.requireFreshFormAction(ctx, tx, formID, action)
+	return mutation.Fenced(func(ctx context.Context, _ Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+		return s.requireFreshFormAction(ctx, lockActive, formID, action)
 	})
 }
 
@@ -109,12 +104,12 @@ func (s *Service) freshFormAction(formID string, action formObjectAction) mutati
 // exists yet. The platform check is performed exactly once after the
 // authenticated principal's lifecycle has been locked.
 func (s *Service) freshFormCreation() mutation.Access {
-	return mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+	return mutation.Fenced(func(ctx context.Context, _ Store, lockActive func(*auth.UserInfo) (bool, error)) error {
 		principal := auth.GetUser(ctx)
 		if principal == nil {
 			return domainerr.AuthenticationRequired()
 		}
-		active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+		active, err := lockActive(principal)
 		if err != nil {
 			return err
 		}
@@ -140,17 +135,16 @@ func (s *Service) requirePlatformFormAction(ctx context.Context, action func() (
 }
 
 // lockFormRoot locks the Form row of a management mutation before its
-// authorization; a missing Form answers notFound.
-func lockFormRoot(ctx context.Context, tx *gorm.DB, formID string, form *model.Form, notFound error, columns ...string) error {
-	query := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
-	if len(columns) != 0 {
-		query = query.Select(columns)
+// authorization and returns its stored ID; a missing Form answers notFound.
+func lockFormRoot(ctx context.Context, store Store, formID string, notFound error) (string, error) {
+	id, err := store.LockFormRoot(ctx, formID)
+	return id, formNotFound(err, notFound)
+}
+
+// formNotFound answers notFound for a missing Form.
+func formNotFound(err, notFound error) error {
+	if errors.Is(err, ErrFormNotFound) {
+		return notFound
 	}
-	if err := query.First(form, "id = ?", formID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return notFound
-		}
-		return err
-	}
-	return nil
+	return err
 }

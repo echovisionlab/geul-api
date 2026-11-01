@@ -7,27 +7,24 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/google/uuid"
 
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
-	"github.com/echovisionlab/geul-api/internal/model"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (h *Handlers) handleCleanupIncompleteUploads(ctx context.Context) error {
-	// Clean up upload_session records with no recent activity for 7 days. Object
-	// storage is cleaned explicitly; a bucket lifecycle rule is defense in depth,
-	// not the authority for deleting the corresponding database session.
-	now := time.Now()
+// handleCleanupIncompleteUploads cleans up the upload sessions with no
+// activity since the retention. Object storage is cleaned explicitly; a
+// bucket lifecycle rule is defense in depth, not the authority for deleting
+// the corresponding database session. A failed session does not stop the
+// others; the next run retries it.
+func (h *Handlers) handleCleanupIncompleteUploads(ctx context.Context, now time.Time) error {
 	cutoff := now.Add(-filemedia.IncompleteUploadRetention)
 
-	expiredUploads, err := h.findExpiredUploadSessions(ctx, cutoff)
+	expiredUploads, err := h.uploads.ExpiredUploads(ctx, cutoff)
 	if err != nil {
 		return err
 	}
@@ -56,24 +53,21 @@ func (h *Handlers) handleCleanupIncompleteUploads(ctx context.Context) error {
 	return nil
 }
 
-func (h *Handlers) findExpiredUploadSessions(ctx context.Context, cutoff time.Time) ([]filemediaadapter.ExpiredUploadSession, error) {
-	return filemediaadapter.ExpiredUploadSessions(ctx, h.db, expiredUploadCleanupStatuses(), cutoff)
-}
-
+// cleanupExpiredUploadSession claims the session, aborts its storage and
+// deletes it, in that order: a storage failure keeps the claimed session for
+// the next run, and a session that changed since the claim is not deleted.
+// It reports false when another cleanup or new activity got there first.
 func (h *Handlers) cleanupExpiredUploadSession(
 	ctx context.Context,
-	session filemediaadapter.ExpiredUploadSession,
+	session ExpiredUpload,
 	cutoff time.Time,
 	expiredAt time.Time,
 ) (bool, error) {
 	if strings.TrimSpace(session.UploadID) == "" || strings.TrimSpace(session.FileID) == "" {
 		return false, fmt.Errorf("expired upload session is missing its storage identity")
 	}
-	if h.s3Client == nil || h.config == nil || strings.TrimSpace(h.config.S3Bucket) == "" {
-		return false, fmt.Errorf("expired upload cleanup requires object storage configuration")
-	}
 
-	claimed, err := filemediaadapter.ClaimExpiredUploadSession(ctx, h.db, session.UploadID, expiredUploadCleanupStatuses(), cutoff)
+	claimed, err := h.uploads.ClaimExpiredUpload(ctx, session.UploadID, cutoff)
 	if err != nil {
 		return false, fmt.Errorf("claim expired upload session %s: %w", session.UploadID, err)
 	}
@@ -81,21 +75,16 @@ func (h *Handlers) cleanupExpiredUploadSession(
 		return false, nil
 	}
 
-	extension := model.GetExtensionFromMime(session.RequestedMime)
-	objectKey, err := mediaauth.MediaObjectKey(session.FileID, extension)
+	objectKey, err := mediaauth.MediaObjectKey(session.FileID, session.Extension)
 	if err != nil {
 		return false, fmt.Errorf("build expired upload target %s: %w", session.UploadID, err)
 	}
-	if _, err := h.s3Client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
-		Bucket:   aws.String(h.config.S3Bucket),
-		Key:      aws.String(objectKey),
-		UploadId: aws.String(session.UploadID),
-	}); err != nil && !filemedia.IsMissingMultipartUploadAbortError(err) {
+	if err := h.uploadStorage.AbortMultipartUpload(ctx, objectKey, session.UploadID); err != nil && !filemedia.IsMissingMultipartUploadAbortError(err) {
 		return false, fmt.Errorf("abort expired multipart upload %s: %w", session.UploadID, err)
 	}
 
 	if session.ClientMediaBundleID != nil && session.ClientMediaManifest != nil {
-		if err := filemedia.CleanupClientMediaStaging(ctx, h.s3Client, h.config.S3Bucket, *session.ClientMediaBundleID, *session.ClientMediaManifest); err != nil {
+		if err := h.uploadStorage.CleanupClientMediaStaging(ctx, *session.ClientMediaBundleID, *session.ClientMediaManifest); err != nil {
 			return false, err
 		}
 	}
@@ -107,7 +96,7 @@ func (h *Handlers) cleanupExpiredUploadSession(
 		}
 	}
 
-	deleted, err := filemediaadapter.DeleteAbortedUploadSession(ctx, h.db, session.UploadID, cutoff)
+	deleted, err := h.uploads.DeleteAbortedUpload(ctx, session.UploadID, cutoff)
 	if err != nil {
 		return false, fmt.Errorf("delete expired upload session %s: %w", session.UploadID, err)
 	}
@@ -115,15 +104,6 @@ func (h *Handlers) cleanupExpiredUploadSession(
 		return false, fmt.Errorf("expired upload session %s changed before deletion", session.UploadID)
 	}
 	return true, nil
-}
-
-func expiredUploadCleanupStatuses() []model.UploadSessionStatus {
-	return []model.UploadSessionStatus{
-		model.UploadSessionStatusInitiated,
-		model.UploadSessionStatusUploading,
-		model.UploadSessionStatusFailed,
-		model.UploadSessionStatusAborted,
-	}
 }
 
 func isExpiredFileIngestLifecycleUploadType(uploadType string) bool {
@@ -142,7 +122,7 @@ func isExpiredFileIngestLifecycleUploadType(uploadType string) bool {
 
 // expiredFileIngestLifecycleIdentityError reports why an expired session
 // cannot identify the file ingest lifecycle it would end, or nil.
-func expiredFileIngestLifecycleIdentityError(session filemediaadapter.ExpiredUploadSession) error {
+func expiredFileIngestLifecycleIdentityError(session ExpiredUpload) error {
 	entityType := expiredUploadEntityType(session)
 	if entityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED ||
 		expiredUploadEntityID(session, entityType) == "" ||
@@ -154,7 +134,7 @@ func expiredFileIngestLifecycleIdentityError(session filemediaadapter.ExpiredUpl
 	return err
 }
 
-func (h *Handlers) publishExpiredFileIngest(ctx context.Context, session filemediaadapter.ExpiredUploadSession, expiredAt time.Time) (bool, error) {
+func (h *Handlers) publishExpiredFileIngest(ctx context.Context, session ExpiredUpload, expiredAt time.Time) (bool, error) {
 	entityType := expiredUploadEntityType(session)
 	entityID := expiredUploadEntityID(session, entityType)
 	if err := expiredFileIngestLifecycleIdentityError(session); err != nil {
@@ -175,9 +155,6 @@ func (h *Handlers) publishExpiredFileIngest(ctx context.Context, session filemed
 	if err != nil {
 		return false, fmt.Errorf("restore expired file ingest identity: %w", err)
 	}
-	if h.fileIngest == nil {
-		return false, fmt.Errorf("file ingest lifecycle publisher is not configured")
-	}
 	if err := h.fileIngest.PublishFileIngest(ctx, event); err != nil {
 		return false, failurecause.WithAttrs(err, slog.String("entity_type", entityType.String()), slog.String("entity_id", entityID))
 	}
@@ -185,7 +162,7 @@ func (h *Handlers) publishExpiredFileIngest(ctx context.Context, session filemed
 }
 
 func expiredFileIngestFailedEvent(
-	session filemediaadapter.ExpiredUploadSession,
+	session ExpiredUpload,
 	entityType managev1.TranscodeEntityType,
 	expiredAt time.Time,
 ) (*managev1.FileIngestFailedEvent, error) {
@@ -193,8 +170,7 @@ func expiredFileIngestFailedEvent(
 	if err != nil {
 		return nil, err
 	}
-	extension := model.GetExtensionFromMime(session.RequestedMime)
-	objectKey, err := mediaauth.MediaObjectKey(session.FileID, extension)
+	objectKey, err := mediaauth.MediaObjectKey(session.FileID, session.Extension)
 	if err != nil {
 		return nil, fmt.Errorf("build expired upload media target: %w", err)
 	}
@@ -209,7 +185,7 @@ func expiredFileIngestFailedEvent(
 			Target: &commonv1.MediaObjectTarget{
 				FileId:    session.FileID,
 				ObjectKey: objectKey,
-				Extension: extension,
+				Extension: session.Extension,
 				MimeType:  session.RequestedMime,
 			},
 			Source:                managev1.FileIngestSource_FILE_INGEST_SOURCE_DIRECT_UPLOAD,
@@ -228,7 +204,7 @@ func expiredFileIngestFailedEvent(
 }
 
 func expiredUploadProjectionIdentity(
-	session filemediaadapter.ExpiredUploadSession,
+	session ExpiredUpload,
 	entityType managev1.TranscodeEntityType,
 ) (*string, error) {
 	var expectedCurrentFileID *string
@@ -266,7 +242,7 @@ func optionalUploadString(value string) *string {
 	return &value
 }
 
-func expiredUploadEntityType(session filemediaadapter.ExpiredUploadSession) managev1.TranscodeEntityType {
+func expiredUploadEntityType(session ExpiredUpload) managev1.TranscodeEntityType {
 	if session.UploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() {
 		return managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK
 	}
@@ -277,7 +253,7 @@ func expiredUploadEntityType(session filemediaadapter.ExpiredUploadSession) mana
 }
 
 func expiredUploadEntityID(
-	session filemediaadapter.ExpiredUploadSession,
+	session ExpiredUpload,
 	entityType managev1.TranscodeEntityType,
 ) string {
 	if entityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_FILE {

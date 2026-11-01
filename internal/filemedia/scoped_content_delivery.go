@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -88,16 +88,16 @@ func (s *Service) resolveAuthorizedFeaturedImage(
 	authorize func(*gorm.DB) error,
 ) (*commonv1.MediaDelivery, error) {
 	if _, err := uuidutil.ParseCanonical(strings.TrimSpace(ownerID), "owner_id"); err != nil {
-		return nil, errs.InvalidArgument("owner_id", "must be a canonical UUID")
+		return nil, domainerr.InvalidField("owner_id", "must be a canonical UUID")
 	}
 	expectedFileID = strings.TrimSpace(expectedFileID)
 	if expectedFileID != "" {
 		if _, err := uuidutil.ParseCanonical(expectedFileID, "expected_file_id"); err != nil {
-			return nil, errs.InvalidArgument("expected_file_id", "must be a canonical UUID")
+			return nil, domainerr.InvalidField("expected_file_id", "must be a canonical UUID")
 		}
 	}
 	if authorize == nil {
-		return nil, errs.InternalMsg("featured image authorization is required")
+		return nil, errors.New("featured image authorization is required")
 	}
 
 	var delivery *commonv1.MediaDelivery
@@ -114,9 +114,9 @@ func (s *Service) resolveAuthorizedFeaturedImage(
 			Where("id = ?", ownerID).
 			Take(&slot).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound(string(owner), ownerID)
+				return domainerr.ResourceNotFound(string(owner), ownerID)
 			}
-			return errs.Internal(err)
+			return err
 		}
 		currentFileID := ""
 		if slot.FileID != nil {
@@ -208,13 +208,13 @@ func (s *Service) hydrateAuthorizedContentBlockMediaWithDB(
 	items []*contentv1.ContentBlockMediaItem,
 ) ([]*contentv1.ContentBlockMediaItem, error) {
 	if s == nil || tx == nil {
-		return nil, errs.InternalMsg("scoped content media transaction is required")
+		return nil, errors.New("scoped content media transaction is required")
 	}
 	if _, err := uuidutil.ParseCanonical(strings.TrimSpace(ownerID), "owner_id"); err != nil {
-		return nil, errs.InvalidArgument("owner_id", "must be a canonical UUID")
+		return nil, domainerr.InvalidField("owner_id", "must be a canonical UUID")
 	}
 	if documentID == uuid.Nil || principal == nil || !principal.Authenticated {
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired()
 	}
 	cloned, requestedFileIDs, requestedBlockIDs := undeliveredContentBlockMediaItems(items)
 	scopedCtx := auth.WithUser(ctx, principal)
@@ -347,7 +347,7 @@ func lockScopedDeliveryFiles(
 		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
 	}
 	if err := query.Find(&files).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("lock scoped delivery Files: %w", err))
+		return nil, fmt.Errorf("lock scoped delivery Files: %w", err)
 	}
 	for _, file := range files {
 		result[file.ID] = file
@@ -371,7 +371,7 @@ func lockScopedContentAttachments(
 	switch owner {
 	case scopedContentOwnerPage, scopedContentOwnerPost, scopedContentOwnerProgramEvent, scopedContentOwnerWork:
 	default:
-		return nil, errs.InternalMsg("unsupported scoped content owner")
+		return nil, errors.New("unsupported scoped content owner")
 	}
 	var rows []scopedContentAttachmentRow
 	query := tx.WithContext(ctx).
@@ -385,7 +385,7 @@ func lockScopedContentAttachments(
 		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare, Table: clause.Table{Name: "attachment"}})
 	}
 	if err := query.Find(&rows).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("lock exact scoped content attachments: %w", err))
+		return nil, fmt.Errorf("lock exact scoped content attachments: %w", err)
 	}
 	for _, row := range rows {
 		result[row.key()] = row
@@ -409,7 +409,7 @@ func (s *Service) buildLockedInlineDelivery(
 		mediaauth.InlineTTL,
 	)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	delivery := &commonv1.MediaDelivery{
 		FileId:    file.ID,

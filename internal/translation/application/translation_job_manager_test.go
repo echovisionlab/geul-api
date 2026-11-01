@@ -5,33 +5,13 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
-
-	"github.com/echovisionlab/geul-api/internal/model"
-	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
-
-type stubTranslationGeneratorSession struct{}
 
 type scriptedTranslationGenerator struct {
 	session      *scriptedTranslationGeneratorSession
 	providerName string
-}
-
-type namedStubTranslationGenerator struct {
-	providerName string
-	modelName    string
-}
-
-type stubTranslationJobPublisher struct {
-	noopAsyncPublisher
 }
 
 type scriptedTranslationGeneratorSession struct {
@@ -40,17 +20,6 @@ type scriptedTranslationGeneratorSession struct {
 	initialCalls     int
 	requests         []translation.ProviderRequest
 	closed           bool
-}
-
-func (stubTranslationGeneratorSession) Translate(
-	_ context.Context,
-	_ translation.ProviderRequest,
-) (*translation.ProviderResponse, error) {
-	return &translation.ProviderResponse{}, nil
-}
-
-func (stubTranslationGeneratorSession) Close(context.Context) error {
-	return nil
 }
 
 func (g *scriptedTranslationGenerator) StartSession(
@@ -85,42 +54,6 @@ func (g *scriptedTranslationGenerator) ModelName() string {
 	return "scripted-model"
 }
 
-func (g namedStubTranslationGenerator) StartSession(
-	_ context.Context,
-	_ translation.ProviderRequest,
-) (translation.GeneratorSession, error) {
-	return stubTranslationGeneratorSession{}, nil
-}
-
-func (g namedStubTranslationGenerator) Translate(
-	_ context.Context,
-	_ translation.ProviderRequest,
-) (*translation.ProviderResponse, error) {
-	return &translation.ProviderResponse{}, nil
-}
-
-func (g namedStubTranslationGenerator) ProviderName() string {
-	return g.providerName
-}
-
-func (g namedStubTranslationGenerator) ModelName() string {
-	return g.modelName
-}
-
-func (stubTranslationJobPublisher) PublishTranslationGenerate(
-	context.Context,
-	*managev1.TranslationGenerateEvent,
-) error {
-	return nil
-}
-
-func (stubTranslationJobPublisher) PublishTranslationLifecycle(
-	context.Context,
-	*managev1.TranslationLifecycleEvent,
-) error {
-	return nil
-}
-
 func (s *scriptedTranslationGeneratorSession) Translate(
 	_ context.Context,
 	req translation.ProviderRequest,
@@ -144,12 +77,12 @@ func TestGenerateValidatedTranslationSubmitsWholeMultiGroupXLIFFOnce(t *testing.
 	session := &scriptedTranslationGeneratorSession{
 		initialResponses: []*translation.ProviderResponse{documentTranslationResponse(request)},
 	}
-	manager := withTestMutations(t, &TranslationJobManager{})
+	manager := &TranslationJobManager{}
 	generator := &scriptedTranslationGenerator{session: session}
 
 	response, err := manager.generateValidatedTranslationWithGenerator(
 		context.Background(),
-		&model.TranslationJob{},
+		&Job{},
 		request,
 		generator,
 	)
@@ -241,23 +174,6 @@ func translationJobProviderResponse(
 	}
 }
 
-func TestTranslationJobManagerConstructorsConfigureResolvers(t *testing.T) {
-	t.Parallel()
-
-	db := &gorm.DB{}
-	publisher := stubTranslationJobPublisher{}
-
-	planner := &ogpostgres.Planner{}
-	refresher := &ogpostgres.Refresher{}
-	manager, err := NewTranslationJobManager(JobManagerDeps{
-		DB: db, SpiceDB: &auth.SpiceDBClient{}, Audit: &audittest.Recorder{}, Publisher: publisher,
-		ContentBlocks: &contentblock.Store{}, OGPlanner: planner, OGRefresher: refresher, Domains: testTranslationDomains{},
-	})
-	require.NoError(t, err)
-	assert.Same(t, db, manager.db)
-	assert.NotNil(t, manager.generatorResolver)
-}
-
 func TestTranslationJobManagerRequiresResolver(t *testing.T) {
 	t.Parallel()
 
@@ -278,9 +194,9 @@ func TestGenerateValidatedTranslationRejectsMissingUnitsWithoutRepair(t *testing
 			translation.UnitResult{UnitID: "block:1:text:0", TranslatedText: "[fr] Bonjour"},
 		)},
 	}
-	manager := withTestMutations(t, &TranslationJobManager{})
+	manager := &TranslationJobManager{}
 	generator := &scriptedTranslationGenerator{session: session}
-	job := &model.TranslationJob{}
+	job := &Job{}
 
 	response, err := manager.generateValidatedTranslationWithGenerator(context.Background(), job, request, generator)
 	require.Nil(t, response)
@@ -304,8 +220,8 @@ func TestGenerateValidatedTranslationDoesNotFallbackToNextProvider(t *testing.T)
 			translation.UnitResult{UnitID: "block:1:text:0", TranslatedText: "[fr] Bonjour"},
 		)},
 	}
-	manager := withTestMutations(t, &TranslationJobManager{})
-	job := &model.TranslationJob{ID: "job-1"}
+	manager := &TranslationJobManager{}
+	job := &Job{ID: "job-1"}
 	primary := &scriptedTranslationGenerator{session: primarySession}
 	fallback := &scriptedTranslationGenerator{session: fallbackSession}
 
@@ -337,12 +253,12 @@ func TestGenerateValidatedTranslationRejectsUnknownUnitsWithoutRepair(t *testing
 			translation.UnitResult{UnitID: "unknown:text:0", TranslatedText: "[fr] Inconnu"},
 		)},
 	}
-	manager := withTestMutations(t, &TranslationJobManager{})
+	manager := &TranslationJobManager{}
 	generator := &scriptedTranslationGenerator{session: session}
 
 	response, err := manager.generateValidatedTranslationWithGenerator(
 		context.Background(),
-		&model.TranslationJob{},
+		&Job{},
 		request,
 		generator,
 	)
@@ -364,12 +280,12 @@ func TestGenerateValidatedTranslationRejectsDuplicateUnitsWithoutRepair(t *testi
 			translation.UnitResult{UnitID: "block:1:text:0", TranslatedText: "[fr] Salut"},
 		)},
 	}
-	manager := withTestMutations(t, &TranslationJobManager{})
+	manager := &TranslationJobManager{}
 	generator := &scriptedTranslationGenerator{session: session}
 
 	response, err := manager.generateValidatedTranslationWithGenerator(
 		context.Background(),
-		&model.TranslationJob{},
+		&Job{},
 		request,
 		generator,
 	)
@@ -390,9 +306,9 @@ func TestGenerateValidatedTranslationRejectsPlaceholderMismatchWithoutRepair(t *
 			translation.UnitResult{UnitID: "block:1:text:0", TranslatedText: "[fr] Bonjour"},
 		)},
 	}
-	manager := withTestMutations(t, &TranslationJobManager{})
+	manager := &TranslationJobManager{}
 	generator := &scriptedTranslationGenerator{session: session}
-	job := &model.TranslationJob{}
+	job := &Job{}
 
 	response, err := manager.generateValidatedTranslationWithGenerator(context.Background(), job, request, generator)
 	require.Nil(t, response)
@@ -413,13 +329,39 @@ func TestGenerateValidatedTranslationRejectsLineBreakMismatchWithoutRepair(t *te
 			translation.UnitResult{UnitID: "block:1:text:0", TranslatedText: "[fr] Ligne un Ligne deux"},
 		)},
 	}
-	manager := withTestMutations(t, &TranslationJobManager{})
+	manager := &TranslationJobManager{}
 	generator := &scriptedTranslationGenerator{session: session}
-	job := &model.TranslationJob{}
+	job := &Job{}
 
 	response, err := manager.generateValidatedTranslationWithGenerator(context.Background(), job, request, generator)
 	require.Nil(t, response)
 	require.ErrorIs(t, err, errTranslationProviderResponseInvalid)
 	require.Equal(t, 1, session.initialCalls)
 	require.True(t, session.closed)
+}
+
+func multiGroupDocumentTranslationRequest() translation.ProviderRequest {
+	profile := translation.GenerationProfile{
+		QualityTier: translation.QualityTierStandard, SourceLocale: "en", TargetLocale: "fr", MIMEType: "text/plain",
+	}
+	return translationProviderRequestForTest(
+		profile,
+		translation.XLIFFGroup{
+			ID: "group-1", SequenceIndex: 1, SequenceTotal: 2,
+			TranslationUnit: []translation.XLIFFUnit{{ID: "unit-1", Source: "Hello"}},
+		},
+		translation.XLIFFGroup{
+			ID: "group-2", SequenceIndex: 2, SequenceTotal: 2,
+			TranslationUnit: []translation.XLIFFUnit{{ID: "unit-2", Source: "World"}},
+		},
+	)
+}
+
+func documentTranslationResponse(request translation.ProviderRequest) *translation.ProviderResponse {
+	response := translationProviderResponseForTest(
+		request,
+		translation.UnitResult{UnitID: "unit-1", TranslatedText: "Bonjour"},
+		translation.UnitResult{UnitID: "unit-2", TranslatedText: "Monde"},
+	)
+	return &response
 }

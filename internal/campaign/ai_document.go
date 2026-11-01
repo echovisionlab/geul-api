@@ -14,13 +14,17 @@ import (
 // AIDocumentService is Campaign's AI document seam: emailcontent owns the
 // shared write and Campaign adds its authorization, draft lifecycle and
 // contributor locks, while the transport adapter owns only DCDP conversion.
-type AIDocumentService struct{ emailcontent.AIDocuments }
+type AIDocumentService struct {
+	emailcontent.AIDocuments[contentStore]
+}
 
 // AIDocuments returns the Campaign AI document use cases.
 func (s *InternalService) AIDocuments() *AIDocumentService {
-	return &AIDocumentService{emailcontent.AIDocuments{
-		Owner: campaignContent, DB: s.db, Store: s.contentBlocks,
-		Mutations: s.mutations, Authorize: s.authorizeAIDocument,
+	return &AIDocumentService{emailcontent.AIDocuments[contentStore]{
+		Owner: campaignContent, Units: contentUnits(s.db, s.contentBlocks),
+		Mutations: s.contentMutations, Authorize: func(ctx context.Context, store contentStore, campaignID string, forUpdate bool) (uuid.UUID, uuid.UUID, error) {
+			return s.authorizeAIDocument(ctx, store.tx, campaignID, forUpdate)
+		},
 	}}
 }
 

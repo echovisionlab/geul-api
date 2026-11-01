@@ -12,12 +12,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -32,7 +33,7 @@ type DomainRegistry struct {
 // NewDomainRegistry routes every catalog domain to its owning adapter; the
 // owners append their locale-content records to audit.
 func NewDomainRegistry(
-	emailReferences emailauthoring.CampaignDeliveryReferences,
+	emailReferences emailauthoringpostgres.DeliveryReferences,
 	audit domainaudit.Appender,
 ) (*DomainRegistry, error) {
 	if emailReferences == nil || audit == nil {
@@ -59,15 +60,28 @@ func (r *DomainRegistry) LoadSourceDocument(
 	return port.loadSourceDocument(ctx, db, store, entityID)
 }
 
-func (r *DomainRegistry) BuildExtractionPlan(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
-	if job == nil {
-		return nil, fmt.Errorf("translation job is required")
-	}
+func (r *DomainRegistry) BuildExtractionPlan(job application.Job, source *core.SourceDocument) (*core.ExtractionPlan, error) {
 	port, err := r.domainPort(job.EntityType)
 	if err != nil {
 		return nil, err
 	}
-	return port.buildExtractionPlan(job, source)
+	return port.buildExtractionPlan(modelJob(job), source)
+}
+
+// modelJob is the job as the owning domains' translation adapters take it.
+func modelJob(job application.Job) *model.TranslationJob {
+	return &model.TranslationJob{
+		ID: job.ID, EntityType: job.EntityType, EntityID: job.EntityID,
+		TargetLocale: job.TargetLocale, SourceLocale: job.SourceLocale,
+		RequestArtifactDigest: job.RequestArtifactDigest, OperationID: job.OperationID,
+		Status: string(job.Status), RequestedByMemberID: job.RequestedByMemberID,
+		Provider: job.Provider, Model: job.Model,
+		ProviderDocumentID: job.ProviderDocumentID, ProviderDocumentKey: job.ProviderDocumentKey,
+		ProviderDocumentSubmittedAt: job.ProviderDocumentSubmittedAt,
+		RequestXLIFF:                job.RequestXLIFF, RequestManifest: job.RequestManifest,
+		FailureReason: job.FailureReason, RequestedAt: job.RequestedAt, StartedAt: job.StartedAt,
+		CompletedAt: job.CompletedAt, CreatedAt: job.CreatedAt, UpdatedAt: job.UpdatedAt,
+	}
 }
 
 func (r *DomainRegistry) BuildCandidate(
@@ -89,10 +103,11 @@ func (r *DomainRegistry) ApplyCandidate(
 	ctx context.Context,
 	tx *gorm.DB,
 	store *contentblock.Store,
-	job *model.TranslationJob,
+	appliedJob application.Job,
 	candidate *core.Candidate,
 	input core.EntryWrite,
 ) (application.AppliedTranslationTarget, error) {
+	job := modelJob(appliedJob)
 	before, err := loadProviderLocaleFence(ctx, tx, job)
 	if err != nil {
 		return application.AppliedTranslationTarget{}, err
@@ -506,4 +521,7 @@ func (r *DomainRegistry) RequireTranslationSourceMutable(
 	return port.requireSourceMutable(ctx, tx, entityID)
 }
 
-var _ application.DomainRegistry = (*DomainRegistry)(nil)
+var (
+	_ translationpostgres.Registry = (*DomainRegistry)(nil)
+	_ application.DomainPlans      = (*DomainRegistry)(nil)
+)

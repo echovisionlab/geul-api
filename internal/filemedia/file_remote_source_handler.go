@@ -13,8 +13,6 @@ import (
 	"strconv"
 	"strings"
 
-	"connectrpc.com/connect"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/google/uuid"
 
@@ -151,21 +149,4 @@ func parseUploadSourceQuery(rawQuery string) (remoteFileImportOptions, error) {
 		opts.expectedCurrentFileID = &expected
 	}
 	return opts, nil
-}
-
-func writeUploadSourceError(w http.ResponseWriter, err error) {
-	status := http.StatusBadGateway
-	switch errs.CodeOf(err) {
-	case connect.CodeInvalidArgument:
-		status = http.StatusBadRequest
-	case connect.CodeUnauthenticated:
-		status = http.StatusUnauthorized
-	case connect.CodePermissionDenied:
-		status = http.StatusForbidden
-	case connect.CodeNotFound:
-		status = http.StatusNotFound
-	case connect.CodeUnavailable:
-		status = http.StatusServiceUnavailable
-	}
-	http.Error(w, http.StatusText(status), status)
 }

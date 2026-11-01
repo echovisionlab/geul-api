@@ -13,7 +13,6 @@ import (
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"google.golang.org/protobuf/proto"
 )
@@ -77,7 +76,7 @@ func buildCreativeInterchangeCandidate(
 	current *contentv1.LocalizedRichTextDocument,
 ) (*core.Candidate, error) {
 	patchCurrent := current
-	if command.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
+	if command.Mode == application.InterchangeModeReplace {
 		patchCurrent = &contentv1.LocalizedRichTextDocument{
 			BlockCatalogFingerprint: current.GetBlockCatalogFingerprint(),
 			Profile:                 current.GetProfile(),

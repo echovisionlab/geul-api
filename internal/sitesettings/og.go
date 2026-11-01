@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -20,7 +19,7 @@ type OGInvalidation struct {
 
 // ClassifyOGInvalidation maps actual Site Settings changes to their affected
 // OG projections.
-func ClassifyOGInvalidation(before, after *model.SiteSettings, keys []string) OGInvalidation {
+func ClassifyOGInvalidation(before, after *Settings, keys []string) OGInvalidation {
 	var result OGInvalidation
 	seen := make(map[string]struct{}, len(keys))
 	for _, key := range keys {

@@ -51,12 +51,13 @@ func (d InternalDeps) validate() error {
 // Campaign document. The collaboration runtime transports operations; it
 // does not own durable document bytes.
 type InternalService struct {
-	db            *gorm.DB
-	permissions   CollaborationPermissionChecker
-	contentBlocks *contentblock.Store
-	checkpoints   persistencecheckpoint.ContributorFence
-	members       ContributorMembers
-	mutations     *mutation.Runner
+	contentMutations *mutation.StoreRunner[contentStore]
+	db               *gorm.DB
+	permissions      CollaborationPermissionChecker
+	contentBlocks    *contentblock.Store
+	checkpoints      persistencecheckpoint.ContributorFence
+	members          ContributorMembers
+	mutations        *mutation.Runner
 }
 
 // NewInternalService validates deps and returns the Campaign collaboration
@@ -69,8 +70,13 @@ func NewInternalService(deps InternalDeps) (*InternalService, error) {
 	if err != nil {
 		return nil, err
 	}
+	contentMutations, err := contentRunner(deps.DB, deps)
+	if err != nil {
+		return nil, err
+	}
 	return &InternalService{
-		db: deps.DB, permissions: deps.Permissions, contentBlocks: deps.ContentBlocks,
+		contentMutations: contentMutations,
+		db:               deps.DB, permissions: deps.Permissions, contentBlocks: deps.ContentBlocks,
 		checkpoints: deps.Checkpoints, members: deps.Members, mutations: mutations,
 	}, nil
 }
@@ -173,11 +179,12 @@ func (s *InternalService) ApplyCampaignBlockBatch(ctx context.Context, command A
 			return emailcontent.CollaborationChange{}, err
 		}
 		return s.saveCampaignCollaboration(ctx, write, func(ctx context.Context, tx *gorm.DB) (emailcontent.CollaborationChange, error) {
-			return campaignContent.SaveCollaborationTarget(ctx, tx, s.contentBlocks, emailcontent.TargetLocaleMutation{
+			bound := bindContent(tx, s.contentBlocks)
+			return campaignContent.SaveCollaborationTarget(ctx, bound, emailcontent.TargetLocaleMutation{
 				ID: write.campaignID, DocumentID: write.documentID, Locale: write.locale,
 				Batch: batch, ExpectedDocumentRevision: batch.ExpectedRevision,
 				ExpectedTargetRevision: command.ExpectedTargetRevision, Now: write.now,
-				Fence: campaignEmailContentFence(write.campaignID),
+				Fence: contentFence(bound, campaignEmailContentFence(write.campaignID)),
 			}, originMemberID)
 		})
 	}
@@ -258,12 +265,13 @@ func (s *InternalService) UpdateCampaignLocaleMetadata(ctx context.Context, comm
 			return emailcontent.CollaborationChange{}, err
 		}
 		return s.saveCampaignCollaboration(ctx, write, func(ctx context.Context, tx *gorm.DB) (emailcontent.CollaborationChange, error) {
-			return campaignContent.SaveCollaborationTarget(ctx, tx, s.contentBlocks, emailcontent.TargetLocaleMutation{
+			bound := bindContent(tx, s.contentBlocks)
+			return campaignContent.SaveCollaborationTarget(ctx, bound, emailcontent.TargetLocaleMutation{
 				ID: write.campaignID, DocumentID: write.documentID, Locale: write.locale,
 				Batch:                    contentblock.Batch{DocumentID: write.documentID, ExpectedRevision: expectedRevision},
 				ExpectedDocumentRevision: expectedRevision, ExpectedTargetRevision: command.ExpectedTargetRevision,
 				SetSubject: true, Subject: command.Subject, Now: write.now,
-				Fence: campaignEmailContentFence(write.campaignID),
+				Fence: contentFence(bound, campaignEmailContentFence(write.campaignID)),
 			}, originMemberID)
 		})
 	}
@@ -329,8 +337,8 @@ func (s *InternalService) LoadCampaignDocument(ctx context.Context, query LoadCa
 	if err := requireCampaignEmailDocumentLoad(ctx, s.db, s.permissions, query.Principal, campaignID); err != nil {
 		return emailcontent.CollaborationDocument{}, err
 	}
-	return campaignContent.LoadCollaborationDocument(ctx, s.db, s.contentBlocks, campaignID, locale, func(ctx context.Context, tx *gorm.DB) (uuid.UUID, error) {
-		return loadCampaignEmailContentDocumentRoot(ctx, tx, campaignID, true)
+	return campaignContent.LoadCollaborationDocument(ctx, contentUnits(s.db, s.contentBlocks), campaignID, locale, func(ctx context.Context, store contentStore) (uuid.UUID, error) {
+		return loadCampaignEmailContentDocumentRoot(ctx, store.tx, campaignID, true)
 	})
 }
 

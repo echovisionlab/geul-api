@@ -166,20 +166,8 @@ func (h *Deletion) Finalize(ctx context.Context, event *managev1.FileDeleteEvent
 		if err := validatePendingFileDeletionWithDB(ctx, tx, event, file); err != nil {
 			return err
 		}
-		var pendingMeshResults int64
-		if err := tx.
-			Table("mesh_optimization_candidate").
-			Where("source_file_id = ? AND selected_at IS NULL", event.GetFileId()).
-			Where("status IN ?", []string{
-				model.MeshOptimizationCandidateStatusPending,
-				model.MeshOptimizationCandidateStatusProcessing,
-				model.MeshOptimizationCandidateStatusCancelled,
-			}).
-			Count(&pendingMeshResults).Error; err != nil {
-			return fmt.Errorf("check pending mesh optimization results before file finalization: %w", err)
-		}
-		if pendingMeshResults > 0 {
-			return fmt.Errorf("file %s still has %d pending mesh optimization result(s)", event.GetFileId(), pendingMeshResults)
+		if err := requireNoPendingMeshResults(tx, event.GetFileId()); err != nil {
+			return err
 		}
 		resource, err := policyv1.File.Resource(event.GetFileId())
 		if err != nil {
@@ -196,21 +184,46 @@ func (h *Deletion) Finalize(ctx context.Context, event *managev1.FileDeleteEvent
 			return err
 		}
 
-		result := tx.
-			Where("id = ? AND delete_requested_at IS NOT NULL", event.GetFileId()).
-			Delete(&model.File{})
-		if result.Error != nil {
-			return fmt.Errorf("finalize file deletion: %w", result.Error)
-		}
-		if result.RowsAffected == 0 {
-			var count int64
-			if err := tx.Table("file").Where("id = ?", event.GetFileId()).Count(&count).Error; err != nil {
-				return fmt.Errorf("verify file deletion finalization: %w", err)
-			}
-			if count != 0 {
-				return fmt.Errorf("file %s deletion request changed before finalization", event.GetFileId())
-			}
-		}
-		return nil
+		return deleteRequestedFile(tx, event.GetFileId())
 	})
+}
+
+func requireNoPendingMeshResults(tx *gorm.DB, fileID string) error {
+	var pendingMeshResults int64
+	if err := tx.
+		Table("mesh_optimization_candidate").
+		Where("source_file_id = ? AND selected_at IS NULL", fileID).
+		Where("status IN ?", []string{
+			model.MeshOptimizationCandidateStatusPending,
+			model.MeshOptimizationCandidateStatusProcessing,
+			model.MeshOptimizationCandidateStatusCancelled,
+		}).
+		Count(&pendingMeshResults).Error; err != nil {
+		return fmt.Errorf("check pending mesh optimization results before file finalization: %w", err)
+	}
+	if pendingMeshResults > 0 {
+		return fmt.Errorf("file %s still has %d pending mesh optimization result(s)", fileID, pendingMeshResults)
+	}
+	return nil
+}
+
+// deleteRequestedFile deletes the File row while its deletion request stands;
+// a row that is already gone counts as deleted.
+func deleteRequestedFile(tx *gorm.DB, fileID string) error {
+	result := tx.
+		Where("id = ? AND delete_requested_at IS NOT NULL", fileID).
+		Delete(&model.File{})
+	if result.Error != nil {
+		return fmt.Errorf("finalize file deletion: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		var count int64
+		if err := tx.Table("file").Where("id = ?", fileID).Count(&count).Error; err != nil {
+			return fmt.Errorf("verify file deletion finalization: %w", err)
+		}
+		if count != 0 {
+			return fmt.Errorf("file %s deletion request changed before finalization", fileID)
+		}
+	}
+	return nil
 }

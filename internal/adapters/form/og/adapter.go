@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	formdomain "github.com/echovisionlab/geul-api/internal/form"
+	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
@@ -30,8 +30,7 @@ func NewOG(cdnDomain string, refresher *ogpostgres.Refresher) *OG {
 func (o *OG) Request(
 	ctx context.Context,
 	tx *gorm.DB,
-	formID, _ string,
-	locale string,
+	formID, locale string,
 	allLocales bool,
 	reason string,
 ) (string, error) {
@@ -44,39 +43,12 @@ func (o *OG) Request(
 	return plan.RunID, nil
 }
 
-func (o *OG) RequestAfterMutation(
-	ctx context.Context,
-	tx *gorm.DB,
-	formID, locale string,
-	allLocales bool,
-	reason string,
-) (*string, error) {
-	plan, err := o.refresher.RequestCurrentWithDB(
-		ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_FORM, formID, locale, allLocales, reason,
-	)
-	if err != nil || plan == nil || strings.TrimSpace(plan.RunID) == "" {
-		return nil, err
-	}
-	return &plan.RunID, nil
-}
-
 func (o *OG) CancelAndRelease(ctx context.Context, tx *gorm.DB, formID string) error {
 	if err := ogpostgres.CancelEntity(ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_FORM, formID); err != nil {
 		return err
 	}
 	return mediaasset.NewLifecycle(tx, o.cdnDomain).
 		ReleasePublicAssetBindings(ctx, "form", formID, "og")
-}
-
-func (*OG) BaseTitle(ctx context.Context, db *gorm.DB, formID string) (string, error) {
-	var row struct {
-		Title string `gorm:"column:title"`
-	}
-	err := db.WithContext(ctx).Table("form").
-		Select(formdomain.FormSourceTitleSQL("form")+" AS title").
-		Where("form.id = ?", formID).
-		Take(&row).Error
-	return row.Title, err
 }
 
 func (o *OG) ReadyAsset(
@@ -115,4 +87,4 @@ func ReadyAsset(
 	return nil, nil
 }
 
-var _ formdomain.OG = (*OG)(nil)
+var _ formpostgres.OG = (*OG)(nil)

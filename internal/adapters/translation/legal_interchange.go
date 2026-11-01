@@ -15,26 +15,27 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type legalTranslationInterchangeDomain interface {
-	LoadTranslationInterchangeAIDocumentWithDB(
+	LoadTranslationInterchangeAIDocument(
 		context.Context,
-		*gorm.DB,
+		legal.Joined,
 		string,
 		string,
 		string,
 	) (legal.AIDocument, error)
-	ExecuteTranslationInterchangeMutationWithDB(
+	ExecuteTranslationInterchangeMutation(
 		context.Context,
-		*gorm.DB,
+		legal.Joined,
 		string,
 		string,
 		string,
@@ -47,13 +48,19 @@ type legalTranslationInterchangeDomain interface {
 // used here so owning-domain code never depends on this adapter package.
 type LegalInterchange struct {
 	domain legalTranslationInterchangeDomain
+	audit  domainaudit.Appender
 }
 
-func NewLegalInterchange(domain legalTranslationInterchangeDomain) *LegalInterchange {
+// NewLegalInterchange returns the Legal interchange port; it appends
+// locale-content records through audit.
+func NewLegalInterchange(domain legalTranslationInterchangeDomain, audit domainaudit.Appender) *LegalInterchange {
 	if domain == nil {
 		panic("Legal translation interchange domain is required")
 	}
-	return &LegalInterchange{domain: domain}
+	if audit == nil {
+		panic("Legal translation interchange audit is required")
+	}
+	return &LegalInterchange{domain: domain, audit: audit}
 }
 
 type legalInterchangeTarget struct {
@@ -81,8 +88,8 @@ func (a *LegalInterchange) LoadTranslationInterchangeTarget(
 	if err := validateLegalInterchangeIdentity(entityType, entityID, locale, plan); err != nil {
 		return application.TranslationInterchangeTargetState{}, err
 	}
-	raw, err := a.domain.LoadTranslationInterchangeAIDocumentWithDB(
-		ctx, db, entityType, entityID, locale,
+	raw, err := a.domain.LoadTranslationInterchangeAIDocument(
+		ctx, legalJoined(db, store, a.audit), entityType, entityID, locale,
 	)
 	if err != nil {
 		return application.TranslationInterchangeTargetState{}, err
@@ -106,10 +113,11 @@ func (a *LegalInterchange) ApplyTranslationInterchange(
 		return application.TranslationInterchangeApplyResult{}, err
 	}
 
+	joined := legalJoined(db, store, a.audit)
 	var before application.TranslationInterchangeTargetState
-	domainResult, err := a.domain.ExecuteTranslationInterchangeMutationWithDB(
+	domainResult, err := a.domain.ExecuteTranslationInterchangeMutation(
 		ctx,
-		db,
+		joined,
 		command.EntityType,
 		command.EntityID,
 		command.TargetLocale,
@@ -151,8 +159,8 @@ func (a *LegalInterchange) ApplyTranslationInterchange(
 		return application.TranslationInterchangeApplyResult{}, err
 	}
 
-	accepted, err := a.domain.LoadTranslationInterchangeAIDocumentWithDB(
-		ctx, db, command.EntityType, command.EntityID, command.TargetLocale,
+	accepted, err := a.domain.LoadTranslationInterchangeAIDocument(
+		ctx, joined, command.EntityType, command.EntityID, command.TargetLocale,
 	)
 	if err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
@@ -222,11 +230,11 @@ func validateLegalInterchangeApply(command application.TranslationInterchangeApp
 		known[unit.UnitID] = struct{}{}
 	}
 	switch command.Mode {
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH:
+	case application.InterchangeModePatch:
 		if len(command.UnitHandles) == 0 {
 			return errs.InvalidArgument("file_id", "Legal XLIFF PATCH requires an explicit stable unit selection")
 		}
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE:
+	case application.InterchangeModeReplace:
 		if len(command.UnitHandles) != len(known) {
 			return errs.InvalidArgument("file_id", "Legal XLIFF REPLACE requires the complete current stable unit manifest")
 		}
@@ -345,7 +353,7 @@ func buildLegalInterchangeMutation(
 		EntityType: command.EntityType, EntityID: command.EntityID, Locale: command.TargetLocale,
 		ExpectedRevision: current.contentRevision, ContributorMemberID: current.memberID,
 		ExpectedTargetRevision:         command.ExpectedRevision,
-		AuthoritativeTargetReplacement: command.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		AuthoritativeTargetReplacement: command.Mode == application.InterchangeModeReplace,
 	}
 	if !current.state.Exists {
 		mutation.Translation = legal.AITranslationCreate
@@ -404,4 +412,4 @@ func changedLegalInterchangeHandles(
 	return affected
 }
 
-var _ application.TranslationInterchangeDomains = (*LegalInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*LegalInterchange)(nil)

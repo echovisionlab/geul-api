@@ -9,7 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/page"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
 )
@@ -107,15 +107,15 @@ func (p *PageInterchangePort) ApplyTranslationInterchange(
 
 // pageInterchangeMode names the Page import mode of mode; an unknown mode
 // stays unknown for the Page to reject.
-func pageInterchangeMode(mode managev1.TranslationInterchangeMode) page.InterchangeMode {
+func pageInterchangeMode(mode application.InterchangeMode) page.InterchangeMode {
 	switch mode {
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH:
+	case application.InterchangeModePatch:
 		return page.InterchangePatch
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE:
+	case application.InterchangeModeReplace:
 		return page.InterchangeReplace
 	default:
 		return 0
 	}
 }
 
-var _ application.TranslationInterchangeDomains = (*PageInterchangePort)(nil)
+var _ translationpostgres.InterchangeRegistry = (*PageInterchangePort)(nil)

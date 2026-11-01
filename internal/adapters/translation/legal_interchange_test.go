@@ -11,12 +11,12 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type legalInterchangeDomainStub struct {
@@ -27,9 +27,9 @@ type legalInterchangeDomainStub struct {
 	applied  bool
 }
 
-func (s *legalInterchangeDomainStub) LoadTranslationInterchangeAIDocumentWithDB(
+func (s *legalInterchangeDomainStub) LoadTranslationInterchangeAIDocument(
 	context.Context,
-	*gorm.DB,
+	legal.Joined,
 	string,
 	string,
 	string,
@@ -40,9 +40,9 @@ func (s *legalInterchangeDomainStub) LoadTranslationInterchangeAIDocumentWithDB(
 	return s.current, nil
 }
 
-func (s *legalInterchangeDomainStub) ExecuteTranslationInterchangeMutationWithDB(
+func (s *legalInterchangeDomainStub) ExecuteTranslationInterchangeMutation(
 	_ context.Context,
-	_ *gorm.DB,
+	_ legal.Joined,
 	_ string,
 	_ string,
 	_ string,
@@ -97,7 +97,7 @@ func TestLegalInterchangeCreateUsesOnlyTargetLocaleAndCanRecreateAfterDelete(t *
 			Revision: fixture.revision, TargetRevision: &acceptedTarget.state.Revision, Changed: true,
 		},
 	}
-	port := NewLegalInterchange(domain)
+	port := NewLegalInterchange(domain, &audittest.Recorder{})
 	targets := make(map[string]core.UnitResult, len(fixture.plan.Units))
 	handles := make([]string, 0, len(fixture.plan.Units))
 	for _, unit := range fixture.plan.Units {
@@ -111,7 +111,7 @@ func TestLegalInterchangeCreateUsesOnlyTargetLocaleAndCanRecreateAfterDelete(t *
 		application.TranslationInterchangeApply{
 			EntityType: fixture.entityType, EntityID: fixture.entityID,
 			SourceLocale: "en", TargetLocale: "ko",
-			Mode:   managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+			Mode:   application.InterchangeModeReplace,
 			Source: fixture.source, Plan: fixture.plan, Targets: targets, UnitHandles: handles,
 			Now: time.Now().UTC(),
 		},
@@ -179,7 +179,7 @@ func TestLegalInterchangeReplaceDeletesOmittedCurrentTargetWhilePatchDoesNot(t *
 	command := application.TranslationInterchangeApply{
 		EntityType: fixture.entityType, EntityID: fixture.entityID,
 		SourceLocale: "en", TargetLocale: "ko",
-		Mode:   managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		Mode:   application.InterchangeModeReplace,
 		Source: fixture.source, Plan: fixture.plan, Targets: targets, UnitHandles: handles,
 	}
 
@@ -189,7 +189,7 @@ func TestLegalInterchangeReplaceDeletesOmittedCurrentTargetWhilePatchDoesNot(t *
 	require.NotNil(t, replacement.Content)
 	require.Equal(t, []uuid.UUID{uuid.MustParse(omittedBlockID)}, replacement.Content.LocaleGroups[0].Deletes)
 
-	command.Mode = managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH
+	command.Mode = application.InterchangeModePatch
 	patch, err := buildLegalInterchangeMutation(command, current)
 	require.NoError(t, err)
 	require.False(t, patch.AuthoritativeTargetReplacement)
@@ -202,7 +202,7 @@ func TestLegalInterchangeRejectsStaleTargetRevisionInsideCompiler(t *testing.T) 
 	fixture := newLegalInterchangeFixture(t, "privacy")
 	empty := ""
 	domain := &legalInterchangeDomainStub{current: fixture.raw(true, true, &empty)}
-	port := NewLegalInterchange(domain)
+	port := NewLegalInterchange(domain, &audittest.Recorder{})
 	title := "changed"
 	stale := "tr1_stale"
 	_, err := port.ApplyTranslationInterchange(
@@ -212,7 +212,7 @@ func TestLegalInterchangeRejectsStaleTargetRevisionInsideCompiler(t *testing.T) 
 		application.TranslationInterchangeApply{
 			EntityType: fixture.entityType, EntityID: fixture.entityID,
 			SourceLocale: "en", TargetLocale: "ko",
-			Mode:             managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+			Mode:             application.InterchangeModePatch,
 			ExpectedRevision: &stale,
 			Source:           fixture.source, Plan: fixture.plan,
 			Targets: map[string]core.UnitResult{
@@ -231,7 +231,7 @@ func TestLegalInterchangeReplaceRequiresCompleteCurrentManifest(t *testing.T) {
 	command := application.TranslationInterchangeApply{
 		EntityType: fixture.entityType, EntityID: fixture.entityID,
 		SourceLocale: "en", TargetLocale: "ko",
-		Mode:   managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		Mode:   application.InterchangeModeReplace,
 		Source: fixture.source, Plan: fixture.plan,
 		Targets: map[string]core.UnitResult{
 			"entity:title": {UnitID: "entity:title", TranslatedText: "only title"},
@@ -302,9 +302,9 @@ func newLegalInterchangeFixture(t *testing.T, entityType string) legalInterchang
 			LocaleOverlay:           sourceOverlay,
 		},
 	}
-	plan, err := legal.BuildTranslationExtractionPlan(&model.TranslationJob{
+	plan, err := core.BuildRichTextExtractionPlan(&model.TranslationJob{
 		EntityType: entityType, EntityID: entityID, SourceLocale: "en", TargetLocale: "ko",
-	}, source)
+	}, source, core.RichTextDocumentFields{Title: true})
 	require.NoError(t, err)
 	return legalInterchangeFixture{
 		entityType: entityType, entityID: entityID, documentID: uuid.New(),

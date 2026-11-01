@@ -11,7 +11,7 @@ import (
 	seriespostgres "github.com/echovisionlab/geul-api/internal/series/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 )
 
 type postSeriesTranslationInterchangeDomain interface {
@@ -82,15 +82,15 @@ func (a *PostSeriesInterchange) ApplyTranslationInterchange(
 	}, nil
 }
 
-func seriesInterchangeMode(mode managev1.TranslationInterchangeMode) seriesdomain.InterchangeMode {
+func seriesInterchangeMode(mode application.InterchangeMode) seriesdomain.InterchangeMode {
 	switch mode {
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH:
+	case application.InterchangeModePatch:
 		return seriesdomain.InterchangeModePatch
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE:
+	case application.InterchangeModeReplace:
 		return seriesdomain.InterchangeModeReplace
 	default:
 		return seriesdomain.InterchangeModeUnknown
 	}
 }
 
-var _ application.TranslationInterchangeDomains = (*PostSeriesInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*PostSeriesInterchange)(nil)

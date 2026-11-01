@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ses"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -62,31 +61,21 @@ func TestStoredEmailPreservesParagraphsAndHardBreaksThroughLayout(t *testing.T) 
 	body := "<p>First\nafter break<br>Another line</p><p>Second paragraph</p>"
 	layout, err := CanonicalizeLayoutSourceMarkers(`<html><head><title>{{subject}}</title></head><body><section>{{content}}</section><footer>Footer<br>Last line</footer></body></html>`)
 	require.NoError(t, err)
-	db, mock := layoutMigrationDB(t)
-	mock.ExpectQuery(`SELECT \* FROM "email_template"`).WithArgs("template-1", 1).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "layout_id"}).AddRow("template-1", "legacy"))
-	mock.ExpectQuery(`SELECT "source_locale" FROM "email_template"`).WithArgs("template-1", 1).
-		WillReturnRows(sqlmock.NewRows([]string{"source_locale"}).AddRow("en"))
-	mock.ExpectQuery(`SELECT subject, content_html FROM "email_template_translation"`).WithArgs("template-1", "en", 1).
-		WillReturnRows(sqlmock.NewRows([]string{"subject", "content_html"}).AddRow("Subject {{login_code}}", body))
-	expectLayoutRender(mock, layout, "", "en")
+	db := templateRows("Subject {{login_code}}", body, layout)
 	rendered, err := RenderTemplateForLocale(t.Context(), db, DirectTemplateType("template-1"), "en", map[string]string{"login_code": "789012"})
 	require.NoError(t, err)
 	require.Equal(t, "Subject 789012", rendered.Subject)
 	require.Contains(t, rendered.HTML, `<p>First<br>after break<br>Another line</p><p>Second paragraph</p>`)
 	require.Contains(t, rendered.HTML, `<footer>Footer<br>Last line</footer>`)
 	require.Equal(t, "First\nafter break\nAnother line\n\nSecond paragraph\n\nFooter\nLast line", rendered.Text)
-	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestLayoutUnsubscribePlaceholderStillRequiresExplicitBulkData(t *testing.T) {
 	layout, err := CanonicalizeLayoutSourceMarkers(`<main>{{content}}</main><footer><a href="{{unsubscribe_link}}">Unsubscribe</a></footer>`)
 	require.NoError(t, err)
-	db, mock := layoutMigrationDB(t)
-	expectLayoutRender(mock, layout, "", "en")
+	db := templateRows("", "", layout)
 	_, _, err = WrapWithLayoutForLocaleStrict(t.Context(), db, "legacy", "en", "<p>System email</p>", map[string]string{"recipient_email": "reader@example.com"})
 	require.ErrorContains(t, err, "unknown or missing email placeholders: unsubscribe_link")
-	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestCampaignSnapshotPreservesParagraphsAndHardBreaks(t *testing.T) {
@@ -122,18 +111,10 @@ func TestBlockRoomEmailBreaksReachTemplateCampaignAndProvider(t *testing.T) {
 	require.Equal(t, "\na\n\nb\n", materialized.Text)
 	layout, err := CanonicalizeLayoutSourceMarkers(`<html><body>{{content}}</body></html>`)
 	require.NoError(t, err)
-	db, mock := layoutMigrationDB(t)
-	mock.ExpectQuery(`SELECT \* FROM "email_template"`).WithArgs("template-1", 1).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "layout_id"}).AddRow("template-1", "legacy"))
-	mock.ExpectQuery(`SELECT "source_locale" FROM "email_template"`).WithArgs("template-1", 1).
-		WillReturnRows(sqlmock.NewRows([]string{"source_locale"}).AddRow("en"))
-	mock.ExpectQuery(`SELECT subject, content_html FROM "email_template_translation"`).WithArgs("template-1", "en", 1).
-		WillReturnRows(sqlmock.NewRows([]string{"subject", "content_html"}).AddRow("Breaks", materialized.HTML))
-	expectLayoutRender(mock, layout, "", "en")
+	db := templateRows("Breaks", materialized.HTML, layout)
 	template, err := RenderTemplateForLocale(t.Context(), db, DirectTemplateType("template-1"), "en", map[string]string{})
 	require.NoError(t, err)
 	require.Equal(t, "\na\n\nb\n", template.Text)
-	require.NoError(t, mock.ExpectationsWereMet())
 	campaign, err := RenderCampaignSnapshotForLocale(model.JSONFields{
 		"source_locale": "en", "subject": "Breaks", "content_html": materialized.HTML, "layout_source_locale": "en",
 		"layout_translations": []structured.Fields{{"locale": "en", "html_content": layout}},

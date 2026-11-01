@@ -10,6 +10,9 @@ import (
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
+	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
+	legalpublic "github.com/echovisionlab/geul-api/internal/legal/public"
+	legalpublicpostgres "github.com/echovisionlab/geul-api/internal/legal/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
@@ -55,10 +58,6 @@ func (r *Runtime) RequestSaved(
 
 func (*Runtime) RouteID(kind string) string { return RouteID(kind) }
 
-func (r *Runtime) ReleaseAssets(ctx context.Context, db *gorm.DB, kind, documentID string) error {
-	return ReleaseAssets(ctx, db, r.cdnDomain, kind, documentID)
-}
-
 func (r *Runtime) CancelAndRelease(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -75,18 +74,18 @@ func (*Runtime) LocalizedOGDisposition(
 	ctx context.Context,
 	db *gorm.DB,
 	kind, routeID, locale string,
-) (legaldomain.OGDisposition, error) {
+) (legalpublic.OGDisposition, error) {
 	disposition, err := ogpostgres.ResolveExactLocalizedGeneration(ctx, db, kind, routeID, locale)
 	if err != nil {
-		return legaldomain.OGUnavailable, err
+		return legalpublic.OGUnavailable, err
 	}
 	switch disposition {
 	case og.LocalizedGenerationPending:
-		return legaldomain.OGPending, nil
+		return legalpublic.OGPending, nil
 	case og.LocalizedGenerationReady:
-		return legaldomain.OGReady, nil
+		return legalpublic.OGReady, nil
 	default:
-		return legaldomain.OGUnavailable, nil
+		return legalpublic.OGUnavailable, nil
 	}
 }
 
@@ -106,15 +105,34 @@ func (r *Runtime) ReadyLocalizedOGAsset(
 	return ref, err
 }
 
+// PrepareAutomaticPreviewShareLink materializes the preview link of a
+// sealed update notice in Campaign's dispatch transaction.
 func (*Runtime) PrepareAutomaticPreviewShareLink(
 	ctx context.Context,
 	tx *gorm.DB,
 	run model.CampaignDeliveryRun,
 	now time.Time,
 ) error {
-	return legaldomain.PrepareAutomaticNoticePreviewShareLink(ctx, tx, sharelinkadapter.LegalPreviewLinks{}, run, now)
+	links := legalpostgres.Bind(tx, legalpostgres.Ports{PreviewLinks: sharelinkadapter.LegalPreviewLinks{}}, nil)
+	return legaldomain.PrepareAutomaticNoticePreviewShareLink(ctx, links.Store, legalpostgres.NoticeRun(run), now)
 }
 
-var _ legaldomain.OG = (*Runtime)(nil)
-var _ legaldomain.PublicMedia = (*Runtime)(nil)
+// OGAssets releases, on db, the OG images of a deleted version.
+type OGAssets struct {
+	db        *gorm.DB
+	cdnDomain string
+}
+
+// NewOGAssets returns the OG image release of deleted versions over db.
+func NewOGAssets(db *gorm.DB, cdnDomain string) OGAssets {
+	return OGAssets{db: db, cdnDomain: cdnDomain}
+}
+
+func (a OGAssets) ReleaseOGAssets(ctx context.Context, kind legaldomain.PolicyKind, id string) error {
+	return ReleaseAssets(ctx, a.db, a.cdnDomain, string(kind), id)
+}
+
+var _ legalpostgres.Routes = (*Runtime)(nil)
+var _ legalpublicpostgres.Media = (*Runtime)(nil)
 var _ campaign.LegalNoticeDeliveryPort = (*Runtime)(nil)
+var _ legaldomain.OGAssets = OGAssets{}

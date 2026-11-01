@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -69,15 +69,15 @@ func renameLockedFile(tx *gorm.DB, fileID, name string) (bool, error) {
 	var file model.File
 	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id", "file_name", "extension", "delete_requested_at").Where("id = ?", fileID).First(&file).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, errs.NotFound("file", fileID)
+			return false, domainerr.ResourceNotFound("file", fileID)
 		}
 		return false, err
 	}
 	if file.DeleteRequestedAt != nil {
-		return false, errs.FailedPrecondition("file is pending deletion")
+		return false, domainerr.Precondition("file is pending deletion")
 	}
 	if strings.EqualFold(mediaauth.FilenameExtension(name), file.Extension) {
-		return false, errs.InvalidArgument("file_name", "must not include the file extension")
+		return false, domainerr.InvalidField("file_name", "must not include the file extension")
 	}
 	if file.FileName == name {
 		return false, nil
@@ -146,13 +146,13 @@ func moveLockedFiles(tx *gorm.DB, fileIDs []string, folderID *string) ([]fileMov
 		return nil, err
 	}
 	if len(files) != len(fileIDs) {
-		return nil, errs.FailedPrecondition("one or more files no longer exist")
+		return nil, domainerr.Precondition("one or more files no longer exist")
 	}
 	nextParentID := pointerValue(folderID)
 	moves := make([]fileMove, 0, len(files))
 	for _, file := range files {
 		if file.DeleteRequestedAt != nil {
-			return nil, errs.FailedPrecondition("file is pending deletion")
+			return nil, domainerr.Precondition("file is pending deletion")
 		}
 		previousParentID := pointerValue(file.FolderID)
 		if previousParentID == nextParentID {
@@ -172,10 +172,10 @@ func (s *Service) loadFileManagerFilesByIDs(ctx context.Context, fileIDs []strin
 	}
 	var rows []fileManagerCatalogRow
 	if err := s.db.WithContext(ctx).Raw(`SELECT 'file' AS item_type, id, folder_id AS parent_id, file_name AS name, extension, mime_type, file_size, duration_seconds, uploaded_by_member_id AS member_id, created_at, updated_at, 1 AS total FROM file WHERE id IN ? AND delete_requested_at IS NULL ORDER BY id`, fileIDs).Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if len(rows) != len(fileIDs) {
-		return nil, errs.FailedPrecondition("one or more files no longer exist")
+		return nil, domainerr.Precondition("one or more files no longer exist")
 	}
 	memberIDs := make([]string, 0, len(rows))
 	for _, row := range rows {
@@ -186,18 +186,18 @@ func (s *Service) loadFileManagerFilesByIDs(ctx context.Context, fileIDs []strin
 	memberSummaries := s.memberSummaries
 	members, err := memberSummaries.Load(ctx, sliceutil.SortedUniqueTrimmed(memberIDs))
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	usageCounts, err := loadFileUsageCounts(ctx, s.db, fileIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	byID, _, changed, err := s.finalizeFileManagerDeliveries(ctx, rows, members, usageCounts, nil)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if changed {
-		return nil, errs.FailedPrecondition("one or more files changed before delivery")
+		return nil, domainerr.Precondition("one or more files changed before delivery")
 	}
 	result := make([]*managev1.FileManagerFile, 0, len(fileIDs))
 	for _, fileID := range fileIDs {
@@ -250,10 +250,10 @@ func impactsForFiles(fileIDs []string, rows []fileUsageRow) []*managev1.FileDele
 func (s *Service) validateFileManagerFileIDs(ctx context.Context, fileIDs []string) error {
 	var count int64
 	if err := s.db.WithContext(ctx).Table("file").Where("id IN ?", fileIDs).Count(&count).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if count != int64(len(fileIDs)) {
-		return errs.FailedPrecondition("one or more files no longer exist")
+		return domainerr.Precondition("one or more files no longer exist")
 	}
 	return nil
 }

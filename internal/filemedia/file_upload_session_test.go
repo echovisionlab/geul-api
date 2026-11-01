@@ -1,5 +1,3 @@
-//go:build integration
-
 package filemedia
 
 import (
@@ -9,17 +7,18 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 func TestDeleteCompletedUploadSessionFailurePreservesRetry(t *testing.T) {
@@ -109,7 +108,7 @@ func TestAbortMultipartUploadReturnsErrorWhenSessionDeleteFails(t *testing.T) {
 	response, err := NewConnectHandler(service).AbortMultipartUpload(ctx, request)
 	require.Error(t, err)
 	require.Nil(t, response)
-	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInternal, errs.CodeOf(err))
 	require.Equal(t, session.UploadID, <-abortRequests)
 	var count int64
 	require.NoError(t, db.Model(&model.UploadSession{}).Where("upload_id = ?", session.UploadID).Count(&count).Error)
@@ -127,7 +126,7 @@ func TestAbortMultipartUploadRejectsFinalizingSessionBeforeStorageMutation(t *te
 	response, err := NewConnectHandler(service).AbortMultipartUpload(ctx, request)
 	require.Error(t, err)
 	require.Nil(t, response)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	select {
 	case uploadID := <-abortRequests:
 		t.Fatalf("storage abort called for finalizing session %s", uploadID)
@@ -192,8 +191,7 @@ func newAbortMultipartUploadRPCFixture(
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`).Error)
-	stack := testutil.SetupOryStack(t)
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
+	admin := newUnitUser()
 	userID := admin.MemberID
 	session := model.UploadSession{
 		UploadID:       "upload-abort-rpc",
@@ -224,7 +222,7 @@ func newAbortMultipartUploadRPCFixture(
 		MediaDomain:    "",
 		MediaSecret:    "",
 		Transcoder:     &recordingFileTranscoderPublisher{},
-		SpiceDB:        stack.SpiceDBClient,
+		SpiceDB:        authztest.AllowAll().Client(t),
 	})
 	ctx := auditedUserContext(context.Background(), admin.AuthUserInfo())
 	request := connect.NewRequest(&managev1.AbortMultipartUploadRequest{UploadId: session.UploadID, FileId: session.FileID})

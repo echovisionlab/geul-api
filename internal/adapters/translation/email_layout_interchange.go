@@ -10,23 +10,24 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	emaildomain "github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // EmailLayoutInterchange adapts stable Layout unit handles to XLIFF while the
 // owning domain retains source wrapper, sparse target and lifecycle authority.
 type EmailLayoutInterchange struct {
-	references   emaildomain.CampaignDeliveryReferences
+	references   emailauthoringpostgres.DeliveryReferences
 	audit        domainaudit.Appender
 	auditBuilder LocaleContentAuditBuilder
 }
 
 func NewEmailLayoutInterchange(
-	references emaildomain.CampaignDeliveryReferences,
+	references emailauthoringpostgres.DeliveryReferences,
 	audit domainaudit.Appender,
 	auditBuilder LocaleContentAuditBuilder,
 ) *EmailLayoutInterchange {
@@ -38,7 +39,7 @@ func NewEmailLayoutInterchange(
 	}
 }
 
-func (*EmailLayoutInterchange) LoadTranslationInterchangeTarget(
+func (a *EmailLayoutInterchange) LoadTranslationInterchangeTarget(
 	ctx context.Context,
 	db *gorm.DB,
 	_ *contentblock.Store,
@@ -50,7 +51,7 @@ func (*EmailLayoutInterchange) LoadTranslationInterchangeTarget(
 	if err := validateEmailLayoutInterchangeIdentity(db, entityType, entityID, locale, plan); err != nil {
 		return application.TranslationInterchangeTargetState{}, err
 	}
-	target, err := emaildomain.LoadEmailLayoutTranslationInterchangeTarget(ctx, db, entityID, locale)
+	target, err := emaildomain.LoadEmailLayoutTranslationInterchangeTarget(ctx, emailAuthoringStore(db, nil, a.references), entityID, locale)
 	if err != nil {
 		return application.TranslationInterchangeTargetState{}, err
 	}
@@ -66,8 +67,9 @@ func (a *EmailLayoutInterchange) ApplyTranslationInterchange(
 	if err := validateEmailLayoutInterchangeApply(db, command); err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
+	store := emailAuthoringStore(db, nil, a.references)
 	current, err := emaildomain.LoadEmailLayoutTranslationInterchangeTarget(
-		ctx, db, command.EntityID, command.TargetLocale,
+		ctx, store, command.EntityID, command.TargetLocale,
 	)
 	if err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
@@ -93,8 +95,7 @@ func (a *EmailLayoutInterchange) ApplyTranslationInterchange(
 	}
 	after, changed, err := emaildomain.ApplyEmailLayoutTranslationInterchange(
 		ctx,
-		db,
-		a.references,
+		store,
 		command.EntityID,
 		command.SourceLocale,
 		emaildomain.EmailLayoutTranslationInterchangeMutation{
@@ -149,8 +150,8 @@ func validateEmailLayoutInterchangeApply(
 		command.Plan.SourceLocale != command.SourceLocale || command.Plan.TargetLocale != command.TargetLocale {
 		return errs.InvalidArgument("target", "Email Layout translation interchange source does not match the extraction plan")
 	}
-	if command.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH &&
-		command.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
+	if command.Mode != application.InterchangeModePatch &&
+		command.Mode != application.InterchangeModeReplace {
 		return errs.InvalidArgument("mode", "PATCH or REPLACE is required")
 	}
 	return nil
@@ -177,4 +178,4 @@ func projectEmailLayoutInterchangeTargets(
 	}
 }
 
-var _ application.TranslationInterchangeDomains = (*EmailLayoutInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*EmailLayoutInterchange)(nil)

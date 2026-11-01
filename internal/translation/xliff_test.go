@@ -308,3 +308,27 @@ func TestValidateXLIFFRejectsTargetTextOutsideSourceTextBearingRun(t *testing.T)
 }
 
 func xliffTestStringPtr(value string) *string { return &value }
+
+func TestUnmarshalXLIFFInterchangeReadsTheFileAnExportWrites(t *testing.T) {
+	title := "Night walks"
+	before := "Previous paragraph"
+	target := "밤 산책"
+	document := &XLIFFDocument{
+		Version: XLIFFVersion, SourceLocale: "en", TargetLocale: "ko",
+		File: XLIFFFile{ID: "series:00000000-0000-0000-0000-000000000001", Groups: []XLIFFGroup{{
+			ID: "meta", ContextTitle: &title, ContextBefore: &before,
+			TranslationUnit: []XLIFFUnit{{ID: "entity:title", Name: "title", Source: "Night walks", Target: &target}},
+		}}},
+	}
+	body, err := MarshalXLIFF(document)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `<note id="n1" category="context-title">`)
+	require.Contains(t, string(body), `canResegment="no"`)
+
+	imported, err := UnmarshalXLIFFInterchange(body)
+
+	require.NoError(t, err)
+	require.Equal(t, title, *imported.File.Groups[0].ContextTitle)
+	require.Equal(t, before, *imported.File.Groups[0].ContextBefore)
+	require.Equal(t, target, *imported.File.Groups[0].TranslationUnit[0].Target)
+}

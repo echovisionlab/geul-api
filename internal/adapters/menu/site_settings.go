@@ -13,7 +13,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	menupostgres "github.com/echovisionlab/geul-api/internal/menu/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/sitesettings"
+	sitesettingspostgres "github.com/echovisionlab/geul-api/internal/sitesettings/postgres"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -61,5 +61,5 @@ func (a SiteSettingsReferences) ClearMenuReferences(
 	if err := tx.WithContext(ctx).Model(&model.SiteSettings{}).Where("id = ?", 1).Updates(updates).Error; err != nil {
 		return errs.Internal(err)
 	}
-	return sitesettings.AppendAudit(ctx, tx, a.auditWriter, changed)
+	return sitesettingspostgres.AppendAudit(ctx, tx, a.auditWriter, changed)
 }

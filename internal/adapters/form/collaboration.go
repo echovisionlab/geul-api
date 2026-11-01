@@ -7,7 +7,7 @@ import (
 
 	collaborationadapter "github.com/echovisionlab/geul-api/internal/adapters/collaboration"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	formdomain "github.com/echovisionlab/geul-api/internal/form"
+	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
 
@@ -27,4 +27,4 @@ func (c *Collaboration) RequireCurrentContributor(ctx context.Context, tx *gorm.
 	)
 }
 
-var _ formdomain.Collaboration = (*Collaboration)(nil)
+var _ formpostgres.Collaboration = (*Collaboration)(nil)

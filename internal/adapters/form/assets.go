@@ -7,6 +7,8 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
+	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
+	formpublicpostgres "github.com/echovisionlab/geul-api/internal/form/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
@@ -98,5 +100,7 @@ func (a *Assets) ResolvedOG(
 	return formogadapter.ReadyAsset(ctx, db, a.cdnDomain, localizedID, sourceID)
 }
 
-var _ formdomain.Assets = (*Assets)(nil)
-var _ formdomain.PublicAssets = (*Assets)(nil)
+var (
+	_ formpostgres.Assets       = (*Assets)(nil)
+	_ formpublicpostgres.Assets = (*Assets)(nil)
+)

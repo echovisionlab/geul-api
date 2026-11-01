@@ -1,29 +1,15 @@
 package legal
 
 import (
-	"context"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
-
-type legalTranslationInterchangeAuditCapture struct {
-	record sharedtelemetry.AuditRecord
-}
-
-func (capture *legalTranslationInterchangeAuditCapture) AppendDomainAuditInTransaction(
-	_ context.Context,
-	_ *gorm.DB,
-	record sharedtelemetry.AuditRecord,
-) error {
-	capture.record = record
-	return nil
-}
 
 func TestLegalTranslationInterchangeAuditIsExactMemberLocaleContent(t *testing.T) {
 	memberID := uuid.NewString()
@@ -51,27 +37,29 @@ func TestLegalTranslationInterchangeAuditIsExactMemberLocaleContent(t *testing.T
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			capture := &legalTranslationInterchangeAuditCapture{}
+			recorder := &audittest.Recorder{}
 			change := legalLocaleContentChange{
 				kind: testCase.entityType, policyID: policyID, version: 7, locale: "ko",
 				operation: testCase.operation, memberID: memberID,
 			}
 			require.NoError(t, domainaudit.AppendMember(
-				t.Context(), nil, capture, change.memberID, sharedtelemetry.AuditLegalPolicyUpdated, change.record,
+				t.Context(), nil, recorder, change.memberID, sharedtelemetry.AuditLegalPolicyUpdated, change.record,
 			))
-			require.NoError(t, capture.record.Validate())
-			require.Equal(t, sharedtelemetry.AuditLegalPolicyUpdated, capture.record.Action)
-			require.Equal(t, "legal_policy", capture.record.TargetType)
-			require.Equal(t, policyID, capture.record.TargetID)
-			require.Equal(t, memberID, capture.record.MemberID)
-			require.Equal(t, sharedtelemetry.ActorKindMember, capture.record.Kind)
-			require.Equal(t, []string{"locale_content"}, capture.record.ChangedFields)
-			require.Equal(t, "ko", capture.record.Locale)
-			require.Equal(t, testCase.operation, capture.record.ItemOperation)
-			require.Equal(t, testCase.policyType, capture.record.PolicyType)
-			require.NotNil(t, capture.record.VersionNumber)
-			require.EqualValues(t, 7, *capture.record.VersionNumber)
-			require.Empty(t, capture.record.ContributorMemberIDs)
+			require.Len(t, recorder.Records(), 1)
+			record := recorder.Records()[0]
+			require.NoError(t, record.Validate())
+			require.Equal(t, sharedtelemetry.AuditLegalPolicyUpdated, record.Action)
+			require.Equal(t, "legal_policy", record.TargetType)
+			require.Equal(t, policyID, record.TargetID)
+			require.Equal(t, memberID, record.MemberID)
+			require.Equal(t, sharedtelemetry.ActorKindMember, record.Kind)
+			require.Equal(t, []string{"locale_content"}, record.ChangedFields)
+			require.Equal(t, "ko", record.Locale)
+			require.Equal(t, testCase.operation, record.ItemOperation)
+			require.Equal(t, testCase.policyType, record.PolicyType)
+			require.NotNil(t, record.VersionNumber)
+			require.EqualValues(t, 7, *record.VersionNumber)
+			require.Empty(t, record.ContributorMemberIDs)
 		})
 	}
 }

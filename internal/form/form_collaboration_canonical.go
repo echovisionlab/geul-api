@@ -10,7 +10,7 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func formCanonicalDocumentFromMeta(meta *intrav1.FormMeta) (*string, []byte, error) {
+func formCanonicalDocumentFromMeta(meta *DocumentMeta) (*string, []byte, error) {
 	if meta == nil || meta.Schema == nil {
 		return nil, nil, fmt.Errorf("canonical Form schema is required")
 	}
@@ -124,15 +124,15 @@ func formAIDocumentEmptyTargetSchema(source []byte) ([]byte, error) {
 	return stripped, nil
 }
 
-func formMetaFromCanonicalRow(row formAIDocumentLocaleRow) (*intrav1.FormMeta, error) {
+func formMetaFromCanonicalRow(row Locale) (DocumentMeta, error) {
 	if len(row.Schema) == 0 {
-		return nil, fmt.Errorf("canonical Form locale schema is missing")
+		return DocumentMeta{}, fmt.Errorf("canonical Form locale schema is missing")
 	}
 	if err := validateCanonicalFormSchema(row.Schema); err != nil {
-		return nil, err
+		return DocumentMeta{}, err
 	}
 	schema := string(row.Schema)
-	return &intrav1.FormMeta{Title: row.Title, Schema: &schema}, nil
+	return DocumentMeta{Title: row.Title, Schema: &schema}, nil
 }
 
 func formCanonicalContentText(schema []byte) *string {

@@ -10,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 )
 
 type interchangeRegistryPort struct {
@@ -106,12 +107,12 @@ func TestInterchangeRegistryRejectsMismatchedPlanBeforeDomainCall(t *testing.T) 
 
 func completeInterchangeRegistrations(
 	replace core.Kind,
-	port application.TranslationInterchangeDomains,
+	port translationpostgres.InterchangeRegistry,
 ) []InterchangeDomainRegistration {
 	definitions := core.Definitions()
 	registrations := make([]InterchangeDomainRegistration, 0, len(definitions))
 	for _, definition := range definitions {
-		selected := application.TranslationInterchangeDomains(&interchangeRegistryPort{})
+		selected := translationpostgres.InterchangeRegistry(&interchangeRegistryPort{})
 		if definition.Kind == replace && port != nil {
 			selected = port
 		}

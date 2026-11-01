@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -362,7 +364,7 @@ func TestFileServiceAuthorizeDownloadValidatesEntityAndFileIDsUnit(t *testing.T)
 		t.Run(name, func(t *testing.T) {
 			_, err := NewConnectHandler(svc).AuthorizeDownload(context.Background(), connect.NewRequest(testCase.request))
 			require.Error(t, err)
-			assert.Equal(t, testCase.code, connect.CodeOf(err))
+			assert.Equal(t, testCase.code, errs.CodeOf(err))
 		})
 	}
 }

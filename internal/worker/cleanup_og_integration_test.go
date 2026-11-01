@@ -21,6 +21,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -92,7 +93,7 @@ func TestUnboundOgCleanupUsesProductionPointerSchemaIntegration(t *testing.T) {
 		seriesID, referenced.ID,
 	).Error)
 
-	require.NoError(t, ogCleanupForIntegration(&Handlers{db: db}).MarkUnboundReadyAssets(t.Context(), cutoff, now))
+	require.NoError(t, ogCleanupForIntegration(&cleanupFixture{db: db}).MarkUnboundReadyAssets(t.Context(), cutoff, now))
 	assertCleanupAssetStatus(t, db, unbound.ID, model.PublicAssetStatusDeletePending)
 	assertCleanupAssetStatus(t, db, bound.ID, model.PublicAssetStatusReady)
 	assertCleanupAssetStatus(t, db, referenced.ID, model.PublicAssetStatusReady)
@@ -118,7 +119,7 @@ func TestExpiredUnreadyCleanupSkipsOgGenerationAssetsBeforeS3DeleteIntegration(t
 		deleteRequests++
 		http.Error(w, "OG generation object must not enter generic unready cleanup", http.StatusInternalServerError)
 	}))
-	handlers := &Handlers{
+	handlers := &cleanupFixture{
 		db: db, s3Client: s3Client, config: &config.Config{S3Bucket: "media"},
 	}
 	require.NoError(t, publicAssetCleanupForIntegration(handlers).DeleteExpiredUnready(t.Context(), now.Add(-unreadyAssetRetention)))
@@ -139,7 +140,7 @@ func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testin
 		require.Equal(t, http.MethodDelete, r.Method)
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	handlers := &Handlers{db: pg.DB, s3Client: s3Client, config: &config.Config{S3Bucket: "media"}}
+	handlers := &cleanupFixture{db: pg.DB, s3Client: s3Client, config: &config.Config{S3Bucket: "media"}}
 
 	allocateExpired := func(t *testing.T) model.PublicAsset {
 		t.Helper()
@@ -171,7 +172,7 @@ func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testin
 			<-release
 			w.WriteHeader(http.StatusNoContent)
 		}))
-		cleanupHandlers := &Handlers{
+		cleanupHandlers := &cleanupFixture{
 			db: pg.DB, s3Client: blockingS3Client, config: &config.Config{S3Bucket: "media"},
 		}
 		cleanupDone := make(chan error, 1)
@@ -193,7 +194,7 @@ func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testin
 			t.Fatalf("completion did not wait for cleanup lock: %v", completeErr)
 		case <-time.After(100 * time.Millisecond):
 		}
-		requireLockWaiters(t, pg.DB, 1)
+		testutil.RequireLockWaiters(t, pg.DB, 1)
 		close(release)
 		require.NoError(t, <-cleanupDone)
 		require.Error(t, <-completeDone)
@@ -221,7 +222,7 @@ func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testin
 			t.Fatalf("cleanup did not wait for completion transaction: %v", cleanupErr)
 		case <-time.After(100 * time.Millisecond):
 		}
-		requireLockWaiters(t, pg.DB, 1)
+		testutil.RequireLockWaiters(t, pg.DB, 1)
 		require.NoError(t, tx.Commit().Error)
 		require.NoError(t, <-cleanupDone)
 		assertCleanupAssetStatus(t, pg.DB, asset.ID, model.PublicAssetStatusReady)
@@ -286,12 +287,12 @@ func TestTerminalOgGenerationCleanupRecoversPutAfterCompletionOutageIntegration(
 	require.NoError(t, lifecycle.Fail(ctx, failed.GenerationIDs[0], claim.LeaseToken, og.FailureCodeProcessingFailed))
 
 	terminalIDs := []string{superseded.GenerationIDs[0], cancelled.GenerationIDs[0], failed.GenerationIDs[0]}
-	require.NoError(t, ogCleanupForIntegration(&Handlers{db: db}).MarkExpiredTerminalGenerationAssets(ctx, now.Add(-unreadyAssetRetention), now))
+	require.NoError(t, ogCleanupForIntegration(&cleanupFixture{db: db}).MarkExpiredTerminalGenerationAssets(ctx, now.Add(-unreadyAssetRetention), now))
 	for _, assetID := range terminalIDs {
 		assertCleanupAssetStatus(t, db, assetID, model.PublicAssetStatusDeletePending)
 	}
 
-	handlers := &Handlers{db: db, config: cfg, s3Client: s3Client, httpClient: cloudflare.Client()}
+	handlers := &cleanupFixture{db: db, config: cfg, s3Client: s3Client, httpClient: cloudflare.Client()}
 	require.NoError(t, publicAssetCleanupForIntegration(handlers).DeletePending(ctx, now))
 	for _, assetID := range terminalIDs {
 		assertCleanupAssetStatus(t, db, assetID, model.PublicAssetStatusDeleted)
@@ -360,7 +361,7 @@ func TestTerminalOgGenerationCleanupProtectsActiveBoundAndPointedAssetsIntegrati
 		pointedWork.ID, pointed.GenerationIDs[0],
 	).Error)
 
-	require.NoError(t, ogCleanupForIntegration(&Handlers{db: db}).MarkExpiredTerminalGenerationAssets(t.Context(), now.Add(-unreadyAssetRetention), now))
+	require.NoError(t, ogCleanupForIntegration(&cleanupFixture{db: db}).MarkExpiredTerminalGenerationAssets(t.Context(), now.Add(-unreadyAssetRetention), now))
 	for _, assetID := range []string{bound.GenerationIDs[0], pointed.GenerationIDs[0]} {
 		assertCleanupAssetStatus(t, db, assetID, model.PublicAssetStatusAllocated)
 	}
@@ -415,19 +416,4 @@ func assertCleanupAssetStatus(t *testing.T, db *gorm.DB, assetID, status string)
 	var asset model.PublicAsset
 	require.NoError(t, db.First(&asset, "id = ?", assetID).Error)
 	require.Equal(t, status, asset.Status)
-}
-
-// requireLockWaiters waits until want sessions of the test's own database are
-// blocked on a lock, so concurrent operations queue in a known order.
-func requireLockWaiters(t *testing.T, db *gorm.DB, want int) {
-	t.Helper()
-	require.Eventually(t, func() bool {
-		var waiting int
-		err := db.Raw(`
-			SELECT count(*)
-			FROM pg_stat_activity
-			WHERE datname = current_database()
-			  AND wait_event_type = 'Lock'`).Scan(&waiting).Error
-		return err == nil && waiting >= want
-	}, 10*time.Second, 10*time.Millisecond)
 }

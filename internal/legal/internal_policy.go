@@ -1,20 +1,11 @@
 package legal
 
 import (
-	"errors"
-	"slices"
-	"strings"
-
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -22,40 +13,24 @@ import (
 // Terms and Privacy documents. Every field is required; NewInternalService
 // rejects a missing one.
 type InternalDeps struct {
-	DB            *gorm.DB
-	ContentBlocks *contentblock.Store
-	SpiceDB       *auth.SpiceDBClient
-	Checkpoints   persistencecheckpoint.ContributorFence
-	OG            OG
-	Audit         domainaudit.Appender
+	Units   mutation.UnitOfWork[Store] // legalpostgres.NewUnits
+	SpiceDB mutation.Authorizer
+	Fence   identitystate.Fence
+	Audit   domainaudit.Appender
 }
 
 func (d InternalDeps) validate() error {
-	var missing []string
-	for name, absent := range map[string]bool{
-		"DB": d.DB == nil, "ContentBlocks": d.ContentBlocks == nil, "SpiceDB": d.SpiceDB == nil,
-		"Checkpoints": d.Checkpoints == nil, "OG": d.OG == nil, "Audit": d.Audit == nil,
-	} {
-		if absent {
-			missing = append(missing, name)
-		}
-	}
-	if len(missing) != 0 {
-		slices.Sort(missing)
-		return errors.New("internal legal dependencies are required: " + strings.Join(missing, ", "))
-	}
-	return nil
+	return requireDeps("internal legal dependencies are required: ", map[string]bool{
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
+	})
 }
 
 // InternalService holds the collaboration use cases of Terms and Privacy
 // documents. Each takes the PolicyKind it acts on.
 type InternalService struct {
-	db            *gorm.DB
-	contentBlocks *contentblock.Store
-	spiceDB       *auth.SpiceDBClient
-	checkpoints   persistencecheckpoint.ContributorFence
-	legalOG       OG
-	mutations     *mutation.Runner
+	units     mutation.UnitOfWork[Store]
+	spiceDB   mutation.Authorizer
+	mutations *mutation.StoreRunner[Store]
 }
 
 // NewInternalService validates deps and returns the collaboration use cases.
@@ -63,22 +38,20 @@ func NewInternalService(deps InternalDeps) (*InternalService, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
-	return &InternalService{
-		db: deps.DB, contentBlocks: deps.ContentBlocks, spiceDB: deps.SpiceDB,
-		checkpoints: deps.Checkpoints, legalOG: deps.OG, mutations: mutations,
-	}, nil
+	return &InternalService{units: deps.Units, spiceDB: deps.SpiceDB, mutations: mutations}, nil
 }
 
 // LoadBlockDocumentQuery reads a version's document for a collaboration
 // principal, with the target locale's values when Locale is set.
 type LoadBlockDocumentQuery struct {
-	ID        string
-	Locale    string
-	Principal *intrav1.CollaborationPrincipal
+	ID     string
+	Locale string
+	// SessionID is the collaboration principal's browser session.
+	SessionID string
 }
 
 // ApplyBlockBatchCommand applies a collaboration Block batch to a version.

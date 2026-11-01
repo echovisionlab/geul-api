@@ -16,8 +16,8 @@ import (
 	"gorm.io/gorm/clause"
 
 	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -29,308 +29,112 @@ func TestEmailLayoutDeleteAndCampaignAssignmentDoNotDeadlockIntegration(
 	t *testing.T,
 ) {
 	t.Parallel()
-	for _, deleteFirst := range []bool{false, true} {
-		name := "assignment_first"
-		if deleteFirst {
-			name = "delete_first"
-		}
-		t.Run(name, func(t *testing.T) {
-			db := newCampaignConcurrentIntegrationDB(t)
-			ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
-			contentBlocks := testutil.NewEmailContentBlockStore(t, spiceDB)
-			references := emailauthoringadapter.NewCampaignDeliveryReferences()
-			campaignID := ""
-			layoutID := ""
-			t.Cleanup(func() {
-				cleanupConcurrentCampaignSnapshotFixture(
-					t,
-					db,
-					ctx,
-					spiceDB,
-					"",
-					campaignID,
-					layoutID,
-				)
-			})
-			layout, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).CreateEmailLayout(
-				ctx,
-				connect.NewRequest(&managev1.CreateEmailLayoutRequest{
-					Name: "Delete race layout " + uuid.NewString(),
-					Key: "delete_race_layout_" +
-						strings.ReplaceAll(uuid.NewString(), "-", "_"),
-					HtmlContent:  "<html><body>{{content}}</body></html>",
-					SourceLocale: "en",
-				}),
-			)
-			require.NoError(t, err)
-			layoutID = layout.Msg.Id
-			campaign, err := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, nil), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, ContentBlocks: contentBlocks, EmailAuthoring: campaignEmailAuthoringConcurrencyFixture{}})).CreateCampaign(
-				ctx,
-				connect.NewRequest(&managev1.CreateCampaignRequest{
-					Name:         "Delete race campaign " + uuid.NewString(),
-					Subject:      "Delete race",
-					SourceLocale: "en",
-					Target:       campaignAllTarget(),
-				}),
-			)
-			require.NoError(t, err)
-			campaignID = campaign.Msg.Campaign.Id
+	db := newCampaignConcurrentIntegrationDB(t)
+	ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
+	contentBlocks := testutil.NewEmailContentBlockStore(t, spiceDB)
+	references := emailauthoringadapter.NewCampaignDeliveryReferences()
+	layout, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: db, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).CreateEmailLayout(
+		ctx,
+		connect.NewRequest(&managev1.CreateEmailLayoutRequest{
+			Name: "Delete race layout " + uuid.NewString(),
+			Key: "delete_race_layout_" +
+				strings.ReplaceAll(uuid.NewString(), "-", "_"),
+			HtmlContent:  "<html><body>{{content}}</body></html>",
+			SourceLocale: "en",
+		}),
+	)
+	require.NoError(t, err)
+	campaign, err := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, nil), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, ContentBlocks: contentBlocks, EmailAuthoring: campaignEmailAuthoringConcurrencyFixture{}})).CreateCampaign(
+		ctx,
+		connect.NewRequest(&managev1.CreateCampaignRequest{
+			Name:         "Delete race campaign " + uuid.NewString(),
+			Subject:      "Delete race",
+			SourceLocale: "en",
+			Target:       campaignAllTarget(),
+		}),
+	)
+	require.NoError(t, err)
 
-			deleteApplication := durableEmailApplicationName(
-				"layout_delete",
-			)
-			assignmentApplication := durableEmailApplicationName(
-				"layout_assign",
-			)
-			deleteDB := newNamedCampaignDeliveryIntegrationDB(
-				t,
-				deleteApplication,
-			)
-			assignmentDB := newNamedCampaignDeliveryIntegrationDB(
-				t,
-				assignmentApplication,
-			)
-			deleteSource := func(
-				operationCtx context.Context,
-				operationDB *gorm.DB,
-			) error {
-				_, deleteErr := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: operationDB, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).DeleteEmailLayout(
-					operationCtx,
-					connect.NewRequest(&managev1.DeleteEmailLayoutRequest{
-						Id: layout.Msg.Id,
-					}),
-				)
-				return deleteErr
-			}
-			assign := func(
-				operationCtx context.Context,
-				operationDB *gorm.DB,
-			) error {
-				targetMode := managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL
-				recipientScope := managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_SUBSCRIBED_USERS
-				_, assignErr := NewConnectHandler(newTestService(t, Deps{DB: operationDB, Runtime: newCampaignRuntimeFixture(nil, nil), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, EmailAuthoring: campaignEmailAuthoringConcurrencyFixture{}})).UpdateCampaignConfiguration(
-					operationCtx,
-					connect.NewRequest(
-						&managev1.UpdateCampaignConfigurationRequest{
-							Id:             campaign.Msg.Campaign.Id,
-							TargetMode:     &targetMode,
-							LayoutId:       &layoutID,
-							RecipientScope: &recipientScope,
-						},
-					),
-				)
-				return assignErr
-			}
-
-			start := make(chan struct{})
-			deleteDone := startDurableEmailOperation(t, ctx, func(operationCtx context.Context) error {
-				<-start
-				return deleteSource(operationCtx, deleteDB)
-			})
-			assignmentDone := startDurableEmailOperation(t, ctx, func(operationCtx context.Context) error {
-				<-start
-				return assign(operationCtx, assignmentDB)
-			})
-			close(start)
-			deleteErr := <-deleteDone
-			assignmentErr := <-assignmentDone
-			deleteWon := deleteErr == nil
-			if deleteWon {
-				require.Equal(t, connect.CodeNotFound, errs.CodeOf(assignmentErr))
-			} else {
-				require.NoError(t, assignmentErr)
-				require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(deleteErr), deleteErr)
-			}
-
-			var storedLayout model.EmailLayout
-			layoutErr := db.First(&storedLayout, "id = ?", layout.Msg.Id).Error
-			var storedCampaign model.Campaign
-			require.NoError(t, db.First(
-				&storedCampaign,
-				"id = ?",
-				campaign.Msg.Campaign.Id,
-			).Error)
-			if deleteWon {
-				require.ErrorIs(t, layoutErr, gorm.ErrRecordNotFound)
-				require.Nil(t, storedCampaign.LayoutID)
-			} else {
-				require.NoError(t, layoutErr)
-				require.Equal(t, layout.Msg.Id, ptrStringValue(storedCampaign.LayoutID))
-			}
-		})
+	deleteApplication := durableEmailApplicationName(
+		"layout_delete",
+	)
+	assignmentApplication := durableEmailApplicationName(
+		"layout_assign",
+	)
+	deleteDB := newNamedCampaignDeliveryIntegrationDB(
+		t,
+		deleteApplication,
+	)
+	assignmentDB := newNamedCampaignDeliveryIntegrationDB(
+		t,
+		assignmentApplication,
+	)
+	deleteSource := func(
+		operationCtx context.Context,
+		operationDB *gorm.DB,
+	) error {
+		_, deleteErr := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: operationDB, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).DeleteEmailLayout(
+			operationCtx,
+			connect.NewRequest(&managev1.DeleteEmailLayoutRequest{
+				Id: layout.Msg.Id,
+			}),
+		)
+		return deleteErr
 	}
-}
+	assign := func(
+		operationCtx context.Context,
+		operationDB *gorm.DB,
+	) error {
+		targetMode := managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL
+		recipientScope := managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_SUBSCRIBED_USERS
+		_, assignErr := NewConnectHandler(newTestService(t, Deps{DB: operationDB, Runtime: newCampaignRuntimeFixture(nil, nil), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, EmailAuthoring: campaignEmailAuthoringConcurrencyFixture{}})).UpdateCampaignConfiguration(
+			operationCtx,
+			connect.NewRequest(
+				&managev1.UpdateCampaignConfigurationRequest{
+					Id:             campaign.Msg.Campaign.Id,
+					TargetMode:     &targetMode,
+					LayoutId:       &layout.Msg.Id,
+					RecipientScope: &recipientScope,
+				},
+			),
+		)
+		return assignErr
+	}
 
-func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(
-	t *testing.T,
-) {
-	t.Parallel()
-	for _, deleteFirst := range []bool{false, true} {
-		name := "assignment_first"
-		if deleteFirst {
-			name = "delete_first"
-		}
-		t.Run(name, func(t *testing.T) {
-			db := newCampaignConcurrentIntegrationDB(t)
-			ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
-			contentBlocks := testutil.NewEmailContentBlockStore(t, spiceDB)
-			references := emailauthoringadapter.NewCampaignDeliveryReferences()
-			layoutID := ""
-			templateID := ""
-			t.Cleanup(func() {
-				templateService := emailauthoring.NewTemplateConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, Runtime: emailauthoringadapter.NewRuntime(), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, ContentBlocks: contentBlocks, References: references}))
-				if templateID != "" {
-					noLayout := ""
-					_, err := templateService.UpdateEmailTemplate(
-						ctx,
-						connect.NewRequest(
-							&managev1.UpdateEmailTemplateRequest{
-								Id:       templateID,
-								LayoutId: &noLayout,
-							},
-						),
-					)
-					if errs.CodeOf(err) != connect.CodeNotFound {
-						require.NoError(t, err)
-					}
-					_, err = templateService.DeleteEmailTemplate(
-						ctx,
-						connect.NewRequest(
-							&managev1.DeleteEmailTemplateRequest{
-								Id: templateID,
-							},
-						),
-					)
-					if errs.CodeOf(err) != connect.CodeNotFound {
-						require.NoError(t, err)
-					}
-				}
-				if layoutID != "" {
-					_, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).DeleteEmailLayout(
-						ctx,
-						connect.NewRequest(
-							&managev1.DeleteEmailLayoutRequest{
-								Id: layoutID,
-							},
-						),
-					)
-					if errs.CodeOf(err) != connect.CodeNotFound {
-						require.NoError(t, err)
-					}
-				}
-			})
+	start := make(chan struct{})
+	deleteDone := startDurableEmailOperation(t, ctx, func(operationCtx context.Context) error {
+		<-start
+		return deleteSource(operationCtx, deleteDB)
+	})
+	assignmentDone := startDurableEmailOperation(t, ctx, func(operationCtx context.Context) error {
+		<-start
+		return assign(operationCtx, assignmentDB)
+	})
+	close(start)
+	deleteErr := <-deleteDone
+	assignmentErr := <-assignmentDone
+	deleteWon := deleteErr == nil
+	if deleteWon {
+		require.Equal(t, connect.CodeNotFound, errs.CodeOf(assignmentErr))
+	} else {
+		require.NoError(t, assignmentErr)
+		require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(deleteErr), deleteErr)
+	}
 
-			layout, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).CreateEmailLayout(
-				ctx,
-				connect.NewRequest(&managev1.CreateEmailLayoutRequest{
-					Name: "Template deleteSource race layout " +
-						uuid.NewString(),
-					Key: "template_delete_race_layout_" +
-						strings.ReplaceAll(uuid.NewString(), "-", "_"),
-					HtmlContent:  "<html><body>{{content}}</body></html>",
-					SourceLocale: "en",
-				}),
-			)
-			require.NoError(t, err)
-			layoutID = layout.Msg.Id
-			template, err := emailauthoring.NewTemplateConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, Runtime: emailauthoringadapter.NewRuntime(), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, ContentBlocks: contentBlocks, References: references})).CreateEmailTemplate(
-				ctx,
-				connect.NewRequest(&managev1.CreateEmailTemplateRequest{
-					Key: "template_delete_race_" +
-						strings.ReplaceAll(uuid.NewString(), "-", "_"),
-					Name:         "Template deleteSource race " + uuid.NewString(),
-					Subject:      "Template deleteSource race",
-					SourceLocale: "en",
-				}),
-			)
-			require.NoError(t, err)
-			templateID = template.Msg.Id
-
-			deleteApplication := durableEmailApplicationName(
-				"template_layout_delete",
-			)
-			assignmentApplication := durableEmailApplicationName(
-				"template_layout_assign",
-			)
-			deleteDB := newNamedCampaignDeliveryIntegrationDB(
-				t,
-				deleteApplication,
-			)
-			assignmentDB := newNamedCampaignDeliveryIntegrationDB(
-				t,
-				assignmentApplication,
-			)
-			deleteSource := func(
-				operationCtx context.Context,
-				operationDB *gorm.DB,
-			) error {
-				_, deleteErr := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: operationDB, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).DeleteEmailLayout(
-					operationCtx,
-					connect.NewRequest(
-						&managev1.DeleteEmailLayoutRequest{
-							Id: layout.Msg.Id,
-						},
-					),
-				)
-				return deleteErr
-			}
-			assign := func(
-				operationCtx context.Context,
-				operationDB *gorm.DB,
-			) error {
-				requestedLayoutID := layout.Msg.Id
-				_, assignErr := emailauthoring.NewTemplateConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: operationDB, Runtime: emailauthoringadapter.NewRuntime(), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, ContentBlocks: contentBlocks, References: references})).UpdateEmailTemplate(
-					operationCtx,
-					connect.NewRequest(
-						&managev1.UpdateEmailTemplateRequest{
-							Id:       template.Msg.Id,
-							LayoutId: &requestedLayoutID,
-						},
-					),
-				)
-				return assignErr
-			}
-
-			start := make(chan struct{})
-			deleteDone := startDurableEmailOperation(t, ctx, func(operationCtx context.Context) error {
-				<-start
-				return deleteSource(operationCtx, deleteDB)
-			})
-			assignmentDone := startDurableEmailOperation(t, ctx, func(operationCtx context.Context) error {
-				<-start
-				return assign(operationCtx, assignmentDB)
-			})
-			close(start)
-			deleteErr := <-deleteDone
-			assignmentErr := <-assignmentDone
-			deleteWon := deleteErr == nil
-			if deleteWon {
-				require.Equal(t, connect.CodeNotFound, errs.CodeOf(assignmentErr))
-			} else {
-				require.NoError(t, assignmentErr)
-				require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(deleteErr))
-			}
-
-			var storedLayout model.EmailLayout
-			layoutErr := db.First(
-				&storedLayout,
-				"id = ?",
-				layout.Msg.Id,
-			).Error
-			var storedTemplate model.EmailTemplate
-			require.NoError(t, db.First(
-				&storedTemplate,
-				"id = ?",
-				template.Msg.Id,
-			).Error)
-			if deleteWon {
-				require.ErrorIs(t, layoutErr, gorm.ErrRecordNotFound)
-				require.Nil(t, storedTemplate.LayoutID)
-			} else {
-				require.NoError(t, layoutErr)
-				require.Equal(t, layout.Msg.Id, ptrStringValue(storedTemplate.LayoutID))
-			}
-		})
+	var storedLayout model.EmailLayout
+	layoutErr := db.First(&storedLayout, "id = ?", layout.Msg.Id).Error
+	var storedCampaign model.Campaign
+	require.NoError(t, db.First(
+		&storedCampaign,
+		"id = ?",
+		campaign.Msg.Campaign.Id,
+	).Error)
+	if deleteWon {
+		require.ErrorIs(t, layoutErr, gorm.ErrRecordNotFound)
+		require.Nil(t, storedCampaign.LayoutID)
+	} else {
+		require.NoError(t, layoutErr)
+		require.Equal(t, layout.Msg.Id, ptrStringValue(storedCampaign.LayoutID))
 	}
 }
 
@@ -408,7 +212,7 @@ func (campaignEmailAuthoringConcurrencyFixture) LoadLayoutSnapshot(
 	db *gorm.DB,
 	layoutID string,
 ) ([]CampaignLayoutLocaleSnapshot, error) {
-	rows, err := email.LoadLayoutLocaleSnapshots(ctx, db, layoutID)
+	rows, err := email.LoadLayoutLocaleSnapshots(ctx, emailpostgres.Bind(db), layoutID)
 	if err != nil {
 		return nil, err
 	}
@@ -425,49 +229,4 @@ func (campaignEmailAuthoringConcurrencyFixture) LoadLayoutSnapshot(
 		})
 	}
 	return snapshots, nil
-}
-
-func cleanupConcurrentCampaignSnapshotFixture(
-	t *testing.T,
-	db *gorm.DB,
-	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
-	runID string,
-	campaignID string,
-	layoutID string,
-) {
-	t.Helper()
-	runID = strings.TrimSpace(runID)
-	campaignID = strings.TrimSpace(campaignID)
-	layoutID = strings.TrimSpace(layoutID)
-	if runID != "" {
-		require.NoError(t, db.Exec(
-			"DELETE FROM email_delivery_run WHERE id = ?",
-			runID,
-		).Error)
-	}
-	if campaignID != "" {
-		// A failed assertion can happen after scheduling but before the fixture
-		// records runID. Delete by durable owner as well so no active run leaks
-		// into the lifecycle cleanup or a later subtest.
-		require.NoError(t, db.Exec(
-			"DELETE FROM email_delivery_run WHERE campaign_id = ?",
-			campaignID,
-		).Error)
-		require.NoError(t, db.Exec(
-			"DELETE FROM campaign WHERE id = ?",
-			campaignID,
-		).Error)
-	}
-	if layoutID != "" {
-		_, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: emailauthoringadapter.NewCampaignDeliveryReferences(), ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB)})).DeleteEmailLayout(
-			ctx,
-			connect.NewRequest(&managev1.DeleteEmailLayoutRequest{
-				Id: layoutID,
-			}),
-		)
-		if errs.CodeOf(err) != connect.CodeNotFound {
-			require.NoError(t, err)
-		}
-	}
 }

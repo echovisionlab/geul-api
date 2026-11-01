@@ -10,6 +10,7 @@ import (
 	labeldomain "github.com/echovisionlab/geul-api/internal/label"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 )
 
 // LabelInterchange adapts XLIFF target projection and exact sparse mutation
@@ -110,4 +111,4 @@ func loadLabelInterchangeTarget(
 	return projectCreativeInterchangeTarget(plan, target.Exists, target.Revision, target.Document)
 }
 
-var _ application.TranslationInterchangeDomains = (*LabelInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*LabelInterchange)(nil)

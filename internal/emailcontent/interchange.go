@@ -2,14 +2,11 @@ package emailcontent
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
@@ -53,10 +50,9 @@ type InterchangeMutationResult struct {
 // LoadInterchangeTarget loads one target without applying source fallback.
 // The Translation application has already locked the root and authorized
 // source-locale editing in the same transaction.
-func (o Owner) LoadInterchangeTarget(
+func (o Owner[S]) LoadInterchangeTarget(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store S,
 	id string,
 	targetLocale string,
 ) (InterchangeTarget, error) {
@@ -67,25 +63,25 @@ func (o Owner) LoadInterchangeTarget(
 	if targetLocale, err = NormalizeLocale(targetLocale); err != nil {
 		return InterchangeTarget{}, err
 	}
-	documentID, err := o.Rows.DocumentID(ctx, tx, id)
+	documentID, err := o.Rows.DocumentID(ctx, store, id)
 	if err != nil {
 		return InterchangeTarget{}, err
 	}
-	domain, err := o.Rows.SourceContext(ctx, tx, id, false)
+	domain, err := o.Rows.SourceContext(ctx, store, id, false)
 	if err != nil {
 		return InterchangeTarget{}, err
 	}
 	if targetLocale == domain.SourceLocale {
 		return InterchangeTarget{}, errs.InvalidArgument("target_locale", "must differ from the "+o.Name+" source locale")
 	}
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, domain.SourceLocale)
 	if err != nil {
 		return InterchangeTarget{}, o.NormalizeContentBlockError(err)
 	}
 	if snapshot.Document.Profile != Profile {
 		return InterchangeTarget{}, errs.FailedPrecondition(o.Name + " translation interchange requires the Email content profile")
 	}
-	subject, updatedAt, exists, err := o.loadInterchangeMetadata(ctx, tx, id, targetLocale)
+	subject, updatedAt, exists, err := o.loadInterchangeMetadata(ctx, store, id, targetLocale)
 	if err != nil {
 		return InterchangeTarget{}, err
 	}
@@ -110,44 +106,32 @@ func (o Owner) LoadInterchangeTarget(
 
 // loadInterchangeMetadata share-locks the target row and reads its subject
 // and update time.
-func (o Owner) loadInterchangeMetadata(ctx context.Context, tx *gorm.DB, id, locale string) (*string, time.Time, bool, error) {
-	var row struct {
-		Subject   sql.NullString `gorm:"column:subject"`
-		UpdatedAt time.Time      `gorm:"column:updated_at"`
+func (o Owner[S]) loadInterchangeMetadata(ctx context.Context, store S, id, locale string) (*string, time.Time, bool, error) {
+	row, exists, err := store.LocaleRow(ctx, id, locale, ShareLock)
+	if err != nil {
+		return nil, time.Time{}, false, errs.Internal(err)
 	}
-	result := tx.WithContext(ctx).Table(o.translationTable()).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-		Select("subject, updated_at").Where("entity_id = ? AND locale = ?", id, locale).
-		Take(&row)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+	if !exists {
 		return nil, time.Time{}, false, nil
 	}
-	if result.Error != nil {
-		return nil, time.Time{}, false, errs.Internal(result.Error)
-	}
-	if !row.Subject.Valid {
-		return nil, row.UpdatedAt, true, nil
-	}
-	value := row.Subject.String
-	return &value, row.UpdatedAt, true, nil
+	return row.Subject, row.UpdatedAt, true, nil
 }
 
 // ApplyInterchange applies one sparse target overlay and subject behind the
 // owner's lifecycle fence and the Content Document CAS.
-func (o Owner) ApplyInterchange(
+func (o Owner[S]) ApplyInterchange(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store S,
 	id string,
 	sourceLocale string,
 	input InterchangeMutation,
-	fence contentblock.DomainFence,
+	fence Fence,
 ) (InterchangeMutationResult, error) {
 	id, expectedRevision, contributor, err := o.validateInterchange(id, &sourceLocale, &input)
 	if err != nil {
 		return InterchangeMutationResult{}, err
 	}
-	documentID, err := o.Rows.DocumentID(ctx, tx, id)
+	documentID, err := o.Rows.DocumentID(ctx, store, id)
 	if err != nil {
 		return InterchangeMutationResult{}, err
 	}
@@ -163,7 +147,7 @@ func (o Owner) ApplyInterchange(
 	if err != nil {
 		return InterchangeMutationResult{}, o.NormalizeContentBlockError(err)
 	}
-	result, err := o.ApplyTargetLocaleMutation(ctx, tx, store, TargetLocaleMutation{
+	result, err := o.ApplyTargetLocaleMutation(ctx, store, TargetLocaleMutation{
 		ID: id, DocumentID: documentID, Locale: input.TargetLocale,
 		Batch: batch, ExpectedDocumentRevision: expectedRevision,
 		ExpectedLocaleExists:   &input.ExpectedPresence,
@@ -184,7 +168,7 @@ func (o Owner) ApplyInterchange(
 
 // validateInterchange canonicalizes the owner, the locales and the time of
 // an interchange mutation and returns its expected revision and contributor.
-func (o Owner) validateInterchange(id string, sourceLocale *string, input *InterchangeMutation) (string, uuid.UUID, uuid.UUID, error) {
+func (o Owner[S]) validateInterchange(id string, sourceLocale *string, input *InterchangeMutation) (string, uuid.UUID, uuid.UUID, error) {
 	id, err := CanonicalID(o.IDField, id)
 	if err != nil {
 		return "", uuid.Nil, uuid.Nil, err

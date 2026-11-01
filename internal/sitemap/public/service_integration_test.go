@@ -190,12 +190,7 @@ func TestPostgresSitemapSnapshotStoreRoundTripIntegration(t *testing.T) {
 
 func newSitemapIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	stack, err := testutil.StartBackendIntegrationStack(t.Context())
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, stack.Close())
-	})
-	return stack.Postgres.DB
+	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 }
 
 func insertSitemapContentDocument(t *testing.T, db *gorm.DB, profile string) string {

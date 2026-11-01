@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -250,10 +252,10 @@ func TestClientMediaStoredBundleRejectsTamperingMissingAndBadPlaylist(t *testing
 			require.Error(t, err)
 			classified := clientMediaCompletionError(err)
 			if mode == "missing" {
-				require.Equal(t, connect.CodeUnavailable, connect.CodeOf(classified))
+				require.Equal(t, connect.CodeUnavailable, errs.CodeOf(classified))
 				require.ErrorContains(t, classified, "CLIENT_MEDIA_ARTIFACTS_MISSING:")
 			} else {
-				require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(classified))
+				require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(classified))
 			}
 		})
 	}
@@ -378,7 +380,7 @@ func TestDirectMediaCompletionRequiresBrowserBundle(t *testing.T) {
 			t.Run(uploadType.String()+mime, func(t *testing.T) {
 				session := model.UploadSession{}
 				err := requireDirectClientMediaBundle(uploadType, mime, session, "")
-				require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+				require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 				require.Contains(t, err.Error(), "clientMediaBundleRequired")
 				nonce := uuid.NewString()
 				session.ClientMediaBundleID = &nonce
@@ -478,7 +480,7 @@ func TestClientMediaPreparedPlanIsImmutable(t *testing.T) {
 			changed := proto.Clone(request).(*managev1.PrepareClientMediaUploadRequest)
 			test.mutate(changed)
 			_, err := service.prepareMediaBundle(ctx, session, prepareClientMediaUploadCommand(changed))
-			require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+			require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 			require.ErrorContains(t, err, "conflicts with existing bundle")
 		})
 	}

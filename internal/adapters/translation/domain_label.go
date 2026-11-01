@@ -58,7 +58,7 @@ func labelDomainRegistration(audit domainaudit.Appender) domainRegistration {
 				return identitystate.LockActivePrincipal(ctx, tx, principal)
 			}, labelID)
 		},
-		requireJobRead:          requireJobEdit(policyv1.Label.Edit),
+		requireJobRead: requireJobEdit(policyv1.Label.Edit),
 	})
 }
 

@@ -2,8 +2,6 @@ package emailauthoring
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"maps"
 	"strings"
 	"time"
@@ -15,8 +13,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // EmailLayoutTranslationInterchangeTarget is Email Layout's sparse target
@@ -41,7 +37,7 @@ type EmailLayoutTranslationInterchangeMutation struct {
 // without resolving omitted units from the canonical source wrapper.
 func LoadEmailLayoutTranslationInterchangeTarget(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	layoutID string,
 	targetLocale string,
 ) (EmailLayoutTranslationInterchangeTarget, error) {
@@ -53,14 +49,14 @@ func LoadEmailLayoutTranslationInterchangeTarget(
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, err
 	}
-	authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, layoutID, clause.LockingStrengthShare)
+	authority, err := loadEmailLayoutDocumentAuthority(ctx, store, layoutID, emailcontent.ShareLock)
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, err
 	}
 	if targetLocale == authority.SourceLocale {
 		return EmailLayoutTranslationInterchangeTarget{}, domainerr.InvalidField("target_locale", "must differ from the Email Layout source locale")
 	}
-	entry, err := loadEmailLayoutInterchangeEntry(ctx, tx, layoutID, targetLocale, clause.LockingStrengthShare)
+	entry, err := store.LockLayoutTranslationEntry(ctx, layoutID, targetLocale, emailcontent.ShareLock)
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, err
 	}
@@ -71,8 +67,7 @@ func LoadEmailLayoutTranslationInterchangeTarget(
 // under the Layout lifecycle fence and target-row CAS.
 func ApplyEmailLayoutTranslationInterchange(
 	ctx context.Context,
-	tx *gorm.DB,
-	references CampaignDeliveryReferences,
+	store Store,
 	layoutID string,
 	sourceLocale string,
 	input EmailLayoutTranslationInterchangeMutation,
@@ -92,24 +87,24 @@ func ApplyEmailLayoutTranslationInterchange(
 	if input.TargetLocale == sourceLocale {
 		return EmailLayoutTranslationInterchangeTarget{}, false, domainerr.InvalidField("target_locale", "must be a non-source Email Layout locale")
 	}
-	if err := lockEmailLayoutAIDocumentRoot(ctx, tx, layoutID, clause.LockingStrengthUpdate); err != nil {
+	if err := lockEmailLayoutAIDocumentRoot(ctx, store, layoutID, emailcontent.UpdateLock); err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
-	if err := references.RequireLayoutMutable(ctx, tx, layoutID); err != nil {
+	if err := store.RequireLayoutMutable(ctx, layoutID); err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
-	authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, layoutID, clause.LockingStrengthUpdate)
+	authority, err := loadEmailLayoutDocumentAuthority(ctx, store, layoutID, emailcontent.UpdateLock)
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
 	if authority.SourceLocale != sourceLocale {
 		return EmailLayoutTranslationInterchangeTarget{}, false, domainerr.Precondition("Email Layout source locale changed; reload before importing")
 	}
-	source, err := email.LoadCanonicalLayoutTranslationDocument(ctx, tx, layoutID, sourceLocale)
+	source, err := store.CanonicalLayoutSource(ctx, layoutID, sourceLocale)
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
-	entry, err := loadEmailLayoutInterchangeEntry(ctx, tx, layoutID, input.TargetLocale, clause.LockingStrengthUpdate)
+	entry, err := store.LockLayoutTranslationEntry(ctx, layoutID, input.TargetLocale, emailcontent.UpdateLock)
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
@@ -144,7 +139,7 @@ func ApplyEmailLayoutTranslationInterchange(
 	} else {
 		input.Now = input.Now.UTC()
 	}
-	updatedAt, err := saveEmailLayoutTarget(ctx, tx, layoutID, input.TargetLocale, derefString(source.ContentHTML), nextValues, input.Now, emailLayoutInterchangeUpdatedAt(entry))
+	updatedAt, err := saveEmailLayoutTarget(ctx, store, layoutID, input.TargetLocale, derefString(source.ContentHTML), nextValues, input.Now, emailLayoutInterchangeUpdatedAt(entry))
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}
@@ -157,45 +152,6 @@ func ApplyEmailLayoutTranslationInterchange(
 	return EmailLayoutTranslationInterchangeTarget{
 		Exists: true, Revision: revision, Values: nextValues,
 	}, true, nil
-}
-
-func loadEmailLayoutInterchangeEntry(
-	ctx context.Context,
-	tx *gorm.DB,
-	layoutID string,
-	locale string,
-	lock string,
-) (*email.LayoutTranslationEntry, error) {
-	var row struct {
-		ContentHTML sql.NullString `gorm:"column:html_content"`
-		ContentText sql.NullString `gorm:"column:content_text"`
-		UpdatedAt   time.Time      `gorm:"column:updated_at"`
-	}
-	query := tx.WithContext(ctx).Table("email_layout_translation").
-		Select("html_content, content_text, updated_at").
-		Where("entity_id = ? AND locale = ?", layoutID, locale)
-	if lock != "" {
-		query = query.Clauses(clause.Locking{Strength: lock})
-	}
-	result := query.Take(&row)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	entry := &email.LayoutTranslationEntry{LayoutTranslationDocument: email.LayoutTranslationDocument{
-		UpdatedAt: row.UpdatedAt,
-	}}
-	if row.ContentHTML.Valid {
-		value := email.NormalizeTemplatePlaceholders(row.ContentHTML.String)
-		entry.ContentHTML = &value
-	}
-	if row.ContentText.Valid {
-		value := row.ContentText.String
-		entry.ContentText = &value
-	}
-	return entry, nil
 }
 
 func projectEmailLayoutInterchangeTarget(

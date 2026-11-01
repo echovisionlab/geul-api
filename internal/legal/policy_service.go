@@ -9,9 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -20,44 +17,59 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
+// NoticeDispatch hands a sealed notice run to Campaign's delivery
+// dispatcher after the policy commit, and cancels the update notice a
+// committed activation made obsolete. Both are best-effort: provider
+// availability is not part of a policy's legal effect.
+type NoticeDispatch interface {
+	DispatchRun(ctx context.Context, runID string) error
+	// CancelUpdateNoticeAfterActivation cancels the still-scheduled update
+	// notice of a version that became effective; it logs a failure.
+	CancelUpdateNoticeAfterActivation(ctx context.Context, kind PolicyKind, id string, now time.Time)
+}
+
+// OGAssets releases the OG images of a deleted version after its commit.
+type OGAssets interface {
+	ReleaseOGAssets(ctx context.Context, kind PolicyKind, id string) error
+}
+
 // Deps are the collaborators of the Terms and Privacy management use cases.
 // Every field except BaseURL is required; NewService rejects a missing one.
 type Deps struct {
-	DB            *gorm.DB
-	SpiceDB       *auth.SpiceDBClient
-	ContentBlocks *contentblock.Store
-	OG            OG
-	Notice        NoticeDelivery
-	PreviewLinks  PreviewLinks
-	Members       MemberLocales
-	Audit         domainaudit.Appender
+	Units    mutation.UnitOfWork[Store] // legalpostgres.NewUnits
+	SpiceDB  mutation.Authorizer
+	Fence    identitystate.Fence
+	Audit    domainaudit.Appender
+	Dispatch NoticeDispatch
+	OGAssets OGAssets
 	// BaseURL is the site origin of notice links; empty keeps them relative.
 	BaseURL string
 }
 
 func (d Deps) validate() error {
+	return requireDeps("legal dependencies are required: ", map[string]bool{
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
+		"Dispatch": d.Dispatch == nil, "OGAssets": d.OGAssets == nil,
+	})
+}
+
+// requireDeps names every absent collaborator after prefix.
+func requireDeps(prefix string, absent map[string]bool) error {
 	var missing []string
-	for name, absent := range map[string]bool{
-		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "ContentBlocks": d.ContentBlocks == nil,
-		"OG": d.OG == nil, "Notice": d.Notice == nil, "PreviewLinks": d.PreviewLinks == nil,
-		"Members": d.Members == nil, "Audit": d.Audit == nil,
-	} {
-		if absent {
+	for name, isAbsent := range absent {
+		if isAbsent {
 			missing = append(missing, name)
 		}
 	}
 	if len(missing) != 0 {
 		slices.Sort(missing)
-		return errors.New("legal dependencies are required: " + strings.Join(missing, ", "))
+		return errors.New(prefix + strings.Join(missing, ", "))
 	}
 	return nil
 }
@@ -65,15 +77,12 @@ func (d Deps) validate() error {
 // Service holds the Terms and Privacy management use cases. Each takes the
 // PolicyKind it acts on.
 type Service struct {
-	db            *gorm.DB
-	spiceDB       *auth.SpiceDBClient
-	baseURL       string
-	notice        NoticeDelivery
-	previewLinks  PreviewLinks
-	members       MemberLocales
-	contentBlocks *contentblock.Store
-	legalOG       OG
-	mutations     *mutation.Runner
+	units     mutation.UnitOfWork[Store]
+	spiceDB   mutation.Authorizer
+	baseURL   string
+	dispatch  NoticeDispatch
+	ogAssets  OGAssets
+	mutations *mutation.StoreRunner[Store]
 }
 
 // NewService validates deps and returns the legal policy use cases.
@@ -81,20 +90,13 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
 	return &Service{
-		db:            deps.DB,
-		spiceDB:       deps.SpiceDB,
-		baseURL:       deps.BaseURL,
-		notice:        deps.Notice,
-		previewLinks:  deps.PreviewLinks,
-		members:       deps.Members,
-		contentBlocks: deps.ContentBlocks,
-		legalOG:       deps.OG,
-		mutations:     mutations,
+		units: deps.Units, spiceDB: deps.SpiceDB, baseURL: deps.BaseURL, dispatch: deps.Dispatch, ogAssets: deps.OGAssets,
+		mutations: mutations,
 	}, nil
 }
 
@@ -107,7 +109,7 @@ type Policy struct {
 	Revision       string
 	SourceLocale   string
 	SnapshotDigest string
-	Status         model.LegalPolicyStatus
+	Status         Status
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 	EffectiveFrom  *time.Time
@@ -120,45 +122,28 @@ type PolicyLifecycle struct {
 	ID               string
 	Changed          bool
 	DocumentRevision string
-	Status           model.LegalPolicyStatus
+	Status           Status
 	UpdatedAt        time.Time
 	EffectiveFrom    *time.Time
 	EffectiveUntil   *time.Time
 }
 
-// policyRow is a row of terms_history or privacy_history; the kinds share
-// the columns.
-type policyRow struct {
-	ID                string     `gorm:"column:id;primaryKey"`
-	Version           int        `gorm:"column:version"`
-	Title             string     `gorm:"column:title"`
-	Status            string     `gorm:"column:status"`
-	ContentDocumentID *string    `gorm:"column:content_document_id"`
-	EffectiveFrom     *time.Time `gorm:"column:effective_from"`
-	EffectiveUntil    *time.Time `gorm:"column:effective_until"`
-	CreatedAt         time.Time  `gorm:"column:created_at"`
-	UpdatedAt         time.Time  `gorm:"column:updated_at"`
-}
-
-func (row policyRow) lifecycle(documentRevision string, changed bool) PolicyLifecycle {
+func (version Version) lifecycle(documentRevision string, changed bool) PolicyLifecycle {
 	return PolicyLifecycle{
-		ID: row.ID, Changed: changed, DocumentRevision: documentRevision,
-		Status: model.LegalPolicyStatus(row.Status), UpdatedAt: row.UpdatedAt,
-		EffectiveFrom: row.EffectiveFrom, EffectiveUntil: row.EffectiveUntil,
+		ID: version.ID, Changed: changed, DocumentRevision: documentRevision,
+		Status: version.Status, UpdatedAt: version.UpdatedAt,
+		EffectiveFrom: version.EffectiveFrom, EffectiveUntil: version.EffectiveUntil,
 	}
 }
 
-// lockPolicyRow locks the version for update. A missing version answers
+// lockVersion locks the version for update. A missing version answers
 // NotFound in the kind's wording.
-func lockPolicyRow(ctx context.Context, tx *gorm.DB, kind *policyKind, id string) (policyRow, error) {
-	var row policyRow
-	err := tx.WithContext(ctx).Table(kind.table).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		First(&row, "id = ?", id).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return row, domainerr.ResourceNotFound(kind.notFoundResource, id)
+func lockVersion(ctx context.Context, store Store, kind *policyKind, id string) (Version, error) {
+	version, err := store.Version(ctx, kind.kind, id, UpdateLock)
+	if errors.Is(err, ErrPolicyNotFound) {
+		return version, domainerr.ResourceNotFound(kind.notFoundResource, id)
 	}
-	return row, err
+	return version, err
 }
 
 // GetPolicyVersionQuery reads one version.
@@ -174,17 +159,17 @@ func (s *Service) GetPolicyVersion(ctx context.Context, kind PolicyKind, query G
 		return Policy{}, err
 	}
 	var policy Policy
-	err = readLocked(ctx, s.mutations, mutation.Locked(func(ctx context.Context, tx *gorm.DB, _ mutation.Require) error {
-		var row policyRow
-		if err := tx.Table(descriptor.table).Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).First(&row, "id = ?", query.ID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
+	err = readLocked(ctx, s.mutations, mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+		version, err := store.Version(ctx, kind, query.ID, ShareLock)
+		if err != nil {
+			if errors.Is(err, ErrPolicyNotFound) {
 				return domainerr.ResourceNotFound(descriptor.notFoundResource, query.ID)
 			}
 			return err
 		}
-		return requireLegalVersionViewOrNotFound(ctx, tx, s.spiceDB, descriptor.entity(), row.ID, row.Status)
-	}), func(ctx context.Context, tx *gorm.DB) error {
-		policy, err = s.policyWithDocument(ctx, tx, descriptor, query.ID)
+		return requireLegalVersionViewOrNotFound(ctx, s.spiceDB, lockActive, descriptor, version.ID, version.Status)
+	}), func(ctx context.Context, store Store) error {
+		policy, err = policyWithDocument(ctx, store, descriptor, query.ID)
 		return err
 	})
 	return policy, err
@@ -193,16 +178,19 @@ func (s *Service) GetPolicyVersion(ctx context.Context, kind PolicyKind, query G
 // ListPolicyVersionsQuery pages through versions, newest first.
 type ListPolicyVersionsQuery struct {
 	// Status keeps only versions in that state when set.
-	Status *model.LegalPolicyStatus
+	Status *Status
 	// Limit defaults to 20.
 	Limit  int32
 	Offset int32
 }
 
-// PolicyPage is one page of versions.
+// PolicyPage is one page of versions and where it lies among them.
 type PolicyPage struct {
-	Versions   []Policy
-	Pagination *commonv1.PaginationResponse
+	Versions []Policy
+	Total    int32
+	Limit    int32
+	Offset   int32
+	HasMore  bool
 }
 
 // ListPolicyVersions returns one page of versions with their documents.
@@ -218,26 +206,21 @@ func (s *Service) ListPolicyVersions(ctx context.Context, kind PolicyKind, query
 	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
 		return PolicyPage{}, err
 	}
-	list := s.db.WithContext(ctx).Table(descriptor.table)
-	if query.Status != nil {
-		list = list.Where("status = ?", *query.Status)
-	}
-	var total int64
-	if err := list.Count(&total).Error; err != nil {
-		return PolicyPage{}, err
-	}
 	limit := int32(20)
 	if query.Limit > 0 {
 		limit = query.Limit
 	}
-	var rows []policyRow
-	if err := list.Order("version DESC").Limit(int(limit)).Offset(int(query.Offset)).Find(&rows).Error; err != nil {
-		return PolicyPage{}, err
-	}
-	versions := make([]Policy, len(rows))
-	if err := readLocked(ctx, s.mutations, authorizedBefore, func(ctx context.Context, tx *gorm.DB) error {
+	var total int64
+	var versions []Policy
+	if err := readLocked(ctx, s.mutations, authorizedBefore, func(ctx context.Context, store Store) error {
+		var rows []Version
+		var err error
+		if rows, total, err = store.ListVersions(ctx, kind, query.Status, limit, query.Offset); err != nil {
+			return err
+		}
+		versions = make([]Policy, len(rows))
 		for i, row := range rows {
-			if versions[i], err = s.policyWithDocument(ctx, tx, descriptor, row.ID); err != nil {
+			if versions[i], err = policyWithDocument(ctx, store, descriptor, row.ID); err != nil {
 				return err
 			}
 		}
@@ -246,13 +229,8 @@ func (s *Service) ListPolicyVersions(ctx context.Context, kind PolicyKind, query
 		return PolicyPage{}, err
 	}
 	return PolicyPage{
-		Versions: versions,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   limit,
-			Offset:  query.Offset,
-			HasMore: query.Offset+limit < int32(total),
-		},
+		Versions: versions, Total: int32(total), Limit: limit, Offset: query.Offset,
+		HasMore: query.Offset+limit < int32(total),
 	}, nil
 }
 
@@ -271,26 +249,27 @@ func (s *Service) CreatePolicyVersion(ctx context.Context, kind PolicyKind, comm
 	if err != nil {
 		return Policy{}, err
 	}
-	row, err := mutation.Run(ctx, s.mutations, mutation.Spec[policyRow]{
+	sourceLocale := s.resolveInitialSourceLocale(ctx, command.AcceptLanguage)
+	version, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[Version, Store]{
 		// Serialize version assignment.
-		Lock: func(_ context.Context, tx *gorm.DB) error {
-			return tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", descriptor.table+"_version").Error
+		Lock: func(ctx context.Context, store Store) error {
+			return store.LockVersionAssignment(ctx, kind)
 		},
 		Access: mutation.FreshAdminCan(descriptor.create()),
-		Change: func(ctx context.Context, tx *gorm.DB) (policyRow, error) {
-			return s.createDraftVersion(ctx, tx, descriptor, command)
+		Change: func(ctx context.Context, store Store) (Version, error) {
+			return createDraftVersion(ctx, store, descriptor, command, sourceLocale)
 		},
-		Audit: func(row policyRow) mutation.Audit {
-			return policyIdentityAudit(sharedtelemetry.AuditLegalPolicyCreated, descriptor, row)
+		Audit: func(version Version) mutation.Audit {
+			return policyIdentityAudit(sharedtelemetry.AuditLegalPolicyCreated, descriptor, version)
 		},
-		Relationships: func(row policyRow) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
-			return descriptor.policyRelationships(row.ID, true)
+		Relationships: func(version Version) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return descriptor.policyRelationships(version.ID, true)
 		},
 	})
 	if err != nil {
 		return Policy{}, err
 	}
-	return s.readPolicy(ctx, descriptor, row.ID)
+	return s.readPolicy(ctx, descriptor, version.ID)
 }
 
 // policyRelationships returns the version's policy relationship write and
@@ -310,50 +289,48 @@ func (k *policyKind) policyRelationships(id string, grant bool) ([]policyv1.Rela
 	return []policyv1.RelationshipMutation{deletePolicy}, []policyv1.RelationshipMutation{touchPolicy}, nil
 }
 
-func (s *Service) createDraftVersion(ctx context.Context, tx *gorm.DB, kind *policyKind, command CreatePolicyVersionCommand) (policyRow, error) {
-	var row policyRow
+func createDraftVersion(ctx context.Context, store Store, kind *policyKind, command CreatePolicyVersionCommand, sourceLocale string) (Version, error) {
 	title := kind.defaultTitle
 	if command.Title != nil && *command.Title != "" {
 		title = *command.Title
 	}
 	now := dbtime.Now()
-	sourceLocale := resolveInitialSourceLocale(ctx, tx, s.members, command.AcceptLanguage)
-	created, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
+	created, err := store.CreateContentDocument(ctx, contentblock.CreateInput{
 		Profile: legalContentDocumentProfile, SourceLocale: sourceLocale,
 	})
 	if err != nil {
-		return row, normalizeLegalContentBlockError(kind.entity(), err)
+		return Version{}, normalizeLegalContentBlockError(kind.entity(), err)
 	}
 	// The version follows both the history and the notices sealed for
 	// deleted versions, so a version number is never reused.
-	sealedVersion, err := s.notice.LatestSealedVersion(ctx, tx, kind.entity())
+	sealedVersion, err := store.LatestSealedVersion(ctx, kind.kind)
 	if err != nil {
-		return row, err
+		return Version{}, err
 	}
-	if err := tx.Raw(`
-		INSERT INTO `+kind.table+` (title, content, status, version, created_at, updated_at, content_document_id, source_locale)
-		VALUES (?, '', ?, GREATEST(COALESCE((SELECT MAX(version) FROM `+kind.table+`), 0), ?::integer) + 1, ?, ?, ?, ?)
-		RETURNING id, version, title, content, status, created_at, updated_at, content_document_id
-	`, title, kind.draft, sealedVersion, now, now, created.Document.ID.String(), sourceLocale).Scan(&row).Error; err != nil {
-		return row, err
+	version, err := store.InsertDraft(ctx, kind.kind, Draft{
+		Title: title, SealedVersion: sealedVersion, ContentDocumentID: created.Document.ID.String(),
+		SourceLocale: sourceLocale, CreatedAt: now,
+	})
+	if err != nil {
+		return version, err
 	}
 	if command.Document != nil {
 		if command.Document.GetSourceLocale() != sourceLocale {
-			return row, domainerr.InvalidField("document.source_locale", "must match the server-selected source locale")
+			return version, domainerr.InvalidField("document.source_locale", "must match the server-selected source locale")
 		}
 		replacement, err := contentblock.ReplaceFromRichTextProto(created.Document.ID, created.Document.Revision, command.Document)
 		if err != nil {
-			return row, normalizeLegalContentBlockError(kind.entity(), err)
+			return version, normalizeLegalContentBlockError(kind.entity(), err)
 		}
-		if _, err := s.contentBlocks.ReplaceSnapshot(ctx, tx, replacement, legalDocumentOwnershipFence(kind.entity(), row.ID)); err != nil {
-			return row, normalizeLegalContentBlockError(kind.entity(), err)
+		if _, err := store.ReplaceContentSnapshot(ctx, replacement, legalDocumentOwnershipFence(kind, version.ID)); err != nil {
+			return version, normalizeLegalContentBlockError(kind.entity(), err)
 		}
 	}
-	finalSnapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, created.Document.ID, sourceLocale)
+	finalSnapshot, err := store.LockedContentSnapshot(ctx, created.Document.ID, sourceLocale)
 	if err != nil {
-		return row, normalizeLegalContentBlockError(kind.entity(), err)
+		return version, normalizeLegalContentBlockError(kind.entity(), err)
 	}
-	return row, refreshDerivedContent(ctx, tx, kind.entity(), row.ID, finalSnapshot, sourceLocale, now)
+	return version, refreshDerivedContent(ctx, store, kind, version.ID, finalSnapshot, sourceLocale, now)
 }
 
 // SchedulePolicyCommand schedules a draft version to take effect at
@@ -383,18 +360,18 @@ func (s *Service) SchedulePolicy(ctx context.Context, kind PolicyKind, command S
 	if err != nil {
 		return PolicyLifecycle{}, err
 	}
-	var row policyRow
-	var run *model.CampaignDeliveryRun
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
-		Access: s.lifecycleAccess(descriptor, command.ID, &row),
-		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) {
+	var version Version
+	var run *NoticeRun
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
+		Access: s.lifecycleAccess(descriptor, command.ID, &version),
+		Change: func(ctx context.Context, store Store) (struct{}, error) {
 			var err error
-			run, err = s.schedule(ctx, tx, descriptor, &row, command.ExpectedRevision, effectiveFrom, previewURL, now)
+			run, err = schedule(ctx, store, descriptor, &version, command.ExpectedRevision, effectiveFrom, previewURL, now)
 			return struct{}{}, err
 		},
 		Audit: func(struct{}) mutation.Audit {
 			return legalLifecycleChange{
-				kind: descriptor.entity(), policyID: row.ID, version: row.Version,
+				kind: descriptor.entity(), policyID: version.ID, version: version.Version,
 				changedFields: []string{"effective_at", "status"},
 				previous:      sharedtelemetry.AuditStateDraft, next: sharedtelemetry.AuditStateScheduled,
 				effectiveAt: &effectiveFrom,
@@ -404,45 +381,43 @@ func (s *Service) SchedulePolicy(ctx context.Context, kind PolicyKind, command S
 	if err != nil {
 		return PolicyLifecycle{}, err
 	}
-	dispatchCreatedLegalNoticeRun(ctx, s.notice, run)
-	return row.lifecycle(command.ExpectedRevision, true), nil
+	dispatchCreatedLegalNoticeRun(ctx, s.dispatch, run)
+	return version.lifecycle(command.ExpectedRevision, true), nil
 }
 
-// schedule moves the locked draft row to scheduled at effectiveFrom and
+// schedule moves the locked draft version to scheduled at effectiveFrom and
 // seals its update notice.
-func (s *Service) schedule(
+func schedule(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	kind *policyKind,
-	row *policyRow,
+	version *Version,
 	expectedRevision string,
 	effectiveFrom time.Time,
 	previewURL string,
 	now time.Time,
-) (*model.CampaignDeliveryRun, error) {
-	if err := verifyLegalExpectedRevisionWithDB(ctx, tx, kind.entity(), row.ID, expectedRevision); err != nil {
+) (*NoticeRun, error) {
+	if err := verifyLegalExpectedRevision(ctx, store, kind, version.ID, expectedRevision); err != nil {
 		return nil, err
 	}
-	if row.Status != string(kind.draft) {
+	if version.Status != kind.draft {
 		return nil, domainerr.Precondition(kind.scheduleNonDraft)
 	}
-	if err := ensureScheduleSlot(ctx, tx, kind, row.ID); err != nil {
+	if err := ensureScheduleSlot(ctx, store, kind, version.ID); err != nil {
 		return nil, err
 	}
 	mutationNow := dbtime.Now()
-	if err := tx.Table(kind.table).Where("id = ?", row.ID).Updates(structured.Fields{
-		"status": kind.scheduled, "effective_from": effectiveFrom, "updated_at": mutationNow,
-	}).Error; err != nil {
+	if err := store.Schedule(ctx, kind.kind, version.ID, effectiveFrom, mutationNow); err != nil {
 		return nil, err
 	}
-	row.Status, row.EffectiveFrom, row.UpdatedAt = string(kind.scheduled), &effectiveFrom, mutationNow
-	if err := s.legalOG.RequestSaved(ctx, tx, kind.entity(), row.ID, "", true, kind.entity()+"_scheduled"); err != nil {
+	version.Status, version.EffectiveFrom, version.UpdatedAt = kind.scheduled, &effectiveFrom, mutationNow
+	if err := store.RequestOG(ctx, kind.kind, version.ID, "", true, kind.entity()+"_scheduled"); err != nil {
 		return nil, err
 	}
-	return s.notice.CreateRun(
-		ctx, tx, kind.entity(), row.ID, kind.updateEvent.String(),
+	return store.SealNoticeRun(
+		ctx, kind.kind, version.ID, kind.updateEvent.String(),
 		map[string]string{
-			"policy_title":   row.Title,
+			"policy_title":   version.Title,
 			"effective_date": effectiveFrom.Format("2006-01-02"),
 			"preview_url":    previewURL,
 		},
@@ -451,17 +426,17 @@ func (s *Service) schedule(
 }
 
 // lifecycleAccess takes the kind's activation lock and the version's row
-// lock into row, then checks that the caller may still publish it.
-func (s *Service) lifecycleAccess(kind *policyKind, id string, row *policyRow) mutation.Access {
-	return mutation.Locked(func(ctx context.Context, tx *gorm.DB, _ mutation.Require) error {
-		if err := s.legalOG.LockActivation(ctx, tx, kind.entity()); err != nil {
+// lock into version, then checks that the caller may still publish it.
+func (s *Service) lifecycleAccess(kind *policyKind, id string, version *Version) mutation.Access {
+	return mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+		if err := store.LockActivation(ctx, kind.kind); err != nil {
 			return err
 		}
 		var err error
-		if *row, err = lockPolicyRow(ctx, tx, kind, id); err != nil {
+		if *version, err = lockVersion(ctx, store, kind, id); err != nil {
 			return err
 		}
-		return authorizeLegal(ctx, tx, s.spiceDB, kind.entity(), row.ID, "publish", false, legalMutationAction(kind, row.Status, legalActionPublish))
+		return authorizeLegal(ctx, s.spiceDB, lockActive, kind, version.ID, "publish", false, legalMutationAction(kind, version.Status, legalActionPublish))
 	})
 }
 
@@ -478,20 +453,20 @@ func (s *Service) CancelPolicySchedule(ctx context.Context, kind PolicyKind, com
 	if err != nil {
 		return PolicyLifecycle{}, err
 	}
-	var row policyRow
+	var version Version
 	var cancelledEffectiveAt *time.Time
-	documentRevision, err := mutation.Run(ctx, s.mutations, mutation.Spec[string]{
-		Access: s.lifecycleAccess(descriptor, command.ID, &row),
-		Change: func(ctx context.Context, tx *gorm.DB) (string, error) {
-			if row.EffectiveFrom != nil {
-				value := row.EffectiveFrom.UTC()
+	documentRevision, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[string, Store]{
+		Access: s.lifecycleAccess(descriptor, command.ID, &version),
+		Change: func(ctx context.Context, store Store) (string, error) {
+			if version.EffectiveFrom != nil {
+				value := version.EffectiveFrom.UTC()
 				cancelledEffectiveAt = &value
 			}
-			return s.cancelSchedule(ctx, tx, descriptor, &row)
+			return cancelSchedule(ctx, store, descriptor, &version)
 		},
 		Audit: func(string) mutation.Audit {
 			return legalLifecycleChange{
-				kind: descriptor.entity(), policyID: row.ID, version: row.Version,
+				kind: descriptor.entity(), policyID: version.ID, version: version.Version,
 				changedFields: []string{"effective_at", "status"},
 				previous:      sharedtelemetry.AuditStateScheduled, next: sharedtelemetry.AuditStateDraft,
 				effectiveAt: cancelledEffectiveAt,
@@ -501,51 +476,49 @@ func (s *Service) CancelPolicySchedule(ctx context.Context, kind PolicyKind, com
 	if err != nil {
 		return PolicyLifecycle{}, err
 	}
-	return row.lifecycle(documentRevision, true), nil
+	return version.lifecycle(documentRevision, true), nil
 }
 
-// cancelSchedule returns the locked scheduled row to draft and returns its
-// document revision.
-func (s *Service) cancelSchedule(ctx context.Context, tx *gorm.DB, kind *policyKind, row *policyRow) (string, error) {
-	if row.Status != string(kind.scheduled) {
+// cancelSchedule returns the locked scheduled version to draft and returns
+// its document revision.
+func cancelSchedule(ctx context.Context, store Store, kind *policyKind, version *Version) (string, error) {
+	if version.Status != kind.scheduled {
 		return "", domainerr.Precondition(kind.cancelNonScheduled)
 	}
-	documentRevision, err := s.policyDocumentRevision(ctx, tx, kind, *row)
+	documentRevision, err := policyDocumentRevision(ctx, store, kind, *version)
 	if err != nil {
 		return "", err
 	}
-	if err := s.notice.CancelScheduledRuns(ctx, tx, kind.entity(), row.ID); err != nil {
+	if err := store.CancelScheduledNotices(ctx, kind.kind, version.ID); err != nil {
 		return "", err
 	}
-	if err := s.deleteAutomaticNoticePreviewLinks(ctx, tx, kind, row.ID); err != nil {
+	if err := deleteAutomaticNoticePreviewLinks(ctx, store, kind, version.ID); err != nil {
 		return "", err
 	}
-	currentBefore, err := s.legalOG.CurrentForRoute(ctx, tx, kind.entity())
+	currentBefore, err := store.CurrentRoute(ctx, kind.kind)
 	if err != nil {
 		return "", err
 	}
 	mutationNow := dbtime.Now()
-	if err := tx.Table(kind.table).Where("id = ?", row.ID).Updates(structured.Fields{
-		"status": kind.draft, "effective_from": nil, "updated_at": mutationNow,
-	}).Error; err != nil {
+	if err := store.Unschedule(ctx, kind.kind, version.ID, mutationNow); err != nil {
 		return "", err
 	}
-	row.Status, row.EffectiveFrom, row.UpdatedAt = string(kind.draft), nil, mutationNow
-	if currentBefore == nil || currentBefore.ID != row.ID {
+	version.Status, version.EffectiveFrom, version.UpdatedAt = kind.draft, nil, mutationNow
+	if currentBefore == nil || currentBefore.ID != version.ID {
 		return documentRevision, nil
 	}
-	return documentRevision, s.refreshRouteAfterCancel(ctx, tx, kind)
+	return documentRevision, refreshRouteAfterCancel(ctx, store, kind)
 }
 
-func (s *Service) policyDocumentRevision(ctx context.Context, tx *gorm.DB, kind *policyKind, row policyRow) (string, error) {
-	if row.ContentDocumentID == nil {
+func policyDocumentRevision(ctx context.Context, store Store, kind *policyKind, version Version) (string, error) {
+	if version.ContentDocumentID == nil {
 		return "", domainerr.Precondition(kind.entity() + " content document has not been populated")
 	}
-	documentID, err := parseLegalContentUUID("content_document_id", *row.ContentDocumentID)
+	documentID, err := parseLegalContentUUID("content_document_id", *version.ContentDocumentID)
 	if err != nil {
 		return "", err
 	}
-	revision, err := contentblock.LoadRevision(ctx, tx, documentID)
+	revision, err := store.ContentRevision(ctx, documentID)
 	if err != nil {
 		return "", normalizeLegalContentBlockError(kind.entity(), err)
 	}
@@ -555,15 +528,15 @@ func (s *Service) policyDocumentRevision(ctx context.Context, tx *gorm.DB, kind 
 // refreshRouteAfterCancel regenerates the public route's OG for the version
 // that is current after the cancelled one stopped being current, or
 // releases it when none is.
-func (s *Service) refreshRouteAfterCancel(ctx context.Context, tx *gorm.DB, kind *policyKind) error {
-	current, err := s.legalOG.CurrentForRoute(ctx, tx, kind.entity())
+func refreshRouteAfterCancel(ctx context.Context, store Store, kind *policyKind) error {
+	current, err := store.CurrentRoute(ctx, kind.kind)
 	if err != nil {
 		return err
 	}
 	if current != nil {
-		return s.legalOG.RequestSaved(ctx, tx, kind.entity(), current.ID, "", true, kind.entity()+"_schedule_cancelled")
+		return store.RequestOG(ctx, kind.kind, current.ID, "", true, kind.entity()+"_schedule_cancelled")
 	}
-	return s.legalOG.CancelAndRelease(ctx, tx, kind.entity(), s.legalOG.RouteID(kind.entity()))
+	return store.ReleaseRoute(ctx, kind.kind)
 }
 
 // ActivatePolicyNowCommand activates a version immediately.
@@ -580,25 +553,25 @@ func (s *Service) ActivatePolicyNow(ctx context.Context, kind PolicyKind, comman
 		return PolicyLifecycle{}, err
 	}
 	now := time.Now()
-	var row policyRow
-	var effectiveRun *model.CampaignDeliveryRun
+	var version Version
+	var effectiveRun *NoticeRun
 	// Policy state, the required sealed effective notice, and canonical OG
 	// planning commit together. Provider dispatch remains post-commit.
-	activation, err := mutation.Run(ctx, s.mutations, mutation.Spec[policyActivation]{
-		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, _ mutation.Require) error {
-			if err := s.legalOG.LockActivation(ctx, tx, descriptor.entity()); err != nil {
+	activation, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[policyActivation, Store]{
+		Access: mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+			if err := store.LockActivation(ctx, kind); err != nil {
 				return err
 			}
-			root, err := loadLegalContentDocumentRoot(ctx, tx, descriptor.entity(), command.ID, true)
+			root, err := loadLegalContentDocumentRoot(ctx, store, descriptor, command.ID, true)
 			if err != nil {
 				return err
 			}
-			return authorizeLegal(ctx, tx, s.spiceDB, descriptor.entity(), root.ID, "publish", false, legalMutationAction(descriptor, root.Status, legalActionPublish))
+			return authorizeLegal(ctx, s.spiceDB, lockActive, descriptor, root.ID, "publish", false, legalMutationAction(descriptor, root.Status, legalActionPublish))
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (policyActivation, error) {
+		Change: func(ctx context.Context, store Store) (policyActivation, error) {
 			var activation policyActivation
 			var err error
-			activation, row, effectiveRun, err = s.activateNow(ctx, tx, descriptor, command, now)
+			activation, version, effectiveRun, err = s.activateNow(ctx, store, descriptor, command, now)
 			return activation, err
 		},
 		Audit: func(activation policyActivation) mutation.Audit {
@@ -613,39 +586,38 @@ func (s *Service) ActivatePolicyNow(ctx context.Context, kind PolicyKind, comman
 	if err != nil {
 		return PolicyLifecycle{}, err
 	}
-	DispatchCommittedLegalEffectiveNoticeAfterActivation(ctx, s.db, s.notice, descriptor.entity(), activation.policyID, now, effectiveRun)
-	return row.lifecycle(command.ExpectedRevision, true), nil
+	DispatchCommittedEffectiveNotice(ctx, s.dispatch, kind, activation.policyID, now, effectiveRun)
+	return version.lifecycle(command.ExpectedRevision, true), nil
 }
 
 // activateNow activates the authorized version, seals its effective notice,
-// requests its OG, and returns the activated row.
+// requests its OG, and returns the activated version.
 func (s *Service) activateNow(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	kind *policyKind,
 	command ActivatePolicyNowCommand,
 	now time.Time,
-) (policyActivation, policyRow, *model.CampaignDeliveryRun, error) {
-	var row policyRow
-	if err := verifyLegalExpectedRevisionWithDB(ctx, tx, kind.entity(), command.ID, command.ExpectedRevision); err != nil {
-		return policyActivation{}, row, nil, err
+) (policyActivation, Version, *NoticeRun, error) {
+	if err := verifyLegalExpectedRevision(ctx, store, kind, command.ID, command.ExpectedRevision); err != nil {
+		return policyActivation{}, Version{}, nil, err
 	}
-	activation, _, err := activatePolicyVersion(ctx, tx, s.legalOG, kind, command.ID, true, now)
+	activation, _, err := activatePolicyVersion(ctx, store, kind, command.ID, true, now)
 	if err != nil {
-		return policyActivation{}, row, nil, err
+		return policyActivation{}, Version{}, nil, err
 	}
-	run, err := s.notice.CreateRun(
-		ctx, tx, kind.entity(), command.ID, kind.effectiveEvent.String(),
+	run, err := store.SealNoticeRun(
+		ctx, kind.kind, command.ID, kind.effectiveEvent.String(),
 		map[string]string{kind.effectiveURLKey: fmt.Sprintf("%s/%s", s.baseURL, kind.entity())}, now,
 	)
 	if err != nil {
-		return policyActivation{}, row, nil, err
+		return policyActivation{}, Version{}, nil, err
 	}
-	if err := s.legalOG.RequestSaved(ctx, tx, kind.entity(), command.ID, "", true, kind.entity()+"_activated"); err != nil {
-		return policyActivation{}, row, nil, err
+	if err := store.RequestOG(ctx, kind.kind, command.ID, "", true, kind.entity()+"_activated"); err != nil {
+		return policyActivation{}, Version{}, nil, err
 	}
-	err = tx.Table(kind.table).First(&row, "id = ?", command.ID).Error
-	return activation, row, run, err
+	version, err := store.Version(ctx, kind.kind, command.ID, NoLock)
+	return activation, version, run, err
 }
 
 // DeletePolicyCommand deletes a version in any lifecycle.
@@ -662,65 +634,65 @@ func (s *Service) DeletePolicy(ctx context.Context, kind PolicyKind, command Del
 	if err != nil {
 		return err
 	}
-	var row policyRow
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
-		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, _ mutation.Require) error {
-			if err := s.legalOG.LockActivation(ctx, tx, descriptor.entity()); err != nil {
+	var version Version
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
+		Access: mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+			if err := store.LockActivation(ctx, kind); err != nil {
 				return err
 			}
 			var err error
-			if row, err = lockPolicyRow(ctx, tx, descriptor, command.ID); err != nil {
+			if version, err = lockVersion(ctx, store, descriptor, command.ID); err != nil {
 				return err
 			}
-			return authorizeLegal(ctx, tx, s.spiceDB, descriptor.entity(), row.ID, "delete", false, legalActionDelete)
+			return authorizeLegal(ctx, s.spiceDB, lockActive, descriptor, version.ID, "delete", false, legalActionDelete)
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) {
-			if err := verifyLegalExpectedRevisionWithDB(ctx, tx, descriptor.entity(), row.ID, command.ExpectedRevision); err != nil {
+		Change: func(ctx context.Context, store Store) (struct{}, error) {
+			if err := verifyLegalExpectedRevision(ctx, store, descriptor, version.ID, command.ExpectedRevision); err != nil {
 				return struct{}{}, err
 			}
-			return struct{}{}, s.deletePolicyRow(ctx, tx, descriptor, row)
+			return struct{}{}, deleteVersion(ctx, store, descriptor, version)
 		},
 		Audit: func(struct{}) mutation.Audit {
-			return policyIdentityAudit(sharedtelemetry.AuditLegalPolicyDeleted, descriptor, row)
+			return policyIdentityAudit(sharedtelemetry.AuditLegalPolicyDeleted, descriptor, version)
 		},
 		Relationships: func(struct{}) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
-			return descriptor.policyRelationships(row.ID, false)
+			return descriptor.policyRelationships(version.ID, false)
 		},
 	})
 	if err != nil {
 		return err
 	}
-	if err := s.legalOG.ReleaseAssets(ctx, s.db, descriptor.entity(), row.ID); err != nil {
-		slog.WarnContext(ctx, "Legal OG asset release failed after the document was deleted", "domain", "legal", "operation", "release_og_assets", "outcome", "failed", "entity_type", descriptor.entity(), "entity_id", row.ID, failurecause.Attr(err))
+	if err := s.ogAssets.ReleaseOGAssets(ctx, kind, version.ID); err != nil {
+		slog.WarnContext(ctx, "Legal OG asset release failed after the document was deleted", "domain", "legal", "operation", "release_og_assets", "outcome", "failed", "entity_type", descriptor.entity(), "entity_id", version.ID, failurecause.Attr(err))
 	}
 	return nil
 }
 
-func (s *Service) deletePolicyRow(ctx context.Context, tx *gorm.DB, kind *policyKind, row policyRow) error {
-	currentBefore, err := s.legalOG.CurrentForRoute(ctx, tx, kind.entity())
+func deleteVersion(ctx context.Context, store Store, kind *policyKind, version Version) error {
+	currentBefore, err := store.CurrentRoute(ctx, kind.kind)
 	if err != nil {
 		return err
 	}
-	if err := s.notice.StopRunsForDeletedPolicy(ctx, tx, kind.entity(), row.ID); err != nil {
+	if err := store.StopNoticesOfDeletedVersion(ctx, kind.kind, version.ID); err != nil {
 		return err
 	}
-	if row.ContentDocumentID == nil {
+	if version.ContentDocumentID == nil {
 		return domainerr.Precondition(kind.entity() + " content document has not been populated")
 	}
-	documentID, err := parseLegalContentUUID("content_document_id", *row.ContentDocumentID)
+	documentID, err := parseLegalContentUUID("content_document_id", *version.ContentDocumentID)
 	if err != nil {
 		return err
 	}
-	if err := s.contentBlocks.DeleteDocument(ctx, tx, documentID, legalDocumentOwnershipFence(kind.entity(), row.ID)); err != nil {
+	if err := store.DeleteContentDocument(ctx, documentID, legalDocumentOwnershipFence(kind, version.ID)); err != nil {
 		return normalizeLegalContentBlockError(kind.entity(), err)
 	}
-	if err := s.previewLinks.DeleteForEntity(ctx, tx, kind.shareLinkEntityType, row.ID); err != nil {
+	if err := store.DeletePreviewLinks(ctx, kind.shareLinkEntityType, version.ID); err != nil {
 		return err
 	}
-	if err := tx.Table(kind.table).Where("id = ?", row.ID).Delete(&policyRow{}).Error; err != nil {
+	if err := store.DeleteVersion(ctx, kind.kind, version.ID); err != nil {
 		return err
 	}
-	return refreshLegalRouteAfterPolicyDeletion(ctx, tx, s.legalOG, kind.entity(), row.ID, currentBefore)
+	return refreshLegalRouteAfterPolicyDeletion(ctx, store, kind, version.ID, currentBefore)
 }
 
 // RegeneratePolicyDerivedContentCommand rebuilds a version's HTML and text.
@@ -737,27 +709,27 @@ func (s *Service) RegeneratePolicyDerivedContent(ctx context.Context, kind Polic
 	if err != nil {
 		return "", err
 	}
-	var root legalContentDocumentRoot
-	return mutation.Run(ctx, s.mutations, mutation.Spec[string]{
-		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, _ mutation.Require) error {
+	var root Root
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[string, Store]{
+		Access: mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
 			var err error
-			if root, err = loadLegalContentDocumentRoot(ctx, tx, descriptor.entity(), command.ID, true); err != nil {
+			if root, err = loadLegalContentDocumentRoot(ctx, store, descriptor, command.ID, true); err != nil {
 				return err
 			}
-			return authorizeLegal(ctx, tx, s.spiceDB, descriptor.entity(), command.ID, "manage", false, legalMutationAction(descriptor, root.Status, legalActionManage))
+			return authorizeLegal(ctx, s.spiceDB, lockActive, descriptor, command.ID, "manage", false, legalMutationAction(descriptor, root.Status, legalActionManage))
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (string, error) {
-			snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, *root.ContentDocumentID, root.SourceLocale)
+		Change: func(ctx context.Context, store Store) (string, error) {
+			snapshot, err := store.LockedContentSnapshot(ctx, *root.ContentDocumentID, root.SourceLocale)
 			if err != nil {
 				return "", normalizeLegalContentBlockError(descriptor.entity(), err)
 			}
 			if strings.TrimSpace(command.ExpectedSnapshotDigest) == "" || command.ExpectedSnapshotDigest != snapshot.SnapshotDigest {
 				return "", domainerr.Precondition("legal derived-content regeneration targets a stale Block document")
 			}
-			if err := refreshDerivedContent(ctx, tx, descriptor.entity(), command.ID, snapshot, root.SourceLocale, time.Now().UTC()); err != nil {
+			if err := refreshDerivedContent(ctx, store, descriptor, command.ID, snapshot, root.SourceLocale, time.Now().UTC()); err != nil {
 				return "", err
 			}
-			return snapshot.SnapshotDigest, s.legalOG.RequestSaved(ctx, tx, descriptor.entity(), command.ID, "", true, descriptor.entity()+"_derived_content_regenerated")
+			return snapshot.SnapshotDigest, store.RequestOG(ctx, kind, command.ID, "", true, descriptor.entity()+"_derived_content_regenerated")
 		},
 		Audit: func(string) mutation.Audit { return mutation.Unchanged() },
 	})
@@ -767,9 +739,9 @@ func (s *Service) RegeneratePolicyDerivedContent(ctx context.Context, kind Polic
 // committed.
 func (s *Service) readPolicy(ctx context.Context, kind *policyKind, id string) (Policy, error) {
 	var policy Policy
-	err := readLocked(ctx, s.mutations, authorizedBefore, func(ctx context.Context, tx *gorm.DB) error {
+	err := readLocked(ctx, s.mutations, authorizedBefore, func(ctx context.Context, store Store) error {
 		var err error
-		policy, err = s.policyWithDocument(ctx, tx, kind, id)
+		policy, err = policyWithDocument(ctx, store, kind, id)
 		return err
 	})
 	return policy, err
@@ -777,11 +749,10 @@ func (s *Service) readPolicy(ctx context.Context, kind *policyKind, id string) (
 
 // policyWithDocument reads the version under a share lock with its source
 // locale document.
-func (s *Service) policyWithDocument(ctx context.Context, tx *gorm.DB, kind *policyKind, id string) (Policy, error) {
-	var persisted policyRow
-	if err := tx.Table(kind.table).Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-		First(&persisted, "id = ?", id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+func policyWithDocument(ctx context.Context, store Store, kind *policyKind, id string) (Policy, error) {
+	persisted, err := store.Version(ctx, kind.kind, id, ShareLock)
+	if err != nil {
+		if errors.Is(err, ErrPolicyNotFound) {
 			return Policy{}, domainerr.ResourceNotFound(kind.entity(), id)
 		}
 		return Policy{}, err
@@ -793,11 +764,11 @@ func (s *Service) policyWithDocument(ctx context.Context, tx *gorm.DB, kind *pol
 	if err != nil {
 		return Policy{}, err
 	}
-	root, err := loadLegalContentDocumentRoot(ctx, tx, kind.entity(), id, false)
+	root, err := loadLegalContentDocumentRoot(ctx, store, kind, id, false)
 	if err != nil {
 		return Policy{}, err
 	}
-	snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, documentID, root.SourceLocale)
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, root.SourceLocale)
 	if err != nil {
 		return Policy{}, normalizeLegalContentBlockError(kind.entity(), err)
 	}
@@ -809,7 +780,7 @@ func (s *Service) policyWithDocument(ctx context.Context, tx *gorm.DB, kind *pol
 		ID: persisted.ID, Version: int32(persisted.Version), Title: persisted.Title,
 		Document: document, Revision: snapshot.Document.Revision.String(),
 		SourceLocale: root.SourceLocale, SnapshotDigest: snapshot.SnapshotDigest,
-		Status:    model.LegalPolicyStatus(persisted.Status),
+		Status:    persisted.Status,
 		CreatedAt: persisted.CreatedAt, UpdatedAt: persisted.UpdatedAt,
 		EffectiveFrom: persisted.EffectiveFrom, EffectiveUntil: persisted.EffectiveUntil,
 	}, nil

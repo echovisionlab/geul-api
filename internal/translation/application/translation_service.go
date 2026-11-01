@@ -8,74 +8,36 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/types/known/fieldmaskpb"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+	"github.com/echovisionlab/geul-api/internal/translation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"github.com/lib/pq"
 )
 
-var translationJobSortConfig = queryutil.SortConfig{
-	AllowedFields: map[string]string{
-		"requested_at":  "requested_at",
-		"updated_at":    "updated_at",
-		"target_locale": "target_locale",
-		"status":        "status",
-	},
-	DefaultSort: "updated_at DESC, id ASC",
-}
-
-// Publisher carries the commands and signals of the Translation use cases.
-type Publisher interface {
-	// The job and its durable queue command must become visible together.
-	EnqueueTranslationGenerateWithDB(context.Context, *gorm.DB, *managev1.TranslationGenerateEvent) error
-	PublishTranslationLifecycle(ctx context.Context, event *managev1.TranslationLifecycleEvent) error
-	// content.updated is scheduled only in the owning mutation transaction.
-	contentsignal.Publisher
-}
-
-// Deps are the collaborators of the Translation use cases. Every field except
-// CDNDomain is required; NewService rejects a missing one.
+// Deps are the collaborators of the Translation use cases; all are required.
 type Deps struct {
-	DB            *gorm.DB
-	SpiceDB       *auth.SpiceDBClient
-	Audit         domainaudit.Appender
-	Publisher     Publisher
-	ContentBlocks *contentblock.Store
-	OGPlanner     *ogpostgres.Planner
-	OGRefresher   *ogpostgres.Refresher
-	// Domains reaches each owning domain's translation port.
-	Domains DomainRegistry
+	Units   mutation.UnitOfWork[Store]
+	SpiceDB mutation.Authorizer
+	Fence   identitystate.Fence
+	Audit   domainaudit.Appender
+	// Plans builds extraction plans by each owning domain's rules.
+	Plans DomainPlans
 	// XLIFFFiles stores XLIFF exports and reads verified XLIFF uploads.
 	XLIFFFiles TranslationXLIFFFiles
-	// InterchangeDomains applies imported XLIFF targets in the owning domain.
-	InterchangeDomains TranslationInterchangeDomains
-	// CDNDomain prefixes OG asset URLs; empty keeps them relative.
-	CDNDomain string
 }
 
 func (d Deps) validate() error {
 	return requireDeps("translation", map[string]bool{
-		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil,
-		"Publisher": d.Publisher == nil, "ContentBlocks": d.ContentBlocks == nil,
-		"OGPlanner": d.OGPlanner == nil, "OGRefresher": d.OGRefresher == nil,
-		"Domains": d.Domains == nil, "XLIFFFiles": d.XLIFFFiles == nil,
-		"InterchangeDomains": d.InterchangeDomains == nil,
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil,
+		"Audit": d.Audit == nil, "Plans": d.Plans == nil, "XLIFFFiles": d.XLIFFFiles == nil,
 	})
 }
 
@@ -97,19 +59,13 @@ func requireDeps(name string, absent map[string]bool) error {
 // entity translations, jobs and XLIFF interchange. Connect and MCP adapters
 // translate their requests into its commands and queries.
 type Service struct {
-	db                 *gorm.DB
-	publisher          Publisher
-	spiceDB            *auth.SpiceDBClient
-	cdnDomain          string
-	now                func() time.Time
-	contentBlocks      *contentblock.Store
-	ogPlanner          *ogpostgres.Planner
-	ogRefresher        *ogpostgres.Refresher
-	metrics            translationMetrics
-	domains            DomainRegistry
-	xliffFiles         TranslationXLIFFFiles
-	interchangeDomains TranslationInterchangeDomains
-	mutations          *mutation.Runner
+	units      mutation.UnitOfWork[Store]
+	spiceDB    mutation.Authorizer
+	now        func() time.Time
+	metrics    translationMetrics
+	plans      DomainPlans
+	xliffFiles TranslationXLIFFFiles
+	mutations  *mutation.StoreRunner[Store]
 }
 
 // NewService returns the Translation use cases over deps.
@@ -117,21 +73,19 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
 	return &Service{
-		db: deps.DB, publisher: deps.Publisher, spiceDB: deps.SpiceDB, cdnDomain: deps.CDNDomain,
-		now: dbtime.Now, contentBlocks: deps.ContentBlocks, ogPlanner: deps.OGPlanner,
-		ogRefresher: deps.OGRefresher, metrics: newTranslationMetrics(), domains: deps.Domains,
-		xliffFiles: deps.XLIFFFiles, interchangeDomains: deps.InterchangeDomains, mutations: mutations,
+		units: deps.Units, spiceDB: deps.SpiceDB, now: dbtime.Now, metrics: newTranslationMetrics(),
+		plans: deps.Plans, xliffFiles: deps.XLIFFFiles, mutations: mutations,
 	}, nil
 }
 
 // ListTranslationLocales lists every runtime locale to an administrator and
 // the enabled ones to any other authenticated principal.
-func (s *Service) ListTranslationLocales(ctx context.Context) ([]*managev1.TranslationLocale, error) {
+func (s *Service) ListTranslationLocales(ctx context.Context) ([]Locale, error) {
 	user := auth.GetUser(ctx)
 	isAdmin := false
 	if user != nil && user.Authenticated {
@@ -144,31 +98,23 @@ func (s *Service) ListTranslationLocales(ctx context.Context) ([]*managev1.Trans
 	if !isAdmin && (user == nil || !user.Authenticated) {
 		return nil, domainerr.AuthenticationRequired()
 	}
-
-	catalog := localization.NewCatalog(s.db)
-	var locales []localization.RuntimeLocale
-	var err error
-	if isAdmin {
-		locales, err = catalog.All(ctx)
-	} else {
-		locales, err = catalog.Enabled(ctx)
-	}
+	var locales []Locale
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		locales, err = store.Locales(ctx, !isAdmin)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-
-	result := make([]*managev1.TranslationLocale, 0, len(locales))
-	for _, locale := range locales {
-		result = append(result, toProtoTranslationLocale(locale))
-	}
-	return result, nil
+	return locales, nil
 }
 
 // Overview is the administrator's translation coverage summary.
 type Overview struct {
-	Stats        *managev1.TranslationOverviewStats
-	LocaleHealth []*managev1.TranslationLocaleHealth
-	EntityHealth []*managev1.TranslationEntityHealth
+	Stats        OverviewStats
+	LocaleHealth []LocaleHealth
+	EntityHealth []EntityHealth
 }
 
 // GetTranslationOverview summarizes locale and entity translation coverage.
@@ -176,25 +122,28 @@ func (s *Service) GetTranslationOverview(ctx context.Context) (Overview, error) 
 	if err := requireTranslationAdmin(ctx, s.spiceDB); err != nil {
 		return Overview{}, err
 	}
-	stats, err := s.getTranslationOverviewStats(ctx)
+	var overview Overview
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		if overview.Stats, err = store.OverviewStats(ctx); err != nil {
+			return err
+		}
+		if overview.LocaleHealth, err = store.LocaleHealth(ctx); err != nil {
+			return err
+		}
+		overview.EntityHealth, err = store.EntityHealth(ctx)
+		return err
+	})
 	if err != nil {
 		return Overview{}, err
 	}
-	localeHealth, err := s.listTranslationLocaleHealth(ctx)
-	if err != nil {
-		return Overview{}, err
-	}
-	entityHealth, err := s.listTranslationEntityHealth(ctx)
-	if err != nil {
-		return Overview{}, err
-	}
-	return Overview{Stats: stats, LocaleHealth: localeHealth, EntityHealth: entityHealth}, nil
+	return overview, nil
 }
 
 // SettingsView is the runtime translation settings and whether a provider
 // can generate translations now.
 type SettingsView struct {
-	Settings                 *managev1.TranslationSettings
+	Settings                 translation.RuntimeSettings
 	GenerationEnabled        bool
 	GenerationDisabledReason *string
 }
@@ -205,15 +154,21 @@ func (s *Service) GetTranslationSettings(ctx context.Context) (SettingsView, err
 	if err := s.requireTranslationPlatformCan(ctx, can, canErr); err != nil {
 		return SettingsView{}, err
 	}
-	settings, err := loadTranslationRuntimeSettings(ctx, s.db)
+	var settings translation.RuntimeSettings
+	var generationEnabled bool
+	// Reading the settings inserts the default singleton when it is missing.
+	err := s.units.ReadCurrent(ctx, func(store Store) error {
+		var err error
+		if settings, err = store.RuntimeSettings(ctx); err != nil {
+			return err
+		}
+		generationEnabled, err = hasAvailableTranslationProvider(ctx, store)
+		return err
+	})
 	if err != nil {
 		return SettingsView{}, err
 	}
-	generationEnabled, err := hasAvailableTranslationProvider(ctx, s.db)
-	if err != nil {
-		return SettingsView{}, err
-	}
-	view := SettingsView{Settings: toProtoTranslationSettings(settings), GenerationEnabled: generationEnabled}
+	view := SettingsView{Settings: settings, GenerationEnabled: generationEnabled}
 	if !generationEnabled {
 		reason := translationProviderUnavailableMessage
 		view.GenerationDisabledReason = &reason
@@ -225,8 +180,8 @@ func (s *Service) GetTranslationSettings(ctx context.Context) (SettingsView, err
 // UpdateMask names the fields to change; BaseSettings are the settings the
 // caller last read, from which a protected-terms patch is derived.
 type UpdateTranslationSettingsCommand struct {
-	Settings     *managev1.TranslationSettings
-	BaseSettings *managev1.TranslationSettings
+	Settings     *translation.RuntimeSettings
+	BaseSettings *translation.RuntimeSettings
 	UpdateMask   *fieldmaskpb.FieldMask
 }
 
@@ -236,15 +191,17 @@ type settingsUpdate struct {
 }
 
 // UpdateTranslationSettings applies the masked settings fields.
-func (s *Service) UpdateTranslationSettings(ctx context.Context, command UpdateTranslationSettingsCommand) (*managev1.TranslationSettings, error) {
-	var row model.TranslationSettings
-	updated, err := mutation.Run(ctx, s.mutations, mutation.Spec[settingsUpdate]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
-			return tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&row, "id = 1").Error
+func (s *Service) UpdateTranslationSettings(ctx context.Context, command UpdateTranslationSettingsCommand) (translation.RuntimeSettings, error) {
+	var stored translation.RuntimeSettings
+	updated, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[settingsUpdate, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			var err error
+			stored, err = store.LockRuntimeSettings(ctx)
+			return err
 		},
 		Access: mutation.FreshAdminCan(policyv1.TranslationSettings.Update()),
-		Change: func(_ context.Context, tx *gorm.DB) (settingsUpdate, error) {
-			return updateTranslationRuntimeSettings(tx, &row, command)
+		Change: func(ctx context.Context, store Store) (settingsUpdate, error) {
+			return updateTranslationRuntimeSettings(ctx, store, stored, command)
 		},
 		Audit: func(update settingsUpdate) mutation.Audit {
 			if len(update.fields) == 0 {
@@ -256,17 +213,18 @@ func (s *Service) UpdateTranslationSettings(ctx context.Context, command UpdateT
 		},
 	})
 	if err != nil {
-		return nil, err
+		return translation.RuntimeSettings{}, err
 	}
-	return toProtoTranslationSettings(updated.settings), nil
+	return updated.settings, nil
 }
 
-func updateTranslationRuntimeSettings(tx *gorm.DB, row *model.TranslationSettings, command UpdateTranslationSettingsCommand) (settingsUpdate, error) {
-	current, err := normalizeTranslationRuntimeSettings(translationRuntimeSettings{
-		DefaultLocale:  row.DefaultLocale,
-		ProtectedTerms: append([]string(nil), row.ProtectedTerms...),
-		UpdatedAt:      &row.UpdatedAt,
-	})
+func updateTranslationRuntimeSettings(
+	ctx context.Context,
+	store Store,
+	stored translation.RuntimeSettings,
+	command UpdateTranslationSettingsCommand,
+) (settingsUpdate, error) {
+	current, err := normalizeTranslationRuntimeSettings(stored)
 	if err != nil {
 		return settingsUpdate{}, err
 	}
@@ -278,21 +236,22 @@ func updateTranslationRuntimeSettings(tx *gorm.DB, row *model.TranslationSetting
 	if len(fields) == 0 {
 		return settingsUpdate{settings: current}, nil
 	}
-	updates := map[string]any{"updated_at": tx.NowFunc().UTC()}
+	var change SettingsChange
 	if current.DefaultLocale != requested.DefaultLocale {
-		updates["default_locale"] = requested.DefaultLocale
+		change.DefaultLocale = &requested.DefaultLocale
 	}
 	if !slices.Equal(current.ProtectedTerms, requested.ProtectedTerms) {
-		updates["protected_terms"] = pq.Array(requested.ProtectedTerms)
+		change.ProtectedTerms, change.TermsChanged = requested.ProtectedTerms, true
 	}
-	if err := tx.Model(row).Clauses(clause.Returning{Columns: []clause.Column{{Name: "updated_at"}}}).Updates(updates).Error; err != nil {
+	updatedAt, err := store.UpdateRuntimeSettings(ctx, change)
+	if err != nil {
 		return settingsUpdate{}, err
 	}
-	requested.UpdatedAt = &row.UpdatedAt
+	requested.UpdatedAt = &updatedAt
 	return settingsUpdate{settings: requested, fields: fields}, nil
 }
 
-func requireTranslationAdmin(ctx context.Context, spiceDB *auth.SpiceDBClient) error {
+func requireTranslationAdmin(ctx context.Context, spiceDB mutation.Authorizer) error {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated {
 		return domainerr.AuthenticationRequired()
@@ -318,6 +277,19 @@ func translationRuntimeSettingsChangedFields(current, requested translationRunti
 	return fields
 }
 
+// Pagination is where a page sits among every match.
+type Pagination struct {
+	Total   int32
+	Limit   int32
+	Offset  int32
+	HasMore bool
+}
+
+func paginationOf(page queryutil.Pagination, total int64) Pagination {
+	response := page.BuildResponse(total)
+	return Pagination{Total: response.Total, Limit: response.Limit, Offset: response.Offset, HasMore: response.HasMore}
+}
+
 // ListTranslationJobsQuery lists in-flight translation jobs. An
 // administrator reads every job; another principal must filter to exactly
 // one entity it may read.
@@ -331,8 +303,8 @@ type ListTranslationJobsQuery struct {
 
 // JobPage is one page of translation jobs.
 type JobPage struct {
-	Jobs       []*managev1.TranslationJob
-	Pagination *commonv1.PaginationResponse
+	Jobs       []Job
+	Pagination Pagination
 }
 
 // ListTranslationJobs lists translation jobs.
@@ -340,50 +312,26 @@ func (s *Service) ListTranslationJobs(ctx context.Context, query ListTranslation
 	if err := s.authorizeTranslationJobList(ctx, query.Filters); err != nil {
 		return JobPage{}, err
 	}
-
-	var jobs []model.TranslationJob
-	var total int64
-
-	db := s.db.WithContext(ctx).Model(&model.TranslationJob{})
-	db, err := applyTranslationJobFilters(db, query.Filters)
-	if err != nil {
-		return JobPage{}, err
-	}
-	if err := db.Count(&total).Error; err != nil {
-		return JobPage{}, err
-	}
-
 	pagination := queryutil.ExtractPaginationRaw(query.Limit, query.Offset, queryutil.DefaultPaginationConfig)
-	db, err = applyTranslationJobSort(db, query.Sorts)
+	var jobs []Job
+	var total int64
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		jobs, total, err = store.ListJobs(ctx, JobListQuery{
+			Filters: query.Filters, Sorts: query.Sorts, Limit: pagination.Limit, Offset: pagination.Offset,
+		})
+		return err
+	})
 	if err != nil {
 		return JobPage{}, err
 	}
-	if err := pagination.Apply(db).Find(&jobs).Error; err != nil {
-		return JobPage{}, err
-	}
-
-	page := JobPage{
-		Jobs:       make([]*managev1.TranslationJob, 0, len(jobs)),
-		Pagination: pagination.BuildResponse(total),
-	}
-	for _, job := range jobs {
-		if err := validateTranslationJobRequester(&job); err != nil {
+	for index := range jobs {
+		if err := ValidateJobRequester(&jobs[index]); err != nil {
 			return JobPage{}, err
 		}
-		page.Jobs = append(page.Jobs, toProtoTranslationJob(job))
 	}
-	return page, nil
-}
-
-func applyTranslationJobSort(query *gorm.DB, sorts []*commonv1.SortSpec) (*gorm.DB, error) {
-	query, err := translationJobSortConfig.ApplySort(query, sorts)
-	if err != nil {
-		return nil, err
+	if jobs == nil {
+		jobs = []Job{}
 	}
-	if len(sorts) != 0 {
-		// Explicit sort fields can tie. Preserve a unique order across offset
-		// pages just as the default sort does.
-		query = query.Order("id ASC")
-	}
-	return query, nil
+	return JobPage{Jobs: jobs, Pagination: paginationOf(pagination, total)}, nil
 }

@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -83,7 +83,7 @@ func (authority multipartFileIngestAuthority) revalidate(
 	entityID string,
 ) error {
 	if strings.TrimSpace(fileID) != authority.fileID {
-		return errs.FailedPrecondition("multipart completion File authority changed")
+		return domainerr.Precondition("multipart completion File authority changed")
 	}
 	var session model.UploadSession
 	result := tx.WithContext(ctx).
@@ -91,16 +91,16 @@ func (authority multipartFileIngestAuthority) revalidate(
 		Where("upload_id = ? AND file_id = ?", authority.uploadID, authority.fileID).
 		Take(&session)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return errs.FailedPrecondition("multipart completion upload authority no longer exists")
+		return domainerr.Precondition("multipart completion upload authority no longer exists")
 	}
 	if result.Error != nil {
-		return errs.Internal(fmt.Errorf("lock multipart completion upload authority: %w", result.Error))
+		return fmt.Errorf("lock multipart completion upload authority: %w", result.Error)
 	}
 	if session.Status != model.UploadSessionStatusFinalizing ||
 		session.UploadType != uploadType.String() ||
 		uploadSessionEntityTypeToEnum(session.EntityType) != entityType ||
 		strings.TrimSpace(session.EntityID) != strings.TrimSpace(entityID) {
-		return errs.FailedPrecondition("multipart completion upload authority changed")
+		return domainerr.Precondition("multipart completion upload authority changed")
 	}
 	return requireFreshFileIngestAuthority(ctx, tx, service, uploadType, entityType, session.EntityID)
 }
@@ -115,7 +115,7 @@ func requireFreshFileIngestAuthority(
 ) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	txService := *service
 	txService.db = tx
@@ -144,10 +144,10 @@ func requireFreshFileIngestAuthority(
 	}
 	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
 	if err != nil {
-		return errs.Internal(fmt.Errorf("lock File ingest principal: %w", err))
+		return fmt.Errorf("lock File ingest principal: %w", err)
 	}
 	if !active {
-		return errs.PermissionDenied("File ingest authority was revoked")
+		return domainerr.Denied("File ingest authority was revoked")
 	}
 	if err := txService.checkRoleAndSpiceDBUploadPermission(
 		ctx,
@@ -180,10 +180,10 @@ func lockFileIngestAuthorizationTarget(
 		Where("id = ?", entityID).
 		Take(&row)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return errs.NotFound(target.resourceType, entityID)
+		return domainerr.ResourceNotFound(target.resourceType, entityID)
 	}
 	if result.Error != nil {
-		return errs.Internal(fmt.Errorf("lock File ingest %s target: %w", target.resourceType, result.Error))
+		return fmt.Errorf("lock File ingest %s target: %w", target.resourceType, result.Error)
 	}
 	return nil
 }

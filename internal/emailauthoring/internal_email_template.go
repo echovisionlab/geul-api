@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
@@ -14,7 +13,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -50,11 +48,14 @@ func (s *InternalService) readTemplateCollaboration(ctx context.Context, templat
 	if write.locale, err = emailcontent.NormalizeLocale(locale); err != nil {
 		return write, err
 	}
-	if write.documentID, err = loadEmailTemplateContentDocument(ctx, s.db, templateID, false); err != nil {
-		return write, err
-	}
-	domain, err := loadEmailTemplateSourceContext(ctx, s.db, templateID, false)
-	write.sourceLocale = domain.SourceLocale
+	err = s.units.Read(ctx, func(store Store) error {
+		var err error
+		if write.documentID, err = loadTemplateContentDocument(ctx, store, templateID, false); err != nil {
+			return err
+		}
+		write.sourceLocale, err = loadTemplateSourceLocale(ctx, store, templateID, false)
+		return err
+	})
 	return write, err
 }
 
@@ -63,21 +64,19 @@ func (s *InternalService) readTemplateCollaboration(ctx context.Context, templat
 func (s *InternalService) saveTemplateCollaboration(
 	ctx context.Context,
 	write templateCollaboration,
-	change func(ctx context.Context, tx *gorm.DB, originMemberID string) (emailcontent.CollaborationChange, error),
+	change func(ctx context.Context, store Store, originMemberID string) (emailcontent.CollaborationChange, error),
 ) (emailcontent.CollaborationChange, error) {
-	return mutation.Run(ctx, s.mutations, mutation.Spec[emailcontent.CollaborationChange]{
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[emailcontent.CollaborationChange, Store]{
 		Access: emailcontent.CollaborationAccess,
-		Change: func(ctx context.Context, tx *gorm.DB) (emailcontent.CollaborationChange, error) {
-			originMemberID, err := s.requireOriginMember(ctx, tx, write.contributors)
+		Change: func(ctx context.Context, store Store) (emailcontent.CollaborationChange, error) {
+			originMemberID, err := requireOriginMember(ctx, store, write.contributors)
 			if err != nil {
 				return emailcontent.CollaborationChange{}, err
 			}
-			if err := s.checkpoints.RequireCurrentContributors(
-				ctx, tx, intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_EMAIL_TEMPLATE, write.templateID, write.contributors,
-			); err != nil {
+			if err := store.RequireCurrentTemplateContributors(ctx, write.templateID, write.contributors); err != nil {
 				return emailcontent.CollaborationChange{}, err
 			}
-			return change(ctx, tx, originMemberID)
+			return change(ctx, store, originMemberID)
 		},
 		Audit: func(change emailcontent.CollaborationChange) mutation.Audit { return change.Record },
 	})
@@ -99,20 +98,20 @@ func (s *InternalService) ApplyTemplateBlockBatch(ctx context.Context, command A
 		return emailcontent.CollaborationChange{}, err
 	}
 	if write.locale != write.sourceLocale {
-		return s.saveTemplateCollaboration(ctx, write, func(ctx context.Context, tx *gorm.DB, originMemberID string) (emailcontent.CollaborationChange, error) {
-			return emailTemplateContent.SaveCollaborationTarget(ctx, tx, s.contentBlocks, emailcontent.TargetLocaleMutation{
+		return s.saveTemplateCollaboration(ctx, write, func(ctx context.Context, store Store, originMemberID string) (emailcontent.CollaborationChange, error) {
+			return emailTemplateContent.SaveCollaborationTarget(ctx, store, emailcontent.TargetLocaleMutation{
 				ID: write.templateID, DocumentID: write.documentID, Locale: write.locale,
 				Batch: batch, ExpectedDocumentRevision: batch.ExpectedRevision,
 				ExpectedTargetRevision: command.ExpectedTargetRevision, Now: write.now,
-				Fence: emailTemplateContentFence(s.references, write.templateID),
+				Fence: emailTemplateContentFence(store, write.templateID),
 			}, originMemberID)
 		})
 	}
 	if command.ExpectedTargetRevision != nil {
 		return emailcontent.CollaborationChange{}, domainerr.InvalidField("expected_target_revision", "must be omitted for the source locale")
 	}
-	return s.saveTemplateCollaboration(ctx, write, func(ctx context.Context, tx *gorm.DB, originMemberID string) (emailcontent.CollaborationChange, error) {
-		result, err := s.contentBlocks.ApplyBatch(ctx, tx, batch, emailTemplateContentFence(s.references, write.templateID))
+	return s.saveTemplateCollaboration(ctx, write, func(ctx context.Context, store Store, originMemberID string) (emailcontent.CollaborationChange, error) {
+		result, err := store.ApplyContentBatch(ctx, batch, emailTemplateContentFence(store, write.templateID))
 		if err != nil {
 			return emailcontent.CollaborationChange{}, emailTemplateContent.NormalizeContentBlockError(err)
 		}
@@ -124,7 +123,7 @@ func (s *InternalService) ApplyTemplateBlockBatch(ctx context.Context, command A
 		if !result.Changed {
 			return change, nil
 		}
-		if err := s.projectTemplateSourceBatch(ctx, tx, write, result); err != nil {
+		if err := projectTemplateSourceBatch(ctx, store, write, result); err != nil {
 			return emailcontent.CollaborationChange{}, err
 		}
 		change.Record = emailTemplateContent.LocaleContentChange(originMemberID, write.templateID, write.locale, emailcontent.LocaleContentOperation(true, false, false, true))
@@ -137,12 +136,12 @@ func (s *InternalService) ApplyTemplateBlockBatch(ctx context.Context, command A
 // fallback of every existing target projection, so those rows are
 // re-materialized from the current snapshot and delivery never serves a
 // stale fallback.
-func (s *InternalService) projectTemplateSourceBatch(ctx context.Context, tx *gorm.DB, write templateCollaboration, result contentblock.Result) error {
-	domain, err := loadEmailTemplateSourceContext(ctx, tx, write.templateID, true)
+func projectTemplateSourceBatch(ctx context.Context, store Store, write templateCollaboration, result contentblock.Result) error {
+	sourceLocale, err := loadTemplateSourceLocale(ctx, store, write.templateID, true)
 	if err != nil {
 		return err
 	}
-	snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, write.documentID, domain.SourceLocale)
+	snapshot, err := store.LockedContentSnapshot(ctx, write.documentID, sourceLocale)
 	if err != nil {
 		return emailTemplateContent.NormalizeContentBlockError(err)
 	}
@@ -150,13 +149,13 @@ func (s *InternalService) projectTemplateSourceBatch(ctx context.Context, tx *go
 	if result.TranslationSourceChanged {
 		projectionLocales = nil
 	}
-	if err := projectEmailTemplateMaterializedContent(ctx, tx, write.templateID, snapshot, projectionLocales, write.now); err != nil {
+	if err := projectEmailTemplateMaterializedContent(ctx, store, write.templateID, snapshot, projectionLocales, write.now); err != nil {
 		return err
 	}
 	if !result.TranslationSourceChanged {
 		return nil
 	}
-	return syncSourceEmailTemplateVariables(ctx, tx, write.templateID, snapshot)
+	return syncSourceEmailTemplateVariables(ctx, store, write.templateID, snapshot)
 }
 
 // UpdateTemplateLocaleMetadataCommand changes an Email Template's subject in
@@ -194,30 +193,30 @@ func (s *InternalService) UpdateTemplateLocaleMetadata(ctx context.Context, comm
 		return emailcontent.CollaborationChange{}, err
 	}
 	if write.locale != write.sourceLocale {
-		return s.saveTemplateCollaboration(ctx, write, func(ctx context.Context, tx *gorm.DB, originMemberID string) (emailcontent.CollaborationChange, error) {
-			return emailTemplateContent.SaveCollaborationTarget(ctx, tx, s.contentBlocks, emailcontent.TargetLocaleMutation{
+		return s.saveTemplateCollaboration(ctx, write, func(ctx context.Context, store Store, originMemberID string) (emailcontent.CollaborationChange, error) {
+			return emailTemplateContent.SaveCollaborationTarget(ctx, store, emailcontent.TargetLocaleMutation{
 				ID: write.templateID, DocumentID: write.documentID, Locale: write.locale,
 				Batch:                    contentblock.Batch{DocumentID: write.documentID, ExpectedRevision: expectedRevision},
 				ExpectedDocumentRevision: expectedRevision, ExpectedTargetRevision: command.ExpectedTargetRevision,
 				SetSubject: true, Subject: command.Subject, Now: write.now,
-				Fence: emailTemplateContentFence(s.references, write.templateID),
+				Fence: emailTemplateContentFence(store, write.templateID),
 			}, originMemberID)
 		})
 	}
 	if command.ExpectedTargetRevision != nil {
 		return emailcontent.CollaborationChange{}, domainerr.InvalidField("expected_target_revision", "must be omitted for the source locale")
 	}
-	return s.saveTemplateCollaboration(ctx, write, func(ctx context.Context, tx *gorm.DB, originMemberID string) (emailcontent.CollaborationChange, error) {
-		result, err := s.contentBlocks.AdvanceRevision(
-			ctx, tx,
+	return s.saveTemplateCollaboration(ctx, write, func(ctx context.Context, store Store, originMemberID string) (emailcontent.CollaborationChange, error) {
+		result, err := store.AdvanceContentRevision(
+			ctx,
 			contentblock.AdvanceInput{DocumentID: write.documentID, ExpectedRevision: expectedRevision},
-			emailTemplateContentFence(s.references, write.templateID),
-			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-				domain, err := loadEmailTemplateSourceContext(ctx, tx, write.templateID, true)
+			emailTemplateContentFence(store, write.templateID),
+			func(ctx context.Context) (contentblock.MetadataEffect, error) {
+				sourceLocale, err := loadTemplateSourceLocale(ctx, store, write.templateID, true)
 				if err != nil {
 					return contentblock.MetadataEffect{}, err
 				}
-				return updateEmailTemplateSourceSubject(ctx, tx, write.templateID, domain.SourceLocale, *command.Subject, write.now)
+				return updateEmailTemplateSourceSubject(ctx, store, write.templateID, sourceLocale, *command.Subject, write.now)
 			},
 		)
 		if err != nil {
@@ -236,11 +235,11 @@ func (s *InternalService) UpdateTemplateLocaleMetadata(ctx context.Context, comm
 }
 
 // LoadTemplateDocumentQuery reads an Email Template's document in one locale
-// for a collaboration principal.
+// for the collaboration principal of SessionID.
 type LoadTemplateDocumentQuery struct {
 	TemplateID string
 	Locale     string
-	Principal  *intrav1.CollaborationPrincipal
+	SessionID  string
 }
 
 // LoadTemplateDocument returns the template's document in the locale after
@@ -254,10 +253,10 @@ func (s *InternalService) LoadTemplateDocument(ctx context.Context, query LoadTe
 	if err != nil {
 		return emailcontent.CollaborationDocument{}, err
 	}
-	if err := requireEmailTemplateDocumentLoad(ctx, s.db, s.spiceDB, s.references, query.Principal, templateID); err != nil {
+	if err := s.requireEmailTemplateDocumentLoad(ctx, query.SessionID, templateID); err != nil {
 		return emailcontent.CollaborationDocument{}, err
 	}
-	return emailTemplateContent.LoadCollaborationDocument(ctx, s.db, s.contentBlocks, templateID, locale, func(ctx context.Context, tx *gorm.DB) (uuid.UUID, error) {
-		return loadEmailTemplateContentDocument(ctx, tx, templateID, true)
+	return emailTemplateContent.LoadCollaborationDocument(ctx, s.units, templateID, locale, func(ctx context.Context, store Store) (uuid.UUID, error) {
+		return loadTemplateContentDocument(ctx, store, templateID, true)
 	})
 }

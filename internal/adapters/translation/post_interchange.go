@@ -14,6 +14,7 @@ import (
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -191,4 +192,4 @@ func buildPostInterchangeCandidate(
 	return candidate, nil
 }
 
-var _ application.TranslationInterchangeDomains = (*PostInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*PostInterchange)(nil)

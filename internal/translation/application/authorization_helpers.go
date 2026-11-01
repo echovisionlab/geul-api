@@ -5,13 +5,14 @@ import (
 	"fmt"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 func checkSpiceDBAdmin(
 	ctx context.Context,
 	user *auth.UserInfo,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB authz.AuthorizationDecisionChecker,
 ) (bool, error) {
 	if user == nil || spiceDB == nil {
 		return false, fmt.Errorf("SpiceDB authorization is not configured")

@@ -8,11 +8,12 @@ import (
 
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
 	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
-	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
+	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -23,16 +24,39 @@ type EmailDeliveryDispatcher interface {
 }
 
 // NoticeRuntime seals legal-policy source, email-template, and layout
-// revisions in the policy transaction, then delegates post-commit dispatch to
-// Campaign's generic delivery runtime. Campaign's adapter reads and stops the
+// revisions in the policy transaction. Campaign's adapter reads and stops the
 // runs a policy lifecycle change affects.
 type NoticeRuntime struct {
 	campaignadapter.LegalNoticeRuns
+}
+
+func NewNoticeRuntime() *NoticeRuntime {
+	return &NoticeRuntime{}
+}
+
+// NoticeDispatch delegates the post-commit dispatch of a sealed notice run
+// to Campaign's generic delivery runtime and cancels, on db, the update
+// notice an activation made obsolete.
+type NoticeDispatch struct {
+	db         *gorm.DB
 	dispatcher EmailDeliveryDispatcher
 }
 
-func NewNoticeRuntime(dispatcher EmailDeliveryDispatcher) *NoticeRuntime {
-	return &NoticeRuntime{dispatcher: dispatcher}
+// NewNoticeDispatch returns the post-commit notice steps over db; a nil
+// dispatcher answers every dispatch as unavailable.
+func NewNoticeDispatch(db *gorm.DB, dispatcher EmailDeliveryDispatcher) *NoticeDispatch {
+	return &NoticeDispatch{db: db, dispatcher: dispatcher}
+}
+
+func (d *NoticeDispatch) DispatchRun(ctx context.Context, runID string) error {
+	if d == nil || d.dispatcher == nil {
+		return errs.DependencyUnavailable("Campaign delivery dispatcher")
+	}
+	return d.dispatcher.DispatchEmailDeliveryRun(ctx, runID)
+}
+
+func (d *NoticeDispatch) CancelUpdateNoticeAfterActivation(ctx context.Context, kind legaldomain.PolicyKind, policyID string, now time.Time) {
+	campaignadapter.LegalNoticeRuns{}.CancelUpdateNoticeAfterActivation(ctx, d.db, string(kind), policyID, now)
 }
 
 type noticeRenderTranslation = campaign.CampaignDeliverySnapshotTranslation
@@ -137,22 +161,6 @@ func (r *NoticeRuntime) CreateRun(
 	)
 }
 
-func (r *NoticeRuntime) DispatchRun(ctx context.Context, runID string) error {
-	if r == nil || r.dispatcher == nil {
-		return errs.DependencyUnavailable("Campaign delivery dispatcher")
-	}
-	return r.dispatcher.DispatchEmailDeliveryRun(ctx, runID)
-}
-
-func (*NoticeRuntime) PrepareAutomaticPreviewShareLink(
-	ctx context.Context,
-	tx *gorm.DB,
-	run model.CampaignDeliveryRun,
-	now time.Time,
-) error {
-	return legaldomain.PrepareAutomaticNoticePreviewShareLink(ctx, tx, sharelinkadapter.LegalPreviewLinks{}, run, now)
-}
-
 func loadNoticeRenderSnapshot(
 	ctx context.Context,
 	db *gorm.DB,
@@ -188,7 +196,7 @@ func loadNoticeRenderSnapshot(
 	if template.LayoutID == nil || strings.TrimSpace(*template.LayoutID) == "" {
 		return snapshot, nil
 	}
-	layoutRows, err := email.LoadLayoutLocaleSnapshots(ctx, db, strings.TrimSpace(*template.LayoutID))
+	layoutRows, err := email.LoadLayoutLocaleSnapshots(ctx, emailpostgres.Bind(db), strings.TrimSpace(*template.LayoutID))
 	if err != nil {
 		return noticeRenderSnapshot{}, err
 	}
@@ -221,5 +229,6 @@ func stringValue(value *string) string {
 }
 
 var (
-	_ legaldomain.NoticeDelivery = (*NoticeRuntime)(nil)
+	_ legalpostgres.Notices      = (*NoticeRuntime)(nil)
+	_ legaldomain.NoticeDispatch = (*NoticeDispatch)(nil)
 )

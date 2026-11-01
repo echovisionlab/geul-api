@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -129,4 +130,4 @@ func loadCampaignInterchangeTarget(
 	)
 }
 
-var _ application.TranslationInterchangeDomains = (*CampaignInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*CampaignInterchange)(nil)

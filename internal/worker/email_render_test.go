@@ -32,7 +32,7 @@ func (stub *campaignEmailRendererStub) RenderCampaignEmail(
 
 func TestRenderEmailJobTemplateRoutesLiveCampaignToCampaignRenderer(t *testing.T) {
 	renderer := &campaignEmailRendererStub{}
-	rendered, err := (&Handlers{campaignEmail: renderer}).renderEmailJobTemplate(
+	rendered, err := (&emailSeams{campaignEmail: renderer}).renderEmailJobTemplate(
 		t.Context(),
 		&managev1.SendEmailEvent{TemplateType: "campaign:campaign-1"},
 		"ko",
@@ -45,7 +45,7 @@ func TestRenderEmailJobTemplateRoutesLiveCampaignToCampaignRenderer(t *testing.T
 }
 
 func TestRenderEmailJobTemplateRequiresCampaignRenderer(t *testing.T) {
-	rendered, err := (&Handlers{}).renderEmailJobTemplate(
+	rendered, err := (&emailSeams{}).renderEmailJobTemplate(
 		t.Context(),
 		&managev1.SendEmailEvent{TemplateType: "campaign:campaign-1"},
 		"en",
@@ -84,7 +84,7 @@ func TestRenderEmailJobTemplateUsesOnlySealedDurableSnapshotUnit(
 		runID,
 	).Error)
 
-	rendered, err := (&Handlers{db: db}).renderEmailJobTemplate(
+	rendered, err := (&emailSeams{db: db}).renderEmailJobTemplate(
 		t.Context(),
 		&managev1.SendEmailEvent{DeliveryRecipientId: &recipientID},
 		"ko",
@@ -155,7 +155,7 @@ func TestRenderEmailJobTemplateRejectsInvalidDurableDefinitionUnit(
 				runID,
 			).Error)
 
-			rendered, err := (&Handlers{db: db}).renderEmailJobTemplate(
+			rendered, err := (&emailSeams{db: db}).renderEmailJobTemplate(
 				t.Context(),
 				&managev1.SendEmailEvent{
 					DeliveryRecipientId: &recipientID,

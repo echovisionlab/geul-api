@@ -5,41 +5,28 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
-// TranslationEntrySelectSQL returns the Form-owned management projection.
-func TranslationEntrySelectSQL() string {
-	return `SELECT locale, title, NULL::text AS summary,
-		NULL::text AS content_html, content_text, content_json,
-		updated_at, og_asset_id FROM form_translation`
-}
-
-// ApplyProviderTranslationCandidateWithDB applies the request-time provider
+// ApplyProviderTranslationCandidate applies the request-time provider
 // unit set to the current root-owned Form graph. A source-locale pointer switch
 // does not revive the old source row: surviving stable handles are projected
 // onto the current source topology. If the requested target has become the
 // current source, the same accepted replacement is promoted to a proper source
 // mutation and advances the shared Content Document revision.
-func ApplyProviderTranslationCandidateWithDB(
+func ApplyProviderTranslationCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	joined Joined,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	input translation.EntryWrite,
-	auditWriter domainaudit.Appender,
 ) error {
-	if tx == nil || store == nil || job == nil || candidate == nil {
+	store := joined.Store
+	if store == nil || candidate == nil {
 		return errors.New("form provider translation dependencies are required")
 	}
 	if job.EntityType != "form" || !IsValidUUID(job.EntityID) ||
@@ -55,13 +42,11 @@ func ApplyProviderTranslationCandidateWithDB(
 		return domainerr.InvalidField("candidate", "Form provider unit patch is required")
 	}
 
-	root, err := loadFormAIDocumentRoot(ctx, tx, job.EntityID, clause.LockingStrengthUpdate)
+	root, err := loadFormAIDocumentRoot(ctx, store, job.EntityID, UpdateLock)
 	if err != nil {
 		return err
 	}
-	source, sourceExists, err := loadFormAIDocumentLocale(
-		ctx, tx, job.EntityID, root.SourceLocale, true,
-	)
+	source, sourceExists, err := store.Locale(ctx, job.EntityID, root.SourceLocale, true)
 	if err != nil {
 		return err
 	}
@@ -101,9 +86,7 @@ func ApplyProviderTranslationCandidateWithDB(
 
 	current, currentExists := source, true
 	if job.TargetLocale != root.SourceLocale {
-		current, currentExists, err = loadFormAIDocumentLocale(
-			ctx, tx, job.EntityID, job.TargetLocale, true,
-		)
+		current, currentExists, err = store.Locale(ctx, job.EntityID, job.TargetLocale, true)
 		if err != nil {
 			return err
 		}
@@ -120,17 +103,10 @@ func ApplyProviderTranslationCandidateWithDB(
 		Schema:                   canonicalSchema,
 		ContributorMemberID:      strings.TrimSpace(job.RequestedByMemberID),
 	}
-	changed, err := persistAIDocumentMutation(ctx, tx, store, mutation, root, source, current, currentExists)
+	changed, err := persistAIDocumentMutation(ctx, store, mutation, root, source, current, currentExists)
 	if err != nil || !changed {
 		return err
 	}
-	return domainaudit.AppendMember(ctx, tx, auditWriter, mutation.ContributorMemberID, sharedtelemetry.AuditFormUpdated,
+	return domainaudit.AppendMember(ctx, nil, joined.Audit, mutation.ContributorMemberID, sharedtelemetry.AuditFormUpdated,
 		formLocaleContentRecord(mutation.FormID, mutation.Locale, formAIDocumentAuditOperation(mutation)))
-}
-
-func formJSONValueOrNil(value []byte) structured.Value {
-	if len(value) == 0 {
-		return nil
-	}
-	return string(value)
 }
