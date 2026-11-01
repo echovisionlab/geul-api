@@ -12,7 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
@@ -32,7 +32,7 @@ type DomainRegistry struct {
 // NewDomainRegistry routes every catalog domain to its owning adapter; the
 // owners append their locale-content records to audit.
 func NewDomainRegistry(
-	emailReferences emailauthoring.CampaignDeliveryReferences,
+	emailReferences emailauthoringpostgres.DeliveryReferences,
 	audit domainaudit.Appender,
 ) (*DomainRegistry, error) {
 	if emailReferences == nil || audit == nil {

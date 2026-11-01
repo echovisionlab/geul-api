@@ -1,75 +1,12 @@
 package emailauthoring
 
 import (
-	"context"
 	"strings"
-
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func toProtoEmailTemplate(t *model.EmailTemplate) *managev1.EmailTemplate {
-	populateSystemEmailTemplateMetadata(t)
-
-	proto := &managev1.EmailTemplate{
-		Id:               t.ID,
-		SourceLocale:     t.SourceLocale,
-		Key:              t.Key,
-		Name:             t.Name,
-		Subject:          t.Subject,
-		IsSystem:         t.IsSystem,
-		IsActive:         t.IsActive,
-		CreatedAt:        timestamppb.New(t.CreatedAt),
-		DeliveryRunCount: t.DeliveryRunCount,
-	}
-
-	if t.Description != nil {
-		proto.Description = t.Description
-	}
-	if t.UpdatedAt != nil {
-		proto.UpdatedAt = timestamppb.New(*t.UpdatedAt)
-	}
-	if t.EventKey != nil {
-		proto.EventKey = t.EventKey
-	}
-	if t.LayoutID != nil {
-		proto.LayoutId = t.LayoutID
-	}
-
-	// Convert variables
-	if t.Variables != nil {
-		proto.Variables = make([]*managev1.EmailTemplateVariable, len(t.Variables))
-		for i, v := range t.Variables {
-			proto.Variables[i] = &managev1.EmailTemplateVariable{
-				Name:        v.Name,
-				Description: v.Description,
-			}
-			if v.DefaultValue != nil {
-				proto.Variables[i].DefaultValue = v.DefaultValue
-			}
-		}
-	}
-
-	return proto
-}
-
-func (s *Service) toProtoEmailTemplateWithDocument(
-	ctx context.Context,
-	template *model.EmailTemplate,
-) (*managev1.EmailTemplate, error) {
-	proto := toProtoEmailTemplate(template)
-	projection, err := loadEmailTemplateEditorProjection(ctx, s.db, s.contentBlocks, template.ID)
-	if err != nil {
-		return nil, err
-	}
-	proto.Document = projection.Document
-	proto.DocumentRevision = projection.Revision
-	proto.SourceLocale = projection.SourceLocale
-	return proto, nil
-}
-
-func populateSystemEmailTemplateMetadata(template *model.EmailTemplate) {
+// populateSystemEmailTemplateMetadata fills a system template's event key
+// and variables from the automatic email catalog when the row has none.
+func populateSystemEmailTemplateMetadata(template *Template) {
 	if !template.IsSystem {
 		return
 	}

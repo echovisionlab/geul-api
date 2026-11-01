@@ -3,22 +3,24 @@ package emailauthoring
 import (
 	"context"
 
-	"github.com/echovisionlab/geul-api/internal/emailcontent"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
+
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
 )
 
 // AIDocumentService is Email Template's AI document seam: emailcontent owns
 // the shared write and Email Template adds its authorization, delivery
 // lifecycle fence and contributor lock, while the transport adapter owns
 // only DCDP conversion.
-type AIDocumentService struct{ emailcontent.AIDocuments }
+type AIDocumentService struct {
+	emailcontent.AIDocuments[Store]
+}
 
 // TemplateAIDocuments returns the Email Template AI document use cases.
 func (s *InternalService) TemplateAIDocuments() *AIDocumentService {
-	return &AIDocumentService{emailcontent.AIDocuments{
-		Owner: emailTemplateContent, DB: s.db, Store: s.contentBlocks,
-		Mutations: s.mutations, Authorize: s.authorizeTemplateAIDocument,
+	return &AIDocumentService{emailcontent.AIDocuments[Store]{
+		Owner: emailTemplateContent, Units: s.units, Mutations: s.mutations,
+		Authorize: s.authorizeTemplateAIDocument,
 	}}
 }
 
@@ -26,13 +28,13 @@ func (s *InternalService) TemplateAIDocuments() *AIDocumentService {
 // mutation it locks the template, rejects a template an active delivery
 // still renders and locks the editing Member as the contributor. Both check
 // the one exact Edit decision.
-func (s *InternalService) authorizeTemplateAIDocument(ctx context.Context, tx *gorm.DB, templateID string, forUpdate bool) (uuid.UUID, uuid.UUID, error) {
-	documentID, err := loadEmailTemplateContentDocument(ctx, tx, templateID, forUpdate)
+func (s *InternalService) authorizeTemplateAIDocument(ctx context.Context, store Store, templateID string, forUpdate bool) (uuid.UUID, uuid.UUID, error) {
+	documentID, err := loadTemplateContentDocument(ctx, store, templateID, forUpdate)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, err
 	}
 	if forUpdate {
-		if err := s.references.RequireTemplateMutable(ctx, tx, templateID); err != nil {
+		if err := store.RequireTemplateMutable(ctx, templateID); err != nil {
 			return uuid.Nil, uuid.Nil, err
 		}
 	}
@@ -41,5 +43,5 @@ func (s *InternalService) authorizeTemplateAIDocument(ctx context.Context, tx *g
 	if err != nil || !forUpdate {
 		return documentID, memberID, err
 	}
-	return documentID, memberID, s.lockAIDocumentContributor(ctx, tx, memberID)
+	return documentID, memberID, lockAIDocumentContributor(ctx, store, memberID)
 }

@@ -150,7 +150,7 @@ func publishEmailTemplateSourceBlocksForIntegration(
 	require.NoError(t, err)
 	contributorID := testutil.IntegrationUUID()
 	testutil.InsertAuthorizedDocumentContributor(t, db, spiceDB, contributorID)
-	_, err = emailauthoring.NewInternalTemplateConnectHandler(newInternalEmailAuthoringService(t, emailauthoring.InternalDeps{DB: db, Audit: apitelemetry.NewDurableWriter(db), SpiceDB: spiceDB, ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB), References: emailauthoringadapter.NewCampaignDeliveryReferences()})).ApplyBlockBatch(t.Context(), connect.NewRequest(&intrav1.ApplyEmailTemplateBlockBatchRequest{
+	_, err = emailauthoring.NewInternalTemplateConnectHandler(newInternalEmailAuthoringService(t, emailAuthoringDeps{DB: db, Audit: apitelemetry.NewDurableWriter(db), SpiceDB: spiceDB, ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB), References: emailauthoringadapter.NewCampaignDeliveryReferences()})).ApplyBlockBatch(t.Context(), connect.NewRequest(&intrav1.ApplyEmailTemplateBlockBatchRequest{
 		EmailTemplateId: templateID,
 		Locale:          template.SourceLocale,
 		Batch: testutil.NewParagraphBatch(

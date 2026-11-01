@@ -7,6 +7,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/email"
 	emailauthoringdomain "github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -28,11 +29,6 @@ func (*Runtime) ResolveLocalizedTemplate(
 	return resolved, err
 }
 
-func (*Runtime) ResolveLayoutHTML(ctx context.Context, db *gorm.DB, layoutID, locale string) (string, error) {
-	layout, _, err := email.ResolveLocalizedEmailLayoutHTML(ctx, db, layoutID, locale)
-	return layout, err
-}
-
 func (*Runtime) NormalizeSupportedLocale(value string) *string {
 	return localization.NormalizeSupportedLocale(value)
 }
@@ -48,5 +44,7 @@ func (*Runtime) BuildEmailRenderData(
 	return emaildelivery.BuildEmailRenderData(ctx, db, cdnDomain, siteOrigin, locale, input)
 }
 
-var _ emailauthoringdomain.EmailTemplateRuntime = (*Runtime)(nil)
-var _ emailauthoringdomain.EmailRenderDataBuilder = (*Runtime)(nil)
+var (
+	_ emailauthoringpostgres.Rendering      = (*Runtime)(nil)
+	_ emailauthoringdomain.LocaleNormalizer = (*Runtime)(nil)
+)

@@ -19,7 +19,7 @@ func LoadTranslationInterchangeTarget(
 	campaignID string,
 	targetLocale string,
 ) (emailcontent.InterchangeTarget, error) {
-	return campaignContent.LoadInterchangeTarget(ctx, tx, store, campaignID, targetLocale)
+	return campaignContent.LoadInterchangeTarget(ctx, bindContent(tx, store), campaignID, targetLocale)
 }
 
 // ApplyTranslationInterchange applies one sparse Campaign target under draft
@@ -32,5 +32,6 @@ func ApplyTranslationInterchange(
 	sourceLocale string,
 	input emailcontent.InterchangeMutation,
 ) (emailcontent.InterchangeMutationResult, error) {
-	return campaignContent.ApplyInterchange(ctx, tx, store, campaignID, sourceLocale, input, campaignEmailContentFence(campaignID))
+	bound := bindContent(tx, store)
+	return campaignContent.ApplyInterchange(ctx, bound, campaignID, sourceLocale, input, contentFence(bound, campaignEmailContentFence(campaignID)))
 }

@@ -777,8 +777,8 @@ func TestLegalDeliveryTemplateAndLayoutLifecycleGuardsIntegration(t *testing.T) 
 	}))
 	require.NotNil(t, terminalRun)
 
-	templateService := emailauthoring.NewTemplateConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, Runtime: emailauthoringadapter.NewRuntime(), CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB), References: emailauthoringadapter.NewCampaignDeliveryReferences()}))
-	layoutService := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB), References: emailauthoringadapter.NewCampaignDeliveryReferences()}))
+	templateService := emailauthoring.NewTemplateConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: db, Runtime: emailauthoringadapter.NewRuntime(), CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB), References: emailauthoringadapter.NewCampaignDeliveryReferences()}))
+	layoutService := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: db, CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB), References: emailauthoringadapter.NewCampaignDeliveryReferences()}))
 	template, err := templateService.GetEmailTemplate(
 		ctx,
 		connect.NewRequest(&managev1.GetEmailTemplateRequest{Id: templateID}),
@@ -1205,7 +1205,7 @@ func seedLegalDeliveryTemplateIntegration(
 	suffix := uuid.NewString()
 	ctx, spiceDB := legalIntegrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	store := testutil.NewEmailContentBlockStore(t, spiceDB)
-	layout, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, ContentBlocks: store, References: emailauthoringadapter.NewCampaignDeliveryReferences()})).CreateEmailLayout(
+	layout, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: db, CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, ContentBlocks: store, References: emailauthoringadapter.NewCampaignDeliveryReferences()})).CreateEmailLayout(
 		ctx,
 		connect.NewRequest(&managev1.CreateEmailLayoutRequest{
 			Name:         "Legal delivery layout " + suffix,
@@ -1215,7 +1215,7 @@ func seedLegalDeliveryTemplateIntegration(
 		}),
 	)
 	require.NoError(t, err)
-	template, err := emailauthoring.NewTemplateConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, Runtime: emailauthoringadapter.NewRuntime(), CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, ContentBlocks: store, References: emailauthoringadapter.NewCampaignDeliveryReferences()})).CreateEmailTemplate(
+	template, err := emailauthoring.NewTemplateConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: db, Runtime: emailauthoringadapter.NewRuntime(), CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, ContentBlocks: store, References: emailauthoringadapter.NewCampaignDeliveryReferences()})).CreateEmailTemplate(
 		ctx,
 		connect.NewRequest(&managev1.CreateEmailTemplateRequest{
 			Key:          "legal_delivery_template_" + strings.ReplaceAll(suffix, "-", "_"),
@@ -1228,7 +1228,7 @@ func seedLegalDeliveryTemplateIntegration(
 	templateSourceTitle := "Legal delivery notice"
 	publishEmailTemplateSourceBlocksForIntegration(t, db, spiceDB, template.Msg.Id, templateSourceTitle)
 	layoutID := layout.Msg.Id
-	templateService := emailauthoring.NewTemplateConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, Runtime: emailauthoringadapter.NewRuntime(), CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, ContentBlocks: store, References: emailauthoringadapter.NewCampaignDeliveryReferences()}))
+	templateService := emailauthoring.NewTemplateConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: db, Runtime: emailauthoringadapter.NewRuntime(), CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: spiceDB, ContentBlocks: store, References: emailauthoringadapter.NewCampaignDeliveryReferences()}))
 	_, err = templateService.UpdateEmailTemplate(
 		ctx,
 		connect.NewRequest(&managev1.UpdateEmailTemplateRequest{

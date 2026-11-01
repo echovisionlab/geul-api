@@ -6,42 +6,48 @@ import (
 	"slices"
 	"strings"
 
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-// ContributorMembers locks the Members an AI document or collaboration write
-// credits, so a concurrent Member deletion waits for the write. Member owns
-// those rows (memberadapter.ContributorMembers).
-type ContributorMembers interface {
-	// LockMembers takes a KEY SHARE lock on each existing Member of
-	// memberIDs and returns the IDs it locked.
-	LockMembers(ctx context.Context, tx *gorm.DB, memberIDs []string) ([]string, error)
+// TestEmail is an administrator's template test send, queued for the email
+// worker.
+type TestEmail struct {
+	Recipient     string
+	TemplateID    string
+	Data          map[string]string
+	MessageID     string
+	ActorMemberID string
+	// Locale is the requested locale; nil renders the source locale.
+	Locale *string
+}
+
+// TestEmailQueue queues an administrator's template test send.
+type TestEmailQueue interface {
+	QueueTestEmail(context.Context, TestEmail) error
+}
+
+// LocaleNormalizer normalizes a requested locale to a supported one, nil
+// when none matches.
+type LocaleNormalizer interface {
+	NormalizeSupportedLocale(string) *string
 }
 
 // Deps are the collaborators of the Email Template and Email Layout
 // management use cases. Every field except CDNDomain and SiteOrigin is
 // required; NewService rejects a missing one.
 type Deps struct {
-	DB            *gorm.DB
-	SpiceDB       *auth.SpiceDBClient
-	ContentBlocks *contentblock.Store
-	// Publisher queues an administrator's template test send.
-	Publisher EmailPublisher
-	// Runtime localizes templates and layouts for previews and test sends.
-	Runtime EmailTemplateRuntime
-	// RenderData adds the site defaults to preview render data.
-	RenderData EmailRenderDataBuilder
-	References CampaignDeliveryReferences
-	Audit      domainaudit.Appender
+	Units   mutation.UnitOfWork[Store] // emailauthoringpostgres.NewUnits(db, ports)
+	SpiceDB mutation.Authorizer
+	Fence   identitystate.Fence // identitystate.PostgresFence{}
+	Audit   domainaudit.Appender
+	// TestEmails queues an administrator's template test send.
+	TestEmails TestEmailQueue
+	Locales    LocaleNormalizer
 	// CDNDomain is the asset host of preview render data; empty keeps
 	// asset links relative.
 	CDNDomain string
@@ -52,9 +58,8 @@ type Deps struct {
 
 func (d Deps) validate() error {
 	return requireDependencies("email authoring", map[string]bool{
-		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "ContentBlocks": d.ContentBlocks == nil,
-		"Publisher": d.Publisher == nil, "Runtime": d.Runtime == nil, "RenderData": d.RenderData == nil,
-		"References": d.References == nil, "Audit": d.Audit == nil,
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
+		"TestEmails": d.TestEmails == nil, "Locales": d.Locales == nil,
 	})
 }
 
@@ -76,16 +81,13 @@ func requireDependencies(name string, absent map[string]bool) error {
 // The Connect adapters translate their requests into its commands and
 // queries.
 type Service struct {
-	db            *gorm.DB
-	spiceDB       *auth.SpiceDBClient
-	contentBlocks *contentblock.Store
-	publisher     EmailPublisher
-	runtime       EmailTemplateRuntime
-	renderData    EmailRenderDataBuilder
-	references    CampaignDeliveryReferences
-	mutations     *mutation.Runner
-	cdnDomain     string
-	siteOrigin    string
+	units      mutation.UnitOfWork[Store]
+	spiceDB    mutation.Authorizer
+	testEmails TestEmailQueue
+	locales    LocaleNormalizer
+	mutations  *mutation.StoreRunner[Store]
+	cdnDomain  string
+	siteOrigin string
 }
 
 // NewService validates deps and returns the management use cases.
@@ -93,15 +95,14 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
 	return &Service{
-		db: deps.DB, spiceDB: deps.SpiceDB, contentBlocks: deps.ContentBlocks,
-		publisher: deps.Publisher, runtime: deps.Runtime, renderData: deps.RenderData,
-		references: deps.References, mutations: mutations,
-		cdnDomain: deps.CDNDomain, siteOrigin: strings.TrimRight(strings.TrimSpace(deps.SiteOrigin), "/"),
+		units: deps.Units, spiceDB: deps.SpiceDB, testEmails: deps.TestEmails, locales: deps.Locales,
+		mutations: mutations, cdnDomain: deps.CDNDomain,
+		siteOrigin: strings.TrimRight(strings.TrimSpace(deps.SiteOrigin), "/"),
 	}, nil
 }
 
@@ -109,33 +110,24 @@ func NewService(deps Deps) (*Service, error) {
 // use cases of Email Templates and Email Layouts. Every field is required;
 // NewInternalService rejects a missing one.
 type InternalDeps struct {
-	DB            *gorm.DB
-	SpiceDB       *auth.SpiceDBClient
-	ContentBlocks *contentblock.Store
-	Checkpoints   persistencecheckpoint.ContributorFence
-	References    CampaignDeliveryReferences
-	Members       ContributorMembers
-	Audit         domainaudit.Appender
+	Units   mutation.UnitOfWork[Store]
+	SpiceDB mutation.Authorizer
+	Fence   identitystate.Fence
+	Audit   domainaudit.Appender
 }
 
 func (d InternalDeps) validate() error {
 	return requireDependencies("internal email authoring", map[string]bool{
-		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "ContentBlocks": d.ContentBlocks == nil,
-		"Checkpoints": d.Checkpoints == nil, "References": d.References == nil,
-		"Members": d.Members == nil, "Audit": d.Audit == nil,
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
 	})
 }
 
 // InternalService holds the collaboration and AI document use cases of
 // Email Templates and Email Layouts.
 type InternalService struct {
-	db            *gorm.DB
-	spiceDB       *auth.SpiceDBClient
-	contentBlocks *contentblock.Store
-	checkpoints   persistencecheckpoint.ContributorFence
-	references    CampaignDeliveryReferences
-	members       ContributorMembers
-	mutations     *mutation.Runner
+	units     mutation.UnitOfWork[Store]
+	spiceDB   mutation.Authorizer
+	mutations *mutation.StoreRunner[Store]
 }
 
 // NewInternalService validates deps and returns the collaboration and AI
@@ -144,15 +136,20 @@ func NewInternalService(deps InternalDeps) (*InternalService, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
-	return &InternalService{
-		db: deps.DB, spiceDB: deps.SpiceDB, contentBlocks: deps.ContentBlocks,
-		checkpoints: deps.Checkpoints, references: deps.References, members: deps.Members,
-		mutations: mutations,
-	}, nil
+	return &InternalService{units: deps.Units, spiceDB: deps.SpiceDB, mutations: mutations}, nil
+}
+
+// requireAdminCan authorizes an administrator read; an ID that cannot name
+// the resource is rejected first.
+func (s *Service) requireAdminCan(ctx context.Context, can policyv1.Can, canErr error) error {
+	if canErr != nil {
+		return domainerr.InvalidField("id", canErr.Error())
+	}
+	return authz.RequireAdminCan(ctx, s.spiceDB, can)
 }
 
 // adminAccess is the in-transaction authority of an administrator mutation
@@ -162,4 +159,18 @@ func adminAccess(can policyv1.Can, err error) (mutation.Access, error) {
 		return mutation.Access{}, domainerr.InvalidField("id", err.Error())
 	}
 	return mutation.FreshAdminCan(can, nil), nil
+}
+
+// renderData adds the site defaults to a preview's render data, read in a
+// snapshot of its own because a failed read is logged and ignored.
+func (s *Service) renderData(ctx context.Context, requestedLocale string, input map[string]string) map[string]string {
+	var data map[string]string
+	_ = s.units.Read(ctx, func(store Store) error {
+		data = store.EmailRenderData(ctx, s.cdnDomain, s.siteOrigin, requestedLocale, input)
+		return nil
+	})
+	if data == nil {
+		data = input
+	}
+	return data
 }

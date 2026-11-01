@@ -23,7 +23,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -33,11 +32,10 @@ const (
 )
 
 // campaignContent is the Campaign owner of shared email content.
-var campaignContent = emailcontent.Owner{
+var campaignContent = emailcontent.Owner[contentStore]{
 	Name: "Campaign", Entity: campaignContentEntity, IDField: "campaign_id",
 	FileBlocksRejected:        "Campaign documents cannot contain File Blocks",
 	TranslatedSubjectRequired: "translated Campaign subject is required",
-	ContentEntityType:         managev1.ContentEntityType_CONTENT_ENTITY_TYPE_CAMPAIGN,
 	Rows:                      campaignContentRows{},
 	LocaleContentAudit: emailcontent.LocaleContentAudit{
 		Action: sharedtelemetry.AuditCampaignUpdated,
@@ -48,18 +46,18 @@ var campaignContent = emailcontent.Owner{
 // campaignContentRows reads the Campaign rows beside its email content.
 type campaignContentRows struct{}
 
-func (campaignContentRows) DocumentID(ctx context.Context, db *gorm.DB, id string) (uuid.UUID, error) {
-	return loadCampaignEmailContentDocumentRoot(ctx, db, id, false)
+func (campaignContentRows) DocumentID(ctx context.Context, store contentStore, id string) (uuid.UUID, error) {
+	return loadCampaignEmailContentDocumentRoot(ctx, store.tx, id, false)
 }
 
-func (campaignContentRows) SourceContext(ctx context.Context, db *gorm.DB, id string, lock bool) (contentblock.DomainContext, error) {
-	return loadCampaignSourceContext(ctx, db, id, lock)
+func (campaignContentRows) SourceContext(ctx context.Context, store contentStore, id string, lock bool) (contentblock.DomainContext, error) {
+	return loadCampaignSourceContext(ctx, store.tx, id, lock)
 }
 
 // ProjectSource rebuilds the source locale's materialized content; a
 // Campaign's targets keep theirs until they are written.
-func (campaignContentRows) ProjectSource(ctx context.Context, tx *gorm.DB, id string, snapshot contentblock.Snapshot, _ bool, now time.Time) error {
-	return projectCampaignEmailMaterializedContent(ctx, tx, id, snapshot, []string{snapshot.SourceLocale}, now)
+func (campaignContentRows) ProjectSource(ctx context.Context, store contentStore, id string, snapshot contentblock.Snapshot, _ bool, now time.Time) error {
+	return projectCampaignEmailMaterializedContent(ctx, store.tx, id, snapshot, []string{snapshot.SourceLocale}, now)
 }
 
 type campaignEmailContentRoot struct {

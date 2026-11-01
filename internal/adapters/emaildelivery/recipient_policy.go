@@ -11,7 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/account"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -54,7 +54,7 @@ func (h *RecipientPolicy) authorize(ctx context.Context, job *managev1.SendEmail
 	if job.GetRecipientContext() == nil {
 		return h.blockEmailForRecipientContext(ctx, job, "recipient_context_required", "email recipient context is required")
 	}
-	if !emailauthoring.EmailTemplateContextAllowed(job) {
+	if !emailauthoringadapter.TemplateContextAllowed(job) {
 		return h.blockEmailForRecipientContext(ctx, job, "recipient_context_template_mismatch", "recipient context is not allowed for email template class")
 	}
 

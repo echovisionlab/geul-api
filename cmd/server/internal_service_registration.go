@@ -10,14 +10,15 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/account"
 	collaborationadapter "github.com/echovisionlab/geul-api/internal/adapters/collaboration"
-	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 )
@@ -32,7 +33,7 @@ type internalContentServiceRegistration struct {
 	accountEmailChangeLifecycle *account.AccountEmailChangeLifecycle
 	collaborationRuntime        *collaborationadapter.Runtime
 	programEvents               *programevent.Service
-	emailAuthoringReferences    *emailauthoringadapter.CampaignDeliveryReferences
+	emailAuthoringUnits         mutation.UnitOfWork[emailauthoring.Store]
 	legalRuntime                *legaladapter.Runtime
 	legalDependencies           legal.Dependencies
 	mapThemes                   *maptheme.Service
@@ -61,7 +62,6 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	internalRPCTrust := r.internalTrust
 	accountEmailChangeLifecycle := r.accountEmailChangeLifecycle
 	collaborationRuntime := r.collaborationRuntime
-	emailAuthoringReferences := r.emailAuthoringReferences
 	legalRuntime := r.legalRuntime
 	legalDependencies := r.legalDependencies
 	// Internal API services are not browser/session authenticated and must not
@@ -104,8 +104,7 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	slog.Info("Registered internal service", "path", internalCampaignPath)
 
 	internalEmailAuthoringService, err := emailauthoring.NewInternalService(emailauthoring.InternalDeps{
-		DB: db, SpiceDB: spicedbClient, ContentBlocks: contentBlockStore, Checkpoints: collaborationRuntime.Checkpoints,
-		References: emailAuthoringReferences, Members: memberadapter.ContributorMembers{}, Audit: telemetryWriter,
+		Units: r.emailAuthoringUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
 	})
 	if err != nil {
 		return internalContentServices{}, fmt.Errorf("initialize internal email authoring service: %w", err)

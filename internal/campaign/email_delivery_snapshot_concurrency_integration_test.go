@@ -52,7 +52,7 @@ func TestEmailLayoutDeleteAndCampaignAssignmentDoNotDeadlockIntegration(
 					layoutID,
 				)
 			})
-			layout, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).CreateEmailLayout(
+			layout, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: db, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).CreateEmailLayout(
 				ctx,
 				connect.NewRequest(&managev1.CreateEmailLayoutRequest{
 					Name: "Delete race layout " + uuid.NewString(),
@@ -94,7 +94,7 @@ func TestEmailLayoutDeleteAndCampaignAssignmentDoNotDeadlockIntegration(
 				operationCtx context.Context,
 				operationDB *gorm.DB,
 			) error {
-				_, deleteErr := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: operationDB, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).DeleteEmailLayout(
+				_, deleteErr := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: operationDB, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).DeleteEmailLayout(
 					operationCtx,
 					connect.NewRequest(&managev1.DeleteEmailLayoutRequest{
 						Id: layout.Msg.Id,
@@ -178,7 +178,7 @@ func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(
 			layoutID := ""
 			templateID := ""
 			t.Cleanup(func() {
-				templateService := emailauthoring.NewTemplateConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, Runtime: emailauthoringadapter.NewRuntime(), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, ContentBlocks: contentBlocks, References: references}))
+				templateService := emailauthoring.NewTemplateConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: db, Runtime: emailauthoringadapter.NewRuntime(), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, ContentBlocks: contentBlocks, References: references}))
 				if templateID != "" {
 					noLayout := ""
 					_, err := templateService.UpdateEmailTemplate(
@@ -206,7 +206,7 @@ func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(
 					}
 				}
 				if layoutID != "" {
-					_, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).DeleteEmailLayout(
+					_, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: db, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).DeleteEmailLayout(
 						ctx,
 						connect.NewRequest(
 							&managev1.DeleteEmailLayoutRequest{
@@ -220,7 +220,7 @@ func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(
 				}
 			})
 
-			layout, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).CreateEmailLayout(
+			layout, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: db, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).CreateEmailLayout(
 				ctx,
 				connect.NewRequest(&managev1.CreateEmailLayoutRequest{
 					Name: "Template deleteSource race layout " +
@@ -233,7 +233,7 @@ func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(
 			)
 			require.NoError(t, err)
 			layoutID = layout.Msg.Id
-			template, err := emailauthoring.NewTemplateConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, Runtime: emailauthoringadapter.NewRuntime(), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, ContentBlocks: contentBlocks, References: references})).CreateEmailTemplate(
+			template, err := emailauthoring.NewTemplateConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: db, Runtime: emailauthoringadapter.NewRuntime(), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, ContentBlocks: contentBlocks, References: references})).CreateEmailTemplate(
 				ctx,
 				connect.NewRequest(&managev1.CreateEmailTemplateRequest{
 					Key: "template_delete_race_" +
@@ -264,7 +264,7 @@ func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(
 				operationCtx context.Context,
 				operationDB *gorm.DB,
 			) error {
-				_, deleteErr := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: operationDB, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).DeleteEmailLayout(
+				_, deleteErr := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: operationDB, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).DeleteEmailLayout(
 					operationCtx,
 					connect.NewRequest(
 						&managev1.DeleteEmailLayoutRequest{
@@ -279,7 +279,7 @@ func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(
 				operationDB *gorm.DB,
 			) error {
 				requestedLayoutID := layout.Msg.Id
-				_, assignErr := emailauthoring.NewTemplateConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: operationDB, Runtime: emailauthoringadapter.NewRuntime(), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, ContentBlocks: contentBlocks, References: references})).UpdateEmailTemplate(
+				_, assignErr := emailauthoring.NewTemplateConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: operationDB, Runtime: emailauthoringadapter.NewRuntime(), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, ContentBlocks: contentBlocks, References: references})).UpdateEmailTemplate(
 					operationCtx,
 					connect.NewRequest(
 						&managev1.UpdateEmailTemplateRequest{
@@ -460,7 +460,7 @@ func cleanupConcurrentCampaignSnapshotFixture(
 		).Error)
 	}
 	if layoutID != "" {
-		_, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailauthoring.Deps{DB: db, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: emailauthoringadapter.NewCampaignDeliveryReferences(), ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB)})).DeleteEmailLayout(
+		_, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: db, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: emailauthoringadapter.NewCampaignDeliveryReferences(), ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB)})).DeleteEmailLayout(
 			ctx,
 			connect.NewRequest(&managev1.DeleteEmailLayoutRequest{
 				Id: layoutID,

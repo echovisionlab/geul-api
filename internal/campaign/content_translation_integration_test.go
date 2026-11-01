@@ -87,7 +87,7 @@ func TestCampaignAIReplacementUsesCurrentTargetRevisionIntegration(t *testing.T)
 	documentID, err := loadCampaignEmailContentDocumentRoot(ctx, db, created.Msg.Campaign.Id, false)
 	require.NoError(t, err)
 	targetState, err := campaignContent.LoadExactLocaleState(
-		ctx, db, store, created.Msg.Campaign.Id, documentID, "ko", false,
+		ctx, bindContent(db, store), created.Msg.Campaign.Id, documentID, "ko", false,
 	)
 	require.NoError(t, err)
 	require.NotNil(t, targetState.TargetMetadata)
@@ -131,7 +131,7 @@ func TestCampaignAIReplacementUsesCurrentTargetRevisionIntegration(t *testing.T)
 	var targetConflict *translation.TargetRevisionConflict
 	require.ErrorAs(t, err, &targetConflict)
 	afterStaleInterchange, err := campaignContent.LoadExactLocaleState(
-		ctx, db, store, created.Msg.Campaign.Id, documentID, "ko", false,
+		ctx, bindContent(db, store), created.Msg.Campaign.Id, documentID, "ko", false,
 	)
 	require.NoError(t, err)
 	require.Equal(t, targetWrite.Msg.GetTargetRevision(), afterStaleInterchange.TargetRevision)

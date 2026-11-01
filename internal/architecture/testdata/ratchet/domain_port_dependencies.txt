@@ -15,10 +15,7 @@
 26 internal/campaign gorm
 25 internal/campaign model
 12 internal/campaign spicedb client
-13 internal/emailauthoring generated contracts
-22 internal/emailauthoring gorm
-13 internal/emailauthoring model
-5 internal/emailauthoring spicedb client
+7 internal/emailauthoring generated contracts
 11 internal/emaildelivery generated contracts
 6 internal/emaildelivery gorm
 2 internal/emaildelivery kratos tables

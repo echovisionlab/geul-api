@@ -2,14 +2,14 @@ package translationadapter
 
 import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 )
 
 // defaultDomainRegistrations is the production composition root. The
 // registry validates that this list contains every catalog domain exactly
 // once before the server can start.
 func defaultDomainRegistrations(
-	emailReferences emailauthoring.CampaignDeliveryReferences,
+	emailReferences emailauthoringpostgres.DeliveryReferences,
 	audit domainaudit.Appender,
 ) []domainRegistration {
 	return []domainRegistration{
