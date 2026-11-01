@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -13,10 +14,10 @@ import (
 // Authorization keeps identity and SpiceDB policy decisions outside the OG
 // lifecycle while satisfying the OG admin service's authorization port.
 type Authorization struct {
-	spiceDB *auth.SpiceDBClient
+	spiceDB authz.AuthorizationDecisionChecker
 }
 
-func NewAuthorization(spiceDB *auth.SpiceDBClient) Authorization {
+func NewAuthorization(spiceDB authz.AuthorizationDecisionChecker) Authorization {
 	if spiceDB == nil {
 		panic("SpiceDB client is required")
 	}

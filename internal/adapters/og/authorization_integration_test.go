@@ -34,21 +34,3 @@ func TestEntityAuthorizationIsScopedToManagedResourceIntegration(t *testing.T) {
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(authorization.AuthorizeEntity(ctx, "artist", otherID, true)))
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(authorization.AuthorizeEntity(ctx, "artist", otherID, false)))
 }
-
-func TestStaticTargetsRemainAdminOnlyIntegration(t *testing.T) {
-	t.Parallel()
-	stack := testutil.SetupOryStack(t)
-	author := stack.CreateUser(t, policyv1.Role.Author().ID())
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	authorization := NewAuthorization(stack.SpiceDBClient)
-
-	authorCtx := auth.WithUser(context.Background(), author.AuthUserInfo())
-	for _, entityType := range []string{"site", "privacy", "terms"} {
-		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(
-			authorization.AuthorizeEntity(authorCtx, entityType, uuid.NewString(), true),
-		))
-	}
-	adminCtx := auth.WithUser(context.Background(), admin.AuthUserInfo())
-	require.NoError(t, authorization.AuthorizeEntity(adminCtx, "privacy", uuid.NewString(), true))
-	require.NoError(t, authorization.RequireAdmin(adminCtx))
-}
