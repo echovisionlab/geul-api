@@ -29,7 +29,7 @@ func TestLibraryDeletionRejectsReferencesAndReplaysPendingCommands(t *testing.T)
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{free.ID, pending.ID}, got.AcceptedFileIDs)
 	require.Len(t, got.RejectedFiles, 1)
-	require.Equal(t, blocked.ID, got.RejectedFiles[0].FileId)
+	require.Equal(t, blocked.ID, got.RejectedFiles[0].FileID)
 	require.True(t, f.store.Files[free.ID].PendingDeletion)
 	require.False(t, f.store.Files[blocked.ID].PendingDeletion)
 	require.Equal(t, []string{free.ID}, f.store.FaviconDeletions)
@@ -137,4 +137,29 @@ func TestDeletionTransfersUnboundAssetsAndKeepsAllocatedRetention(t *testing.T) 
 			require.Equal(t, mediaasset.AssetAllocated, a.Status)
 		})
 	}
+}
+
+func TestDeletionImpactKeepsDomainOrderUnknownCountsAndFiveUsagePreview(t *testing.T) {
+	t.Parallel()
+	f := newLibraryFixture(t)
+	file := filemediatest.CatalogFile("used", nil)
+	f.store.Files[file.ID] = filemediatest.CatalogFileRecord{Row: file}
+	for _, kind := range []string{"work", "page", "post", "mystery", "unknown", "page", "post"} {
+		f.store.Usages = append(f.store.Usages, domain.FileUsageRow{FileID: file.ID, Domain: kind, EntityID: uuid.NewString(), ReferencePath: "featured_image"})
+	}
+	values, err := f.files.GetFileDeletionImpact(f.ctx, filemedia.GetFileDeletionImpactQuery{FileIDs: []string{file.ID}})
+	require.NoError(t, err)
+	require.Len(t, values, 1)
+	result := values[0]
+	require.Equal(t, file.ID, result.FileID)
+	require.EqualValues(t, 7, result.TotalUsageCount)
+	require.Equal(t, []*domain.UsageDomainCount{{Domain: domain.UsageUnspecified, Count: 2}, {Domain: domain.UsagePost, Count: 2}, {Domain: domain.UsagePage, Count: 2}, {Domain: domain.UsageWork, Count: 1}}, result.DomainCounts)
+	require.True(t, result.HasMoreUsages)
+	require.Len(t, result.FirstUsages, 5)
+	kinds := make([]domain.UsageDomain, 0, 5)
+	for _, usage := range result.FirstUsages {
+		kinds = append(kinds, usage.Domain)
+		require.EqualValues(t, 1, usage.Count)
+	}
+	require.Equal(t, []domain.UsageDomain{domain.UsageUnspecified, domain.UsagePage, domain.UsagePage, domain.UsagePost, domain.UsagePost}, kinds)
 }

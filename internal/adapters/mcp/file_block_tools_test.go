@@ -450,10 +450,10 @@ func TestFileUsageListReturnsExactPaginatedUsages(t *testing.T) {
 	title := "Post title"
 	blockType := "file"
 	link := "/admin/posts/" + fileBlockTestDocumentID
-	manager := &recordingFileBlockManagement{usages: &managev1.ListFileUsagesResponse{
-		Usages: []*managev1.FileUsage{{
-			Domain: managev1.FileUsageDomain_FILE_USAGE_DOMAIN_POST, EntityId: fileBlockTestDocumentID,
-			ReferencePath: "file", BlockId: stringPointerForFileBlockTest(fileBlockTestBlockID), Count: 1,
+	manager := &recordingFileBlockManagement{usages: &fileauthority.FileUsagePage{
+		Usages: []*fileauthority.UsageView{{
+			Domain: fileauthority.UsageDomain(managev1.FileUsageDomain_FILE_USAGE_DOMAIN_POST), EntityID: fileBlockTestDocumentID,
+			ReferencePath: "file", BlockID: stringPointerForFileBlockTest(fileBlockTestBlockID), Count: 1,
 			BlockType: &blockType, Title: &title, Link: &link,
 		}},
 		NextPageToken: &next, Total: 2,
@@ -522,7 +522,7 @@ type recordingFileBlockManagement struct {
 	updateRequest *connect.Request[managev1.UpdateFileDownloadPolicyRequest]
 	usageRequest  *connect.Request[managev1.ListFileUsagesRequest]
 	policy        *managev1.FileDownloadPolicy
-	usages        *managev1.ListFileUsagesResponse
+	usages        *fileauthority.FileUsagePage
 	err           error
 }
 
@@ -556,7 +556,16 @@ func (manager *recordingFileBlockManagement) ListFileUsages(_ context.Context, q
 	}
 	manager.usageRequest = connect.NewRequest(request)
 	if manager.usages == nil {
-		manager.usages = &managev1.ListFileUsagesResponse{}
+		manager.usages = &fileauthority.FileUsagePage{}
 	}
 	return fileauthority.FileUsagePage{Usages: manager.usages.Usages, NextPageToken: manager.usages.NextPageToken, Total: manager.usages.Total}, manager.err
+}
+
+func TestFileUsageListStillRejectsUnknownDomainValues(t *testing.T) {
+	manager := &recordingFileBlockManagement{usages: &fileauthority.FileUsagePage{Usages: []*fileauthority.UsageView{{Domain: 999, EntityID: fileBlockTestDocumentID, ReferencePath: "file", Count: 1}}}}
+	tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, manager)
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolFileUsageList, toolArguments(t, `{"file_id":"`+fileBlockTestFileID+`"}`))
+	if err == nil || !strings.Contains(err.Error(), `unsupported domain "999"`) || result.Content != nil {
+		t.Fatalf("unknown usage domain: result=%+v, error=%v", result, err)
+	}
 }

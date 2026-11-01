@@ -72,7 +72,7 @@ func (h *ConnectHandler) GetFile(ctx context.Context, req *connect.Request[manag
 
 func (h *ConnectHandler) ListFileUsages(ctx context.Context, req *connect.Request[managev1.ListFileUsagesRequest]) (*connect.Response[managev1.ListFileUsagesResponse], error) {
 	page, err := h.files.ListFileUsages(ctx, ListFileUsagesQuery{FileID: req.Msg.FileId, PageToken: req.Msg.GetPageToken(), PageSize: req.Msg.PageSize})
-	return respond(&managev1.ListFileUsagesResponse{Usages: page.Usages, NextPageToken: page.NextPageToken, Total: page.Total}, err)
+	return respond(&managev1.ListFileUsagesResponse{Usages: fileUsageViewsProto(page.Usages), NextPageToken: page.NextPageToken, Total: page.Total}, err)
 }
 
 func (h *ConnectHandler) CreateFileFolder(ctx context.Context, req *connect.Request[managev1.CreateFileFolderRequest]) (*connect.Response[managev1.CreateFileFolderResponse], error) {
@@ -107,12 +107,12 @@ func (h *ConnectHandler) MoveFiles(ctx context.Context, req *connect.Request[man
 
 func (h *ConnectHandler) GetFileDeletionImpact(ctx context.Context, req *connect.Request[managev1.GetFileDeletionImpactRequest]) (*connect.Response[managev1.GetFileDeletionImpactResponse], error) {
 	impacts, err := h.files.GetFileDeletionImpact(ctx, GetFileDeletionImpactQuery{FileIDs: req.Msg.FileIds})
-	return respond(&managev1.GetFileDeletionImpactResponse{Impacts: impacts}, err)
+	return respond(&managev1.GetFileDeletionImpactResponse{Impacts: deletionImpactsProto(impacts)}, err)
 }
 
 func (h *ConnectHandler) DeleteFiles(ctx context.Context, req *connect.Request[managev1.DeleteFilesRequest]) (*connect.Response[managev1.DeleteFilesResponse], error) {
 	outcome, err := h.files.DeleteFiles(ctx, DeleteFilesCommand{FileIDs: req.Msg.FileIds})
-	return respond(&managev1.DeleteFilesResponse{AcceptedFileIds: outcome.AcceptedFileIDs, RejectedFiles: outcome.RejectedFiles}, err)
+	return respond(&managev1.DeleteFilesResponse{AcceptedFileIds: outcome.AcceptedFileIDs, RejectedFiles: deletionImpactsProto(outcome.RejectedFiles)}, err)
 }
 
 func (h *ConnectHandler) DeleteFile(ctx context.Context, req *connect.Request[managev1.DeleteFileRequest]) (*connect.Response[managev1.DeleteFileResponse], error) {

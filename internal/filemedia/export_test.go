@@ -24,7 +24,7 @@ func ExportLibraryService(units mutation.UnitOfWork[Store], authorizer mutation.
 	if err != nil {
 		panic(err)
 	}
-	return &Service{units: units, storeMutations: runner, memberSummaries: members}
+	return &Service{units: units, storeMutations: runner, memberSummaries: members, spiceDB: authorizer}
 }
 
 var ExportRenameLockedFile = renameLockedFile

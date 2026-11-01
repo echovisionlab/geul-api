@@ -556,19 +556,19 @@ func (tools *FileBlockTools) listUsages(ctx context.Context, arguments mcpserver
 		if usage == nil {
 			return mcpserver.ToolResult{}, errors.New("file usage service returned an empty usage")
 		}
-		domain, err := fileUsageDomainName(usage.Domain)
+		domain, err := fileUsageDomainName(managev1.FileUsageDomain(usage.Domain))
 		if err != nil {
 			return mcpserver.ToolResult{}, err
 		}
-		if strings.TrimSpace(usage.EntityId) == "" || strings.TrimSpace(usage.ReferencePath) == "" || usage.Count < 1 {
+		if strings.TrimSpace(usage.EntityID) == "" || strings.TrimSpace(usage.ReferencePath) == "" || usage.Count < 1 {
 			return mcpserver.ToolResult{}, errors.New("file usage service returned an invalid usage identity")
 		}
 		item := map[string]any{
-			"domain": domain, "entity_id": usage.EntityId,
+			"domain": domain, "entity_id": usage.EntityID,
 			"reference_path": usage.ReferencePath, "count": usage.Count,
 		}
-		if usage.BlockId != nil {
-			item["block_id"] = *usage.BlockId
+		if usage.BlockID != nil {
+			item["block_id"] = *usage.BlockID
 		}
 		if usage.BlockType != nil {
 			item["block_type"] = *usage.BlockType

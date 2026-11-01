@@ -186,9 +186,9 @@ func TestFileManagerAllowsHundredIDsWithoutChangingSelection(t *testing.T) {
 
 func TestFileManagerDeletionPreservesAcceptedAndRejectedImpact(t *testing.T) {
 	blockID, title, link := fileManagerTestFolderID, "Referenced page", "/pages/reference"
-	impact := &managev1.FileDeletionImpact{FileId: fileManagerTestFolderID, TotalUsageCount: 8, HasMoreUsages: true,
-		DomainCounts: []*managev1.FileUsageDomainCount{{Domain: managev1.FileUsageDomain_FILE_USAGE_DOMAIN_PAGE, Count: 8}},
-		FirstUsages:  []*managev1.FileUsage{{Domain: managev1.FileUsageDomain_FILE_USAGE_DOMAIN_PAGE, EntityId: fileManagerTestID, ReferencePath: "props.file", BlockId: &blockID, Count: 2, Title: &title, Link: &link}}}
+	impact := &filemedia.DeletionImpact{FileID: fileManagerTestFolderID, TotalUsageCount: 8, HasMoreUsages: true,
+		DomainCounts: []*filemedia.UsageDomainCount{{Domain: filemedia.UsageDomain(managev1.FileUsageDomain_FILE_USAGE_DOMAIN_PAGE), Count: 8}},
+		FirstUsages:  []*filemedia.UsageView{{Domain: filemedia.UsageDomain(managev1.FileUsageDomain_FILE_USAGE_DOMAIN_PAGE), EntityID: fileManagerTestID, ReferencePath: "props.file", BlockID: &blockID, Count: 2, Title: &title, Link: &link}}}
 	manager := &recordingFileManager{impact: impact, accepted: []string{fileManagerTestID}}
 	tools, err := NewFileManagerTools(manager)
 	require.NoError(t, err)
@@ -280,7 +280,7 @@ type recordingFileManager struct {
 	request  proto.Message
 	calls    []string
 	err      error
-	impact   *managev1.FileDeletionImpact
+	impact   *filemedia.DeletionImpact
 	accepted []string
 }
 
@@ -300,12 +300,12 @@ func fileManagerFolderView() *filemedia.FolderView {
 
 // The fake records each use-case call as the request a Connect client would
 // have sent, so the assertions read the native field names.
-func (manager *recordingFileManager) GetFileDeletionImpact(ctx context.Context, query filemedia.GetFileDeletionImpactQuery) ([]*managev1.FileDeletionImpact, error) {
+func (manager *recordingFileManager) GetFileDeletionImpact(ctx context.Context, query filemedia.GetFileDeletionImpactQuery) ([]*filemedia.DeletionImpact, error) {
 	manager.record(ctx, ToolFileDeletionImpactGet, &managev1.GetFileDeletionImpactRequest{FileIds: query.FileIDs})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	impacts := []*managev1.FileDeletionImpact{}
+	impacts := []*filemedia.DeletionImpact{}
 	if manager.impact != nil {
 		impacts = append(impacts, manager.impact)
 	}
@@ -317,7 +317,7 @@ func (manager *recordingFileManager) DeleteFiles(ctx context.Context, command fi
 	if manager.err != nil {
 		return filemedia.FileDeletionOutcome{}, manager.err
 	}
-	impacts := []*managev1.FileDeletionImpact{}
+	impacts := []*filemedia.DeletionImpact{}
 	if manager.impact != nil {
 		impacts = append(impacts, manager.impact)
 	}
