@@ -36,3 +36,10 @@ func ExportFinalizeManageDelivery(units mutation.UnitOfWork[Store], ctx context.
 	id := response.GetDelivery().GetFileId()
 	return s.finalizeManageFileURLResponses(ctx, map[string]*managev1.GetMediaDeliveryResponse{id: response}, &manageFileDeliveryAuthorization{principal: user, files: map[string]manageFileDeliveryGrant{id: g}})
 }
+
+func ExportDeliveryService(units mutation.UnitOfWork[Store]) *Service {
+	return &Service{units: units, cdnDomain: "cdn.example.com", mediaDomain: "media.example.com", mediaSecret: "test-secret"}
+}
+
+var ExportGetFileURLs = (*Service).getFileUrlsForID
+var ExportLoadFileURLs = (*Service).loadFileURLResponses

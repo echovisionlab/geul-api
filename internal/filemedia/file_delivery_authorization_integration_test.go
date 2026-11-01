@@ -5,6 +5,8 @@ package filemedia
 import (
 	"testing"
 
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -20,7 +22,7 @@ func TestAuthorizeManageFileDeliveriesUsesCurrentPostAttachmentCurrentSchemaInte
 	})
 	postID, fileID := seedCurrentSchemaPostFileDelivery(t, pg.DB)
 
-	svc := &Service{db: pg.DB}
+	svc := &Service{db: pg.DB, units: filemediapostgres.NewUnits(pg.DB, filemediapostgres.Ports{})}
 	usages, err := svc.currentManageFileDeliveryUsages(t.Context(), []string{fileID})
 	require.NoError(t, err)
 	require.Len(t, usages[fileID], 1)

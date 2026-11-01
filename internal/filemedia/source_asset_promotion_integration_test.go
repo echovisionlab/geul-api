@@ -3,6 +3,8 @@
 package filemedia
 
 import (
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -62,7 +64,7 @@ func TestSourceAssetPromotionStreamsLargeObjectThroughMinIOMultipartIntegration(
 		_ = stack.DB.Where("id = ?", file.ID).Delete(&model.File{}).Error
 	})
 
-	service := &Service{
+	service := &Service{units: filemediapostgres.NewUnits(stack.DB, filemediapostgres.Ports{}),
 		db: stack.DB, s3Client: client, s3Bucket: stack.S3MediaBucket,
 		cdnDomain: stack.CDNURL,
 	}
@@ -194,7 +196,7 @@ func TestSourceAssetPromotionCompletionSerializesAfterFileDeletionIntentIntegrat
 	digest := sha256.Sum256([]byte("verified public source"))
 	completionDone := make(chan error, 1)
 	go func() {
-		completionDone <- (&Service{db: db}).completeSourceAssetPromotion(
+		completionDone <- (&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db}).completeSourceAssetPromotion(
 			context.Background(), fileID, assetID, 22, digest[:],
 		)
 	}()
@@ -233,7 +235,7 @@ func seedSourceAssetPromotionIntegrationFixture(
 		_ = db.Where("id = ?", file.ID).Delete(&model.File{}).Error
 	})
 	store := newSourceAssetPromotionS3Fixture(t, file, body)
-	service := &Service{db: db, s3Client: store.client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com"}
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db, s3Client: store.client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com"}
 	return file, store, service
 }
 

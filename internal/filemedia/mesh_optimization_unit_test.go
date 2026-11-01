@@ -1,6 +1,8 @@
 package filemedia
 
 import (
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -192,7 +194,7 @@ func TestFileServiceBatchClearMeshOptimizationCandidatesScopesByProfile(t *testi
 	})
 	admin := newUnitUser()
 	spiceDB := authztest.AllowAll().Client(t)
-	service := &Service{db: db, spiceDB: spiceDB}
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db, spiceDB: spiceDB}
 
 	response, err := NewConnectHandler(service).ClearMeshOptimizationCandidates(
 		auditedUserContext(context.Background(), admin.AuthUserInfo()),

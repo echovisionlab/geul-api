@@ -1,6 +1,8 @@
 package filemedia
 
 import (
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
 	"context"
 	"fmt"
 	"image/color"
@@ -93,7 +95,7 @@ func TestVerifyMultipartCompletionSizeMismatchFailsAndDeletesObject(t *testing.T
 
 func TestPersistMultipartCompletionDatabaseFailureKeepsFinalizing(t *testing.T) {
 	db := newMultipartCompletionRetryDB(t)
-	service := &Service{db: db}
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db}
 	completion := insertFinalizingCompletion(t, db, 10)
 	completion.uploadType = managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO
 	completion.session.FileName = "field-recording.wav"
@@ -106,7 +108,7 @@ func TestPersistMultipartCompletionDatabaseFailureKeepsFinalizing(t *testing.T) 
 
 func TestMarkMultipartCompletionFailedCannotOverwriteNonFinalizingState(t *testing.T) {
 	db := newMultipartCompletionRetryDB(t)
-	service := &Service{db: db}
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db}
 	completion := insertFinalizingCompletion(t, db, 10)
 
 	require.NoError(t, db.Model(&model.UploadSession{}).
@@ -126,7 +128,7 @@ func TestMultipartPublicAssetPromotionRetryPreservesVerifiedSourceAndFinalizingS
 	store.setFailTransfer(true)
 	uploadID := uuid.NewString()
 	insertMultipartPromotionRetrySession(t, db, uploadID, file.ID)
-	service := &Service{
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, s3Client: store.client, s3Bucket: "media-bucket",
 		cdnDomain: "https://cdn.example.com", mediaSecret: "test-media-secret",
 	}
@@ -170,7 +172,7 @@ func TestMultipartFaviconCommitAmbiguityPreservesSourceAndFinalizingSession(t *t
 	store := newFaviconS3Fixture(t, fileID, "png", source, 0)
 	uploadID := uuid.NewString()
 	insertMultipartPromotionRetrySession(t, db, uploadID, fileID)
-	service := &Service{
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, s3Client: store.client, s3Bucket: "media-bucket",
 		cdnDomain: "https://cdn.example.com", mediaSecret: "test-media-secret",
 		faviconProcessor:          staticFaviconProcessor{outputs: faviconTestGeneratedOutputs(t)},

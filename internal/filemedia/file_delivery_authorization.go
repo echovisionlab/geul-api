@@ -9,7 +9,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -126,15 +126,16 @@ func sortedUniqueManageDeliveryFileIDs(fileIDs []string) ([]string, error) {
 
 // loadManageDeliveryFiles reads the ownership of each File, denying the
 // request when one is missing or pending deletion.
-func (s *Service) loadManageDeliveryFiles(ctx context.Context, fileIDs []string) (map[string]model.File, error) {
-	var files []model.File
-	if err := s.db.WithContext(ctx).
-		Select("id", "uploaded_by_member_id", "delete_requested_at").
-		Where("id IN ?", fileIDs).
-		Find(&files).Error; err != nil {
+func (s *Service) loadManageDeliveryFiles(ctx context.Context, fileIDs []string) (map[string]File, error) {
+	var files []File
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		files, err = store.DeliveryFileOwnership(ctx, fileIDs)
+		return err
+	}); err != nil {
 		return nil, fmt.Errorf("load File ownership: %w", err)
 	}
-	fileByID := make(map[string]model.File, len(files))
+	fileByID := make(map[string]File, len(files))
 	for _, file := range files {
 		if file.DeleteRequestedAt != nil {
 			continue
@@ -151,7 +152,7 @@ func (s *Service) loadManageDeliveryFiles(ctx context.Context, fileIDs []string)
 
 // manageFileOwnerDeliveryGrant grants the File's uploader, or the Member
 // whose avatar it is, a delivery fenced on that ownership.
-func manageFileOwnerDeliveryGrant(user *auth.UserInfo, file model.File, binding model.FileIngestBinding) (manageFileDeliveryGrant, bool) {
+func manageFileOwnerDeliveryGrant(user *auth.UserInfo, file File, binding domain.IngestBinding) (manageFileDeliveryGrant, bool) {
 	ownerKind := manageFileOwnerDeliveryKind(user, file, binding)
 	if ownerKind == "" {
 		return manageFileDeliveryGrant{}, false
@@ -205,19 +206,6 @@ func (s *Service) manageFileUsageDeliveryGrant(
 	return manageFileDeliveryGrant{usageWitnesses: authorizedUsages}, nil
 }
 
-type currentContentFileDeliveryOwner struct {
-	table               string
-	resourceType        string
-	hasFeaturedImageRef bool
-}
-
-var currentContentFileDeliveryOwners = []currentContentFileDeliveryOwner{
-	{table: "post", resourceType: "post", hasFeaturedImageRef: true},
-	{table: "page", resourceType: "page", hasFeaturedImageRef: true},
-	{table: "work", resourceType: "work", hasFeaturedImageRef: true},
-	{table: "program_event", resourceType: "program_event"},
-}
-
 // currentManageFileDeliveryUsages resolves exact current product references.
 // Immutable ingest provenance is deliberately excluded: after detach it is no
 // longer a delivery authority.
@@ -229,85 +217,13 @@ func (s *Service) currentManageFileDeliveryUsages(
 	if len(fileIDs) == 0 {
 		return result, nil
 	}
-	var rows []struct {
-		FileID           string `gorm:"column:file_id"`
-		ResourceType     string `gorm:"column:resource_type"`
-		ResourceID       string `gorm:"column:resource_id"`
-		Kind             string `gorm:"column:kind"`
-		RelationID       string `gorm:"column:relation_id"`
-		ReferencePath    string `gorm:"column:reference_path"`
-		OwnerFingerprint string `gorm:"column:owner_fingerprint"`
-	}
-	queries := make([]string, 0, len(currentContentFileDeliveryOwners)*2)
-	arguments := make([]any, 0, len(currentContentFileDeliveryOwners)*2)
-	for _, owner := range currentContentFileDeliveryOwners {
-		ownerFingerprint := `COALESCE(CAST(owner.content_document_id AS TEXT), '') || ':'`
-		if owner.resourceType == "post" || owner.resourceType == "program_event" {
-			ownerFingerprint = `COALESCE(CAST(owner.content_document_id AS TEXT), '') || ':' || COALESCE(CAST(owner.status AS TEXT), '')`
-		}
-		attachmentQuery := fmt.Sprintf(`SELECT attachment.file_id, '%s' AS resource_type, owner.id AS resource_id,
-			'content_attachment' AS kind, attachment.block_id AS relation_id, attachment.reference_path,
-			%s AS owner_fingerprint
-			FROM content_block_attachment AS attachment
-			JOIN content_block AS block ON block.id = attachment.block_id
-			JOIN %s AS owner ON owner.content_document_id = block.document_id
-			WHERE attachment.selector_kind = 'active' AND attachment.file_id IN ?`, owner.resourceType, ownerFingerprint, owner.table)
-		queries = append(queries, attachmentQuery)
-		arguments = append(arguments, fileIDs)
-		if owner.hasFeaturedImageRef {
-			featuredImageQuery := fmt.Sprintf(
-				`SELECT owner.featured_image_file_id AS file_id, '%s' AS resource_type, owner.id AS resource_id,
-				'featured_image' AS kind, owner.id AS relation_id, 'featured_image' AS reference_path,
-				%s AS owner_fingerprint
-				FROM %s AS owner
-				WHERE owner.featured_image_file_id IN ?`,
-				owner.resourceType,
-				ownerFingerprint,
-				owner.table,
-			)
-			queries = append(queries, featuredImageQuery)
-			arguments = append(arguments, fileIDs)
-		}
-	}
-	queries = append(queries,
-		`SELECT relation.file_id, 'artist' AS resource_type, relation.artist_id AS resource_id,
-			'artist_file' AS kind, relation.artist_id AS relation_id, '' AS reference_path, '' AS owner_fingerprint
-		 FROM artist_file AS relation WHERE relation.file_id IN ?`,
-		`SELECT relation.file_id, 'release' AS resource_type, relation.release_id AS resource_id,
-			'release_file' AS kind, relation.release_id AS relation_id, '' AS reference_path, '' AS owner_fingerprint
-		 FROM release_file AS relation WHERE relation.file_id IN ?`,
-		`SELECT relation.file_id, 'program_event' AS resource_type, relation.event_id AS resource_id,
-			'program_event_media' AS kind, relation.id AS relation_id, relation.role AS reference_path,
-			COALESCE(CAST(owner.content_document_id AS TEXT), '') || ':' || COALESCE(CAST(owner.status AS TEXT), '') AS owner_fingerprint
-		 FROM program_event_media AS relation JOIN program_event AS owner ON owner.id = relation.event_id WHERE relation.file_id IN ?`,
-		`SELECT track.audio_original_file_id AS file_id, 'release' AS resource_type, track.release_id AS resource_id,
-			'track' AS kind, track.id AS relation_id, 'audio_original' AS reference_path, '' AS owner_fingerprint
-		 FROM track WHERE track.audio_original_file_id IN ?`,
-		`SELECT label.logo_light_file_id AS file_id, 'label' AS resource_type, label.id AS resource_id,
-			'label_logo' AS kind, label.id AS relation_id, 'logo_light' AS reference_path, '' AS owner_fingerprint
-		 FROM label WHERE label.logo_light_file_id IN ?`,
-		`SELECT label.logo_dark_file_id AS file_id, 'label' AS resource_type, label.id AS resource_id,
-			'label_logo' AS kind, label.id AS relation_id, 'logo_dark' AS reference_path, '' AS owner_fingerprint
-		 FROM label WHERE label.logo_dark_file_id IN ?`,
-		`SELECT series.featured_image_file_id AS file_id, 'series' AS resource_type, series.id AS resource_id,
-			'series_featured_image' AS kind, series.id AS relation_id, 'featured_image' AS reference_path, '' AS owner_fingerprint
-		 FROM series WHERE series.featured_image_file_id IN ?`,
-		`SELECT form.featured_image_file_id AS file_id, 'form' AS resource_type, form.id AS resource_id,
-			'form_featured_image' AS kind, form.id AS relation_id, 'featured_image' AS reference_path, '' AS owner_fingerprint
-		 FROM form WHERE form.featured_image_file_id IN ?`)
-	for range 8 {
-		arguments = append(arguments, fileIDs)
-	}
-	query := `SELECT DISTINCT current_content_files.file_id,
-			current_content_files.resource_type,
-			current_content_files.resource_id,
-			current_content_files.kind,
-			current_content_files.relation_id,
-			current_content_files.reference_path,
-			current_content_files.owner_fingerprint
-		FROM (` + strings.Join(queries, ` UNION ALL `) + `) AS current_content_files`
-	if err := s.db.WithContext(ctx).Raw(query, arguments...).Scan(&rows).Error; err != nil {
-		return nil, fmt.Errorf("load current Content file usage: %w", err)
+	var rows []domain.CurrentDeliveryUsage
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		rows, err = store.CurrentDeliveryUsages(ctx, fileIDs)
+		return err
+	}); err != nil {
+		return nil, err
 	}
 	seen := make(map[string]map[string]struct{})
 	for _, row := range rows {
@@ -348,13 +264,17 @@ func currentManageFileDeliveryResourceType(value string) (string, bool) {
 func (s *Service) loadOptionalManageFileIngestBindings(
 	ctx context.Context,
 	fileIDs []string,
-) (map[string]model.FileIngestBinding, error) {
-	result := make(map[string]model.FileIngestBinding, len(fileIDs))
+) (map[string]domain.IngestBinding, error) {
+	result := make(map[string]domain.IngestBinding, len(fileIDs))
 	if len(fileIDs) == 0 {
 		return result, nil
 	}
-	var bindings []model.FileIngestBinding
-	if err := s.db.WithContext(ctx).Where("file_id IN ?", fileIDs).Find(&bindings).Error; err != nil {
+	var bindings []domain.IngestBinding
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		bindings, err = store.DeliveryIngestBindings(ctx, fileIDs)
+		return err
+	}); err != nil {
 		return nil, fmt.Errorf("load file ingest classification: %w", err)
 	}
 	for _, binding := range bindings {
@@ -363,7 +283,7 @@ func (s *Service) loadOptionalManageFileIngestBindings(
 	return result, nil
 }
 
-func manageFileOwnerDeliveryKind(user *auth.UserInfo, file model.File, binding model.FileIngestBinding) string {
+func manageFileOwnerDeliveryKind(user *auth.UserInfo, file File, binding domain.IngestBinding) string {
 	if user == nil {
 		return ""
 	}

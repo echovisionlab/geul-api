@@ -3,6 +3,8 @@
 package filemedia
 
 import (
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
 	"crypto/sha256"
 	"strings"
 	"testing"
@@ -30,7 +32,7 @@ func TestFileManagerCatalogUsageAndDeletionIntegration(t *testing.T) {
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
 	publisher := &capturingAsyncPublisher{}
-	service := withTestMutations(&Service{
+	service := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, cdnDomain: "https://cdn.example.test", mediaSecret: "file-manager-integration-secret",
 		downloadTTL: time.Hour, asyncPublisher: publisher, spiceDB: spiceDB,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
@@ -141,7 +143,7 @@ func TestFileManagerSiteWideSearchIncludesFoldersPathsAndPaginationIntegration(t
 	db := testutil.NewIntegrationDB(t)
 	adminCtx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(adminCtx).MemberID.String()
-	service := withTestMutations(&Service{
+	service := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, cdnDomain: "https://cdn.example.test", mediaSecret: "file-search-integration-secret",
 		downloadTTL: time.Hour, spiceDB: spiceDB,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
@@ -220,7 +222,7 @@ func TestFileManagerGetFileIncludesGeneratedOutputsIntegration(t *testing.T) {
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
 	now := time.Now().UTC()
-	service := withTestMutations(&Service{
+	service := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, cdnDomain: "https://cdn.example.test", mediaSecret: "generated-output-secret",
 		downloadTTL: time.Hour, spiceDB: spiceDB,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
@@ -280,7 +282,7 @@ func TestFileManagerFolderDeletionIsAllOrNothingIntegration(t *testing.T) {
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
 	publisher := &capturingAsyncPublisher{}
-	service := withTestMutations(&Service{
+	service := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, cdnDomain: "https://cdn.example.test", mediaSecret: "folder-delete-integration-secret",
 		downloadTTL: time.Hour, asyncPublisher: publisher, spiceDB: spiceDB,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
@@ -321,7 +323,7 @@ func TestFileManagerListsEverySiteSettingsUsageSlotIntegration(t *testing.T) {
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	memberID := auth.GetUser(ctx).MemberID.String()
-	service := withTestMutations(&Service{
+	service := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, spiceDB: spiceDB,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
 	})
@@ -377,7 +379,7 @@ func TestFileManagerFiltersAuthorUsageProjectionIntegration(t *testing.T) {
 	memberID := principal.MemberID.String()
 	identitySubject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
 	require.NoError(t, err)
-	service := withTestMutations(&Service{
+	service := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, spiceDB: spiceDB, cdnDomain: "https://cdn.example.test",
 		mediaSecret: "file-manager-author-secret", downloadTTL: time.Hour,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),

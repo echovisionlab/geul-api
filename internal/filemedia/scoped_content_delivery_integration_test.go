@@ -3,6 +3,8 @@
 package filemedia
 
 import (
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
 	"context"
 	"database/sql"
 	"sync"
@@ -428,7 +430,7 @@ func seedScopedPostFeaturedFixture(t *testing.T, db *gorm.DB) scopedFeaturedFixt
 	).Error)
 	seedFileDeliveryContentPolicy(t, spiceDB, "post", postID)
 	seedFileDeliveryPostAuthority(t, spiceDB, postID, identityID)
-	service := &Service{
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, spiceDB: spiceDB, mediaDomain: "https://media.example.test", mediaSecret: "scoped-featured-secret",
 	}
 	service.postAccess = newIntegrationPostAccess(db, spiceDB)
@@ -495,7 +497,7 @@ func seedScopedContentBlockFixture(t *testing.T, db *gorm.DB, owner scopedConten
 		blockID, fileID,
 	).Error)
 	return scopedBlockFixture{
-		service: &Service{
+		service: &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 			db: db, mediaDomain: "https://media.example.test", mediaSecret: "scoped-block-secret",
 		},
 		principal: &auth.UserInfo{
