@@ -7,7 +7,6 @@ import (
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -156,13 +155,8 @@ func (h *ConnectHandler) ListSegmentsForAuthenticatedAccess(ctx context.Context,
 		summaries[i] = segmentSummary(segment)
 	}
 	return connect.NewResponse(&managev1.ListSegmentsForAuthenticatedAccessResponse{
-		Segments: summaries,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(page.Total),
-			Limit:   page.Limit,
-			Offset:  page.Offset,
-			HasMore: int64(page.Offset+page.Limit) < page.Total,
-		},
+		Segments:   summaries,
+		Pagination: (queryutil.Pagination{Limit: page.Limit, Offset: page.Offset}).BuildResponse(page.Total),
 	}), nil
 }
 
