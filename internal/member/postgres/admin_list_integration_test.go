@@ -4,6 +4,7 @@ package memberpostgres_test
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,7 +35,8 @@ func (l queryCounter) Trace(ctx context.Context, begin time.Time, fc func() (str
 func seedListed(t *testing.T, db *gorm.DB, name string, subscribed, banned bool, createdAt time.Time) (string, string) {
 	t.Helper()
 	memberID, identityID := uuid.NewString(), uuid.NewString()
-	email := name + "-" + memberID + "@example.test"
+	// Stored emails are normalized (chk_member_available_emails).
+	email := strings.ToLower(name + "-" + memberID + "@example.test")
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Email: email, Name: name, Banned: banned, CreatedAt: createdAt})
 	require.NoError(t, db.Exec("UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid", memberID, identityID).Error)
 	require.NoError(t, db.Exec("INSERT INTO account_identity (id) VALUES (?::uuid)", identityID).Error)

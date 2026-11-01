@@ -53,10 +53,12 @@ func seedMember(t *testing.T, db *gorm.DB, nickname string, onboarded bool) (str
 	t.Helper()
 	memberID, identityID := uuid.NewString(), uuid.NewString()
 	require.NoError(t, db.Exec(`INSERT INTO account_identity (id) VALUES (?::uuid)`, identityID).Error)
+	// A linked Member has an email projection (chk_member_active_profile).
+	email := identityID + "@example.test"
 	require.NoError(t, db.Exec(`
-		INSERT INTO member (id, account_identity_id, nickname, onboarded, bio, social_links)
-		VALUES (?::uuid, ?::uuid, ?, ?, ?, '{}'::jsonb)
-	`, memberID, identityID, nickname, onboarded, "Bio "+nickname).Error)
+		INSERT INTO member (id, account_identity_id, nickname, onboarded, bio, social_links, primary_email, available_emails)
+		VALUES (?::uuid, ?::uuid, ?, ?, ?, '{}'::jsonb, ?, ARRAY[?::text])
+	`, memberID, identityID, nickname, onboarded, "Bio "+nickname, email, email).Error)
 	return memberID, identityID
 }
 
@@ -158,7 +160,7 @@ func TestNewsletterMemberIDIgnoresDeletedMembersIntegration(t *testing.T) {
 	found, err := read()
 	require.NoError(t, err)
 	require.Equal(t, memberID, found)
-	require.NoError(t, db.Exec(`UPDATE member SET account_identity_id = NULL, deleted_at = now() WHERE id = ?::uuid`, memberID).Error)
+	require.NoError(t, db.Exec(`UPDATE member SET account_identity_id = NULL, deleted_at = now(), bio = NULL WHERE id = ?::uuid`, memberID).Error)
 	_, err = read()
 	require.Error(t, err)
 }

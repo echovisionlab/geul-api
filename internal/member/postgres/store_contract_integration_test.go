@@ -32,10 +32,12 @@ func seedLinked(t *testing.T, db *gorm.DB, nickname string, onboarded bool) (str
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Email: identityID + "@example.test", Name: nickname, CreatedAt: time.Now().UTC()})
 	require.NoError(t, db.Exec("UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid", memberID, identityID).Error)
 	require.NoError(t, db.Exec("INSERT INTO account_identity (id) VALUES (?::uuid)", identityID).Error)
+	// A linked Member has an email projection (chk_member_active_profile).
+	email := identityID + "@example.test"
 	require.NoError(t, db.Exec(`
-		INSERT INTO member (id, account_identity_id, nickname, onboarded, social_links)
-		VALUES (?::uuid, ?::uuid, ?, ?, '{}'::jsonb)
-	`, memberID, identityID, nickname, onboarded).Error)
+		INSERT INTO member (id, account_identity_id, nickname, onboarded, primary_email, available_emails, social_links)
+		VALUES (?::uuid, ?::uuid, ?, ?, ?, ARRAY[?::text], '{}'::jsonb)
+	`, memberID, identityID, nickname, onboarded, email, email).Error)
 	return memberID, identityID
 }
 

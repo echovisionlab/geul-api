@@ -286,7 +286,8 @@ var storeContract = map[string]func(t *testing.T, f Fixture){
 			},
 		)
 		require.NoError(t, err)
-		require.NoError(t, mutationtest.Read(t, f.Harness, func(ctx context.Context, store member.Store) error {
+		// The row lock needs a writable transaction.
+		require.NoError(t, transact(t, f, func(ctx context.Context, store member.Store) error {
 			_, err := store.PrimaryEmail(ctx, memberID, uuid.NewString())
 			require.ErrorIs(t, err, member.ErrMemberNotFound)
 			_, err = store.LockLinkedMember(ctx, uuid.NewString(), identityID)

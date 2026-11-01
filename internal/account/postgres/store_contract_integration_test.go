@@ -51,11 +51,10 @@ func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 			SeedPair: func(t *testing.T, onboarded bool) (string, string, string) { return seedPair(t, db, onboarded) },
 			SeedSession: func(t *testing.T, identityID string, authenticatedAt time.Time) string {
 				sessionID := uuid.NewString()
+				// The Kratos stub's sessions table has no authentication methods.
 				require.NoError(t, db.Exec(`
-					INSERT INTO kratos.sessions (
-						id, identity_id, active, authenticated_at, expires_at,
-						created_at, updated_at, authentication_methods
-					) VALUES (?::uuid, ?::uuid, TRUE, ?, ?, ?, ?, '[]'::jsonb)
+					INSERT INTO kratos.sessions (id, identity_id, active, authenticated_at, expires_at, created_at, updated_at)
+					VALUES (?::uuid, ?::uuid, TRUE, ?, ?, ?, ?)
 				`, sessionID, identityID, authenticatedAt, authenticatedAt.Add(time.Hour), authenticatedAt, authenticatedAt).Error)
 				return sessionID
 			},

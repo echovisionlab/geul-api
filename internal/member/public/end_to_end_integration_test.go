@@ -32,10 +32,11 @@ func TestExtendedMemberProfileVisibilityFollowsCurrentIdentityRoleIntegration(t 
 	require.NoError(t, db.Exec(`INSERT INTO account_identity (id) VALUES (?::uuid)`, identityID).Error)
 	require.NoError(t, db.Exec(`UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid`, memberID, identityID).Error)
 	bio, website := "stored biography", "https://profile.example.test"
+	email := identityID + "@example.test"
 	require.NoError(t, db.Exec(`
-		INSERT INTO member (id, account_identity_id, nickname, onboarded, bio, website, social_links)
-		VALUES (?::uuid, ?::uuid, 'Role Profile', TRUE, ?, ?, jsonb_build_object('homepage', ?::text))
-	`, memberID, identityID, bio, website, website).Error)
+		INSERT INTO member (id, account_identity_id, nickname, onboarded, bio, website, social_links, primary_email, available_emails)
+		VALUES (?::uuid, ?::uuid, 'Role Profile', TRUE, ?, ?, jsonb_build_object('homepage', ?::text), ?, ARRAY[?::text])
+	`, memberID, identityID, bio, website, website, email, email).Error)
 	documentID, postID := uuid.NewString(), uuid.NewString()
 	require.NoError(t, db.Exec(`INSERT INTO content_document (id, profile) VALUES (?::uuid, 'post')`, documentID).Error)
 	require.NoError(t, db.Exec(`INSERT INTO post (id, status, slug, published_at, content_document_id) VALUES (?::uuid, 'POST_STATUS_PUBLISHED', ?, ?, ?::uuid)`, postID, "role-profile-"+memberID, now, documentID).Error)
