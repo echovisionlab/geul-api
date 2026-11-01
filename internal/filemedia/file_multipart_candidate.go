@@ -10,7 +10,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -103,9 +102,9 @@ func normalizeOptionalCandidateFilename(fileName string) (string, error) {
 func (s *Service) findMultipartUploadCandidate(
 	ctx context.Context,
 	search multipartCandidateSearch,
-) (model.UploadSession, bool, error) {
+) (domain.UploadSession, bool, error) {
 	if search.projectionIdentity.mode == fileIngestTargetModeUnknown {
-		return model.UploadSession{}, false, fmt.Errorf("upload target classification is missing")
+		return domain.UploadSession{}, false, fmt.Errorf("upload target classification is missing")
 	}
 	var entityType *string
 	if search.request.EntityType != nil {
@@ -119,10 +118,10 @@ func (s *Service) findMultipartUploadCandidate(
 		row, found, err = store.FindUploadCandidate(ctx, filter)
 		return err
 	})
-	return uploadSessionFromStore(row), found, err
+	return row, found, err
 }
 
-func multipartCandidateResponse(session model.UploadSession) *managev1.FindMultipartUploadCandidateResponse {
+func multipartCandidateResponse(session domain.UploadSession) *managev1.FindMultipartUploadCandidateResponse {
 	extension := mediaExtension(&session.RequestedMime)
 	return &managev1.FindMultipartUploadCandidateResponse{
 		ClientMediaBundleId:   session.ClientMediaBundleID,
@@ -145,10 +144,10 @@ func multipartCandidateResponse(session model.UploadSession) *managev1.FindMulti
 
 func (s *Service) prepareMultipartCandidateResponse(
 	ctx context.Context,
-	session model.UploadSession,
+	session domain.UploadSession,
 ) (*managev1.FindMultipartUploadCandidateResponse, error) {
 	response := multipartCandidateResponse(session)
-	if session.Status == model.UploadSessionStatusFinalizing {
+	if session.Status == domain.UploadSessionStatusFinalizing {
 		parts, err := s.loadUploadPartInfos(ctx, session.UploadID)
 		if err != nil {
 			return nil, err

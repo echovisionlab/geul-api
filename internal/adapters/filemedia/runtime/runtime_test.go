@@ -37,7 +37,7 @@ func TestHandleFileDeleteKeepsFileAndAuthorizationUntilEveryObjectIsDeleted(t *t
 	now := time.Now().UTC()
 	file := model.File{ID: uuid.NewString(), FileName: "source.mp4", MimeType: "video/mp4", FileSize: 1, Extension: "mp4", SHA256: make([]byte, 32), DeleteRequestedAt: &now, CreatedAt: now}
 	require.NoError(t, db.Create(&file).Error)
-	original, err := filemedia.CanonicalMediaObjectTargetForFile(file)
+	original, err := filemedia.CanonicalMediaObjectTargetForFile(filemedia.File(file))
 	require.NoError(t, err)
 	generationID := uuid.NewString()
 	prefix, err := mediaauth.MediaHLSObjectPrefix(file.ID, generationID)

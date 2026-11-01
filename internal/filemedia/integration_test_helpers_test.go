@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
@@ -270,14 +271,14 @@ func (p *flakyAttachedConfirmPublisher) NotifyProtobuf(ctx context.Context, sign
 	return nil
 }
 
-func loadEditorUploadSession(t *testing.T, db *gorm.DB, uploadID string) model.UploadSession {
+func loadEditorUploadSession(t *testing.T, db *gorm.DB, uploadID string) domain.UploadSession {
 	t.Helper()
 	var session model.UploadSession
 	require.NoError(t, db.First(&session, "upload_id = ?", uploadID).Error)
-	return session
+	return filemediapostgres.UploadSession(session)
 }
 
-func requireEditorUploadSessionStatus(t *testing.T, db *gorm.DB, uploadID string, status model.UploadSessionStatus) {
+func requireEditorUploadSessionStatus(t *testing.T, db *gorm.DB, uploadID string, status domain.UploadSessionStatus) {
 	t.Helper()
 	require.Equal(t, status, loadEditorUploadSession(t, db, uploadID).Status)
 }

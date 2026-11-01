@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
@@ -16,37 +16,37 @@ func TestUploadSessionStatusToProtoMapsKnownStatuses(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		status model.UploadSessionStatus
+		status domain.UploadSessionStatus
 		want   managev1.UploadSessionStatus
 	}{
 		{
 			name:   "initiated",
-			status: model.UploadSessionStatusInitiated,
+			status: domain.UploadSessionStatusInitiated,
 			want:   managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED,
 		},
 		{
 			name:   "uploading",
-			status: model.UploadSessionStatusUploading,
+			status: domain.UploadSessionStatusUploading,
 			want:   managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING,
 		},
 		{
 			name:   "finalizing",
-			status: model.UploadSessionStatusFinalizing,
+			status: domain.UploadSessionStatusFinalizing,
 			want:   managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FINALIZING,
 		},
 		{
 			name:   "failed",
-			status: model.UploadSessionStatusFailed,
+			status: domain.UploadSessionStatusFailed,
 			want:   managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FAILED,
 		},
 		{
 			name:   "aborted",
-			status: model.UploadSessionStatusAborted,
+			status: domain.UploadSessionStatusAborted,
 			want:   managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_ABORTED,
 		},
 		{
 			name:   "unknown",
-			status: model.UploadSessionStatus("paused"),
+			status: domain.UploadSessionStatus("paused"),
 			want:   managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UNSPECIFIED,
 		},
 	}
@@ -78,13 +78,13 @@ func TestMultipartInitiateResponseFromSessionShapesFreshAndResumeResponses(t *te
 	t.Parallel()
 
 	freshResp := multipartInitiateResponseFromSession(
-		model.UploadSession{
+		domain.UploadSession{
 			UploadID:      "upload-fresh",
 			FileID:        "file-fresh",
 			RequestedMime: "image/webp",
 			TotalParts:    1,
 			ChunkSize:     int32(chunkSize),
-			Status:        model.UploadSessionStatusInitiated,
+			Status:        domain.UploadSessionStatusInitiated,
 		},
 		nil,
 		false,
@@ -106,13 +106,13 @@ func TestMultipartInitiateResponseFromSessionShapesFreshAndResumeResponses(t *te
 	}
 
 	resp := multipartInitiateResponseFromSession(
-		model.UploadSession{
+		domain.UploadSession{
 			UploadID:      "upload-1",
 			FileID:        "file-1",
 			RequestedMime: "image/webp",
 			TotalParts:    3,
 			ChunkSize:     64,
-			Status:        model.UploadSessionStatusUploading,
+			Status:        domain.UploadSessionStatusUploading,
 			AttemptID:     &attemptID,
 		},
 		uploadedParts,
@@ -135,10 +135,10 @@ func TestContainsFinalizingUploadSession(t *testing.T) {
 	t.Parallel()
 
 	require.False(t, containsFinalizingUploadSession(nil))
-	require.False(t, containsFinalizingUploadSession([]model.UploadSession{{Status: model.UploadSessionStatusUploading}}))
-	require.True(t, containsFinalizingUploadSession([]model.UploadSession{
-		{Status: model.UploadSessionStatusUploading},
-		{Status: model.UploadSessionStatusFinalizing},
+	require.False(t, containsFinalizingUploadSession([]domain.UploadSession{{Status: domain.UploadSessionStatusUploading}}))
+	require.True(t, containsFinalizingUploadSession([]domain.UploadSession{
+		{Status: domain.UploadSessionStatusUploading},
+		{Status: domain.UploadSessionStatusFinalizing},
 	}))
 }
 
@@ -148,7 +148,7 @@ func TestUploadSessionMatchesSelection(t *testing.T) {
 	storedLastModified := int64(1710000000000)
 	requestLastModified := storedLastModified
 	differentLastModified := storedLastModified + 1
-	session := model.UploadSession{
+	session := domain.UploadSession{
 		FileName:         "image.jpeg",
 		FileSize:         1024,
 		RequestedMime:    "image/jpeg",
@@ -157,7 +157,7 @@ func TestUploadSessionMatchesSelection(t *testing.T) {
 
 	tests := []struct {
 		name             string
-		session          model.UploadSession
+		session          domain.UploadSession
 		fileName         string
 		fileSize         int64
 		mimeType         string
@@ -204,7 +204,7 @@ func TestUploadSessionMatchesSelection(t *testing.T) {
 		},
 		{
 			name:             "rejects missing stored last modified",
-			session:          model.UploadSession{FileName: "image.jpeg", FileSize: 1024, RequestedMime: "image/jpeg"},
+			session:          domain.UploadSession{FileName: "image.jpeg", FileSize: 1024, RequestedMime: "image/jpeg"},
 			fileName:         "image.jpeg",
 			fileSize:         1024,
 			mimeType:         "image/jpeg",
@@ -238,14 +238,14 @@ func TestUploadSessionMatchesSelection(t *testing.T) {
 func TestMultipartSessionChunkSizeUsesStoredOrDefaultChunkSize(t *testing.T) {
 	t.Parallel()
 
-	require.Equal(t, int64(9), multipartSessionChunkSize(model.UploadSession{ChunkSize: 9}))
-	require.Equal(t, int64(chunkSize), multipartSessionChunkSize(model.UploadSession{}))
+	require.Equal(t, int64(9), multipartSessionChunkSize(domain.UploadSession{ChunkSize: 9}))
+	require.Equal(t, int64(chunkSize), multipartSessionChunkSize(domain.UploadSession{}))
 }
 
 func TestUploadPartConversionsPreservePartOrder(t *testing.T) {
 	t.Parallel()
 
-	parts := []model.UploadPart{
+	parts := []domain.UploadPart{
 		{UploadID: "upload-1", PartNumber: 2, ETag: "etag-2"},
 		{UploadID: "upload-1", PartNumber: 1, ETag: "etag-1"},
 	}

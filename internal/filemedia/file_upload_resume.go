@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type multipartResumeSelection struct {
-	activeSessions []model.UploadSession
-	session        *model.UploadSession
+	activeSessions []domain.UploadSession
+	session        *domain.UploadSession
 	response       *managev1.InitiateMultipartUploadResponse
 }
 
@@ -68,7 +68,7 @@ func (s *Service) selectUnserializedMultipartResumeCandidate(
 
 func (s *Service) buildMultipartResumeResponse(
 	ctx context.Context,
-	session model.UploadSession,
+	session domain.UploadSession,
 ) (*managev1.InitiateMultipartUploadResponse, error) {
 	uploadedParts, err := s.loadUploadPartInfos(ctx, session.UploadID)
 	if err != nil {

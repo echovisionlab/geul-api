@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
@@ -25,7 +25,7 @@ func TestValidateMultipartCompletionMimeRejectsMediaContainerCorrections(t *test
 			_, err := validateMultipartCompletionMime(
 				"audio/mpeg",
 				"audio/aiff",
-				model.DefaultUploadConfigs[uploadType].PermittedMimeTypes,
+				domain.DefaultUploadConfigs[uploadType.String()].PermittedMimeTypes,
 			)
 			require.Error(t, err)
 		})
@@ -45,7 +45,7 @@ func TestValidateMultipartCompletionMimeRejectsDetectedVideoForAudioUpload(t *te
 			_, err := validateMultipartCompletionMime(
 				"audio/mp4",
 				"video/mp4",
-				model.DefaultUploadConfigs[uploadType].PermittedMimeTypes,
+				domain.DefaultUploadConfigs[uploadType.String()].PermittedMimeTypes,
 			)
 			require.Error(t, err)
 		})
@@ -67,7 +67,7 @@ func TestExpectedMultipartPartSizeUsesSessionChunkBoundaries(t *testing.T) {
 func TestValidateMultipartPartContentLengthUsesStoredSessionChunkSize(t *testing.T) {
 	t.Parallel()
 
-	session := model.UploadSession{
+	session := domain.UploadSession{
 		FileSize:  12,
 		ChunkSize: 5,
 	}
@@ -126,7 +126,7 @@ func TestDetectCanonicalMimeDetectsValidGLB(t *testing.T) {
 	body := buildTestGLB([]byte(`{"asset":{"version":"2.0"}}`), 0)
 
 	allowedSet := buildAllowedMimeSet(
-		model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH].PermittedMimeTypes,
+		domain.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH.String()].PermittedMimeTypes,
 	)
 
 	require.Equal(t, "model/gltf-binary", detectCanonicalMime(body, allowedSet))
@@ -137,7 +137,7 @@ func TestDetectCanonicalMimeRejectsCorruptGLB(t *testing.T) {
 	t.Parallel()
 
 	allowedSet := buildAllowedMimeSet(
-		model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH].PermittedMimeTypes,
+		domain.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH.String()].PermittedMimeTypes,
 	)
 
 	require.NotEqual(t, "model/gltf-binary", detectCanonicalMime([]byte(strings.Repeat("x", 64)), allowedSet))
@@ -151,7 +151,7 @@ func TestDetectCanonicalMimeRecognizesConsecutiveMPEGLayerIIIFrames(t *testing.T
 	binary.BigEndian.PutUint32(body[0:4], 0xfffb9064)
 	binary.BigEndian.PutUint32(body[frameLength:frameLength+4], 0xfffb9064)
 	allowedSet := buildAllowedMimeSet(
-		model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO].PermittedMimeTypes,
+		domain.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO.String()].PermittedMimeTypes,
 	)
 
 	require.Equal(t, "audio/mpeg", detectCanonicalMime(body, allowedSet))
@@ -164,7 +164,7 @@ func TestDetectCanonicalMimeRecognizesRepositoryMP3Fixture(t *testing.T) {
 	body, err := os.ReadFile("../testutil/testdata/media/release-audio-001.mp3")
 	require.NoError(t, err)
 	allowedSet := buildAllowedMimeSet(
-		model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO].PermittedMimeTypes,
+		domain.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO.String()].PermittedMimeTypes,
 	)
 
 	require.Equal(t, "audio/mpeg", detectCanonicalMime(body[:multipartSniffBytes], allowedSet))
@@ -175,7 +175,7 @@ func TestDetectCanonicalMimeRejectsGLBWithInvalidJSONChunk(t *testing.T) {
 
 	body := buildTestGLB([]byte(`not-json`), 0)
 	allowedSet := buildAllowedMimeSet(
-		model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH].PermittedMimeTypes,
+		domain.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH.String()].PermittedMimeTypes,
 	)
 
 	require.NotEqual(t, "model/gltf-binary", detectCanonicalMime(body, allowedSet))
@@ -196,7 +196,7 @@ func TestValidateMultipartCompletionMimeKeepsStrictPolicyForNonMediaUploads(t *t
 	_, err := validateMultipartCompletionMime(
 		"image/jpeg",
 		"image/png",
-		model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE].PermittedMimeTypes,
+		domain.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE.String()].PermittedMimeTypes,
 	)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Uploaded file type does not match this field")
@@ -204,7 +204,7 @@ func TestValidateMultipartCompletionMimeKeepsStrictPolicyForNonMediaUploads(t *t
 
 func TestValidateMultipartCompletionMimeCanonicalizesFaviconICOAliases(t *testing.T) {
 	t.Parallel()
-	allowed := model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON].PermittedMimeTypes
+	allowed := domain.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON.String()].PermittedMimeTypes
 	for _, declared := range []string{"image/x-icon", "image/vnd.microsoft.icon"} {
 		for _, detected := range []string{"image/x-icon", "image/vnd.microsoft.icon"} {
 			mimeType, err := validateMultipartCompletionMime(declared, detected, allowed)

@@ -5,11 +5,10 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *Service) findActiveUploadSessionsForSurface(ctx context.Context, uploadType managev1.UploadType, entityID string, entityType *string, target fileIngestProjectionIdentity) ([]model.UploadSession, error) {
+func (s *Service) findActiveUploadSessionsForSurface(ctx context.Context, uploadType managev1.UploadType, entityID string, entityType *string, target fileIngestProjectionIdentity) ([]domain.UploadSession, error) {
 	if uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE || isEditorFileIngestUploadType(uploadType) || target.mode == fileIngestTargetModeUnknown || (target.mode == fileIngestTargetModeGeneral && target.slotID == "") {
 		return nil, nil
 	}
@@ -23,9 +22,7 @@ func (s *Service) findActiveUploadSessionsForSurface(ctx context.Context, upload
 	if err != nil {
 		return nil, err
 	}
-	result := make([]model.UploadSession, len(rows))
-	for i, r := range rows {
-		result[i] = uploadSessionFromStore(r)
-	}
+	result := make([]domain.UploadSession, len(rows))
+	copy(result, rows)
 	return result, nil
 }

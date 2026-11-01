@@ -74,48 +74,42 @@ var ExportClaimUploadPartActivity = (*Service).claimUploadPartActivity
 var ExportClaimUploadSessionAbort = (*Service).claimUploadSessionAbort
 
 func ExportClaimMultipartCompletion(s *Service, ctx context.Context, upload, file string, now time.Time) (bool, []domain.UploadPart, error) {
-	claimed, parts, err := s.claimMultipartCompletion(ctx, model.UploadSession{UploadID: upload, FileID: file}, now)
+	claimed, parts, err := s.claimMultipartCompletion(ctx, domain.UploadSession{UploadID: upload, FileID: file}, now)
 	var result []domain.UploadPart
 	if parts != nil {
 		result = make([]domain.UploadPart, len(parts))
-		for i, p := range parts {
-			result[i] = domain.UploadPart(p)
-		}
+		copy(result, parts)
 	}
 	return claimed, result, err
 }
 func ExportRetryableMultipartFailure(s *Service, ctx context.Context, upload, file string, now time.Time) error {
-	return s.recordRetryableMultipartPartFailure(ctx, model.UploadSession{UploadID: upload, FileID: file}, now)
+	return s.recordRetryableMultipartPartFailure(ctx, domain.UploadSession{UploadID: upload, FileID: file}, now)
 }
 
 func ExportRecordUploadedPart(s *Service, ctx context.Context, row domain.UploadSession, part domain.UploadPart) (bool, error) {
-	return s.recordUploadedPart(ctx, uploadSessionFromStore(row), model.UploadPart(part))
+	return s.recordUploadedPart(ctx, row, part)
 }
 
 func ExportRecordUploadMIME(s *Service, ctx context.Context, row domain.UploadSession, mime string, now time.Time) error {
-	return s.recordMultipartDetectedMIME(ctx, uploadSessionFromStore(row), mime, now)
+	return s.recordMultipartDetectedMIME(ctx, row, mime, now)
 }
 
 func ExportReconcileUploadParts(s *Service, ctx context.Context, row domain.UploadSession, parts []domain.UploadPart) error {
-	rows := make([]model.UploadPart, len(parts))
-	for i, p := range parts {
-		rows[i] = model.UploadPart(p)
-	}
-	return s.reconcileMultipartResumePartCache(ctx, uploadSessionFromStore(row), rows)
+	rows := make([]domain.UploadPart, len(parts))
+	copy(rows, parts)
+	return s.reconcileMultipartResumePartCache(ctx, row, rows)
 }
 
 func ExportCreateUploadSession(s *Service, ctx context.Context, row domain.UploadSession) (domain.UploadSession, error) {
-	stored := uploadSessionFromStore(row)
+	stored := row
 	err := s.createUploadSession(ctx, &stored)
-	return uploadSessionToStore(stored), err
+	return stored, err
 }
 
 func ExportClaimTrackUploadCleanup(s *Service, ctx context.Context, id string) ([]domain.UploadSession, error) {
 	rows, err := s.claimTrackUploadSessionsForCleanup(ctx, id)
 	result := make([]domain.UploadSession, len(rows))
-	for i, row := range rows {
-		result[i] = uploadSessionToStore(row)
-	}
+	copy(result, rows)
 	return result, err
 }
 
@@ -124,11 +118,11 @@ func ExportAbortService(units mutation.UnitOfWork[Store], storage *s3.Client, ch
 }
 
 func ExportRejectUploadPart(s *Service, w http.ResponseWriter, r *http.Request, row domain.UploadSession) bool {
-	return s.rejectMultipartUploadPart(w, r, uploadSessionFromStore(row), "MIME type mismatch")
+	return s.rejectMultipartUploadPart(w, r, row, "MIME type mismatch")
 }
 
 func ExportValidateCompletedFile(s *Service, ctx context.Context, row domain.UploadSession, uploadType, entityType int32) error {
-	return s.validateCompletedFileRecord(ctx, uploadSessionFromStore(row), managev1.UploadType(uploadType), managev1.TranscodeEntityType(entityType))
+	return s.validateCompletedFileRecord(ctx, row, managev1.UploadType(uploadType), managev1.TranscodeEntityType(entityType))
 }
 
 func ExportLoadFinishedFile(s *Service, ctx context.Context, id string) (File, int32, error) {
@@ -137,7 +131,7 @@ func ExportLoadFinishedFile(s *Service, ctx context.Context, id string) (File, i
 }
 
 func ExportPrepareBundle(s *Service, ctx context.Context, row domain.UploadSession, command PrepareClientMediaUploadCommand) (string, error) {
-	return s.prepareMediaBundle(ctx, uploadSessionFromStore(row), command)
+	return s.prepareMediaBundle(ctx, row, command)
 }
 
 func ExportClientBundleFixture(t *testing.T, kind string) (domain.UploadSession, PrepareClientMediaUploadCommand, string) {
@@ -153,7 +147,7 @@ func ExportClientBundleFixture(t *testing.T, kind string) (domain.UploadSession,
 	for _, artifact := range plan.Artifacts {
 		command.Artifacts = append(command.Artifacts, ClientMediaUploadArtifact{Path: artifact.Path, MimeType: artifact.MimeType, Size: artifact.Size, SHA256: artifact.SHA256, DerivativeType: managev1.FileDerivativeType(artifact.DerivativeType)})
 	}
-	return uploadSessionToStore(row), command, plan.MemberID
+	return row, command, plan.MemberID
 }
 
 func ExportIngestChecker(s *Service, checker *auth.SpiceDBClient) { s.spiceDB = checker }
@@ -162,7 +156,7 @@ func ExportCreateVerifiedFile(s *Service, ctx context.Context, file File, upload
 	var authority verifiedFileIngestAuthority = requestFileIngestAuthority{}
 	if session != nil {
 		var err error
-		authority, err = newMultipartFileIngestAuthority(uploadSessionFromStore(*session))
+		authority, err = newMultipartFileIngestAuthority(*session)
 		if err != nil {
 			return err
 		}
@@ -171,7 +165,7 @@ func ExportCreateVerifiedFile(s *Service, ctx context.Context, file File, upload
 }
 
 func ExportArtifactWritable(s *Service, ctx context.Context, row domain.UploadSession) (bool, error) {
-	return s.clientMediaArtifactWritable(ctx, uploadSessionFromStore(row))
+	return s.clientMediaArtifactWritable(ctx, row)
 }
 
 func ExportRestoreRemoteReceipt(s *Service, ctx context.Context, id, slot, attempt, entityID string, uploadType, entityType int32) (File, bool, error) {
@@ -189,13 +183,12 @@ func ExportRestoreRemoteReceipt(s *Service, ctx context.Context, id, slot, attem
 var ExportTriggerFileProcessing = (*Service).triggerFileScopedProcessingIfNeeded
 
 func ExportClientMediaStorage(t *testing.T, row domain.UploadSession) *s3.Client {
-	legacy := uploadSessionFromStore(row)
-	plan, err := decodeClientMediaPlan(legacy)
+	plan, err := decodeClientMediaPlan(row)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, objects := clientMediaTestBundle(t, plan.Kind)
-	return newClientMediaStorageService(t, legacy, objects).s3Client
+	return newClientMediaStorageService(t, row, objects).s3Client
 }
 
 func ExportConfigureClientMediaStorage(s *Service, client *s3.Client) {
@@ -203,7 +196,7 @@ func ExportConfigureClientMediaStorage(s *Service, client *s3.Client) {
 }
 
 func ExportRegisterClientMedia(s *Service, ctx context.Context, row domain.UploadSession, authorize func(context.Context, Store, func(*auth.UserInfo) (bool, error)) error) error {
-	return s.registerVerifiedClientMediaBundle(ctx, &multipartCompletion{session: uploadSessionFromStore(row)}, authorize)
+	return s.registerVerifiedClientMediaBundle(ctx, &multipartCompletion{session: row}, authorize)
 }
 
 func ExportFaviconService(units mutation.UnitOfWork[Store], commits domain.FaviconCommits, client *s3.Client, processor favicon.Processor) *Service {

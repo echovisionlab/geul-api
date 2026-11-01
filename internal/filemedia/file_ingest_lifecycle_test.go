@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -98,7 +98,7 @@ func TestFileIngestEventEmitterUsesUploadSessionSequenceAllocator(t *testing.T) 
 	emitter.setTarget(&commonv1.MediaObjectTarget{
 		FileId: fileID, ObjectKey: "media/" + fileID + ".ogg", Extension: "ogg", MimeType: "audio/ogg",
 	})
-	emitter.setUploadIdentity(model.UploadSession{
+	emitter.setUploadIdentity(domain.UploadSession{
 		UploadID:   uploadID,
 		UploadType: managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(),
 	})

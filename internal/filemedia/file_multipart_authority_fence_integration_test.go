@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -66,11 +69,11 @@ func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorit
 func seedFinalizingMultipartAuthoritySession(
 	t *testing.T,
 	db *gorm.DB,
-) model.UploadSession {
+) domain.UploadSession {
 	t.Helper()
 	now := time.Now().UTC()
 	attemptID := uuid.NewString()
-	session := model.UploadSession{
+	session := domain.UploadSession{
 		UploadID:       uuid.NewString(),
 		FileID:         uuid.NewString(),
 		UploadType:     managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE.String(),
@@ -80,12 +83,13 @@ func seedFinalizingMultipartAuthoritySession(
 		RequestedMime:  "image/jpeg",
 		TotalParts:     1,
 		ChunkSize:      1024,
-		Status:         model.UploadSessionStatusFinalizing,
+		Status:         domain.UploadSessionStatusFinalizing,
 		LastActivityAt: now,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
-	require.NoError(t, db.Omit("EntityID", "EntityType", "SlotID", "ExpectedFileID").Create(&session).Error)
+	row := filemediapostgres.UploadSessionRow(session)
+	require.NoError(t, db.Omit("EntityID", "EntityType", "SlotID", "ExpectedFileID").Create(&row).Error)
 	return session
 }
 

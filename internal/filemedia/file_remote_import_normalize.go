@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediamime"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -20,13 +21,12 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const (
 	managedRemoteImportMaxDimension   = 4096
-	managedRemoteImportFinalMaxSize   = model.ManagedRasterFinalMaxSize
+	managedRemoteImportFinalMaxSize   = domain.ManagedRasterFinalMaxSize
 	managedRemoteImportSelectionLimit = 20 * 1024 * 1024
 	managedRemoteImportStartQuality   = 100
 	managedRemoteImportMinQuality     = 56

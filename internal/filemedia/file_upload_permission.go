@@ -13,7 +13,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -154,12 +153,12 @@ func uploadPermissionPartError(err error) error {
 func (s *Service) resolvePartUploadPermissionTarget(
 	ctx context.Context,
 	uploadType managev1.UploadType,
-	session model.UploadSession,
+	session domain.UploadSession,
 ) (uploadPermissionTarget, string, error) {
 	return resolvePartUploadPermissionTargetUsing(ctx, uploadType, session, s.resolveTrackReleaseID)
 }
 
-func resolvePartUploadPermissionTargetUsing(ctx context.Context, uploadType managev1.UploadType, session model.UploadSession, lookup func(context.Context, string) (string, error)) (uploadPermissionTarget, string, error) {
+func resolvePartUploadPermissionTargetUsing(ctx context.Context, uploadType managev1.UploadType, session domain.UploadSession, lookup func(context.Context, string) (string, error)) (uploadPermissionTarget, string, error) {
 	entityType := ""
 	if session.EntityType != nil {
 		entityType = *session.EntityType

@@ -20,7 +20,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -36,7 +35,7 @@ type multipartUploadPartRequest struct {
 	uploadID      string
 	correlationID string
 	partNumber    int32
-	session       model.UploadSession
+	session       domain.UploadSession
 	fileKey       string
 }
 
@@ -79,7 +78,7 @@ func isDirectS3UploadType(uploadType managev1.UploadType) bool {
 	}
 }
 
-func uploadSessionUsesDirectS3(session model.UploadSession) bool {
+func uploadSessionUsesDirectS3(session domain.UploadSession) bool {
 	value, ok := managev1.UploadType_value[session.UploadType]
 	return ok && isDirectS3UploadType(managev1.UploadType(value))
 }
@@ -87,7 +86,7 @@ func uploadSessionUsesDirectS3(session model.UploadSession) bool {
 func (s *Service) rejectMultipartUploadPart(
 	w http.ResponseWriter,
 	r *http.Request,
-	session model.UploadSession,
+	session domain.UploadSession,
 	reason string,
 ) bool {
 	if err := s.abortUploadSession(r.Context(), session, reason); err != nil {
@@ -104,8 +103,8 @@ func (s *Service) rejectMultipartUploadPart(
 
 func (s *Service) recordUploadedPart(
 	ctx context.Context,
-	session model.UploadSession,
-	part model.UploadPart,
+	session domain.UploadSession,
+	part domain.UploadPart,
 ) (bool, error) {
 	recorded := false
 	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
@@ -114,7 +113,7 @@ func (s *Service) recordUploadedPart(
 		if err != nil || !changed {
 			return err
 		}
-		if err := store.UpsertUploadPart(ctx, domain.UploadPart(part)); err != nil {
+		if err := store.UpsertUploadPart(ctx, part); err != nil {
 			return err
 		}
 		recorded = true
@@ -125,7 +124,7 @@ func (s *Service) recordUploadedPart(
 
 func (s *Service) recordMultipartDetectedMIME(
 	ctx context.Context,
-	session model.UploadSession,
+	session domain.UploadSession,
 	detected string,
 	now time.Time,
 ) error {
@@ -180,7 +179,7 @@ func (s *Service) claimMultipartUploadPartActivity(
 
 func (s *Service) uploadAndRecordMultipartPart(
 	ctx context.Context,
-	session model.UploadSession,
+	session domain.UploadSession,
 	fileKey string,
 	partNumber int32,
 	partBody []byte,
@@ -238,7 +237,7 @@ func (s *Service) uploadAndRecordMultipartPart(
 			}
 
 			etag = strings.Trim(*output.ETag, "\"")
-			recorded, err := lockedService.recordUploadedPart(ctx, session, model.UploadPart{
+			recorded, err := lockedService.recordUploadedPart(ctx, session, domain.UploadPart{
 				UploadID:   session.UploadID,
 				PartNumber: partNumber,
 				ETag:       etag,
@@ -594,7 +593,7 @@ func (s *Service) HandleConfirmUploadPart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var confirmed model.UploadPart
+	var confirmed domain.UploadPart
 	err := s.ingestLocks.Multipart(r.Context(), request.session.UploadID, request.session.FileID,
 		func(scope domain.IngestSession) error {
 			lockedService, err := s.ingestService(scope)
@@ -650,7 +649,7 @@ func (s *Service) HandleConfirmUploadPart(w http.ResponseWriter, r *http.Request
 func (s *Service) loadExactMultipartPart(
 	ctx context.Context,
 	request multipartUploadPartRequest,
-) (model.UploadPart, error) {
+) (domain.UploadPart, error) {
 	marker := strconv.Itoa(int(request.partNumber - 1))
 	output, err := s.s3Client.ListParts(ctx, &s3.ListPartsInput{
 		Bucket:           aws.String(s.s3Bucket),
@@ -660,10 +659,10 @@ func (s *Service) loadExactMultipartPart(
 		MaxParts:         aws.Int32(1),
 	})
 	if err != nil {
-		return model.UploadPart{}, fmt.Errorf("list multipart upload part: %w", err)
+		return domain.UploadPart{}, fmt.Errorf("list multipart upload part: %w", err)
 	}
 	if output == nil || len(output.Parts) != 1 || aws.ToInt32(output.Parts[0].PartNumber) != request.partNumber {
-		return model.UploadPart{}, errMultipartUploadedPartNotFound
+		return domain.UploadPart{}, errMultipartUploadedPartNotFound
 	}
 	part := output.Parts[0]
 	etag := strings.Trim(aws.ToString(part.ETag), "\"")
@@ -671,9 +670,9 @@ func (s *Service) loadExactMultipartPart(
 		request.session.FileSize, multipartSessionChunkSize(request.session), request.partNumber,
 	)
 	if etag == "" || aws.ToInt64(part.Size) != expectedSize {
-		return model.UploadPart{}, fmt.Errorf("object-store part identity does not match the upload session")
+		return domain.UploadPart{}, fmt.Errorf("object-store part identity does not match the upload session")
 	}
-	return model.UploadPart{
+	return domain.UploadPart{
 		UploadID: request.session.UploadID, PartNumber: request.partNumber, ETag: etag, Size: expectedSize,
 	}, nil
 }
@@ -737,7 +736,7 @@ func (s *Service) loadMultipartUploadPartRequest(
 		http.Error(w, message, status)
 		return request, false
 	}
-	request.session = uploadSessionFromStore(row)
+	request.session = row
 	fileKey, err := uploadSessionObjectKey(request.session)
 	if err != nil {
 		recordUploadFailure(r, fmt.Errorf("resolve upload session target: %w", err), request.failureAttrs()...)
@@ -812,7 +811,7 @@ func (s *Service) publishMultipartPartProgress(
 	progressEmitter.publishUploading(progress, &uploadedBytes)
 }
 
-func validateMultipartFirstPartGLB(prefix []byte, session model.UploadSession, detected string) error {
+func validateMultipartFirstPartGLB(prefix []byte, session domain.UploadSession, detected string) error {
 	if detected != "model/gltf-binary" {
 		return nil
 	}
@@ -822,7 +821,7 @@ func validateMultipartFirstPartGLB(prefix []byte, session model.UploadSession, d
 func (s *Service) rejectMultipartFirstPart(
 	w http.ResponseWriter,
 	r *http.Request,
-	session model.UploadSession,
+	session domain.UploadSession,
 	reason string,
 ) {
 	if s.rejectMultipartUploadPart(w, r, session, reason) {

@@ -16,19 +16,19 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
 
-func clientMediaTestBundle(t *testing.T, kind string) (model.UploadSession, map[string][]byte) {
+func clientMediaTestBundle(t *testing.T, kind string) (domain.UploadSession, map[string][]byte) {
 	t.Helper()
 	bundleID := uuid.NewString()
-	session := model.UploadSession{FileID: uuid.NewString(), UploadID: "upload-client", RequestedMime: kind + "/mp4", UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE.String(), ClientMediaBundleID: &bundleID}
+	session := domain.UploadSession{FileID: uuid.NewString(), UploadID: "upload-client", RequestedMime: kind + "/mp4", UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE.String(), ClientMediaBundleID: &bundleID}
 	segment := make([]byte, 188*3)
 	for i := 0; i < len(segment); i += 188 {
 		segment[i] = 0x47
@@ -110,7 +110,7 @@ func TestClientMediaWaveformPreservesSignedPeaks(t *testing.T) {
 	require.Error(t, validateClientWaveform([]byte("[["+strings.Repeat("null,", 2047)+"null]]")))
 }
 
-func newClientMediaStorageService(t *testing.T, session model.UploadSession, objects map[string][]byte) *Service {
+func newClientMediaStorageService(t *testing.T, session domain.UploadSession, objects map[string][]byte) *Service {
 	t.Helper()
 	stored := map[string][]byte{}
 	mimes := map[string]string{}
@@ -241,7 +241,7 @@ func TestDirectMediaCompletionRequiresBrowserBundle(t *testing.T) {
 	for _, uploadType := range []managev1.UploadType{managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT, managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO, managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO, managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO} {
 		for _, mime := range []string{"audio/mpeg", "video/mp4"} {
 			t.Run(uploadType.String()+mime, func(t *testing.T) {
-				session := model.UploadSession{}
+				session := domain.UploadSession{}
 				err := requireDirectClientMediaBundle(uploadType, mime, session, "")
 				require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 				require.Contains(t, err.Error(), "clientMediaBundleRequired")
@@ -262,9 +262,9 @@ func TestDirectMediaCompletionRequiresBrowserBundle(t *testing.T) {
 			})
 		}
 	}
-	require.NoError(t, requireDirectClientMediaBundle(managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, "application/pdf", model.UploadSession{}, ""))
-	require.NoError(t, requireDirectClientMediaBundle(managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT, "application/pdf", model.UploadSession{}, ""))
-	require.NoError(t, requireDirectClientMediaBundle(managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE, "image/png", model.UploadSession{}, ""))
+	require.NoError(t, requireDirectClientMediaBundle(managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, "application/pdf", domain.UploadSession{}, ""))
+	require.NoError(t, requireDirectClientMediaBundle(managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT, "application/pdf", domain.UploadSession{}, ""))
+	require.NoError(t, requireDirectClientMediaBundle(managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE, "image/png", domain.UploadSession{}, ""))
 }
 
 func TestClientMediaPlanBoundsAggregatePlaylistMemory(t *testing.T) {

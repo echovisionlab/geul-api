@@ -97,7 +97,7 @@ func (s store) WaveformSource(ctx context.Context, fileID string) (*commonv1.Med
 		}
 		return nil, false, fmt.Errorf("lookup waveform source: %w", err)
 	}
-	target, err := filemedia.CanonicalMediaObjectTargetForFile(source)
+	target, err := filemedia.CanonicalMediaObjectTargetForFile(filemedia.File(source))
 	if err != nil {
 		return nil, false, fmt.Errorf("build waveform source target: %w", err)
 	}

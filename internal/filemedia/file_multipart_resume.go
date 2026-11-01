@@ -13,7 +13,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -21,23 +20,23 @@ import (
 // multipartResumeReconciliation carries the current lifecycle state and the
 // corresponding authoritative or frozen part snapshot.
 type multipartResumeReconciliation struct {
-	session model.UploadSession
+	session domain.UploadSession
 	parts   []*managev1.UploadPartInfo
 }
 
 func (s *Service) prepareMultipartResumeResponse(
 	ctx context.Context,
-	session model.UploadSession,
+	session domain.UploadSession,
 	response *managev1.InitiateMultipartUploadResponse,
 ) (*managev1.InitiateMultipartUploadResponse, error) {
-	if session.Status != model.UploadSessionStatusFinalizing {
+	if session.Status != domain.UploadSessionStatusFinalizing {
 		reconciled, err := s.reconcileMultipartResumeResponse(ctx, session, response)
 		if err != nil {
 			return nil, err
 		}
 		session = reconciled
 	}
-	if session.Status == model.UploadSessionStatusFinalizing {
+	if session.Status == domain.UploadSessionStatusFinalizing {
 		return response, nil
 	}
 	if err := s.publishMultipartResumeProgress(ctx, session, response); err != nil {
@@ -48,15 +47,15 @@ func (s *Service) prepareMultipartResumeResponse(
 
 func (s *Service) reconcileMultipartResumeResponse(
 	ctx context.Context,
-	session model.UploadSession,
+	session domain.UploadSession,
 	response *managev1.InitiateMultipartUploadResponse,
-) (model.UploadSession, error) {
+) (domain.UploadSession, error) {
 	if s.testBeforeResumeReconciliation != nil {
 		s.testBeforeResumeReconciliation(session)
 	}
 	reconciliation, err := s.reconcileWritableMultipartResumeParts(ctx, session)
 	if err != nil {
-		return model.UploadSession{}, fmt.Errorf("failed to reconcile multipart resume parts: %w", err)
+		return domain.UploadSession{}, fmt.Errorf("failed to reconcile multipart resume parts: %w", err)
 	}
 	response.Status = uploadSessionStatusToProto(reconciliation.session.Status)
 	response.UploadedParts = reconciliation.parts
@@ -65,7 +64,7 @@ func (s *Service) reconcileMultipartResumeResponse(
 
 func (s *Service) publishMultipartResumeProgress(
 	ctx context.Context,
-	session model.UploadSession,
+	session domain.UploadSession,
 	response *managev1.InitiateMultipartUploadResponse,
 ) error {
 	emitter := newFileIngestEventEmitter(
@@ -99,10 +98,10 @@ func (s *Service) publishMultipartResumeProgress(
 // the S3 inventory has been validated against that session's immutable shape.
 func (s *Service) reconcileWritableMultipartResumeParts(
 	ctx context.Context,
-	session model.UploadSession,
+	session domain.UploadSession,
 ) (multipartResumeReconciliation, error) {
 	result := multipartResumeReconciliation{session: session}
-	var parts []model.UploadPart
+	var parts []domain.UploadPart
 	err := s.ingestLocks.Multipart(ctx,
 		session.UploadID,
 		session.FileID,
@@ -116,7 +115,7 @@ func (s *Service) reconcileWritableMultipartResumeParts(
 				return fmt.Errorf("recheck multipart resume session: %w", err)
 			}
 			result.session = current
-			if current.Status == model.UploadSessionStatusFinalizing {
+			if current.Status == domain.UploadSessionStatusFinalizing {
 				parts = cachedParts
 				return nil
 			}
@@ -145,10 +144,10 @@ func (s *Service) reconcileWritableMultipartResumeParts(
 
 func (s *Service) loadMultipartResumeSessionState(
 	ctx context.Context,
-	expected model.UploadSession,
-) (model.UploadSession, []model.UploadPart, error) {
-	var current model.UploadSession
-	var cachedParts []model.UploadPart
+	expected domain.UploadSession,
+) (domain.UploadSession, []domain.UploadPart, error) {
+	var current domain.UploadSession
+	var cachedParts []domain.UploadPart
 	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
 		store := unit.Store()
 		row, err := store.UploadSession(ctx, expected.UploadID, expected.FileID, true)
@@ -158,22 +157,20 @@ func (s *Service) loadMultipartResumeSessionState(
 		if err != nil {
 			return err
 		}
-		current = uploadSessionFromStore(row)
+		current = row
 		if !sameMultipartResumeSessionShape(current, expected) {
 			return domainerr.Precondition("upload session shape changed before multipart resume reconciliation")
 		}
 		switch current.Status {
-		case model.UploadSessionStatusInitiated, model.UploadSessionStatusUploading:
+		case domain.UploadSessionStatusInitiated, domain.UploadSessionStatusUploading:
 			return nil
-		case model.UploadSessionStatusFinalizing:
+		case domain.UploadSessionStatusFinalizing:
 			rows, err := store.UploadParts(ctx, expected.UploadID)
 			if err != nil {
 				return err
 			}
-			cachedParts = make([]model.UploadPart, len(rows))
-			for i, r := range rows {
-				cachedParts[i] = model.UploadPart(r)
-			}
+			cachedParts = make([]domain.UploadPart, len(rows))
+			copy(cachedParts, rows)
 			return nil
 		default:
 			return domainerr.Precondition("upload session is no longer resumable")
@@ -184,9 +181,9 @@ func (s *Service) loadMultipartResumeSessionState(
 
 func (s *Service) listAndValidateMultipartResumeParts(
 	ctx context.Context,
-	session model.UploadSession,
+	session domain.UploadSession,
 	objectKey string,
-) ([]model.UploadPart, error) {
+) ([]domain.UploadPart, error) {
 	paginator := s3.NewListPartsPaginator(s.s3Client, &s3.ListPartsInput{
 		Bucket:   aws.String(s.s3Bucket),
 		Key:      aws.String(objectKey),
@@ -198,7 +195,7 @@ func (s *Service) listAndValidateMultipartResumeParts(
 	})
 
 	now := time.Now()
-	parts := make([]model.UploadPart, 0, session.TotalParts)
+	parts := make([]domain.UploadPart, 0, session.TotalParts)
 	seen := make(map[int32]struct{}, session.TotalParts)
 	previousMarker := ""
 	for paginator.HasMorePages() {
@@ -227,7 +224,7 @@ func (s *Service) listAndValidateMultipartResumeParts(
 			if partNumber <= 0 || partNumber > session.TotalParts || etag == "" || expectedSize <= 0 || *listed.Size != expectedSize {
 				return nil, domainerr.Precondition(fmt.Sprintf("object-store multipart part %d does not match the upload session shape", partNumber))
 			}
-			parts = append(parts, model.UploadPart{
+			parts = append(parts, domain.UploadPart{
 				UploadID:   session.UploadID,
 				PartNumber: partNumber,
 				ETag:       etag,
@@ -258,8 +255,8 @@ func nextMultipartListPartsMarker(page *s3.ListPartsOutput, previous string) (st
 
 func (s *Service) reconcileMultipartResumePartCache(
 	ctx context.Context,
-	expected model.UploadSession,
-	parts []model.UploadPart,
+	expected domain.UploadSession,
+	parts []domain.UploadPart,
 ) error {
 	return s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
 		store := unit.Store()
@@ -270,14 +267,12 @@ func (s *Service) reconcileMultipartResumePartCache(
 		if err != nil {
 			return err
 		}
-		current := uploadSessionFromStore(row)
+		current := row
 		if !sameMultipartResumeSessionShape(current, expected) {
 			return domainerr.Precondition("upload session shape changed before multipart resume reconciliation")
 		}
 		rows := make([]domain.UploadPart, len(parts))
-		for i, p := range parts {
-			rows[i] = domain.UploadPart(p)
-		}
+		copy(rows, parts)
 		if err := store.ReplaceUploadParts(ctx, expected.UploadID, rows); err != nil {
 			return err
 		}
@@ -292,7 +287,7 @@ func (s *Service) reconcileMultipartResumePartCache(
 	})
 }
 
-func sameMultipartResumeSessionShape(current, expected model.UploadSession) bool {
+func sameMultipartResumeSessionShape(current, expected domain.UploadSession) bool {
 	return current.UploadID == expected.UploadID &&
 		current.FileID == expected.FileID &&
 		current.UploadType == expected.UploadType &&

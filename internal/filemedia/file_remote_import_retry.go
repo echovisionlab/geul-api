@@ -12,7 +12,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -114,7 +113,7 @@ func (s *Service) restoreCompletedRemoteImport(
 func (s *Service) loadCompletedRemoteImportFile(
 	ctx context.Context,
 	fileID string,
-) (model.File, bool, error) {
+) (File, bool, error) {
 	var file File
 	if err := s.units.Read(ctx, func(store Store) error {
 		var err error
@@ -122,15 +121,15 @@ func (s *Service) loadCompletedRemoteImportFile(
 		return err
 	}); err != nil {
 		if errors.Is(err, domain.ErrFileNotFound) {
-			return model.File{}, false, nil
+			return File{}, false, nil
 		}
-		return model.File{}, false, fmt.Errorf("load existing remote import file: %w", err)
+		return File{}, false, fmt.Errorf("load existing remote import file: %w", err)
 	}
-	return model.File(file), true, nil
+	return file, true, nil
 }
 
 func validateCompletedRemoteImportFile(
-	file model.File,
+	file File,
 	slotID string,
 	identity remoteImportOperationIdentity,
 ) error {
@@ -183,7 +182,7 @@ func (s *Service) validateCompletedRemoteImportBinding(
 
 func (s *Service) verifyCompletedRemoteImportObject(
 	ctx context.Context,
-	file model.File,
+	file File,
 	uploadType managev1.UploadType,
 ) error {
 	target, err := CanonicalMediaObjectTargetForFile(file)
@@ -203,7 +202,7 @@ func (s *Service) verifyCompletedRemoteImportObject(
 }
 
 func (s *Service) buildCompletedRemoteImportResult(
-	file model.File,
+	file File,
 	slotID string,
 	identity remoteImportOperationIdentity,
 	projection fileIngestProjectionIdentity,

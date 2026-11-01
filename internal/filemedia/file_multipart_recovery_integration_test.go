@@ -19,6 +19,7 @@ import (
 	"time"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -78,7 +79,7 @@ func TestMultipartMissingPartsRemainRetryableAndAbortableDirectIntegration(t *te
 		require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(result.err))
 		require.Contains(t, result.err.Error(), "uploaded part count")
 	}
-	requireEditorUploadSessionStatus(t, stack.DB, retrySession.GetUploadId(), model.UploadSessionStatusInitiated)
+	requireEditorUploadSessionStatus(t, stack.DB, retrySession.GetUploadId(), domain.UploadSessionStatusInitiated)
 	require.Zero(t, observer.count(), "invalid completion attempts must not reach object-store completion")
 
 	handleMultipartPartDirect(t, service, manager, retrySession.GetFileId(), retrySession.GetUploadId(), 1, body)
@@ -254,7 +255,7 @@ func TestMultipartCompletionRejectsBytesDifferentFromVerifiedPrefixDirectIntegra
 	}))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "completed object MIME")
-	requireEditorUploadSessionStatus(t, stack.DB, initiated.GetUploadId(), model.UploadSessionStatusFailed)
+	requireEditorUploadSessionStatus(t, stack.DB, initiated.GetUploadId(), domain.UploadSessionStatusFailed)
 
 	session := loadEditorUploadSession(t, stack.DB, initiated.GetUploadId())
 	objectKey, keyErr := uploadSessionObjectKey(session)
@@ -474,7 +475,7 @@ func TestMultipartInvalidCompletedObjectDeleteFailureRetainsCleanupAuthorityDire
 	}))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "delete invalid completed object")
-	requireEditorUploadSessionStatus(t, stack.DB, session.UploadID, model.UploadSessionStatusFinalizing)
+	requireEditorUploadSessionStatus(t, stack.DB, session.UploadID, domain.UploadSessionStatusFinalizing)
 	require.True(t, runtimeS3ObjectExists(t, baseS3, stack.S3MediaBucket, objectKey))
 	require.GreaterOrEqual(t, fault.failureCount(), 1)
 
@@ -484,7 +485,7 @@ func TestMultipartInvalidCompletedObjectDeleteFailureRetainsCleanupAuthorityDire
 		FileId:   session.FileID,
 	}))
 	require.Error(t, err)
-	requireEditorUploadSessionStatus(t, stack.DB, session.UploadID, model.UploadSessionStatusFailed)
+	requireEditorUploadSessionStatus(t, stack.DB, session.UploadID, domain.UploadSessionStatusFailed)
 	require.False(t, runtimeS3ObjectExists(t, baseS3, stack.S3MediaBucket, objectKey))
 }
 

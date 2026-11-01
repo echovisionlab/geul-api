@@ -13,7 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -50,7 +50,7 @@ type clientMediaPlan struct {
 	Artifacts       []clientMediaArtifact `json:"artifacts"`
 }
 
-func validateClientMediaPlan(plan clientMediaPlan, session model.UploadSession) error {
+func validateClientMediaPlan(plan clientMediaPlan, session domain.UploadSession) error {
 	if err := validateClientMediaPlanHeader(plan, session); err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func validateClientMediaPlan(plan clientMediaPlan, session model.UploadSession) 
 	return nil
 }
 
-func validateClientMediaPlanHeader(plan clientMediaPlan, session model.UploadSession) error {
+func validateClientMediaPlanHeader(plan clientMediaPlan, session domain.UploadSession) error {
 	if !IsValidUUID(plan.MemberID) {
 		return fmt.Errorf("invalid bundle member")
 	}
@@ -167,7 +167,7 @@ func clientMediaArtifactPolicy(name, kind string) (string, managev1.FileDerivati
 	}
 	return "", unset, fmt.Errorf("unsupported artifact")
 }
-func decodeClientMediaPlan(session model.UploadSession) (clientMediaPlan, error) {
+func decodeClientMediaPlan(session domain.UploadSession) (clientMediaPlan, error) {
 	var plan clientMediaPlan
 	if session.ClientMediaManifest == nil || session.ClientMediaBundleID == nil {
 		return plan, fmt.Errorf("client media plan missing")
@@ -186,7 +186,7 @@ func clientMediaStagingKey(bundleID, path string) string {
 
 // Direct browser media must arrive with completed derivatives. Remote imports
 // use artifact separate ingest path and retain their server processing workflow.
-func requireDirectClientMediaBundle(uploadType managev1.UploadType, verifiedMime string, session model.UploadSession, bundleID string) error {
+func requireDirectClientMediaBundle(uploadType managev1.UploadType, verifiedMime string, session domain.UploadSession, bundleID string) error {
 	if !supportsClientMedia(uploadType) {
 		return nil
 	}

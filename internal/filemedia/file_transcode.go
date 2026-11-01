@@ -7,7 +7,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -74,6 +73,6 @@ func (s *Service) promoteFileScopedImageIfNeeded(
 	return s.promoteSourceFileToPublicAsset(ctx, fileID, "image")
 }
 
-func CanonicalMediaObjectTargetForFile(file model.File) (*commonv1.MediaObjectTarget, error) {
+func CanonicalMediaObjectTargetForFile(file File) (*commonv1.MediaObjectTarget, error) {
 	return meshMediaObjectTarget(file.ID, file.Extension, file.MimeType)
 }

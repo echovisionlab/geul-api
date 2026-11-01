@@ -21,7 +21,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/transcoding/hls"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -122,7 +121,7 @@ func validateClientWaveform(data []byte) error {
 	}
 	return nil
 }
-func (s *Service) verifyClientMediaBundle(ctx context.Context, session model.UploadSession) (clientMediaPlan, error) {
+func (s *Service) verifyClientMediaBundle(ctx context.Context, session domain.UploadSession) (clientMediaPlan, error) {
 	plan, err := decodeClientMediaPlan(session)
 	if err != nil {
 		return plan, err
@@ -145,7 +144,7 @@ func (s *Service) verifyClientMediaBundle(ctx context.Context, session model.Upl
 
 // A durable READY receipt skips staging reads on completion recovery. Otherwise
 // verify the sealed plan under the caller's advisory lock before claiming completion.
-func (s *Service) loadClientMediaPlan(ctx context.Context, session model.UploadSession, memberID string) (*clientMediaPlan, error) {
+func (s *Service) loadClientMediaPlan(ctx context.Context, session domain.UploadSession, memberID string) (*clientMediaPlan, error) {
 	if session.ClientMediaBundleID == nil {
 		return nil, nil
 	}
@@ -247,7 +246,7 @@ func (s *Service) publishClientMediaReady(ctx context.Context, completion *multi
 	event := &managev1.MediaProcessingLifecycleEvent{CorrelationId: completion.correlationID, EntityType: entityType, EntityId: entityID, FileId: fileID, Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY, Outputs: outputs, TimestampMs: time.Now().UnixMilli(), SlotId: completion.session.SlotID, AttemptId: completion.session.AttemptID, TrackId: trackID, ReleaseId: releaseID}
 	return publishSignalProto(ctx, s.asyncPublisher, eventpkg.SignalMediaProcessingLifecycle, event)
 }
-func (s *Service) cleanupClientMediaStaging(ctx context.Context, session model.UploadSession) error {
+func (s *Service) cleanupClientMediaStaging(ctx context.Context, session domain.UploadSession) error {
 	if session.ClientMediaBundleID == nil {
 		return nil
 	}
@@ -280,7 +279,7 @@ func CleanupClientMediaStaging(ctx context.Context, client *s3.Client, bucket, b
 	return nil
 }
 
-func (s *Service) clientMediaRegistrationReady(ctx context.Context, session model.UploadSession) (bool, error) {
+func (s *Service) clientMediaRegistrationReady(ctx context.Context, session domain.UploadSession) (bool, error) {
 	var file File
 	err := s.readUploadFacts(ctx, func(store Store) error { var err error; file, err = store.IngestFile(ctx, session.FileID); return err })
 	if errors.Is(err, domain.ErrFileNotFound) {

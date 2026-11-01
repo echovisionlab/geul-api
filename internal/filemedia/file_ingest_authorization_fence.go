@@ -9,7 +9,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -64,7 +63,7 @@ type multipartFileIngestAuthority struct {
 	fileID   string
 }
 
-func newMultipartFileIngestAuthority(session model.UploadSession) (multipartFileIngestAuthority, error) {
+func newMultipartFileIngestAuthority(session domain.UploadSession) (multipartFileIngestAuthority, error) {
 	uploadID := strings.TrimSpace(session.UploadID)
 	fileID := strings.TrimSpace(session.FileID)
 	if uploadID == "" || fileID == "" {
@@ -108,7 +107,7 @@ func requireFreshFileIngestAuthority(ctx context.Context, store Store, service *
 	if principal == nil || !principal.Authenticated {
 		return domainerr.AuthenticationRequired()
 	}
-	session := model.UploadSession{EntityID: strings.TrimSpace(entityID)}
+	session := domain.UploadSession{EntityID: strings.TrimSpace(entityID)}
 	if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
 		session.EntityType = new(entityType.String())
 	}

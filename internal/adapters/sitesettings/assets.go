@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia/domain"
+
 	"github.com/echovisionlab/geul-api/internal/favicon"
 
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
@@ -48,7 +50,7 @@ func (Assets) ValidateAttachment(ctx context.Context, db *gorm.DB, key, fileID s
 	if !managed {
 		return nil
 	}
-	config := model.DefaultUploadConfigs[uploadType]
+	config := filemediadomain.DefaultUploadConfigs[uploadType.String()]
 	if config == nil {
 		return errs.Internal(fmt.Errorf("site setting upload config is missing for %s", key))
 	}

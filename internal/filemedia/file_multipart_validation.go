@@ -7,17 +7,17 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediamime"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func multipartSessionChunkSize(session model.UploadSession) int64 {
+func multipartSessionChunkSize(session domain.UploadSession) int64 {
 	return effectiveMultipartChunkSize(session.ChunkSize)
 }
 func effectiveMultipartChunkSize(size int32) int64 {
@@ -39,7 +39,7 @@ func expectedMultipartPartSize(fileSize int64, chunkSize int64, partNumber int32
 	return end - start
 }
 
-func validateMultipartPartContentLength(session model.UploadSession, partNumber int32, contentLength int64) error {
+func validateMultipartPartContentLength(session domain.UploadSession, partNumber int32, contentLength int64) error {
 	if contentLength <= 0 {
 		return domainerr.InvalidField("content_length", "upload part content length is required")
 	}
@@ -55,7 +55,7 @@ func validateMultipartPartContentLength(session model.UploadSession, partNumber 
 	return nil
 }
 
-func validateMultipartCompletionParts(fileSize, partSize int64, totalParts int32, parts []model.UploadPart) error {
+func validateMultipartCompletionParts(fileSize, partSize int64, totalParts int32, parts []domain.UploadPart) error {
 	if totalParts <= 0 || int32(len(parts)) != totalParts {
 		return domainerr.Precondition("uploaded part count does not match expected multipart count")
 	}
@@ -118,7 +118,7 @@ func readMultipartUploadBody(reader io.Reader, contentLength int64) ([]byte, err
 	return body, nil
 }
 
-func toCompletedParts(parts []model.UploadPart) []types.CompletedPart {
+func toCompletedParts(parts []domain.UploadPart) []types.CompletedPart {
 	completed := make([]types.CompletedPart, len(parts))
 	for i, part := range parts {
 		completed[i] = types.CompletedPart{
@@ -129,7 +129,7 @@ func toCompletedParts(parts []model.UploadPart) []types.CompletedPart {
 	return completed
 }
 
-func uploadPartInfos(parts []model.UploadPart) []*managev1.UploadPartInfo {
+func uploadPartInfos(parts []domain.UploadPart) []*managev1.UploadPartInfo {
 	partInfos := make([]*managev1.UploadPartInfo, 0, len(parts))
 	for _, part := range parts {
 		partInfos = append(partInfos, &managev1.UploadPartInfo{
@@ -140,7 +140,7 @@ func uploadPartInfos(parts []model.UploadPart) []*managev1.UploadPartInfo {
 	return partInfos
 }
 
-func uploadPartModelNumbers(parts []model.UploadPart) []int32 {
+func uploadPartModelNumbers(parts []domain.UploadPart) []int32 {
 	partNumbers := make([]int32, 0, len(parts))
 	for _, part := range parts {
 		partNumbers = append(partNumbers, part.PartNumber)

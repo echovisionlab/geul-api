@@ -9,7 +9,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -23,7 +22,7 @@ func newStorageCompensationContext(ctx context.Context) (context.Context, contex
 
 func (s *Service) recordInterruptedMultipartUpload(
 	ctx context.Context,
-	session model.UploadSession,
+	session domain.UploadSession,
 	uploadID string,
 	operation string,
 	readErr error,
@@ -52,15 +51,15 @@ func (s *Service) recordInterruptedMultipartUpload(
 	}
 }
 
-func uploadSessionMediaObjectTarget(session model.UploadSession) (*commonv1.MediaObjectTarget, error) {
-	return CanonicalMediaObjectTargetForFile(model.File{
+func uploadSessionMediaObjectTarget(session domain.UploadSession) (*commonv1.MediaObjectTarget, error) {
+	return CanonicalMediaObjectTargetForFile(File{
 		ID:        session.FileID,
 		Extension: mediaExtension(&session.RequestedMime),
 		MimeType:  session.RequestedMime,
 	})
 }
 
-func uploadSessionObjectKey(session model.UploadSession) (string, error) {
+func uploadSessionObjectKey(session domain.UploadSession) (string, error) {
 	target, err := uploadSessionMediaObjectTarget(session)
 	if err != nil {
 		return "", err
@@ -92,7 +91,7 @@ func (s *Service) nextUploadSessionIngestSequence(ctx context.Context, uploadID 
 	return sequence, nil
 }
 
-func (s *Service) bindUploadSessionIngestEmitter(emitter *fileIngestEventEmitter, session model.UploadSession) error {
+func (s *Service) bindUploadSessionIngestEmitter(emitter *fileIngestEventEmitter, session domain.UploadSession) error {
 	if emitter == nil {
 		return nil
 	}
@@ -113,17 +112,17 @@ func (s *Service) bindUploadSessionIngestEmitter(emitter *fileIngestEventEmitter
 	return nil
 }
 
-func uploadSessionStatusToProto(status model.UploadSessionStatus) managev1.UploadSessionStatus {
+func uploadSessionStatusToProto(status domain.UploadSessionStatus) managev1.UploadSessionStatus {
 	switch status {
-	case model.UploadSessionStatusInitiated:
+	case domain.UploadSessionStatusInitiated:
 		return managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED
-	case model.UploadSessionStatusUploading:
+	case domain.UploadSessionStatusUploading:
 		return managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING
-	case model.UploadSessionStatusFinalizing:
+	case domain.UploadSessionStatusFinalizing:
 		return managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FINALIZING
-	case model.UploadSessionStatusFailed:
+	case domain.UploadSessionStatusFailed:
 		return managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FAILED
-	case model.UploadSessionStatusAborted:
+	case domain.UploadSessionStatusAborted:
 		return managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_ABORTED
 	default:
 		return managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UNSPECIFIED
@@ -147,7 +146,7 @@ func (s *Service) claimUploadPartActivity(
 
 func (s *Service) recordRetryableMultipartPartFailure(
 	ctx context.Context,
-	session model.UploadSession,
+	session domain.UploadSession,
 	now time.Time,
 ) error {
 	return s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
@@ -158,11 +157,11 @@ func (s *Service) recordRetryableMultipartPartFailure(
 
 func (s *Service) claimMultipartCompletion(
 	ctx context.Context,
-	session model.UploadSession,
+	session domain.UploadSession,
 	now time.Time,
-) (bool, []model.UploadPart, error) {
+) (bool, []domain.UploadPart, error) {
 	var claimed bool
-	var uploadedParts []model.UploadPart
+	var uploadedParts []domain.UploadPart
 	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
 		store := unit.Store()
 		locked, err := store.UploadSession(ctx, session.UploadID, session.FileID, true)
@@ -179,10 +178,8 @@ func (s *Service) claimMultipartCompletion(
 		if err != nil {
 			return err
 		}
-		parts := make([]model.UploadPart, len(rows))
-		for i, row := range rows {
-			parts[i] = model.UploadPart(row)
-		}
+		parts := make([]domain.UploadPart, len(rows))
+		copy(parts, rows)
 		if err := validateMultipartCompletionParts(locked.FileSize, effectiveMultipartChunkSize(locked.ChunkSize), locked.TotalParts, parts); err != nil {
 			return err
 		}
@@ -198,7 +195,7 @@ func (s *Service) claimMultipartCompletion(
 }
 
 func uploadSessionMatchesSelection(
-	session model.UploadSession,
+	session domain.UploadSession,
 	fileName string,
 	fileSize int64,
 	mimeType string,
@@ -218,7 +215,7 @@ func uploadSessionMatchesSelection(
 }
 
 func multipartInitiateResponseFromSession(
-	session model.UploadSession,
+	session domain.UploadSession,
 	uploadedParts []*managev1.UploadPartInfo,
 	resumed bool,
 ) *managev1.InitiateMultipartUploadResponse {
@@ -243,17 +240,7 @@ func (s *Service) loadUploadPartInfos(ctx context.Context, uploadID string) ([]*
 	if err != nil {
 		return nil, err
 	}
-	parts := make([]model.UploadPart, len(rows))
-	for i, row := range rows {
-		parts[i] = model.UploadPart(row)
-	}
+	parts := make([]domain.UploadPart, len(rows))
+	copy(parts, rows)
 	return uploadPartInfos(parts), nil
-}
-
-func uploadSessionFromStore(r domain.UploadSession) model.UploadSession {
-	return model.UploadSession{UploadID: r.UploadID, ClientMediaBundleID: r.ClientMediaBundleID, ClientMediaManifest: r.ClientMediaManifest, FileID: r.FileID, UploadType: r.UploadType, EntityID: r.EntityID, EntityType: r.EntityType, FileName: r.FileName, FileSize: r.FileSize, FileLastModified: r.FileLastModified, SlotID: r.SlotID, AttemptID: r.AttemptID, ExpectedFileID: r.ExpectedFileID, IngestSequence: r.IngestSequence, RequestedMime: r.RequestedMime, DetectedMime: r.DetectedMime, TotalParts: r.TotalParts, ChunkSize: r.ChunkSize, Status: model.UploadSessionStatus(r.Status), VerifiedAt: r.VerifiedAt, LastActivityAt: r.LastActivityAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
-}
-
-func uploadSessionToStore(r model.UploadSession) domain.UploadSession {
-	return domain.UploadSession{UploadID: r.UploadID, ClientMediaBundleID: r.ClientMediaBundleID, ClientMediaManifest: r.ClientMediaManifest, FileID: r.FileID, UploadType: r.UploadType, EntityID: r.EntityID, EntityType: r.EntityType, FileName: r.FileName, FileSize: r.FileSize, FileLastModified: r.FileLastModified, SlotID: r.SlotID, AttemptID: r.AttemptID, ExpectedFileID: r.ExpectedFileID, IngestSequence: r.IngestSequence, RequestedMime: r.RequestedMime, DetectedMime: r.DetectedMime, TotalParts: r.TotalParts, ChunkSize: r.ChunkSize, Status: domain.UploadSessionStatus(r.Status), VerifiedAt: r.VerifiedAt, LastActivityAt: r.LastActivityAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
 }

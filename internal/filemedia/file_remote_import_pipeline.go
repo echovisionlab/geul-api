@@ -19,7 +19,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -27,7 +26,7 @@ import (
 type preparedRemoteImport struct {
 	opts               remoteFileImportOptions
 	uploadType         managev1.UploadType
-	config             *model.UploadConfig
+	config             *domain.UploadConfig
 	entityType         string
 	entityID           string
 	slotID             string

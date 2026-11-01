@@ -16,7 +16,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -116,15 +115,15 @@ type Service struct {
 	remoteImportBaseTransport *http.Transport
 	legalRouteIdentity        LegalRouteIdentity
 
-	uploadConfigs                      map[managev1.UploadType]*model.UploadConfig
+	uploadConfigs                      map[string]*domain.UploadConfig
 	faviconProcessor                   favicon.Processor
 	testFaviconBundleTimeout           time.Duration
 	testFaviconCommitError             error
 	testFaviconReconcileError          error
 	testVerifiedIngestCommitError      error
-	testBeforeTrackSessionInsert       func(model.UploadSession)
-	testAfterTrackSessionInsert        func(model.UploadSession)
-	testBeforeResumeReconciliation     func(model.UploadSession)
+	testBeforeTrackSessionInsert       func(domain.UploadSession)
+	testAfterTrackSessionInsert        func(domain.UploadSession)
+	testBeforeResumeReconciliation     func(domain.UploadSession)
 	testBeforeFileManagerDeliveryFence func([]string)
 	testAfterFileManagerDeliverySigned func([]string)
 	testBeforeManageDeliveryFence      func([]string)
@@ -157,7 +156,7 @@ func NewService(deps Deps) (*Service, error) {
 		downloadTTL = min(deps.DownloadTTL, mediaauth.DownloadTTL)
 	}
 	uploadConfigs := cloneUploadConfigs()
-	if editorImage := uploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE]; editorImage != nil && deps.EditorImageMaxSize > 0 {
+	if editorImage := uploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE.String()]; editorImage != nil && deps.EditorImageMaxSize > 0 {
 		editorImage.MaxSize = deps.EditorImageMaxSize
 	}
 	return &Service{
