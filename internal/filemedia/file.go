@@ -16,13 +16,12 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -219,24 +218,15 @@ type fileIngestRecord struct {
 	ingestAttemptID string
 }
 
-func (r fileIngestRecord) columns() structured.Fields {
-	columns := structured.Fields{
-		"id":        r.id,
-		"file_name": r.fileName,
-		"mime_type": r.mimeType,
-		"file_size": r.fileSize,
-		"extension": r.extension,
-	}
-	if r.sha256 != nil {
-		columns["sha256"] = r.sha256
-	}
+func (r fileIngestRecord) file() File {
+	file := File{ID: r.id, FileName: r.fileName, MimeType: r.mimeType, FileSize: r.fileSize, Extension: r.extension, SHA256: r.sha256}
 	if r.ingestSlotID != "" {
-		columns["ingest_slot_id"] = r.ingestSlotID
+		file.IngestSlotID = new(r.ingestSlotID)
 	}
 	if r.ingestAttemptID != "" {
-		columns["ingest_attempt_id"] = r.ingestAttemptID
+		file.IngestAttemptID = new(r.ingestAttemptID)
 	}
-	return columns
+	return file
 }
 
 func completedMultipartFileRecord(session model.UploadSession) fileIngestRecord {
@@ -250,38 +240,6 @@ func completedMultipartFileRecord(session model.UploadSession) fileIngestRecord 
 		ingestSlotID:    derefString(session.SlotID),
 		ingestAttemptID: derefString(session.AttemptID),
 	}
-}
-
-func ensureFileManagerDateFolder(ctx context.Context, tx *gorm.DB) (*string, error) {
-	if tx.Dialector.Name() != "postgres" {
-		return nil, nil
-	}
-	var dateParts struct {
-		Year  string `gorm:"column:year"`
-		Month string `gorm:"column:month"`
-		Day   string `gorm:"column:day"`
-	}
-	if err := tx.WithContext(ctx).Raw(`
-		SELECT to_char(CURRENT_DATE, 'YYYY') AS year,
-		       to_char(CURRENT_DATE, 'MM') AS month,
-		       to_char(CURRENT_DATE, 'DD') AS day
-	`).Scan(&dateParts).Error; err != nil {
-		return nil, err
-	}
-	var parentID *string
-	for _, name := range []string{dateParts.Year, dateParts.Month, dateParts.Day} {
-		var folderID string
-		if err := tx.WithContext(ctx).Raw(`
-			INSERT INTO file_folder (id, parent_id, name, created_by_member_id, created_at, updated_at)
-			VALUES (gen_random_uuid(), ?, ?, NULL, now(), now())
-			ON CONFLICT (parent_id, name) DO UPDATE SET name = EXCLUDED.name
-			RETURNING id
-		`, parentID, name).Scan(&folderID).Error; err != nil {
-			return nil, err
-		}
-		parentID = &folderID
-	}
-	return parentID, nil
 }
 
 func (s *Service) createVerifiedFileIngestRecord(
@@ -299,58 +257,48 @@ func (s *Service) createVerifiedFileIngestRecord(
 	if authority == nil {
 		return fmt.Errorf("verified File ingest authority is required")
 	}
-	_, err := authzmutation.Execute(ctx, s.db, s.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-		if err := authority.revalidate(ctx, tx, s, fileID, uploadType, entityType, entityID); err != nil {
-			return err
-		}
-		file := record.columns()
-		file["file_name"] = storedFileBasename(record.fileName, fileID, record.extension)
-		folderID, err := ensureFileManagerDateFolder(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if folderID != nil {
-			file["folder_id"] = *folderID
-		}
-		if user := auth.GetUser(ctx); user != nil && strings.TrimSpace(user.MemberID.String()) != "" {
-			file["uploaded_by_member_id"] = user.MemberID.String()
-		}
-		if err := tx.Table("file").Create(file).Error; err != nil {
-			return err
-		}
-		var entityTypeName *string
-		if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
-			value := entityType.String()
-			entityTypeName = &value
-		}
-		binding := &model.FileIngestBinding{
-			FileID:     fileID,
-			UploadType: uploadType.String(),
-			EntityType: entityTypeName,
-			EntityID:   entityID,
-		}
-		bindingWrite := tx
-		if uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE || isEditorFileIngestUploadType(uploadType) {
-			bindingWrite = bindingWrite.Omit("EntityID")
-		}
-		if err := bindingWrite.Create(binding).Error; err != nil {
-			return err
-		}
-		if err := appendFileCreatedAudit(ctx, tx, s.auditWriter, fileID); err != nil {
-			return err
-		}
-		apply, err := policyv1.File.TouchPolicy(fileID)
-		if err != nil {
-			return err
-		}
-		compensate, err := policyv1.File.DeletePolicy(fileID)
-		if err != nil {
-			return err
-		}
-		return write(
-			[]policyv1.RelationshipMutation{apply},
-			[]policyv1.RelationshipMutation{compensate},
-		)
+	if s.storeMutations == nil {
+		return fmt.Errorf("File ingest mutation runner is required")
+	}
+	_, err := mutation.Run(ctx, s.storeMutations, mutation.StoreSpec[string, Store]{
+		Access: mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+			return authority.revalidate(ctx, store, s, fileID, uploadType, entityType, entityID, lockActive)
+		}),
+		Change: func(ctx context.Context, store Store) (string, error) {
+			file := record.file()
+			file.FileName = storedFileBasename(record.fileName, fileID, record.extension)
+			folder, err := store.EnsureIngestDateFolder(ctx)
+			if err != nil {
+				return "", err
+			}
+			file.FolderID = folder
+			if user := auth.GetUser(ctx); user != nil && strings.TrimSpace(user.MemberID.String()) != "" {
+				file.UploadedByMemberID = new(user.MemberID.String())
+			}
+			if err := store.InsertIngestFile(ctx, file); err != nil {
+				return "", err
+			}
+			binding := domain.IngestBinding{FileID: fileID, UploadType: uploadType.String(), EntityID: entityID}
+			if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
+				binding.EntityType = new(entityType.String())
+			}
+			if err := store.InsertIngestBinding(ctx, binding, uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE || isEditorFileIngestUploadType(uploadType)); err != nil {
+				return "", err
+			}
+			return fileID, nil
+		},
+		Audit: fileCreatedAudit,
+		Relationships: func(id string) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			apply, err := policyv1.File.TouchPolicy(id)
+			if err != nil {
+				return nil, nil, err
+			}
+			compensate, err := policyv1.File.DeletePolicy(id)
+			if err != nil {
+				return nil, nil, err
+			}
+			return []policyv1.RelationshipMutation{apply}, []policyv1.RelationshipMutation{compensate}, nil
+		},
 	})
 	if err != nil {
 		return err

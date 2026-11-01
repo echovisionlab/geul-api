@@ -69,6 +69,11 @@ func NewLibraryStore() *LibraryStore {
 	return &LibraryStore{UploadSessions: map[string]domain.UploadSession{}, UploadPartRows: map[string][]domain.UploadPart{}, ScopedOwners: map[string]ScopedOwner{}, Policies: map[string]PolicyRecord{}, Segments: map[string]domain.PolicySegment{}, PolicyDenied: map[string]error{}, AssetIDs: map[string]bool{}, Generations: map[string]mediaasset.Generation{}, References: map[string][]string{}, TrackReleases: map[string]string{}, MediaAssets: assets, MeshRecords: map[string]MeshRecord{}, Derivatives: map[string][]domain.StoredDerivativeDelivery{}, IngestBindings: map[string]domain.IngestBinding{}, PrincipalFence: &identitystatetest.Fence{}, ReadyMeshes: map[string]domain.MeshDeliveryWitness{}, AvatarOwners: map[string]string{}, DeliveryOwners: map[string]domain.DeliveryOwner{}, ExactUsages: map[string]bool{}, Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
 }
 func (s *LibraryStore) Savepoint() func() {
+	bindings := maps.Clone(s.IngestBindings)
+	for id, row := range bindings {
+		row.EntityType = cloneUploadPointer(row.EntityType)
+		bindings[id] = row
+	}
 	uploads, parts := cloneUploads(s.UploadSessions), cloneUploadParts(s.UploadPartRows)
 	assetIDs := maps.Clone(s.AssetIDs)
 	saved := maps.Clone(s.Folders)
@@ -79,6 +84,7 @@ func (s *LibraryStore) Savepoint() func() {
 	assets := s.MediaAssets.Savepoint()
 	favicon, outbox, audits := slices.Clone(s.FaviconDeletions), slices.Clone(s.DeletionOutbox), slices.Clone(s.Audits)
 	return func() {
+		s.IngestBindings = bindings
 		s.UploadSessions = uploads
 		s.UploadPartRows = parts
 		s.AssetIDs = assetIDs
