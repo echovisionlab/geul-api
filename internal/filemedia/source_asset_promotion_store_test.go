@@ -40,7 +40,7 @@ func TestSourcePromotionRetryRetainsAssetAndObjectIdentity(t *testing.T) {
 	failTransfer(false)
 	ref, err := filemedia.ExportPromoteSourceFile(service, t.Context(), file.ID, "image")
 	require.NoError(t, err)
-	require.Equal(t, failed.ID, ref.GetAssetId())
+	require.Equal(t, failed.ID, ref.AssetID)
 	ready, err := s.PromotionAsset(t.Context(), failed.ID, false)
 	require.NoError(t, err)
 	require.Equal(t, mediaasset.AssetReady, ready.Status)

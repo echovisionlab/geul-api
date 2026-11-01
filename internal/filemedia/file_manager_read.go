@@ -7,6 +7,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -94,7 +95,7 @@ func (s *Service) loadFileGeneratedOutputs(ctx context.Context, fileID string) (
 			} else if ref != nil {
 				output.Delivery = &commonv1.MediaDelivery{
 					FileId: fileID, Extension: ref.Extension, MimeType: ref.MimeType,
-					FileSize: ref.FileSize, Asset: ref,
+					FileSize: ref.FileSize, Asset: mediaasset.ReferenceProto(ref),
 					ProcessingStatus: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY,
 				}
 			}

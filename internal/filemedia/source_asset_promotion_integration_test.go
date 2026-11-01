@@ -65,10 +65,10 @@ func TestSourceAssetPromotionStreamsLargeObjectThroughMinIOMultipartIntegration(
 	service := withNativeFileUnits(&Service{s3Client: client, s3Bucket: stack.S3MediaBucket, cdnDomain: stack.CDNURL}, stack.DB, nativeFilePorts{})
 	ref, err := service.promoteSourceFileToPublicAsset(t.Context(), file.ID, "image")
 	require.NoError(t, err)
-	require.Equal(t, digest[:], ref.GetSha256())
+	require.Equal(t, digest[:], ref.SHA256)
 
 	var asset model.PublicAsset
-	require.NoError(t, stack.DB.Where("id = ?", ref.GetAssetId()).Take(&asset).Error)
+	require.NoError(t, stack.DB.Where("id = ?", ref.AssetID).Take(&asset).Error)
 	assetObjectKey = asset.ObjectKey
 	head, err := client.HeadObject(t.Context(), &s3.HeadObjectInput{
 		Bucket: aws.String(stack.S3MediaBucket),
@@ -139,7 +139,7 @@ func TestSourceAssetPromotionConcurrentReplicasConvergeOnOneReadyAssetIntegratio
 			ref, err := service.promoteSourceFileToPublicAsset(context.Background(), file.ID, "image")
 			errs[index] = err
 			if ref != nil {
-				refs[index] = ref.GetAssetId()
+				refs[index] = ref.AssetID
 			}
 		}(i)
 	}

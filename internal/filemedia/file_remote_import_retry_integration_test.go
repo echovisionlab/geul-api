@@ -177,7 +177,7 @@ func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownl
 	require.NoError(t, err)
 	require.Equal(t, file.ID, result.fileID)
 	require.NotNil(t, result.asset)
-	require.Equal(t, failed.ID, result.asset.GetAssetId())
+	require.Equal(t, failed.ID, result.asset.AssetID)
 	require.Empty(t, store.deletedKeys())
 	var ready model.PublicAsset
 	require.NoError(t, stack.DB.Where("id = ?", failed.ID).Take(&ready).Error)
@@ -245,7 +245,7 @@ func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIn
 
 	asset, err := service.PromoteUserAvatarAsset(memberRequestContext(), imported.fileID)
 	require.NoError(t, err)
-	require.Equal(t, failed.ID, asset.GetAssetId())
+	require.Equal(t, failed.ID, asset.AssetID)
 	var ready model.PublicAsset
 	require.NoError(t, stack.DB.Where("id = ?", failed.ID).Take(&ready).Error)
 	require.Equal(t, model.PublicAssetStatusReady, ready.Status)

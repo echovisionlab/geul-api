@@ -7,6 +7,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -62,8 +63,8 @@ func (s *Service) promoteFileScopedImageIfNeeded(
 	slotID string,
 	fileID string,
 	mimeType string,
-	current *commonv1.AssetRef,
-) (*commonv1.AssetRef, error) {
+	current *mediaasset.Reference,
+) (*mediaasset.Reference, error) {
 	if current != nil || !strings.HasPrefix(canonicalMimeType(mimeType), "image/") {
 		return current, nil
 	}

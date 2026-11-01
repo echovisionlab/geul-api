@@ -152,7 +152,7 @@ func TestMultipartPublicAssetPromotionRetryPreservesVerifiedSourceAndFinalizingS
 	store.setFailTransfer(false)
 	require.NoError(t, service.attachOrProjectMultipartCompletion(t.Context(), completion))
 	require.NotNil(t, completion.promotedAsset)
-	require.Equal(t, failed.ID, completion.promotedAsset.GetAssetId())
+	require.Equal(t, failed.ID, completion.promotedAsset.AssetID)
 	require.Equal(t, domain.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, uploadID))
 	require.Empty(t, store.deletedKeys())
 	var ready model.PublicAsset
@@ -205,7 +205,7 @@ func TestMultipartFaviconCommitAmbiguityPreservesSourceAndFinalizingSession(t *t
 	service.testFaviconReconcileError = nil
 	require.NoError(t, service.attachOrProjectMultipartCompletion(t.Context(), completion))
 	require.NotNil(t, completion.promotedAsset)
-	require.Equal(t, readyAssetID, completion.promotedAsset.GetAssetId())
+	require.Equal(t, readyAssetID, completion.promotedAsset.AssetID)
 	require.Equal(t, writtenBeforeRetry, store.writtenKeys(), "retry must reuse the committed bundle")
 	require.Equal(t, domain.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, uploadID))
 	require.Empty(t, store.deletedKeys())

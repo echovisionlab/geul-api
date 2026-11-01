@@ -22,7 +22,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 const (
@@ -35,7 +34,7 @@ var errFaviconBundleCommitUncertain = stderrors.New("favicon bundle commit outco
 func (s *Service) generateFaviconBundle(
 	ctx context.Context,
 	sourceFileID string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	bundleCtx, cancel := context.WithTimeout(ctx, s.faviconGenerationTimeout())
 	defer cancel()
 	sourceFileID = strings.TrimSpace(sourceFileID)
@@ -45,7 +44,7 @@ func (s *Service) generateFaviconBundle(
 		return nil, domainerr.Precondition(fmt.Sprintf("existing favicon bundle is invalid: %v", err))
 	}
 	if existing != nil {
-		return mediaasset.ReferenceProto(existing.IconPNG32), nil
+		return existing.IconPNG32, nil
 	}
 
 	source, sourceBytes, err := s.loadValidatedFaviconSource(bundleCtx, sourceFileID)
@@ -182,7 +181,7 @@ func (s *Service) commitFaviconBundle(
 	ctx context.Context,
 	source File,
 	staged []stagedFaviconAsset,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	var set *favicon.Set
 	var usedStaged bool
 	result := s.faviconCommits.Commit(ctx, func(store Store) error {
@@ -207,7 +206,7 @@ func (s *Service) commitFaviconBundle(
 		winner, reconcileErr := s.reconcileFaviconBundle(cleanupCtx, source.ID)
 		if reconcileErr == nil && winner != nil {
 			s.scheduleStagedFaviconDeletion(cleanupCtx, staged, favicon.AssetIDs(winner))
-			return mediaasset.ReferenceProto(winner.IconPNG32), nil
+			return winner.IconPNG32, nil
 		}
 		slog.ErrorContext(ctx, "favicon bundle commit outcome could not be reconciled; preserving source and staged assets", failurecause.Attr(stderrors.Join(commitErr, reconcileErr)), "file_id", source.ID)
 		return nil, fmt.Errorf(
@@ -220,7 +219,7 @@ func (s *Service) commitFaviconBundle(
 	if !usedStaged {
 		s.scheduleStagedFaviconDeletion(cleanupCtx, staged, favicon.AssetIDs(set))
 	}
-	return mediaasset.ReferenceProto(set.IconPNG32), nil
+	return set.IconPNG32, nil
 }
 
 type stagedFaviconAsset struct {
