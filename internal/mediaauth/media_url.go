@@ -8,7 +8,6 @@ import (
 
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"golang.org/x/text/unicode/norm"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // ErrURLSigningFailed wraps every reason a media delivery URL cannot be built.
@@ -90,7 +89,7 @@ func ExpiringFileRef(
 	if err != nil {
 		return nil, err
 	}
-	return &commonv1.ExpiringMediaRef{FileId: ref.FileID, Url: ref.URL, Purpose: DeliveryPurpose(ref.Purpose), ExpiresAt: timestamppb.New(ref.ExpiresAt), Extension: ref.Extension, MimeType: ref.MimeType, FileName: ref.FileName}, nil
+	return ReferenceProto(ref), nil
 }
 
 // Reference is a signed media URL and the exact expiry enforced by its token.

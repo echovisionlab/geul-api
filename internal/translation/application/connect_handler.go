@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/echovisionlab/geul-api/internal/mediaauth"
+
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -236,7 +238,7 @@ func InterchangeModeMessage(mode InterchangeMode) managev1.TranslationInterchang
 // XLIFFExportMessage is the wire form of an XLIFF export.
 func XLIFFExportMessage(exported XLIFFExport) *managev1.ExportEntityTranslationXLIFFResponse {
 	return &managev1.ExportEntityTranslationXLIFFResponse{
-		Artifact: exported.Artifact, SourceLocale: exported.SourceLocale, TargetLocale: exported.TargetLocale,
+		Artifact: mediaauth.ReferenceProto(exported.Artifact), SourceLocale: exported.SourceLocale, TargetLocale: exported.TargetLocale,
 		TargetRevision: exported.TargetRevision, Mode: InterchangeModeMessage(exported.Mode),
 	}
 }

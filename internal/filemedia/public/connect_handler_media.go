@@ -8,15 +8,8 @@ import (
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func expiringReferenceProto(ref *mediaauth.Reference) *commonv1.ExpiringMediaRef {
-	if ref == nil {
-		return nil
-	}
-	return &commonv1.ExpiringMediaRef{FileId: ref.FileID, Url: ref.URL, Extension: ref.Extension, MimeType: ref.MimeType, FileName: ref.FileName, Purpose: mediaauth.DeliveryPurpose(ref.Purpose), ExpiresAt: timestamppb.New(ref.ExpiresAt)}
-}
 func hlsReferenceProto(ref *HLSReference) *commonv1.HlsMediaRef {
 	if ref == nil {
 		return nil
@@ -27,13 +20,13 @@ func DeliveryProto(d *Delivery) *commonv1.MediaDelivery {
 	if d == nil {
 		return nil
 	}
-	return &commonv1.MediaDelivery{FileId: d.FileID, Extension: d.Extension, MimeType: d.MimeType, FileSize: d.FileSize, FileName: d.FileName, DurationSeconds: d.DurationSeconds, Asset: mediaasset.ReferenceProto(d.Asset), Thumbnail: mediaasset.ReferenceProto(d.Thumbnail), Spectrogram: mediaasset.ReferenceProto(d.Spectrogram), Waveform: mediaasset.ReferenceProto(d.Waveform), Playback: hlsReferenceProto(d.Playback), Inline: expiringReferenceProto(d.Inline), Download: expiringReferenceProto(d.Download)}
+	return &commonv1.MediaDelivery{FileId: d.FileID, Extension: d.Extension, MimeType: d.MimeType, FileSize: d.FileSize, FileName: d.FileName, DurationSeconds: d.DurationSeconds, Asset: mediaasset.ReferenceProto(d.Asset), Thumbnail: mediaasset.ReferenceProto(d.Thumbnail), Spectrogram: mediaasset.ReferenceProto(d.Spectrogram), Waveform: mediaasset.ReferenceProto(d.Waveform), Playback: hlsReferenceProto(d.Playback), Inline: mediaauth.ReferenceProto(d.Inline), Download: mediaauth.ReferenceProto(d.Download)}
 }
 func downloadResultProto(result *DownloadResult) *openv1.AuthorizeDownloadResponse {
 	if result == nil {
 		return nil
 	}
-	value := &openv1.AuthorizeDownloadResponse{Download: expiringReferenceProto(result.Download)}
+	value := &openv1.AuthorizeDownloadResponse{Download: mediaauth.ReferenceProto(result.Download)}
 	if result.Access != nil {
 		value.Access = &openv1.FileDownloadAccess{Availability: openv1.FileDownloadAvailability(result.Access.Availability), Action: openv1.FileDownloadAction(result.Access.Action)}
 	}

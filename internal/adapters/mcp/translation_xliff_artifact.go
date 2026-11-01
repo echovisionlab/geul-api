@@ -7,26 +7,29 @@ import (
 	"net/url"
 	"strings"
 
+	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func encodeXLIFFExport(response *managev1.ExportEntityTranslationXLIFFResponse) ([]byte, error) {
+func encodeXLIFFExport(response translationapp.XLIFFExport) ([]byte, error) {
 	artifact := response.Artifact
-	if artifact == nil || strings.TrimSpace(artifact.FileId) == "" || strings.TrimSpace(artifact.Url) == "" || artifact.ExpiresAt == nil {
+	if artifact == nil || strings.TrimSpace(artifact.FileID) == "" || strings.TrimSpace(artifact.URL) == "" || artifact.ExpiresAt.IsZero() {
 		return nil, errors.New("translation application returned an incomplete XLIFF artifact reference")
 	}
-	if err := validateUUID("Translation application XLIFF artifact file ID", artifact.FileId); err != nil {
+	if err := validateUUID("Translation application XLIFF artifact file ID", artifact.FileID); err != nil {
 		return nil, err
 	}
-	if err := validateArtifactURL(artifact.Url); err != nil {
+	if err := validateArtifactURL(artifact.URL); err != nil {
 		return nil, err
 	}
-	expiresAt, err := compactTimestamp(artifact.ExpiresAt)
+	expiresAt, err := compactTimestamp(timestamppb.New(artifact.ExpiresAt))
 	if err != nil || expiresAt == nil {
 		return nil, errors.New("translation application returned an invalid XLIFF artifact expiration")
 	}
-	mode, err := compactInterchangeMode(response.Mode)
+	mode, err := compactInterchangeMode(translationapp.InterchangeModeMessage(response.Mode))
 	if err != nil {
 		return nil, err
 	}
@@ -43,8 +46,8 @@ func encodeXLIFFExport(response *managev1.ExportEntityTranslationXLIFFResponse) 
 		return nil, err
 	}
 	artifactOutput := map[string]any{
-		"f": artifact.FileId,
-		"u": artifact.Url,
+		"f": artifact.FileID,
+		"u": artifact.URL,
 		"e": *expiresAt,
 		"x": artifact.Extension,
 		"t": artifact.MimeType,

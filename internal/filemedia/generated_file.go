@@ -18,7 +18,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -45,7 +44,7 @@ type VerifiedFileBody struct {
 func (s *Service) CreateGeneratedGeneralFile(
 	ctx context.Context,
 	input GeneratedGeneralFileInput,
-) (*commonv1.ExpiringMediaRef, error) {
+) (*mediaauth.Reference, error) {
 	if strings.TrimSpace(s.s3Bucket) == "" {
 		return nil, fmt.Errorf("generated File storage runtime is required")
 	}
@@ -64,7 +63,7 @@ func (s *Service) CreateGeneratedGeneralFile(
 	if err != nil {
 		return nil, err
 	}
-	download, err := buildExpiringMediaFileRef(
+	download, err := mediaauth.ExpiringReference(
 		s.mediaDomain, s.mediaSecret, fileID, extension, mimeType, &fileName,
 		mediaauth.PurposeDownload, s.effectiveDownloadTTL(),
 	)

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediaauth"
+
 	"connectrpc.com/connect"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
@@ -20,7 +22,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -190,8 +191,8 @@ func TestTranslationToolsXLIFFUsesOnlyArtifactReferenceAndUploadedFileID(t *test
 	targetRevision := "target-revision-a"
 	application := &recordingTranslationApplication{
 		exportResponse: translationapp.XLIFFExport{
-			Artifact: &commonv1.ExpiringMediaRef{
-				FileId: testTranslationArtifactID, Url: "https://cdn.example/xliff/signed", ExpiresAt: timestamppb.New(time.Now().UTC().Add(time.Hour)),
+			Artifact: &mediaauth.Reference{
+				FileID: testTranslationArtifactID, URL: "https://cdn.example/xliff/signed", ExpiresAt: time.Now().UTC().Add(time.Hour),
 				Extension: "xlf", MimeType: "application/xliff+xml", FileName: &fileName,
 			},
 			SourceLocale: "ko", TargetLocale: "en", TargetRevision: &targetRevision,
@@ -322,9 +323,9 @@ func TestTranslationOptionalArgumentsPreserveOmissionAndEmptyValues(t *testing.T
 
 func TestTranslationToolsRejectInlineArtifactReferencesAndInvalidApplicationOutput(t *testing.T) {
 	application := &recordingTranslationApplication{exportResponse: translationapp.XLIFFExport{
-		Artifact: &commonv1.ExpiringMediaRef{
-			FileId: testTranslationArtifactID, Url: "data:application/xliff+xml;base64,AAAA",
-			ExpiresAt: timestamppb.New(time.Now().UTC().Add(time.Hour)), Extension: "xlf", MimeType: "application/xliff+xml",
+		Artifact: &mediaauth.Reference{
+			FileID: testTranslationArtifactID, URL: "data:application/xliff+xml;base64,AAAA",
+			ExpiresAt: time.Now().UTC().Add(time.Hour), Extension: "xlf", MimeType: "application/xliff+xml",
 		},
 		SourceLocale: "ko", TargetLocale: "en", Mode: translationapp.InterchangeModeReplace,
 	}}
@@ -355,9 +356,9 @@ func TestTranslationToolsPreserveOwningMenuUnitHandles(t *testing.T) {
 	handle := plan.Units[0].UnitID
 	application := &recordingTranslationApplication{
 		exportResponse: translationapp.XLIFFExport{
-			Artifact: &commonv1.ExpiringMediaRef{
-				FileId: testTranslationArtifactID, Url: "https://cdn.example/xliff/signed",
-				ExpiresAt: timestamppb.New(time.Now().UTC().Add(time.Hour)), Extension: "xlf", MimeType: "application/xliff+xml",
+			Artifact: &mediaauth.Reference{
+				FileID: testTranslationArtifactID, URL: "https://cdn.example/xliff/signed",
+				ExpiresAt: time.Now().UTC().Add(time.Hour), Extension: "xlf", MimeType: "application/xliff+xml",
 			},
 			SourceLocale: "ko", TargetLocale: "en", Mode: translationapp.InterchangeModePatch,
 		},
@@ -554,4 +555,16 @@ func serveMCPAdapterRequest(handler interface {
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, mcpHTTPRequest(body))
 	return response
+}
+
+func TestTranslationToolsRejectXLIFFArtifactWithoutExpiry(t *testing.T) {
+	application := &recordingTranslationApplication{exportResponse: translationapp.XLIFFExport{
+		Artifact:     &mediaauth.Reference{FileID: testTranslationArtifactID, URL: "https://cdn.example/xliff/signed", Extension: "xlf", MimeType: "application/xliff+xml"},
+		SourceLocale: "ko", TargetLocale: "en", Mode: translationapp.InterchangeModeReplace,
+	}}
+	tools := mustTranslationTools(t, application)
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolTranslationXLIFFExport, toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"replace"}`))
+	if err == nil || !strings.Contains(err.Error(), "incomplete XLIFF artifact reference") || result.Content != nil {
+		t.Fatalf("missing artifact expiry: result=%+v, error=%v", result, err)
+	}
 }

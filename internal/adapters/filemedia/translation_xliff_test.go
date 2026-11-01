@@ -5,24 +5,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediaauth"
+
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type recordingTranslationXLIFFRuntime struct {
 	createInput filemediadomain.GeneratedGeneralFileInput
 	readFileID  string
 	readLimit   int64
-	ref         *commonv1.ExpiringMediaRef
+	ref         *mediaauth.Reference
 	file        filemediadomain.VerifiedFileBody
 }
 
 func (r *recordingTranslationXLIFFRuntime) CreateGeneratedGeneralFile(
 	_ context.Context,
 	input filemediadomain.GeneratedGeneralFileInput,
-) (*commonv1.ExpiringMediaRef, error) {
+) (*mediaauth.Reference, error) {
 	r.createInput = input
 	return r.ref, nil
 }
@@ -38,7 +38,7 @@ func (r *recordingTranslationXLIFFRuntime) ReadVerifiedFileBody(
 
 func TestTranslationXLIFFFilesDelegatesToExistingFileAuthority(t *testing.T) {
 	runtime := &recordingTranslationXLIFFRuntime{
-		ref:  &commonv1.ExpiringMediaRef{FileId: "file-a", Url: "https://media.example/file-a", ExpiresAt: timestamppb.New(time.Now().Add(time.Minute))},
+		ref:  &mediaauth.Reference{FileID: "file-a", URL: "https://media.example/file-a", ExpiresAt: time.Now().Add(time.Minute)},
 		file: filemediadomain.VerifiedFileBody{FileID: "file-b", Extension: "xlf", MimeType: "application/xliff+xml", Body: []byte("<xliff/>")},
 	}
 	adapter, err := NewTranslationXLIFFFiles(runtime)

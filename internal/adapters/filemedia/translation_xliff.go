@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/echovisionlab/geul-api/internal/mediaauth"
+
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 type TranslationXLIFFRuntime interface {
-	CreateGeneratedGeneralFile(context.Context, filemediadomain.GeneratedGeneralFileInput) (*commonv1.ExpiringMediaRef, error)
+	CreateGeneratedGeneralFile(context.Context, filemediadomain.GeneratedGeneralFileInput) (*mediaauth.Reference, error)
 	ReadVerifiedFileBody(context.Context, string, int64) (filemediadomain.VerifiedFileBody, error)
 }
 
@@ -45,7 +46,7 @@ func translationXLIFFRuntimeIsNil(files TranslationXLIFFRuntime) bool {
 func (a *TranslationXLIFFFiles) CreateTranslationXLIFF(
 	ctx context.Context,
 	artifact translationapp.TranslationXLIFFArtifact,
-) (*commonv1.ExpiringMediaRef, error) {
+) (*mediaauth.Reference, error) {
 	return a.files.CreateGeneratedGeneralFile(ctx, filemediadomain.GeneratedGeneralFileInput{
 		FileName: artifact.FileName, Extension: "xlf", MimeType: artifact.MimeType,
 		Body: append([]byte(nil), artifact.Body...),
