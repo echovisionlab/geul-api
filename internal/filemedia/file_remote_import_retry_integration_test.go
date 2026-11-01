@@ -32,14 +32,16 @@ func TestRemoteImportCommitAcknowledgementLossRestoresExactCommittedResultDirect
 	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Remote commit acknowledgement loss")
 
 	opts := remoteFileImportOptions{
-		uploadType:          managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		uploadType: UploadTrackAudio,
+
 		entityID:            trackID,
 		entityType:          managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK.String(),
-		transcodeEntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
-		correlationID:       uuid.NewString(),
-		emitLifecycle:       true,
-		triggerTranscoding:  true,
-		checkPermission:     false,
+		transcodeEntityType: EntityTrack,
+
+		correlationID:      uuid.NewString(),
+		emitLifecycle:      true,
+		triggerTranscoding: true,
+		checkPermission:    false,
 	}
 	projection, err := normalizeFileIngestProjectionIdentity(
 		opts.uploadType,
@@ -128,7 +130,8 @@ func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownl
 	correlationID := uuid.NewString()
 	entityID := uuid.NewString()
 	opts := remoteFileImportOptions{
-		uploadType:      managev1.UploadType_UPLOAD_TYPE_CLIENT_LOGO,
+		uploadType: UploadClientLogo,
+
 		entityID:        entityID,
 		sourceURL:       "https://does-not-resolve.invalid/logo.webp",
 		correlationID:   correlationID,
@@ -190,7 +193,8 @@ func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIn
 	userID := uuid.NewString()
 	correlationID := uuid.NewString()
 	opts := remoteFileImportOptions{
-		uploadType:    managev1.UploadType_UPLOAD_TYPE_USER_AVATAR,
+		uploadType: UploadUserAvatar,
+
 		entityID:      userID,
 		correlationID: correlationID,
 	}
@@ -260,15 +264,17 @@ func TestRemoteImportRetryReconfirmsCommittedTrackWinnerWithoutRedownloadDirectI
 
 	correlationID := uuid.NewString()
 	opts := remoteFileImportOptions{
-		uploadType:          managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
+		uploadType: UploadTrackAudio,
+
 		entityID:            trackID,
 		entityType:          managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK.String(),
-		transcodeEntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
-		sourceURL:           "https://does-not-resolve.invalid/retry-source.wav",
-		correlationID:       correlationID,
-		emitLifecycle:       true,
-		triggerTranscoding:  true,
-		checkPermission:     false,
+		transcodeEntityType: EntityTrack,
+
+		sourceURL:          "https://does-not-resolve.invalid/retry-source.wav",
+		correlationID:      correlationID,
+		emitLifecycle:      true,
+		triggerTranscoding: true,
+		checkPermission:    false,
 	}
 	projection, err := normalizeFileIngestProjectionIdentity(
 		opts.uploadType,

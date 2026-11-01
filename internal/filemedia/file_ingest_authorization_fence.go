@@ -9,7 +9,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type verifiedFileIngestAuthority interface {
@@ -18,8 +17,8 @@ type verifiedFileIngestAuthority interface {
 		Store,
 		*Service,
 		string,
-		managev1.UploadType,
-		managev1.TranscodeEntityType,
+		UploadType,
+		EntityType,
 		string,
 		func(*auth.UserInfo) (bool, error),
 	) error
@@ -35,8 +34,8 @@ func (trustedSystemFileIngestAuthority) revalidate(
 	Store,
 	*Service,
 	string,
-	managev1.UploadType,
-	managev1.TranscodeEntityType,
+	UploadType,
+	EntityType,
 	string,
 	func(*auth.UserInfo) (bool, error),
 ) error {
@@ -50,8 +49,8 @@ func (requestFileIngestAuthority) revalidate(
 	tx Store,
 	service *Service,
 	_ string,
-	uploadType managev1.UploadType,
-	entityType managev1.TranscodeEntityType,
+	uploadType UploadType,
+	entityType EntityType,
 	entityID string,
 	lockActive func(*auth.UserInfo) (bool, error),
 ) error {
@@ -77,8 +76,8 @@ func (authority multipartFileIngestAuthority) revalidate(
 	tx Store,
 	service *Service,
 	fileID string,
-	uploadType managev1.UploadType,
-	entityType managev1.TranscodeEntityType,
+	uploadType UploadType,
+	entityType EntityType,
 	entityID string,
 	lockActive func(*auth.UserInfo) (bool, error),
 ) error {
@@ -102,13 +101,13 @@ func (authority multipartFileIngestAuthority) revalidate(
 	return requireFreshFileIngestAuthority(ctx, tx, service, uploadType, entityType, session.EntityID, lockActive)
 }
 
-func requireFreshFileIngestAuthority(ctx context.Context, store Store, service *Service, uploadType managev1.UploadType, entityType managev1.TranscodeEntityType, entityID string, lockActive func(*auth.UserInfo) (bool, error)) error {
+func requireFreshFileIngestAuthority(ctx context.Context, store Store, service *Service, uploadType UploadType, entityType EntityType, entityID string, lockActive func(*auth.UserInfo) (bool, error)) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated {
 		return domainerr.AuthenticationRequired()
 	}
 	session := domain.UploadSession{EntityID: strings.TrimSpace(entityID)}
-	if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
+	if entityType != EntityUnspecified {
 		session.EntityType = new(entityType.String())
 	}
 	target, resolvedID, err := resolvePartUploadPermissionTargetUsing(ctx, uploadType, session, func(ctx context.Context, id string) (string, error) {

@@ -21,7 +21,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -113,7 +112,7 @@ func cloneUploadConfigs() map[string]*domain.UploadConfig {
 }
 
 // getUploadConfig returns the upload config for the given type from DefaultUploadConfigs.
-func getUploadConfig(uploadType managev1.UploadType) *domain.UploadConfig {
+func getUploadConfig(uploadType UploadType) *domain.UploadConfig {
 	if cfg, ok := domain.DefaultUploadConfigs[uploadType.String()]; ok {
 		return cfg
 	}
@@ -127,7 +126,7 @@ type LegalRouteIdentity interface {
 	RouteID(kind string) string
 }
 
-func (s *Service) getUploadConfig(uploadType managev1.UploadType) *domain.UploadConfig {
+func (s *Service) getUploadConfig(uploadType UploadType) *domain.UploadConfig {
 	if s != nil && s.uploadConfigs != nil {
 		if cfg, ok := s.uploadConfigs[uploadType.String()]; ok {
 			return cfg
@@ -167,15 +166,15 @@ func (s *Service) buildManagedFileKey(
 	return mediaauth.MediaObjectKey(fileID, mediaExtension(&mimeType))
 }
 
-func isSiteEmailLogoUpload(uploadType managev1.UploadType, slotID string) bool {
-	if uploadType != managev1.UploadType_UPLOAD_TYPE_SITE_LOGO {
+func isSiteEmailLogoUpload(uploadType UploadType, slotID string) bool {
+	if uploadType != UploadSiteLogo {
 		return false
 	}
 	slot := strings.TrimSpace(slotID)
 	return slot == siteLogoSlotEmailLight || slot == siteLogoSlotEmailDark
 }
 
-func validateSiteEmailLogoMime(uploadType managev1.UploadType, slotID string, mimeType string) error {
+func validateSiteEmailLogoMime(uploadType UploadType, slotID string, mimeType string) error {
 	if !isSiteEmailLogoUpload(uploadType, slotID) {
 		return nil
 	}
@@ -186,7 +185,7 @@ func validateSiteEmailLogoMime(uploadType managev1.UploadType, slotID string, mi
 }
 
 func validateMultipartCompletionVerifiedMime(
-	uploadType managev1.UploadType,
+	uploadType UploadType,
 	session domain.UploadSession,
 	config *domain.UploadConfig,
 ) (string, error) {
@@ -252,8 +251,8 @@ func completedMultipartFileRecord(session domain.UploadSession) fileIngestRecord
 func (s *Service) createVerifiedFileIngestRecord(
 	ctx context.Context,
 	record fileIngestRecord,
-	uploadType managev1.UploadType,
-	entityType managev1.TranscodeEntityType,
+	uploadType UploadType,
+	entityType EntityType,
 	entityID string,
 	authority verifiedFileIngestAuthority,
 ) error {
@@ -286,10 +285,10 @@ func (s *Service) createVerifiedFileIngestRecord(
 				return "", err
 			}
 			binding := domain.IngestBinding{FileID: fileID, UploadType: uploadType.String(), EntityID: entityID}
-			if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
+			if entityType != EntityUnspecified {
 				binding.EntityType = new(entityType.String())
 			}
-			if err := store.InsertIngestBinding(ctx, binding, uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE || isEditorFileIngestUploadType(uploadType)); err != nil {
+			if err := store.InsertIngestBinding(ctx, binding, uploadType == UploadGeneralFile || isEditorFileIngestUploadType(uploadType)); err != nil {
 				return "", err
 			}
 			return fileID, nil
@@ -329,8 +328,8 @@ func (s *Service) completedFileRecordExists(ctx context.Context, fileID string) 
 func (s *Service) validateCompletedFileRecord(
 	ctx context.Context,
 	session domain.UploadSession,
-	uploadType managev1.UploadType,
-	entityType managev1.TranscodeEntityType,
+	uploadType UploadType,
+	entityType EntityType,
 ) error {
 	var file File
 	if err := s.units.Read(ctx, func(store Store) error {
@@ -363,7 +362,7 @@ func (s *Service) validateCompletedFileRecord(
 	}
 
 	var expectedEntityType *string
-	if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
+	if entityType != EntityUnspecified {
 		value := entityType.String()
 		expectedEntityType = &value
 	}
@@ -468,31 +467,31 @@ var siteLogoUploadEntityIDs = map[string]string{
 
 func resolveSiteUploadEntityID(
 	legalRoutes LegalRouteIdentity,
-	uploadType managev1.UploadType,
+	uploadType UploadType,
 	slotID string,
 ) (string, error) {
 	slot := strings.TrimSpace(slotID)
 
 	switch uploadType {
-	case managev1.UploadType_UPLOAD_TYPE_SITE_LOGO:
+	case UploadSiteLogo:
 		if entityID, ok := siteLogoUploadEntityIDs[slot]; ok {
 			return entityID, nil
 		}
 		return "", domainerr.InvalidField("slot_id", fmt.Sprintf("unsupported site logo slot: %s", slot))
 
-	case managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON:
+	case UploadSiteFavicon:
 		if slot != "" && slot != "favicon" {
 			return "", domainerr.InvalidField("slot_id", fmt.Sprintf("unsupported site favicon slot: %s", slot))
 		}
 		return siteUploadEntityIDFavicon, nil
 
-	case managev1.UploadType_UPLOAD_TYPE_SITE_LOADER:
+	case UploadSiteLoader:
 		if slot != "" && slot != "loader" {
 			return "", domainerr.InvalidField("slot_id", fmt.Sprintf("unsupported site loader slot: %s", slot))
 		}
 		return siteUploadEntityIDLoader, nil
 
-	case managev1.UploadType_UPLOAD_TYPE_SITE_OG_BACKGROUND:
+	case UploadSiteOGBackground:
 		switch slot {
 		case "", "site_og_background":
 			return siteUploadEntityIDSiteOgBackground, nil
@@ -527,7 +526,7 @@ func (s *Service) checkPartUploadPermission(ctx context.Context, userID string, 
 			return domainerr.Denied("client media bundle belongs to another member")
 		}
 	}
-	uploadType := managev1.UploadType(managev1.UploadType_value[session.UploadType])
+	uploadType, _ := domain.ParseUploadType(session.UploadType)
 	target, entityID, err := s.resolvePartUploadPermissionTarget(ctx, uploadType, session)
 	if err != nil {
 		return err
@@ -544,7 +543,7 @@ func (s *Service) checkPartUploadPermission(ctx context.Context, userID string, 
 
 // checkEntityPermission verifies that the user has permission to upload to the specified entity.
 // This prevents unauthorized users from uploading files to entities they don't manage.
-func (s *Service) checkEntityPermission(ctx context.Context, uploadType managev1.UploadType, entityType, entityID, userID string) error {
+func (s *Service) checkEntityPermission(ctx context.Context, uploadType UploadType, entityType, entityID, userID string) error {
 	user := auth.GetUser(ctx)
 	if user == nil {
 		return domainerr.AuthenticationRequired()
@@ -587,10 +586,10 @@ func (s *Service) checkEntityPermission(ctx context.Context, uploadType managev1
 
 func (s *Service) resolveUploadPermissionEntityID(
 	ctx context.Context,
-	uploadType managev1.UploadType,
+	uploadType UploadType,
 	entityID string,
 ) (string, error) {
-	if uploadType != managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO {
+	if uploadType != UploadTrackAudio {
 		return entityID, nil
 	}
 	releaseID, err := s.resolveTrackReleaseID(ctx, entityID)
@@ -773,7 +772,7 @@ func (s *Service) AbortMultipartUpload(ctx context.Context, command AbortMultipa
 	if session.EntityType != nil {
 		entityType = *session.EntityType
 	}
-	uploadType := managev1.UploadType(managev1.UploadType_value[session.UploadType])
+	uploadType, _ := domain.ParseUploadType(session.UploadType)
 	if err := s.checkEntityPermission(ctx, uploadType, entityType, session.EntityID, user.MemberID.String()); err != nil {
 		return err
 	}
@@ -781,7 +780,7 @@ func (s *Service) AbortMultipartUpload(ctx context.Context, command AbortMultipa
 	progressEmitter := newFileIngestEventEmitter(
 		ctx,
 		s.asyncPublisher,
-		managev1.FileIngestSource_FILE_INGEST_SOURCE_DIRECT_UPLOAD,
+		IngestSourceDirectUpload,
 		uploadSessionEntityTypeToEnum(session.EntityType),
 		session.EntityID,
 		command.CorrelationID,
@@ -841,9 +840,9 @@ func (s *Service) AbortMultipartUpload(ctx context.Context, command AbortMultipa
 // FindMultipartUploadCandidateQuery describes the upload a client may resume.
 // The optional fields narrow the match to the same local file.
 type FindMultipartUploadCandidateQuery struct {
-	UploadType            managev1.UploadType
+	UploadType            UploadType
 	EntityID              string
-	EntityType            *managev1.TranscodeEntityType
+	EntityType            *EntityType
 	FileID                *string
 	UploadID              *string
 	FileName              *string
@@ -854,9 +853,9 @@ type FindMultipartUploadCandidateQuery struct {
 	ExpectedCurrentFileID *string
 }
 
-func (q FindMultipartUploadCandidateQuery) entityType() managev1.TranscodeEntityType {
+func (q FindMultipartUploadCandidateQuery) entityType() EntityType {
 	if q.EntityType == nil {
-		return managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED
+		return EntityUnspecified
 	}
 	return *q.EntityType
 }

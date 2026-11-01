@@ -38,12 +38,12 @@ func newMeshFixture(t *testing.T) *meshFixture {
 	return &meshFixture{libraryFixture: f, source: file.ID, page: page, mesh: filemedia.NewMeshOptimizationService(filemedia.MeshOptimizationDeps{Units: f.units, Authorizer: f.checker})}
 }
 func (f *meshFixture) input() filemedia.MeshOptimizationGenerateInput {
-	return filemedia.MeshOptimizationGenerateInput{SourceFileID: f.source, EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE, EntityID: f.page, TargetRatioPercent: 50, Method: domain.MeshMethodDraco}
+	return filemedia.MeshOptimizationGenerateInput{SourceFileID: f.source, EntityType: filemedia.EntityPage, EntityID: f.page, TargetRatioPercent: 50, Method: domain.MeshMethodDraco}
 }
 func (f *meshFixture) candidate(status, pipeline string) domain.MeshCandidate {
 	row := filemediatest.MeshCandidate(f.source)
 	row.Status = status
-	row.EntityType = new(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE.String())
+	row.EntityType = new(filemedia.EntityPage.String())
 	row.EntityID = new(f.page)
 	if pipeline != "" {
 		row.PipelineVersion = pipeline
@@ -55,7 +55,7 @@ func (f *meshFixture) candidate(status, pipeline string) domain.MeshCandidate {
 func meshCompleteEvent(row domain.MeshCandidate) *domain.MeshCompleteEvent {
 	digest := sha256.Sum256([]byte("optimized mesh"))
 	size := int64(512)
-	return &domain.MeshCompleteEvent{JobID: *row.JobID, CorrelationID: row.ID, Identity: &domain.MeshIdentity{EntityType: int32(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE), EntityID: *row.EntityID, FileID: row.SourceFileID}, Output: &domain.MeshOutput{Written: &domain.MeshWritten{FileID: row.OutputObjectID, FileSize: size, SHA256: digest[:]}, OptimizedSizeBytes: &size}}
+	return &domain.MeshCompleteEvent{JobID: *row.JobID, CorrelationID: row.ID, Identity: &domain.MeshIdentity{EntityType: int32(filemedia.EntityPage), EntityID: *row.EntityID, FileID: row.SourceFileID}, Output: &domain.MeshOutput{Written: &domain.MeshWritten{FileID: row.OutputObjectID, FileSize: size, SHA256: digest[:]}, OptimizedSizeBytes: &size}}
 }
 
 func TestMeshSourceMustBeLinkedForGenerateListSelectionAndDiscard(t *testing.T) {
@@ -71,7 +71,7 @@ func TestMeshSourceMustBeLinkedForGenerateListSelectionAndDiscard(t *testing.T) 
 	row := filemediatest.MeshCandidate(unlinked.ID)
 	row.Status = domain.MeshStatusReady
 	row.OutputFileID = new(uuid.NewString())
-	row.EntityType = new(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE.String())
+	row.EntityType = new(filemedia.EntityPage.String())
 	row.EntityID = &f.page
 	f.store.PutMeshCandidate(row)
 	input := f.input()
@@ -93,7 +93,7 @@ func TestMeshProfilesKeepIndependentPipelinesCachesAndClearScope(t *testing.T) {
 	input := f.input()
 	legacy, err := f.mesh.GenerateCandidate(f.ctx, input)
 	require.NoError(t, err)
-	input.Profile = managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_PARTICLE_MESH_V1
+	input.Profile = filemedia.MeshProfileParticleMeshV1
 	particle, err := f.mesh.GenerateCandidate(f.ctx, input)
 	require.NoError(t, err)
 	require.NotEqual(t, legacy.Candidate.CacheKey, particle.Candidate.CacheKey)
@@ -104,8 +104,8 @@ func TestMeshProfilesKeepIndependentPipelinesCachesAndClearScope(t *testing.T) {
 	require.False(t, cached.Enqueued)
 	require.Equal(t, particle.Candidate.ID, cached.Candidate.ID)
 	require.Len(t, f.store.MeshJobs, 2)
-	require.Equal(t, int32(managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_PARTICLE_MESH_V1), f.store.MeshJobs[1].Profile)
-	for _, profile := range []managev1.MeshOptimizationProfile{managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_UNSPECIFIED, input.Profile} {
+	require.Equal(t, int32(filemedia.MeshProfileParticleMeshV1), f.store.MeshJobs[1].Profile)
+	for _, profile := range []filemedia.MeshProfile{filemedia.MeshProfileUnspecified, input.Profile} {
 		rows, err := f.mesh.ListCandidates(f.ctx, filemedia.MeshOptimizationListInput{SourceFileID: f.source, EntityType: input.EntityType, EntityID: f.page, Profile: profile})
 		require.NoError(t, err)
 		require.Len(t, rows, 1)
@@ -121,7 +121,7 @@ func TestMeshProfilesKeepIndependentPipelinesCachesAndClearScope(t *testing.T) {
 	f.store.PutMeshCandidate(legacyRow)
 	f.store.PutMeshCandidate(particleRow)
 	service := filemedia.ExportMeshFileService(f.units, f.checker)
-	response, err := filemedia.NewConnectHandler(service).ClearMeshOptimizationCandidates(f.ctx, connect.NewRequest(&managev1.ClearMeshOptimizationCandidatesRequest{SourceFileId: f.source, EntityType: input.EntityType, EntityId: f.page, Profile: input.Profile}))
+	response, err := filemedia.NewConnectHandler(service).ClearMeshOptimizationCandidates(f.ctx, connect.NewRequest(&managev1.ClearMeshOptimizationCandidatesRequest{SourceFileId: f.source, EntityType: managev1.TranscodeEntityType(input.EntityType), EntityId: f.page, Profile: managev1.MeshOptimizationProfile(input.Profile)}))
 	require.NoError(t, err)
 	require.True(t, response.Msg.Success)
 	require.Contains(t, f.store.MeshCandidateRows, legacy.Candidate.ID)
@@ -234,7 +234,7 @@ func TestMeshCompletionRequiresSizeAndTheAllocatedProfile(t *testing.T) {
 			require.Equal(t, domain.MeshStatusProcessing, f.store.MeshCandidateRows[row.ID].Status)
 			if mode == "profile" {
 				require.ErrorContains(t, err, "output.profile")
-				event.Output.Profile = int32(managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_PARTICLE_MESH_V1)
+				event.Output.Profile = int32(filemedia.MeshProfileParticleMeshV1)
 				completed, err := f.mesh.HandleComplete(f.ctx, event)
 				require.NoError(t, err)
 				require.Equal(t, domain.MeshStatusReady, completed.Status)
@@ -255,7 +255,7 @@ func TestMeshEventsRequireExactJobCandidateAndIdentity(t *testing.T) {
 			case "entity":
 				event.Identity.EntityID = uuid.NewString()
 			case "entity type":
-				event.Identity.EntityType = int32(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_WORK)
+				event.Identity.EntityType = int32(filemedia.EntityWork)
 			case "job":
 				event.JobID = uuid.NewString()
 			case "candidate":

@@ -18,7 +18,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // GeneratedGeneralFileInput is a bounded server-generated File. It follows
@@ -85,8 +84,8 @@ func (s *Service) CreateGeneratedGeneralFile(
 	}
 	createErr := s.createVerifiedFileIngestRecord(
 		ctx, file,
-		managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
-		managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED,
+		UploadGeneralFile,
+		EntityUnspecified,
 		"",
 		requestFileIngestAuthority{},
 	)

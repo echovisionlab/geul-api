@@ -393,8 +393,8 @@ func (tools *FileBlockTools) updateDownloadPolicy(ctx context.Context, arguments
 	}
 	policy, err := tools.files.UpdateFileDownloadPolicy(ctx, filemedia.UpdateFileDownloadPolicyCommand{
 		Target: selector, ExpectedFileID: expectedFileID,
-		Policy:   filemedia.FileDownloadPolicyState{Audience: audience, AudienceSegmentIDs: segmentIDs},
-		Observed: &filemedia.FileDownloadPolicyState{Audience: observedAudience, AudienceSegmentIDs: observedSegments},
+		Policy:   filemedia.FileDownloadPolicyState{Audience: filemedia.DownloadAudience(audience), AudienceSegmentIDs: segmentIDs},
+		Observed: &filemedia.FileDownloadPolicyState{Audience: filemedia.DownloadAudience(observedAudience), AudienceSegmentIDs: observedSegments},
 	})
 	if err != nil {
 		return fileToolCallError(err)
@@ -440,7 +440,7 @@ func fileBlockPolicySelector(input documentFilePolicyArguments) (filemedia.FileD
 	}
 	referencePath := fileBlockReferencePath
 	return filemedia.FileDownloadPolicyTarget{
-		EntityType: entityType, EntityID: documentID, BlockID: &blockID, ReferencePath: &referencePath,
+		EntityType: filemedia.EntityType(entityType), EntityID: documentID, BlockID: &blockID, ReferencePath: &referencePath,
 	}, nil
 }
 

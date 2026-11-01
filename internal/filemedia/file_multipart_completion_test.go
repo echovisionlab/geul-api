@@ -14,8 +14,8 @@ import (
 func TestValidateMultipartCompletionVerifiedMimeRequiresDetectedMime(t *testing.T) {
 	t.Parallel()
 
-	_, err := validateMultipartCompletionVerifiedMime(
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
+	_, err := validateMultipartCompletionVerifiedMime(UploadEditorImage,
+
 		domain.UploadSession{
 			UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE.String(),
 		},
@@ -35,8 +35,8 @@ func TestValidateMultipartCompletionVerifiedMimeAppliesSiteEmailLogoPNGPolicy(t 
 	regularSlotID := "logo"
 	svgMime := "image/svg+xml"
 
-	_, err := validateMultipartCompletionVerifiedMime(
-		managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
+	_, err := validateMultipartCompletionVerifiedMime(UploadSiteLogo,
+
 		domain.UploadSession{
 			UploadType:    managev1.UploadType_UPLOAD_TYPE_SITE_LOGO.String(),
 			DetectedMime:  &svgMime,
@@ -49,8 +49,8 @@ func TestValidateMultipartCompletionVerifiedMimeAppliesSiteEmailLogoPNGPolicy(t 
 	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 	require.Contains(t, err.Error(), "email logo uploads must be PNG")
 
-	verifiedMime, err := validateMultipartCompletionVerifiedMime(
-		managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
+	verifiedMime, err := validateMultipartCompletionVerifiedMime(UploadSiteLogo,
+
 		domain.UploadSession{
 			UploadType:    managev1.UploadType_UPLOAD_TYPE_SITE_LOGO.String(),
 			DetectedMime:  &svgMime,

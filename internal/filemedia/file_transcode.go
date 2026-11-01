@@ -8,7 +8,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // triggerFileScopedProcessingIfNeeded publishes stable derivative work from
@@ -35,7 +34,7 @@ func (s *Service) triggerFileScopedProcessingIfNeeded(ctx context.Context, fileI
 		}
 		return nil
 	}
-	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_FILE
+	entityType := EntityFile
 	if err := s.units.Read(ctx, func(store Store) error { return store.RequireIngestTranscodePublisher(ctx) }); err != nil {
 		return err
 	}
@@ -58,7 +57,7 @@ func (s *Service) triggerFileScopedProcessingIfNeeded(ctx context.Context, fileI
 
 func (s *Service) promoteFileScopedImageIfNeeded(
 	ctx context.Context,
-	uploadType managev1.UploadType,
+	uploadType UploadType,
 	slotID string,
 	fileID string,
 	mimeType string,

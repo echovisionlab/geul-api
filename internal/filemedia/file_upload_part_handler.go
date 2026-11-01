@@ -22,7 +22,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 var (
@@ -63,15 +62,15 @@ type multipartConfirmResponse struct {
 	ETag string `json:"etag"`
 }
 
-func isDirectS3UploadType(uploadType managev1.UploadType) bool {
+func isDirectS3UploadType(uploadType UploadType) bool {
 	switch uploadType {
-	case managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH,
-		managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO:
+	case UploadGeneralFile,
+		UploadEditorImage,
+		UploadEditorVideo,
+		UploadEditorAudio,
+		UploadEditorAttachment,
+		UploadEditorMesh,
+		UploadTrackAudio:
 		return true
 	default:
 		return false
@@ -79,8 +78,8 @@ func isDirectS3UploadType(uploadType managev1.UploadType) bool {
 }
 
 func uploadSessionUsesDirectS3(session domain.UploadSession) bool {
-	value, ok := managev1.UploadType_value[session.UploadType]
-	return ok && isDirectS3UploadType(managev1.UploadType(value))
+	value, ok := domain.ParseUploadType(session.UploadType)
+	return ok && isDirectS3UploadType(UploadType(value))
 }
 
 func (s *Service) rejectMultipartUploadPart(
@@ -403,7 +402,7 @@ func (s *Service) prepareMultipartFirstPart(
 		return nil, "", false
 	}
 
-	uploadType := managev1.UploadType(managev1.UploadType_value[request.session.UploadType])
+	uploadType, _ := domain.ParseUploadType(request.session.UploadType)
 	config := s.getUploadConfig(uploadType)
 	if config == nil {
 		writeMultipartPartFailure(w, progressEmitter, "Invalid upload type", http.StatusBadRequest)
@@ -450,7 +449,7 @@ func (s *Service) HandleVerifyUploadPrefix(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	uploadType := managev1.UploadType(managev1.UploadType_value[request.session.UploadType])
+	uploadType, _ := domain.ParseUploadType(request.session.UploadType)
 	config := s.getUploadConfig(uploadType)
 	if config == nil {
 		http.Error(w, "Invalid upload type", http.StatusBadRequest)
@@ -771,7 +770,7 @@ func (s *Service) multipartPartProgressEmitter(
 	emitter := newFileIngestEventEmitter(
 		ctx,
 		s.asyncPublisher,
-		managev1.FileIngestSource_FILE_INGEST_SOURCE_DIRECT_UPLOAD,
+		IngestSourceDirectUpload,
 		uploadSessionEntityTypeToEnum(request.session.EntityType),
 		request.session.EntityID,
 		request.correlationID,

@@ -12,7 +12,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 var remoteImportFileNamespace = uuid.MustParse("1b9e8e7d-3051-52c6-a782-3cb87f5b82cc")
@@ -33,7 +32,7 @@ func resolveRemoteImportOperationIdentity(
 	if !isEditorFileIngestUploadType(opts.uploadType) &&
 		!requiresDurableFileIngestAttachment(projection) &&
 		!dedicatedPublicAsset &&
-		(opts.uploadType != managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE || strings.TrimSpace(opts.correlationID) == "") {
+		(opts.uploadType != UploadGeneralFile || strings.TrimSpace(opts.correlationID) == "") {
 		return remoteImportOperationIdentity{
 			fileID:    uuid.NewString(),
 			attemptID: uuid.NewString(),
@@ -168,7 +167,7 @@ func (s *Service) validateCompletedRemoteImportBinding(
 	}
 
 	var expectedEntityType *string
-	if opts.transcodeEntityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
+	if opts.transcodeEntityType != EntityUnspecified {
 		value := opts.transcodeEntityType.String()
 		expectedEntityType = &value
 	}
@@ -183,7 +182,7 @@ func (s *Service) validateCompletedRemoteImportBinding(
 func (s *Service) verifyCompletedRemoteImportObject(
 	ctx context.Context,
 	file File,
-	uploadType managev1.UploadType,
+	uploadType UploadType,
 ) error {
 	target, err := CanonicalObjectTarget(file)
 	if err != nil {

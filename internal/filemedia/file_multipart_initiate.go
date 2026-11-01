@@ -18,11 +18,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type multipartUploadInitiation struct {
-	uploadType         managev1.UploadType
+	uploadType         UploadType
 	entityType         string
 	entityTypePtr      *string
 	entityID           string
@@ -35,9 +34,9 @@ type multipartUploadInitiation struct {
 // InitiateMultipartUploadCommand starts the multipart upload of a File for
 // an upload type and its target entity.
 type InitiateMultipartUploadCommand struct {
-	UploadType            managev1.UploadType
+	UploadType            UploadType
 	EntityID              string
-	EntityType            *managev1.TranscodeEntityType
+	EntityType            *EntityType
 	FileName              string
 	FileSize              int64
 	MimeType              string
@@ -46,9 +45,9 @@ type InitiateMultipartUploadCommand struct {
 	ExpectedCurrentFileID *string
 }
 
-func (c InitiateMultipartUploadCommand) entityType() managev1.TranscodeEntityType {
+func (c InitiateMultipartUploadCommand) entityType() EntityType {
 	if c.EntityType == nil {
-		return managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED
+		return EntityUnspecified
 	}
 	return *c.EntityType
 }
@@ -125,7 +124,7 @@ func normalizeMultipartUploadTarget(
 		entityID:      strings.TrimSpace(request.EntityID),
 		slotID:        strings.TrimSpace(derefString(request.SlotID)),
 	}
-	if initiation.uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE && initiation.entityID != "" {
+	if initiation.uploadType == UploadGeneralFile && initiation.entityID != "" {
 		return multipartUploadInitiation{}, domainerr.InvalidField("entity_id", "general File Manager upload must omit entity ID")
 	}
 	if isEditorFileIngestUploadType(initiation.uploadType) && initiation.entityID != "" {
@@ -192,7 +191,7 @@ func validateMultipartUploadTypeFile(
 	slotID string,
 	canonicalMime string,
 ) error {
-	if request.UploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE {
+	if request.UploadType == UploadGeneralFile {
 		maxSize := generalFileMaxSize(canonicalMime)
 		if request.FileSize > maxSize {
 			message := fmt.Sprintf(
@@ -204,7 +203,7 @@ func validateMultipartUploadTypeFile(
 			return domainerr.InvalidField("file_size", message)
 		}
 	}
-	if request.UploadType == managev1.UploadType_UPLOAD_TYPE_USER_AVATAR && canonicalMime != "image/webp" {
+	if request.UploadType == UploadUserAvatar && canonicalMime != "image/webp" {
 		return domainerr.InvalidField("mime_type", "direct avatar uploads must be WebP")
 	}
 	return validateSiteEmailLogoMime(request.UploadType, slotID, canonicalMime)
@@ -310,13 +309,13 @@ func newMultipartUploadSession(
 }
 
 func (s *Service) beforeMultipartSessionInsert(session domain.UploadSession) {
-	if session.UploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() && s.testBeforeTrackSessionInsert != nil {
+	if session.UploadType == UploadTrackAudio.String() && s.testBeforeTrackSessionInsert != nil {
 		s.testBeforeTrackSessionInsert(session)
 	}
 }
 
 func (s *Service) afterMultipartSessionInsert(session domain.UploadSession) {
-	if session.UploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() && s.testAfterTrackSessionInsert != nil {
+	if session.UploadType == UploadTrackAudio.String() && s.testAfterTrackSessionInsert != nil {
 		s.testAfterTrackSessionInsert(session)
 	}
 }
@@ -340,7 +339,7 @@ func (s *Service) publishMultipartUploadStarted(ctx context.Context, session dom
 	emitter := newFileIngestEventEmitter(
 		ctx,
 		s.asyncPublisher,
-		managev1.FileIngestSource_FILE_INGEST_SOURCE_DIRECT_UPLOAD,
+		IngestSourceDirectUpload,
 		uploadSessionEntityTypeToEnum(session.EntityType),
 		session.EntityID,
 		"",

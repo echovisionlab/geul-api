@@ -18,7 +18,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -44,18 +43,18 @@ type MeshOptimizationDeps struct {
 
 type MeshOptimizationListInput struct {
 	SourceFileID string
-	EntityType   managev1.TranscodeEntityType
+	EntityType   EntityType
 	EntityID     string
-	Profile      managev1.MeshOptimizationProfile
+	Profile      MeshProfile
 }
 
 type MeshOptimizationGenerateInput struct {
 	SourceFileID       string
-	EntityType         managev1.TranscodeEntityType
+	EntityType         EntityType
 	EntityID           string
 	TargetRatioPercent int32
 	Method             string
-	Profile            managev1.MeshOptimizationProfile
+	Profile            MeshProfile
 	PipelineVersion    string
 }
 
@@ -147,11 +146,11 @@ func optionalPositiveEventInt64(value int64) *int64 {
 	return &value
 }
 
-func meshOptimizationCompressionMethod(method string) managev1.MeshOptimizationCompressionMethod {
+func meshOptimizationCompressionMethod(method string) MeshCompressionMethod {
 	if normalizeMeshOptimizationMethod(method) == domain.MeshMethodDraco {
-		return managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_DRACO
+		return MeshCompressionDraco
 	}
-	return managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_UNSPECIFIED
+	return MeshCompressionUnspecified
 }
 
 func normalizeMeshOptimizationMethod(method string) string {
@@ -170,37 +169,37 @@ func normalizeMeshOptimizationPipelineVersion(pipelineVersion string) string {
 	return pipelineVersion
 }
 
-func meshOptimizationPipelineVersionForProfile(profile managev1.MeshOptimizationProfile) (string, error) {
+func meshOptimizationPipelineVersionForProfile(profile MeshProfile) (string, error) {
 	switch profile {
-	case managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_UNSPECIFIED,
-		managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_DRACO_WEBP_V1:
+	case MeshProfileUnspecified,
+		MeshProfileDracoWebpV1:
 		return domain.MeshPipelineDracoWebpV1, nil
-	case managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_PARTICLE_MESH_V1:
+	case MeshProfileParticleMeshV1:
 		return domain.MeshPipelineParticleMeshV1, nil
 	default:
 		return "", domainerr.InvalidField("profile", "unsupported mesh optimization profile")
 	}
 }
 
-func meshOptimizationProfileForPipelineVersion(pipelineVersion string) managev1.MeshOptimizationProfile {
+func meshOptimizationProfileForPipelineVersion(pipelineVersion string) MeshProfile {
 	switch normalizeMeshOptimizationPipelineVersion(pipelineVersion) {
 	case domain.MeshPipelineParticleMeshV1:
-		return managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_PARTICLE_MESH_V1
+		return MeshProfileParticleMeshV1
 	case domain.MeshPipelineDracoV1,
 		domain.MeshPipelineDracoWebpV1:
-		return managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_DRACO_WEBP_V1
+		return MeshProfileDracoWebpV1
 	default:
-		return managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_UNSPECIFIED
+		return MeshProfileUnspecified
 	}
 }
 
 func validateMeshOptimizationOutputProfile(
 	candidate domain.MeshCandidate,
-	outputProfile managev1.MeshOptimizationProfile,
+	outputProfile MeshProfile,
 ) error {
 	expected := meshOptimizationProfileForPipelineVersion(candidate.PipelineVersion)
-	if expected == managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_DRACO_WEBP_V1 &&
-		outputProfile == managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_UNSPECIFIED {
+	if expected == MeshProfileDracoWebpV1 &&
+		outputProfile == MeshProfileUnspecified {
 		return nil
 	}
 	if outputProfile != expected {
@@ -446,7 +445,7 @@ func (s *MeshOptimizationService) prepareMeshOptimizationCompletion(
 	if err != nil {
 		return meshOptimizationCompletion{}, nil, err
 	}
-	if err := validateMeshOptimizationOutputProfile(*candidate, managev1.MeshOptimizationProfile(output.Profile)); err != nil {
+	if err := validateMeshOptimizationOutputProfile(*candidate, MeshProfile(output.Profile)); err != nil {
 		return meshOptimizationCompletion{}, nil, err
 	}
 	completion, err := validateMeshOptimizationCompletionPayload(event, output, candidate.OutputObjectID)
@@ -791,7 +790,7 @@ func (s *MeshOptimizationService) deleteCandidateAndOutput(ctx context.Context, 
 func (s *MeshOptimizationService) ensureSourceFileReadable(
 	ctx context.Context,
 	sourceFileID string,
-	entityType managev1.TranscodeEntityType,
+	entityType EntityType,
 	entityID string,
 ) error {
 	sourceFileID = strings.TrimSpace(sourceFileID)
@@ -811,7 +810,7 @@ func (s *MeshOptimizationService) ensureSourceFileReadable(
 func (s *MeshOptimizationService) ensureSourceFileOptimizable(
 	ctx context.Context,
 	sourceFileID string,
-	entityType managev1.TranscodeEntityType,
+	entityType EntityType,
 	entityID string,
 ) (*File, error) {
 	if err := s.ensureMeshOptimizationPermission(ctx, entityType, entityID); err != nil {
@@ -844,7 +843,7 @@ func (s *MeshOptimizationService) ensureSourceFileOptimizable(
 func (s *MeshOptimizationService) ensureSourceFileLinkedToEntity(
 	ctx context.Context,
 	sourceFileID string,
-	entityType managev1.TranscodeEntityType,
+	entityType EntityType,
 	entityID string,
 ) error {
 	sourceFileID = strings.TrimSpace(sourceFileID)
@@ -857,13 +856,13 @@ func (s *MeshOptimizationService) ensureSourceFileLinkedToEntity(
 	}
 	var ownerTable string
 	switch entityType {
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST:
+	case EntityPost:
 		ownerTable = "post"
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE:
+	case EntityPage:
 		ownerTable = "page"
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_WORK:
+	case EntityWork:
 		ownerTable = "work"
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PROGRAM_EVENT:
+	case EntityProgramEvent:
 		ownerTable = "program_event"
 	default:
 		return domainerr.InvalidField("entity_type", "unsupported editor entity type")
@@ -885,7 +884,7 @@ func (s *MeshOptimizationService) ensureSourceFileLinkedToEntity(
 
 func (s *MeshOptimizationService) ensureMeshOptimizationPermission(
 	ctx context.Context,
-	entityType managev1.TranscodeEntityType,
+	entityType EntityType,
 	entityID string,
 ) error {
 	user := auth.GetUser(ctx)
@@ -939,34 +938,34 @@ func meshOptimizationEditCan(resourceType, resourceID string) (policyv1.Can, err
 	}
 }
 
-func meshOptimizationResourceType(entityType managev1.TranscodeEntityType) string {
+func meshOptimizationResourceType(entityType EntityType) string {
 	switch entityType {
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE:
+	case EntityPage:
 		return "page"
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST:
+	case EntityPost:
 		return "post"
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_WORK:
+	case EntityWork:
 		return "work"
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PROGRAM_EVENT:
+	case EntityProgramEvent:
 		return "program_event"
 	default:
 		return ""
 	}
 }
 
-func optionalMeshOptimizationEntityType(entityType managev1.TranscodeEntityType) *string {
-	if entityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
+func optionalMeshOptimizationEntityType(entityType EntityType) *string {
+	if entityType == EntityUnspecified {
 		return nil
 	}
 	value := entityType.String()
 	return &value
 }
 
-func candidatePermissionTarget(candidate domain.MeshCandidate) (managev1.TranscodeEntityType, string) {
-	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED
+func candidatePermissionTarget(candidate domain.MeshCandidate) (EntityType, string) {
+	entityType := EntityUnspecified
 	if candidate.EntityType != nil {
-		if value, ok := managev1.TranscodeEntityType_value[*candidate.EntityType]; ok {
-			entityType = managev1.TranscodeEntityType(value)
+		if value, ok := domain.ParseEntityType(*candidate.EntityType); ok {
+			entityType = EntityType(value)
 		}
 	}
 	entityID := ""

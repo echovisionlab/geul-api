@@ -5,11 +5,10 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *Service) findActiveUploadSessionsForSurface(ctx context.Context, uploadType managev1.UploadType, entityID string, entityType *string, target fileIngestProjectionIdentity) ([]domain.UploadSession, error) {
-	if uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE || isEditorFileIngestUploadType(uploadType) || target.mode == fileIngestTargetModeUnknown || (target.mode == fileIngestTargetModeGeneral && target.slotID == "") {
+func (s *Service) findActiveUploadSessionsForSurface(ctx context.Context, uploadType UploadType, entityID string, entityType *string, target fileIngestProjectionIdentity) ([]domain.UploadSession, error) {
+	if uploadType == UploadGeneralFile || isEditorFileIngestUploadType(uploadType) || target.mode == fileIngestTargetModeUnknown || (target.mode == fileIngestTargetModeGeneral && target.slotID == "") {
 		return nil, nil
 	}
 	filter := domain.UploadSearch{UploadType: uploadType.String(), EntityID: entityID, EntityType: entityType, Mode: target.mode, SlotID: target.slotID, ExpectedCurrentFileID: target.expectedCurrentFileID, ActiveAfter: time.Now().Add(-multipartResumeWindow), ChunkSize: int32(chunkSize)}

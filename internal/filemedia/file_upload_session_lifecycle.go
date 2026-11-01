@@ -9,7 +9,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func (s *Service) createUploadSession(ctx context.Context, session *domain.UploadSession) error {
@@ -18,12 +17,12 @@ func (s *Service) createUploadSession(ctx context.Context, session *domain.Uploa
 	}
 	mode := domain.UploadTargetUnknown
 	switch {
-	case session.UploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE.String():
+	case session.UploadType == UploadGeneralFile.String():
 		mode = domain.UploadTargetGeneral
-	case session.UploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String():
+	case session.UploadType == UploadTrackAudio.String():
 		mode = domain.UploadTargetTrackProjection
 	default:
-		if value, ok := managev1.UploadType_value[session.UploadType]; ok && isEditorFileIngestUploadType(managev1.UploadType(value)) {
+		if value, ok := domain.ParseUploadType(session.UploadType); ok && isEditorFileIngestUploadType(UploadType(value)) {
 			mode = domain.UploadTargetEditorFile
 		}
 	}

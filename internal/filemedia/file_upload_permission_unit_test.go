@@ -106,7 +106,7 @@ func TestResolveUploadPermissionTarget(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := resolveUploadPermissionTarget(tt.uploadType, tt.entityType)
+			got, err := resolveUploadPermissionTarget(UploadType(tt.uploadType), tt.entityType)
 			if tt.wantValidationErr {
 				require.Error(t, err)
 				return
@@ -125,7 +125,7 @@ func TestCheckEntityPermissionAllowsIndependentEditorMesh(t *testing.T) {
 	t.Parallel()
 
 	svc := &Service{}
-	target, entityID, err := svc.resolvePartUploadPermissionTarget(context.Background(), managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH, domain.UploadSession{})
+	target, entityID, err := svc.resolvePartUploadPermissionTarget(context.Background(), UploadEditorMesh, domain.UploadSession{})
 	require.NoError(t, err)
 	require.True(t, target.authorOnly)
 	require.Empty(t, entityID)
@@ -137,10 +137,12 @@ func TestCheckPartUploadPermissionRejectsDocumentTargetForEditorMesh(t *testing.
 	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE.String()
 	svc := &Service{}
 
-	_, _, err := svc.resolvePartUploadPermissionTarget(context.Background(), managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH, domain.UploadSession{
-		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH.String(),
-		EntityType: &entityType,
-	})
+	_, _, err := svc.resolvePartUploadPermissionTarget(context.Background(), UploadEditorMesh,
+
+		domain.UploadSession{
+			UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH.String(),
+			EntityType: &entityType,
+		})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "omit document entity type")
 }
@@ -152,7 +154,9 @@ func TestCheckEntityPermissionAllowsLibraryManagerProgramEventPosterForSeriesID(
 	checker := (&authztest.Checker{}).For(admin.IdentityID).Allow(policyv1.File.ManageLibrary())
 	svc := &Service{spiceDB: checker.Client(t)}
 	ctx := auditedUserContext(context.Background(), admin.AuthUserInfo())
-	target, err := resolveUploadPermissionTarget(managev1.UploadType_UPLOAD_TYPE_PROGRAM_EVENT_POSTER, "")
+	target, err := resolveUploadPermissionTarget(UploadProgramEventPoster,
+
+		"")
 	require.NoError(t, err)
 
 	require.NoError(t, svc.checkRoleAndSpiceDBUploadPermission(ctx, target, "program-event-series-id", admin.MemberID))
@@ -168,7 +172,9 @@ func TestCheckEntityPermissionRejectsProgramEventPosterWithoutLibraryManagement(
 	checker := &authztest.Checker{}
 	svc := &Service{spiceDB: checker.Client(t)}
 	ctx := auditedUserContext(context.Background(), user.AuthUserInfo())
-	target, err := resolveUploadPermissionTarget(managev1.UploadType_UPLOAD_TYPE_PROGRAM_EVENT_POSTER, "")
+	target, err := resolveUploadPermissionTarget(UploadProgramEventPoster,
+
+		"")
 	require.NoError(t, err)
 
 	err = svc.checkRoleAndSpiceDBUploadPermission(ctx, target, "program-event-series-id", user.MemberID)

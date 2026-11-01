@@ -24,37 +24,36 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func dedicatedPublicAssetKind(uploadType managev1.UploadType, slotID string) (string, bool) {
+func dedicatedPublicAssetKind(uploadType UploadType, slotID string) (string, bool) {
 	switch uploadType {
-	case managev1.UploadType_UPLOAD_TYPE_USER_AVATAR:
+	case UploadUserAvatar:
 		return "avatar", true
-	case managev1.UploadType_UPLOAD_TYPE_ARTIST_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_WORK_FEATURED_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_SERIES_FEATURED_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_FORM_FEATURED_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_SITE_OG_BACKGROUND:
+	case UploadArtistImage,
+		UploadFeaturedImage,
+		UploadWorkFeaturedImage,
+		UploadSeriesFeaturedImage,
+		UploadFormFeaturedImage,
+		UploadSiteOGBackground:
 		return "image", true
-	case managev1.UploadType_UPLOAD_TYPE_PROGRAM_EVENT_POSTER:
+	case UploadProgramEventPoster:
 		return "poster", true
-	case managev1.UploadType_UPLOAD_TYPE_MAP_IMAGE:
+	case UploadMapImage:
 		return "map_image", true
-	case managev1.UploadType_UPLOAD_TYPE_RELEASE_ARTWORK:
+	case UploadReleaseArtwork:
 		return "artwork", true
-	case managev1.UploadType_UPLOAD_TYPE_LABEL_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_CLIENT_LOGO:
+	case UploadLabelImage,
+		UploadClientLogo:
 		return "logo", true
-	case managev1.UploadType_UPLOAD_TYPE_SITE_LOGO:
+	case UploadSiteLogo:
 		if isSiteEmailLogoUpload(uploadType, slotID) {
 			return "email_image", true
 		}
 		return "logo", true
-	case managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON:
+	case UploadSiteFavicon:
 		return "favicon", true
-	case managev1.UploadType_UPLOAD_TYPE_SITE_LOADER:
+	case UploadSiteLoader:
 		return "loader", true
 	default:
 		return "", false
@@ -63,11 +62,11 @@ func dedicatedPublicAssetKind(uploadType managev1.UploadType, slotID string) (st
 
 func (s *Service) promoteDedicatedPublicUploadAsset(
 	ctx context.Context,
-	uploadType managev1.UploadType,
+	uploadType UploadType,
 	slotID string,
 	fileID string,
 ) (*mediaasset.Reference, error) {
-	if uploadType == managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON {
+	if uploadType == UploadSiteFavicon {
 		return s.generateFaviconBundle(ctx, fileID)
 	}
 	kind, ok := dedicatedPublicAssetKind(uploadType, slotID)

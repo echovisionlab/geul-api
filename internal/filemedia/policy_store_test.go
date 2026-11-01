@@ -13,7 +13,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/filemedia/filemediatest"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -26,7 +25,7 @@ func policyFixture(t *testing.T) (*libraryFixture, domain.PolicyRelation, fileme
 	selector := domain.PolicySelector{OwnerKind: "post", EntityID: uuid.NewString(), BlockID: new(uuid.NewString()), ReferencePath: new("file")}
 	relation := domain.PolicyRelation{Selector: selector, FileID: row.ID, Audience: mediaasset.FileDownloadAudienceDisabled, ResourceType: "post", ResourceID: selector.EntityID}
 	f.store.Policies[filemediatest.PolicyKey(selector)] = filemediatest.PolicyRecord{Relation: relation}
-	command := filemedia.UpdateFileDownloadPolicyCommand{Target: filemedia.FileDownloadPolicyTarget{EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST, EntityID: selector.EntityID, BlockID: selector.BlockID, ReferencePath: selector.ReferencePath}, ExpectedFileID: row.ID, Policy: filemedia.FileDownloadPolicyState{Audience: managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_DISABLED}, Observed: &filemedia.FileDownloadPolicyState{Audience: managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_DISABLED}}
+	command := filemedia.UpdateFileDownloadPolicyCommand{Target: filemedia.FileDownloadPolicyTarget{EntityType: filemedia.EntityPost, EntityID: selector.EntityID, BlockID: selector.BlockID, ReferencePath: selector.ReferencePath}, ExpectedFileID: row.ID, Policy: filemedia.FileDownloadPolicyState{Audience: filemedia.DownloadAudienceDisabled}, Observed: &filemedia.FileDownloadPolicyState{Audience: filemedia.DownloadAudienceDisabled}}
 	return f, relation, command
 }
 func TestFilePolicyStoreMergesIndependentSegmentChanges(t *testing.T) {
@@ -38,8 +37,8 @@ func TestFilePolicyStoreMergesIndependentSegmentChanges(t *testing.T) {
 	}
 	relation.Audience = mediaasset.FileDownloadAudienceRestricted
 	f.store.Policies[filemediatest.PolicyKey(relation.Selector)] = filemediatest.PolicyRecord{Relation: relation, SegmentIDs: ids[:2]}
-	command.Observed = &filemedia.FileDownloadPolicyState{Audience: managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, AudienceSegmentIDs: ids[:1]}
-	command.Policy = filemedia.FileDownloadPolicyState{Audience: managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, AudienceSegmentIDs: []string{ids[0], ids[2]}}
+	command.Observed = &filemedia.FileDownloadPolicyState{Audience: filemedia.DownloadAudienceRestricted, AudienceSegmentIDs: ids[:1]}
+	command.Policy = filemedia.FileDownloadPolicyState{Audience: filemedia.DownloadAudienceRestricted, AudienceSegmentIDs: []string{ids[0], ids[2]}}
 	got, err := f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.NoError(t, err)
 	require.Equal(t, mediaasset.FileDownloadAudienceRestricted, got.Audience)
@@ -71,7 +70,7 @@ func TestFilePolicyOwnerDenialPrecedesSegmentValidation(t *testing.T) {
 	f, relation, command := policyFixture(t)
 	denied := domainerr.Denied("owner denied")
 	f.store.PolicyDenied["post\x00"+relation.ResourceID] = denied
-	command.Policy = filemedia.FileDownloadPolicyState{Audience: managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, AudienceSegmentIDs: []string{uuid.NewString()}}
+	command.Policy = filemedia.FileDownloadPolicyState{Audience: filemedia.DownloadAudienceRestricted, AudienceSegmentIDs: []string{uuid.NewString()}}
 	_, err := f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.ErrorIs(t, err, denied)
 	require.Empty(t, f.store.ValidatedPolicySegments)
@@ -82,7 +81,7 @@ func TestFilePolicyChangedAttachmentAndSignalFailureRollBack(t *testing.T) {
 	for _, mode := range []string{"attachment", "signal"} {
 		t.Run(mode, func(t *testing.T) {
 			f, relation, command := policyFixture(t)
-			command.Policy.Audience = managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC
+			command.Policy.Audience = filemedia.DownloadAudiencePublic
 			if mode == "attachment" {
 				command.ExpectedFileID = uuid.NewString()
 			} else {
@@ -111,12 +110,12 @@ func TestFilePolicyReadRejectsIneligibleCurrentSegment(t *testing.T) {
 
 func TestPolicySegmentsDeduplicateAndRejectInvalidRequests(t *testing.T) {
 	f, relation, command := policyFixture(t)
-	command.Policy.Audience = managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED
+	command.Policy.Audience = filemedia.DownloadAudienceRestricted
 	got, err := f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.NoError(t, err)
 	require.Empty(t, got.AudienceSegments)
 	require.Len(t, f.store.PolicySignals, 1)
-	command.Observed.Audience = managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED
+	command.Observed.Audience = filemedia.DownloadAudienceRestricted
 	_, err = f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.NoError(t, err)
 	require.Len(t, f.store.PolicySignals, 1)
@@ -129,10 +128,10 @@ func TestPolicySegmentsDeduplicateAndRejectInvalidRequests(t *testing.T) {
 	require.Equal(t, id, got.AudienceSegments[0].ID)
 	require.Equal(t, "SEGMENT_TYPE_MEMBER_TAGS", got.AudienceSegments[0].Kind)
 	command.Observed.AudienceSegmentIDs = []string{id}
-	command.Policy.Audience = managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC
+	command.Policy.Audience = filemedia.DownloadAudiencePublic
 	_, err = f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
-	command.Policy.Audience = managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED
+	command.Policy.Audience = filemedia.DownloadAudienceRestricted
 	command.Policy.AudienceSegmentIDs = nil
 	for i := 0; i < 21; i++ {
 		command.Policy.AudienceSegmentIDs = append(command.Policy.AudienceSegmentIDs, uuid.NewString())
@@ -144,7 +143,7 @@ func TestPolicySegmentsDeduplicateAndRejectInvalidRequests(t *testing.T) {
 func TestPolicyUsesCurrentRelationAndIgnoresIngestProvenance(t *testing.T) {
 	f, relation, command := policyFixture(t)
 	f.store.IngestBindings[relation.FileID] = domain.IngestBinding{FileID: relation.FileID, UploadType: "UPLOAD_TYPE_EDITOR_AUDIO", EntityType: new("TRANSCODE_ENTITY_TYPE_POST"), EntityID: uuid.NewString()}
-	command.Policy.Audience = managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC
+	command.Policy.Audience = filemedia.DownloadAudiencePublic
 	got, err := f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.NoError(t, err)
 	require.Equal(t, relation.ResourceID, got.EntityID)

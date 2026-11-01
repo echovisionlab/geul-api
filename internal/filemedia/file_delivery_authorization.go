@@ -11,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -287,12 +286,12 @@ func manageFileOwnerDeliveryKind(user *auth.UserInfo, file File, binding domain.
 	if user == nil {
 		return ""
 	}
-	uploadTypeValue, ok := managev1.UploadType_value[binding.UploadType]
+	uploadTypeValue, ok := domain.ParseUploadType(binding.UploadType)
 	if !ok {
 		return ""
 	}
-	uploadType := managev1.UploadType(uploadTypeValue)
-	if uploadType == managev1.UploadType_UPLOAD_TYPE_USER_AVATAR {
+	uploadType := UploadType(uploadTypeValue)
+	if uploadType == UploadUserAvatar {
 		if strings.TrimSpace(binding.EntityID) == user.MemberID.String() {
 			return "avatar"
 		}
@@ -302,12 +301,12 @@ func manageFileOwnerDeliveryKind(user *auth.UserInfo, file File, binding domain.
 		return ""
 	}
 	switch uploadType {
-	case managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH:
+	case UploadGeneralFile,
+		UploadEditorImage,
+		UploadEditorVideo,
+		UploadEditorAudio,
+		UploadEditorAttachment,
+		UploadEditorMesh:
 		return "uploader"
 	default:
 		return ""

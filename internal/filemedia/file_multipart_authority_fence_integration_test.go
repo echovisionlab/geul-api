@@ -35,9 +35,8 @@ func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorit
 
 		err = (withTestMutations(withNativeFileUnits(&Service{spiceDB: stack.SpiceDBClient}, stack.DB, nativeFilePorts{}))).createVerifiedFileIngestRecord(
 			ctx,
-			verifiedMultipartAuthorityFile(session.FileID),
-			managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-			managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED,
+			verifiedMultipartAuthorityFile(session.FileID), UploadEditorImage, EntityUnspecified,
+
 			"",
 			authority,
 		)
@@ -55,9 +54,8 @@ func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorit
 
 		err = (withTestMutations(withNativeFileUnits(&Service{spiceDB: stack.SpiceDBClient}, stack.DB, nativeFilePorts{}))).createVerifiedFileIngestRecord(
 			ctx,
-			verifiedMultipartAuthorityFile(session.FileID),
-			managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-			managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED,
+			verifiedMultipartAuthorityFile(session.FileID), UploadEditorImage, EntityUnspecified,
+
 			"",
 			authority,
 		)

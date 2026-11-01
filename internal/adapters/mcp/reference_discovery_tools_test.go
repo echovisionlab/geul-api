@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/artist"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -206,7 +207,8 @@ func (r *recordingFileReferences) ListFileManagerItems(_ context.Context, query 
 	}
 	r.request = connect.NewRequest(&managev1.ListFileManagerItemsRequest{
 		FolderId: optional(query.FolderID), Query: optional(query.Query), MimeTypePrefix: optional(query.MimeTypePrefix),
-		UploadedByMemberId: optional(query.UploadedByMemberID), SortField: query.SortField, SortOrder: query.SortOrder,
+		UploadedByMemberId: optional(query.UploadedByMemberID), SortField: managev1.FileManagerSortField(query.SortField), SortOrder: commonv1.SortOrder(query.SortOrder),
+
 		PageSize: query.PageSize, PageToken: optional(query.PageToken),
 	})
 	now := time.Now()

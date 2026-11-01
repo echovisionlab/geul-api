@@ -13,8 +13,6 @@ import (
 
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/google/uuid"
-
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 var (
@@ -312,7 +310,7 @@ func (facade *MCPFileFacade) Read(ctx context.Context, fileID string) (MCPVerifi
 func (facade *MCPFileFacade) beginMultipart(
 	ctx context.Context,
 	input MCPFileBeginInput,
-	uploadType managev1.UploadType,
+	uploadType filemediadomain.UploadType,
 ) (MCPFileTransferResult, error) {
 	if strings.TrimSpace(input.RemoteURL) != "" {
 		return MCPFileTransferResult{}, invalidMCPFileInput("multipart transfer must not include remote_url")
@@ -353,7 +351,7 @@ func (facade *MCPFileFacade) beginMultipart(
 func (facade *MCPFileFacade) beginRemoteHTTPS(
 	ctx context.Context,
 	input MCPFileBeginInput,
-	uploadType managev1.UploadType,
+	uploadType filemediadomain.UploadType,
 ) (MCPFileTransferResult, error) {
 	if strings.TrimSpace(input.FileName) != "" || strings.TrimSpace(input.MIMEType) != "" ||
 		input.FileSize != 0 || input.FileLastModified != nil {
@@ -394,19 +392,19 @@ func (facade *MCPFileFacade) beginRemoteHTTPS(
 	return MCPFileTransferResult{State: MCPFileTransferReady, File: &file}, nil
 }
 
-func validateMCPFileSessionHandle(handle MCPFileSessionHandle) (managev1.UploadType, error) {
+func validateMCPFileSessionHandle(handle MCPFileSessionHandle) (filemediadomain.UploadType, error) {
 	if handle.Transport != MCPFileTransportBrowserUploadPage &&
 		handle.Transport != MCPFileTransportPresignedMultipart {
-		return managev1.UploadType_UPLOAD_TYPE_UNSPECIFIED, invalidMCPFileInput("session transport must be browser_upload_page or presigned_multipart")
+		return filemediadomain.UploadUnspecified, invalidMCPFileInput("session transport must be browser_upload_page or presigned_multipart")
 	}
 	if _, err := normalizeMCPFileUUID(handle.FileID, "file_id"); err != nil {
-		return managev1.UploadType_UPLOAD_TYPE_UNSPECIFIED, err
+		return filemediadomain.UploadUnspecified, err
 	}
 	if strings.TrimSpace(handle.UploadID) == "" {
-		return managev1.UploadType_UPLOAD_TYPE_UNSPECIFIED, invalidMCPFileInput("upload_id is required")
+		return filemediadomain.UploadUnspecified, invalidMCPFileInput("upload_id is required")
 	}
 	if err := validateMCPFileTrackTarget(handle.Kind, handle.TrackID, handle.ExpectedCurrentFileID); err != nil {
-		return managev1.UploadType_UPLOAD_TYPE_UNSPECIFIED, err
+		return filemediadomain.UploadUnspecified, err
 	}
 	return mcpUploadType(handle.Kind)
 }
@@ -429,31 +427,31 @@ func validateMCPFileTrackTarget(kind MCPFileKind, trackID string, expectedCurren
 	return nil
 }
 
-func mcpFileEntityType(kind MCPFileKind) *managev1.TranscodeEntityType {
+func mcpFileEntityType(kind MCPFileKind) *filemediadomain.EntityType {
 	if kind == MCPFileKindTrackAudio {
-		return pointer(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK)
+		return pointer(filemediadomain.EntityTrack)
 	}
 	return nil
 }
 
-func mcpUploadType(kind MCPFileKind) (managev1.UploadType, error) {
+func mcpUploadType(kind MCPFileKind) (filemediadomain.UploadType, error) {
 	switch kind {
 	case MCPFileKindGeneral:
-		return managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, nil
+		return filemediadomain.UploadGeneralFile, nil
 	case MCPFileKindImage:
-		return managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE, nil
+		return filemediadomain.UploadEditorImage, nil
 	case MCPFileKindVideo:
-		return managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO, nil
+		return filemediadomain.UploadEditorVideo, nil
 	case MCPFileKindAudio:
-		return managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO, nil
+		return filemediadomain.UploadEditorAudio, nil
 	case MCPFileKindTrackAudio:
-		return managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO, nil
+		return filemediadomain.UploadTrackAudio, nil
 	case MCPFileKindAttachment:
-		return managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT, nil
+		return filemediadomain.UploadEditorAttachment, nil
 	case MCPFileKindMesh:
-		return managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH, nil
+		return filemediadomain.UploadEditorMesh, nil
 	default:
-		return managev1.UploadType_UPLOAD_TYPE_UNSPECIFIED, invalidMCPFileInput("kind is unsupported")
+		return filemediadomain.UploadUnspecified, invalidMCPFileInput("kind is unsupported")
 	}
 }
 

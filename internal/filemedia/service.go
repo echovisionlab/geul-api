@@ -15,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // Deps are the collaborators of the File use cases.
@@ -130,7 +129,7 @@ func NewService(deps Deps) (*Service, error) {
 		downloadTTL = min(deps.DownloadTTL, mediaauth.DownloadTTL)
 	}
 	uploadConfigs := cloneUploadConfigs()
-	if editorImage := uploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE.String()]; editorImage != nil && deps.EditorImageMaxSize > 0 {
+	if editorImage := uploadConfigs[UploadEditorImage.String()]; editorImage != nil && deps.EditorImageMaxSize > 0 {
 		editorImage.MaxSize = deps.EditorImageMaxSize
 	}
 	return &Service{

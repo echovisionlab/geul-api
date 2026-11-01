@@ -5,10 +5,9 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *Service) enqueueStableFileIngestTranscode(ctx context.Context, file File, entityType managev1.TranscodeEntityType, entityID string, kind domain.IngestTranscodeKind) error {
+func (s *Service) enqueueStableFileIngestTranscode(ctx context.Context, file File, entityType EntityType, entityID string, kind domain.IngestTranscodeKind) error {
 	return s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
 		store := unit.Store()
 		var job *domain.IngestTranscodeCommand

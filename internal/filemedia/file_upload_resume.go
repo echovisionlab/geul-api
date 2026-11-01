@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type multipartResumeSelection struct {
@@ -16,8 +15,8 @@ type multipartResumeSelection struct {
 
 func (s *Service) selectMultipartResumeCandidate(
 	ctx context.Context,
-	_ managev1.TranscodeEntityType,
-	uploadType managev1.UploadType,
+	_ EntityType,
+	uploadType UploadType,
 	entityID string,
 	storedEntityType *string,
 	identity fileIngestProjectionIdentity,
@@ -34,7 +33,7 @@ func (s *Service) selectMultipartResumeCandidate(
 
 func (s *Service) selectUnserializedMultipartResumeCandidate(
 	ctx context.Context,
-	uploadType managev1.UploadType,
+	uploadType UploadType,
 	entityID string,
 	entityType *string,
 	identity fileIngestProjectionIdentity,

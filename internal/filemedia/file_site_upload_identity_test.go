@@ -64,7 +64,7 @@ func TestResolveSiteUploadEntityIDUsesBackendOwnedSlots(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := resolveSiteUploadEntityID(legalRoutes, tt.uploadType, tt.slotID)
+			got, err := resolveSiteUploadEntityID(legalRoutes, UploadType(tt.uploadType), tt.slotID)
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got)
 		})
@@ -75,13 +75,13 @@ func TestResolveSiteUploadEntityIDRejectsUnsupportedSlot(t *testing.T) {
 	t.Parallel()
 
 	for _, slot := range []string{"", "logo", "logo_light", "logo_dark", "logo_email"} {
-		_, err := resolveSiteUploadEntityID(nil, managev1.UploadType_UPLOAD_TYPE_SITE_LOGO, slot)
+		_, err := resolveSiteUploadEntityID(nil, UploadSiteLogo, slot)
 		require.Error(t, err, slot)
 	}
 
 	_, err := resolveSiteUploadEntityID(
-		nil,
-		managev1.UploadType_UPLOAD_TYPE_SITE_OG_BACKGROUND,
+		nil, UploadSiteOGBackground,
+
 		"post_featured_image",
 	)
 	require.Error(t, err)
@@ -91,8 +91,8 @@ func TestResolveSiteUploadEntityIDRequiresLegalRouteIdentityForLegalSlots(t *tes
 	t.Parallel()
 
 	_, err := resolveSiteUploadEntityID(
-		nil,
-		managev1.UploadType_UPLOAD_TYPE_SITE_OG_BACKGROUND,
+		nil, UploadSiteOGBackground,
+
 		"privacy_og_background",
 	)
 	require.Error(t, err)
@@ -177,7 +177,7 @@ func TestValidateSiteEmailLogoMimeRequiresPNGOnlyForEmailLogoSlot(t *testing.T) 
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := validateSiteEmailLogoMime(tt.uploadType, tt.slotID, tt.mimeType)
+			err := validateSiteEmailLogoMime(UploadType(tt.uploadType), tt.slotID, tt.mimeType)
 			if tt.wantErr {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), "email logo uploads must be PNG")

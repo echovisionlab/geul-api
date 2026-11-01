@@ -10,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const storageCompensationTimeout = 10 * time.Second
@@ -66,16 +65,16 @@ func uploadSessionObjectKey(session domain.UploadSession) (string, error) {
 	return target.ObjectKey, nil
 }
 
-func uploadSessionEntityTypeToEnum(entityType *string) managev1.TranscodeEntityType {
+func uploadSessionEntityTypeToEnum(entityType *string) EntityType {
 	if entityType == nil || *entityType == "" {
-		return managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED
+		return EntityUnspecified
 	}
 
-	if value, ok := managev1.TranscodeEntityType_value[*entityType]; ok {
-		return managev1.TranscodeEntityType(value)
+	if value, ok := domain.ParseEntityType(*entityType); ok {
+		return EntityType(value)
 	}
 
-	return managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED
+	return EntityUnspecified
 }
 
 func (s *Service) nextUploadSessionIngestSequence(ctx context.Context, uploadID string) (int64, error) {

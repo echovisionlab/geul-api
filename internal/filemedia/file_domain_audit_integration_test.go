@@ -95,7 +95,9 @@ func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *t
 	createdID := testutil.IntegrationUUID()
 	err := service.createVerifiedFileIngestRecord(ctx, fileIngestRecord{
 		id: createdID, fileName: "verified", mimeType: "image/jpeg", fileSize: 1024, extension: "jpg", sha256: make([]byte, 32), ingestAttemptID: testutil.IntegrationUUID(),
-	}, managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, "", trustedSystemFileIngestAuthority{})
+	}, UploadGeneralFile, EntityUnspecified,
+
+		"", trustedSystemFileIngestAuthority{})
 	require.NoError(t, err)
 	var createdRows []postSeriesAuditRow
 	require.NoError(t, db.Raw(`SELECT action, target_type, target_id, actor_member_id::text AS actor_member_id, request_id::text AS request_id, attributes FROM domain_audit WHERE target_id = ?`, createdID).Scan(&createdRows).Error)
@@ -110,7 +112,9 @@ func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *t
 	failingIngest := withTestMutations(withNativeFileUnits(&Service{spiceDB: spiceDB, auditWriter: fileFailingAuditAppender{}}, db, nativeFilePorts{}))
 	err = failingIngest.createVerifiedFileIngestRecord(ctx, fileIngestRecord{
 		id: failingIngestID, fileName: "must-rollback", mimeType: "image/jpeg", fileSize: 1024, extension: "jpg", sha256: make([]byte, 32), ingestAttemptID: testutil.IntegrationUUID(),
-	}, managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, "", trustedSystemFileIngestAuthority{})
+	}, UploadGeneralFile, EntityUnspecified,
+
+		"", trustedSystemFileIngestAuthority{})
 	require.Error(t, err)
 	var ingestCount int64
 	require.NoError(t, db.Table("file").Where("id = ?", failingIngestID).Count(&ingestCount).Error)

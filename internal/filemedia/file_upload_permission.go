@@ -12,7 +12,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -36,44 +35,44 @@ func (e *uploadPermissionValidationError) Error() string {
 	return e.message
 }
 
-func uploadTypeToResourceType(uploadType managev1.UploadType) (resourceType string, requiresSpiceDBCheck bool) {
+func uploadTypeToResourceType(uploadType UploadType) (resourceType string, requiresSpiceDBCheck bool) {
 	switch uploadType {
-	case managev1.UploadType_UPLOAD_TYPE_ARTIST_IMAGE:
+	case UploadArtistImage:
 		return "artist", true
-	case managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE:
+	case UploadFeaturedImage:
 		return "post", true
-	case managev1.UploadType_UPLOAD_TYPE_WORK_FEATURED_IMAGE:
+	case UploadWorkFeaturedImage:
 		return "work", true
-	case managev1.UploadType_UPLOAD_TYPE_SERIES_FEATURED_IMAGE:
+	case UploadSeriesFeaturedImage:
 		return "series", true
-	case managev1.UploadType_UPLOAD_TYPE_FORM_FEATURED_IMAGE:
+	case UploadFormFeaturedImage:
 		return "form", true
-	case managev1.UploadType_UPLOAD_TYPE_PROGRAM_EVENT_POSTER:
+	case UploadProgramEventPoster:
 		return "", false
-	case managev1.UploadType_UPLOAD_TYPE_RELEASE_ARTWORK, managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO:
+	case UploadReleaseArtwork, UploadTrackAudio:
 		return "release", false
-	case managev1.UploadType_UPLOAD_TYPE_LABEL_IMAGE:
+	case UploadLabelImage:
 		return "label", true
-	case managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH:
+	case UploadEditorImage,
+		UploadEditorVideo,
+		UploadEditorAudio,
+		UploadEditorAttachment,
+		UploadEditorMesh:
 		return "", false
-	case managev1.UploadType_UPLOAD_TYPE_USER_AVATAR:
+	case UploadUserAvatar:
 		return "user", false
-	case managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-		managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON,
-		managev1.UploadType_UPLOAD_TYPE_SITE_LOADER,
-		managev1.UploadType_UPLOAD_TYPE_SITE_OG_BACKGROUND,
-		managev1.UploadType_UPLOAD_TYPE_CLIENT_LOGO:
+	case UploadSiteLogo,
+		UploadSiteFavicon,
+		UploadSiteLoader,
+		UploadSiteOGBackground,
+		UploadClientLogo:
 		return "", false
 	default:
 		return "", false
 	}
 }
 
-func resolveUploadPermissionTarget(uploadType managev1.UploadType, entityType string) (uploadPermissionTarget, error) {
+func resolveUploadPermissionTarget(uploadType UploadType, entityType string) (uploadPermissionTarget, error) {
 	resourceType, requiresSpiceDBCheck := uploadTypeToResourceType(uploadType)
 	target := uploadPermissionTarget{
 		resourceType:         resourceType,
@@ -81,32 +80,32 @@ func resolveUploadPermissionTarget(uploadType managev1.UploadType, entityType st
 	}
 
 	switch uploadType {
-	case managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE:
+	case UploadGeneralFile:
 		target.authorOnly = true
-	case managev1.UploadType_UPLOAD_TYPE_USER_AVATAR:
+	case UploadUserAvatar:
 		target.userOwned = true
-	case managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE:
-		if entityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE.String() {
+	case UploadFeaturedImage:
+		if entityType == EntityPage.String() {
 			target.resourceType = "page"
 			target.requiresSpiceDBCheck = true
 		}
-	case managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-		managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON,
-		managev1.UploadType_UPLOAD_TYPE_SITE_LOADER,
-		managev1.UploadType_UPLOAD_TYPE_SITE_OG_BACKGROUND,
-		managev1.UploadType_UPLOAD_TYPE_CLIENT_LOGO,
-		managev1.UploadType_UPLOAD_TYPE_MAP_IMAGE:
+	case UploadSiteLogo,
+		UploadSiteFavicon,
+		UploadSiteLoader,
+		UploadSiteOGBackground,
+		UploadClientLogo,
+		UploadMapImage:
 		target.adminOnly = true
-	case managev1.UploadType_UPLOAD_TYPE_RELEASE_ARTWORK,
-		managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO:
+	case UploadReleaseArtwork,
+		UploadTrackAudio:
 		target.adminOnly = true
-	case managev1.UploadType_UPLOAD_TYPE_PROGRAM_EVENT_POSTER:
+	case UploadProgramEventPoster:
 		target.adminOnly = true
-	case managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH:
+	case UploadEditorImage,
+		UploadEditorVideo,
+		UploadEditorAudio,
+		UploadEditorAttachment,
+		UploadEditorMesh:
 		if strings.TrimSpace(entityType) != "" {
 			return target, &uploadPermissionValidationError{
 				field:   "entity_type",
@@ -117,17 +116,17 @@ func resolveUploadPermissionTarget(uploadType managev1.UploadType, entityType st
 	}
 
 	if target.resourceType == "page" || target.resourceType == "work" ||
-		uploadType == managev1.UploadType_UPLOAD_TYPE_FORM_FEATURED_IMAGE {
+		uploadType == UploadFormFeaturedImage {
 		target.adminOnly = true
 	}
 	return target, nil
 }
 
-func uploadPermissionRequiresEntityID(uploadType managev1.UploadType, target uploadPermissionTarget) bool {
+func uploadPermissionRequiresEntityID(uploadType UploadType, target uploadPermissionTarget) bool {
 	if target.resourceType != "" || target.requiresSpiceDBCheck || target.userOwned {
 		return true
 	}
-	return uploadType == managev1.UploadType_UPLOAD_TYPE_CLIENT_LOGO
+	return uploadType == UploadClientLogo
 }
 
 func connectUploadPermissionValidationError(err error) error {
@@ -151,13 +150,13 @@ func uploadPermissionPartError(err error) error {
 
 func (s *Service) resolvePartUploadPermissionTarget(
 	ctx context.Context,
-	uploadType managev1.UploadType,
+	uploadType UploadType,
 	session domain.UploadSession,
 ) (uploadPermissionTarget, string, error) {
 	return resolvePartUploadPermissionTargetUsing(ctx, uploadType, session, s.resolveTrackReleaseID)
 }
 
-func resolvePartUploadPermissionTargetUsing(ctx context.Context, uploadType managev1.UploadType, session domain.UploadSession, lookup func(context.Context, string) (string, error)) (uploadPermissionTarget, string, error) {
+func resolvePartUploadPermissionTargetUsing(ctx context.Context, uploadType UploadType, session domain.UploadSession, lookup func(context.Context, string) (string, error)) (uploadPermissionTarget, string, error) {
 	entityType := ""
 	if session.EntityType != nil {
 		entityType = *session.EntityType
@@ -170,7 +169,7 @@ func resolvePartUploadPermissionTargetUsing(ctx context.Context, uploadType mana
 	if uploadPermissionRequiresEntityID(uploadType, target) && entityID == "" {
 		return target, "", fmt.Errorf("entity_id is required")
 	}
-	if uploadType != managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO {
+	if uploadType != UploadTrackAudio {
 		return target, entityID, nil
 	}
 	releaseID, err := lookup(ctx, session.EntityID)
@@ -185,7 +184,7 @@ func resolvePartUploadPermissionTargetUsing(ctx context.Context, uploadType mana
 
 func (s *Service) validatePartUploadTarget(
 	ctx context.Context,
-	uploadType managev1.UploadType,
+	uploadType UploadType,
 	target uploadPermissionTarget,
 	entityID string,
 ) error {

@@ -27,10 +27,10 @@ func TestDirectS3UploadTypePolicy(t *testing.T) {
 		require.Equalf(
 			t,
 			expectedDirect,
-			isDirectS3UploadType(uploadType),
+			isDirectS3UploadType(UploadType(uploadType)),
 			"unexpected multipart transport for %s",
 			uploadType.String(),
 		)
 	}
-	require.False(t, isDirectS3UploadType(managev1.UploadType_UPLOAD_TYPE_UNSPECIFIED))
+	require.False(t, isDirectS3UploadType(UploadUnspecified))
 }

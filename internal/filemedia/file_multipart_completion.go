@@ -19,13 +19,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type multipartCompletion struct {
 	clientMediaPlan *clientMediaPlan
 	session         domain.UploadSession
-	uploadType      managev1.UploadType
+	uploadType      UploadType
 	target          fileIngestProjectionIdentity
 	objectKey       string
 	verifiedMime    string
@@ -134,11 +133,11 @@ func (s *Service) loadAuthorizedMultipartCompletion(
 		return nil, false, domainerr.AuthenticationRequired()
 	}
 	entityType := derefString(session.EntityType)
-	uploadTypeValue, ok := managev1.UploadType_value[session.UploadType]
+	uploadTypeValue, ok := domain.ParseUploadType(session.UploadType)
 	if !ok {
 		return nil, false, fmt.Errorf("upload session contains unsupported upload type %q", session.UploadType)
 	}
-	uploadType := managev1.UploadType(uploadTypeValue)
+	uploadType := UploadType(uploadTypeValue)
 	if err := s.checkEntityPermission(ctx, uploadType, entityType, session.EntityID, user.MemberID.String()); err != nil {
 		return nil, false, err
 	}
@@ -161,7 +160,7 @@ func (s *Service) loadAuthorizedMultipartCompletion(
 	completion.progressEmitter = newFileIngestEventEmitter(
 		ctx,
 		s.asyncPublisher,
-		managev1.FileIngestSource_FILE_INGEST_SOURCE_DIRECT_UPLOAD,
+		IngestSourceDirectUpload,
 		uploadSessionEntityTypeToEnum(session.EntityType),
 		session.EntityID,
 		request.CorrelationID,
@@ -269,7 +268,7 @@ func (s *Service) recoverFinishedMultipartCompletion(
 	if err != nil {
 		return nil, err
 	}
-	if uploadType != managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO {
+	if uploadType != UploadTrackAudio {
 		if err := s.triggerFileScopedProcessingIfNeeded(ctx, fileID); err != nil {
 			return nil, err
 		}
@@ -286,7 +285,7 @@ func (s *Service) recoverFinishedMultipartCompletion(
 
 // loadFinishedMultipartFile loads the deliverable File a completed upload
 // left behind and the upload type its ingest binding recorded.
-func (s *Service) loadFinishedMultipartFile(ctx context.Context, fileID string) (File, managev1.UploadType, error) {
+func (s *Service) loadFinishedMultipartFile(ctx context.Context, fileID string) (File, UploadType, error) {
 	// A different upload ID must not bypass an active session and return before
 	// attachment/downstream confirmation. Successful completion deletes the only
 	// session for this file after every required side effect has succeeded.
@@ -333,11 +332,11 @@ func (s *Service) loadFinishedMultipartFile(ctx context.Context, fileID string) 
 		return File{}, 0, fmt.Errorf("load completed file binding: %w", err)
 	}
 
-	uploadTypeValue, ok := managev1.UploadType_value[binding.UploadType]
+	uploadTypeValue, ok := domain.ParseUploadType(binding.UploadType)
 	if !ok {
 		return File{}, 0, domainerr.Precondition("completed file binding has unsupported upload type")
 	}
-	return file, managev1.UploadType(uploadTypeValue), nil
+	return file, UploadType(uploadTypeValue), nil
 }
 
 // requireFinishedClientMediaBundle requires the completed File's client media
@@ -402,11 +401,11 @@ func (s *Service) signFinishedMultipartDelivery(file File, promotedAsset *mediaa
 
 func (s *Service) restoreFinishedMultipartPromotedAsset(
 	ctx context.Context,
-	uploadType managev1.UploadType,
+	uploadType UploadType,
 	slotID string,
 	fileID string,
 ) (*mediaasset.Reference, error) {
-	if uploadType == managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON {
+	if uploadType == UploadSiteFavicon {
 		set, err := s.loadFaviconSet(ctx, fileID)
 		if err != nil {
 			return nil, fmt.Errorf("restore completed favicon asset: %w", err)
@@ -578,7 +577,7 @@ func (s *Service) verifyCompletedObjectContent(
 	objectKey string,
 	expectedSize int64,
 	expectedMime string,
-	uploadType managev1.UploadType,
+	uploadType UploadType,
 ) error {
 	if err := s.verifyCompletedObjectMetadata(ctx, objectKey, expectedSize, expectedMime); err != nil {
 		return err

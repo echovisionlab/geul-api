@@ -12,7 +12,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // AttachTrackOriginalAudioCommand attaches a verified File as a Track's
@@ -133,8 +132,8 @@ func loadTrackOriginalAudioFile(ctx context.Context, store Store, target trackOr
 		return file, err
 	}
 
-	trackEntityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK.String()
-	if binding.UploadType != managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() ||
+	trackEntityType := EntityTrack.String()
+	if binding.UploadType != UploadTrackAudio.String() ||
 		binding.EntityID != target.trackID || binding.EntityType == nil || *binding.EntityType != trackEntityType {
 		return file, domainerr.Precondition("File ingest binding does not match the Track")
 	}
@@ -143,7 +142,7 @@ func loadTrackOriginalAudioFile(ctx context.Context, store Store, target trackOr
 
 func (s *Service) enqueueTrackOriginalAudioTranscode(ctx context.Context, store Store, file File, trackID string) error {
 	job, shouldEnqueue, err := newStableFileIngestAudioTranscodeJob(
-		ctx, store, file, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK, trackID,
+		ctx, store, file, EntityTrack, trackID,
 	)
 	if err != nil || !shouldEnqueue {
 		return err
