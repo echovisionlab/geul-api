@@ -413,6 +413,51 @@ func (s *Service) failSourceAssetPromotion(ctx context.Context, assetID string, 
 	return false, errs.FailedPrecondition("public asset promotion allocation changed unexpectedly")
 }
 
+// completeLockedSourceAsset completes the source File's promoted public asset,
+// resuming it first when an earlier attempt failed.
+func (s *Service) completeLockedSourceAsset(
+	ctx context.Context,
+	tx *gorm.DB,
+	sourceFileID string,
+	assetID string,
+	result *commonv1.AssetWriteResult,
+) error {
+	// File is the serialization authority for both new product references
+	// and deletion. Keep the global File -> public_asset lock order.
+	if err := mediaasset.LockAttachableFilesForUpdate(ctx, tx, []string{sourceFileID}); err != nil {
+		return err
+	}
+	var asset model.PublicAsset
+	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?", assetID).Take(&asset).Error; err != nil {
+		return err
+	}
+	if asset.SourceFileID == nil || *asset.SourceFileID != sourceFileID {
+		return errs.FailedPrecondition("public asset no longer belongs to the source file")
+	}
+	if asset.Status == model.PublicAssetStatusFailed {
+		now := time.Now().UTC()
+		resumed := tx.Model(&model.PublicAsset{}).
+			Where("id = ? AND status = ?", assetID, model.PublicAssetStatusFailed).
+			Updates(structured.Fields{
+				"file_size":      nil,
+				"sha256":         nil,
+				"status":         model.PublicAssetStatusAllocated,
+				"ready_at":       nil,
+				"failed_at":      nil,
+				"failure_reason": nil,
+				"updated_at":     now,
+			})
+		if resumed.Error != nil {
+			return resumed.Error
+		}
+		if resumed.RowsAffected != 1 {
+			return errs.FailedPrecondition("failed public asset could not be resumed")
+		}
+	}
+	_, err := mediaasset.NewLifecycle(tx, s.cdnDomain).CompletePublicAsset(ctx, result)
+	return err
+}
+
 func (s *Service) completeSourceAssetPromotion(
 	ctx context.Context,
 	sourceFileID string,
@@ -425,39 +470,7 @@ func (s *Service) completeSourceAssetPromotion(
 	for range 2 {
 		callbackCompleted := false
 		txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			// File is the serialization authority for both new product references
-			// and deletion. Keep the global File -> public_asset lock order.
-			if err := mediaasset.LockAttachableFilesForUpdate(ctx, tx, []string{sourceFileID}); err != nil {
-				return err
-			}
-			var asset model.PublicAsset
-			if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?", assetID).Take(&asset).Error; err != nil {
-				return err
-			}
-			if asset.SourceFileID == nil || *asset.SourceFileID != sourceFileID {
-				return errs.FailedPrecondition("public asset no longer belongs to the source file")
-			}
-			if asset.Status == model.PublicAssetStatusFailed {
-				now := time.Now().UTC()
-				resumed := tx.Model(&model.PublicAsset{}).
-					Where("id = ? AND status = ?", assetID, model.PublicAssetStatusFailed).
-					Updates(structured.Fields{
-						"file_size":      nil,
-						"sha256":         nil,
-						"status":         model.PublicAssetStatusAllocated,
-						"ready_at":       nil,
-						"failed_at":      nil,
-						"failure_reason": nil,
-						"updated_at":     now,
-					})
-				if resumed.Error != nil {
-					return resumed.Error
-				}
-				if resumed.RowsAffected != 1 {
-					return errs.FailedPrecondition("failed public asset could not be resumed")
-				}
-			}
-			if _, err := mediaasset.NewLifecycle(tx, s.cdnDomain).CompletePublicAsset(ctx, result); err != nil {
+			if err := s.completeLockedSourceAsset(ctx, tx, sourceFileID, assetID, result); err != nil {
 				return err
 			}
 			callbackCompleted = true

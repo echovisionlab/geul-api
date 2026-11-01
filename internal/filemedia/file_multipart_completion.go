@@ -260,62 +260,16 @@ func (s *Service) recoverFinishedMultipartCompletion(
 		return nil, errs.AuthenticationRequired()
 	}
 
-	// A different upload ID must not bypass an active session and return before
-	// attachment/downstream confirmation. Successful completion deletes the only
-	// session for this file after every required side effect has succeeded.
-	var activeSessionCount int64
-	if err := s.db.WithContext(ctx).
-		Model(&model.UploadSession{}).
-		Where("file_id = ?", fileID).
-		Count(&activeSessionCount).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("inspect completed upload authority: %w", err))
+	file, uploadType, err := s.loadFinishedMultipartFile(ctx, fileID)
+	if err != nil {
+		return nil, err
 	}
-	if activeSessionCount != 0 {
-		return nil, errs.NotFoundMsg("upload session not found")
-	}
-
-	var file model.File
-	if err := s.db.WithContext(ctx).Where("id = ?", fileID).Take(&file).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFoundMsg("upload session not found")
-		}
-		return nil, errs.Internal(fmt.Errorf("load completed file: %w", err))
-	}
-	if file.DeleteRequestedAt != nil || file.FileSize <= 0 ||
-		strings.TrimSpace(file.FileName) == "" || strings.TrimSpace(file.MimeType) == "" ||
-		file.Extension != mediaExtension(&file.MimeType) ||
-		file.FileName != storedFileBasename(file.FileName, file.ID, file.Extension) {
-		return nil, errs.FailedPrecondition("completed file metadata is not deliverable")
-	}
-
-	var binding model.FileIngestBinding
-	if err := s.db.WithContext(ctx).Where("file_id = ?", fileID).Take(&binding).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFoundMsg("upload session not found")
-		}
-		return nil, errs.Internal(fmt.Errorf("load completed file binding: %w", err))
-	}
-	uploadTypeValue, ok := managev1.UploadType_value[binding.UploadType]
-	if !ok {
-		return nil, errs.FailedPrecondition("completed file binding has unsupported upload type")
-	}
-	uploadType := managev1.UploadType(uploadTypeValue)
 	if err := s.authorizeManageFileDeliveries(ctx, []string{fileID}); err != nil {
 		return nil, err
 	}
 	if file.ClientMediaBundleID != nil || request.ClientMediaBundleID != "" {
-		if file.ClientMediaBundleID == nil || *file.ClientMediaBundleID != request.ClientMediaBundleID {
-			return nil, errs.FailedPrecondition("completed client media bundle does not match")
-		}
-		if file.UploadedByMemberID == nil || *file.UploadedByMemberID != user.MemberID.String() {
-			return nil, errs.PermissionDenied("completed client media bundle belongs to another member")
-		}
-		ready, err := clientMediaFileReady(ctx, s.db, file)
-		if err != nil {
-			return nil, errs.Internal(err)
-		}
-		if !ready {
-			return nil, errs.FailedPrecondition("completed client media derivatives are not ready")
+		if err := s.requireFinishedClientMediaBundle(ctx, file, request.ClientMediaBundleID, user); err != nil {
+			return nil, err
 		}
 	}
 
@@ -352,6 +306,82 @@ func (s *Service) recoverFinishedMultipartCompletion(
 			return nil, err
 		}
 	}
+	delivery, err := s.signFinishedMultipartDelivery(file, promotedAsset)
+	if err != nil {
+		return nil, err
+	}
+	return &managev1.CompleteMultipartUploadResponse{
+		FileId:   file.ID,
+		Delivery: delivery,
+	}, nil
+}
+
+// loadFinishedMultipartFile loads the deliverable File a completed upload
+// left behind and the upload type its ingest binding recorded.
+func (s *Service) loadFinishedMultipartFile(ctx context.Context, fileID string) (model.File, managev1.UploadType, error) {
+	// A different upload ID must not bypass an active session and return before
+	// attachment/downstream confirmation. Successful completion deletes the only
+	// session for this file after every required side effect has succeeded.
+	var activeSessionCount int64
+	if err := s.db.WithContext(ctx).
+		Model(&model.UploadSession{}).
+		Where("file_id = ?", fileID).
+		Count(&activeSessionCount).Error; err != nil {
+		return model.File{}, 0, errs.Internal(fmt.Errorf("inspect completed upload authority: %w", err))
+	}
+	if activeSessionCount != 0 {
+		return model.File{}, 0, errs.NotFoundMsg("upload session not found")
+	}
+
+	var file model.File
+	if err := s.db.WithContext(ctx).Where("id = ?", fileID).Take(&file).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.File{}, 0, errs.NotFoundMsg("upload session not found")
+		}
+		return model.File{}, 0, errs.Internal(fmt.Errorf("load completed file: %w", err))
+	}
+	if file.DeleteRequestedAt != nil || file.FileSize <= 0 ||
+		strings.TrimSpace(file.FileName) == "" || strings.TrimSpace(file.MimeType) == "" ||
+		file.Extension != mediaExtension(&file.MimeType) ||
+		file.FileName != storedFileBasename(file.FileName, file.ID, file.Extension) {
+		return model.File{}, 0, errs.FailedPrecondition("completed file metadata is not deliverable")
+	}
+
+	var binding model.FileIngestBinding
+	if err := s.db.WithContext(ctx).Where("file_id = ?", fileID).Take(&binding).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.File{}, 0, errs.NotFoundMsg("upload session not found")
+		}
+		return model.File{}, 0, errs.Internal(fmt.Errorf("load completed file binding: %w", err))
+	}
+	uploadTypeValue, ok := managev1.UploadType_value[binding.UploadType]
+	if !ok {
+		return model.File{}, 0, errs.FailedPrecondition("completed file binding has unsupported upload type")
+	}
+	return file, managev1.UploadType(uploadTypeValue), nil
+}
+
+// requireFinishedClientMediaBundle requires the completed File's client media
+// bundle to be the requested one, uploaded by the caller, with its
+// derivatives ready.
+func (s *Service) requireFinishedClientMediaBundle(ctx context.Context, file model.File, bundleID string, user *auth.UserInfo) error {
+	if file.ClientMediaBundleID == nil || *file.ClientMediaBundleID != bundleID {
+		return errs.FailedPrecondition("completed client media bundle does not match")
+	}
+	if file.UploadedByMemberID == nil || *file.UploadedByMemberID != user.MemberID.String() {
+		return errs.PermissionDenied("completed client media bundle belongs to another member")
+	}
+	ready, err := clientMediaFileReady(ctx, s.db, file)
+	if err != nil {
+		return errs.Internal(err)
+	}
+	if !ready {
+		return errs.FailedPrecondition("completed client media derivatives are not ready")
+	}
+	return nil
+}
+
+func (s *Service) signFinishedMultipartDelivery(file model.File, promotedAsset *commonv1.AssetRef) (*commonv1.MediaDelivery, error) {
 	inline, err := buildExpiringMediaFileRef(
 		s.mediaDomain,
 		s.mediaSecret,
@@ -379,7 +409,7 @@ func (s *Service) recoverFinishedMultipartCompletion(
 	if err != nil {
 		return nil, errs.Internal(fmt.Errorf("sign completed file download delivery: %w", err))
 	}
-	delivery := &commonv1.MediaDelivery{
+	return &commonv1.MediaDelivery{
 		FileId:    file.ID,
 		Extension: file.Extension,
 		MimeType:  file.MimeType,
@@ -388,10 +418,6 @@ func (s *Service) recoverFinishedMultipartCompletion(
 		Asset:     promotedAsset,
 		Inline:    inline,
 		Download:  download,
-	}
-	return &managev1.CompleteMultipartUploadResponse{
-		FileId:   file.ID,
-		Delivery: delivery,
 	}, nil
 }
 
