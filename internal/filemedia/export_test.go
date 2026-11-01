@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -114,4 +115,21 @@ func ExportClaimTrackUploadCleanup(s *Service, ctx context.Context, id string) (
 		result[i] = uploadSessionToStore(row)
 	}
 	return result, err
+}
+
+func ExportAbortService(units mutation.UnitOfWork[Store], storage *s3.Client, checker *auth.SpiceDBClient) *Service {
+	return &Service{units: units, s3Client: storage, s3Bucket: "media", spiceDB: checker, asyncPublisher: &hardCutAsyncPublisher{}}
+}
+
+func ExportRejectUploadPart(s *Service, w http.ResponseWriter, r *http.Request, row domain.UploadSession) bool {
+	return s.rejectMultipartUploadPart(w, r, uploadSessionFromStore(row), "MIME type mismatch")
+}
+
+func ExportValidateCompletedFile(s *Service, ctx context.Context, row domain.UploadSession, uploadType, entityType int32) error {
+	return s.validateCompletedFileRecord(ctx, uploadSessionFromStore(row), managev1.UploadType(uploadType), managev1.TranscodeEntityType(entityType))
+}
+
+func ExportLoadFinishedFile(s *Service, ctx context.Context, id string) (File, int32, error) {
+	file, upload, err := s.loadFinishedMultipartFile(ctx, id)
+	return File(file), int32(upload), err
 }
