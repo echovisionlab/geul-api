@@ -300,7 +300,7 @@ func loadEmailTemplateTranslationRows(
 	}
 	result := make(map[string]localizedEmailTemplateRow, len(rows))
 	for _, row := range rows {
-		result[row.Locale] = localizedEmailTemplateRow{Locale: row.Locale, Subject: row.Subject, ContentHTML: row.ContentHTML}
+		result[row.Locale] = localizedEmailTemplateRow(row)
 	}
 	return result, nil
 }
