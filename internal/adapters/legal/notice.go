@@ -203,7 +203,7 @@ func loadNoticeRenderSnapshot(
 	if template.LayoutID == nil || strings.TrimSpace(*template.LayoutID) == "" {
 		return snapshot, nil
 	}
-	layoutRows, err := email.LoadLayoutLocaleSnapshots(ctx, emailpostgres.Bind(db), strings.TrimSpace(*template.LayoutID))
+	layoutRows, err := email.LoadLayoutLocaleSnapshots(ctx, emailpostgres.NewStore(db), strings.TrimSpace(*template.LayoutID))
 	if err != nil {
 		return noticeRenderSnapshot{}, err
 	}

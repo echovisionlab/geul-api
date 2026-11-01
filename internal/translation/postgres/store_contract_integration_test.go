@@ -25,7 +25,7 @@ func TestPostgresStoreKeepsTheTranslationStoreContractIntegration(t *testing.T) 
 		// The contract reaches only translation's own tables, so no domain
 		// adapter or shared runtime is bound.
 		units := mutation.Postgres(db, func(tx *gorm.DB) application.Store {
-			return translationpostgres.Bind(tx, translationpostgres.Ports{})
+			return translationpostgres.NewStore(tx, translationpostgres.Ports{})
 		})
 		return translationtest.Harness{
 			Harness: mutationtest.PostgresHarness(db, units),

@@ -31,14 +31,14 @@ func emailLayoutDomainRegistration(
 			_ *contentblock.Store,
 			entityID string,
 		) (*core.SourceDocument, error) {
-			locale, found, err := email.ResolveLayoutTranslationSourceLocale(ctx, emailpostgres.Bind(db), entityID)
+			locale, found, err := email.ResolveLayoutTranslationSourceLocale(ctx, emailpostgres.NewStore(db), entityID)
 			if err != nil {
 				return nil, err
 			}
 			if !found {
 				return nil, fmt.Errorf("email layout %q source locale is not initialized", entityID)
 			}
-			return email.LoadLayoutTranslationSourceDocument(ctx, emailpostgres.Bind(db), entityID, locale)
+			return email.LoadLayoutTranslationSourceDocument(ctx, emailpostgres.NewStore(db), entityID, locale)
 		},
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
 			return email.BuildLayoutTranslationExtractionPlan(
@@ -91,7 +91,7 @@ func emailLayoutDomainRegistration(
 			now time.Time,
 		) error {
 			return email.PrepareLayoutSourceLocaleSwitch(
-				ctx, emailpostgres.Bind(db), entityID, currentSourceLocale, requestedLocale, now,
+				ctx, emailpostgres.NewStore(db), entityID, currentSourceLocale, requestedLocale, now,
 			)
 		},
 		requireSourceMutable: func(ctx context.Context, db *gorm.DB, entityID string) error {

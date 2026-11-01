@@ -1,4 +1,4 @@
-package postgres
+package artistpostgres
 
 import (
 	"context"
@@ -365,15 +365,15 @@ func (s *store) ReplaceLabelIDs(ctx context.Context, artistID string, labelIDs [
 }
 
 func (s *store) CheckResourceRoute(ctx context.Context, slug string) error {
-	return s.deps.Runtime.EnsureResourceRouteAvailable(ctx, s.tx, "artist", "artists", slug)
+	return s.ports.Runtime.EnsureResourceRouteAvailable(ctx, s.tx, "artist", "artists", slug)
 }
 
 func (s *store) LockResourceRoute(ctx context.Context, slug string) error {
-	return s.deps.Runtime.EnsureResourceRouteAvailableInTx(ctx, s.tx, "artist", "artists", slug)
+	return s.ports.Runtime.EnsureResourceRouteAvailableInTx(ctx, s.tx, "artist", "artists", slug)
 }
 
 func (s *store) ResourceRouteAvailable(ctx context.Context, slug string) (bool, error) {
-	return s.deps.Runtime.IsResourceRouteAvailable(ctx, s.tx, "artists", slug)
+	return s.ports.Runtime.IsResourceRouteAvailable(ctx, s.tx, "artists", slug)
 }
 
 func (s *store) LocaleTitle(ctx context.Context, artistID, locale string, forUpdate bool) (artist.LocaleTitle, bool, error) {

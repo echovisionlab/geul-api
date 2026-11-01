@@ -1,6 +1,6 @@
 //go:build integration
 
-package postgres_test
+package artistpostgres_test
 
 import (
 	"testing"
@@ -25,8 +25,8 @@ func TestPostgresStoreKeepsTheArtistStoreContractIntegration(t *testing.T) {
 		// The contract reaches the artist rows and the Label links; content,
 		// media, collaboration and the other relation readers stay with
 		// their own tests.
-		deps := artistpostgres.Deps{Labels: labeladapter.NewArtistLinks()}
-		units := mutation.Postgres(db, func(tx *gorm.DB) artist.Store { return artistpostgres.Bind(tx, deps) })
+		ports := artistpostgres.Ports{Labels: labeladapter.NewArtistLinks()}
+		units := mutation.Postgres(db, func(tx *gorm.DB) artist.Store { return artistpostgres.NewStore(tx, ports) })
 		seedDocument := func(t *testing.T) string {
 			id := uuid.NewString()
 			require.NoError(t, db.Exec(`INSERT INTO content_document (id, profile) VALUES (?, 'compact')`, id).Error)

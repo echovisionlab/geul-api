@@ -22,7 +22,7 @@ var _ accountpostgres.MemberDeletion = MemberDeletion{}
 func (MemberDeletion) PrepareTombstone(
 	ctx context.Context, db *gorm.DB, memberID, identityID, email string,
 ) (account.MemberDeletionSnapshot, error) {
-	snapshot, err := (member.DeletionLifecycle{}).PrepareTombstone(ctx, memberpostgres.Bind(db), memberID, identityID, email)
+	snapshot, err := (member.DeletionLifecycle{}).PrepareTombstone(ctx, memberpostgres.NewStore(db), memberID, identityID, email)
 	return account.MemberDeletionSnapshot{
 		MemberID: snapshot.MemberID, IdentityID: snapshot.IdentityID,
 		PrimaryEmailSnapshot: snapshot.PrimaryEmailSnapshot,
@@ -37,7 +37,7 @@ func (MemberDeletion) FinalizeTombstone(
 	deletedAt time.Time,
 	appendAudit accountpostgres.MemberDeletionAudit,
 ) error {
-	store, err := memberpostgres.BindTransaction(db)
+	store, err := memberpostgres.NewStoreInTransaction(db)
 	if err != nil {
 		return err
 	}
@@ -51,7 +51,7 @@ func (MemberDeletion) FinalizeTombstone(
 func (MemberDeletion) PrepareUnonboardedHardDelete(
 	ctx context.Context, db *gorm.DB, memberID, identityID string,
 ) (account.MemberUnonboardedDeletionTarget, error) {
-	target, err := (member.DeletionLifecycle{}).PrepareUnonboardedHardDelete(ctx, memberpostgres.Bind(db), memberID, identityID)
+	target, err := (member.DeletionLifecycle{}).PrepareUnonboardedHardDelete(ctx, memberpostgres.NewStore(db), memberID, identityID)
 	return account.MemberUnonboardedDeletionTarget{
 		MemberID: target.MemberID, IdentityID: target.IdentityID, IdentityLinked: target.IdentityLinked,
 	}, err
@@ -71,7 +71,7 @@ func (MemberDeletion) FinalizeUnonboardedHardDelete(
 	target account.MemberUnonboardedDeletionTarget,
 	appendAudit accountpostgres.MemberDeletionAudit,
 ) error {
-	store, err := memberpostgres.BindTransaction(tx)
+	store, err := memberpostgres.NewStoreInTransaction(tx)
 	if err != nil {
 		return err
 	}
@@ -92,24 +92,24 @@ func unonboardedTarget(target account.MemberUnonboardedDeletionTarget) member.Un
 }
 
 func (MemberDeletion) CleanupAvatar(ctx context.Context, db *gorm.DB, memberID, avatarAssetID string) error {
-	return (member.DeletionLifecycle{}).CleanupAvatar(ctx, memberpostgres.Bind(db), memberID, avatarAssetID)
+	return (member.DeletionLifecycle{}).CleanupAvatar(ctx, memberpostgres.NewStore(db), memberID, avatarAssetID)
 }
 
 func (MemberDeletion) NotificationSnapshot(
 	ctx context.Context, db *gorm.DB, memberID, identityID string,
 ) (account.MemberDeletionNotification, error) {
-	snapshot, err := (member.DeletionLifecycle{}).NotificationSnapshot(ctx, memberpostgres.Bind(db), memberID, identityID)
+	snapshot, err := (member.DeletionLifecycle{}).NotificationSnapshot(ctx, memberpostgres.NewStore(db), memberID, identityID)
 	return account.MemberDeletionNotification{
 		Nickname: snapshot.Nickname, PrimaryEmail: snapshot.PrimaryEmail, Locale: snapshot.Locale,
 	}, err
 }
 
 func (MemberDeletion) CompletionEligible(ctx context.Context, db *gorm.DB, memberID string) (bool, error) {
-	return (member.DeletionLifecycle{}).CompletionEligible(ctx, memberpostgres.Bind(db), memberID)
+	return (member.DeletionLifecycle{}).CompletionEligible(ctx, memberpostgres.NewStore(db), memberID)
 }
 
 func (MemberDeletion) AvatarAssetID(ctx context.Context, db *gorm.DB, memberID string) (string, error) {
-	return (member.DeletionLifecycle{}).AvatarAssetID(ctx, memberpostgres.Bind(db), memberID)
+	return (member.DeletionLifecycle{}).AvatarAssetID(ctx, memberpostgres.NewStore(db), memberID)
 }
 
 func (MemberDeletion) ListExpiredUnonboarded(
@@ -123,7 +123,7 @@ func (MemberDeletion) ListExpiredUnonboarded(
 	if after != nil {
 		memberCursor = &member.UnonboardedCursor{CreatedAt: after.CreatedAt, MemberID: after.MemberID}
 	}
-	rows, next, err := (member.DeletionLifecycle{}).ListExpiredUnonboarded(ctx, memberpostgres.Bind(db), cutoff, limit, memberCursor)
+	rows, next, err := (member.DeletionLifecycle{}).ListExpiredUnonboarded(ctx, memberpostgres.NewStore(db), cutoff, limit, memberCursor)
 	result := make([]account.MemberUnonboardedCandidate, 0, len(rows))
 	for _, row := range rows {
 		result = append(result, account.MemberUnonboardedCandidate{
@@ -139,9 +139,9 @@ func (MemberDeletion) ListExpiredUnonboarded(
 func (MemberDeletion) RecheckUnonboarded(
 	ctx context.Context, tx *gorm.DB, memberID, identityID string, cutoff *time.Time,
 ) (bool, error) {
-	return (member.DeletionLifecycle{}).RecheckUnonboarded(ctx, memberpostgres.Bind(tx), memberID, identityID, cutoff)
+	return (member.DeletionLifecycle{}).RecheckUnonboarded(ctx, memberpostgres.NewStore(tx), memberID, identityID, cutoff)
 }
 
 func (MemberDeletion) UnonboardedIdentity(ctx context.Context, db *gorm.DB, memberID string) (string, bool, error) {
-	return (member.DeletionLifecycle{}).UnonboardedIdentity(ctx, memberpostgres.Bind(db), memberID)
+	return (member.DeletionLifecycle{}).UnonboardedIdentity(ctx, memberpostgres.NewStore(db), memberID)
 }

@@ -42,7 +42,7 @@ func TestRegistrationEmailReuseHoldChecksEveryDeletedMemberCandidateIntegration(
 	blocked, err := member.RegistrationEmailReuseBlocked(t.Context(), db, "SECONDARY@example.test")
 	require.NoError(t, err)
 	require.True(t, blocked)
-	held, err := memberpostgres.Bind(db).EmailReuseHeld(t.Context(), "secondary@example.test")
+	held, err := memberpostgres.NewStore(db).EmailReuseHeld(t.Context(), "secondary@example.test")
 	require.NoError(t, err)
 	require.True(t, held)
 
@@ -96,7 +96,7 @@ func TestMemberIDAllocationSkipsAnExistingUUIDNicknameIntegration(t *testing.T) 
 	claimed := uuid.NewString()
 	require.NoError(t, db.Exec(`INSERT INTO member (id, nickname, onboarded, available_emails) VALUES (?::uuid, ?, TRUE, '{}'::text[])`, uuid.NewString(), claimed).Error)
 	_, identityID := seedLinked(t, db, "identity-holder", true)
-	store := memberpostgres.Bind(db)
+	store := memberpostgres.NewStore(db)
 
 	for candidate, want := range map[string]bool{claimed: true, identityID: true, uuid.NewString(): false} {
 		occupied, err := store.MemberIDOccupied(t.Context(), candidate)
@@ -109,7 +109,7 @@ func TestDeletionWitnessReportsTheBilateralLinkIntegration(t *testing.T) {
 	t.Parallel()
 	db := emailDB(t)
 	memberID, identityID := seedLinked(t, db, "witness", true)
-	store := memberpostgres.Bind(db)
+	store := memberpostgres.NewStore(db)
 
 	linked, exists, err := store.DeletionPairWitness(t.Context(), memberID, identityID)
 	require.NoError(t, err)

@@ -18,7 +18,7 @@ import (
 )
 
 func (s *store) LockAttachableFiles(ctx context.Context, fileIDs []string) error {
-	return mediaassetpostgres.Bind(s.tx).LockAttachableFiles(ctx, fileIDs)
+	return mediaassetpostgres.NewStore(s.tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (s *store) FindFile(ctx context.Context, fileID string) error {
@@ -34,7 +34,7 @@ func (s *store) ReadyOgAssets(ctx context.Context, assetIDs []string) (map[strin
 		Find(&assets).Error; err != nil {
 		return nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.deps.CDNDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.ports.CDNDomain)
 	for _, asset := range assets {
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
@@ -49,15 +49,15 @@ func (s *store) ReadyOgAssets(ctx context.Context, assetIDs []string) (map[strin
 }
 
 func (s *store) BlockMedia(ctx context.Context, postID string, documentID uuid.UUID, principal *auth.UserInfo) ([]*contentv1.ContentBlockMediaItem, error) {
-	items, err := s.deps.MediaLoader.LoadContentBlockMediaReferences(ctx, s.tx, documentID)
+	items, err := s.ports.MediaLoader.LoadContentBlockMediaReferences(ctx, s.tx, documentID)
 	if err != nil {
 		return nil, err
 	}
-	return s.deps.Media.HydrateAuthorizedPostBlockMediaWithDB(auth.WithUser(ctx, principal), s.tx, postID, documentID, principal, items)
+	return s.ports.Media.HydrateAuthorizedPostBlockMediaWithDB(auth.WithUser(ctx, principal), s.tx, postID, documentID, principal, items)
 }
 
 func (s *store) RequestOG(ctx context.Context, postID, locale string, force bool, reason string) (*string, error) {
-	plan, err := s.deps.OG.RequestCurrentWithDB(
+	plan, err := s.ports.OG.RequestCurrentWithDB(
 		ctx, s.tx, managev1.OgEntityType_OG_ENTITY_TYPE_POST, postID, locale, force, reason,
 	)
 	if err != nil || plan == nil {
@@ -71,9 +71,9 @@ func (s *store) CancelOG(ctx context.Context, postID string) error {
 	if err := ogpostgres.CancelEntity(ctx, s.tx, managev1.OgEntityType_OG_ENTITY_TYPE_POST, postID); err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.deps.CDNDomain).ReleasePublicAssetBindings(ctx, "post", postID, "og")
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.ports.CDNDomain).ReleasePublicAssetBindings(ctx, "post", postID, "og")
 }
 
 func (s *store) DeleteShareLinks(ctx context.Context, postID string) error {
-	return s.deps.ShareLinkCleanup.DeleteEntityShareLinks(ctx, s.tx, postID)
+	return s.ports.ShareLinkCleanup.DeleteEntityShareLinks(ctx, s.tx, postID)
 }

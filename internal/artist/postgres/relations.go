@@ -1,4 +1,4 @@
-package postgres
+package artistpostgres
 
 import (
 	"context"
@@ -19,33 +19,33 @@ func (s *store) ChildArtists(ctx context.Context, artistID string) ([]entitypart
 }
 
 func (s *store) ProgramEventsOfArtist(ctx context.Context, artistID string) ([]entityparticipant.Related, error) {
-	return s.deps.ProgramEvents.ProgramEventsOfArtist(ctx, s.tx, artistID)
+	return s.ports.ProgramEvents.ProgramEventsOfArtist(ctx, s.tx, artistID)
 }
 
 func (s *store) ReleasesOfArtist(ctx context.Context, artistID string) ([]entityparticipant.Related, error) {
-	return s.deps.Releases.ReleasesOfArtist(ctx, s.tx, artistID)
+	return s.ports.Releases.ReleasesOfArtist(ctx, s.tx, artistID)
 }
 
 func (s *store) TracksOfArtist(ctx context.Context, artistID string) ([]entityparticipant.Related, error) {
-	return s.deps.Releases.TracksOfArtist(ctx, s.tx, artistID)
+	return s.ports.Releases.TracksOfArtist(ctx, s.tx, artistID)
 }
 
 func (s *store) WorksOfArtist(ctx context.Context, artistID string) ([]entityparticipant.Related, error) {
-	return s.deps.Works.WorksOfArtist(ctx, s.tx, artistID)
+	return s.ports.Works.WorksOfArtist(ctx, s.tx, artistID)
 }
 
 func (s *store) LabelTitles(ctx context.Context, labelIDs []string) (map[string]string, error) {
-	return s.deps.Labels.LabelTitles(ctx, s.tx, labelIDs)
+	return s.ports.Labels.LabelTitles(ctx, s.tx, labelIDs)
 }
 
 func (s *store) DraftLabelIDs(ctx context.Context, labelIDs []string) (map[string]bool, error) {
-	return s.deps.Labels.DraftLabelIDs(ctx, s.tx, labelIDs)
+	return s.ports.Labels.DraftLabelIDs(ctx, s.tx, labelIDs)
 }
 
 func (s *store) CountReleasesByArtist(ctx context.Context, artistIDs []string) (map[string]int32, error) {
-	return s.deps.Releases.CountReleasesByArtist(ctx, s.tx, artistIDs)
+	return s.ports.Releases.CountReleasesByArtist(ctx, s.tx, artistIDs)
 }
 
 func (s *store) DeleteShareLinks(ctx context.Context, artistID string) error {
-	return s.deps.ShareLinks.DeleteArtistShareLinks(ctx, s.tx, artistID)
+	return s.ports.ShareLinks.DeleteArtistShareLinks(ctx, s.tx, artistID)
 }

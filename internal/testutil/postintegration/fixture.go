@@ -126,7 +126,7 @@ type Deps struct {
 func NewUnits(t *testing.T, deps Deps) mutation.UnitOfWork[postdomain.Store] {
 	t.Helper()
 	deps = withDefaults(t, deps)
-	units, err := postpostgres.NewUnits(deps.DB, postpostgres.Deps{
+	units, err := postpostgres.NewUnits(deps.DB, postpostgres.Ports{
 		ContentBlocks: deps.ContentBlocks, Signals: deps.Signals, OG: NewPostOGRefresher(deps.DB, deps.CDNDomain),
 		ShareLinkCleanup: sharelinkadapter.EntityLinks{Type: sharelink.EntityPost},
 		MediaLoader:      deps.MediaLoader, Media: deps.Media, VersionRestore: deps.VersionRestore, CDNDomain: deps.CDNDomain,

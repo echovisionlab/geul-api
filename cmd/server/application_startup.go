@@ -140,7 +140,7 @@ func initializeApplicationDependencies(
 	deps.s3PresignClient = s3.NewPresignClient(publicS3Client)
 	deps.workerPublisher = deps.hooksPublisher
 	deps.transcodeTracker = transcodepostgres.NewTracker(deps.db, deps.workerPublisher)
-	deps.adapterLoader = email.NewAdapterLoader(emailpostgres.Bind(deps.db), nil)
+	deps.adapterLoader = email.NewAdapterLoader(emailpostgres.NewStore(deps.db), nil)
 	metadataAIUnits, err := aipostgres.NewUnits(deps.db, deps.servicePublisher)
 	if err != nil {
 		return nil, fmt.Errorf("initialize metadata AI store: %w", err)

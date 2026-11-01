@@ -33,7 +33,7 @@ func NewAssets(cdnDomain string) Assets {
 }
 
 func (a Assets) LockForAttachment(ctx context.Context, db *gorm.DB, fileIDs []string) error {
-	return mediaassetpostgres.Bind(db).LockAttachableFiles(ctx, fileIDs)
+	return mediaassetpostgres.NewStore(db).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (a Assets) BindReady(

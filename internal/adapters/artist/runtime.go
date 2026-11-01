@@ -146,7 +146,7 @@ func (r *Runtime) ReplaceArtistImageBindings(
 	artistID string,
 	fileIDs []string,
 ) error {
-	if err := mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, fileIDs); err != nil {
+	if err := mediaassetpostgres.NewStore(tx).LockAttachableFiles(ctx, fileIDs); err != nil {
 		return err
 	}
 	var currentKeys []string

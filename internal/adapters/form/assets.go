@@ -29,7 +29,7 @@ func NewAssets(cdnDomain string) *Assets {
 }
 
 func (a *Assets) LockAttachableFiles(ctx context.Context, tx *gorm.DB, fileIDs []string) error {
-	return mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, fileIDs)
+	return mediaassetpostgres.NewStore(tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (a *Assets) BindFeaturedImage(

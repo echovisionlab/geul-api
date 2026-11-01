@@ -60,8 +60,8 @@ type LocalizationService interface {
 	) (public.LocalizedContentSelection, error)
 }
 
-// Deps are the shared runtimes the Store uses.
-type Deps struct {
+// Ports are the shared runtimes the Store uses.
+type Ports struct {
 	ContentBlocks *contentblock.Store
 	Localization  LocalizationService
 	MapPlaces     MapPlaceProjector
@@ -70,7 +70,7 @@ type Deps struct {
 	CDNDomain string
 }
 
-func (d Deps) validate() error {
+func (d Ports) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
 		"ContentBlocks": d.ContentBlocks == nil, "Localization": d.Localization == nil,
@@ -88,15 +88,15 @@ func (d Deps) validate() error {
 }
 
 // NewUnits returns the unit of work of the public Post reads.
-func NewUnits(db *gorm.DB, deps Deps) (mutation.UnitOfWork[public.Store], error) {
+func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[public.Store], error) {
 	if db == nil {
 		return nil, errors.New("public post store database is required")
 	}
-	if err := deps.validate(); err != nil {
+	if err := ports.validate(); err != nil {
 		return nil, err
 	}
 	return mutation.Postgres(db, func(tx *gorm.DB) public.Store {
-		return &store{Store: postpostgres.Bind(tx, postpostgres.Deps{ContentBlocks: deps.ContentBlocks}), tx: tx, deps: deps}
+		return &store{Store: postpostgres.NewStore(tx, postpostgres.Ports{ContentBlocks: ports.ContentBlocks}), tx: tx, ports: ports}
 	}), nil
 }
 
@@ -123,8 +123,8 @@ func (l Localizer) ResolveSelections(ctx context.Context, entityType string, ent
 // reads, which a public read shares with the manage reads.
 type store struct {
 	post.Store
-	tx   *gorm.DB
-	deps Deps
+	tx    *gorm.DB
+	ports Ports
 }
 
 var _ public.Store = (*store)(nil)
@@ -156,7 +156,7 @@ func (s *store) ShareLockPost(ctx context.Context, slugOrID string, byID bool) (
 	}
 	locked := public.PublicPost{Post: postpostgres.PostFromRow(row)}
 	if row.MapPlaceID != nil {
-		locked.MapPlace = s.deps.MapPlaces.Basic(row.MapPlace)
+		locked.MapPlace = s.ports.MapPlaces.Basic(row.MapPlace)
 	}
 	return locked, nil
 }
@@ -167,7 +167,7 @@ func (err notFoundError) Is(target error) bool { return target == post.ErrPostNo
 func (err notFoundError) Unwrap() error        { return err.error }
 
 func (s *store) ShareLink(ctx context.Context, token, password, postID string) (*mediaasset.ContentDownloadShareLinkWitness, error) {
-	link, err := s.deps.ShareLinks.ValidateShareLinkForEntity(ctx, s.tx, token, password, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_POST, postID)
+	link, err := s.ports.ShareLinks.ValidateShareLinkForEntity(ctx, s.tx, token, password, managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_POST, postID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, shareLinkNotFoundError{err}
 	}
@@ -178,11 +178,11 @@ func (s *store) ShareLink(ctx context.Context, token, password, postID string) (
 }
 
 func (s *store) ResolveLocalization(ctx context.Context, postID, acceptLanguage string) (public.LocalizedContentSelection, error) {
-	return s.deps.Localization.ResolveSelectionWithPolicy(ctx, s.tx, "post", postID, acceptLanguage, true)
+	return s.ports.Localization.ResolveSelectionWithPolicy(ctx, s.tx, "post", postID, acceptLanguage, true)
 }
 
 func (s *store) ResolveOgConsistency(ctx context.Context, postID string, selection public.LocalizedContentSelection) (public.LocalizedContentSelection, error) {
-	return s.deps.Localization.ResolveOgConsistency(ctx, s.tx, s.deps.CDNDomain, "post", postID, selection)
+	return s.ports.Localization.ResolveOgConsistency(ctx, s.tx, s.ports.CDNDomain, "post", postID, selection)
 }
 
 func (s *store) ReadyOgAsset(ctx context.Context, candidates ...*string) (*commonv1.AssetRef, error) {
@@ -202,7 +202,7 @@ func (s *store) ReadyOgAsset(ctx context.Context, candidates ...*string) (*commo
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.deps.CDNDomain).AssetRef(mediaassetpostgres.Asset(asset)))
+		return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.ports.CDNDomain).AssetRef(mediaassetpostgres.Asset(asset)))
 	}
 	return nil, nil
 }

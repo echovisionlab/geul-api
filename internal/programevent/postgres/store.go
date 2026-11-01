@@ -22,7 +22,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
 
@@ -110,32 +109,17 @@ func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[programevent.Store]
 	if err := ports.validate(); err != nil {
 		return nil, err
 	}
-	return mutation.Postgres(db, func(tx *gorm.DB) programevent.Store { return newStore(tx, ports) }), nil
+	return mutation.Postgres(db, func(tx *gorm.DB) programevent.Store { return NewStore(tx, ports) }), nil
 }
 
 // Bind joins tx, a transaction another pipeline opened: translation
 // delivery and interchange, or an attachment check. Only the methods whose
 // ports are set are usable; a nil audit leaves the step unaudited.
 func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) programevent.Joined {
-	joined := programevent.Joined{Store: newStore(tx, ports)}
-	if audit != nil {
-		joined.Audit = boundAudit{audit: audit, tx: tx}
-	}
-	return joined
+	return programevent.Joined{Store: NewStore(tx, ports), Audit: domainaudit.Bind(tx, audit)}
 }
 
-// boundAudit appends in the joined transaction whatever transaction the
-// Program Event step names, which is nil.
-type boundAudit struct {
-	audit domainaudit.Appender
-	tx    *gorm.DB
-}
-
-func (b boundAudit) AppendDomainAuditInTransaction(ctx context.Context, _ *gorm.DB, record sharedtelemetry.AuditRecord) error {
-	return b.audit.AppendDomainAuditInTransaction(ctx, b.tx, record)
-}
-
-func newStore(tx *gorm.DB, ports Ports) *store {
+func NewStore(tx *gorm.DB, ports Ports) *store {
 	return &store{tx: tx, ports: ports}
 }
 
@@ -149,7 +133,7 @@ var _ programevent.Store = (*store)(nil)
 // with binds the Store to tx, the transaction a shared runtime hands back
 // to a domain callback.
 func (s *store) with(tx *gorm.DB) programevent.Store {
-	return newStore(tx, s.ports)
+	return NewStore(tx, s.ports)
 }
 
 // notFoundError keeps the driver's not-found error readable and in the

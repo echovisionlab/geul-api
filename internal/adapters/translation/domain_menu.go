@@ -7,6 +7,7 @@ import (
 	"time"
 
 	menuadapter "github.com/echovisionlab/geul-api/internal/adapters/menu"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -37,7 +38,7 @@ func menuDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			if job == nil || job.EntityType != string(core.KindMenu) {
 				return errors.New("menu provider translation candidate is required")
 			}
-			return menu.ApplyProviderTranslation(ctx, menuadapter.Join(tx, audit), menu.ProviderTranslation{
+			return menu.ApplyProviderTranslation(ctx, menupostgres.Bind(tx, menupostgres.Ports{}, audit), menu.ProviderTranslation{
 				MenuID: job.EntityID, TargetLocale: job.TargetLocale, RequestedByMemberID: job.RequestedByMemberID,
 				Candidate: candidate, Now: input.Now,
 			})

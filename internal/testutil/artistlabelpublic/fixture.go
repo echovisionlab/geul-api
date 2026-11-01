@@ -128,7 +128,7 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	artistRuntime := artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher())
 
 	manageArtist := artistdomain.NewConnectHandler(newFixtureArtistService(t, db, spiceDB, contentBlocks, publisher))
-	labelUnits, err := labelpostgres.NewUnits(db, labelpostgres.Deps{
+	labelUnits, err := labelpostgres.NewUnits(db, labelpostgres.Ports{
 		ContentBlocks: contentBlocks, Publisher: publisher, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
 		Translation:   labeladapter.NewTranslation(),
 		Runtime:       labeladapter.NewRuntime(artistLabelPublicCDN, labelFixtureOGRefresher()),
@@ -538,7 +538,7 @@ func createPublishedArtistLabelFixtureLabel(
 // recorder.
 func newFixtureArtistService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentblock.Store, publisher artistLabelAsyncPublisher) *artistdomain.Service {
 	t.Helper()
-	units, err := artistpostgres.NewUnits(db, artistpostgres.Deps{
+	units, err := artistpostgres.NewUnits(db, artistpostgres.Ports{
 		ContentBlocks: store, Publisher: publisher, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
 		Translation:   artistadapter.NewTranslation(),
 		Runtime:       artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher()),

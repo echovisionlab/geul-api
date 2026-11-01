@@ -62,12 +62,12 @@ func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[og.Store], error) {
 		return nil, fmt.Errorf("OG units: missing %s", strings.Join(missing, ", "))
 	}
 	ports.CDNDomain = strings.TrimRight(strings.TrimSpace(ports.CDNDomain), "/")
-	return mutation.Postgres(db, func(tx *gorm.DB) og.Store { return Bind(tx, ports) }), nil
+	return mutation.Postgres(db, func(tx *gorm.DB) og.Store { return NewStore(tx, ports) }), nil
 }
 
-// Bind binds the OG store to tx, the transaction of the caller that joins
-// it. A port Bind leaves unset fails the call that needs it.
-func Bind(tx *gorm.DB, ports Ports) og.Store {
+// NewStore binds the OG store to tx, the transaction of the caller that joins
+// it. A port NewStore leaves unset fails the call that needs it.
+func NewStore(tx *gorm.DB, ports Ports) og.Store {
 	return &store{tx: tx, ports: ports}
 }
 

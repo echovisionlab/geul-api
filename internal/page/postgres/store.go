@@ -24,7 +24,6 @@ import (
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // OGRequests is the narrow OG lifecycle a Page transaction drives.
@@ -137,22 +136,7 @@ func NewStore(tx *gorm.DB, ports Ports) page.Store {
 // Bind joins the Store and audit to tx, a transaction another domain's
 // pipeline opened (translation delivery and interchange).
 func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) page.Joined {
-	joined := page.Joined{Store: NewStore(tx, ports)}
-	if audit != nil {
-		joined.Audit = boundAudit{audit: audit, tx: tx}
-	}
-	return joined
-}
-
-// boundAudit appends in the joined transaction whatever transaction the
-// Page step names, which is nil.
-type boundAudit struct {
-	audit domainaudit.Appender
-	tx    *gorm.DB
-}
-
-func (b boundAudit) AppendDomainAuditInTransaction(ctx context.Context, _ *gorm.DB, record sharedtelemetry.AuditRecord) error {
-	return b.audit.AppendDomainAuditInTransaction(ctx, b.tx, record)
+	return page.Joined{Store: NewStore(tx, ports), Audit: domainaudit.Bind(tx, audit)}
 }
 
 type store struct {

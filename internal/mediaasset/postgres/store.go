@@ -23,10 +23,10 @@ func NewUnits(db *gorm.DB) mutation.UnitOfWork[mediaasset.Store] {
 	if db == nil {
 		panic("media asset units: db is required")
 	}
-	return mutation.Postgres(db, func(tx *gorm.DB) mediaasset.Store { return Bind(tx) })
+	return mutation.Postgres(db, func(tx *gorm.DB) mediaasset.Store { return NewStore(tx) })
 }
 
-func Bind(tx *gorm.DB) mediaasset.Store { return &store{tx: tx} }
+func NewStore(tx *gorm.DB) mediaasset.Store { return &store{tx: tx} }
 
 type store struct{ tx *gorm.DB }
 

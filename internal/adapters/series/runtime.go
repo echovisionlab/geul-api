@@ -151,7 +151,7 @@ func (r *Runtime) BindFeaturedImage(
 }
 
 func (r *Runtime) RequireAttachableFile(ctx context.Context, tx *gorm.DB, fileID string) error {
-	if err := mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, []string{fileID}); err != nil {
+	if err := mediaassetpostgres.NewStore(tx).LockAttachableFiles(ctx, []string{fileID}); err != nil {
 		return err
 	}
 	var file model.File

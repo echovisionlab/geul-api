@@ -27,13 +27,13 @@ func (s *store) FaviconSet(ctx context.Context, cdn, file string) (*favicon.Set,
 	return faviconpostgres.LoadSet(ctx, s.tx, cdn, file)
 }
 func (s *store) AttachFaviconSource(ctx context.Context, asset, file string, now time.Time) (bool, error) {
-	return faviconpostgres.Bind(s.tx, "").AttachSourceAsset(ctx, asset, file, now)
+	return faviconpostgres.NewStore(s.tx, "").AttachSourceAsset(ctx, asset, file, now)
 }
 func (s *store) InsertFaviconDerivative(ctx context.Context, id, file, typ, asset string) error {
 	return s.tx.WithContext(ctx).Table("file_derivative").Create(structured.Fields{"id": id, "file_id": file, "type": typ, "asset_id": asset}).Error
 }
 func (s *store) ScheduleStagedFaviconDeletion(ctx context.Context, ids []string, now time.Time) error {
-	return faviconpostgres.Bind(s.tx, "").ScheduleStagedDeletion(ctx, ids, now)
+	return faviconpostgres.NewStore(s.tx, "").ScheduleStagedDeletion(ctx, ids, now)
 }
 
 type faviconCommits struct {

@@ -65,7 +65,7 @@ func (r *Runtime) CancelAndReleaseEntityWithDB(
 }
 
 func (*Runtime) LockAttachableFilesForUpdate(ctx context.Context, tx *gorm.DB, fileIDs []string) error {
-	return mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, fileIDs)
+	return mediaassetpostgres.NewStore(tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (r *Runtime) ReleasePublicAssetBindings(
@@ -136,7 +136,7 @@ func (*Runtime) LoadUnavailableVersionAttachmentKinds(
 	tx *gorm.DB,
 	document proto.Message,
 ) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error) {
-	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, mediaassetpostgres.BindAttachments(tx), document)
+	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, mediaassetpostgres.NewAttachmentStore(tx), document)
 }
 
 func (r *Runtime) ResolveReadyOGAsset(

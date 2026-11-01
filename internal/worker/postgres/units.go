@@ -56,11 +56,11 @@ func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[worker.Jobs], error
 	if err := ports.validate(); err != nil {
 		return nil, err
 	}
-	return mutation.Postgres(db, func(tx *gorm.DB) worker.Jobs { return Bind(tx, ports) }), nil
+	return mutation.Postgres(db, func(tx *gorm.DB) worker.Jobs { return NewJobs(tx, ports) }), nil
 }
 
-// Bind returns the job ports bound to tx.
-func Bind(tx *gorm.DB, ports Ports) worker.Jobs {
+// NewJobs returns the job ports bound to tx.
+func NewJobs(tx *gorm.DB, ports Ports) worker.Jobs {
 	return jobs{tx: tx, ports: ports}
 }
 
@@ -70,7 +70,7 @@ type jobs struct {
 }
 
 func (j jobs) ScheduledPosts() post.Store {
-	return postpostgres.Bind(j.tx, postpostgres.Deps{})
+	return postpostgres.NewStore(j.tx, postpostgres.Ports{})
 }
 
 func (j jobs) MetadataAIRecovery() worker.MetadataAIRecovery {

@@ -43,7 +43,7 @@ func openLocaleDB(t *testing.T) *gorm.DB {
 
 func TestRecipientLocaleUsesTheExactActiveMember(t *testing.T) {
 	db := openLocaleDB(t)
-	store := emaildeliverypostgres.Bind(db)
+	store := emaildeliverypostgres.NewStore(db)
 
 	locale, err := store.RecipientLocale(t.Context(), "reader@example.test")
 	require.NoError(t, err)
@@ -71,7 +71,7 @@ func TestRecipientLocaleUsesTheExactActiveMember(t *testing.T) {
 
 func TestIdentityLocaleUsesTheLinkedActiveMember(t *testing.T) {
 	db := openLocaleDB(t)
-	store := emaildeliverypostgres.Bind(db)
+	store := emaildeliverypostgres.NewStore(db)
 
 	locale, err := store.IdentityLocale(t.Context(), "identity-1")
 	require.NoError(t, err)

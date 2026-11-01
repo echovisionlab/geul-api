@@ -65,7 +65,7 @@ func labelDomainRegistration(audit domainaudit.Appender) domainRegistration {
 // labelStore binds the Label Store to the translation domain's database
 // handle, with the content store it hands the delivery.
 func labelStore(db *gorm.DB, contents *contentblock.Store) label.Store {
-	return labelpostgres.Bind(db, labelpostgres.Deps{ContentBlocks: contents})
+	return labelpostgres.NewStore(db, labelpostgres.Ports{ContentBlocks: contents})
 }
 
 func labelTranslationJob(job *model.TranslationJob) label.TranslationJob {

@@ -21,29 +21,29 @@ import (
 
 // NewUnits returns the favicon unit of work over db.
 func NewUnits(db *gorm.DB, cdnDomain string) mutation.UnitOfWork[favicon.Store] {
-	return mutation.Postgres(db, func(tx *gorm.DB) favicon.Store { return Bind(tx, cdnDomain) })
+	return mutation.Postgres(db, func(tx *gorm.DB) favicon.Store { return NewStore(tx, cdnDomain) })
 }
 
-// Bind binds the favicon store to db, the caller's transaction or pool.
-func Bind(db *gorm.DB, cdnDomain string) favicon.Store {
+// NewStore binds the favicon store to db, the caller's transaction or pool.
+func NewStore(db *gorm.DB, cdnDomain string) favicon.Store {
 	return store{db: db, cdnDomain: cdnDomain}
 }
 
 // LoadSet returns the generated favicon set of a source File in db.
 func LoadSet(ctx context.Context, db *gorm.DB, cdnDomain, sourceFileID string) (*favicon.Set, error) {
-	return favicon.LoadSet(ctx, Bind(db, cdnDomain), sourceFileID)
+	return favicon.LoadSet(ctx, NewStore(db, cdnDomain), sourceFileID)
 }
 
 // Projection returns the legacy favicon and generated set of a source File
 // in db.
 func Projection(ctx context.Context, db *gorm.DB, cdnDomain, sourceFileID string) (*mediaasset.Reference, *favicon.Set) {
-	return favicon.Projection(ctx, Bind(db, cdnDomain), sourceFileID)
+	return favicon.Projection(ctx, NewStore(db, cdnDomain), sourceFileID)
 }
 
 // RequestDeletion schedules the favicon assets of a source File for deletion
 // in tx, the transaction that deletes the File.
 func RequestDeletion(ctx context.Context, tx *gorm.DB, sourceFileID string) error {
-	return favicon.RequestDeletion(ctx, Bind(tx, ""), sourceFileID)
+	return favicon.RequestDeletion(ctx, NewStore(tx, ""), sourceFileID)
 }
 
 type store struct {

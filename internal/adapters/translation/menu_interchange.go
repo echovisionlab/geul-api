@@ -5,7 +5,6 @@ import (
 
 	"gorm.io/gorm"
 
-	menuadapter "github.com/echovisionlab/geul-api/internal/adapters/menu"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -62,7 +61,7 @@ func (a *MenuInterchange) ApplyTranslationInterchange(
 	if err := validateScalarInterchangeApply(command, string(core.KindMenu)); err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
-	result, err := menudomain.ApplyTranslationInterchange(ctx, menuadapter.Join(db, a.audit), menudomain.TranslationInterchangeMutation{
+	result, err := menudomain.ApplyTranslationInterchange(ctx, menupostgres.Bind(db, menupostgres.Ports{}, a.audit), menudomain.TranslationInterchangeMutation{
 		MenuID: command.EntityID, SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
 		Mode: menuInterchangeMode(command.Mode), ExpectedRevision: command.ExpectedRevision,
 		Plan: command.Plan, Targets: command.Targets,

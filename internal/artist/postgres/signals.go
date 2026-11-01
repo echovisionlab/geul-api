@@ -1,4 +1,4 @@
-package postgres
+package artistpostgres
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 )
 
 func (s *store) PublishContentUpdate(ctx context.Context, update artist.ContentUpdate) error {
-	return contentsignal.PublishInTransaction(ctx, s.tx, s.deps.Publisher, contentUpdatedEvent(update))
+	return contentsignal.PublishInTransaction(ctx, s.tx, s.ports.Publisher, contentUpdatedEvent(update))
 }
 
 // contentUpdatedEvent renders an Artist's content.updated signal; nil when

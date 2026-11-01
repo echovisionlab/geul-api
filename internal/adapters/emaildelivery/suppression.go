@@ -25,6 +25,6 @@ func (s *SuppressionStore) Suppress(
 		return fmt.Errorf("email suppression database is required")
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return emaildelivery.SuppressAddress(ctx, emaildeliverypostgres.Bind(tx), request)
+		return emaildelivery.SuppressAddress(ctx, emaildeliverypostgres.NewStore(tx), request)
 	})
 }

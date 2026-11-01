@@ -32,7 +32,7 @@ func NewUnits(db *gorm.DB, contentBlocks *contentblock.Store) (mutation.UnitOfWo
 		return nil, errors.New("public artist store database and content blocks are required")
 	}
 	return mutation.Postgres(db, func(tx *gorm.DB) artistpublic.Store {
-		return store{tx: tx, artists: artistpostgres.Bind(tx, artistpostgres.Deps{ContentBlocks: contentBlocks})}
+		return store{tx: tx, artists: artistpostgres.NewStore(tx, artistpostgres.Ports{ContentBlocks: contentBlocks})}
 	}), nil
 }
 

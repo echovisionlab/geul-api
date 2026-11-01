@@ -66,7 +66,7 @@ func (m musicServiceRegistration) registerPublic(path string, handler http.Handl
 func (m musicServiceRegistration) registerArtist() (*artist.Service, error) {
 	deps := m.dependencies
 	artistRuntime := artistadapter.NewRuntime(deps.cfg.CDNURL, deps.og.refresher)
-	artistUnits, err := artistpostgres.NewUnits(deps.db, artistpostgres.Deps{
+	artistUnits, err := artistpostgres.NewUnits(deps.db, artistpostgres.Ports{
 		ContentBlocks: deps.contentBlockStore, Publisher: deps.servicePublisher, Checkpoints: m.checkpoints,
 		Translation:   artistadapter.NewTranslation(),
 		Runtime:       artistRuntime,
@@ -106,7 +106,7 @@ func (m musicServiceRegistration) registerArtist() (*artist.Service, error) {
 
 func (m musicServiceRegistration) registerLabel() (*label.Service, error) {
 	deps := m.dependencies
-	labelUnits, err := labelpostgres.NewUnits(deps.db, labelpostgres.Deps{
+	labelUnits, err := labelpostgres.NewUnits(deps.db, labelpostgres.Ports{
 		ContentBlocks: deps.contentBlockStore, Publisher: deps.servicePublisher, Checkpoints: m.checkpoints,
 		Translation:   labeladapter.NewTranslation(),
 		Runtime:       labeladapter.NewRuntime(deps.cfg.CDNURL, deps.og.refresher),

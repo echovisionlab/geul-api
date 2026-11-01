@@ -33,7 +33,7 @@ func NewRuntime(cdnDomain string, refresher *ogpostgres.Refresher) *Runtime {
 }
 
 func (*Runtime) LockAttachableFilesForUpdate(ctx context.Context, tx *gorm.DB, fileIDs []string) error {
-	return mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, fileIDs)
+	return mediaassetpostgres.NewStore(tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (runtime *Runtime) BindReadyAssetForSourceFile(

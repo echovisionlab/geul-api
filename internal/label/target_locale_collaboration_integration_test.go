@@ -254,7 +254,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	providerJobWithoutRequester.RequestedByMemberID = ""
 	err = db.Transaction(func(tx *gorm.DB) error {
 		return label.ApplyTypedTranslationCandidate(
-			t.Context(), labelpostgres.Bind(tx, labelpostgres.Deps{ContentBlocks: store}), providerJobWithoutRequester, providerCandidate,
+			t.Context(), labelpostgres.NewStore(tx, labelpostgres.Ports{ContentBlocks: store}), providerJobWithoutRequester, providerCandidate,
 			translation.EntryWrite{Now: time.Now().UTC()}, auditWriter,
 		)
 	})
@@ -262,7 +262,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	requireLabelTargetLocaleAuditCountIntegration(t, db, labelID, 7)
 
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return label.ApplyTypedTranslationCandidate(t.Context(), labelpostgres.Bind(tx, labelpostgres.Deps{ContentBlocks: store}), providerJob, providerCandidate, translation.EntryWrite{Now: time.Now().UTC()}, auditWriter)
+		return label.ApplyTypedTranslationCandidate(t.Context(), labelpostgres.NewStore(tx, labelpostgres.Ports{ContentBlocks: store}), providerJob, providerCandidate, translation.EntryWrite{Now: time.Now().UTC()}, auditWriter)
 	}))
 	jaLoaded := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ja")
 	require.True(t, jaLoaded.Msg.LocaleExists)
@@ -279,7 +279,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 		ContentBlockLocaleDeletes: []string{blockID},
 	}
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return label.ApplyTypedTranslationCandidate(t.Context(), labelpostgres.Bind(tx, labelpostgres.Deps{ContentBlocks: store}), providerJob, providerReplacement, translation.EntryWrite{Now: time.Now().UTC()}, auditWriter)
+		return label.ApplyTypedTranslationCandidate(t.Context(), labelpostgres.NewStore(tx, labelpostgres.Ports{ContentBlocks: store}), providerJob, providerReplacement, translation.EntryWrite{Now: time.Now().UTC()}, auditWriter)
 	}))
 	jaAfterReplacement := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ja")
 	require.True(t, jaAfterReplacement.Msg.LocaleExists)
@@ -288,7 +288,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	require.Equal(t, sourceEdited.Msg.DocumentRevision, jaAfterReplacement.Msg.DocumentRevision)
 	require.Zero(t, labelLocaleOverlayCountIntegration(t, db, labelID, "ja"), "provider whole replacement may remove omitted locale units")
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return label.ApplyTypedTranslationCandidate(t.Context(), labelpostgres.Bind(tx, labelpostgres.Deps{ContentBlocks: store}), providerJob, providerReplacement,
+		return label.ApplyTypedTranslationCandidate(t.Context(), labelpostgres.NewStore(tx, labelpostgres.Ports{ContentBlocks: store}), providerJob, providerReplacement,
 			translation.EntryWrite{Now: time.Now().UTC()}, auditWriter,
 		)
 	}))

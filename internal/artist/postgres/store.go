@@ -1,7 +1,7 @@
-// Package postgres is the PostgreSQL artist.Store: the artist tables, and
+// Package artistpostgres is the PostgreSQL artist.Store: the artist tables, and
 // the shared content, media, OG, route and relation runtimes an Artist
 // transaction drives, bound to one gorm transaction.
-package postgres
+package artistpostgres
 
 import (
 	"context"
@@ -76,8 +76,8 @@ type ShareLinks interface {
 	DeleteArtistShareLinks(ctx context.Context, tx *gorm.DB, artistID string) error
 }
 
-// Deps are the shared runtimes the Store drives in the Artist transaction.
-type Deps struct {
+// Ports are the shared runtimes the Store drives in the Artist transaction.
+type Ports struct {
 	ContentBlocks *contentblock.Store
 	Publisher     contentsignal.Publisher
 	Checkpoints   persistencecheckpoint.ContributorFence
@@ -90,7 +90,7 @@ type Deps struct {
 	ShareLinks    ShareLinks
 }
 
-func (d Deps) validate() error {
+func (d Ports) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
 		"ContentBlocks": d.ContentBlocks == nil, "Publisher": d.Publisher == nil, "Checkpoints": d.Checkpoints == nil,
@@ -110,21 +110,21 @@ func (d Deps) validate() error {
 }
 
 // NewUnits returns the production unit of work of the Artist use cases.
-func NewUnits(db *gorm.DB, deps Deps) (mutation.UnitOfWork[artist.Store], error) {
+func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[artist.Store], error) {
 	if db == nil {
 		return nil, errors.New("artist store database is required")
 	}
-	if err := deps.validate(); err != nil {
+	if err := ports.validate(); err != nil {
 		return nil, err
 	}
-	return mutation.Postgres(db, func(tx *gorm.DB) artist.Store { return Bind(tx, deps) }), nil
+	return mutation.Postgres(db, func(tx *gorm.DB) artist.Store { return NewStore(tx, ports) }), nil
 }
 
-// Bind returns the Store over tx, for a port another domain drives in its
+// NewStore returns the Store over tx, for a port another domain drives in its
 // own transaction (translation delivery, the public reads). Only the
-// methods whose runtime deps names are usable.
-func Bind(tx *gorm.DB, deps Deps) artist.Store {
-	return &store{Store: entityparticipantpostgres.New(tx, artistTables), tx: tx, deps: deps}
+// methods whose required ports are set are usable.
+func NewStore(tx *gorm.DB, ports Ports) artist.Store {
+	return &store{Store: entityparticipantpostgres.New(tx, artistTables), tx: tx, ports: ports}
 }
 
 var artistTables = entityparticipantpostgres.Tables{
@@ -134,8 +134,8 @@ var artistTables = entityparticipantpostgres.Tables{
 
 type store struct {
 	entityparticipantpostgres.Store
-	tx   *gorm.DB
-	deps Deps
+	tx    *gorm.DB
+	ports Ports
 }
 
 var _ artist.Store = (*store)(nil)
@@ -143,7 +143,7 @@ var _ artist.Store = (*store)(nil)
 // with binds the Store to tx, the transaction a shared runtime hands back
 // to a domain callback.
 func (s *store) with(tx *gorm.DB) artist.Store {
-	return Bind(tx, s.deps)
+	return NewStore(tx, s.ports)
 }
 
 // notFoundError keeps the driver's not-found error readable and in the

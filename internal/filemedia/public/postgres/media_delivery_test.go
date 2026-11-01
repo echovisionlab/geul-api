@@ -22,16 +22,16 @@ func TestReadyPublicAssetProjectionAndLookupUnit(t *testing.T) {
 	fileID, sourceAssetID := seedMediaDeliveryTestAsset(t, db, "image")
 	_, localizedAssetID := seedMediaDeliveryTestAsset(t, db, "og")
 
-	byID, err := filepublicpostgres.Bind(db, filepublicpostgres.Ports{}).ReadyAsset(t.Context(), sourceAssetID)
+	byID, err := filepublicpostgres.NewStore(db, filepublicpostgres.Ports{}).ReadyAsset(t.Context(), sourceAssetID)
 	require.NoError(t, err)
 	assert.Equal(t, sourceAssetID, byID.AssetID)
 
-	bySources, err := filepublicpostgres.Bind(db, filepublicpostgres.Ports{}).ReadyAssetsForFiles(t.Context(), []string{"", fileID, fileID}, "image")
+	bySources, err := filepublicpostgres.NewStore(db, filepublicpostgres.Ports{}).ReadyAssetsForFiles(t.Context(), []string{"", fileID, fileID}, "image")
 	require.NoError(t, err)
 	require.Len(t, bySources, 1)
 	assert.Equal(t, sourceAssetID, bySources[fileID].AssetID)
 
-	byIDs, err := filepublicpostgres.Bind(db, filepublicpostgres.Ports{}).ReadyAssets(t.Context(), []string{"", sourceAssetID, sourceAssetID})
+	byIDs, err := filepublicpostgres.NewStore(db, filepublicpostgres.Ports{}).ReadyAssets(t.Context(), []string{"", sourceAssetID, sourceAssetID})
 	require.NoError(t, err)
 	require.Len(t, byIDs, 1)
 

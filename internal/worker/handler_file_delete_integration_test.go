@@ -83,7 +83,7 @@ func TestFileDeleteConsumerIntentRejectsAttachWithoutStorageLockStarvationIntegr
 	attachDone := make(chan error, 1)
 	go func() {
 		attachDone <- db.WithContext(context.Background()).Transaction(func(tx *gorm.DB) error {
-			return mediaassetpostgres.Bind(tx).LockAttachableFiles(context.Background(), []string{file.ID})
+			return mediaassetpostgres.NewStore(tx).LockAttachableFiles(context.Background(), []string{file.ID})
 		})
 	}()
 	select {

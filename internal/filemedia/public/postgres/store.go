@@ -35,10 +35,10 @@ func NewUnits(db *gorm.DB, ports Ports) mutation.UnitOfWork[public.Store] {
 	if db == nil {
 		panic("public file media units: db is required")
 	}
-	return mutation.Postgres(db, func(tx *gorm.DB) public.Store { return Bind(tx, ports) })
+	return mutation.Postgres(db, func(tx *gorm.DB) public.Store { return NewStore(tx, ports) })
 }
-func Bind(tx *gorm.DB, ports Ports) public.Store {
-	return &store{tx: tx, DownloadStore: mediaassetpostgres.BindDownload(tx, ports.Segments)}
+func NewStore(tx *gorm.DB, ports Ports) public.Store {
+	return &store{tx: tx, DownloadStore: mediaassetpostgres.NewDownloadStore(tx, ports.Segments)}
 }
 
 func readyPublicAssetSelect(alias string) string {

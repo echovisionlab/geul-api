@@ -20,7 +20,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/release"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // TrackFiles is the File domain's check that a Track has no audio upload
@@ -120,22 +119,7 @@ func NewStore(tx *gorm.DB, ports Ports) release.Store {
 // tx, and audit appending in tx. A nil audit leaves Joined.Audit nil for a
 // step that records nothing.
 func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) release.Joined {
-	joined := release.Joined{Store: NewStore(tx, ports)}
-	if audit != nil {
-		joined.Audit = boundAudit{audit: audit, tx: tx}
-	}
-	return joined
-}
-
-// boundAudit appends in the joined transaction whatever transaction the
-// Release step names, which is nil.
-type boundAudit struct {
-	audit domainaudit.Appender
-	tx    *gorm.DB
-}
-
-func (b boundAudit) AppendDomainAuditInTransaction(ctx context.Context, _ *gorm.DB, record sharedtelemetry.AuditRecord) error {
-	return b.audit.AppendDomainAuditInTransaction(ctx, b.tx, record)
+	return release.Joined{Store: NewStore(tx, ports), Audit: domainaudit.Bind(tx, audit)}
 }
 
 type store struct {

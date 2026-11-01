@@ -1,7 +1,7 @@
-// Package postgres is the PostgreSQL label.Store: the label tables, and the
+// Package labelpostgres is the PostgreSQL label.Store: the label tables, and the
 // shared content, media, OG, route and relation runtimes a Label transaction
 // drives, bound to one gorm transaction.
-package postgres
+package labelpostgres
 
 import (
 	"context"
@@ -68,8 +68,8 @@ type ShareLinks interface {
 	DeleteLabelShareLinks(ctx context.Context, tx *gorm.DB, labelID string) error
 }
 
-// Deps are the shared runtimes the Store drives in the Label transaction.
-type Deps struct {
+// Ports are the shared runtimes the Store drives in the Label transaction.
+type Ports struct {
 	ContentBlocks *contentblock.Store
 	Publisher     contentsignal.Publisher
 	Checkpoints   persistencecheckpoint.ContributorFence
@@ -81,7 +81,7 @@ type Deps struct {
 	ShareLinks    ShareLinks
 }
 
-func (d Deps) validate() error {
+func (d Ports) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
 		"ContentBlocks": d.ContentBlocks == nil, "Publisher": d.Publisher == nil, "Checkpoints": d.Checkpoints == nil,
@@ -100,21 +100,21 @@ func (d Deps) validate() error {
 }
 
 // NewUnits returns the production unit of work of the Label use cases.
-func NewUnits(db *gorm.DB, deps Deps) (mutation.UnitOfWork[label.Store], error) {
+func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[label.Store], error) {
 	if db == nil {
 		return nil, errors.New("label store database is required")
 	}
-	if err := deps.validate(); err != nil {
+	if err := ports.validate(); err != nil {
 		return nil, err
 	}
-	return mutation.Postgres(db, func(tx *gorm.DB) label.Store { return Bind(tx, deps) }), nil
+	return mutation.Postgres(db, func(tx *gorm.DB) label.Store { return NewStore(tx, ports) }), nil
 }
 
-// Bind returns the Store over tx, for a port another domain drives in its
-// own transaction (translation delivery). Only the methods whose runtime
-// deps names are usable.
-func Bind(tx *gorm.DB, deps Deps) label.Store {
-	return &store{Store: entityparticipantpostgres.New(tx, labelTables), tx: tx, deps: deps}
+// NewStore returns the Store over tx, for a port another domain drives in its
+// own transaction (translation delivery). Only methods whose required ports
+// are set are usable.
+func NewStore(tx *gorm.DB, ports Ports) label.Store {
+	return &store{Store: entityparticipantpostgres.New(tx, labelTables), tx: tx, ports: ports}
 }
 
 var labelTables = entityparticipantpostgres.Tables{
@@ -124,8 +124,8 @@ var labelTables = entityparticipantpostgres.Tables{
 
 type store struct {
 	entityparticipantpostgres.Store
-	tx   *gorm.DB
-	deps Deps
+	tx    *gorm.DB
+	ports Ports
 }
 
 var _ label.Store = (*store)(nil)
@@ -133,7 +133,7 @@ var _ label.Store = (*store)(nil)
 // with binds the Store to tx, the transaction a shared runtime hands back
 // to a domain callback.
 func (s *store) with(tx *gorm.DB) label.Store {
-	return Bind(tx, s.deps)
+	return NewStore(tx, s.ports)
 }
 
 // notFoundError keeps the driver's not-found error readable and in the

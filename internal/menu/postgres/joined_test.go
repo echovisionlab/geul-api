@@ -1,8 +1,10 @@
-package menuadapter
+package menupostgres_test
 
 import (
 	"context"
 	"testing"
+
+	menupostgres "github.com/echovisionlab/geul-api/internal/menu/postgres"
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -17,13 +19,13 @@ func (r *transactionRecorder) AppendDomainAuditInTransaction(_ context.Context, 
 	return nil
 }
 
-func TestJoinAppendsInTheJoinedTransaction(t *testing.T) {
+func TestBindAppendsInTheJoinedTransaction(t *testing.T) {
 	tx := &gorm.DB{}
 	recorder := &transactionRecorder{}
 
-	joined := Join(tx, recorder)
+	joined := menupostgres.Bind(tx, menupostgres.Ports{}, recorder)
 	require.NoError(t, joined.Audit.AppendDomainAuditInTransaction(t.Context(), nil, sharedtelemetry.AuditRecord{}))
 
 	require.Equal(t, []*gorm.DB{tx}, recorder.transactions)
-	require.Nil(t, Join(tx, nil).Audit, "an unaudited caller stays unaudited")
+	require.Nil(t, menupostgres.Bind(tx, menupostgres.Ports{}, nil).Audit, "an unaudited caller stays unaudited")
 }

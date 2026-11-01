@@ -47,7 +47,7 @@ func TestResolveSeriesOgGenerationUsesLocaleTitlesAndAllowsNoFeaturedImageIntegr
 
 	resolve := func(selection *managev1.OgTargetSelection) []og.Request {
 		t.Helper()
-		requests, err := og.ResolveRequests(t.Context(), ogpostgres.Bind(db, ogpostgres.Ports{Requests: ogpostgres.NewResolver(seriesadapter.NewRequests())}), "series", seriesID, og.SelectionFromProto(selection))
+		requests, err := og.ResolveRequests(t.Context(), ogpostgres.NewStore(db, ogpostgres.Ports{Requests: ogpostgres.NewResolver(seriesadapter.NewRequests())}), "series", seriesID, og.SelectionFromProto(selection))
 		require.NoError(t, err)
 		return requests
 	}

@@ -29,9 +29,9 @@ const userDeletionAdminFenceKey = int64(0x4745554c41444d49) // GEULADMI
 
 var deletionPendingStates = []string{"scheduled", "recovery_confirmation_pending"}
 
-// Bind binds the Account store to a transaction or connection another
+// NewStore binds the Account store to a transaction or connection another
 // package opened.
-func Bind(tx *gorm.DB, ports Ports) account.Store {
+func NewStore(tx *gorm.DB, ports Ports) account.Store {
 	return store{tx: tx, ports: ports}
 }
 

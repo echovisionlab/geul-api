@@ -11,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -419,4 +420,10 @@ func localeValuesOf(menuID string, row localeRow) (menu.LocaleValues, error) {
 		return menu.LocaleValues{}, err
 	}
 	return menu.LocaleValues{MenuID: menuID, Locale: row.Locale, Labels: labels, UpdatedAt: row.UpdatedAt}, nil
+}
+
+// Bind joins the Store and audit to the caller's transaction. A nil audit
+// keeps the joined step unaudited.
+func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) menu.Joined {
+	return menu.Joined{Store: NewStore(tx, ports), Audit: domainaudit.Bind(tx, audit)}
 }

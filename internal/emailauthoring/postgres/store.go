@@ -24,7 +24,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // DeliveryReferences is Campaign's delivery history that freezes or retains
@@ -103,22 +102,7 @@ func NewStore(tx *gorm.DB, ports Ports) emailauthoring.Store {
 // Bind joins the Store and audit to tx, a transaction another domain's
 // pipeline opened (translation delivery and interchange).
 func Bind(tx *gorm.DB, ports Ports, audit domainaudit.Appender) emailauthoring.Joined {
-	joined := emailauthoring.Joined{Store: NewStore(tx, ports)}
-	if audit != nil {
-		joined.Audit = boundAudit{audit: audit, tx: tx}
-	}
-	return joined
-}
-
-// boundAudit appends in the joined transaction whatever transaction the
-// authoring step names, which is nil.
-type boundAudit struct {
-	audit domainaudit.Appender
-	tx    *gorm.DB
-}
-
-func (b boundAudit) AppendDomainAuditInTransaction(ctx context.Context, _ *gorm.DB, record sharedtelemetry.AuditRecord) error {
-	return b.audit.AppendDomainAuditInTransaction(ctx, b.tx, record)
+	return emailauthoring.Joined{Store: NewStore(tx, ports), Audit: domainaudit.Bind(tx, audit)}
 }
 
 type store struct {
@@ -212,5 +196,5 @@ func (s *store) EmailRenderData(ctx context.Context, cdnDomain, siteOrigin, loca
 }
 
 func (s *store) CheckTestSendReadiness(ctx context.Context, recipient string) error {
-	return email.CheckTestSendReadiness(ctx, emailpostgres.Bind(s.tx), recipient)
+	return email.CheckTestSendReadiness(ctx, emailpostgres.NewStore(s.tx), recipient)
 }

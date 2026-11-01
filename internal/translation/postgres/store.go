@@ -109,7 +109,7 @@ func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[application.Store],
 	if err := ports.validate(false); err != nil {
 		return nil, err
 	}
-	return mutation.Postgres(db, func(tx *gorm.DB) application.Store { return Bind(tx, ports) }), nil
+	return mutation.Postgres(db, func(tx *gorm.DB) application.Store { return NewStore(tx, ports) }), nil
 }
 
 // NewJobUnits returns the production unit of work of the job runner, which
@@ -121,11 +121,11 @@ func NewJobUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[application.JobS
 	if err := ports.validate(true); err != nil {
 		return nil, err
 	}
-	return mutation.Postgres(db, func(tx *gorm.DB) application.JobStore { return Bind(tx, ports) }), nil
+	return mutation.Postgres(db, func(tx *gorm.DB) application.JobStore { return NewStore(tx, ports) }), nil
 }
 
-// Bind returns the Store over tx.
-func Bind(tx *gorm.DB, ports Ports) application.Store {
+// NewStore returns the Store over tx.
+func NewStore(tx *gorm.DB, ports Ports) application.Store {
 	return &store{tx: tx, ports: ports}
 }
 

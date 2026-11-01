@@ -78,18 +78,18 @@ func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[member.Store], erro
 	return mutation.Postgres(db, func(tx *gorm.DB) member.Store { return store{tx: tx, ports: ports} }), nil
 }
 
-// Bind binds the Member store to a transaction or connection another domain
+// NewStore binds the Member store to a transaction or connection another domain
 // opened, for the Member steps Account runs in it (deletion, the email
 // projection, the newsletter subscription). Those steps never reach the
 // welcome email ports.
-func Bind(tx *gorm.DB) member.Store {
+func NewStore(tx *gorm.DB) member.Store {
 	return store{tx: tx}
 }
 
-// BindTransaction binds the Member store to the caller's transaction and
+// NewStoreInTransaction binds the Member store to the caller's transaction and
 // refuses a pool, so a terminal Member step cannot commit part of its
 // transition on its own.
-func BindTransaction(tx *gorm.DB) (member.Store, error) {
+func NewStoreInTransaction(tx *gorm.DB) (member.Store, error) {
 	if tx == nil || tx.Statement == nil {
 		return nil, errors.New("member deletion requires the caller's transaction")
 	}
@@ -541,7 +541,7 @@ func (s store) AvatarSourceOwned(ctx context.Context, fileID, ownerID string) (b
 }
 
 func (s store) LockAvatarBinding(ctx context.Context, memberID string) (string, bool, error) {
-	binding, found, err := mediaassetpostgres.Bind(s.tx).LockBinding(ctx, "member", memberID, "avatar")
+	binding, found, err := mediaassetpostgres.NewStore(s.tx).LockBinding(ctx, "member", memberID, "avatar")
 	return binding.AssetID, found, err
 }
 

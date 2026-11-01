@@ -27,7 +27,7 @@ func (*Runtime) ResolveLocalizedTemplate(
 	template model.EmailTemplate,
 	locale string,
 ) (model.EmailTemplate, error) {
-	resolved, _, err := email.ResolveLocalizedEmailTemplate(ctx, emailpostgres.Bind(db), template, locale)
+	resolved, _, err := email.ResolveLocalizedEmailTemplate(ctx, emailpostgres.NewStore(db), template, locale)
 	return resolved, err
 }
 
@@ -43,7 +43,7 @@ func (*Runtime) BuildEmailRenderData(
 	locale string,
 	input map[string]string,
 ) map[string]string {
-	return emaildelivery.BuildEmailRenderData(ctx, emaildeliverypostgres.Bind(db), cdnDomain, siteOrigin, locale, input)
+	return emaildelivery.BuildEmailRenderData(ctx, emaildeliverypostgres.NewStore(db), cdnDomain, siteOrigin, locale, input)
 }
 
 var (

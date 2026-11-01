@@ -50,8 +50,8 @@ type VersionRestoreSupport interface {
 	) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error)
 }
 
-// Deps are the shared runtimes the Store drives in the Post transaction.
-type Deps struct {
+// Ports are the shared runtimes the Store drives in the Post transaction.
+type Ports struct {
 	ContentBlocks *contentblock.Store
 	// Signals schedules content.updated in the mutation's transaction.
 	Signals          contentsignal.Publisher
@@ -64,7 +64,7 @@ type Deps struct {
 	CDNDomain string
 }
 
-func (d Deps) validate() error {
+func (d Ports) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
 		"ContentBlocks": d.ContentBlocks == nil, "Signals": d.Signals == nil, "OG": d.OG == nil,
@@ -83,26 +83,26 @@ func (d Deps) validate() error {
 }
 
 // NewUnits returns the production unit of work of the Post use cases.
-func NewUnits(db *gorm.DB, deps Deps) (mutation.UnitOfWork[post.Store], error) {
+func NewUnits(db *gorm.DB, ports Ports) (mutation.UnitOfWork[post.Store], error) {
 	if db == nil {
 		return nil, errors.New("post store database is required")
 	}
-	if err := deps.validate(); err != nil {
+	if err := ports.validate(); err != nil {
 		return nil, err
 	}
-	return mutation.Postgres(db, func(tx *gorm.DB) post.Store { return Bind(tx, deps) }), nil
+	return mutation.Postgres(db, func(tx *gorm.DB) post.Store { return NewStore(tx, ports) }), nil
 }
 
-// Bind returns the Store over tx, for a port another domain drives in its
+// NewStore returns the Store over tx, for a port another domain drives in its
 // own transaction (translation delivery, Series membership, File access).
-// Only the methods whose runtime deps names are usable.
-func Bind(tx *gorm.DB, deps Deps) post.Store {
-	return &store{tx: tx, deps: deps}
+// Only methods whose required ports are set are usable.
+func NewStore(tx *gorm.DB, ports Ports) post.Store {
+	return &store{tx: tx, ports: ports}
 }
 
 type store struct {
-	tx   *gorm.DB
-	deps Deps
+	tx    *gorm.DB
+	ports Ports
 }
 
 var _ post.Store = (*store)(nil)
@@ -110,7 +110,7 @@ var _ post.Store = (*store)(nil)
 // with binds the Store to tx, the transaction a shared runtime hands back
 // to a domain callback.
 func (s *store) with(tx *gorm.DB) post.Store {
-	return Bind(tx, s.deps)
+	return NewStore(tx, s.ports)
 }
 
 // notFoundError keeps the driver's not-found error readable and in the
@@ -140,5 +140,5 @@ func (err slugTakenError) Unwrap() error        { return err.error }
 // ProcessDueScheduledPosts publishes the due Posts in tx, the scheduler
 // job's transaction (post.ProcessDueScheduledPosts).
 func ProcessDueScheduledPosts(ctx context.Context, tx *gorm.DB, limit int) ([]string, error) {
-	return post.ProcessDueScheduledPosts(ctx, Bind(tx, Deps{}), limit)
+	return post.ProcessDueScheduledPosts(ctx, NewStore(tx, Ports{}), limit)
 }

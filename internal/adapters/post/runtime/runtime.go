@@ -53,7 +53,7 @@ func (VersionRestore) LoadUnavailableVersionAttachmentKinds(
 	tx *gorm.DB,
 	document proto.Message,
 ) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error) {
-	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, mediaassetpostgres.BindAttachments(tx), document)
+	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, mediaassetpostgres.NewAttachmentStore(tx), document)
 }
 
 var (

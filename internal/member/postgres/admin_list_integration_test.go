@@ -54,7 +54,7 @@ func seedListed(t *testing.T, db *gorm.DB, name string, subscribed, banned bool,
 
 func pageIDs(t *testing.T, db *gorm.DB, filters []*commonv1.FilterSpec, sorts []*commonv1.SortSpec) []string {
 	t.Helper()
-	members, total, err := memberpostgres.Bind(db).AdminMemberPage(t.Context(), filters, sorts, 50, 0)
+	members, total, err := memberpostgres.NewStore(db).AdminMemberPage(t.Context(), filters, sorts, 50, 0)
 	require.NoError(t, err)
 	require.EqualValues(t, len(members), total)
 	ids := make([]string, len(members))
@@ -96,7 +96,7 @@ func TestAdminMemberPageFiltersSortsAndKeepsAConstantQueryCountIntegration(t *te
 	counted := db.Session(&gorm.Session{Logger: queryCounter{Interface: db.Config.Logger, count: &queries}})
 	listAndCount := func(limit int) int64 {
 		queries.Store(0)
-		store := memberpostgres.Bind(counted)
+		store := memberpostgres.NewStore(counted)
 		members, _, err := store.AdminMemberPage(t.Context(), nil, []*commonv1.SortSpec{{Field: "newsletter_subscribed", Order: commonv1.SortOrder_SORT_ORDER_DESC}}, limit, 0)
 		require.NoError(t, err)
 		ids := make([]string, len(members))
@@ -124,7 +124,7 @@ func TestTagPageAppliesFiltersAndSortsIntegration(t *testing.T) {
 	alpha, editorial := uuid.NewString(), uuid.NewString()
 	require.NoError(t, db.Exec(`INSERT INTO user_tag (id, name, created_at) VALUES (?::uuid, 'Alpha', ?), (?::uuid, 'Editorial', ?)`, alpha, now.Add(-time.Hour), editorial, now).Error)
 	require.NoError(t, db.Exec(`INSERT INTO user_tag_mapping (member_id, tag_id) VALUES (?::uuid, ?::uuid), (?::uuid, ?::uuid), (?::uuid, ?::uuid)`, first, alpha, second, alpha, first, editorial).Error)
-	store := memberpostgres.Bind(db)
+	store := memberpostgres.NewStore(db)
 
 	filtered, total, err := store.TagPage(t.Context(), []*commonv1.FilterSpec{{Field: "search", Op: commonv1.FilterOp_FILTER_OP_ILIKE, Value: "editor"}}, nil, 50, 0)
 	require.NoError(t, err)

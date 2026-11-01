@@ -24,8 +24,8 @@ func LayoutTranslationEntrySelectSQL() string {
 		NULL::uuid AS og_asset_id FROM email_layout_translation`
 }
 
-// Bind returns the Store over db, a transaction or the pool.
-func Bind(db *gorm.DB) email.Store {
+// NewStore returns the Store over db, a transaction or the pool.
+func NewStore(db *gorm.DB) email.Store {
 	return store{db: db}
 }
 

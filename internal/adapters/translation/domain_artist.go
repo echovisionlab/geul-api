@@ -66,7 +66,7 @@ func artistDomainRegistration(audit domainaudit.Appender) domainRegistration {
 // artistStore binds the Artist Store to the translation domain's database
 // handle, with the content store it hands the delivery.
 func artistStore(db *gorm.DB, contents *contentblock.Store) artist.Store {
-	return artistpostgres.Bind(db, artistpostgres.Deps{ContentBlocks: contents})
+	return artistpostgres.NewStore(db, artistpostgres.Ports{ContentBlocks: contents})
 }
 
 func artistTranslationJob(job *model.TranslationJob) artist.TranslationJob {

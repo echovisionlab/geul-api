@@ -34,7 +34,7 @@ func (p AccountEmailProjection) ResolveDelivery(
 	ctx context.Context, tx *gorm.DB, identityID string,
 ) (string, string, string, error) {
 	inTransaction := func(_ context.Context, work func(account.Store) error) error {
-		return work(accountpostgres.Bind(tx, accountpostgres.Ports{MemberEmails: accountMemberEmailProjection{}}))
+		return work(accountpostgres.NewStore(tx, accountpostgres.Ports{MemberEmails: accountMemberEmailProjection{}}))
 	}
 	result, reason, err := account.ResolveMemberPrimaryEmailForIdentity(ctx, inTransaction, p.Identity, identityID)
 	if err != nil || result == nil || result.Identity == nil {
@@ -116,7 +116,7 @@ type accountMemberEmailProjection struct{}
 func (accountMemberEmailProjection) PrimaryEmail(
 	ctx context.Context, db *gorm.DB, memberID, identityID string,
 ) (string, error) {
-	email, err := memberdomain.PrimaryEmail(ctx, memberpostgres.Bind(db), memberID, identityID)
+	email, err := memberdomain.PrimaryEmail(ctx, memberpostgres.NewStore(db), memberID, identityID)
 	if errors.Is(err, memberdomain.ErrMemberNotFound) {
 		return "", gorm.ErrRecordNotFound
 	}
@@ -126,7 +126,7 @@ func (accountMemberEmailProjection) PrimaryEmail(
 func (accountMemberEmailProjection) SyncEmailProjection(
 	ctx context.Context, db *gorm.DB, memberID, identityID, primaryEmail string, availableEmails []string,
 ) error {
-	err := memberdomain.SyncEmailProjection(ctx, memberpostgres.Bind(db), memberID, identityID, primaryEmail, availableEmails)
+	err := memberdomain.SyncEmailProjection(ctx, memberpostgres.NewStore(db), memberID, identityID, primaryEmail, availableEmails)
 	if errors.Is(err, memberdomain.ErrMemberNotFound) {
 		return gorm.ErrRecordNotFound
 	}

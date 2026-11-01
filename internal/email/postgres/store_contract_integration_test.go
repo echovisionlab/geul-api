@@ -24,7 +24,7 @@ func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 	emailtest.RunStoreContract(t, func(t *testing.T) emailtest.Harness {
 		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		return emailtest.Harness{
-			Harness:             mutationtest.PostgresHarness(db, mutation.Postgres(db, emailpostgres.Bind)),
+			Harness:             mutationtest.PostgresHarness(db, mutation.Postgres(db, emailpostgres.NewStore)),
 			SeedTemplate:        func(t *testing.T, template model.EmailTemplate) string { return seedTemplate(t, db, template) },
 			SeedTemplateContent: func(t *testing.T, id string, content email.TemplateContent) { seedTemplateContent(t, db, id, content) },
 			SeedLayout:          func(t *testing.T, sourceLocale string) string { return seedLayout(t, db, sourceLocale) },

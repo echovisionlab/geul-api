@@ -27,14 +27,14 @@ import (
 
 // NewUnits is the production unit of work of the email delivery use cases.
 func NewUnits(db *gorm.DB) mutation.UnitOfWork[emaildelivery.Store] {
-	return mutation.Postgres(db, Bind)
+	return mutation.Postgres(db, NewStore)
 }
 
-// Bind binds the Store to db: the transaction a principal-less delivery step
+// NewStore binds the Store to db: the transaction a principal-less delivery step
 // runs in (the worker's and the provider callback's suppression writes), or
 // the pool for a read of one statement (a renderer's locale and site
 // defaults, the worker's suppression lookups).
-func Bind(db *gorm.DB) emaildelivery.Store {
+func NewStore(db *gorm.DB) emaildelivery.Store {
 	return store{tx: db}
 }
 

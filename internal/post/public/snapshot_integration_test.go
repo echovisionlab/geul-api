@@ -232,7 +232,7 @@ var _ postpublic.FileService = snapshotFileService{}
 func newPublicPostHandler(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentblock.Store) *postpublic.ConnectHandler {
 	t.Helper()
 	localization := postadapter.NewLocalization()
-	units, err := postpublicpostgres.NewUnits(db, postpublicpostgres.Deps{
+	units, err := postpublicpostgres.NewUnits(db, postpublicpostgres.Ports{
 		ContentBlocks: store, Localization: localization,
 		MapPlaces: referencecatalogadapter.PublicMapPlaces{}, ShareLinks: postruntime.ShareLinks{},
 	})

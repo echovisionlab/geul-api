@@ -1,6 +1,6 @@
 //go:build integration
 
-package postgres_test
+package labelpostgres_test
 
 import (
 	"crypto/sha256"
@@ -27,11 +27,11 @@ func TestPostgresStoreKeepsTheLabelStoreContractIntegration(t *testing.T) {
 		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		// The contract reaches the label rows and the relation readers;
 		// content, media and collaboration stay with their own tests.
-		deps := labelpostgres.Deps{
+		ports := labelpostgres.Ports{
 			Artists: artistadapter.NewLabelRelations(), Releases: releaseadapter.NewLabelRelations(),
 			ProgramEvents: programeventadapter.NewLabelRelations(),
 		}
-		units := mutation.Postgres(db, func(tx *gorm.DB) label.Store { return labelpostgres.Bind(tx, deps) })
+		units := mutation.Postgres(db, func(tx *gorm.DB) label.Store { return labelpostgres.NewStore(tx, ports) })
 		return labeltest.Harness{
 			Harness: mutationtest.PostgresHarness(db, units),
 			SeedMember: func(t *testing.T) string {
