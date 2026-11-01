@@ -77,6 +77,7 @@ func requireDeps(prefix string, absent map[string]bool) error {
 // Service holds the Terms and Privacy management use cases. Each takes the
 // PolicyKind it acts on.
 type Service struct {
+	units     mutation.UnitOfWork[Store]
 	spiceDB   mutation.Authorizer
 	baseURL   string
 	dispatch  NoticeDispatch
@@ -94,7 +95,7 @@ func NewService(deps Deps) (*Service, error) {
 		return nil, err
 	}
 	return &Service{
-		spiceDB: deps.SpiceDB, baseURL: deps.BaseURL, dispatch: deps.Dispatch, ogAssets: deps.OGAssets,
+		units: deps.Units, spiceDB: deps.SpiceDB, baseURL: deps.BaseURL, dispatch: deps.Dispatch, ogAssets: deps.OGAssets,
 		mutations: mutations,
 	}, nil
 }
@@ -248,6 +249,7 @@ func (s *Service) CreatePolicyVersion(ctx context.Context, kind PolicyKind, comm
 	if err != nil {
 		return Policy{}, err
 	}
+	sourceLocale := s.resolveInitialSourceLocale(ctx, command.AcceptLanguage)
 	version, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[Version, Store]{
 		// Serialize version assignment.
 		Lock: func(ctx context.Context, store Store) error {
@@ -255,7 +257,7 @@ func (s *Service) CreatePolicyVersion(ctx context.Context, kind PolicyKind, comm
 		},
 		Access: mutation.FreshAdminCan(descriptor.create()),
 		Change: func(ctx context.Context, store Store) (Version, error) {
-			return createDraftVersion(ctx, store, descriptor, command)
+			return createDraftVersion(ctx, store, descriptor, command, sourceLocale)
 		},
 		Audit: func(version Version) mutation.Audit {
 			return policyIdentityAudit(sharedtelemetry.AuditLegalPolicyCreated, descriptor, version)
@@ -287,13 +289,12 @@ func (k *policyKind) policyRelationships(id string, grant bool) ([]policyv1.Rela
 	return []policyv1.RelationshipMutation{deletePolicy}, []policyv1.RelationshipMutation{touchPolicy}, nil
 }
 
-func createDraftVersion(ctx context.Context, store Store, kind *policyKind, command CreatePolicyVersionCommand) (Version, error) {
+func createDraftVersion(ctx context.Context, store Store, kind *policyKind, command CreatePolicyVersionCommand, sourceLocale string) (Version, error) {
 	title := kind.defaultTitle
 	if command.Title != nil && *command.Title != "" {
 		title = *command.Title
 	}
 	now := dbtime.Now()
-	sourceLocale := resolveInitialSourceLocale(ctx, store, command.AcceptLanguage)
 	created, err := store.CreateContentDocument(ctx, contentblock.CreateInput{
 		Profile: legalContentDocumentProfile, SourceLocale: sourceLocale,
 	})
