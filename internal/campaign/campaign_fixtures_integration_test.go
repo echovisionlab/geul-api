@@ -10,10 +10,11 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/audience"
+	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -48,10 +49,10 @@ func (campaignAudienceTargets) LockTarget(
 	if target.Archived {
 		return target, nil
 	}
-	if err := audience.LoadSegmentConfig(ctx, tx, &segment); err != nil {
+	if err := audiencepostgres.LoadSegmentConfig(ctx, tx, &segment); err != nil {
 		return CampaignAudienceTarget{}, err
 	}
-	target.Valid = audience.ValidateSegmentConfigForType(segment.SegmentType, segment.Config) == nil
+	target.Valid = audience.ValidateConfig(audience.SegmentType(segment.SegmentType), audiencepostgres.SegmentOf(segment).Config) == nil
 	target.CreatedAfter = segment.CreatedAfter
 	target.CreatedBefore = segment.CreatedBefore
 	target.MemberTagIDs = append([]string(nil), segment.Config.MemberTagIDs...)
@@ -67,19 +68,10 @@ type campaignAudienceRecipientCounter struct {
 
 func (counter campaignAudienceRecipientCounter) Count(
 	ctx context.Context,
-	segment *model.AudienceSegment,
+	segment audience.Segment,
 ) (int64, error) {
-	return CountBulkEmailRecipientsForAudienceSegment(ctx, counter.db, counter.spiceDB, segment)
-}
-
-type campaignAudienceMemberReferences struct{}
-
-func (campaignAudienceMemberReferences) EligibleIDs(
-	ctx context.Context,
-	db *gorm.DB,
-	memberIDs []string,
-) ([]string, error) {
-	return authorizationtarget.EligibleMemberIDs(ctx, db, memberIDs)
+	row := audiencepostgres.SegmentRow(segment)
+	return CountBulkEmailRecipientsForAudienceSegment(ctx, counter.db, counter.spiceDB, &row)
 }
 
 func newCampaignAudienceService(
@@ -87,12 +79,11 @@ func newCampaignAudienceService(
 	spiceDB *auth.SpiceDBClient,
 ) *audience.ConnectHandler {
 	service, err := audience.NewService(audience.Deps{
-		DB:               db,
+		Units:            audiencepostgres.NewUnits(db, SegmentUsage{}),
 		SpiceDB:          spiceDB,
-		RecipientCounter: campaignAudienceRecipientCounter{db: db, spiceDB: spiceDB},
-		MemberReferences: campaignAudienceMemberReferences{},
-		Campaigns:        SegmentUsage{},
+		Fence:            identitystate.PostgresFence{},
 		Audit:            &audittest.Recorder{},
+		RecipientCounter: campaignAudienceRecipientCounter{db: db, spiceDB: spiceDB},
 	})
 	if err != nil {
 		panic(err)

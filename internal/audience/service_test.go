@@ -8,5 +8,5 @@ import (
 
 func TestNewServiceRequiresEveryCollaborator(t *testing.T) {
 	_, err := NewService(Deps{})
-	require.EqualError(t, err, "audience dependencies are required: Audit, Campaigns, DB, MemberReferences, RecipientCounter, SpiceDB")
+	require.EqualError(t, err, "audience dependencies are required: Audit, Fence, RecipientCounter, SpiceDB, Units")
 }

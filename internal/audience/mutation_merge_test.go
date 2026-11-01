@@ -6,7 +6,6 @@ import (
 
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,21 +16,21 @@ func TestMergeSegmentConfigPreservesUnobservedPeerChanges(t *testing.T) {
 	currentBefore := time.Date(2026, time.February, 28, 0, 0, 0, 0, time.UTC)
 	desiredAfter := time.Date(2026, time.March, 1, 0, 0, 0, 0, time.UTC)
 
-	current := model.AudienceSegmentConfig{
+	current := Config{
 		MemberTagIDs:     []string{"tag-a", "tag-b", "tag-peer"},
 		AccountRoles:     []string{"admin", "user"},
 		ExcludeMemberIDs: []string{"member-a", "member-peer"},
 		CreatedAfter:     &currentAfter,
 		CreatedBefore:    &currentBefore,
 	}
-	observed := model.AudienceSegmentConfig{
+	observed := Config{
 		MemberTagIDs:     []string{"tag-a", "tag-b"},
 		AccountRoles:     []string{"user"},
 		ExcludeMemberIDs: []string{"member-a"},
 		CreatedAfter:     &observedAfter,
 		CreatedBefore:    &observedBefore,
 	}
-	desired := model.AudienceSegmentConfig{
+	desired := Config{
 		MemberTagIDs:     []string{"tag-a", "tag-c"},
 		AccountRoles:     []string{"user"}, // Unchanged from baseline: retain the peer's admin addition.
 		ExcludeMemberIDs: []string{},
@@ -57,20 +56,20 @@ func TestMergeObservedStringSetAppliesOnlyObservedDeltas(t *testing.T) {
 }
 
 func TestSegmentUpdatePlanTypeSwitchResetsConfigAtomically(t *testing.T) {
-	observedType := model.AudienceSegmentMemberTags
-	desiredType := model.AudienceSegmentAllMembers
+	observedType := SegmentMemberTags
+	desiredType := SegmentAllMembers
 	config, err := normalizeSegmentConfig(&SegmentConfigInput{MemberTagIDs: []string{"7b1cf6a2-eafa-4a46-b4e5-4084f481c77d"}})
 	require.NoError(t, err)
 	plan := segmentUpdatePlan{
 		command: UpdateSegmentCommand{SegmentType: &desiredType},
-		requestedConfig: func() *model.AudienceSegmentConfig {
-			return &model.AudienceSegmentConfig{}
+		requestedConfig: func() *Config {
+			return &Config{}
 		}(),
 		observed: &segmentConfigBaseline{segmentType: observedType, config: config},
 	}
-	current := model.AudienceSegment{
-		SegmentType: model.AudienceSegmentMembersByFilter,
-		Config: model.AudienceSegmentConfig{
+	current := Segment{
+		Type: SegmentMembersByFilter,
+		Config: Config{
 			AccountRoles: []string{"admin"},
 		},
 	}
@@ -78,19 +77,19 @@ func TestSegmentUpdatePlanTypeSwitchResetsConfigAtomically(t *testing.T) {
 	nextType, nextConfig, err := plan.nextState(current)
 	require.NoError(t, err)
 	require.Equal(t, desiredType, nextType)
-	require.Equal(t, model.AudienceSegmentConfig{}, nextConfig)
+	require.Equal(t, Config{}, nextConfig)
 }
 
 func TestSegmentUpdatePlanSameTypeUsesBaselineMergeAndCurrentType(t *testing.T) {
-	segmentType := model.AudienceSegmentMembersByFilter
+	segmentType := SegmentMembersByFilter
 	observedAfter := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
 	currentAfter := time.Date(2026, time.February, 1, 0, 0, 0, 0, time.UTC)
 	desiredBefore := time.Date(2026, time.March, 1, 0, 0, 0, 0, time.UTC)
-	observed := model.AudienceSegmentConfig{
+	observed := Config{
 		AccountRoles: []string{"user"},
 		CreatedAfter: &observedAfter,
 	}
-	desired := model.AudienceSegmentConfig{
+	desired := Config{
 		AccountRoles:  []string{"user"},
 		CreatedAfter:  &observedAfter,
 		CreatedBefore: &desiredBefore,
@@ -100,9 +99,9 @@ func TestSegmentUpdatePlanSameTypeUsesBaselineMergeAndCurrentType(t *testing.T) 
 		requestedConfig: &desired,
 		observed:        &segmentConfigBaseline{segmentType: segmentType, config: observed},
 	}
-	current := model.AudienceSegment{
-		SegmentType: segmentType,
-		Config: model.AudienceSegmentConfig{
+	current := Segment{
+		Type: segmentType,
+		Config: Config{
 			AccountRoles: []string{"admin", "user"},
 			CreatedAfter: &currentAfter,
 		},
@@ -117,7 +116,7 @@ func TestSegmentUpdatePlanSameTypeUsesBaselineMergeAndCurrentType(t *testing.T) 
 }
 
 func TestBuildSegmentUpdatePlanRequiresObservedForConfigOrTypeWrites(t *testing.T) {
-	desiredType := model.AudienceSegmentMembersByFilter
+	desiredType := SegmentMembersByFilter
 	for _, test := range []struct {
 		name    string
 		request UpdateSegmentCommand
@@ -138,19 +137,19 @@ func TestBuildSegmentUpdatePlanAllowsScalarOnlyWithoutObserved(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, plan.observed)
 	require.Nil(t, plan.requestedConfig)
-	current := model.AudienceSegment{
-		SegmentType: model.AudienceSegmentMemberTags,
-		Config:      model.AudienceSegmentConfig{MemberTagIDs: []string{"tag-id"}},
+	current := Segment{
+		Type: SegmentMemberTags,
+		Config:      Config{MemberTagIDs: []string{"tag-id"}},
 	}
 	nextType, nextConfig, err := plan.nextState(current)
 	require.NoError(t, err)
-	require.Equal(t, current.SegmentType, nextType)
+	require.Equal(t, current.Type, nextType)
 	require.Equal(t, current.Config, nextConfig)
 }
 
 func TestBuildSegmentUpdatePlanParsesObservedBaseline(t *testing.T) {
 	tagID := "7b1cf6a2-eafa-4a46-b4e5-4084f481c77d"
-	segmentType := model.AudienceSegmentMemberTags
+	segmentType := SegmentMemberTags
 	plan, err := buildSegmentUpdatePlan(UpdateSegmentCommand{
 		SegmentType: &segmentType,
 		Config:      &SegmentConfigInput{MemberTagIDs: []string{tagID}},
@@ -168,8 +167,8 @@ func TestBuildSegmentUpdatePlanParsesObservedBaseline(t *testing.T) {
 
 func TestBuildSegmentUpdatePlanResetsObservedTypeSwitchWithoutConfig(t *testing.T) {
 	tagID := "7b1cf6a2-eafa-4a46-b4e5-4084f481c77d"
-	observedType := model.AudienceSegmentMemberTags
-	desiredType := model.AudienceSegmentAllMembers
+	observedType := SegmentMemberTags
+	desiredType := SegmentAllMembers
 	observedConfig := &SegmentConfigInput{MemberTagIDs: []string{tagID}}
 	plan, err := buildSegmentUpdatePlan(UpdateSegmentCommand{
 		SegmentType: &desiredType,
@@ -180,16 +179,16 @@ func TestBuildSegmentUpdatePlanResetsObservedTypeSwitchWithoutConfig(t *testing.
 	})
 	require.NoError(t, err)
 	require.NotNil(t, plan.requestedConfig)
-	require.Equal(t, model.AudienceSegmentConfig{}, *plan.requestedConfig)
+	require.Equal(t, Config{}, *plan.requestedConfig)
 
-	current := &model.AudienceSegment{
-		SegmentType: observedType,
-		Config:      model.AudienceSegmentConfig{MemberTagIDs: []string{tagID}},
+	current := &Segment{
+		Type: observedType,
+		Config:      Config{MemberTagIDs: []string{tagID}},
 	}
 	nextType, nextConfig, err := plan.nextState(*current)
 	require.NoError(t, err)
-	updates, changed, configChanged := buildSegmentUpdates(current, plan, nextType, nextConfig)
+	change, changed, configChanged := buildSegmentChange(*current, plan, nextType, nextConfig)
 	require.True(t, configChanged)
 	require.Contains(t, changed, "member_tag_ids")
-	require.Equal(t, desiredType, updates["segment_type"])
+	require.Equal(t, desiredType, *change.Type)
 }

@@ -2,79 +2,46 @@ package audience
 
 import (
 	"context"
-
-	"gorm.io/gorm"
+	"errors"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
-type referenceCountRow struct {
-	ID    string `gorm:"column:id"`
-	Count int64  `gorm:"column:count"`
-}
-
-func (s *Service) loadSegmentReferenceCounts(ctx context.Context, db *gorm.DB, segments []*model.AudienceSegment) error {
-	byID := make(map[string]*model.AudienceSegment, len(segments))
-	ids := make([]string, 0, len(segments))
-	for _, segment := range segments {
-		if segment == nil {
-			continue
-		}
-		segment.CampaignCount = 0
-		segment.DeliveryRunCount = 0
-		segment.DownloadPolicyReferenceCount = 0
-		byID[segment.ID] = segment
-		ids = append(ids, segment.ID)
+// segmentViews returns segments with what targets each of them.
+func segmentViews(ctx context.Context, store Store, segments []Segment) ([]SegmentView, error) {
+	views := make([]SegmentView, len(segments))
+	if len(segments) == 0 {
+		return views, nil
 	}
-	if len(ids) == 0 {
-		return nil
+	ids := make([]string, len(segments))
+	for i, segment := range segments {
+		ids[i] = segment.ID
 	}
-	campaigns, runs, err := s.campaigns.CountSegmentUsage(ctx, db, ids)
+	references, err := store.SegmentReferences(ctx, ids)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for id, count := range campaigns {
-		byID[id].CampaignCount = count
+	for i, segment := range segments {
+		views[i] = SegmentView{Segment: segment, References: references[segment.ID]}
 	}
-	for id, count := range runs {
-		byID[id].DeliveryRunCount = count
-	}
-	return applyDownloadPolicyReferenceCounts(ctx, db, ids, func(id string, count int32) {
-		byID[id].DownloadPolicyReferenceCount = count
-	})
+	return views, nil
 }
 
-func applyDownloadPolicyReferenceCounts(
-	ctx context.Context,
-	db *gorm.DB,
-	ids []string,
-	apply func(string, int32),
-) error {
-	var rows []referenceCountRow
-	if err := db.WithContext(ctx).Raw(`
-		SELECT audience_segment_id AS id, COUNT(*) AS count
-		FROM (
-			SELECT audience_segment_id
-			FROM content_block_attachment_download_audience_segment
-			WHERE audience_segment_id IN ?
-			UNION ALL
-			SELECT audience_segment_id
-			FROM track_download_audience_segment
-			WHERE audience_segment_id IN ?
-		) AS policy_reference
-		GROUP BY audience_segment_id
-	`, ids, ids).Scan(&rows).Error; err != nil {
-		return err
+// segmentView reads a segment and what targets it, as a mutation returns it.
+func segmentView(ctx context.Context, store Store, id string) (SegmentView, error) {
+	segment, err := store.Segment(ctx, id)
+	if err != nil {
+		return SegmentView{}, segmentNotFound(err)
 	}
-	for _, row := range rows {
-		apply(row.ID, int32(row.Count))
+	views, err := segmentViews(ctx, store, []Segment{segment})
+	if err != nil {
+		return SegmentView{}, err
 	}
-	return nil
+	return views[0], nil
 }
 
-func (s *Service) ensureSegmentMutableForActiveDelivery(ctx context.Context, tx *gorm.DB, segmentID string) error {
-	campaign, deliveryRun, err := s.campaigns.SegmentInActiveUse(ctx, tx, segmentID)
+func ensureSegmentMutableForActiveDelivery(ctx context.Context, store Store, segmentID string) error {
+	campaign, deliveryRun, err := store.SegmentInActiveDelivery(ctx, segmentID)
 	if err != nil {
 		return err
 	}
@@ -85,4 +52,16 @@ func (s *Service) ensureSegmentMutableForActiveDelivery(ctx context.Context, tx 
 		return domainerr.Precondition("audience segment is frozen by an active delivery run")
 	}
 	return nil
+}
+
+// segmentNotFound answers a missing segment; other errors pass unchanged.
+func segmentNotFound(err error) error {
+	if errors.Is(err, ErrSegmentNotFound) {
+		return errSegmentNotFound()
+	}
+	return err
+}
+
+func errSegmentNotFound() error {
+	return domainerr.New(domainerr.NotFound, "", "segment not found")
 }

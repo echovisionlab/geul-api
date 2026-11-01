@@ -16,10 +16,7 @@
 3 internal/artist/public gorm
 4 internal/artist/public model
 3 internal/artist/public spicedb client
-5 internal/audience generated contracts
-7 internal/audience gorm
-8 internal/audience model
-4 internal/audience spicedb client
+1 internal/audience generated contracts
 13 internal/campaign generated contracts
 26 internal/campaign gorm
 25 internal/campaign model

@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	audiencedomain "github.com/echovisionlab/geul-api/internal/audience"
+	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -171,7 +172,7 @@ func (*AudienceAccess) ValidateAuthenticatedSegmentIDs(
 ) error {
 	// Audience answers with use-case errors; File keeps answering with
 	// Connect errors until it migrates.
-	if err := audiencedomain.ValidateAuthenticatedAccessSegmentIDs(ctx, tx, segmentIDs); err != nil {
+	if err := audiencepostgres.ValidateAuthenticatedAccessSegmentIDs(ctx, tx, segmentIDs); err != nil {
 		return errs.Wrap(err)
 	}
 	return nil
@@ -180,7 +181,10 @@ func (*AudienceAccess) ValidateAuthenticatedSegmentIDs(
 func (*AudienceAccess) AuthenticatedSegmentSummary(
 	segment *model.AudienceSegment,
 ) (*managev1.AudienceSegmentSummary, bool) {
-	return audiencedomain.AuthenticatedAccessSegmentSummary(segment)
+	if segment == nil {
+		return nil, false
+	}
+	return audiencedomain.AuthenticatedAccessSegmentSummary(audiencepostgres.SegmentOf(*segment))
 }
 
 type MemberSummaries struct {

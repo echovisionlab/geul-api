@@ -12,9 +12,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/echovisionlab/geul-api/internal/audience"
+	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -192,20 +194,14 @@ func seedAudienceSegmentRelationsForTest(
 
 type fileTestAudienceRecipientCounter struct{}
 
-func (fileTestAudienceRecipientCounter) Count(context.Context, *model.AudienceSegment) (int64, error) {
+func (fileTestAudienceRecipientCounter) Count(context.Context, audience.Segment) (int64, error) {
 	return 0, nil
-}
-
-type fileTestAudienceMemberReferences struct{}
-
-func (fileTestAudienceMemberReferences) EligibleIDs(_ context.Context, _ *gorm.DB, memberIDs []string) ([]string, error) {
-	return memberIDs, nil
 }
 
 func newAudienceServiceForTest(db *gorm.DB, spiceDB *auth.SpiceDBClient) *audience.ConnectHandler {
 	service, err := audience.NewService(audience.Deps{
-		DB: db, SpiceDB: spiceDB, RecipientCounter: fileTestAudienceRecipientCounter{},
-		MemberReferences: fileTestAudienceMemberReferences{}, Campaigns: campaign.SegmentUsage{}, Audit: &audittest.Recorder{},
+		Units: audiencepostgres.NewUnits(db, campaign.SegmentUsage{}), SpiceDB: spiceDB,
+		Fence: identitystate.PostgresFence{}, Audit: &audittest.Recorder{}, RecipientCounter: fileTestAudienceRecipientCounter{},
 	})
 	if err != nil {
 		panic(err)

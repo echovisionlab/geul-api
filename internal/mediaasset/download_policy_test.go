@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/audience"
+	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	. "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -532,7 +532,7 @@ func trackDownloadSource(fileID string, audience FileDownloadAudience) FileDownl
 type testSegmentConfigLoader struct{}
 
 func (testSegmentConfigLoader) LoadSegmentConfigs(ctx context.Context, db *gorm.DB, segments []*model.AudienceSegment) error {
-	return audience.LoadSegmentConfigs(ctx, db, segments)
+	return audiencepostgres.LoadSegmentConfigs(ctx, db, segments)
 }
 
 func downloadUserInfo(id string) *auth.UserInfo {
