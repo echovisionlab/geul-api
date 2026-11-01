@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/postgreslock"
@@ -142,14 +143,18 @@ func (s *Service) loadCompletedRemoteImportFile(
 	ctx context.Context,
 	fileID string,
 ) (model.File, bool, error) {
-	var file model.File
-	if err := s.db.WithContext(ctx).Where("id = ?", fileID).Take(&file).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	var file File
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		file, err = store.IngestFile(ctx, fileID)
+		return err
+	}); err != nil {
+		if errors.Is(err, domain.ErrFileNotFound) {
 			return model.File{}, false, nil
 		}
 		return model.File{}, false, fmt.Errorf("load existing remote import file: %w", err)
 	}
-	return file, true, nil
+	return model.File(file), true, nil
 }
 
 func validateCompletedRemoteImportFile(
@@ -182,10 +187,15 @@ func (s *Service) validateCompletedRemoteImportBinding(
 	entityID string,
 	opts remoteFileImportOptions,
 ) error {
-	var binding model.FileIngestBinding
-	if err := s.db.WithContext(ctx).Where("file_id = ?", fileID).Take(&binding).Error; err != nil {
+	var binding domain.IngestBinding
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		binding, err = store.IngestBinding(ctx, fileID)
+		return err
+	}); err != nil {
 		return fmt.Errorf("load existing remote import binding: %w", err)
 	}
+
 	var expectedEntityType *string
 	if opts.transcodeEntityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
 		value := opts.transcodeEntityType.String()

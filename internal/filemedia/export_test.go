@@ -171,3 +171,15 @@ func ExportCreateVerifiedFile(s *Service, ctx context.Context, file File, upload
 func ExportArtifactWritable(s *Service, ctx context.Context, row domain.UploadSession) (bool, error) {
 	return s.clientMediaArtifactWritable(ctx, uploadSessionFromStore(row))
 }
+
+func ExportRestoreRemoteReceipt(s *Service, ctx context.Context, id, slot, attempt, entityID string, uploadType, entityType int32) (File, bool, error) {
+	file, found, err := s.loadCompletedRemoteImportFile(ctx, id)
+	if err != nil || !found {
+		return File(file), found, err
+	}
+	if err := validateCompletedRemoteImportFile(file, slot, remoteImportOperationIdentity{fileID: id, attemptID: attempt}); err != nil {
+		return File{}, true, err
+	}
+	err = s.validateCompletedRemoteImportBinding(ctx, id, entityID, remoteFileImportOptions{uploadType: managev1.UploadType(uploadType), transcodeEntityType: managev1.TranscodeEntityType(entityType)})
+	return File(file), true, err
+}
