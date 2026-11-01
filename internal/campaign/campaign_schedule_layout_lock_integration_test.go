@@ -29,10 +29,6 @@ func TestScheduleCampaignAndDeleteReferencedLayoutDoNotDeadlockIntegration(t *te
 	ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 	contentBlocks := testutil.NewEmailContentBlockStore(t, spiceDB)
 	references := emailauthoringadapter.NewCampaignDeliveryReferences()
-	var campaignID, layoutID string
-	t.Cleanup(func() {
-		cleanupConcurrentCampaignSnapshotFixture(t, db, ctx, spiceDB, "", campaignID, layoutID)
-	})
 
 	layout, err := emailauthoring.NewLayoutConnectHandler(newEmailAuthoringService(t, emailAuthoringDeps{DB: db, CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, References: references, ContentBlocks: contentBlocks})).CreateEmailLayout(ctx, connect.NewRequest(&managev1.CreateEmailLayoutRequest{
 		Name:         "Schedule layout race " + uuid.NewString(),
@@ -41,7 +37,7 @@ func TestScheduleCampaignAndDeleteReferencedLayoutDoNotDeadlockIntegration(t *te
 		SourceLocale: "en",
 	}))
 	require.NoError(t, err)
-	layoutID = layout.Msg.Id
+	layoutID := layout.Msg.Id
 
 	campaignService := func(operationDB *gorm.DB) *ConnectHandler {
 		return NewConnectHandler(newTestService(t, Deps{DB: operationDB, Runtime: newCampaignRuntimeFixture(nil, nil), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, ContentBlocks: contentBlocks, EmailAuthoring: campaignEmailAuthoringConcurrencyFixture{}, EmailDelivery: NewCampaignDeliveryRuntime(spiceDB, nil)}))
@@ -53,7 +49,7 @@ func TestScheduleCampaignAndDeleteReferencedLayoutDoNotDeadlockIntegration(t *te
 		Target:       campaignAllTarget(),
 	}))
 	require.NoError(t, err)
-	campaignID = created.Msg.Campaign.Id
+	campaignID := created.Msg.Campaign.Id
 	publishCampaignSourceBlocksForIntegration(
 		t,
 		db,
