@@ -56,6 +56,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/admin/postgres",
 			"./internal/artist/postgres",
 			"./internal/audience/postgres",
+			"./internal/authentication/postgres",
 			"./internal/contentblock",
 			"./internal/email",
 			"./internal/emaildelivery/postgres",
