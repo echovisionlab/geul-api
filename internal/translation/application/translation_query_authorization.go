@@ -2,10 +2,7 @@ package application
 
 import (
 	"context"
-	"fmt"
 	"strings"
-
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -13,43 +10,6 @@ import (
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"github.com/google/uuid"
 )
-
-func applyTranslationJobFilters(query *gorm.DB, filters []*commonv1.FilterSpec) (*gorm.DB, error) {
-	for _, filter := range filters {
-		if filter == nil {
-			continue
-		}
-		value := strings.TrimSpace(filter.GetValue())
-		switch filter.GetField() {
-		case "entity_type", "entity_id", "target_locale", "source_locale":
-			if filter.GetOp() != commonv1.FilterOp_FILTER_OP_EQ {
-				return nil, invalidFilterOp(filter.GetField(), filter.GetOp().String())
-			}
-			query = query.Where(fmt.Sprintf("%s = ?", filter.GetField()), value)
-		case "status":
-			switch filter.GetOp() {
-			case commonv1.FilterOp_FILTER_OP_EQ:
-				query = query.Where(fmt.Sprintf("%s = ?", filter.GetField()), value)
-			case commonv1.FilterOp_FILTER_OP_IN:
-				values := make([]string, 0, len(filter.GetValues()))
-				for _, item := range filter.GetValues() {
-					if normalized := strings.TrimSpace(item); normalized != "" {
-						values = append(values, normalized)
-					}
-				}
-				if len(values) == 0 {
-					return nil, domainerr.InvalidField(filter.GetField(), "IN filter requires at least one value")
-				}
-				query = query.Where(fmt.Sprintf("%s IN ?", filter.GetField()), values)
-			default:
-				return nil, invalidFilterOp(filter.GetField(), filter.GetOp().String())
-			}
-		default:
-			return nil, domainerr.New(domainerr.Invalid, filter.GetField(), "invalid filter field: "+filter.GetField())
-		}
-	}
-	return query, nil
-}
 
 // authorizeTranslationJobList keeps the global job browser admin-only while
 // allowing an authenticated resource manager to read only the jobs for the
@@ -82,7 +42,15 @@ func (s *Service) authorizeTranslationJobList(
 	if _, ok := translation.DefinitionForKind(entityType); !ok {
 		return domainerr.InvalidField("filters.entity_type", "unsupported translation entity type")
 	}
-	return s.domains.RequireJobRead(ctx, s.db, s.spiceDB, entityType, entityID)
+	return s.requireJobRead(ctx, entityType, entityID)
+}
+
+// requireJobRead asks the owning domain whether the principal may read the
+// entity's jobs. A domain may lock the entity and the principal to decide.
+func (s *Service) requireJobRead(ctx context.Context, entityType, entityID string) error {
+	return s.units.ReadCurrent(ctx, func(store Store) error {
+		return store.Domains().RequireJobRead(ctx, entityType, entityID)
+	})
 }
 
 func exactTranslationJobEntityScope(filters []*commonv1.FilterSpec) (string, string, bool) {
@@ -121,9 +89,5 @@ func (s *Service) authorizeTranslationRead(
 	if entityType != "series" {
 		return domainerr.AdminRequired()
 	}
-	return s.domains.RequireJobRead(ctx, s.db, s.spiceDB, entityType, entityID)
-}
-
-func invalidFilterOp(field, op string) error {
-	return domainerr.New(domainerr.Invalid, field, fmt.Sprintf("invalid filter operation '%s' for field '%s'", op, field))
+	return s.requireJobRead(ctx, entityType, entityID)
 }

@@ -27,7 +27,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	sitesettingspostgres "github.com/echovisionlab/geul-api/internal/sitesettings/postgres"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -46,11 +46,10 @@ const cdnDomain = "https://cdn.example.test"
 
 func newUnits(t *testing.T, db *gorm.DB) mutation.UnitOfWork[sitesettings.Store] {
 	t.Helper()
-	planner := og.NewPlanner(
-		db, cdnDomain, sitesettingsadapter.NewRenderConfig(),
+	planner := ogpostgres.NewPlanner(cdnDomain, sitesettingsadapter.NewRenderConfig(),
 		legaladapter.NewProjection(), sitesettingsadapter.NewProjection(),
 	)
-	collector := og.NewCollector(
+	collector := ogpostgres.NewCollector(
 		postadapter.NewRequests(), pageadapter.NewRequests(), seriesadapter.NewRequests(),
 		workadapter.NewRequests(), labeladapter.NewRequests(), artistadapter.NewRequests(),
 		formogadapter.NewRequests(), legaladapter.NewRequests(), sitesettingsadapter.NewRequests(),

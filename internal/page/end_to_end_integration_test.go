@@ -29,7 +29,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/page"
 	pagepostgres "github.com/echovisionlab/geul-api/internal/page/postgres"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
@@ -75,10 +75,10 @@ func stackPorts(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, hydrate 
 	if hydrate == nil {
 		hydrate = passthroughHydrator{}
 	}
-	planner := og.NewPlanner(db, "https://cdn.example.com", renderConfig{}, pageadapter.NewProjection())
+	planner := ogpostgres.NewPlanner("https://cdn.example.com", renderConfig{}, pageadapter.NewProjection())
 	return pagepostgres.Ports{
 		ContentBlocks: contents, Signals: noopPublisher{},
-		Runtime:       pageadapter.NewRuntime("https://cdn.example.com", og.NewRefresher(planner, og.NewResolver(pageadapter.NewRequests()))),
+		Runtime:       pageadapter.NewRuntime("https://cdn.example.com", ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(pageadapter.NewRequests()))),
 		MediaHydrator: hydrate, MenuTargets: noopMenuTargets{}, Members: memberadapter.PageMembers{},
 		ShareLinks: sharelinkadapter.PageLinks{},
 	}
@@ -385,8 +385,10 @@ func (noopMenuTargets) Remove(context.Context, *gorm.DB, string, string, string)
 
 type noopPublisher struct{}
 
-func (noopPublisher) EnqueueProtobuf(context.Context, string, string, proto.Message) error { return nil }
-func (noopPublisher) NotifyProtobuf(context.Context, string, proto.Message) error       { return nil }
+func (noopPublisher) EnqueueProtobuf(context.Context, string, string, proto.Message) error {
+	return nil
+}
+func (noopPublisher) NotifyProtobuf(context.Context, string, proto.Message) error { return nil }
 func (noopPublisher) NotifyProtobufWithExecutor(context.Context, eventpkg.DBTX, string, proto.Message) error {
 	return nil
 }

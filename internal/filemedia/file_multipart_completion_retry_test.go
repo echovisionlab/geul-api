@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/favicon"
+	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -195,7 +195,7 @@ func TestMultipartFaviconCommitAmbiguityPreservesSourceAndFinalizingSession(t *t
 	require.NoError(t, db.Model(&model.File{}).Where("id = ? AND delete_requested_at IS NULL", fileID).Count(&sourceCount).Error)
 	require.EqualValues(t, 1, sourceCount)
 	require.Empty(t, store.deletedKeys())
-	set, err := favicon.LoadSet(t.Context(), db, service.cdnDomain, fileID)
+	set, err := faviconpostgres.LoadSet(t.Context(), db, service.cdnDomain, fileID)
 	require.NoError(t, err)
 	require.NotNil(t, set)
 	readyAssetID := set.GetIconPng_32().GetAssetId()

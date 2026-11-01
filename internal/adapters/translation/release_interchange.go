@@ -14,8 +14,8 @@ import (
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"google.golang.org/protobuf/proto"
 )
@@ -93,7 +93,7 @@ func (a *ReleaseInterchange) ApplyTranslationInterchange(
 		candidate,
 		core.EntryWrite{Now: command.Now.UTC()},
 		command.ExpectedRevision,
-		command.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		command.Mode == application.InterchangeModeReplace,
 	); err != nil {
 		var conflict *core.TargetRevisionConflict
 		if errors.As(err, &conflict) {
@@ -178,11 +178,11 @@ func buildReleaseInterchangeCandidate(
 	if err != nil {
 		return nil, err
 	}
-	if command.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH {
+	if command.Mode == application.InterchangeModePatch {
 		ensureReleasePatchBlocks(candidate.ContentBlockLocaleOverlay, current.localized, command.Source.ContentBlockDocument)
 	}
 	candidate.ReleaseCreditNotes = make(map[string]string)
-	if command.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH {
+	if command.Mode == application.InterchangeModePatch {
 		for creditID, value := range current.creditNotes {
 			candidate.ReleaseCreditNotes[creditID] = value
 		}
@@ -226,4 +226,4 @@ func ensureReleasePatchBlocks(
 	}
 }
 
-var _ application.TranslationInterchangeDomains = (*ReleaseInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*ReleaseInterchange)(nil)

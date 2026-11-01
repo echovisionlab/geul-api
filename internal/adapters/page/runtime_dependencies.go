@@ -8,7 +8,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -19,10 +19,10 @@ import (
 // Runtime adapts shared OG and media lifecycles to Page-owned ports.
 type Runtime struct {
 	cdnDomain string
-	refresher *og.Refresher
+	refresher *ogpostgres.Refresher
 }
 
-func NewRuntime(cdnDomain string, refresher *og.Refresher) *Runtime {
+func NewRuntime(cdnDomain string, refresher *ogpostgres.Refresher) *Runtime {
 	if refresher == nil {
 		panic("Page runtime OG refresher is required")
 	}
@@ -52,7 +52,7 @@ func (r *Runtime) CancelAndReleaseEntityWithDB(
 	ownerType string,
 	ownerID string,
 ) error {
-	if err := og.NewLifecycle(tx, r.cdnDomain).CancelEntityWithDB(ctx, tx, entityType, ownerID); err != nil {
+	if err := ogpostgres.CancelEntity(ctx, tx, entityType, ownerID); err != nil {
 		return err
 	}
 	return r.ReleasePublicAssetBindings(ctx, tx, ownerType, ownerID, "og")

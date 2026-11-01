@@ -7,13 +7,18 @@ import (
 	"connectrpc.com/connect"
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	translationadapter "github.com/echovisionlab/geul-api/internal/adapters/translation"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/legal"
+	"github.com/echovisionlab/geul-api/internal/mq"
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/series"
 	translationcore "github.com/echovisionlab/geul-api/internal/translation"
 	translationapplication "github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -136,11 +141,15 @@ func (r translationServiceRegistration) register() (*translationapplication.Serv
 	if err != nil {
 		return nil, fmt.Errorf("initialize Translation XLIFF File runtime: %w", err)
 	}
+	translationPorts := translationStorePorts(translationRegistry, contentBlockStore, ogDeps, spicedbClient, workerPublisher, cfg.CDNURL)
+	translationPorts.Interchange = translationInterchangeRegistry
+	translationUnits, err := translationpostgres.NewUnits(db, translationPorts)
+	if err != nil {
+		return nil, fmt.Errorf("initialize Translation store: %w", err)
+	}
 	translationService, err := translationapplication.NewService(translationapplication.Deps{
-		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, Publisher: workerPublisher,
-		ContentBlocks: contentBlockStore, OGPlanner: ogDeps.planner, OGRefresher: ogDeps.refresher,
-		Domains: translationRegistry, XLIFFFiles: translationXLIFFFiles,
-		InterchangeDomains: translationInterchangeRegistry, CDNDomain: cfg.CDNURL,
+		Units: translationUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{},
+		Audit: telemetryWriter, Plans: translationRegistry, XLIFFFiles: translationXLIFFFiles,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize Translation service: %w", err)
@@ -152,4 +161,21 @@ func (r translationServiceRegistration) register() (*translationapplication.Serv
 	slog.Info("Registered service", "path", translationPath)
 
 	return translationService, nil
+}
+
+// translationStorePorts are the Translation Store's domain registry and
+// shared runtimes; the use cases also need the interchange registry, which
+// the content domains' services complete later than the job runner starts.
+func translationStorePorts(
+	registry *translationadapter.DomainRegistry,
+	contentBlocks *contentblock.Store,
+	ogDeps *ogDependencies,
+	spiceDB *auth.SpiceDBClient,
+	publisher *mq.Publisher,
+	cdnDomain string,
+) translationpostgres.Ports {
+	return translationpostgres.Ports{
+		Domains: registry, ContentBlocks: contentBlocks, OGPlanner: ogDeps.planner, OGRefresher: ogDeps.refresher,
+		SpiceDB: spiceDB, Signals: publisher, Queue: publisher, CDNDomain: cdnDomain,
+	}
 }

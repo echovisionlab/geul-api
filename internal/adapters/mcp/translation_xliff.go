@@ -61,7 +61,8 @@ func translationXLIFFExportCommand(arguments mcpserver.ToolArguments) (translati
 		return translationapp.ExportTranslationXLIFFCommand{}, err
 	}
 	return translationapp.ExportTranslationXLIFFCommand{
-		Target: target, TargetLocale: string(input.TargetLocale), Mode: mode,
+		Target: translationapp.TargetFromMessage(target), TargetLocale: string(input.TargetLocale),
+		Mode:        translationapp.InterchangeModeFromMessage(mode),
 		UnitHandles: append([]string(nil), input.UnitHandles...),
 	}, nil
 }
@@ -94,7 +95,8 @@ func translationXLIFFImportCommand(arguments mcpserver.ToolArguments) (translati
 		}
 	}
 	return translationapp.ImportTranslationXLIFFCommand{
-		Target: target, TargetLocale: string(input.TargetLocale), Mode: mode, FileID: input.FileID,
+		Target: translationapp.TargetFromMessage(target), TargetLocale: string(input.TargetLocale),
+		Mode: translationapp.InterchangeModeFromMessage(mode), FileID: input.FileID,
 		ExpectedTargetRevision: input.ExpectedTargetRevision,
 	}, nil
 }

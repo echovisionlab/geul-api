@@ -9,8 +9,8 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	"github.com/echovisionlab/geul-api/internal/work"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
 )
@@ -106,13 +106,13 @@ func (p *WorkInterchangePort) ApplyTranslationInterchange(
 	}, nil
 }
 
-var _ application.TranslationInterchangeDomains = (*WorkInterchangePort)(nil)
+var _ translationpostgres.InterchangeRegistry = (*WorkInterchangePort)(nil)
 
-func workInterchangeMode(mode managev1.TranslationInterchangeMode) work.InterchangeMode {
+func workInterchangeMode(mode application.InterchangeMode) work.InterchangeMode {
 	switch mode {
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH:
+	case application.InterchangeModePatch:
 		return work.InterchangePatch
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE:
+	case application.InterchangeModeReplace:
 		return work.InterchangeReplace
 	default:
 		return 0

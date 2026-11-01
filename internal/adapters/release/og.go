@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
@@ -20,7 +20,7 @@ func NewOG(cdnDomain string) *OG {
 }
 
 func (o *OG) CancelAndRelease(ctx context.Context, tx *gorm.DB, releaseID string) error {
-	if err := og.NewLifecycle(tx, o.cdnDomain).CancelEntityWithDB(
+	if err := ogpostgres.CancelEntity(
 		ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_RELEASE, releaseID,
 	); err != nil {
 		return err
@@ -30,10 +30,10 @@ func (o *OG) CancelAndRelease(ctx context.Context, tx *gorm.DB, releaseID string
 }
 
 type ContentOG struct {
-	refresher *og.Refresher
+	refresher *ogpostgres.Refresher
 }
 
-func NewContentOG(refresher *og.Refresher) *ContentOG {
+func NewContentOG(refresher *ogpostgres.Refresher) *ContentOG {
 	if refresher == nil {
 		panic("Release OG refresher is required")
 	}

@@ -8,7 +8,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -17,10 +17,10 @@ import (
 // Runtime adapts shared File/media and OG lifecycles to Label-owned ports.
 type Runtime struct {
 	cdnDomain string
-	refresher *og.Refresher
+	refresher *ogpostgres.Refresher
 }
 
-func NewRuntime(cdnDomain string, refresher *og.Refresher) *Runtime {
+func NewRuntime(cdnDomain string, refresher *ogpostgres.Refresher) *Runtime {
 	if refresher == nil {
 		panic("Label runtime OG refresher is required")
 	}
@@ -151,7 +151,7 @@ func (runtime *Runtime) CancelAndReleaseOGWithDB(
 	tx *gorm.DB,
 	labelID string,
 ) error {
-	if err := og.NewLifecycle(tx, runtime.cdnDomain).CancelEntityWithDB(
+	if err := ogpostgres.CancelEntity(
 		ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_LABEL, labelID,
 	); err != nil {
 		return err

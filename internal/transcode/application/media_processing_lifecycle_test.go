@@ -3,7 +3,6 @@ package application
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
@@ -11,7 +10,7 @@ import (
 
 func TestMediaProcessingSnapshotAudioReadinessRequiresAllDerivatives(t *testing.T) {
 	snapshot := mediaProcessingSnapshot{
-		File: model.File{
+		File: File{
 			ID:       randomWorkerTranscodeUUID(),
 			MimeType: "audio/ogg",
 		},
@@ -37,7 +36,7 @@ func TestMediaProcessingSnapshotAudioReadinessRequiresAllDerivatives(t *testing.
 
 func TestMediaProcessingSnapshotReadyDerivativeDoesNotRegressFromLateProgress(t *testing.T) {
 	snapshot := mediaProcessingSnapshot{
-		File: model.File{
+		File: File{
 			ID:       randomWorkerTranscodeUUID(),
 			MimeType: "audio/ogg",
 		},
@@ -75,7 +74,7 @@ func TestMediaProcessingSnapshotReadyDerivativeDoesNotRegressFromLateProgress(t 
 
 func TestMediaProcessingLifecycleStatusDoesNotInferReadyFromProgress(t *testing.T) {
 	snapshot := mediaProcessingSnapshot{
-		File: model.File{
+		File: File{
 			ID:       randomWorkerTranscodeUUID(),
 			MimeType: "video/mp4",
 		},
@@ -93,7 +92,7 @@ func TestMediaProcessingLifecycleStatusDoesNotInferReadyFromProgress(t *testing.
 func TestMediaProcessingSnapshotVideoReadinessRequiresThumbnailAndDuration(t *testing.T) {
 	duration := 1
 	snapshot := mediaProcessingSnapshot{
-		File: model.File{
+		File: File{
 			ID:              randomWorkerTranscodeUUID(),
 			MimeType:        "video/mp4",
 			DurationSeconds: &duration,
@@ -129,7 +128,7 @@ func TestMediaProcessingSnapshotVideoReadinessRequiresThumbnailAndDuration(t *te
 
 func TestMediaProcessingSnapshotVideoReadinessRequiresDuration(t *testing.T) {
 	snapshot := mediaProcessingSnapshot{
-		File: model.File{
+		File: File{
 			ID:       randomWorkerTranscodeUUID(),
 			MimeType: "video/mp4",
 		},
@@ -155,7 +154,7 @@ func TestPlanMediaProcessingLifecycleEventBuildsProcessingEvent(t *testing.T) {
 	slotID := "slot-1"
 	attemptID := "attempt-1"
 	snapshot := mediaProcessingSnapshot{
-		File: model.File{
+		File: File{
 			ID:              "file-1",
 			MimeType:        "audio/ogg",
 			IngestSlotID:    &slotID,
@@ -200,7 +199,7 @@ func TestPlanMediaProcessingLifecycleEventBuildsProcessingEvent(t *testing.T) {
 func TestPlanMediaProcessingLifecycleEventBuildsReadyAudioEvent(t *testing.T) {
 	duration := 157
 	snapshot := mediaProcessingSnapshot{
-		File: model.File{
+		File: File{
 			ID:              "file-1",
 			MimeType:        "audio/ogg",
 			DurationSeconds: &duration,
@@ -251,7 +250,7 @@ func TestPlanMediaProcessingLifecycleEventBuildsReadyAudioEvent(t *testing.T) {
 
 func TestPlanMediaProcessingLifecycleEventBuildsFailedEventFromError(t *testing.T) {
 	snapshot := mediaProcessingSnapshot{
-		File: model.File{
+		File: File{
 			ID:       "file-1",
 			MimeType: "audio/ogg",
 		},
@@ -286,7 +285,7 @@ func TestPlanMediaProcessingLifecycleEventBuildsFailedEventFromError(t *testing.
 func TestBuildMediaProcessingLifecycleOutputsRequiresReadyAudioContract(t *testing.T) {
 	duration := 157
 	snapshot := mediaProcessingSnapshot{
-		File: model.File{
+		File: File{
 			ID:              randomWorkerTranscodeUUID(),
 			MimeType:        "audio/ogg",
 			DurationSeconds: &duration,
@@ -318,7 +317,7 @@ func TestBuildMediaProcessingLifecycleOutputsRequiresReadyAudioContract(t *testi
 
 func TestBuildMediaProcessingLifecycleOutputsFailsMissingReadyDuration(t *testing.T) {
 	snapshot := mediaProcessingSnapshot{
-		File: model.File{
+		File: File{
 			ID:       randomWorkerTranscodeUUID(),
 			MimeType: "audio/ogg",
 		},

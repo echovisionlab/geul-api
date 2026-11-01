@@ -16,7 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/favicon"
+	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -428,7 +428,7 @@ func (s *Service) restoreFinishedMultipartPromotedAsset(
 	fileID string,
 ) (*commonv1.AssetRef, error) {
 	if uploadType == managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON {
-		set, err := favicon.LoadSet(ctx, s.db, s.cdnDomain, fileID)
+		set, err := faviconpostgres.LoadSet(ctx, s.db, s.cdnDomain, fileID)
 		if err != nil {
 			return nil, fmt.Errorf("restore completed favicon asset: %w", err)
 		}

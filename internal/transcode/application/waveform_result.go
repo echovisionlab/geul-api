@@ -10,11 +10,8 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
 	transcodestate "github.com/echovisionlab/geul-api/internal/transcode"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -58,44 +55,10 @@ func (h *Handlers) HandleWaveformProgress(ctx context.Context, body []byte) (res
 	progress := min(max(int(event.Progress), 0), 100)
 
 	now := time.Now()
-	result := h.db.WithContext(ctx).Exec(`
-UPDATE waveform_job
-SET progress = GREATEST(progress, ?),
-    last_sequence = CASE
-        WHEN ? <= 0 THEN last_sequence
-        WHEN last_sequence IS NULL THEN ?
-        WHEN last_sequence < ? THEN ?
-        ELSE last_sequence
-    END,
-    last_stage = CASE
-        WHEN ? = '' THEN last_stage
-        WHEN ? <= 0 THEN ?
-        WHEN last_sequence IS NULL THEN ?
-        WHEN last_sequence < ? THEN ?
-        ELSE last_stage
-    END,
-    updated_at = ?
-WHERE event_id = ?
-  AND status = ?
-  AND cancel_requested = false
-`,
-		progress,
-		event.SequenceNumber,
-		event.SequenceNumber,
-		event.SequenceNumber,
-		event.SequenceNumber,
-		event.GetStage().String(),
-		event.SequenceNumber,
-		event.GetStage().String(),
-		event.GetStage().String(),
-		event.SequenceNumber,
-		event.GetStage().String(),
-		now,
-		event.EventId,
-		transcodestate.WaveformJobStatusQueued,
-	)
-	if result.Error != nil {
-		return result.Error
+	if err := h.transaction(ctx, func(store Store) error {
+		return store.RecordWaveformProgress(ctx, event.EventId, progress, event.SequenceNumber, event.GetStage().String(), now)
+	}); err != nil {
+		return err
 	}
 
 	if err := h.publishMediaProcessingLifecycle(ctx, mediaProcessingPublishOptions{
@@ -174,8 +137,8 @@ func (h *Handlers) HandleWaveformComplete(ctx context.Context, body []byte) (res
 		return nil
 	}
 
-	if err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		acceptsResults, err := lockFileAcceptingProcessingResults(ctx, tx, event.FileId)
+	if err := h.transaction(ctx, func(store Store) error {
+		acceptsResults, err := lockFileAcceptingProcessingResults(ctx, store, event.FileId)
 		if err != nil {
 			return err
 		}
@@ -184,8 +147,7 @@ func (h *Handlers) HandleWaveformComplete(ctx context.Context, body []byte) (res
 		}
 		return completeAssetDerivative(
 			ctx,
-			tx,
-			mediaasset.NewLifecycle(tx, ""),
+			store,
 			event.FileId,
 			managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_WAVEFORM,
 			"waveform",
@@ -235,9 +197,9 @@ func (h *Handlers) handleWaveformDerivativeCompletionError(
 }
 
 func (h *Handlers) retireUnboundWaveformResult(ctx context.Context, result *commonv1.AssetWriteResult) error {
-	return h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return h.transaction(ctx, func(store Store) error {
 		if result != nil && strings.TrimSpace(result.GetAssetId()) != "" {
-			referenced, err := waveformAssetIsReferenced(ctx, tx, result.GetAssetId())
+			referenced, err := store.WaveformAssetReferenced(ctx, strings.TrimSpace(result.GetAssetId()))
 			if err != nil {
 				return err
 			}
@@ -245,10 +207,9 @@ func (h *Handlers) retireUnboundWaveformResult(ctx context.Context, result *comm
 				return nil
 			}
 		}
-		lifecycle := mediaasset.NewLifecycle(tx, "")
-		asset, err := lifecycle.CompletePublicAsset(ctx, result)
+		asset, err := store.CompleteAsset(ctx, result)
 		if err != nil {
-			retired, lookupErr := waveformResultAlreadyRetired(ctx, tx, result)
+			retired, lookupErr := waveformResultAlreadyRetired(ctx, store, result)
 			if lookupErr != nil {
 				return lookupErr
 			}
@@ -260,40 +221,24 @@ func (h *Handlers) retireUnboundWaveformResult(ctx context.Context, result *comm
 		if asset.Kind != "waveform" {
 			return fmt.Errorf("asset %s is not a waveform", asset.ID)
 		}
-		return lifecycle.RequestPublicAssetDeletion(ctx, asset.ID)
+		return store.RequestAssetDeletion(ctx, asset.ID)
 	})
-}
-
-func waveformAssetIsReferenced(ctx context.Context, db *gorm.DB, assetID string) (bool, error) {
-	var count int64
-	if err := db.WithContext(ctx).
-		Table("file_derivative").
-		Where("type = ? AND asset_id = ?", managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_WAVEFORM.String(), strings.TrimSpace(assetID)).
-		Count(&count).Error; err != nil {
-		return false, err
-	}
-	return count > 0, nil
 }
 
 func waveformResultAlreadyRetired(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	result *commonv1.AssetWriteResult,
 ) (bool, error) {
 	if result == nil || result.GetFileSize() <= 0 || len(result.GetSha256()) != 32 {
 		return false, nil
 	}
-	var asset model.PublicAsset
-	if err := db.WithContext(ctx).
-		Where("id = ?", strings.TrimSpace(result.GetAssetId())).
-		Take(&asset).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, nil
-		}
+	asset, found, err := store.Asset(ctx, strings.TrimSpace(result.GetAssetId()))
+	if err != nil || !found {
 		return false, err
 	}
 	if asset.Kind != "waveform" ||
-		(asset.Status != model.PublicAssetStatusDeletePending && asset.Status != model.PublicAssetStatusDeleted) ||
+		(asset.Status != AssetDeletePending && asset.Status != AssetDeleted) ||
 		asset.FileSize == nil {
 		return false, nil
 	}
@@ -397,19 +342,16 @@ func (h *Handlers) isCurrentTrackAudioSource(
 		return true, nil
 	}
 
-	var count int64
-	if err := h.db.WithContext(ctx).
-		Model(&model.Track{}).
-		Where("id = ? AND audio_original_file_id = ?", entityID, fileID).
-		Count(&count).Error; err != nil {
-		return false, err
-	}
-
-	return count > 0, nil
+	var current bool
+	err := h.read(ctx, func(store Store) (err error) {
+		current, err = store.TrackSourceMatches(ctx, entityID, fileID)
+		return err
+	})
+	return current, err
 }
 
 func waveformJobMatchesEvent(
-	job *model.WaveformJob,
+	job *transcodestate.WaveformJob,
 	entityType managev1.TranscodeEntityType,
 	entityID string,
 	fileID string,

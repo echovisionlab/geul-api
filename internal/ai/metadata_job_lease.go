@@ -2,52 +2,35 @@ package ai
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
 var errMetadataAIJobLeaseUnavailable = errors.New("metadata AI job is being processed by another delivery")
 
 func (m *MetadataJobManager) claimJob(
 	ctx context.Context,
-	job *metadataJobRecord,
+	job *Job,
 	startedAt time.Time,
 ) (bool, error) {
-	query := m.db.WithContext(ctx).Model(&metadataJobRecord{})
-	switch job.Status {
-	case metadataAIJobStatusQueued:
-		query = query.Where("id = ? AND status = ?", job.ID, metadataAIJobStatusQueued)
-	case metadataAIJobStatusRunning:
-		query = query.Where("id = ? AND status = ?", job.ID, metadataAIJobStatusRunning)
-		if job.StartedAt == nil {
-			query = query.Where("started_at IS NULL")
-		} else {
-			query = query.Where("started_at = ?", *job.StartedAt)
-		}
-	default:
+	if job.Status != JobQueued && job.Status != JobRunning {
 		return false, nil
 	}
-	result := query.Updates(structured.Fields{
-		"status":     metadataAIJobStatusRunning,
-		"provider":   m.provider.ProviderName(),
-		"model":      m.provider.ModelName(),
-		"started_at": startedAt,
-		"updated_at": startedAt,
+	claimed, err := m.runJobUpdate(ctx, func(ctx context.Context, store Store) (bool, error) {
+		return store.ClaimJob(ctx, *job, m.provider.ProviderName(), m.provider.ModelName(), startedAt)
 	})
-	if result.Error != nil {
-		return false, fmt.Errorf("failed to mark metadata AI job running: %w", result.Error)
+	if err != nil {
+		return false, fmt.Errorf("failed to mark metadata AI job running: %w", err)
 	}
-	if result.RowsAffected == 0 {
+	if !claimed {
 		return false, nil
 	}
 
-	job.Status = metadataAIJobStatusRunning
+	job.Status = JobRunning
 	job.Provider = new(m.provider.ProviderName())
 	job.Model = new(m.provider.ModelName())
 	job.StartedAt = &startedAt
@@ -57,7 +40,7 @@ func (m *MetadataJobManager) claimJob(
 
 func (m *MetadataJobManager) failJob(
 	ctx context.Context,
-	job *metadataJobRecord,
+	job *Job,
 	startedAt time.Time,
 	duration time.Duration,
 	cause error,
@@ -70,27 +53,21 @@ func (m *MetadataJobManager) failJob(
 	finishedAt := time.Now()
 	durationMS := duration.Milliseconds()
 	message := cause.Error()
-	updates := structured.Fields{
-		"status":       metadataAIJobStatusFailed,
-		"error":        message,
-		"duration_ms":  durationMS,
-		"completed_at": finishedAt,
-		"updated_at":   finishedAt,
-	}
 	persistenceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), metadataAIPersistenceTimeout)
 	defer cancel()
-	result := m.db.WithContext(persistenceCtx).
-		Model(&metadataJobRecord{}).
-		Where("id = ? AND status = ? AND started_at = ?", job.ID, metadataAIJobStatusRunning, startedAt).
-		Updates(updates)
-	if result.Error != nil {
-		return fmt.Errorf("metadata AI job failed with %q and the failure state could not be stored: %w", message, result.Error)
+	finished, err := m.runJobUpdate(persistenceCtx, func(ctx context.Context, store Store) (bool, error) {
+		return store.FinishJob(ctx, Lease{JobID: job.ID, StartedAt: startedAt}, JobOutcome{
+			Status: JobFailed, Error: &message, DurationMS: durationMS, CompletedAt: finishedAt,
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("metadata AI job failed with %q and the failure state could not be stored: %w", message, err)
 	}
-	if result.RowsAffected == 0 {
+	if !finished {
 		return fmt.Errorf("%w: %s", errMetadataAIJobLeaseUnavailable, job.ID)
 	}
 
-	job.Status = metadataAIJobStatusFailed
+	job.Status = JobFailed
 	job.Error = &message
 	job.DurationMS = &durationMS
 	job.CompletedAt = &finishedAt
@@ -101,38 +78,27 @@ func (m *MetadataJobManager) failJob(
 
 func (m *MetadataJobManager) completeJob(
 	ctx context.Context,
-	job *metadataJobRecord,
+	job *Job,
 	startedAt time.Time,
 	suggestion map[string]string,
 	responseText string,
 ) error {
 	completedAt := time.Now()
 	durationMS := time.Since(startedAt).Milliseconds()
-	suggestionJSON, err := json.Marshal(suggestion)
+	finished, err := m.runJobUpdate(ctx, func(ctx context.Context, store Store) (bool, error) {
+		return store.FinishJob(ctx, Lease{JobID: job.ID, StartedAt: startedAt}, JobOutcome{
+			Status: JobReady, Suggestion: suggestion, ResponseText: &responseText,
+			DurationMS: durationMS, CompletedAt: completedAt,
+		})
+	})
 	if err != nil {
-		return m.failJob(ctx, job, startedAt, time.Since(startedAt), err)
+		return fmt.Errorf("failed to finalize metadata AI job: %w", err)
 	}
-	updates := structured.Fields{
-		"status":        metadataAIJobStatusReady,
-		"suggestion":    string(suggestionJSON),
-		"response_text": responseText,
-		"error":         nil,
-		"duration_ms":   durationMS,
-		"completed_at":  completedAt,
-		"updated_at":    completedAt,
-	}
-	result := m.db.WithContext(ctx).
-		Model(&metadataJobRecord{}).
-		Where("id = ? AND status = ? AND started_at = ?", job.ID, metadataAIJobStatusRunning, startedAt).
-		Updates(updates)
-	if result.Error != nil {
-		return fmt.Errorf("failed to finalize metadata AI job: %w", result.Error)
-	}
-	if result.RowsAffected == 0 {
+	if !finished {
 		return fmt.Errorf("%w: %s", errMetadataAIJobLeaseUnavailable, job.ID)
 	}
 
-	job.Status = metadataAIJobStatusReady
+	job.Status = JobReady
 	job.Suggestion = suggestion
 	job.ResponseText = &responseText
 	job.Error = nil

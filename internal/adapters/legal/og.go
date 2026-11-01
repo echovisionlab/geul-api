@@ -17,6 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -249,7 +250,7 @@ func CurrentRequests(
 func RequestSaved(
 	ctx context.Context,
 	tx *gorm.DB,
-	planner *og.Planner,
+	planner *ogpostgres.Planner,
 	kind string,
 	documentID string,
 	requestedLocale string,
@@ -480,4 +481,4 @@ func bindingKey(locale *string) string {
 	return "og"
 }
 
-var _ og.Projection = (*Projection)(nil)
+var _ ogpostgres.Projection = (*Projection)(nil)

@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"errors"
 
 	"connectrpc.com/connect"
 
@@ -27,10 +26,9 @@ func (tools *TranslationTools) listJobs(ctx context.Context, arguments mcpserver
 	if err != nil {
 		return translationCallError(err)
 	}
-	if page.Pagination == nil {
-		return mcpserver.ToolResult{}, errors.New("translation application returned an incomplete Job list")
-	}
-	return translationStructuredResult(encodeTranslationJobList(page.Jobs, page.Pagination))
+	return translationStructuredResult(encodeTranslationJobList(
+		translationapp.JobMessages(page.Jobs), translationapp.PaginationMessage(page.Pagination),
+	))
 }
 
 func (tools *TranslationTools) listTranslations(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -42,11 +40,15 @@ func (tools *TranslationTools) listTranslations(ctx context.Context, arguments m
 	if err != nil {
 		return executionError(err)
 	}
-	translations, err := tools.application.ListEntityTranslations(ctx, translationapp.ListEntityTranslationsQuery{Target: target})
+	translations, err := tools.application.ListEntityTranslations(ctx, translationapp.ListEntityTranslationsQuery{
+		Target: translationapp.TargetFromMessage(target),
+	})
 	if err != nil {
 		return translationCallError(err)
 	}
-	return translationStructuredResult(encodeTranslationEntries(target, translations.SourceLocale, translations.Entries))
+	return translationStructuredResult(encodeTranslationEntries(
+		target, translations.SourceLocale, translationapp.EntryMessages(translations.Entries),
+	))
 }
 
 func (tools *TranslationTools) getTranslation(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -62,15 +64,12 @@ func (tools *TranslationTools) getTranslation(ctx context.Context, arguments mcp
 		return executionError(err)
 	}
 	entry, err := tools.application.GetEntityTranslation(ctx, translationapp.GetEntityTranslationQuery{
-		Target: target, Locale: string(input.Locale),
+		Target: translationapp.TargetFromMessage(target), Locale: string(input.Locale),
 	})
 	if err != nil {
 		return translationCallError(err)
 	}
-	if entry == nil {
-		return mcpserver.ToolResult{}, errors.New("translation application returned an incomplete locale entry")
-	}
-	return translationStructuredResult(encodeTranslationEntry(target, entry))
+	return translationStructuredResult(encodeTranslationEntry(target, translationapp.EntryMessage(entry)))
 }
 
 func (tools *TranslationTools) cancelJob(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -101,12 +100,12 @@ func (tools *TranslationTools) regenerate(ctx context.Context, arguments mcpserv
 		return executionError(err)
 	}
 	jobs, err := tools.application.RegenerateEntityTranslations(ctx, translationapp.RegenerateEntityTranslationsCommand{
-		Target: target, Locales: locales,
+		Target: translationapp.TargetFromMessage(target), Locales: locales,
 	})
 	if err != nil {
 		return translationCallError(err)
 	}
-	return translationStructuredResult(encodeTranslationJobs(jobs))
+	return translationStructuredResult(encodeTranslationJobs(translationapp.JobMessages(jobs)))
 }
 
 func (tools *TranslationTools) exportXLIFF(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -118,10 +117,7 @@ func (tools *TranslationTools) exportXLIFF(ctx context.Context, arguments mcpser
 	if err != nil {
 		return translationCallError(err)
 	}
-	if exported == nil {
-		return mcpserver.ToolResult{}, errors.New("translation application returned an incomplete XLIFF export")
-	}
-	return translationStructuredResult(encodeXLIFFExport(exported))
+	return translationStructuredResult(encodeXLIFFExport(translationapp.XLIFFExportMessage(exported)))
 }
 
 func (tools *TranslationTools) importXLIFF(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -133,10 +129,7 @@ func (tools *TranslationTools) importXLIFF(ctx context.Context, arguments mcpser
 	if err != nil {
 		return translationCallError(err)
 	}
-	if imported == nil {
-		return mcpserver.ToolResult{}, errors.New("translation application returned an incomplete XLIFF import")
-	}
-	return translationStructuredResult(encodeXLIFFImport(imported))
+	return translationStructuredResult(encodeXLIFFImport(translationapp.XLIFFImportMessage(imported)))
 }
 
 func translationCallError(err error) (mcpserver.ToolResult, error) {

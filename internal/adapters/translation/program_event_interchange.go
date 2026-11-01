@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -138,4 +139,4 @@ func (a *ProgramEventInterchange) loadProgramEventInterchangeTarget(
 	return programEventInterchangeTarget{state: state, localized: loaded.Localized}, nil
 }
 
-var _ application.TranslationInterchangeDomains = (*ProgramEventInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*ProgramEventInterchange)(nil)

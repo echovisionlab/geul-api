@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -98,12 +99,12 @@ func prepareScalarSourceLocale(domain core.Kind) func(context.Context, *gorm.DB,
 	}
 }
 
-func localeAwareOG(domain core.Kind) func(context.Context, *gorm.DB, *og.Planner, *og.Refresher, string, string, string) (bool, error) {
+func localeAwareOG(domain core.Kind) func(context.Context, *gorm.DB, *ogpostgres.Planner, *ogpostgres.Refresher, string, string, string) (bool, error) {
 	entityType := string(domain)
 	if !og.SupportsLocaleAware(entityType) {
 		panic(fmt.Sprintf("translation domain %q does not support locale-aware OG", domain))
 	}
-	return func(ctx context.Context, tx *gorm.DB, _ *og.Planner, refresher *og.Refresher, entityID string, locale string, reason string) (bool, error) {
+	return func(ctx context.Context, tx *gorm.DB, _ *ogpostgres.Planner, refresher *ogpostgres.Refresher, entityID string, locale string, reason string) (bool, error) {
 		_, err := refresher.RequestCurrentWithDB(
 			ctx, tx, og.EntityTypeForName(entityType), entityID, locale, false, reason,
 		)

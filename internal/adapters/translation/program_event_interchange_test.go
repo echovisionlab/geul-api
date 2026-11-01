@@ -10,7 +10,6 @@ import (
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestProgramEventInterchangeImportKeepsTitleSourceOwnedAndExplicitEmptySummary(t *testing.T) {
@@ -38,7 +37,7 @@ func TestProgramEventInterchangeImportKeepsTitleSourceOwnedAndExplicitEmptySumma
 	blockHandle := requireBlockInterchangeHandle(t, plan, blockID)
 	command := application.TranslationInterchangeApply{
 		EntityType: "program_event", EntityID: "event-1", SourceLocale: "en", TargetLocale: "ko",
-		Mode:   managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		Mode:   application.InterchangeModeReplace,
 		Source: source, Plan: plan,
 		Targets: map[string]core.UnitResult{
 			"entity:summary": {UnitID: "entity:summary", TranslatedText: ""},

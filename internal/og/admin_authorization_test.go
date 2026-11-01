@@ -5,8 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type recordingAdminAuthorizer struct {
@@ -31,25 +29,23 @@ func (a *recordingAdminAuthorizer) AuthorizeEntity(_ context.Context, entityType
 
 func TestAuthorizeOgEntityTargetDelegatesDomainPolicy(t *testing.T) {
 	authorizer := &recordingAdminAuthorizer{}
-	service := &AdminService{authorizer: authorizer}
+	service := &Admin{authorizer: authorizer}
 	entityID := "11111111-1111-4111-8111-111111111111"
 
-	require.NoError(t, service.authorizeOgEntityTarget(
-		context.Background(), managev1.OgEntityType_OG_ENTITY_TYPE_SERIES, entityID, true,
-	))
+	require.NoError(t, service.authorizeEntityTarget(context.Background(), "series", entityID, true))
 	require.Equal(t, "series", authorizer.entityType)
 	require.Equal(t, entityID, authorizer.entityID)
 	require.True(t, authorizer.requireEdit)
 }
 
 func TestNormalizeOgAuthorizationEntityIDUsesCanonicalStaticIdentity(t *testing.T) {
-	require.Equal(t, SiteEntityID, normalizeOgAuthorizationEntityID(
-		managev1.OgEntityType_OG_ENTITY_TYPE_SITE, "",
+	require.Equal(t, SiteEntityID, normalizeAuthorizationEntityID(
+		"site", "",
 	))
-	require.Equal(t, PrivacyRouteEntityID, normalizeOgAuthorizationEntityID(
-		managev1.OgEntityType_OG_ENTITY_TYPE_PRIVACY, "ignored",
+	require.Equal(t, PrivacyRouteEntityID, normalizeAuthorizationEntityID(
+		"privacy", "ignored",
 	))
-	require.Equal(t, TermsRouteEntityID, normalizeOgAuthorizationEntityID(
-		managev1.OgEntityType_OG_ENTITY_TYPE_TERMS, "ignored",
+	require.Equal(t, TermsRouteEntityID, normalizeAuthorizationEntityID(
+		"terms", "ignored",
 	))
 }

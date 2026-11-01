@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 )
 
 func TestNewRuntimeRequiresOGAuthority(t *testing.T) {
@@ -20,7 +20,7 @@ func TestNewRuntimeRequiresOGAuthority(t *testing.T) {
 func TestRuntimeBuildsBoundedReadyAssetRefsByAuthorityKey(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	runtime := NewRuntime(" https://cdn.example.com/ ", &og.Refresher{})
+	runtime := NewRuntime(" https://cdn.example.com/ ", &ogpostgres.Refresher{})
 	fileID := uuid.NewString()
 	assetID := uuid.NewString()
 	size := int64(42)
