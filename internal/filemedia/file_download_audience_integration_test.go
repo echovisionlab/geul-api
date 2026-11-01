@@ -3,8 +3,6 @@
 package filemedia
 
 import (
-	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
-
 	"context"
 	"testing"
 	"time"
@@ -95,12 +93,12 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	_, err = stack.SpiceDBClient.ApplyRelationships(t.Context(), postPolicy)
 	require.NoError(t, err)
 
-	fileSvc := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	fileSvc := withTestMutations(withTestStorage(&Service{
 		db:             db,
 		spiceDB:        stack.SpiceDBClient,
 		auditWriter:    apitelemetry.NewDurableWriter(db),
 		asyncPublisher: &policySignalPublisher{},
-	})
+	}))
 	fileSvc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
 	fileSvc.audienceAccess = newIntegrationAudienceAccess()
 	updated, err := NewConnectHandler(fileSvc).UpdateFileDownloadPolicy(
@@ -215,7 +213,7 @@ func TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegratio
 	_, err = stack.SpiceDBClient.ApplyRelationships(t.Context(), eventPolicy)
 	require.NoError(t, err)
 
-	svc := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db, spiceDB: stack.SpiceDBClient})
+	svc := withTestMutations(withTestStorage(&Service{db: db, spiceDB: stack.SpiceDBClient}))
 	svc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
 	svc.programEventAttachment = newIntegrationProgramEventAccess(db)
 	svc.audienceAccess = newIntegrationAudienceAccess()

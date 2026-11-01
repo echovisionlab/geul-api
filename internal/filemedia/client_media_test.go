@@ -1,8 +1,6 @@
 package filemedia
 
 import (
-	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
-
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -169,7 +167,7 @@ func TestClientMediaVerifiedAudioVideoRegisterWithoutEncodingJobs(t *testing.T) 
 			svc := newClientMediaStorageService(t, session, objects)
 			db := newServiceUnitDB(t)
 			svc.db = db
-			svc.units = filemediapostgres.NewUnits(db, filemediapostgres.Ports{})
+			withTestStorage(svc)
 			require.NoError(t, db.Exec(`CREATE TABLE file_derivative (id TEXT PRIMARY KEY,file_id TEXT,type TEXT,asset_id TEXT,media_generation_id TEXT,created_at DATETIME,UNIQUE(file_id,type))`).Error)
 			require.NoError(t, db.Create(&model.File{ID: session.FileID, FileName: "source", Extension: "mp4", MimeType: session.RequestedMime, FileSize: 100}).Error)
 			publisher := &recordingFileTranscoderPublisher{}
@@ -286,7 +284,7 @@ func TestClientMediaTrackFinalizerUsesCompletedBundleWithoutJobs(t *testing.T) {
 	svc := newClientMediaStorageService(t, session, objects)
 	db := newServiceUnitDB(t)
 	svc.db = db
-	svc.units = filemediapostgres.NewUnits(db, filemediapostgres.Ports{})
+	withTestStorage(svc)
 	require.NoError(t, db.Exec(`CREATE TABLE file_derivative (id TEXT PRIMARY KEY,file_id TEXT,type TEXT,asset_id TEXT,media_generation_id TEXT,created_at DATETIME,UNIQUE(file_id,type))`).Error)
 	attemptID := uuid.NewString()
 	trackID := uuid.NewString()
@@ -315,7 +313,7 @@ func TestClientMediaAuthorityRevocationCannotMakeCopiedArtifactsReady(t *testing
 	svc := newClientMediaStorageService(t, session, objects)
 	db := newServiceUnitDB(t)
 	svc.db = db
-	svc.units = filemediapostgres.NewUnits(db, filemediapostgres.Ports{})
+	withTestStorage(svc)
 	require.NoError(t, db.Exec(`CREATE TABLE file_derivative (id TEXT PRIMARY KEY,file_id TEXT,type TEXT,asset_id TEXT,media_generation_id TEXT,created_at DATETIME,UNIQUE(file_id,type))`).Error)
 	require.NoError(t, db.Create(&model.File{ID: session.FileID, FileName: "source", Extension: "mp4", MimeType: session.RequestedMime, FileSize: 100}).Error)
 	revoked := fmt.Errorf("membership revoked")
@@ -355,7 +353,7 @@ func TestClientMediaReadySignalHasCompleteOutputsAndNoCommands(t *testing.T) {
 
 func TestClientMediaFinalizingRepairNeverReopensRegisteredBundle(t *testing.T) {
 	session, _ := clientMediaTestBundle(t, "audio")
-	svc := &Service{units: filemediapostgres.NewUnits(newServiceUnitDB(t), filemediapostgres.Ports{}), db: newServiceUnitDB(t)}
+	svc := withTestStorage(&Service{db: newServiceUnitDB(t)})
 	session.Status = model.UploadSessionStatusUploading
 	allowed, err := svc.clientMediaArtifactWritable(t.Context(), session)
 	require.NoError(t, err)

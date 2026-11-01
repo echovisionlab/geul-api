@@ -14,11 +14,13 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filemediaapplication "github.com/echovisionlab/geul-api/internal/filemedia/application"
 	filemediaapplicationpostgres "github.com/echovisionlab/geul-api/internal/filemedia/application/postgres"
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	transcodeapplication "github.com/echovisionlab/geul-api/internal/transcode/application"
 	applicationpostgres "github.com/echovisionlab/geul-api/internal/transcode/application/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -225,5 +227,5 @@ func (d meshOptimizationFileDeleter) DeleteFileByID(ctx context.Context, fileID 
 	if d.runtime == nil || d.runtime.publisher == nil || fileID == "" {
 		return nil
 	}
-	return filemedia.RequestFileDeletion(ctx, d.runtime.db, d.runtime.publisher, fileID)
+	return filemedia.RequestFileDeletion(ctx, filemediapostgres.NewUnits(d.runtime.db, filemediapostgres.Ports{DeletionQueue: filemediaqueue.Publisher(d.runtime.publisher)}), fileID)
 }

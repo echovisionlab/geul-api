@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 )
 
 type CatalogFileRecord struct {
+	DeleteRequestedAt                                  *time.Time
 	IngestSlotID, IngestAttemptID, ClientMediaBundleID *string
 	Row                                                domain.CatalogRow
 	PendingDeletion, MeshOutput                        bool

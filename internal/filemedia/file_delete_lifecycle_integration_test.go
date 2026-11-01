@@ -3,8 +3,6 @@
 package filemedia
 
 import (
-	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
-
 	"crypto/sha256"
 	"testing"
 	"time"
@@ -29,12 +27,12 @@ func TestFileServiceDeleteFilePersistsRequestAndPublishesDeleteEventIntegration(
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	publisher := &hardCutAsyncPublisher{}
-	service := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	service := withTestMutations(withTestStorage(&Service{
 		db:             db,
 		s3Bucket:       "media-bucket",
 		spiceDB:        stack.SpiceDBClient,
 		asyncPublisher: publisher,
-	})
+	}))
 	fileID := uuid.NewString()
 	seedFileDeleteLifecycleFile(t, db, fileID, "poster.jpg", "image/jpeg", "jpg")
 	seedFileDeleteLifecyclePolicy(t, stack.SpiceDBClient, fileID)
@@ -107,12 +105,12 @@ func TestFileServiceDeleteFileCleansUnselectedMeshOptimizationCandidatesIntegrat
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	publisher := &hardCutAsyncPublisher{}
-	service := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	service := withTestMutations(withTestStorage(&Service{
 		db:             db,
 		s3Bucket:       "media-bucket",
 		spiceDB:        stack.SpiceDBClient,
 		asyncPublisher: publisher,
-	})
+	}))
 	pageID := seedHardCutPageFixture(t, db)
 	sourceFileID := seedMeshOptimizationSourceFile(t, db)
 	seedFileDeleteLifecyclePolicy(t, stack.SpiceDBClient, sourceFileID)

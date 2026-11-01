@@ -182,7 +182,7 @@ func (s *Service) loadFileManagerFilesByIDs(ctx context.Context, fileIDs []strin
 	if err != nil {
 		return nil, err
 	}
-	usageCounts, err := loadFileUsageCounts(ctx, s.db, fileIDs)
+	usageCounts, err := s.loadLibraryUsageCounts(ctx, fileIDs)
 	if err != nil {
 		return nil, err
 	}

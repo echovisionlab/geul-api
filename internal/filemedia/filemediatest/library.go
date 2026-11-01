@@ -3,7 +3,11 @@ package filemediatest
 import (
 	"context"
 	"maps"
+	"slices"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	telemetry "github.com/echovisionlab/geul-telemetry"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset/mediaassettest"
 
@@ -12,38 +16,64 @@ import (
 )
 
 type MeshRecord struct {
-	Witness domain.MeshDeliveryWitness
-	Status  string
+	Selected             bool
+	CancelledAt          *time.Time
+	ExpiresAt, UpdatedAt time.Time
+	Witness              domain.MeshDeliveryWitness
+	Status               string
 }
 
 type LibraryStore struct {
-	MeshRecords    map[string]MeshRecord
-	Derivatives    map[string][]domain.StoredDerivativeDelivery
-	MediaAssets    *mediaassettest.Store
-	Failures       domain.ProcessingFailureCounts
-	DeliveryUsages []domain.CurrentDeliveryUsage
-	IngestBindings map[string]domain.IngestBinding
-	PrincipalFence *identitystatetest.Fence
-	DeliveryLocks  []string
-	ReadyMeshes    map[string]domain.MeshDeliveryWitness
-	AvatarOwners   map[string]string
-	DeliveryOwners map[string]domain.DeliveryOwner
-	ExactUsages    map[string]bool
-	Folders        map[string]domain.FileFolder
-	Files          map[string]CatalogFileRecord
-	Fail           error
-	Writes         int
+	AssetIDs         map[string]bool
+	Generations      map[string]mediaasset.Generation
+	References       map[string][]string
+	FaviconDeletions []string
+	DeletionOutbox   []domain.DeletionTarget
+	Audits           []telemetry.AuditRecord
+	EnqueueError     error
+	Usages           []domain.FileUsageRow
+	Slugs            []domain.FileUsageSlug
+	TrackReleases    map[string]string
+	MeshRecords      map[string]MeshRecord
+	Derivatives      map[string][]domain.StoredDerivativeDelivery
+	MediaAssets      *mediaassettest.Store
+	Failures         domain.ProcessingFailureCounts
+	DeliveryUsages   []domain.CurrentDeliveryUsage
+	IngestBindings   map[string]domain.IngestBinding
+	PrincipalFence   *identitystatetest.Fence
+	DeliveryLocks    []string
+	ReadyMeshes      map[string]domain.MeshDeliveryWitness
+	AvatarOwners     map[string]string
+	DeliveryOwners   map[string]domain.DeliveryOwner
+	ExactUsages      map[string]bool
+	Folders          map[string]domain.FileFolder
+	Files            map[string]CatalogFileRecord
+	Fail             error
+	Writes           int
 }
 
 func NewLibraryStore() *LibraryStore {
 	assets, _ := mediaassettest.New()
-	return &LibraryStore{MediaAssets: assets, MeshRecords: map[string]MeshRecord{}, Derivatives: map[string][]domain.StoredDerivativeDelivery{}, IngestBindings: map[string]domain.IngestBinding{}, PrincipalFence: &identitystatetest.Fence{}, ReadyMeshes: map[string]domain.MeshDeliveryWitness{}, AvatarOwners: map[string]string{}, DeliveryOwners: map[string]domain.DeliveryOwner{}, ExactUsages: map[string]bool{}, Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
+	return &LibraryStore{AssetIDs: map[string]bool{}, Generations: map[string]mediaasset.Generation{}, References: map[string][]string{}, TrackReleases: map[string]string{}, MediaAssets: assets, MeshRecords: map[string]MeshRecord{}, Derivatives: map[string][]domain.StoredDerivativeDelivery{}, IngestBindings: map[string]domain.IngestBinding{}, PrincipalFence: &identitystatetest.Fence{}, ReadyMeshes: map[string]domain.MeshDeliveryWitness{}, AvatarOwners: map[string]string{}, DeliveryOwners: map[string]domain.DeliveryOwner{}, ExactUsages: map[string]bool{}, Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
 }
 func (s *LibraryStore) Savepoint() func() {
 	saved := maps.Clone(s.Folders)
 	files := maps.Clone(s.Files)
 	writes := s.Writes
-	return func() { s.Folders = saved; s.Files = files; s.Writes = writes }
+	mesh, ready := maps.Clone(s.MeshRecords), maps.Clone(s.ReadyMeshes)
+	assets := s.MediaAssets.Savepoint()
+	favicon, outbox, audits := slices.Clone(s.FaviconDeletions), slices.Clone(s.DeletionOutbox), slices.Clone(s.Audits)
+	return func() {
+		s.Folders = saved
+		s.Files = files
+		s.Writes = writes
+		s.MeshRecords = mesh
+		s.ReadyMeshes = ready
+		assets()
+		s.FaviconDeletions = favicon
+		s.DeletionOutbox = outbox
+		s.Audits = audits
+	}
 }
 func (s *LibraryStore) FolderExists(_ context.Context, id string) (bool, error) {
 	_, exists := s.Folders[id]

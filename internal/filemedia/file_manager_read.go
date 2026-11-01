@@ -40,7 +40,7 @@ func (s *Service) GetFile(ctx context.Context, query GetFileQuery) (*managev1.Ge
 			return nil, err
 		}
 	}
-	usageRows, err := loadFileUsages(ctx, s.db, []string{*fileID})
+	usageRows, err := s.loadLibraryFileUsages(ctx, []string{*fileID})
 	if err != nil {
 		return nil, err
 	}

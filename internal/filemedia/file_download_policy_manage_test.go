@@ -1,8 +1,6 @@
 package filemedia
 
 import (
-	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
-
 	"errors"
 	"testing"
 	"time"
@@ -60,9 +58,9 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 		Update("archived_at", time.Now().UTC()).Error)
 
 	signals := &policySignalPublisher{}
-	svc := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	svc := withTestMutations(withTestStorage(&Service{
 		db: db, spiceDB: spiceDB, asyncPublisher: signals,
-	})
+	}))
 	svc.postAccess = newIntegrationPostAccess(db, spiceDB)
 	svc.audienceAccess = newIntegrationAudienceAccess()
 	checker.For(manager.IdentityID).Allow(policyv1.Post.View(postID))
@@ -194,7 +192,7 @@ func TestFileDownloadPolicyScopeUsesCurrentBindingInsteadOfIngestProvenance(t *t
 	checker.For(manager.IdentityID).Allow(policyv1.Post.View(currentPostID))
 	checker.For(manager.IdentityID).Allow(policyv1.Post.Edit(currentPostID))
 
-	svc := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db, spiceDB: spiceDB, asyncPublisher: &policySignalPublisher{}})
+	svc := withTestMutations(withTestStorage(&Service{db: db, spiceDB: spiceDB, asyncPublisher: &policySignalPublisher{}}))
 	svc.postAccess = newIntegrationPostAccess(db, spiceDB)
 	svc.audienceAccess = newIntegrationAudienceAccess()
 	response, err := NewConnectHandler(svc).UpdateFileDownloadPolicy(

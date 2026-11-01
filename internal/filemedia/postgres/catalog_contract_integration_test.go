@@ -3,9 +3,16 @@
 package filemediapostgres_test
 
 import (
+	"context"
 	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"testing"
 	"time"
+
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	telemetry "github.com/echovisionlab/geul-telemetry"
+	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
@@ -26,7 +33,38 @@ func TestPostgresCatalogStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	filemediatest.RunCatalogContract(t, func(t *testing.T) filemediatest.CatalogHarness {
 		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
-		return filemediatest.CatalogHarness{Harness: mutationtest.PostgresHarness(db, filemediapostgres.NewUnits(db, filemediapostgres.Ports{})), SeedAsset: func(t *testing.T, a mediaasset.Asset) {
+		require.NoError(t, db.Exec(`CREATE TABLE filemedia_contract_output (sequence bigserial PRIMARY KEY, kind text NOT NULL, payload jsonb NOT NULL)`).Error)
+		return filemediatest.CatalogHarness{Audit: deletionContractOutputs{}, SeedAssetBinding: func(t *testing.T, asset, id string) {
+			require.NoError(t, db.Create(&model.PublicAssetBinding{AssetID: asset, SourceFileID: &id, OwnerType: "post", OwnerID: uuid.NewString(), BindingKey: "featured_image"}).Error)
+		}, Asset: func(t *testing.T, id string) mediaasset.Asset {
+			var a model.PublicAsset
+			require.NoError(t, db.First(&a, "id = ?", id).Error)
+			return mediaassetpostgres.Asset(a)
+		}, Outbox: func(t *testing.T) []domain.DeletionTarget {
+			var rows []struct{ Payload []byte }
+			require.NoError(t, db.Table("filemedia_contract_output").Select("payload").Where("kind = ?", "delete").Order("sequence").Find(&rows).Error)
+			targets := make([]domain.DeletionTarget, len(rows))
+			for i, r := range rows {
+				require.NoError(t, json.Unmarshal(r.Payload, &targets[i]))
+			}
+			return targets
+		}, AuditCount: func(t *testing.T) int {
+			var n int64
+			require.NoError(t, db.Table("filemedia_contract_output").Where("kind = ?", "audit").Count(&n).Error)
+			return int(n)
+		}, Mesh: func(t *testing.T, id string) (filemediatest.MeshRecord, bool) {
+			var m model.MeshOptimizationCandidate
+			err := db.First(&m, "id = ?", id).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return filemediatest.MeshRecord{}, false
+			}
+			require.NoError(t, err)
+			expires, updated := time.Time{}, m.UpdatedAt
+			if m.ExpiresAt != nil {
+				expires = *m.ExpiresAt
+			}
+			return filemediatest.MeshRecord{Status: m.Status, CancelledAt: m.CancelledAt, ExpiresAt: expires, UpdatedAt: updated}, true
+		}, Harness: mutationtest.PostgresHarness(db, filemediapostgres.NewUnits(db, filemediapostgres.Ports{DeletionQueue: deletionContractOutputs{}})), SeedAsset: func(t *testing.T, a mediaasset.Asset) {
 			r := mediaassetpostgres.AssetRow(a)
 			require.NoError(t, db.Create(&r).Error)
 		}, SeedGeneration: func(t *testing.T, g mediaasset.Generation) {
@@ -59,4 +97,22 @@ func TestPostgresCatalogStoreContractIntegration(t *testing.T) {
 			}
 		}}
 	})
+}
+
+type deletionContractOutputs struct{}
+
+func (deletionContractOutputs) EnqueueFileDeletion(ctx context.Context, executor eventpkg.DBTX, target domain.DeletionTarget) error {
+	payload, err := json.Marshal(target)
+	if err != nil {
+		return err
+	}
+	_, err = executor.ExecContext(ctx, "INSERT INTO filemedia_contract_output(kind,payload) VALUES ('delete',$1::jsonb)", string(payload))
+	return err
+}
+func (deletionContractOutputs) AppendDomainAuditInTransaction(ctx context.Context, tx *gorm.DB, record telemetry.AuditRecord) error {
+	payload, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	return tx.WithContext(ctx).Exec("INSERT INTO filemedia_contract_output(kind,payload) VALUES ('audit',?::jsonb)", string(payload)).Error
 }

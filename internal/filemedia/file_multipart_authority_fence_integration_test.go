@@ -3,8 +3,6 @@
 package filemedia
 
 import (
-	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
-
 	"context"
 	"testing"
 	"time"
@@ -32,7 +30,7 @@ func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorit
 			Where("upload_id = ?", session.UploadID).
 			Update("upload_type", managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO.String()).Error)
 
-		err = (&Service{units: filemediapostgres.NewUnits(stack.DB, filemediapostgres.Ports{}), db: stack.DB, spiceDB: stack.SpiceDBClient}).createVerifiedFileIngestRecord(
+		err = (withTestStorage(&Service{db: stack.DB, spiceDB: stack.SpiceDBClient})).createVerifiedFileIngestRecord(
 			ctx,
 			verifiedMultipartAuthorityFile(session.FileID),
 			managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
@@ -52,7 +50,7 @@ func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorit
 			Where("id = ?", manager.MemberID).
 			Update("account_identity_id", nil).Error)
 
-		err = (&Service{units: filemediapostgres.NewUnits(stack.DB, filemediapostgres.Ports{}), db: stack.DB, spiceDB: stack.SpiceDBClient}).createVerifiedFileIngestRecord(
+		err = (withTestStorage(&Service{db: stack.DB, spiceDB: stack.SpiceDBClient})).createVerifiedFileIngestRecord(
 			ctx,
 			verifiedMultipartAuthorityFile(session.FileID),
 			managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,

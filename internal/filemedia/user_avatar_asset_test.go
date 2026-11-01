@@ -1,8 +1,6 @@
 package filemedia
 
 import (
-	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
-
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -55,12 +53,12 @@ func TestPromoteUserAvatarAssetStreamsWebPAndReusesReadyAsset(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	service := withTestStorage(&Service{
 		db:        db,
 		s3Bucket:  "bucket",
 		cdnDomain: "https://cdn.example.com",
 		s3Client:  newAvatarAssetTestS3Client(server),
-	}
+	})
 	ref, err := service.PromoteUserAvatarAsset(t.Context(), fileID)
 
 	require.NoError(t, err)
@@ -105,12 +103,12 @@ func TestPromoteUserAvatarAssetMarksAllocationFailedWithoutDeletingSharedObject(
 	}))
 	t.Cleanup(server.Close)
 
-	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	service := withTestStorage(&Service{
 		db:        db,
 		s3Bucket:  "bucket",
 		cdnDomain: "https://cdn.example.com",
 		s3Client:  newAvatarAssetTestS3Client(server),
-	}
+	})
 	ref, err := service.PromoteUserAvatarAsset(t.Context(), fileID)
 
 	require.Error(t, err)
@@ -167,12 +165,12 @@ func TestPromoteUserAvatarAssetResumesAllocatedAsset(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	service := withTestStorage(&Service{
 		db:        db,
 		s3Bucket:  "bucket",
 		cdnDomain: "https://cdn.example.com",
 		s3Client:  newAvatarAssetTestS3Client(server),
-	}
+	})
 	ref, err := service.PromoteUserAvatarAsset(t.Context(), fileID)
 
 	require.NoError(t, err)
