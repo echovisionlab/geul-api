@@ -180,7 +180,7 @@ func (r *Runtime) HandleMeshOptimizationProgress(
 	if err := proto.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("invalid mesh optimization progress event: %w", err)
 	}
-	_, err := r.meshOptimizationService().HandleProgress(ctx, &event)
+	_, err := r.meshOptimizationService().HandleProgress(ctx, filemediaqueue.MeshProgressEvent(&event))
 	return err
 }
 
@@ -192,7 +192,7 @@ func (r *Runtime) HandleMeshOptimizationComplete(
 	if err := proto.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("invalid mesh optimization complete event: %w", err)
 	}
-	_, err := r.meshOptimizationService().HandleComplete(ctx, &event)
+	_, err := r.meshOptimizationService().HandleComplete(ctx, filemediaqueue.MeshCompleteEvent(&event))
 	return err
 }
 
@@ -204,7 +204,7 @@ func (r *Runtime) HandleMeshOptimizationFail(
 	if err := proto.Unmarshal(body, &event); err != nil {
 		return fmt.Errorf("invalid mesh optimization fail event: %w", err)
 	}
-	_, err := r.meshOptimizationService().HandleFailed(ctx, &event)
+	_, err := r.meshOptimizationService().HandleFailed(ctx, filemediaqueue.MeshFailedEvent(&event))
 	return err
 }
 

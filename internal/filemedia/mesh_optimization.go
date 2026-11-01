@@ -366,20 +366,20 @@ func (s *MeshOptimizationService) DiscardCandidate(ctx context.Context, candidat
 
 func (s *MeshOptimizationService) HandleProgress(
 	ctx context.Context,
-	event *managev1.MeshOptimizationProgressEvent,
+	event *domain.MeshProgressEvent,
 ) (_ *domain.MeshCandidate, resultErr error) {
 	if event == nil {
 		return nil, domainerr.Required("event")
 	}
-	if strings.TrimSpace(event.GetJobId()) == "" {
+	if strings.TrimSpace(event.JobID) == "" {
 		return nil, domainerr.Required("job_id")
 	}
-	candidate, err := s.loadCandidateForMeshEvent(ctx, event.GetJobId(), event.GetCorrelationId(), event.GetIdentity())
+	candidate, err := s.loadCandidateForMeshEvent(ctx, event.JobID, event.CorrelationID, event.Identity)
 	if err != nil {
 		return nil, err
 	}
 	if candidate.Status == domain.MeshStatusPending {
-		if err := s.MarkCandidateProcessing(ctx, candidate.ID, unixMillisTime(event.GetTimestampMs())); err != nil {
+		if err := s.MarkCandidateProcessing(ctx, candidate.ID, unixMillisTime(event.TimestampMS)); err != nil {
 			return nil, err
 		}
 		return s.loadCandidate(ctx, candidate.ID)
@@ -389,7 +389,7 @@ func (s *MeshOptimizationService) HandleProgress(
 
 func (s *MeshOptimizationService) HandleComplete(
 	ctx context.Context,
-	event *managev1.MeshOptimizationCompleteEvent,
+	event *domain.MeshCompleteEvent,
 ) (_ *domain.MeshCandidate, resultErr error) {
 	completion, candidate, err := s.prepareMeshOptimizationCompletion(ctx, event)
 	if err != nil {
@@ -419,8 +419,8 @@ func (s *MeshOptimizationService) HandleComplete(
 }
 
 type meshOptimizationCompletion struct {
-	event        *managev1.MeshOptimizationCompleteEvent
-	output       *managev1.MeshOptimizationOutput
+	event        *domain.MeshCompleteEvent
+	output       *domain.MeshOutput
 	outputFileID string
 	fileSize     int64
 	sha256       []byte
@@ -430,23 +430,23 @@ type meshOptimizationCompletion struct {
 
 func (s *MeshOptimizationService) prepareMeshOptimizationCompletion(
 	ctx context.Context,
-	event *managev1.MeshOptimizationCompleteEvent,
+	event *domain.MeshCompleteEvent,
 ) (meshOptimizationCompletion, *domain.MeshCandidate, error) {
 	if event == nil {
 		return meshOptimizationCompletion{}, nil, domainerr.Required("event")
 	}
-	if strings.TrimSpace(event.GetJobId()) == "" {
+	if strings.TrimSpace(event.JobID) == "" {
 		return meshOptimizationCompletion{}, nil, domainerr.Required("job_id")
 	}
-	output := event.GetOutput()
+	output := event.Output
 	if output == nil {
 		return meshOptimizationCompletion{}, nil, domainerr.Required("output")
 	}
-	candidate, err := s.loadCandidateForMeshEvent(ctx, event.GetJobId(), event.GetCorrelationId(), event.GetIdentity())
+	candidate, err := s.loadCandidateForMeshEvent(ctx, event.JobID, event.CorrelationID, event.Identity)
 	if err != nil {
 		return meshOptimizationCompletion{}, nil, err
 	}
-	if err := validateMeshOptimizationOutputProfile(*candidate, output.GetProfile()); err != nil {
+	if err := validateMeshOptimizationOutputProfile(*candidate, managev1.MeshOptimizationProfile(output.Profile)); err != nil {
 		return meshOptimizationCompletion{}, nil, err
 	}
 	completion, err := validateMeshOptimizationCompletionPayload(event, output, candidate.OutputObjectID)
@@ -454,15 +454,15 @@ func (s *MeshOptimizationService) prepareMeshOptimizationCompletion(
 }
 
 func validateMeshOptimizationCompletionPayload(
-	event *managev1.MeshOptimizationCompleteEvent,
-	output *managev1.MeshOptimizationOutput,
+	event *domain.MeshCompleteEvent,
+	output *domain.MeshOutput,
 	expectedOutputObjectID string,
 ) (meshOptimizationCompletion, error) {
-	written := output.GetWritten()
+	written := output.Written
 	if written == nil {
 		return meshOptimizationCompletion{}, domainerr.Required("output.written")
 	}
-	outputFileID := strings.TrimSpace(written.GetFileId())
+	outputFileID := strings.TrimSpace(written.FileID)
 	expectedOutputObjectID = strings.TrimSpace(expectedOutputObjectID)
 	if expectedOutputObjectID == "" {
 		return meshOptimizationCompletion{}, domainerr.Precondition("mesh optimization output was not allocated")
@@ -473,16 +473,16 @@ func validateMeshOptimizationCompletionPayload(
 	if output.OptimizedSizeBytes == nil {
 		return meshOptimizationCompletion{}, domainerr.Required("optimized_size_bytes")
 	}
-	if written.GetFileSize() <= 0 || written.GetFileSize() != output.GetOptimizedSizeBytes() {
+	if written.FileSize <= 0 || written.FileSize != *output.OptimizedSizeBytes {
 		return meshOptimizationCompletion{}, domainerr.InvalidField("output.written.file_size", "must match optimized_size_bytes and be positive")
 	}
-	if len(written.GetSha256()) != 32 {
+	if len(written.SHA256) != 32 {
 		return meshOptimizationCompletion{}, domainerr.InvalidField("output.written.sha256", "must be a 32-byte SHA-256 digest")
 	}
-	completedAt := unixMillisTime(event.GetTimestampMs())
+	completedAt := unixMillisTime(event.TimestampMS)
 	return meshOptimizationCompletion{
 		event: event, output: output, outputFileID: outputFileID,
-		fileSize: *output.OptimizedSizeBytes, sha256: append([]byte(nil), written.GetSha256()...),
+		fileSize: *output.OptimizedSizeBytes, sha256: append([]byte(nil), written.SHA256...),
 		completedAt: completedAt, expiresAt: completedAt.Add(meshOptimizationCandidateTTL),
 	}, nil
 }
@@ -548,18 +548,18 @@ func meshOptimizationCompletionUpdates(
 		OptimizedFileSize: optionalEventInt64(output.OptimizedSizeBytes), OriginalFileSize: optionalEventInt64(output.OriginalSizeBytes),
 		OriginalVertexes: optionalEventInt64(output.OriginalVertexCount), OptimizedVertexes: optionalEventInt64(output.OptimizedVertexCount),
 		OriginalTriangles: optionalEventInt64(output.OriginalTriangleCount), OptimizedTriangles: optionalEventInt64(output.OptimizedTriangleCount),
-		ProcessingTimeMS: optionalPositiveEventInt64(completion.event.GetProcessingTimeMs()), CompletedAt: completion.completedAt, ExpiresAt: completion.expiresAt,
+		ProcessingTimeMS: optionalPositiveEventInt64(completion.event.ProcessingTimeMS), CompletedAt: completion.completedAt, ExpiresAt: completion.expiresAt,
 	}, status
 }
 
-func (s *MeshOptimizationService) HandleFailed(ctx context.Context, event *managev1.MeshOptimizationFailEvent) (_ *domain.MeshCandidate, resultErr error) {
+func (s *MeshOptimizationService) HandleFailed(ctx context.Context, event *domain.MeshFailedEvent) (_ *domain.MeshCandidate, resultErr error) {
 	if event == nil {
 		return nil, domainerr.Required("event")
 	}
-	if strings.TrimSpace(event.GetJobId()) == "" {
+	if strings.TrimSpace(event.JobID) == "" {
 		return nil, domainerr.Required("job_id")
 	}
-	candidate, err := s.loadCandidateForMeshEvent(ctx, event.GetJobId(), event.GetCorrelationId(), event.GetIdentity())
+	candidate, err := s.loadCandidateForMeshEvent(ctx, event.JobID, event.CorrelationID, event.Identity)
 	if err != nil {
 		return nil, err
 	}
@@ -569,17 +569,21 @@ func (s *MeshOptimizationService) HandleFailed(ctx context.Context, event *manag
 		}
 		return candidate, nil
 	}
-	failedAt := unixMillisTime(event.GetTimestampMs())
+	failedAt := unixMillisTime(event.TimestampMS)
 	expiresAt := failedAt.Add(meshOptimizationCandidateTTL)
-	errText := strings.TrimSpace(event.GetError())
+	reason := event.Reason
+	if reason == "" {
+		reason = domain.MeshFailureUnspecified
+	}
+	errText := strings.TrimSpace(event.Error)
 	if errText == "" {
-		errText = event.GetReason().String()
+		errText = reason
 	}
 	level := slog.LevelError
-	if event.GetReason() == managev1.MeshOptimizationFailureReason_MESH_OPTIMIZATION_FAILURE_REASON_REJECTED {
+	if reason == domain.MeshFailureRejected {
 		level = slog.LevelWarn
 	}
-	slog.Log(ctx, level, "Mesh optimization processing failed", failurecause.Attr(fmt.Errorf("%s", errText)), "job_id", event.GetJobId(), "correlation_id", event.GetCorrelationId(), "candidate_id", candidate.ID, "source_file_id", candidate.SourceFileID, "reason", event.GetReason().String())
+	slog.Log(ctx, level, "Mesh optimization processing failed", failurecause.Attr(fmt.Errorf("%s", errText)), "job_id", event.JobID, "correlation_id", event.CorrelationID, "candidate_id", candidate.ID, "source_file_id", candidate.SourceFileID, "reason", reason)
 	if err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
 		return unit.Store().FailMeshCandidate(ctx, candidate.ID, errText, failedAt, expiresAt)
 	}); err != nil {
@@ -741,7 +745,7 @@ func (s *MeshOptimizationService) loadCandidateForMeshEvent(
 	ctx context.Context,
 	jobID string,
 	correlationID string,
-	identity *managev1.MeshOptimizationIdentity,
+	identity *domain.MeshIdentity,
 ) (*domain.MeshCandidate, error) {
 	jobID = strings.TrimSpace(jobID)
 	correlationID = strings.TrimSpace(correlationID)
@@ -762,9 +766,9 @@ func (s *MeshOptimizationService) loadCandidateForMeshEvent(
 		return nil, err
 	}
 	entityType, entityID := candidatePermissionTarget(candidate)
-	if strings.TrimSpace(identity.GetFileId()) != candidate.SourceFileID ||
-		identity.GetEntityType() != entityType ||
-		strings.TrimSpace(identity.GetEntityId()) != strings.TrimSpace(entityID) {
+	if strings.TrimSpace(identity.FileID) != candidate.SourceFileID ||
+		identity.EntityType != int32(entityType) ||
+		strings.TrimSpace(identity.EntityID) != strings.TrimSpace(entityID) {
 		return nil, domainerr.InvalidField("identity", "does not match the allocated mesh optimization job")
 	}
 	return &candidate, nil

@@ -13,7 +13,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/filemedia/filemediatest"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -53,10 +52,10 @@ func (f *meshFixture) candidate(status, pipeline string) domain.MeshCandidate {
 	f.store.PutMeshCandidate(row)
 	return row
 }
-func meshCompleteEvent(row domain.MeshCandidate) *managev1.MeshOptimizationCompleteEvent {
+func meshCompleteEvent(row domain.MeshCandidate) *domain.MeshCompleteEvent {
 	digest := sha256.Sum256([]byte("optimized mesh"))
 	size := int64(512)
-	return &managev1.MeshOptimizationCompleteEvent{JobId: *row.JobID, CorrelationId: row.ID, Identity: &managev1.MeshOptimizationIdentity{EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE, EntityId: *row.EntityID, FileId: row.SourceFileID}, Output: &managev1.MeshOptimizationOutput{Written: &commonv1.MediaObjectWriteResult{FileId: row.OutputObjectID, FileSize: size, Sha256: digest[:]}, OptimizedSizeBytes: &size}}
+	return &domain.MeshCompleteEvent{JobID: *row.JobID, CorrelationID: row.ID, Identity: &domain.MeshIdentity{EntityType: int32(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE), EntityID: *row.EntityID, FileID: row.SourceFileID}, Output: &domain.MeshOutput{Written: &domain.MeshWritten{FileID: row.OutputObjectID, FileSize: size, SHA256: digest[:]}, OptimizedSizeBytes: &size}}
 }
 
 func TestMeshSourceMustBeLinkedForGenerateListSelectionAndDiscard(t *testing.T) {
@@ -201,15 +200,15 @@ func TestMeshCompletionValidatesAllocatedBytesAndReplaysWithoutReplacingTheFile(
 	require.Equal(t, int64(512), *output.Row.FileSize)
 	require.Equal(t, row.OutputObjectID, output.Row.Name)
 	require.Equal(t, "glb", *output.Row.Extension)
-	require.Equal(t, event.Output.Written.Sha256, output.SHA256)
+	require.Equal(t, event.Output.Written.SHA256, output.SHA256)
 	completed, err = f.mesh.HandleComplete(f.ctx, event)
 	require.NoError(t, err)
 	require.Equal(t, domain.MeshStatusReady, completed.Status)
-	event.Output.Written.FileId = uuid.NewString()
+	event.Output.Written.FileID = uuid.NewString()
 	_, err = f.mesh.HandleComplete(f.ctx, event)
 	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
-	event.Output.Written.FileId = row.OutputObjectID
-	event.Output.Written.Sha256 = make([]byte, 32)
+	event.Output.Written.FileID = row.OutputObjectID
+	event.Output.Written.SHA256 = make([]byte, 32)
 	_, err = f.mesh.HandleComplete(f.ctx, event)
 	require.ErrorContains(t, err, "conflicts with existing output metadata")
 	require.Equal(t, output.SHA256, f.store.Files[row.OutputObjectID].SHA256)
@@ -235,7 +234,7 @@ func TestMeshCompletionRequiresSizeAndTheAllocatedProfile(t *testing.T) {
 			require.Equal(t, domain.MeshStatusProcessing, f.store.MeshCandidateRows[row.ID].Status)
 			if mode == "profile" {
 				require.ErrorContains(t, err, "output.profile")
-				event.Output.Profile = managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_PARTICLE_MESH_V1
+				event.Output.Profile = int32(managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_PARTICLE_MESH_V1)
 				completed, err := f.mesh.HandleComplete(f.ctx, event)
 				require.NoError(t, err)
 				require.Equal(t, domain.MeshStatusReady, completed.Status)
@@ -249,18 +248,18 @@ func TestMeshEventsRequireExactJobCandidateAndIdentity(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := newMeshFixture(t)
 			row := f.candidate(domain.MeshStatusPending, "")
-			event := &managev1.MeshOptimizationProgressEvent{JobId: *row.JobID, CorrelationId: row.ID, Identity: meshCompleteEvent(row).Identity}
+			event := &domain.MeshProgressEvent{JobID: *row.JobID, CorrelationID: row.ID, Identity: meshCompleteEvent(row).Identity}
 			switch mode {
 			case "file":
-				event.Identity.FileId = uuid.NewString()
+				event.Identity.FileID = uuid.NewString()
 			case "entity":
-				event.Identity.EntityId = uuid.NewString()
+				event.Identity.EntityID = uuid.NewString()
 			case "entity type":
-				event.Identity.EntityType = managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_WORK
+				event.Identity.EntityType = int32(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_WORK)
 			case "job":
-				event.JobId = uuid.NewString()
+				event.JobID = uuid.NewString()
 			case "candidate":
-				event.CorrelationId = uuid.NewString()
+				event.CorrelationID = uuid.NewString()
 			}
 			_, err := f.mesh.HandleProgress(f.ctx, event)
 			want := connect.CodeInvalidArgument
@@ -354,10 +353,10 @@ func TestMeshProgressFailureAndExpiryPreserveCleanupOrder(t *testing.T) {
 	row := f.candidate(domain.MeshStatusPending, "")
 	identity := meshCompleteEvent(row).Identity
 	at := time.Now().UTC().Truncate(time.Millisecond)
-	progressed, err := f.mesh.HandleProgress(f.ctx, &managev1.MeshOptimizationProgressEvent{JobId: *row.JobID, CorrelationId: row.ID, Identity: identity, TimestampMs: at.UnixMilli()})
+	progressed, err := f.mesh.HandleProgress(f.ctx, &domain.MeshProgressEvent{JobID: *row.JobID, CorrelationID: row.ID, Identity: identity, TimestampMS: at.UnixMilli()})
 	require.NoError(t, err)
 	require.Equal(t, domain.MeshStatusProcessing, progressed.Status)
-	failed, err := f.mesh.HandleFailed(f.ctx, &managev1.MeshOptimizationFailEvent{JobId: *row.JobID, CorrelationId: row.ID, Identity: identity, Error: "rejected", TimestampMs: at.UnixMilli()})
+	failed, err := f.mesh.HandleFailed(f.ctx, &domain.MeshFailedEvent{JobID: *row.JobID, CorrelationID: row.ID, Identity: identity, Error: "rejected", TimestampMS: at.UnixMilli()})
 	require.NoError(t, err)
 	require.Equal(t, domain.MeshStatusFailed, failed.Status)
 	require.Equal(t, new("rejected"), failed.ErrorMessage)
@@ -372,4 +371,22 @@ func TestMeshProgressFailureAndExpiryPreserveCleanupOrder(t *testing.T) {
 	require.Equal(t, int64(1), count)
 	require.Equal(t, []string{row.OutputObjectID}, deleted)
 	require.Empty(t, f.store.MeshCandidateRows)
+}
+
+func TestMeshFailureUsesTheReasonWhenTheErrorIsEmpty(t *testing.T) {
+	for _, test := range []struct{ name, reason, want string }{
+		{"unspecified", "", domain.MeshFailureUnspecified},
+		{"rejected", domain.MeshFailureRejected, domain.MeshFailureRejected},
+		{"unknown", "999", "999"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			f := newMeshFixture(t)
+			row := f.candidate(domain.MeshStatusProcessing, "")
+			result, err := f.mesh.HandleFailed(f.ctx, &domain.MeshFailedEvent{JobID: *row.JobID, CorrelationID: row.ID, Identity: meshCompleteEvent(row).Identity, Reason: test.reason, Error: " "})
+			require.NoError(t, err)
+			require.Equal(t, domain.MeshStatusFailed, result.Status)
+			require.Equal(t, new(test.want), result.ErrorMessage)
+		})
+	}
 }
