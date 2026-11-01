@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	eventdomain "github.com/echovisionlab/geul-api/internal/programevent"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
@@ -122,7 +123,7 @@ func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
 	t.Run("binding errors preserved", func(t *testing.T) {
 		fileID, _ := testutil.SeedCanonicalPublicFileFixture(t, db, "invalid-binding.webp", "image/webp", "poster")
 		_, err := runtime.BindReadyAssetForSourceFile(ctx, db, fileID, "", event.Msg.Id, "invalid", "poster")
-		require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+		require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 		var count int64
 		require.NoError(t, db.Model(&model.PublicAssetBinding{}).Where("source_file_id = ?", fileID).Count(&count).Error)
 		require.Zero(t, count)
@@ -131,7 +132,7 @@ func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
 	t.Run("other expected kinds stay strict", func(t *testing.T) {
 		fileID, _ := testutil.SeedCanonicalPublicFileFixture(t, db, "strict.webp", "image/webp", "image")
 		_, err := runtime.BindReadyAssetForSourceFile(ctx, db, fileID, "program_event", event.Msg.Id, "strict", "map_image")
-		require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+		require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 		var count int64
 		require.NoError(t, db.Model(&model.PublicAssetBinding{}).Where("source_file_id = ?", fileID).Count(&count).Error)
 		require.Zero(t, count)
