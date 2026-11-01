@@ -24,6 +24,7 @@ import (
 
 // Deps are the collaborators of the File use cases.
 type Deps struct {
+	IngestLocks    domain.IngestLocks
 	FaviconCommits domain.FaviconCommits
 	Units          mutation.UnitOfWork[Store]
 	Fence          identitystate.Fence
@@ -59,7 +60,7 @@ type Deps struct {
 func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
-		"FaviconCommits": d.FaviconCommits == nil, "Units": d.Units == nil, "Fence": d.Fence == nil, "DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil, "S3": d.S3 == nil,
+		"IngestLocks": d.IngestLocks == nil, "FaviconCommits": d.FaviconCommits == nil, "Units": d.Units == nil, "Fence": d.Fence == nil, "DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil, "S3": d.S3 == nil,
 		"AsyncPublisher": d.AsyncPublisher == nil, "Transcoder": d.Transcoder == nil,
 		"LegalRoutes": d.LegalRoutes == nil, "PostAccess": d.PostAccess == nil,
 		"PagePolicyAccess": d.PagePolicyAccess == nil, "WorkAttachment": d.WorkAttachment == nil,
@@ -83,8 +84,10 @@ func (d Deps) validate() error {
 // other domains call. Connect and MCP adapters translate their requests into
 // its commands and queries.
 type Service struct {
+	ingestLocks               domain.IngestLocks
 	faviconCommits            domain.FaviconCommits
 	uploadReads               fileStoreReader
+	ownerPreflights           fileStoreReader
 	units                     mutation.UnitOfWork[Store]
 	storeMutations            *mutation.StoreRunner[Store]
 	db                        *gorm.DB
@@ -158,7 +161,7 @@ func NewService(deps Deps) (*Service, error) {
 		editorImage.MaxSize = deps.EditorImageMaxSize
 	}
 	return &Service{
-		faviconCommits: deps.FaviconCommits, units: deps.Units, storeMutations: storeMutations, db: deps.DB, spiceDB: deps.SpiceDB, auditWriter: deps.Audit, mutations: mutations,
+		ingestLocks: deps.IngestLocks, faviconCommits: deps.FaviconCommits, units: deps.Units, storeMutations: storeMutations, db: deps.DB, spiceDB: deps.SpiceDB, auditWriter: deps.Audit, mutations: mutations,
 		s3Client: deps.S3, s3PresignClient: presigner, asyncPublisher: deps.AsyncPublisher,
 		publisher: deps.Transcoder, s3Bucket: deps.S3Bucket, cdnDomain: deps.CDNDomain,
 		mediaDomain: deps.MediaDomain, mediaSecret: deps.MediaSecret, downloadTTL: downloadTTL,

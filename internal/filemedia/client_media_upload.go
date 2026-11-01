@@ -14,7 +14,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -47,15 +46,19 @@ type ClientMediaUploadArtifact struct {
 // PrepareClientMediaUpload returns the ID of the bundle it registered.
 func (s *Service) PrepareClientMediaUpload(ctx context.Context, command PrepareClientMediaUploadCommand) (string, error) {
 	var bundleID string
-	err := withMultipartCompletionAdvisoryLock(ctx, s.db, command.UploadID, command.FileID, func(_ *gorm.DB) error {
-		session, err := s.authorizedClientMediaSession(ctx, command.UploadID, command.FileID)
+	err := s.ingestLocks.Multipart(ctx, command.UploadID, command.FileID, func(scope domain.IngestSession) error {
+		lockedService, err := s.ingestService(scope)
+		if err != nil {
+			return err
+		}
+		session, err := lockedService.authorizedClientMediaSession(ctx, command.UploadID, command.FileID)
 		if err != nil {
 			return err
 		}
 		if !clientMediaSessionWritable(session) {
 			return domainerr.Precondition("upload session is not writable")
 		}
-		bundleID, err = s.prepareMediaBundle(ctx, session, command)
+		bundleID, err = lockedService.prepareMediaBundle(ctx, session, command)
 		return err
 	})
 	if err != nil {
@@ -168,10 +171,15 @@ func (s *Service) HandleClientMediaArtifact(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	// The same lock seals PUT and completion; no upload can race canonical registration.
-	err := withMultipartCompletionAdvisoryLock(r.Context(), s.db, uploadID, fileID, func(_ *gorm.DB) error {
-		return s.units.Transaction(r.Context(), false, func(unit mutation.Tx[Store]) error {
-			svc := *s
+	err := s.ingestLocks.Multipart(r.Context(), uploadID, fileID, func(scope domain.IngestSession) error {
+		lockedService, err := s.ingestService(scope)
+		if err != nil {
+			return err
+		}
+		return lockedService.units.Transaction(r.Context(), false, func(unit mutation.Tx[Store]) error {
+			svc := *lockedService
 			svc.uploadReads = boundFileStoreReader{unit.Store()}
+			svc.ownerPreflights = boundFileStoreReader{unit.Store()}
 			session, artifact, err := svc.authorizeMediaArtifact(r.Context(), identity.MemberID.String(), fileID, uploadID, bundleID, path)
 			if err != nil {
 				return err

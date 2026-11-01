@@ -59,6 +59,9 @@ func newTestService(deps Deps) *Service {
 	if deps.MemberSummaries == nil {
 		deps.MemberSummaries = unusedFilePorts{}
 	}
+	if deps.IngestLocks == nil {
+		deps.IngestLocks = filemediapostgres.NewIngestLocks(deps.DB, testFilePorts(&Service{publisher: deps.Transcoder, trackAttachment: deps.TrackAttachment, asyncPublisher: deps.AsyncPublisher, postAccess: deps.PostAccess, pagePolicyAccess: deps.PagePolicyAccess, workPolicyAccess: deps.WorkPolicyAccess, programEventAttachment: deps.ProgramEventAttachment, releasePolicyAccess: deps.ReleasePolicyAccess, spiceDB: deps.SpiceDB}))
+	}
 	if deps.FaviconCommits == nil {
 		deps.FaviconCommits = filemediapostgres.NewFaviconCommits(deps.DB, filemediapostgres.Ports{})
 	}

@@ -329,12 +329,10 @@ func (s *Service) authorizeManageFilePermissionTarget(
 	target manageFilePermissionTarget,
 ) error {
 	if target.resourceType == "post" {
-		access := s.postAccess
-		return access.RequireView(ctx, target.resourceID)
+		return s.requireOwnerPreflight(ctx, "post", target.resourceID, false)
 	}
 	if target.resourceType == "program_event" {
-		access := s.programEventAttachment
-		return access.RequireView(ctx, s.spiceDB, target.resourceID)
+		return s.requireOwnerPreflight(ctx, "program_event", target.resourceID, false)
 	}
 	adminCan, err := policyv1.File.ManageLibrary()
 	if err != nil {

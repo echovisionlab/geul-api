@@ -98,3 +98,14 @@ func (s *store) UploadOwnerExists(ctx context.Context, kind, id string) (bool, e
 	err := s.tx.WithContext(ctx).Table(table).Where("id = ?", id).Count(&count).Error
 	return count != 0, err
 }
+
+type UploadWorks interface {
+	RequireExists(context.Context, *gorm.DB, string) error
+}
+
+func (s *store) RequireUploadWork(ctx context.Context, id string) error {
+	if s.ports.UploadWorks == nil {
+		return fmt.Errorf("File upload Work authority is required")
+	}
+	return s.ports.UploadWorks.RequireExists(ctx, s.tx, id)
+}

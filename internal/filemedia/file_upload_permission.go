@@ -200,8 +200,7 @@ func (s *Service) validatePartUploadTarget(
 		}
 	}
 	if target.resourceType == "work" {
-		attachment := s.workAttachment
-		return attachment.RequireExists(ctx, entityID)
+		return s.readUploadFacts(ctx, func(store Store) error { return store.RequireUploadWork(ctx, entityID) })
 	}
 	return nil
 }
@@ -225,12 +224,10 @@ func (s *Service) checkRoleAndSpiceDBUploadPermission(
 	userID string,
 ) error {
 	if target.resourceType == "post" {
-		access := s.postAccess
-		return access.RequireEdit(ctx, entityID)
+		return s.requireOwnerPreflight(ctx, "post", entityID, true)
 	}
 	if target.resourceType == "program_event" {
-		access := s.programEventAttachment
-		return access.RequireEdit(ctx, s.spiceDB, entityID)
+		return s.requireOwnerPreflight(ctx, "program_event", entityID, true)
 	}
 	can, err := policyv1.File.ManageLibrary()
 	if err != nil {

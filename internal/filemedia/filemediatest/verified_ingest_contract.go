@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/google/uuid"
@@ -32,6 +33,19 @@ func verifiedIngestCases() map[string]func(*testing.T, CatalogHarness) {
 				exists, err = s.UploadOwnerExists(ctx, "user", owner)
 				require.NoError(t, err)
 				require.False(t, exists)
+				return nil
+			}))
+		},
+		"upload Work existence uses owner errors": func(t *testing.T, h CatalogHarness) {
+			id, doc := uuid.NewString(), uuid.NewString()
+			file := CatalogFile("work", nil)
+			h.SeedFile(t, file, false, false)
+			h.SeedScoped(t, "work", id, ScopedOwner{DocumentID: doc}, domain.ScopedAttachment{BlockID: uuid.NewString(), ReferencePath: "file", FileID: file.ID})
+			require.NoError(t, mutationtest.Read(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				require.NoError(t, s.RequireUploadWork(ctx, id))
+				var missing *domainerr.Error
+				require.ErrorAs(t, s.RequireUploadWork(ctx, uuid.NewString()), &missing)
+				require.Equal(t, domainerr.NotFound, missing.Kind)
 				return nil
 			}))
 		},

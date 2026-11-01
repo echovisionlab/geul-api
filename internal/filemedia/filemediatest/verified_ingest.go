@@ -109,3 +109,14 @@ func (s *LibraryStore) UploadOwnerExists(_ context.Context, kind, id string) (bo
 	}
 	return false, nil
 }
+
+func (s *LibraryStore) RequireUploadWork(ctx context.Context, id string) error {
+	exists, err := s.UploadOwnerExists(ctx, "work", id)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return domainerr.ResourceNotFound("work", id)
+	}
+	return nil
+}

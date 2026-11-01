@@ -16,6 +16,7 @@ type DeletionQueue interface {
 	EnqueueFileDeletion(context.Context, eventpkg.DBTX, domain.DeletionTarget) error
 }
 type Ports struct {
+	UploadWorks      UploadWorks
 	MeshJobs         MeshJobs
 	IngestTranscodes IngestTranscodes
 	UploadTracks     UploadTracks

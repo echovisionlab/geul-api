@@ -97,7 +97,7 @@ func TestPostUploadAuthorizationUsesOneStatusAwareDomainAction(t *testing.T) {
 
 	t.Run("initiation", func(t *testing.T) {
 		access := &recordingPostAccess{}
-		service := &Service{postAccess: access}
+		service := withTestStorage(&Service{db: newPostAccessUnitDB(t), postAccess: access})
 		err := service.checkEntityPermission(
 			ctx,
 			managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE,
@@ -106,18 +106,18 @@ func TestPostUploadAuthorizationUsesOneStatusAwareDomainAction(t *testing.T) {
 			principal.MemberID.String(),
 		)
 		require.NoError(t, err)
-		require.Equal(t, 1, access.requireEditCount)
-		require.Zero(t, access.requireLockedEditCount)
+		require.Zero(t, access.requireEditCount)
+		require.Equal(t, 1, access.requireLockedEditCount)
 		require.Zero(t, access.requireViewCount)
 	})
 
 	t.Run("part", func(t *testing.T) {
 		access := &recordingPostAccess{}
-		service := &Service{postAccess: access}
+		service := withTestStorage(&Service{db: newPostAccessUnitDB(t), postAccess: access})
 		err := service.checkPartUploadPermission(ctx, principal.MemberID.String(), postUploadSession(postID))
 		require.NoError(t, err)
-		require.Equal(t, 1, access.requireEditCount)
-		require.Zero(t, access.requireLockedEditCount)
+		require.Zero(t, access.requireEditCount)
+		require.Equal(t, 1, access.requireLockedEditCount)
 		require.Zero(t, access.requireViewCount)
 	})
 }
@@ -150,7 +150,7 @@ func TestPostManageDeliveryUsesOneViewAction(t *testing.T) {
 	t.Parallel()
 
 	access := &recordingPostAccess{}
-	service := &Service{postAccess: access}
+	service := withTestStorage(&Service{db: newPostAccessUnitDB(t), postAccess: access})
 	principal := postAccessPrincipal()
 	err := service.authorizeManageFilePermissionTarget(
 		auditedUserContext(context.Background(), principal),
@@ -158,9 +158,9 @@ func TestPostManageDeliveryUsesOneViewAction(t *testing.T) {
 		manageFilePermissionTarget{resourceType: "post", resourceID: uuid.NewString()},
 	)
 	require.NoError(t, err)
-	require.Equal(t, 1, access.requireViewCount)
+	require.Zero(t, access.requireViewCount)
 	require.Zero(t, access.requireEditCount)
-	require.Zero(t, access.requireLockedViewCount)
+	require.Equal(t, 1, access.requireLockedViewCount)
 	require.Zero(t, access.requireLockedEditCount)
 }
 
@@ -208,15 +208,15 @@ func TestProgramEventFileOperationsUseOneExactDomainAction(t *testing.T) {
 	ctx := auditedUserContext(context.Background(), postAccessPrincipal())
 
 	deliveryAccess := &recordingProgramEventAccess{}
-	deliveryService := &Service{programEventAttachment: deliveryAccess}
+	deliveryService := withTestStorage(&Service{db: db, programEventAttachment: deliveryAccess})
 	require.NoError(t, deliveryService.authorizeManageFilePermissionTarget(
 		ctx,
 		auth.GetUser(ctx),
 		manageFilePermissionTarget{resourceType: "program_event", resourceID: eventID},
 	))
-	require.Equal(t, 1, deliveryAccess.requireViewCount)
+	require.Zero(t, deliveryAccess.requireViewCount)
 	require.Zero(t, deliveryAccess.requireEditCount)
-	require.Zero(t, deliveryAccess.requireLockedViewCount)
+	require.Equal(t, 1, deliveryAccess.requireLockedViewCount)
 	require.Zero(t, deliveryAccess.requireLockedEditCount)
 
 	viewAccess := &recordingProgramEventAccess{}

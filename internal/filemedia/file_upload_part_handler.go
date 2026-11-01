@@ -15,7 +15,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -164,15 +163,14 @@ func (s *Service) claimMultipartUploadPartActivity(
 	fileID string,
 ) (bool, error) {
 	claimed := false
-	err := withMultipartCompletionAdvisoryLock(
-		ctx,
-		s.db,
+	err := s.ingestLocks.Multipart(ctx,
 		uploadID,
 		fileID,
-		func(connection *gorm.DB) error {
-			lockedService := *s
-			lockedService.db = connection
-			var err error
+		func(scope domain.IngestSession) error {
+			lockedService, err := s.ingestService(scope)
+			if err != nil {
+				return err
+			}
 			claimed, err = lockedService.claimUploadPartActivity(ctx, uploadID, fileID, time.Now())
 			return err
 		},
@@ -189,14 +187,14 @@ func (s *Service) uploadAndRecordMultipartPart(
 	detectedMIME string,
 ) (string, error) {
 	var etag string
-	err := withMultipartCompletionAdvisoryLock(
-		ctx,
-		s.db,
+	err := s.ingestLocks.Multipart(ctx,
 		session.UploadID,
 		session.FileID,
-		func(connection *gorm.DB) error {
-			lockedService := *s
-			lockedService.db = connection
+		func(scope domain.IngestSession) error {
+			lockedService, err := s.ingestService(scope)
+			if err != nil {
+				return err
+			}
 			now := time.Now()
 			claimed, err := lockedService.claimUploadPartActivity(ctx, session.UploadID, session.FileID, now)
 			if err != nil {
@@ -475,11 +473,12 @@ func (s *Service) HandleVerifyUploadPrefix(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	err = withMultipartCompletionAdvisoryLock(
-		r.Context(), s.db, request.session.UploadID, request.session.FileID,
-		func(connection *gorm.DB) error {
-			lockedService := *s
-			lockedService.db = connection
+	err = s.ingestLocks.Multipart(r.Context(), request.session.UploadID, request.session.FileID,
+		func(scope domain.IngestSession) error {
+			lockedService, err := s.ingestService(scope)
+			if err != nil {
+				return err
+			}
 			now := time.Now()
 			claimed, err := lockedService.claimUploadPartActivity(
 				r.Context(), request.session.UploadID, request.session.FileID, now,
@@ -527,11 +526,12 @@ func (s *Service) HandlePresignUploadPart(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	err := withMultipartCompletionAdvisoryLock(
-		r.Context(), s.db, request.session.UploadID, request.session.FileID,
-		func(connection *gorm.DB) error {
-			lockedService := *s
-			lockedService.db = connection
+	err := s.ingestLocks.Multipart(r.Context(), request.session.UploadID, request.session.FileID,
+		func(scope domain.IngestSession) error {
+			lockedService, err := s.ingestService(scope)
+			if err != nil {
+				return err
+			}
 			claimed, err := lockedService.claimUploadPartActivity(
 				r.Context(), request.session.UploadID, request.session.FileID, time.Now(),
 			)
@@ -595,11 +595,12 @@ func (s *Service) HandleConfirmUploadPart(w http.ResponseWriter, r *http.Request
 	}
 
 	var confirmed model.UploadPart
-	err := withMultipartCompletionAdvisoryLock(
-		r.Context(), s.db, request.session.UploadID, request.session.FileID,
-		func(connection *gorm.DB) error {
-			lockedService := *s
-			lockedService.db = connection
+	err := s.ingestLocks.Multipart(r.Context(), request.session.UploadID, request.session.FileID,
+		func(scope domain.IngestSession) error {
+			lockedService, err := s.ingestService(scope)
+			if err != nil {
+				return err
+			}
 			now := time.Now()
 			claimed, err := lockedService.claimUploadPartActivity(
 				r.Context(), request.session.UploadID, request.session.FileID, now,

@@ -131,3 +131,36 @@ func TestUnitOfWorkReadsHandTheStoreAndKeepTheReadError(t *testing.T) {
 		})
 	}
 }
+
+func TestRunnerWithUnitsKeepsAuthorityAndAuditOnTheSelectedStore(t *testing.T) {
+	t.Parallel()
+	original := mutationtest.New(&notes{names: map[string]bool{}})
+	selected := mutationtest.New(&notes{names: map[string]bool{}})
+	checker, fence, audit := authztest.AllowAll(), &identitystatetest.Fence{}, &audittest.Recorder{}
+	runner, err := mutation.NewStoreRunner(original, checker, fence, audit)
+	require.NoError(t, err)
+	scoped, err := runner.WithUnits(selected)
+	require.NoError(t, err)
+	ctx, identity := adminContext(t)
+	_, err = mutation.Run(ctx, scoped, noteSpec("selected", nil))
+	require.NoError(t, err)
+	require.Empty(t, original.Store().names)
+	require.True(t, selected.Store().names["selected"])
+	require.Equal(t, []string{identity}, fence.Locked())
+	require.Len(t, audit.Records(), 1)
+	_, err = mutation.Run(ctx, runner, noteSpec("original", nil))
+	require.NoError(t, err)
+	require.True(t, original.Store().names["original"])
+	require.False(t, selected.Store().names["original"])
+	queueDown := errors.New("queue down")
+	_, err = mutation.Run(ctx, scoped, noteSpec("rolled back", queueDown))
+	require.ErrorIs(t, err, queueDown)
+	require.False(t, selected.Store().names["rolled back"])
+	denied := errors.New("authorization unavailable")
+	checker.Fail(denied)
+	_, err = mutation.Run(ctx, scoped, noteSpec("denied", nil))
+	require.ErrorIs(t, err, denied)
+	require.False(t, selected.Store().names["denied"])
+	_, err = runner.WithUnits(nil)
+	require.ErrorContains(t, err, "unit of work is required")
+}

@@ -8,6 +8,7 @@ import (
 var ErrUploadTrackNotFound = errors.New("upload Track not found")
 
 type VerifiedIngestStore interface {
+	RequireUploadWork(context.Context, string) error
 	// EnsureIngestDateFolder creates the current date hierarchy when absent.
 	EnsureIngestDateFolder(context.Context) (*string, error)
 	InsertIngestFile(context.Context, File) error
