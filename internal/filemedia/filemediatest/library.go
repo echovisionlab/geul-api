@@ -24,6 +24,10 @@ type MeshRecord struct {
 }
 
 type LibraryStore struct {
+	MeshCandidateRows       map[string]domain.MeshCandidate
+	MeshJobs                []domain.MeshJob
+	MeshJobError            error
+	MeshPublisherError      error
 	IngestCommands          []domain.IngestTranscodeCommand
 	IngestTranscodeError    error
 	TrackOriginals          map[string]string
@@ -69,9 +73,14 @@ type LibraryStore struct {
 
 func NewLibraryStore() *LibraryStore {
 	assets, _ := mediaassettest.New()
-	return &LibraryStore{UploadSessions: map[string]domain.UploadSession{}, UploadPartRows: map[string][]domain.UploadPart{}, ScopedOwners: map[string]ScopedOwner{}, Policies: map[string]PolicyRecord{}, Segments: map[string]domain.PolicySegment{}, PolicyDenied: map[string]error{}, AssetIDs: map[string]bool{}, Generations: map[string]mediaasset.Generation{}, References: map[string][]string{}, TrackReleases: map[string]string{}, MediaAssets: assets, MeshRecords: map[string]MeshRecord{}, Derivatives: map[string][]domain.StoredDerivativeDelivery{}, IngestBindings: map[string]domain.IngestBinding{}, PrincipalFence: &identitystatetest.Fence{}, ReadyMeshes: map[string]domain.MeshDeliveryWitness{}, AvatarOwners: map[string]string{}, DeliveryOwners: map[string]domain.DeliveryOwner{}, ExactUsages: map[string]bool{}, Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
+	return &LibraryStore{MeshCandidateRows: map[string]domain.MeshCandidate{}, UploadSessions: map[string]domain.UploadSession{}, UploadPartRows: map[string][]domain.UploadPart{}, ScopedOwners: map[string]ScopedOwner{}, Policies: map[string]PolicyRecord{}, Segments: map[string]domain.PolicySegment{}, PolicyDenied: map[string]error{}, AssetIDs: map[string]bool{}, Generations: map[string]mediaasset.Generation{}, References: map[string][]string{}, TrackReleases: map[string]string{}, MediaAssets: assets, MeshRecords: map[string]MeshRecord{}, Derivatives: map[string][]domain.StoredDerivativeDelivery{}, IngestBindings: map[string]domain.IngestBinding{}, PrincipalFence: &identitystatetest.Fence{}, ReadyMeshes: map[string]domain.MeshDeliveryWitness{}, AvatarOwners: map[string]string{}, DeliveryOwners: map[string]domain.DeliveryOwner{}, ExactUsages: map[string]bool{}, Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
 }
 func (s *LibraryStore) Savepoint() func() {
+	meshRows := maps.Clone(s.MeshCandidateRows)
+	for id, row := range meshRows {
+		meshRows[id] = cloneMeshCandidate(row)
+	}
+	meshJobs := slices.Clone(s.MeshJobs)
 	commands := slices.Clone(s.IngestCommands)
 	originals := maps.Clone(s.TrackOriginals)
 	generations := maps.Clone(s.Generations)
@@ -94,6 +103,8 @@ func (s *LibraryStore) Savepoint() func() {
 	assets := s.MediaAssets.Savepoint()
 	favicon, outbox, audits := slices.Clone(s.FaviconDeletions), slices.Clone(s.DeletionOutbox), slices.Clone(s.Audits)
 	return func() {
+		s.MeshCandidateRows = meshRows
+		s.MeshJobs = meshJobs
 		s.IngestCommands = commands
 		s.TrackOriginals = originals
 		s.Generations = generations

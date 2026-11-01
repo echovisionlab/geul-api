@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 
 	mutationpkg "github.com/echovisionlab/geul-api/internal/mutation"
@@ -1404,7 +1405,8 @@ func startMeshCompletion(
 			return connection.Transaction(func(tx *gorm.DB) error {
 				close(attempted)
 				attemptedClosed = true
-				_, _, err := applyMeshOptimizationCompletionWithDB(context.Background(), tx, &candidate, completion)
+				plain := domain.MeshCandidate(candidate)
+				_, _, err := applyMeshOptimizationCompletion(context.Background(), testFileStore(&Service{}, tx), &plain, completion)
 				return err
 			})
 		})

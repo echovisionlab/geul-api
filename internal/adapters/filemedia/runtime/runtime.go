@@ -213,12 +213,10 @@ func (r *Runtime) ExpireStaleMeshOptimizationCandidates(ctx context.Context, now
 }
 
 func (r *Runtime) meshOptimizationService() *filemedia.MeshOptimizationService {
-	return filemedia.NewMeshOptimizationService(
-		r.db,
-		nil,
-		meshOptimizationFileDeleter{runtime: r},
-		r.spiceDB,
-	)
+	return filemedia.NewMeshOptimizationService(filemedia.MeshOptimizationDeps{
+		Units:       filemediapostgres.NewUnits(r.db, filemediapostgres.Ports{}),
+		FileDeleter: meshOptimizationFileDeleter{runtime: r}, Authorizer: r.spiceDB,
+	})
 }
 
 type meshOptimizationFileDeleter struct{ runtime *Runtime }

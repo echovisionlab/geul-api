@@ -176,8 +176,6 @@ func faviconTestICO(t *testing.T, sizes ...int) []byte {
 	return data
 }
 
-var _ TransactionalAsyncPublisher = noopAsyncPublisher{}
-
 func newServiceUnitDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

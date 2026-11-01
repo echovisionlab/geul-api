@@ -103,8 +103,6 @@ func (p *recordingFileTranscoderPublisher) EnqueueProtobufWithExecutor(
 	return p.EnqueueProtobuf(ctx, queue, messageID, message)
 }
 
-var _ TransactionalAsyncPublisher = (*recordingFileTranscoderPublisher)(nil)
-
 func TestTriggerFileScopedProcessingPublishesAudioWithoutManualOptions(t *testing.T) {
 	t.Parallel()
 

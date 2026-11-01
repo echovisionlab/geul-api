@@ -36,7 +36,15 @@ func TestPostgresCatalogStoreContractIntegration(t *testing.T) {
 	filemediatest.RunCatalogContract(t, func(t *testing.T) filemediatest.CatalogHarness {
 		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		require.NoError(t, db.Exec(`CREATE TABLE filemedia_contract_output (sequence bigserial PRIMARY KEY, kind text NOT NULL, payload jsonb NOT NULL)`).Error)
-		return filemediatest.CatalogHarness{IngestCommands: func(t *testing.T) []domain.IngestTranscodeCommand {
+		return filemediatest.CatalogHarness{MeshJobs: func(t *testing.T) []domain.MeshJob {
+			var rows []struct{ Payload []byte }
+			require.NoError(t, db.Table("filemedia_contract_output").Select("payload").Where("kind = ?", "mesh").Order("sequence").Find(&rows).Error)
+			result := make([]domain.MeshJob, len(rows))
+			for i, row := range rows {
+				require.NoError(t, json.Unmarshal(row.Payload, &result[i]))
+			}
+			return result
+		}, IngestCommands: func(t *testing.T) []domain.IngestTranscodeCommand {
 			var rows []struct{ Payload []byte }
 			require.NoError(t, db.Table("filemedia_contract_output").Select("payload").Where("kind = ?", "ingest").Order("sequence").Find(&rows).Error)
 			result := make([]domain.IngestTranscodeCommand, len(rows))
@@ -109,7 +117,7 @@ func TestPostgresCatalogStoreContractIntegration(t *testing.T) {
 				expires = *m.ExpiresAt
 			}
 			return filemediatest.MeshRecord{Status: m.Status, CancelledAt: m.CancelledAt, ExpiresAt: expires, UpdatedAt: updated}, true
-		}, Harness: mutationtest.PostgresHarness(db, filemediapostgres.NewUnits(db, filemediapostgres.Ports{IngestTranscodes: deletionContractOutputs{}, DeletionQueue: deletionContractOutputs{}, PolicyAudiences: filemediapolicy.Audiences{}})), SeedAsset: func(t *testing.T, a mediaasset.Asset) {
+		}, Harness: mutationtest.PostgresHarness(db, filemediapostgres.NewUnits(db, filemediapostgres.Ports{MeshJobs: meshContractOutputs{}, IngestTranscodes: deletionContractOutputs{}, DeletionQueue: deletionContractOutputs{}, PolicyAudiences: filemediapolicy.Audiences{}})), SeedAsset: func(t *testing.T, a mediaasset.Asset) {
 			r := mediaassetpostgres.AssetRow(a)
 			require.NoError(t, db.Create(&r).Error)
 		}, SeedGeneration: func(t *testing.T, g mediaasset.Generation) {
@@ -172,4 +180,14 @@ func (deletionContractOutputs) Enqueue(ctx context.Context, tx *gorm.DB, command
 		return err
 	}
 	return tx.WithContext(ctx).Exec("INSERT INTO filemedia_contract_output(kind,payload) VALUES ('ingest',?::jsonb)", string(payload)).Error
+}
+
+type meshContractOutputs struct{ deletionContractOutputs }
+
+func (meshContractOutputs) Enqueue(ctx context.Context, tx *gorm.DB, job domain.MeshJob) error {
+	payload, err := json.Marshal(job)
+	if err != nil {
+		return err
+	}
+	return tx.WithContext(ctx).Exec("INSERT INTO filemedia_contract_output(kind,payload) VALUES ('mesh',?::jsonb)", string(payload)).Error
 }

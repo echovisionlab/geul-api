@@ -258,7 +258,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	fileTrackAttachment := filemediaadapter.NewTrackAttachment(telemetryWriter)
 	filePolicyOwners := filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: filePostAccess, Pages: filePageAccess, Works: fileWorkAccess, Events: fileEventAccess, Releases: fileReleaseAccess, SpiceDB: spicedbClient})
 
-	fileMediaPorts := filemediapostgres.Ports{IngestTranscodes: filemediaqueue.Transcodes(transcodeTracker, servicePublisher), UploadTracks: fileTrackAttachment, DeletionQueue: filemediaqueue.Async(servicePublisher), PolicyOwners: filePolicyOwners, PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(servicePublisher)}
+	fileMediaPorts := filemediapostgres.Ports{MeshJobs: filemediaqueue.Mesh(transcodeTracker, servicePublisher), IngestTranscodes: filemediaqueue.Transcodes(transcodeTracker, servicePublisher), UploadTracks: fileTrackAttachment, DeletionQueue: filemediaqueue.Async(servicePublisher), PolicyOwners: filePolicyOwners, PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(servicePublisher)}
 	fileService, err := filemedia.NewService(filemedia.Deps{
 		FaviconCommits: filemediapostgres.NewFaviconCommits(db, fileMediaPorts),
 		Units:          filemediapostgres.NewUnits(db, fileMediaPorts), Fence: identitystate.PostgresFence{},

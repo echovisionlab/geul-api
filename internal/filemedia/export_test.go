@@ -235,3 +235,9 @@ func ExportFaviconReconcileError(service *Service, err error) {
 func ExportFaviconTimeout(service *Service, timeout time.Duration) {
 	service.testFaviconBundleTimeout = timeout
 }
+
+var ExportDeleteMeshCandidateAndOutput = (*MeshOptimizationService).deleteCandidateAndOutput
+
+func ExportMeshFileService(units mutation.UnitOfWork[Store], authorizer *auth.SpiceDBClient) *Service {
+	return &Service{units: units, spiceDB: authorizer}
+}
