@@ -1,4 +1,4 @@
-package filemediapostgres
+package applicationpostgres
 
 import (
 	"bytes"

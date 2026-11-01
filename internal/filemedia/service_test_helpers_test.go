@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -19,6 +22,12 @@ var errUnusedTestDependency = errors.New("test did not configure this File depen
 // unset in deps get stand-ins that fail if a test reaches them, and a
 // recording audit appender.
 func newTestService(deps Deps) *Service {
+	if deps.Units == nil {
+		deps.Units = filemediapostgres.NewUnits(deps.DB, filemediapostgres.Ports{})
+	}
+	if deps.Fence == nil {
+		deps.Fence = identitystate.PostgresFence{}
+	}
 	if deps.Audit == nil {
 		deps.Audit = &audittest.Recorder{}
 	}

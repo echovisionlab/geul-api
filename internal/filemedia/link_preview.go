@@ -17,9 +17,9 @@ import (
 	"golang.org/x/net/html/charset"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -42,7 +42,7 @@ type LinkPreviewService struct {
 	baseTransport *http.Transport
 }
 
-func NewLinkPreviewService(spiceDB *auth.SpiceDBClient) *LinkPreviewService {
+func NewLinkPreviewService(spiceDB authz.AuthorizationDecisionChecker) *LinkPreviewService {
 	if spiceDB == nil {
 		panic("spiceDB is required")
 	}
@@ -53,7 +53,7 @@ func NewLinkPreviewService(spiceDB *auth.SpiceDBClient) *LinkPreviewService {
 	}
 }
 
-func requirePlatformAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient) error {
+func requirePlatformAuthor(ctx context.Context, spiceDB authz.AuthorizationDecisionChecker) error {
 	user := auth.GetUser(ctx)
 	if user == nil || user.IdentityID.String() == "" {
 		return domainerr.AuthenticationRequired()
@@ -78,11 +78,15 @@ func requirePlatformAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient) err
 }
 
 // GetLinkPreviewQuery reads the preview of one HTTPS page.
+type LinkPreviewResult struct {
+	ResolvedURL, Title, Description, SiteName, ImageSource, IconSource string
+}
+
 type GetLinkPreviewQuery struct {
 	URL string
 }
 
-func (s *LinkPreviewService) GetLinkPreview(ctx context.Context, query GetLinkPreviewQuery) (*managev1.GetLinkPreviewResponse, error) {
+func (s *LinkPreviewService) GetLinkPreview(ctx context.Context, query GetLinkPreviewQuery) (*LinkPreviewResult, error) {
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
 	}
@@ -119,7 +123,7 @@ func (s *LinkPreviewService) GetLinkPreview(ctx context.Context, query GetLinkPr
 	}
 
 	resolved := response.Request.URL
-	result := &managev1.GetLinkPreviewResponse{ResolvedUrl: resolved.String()}
+	result := &LinkPreviewResult{ResolvedURL: resolved.String()}
 	mediaType, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	switch {
 	case strings.HasPrefix(mediaType, "image/"):

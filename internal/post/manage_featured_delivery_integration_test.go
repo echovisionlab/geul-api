@@ -6,6 +6,9 @@ import (
 	"context"
 	"testing"
 
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	"connectrpc.com/connect"
@@ -97,6 +100,7 @@ func newManagePostFeaturedDeliveryFixture(t *testing.T) managePostFeaturedDelive
 	store := testutil.NewPostContentBlockStore(t)
 
 	fileService, err := filemedia.NewService(filemedia.Deps{
+		Units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), Fence: identitystate.PostgresFence{},
 		DB:                     db,
 		S3:                     s3.New(s3.Options{Region: "integration"}),
 		AsyncPublisher:         postFeaturedAsyncPublisher{},

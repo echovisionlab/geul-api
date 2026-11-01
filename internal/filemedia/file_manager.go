@@ -197,14 +197,16 @@ func (s *Service) requireFileManagerFolder(ctx context.Context, folderID *string
 	if folderID == nil {
 		return nil
 	}
-	var count int64
-	if err := s.db.WithContext(ctx).Table("file_folder").Where("id = ?", *folderID).Count(&count).Error; err != nil {
-		return err
-	}
-	if count == 0 {
-		return domainerr.ResourceNotFound("folder", *folderID)
-	}
-	return nil
+	return s.units.Read(ctx, func(store Store) error {
+		exists, err := store.FolderExists(ctx, *folderID)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return domainerr.ResourceNotFound("folder", *folderID)
+		}
+		return nil
+	})
 }
 
 func fileManagerSortClause(field managev1.FileManagerSortField, order commonv1.SortOrder, prefix string) string {

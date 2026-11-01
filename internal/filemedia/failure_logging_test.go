@@ -19,7 +19,7 @@ import (
 
 func TestFileFolderConflictKeepsOriginalCauseForTheRequestRecord(t *testing.T) {
 	cause := fmt.Errorf("create folder: %w", errors.New(`duplicate key violates constraint "file_folder_name_key": <folder> {detail} Private Folder private@example.test token=hidden`))
-	err := fileManagerMutationError(cause, "folder already exists", "Private Folder")
+	err := fileManagerMutationError(errors.Join(ErrFolderNameExists, cause), "folder already exists", "Private Folder")
 	require.Equal(t, connect.CodeAlreadyExists, errs.CodeOf(err))
 	require.Equal(t, "folder already exists", errs.Wrap(err).Message())
 

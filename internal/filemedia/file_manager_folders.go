@@ -3,19 +3,13 @@ package filemedia
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -45,13 +39,13 @@ func (s *Service) CreateFileFolder(ctx context.Context, command CreateFileFolder
 		return nil, err
 	}
 	creator := user.MemberID.String()
-	folder, err := mutation.Run(ctx, s.mutations, mutation.Spec[model.FileFolder]{
+	folder, err := mutation.Run(ctx, s.storeMutations, mutation.StoreSpec[FileFolder, Store]{
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(_ context.Context, tx *gorm.DB) (model.FileFolder, error) {
-			folder := model.FileFolder{ID: uuid.NewString(), ParentID: parentID, Name: name, CreatedByMemberID: &creator}
-			return folder, tx.Create(&folder).Error
+		Change: func(ctx context.Context, store Store) (FileFolder, error) {
+			folder := FileFolder{ID: uuid.NewString(), ParentID: parentID, Name: name, CreatedByMemberID: &creator}
+			return store.InsertFolder(ctx, folder)
 		},
-		Audit: func(folder model.FileFolder) mutation.Audit { return fileFolderCreatedAudit(folder.ID) },
+		Audit: func(folder FileFolder) mutation.Audit { return fileFolderCreatedAudit(folder.ID) },
 	})
 	if err != nil {
 		return nil, fileManagerMutationError(err, "folder name already exists at this location", name)
@@ -62,7 +56,7 @@ func (s *Service) CreateFileFolder(ctx context.Context, command CreateFileFolder
 // fileFolderChange is a folder after a rename or move, and whether it moved
 // from previousParentID or changed its name.
 type fileFolderChange struct {
-	folder           model.FileFolder
+	folder           FileFolder
 	changed          bool
 	previousParentID string
 	nextParentID     string
@@ -89,22 +83,24 @@ func (s *Service) RenameFileFolder(ctx context.Context, command RenameFileFolder
 	if err != nil {
 		return nil, err
 	}
-	var folder model.FileFolder
-	change, err := mutation.Run(ctx, s.mutations, mutation.Spec[fileFolderChange]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
-			return lockFileFolderForUpdate(ctx, tx, *folderID, &folder)
+	var folder FileFolder
+	change, err := mutation.Run(ctx, s.storeMutations, mutation.StoreSpec[fileFolderChange, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			return lockFileFolderForUpdate(ctx, store, *folderID, &folder)
 		},
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(_ context.Context, tx *gorm.DB) (fileFolderChange, error) {
+		Change: func(ctx context.Context, store Store) (fileFolderChange, error) {
 			if folder.Name == name {
 				return fileFolderChange{folder: folder}, nil
 			}
-			if err := tx.Model(&model.FileFolder{}).Where("id = ?", *folderID).Updates(structured.Fields{"name": name, "updated_at": gorm.Expr("CURRENT_TIMESTAMP")}).Error; err != nil {
+			if err := store.RenameFolder(ctx, *folderID, name); err != nil {
 				return fileFolderChange{}, fileManagerMutationError(err, "folder name already exists at this location", name)
 			}
-			if err := tx.Where("id = ?", *folderID).First(&folder).Error; err != nil {
+			stored, err := store.Folder(ctx, *folderID)
+			if err != nil {
 				return fileFolderChange{}, err
 			}
+			folder = stored
 			return fileFolderChange{folder: folder, changed: true}, nil
 		},
 		Audit: func(change fileFolderChange) mutation.Audit {
@@ -122,14 +118,15 @@ func (s *Service) RenameFileFolder(ctx context.Context, command RenameFileFolder
 
 // lockFileFolderForUpdate locks a folder row into folder, answering a missing
 // folder as not found.
-func lockFileFolderForUpdate(ctx context.Context, tx *gorm.DB, folderID string, folder *model.FileFolder) error {
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Where("id = ?", folderID).First(folder).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return domainerr.ResourceNotFound("folder", folderID)
-		}
+func lockFileFolderForUpdate(ctx context.Context, store Store, folderID string, folder *FileFolder) error {
+	value, err := store.LockFolder(ctx, folderID)
+	if errors.Is(err, ErrFolderNotFound) {
+		return domainerr.ResourceNotFound("folder", folderID)
+	}
+	if err != nil {
 		return err
 	}
+	*folder = value
 	return nil
 }
 
@@ -156,25 +153,25 @@ func (s *Service) MoveFileFolder(ctx context.Context, command MoveFileFolderComm
 	if parentID != nil && *parentID == *folderID {
 		return nil, domainerr.Precondition("folder cannot be moved into itself")
 	}
-	var folder model.FileFolder
-	change, err := mutation.Run(ctx, s.mutations, mutation.Spec[fileFolderChange]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
-			return lockFileFolderMove(ctx, tx, *folderID, parentID, &folder)
+	var folder FileFolder
+	change, err := mutation.Run(ctx, s.storeMutations, mutation.StoreSpec[fileFolderChange, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			return lockFileFolderMove(ctx, store, *folderID, parentID, &folder)
 		},
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(ctx context.Context, tx *gorm.DB) (fileFolderChange, error) {
+		Change: func(ctx context.Context, store Store) (fileFolderChange, error) {
 			change := fileFolderChange{folder: folder, previousParentID: pointerValue(folder.ParentID), nextParentID: pointerValue(parentID)}
 			if change.previousParentID == change.nextParentID {
 				return change, nil
 			}
-			if err := tx.WithContext(ctx).Model(&model.FileFolder{}).
-				Where("id = ?", *folderID).
-				Updates(structured.Fields{"parent_id": parentID, "updated_at": gorm.Expr("CURRENT_TIMESTAMP")}).Error; err != nil {
+			if err := store.MoveFolder(ctx, *folderID, parentID); err != nil {
 				return fileFolderChange{}, fileManagerMutationError(err, "folder move would create a cycle or duplicate name", folder.Name)
 			}
-			if err := tx.WithContext(ctx).Where("id = ?", *folderID).First(&change.folder).Error; err != nil {
+			stored, err := store.Folder(ctx, *folderID)
+			if err != nil {
 				return fileFolderChange{}, err
 			}
+			change.folder = stored
 			change.changed = true
 			return change, nil
 		},
@@ -193,31 +190,22 @@ func (s *Service) MoveFileFolder(ctx context.Context, command MoveFileFolderComm
 
 // lockFileFolderMove takes the folder hierarchy lock, then the moved folder
 // and its new parent, and rejects a move under the folder's own subtree.
-func lockFileFolderMove(ctx context.Context, tx *gorm.DB, folderID string, parentID *string, folder *model.FileFolder) error {
-	if err := lockFileFolderHierarchy(tx); err != nil {
+func lockFileFolderMove(ctx context.Context, store Store, folderID string, parentID *string, folder *FileFolder) error {
+	if err := store.LockFolderHierarchy(ctx); err != nil {
 		return err
 	}
-	if err := lockFileFolderForUpdate(ctx, tx, folderID, folder); err != nil {
+	if err := lockFileFolderForUpdate(ctx, store, folderID, folder); err != nil {
 		return err
 	}
 	if parentID == nil {
 		return nil
 	}
-	var parent model.FileFolder
-	if err := lockFileFolderForUpdate(ctx, tx, *parentID, &parent); err != nil {
+	var parent FileFolder
+	if err := lockFileFolderForUpdate(ctx, store, *parentID, &parent); err != nil {
 		return err
 	}
-	var cycleFound bool
-	if err := tx.WithContext(ctx).Raw(`
-		WITH RECURSIVE ancestors AS (
-			SELECT id, parent_id FROM file_folder WHERE id = ?
-			UNION
-			SELECT folder.id, folder.parent_id
-			FROM file_folder AS folder
-			JOIN ancestors ON ancestors.parent_id = folder.id
-		)
-		SELECT EXISTS (SELECT 1 FROM ancestors WHERE id = ?)
-	`, *parentID, folderID).Scan(&cycleFound).Error; err != nil {
+	cycleFound, err := store.FolderMoveCreatesCycle(ctx, *parentID, folderID)
+	if err != nil {
 		return err
 	}
 	if cycleFound {
@@ -228,16 +216,16 @@ func lockFileFolderMove(ctx context.Context, tx *gorm.DB, folderID string, paren
 
 func fileManagerMutationError(err error, message string, privateName string) error {
 	cause := failurecause.WithPrivate(err, privateName)
-	if dberrors.IsUniqueViolation(err) {
+	if errors.Is(err, ErrFolderNameExists) {
 		return domainerr.New(domainerr.AlreadyExists, "", message).WithCause(cause)
 	}
-	if value := strings.ToLower(err.Error()); strings.Contains(value, "cycle") || strings.Contains(value, "cannot be its own parent") {
+	if errors.Is(err, ErrFolderCycle) {
 		return domainerr.Precondition(message).WithCause(cause)
 	}
 	return cause
 }
 
-func (s *Service) fileFolderProto(ctx context.Context, folder model.FileFolder) (*managev1.FileFolder, error) {
+func (s *Service) fileFolderProto(ctx context.Context, folder FileFolder) (*managev1.FileFolder, error) {
 	result := &managev1.FileFolder{Id: folder.ID, ParentId: folder.ParentID, Name: folder.Name, CreatedAt: timestamppb.New(folder.CreatedAt), UpdatedAt: timestamppb.New(folder.UpdatedAt)}
 	if folder.CreatedByMemberID != nil {
 		memberSummaries := s.memberSummaries

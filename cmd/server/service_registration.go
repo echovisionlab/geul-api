@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
 	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
 	transcodepostgres "github.com/echovisionlab/geul-api/internal/transcode/postgres"
 
@@ -246,6 +248,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	legalRuntime := legaladapter.NewOGRuntime(cfg.CDNURL, ogDeps.planner)
 	campaignDeliveryDispatcher := campaignadapter.NewDeliveryDispatcher(db, spicedbClient, workerPublisher, telemetryWriter, legalRuntime)
 	fileService, err := filemedia.NewService(filemedia.Deps{
+		Units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), Fence: identitystate.PostgresFence{},
 		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, S3: s3Client, Presigner: s3PresignClient,
 		AsyncPublisher: servicePublisher, Transcoder: transcodeTracker, S3Bucket: cfg.S3Bucket,
 		CDNDomain: cfg.CDNURL, MediaDomain: cfg.MediaURL, MediaSecret: cfg.MediaSigningSecret,
