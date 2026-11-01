@@ -14,6 +14,7 @@ import (
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/model"
+	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
 	sharelinkpublic "github.com/echovisionlab/geul-api/internal/sharelink/public"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -98,7 +99,7 @@ func TestExpiredAutomaticLegalPreviewTokenResolvesOnlyExactPublicHistoryIntegrat
 		now,
 	)
 
-	validation, err := sharelinkpublic.NewService(sharelinkpublic.Deps{DB: db, Targets: sharelinkadapter.NewPublicTargetResolver(db)})
+	validation, err := sharelinkpublic.NewService(sharelinkpublic.Deps{Units: sharelinkpostgres.NewUnits(db), Targets: sharelinkadapter.NewPublicTargetResolver(db)})
 	require.NoError(t, err)
 	service := sharelinkpublic.NewConnectHandler(validation)
 	publicHistory, err := service.Validate(

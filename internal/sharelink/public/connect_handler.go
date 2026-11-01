@@ -5,6 +5,7 @@ import (
 
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/sharelink"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
@@ -21,9 +22,21 @@ func NewConnectHandler(links *Service) *ConnectHandler {
 }
 
 func (h *ConnectHandler) Validate(ctx context.Context, req *connect.Request[openv1.ValidateShareLinkRequest]) (*connect.Response[openv1.ValidateShareLinkResponse], error) {
-	response, err := h.links.ValidateShareLink(ctx, ValidateShareLinkQuery{Token: req.Msg.Token, Password: req.Msg.Password})
+	validation, err := h.links.ValidateShareLink(ctx, ValidateShareLinkQuery{Token: req.Msg.Token, Password: req.Msg.Password})
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}
-	return connect.NewResponse(response), nil
+	return connect.NewResponse(validationMessage(validation)), nil
+}
+
+func validationMessage(validation Validation) *openv1.ValidateShareLinkResponse {
+	response := &openv1.ValidateShareLinkResponse{Valid: validation.Valid, PasswordRequired: validation.PasswordRequired}
+	if target := validation.Target; target != nil {
+		entityType := sharelink.EntityTypeToProto(target.EntityType)
+		entityID := target.EntityID
+		response.EntityType = &entityType
+		response.EntityId = &entityID
+		response.Slug = target.Slug
+	}
+	return response
 }

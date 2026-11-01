@@ -10,9 +10,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
+	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 )
 
@@ -21,7 +22,7 @@ import (
 func NewHandler(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *sharelink.ConnectHandler {
 	t.Helper()
 	links, err := sharelink.NewService(sharelink.Deps{
-		DB: db, SpiceDB: spiceDB, Targets: sharelinkadapter.NewAuthority(db, spiceDB), Audit: apitelemetry.NewDurableWriter(db),
+		Units: sharelinkpostgres.NewUnits(db), SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: apitelemetry.NewDurableWriter(db),
 	})
 	require.NoError(t, err)
 	return sharelink.NewConnectHandler(links)

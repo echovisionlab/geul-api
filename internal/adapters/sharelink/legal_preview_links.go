@@ -5,10 +5,10 @@ import (
 	"fmt"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/sharelink"
+	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
 )
 
 // LegalPreviewLinks writes the Share Links of legal policy versions for the
@@ -21,26 +21,23 @@ var _ legaldomain.PreviewLinks = LegalPreviewLinks{}
 // update notice mails out. A retry finds the link it already stored; a token
 // bound to any other link fails.
 func (LegalPreviewLinks) CreateAutomaticPreview(ctx context.Context, tx *gorm.DB, preview legaldomain.AutomaticPreview) error {
+	links := sharelinkpostgres.NewStore(tx)
 	expiresAt := preview.ExpiresAt.UTC()
-	link := model.ShareLink{
+	if err := links.InsertLinkUnlessTokenExists(ctx, sharelink.Link{
 		Token:      preview.Token,
-		EntityType: preview.EntityType,
+		EntityType: sharelink.EntityType(preview.EntityType),
 		EntityID:   preview.EntityID,
-		ExpiresAt:  &expiresAt,
+		ExpiresAt:  expiresAt,
 		CreatedAt:  preview.CreatedAt.UTC(),
-	}
-	if err := tx.WithContext(ctx).
-		Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "token"}}, DoNothing: true}).
-		Create(&link).Error; err != nil {
+	}); err != nil {
 		return err
 	}
-	var persisted model.ShareLink
-	if err := tx.WithContext(ctx).Where("token = ?", preview.Token).Take(&persisted).Error; err != nil {
+	persisted, err := links.LinkByToken(ctx, preview.Token)
+	if err != nil {
 		return err
 	}
-	if persisted.EntityType != preview.EntityType || persisted.EntityID != preview.EntityID ||
-		persisted.PasswordHash != nil || persisted.ExpiresAt == nil ||
-		!persisted.ExpiresAt.Equal(expiresAt) {
+	if persisted.EntityType != sharelink.EntityType(preview.EntityType) || persisted.EntityID != preview.EntityID ||
+		persisted.PasswordHash != nil || !persisted.ExpiresAt.Equal(expiresAt) {
 		return fmt.Errorf("automatic legal preview token is already bound to a different share link")
 	}
 	return nil
@@ -49,12 +46,10 @@ func (LegalPreviewLinks) CreateAutomaticPreview(ctx context.Context, tx *gorm.DB
 // DeleteAutomaticPreview deletes the password-free link of token on the
 // version.
 func (LegalPreviewLinks) DeleteAutomaticPreview(ctx context.Context, tx *gorm.DB, token, entityType, entityID string) error {
-	return tx.WithContext(ctx).
-		Where("token = ? AND entity_type = ? AND entity_id = ? AND password_hash IS NULL", token, entityType, entityID).
-		Delete(&model.ShareLink{}).Error
+	return sharelinkpostgres.NewStore(tx).DeletePasswordFreeLink(ctx, token, sharelink.EntityType(entityType), entityID)
 }
 
 // DeleteForEntity deletes every link of the version.
 func (LegalPreviewLinks) DeleteForEntity(ctx context.Context, tx *gorm.DB, entityType, entityID string) error {
-	return tx.WithContext(ctx).Where("entity_type = ? AND entity_id = ?", entityType, entityID).Delete(&model.ShareLink{}).Error
+	return sharelinkpostgres.NewStore(tx).DeleteTargetLinks(ctx, entityID, sharelink.EntityType(entityType))
 }

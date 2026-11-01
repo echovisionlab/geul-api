@@ -123,13 +123,6 @@
 6 internal/series spicedb client
 2 internal/series/public generated contracts
 1 internal/series/public model
-3 internal/sharelink generated contracts
-3 internal/sharelink gorm
-2 internal/sharelink model
-1 internal/sharelink spicedb client
-1 internal/sharelink/public generated contracts
-1 internal/sharelink/public gorm
-1 internal/sharelink/public model
 3 internal/sitesettings generated contracts
 5 internal/sitesettings gorm
 8 internal/sitesettings model

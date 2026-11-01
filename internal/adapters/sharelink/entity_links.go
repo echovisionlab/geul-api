@@ -5,8 +5,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
+	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
 )
 
 // EntityLinks removes the share links of one entity type's deleted
@@ -16,7 +16,5 @@ type EntityLinks struct {
 }
 
 func (l EntityLinks) DeleteEntityShareLinks(ctx context.Context, tx *gorm.DB, entityID string) error {
-	return tx.WithContext(ctx).
-		Where("entity_type = ? AND entity_id = ?", string(l.Type), entityID).
-		Delete(&model.ShareLink{}).Error
+	return sharelinkpostgres.NewStore(tx).DeleteTargetLinks(ctx, entityID, l.Type)
 }

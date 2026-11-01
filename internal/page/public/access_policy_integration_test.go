@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
-	"github.com/echovisionlab/geul-api/internal/sharelink"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -83,7 +83,7 @@ func TestPublicPageAudienceGatesAllProjectionAndReopensIntegration(t *testing.T)
 	token := uuid.NewString()
 	expires := time.Now().Add(time.Hour)
 	require.NoError(t, db.Create(&model.ShareLink{ID: uuid.NewString(), Token: token, EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE.String(), EntityID: pageID, ExpiresAt: &expires, CreatedAt: time.Now()}).Error)
-	validLink, err := sharelink.ValidateForEntity(t.Context(), db, token, "", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE, pageID)
+	validLink, err := sharelinkadapter.ValidateForEntity(t.Context(), db, token, "", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE, pageID)
 	require.NoError(t, err)
 	require.NotNil(t, validLink)
 	assertDenied(read(t.Context(), &token), commonv1.PageAccessReason_PAGE_ACCESS_REASON_AUTHENTICATION_REQUIRED)
