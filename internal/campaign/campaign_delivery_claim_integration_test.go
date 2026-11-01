@@ -24,7 +24,7 @@ import (
 // Real concurrent workers must produce one lease owner, and a stale worker must not finalize it.
 func TestCampaignDeliveryRecipientClaimFencesConcurrentAndExpiredWorkersIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true, BootstrapKratosStub: true}).DB
 	units := mutation.Postgres(db, func(tx *gorm.DB) campaign.Store {
 		return campaignpostgres.NewStore(tx, campaignpostgres.Ports{ContentBlocks: testutil.NewEmailContentBlockStore(t, nil)})
 	})
@@ -32,10 +32,8 @@ func TestCampaignDeliveryRecipientClaimFencesConcurrentAndExpiredWorkersIntegrat
 	c := campaigntest.SeedCampaign(t, h)
 	run := campaigntest.SeedRun(t, h, c, "sending")
 	identityID := uuid.NewString()
-	require.NoError(t, db.Exec("INSERT INTO account_identity (id) VALUES (?)", identityID).Error)
-	member := model.Member{Nickname: "Claim worker", AccountIdentityID: &identityID}
-	require.NoError(t, db.Create(&member).Error)
-	r := model.CampaignDeliveryRecipient{RunID: run.ID, RecipientEmail: "claim@example.test", MemberID: &member.ID, IdentityID: &identityID, RecipientContextType: campaign.BulkEmailContextAccountCurrent, Status: "pending"}
+	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Claim worker "+identityID)
+	r := model.CampaignDeliveryRecipient{RunID: run.ID, RecipientEmail: "claim@example.test", MemberID: &memberID, IdentityID: &identityID, RecipientContextType: campaign.BulkEmailContextAccountCurrent, Status: "pending"}
 	require.NoError(t, db.Create(&r).Error)
 	joined := func(tx *gorm.DB) campaign.Joined {
 		return campaignpostgres.Bind(tx, campaignpostgres.Ports{}, &audittest.Recorder{})

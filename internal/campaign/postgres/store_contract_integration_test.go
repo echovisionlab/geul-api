@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/campaign/campaigntest"
 	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -26,7 +25,7 @@ import (
 func TestPostgresStoreKeepsTheCampaignStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	campaigntest.RunStoreContract(t, func(t *testing.T) campaigntest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true, BootstrapKratosStub: true}).DB
 		sqlDB, err := db.DB()
 		require.NoError(t, err)
 		publisher, err := mq.NewPublisher(sqlDB)
@@ -49,10 +48,8 @@ func TestPostgresStoreKeepsTheCampaignStoreContractIntegration(t *testing.T) {
 		}, SeedRecipient: func(t *testing.T, v campaign.DeliveryRecipient) campaign.DeliveryRecipient {
 			t.Helper()
 			identityID := uuid.NewString()
-			require.NoError(t, db.Exec("INSERT INTO account_identity (id) VALUES (?)", identityID).Error)
-			member := model.Member{Nickname: "Campaign contract", AccountIdentityID: &identityID}
-			require.NoError(t, db.Create(&member).Error)
-			v.MemberID, v.IdentityID = &member.ID, &identityID
+			memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Campaign contract "+identityID)
+			v.MemberID, v.IdentityID = &memberID, &identityID
 			row := campaignpostgres.DeliveryRecipientToRow(v)
 			require.NoError(t, db.Create(&row).Error)
 			return campaignpostgres.DeliveryRecipientFromRow(row)

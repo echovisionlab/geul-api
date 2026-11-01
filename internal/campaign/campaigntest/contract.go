@@ -150,7 +150,7 @@ var storeContract = map[string]func(*testing.T, Harness){
 			got, err := s.FindCampaign(ctx, v.ID)
 			require.NoError(t, err)
 			require.Equal(t, name, got.Name)
-			require.Equal(t, next, got.UpdatedAt)
+			require.True(t, next.Equal(got.UpdatedAt), "updated_at %s, want %s", got.UpdatedAt, next)
 			return nil
 		})
 	},
@@ -172,10 +172,10 @@ var storeContract = map[string]func(*testing.T, Harness){
 		read(t, h, func(ctx context.Context, s campaign.Store) error {
 			got, err := s.FindRun(ctx, run.ID)
 			require.NoError(t, err)
-			require.Equal(t, run, got)
+			requireSameRun(t, run, got)
 			target, err := s.LoadDeliveryTarget(ctx, got)
 			require.NoError(t, err)
-			require.Equal(t, Target(), target)
+			require.Equal(t, emptyListsAsNil(Target()), emptyListsAsNil(target))
 			due, err := s.DueRuns(ctx, run.ScheduledAt, 25)
 			require.NoError(t, err)
 			require.Len(t, due, 1)
@@ -266,7 +266,8 @@ var storeContract = map[string]func(*testing.T, Harness){
 			require.NoError(t, err)
 			require.Equal(t, "sent", got.Status)
 			require.Nil(t, got.DeliveryClaimID)
-			require.Equal(t, &now, got.TerminalAt)
+			require.NotNil(t, got.TerminalAt)
+			require.True(t, now.Equal(*got.TerminalAt), "terminal_at %s, want %s", *got.TerminalAt, now)
 			return nil
 		})
 	},
@@ -462,7 +463,8 @@ func init() {
 			require.NoError(t, err)
 			require.Equal(t, "sending", v.Status)
 			require.Equal(t, 2, v.TargetCount)
-			require.Equal(t, &now, v.StartedAt)
+			require.NotNil(t, v.StartedAt)
+			require.True(t, now.Equal(*v.StartedAt), "started_at %s, want %s", *v.StartedAt, now)
 			return nil
 		})
 	}
@@ -642,4 +644,46 @@ func init() {
 			return nil
 		}))
 	}
+}
+
+// requireSameRun compares a stored run with the one the test inserted: times
+// as instants (PostgreSQL answers in the session's time zone), and updated_at
+// no earlier than inserted, because sealing the definition touches the row.
+func requireSameRun(t *testing.T, want, got campaign.DeliveryRun) {
+	t.Helper()
+	require.False(t, got.UpdatedAt.Before(want.UpdatedAt), "updated_at %s before inserted %s", got.UpdatedAt, want.UpdatedAt)
+	require.Equal(t, utcRun(want), utcRun(got))
+}
+
+func utcRun(run campaign.DeliveryRun) campaign.DeliveryRun {
+	utc := func(at *time.Time) *time.Time {
+		if at == nil {
+			return nil
+		}
+		value := at.UTC()
+		return &value
+	}
+	run.ScheduledAt = run.ScheduledAt.UTC()
+	run.CreatedAt = run.CreatedAt.UTC()
+	run.UpdatedAt = time.Time{}
+	run.StartedAt, run.CompletedAt = utc(run.StartedAt), utc(run.CompletedAt)
+	run.SourceCampaignUpdatedAt = utc(run.SourceCampaignUpdatedAt)
+	run.SourceTemplateUpdatedAt, run.SourceLayoutUpdatedAt = utc(run.SourceTemplateUpdatedAt), utc(run.SourceLayoutUpdatedAt)
+	run.TargetCreatedAfter, run.TargetCreatedBefore = utc(run.TargetCreatedAfter), utc(run.TargetCreatedBefore)
+	return run
+}
+
+// emptyListsAsNil lets a target read back from PostgreSQL ([]) equal one
+// built in memory (nil).
+func emptyListsAsNil(target campaign.CampaignDeliveryTarget) campaign.CampaignDeliveryTarget {
+	if len(target.MemberTagIDs) == 0 {
+		target.MemberTagIDs = nil
+	}
+	if len(target.AccountRoles) == 0 {
+		target.AccountRoles = nil
+	}
+	if len(target.ExcludedMemberIDs) == 0 {
+		target.ExcludedMemberIDs = nil
+	}
+	return target
 }
