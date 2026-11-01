@@ -90,7 +90,7 @@ func newStackService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, por
 	require.NoError(t, err)
 	service, err := page.NewService(page.Deps{
 		Units: units, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{},
-		Audit: apitelemetry.NewDurableWriter(db), Files: featuredImages{},
+		Audit: apitelemetry.NewDurableWriter(db), Files: stackFeaturedImages{},
 	})
 	require.NoError(t, err)
 	return service
@@ -358,9 +358,9 @@ func (passthroughHydrator) HydrateAuthorizedPageBlockMediaWithDB(_ context.Conte
 	return items, nil
 }
 
-type featuredImages struct{}
+type stackFeaturedImages struct{}
 
-func (featuredImages) ResolveAuthorizedPageFeaturedImage(_ context.Context, _ string, fileID string) (*commonv1.MediaDelivery, error) {
+func (stackFeaturedImages) ResolveAuthorizedPageFeaturedImage(_ context.Context, _ string, fileID string) (*commonv1.MediaDelivery, error) {
 	if fileID == "" {
 		return nil, nil
 	}
