@@ -16,10 +16,15 @@ import (
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/artist"
+	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	artistpublic "github.com/echovisionlab/geul-api/internal/artist/public"
+	artistpublicpostgres "github.com/echovisionlab/geul-api/internal/artist/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/label"
+	labelpostgres "github.com/echovisionlab/geul-api/internal/label/postgres"
 	labelpublic "github.com/echovisionlab/geul-api/internal/label/public"
+	labelpublicpostgres "github.com/echovisionlab/geul-api/internal/label/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
@@ -58,11 +63,9 @@ func (m musicServiceRegistration) registerPublic(path string, handler http.Handl
 func (m musicServiceRegistration) registerArtist() (*artist.Service, error) {
 	deps := m.dependencies
 	artistRuntime := artistadapter.NewRuntime(deps.cfg.CDNURL, deps.og.refresher)
-	artistService, err := artist.NewService(artist.Deps{
-		DB: deps.db, SpiceDB: deps.spicedbClient, Audit: deps.telemetryWriter, Publisher: deps.servicePublisher,
-		ContentBlocks: deps.contentBlockStore, Checkpoints: m.checkpoints,
+	artistUnits, err := artistpostgres.NewUnits(deps.db, artistpostgres.Deps{
+		ContentBlocks: deps.contentBlockStore, Publisher: deps.servicePublisher, Checkpoints: m.checkpoints,
 		Translation:   artistadapter.NewTranslation(),
-		Members:       artistadapter.NewMemberProjection(deps.db, deps.cfg.CDNURL),
 		Runtime:       artistRuntime,
 		Labels:        labeladapter.NewArtistLinks(),
 		Releases:      releaseadapter.NewArtistRelations(),
@@ -71,13 +74,24 @@ func (m musicServiceRegistration) registerArtist() (*artist.Service, error) {
 		ShareLinks:    sharelinkadapter.NewCatalogLinks(),
 	})
 	if err != nil {
+		return nil, fmt.Errorf("initialize artist store: %w", err)
+	}
+	artistService, err := artist.NewService(artist.Deps{
+		Units: artistUnits, SpiceDB: deps.spicedbClient, Fence: identitystate.PostgresFence{}, Audit: deps.telemetryWriter,
+		Members: artistadapter.NewMemberProjection(deps.db, deps.cfg.CDNURL),
+	})
+	if err != nil {
 		return nil, fmt.Errorf("initialize artist service: %w", err)
 	}
 	m.registerManage(managev1connect.NewArtistServiceHandler(artist.NewConnectHandler(artistService), m.manageOptions...))
 	m.registerInternal(intrav1connect.NewInternalArtistServiceHandler(artist.NewInternalConnectHandler(artistService), m.internalOptions...))
 
+	publicArtistUnits, err := artistpublicpostgres.NewUnits(deps.db, deps.contentBlockStore)
+	if err != nil {
+		return nil, fmt.Errorf("initialize public artist store: %w", err)
+	}
 	publicArtistService, err := artistpublic.NewService(artistpublic.Deps{
-		DB: deps.db, SpiceDB: deps.spicedbClient, ContentBlocks: deps.contentBlockStore,
+		Units: publicArtistUnits, SpiceDB: deps.spicedbClient,
 		Media: artistadapter.NewPublicMedia(deps.db, artistRuntime),
 	})
 	if err != nil {
@@ -89,16 +103,21 @@ func (m musicServiceRegistration) registerArtist() (*artist.Service, error) {
 
 func (m musicServiceRegistration) registerLabel() (*label.Service, error) {
 	deps := m.dependencies
-	labelService, err := label.NewService(label.Deps{
-		DB: deps.db, SpiceDB: deps.spicedbClient, Audit: deps.telemetryWriter, Publisher: deps.servicePublisher,
-		ContentBlocks: deps.contentBlockStore, Checkpoints: m.checkpoints,
+	labelUnits, err := labelpostgres.NewUnits(deps.db, labelpostgres.Deps{
+		ContentBlocks: deps.contentBlockStore, Publisher: deps.servicePublisher, Checkpoints: m.checkpoints,
 		Translation:   labeladapter.NewTranslation(),
-		Members:       labeladapter.NewMemberProjection(deps.db, deps.cfg.CDNURL),
 		Runtime:       labeladapter.NewRuntime(deps.cfg.CDNURL, deps.og.refresher),
 		Artists:       artistadapter.NewLabelRelations(),
 		Releases:      releaseadapter.NewLabelRelations(),
 		ProgramEvents: programeventadapter.NewLabelRelations(),
 		ShareLinks:    sharelinkadapter.NewCatalogLinks(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize label store: %w", err)
+	}
+	labelService, err := label.NewService(label.Deps{
+		Units: labelUnits, SpiceDB: deps.spicedbClient, Fence: identitystate.PostgresFence{}, Audit: deps.telemetryWriter,
+		Members: labeladapter.NewMemberProjection(deps.db, deps.cfg.CDNURL),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize label service: %w", err)
@@ -107,9 +126,11 @@ func (m musicServiceRegistration) registerLabel() (*label.Service, error) {
 	m.registerInternal(intrav1connect.NewInternalLabelServiceHandler(label.NewInternalConnectHandler(labelService), m.internalOptions...))
 
 	labelPublicRuntime := labeladapter.NewPublicRuntime(deps.db, deps.cfg.CDNURL, deps.spicedbClient, deps.contentBlockStore)
-	publicLabelService, err := labelpublic.NewService(labelpublic.Deps{
-		DB: deps.db, Content: labelPublicRuntime, Draft: labelPublicRuntime, Media: labelPublicRuntime,
-	})
+	publicLabelUnits, err := labelpublicpostgres.NewUnits(deps.db, labelPublicRuntime, labelPublicRuntime)
+	if err != nil {
+		return nil, fmt.Errorf("initialize public label store: %w", err)
+	}
+	publicLabelService, err := labelpublic.NewService(labelpublic.Deps{Units: publicLabelUnits, Draft: labelPublicRuntime})
 	if err != nil {
 		return nil, fmt.Errorf("initialize public label service: %w", err)
 	}

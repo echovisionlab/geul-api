@@ -24,12 +24,17 @@ import (
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
+	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	artistpublic "github.com/echovisionlab/geul-api/internal/artist/public"
+	artistpublicpostgres "github.com/echovisionlab/geul-api/internal/artist/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	labeldomain "github.com/echovisionlab/geul-api/internal/label"
+	labelpostgres "github.com/echovisionlab/geul-api/internal/label/postgres"
 	labelpublic "github.com/echovisionlab/geul-api/internal/label/public"
+	labelpublicpostgres "github.com/echovisionlab/geul-api/internal/label/public/postgres"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
@@ -114,16 +119,19 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	artistRuntime := artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher(db))
 
 	manageArtist := artistdomain.NewConnectHandler(newFixtureArtistService(t, db, spiceDB, contentBlocks, publisher))
-	labelService, err := labeldomain.NewService(labeldomain.Deps{
-		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{}, Publisher: publisher,
-		ContentBlocks: contentBlocks, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
+	labelUnits, err := labelpostgres.NewUnits(db, labelpostgres.Deps{
+		ContentBlocks: contentBlocks, Publisher: publisher, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
 		Translation:   labeladapter.NewTranslation(),
-		Members:       labeladapter.NewMemberProjection(db, artistLabelPublicCDN),
 		Runtime:       labeladapter.NewRuntime(artistLabelPublicCDN, labelFixtureOGRefresher(db)),
 		Artists:       artistadapter.NewLabelRelations(),
 		Releases:      releaseadapter.NewLabelRelations(),
 		ProgramEvents: programeventadapter.NewLabelRelations(),
 		ShareLinks:    sharelinkadapter.NewCatalogLinks(),
+	})
+	require.NoError(t, err)
+	labelService, err := labeldomain.NewService(labeldomain.Deps{
+		Units: labelUnits, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: &audittest.Recorder{},
+		Members: labeladapter.NewMemberProjection(db, artistLabelPublicCDN),
 	})
 	require.NoError(t, err)
 	manageLabel := labeldomain.NewConnectHandler(labelService)
@@ -144,11 +152,15 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	manageWork := workdomain.NewConnectHandler(workService)
 	shareLinks := sharelinktest.NewHandler(t, db, spiceDB)
 	artistMedia := artistadapter.NewPublicMedia(db, artistRuntime)
-	publicArtistService, err := artistpublic.NewService(artistpublic.Deps{DB: db, SpiceDB: spiceDB, ContentBlocks: contentBlocks, Media: artistMedia})
+	publicArtistUnits, err := artistpublicpostgres.NewUnits(db, contentBlocks)
+	require.NoError(t, err)
+	publicArtistService, err := artistpublic.NewService(artistpublic.Deps{Units: publicArtistUnits, SpiceDB: spiceDB, Media: artistMedia})
 	require.NoError(t, err)
 	publicArtist := artistpublic.NewConnectHandler(publicArtistService)
 	labelRuntime := labeladapter.NewPublicRuntime(db, artistLabelPublicCDN, spiceDB, contentBlocks)
-	publicLabelService, err := labelpublic.NewService(labelpublic.Deps{DB: db, Content: labelRuntime, Draft: labelRuntime, Media: labelRuntime})
+	publicLabelUnits, err := labelpublicpostgres.NewUnits(db, labelRuntime, labelRuntime)
+	require.NoError(t, err)
+	publicLabelService, err := labelpublic.NewService(labelpublic.Deps{Units: publicLabelUnits, Draft: labelRuntime})
 	require.NoError(t, err)
 	publicLabel := labelpublic.NewConnectHandler(publicLabelService)
 
@@ -513,17 +525,20 @@ func createPublishedArtistLabelFixtureLabel(
 // recorder.
 func newFixtureArtistService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentblock.Store, publisher artistLabelAsyncPublisher) *artistdomain.Service {
 	t.Helper()
-	service, err := artistdomain.NewService(artistdomain.Deps{
-		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{}, Publisher: publisher,
-		ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
+	units, err := artistpostgres.NewUnits(db, artistpostgres.Deps{
+		ContentBlocks: store, Publisher: publisher, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
 		Translation:   artistadapter.NewTranslation(),
-		Members:       artistadapter.NewMemberProjection(db, artistLabelPublicCDN),
 		Runtime:       artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher(db)),
 		Labels:        labeladapter.NewArtistLinks(),
 		Releases:      releaseadapter.NewArtistRelations(),
 		ProgramEvents: programeventadapter.NewArtistRelations(),
 		Works:         workadapter.NewArtistRelations(),
 		ShareLinks:    sharelinkadapter.NewCatalogLinks(),
+	})
+	require.NoError(t, err)
+	service, err := artistdomain.NewService(artistdomain.Deps{
+		Units: units, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: &audittest.Recorder{},
+		Members: artistadapter.NewMemberProjection(db, artistLabelPublicCDN),
 	})
 	require.NoError(t, err)
 	return service

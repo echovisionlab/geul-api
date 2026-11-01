@@ -162,16 +162,14 @@ func (tools *ProgramEventReferenceTools) CallTool(ctx context.Context, _ mcpserv
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = page.Pagination
+		responsePagination = label.PaginationMessage(page.Pagination)
 		for _, item := range page.Labels {
-			if item != nil && item.Label != nil {
-				listed := item.Label
-				projected := map[string]any{"id": listed.Id, "name": listed.Name, "status": listed.Status, "source_locale": listed.SourceLocale}
-				if listed.Slug != nil {
-					projected["slug"] = *listed.Slug
-				}
-				items = append(items, projected)
+			listed := item.Label.Label
+			projected := map[string]any{"id": listed.ID, "name": item.Label.Name, "status": string(listed.Status), "source_locale": listed.SourceLocale}
+			if listed.Slug != nil {
+				projected["slug"] = *listed.Slug
 			}
+			items = append(items, projected)
 		}
 	}
 	output := map[string]any{"items": items, "total": responsePagination.GetTotal(), "limit": pagination.Limit, "offset": pagination.Offset, "has_more": responsePagination.GetHasMore()}

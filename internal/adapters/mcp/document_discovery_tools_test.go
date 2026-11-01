@@ -233,10 +233,10 @@ func TestDocumentDiscoveryReleaseAndArtistRequestsAndMetadata(t *testing.T) {
 					Id: discoveryDocumentID, Title: "Same Name", Slug: &slug, SourceLocale: "ko", Status: "draft", UpdatedAt: timestamppb.New(updatedAt),
 				}}}, Pagination: &commonv1.PaginationResponse{Total: 25, Limit: 2, Offset: 4},
 			}}
-			artists := &recordingArtistDocumentDiscovery{response: &managev1.ListArtistsAdminResponse{
-				Artists: []*managev1.ArtistWithStats{nil, {}, {Artist: &managev1.Artist{}}, {Artist: &managev1.Artist{
-					Id: discoveryDocumentID, Name: "Same Name", Slug: &slug, SourceLocale: "ko", Status: "published", UpdatedAt: timestamppb.New(updatedAt),
-				}}}, Pagination: &commonv1.PaginationResponse{Total: 25, Limit: 2, Offset: 4},
+			artists := &recordingArtistDocumentDiscovery{page: artist.AdminArtistPage{
+				Artists: []artist.AdminView{{}, {Artist: artist.View{Name: "Same Name", Artist: artist.Artist{
+					ID: discoveryDocumentID, Slug: &slug, SourceLocale: "ko", Status: "published", UpdatedAt: &updatedAt,
+				}}}}, Pagination: artist.Pagination{Total: 25, Limit: 2, Offset: 4},
 			}}
 			tools, err := NewDocumentDiscoveryTools(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, &recordingProgramEventDocumentDiscovery{}, releases, artists)
 			require.NoError(t, err)
@@ -279,8 +279,8 @@ func TestDocumentDiscoveryReleaseAndArtistRequestsAndMetadata(t *testing.T) {
 			// A final page uses the default page size and omits an absent slug.
 			releases.response.Pagination = &commonv1.PaginationResponse{Total: 1, Limit: 20}
 			releases.response.Releases[3].Release.Slug = nil
-			artists.response.Pagination = &commonv1.PaginationResponse{Total: 1, Limit: 20}
-			artists.response.Artists[3].Artist.Slug = nil
+			artists.page.Pagination = artist.Pagination{Total: 1, Limit: 20}
+			artists.page.Artists[1].Artist.Artist.Slug = nil
 			result, err = tools.CallTool(ctx, mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"`+profile+`","q":"   "}`))
 			require.NoError(t, err)
 			require.Nil(t, result.StructuredContent["next_offset"])
@@ -375,9 +375,9 @@ func (discovery *recordingReleaseDocumentDiscovery) ListReleasesAdmin(ctx contex
 
 type recordingArtistDocumentDiscovery struct {
 	ctx      context.Context
-	request  *connect.Request[managev1.ListArtistsAdminRequest]
-	response *managev1.ListArtistsAdminResponse
-	err      error
+	request *connect.Request[managev1.ListArtistsAdminRequest]
+	page    artist.AdminArtistPage
+	err     error
 }
 
 func (discovery *recordingArtistDocumentDiscovery) ListArtistsAdmin(ctx context.Context, query artist.ListArtistsQuery) (artist.AdminArtistPage, error) {
@@ -385,8 +385,5 @@ func (discovery *recordingArtistDocumentDiscovery) ListArtistsAdmin(ctx context.
 	discovery.request = connect.NewRequest(&managev1.ListArtistsAdminRequest{
 		Pagination: &commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset}, Filters: query.Filters, Sorts: query.Sorts,
 	})
-	if discovery.response == nil {
-		discovery.response = &managev1.ListArtistsAdminResponse{}
-	}
-	return artist.AdminArtistPage{Artists: discovery.response.Artists, Pagination: discovery.response.Pagination}, discovery.err
+	return discovery.page, discovery.err
 }

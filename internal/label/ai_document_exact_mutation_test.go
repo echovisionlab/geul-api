@@ -7,7 +7,6 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 )
@@ -96,7 +95,7 @@ func TestLabelAIDocumentLifecycleUsesExactGeneratedStatus(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.status, func(t *testing.T) {
-			if got := labelAIDocumentLifecycleValid(model.LabelStatus(test.status)); got != test.valid {
+			if got := labelAIDocumentLifecycleValid(Status(test.status)); got != test.valid {
 				t.Fatalf("labelAIDocumentLifecycleValid(%q) = %t, want %t", test.status, got, test.valid)
 			}
 		})

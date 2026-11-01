@@ -4,11 +4,14 @@ import (
 	"context"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // ConnectHandler serves the manage Label RPCs. Each method translates the
@@ -45,29 +48,46 @@ func respond[T any](message *T, err error) (*connect.Response[T], error) {
 
 func (h *ConnectHandler) GetLabelEditorData(ctx context.Context, req *connect.Request[managev1.GetLabelEditorDataRequest]) (*connect.Response[managev1.GetLabelEditorDataResponse], error) {
 	data, err := h.labels.GetLabelEditorData(ctx, GetLabelEditorDataQuery{ID: req.Msg.Id})
-	return respond(&managev1.GetLabelEditorDataResponse{Label: data.Label, AllowedActions: data.AllowedActions}, err)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return respond(&managev1.GetLabelEditorDataResponse{Label: labelMessage(data.Label), AllowedActions: labelActionMessages(data.AllowedActions)}, nil)
 }
 
 func (h *ConnectHandler) ListLabels(ctx context.Context, req *connect.Request[managev1.ListLabelsRequest]) (*connect.Response[managev1.ListLabelsResponse], error) {
 	page, err := h.labels.ListLabels(ctx, ListLabelsQuery{
 		Limit: req.Msg.GetPagination().GetLimit(), Offset: req.Msg.GetPagination().GetOffset(), Filters: req.Msg.Filters, Sorts: req.Msg.Sorts,
 	})
-	return respond(&managev1.ListLabelsResponse{Labels: page.Labels, Pagination: page.Pagination}, err)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	labels := make([]*managev1.Label, len(page.Labels))
+	for i, view := range page.Labels {
+		labels[i] = labelMessage(view)
+	}
+	return respond(&managev1.ListLabelsResponse{Labels: labels, Pagination: paginationMessage(page.Pagination)}, nil)
 }
 
 func (h *ConnectHandler) ListLabelsAdmin(ctx context.Context, req *connect.Request[managev1.ListLabelsAdminRequest]) (*connect.Response[managev1.ListLabelsAdminResponse], error) {
 	page, err := h.labels.ListLabelsAdmin(ctx, ListLabelsQuery{
 		Limit: req.Msg.GetPagination().GetLimit(), Offset: req.Msg.GetPagination().GetOffset(), Filters: req.Msg.Filters, Sorts: req.Msg.Sorts,
 	})
-	return respond(&managev1.ListLabelsAdminResponse{Labels: page.Labels, Pagination: page.Pagination}, err)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return respond(&managev1.ListLabelsAdminResponse{Labels: labelsWithStatsMessages(page.Labels), Pagination: paginationMessage(page.Pagination)}, nil)
 }
 
 func (h *ConnectHandler) CreateLabel(ctx context.Context, req *connect.Request[managev1.CreateLabelRequest]) (*connect.Response[managev1.Label], error) {
-	return respond(h.labels.CreateLabel(ctx, CreateLabelCommand{
+	view, err := h.labels.CreateLabel(ctx, CreateLabelCommand{
 		Name: req.Msg.Name, Slug: req.Msg.Slug, CountryCode: req.Msg.CountryCode, Website: req.Msg.Website,
 		ParentLabelID: req.Msg.ParentLabelId, SocialLinks: req.Msg.SocialLinks, Document: req.Msg.Document,
 		AcceptLanguage: req.Header().Get("Accept-Language"),
-	}))
+	})
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return respond(labelMessage(view), nil)
 }
 
 func (h *ConnectHandler) DeleteLabel(ctx context.Context, req *connect.Request[managev1.DeleteLabelRequest]) (*connect.Response[managev1.DeleteResponse], error) {
@@ -76,15 +96,21 @@ func (h *ConnectHandler) DeleteLabel(ctx context.Context, req *connect.Request[m
 }
 
 func (h *ConnectHandler) PreviewDeleteLabel(ctx context.Context, req *connect.Request[managev1.PreviewDeleteLabelRequest]) (*connect.Response[managev1.PreviewDeleteLabelResponse], error) {
-	return respond(h.labels.PreviewDeleteLabel(ctx, PreviewDeleteLabelQuery{ID: req.Msg.Id}))
+	preview, err := h.labels.PreviewDeleteLabel(ctx, PreviewDeleteLabelQuery{ID: req.Msg.Id})
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return respond(deletionPreviewMessage(preview), nil)
 }
 
 func (h *ConnectHandler) PublishLabel(ctx context.Context, req *connect.Request[managev1.PublishLabelRequest]) (*connect.Response[managev1.LabelLifecycleMutationResponse], error) {
-	return respond(h.labels.PublishLabel(ctx, PublishLabelCommand{ID: req.Msg.Id}))
+	result, err := h.labels.PublishLabel(ctx, PublishLabelCommand{ID: req.Msg.Id})
+	return respond(lifecycleMessage(result), err)
 }
 
 func (h *ConnectHandler) UnpublishLabel(ctx context.Context, req *connect.Request[managev1.UnpublishLabelRequest]) (*connect.Response[managev1.LabelLifecycleMutationResponse], error) {
-	return respond(h.labels.UnpublishLabel(ctx, UnpublishLabelCommand{ID: req.Msg.Id}))
+	result, err := h.labels.UnpublishLabel(ctx, UnpublishLabelCommand{ID: req.Msg.Id})
+	return respond(lifecycleMessage(result), err)
 }
 
 func (h *ConnectHandler) SetLabelImage(ctx context.Context, req *connect.Request[managev1.SetLabelImageRequest]) (*connect.Response[managev1.SetLabelImageResponse], error) {
@@ -101,13 +127,17 @@ func (h *ConnectHandler) DeleteLabelImage(ctx context.Context, req *connect.Requ
 
 func (h *ConnectHandler) ListLabelParticipants(ctx context.Context, req *connect.Request[managev1.ListLabelParticipantsRequest]) (*connect.Response[managev1.ListLabelParticipantsResponse], error) {
 	participants, err := h.labels.ListLabelParticipants(ctx, ListLabelParticipantsQuery{LabelID: req.Msg.LabelId})
-	return respond(&managev1.ListLabelParticipantsResponse{Participants: participants}, err)
+	return respond(&managev1.ListLabelParticipantsResponse{Participants: entityparticipant.MapViews(participants, labelParticipantMessage)}, err)
 }
 
 func (h *ConnectHandler) SetLabelParticipant(ctx context.Context, req *connect.Request[managev1.SetLabelParticipantRequest]) (*connect.Response[managev1.LabelParticipant], error) {
-	return respond(h.labels.SetLabelParticipant(ctx, SetLabelParticipantCommand{
+	view, err := h.labels.SetLabelParticipant(ctx, SetLabelParticipantCommand{
 		LabelID: req.Msg.LabelId, MemberID: req.Msg.MemberId, Role: participantRole(req.Msg.Role),
-	}))
+	})
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return respond(labelParticipantMessage(view), nil)
 }
 
 func (h *ConnectHandler) RemoveLabelParticipant(ctx context.Context, req *connect.Request[managev1.RemoveLabelParticipantRequest]) (*connect.Response[managev1.DeleteResponse], error) {
@@ -121,9 +151,13 @@ func (h *ConnectHandler) CheckLabelSlugAvailable(ctx context.Context, req *conne
 }
 
 func (h *InternalConnectHandler) LoadLabelBlockDocument(ctx context.Context, req *connect.Request[intrav1.LoadLabelBlockDocumentRequest]) (*connect.Response[intrav1.LoadLabelBlockDocumentResponse], error) {
-	return respond(h.labels.LoadLabelBlockDocument(ctx, LoadLabelBlockDocumentQuery{
+	room, err := h.labels.LoadLabelBlockDocument(ctx, LoadLabelBlockDocumentQuery{
 		LabelID: req.Msg.LabelId, Locale: req.Msg.Locale, SessionID: req.Msg.GetPrincipal().GetSessionId(),
-	}))
+	})
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return respond(roomDocumentMessage(room), nil)
 }
 
 func (h *InternalConnectHandler) ApplyLabelBlockBatch(ctx context.Context, req *connect.Request[intrav1.ApplyLabelBlockBatchRequest]) (*connect.Response[intrav1.ApplyLabelBlockBatchResponse], error) {
@@ -152,7 +186,7 @@ func (h *InternalConnectHandler) UpdateLabelLocaleMetadata(ctx context.Context, 
 
 func (h *InternalConnectHandler) UpdateLabelDocumentMetadata(ctx context.Context, req *connect.Request[intrav1.UpdateLabelDocumentMetadataRequest]) (*connect.Response[intrav1.UpdateLabelDocumentMetadataResponse], error) {
 	advanced, err := h.labels.UpdateLabelDocumentMetadata(ctx, UpdateLabelDocumentMetadataCommand{
-		LabelID: req.Msg.LabelId, ExpectedRevision: req.Msg.ExpectedRevision, Update: req.Msg.Update,
+		LabelID: req.Msg.LabelId, ExpectedRevision: req.Msg.ExpectedRevision, Update: documentMetadataUpdate(req.Msg.Update),
 		ContributorMemberIDs: req.Msg.ContributorMemberIds,
 	})
 	return respond(&intrav1.UpdateLabelDocumentMetadataResponse{
@@ -183,5 +217,194 @@ func participantRole(role managev1.LabelParticipantRole) string {
 		return ParticipantRoleManager
 	default:
 		return ""
+	}
+}
+
+// labelMessage renders a Label view.
+func labelMessage(view View) *managev1.Label {
+	l := view.Label
+	label := &managev1.Label{
+		Id:           l.ID,
+		Name:         view.Name,
+		Document:     view.Document,
+		Status:       string(l.Status),
+		CreatedAt:    timestamppb.New(l.CreatedAt),
+		UpdatedAt:    timestamppb.New(l.UpdatedAt),
+		OgAsset:      view.OgImage,
+		Revision:     view.Revision,
+		SourceLocale: l.SourceLocale,
+	}
+	if l.Slug != nil {
+		label.Slug = l.Slug
+	}
+	if l.CountryCode != nil {
+		label.CountryCode = l.CountryCode
+	}
+	if l.Website != nil {
+		label.Website = l.Website
+	}
+	label.ImageLightAsset = view.LightLogo
+	label.ImageDarkAsset = view.DarkLogo
+	if l.ParentLabelID != nil {
+		label.ParentLabelId = l.ParentLabelID
+	}
+	if l.SocialLinks != nil {
+		label.SocialLinks = l.SocialLinks
+	}
+	if l.PublishedAt != nil {
+		label.PublishedAt = timestamppb.New(*l.PublishedAt)
+	}
+	return label
+}
+
+// labelsWithStatsMessages renders an administrator page of Labels.
+func labelsWithStatsMessages(views []AdminView) []*managev1.LabelWithStats {
+	labels := make([]*managev1.LabelWithStats, len(views))
+	for i, view := range views {
+		labels[i] = &managev1.LabelWithStats{
+			Label: labelMessage(view.Label), ArtistCount: view.ArtistCount, ReleaseCount: view.ReleaseCount,
+		}
+	}
+	return labels
+}
+
+// PaginationMessage renders a page position, for the manage API and its
+// MCP tools.
+func PaginationMessage(pagination Pagination) *commonv1.PaginationResponse {
+	return paginationMessage(pagination)
+}
+
+func paginationMessage(pagination Pagination) *commonv1.PaginationResponse {
+	return &commonv1.PaginationResponse{
+		Total: pagination.Total, Limit: pagination.Limit, Offset: pagination.Offset, HasMore: pagination.HasMore,
+	}
+}
+
+func labelActionMessages(actions []Action) []managev1.LabelAction {
+	messages := make([]managev1.LabelAction, 0, len(actions))
+	for _, action := range actions {
+		messages = append(messages, labelActionMessage(action))
+	}
+	return messages
+}
+
+func labelActionMessage(action Action) managev1.LabelAction {
+	switch action {
+	case ActionEdit:
+		return managev1.LabelAction_LABEL_ACTION_EDIT
+	case ActionManageShareLinks:
+		return managev1.LabelAction_LABEL_ACTION_MANAGE_SHARE_LINKS
+	case ActionDelete:
+		return managev1.LabelAction_LABEL_ACTION_DELETE
+	case ActionManageParticipants:
+		return managev1.LabelAction_LABEL_ACTION_MANAGE_PARTICIPANTS
+	case ActionPublish:
+		return managev1.LabelAction_LABEL_ACTION_PUBLISH
+	case ActionUnpublish:
+		return managev1.LabelAction_LABEL_ACTION_UNPUBLISH
+	case ActionRemoveOwner:
+		return managev1.LabelAction_LABEL_ACTION_REMOVE_OWNER
+	default:
+		return managev1.LabelAction_LABEL_ACTION_UNSPECIFIED
+	}
+}
+
+func deletionPreviewMessage(preview DeletionPreview) *managev1.PreviewDeleteLabelResponse {
+	response := &managev1.PreviewDeleteLabelResponse{Revision: preview.Revision}
+	for _, impact := range preview.Impacts {
+		kind := managev1.LabelDeletionImpactKind(impact.Kind)
+		response.Impacts = append(response.Impacts, &managev1.LabelDeletionImpact{
+			Kind: kind, EntityId: impact.EntityID, DisplayName: impact.DisplayName,
+		})
+		switch kind {
+		case managev1.LabelDeletionImpactKind_LABEL_DELETION_IMPACT_KIND_CHILD_LABEL:
+			response.ChildLabelCount++
+		case managev1.LabelDeletionImpactKind_LABEL_DELETION_IMPACT_KIND_ARTIST:
+			response.ArtistCount++
+		case managev1.LabelDeletionImpactKind_LABEL_DELETION_IMPACT_KIND_PROGRAM_EVENT:
+			response.ProgramEventCount++
+		case managev1.LabelDeletionImpactKind_LABEL_DELETION_IMPACT_KIND_RELEASE:
+			response.ReleaseCount++
+		}
+	}
+	return response
+}
+
+func lifecycleMessage(result LifecycleResult) *managev1.LabelLifecycleMutationResponse {
+	response := &managev1.LabelLifecycleMutationResponse{
+		Id: result.ID, Changed: result.Changed, Status: labelStatusToProto(result.Status),
+		UpdatedAt: timestamppb.New(result.UpdatedAt),
+	}
+	if result.PublishedAt != nil {
+		response.PublishedAt = timestamppb.New(*result.PublishedAt)
+	}
+	return response
+}
+
+// labelStatusToProto maps a stored Label status to the API enum. A value the
+// API does not know is UNSPECIFIED.
+func labelStatusToProto(status Status) managev1.LabelStatus {
+	switch status {
+	case StatusDraft:
+		return managev1.LabelStatus_LABEL_STATUS_DRAFT
+	case StatusPublished:
+		return managev1.LabelStatus_LABEL_STATUS_PUBLISHED
+	default:
+		return managev1.LabelStatus_LABEL_STATUS_UNSPECIFIED
+	}
+}
+
+func labelParticipantMessage(view entityparticipant.View) *managev1.LabelParticipant {
+	role := managev1.LabelParticipantRole_LABEL_PARTICIPANT_ROLE_MANAGER
+	if view.Role == ParticipantRoleOwner {
+		role = managev1.LabelParticipantRole_LABEL_PARTICIPANT_ROLE_OWNER
+	}
+	return &managev1.LabelParticipant{
+		Member: view.Member, Role: role, CreatedAt: timestamppb.New(view.CreatedAt),
+		HasEffectiveAuthority: view.HasEffectiveAuthority,
+	}
+}
+
+func roomDocumentMessage(room RoomDocument) *intrav1.LoadLabelBlockDocumentResponse {
+	response := &intrav1.LoadLabelBlockDocumentResponse{
+		Document: room.Document, DocumentRevision: room.DocumentRevision,
+		SourceMetadata: &intrav1.LabelLocaleMetadata{Locale: room.SourceMetadata.Locale, Title: room.SourceMetadata.Title},
+		Metadata: &intrav1.LabelDocumentMetadata{
+			Slug: room.Metadata.Slug, CountryCode: room.Metadata.CountryCode, Website: room.Metadata.Website,
+			SocialLinks: room.Metadata.SocialLinks, ParentLabelId: room.Metadata.ParentLabelID,
+		},
+		Locale: room.Locale, LocaleExists: room.LocaleExists, TargetRevision: room.TargetRevision,
+		PresentLocaleValues: room.PresentLocaleValues,
+	}
+	if room.LocaleMetadata != nil {
+		response.LocaleMetadata = &intrav1.LabelLocaleMetadata{Locale: room.LocaleMetadata.Locale, Title: room.LocaleMetadata.Title}
+	}
+	return response
+}
+
+// documentMetadataUpdate maps a room's metadata update; nil stays nil, which
+// the use case rejects.
+func documentMetadataUpdate(update *intrav1.LabelDocumentMetadataUpdate) *DocumentMetadataUpdate {
+	if update == nil {
+		return nil
+	}
+	return &DocumentMetadataUpdate{
+		Slug: stringMutation(update.Slug), CountryCode: stringMutation(update.CountryCode),
+		Website: stringMutation(update.Website), ParentLabelID: stringMutation(update.ParentLabelId),
+		SocialLinksPresent: update.SocialLinks != nil, SocialLinks: update.SocialLinks.GetValues(),
+	}
+}
+
+func stringMutation(input *intrav1.NullableStringMutation) *entityparticipant.StringMutation {
+	if input == nil {
+		return nil
+	}
+	switch operation := input.Operation.(type) {
+	case *intrav1.NullableStringMutation_Set:
+		return &entityparticipant.StringMutation{Set: &operation.Set}
+	case *intrav1.NullableStringMutation_Clear:
+		return &entityparticipant.StringMutation{Clear: &operation.Clear}
+	default:
+		return &entityparticipant.StringMutation{}
 	}
 }

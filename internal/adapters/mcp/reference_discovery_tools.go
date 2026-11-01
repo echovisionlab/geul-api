@@ -199,11 +199,9 @@ func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, argu
 		if err != nil {
 			return expectedToolError(err)
 		}
-		hasMore = page.Pagination.GetHasMore()
+		hasMore = page.Pagination.HasMore
 		for _, item := range page.Artists {
-			if item != nil {
-				items = append(items, referenceItem(item.Id, item.Name, item.Slug, "", item.Status, false))
-			}
+			items = append(items, referenceItem(item.Artist.ID, item.Name, item.Artist.Slug, "", string(item.Artist.Status), false))
 		}
 	default:
 		return executionError(fmt.Errorf("unsupported reference_type %q", input.ReferenceType))

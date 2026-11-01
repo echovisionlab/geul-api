@@ -276,16 +276,16 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 		}
 		documents := make([]map[string]any, 0, len(listed.Artists))
 		for _, item := range listed.Artists {
-			if item == nil || item.Artist == nil || item.Artist.UpdatedAt == nil {
+			listedArtist := item.Artist.Artist
+			if listedArtist.UpdatedAt == nil {
 				continue
 			}
-			listedArtist := item.Artist
 			documents = append(documents, discoveryDocument(
-				"artist", listedArtist.Id, listedArtist.Name, listedArtist.Slug, listedArtist.SourceLocale,
-				listedArtist.Status, listedArtist.UpdatedAt.AsTime(),
+				"artist", listedArtist.ID, item.Artist.Name, listedArtist.Slug, listedArtist.SourceLocale,
+				string(listedArtist.Status), *listedArtist.UpdatedAt,
 			))
 		}
-		return documents, int64(listed.Pagination.GetTotal()), int(listed.Pagination.GetLimit()), nil
+		return documents, int64(listed.Pagination.Total), int(listed.Pagination.Limit), nil
 	default:
 		return nil, 0, 0, fmt.Errorf("p must be post, work, page, program_event, release, or artist")
 	}

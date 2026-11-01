@@ -6,10 +6,11 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-func requireLabelCollaborationEdit(ctx context.Context, checker *auth.SpiceDBClient, labelID string, principal *auth.UserInfo) error {
+func requireLabelCollaborationEdit(ctx context.Context, checker entityparticipant.PermissionChecker, labelID string, principal *auth.UserInfo) error {
 	if principal == nil || !principal.Authenticated {
 		return errAuthenticationRequired
 	}

@@ -8,7 +8,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	labeldomain "github.com/echovisionlab/geul-api/internal/label"
-	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 )
@@ -65,9 +64,8 @@ func (a *LabelInterchange) ApplyTranslationInterchange(
 	if err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
-	job := &model.TranslationJob{
-		EntityType: command.EntityType, EntityID: command.EntityID,
-		SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
+	job := labeldomain.TranslationJob{
+		EntityType: command.EntityType, EntityID: command.EntityID, TargetLocale: command.TargetLocale,
 		RequestedByMemberID: memberID,
 	}
 	var expectedTargetRevision *string
@@ -75,7 +73,7 @@ func (a *LabelInterchange) ApplyTranslationInterchange(
 		expectedTargetRevision = command.ExpectedRevision
 	}
 	if err := labeldomain.ApplyTypedTranslationCandidateWithTargetRevision(
-		ctx, db, store, job, candidate, core.EntryWrite{Now: command.Now.UTC()}, a.audit,
+		ctx, labelStore(db, store), job, candidate, core.EntryWrite{Now: command.Now.UTC()}, a.audit,
 		expectedTargetRevision,
 	); err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
@@ -105,7 +103,7 @@ func loadLabelInterchangeTarget(
 	if err := validateCreativeInterchangeLoad(db, store, entityType, entityID, locale, plan, string(core.KindLabel)); err != nil {
 		return creativeInterchangeTarget{}, err
 	}
-	target, err := labeldomain.LoadTypedTranslationInterchangeTarget(ctx, db, store, entityID, locale)
+	target, err := labeldomain.LoadTypedTranslationInterchangeTarget(ctx, labelStore(db, store), entityID, locale)
 	if err != nil {
 		return creativeInterchangeTarget{}, err
 	}

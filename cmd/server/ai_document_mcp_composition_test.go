@@ -726,9 +726,10 @@ type compositionArtistApplication struct {
 
 func (application *compositionArtistApplication) ListArtistsAdmin(ctx context.Context, _ artistdomain.ListArtistsQuery) (artistdomain.AdminArtistPage, error) {
 	application.principal = auth.GetUser(ctx)
-	return artistdomain.AdminArtistPage{Artists: []*managev1.ArtistWithStats{{Artist: &managev1.Artist{
-		Id: "55555555-5555-4555-8555-555555555555", Name: "Artist A", Status: "published", SourceLocale: "en", UpdatedAt: timestamppb.New(time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)),
-	}}}, Pagination: &commonv1.PaginationResponse{Total: 1, Limit: 20}}, nil
+	updatedAt := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
+	return artistdomain.AdminArtistPage{Artists: []artistdomain.AdminView{{Artist: artistdomain.View{Name: "Artist A", Artist: artistdomain.Artist{
+		ID: "55555555-5555-4555-8555-555555555555", Status: "published", SourceLocale: "en", UpdatedAt: &updatedAt,
+	}}}}, Pagination: artistdomain.Pagination{Total: 1, Limit: 20}}, nil
 }
 
 func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContext(t *testing.T) {

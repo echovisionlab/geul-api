@@ -60,7 +60,7 @@ func TestPermissionFailureKeepsRedactedCauseOnGenericDependencyError(t *testing.
 func TestContentBlockRejectionKeepsWrappedCauseOnStatusMapping(t *testing.T) {
 	output := captureLogs(t)
 	cause := fmt.Errorf(`element <file> in relation "content_block": password=private-secret: %w`, contentblock.ErrFileReference)
-	err := errs.Wrap(normalizeCreativeContentBlockError(artistContentEntity, cause))
+	err := errs.Wrap(normalizeCreativeContentBlockError(cause))
 	require.Equal(t, connect.CodeInvalidArgument, err.Code())
 	require.NotContains(t, err.Error(), cause.Error())
 	require.ErrorIs(t, err, contentblock.ErrFileReference)
@@ -74,7 +74,7 @@ func TestContentBlockRejectionKeepsWrappedCauseOnStatusMapping(t *testing.T) {
 
 func TestContentBlockRevisionConflictDoesNotMatchRawStaleRevision(t *testing.T) {
 	cause := &contentblock.StaleRevisionError{}
-	err := normalizeCreativeContentBlockError(artistContentEntity, cause)
+	err := normalizeCreativeContentBlockError(cause)
 	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	require.NotErrorIs(t, err, contentblock.ErrStaleRevision)
 }

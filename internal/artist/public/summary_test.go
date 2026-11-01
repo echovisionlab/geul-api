@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 )
 
 func TestArtistSummaryCarriesSocialLinks(t *testing.T) {
@@ -16,16 +16,15 @@ func TestArtistSummaryCarriesSocialLinks(t *testing.T) {
 		"x":         "https://x.com/example",
 	}
 
-	artist := model.Artist{
+	artist := artistdomain.Artist{
 		ID:          "artist-1",
-		Name:        "Artist",
 		Slug:        &slug,
 		CountryCode: &countryCode,
 		SocialLinks: socialLinks,
 		PublishedAt: &now,
 	}
 
-	summary := buildArtistSummary(&artist)
+	summary := summaryMessage(buildArtistSummary(artist, "Artist"))
 
 	if summary.SocialLinks["instagram"] != "https://instagram.com/example" {
 		t.Fatalf("expected instagram social link, got %v", summary.SocialLinks)

@@ -1,6 +1,6 @@
 //go:build integration
 
-package label
+package label_test
 
 import (
 	"context"
@@ -8,10 +8,11 @@ import (
 	"testing"
 	"time"
 
+	label "github.com/echovisionlab/geul-api/internal/label"
+	labelpostgres "github.com/echovisionlab/geul-api/internal/label/postgres"
+
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -37,22 +38,20 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	attachInternalResourcePolicy(t, stack.SpiceDBClient, labelID)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	title := "Label target locale"
-	require.NoError(t, saveLabelSourceLocaleDocumentState(t.Context(), db, labelID, "en", translationLocaleDocumentSaveInput{
-		Title: &title, OverwriteNullFields: true, Now: now,
-	}))
+	require.NoError(t, seedLabelLocaleTitle(t.Context(), db, labelID, "en", title, now))
 	documentRevision := attachCreativeContentIntegrationDocument(
-		t, db, store, labelContentEntity, labelID, "en", "source description",
+		t, db, store, "label", labelID, "en", "source description",
 	)
 	documentID := labelDocumentIDForIntegration(t, db, labelID)
 	memberID := labelOwnerIDForIntegration(t, db, labelID)
 	sessionID := testutil.InsertPostIntegrationSession(t, db, identityID)
 	auditWriter := apitelemetry.NewDurableWriter(db)
 	memberCtx := labelTargetMemberContext(t, identityID)
-	aiService := newTestService(t, Deps{
+	aiService := newTestService(t, integrationDeps{
 		DB: db, SpiceDB: stack.SpiceDBClient, Audit: auditWriter, Publisher: &capturingAsyncPublisher{},
 		ContentBlocks: store, Runtime: labelTargetIntegrationRuntime{},
 	})
-	internal := NewInternalConnectHandler(aiService)
+	internal := label.NewInternalConnectHandler(aiService)
 
 	missing := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ko")
 	require.False(t, missing.Msg.LocaleExists)
@@ -133,10 +132,9 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 		intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
 	)
 
-	dcdpDeleteErr := db.Transaction(func(tx *gorm.DB) error {
-		_, mutationErr := aiService.applyAIDocumentMode(
-			t.Context(), tx,
-			AIDocumentMutation{
+	_, dcdpDeleteErr := aiService.ExecuteAIDocumentMutation(memberCtx, labelID, "ko", label.AIDocumentExecutionApply,
+		func(label.AIDocumentState) (label.AIDocumentMutation, error) {
+			return label.AIDocumentMutation{
 				LabelID: labelID, Locale: "ko", ExpectedRevision: documentRevision,
 				ExpectedTargetRevision: koEdited.Msg.TargetRevision, ExpectedSource: "en", ExpectedPresence: true,
 				ContributorMemberID: memberID,
@@ -145,12 +143,8 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 					ContributorMemberIDs: []uuid.UUID{memberID},
 					LocaleGroups:         []contentblock.LocaleMutationGroup{{Locale: "ko", Deletes: []uuid.UUID{uuid.MustParse(blockID)}}},
 				},
-			},
-			uuid.MustParse(documentRevision), memberID, documentID,
-			labelAuthorizedAIDocumentFence(labelAIDocumentRoot{ID: labelID, DocumentID: &documentID}, "en"),
-		)
-		return mutationErr
-	})
+			}, nil
+		})
 	requireLabelMutationRejectionIntegration(
 		t, dcdpDeleteErr,
 		intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN,
@@ -251,15 +245,15 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 		ContentDocumentRevision:   sourceEdited.Msg.DocumentRevision,
 		ContentBlockLocaleOverlay: labelTargetLocaleOverlay(blockID, "ja", "provider ja"),
 	}
-	providerJob := &model.TranslationJob{
-		EntityType: labelContentEntity, EntityID: labelID, SourceLocale: "en", TargetLocale: "ja",
+	providerJob := label.TranslationJob{
+		EntityType: "label", EntityID: labelID, TargetLocale: "ja",
 		RequestedByMemberID: testutil.PostIntegrationMemberID(identityID),
 	}
-	providerJobWithoutRequester := *providerJob
+	providerJobWithoutRequester := providerJob
 	providerJobWithoutRequester.RequestedByMemberID = ""
 	err = db.Transaction(func(tx *gorm.DB) error {
-		return ApplyTypedTranslationCandidateWithDB(
-			t.Context(), tx, store, &providerJobWithoutRequester, providerCandidate,
+		return label.ApplyTypedTranslationCandidate(
+			t.Context(), labelpostgres.Bind(tx, labelpostgres.Deps{ContentBlocks: store}), providerJobWithoutRequester, providerCandidate,
 			translation.EntryWrite{Now: time.Now().UTC()}, auditWriter,
 		)
 	})
@@ -267,7 +261,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	requireLabelTargetLocaleAuditCountIntegration(t, db, labelID, 7)
 
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return ApplyTypedTranslationCandidateWithDB(t.Context(), tx, store, providerJob, providerCandidate, translation.EntryWrite{Now: time.Now().UTC()}, auditWriter)
+		return label.ApplyTypedTranslationCandidate(t.Context(), labelpostgres.Bind(tx, labelpostgres.Deps{ContentBlocks: store}), providerJob, providerCandidate, translation.EntryWrite{Now: time.Now().UTC()}, auditWriter)
 	}))
 	jaLoaded := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ja")
 	require.True(t, jaLoaded.Msg.LocaleExists)
@@ -284,7 +278,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 		ContentBlockLocaleDeletes: []string{blockID},
 	}
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return ApplyTypedTranslationCandidateWithDB(t.Context(), tx, store, providerJob, providerReplacement, translation.EntryWrite{Now: time.Now().UTC()}, auditWriter)
+		return label.ApplyTypedTranslationCandidate(t.Context(), labelpostgres.Bind(tx, labelpostgres.Deps{ContentBlocks: store}), providerJob, providerReplacement, translation.EntryWrite{Now: time.Now().UTC()}, auditWriter)
 	}))
 	jaAfterReplacement := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ja")
 	require.True(t, jaAfterReplacement.Msg.LocaleExists)
@@ -293,8 +287,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	require.Equal(t, sourceEdited.Msg.DocumentRevision, jaAfterReplacement.Msg.DocumentRevision)
 	require.Zero(t, labelLocaleOverlayCountIntegration(t, db, labelID, "ja"), "provider whole replacement may remove omitted locale units")
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return ApplyTypedTranslationCandidateWithDB(
-			t.Context(), tx, store, providerJob, providerReplacement,
+		return label.ApplyTypedTranslationCandidate(t.Context(), labelpostgres.Bind(tx, labelpostgres.Deps{ContentBlocks: store}), providerJob, providerReplacement,
 			translation.EntryWrite{Now: time.Now().UTC()}, auditWriter,
 		)
 	}))
@@ -312,7 +305,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 		},
 	})
 
-	syncArtistIntegrationGlobalRole(t, stack.SpiceDBClient, identityID, policyv1.Role.User())
+	syncLabelIntegrationGlobalRole(t, stack.SpiceDBClient, identityID, policyv1.Role.User())
 	_, err = internal.ApplyLabelBlockBatch(memberCtx, connect.NewRequest(&intrav1.ApplyLabelBlockBatchRequest{
 		LabelId: labelID, Locale: "ja", ExpectedTargetRevision: jaAfterReplacement.Msg.TargetRevision,
 		Batch: labelTargetParagraphBatch(
@@ -327,7 +320,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	requireLabelTargetLocaleAuditCountIntegration(t, db, labelID, 9)
 }
 
-type labelTargetIntegrationRuntime struct{ Runtime }
+type labelTargetIntegrationRuntime struct{ labelpostgres.Runtime }
 
 func (labelTargetIntegrationRuntime) RequestCurrentWithDB(context.Context, *gorm.DB, string, string) (string, error) {
 	return "", nil
@@ -336,22 +329,21 @@ func (labelTargetIntegrationRuntime) RequestCurrentWithDB(context.Context, *gorm
 func executeLabelTargetLifecycleIntegration(
 	t *testing.T,
 	ctx context.Context,
-	service *Service,
-	labelID string,
+	service *label.Service, labelID string,
 	locale string,
 	documentRevision string,
 	targetRevision *string,
 	deleteTarget bool,
-) AIDocumentMutationResult {
+) label.AIDocumentMutationResult {
 	t.Helper()
 	result, err := service.ExecuteAIDocumentMutation(
-		ctx, labelID, locale, AIDocumentExecutionApply,
-		func(state AIDocumentState) (AIDocumentMutation, error) {
+		ctx, labelID, locale, label.AIDocumentExecutionApply,
+		func(state label.AIDocumentState) (label.AIDocumentMutation, error) {
 			memberID, parseErr := uuid.Parse(state.ViewerMemberID)
 			if parseErr != nil {
-				return AIDocumentMutation{}, parseErr
+				return label.AIDocumentMutation{}, parseErr
 			}
-			return AIDocumentMutation{
+			return label.AIDocumentMutation{
 				LabelID: labelID, Locale: locale, ExpectedRevision: documentRevision,
 				ExpectedTargetRevision: targetRevision, ExpectedSource: state.SourceLocale,
 				ExpectedPresence: targetRevision != nil, ContributorMemberID: memberID,
@@ -366,18 +358,17 @@ func executeLabelTargetLifecycleIntegration(
 func executeLabelTargetValueIntegration(
 	t *testing.T,
 	ctx context.Context,
-	service *Service,
-	labelID string,
+	service *label.Service, labelID string,
 	locale string,
 	text string,
-) AIDocumentMutationResult {
+) label.AIDocumentMutationResult {
 	t.Helper()
 	result, err := service.ExecuteAIDocumentMutation(
-		ctx, labelID, locale, AIDocumentExecutionApply,
-		func(state AIDocumentState) (AIDocumentMutation, error) {
+		ctx, labelID, locale, label.AIDocumentExecutionApply,
+		func(state label.AIDocumentState) (label.AIDocumentMutation, error) {
 			memberID, parseErr := uuid.Parse(state.ViewerMemberID)
 			if parseErr != nil {
-				return AIDocumentMutation{}, parseErr
+				return label.AIDocumentMutation{}, parseErr
 			}
 			blockID := state.Document.GetBase().GetNodes()[0].GetBlock().GetId()
 			protoBatch := labelTargetParagraphBatch(
@@ -385,9 +376,9 @@ func executeLabelTargetValueIntegration(
 			)
 			batch, conversionErr := contentblock.BatchFromRichTextProto(state.ContentDocumentID, protoBatch)
 			if conversionErr != nil {
-				return AIDocumentMutation{}, conversionErr
+				return label.AIDocumentMutation{}, conversionErr
 			}
-			return AIDocumentMutation{
+			return label.AIDocumentMutation{
 				LabelID: state.LabelID, Locale: locale, ExpectedRevision: state.Revision,
 				ExpectedTargetRevision: optional.Clone(state.TargetRevision),
 				ExpectedSource:         state.SourceLocale, ExpectedPresence: state.LocaleExists,
@@ -401,8 +392,7 @@ func executeLabelTargetValueIntegration(
 
 func loadLabelTargetRoomIntegration(
 	t *testing.T,
-	service *InternalConnectHandler,
-	sessionID string,
+	service *label.InternalConnectHandler, sessionID string,
 	labelID string,
 	locale string,
 ) *connect.Response[intrav1.LoadLabelBlockDocumentResponse] {
@@ -460,9 +450,11 @@ func labelFirstBlockText(t *testing.T, document *contentv1.LocalizedRichTextDocu
 
 func labelDocumentIDForIntegration(t *testing.T, db *gorm.DB, labelID string) uuid.UUID {
 	t.Helper()
-	documentID, err := loadLabelContentDocumentID(t.Context(), db, labelID)
+	var documentID string
+	require.NoError(t, db.Table("label").Select("content_document_id::text").Where("id = ?", labelID).Scan(&documentID).Error)
+	parsed, err := uuid.Parse(documentID)
 	require.NoError(t, err)
-	return documentID
+	return parsed
 }
 
 func labelOwnerIDForIntegration(t *testing.T, db *gorm.DB, labelID string) uuid.UUID {
@@ -493,26 +485,11 @@ func labelTargetRevisionIntegration(t *testing.T, db *gorm.DB, labelID, document
 	require.NoError(t, db.Table("label_translation").Select("updated_at").
 		Where("entity_id = ?::uuid AND locale = ?", labelID, locale).
 		Scan(&updatedAt).Error)
-	revision, err := deriveLabelTargetRevision(documentRevision, updatedAt)
+	revision, err := translation.DeriveTargetRevision(translation.TargetRevisionFacts{
+		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &updatedAt,
+	})
 	require.NoError(t, err)
 	return revision
-}
-
-func labelTargetMemberContext(t *testing.T, identityID string) context.Context {
-	t.Helper()
-	base := artistIntegrationAdminCtx(identityID)
-	user := auth.GetUser(base)
-	require.NotNil(t, user)
-	requestContext, err := sharedtelemetry.NewPropagatedRequestContext(
-		uuid.NewString(),
-		sharedtelemetry.MemberActor{
-			IdentityID: identityID,
-			MemberID:   testutil.PostIntegrationMemberID(identityID),
-			SessionID:  uuid.NewString(),
-		},
-	)
-	require.NoError(t, err)
-	return auth.WithUser(sharedtelemetry.WithRequestContext(base, requestContext), user)
 }
 
 func requireLabelTargetLocaleAuditsIntegration(

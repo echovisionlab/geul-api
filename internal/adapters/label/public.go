@@ -12,6 +12,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	labelpublic "github.com/echovisionlab/geul-api/internal/label/public"
+	labelpublicpostgres "github.com/echovisionlab/geul-api/internal/label/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -214,7 +215,7 @@ func (runtime *PublicRuntime) ResolveOg(ctx context.Context, tx *gorm.DB, assetI
 }
 
 var (
-	_ labelpublic.ContentProjection = (*PublicRuntime)(nil)
-	_ labelpublic.DraftAccess       = (*PublicRuntime)(nil)
-	_ labelpublic.MediaHydrator     = (*PublicRuntime)(nil)
+	_ labelpublicpostgres.ContentProjection = (*PublicRuntime)(nil)
+	_ labelpublic.DraftAccess               = (*PublicRuntime)(nil)
+	_ labelpublicpostgres.MediaHydrator     = (*PublicRuntime)(nil)
 )

@@ -1,6 +1,6 @@
 //go:build integration
 
-package label
+package label_test
 
 import (
 	"crypto/sha256"
@@ -23,7 +23,7 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Label Logo Admin")
-	ctx := artistIntegrationAdminCtx(adminID)
+	ctx := labelIntegrationAdminCtx(adminID)
 	labelService := newLabelIntegrationService(t, db, adminID)
 
 	tests := []struct {
@@ -234,11 +234,13 @@ func requireLabelLogoFileID(
 ) string {
 	t.Helper()
 
-	slot, err := labelLogoSlotFor(logoVariant(variant))
-	require.NoError(t, err)
+	column := "logo_light_file_id"
+	if variant == managev1.ThemeAssetVariant_THEME_ASSET_VARIANT_DARK {
+		column = "logo_dark_file_id"
+	}
 	var fileID *string
 	require.NoError(t, db.Table("label").
-		Select(slot.column).
+		Select(column).
 		Where("id = ?", labelID).
 		Row().
 		Scan(&fileID))

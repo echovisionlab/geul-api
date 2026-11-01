@@ -7,7 +7,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	"gorm.io/gorm"
 )
 
 // TranslationInterchangeTarget is Label's raw sparse target projection.
@@ -17,14 +16,16 @@ type TranslationInterchangeTarget struct {
 	Document *contentv1.LocalizedRichTextDocument
 }
 
+// LoadTypedTranslationInterchangeTarget reads the Label's sparse target
+// projection in the translation domain's transaction, which store is bound
+// to.
 func LoadTypedTranslationInterchangeTarget(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	labelID string,
 	targetLocale string,
 ) (TranslationInterchangeTarget, error) {
-	if tx == nil || store == nil {
+	if store == nil {
 		return TranslationInterchangeTarget{}, errors.New("label translation interchange dependencies are not configured")
 	}
 	if _, err := canonicalLabelUUID(labelID); err != nil {
@@ -35,11 +36,11 @@ func LoadTypedTranslationInterchangeTarget(
 	if err != nil {
 		return TranslationInterchangeTarget{}, domainerr.InvalidField("target_locale", err.Error())
 	}
-	documentID, err := loadLabelContentDocumentID(ctx, tx, labelID)
+	documentID, err := loadLabelContentDocumentID(ctx, store, labelID)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}
-	state, err := loadLabelTargetLocaleState(ctx, tx, store, labelID, documentID, targetLocale, false)
+	state, err := loadLabelTargetLocaleState(ctx, store, labelID, documentID, targetLocale, false)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}

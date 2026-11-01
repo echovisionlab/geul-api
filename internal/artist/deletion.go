@@ -5,20 +5,41 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"sort"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
-	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"gorm.io/gorm"
 )
 
-type artistDeletionImpact struct {
-	Domain        managev1.ArtistRelationDomain
+// RelationDomain names what references an Artist a deletion detaches. The
+// values are those of managev1.ArtistRelationDomain.
+type RelationDomain int32
+
+const (
+	RelationChildArtist  RelationDomain = 1
+	RelationLabel        RelationDomain = 2
+	RelationProgramEvent RelationDomain = 3
+	RelationRelease      RelationDomain = 4
+	RelationTrack        RelationDomain = 5
+	RelationWork         RelationDomain = 6
+)
+
+// DeletionImpact is one row that references the Artist.
+type DeletionImpact struct {
+	Domain        RelationDomain
 	EntityID      string
 	Label         string
 	RelationCount int32
+}
+
+// DeletionPreview is what deleting an Artist would detach, with the revision
+// DeleteArtist checks.
+type DeletionPreview struct {
+	Revision string
+	Impacts  []DeletionImpact
 }
 
 // PreviewDeleteArtistQuery reads what deleting an Artist would detach.
@@ -29,42 +50,44 @@ type PreviewDeleteArtistQuery struct {
 // PreviewDeleteArtist lists the child Artists, Labels, Program Events,
 // Releases, Tracks and Works that reference the Artist, with the revision
 // DeleteArtist checks.
-func (s *Service) PreviewDeleteArtist(ctx context.Context, query PreviewDeleteArtistQuery) (*managev1.PreviewDeleteArtistResponse, error) {
+func (s *Service) PreviewDeleteArtist(ctx context.Context, query PreviewDeleteArtistQuery) (DeletionPreview, error) {
 	if err := artistEntity.RequirePermission(ctx, s.spiceDB, query.ID, policyv1.Artist.Delete); err != nil {
-		return nil, err
+		return DeletionPreview{}, err
 	}
-	var impacts []artistDeletionImpact
-	if err := mutation.Read(ctx, s.db, func(tx *gorm.DB) error {
+	var impacts []DeletionImpact
+	if err := s.units.Read(ctx, func(store Store) error {
 		var err error
-		impacts, err = s.loadArtistDeletionImpacts(ctx, tx, query.ID)
+		impacts, err = loadArtistDeletionImpacts(ctx, store, query.ID)
 		return err
 	}); err != nil {
-		return nil, err
+		return DeletionPreview{}, err
 	}
-	return buildArtistDeletionPreview(impacts), nil
+	return DeletionPreview{Revision: artistDeletionRevision(impacts), Impacts: impacts}, nil
 }
 
 // loadArtistDeletionImpacts lists what references the Artist, ordered by
 // relation domain and entity ID.
-func (s *Service) loadArtistDeletionImpacts(ctx context.Context, db *gorm.DB, artistID string) ([]artistDeletionImpact, error) {
-	impacts := make([]artistDeletionImpact, 0)
+func loadArtistDeletionImpacts(ctx context.Context, store Store, artistID string) ([]DeletionImpact, error) {
+	impacts := make([]DeletionImpact, 0)
 	for _, related := range []struct {
-		domain managev1.ArtistRelationDomain
-		load   func(context.Context, *gorm.DB, string) ([]entityparticipant.Related, error)
+		domain RelationDomain
+		load   func(context.Context, string) ([]entityparticipant.Related, error)
 	}{
-		{domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_CHILD_ARTIST, load: loadChildArtists},
-		{domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_LABEL, load: s.loadArtistLabels},
-		{domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_PROGRAM_EVENT, load: s.programEvents.ProgramEventsOfArtist},
-		{domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_RELEASE, load: s.releases.ReleasesOfArtist},
-		{domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_TRACK, load: s.releases.TracksOfArtist},
-		{domain: managev1.ArtistRelationDomain_ARTIST_RELATION_DOMAIN_WORK, load: s.works.WorksOfArtist},
+		{domain: RelationChildArtist, load: store.ChildArtists},
+		{domain: RelationLabel, load: func(ctx context.Context, artistID string) ([]entityparticipant.Related, error) {
+			return loadArtistLabels(ctx, store, artistID)
+		}},
+		{domain: RelationProgramEvent, load: store.ProgramEventsOfArtist},
+		{domain: RelationRelease, load: store.ReleasesOfArtist},
+		{domain: RelationTrack, load: store.TracksOfArtist},
+		{domain: RelationWork, load: store.WorksOfArtist},
 	} {
-		rows, err := related.load(ctx, db, artistID)
+		rows, err := related.load(ctx, artistID)
 		if err != nil {
 			return nil, err
 		}
 		for _, row := range rows {
-			impacts = append(impacts, artistDeletionImpact{
+			impacts = append(impacts, DeletionImpact{
 				Domain: related.domain, EntityID: row.ID, Label: row.DisplayName, RelationCount: row.RelationCount,
 			})
 		}
@@ -78,26 +101,14 @@ func (s *Service) loadArtistDeletionImpacts(ctx context.Context, db *gorm.DB, ar
 	return impacts, nil
 }
 
-func loadChildArtists(ctx context.Context, db *gorm.DB, artistID string) ([]entityparticipant.Related, error) {
-	var rows []entityparticipant.Related
-	err := db.WithContext(ctx).Raw(`
-		SELECT child.id::text AS id,
-		       `+ArtistSourceTitleSQL("child")+` AS display_name,
-		       1::integer AS relation_count
-		FROM artist AS child
-		WHERE child.parent_artist_id = ?::uuid
-	`, artistID).Scan(&rows).Error
-	return rows, err
-}
-
 // loadArtistLabels lists the Labels the Artist links with their source
 // titles.
-func (s *Service) loadArtistLabels(ctx context.Context, db *gorm.DB, artistID string) ([]entityparticipant.Related, error) {
-	var labelIDs []string
-	if err := db.WithContext(ctx).Table("artist_label").Select("label_id::text").Where("artist_id = ?::uuid", artistID).Scan(&labelIDs).Error; err != nil {
+func loadArtistLabels(ctx context.Context, store Store, artistID string) ([]entityparticipant.Related, error) {
+	labelIDs, err := store.LabelIDs(ctx, artistID)
+	if err != nil {
 		return nil, err
 	}
-	titles, err := s.labels.LabelTitles(ctx, db, labelIDs)
+	titles, err := store.LabelTitles(ctx, labelIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +121,7 @@ func (s *Service) loadArtistLabels(ctx context.Context, db *gorm.DB, artistID st
 	return rows, nil
 }
 
-func artistDeletionRevision(impacts []artistDeletionImpact) string {
+func artistDeletionRevision(impacts []DeletionImpact) string {
 	hash := sha256.New()
 	var number [4]byte
 	for _, impact := range impacts {
@@ -125,19 +136,10 @@ func artistDeletionRevision(impacts []artistDeletionImpact) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-func buildArtistDeletionPreview(impacts []artistDeletionImpact) *managev1.PreviewDeleteArtistResponse {
-	response := &managev1.PreviewDeleteArtistResponse{
-		Revision: artistDeletionRevision(impacts),
-		Impacts:  make([]*managev1.ArtistDeletionImpact, 0, len(impacts)),
+func validateResourceDeletionAuthorizationBatchSize(resourceName string, deleted, restored []policyv1.RelationshipMutation) error {
+	const maxMutations = 1000
+	if len(deleted) <= maxMutations && len(restored) <= maxMutations {
+		return nil
 	}
-	for _, impact := range impacts {
-		response.TotalRelationCount += impact.RelationCount
-		response.Impacts = append(response.Impacts, &managev1.ArtistDeletionImpact{
-			Domain:        impact.Domain,
-			EntityId:      impact.EntityID,
-			Label:         impact.Label,
-			RelationCount: impact.RelationCount,
-		})
-	}
-	return response
+	return domainerr.Precondition(fmt.Sprintf("%s has too many authorization relationships to delete atomically; remove participant relationships or reparent dependent resources first", resourceName))
 }

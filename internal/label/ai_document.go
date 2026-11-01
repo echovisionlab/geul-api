@@ -7,20 +7,15 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // AIDocumentState is the Label-owned, authorized compact document projection.
@@ -119,8 +114,8 @@ func (s *Service) LoadAIDocumentState(ctx context.Context, labelID, locale strin
 	}
 
 	var state AIDocumentState
-	err = mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
-		root, err := loadLabelAIDocumentRoot(ctx, tx, canonicalID.String(), "KEY SHARE")
+	err = s.units.ReadLocked(ctx, func(store Store) error {
+		root, err := loadLabelAIDocumentRoot(ctx, store, canonicalID.String(), KeyShareLock)
 		if err != nil {
 			return err
 		}
@@ -130,78 +125,62 @@ func (s *Service) LoadAIDocumentState(ctx context.Context, labelID, locale strin
 		if err := requireLabelView(ctx, s.spiceDB, canonicalID.String()); err != nil {
 			return err
 		}
-		state, err = s.loadAIDocumentStateAfterAuthorization(
-			ctx, tx, root, locale, principal.MemberID.String(),
+		state, err = loadAIDocumentStateAfterAuthorization(
+			ctx, store, root, locale, principal.MemberID.String(),
 		)
 		return err
 	})
 	return state, err
 }
 
-type labelAIDocumentRoot struct {
-	ID         string            `gorm:"column:id"`
-	Status     model.LabelStatus `gorm:"column:status"`
-	DocumentID *uuid.UUID        `gorm:"column:content_document_id"`
-}
-
-func loadLabelAIDocumentRoot(
-	ctx context.Context,
-	tx *gorm.DB,
-	labelID string,
-	lock string,
-) (labelAIDocumentRoot, error) {
-	query := tx.WithContext(ctx).
-		Table("label").
-		Select("id::text AS id", "status", "content_document_id").
-		Where("id = ?::uuid", labelID)
-	if lock != "" {
-		query = query.Clauses(clause.Locking{Strength: lock})
-	}
-	var root labelAIDocumentRoot
-	if err := query.Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return labelAIDocumentRoot{}, domainerr.ResourceNotFound("label", labelID)
+// loadLabelAIDocumentRoot reads the Label root with lock; a missing Label
+// answers not found and one without a document fails its precondition.
+func loadLabelAIDocumentRoot(ctx context.Context, store Store, labelID string, lock RowLock) (DocumentRoot, error) {
+	root, err := store.DocumentRoot(ctx, labelID, lock)
+	if err != nil {
+		if errors.Is(err, ErrLabelNotFound) {
+			return DocumentRoot{}, domainerr.ResourceNotFound("label", labelID)
 		}
-		return labelAIDocumentRoot{}, err
+		return DocumentRoot{}, err
 	}
 	if root.DocumentID == nil || *root.DocumentID == uuid.Nil {
-		return labelAIDocumentRoot{}, domainerr.Precondition("label content document is not initialized")
+		return DocumentRoot{}, domainerr.Precondition("label content document is not initialized")
 	}
 	return root, nil
 }
 
-func labelAIDocumentLifecycleValid(status model.LabelStatus) bool {
+func labelAIDocumentLifecycleValid(status Status) bool {
 	switch status {
-	case model.LabelStatusDraft, model.LabelStatusPublished:
+	case StatusDraft, StatusPublished:
 		return true
 	default:
 		return false
 	}
 }
 
-func (s *Service) loadAIDocumentStateAfterAuthorization(
+func loadAIDocumentStateAfterAuthorization(
 	ctx context.Context,
-	tx *gorm.DB,
-	root labelAIDocumentRoot,
+	store Store,
+	root DocumentRoot,
 	locale string,
 	viewerMemberID string,
 ) (AIDocumentState, error) {
-	source, err := loadLabelSourceAuthority(ctx, tx, root.ID, clause.LockingStrengthShare)
+	sourceLocale, err := loadLabelSourceLocale(ctx, store, root.ID, ShareLock)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
-	snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, *root.DocumentID, source.SourceLocale)
+	snapshot, err := store.LockedContentSnapshot(ctx, *root.DocumentID, sourceLocale)
 	if err != nil {
 		return AIDocumentState{}, normalizeLabelContentBlockError(err)
 	}
 	if snapshot.Document.Profile != creativeContentProfile {
 		return AIDocumentState{}, errors.New("Label AI document requires the compact content profile")
 	}
-	localeMetadata, localeExists, err := loadOptionalLabelLocaleMetadata(ctx, tx, root.ID, locale, false)
+	localeMetadata, localeExists, err := store.LocaleTitle(ctx, root.ID, locale, false)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
-	if locale == source.SourceLocale && !localeExists {
+	if locale == sourceLocale && !localeExists {
 		return AIDocumentState{}, errors.New("Label source locale metadata is missing")
 	}
 	localized, err := contentblock.SnapshotToLocalizedRichTextDocument(snapshot, locale)
@@ -213,11 +192,11 @@ func (s *Service) loadAIDocumentStateAfterAuthorization(
 	}
 	state := AIDocumentState{
 		LabelID: root.ID, Status: string(root.Status), ContentDocumentID: *root.DocumentID,
-		Revision: snapshot.Document.Revision.String(), SourceLocale: source.SourceLocale,
+		Revision: snapshot.Document.Revision.String(), SourceLocale: sourceLocale,
 		Locale: locale, LocaleExists: localeExists, Document: localized,
 		ViewerMemberID: viewerMemberID,
 	}
-	if locale != source.SourceLocale && localeExists {
+	if locale != sourceLocale && localeExists {
 		targetRevision, revisionErr := deriveLabelTargetRevision(state.Revision, localeMetadata.UpdatedAt)
 		if revisionErr != nil {
 			return AIDocumentState{}, revisionErr
@@ -254,12 +233,12 @@ func (s *Service) ExecuteAIDocumentMutation(
 	if err != nil {
 		return AIDocumentMutationResult{}, err
 	}
-	var root labelAIDocumentRoot
+	var root DocumentRoot
 	var output labelAIDocumentOutcome
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[labelAIDocumentOutcome]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[labelAIDocumentOutcome, Store]{
+		Lock: func(ctx context.Context, store Store) error {
 			var err error
-			if root, err = loadLabelAIDocumentRoot(ctx, tx, canonicalID.String(), clause.LockingStrengthUpdate); err != nil {
+			if root, err = loadLabelAIDocumentRoot(ctx, store, canonicalID.String(), UpdateLock); err != nil {
 				return err
 			}
 			if !labelAIDocumentLifecycleValid(root.Status) {
@@ -268,20 +247,20 @@ func (s *Service) ExecuteAIDocumentMutation(
 			return nil
 		},
 		Access: labelEntity.LockedAccess(s.spiceDB, canonicalID.String(), policyv1.Label.Edit),
-		Change: func(ctx context.Context, tx *gorm.DB) (labelAIDocumentOutcome, error) {
+		Change: func(ctx context.Context, store Store) (labelAIDocumentOutcome, error) {
 			var err error
-			output, err = s.applyAIDocumentMutation(ctx, tx, root, locale, compiler)
+			output, err = applyAIDocumentMutation(ctx, store, root, locale, compiler)
 			return output, err
 		},
 		Audit: func(outcome labelAIDocumentOutcome) mutation.Audit { return outcome.audit() },
-		Outbox: func(ctx context.Context, tx *gorm.DB, outcome labelAIDocumentOutcome) error {
+		Outbox: func(ctx context.Context, store Store, outcome labelAIDocumentOutcome) error {
 			if mode == AIDocumentExecutionValidate {
 				return errRollbackLabelAIDocumentValidation
 			}
 			if !outcome.result.Content.Changed {
 				return nil
 			}
-			return contentsignal.PublishInTransaction(ctx, tx, s.publisher, outcome.contentUpdatedEvent())
+			return store.PublishContentUpdate(ctx, outcome.contentUpdate())
 		},
 	})
 	if errors.Is(err, errRollbackLabelAIDocumentValidation) {
@@ -307,10 +286,10 @@ type labelAIDocumentOutcome struct {
 
 // applyAIDocumentMutation compiles the mutation against the locked state and
 // applies it as the principal's Member.
-func (s *Service) applyAIDocumentMutation(
+func applyAIDocumentMutation(
 	ctx context.Context,
-	tx *gorm.DB,
-	root labelAIDocumentRoot,
+	store Store,
+	root DocumentRoot,
 	locale string,
 	compiler AIDocumentMutationCompiler,
 ) (labelAIDocumentOutcome, error) {
@@ -322,7 +301,7 @@ func (s *Service) applyAIDocumentMutation(
 	if err != nil {
 		return labelAIDocumentOutcome{}, domainerr.ResourceNotFound("label", root.ID).WithCause(err)
 	}
-	state, err := s.loadAIDocumentStateAfterAuthorization(ctx, tx, root, locale, memberID.String())
+	state, err := loadAIDocumentStateAfterAuthorization(ctx, store, root, locale, memberID.String())
 	if err != nil {
 		return labelAIDocumentOutcome{}, err
 	}
@@ -334,16 +313,16 @@ func (s *Service) applyAIDocumentMutation(
 	if err != nil {
 		return labelAIDocumentOutcome{}, err
 	}
-	if err := s.translation.RequireDocumentContributors(ctx, tx, []string{memberID.String()}); err != nil {
+	if err := store.RequireDocumentContributors(ctx, []string{memberID.String()}); err != nil {
 		return labelAIDocumentOutcome{}, err
 	}
 	fence := labelAuthorizedAIDocumentFence(root, input.ExpectedSource)
-	result, err := s.applyAIDocumentMode(ctx, tx, input, expected, memberID, *root.DocumentID, fence)
+	result, err := applyAIDocumentMode(ctx, store, input, expected, memberID, *root.DocumentID, fence)
 	if err != nil {
 		return labelAIDocumentOutcome{}, mapLabelAIDocumentMutationError(err, input.ExpectedRevision)
 	}
 	if result.Content.TranslationSourceChanged {
-		if _, err := s.runtime.RequestCurrentWithDB(ctx, tx, root.ID, "label_ai_document_saved"); err != nil {
+		if _, err := store.RequestOG(ctx, root.ID, "label_ai_document_saved"); err != nil {
 			return labelAIDocumentOutcome{}, err
 		}
 	}
@@ -366,19 +345,18 @@ func (o labelAIDocumentOutcome) audit() mutation.Audit {
 	return labelMemberLocaleAudit(o.memberID, o.input.LabelID, o.input.Locale, operation)
 }
 
-func (o labelAIDocumentOutcome) contentUpdatedEvent() *managev1.ContentUpdatedEvent {
+func (o labelAIDocumentOutcome) contentUpdate() ContentUpdate {
 	localeExists := o.input.Locale == o.input.ExpectedSource || o.result.TargetRevision != nil
-	return buildLabelLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-		EntityID:             o.input.LabelID,
+	return ContentUpdate{LabelID: o.input.LabelID, Kind: LocaleUpdate, Locale: LocaleChange{
 		Fields:               []string{"content"},
 		DocumentRevision:     o.result.Content.DocumentRevision.String(),
 		Contributors:         []string{o.input.ContributorMemberID.String()},
-		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+		Source:               SourceAI,
 		Locale:               o.input.Locale,
 		LocaleDeleted:        !localeExists,
 		TargetRevision:       o.result.TargetRevision,
 		DocumentStateChanged: o.input.Locale == o.input.ExpectedSource,
-	})
+	}}
 }
 
 func validateLabelAIDocumentMutation(input AIDocumentMutation) (uuid.UUID, uuid.UUID, error) {
@@ -461,14 +439,14 @@ func validateCompiledLabelAIDocumentMutation(
 	return expected, nil
 }
 
-func (s *Service) applyAIDocumentMode(
+func applyAIDocumentMode(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	input AIDocumentMutation,
 	expected uuid.UUID,
 	memberID uuid.UUID,
 	documentID uuid.UUID,
-	fence contentblock.DomainFence,
+	fence ContentFence,
 ) (AIDocumentMutationResult, error) {
 	if input.Batch != nil {
 		batch := *input.Batch
@@ -479,7 +457,7 @@ func (s *Service) applyAIDocumentMode(
 		batch.ContributorMemberIDs = []uuid.UUID{memberID}
 		if input.Locale != input.ExpectedSource {
 			createTarget := !input.ExpectedPresence
-			target, err := applyLabelTargetLocaleMutation(ctx, tx, s.contentBlocks, labelTargetLocaleMutationInput{
+			target, err := applyLabelTargetLocaleMutation(ctx, store, labelTargetLocaleMutationInput{
 				LabelID: input.LabelID, Locale: input.Locale,
 				ExpectedDocumentRevision: expected, ExpectedTargetRevision: input.ExpectedTargetRevision,
 				Batch: batch, Policy: targetlocale.Policy{AllowCreate: createTarget, SeedSource: createTarget}, Fence: fence,
@@ -492,11 +470,11 @@ func (s *Service) applyAIDocumentMode(
 		if input.ExpectedTargetRevision != nil {
 			return AIDocumentMutationResult{}, domainerr.InvalidField("expected_target_revision", "source Label mutation cannot carry a target revision")
 		}
-		result, err := s.contentBlocks.ApplyBatch(ctx, tx, batch, fence)
+		result, err := store.ApplyContentBatch(ctx, batch, fence)
 		return AIDocumentMutationResult{Content: result}, err
 	}
 	if input.CreateTranslation {
-		target, err := applyLabelTargetLocaleMutation(ctx, tx, s.contentBlocks, labelTargetLocaleMutationInput{
+		target, err := applyLabelTargetLocaleMutation(ctx, store, labelTargetLocaleMutationInput{
 			LabelID: input.LabelID, Locale: input.Locale,
 			ExpectedDocumentRevision: expected, ExpectedTargetRevision: input.ExpectedTargetRevision,
 			Batch:  contentblock.Batch{DocumentID: documentID, ExpectedRevision: expected, ContributorMemberIDs: []uuid.UUID{memberID}},
@@ -507,24 +485,24 @@ func (s *Service) applyAIDocumentMode(
 		}
 		return AIDocumentMutationResult{Content: target.Content, TargetRevision: &target.TargetRevision}, nil
 	}
-	result, err := deleteLabelTargetLocale(ctx, tx, s.contentBlocks, input.LabelID, input.Locale, expected, input.ExpectedTargetRevision, []uuid.UUID{memberID}, fence)
+	result, err := deleteLabelTargetLocale(ctx, store, input.LabelID, input.Locale, expected, input.ExpectedTargetRevision, []uuid.UUID{memberID}, fence)
 	return AIDocumentMutationResult{Content: result}, err
 }
 
 func labelAuthorizedAIDocumentFence(
-	root labelAIDocumentRoot,
+	root DocumentRoot,
 	expectedSource string,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
+) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		if root.ID == "" || root.DocumentID == nil || documentID != *root.DocumentID {
 			return contentblock.DomainContext{}, domainerr.Precondition("label content document changed; reload before saving")
 		}
-		source, err := lockLabelTranslationSourceContext(ctx, tx, root.ID)
+		source, err := lockLabelTranslationSourceContext(ctx, store, root.ID)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if source.SourceLocale != expectedSource {
-			current, err := contentblock.CurrentRevision(ctx, tx, documentID)
+			current, err := store.CurrentContentRevision(ctx, documentID)
 			if err != nil {
 				return contentblock.DomainContext{}, err
 			}

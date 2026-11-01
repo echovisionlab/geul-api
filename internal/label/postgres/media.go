@@ -1,0 +1,61 @@
+package postgres
+
+import (
+	"context"
+
+	"github.com/echovisionlab/geul-api/internal/label"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+)
+
+// The logo bindings of a Label's public assets.
+const (
+	labelOwnerType   = "label"
+	lightLogoBinding = "logo_light"
+	darkLogoBinding  = "logo_dark"
+	logoAssetKind    = "logo"
+)
+
+func logoBinding(variant label.LogoVariant) string {
+	if variant == label.LogoVariantDark {
+		return darkLogoBinding
+	}
+	return lightLogoBinding
+}
+
+// The media runtime answers in gorm's errors. A logo mutation answers every
+// missing row as a missing Label, as it always did, so the not-found error
+// of a runtime call carries label.ErrLabelNotFound.
+
+func (s *store) LockAttachableFiles(ctx context.Context, fileIDs []string) error {
+	return labelNotFound(s.deps.Runtime.LockAttachableFilesForUpdate(ctx, s.tx, fileIDs))
+}
+
+func (s *store) BindLogo(ctx context.Context, fileID, labelID string, variant label.LogoVariant) error {
+	_, err := s.deps.Runtime.BindReadyAssetForSourceFile(ctx, s.tx, fileID, labelOwnerType, labelID, logoBinding(variant), logoAssetKind)
+	return labelNotFound(err)
+}
+
+func (s *store) ReleaseLogoBinding(ctx context.Context, labelID string, variant label.LogoVariant) error {
+	return labelNotFound(s.deps.Runtime.ReleasePublicAssetBindings(ctx, s.tx, labelOwnerType, labelID, logoBinding(variant)))
+}
+
+func (s *store) ReleaseLogoBindings(ctx context.Context, labelID string) error {
+	return labelNotFound(s.deps.Runtime.ReleaseExactPublicAssetBindings(ctx, s.tx, labelOwnerType, labelID, []string{lightLogoBinding, darkLogoBinding}))
+}
+
+func (s *store) ReadyAssets(ctx context.Context, assetIDs []string) (map[string]*commonv1.AssetRef, error) {
+	return s.deps.Runtime.ResolveReadyAssetRefs(ctx, s.tx, assetIDs)
+}
+
+func (s *store) ReadyLogoAssets(ctx context.Context, fileIDs []string) (map[string]*commonv1.AssetRef, error) {
+	return s.deps.Runtime.ResolveReadySourceFileRefs(ctx, s.tx, fileIDs, logoAssetKind)
+}
+
+func (s *store) RequestOG(ctx context.Context, labelID, reason string) (string, error) {
+	runID, err := s.deps.Runtime.RequestCurrentWithDB(ctx, s.tx, labelID, reason)
+	return runID, labelNotFound(err)
+}
+
+func (s *store) CancelOG(ctx context.Context, labelID string) error {
+	return labelNotFound(s.deps.Runtime.CancelAndReleaseOGWithDB(ctx, s.tx, labelID))
+}

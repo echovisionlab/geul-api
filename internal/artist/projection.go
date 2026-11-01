@@ -2,58 +2,47 @@ package artist
 
 import (
 	"context"
-
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
-	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-var artistSortConfig = queryutil.SortConfig{
-	AllowedFields: map[string]string{
-		"name":         ArtistSourceTitleSQL("artist"),
-		"slug":         "slug",
-		"status":       "status",
-		"country_code": "country_code",
-		"created_at":   "created_at",
-		"updated_at":   "updated_at",
-		"published_at": "published_at",
-	},
-	DefaultSort: ArtistSourceTitleSQL("artist") + " ASC",
+// View is an Artist as the manage API renders it: the row, its
+// source-locale name and content document, its ready OG image and its
+// ordered images.
+type View struct {
+	Artist   Artist
+	Name     string
+	Document *contentv1.RichTextDocument
+	Revision string
+	OgImage  *commonv1.AssetRef
+	Images   []ArtistImageProjection
 }
 
-// checkSlugAvailable checks if an artist slug is available for use
-// excludeID can be empty for new artists, or set to the current artist ID when updating
-func (s *Service) checkSlugAvailable(ctx context.Context, slug string, excludeID string) error {
+func artistView(artist Artist, document artistDocument, ogAsset *commonv1.AssetRef, images []ArtistImageProjection) View {
+	return View{Artist: artist, Name: document.Name, Document: document.Document, Revision: document.Revision, OgImage: ogAsset, Images: images}
+}
+
+// checkSlugAvailable validates slug and requires that no other Artist holds
+// it; excludeID is the Artist being updated, empty for a new one.
+func checkSlugAvailable(ctx context.Context, store Store, slug string, excludeID string) error {
 	if err := pathslug.Validate(slug); err != nil {
 		return err
 	}
 	if slug == "" {
-		return nil // Empty slug is always valid
+		return nil
 	}
-
-	var count int64
-	query := s.db.WithContext(ctx).Model(&model.Artist{}).Where("slug = ?", slug)
-	if excludeID != "" {
-		query = query.Where("id != ?", excludeID)
-	}
-
-	if err := query.Count(&count).Error; err != nil {
+	taken, err := store.SlugTaken(ctx, slug, excludeID)
+	if err != nil {
 		return err
 	}
-
-	if count > 0 {
+	if taken {
 		return domainerr.Duplicate("artist", "slug", slug)
 	}
-
 	return nil
 }
 
@@ -69,53 +58,52 @@ type CheckArtistSlugAvailableQuery struct {
 // one, the platform-wide create action.
 func (s *Service) CheckArtistSlugAvailable(ctx context.Context, query CheckArtistSlugAvailableQuery) (bool, error) {
 	existing := query.ExcludeArtistID != nil && *query.ExcludeArtistID != ""
+	excludeID := ""
 	if existing {
 		if err := artistEntity.RequirePermission(ctx, s.spiceDB, *query.ExcludeArtistID, policyv1.Artist.Edit); err != nil {
 			return false, err
 		}
+		excludeID = *query.ExcludeArtistID
 	} else if err := artistEntity.RequireCreate(ctx, s.spiceDB); err != nil {
 		return false, err
 	}
 	if err := pathslug.Validate(query.Slug); err != nil {
 		return false, err
 	}
-	artists := s.db.WithContext(ctx).Model(&model.Artist{}).Where("slug = ?", query.Slug)
-	if existing {
-		artists = artists.Where("id != ?", *query.ExcludeArtistID)
-	}
-	var count int64
-	if err := artists.Count(&count).Error; err != nil {
-		return false, err
-	}
-	if count != 0 {
-		return false, nil
-	}
-	return s.runtime.IsResourceRouteAvailable(ctx, s.db, "artists", query.Slug)
+	var available bool
+	err := s.units.Read(ctx, func(store Store) error {
+		taken, err := store.SlugTaken(ctx, query.Slug, excludeID)
+		if err != nil || taken {
+			return err
+		}
+		available, err = store.ResourceRouteAvailable(ctx, query.Slug)
+		return err
+	})
+	return available, err
 }
 
 // getArtistLabelIDs returns the Artist's linked Labels in link order,
 // without draft Labels.
 func (s *Service) getArtistLabelIDs(ctx context.Context, artistID string) ([]string, error) {
-	var linked []string
-	if err := s.db.WithContext(ctx).
-		Table("artist_label").
-		Select("label_id::text").
-		Where("artist_id = ?", artistID).
-		Order("sort_order ASC NULLS LAST, label_id ASC").
-		Scan(&linked).Error; err != nil {
-		return nil, err
-	}
-	drafts, err := s.labels.DraftLabelIDs(ctx, s.db, linked)
-	if err != nil {
-		return nil, err
-	}
-	labelIDs := make([]string, 0, len(linked))
-	for _, labelID := range linked {
-		if !drafts[labelID] {
-			labelIDs = append(labelIDs, labelID)
+	var labelIDs []string
+	err := s.units.Read(ctx, func(store Store) error {
+		linked, err := store.LabelIDsInLinkOrder(ctx, artistID)
+		if err != nil {
+			return err
 		}
-	}
-	return labelIDs, nil
+		drafts, err := store.DraftLabelIDs(ctx, linked)
+		if err != nil {
+			return err
+		}
+		labelIDs = make([]string, 0, len(linked))
+		for _, labelID := range linked {
+			if !drafts[labelID] {
+				labelIDs = append(labelIDs, labelID)
+			}
+		}
+		return nil
+	})
+	return labelIDs, err
 }
 
 // artistDocument is an Artist's source-locale name, content document and
@@ -129,22 +117,16 @@ type artistDocument struct {
 
 // overlayArtistSourceLocaleDocument rereads the Artist row into artist and
 // returns its source-locale document from the same snapshot.
-func (s *Service) overlayArtistSourceLocaleDocument(ctx context.Context, artist *model.Artist) (artistDocument, error) {
+func (s *Service) overlayArtistSourceLocaleDocument(ctx context.Context, artist *Artist) (artistDocument, error) {
 	artistID := artist.ID
-	projection, err := loadCreativeManageContentProjection(
-		ctx, s.db, s.contentBlocks, artistID,
-		func(ctx context.Context, tx *gorm.DB) error {
-			var current model.Artist
-			if err := tx.WithContext(ctx).
-				Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-				Where("id = ?", artistID).
-				Take(&current).Error; err != nil {
-				return err
-			}
-			*artist = current
-			return nil
-		},
-	)
+	projection, err := s.loadCreativeManageContentProjection(ctx, artistID, func(ctx context.Context, store Store) error {
+		current, err := store.ShareLockArtist(ctx, artistID)
+		if err != nil {
+			return err
+		}
+		*artist = current
+		return nil
+	})
 	if err != nil {
 		return artistDocument{}, err
 	}
@@ -154,7 +136,7 @@ func (s *Service) overlayArtistSourceLocaleDocument(ctx context.Context, artist 
 	}, nil
 }
 
-func (s *Service) overlayArtistSourceLocaleDocuments(ctx context.Context, artists []model.Artist) ([]artistDocument, error) {
+func (s *Service) overlayArtistSourceLocaleDocuments(ctx context.Context, artists []Artist) ([]artistDocument, error) {
 	documents := make([]artistDocument, len(artists))
 	for i := range artists {
 		var err error
@@ -170,63 +152,59 @@ func (s *Service) loadReadyArtistOgAssets(ctx context.Context, documents []artis
 	for i := range documents {
 		candidates = append(candidates, documents[i].OgAssetID)
 	}
-	return loadReadyManageOgAssetRefs(ctx, s.runtime, s.db, candidates...)
+	return s.loadReadyManageOgAssetRefs(ctx, candidates...)
 }
 
-func (s *Service) artistWithReadyOg(ctx context.Context, artist *model.Artist, document artistDocument) (*managev1.Artist, error) {
-	ogAsset, err := readyManageOgAssetRef(ctx, s.runtime, s.db, document.OgAssetID)
+func (s *Service) artistWithReadyOg(ctx context.Context, artist Artist, document artistDocument) (View, error) {
+	ogAsset, err := s.readyManageOgAssetRef(ctx, document.OgAssetID)
+	if err != nil {
+		return View{}, err
+	}
+	images, err := s.loadArtistImages(ctx, artist.ID)
+	if err != nil {
+		return View{}, err
+	}
+	return artistView(artist, document, ogAsset, images), nil
+}
+
+func (s *Service) loadReadyManageOgAssetRefs(ctx context.Context, candidates ...*string) (map[string]*commonv1.AssetRef, error) {
+	ids := make([]string, 0, len(candidates))
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		if candidate != nil {
+			id := strings.TrimSpace(*candidate)
+			if id != "" {
+				if _, ok := seen[id]; !ok {
+					seen[id] = struct{}{}
+					ids = append(ids, id)
+				}
+			}
+		}
+	}
+	var ready map[string]*commonv1.AssetRef
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		ready, err = store.ReadyAssets(ctx, ids)
+		return err
+	})
+	return ready, err
+}
+
+func manageOgAssetFromReadyMap(ready map[string]*commonv1.AssetRef, candidates ...*string) *commonv1.AssetRef {
+	for _, candidate := range candidates {
+		if candidate != nil {
+			if asset := ready[strings.TrimSpace(*candidate)]; asset != nil {
+				return asset
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Service) readyManageOgAssetRef(ctx context.Context, candidates ...*string) (*commonv1.AssetRef, error) {
+	ready, err := s.loadReadyManageOgAssetRefs(ctx, candidates...)
 	if err != nil {
 		return nil, err
 	}
-	images, err := loadArtistImages(ctx, s.runtime, s.db, artist.ID)
-	if err != nil {
-		return nil, err
-	}
-	protoArtist := toProtoArtist(artist, document, ogAsset)
-	applyManageArtistImages(protoArtist, images)
-	return protoArtist, nil
-}
-
-// toProtoArtist converts a model.Artist to protobuf Artist
-func toProtoArtist(
-	a *model.Artist,
-	document artistDocument,
-	ogAsset *commonv1.AssetRef,
-) *managev1.Artist {
-	artist := &managev1.Artist{
-		Id:           a.ID,
-		SourceLocale: a.SourceLocale,
-		Name:         document.Name,
-		Document:     document.Document,
-		Status:       string(a.Status),
-		CreatedAt:    timestamppb.New(a.CreatedAt),
-		OgAsset:      ogAsset,
-		Revision:     document.Revision,
-	}
-
-	if a.Slug != nil {
-		artist.Slug = a.Slug
-	}
-	if a.RealName != nil {
-		artist.RealName = a.RealName
-	}
-	if a.ParentArtistID != nil {
-		artist.ParentArtistId = a.ParentArtistID
-	}
-	if a.CountryCode != nil {
-		artist.CountryCode = a.CountryCode
-	}
-	if a.Website != nil {
-		artist.Website = a.Website
-	}
-	if a.PublishedAt != nil {
-		artist.PublishedAt = timestamppb.New(*a.PublishedAt)
-	}
-	if a.UpdatedAt != nil {
-		artist.UpdatedAt = timestamppb.New(*a.UpdatedAt)
-	}
-	if a.SocialLinks != nil {
-		artist.SocialLinks = a.SocialLinks
-	}
-	return artist
+	return manageOgAssetFromReadyMap(ready, candidates...), nil
 }

@@ -1,18 +1,28 @@
 //go:build integration
 
-package artist
+package artist_test
 
 import (
 	"context"
 	"errors"
+	artist "github.com/echovisionlab/geul-api/internal/artist"
 	"testing"
+	"time"
 
+	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
 	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
+	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -20,6 +30,7 @@ import (
 
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"google.golang.org/protobuf/proto"
+	"gorm.io/gorm"
 )
 
 // requestBackground carries the request context a request-attributed audit
@@ -32,10 +43,29 @@ func requestBackground() context.Context {
 	return sharedtelemetry.WithRequestContext(context.Background(), requestContext)
 }
 
+// integrationDeps are the collaborators an integration test may set; the
+// rest take the integration defaults.
+type integrationDeps struct {
+	DB            *gorm.DB
+	SpiceDB       *auth.SpiceDBClient
+	Audit         domainaudit.Appender
+	Publisher     contentsignal.Publisher
+	ContentBlocks *contentblock.Store
+	Checkpoints   persistencecheckpoint.ContributorFence
+	Translation   artistpostgres.Translation
+	Members       artist.MemberProjection
+	Runtime       artistpostgres.Runtime
+	Labels        artistpostgres.Labels
+	Releases      artistpostgres.ReleaseRelations
+	ProgramEvents artistpostgres.ProgramEventRelations
+	Works         artistpostgres.WorkRelations
+	ShareLinks    artistpostgres.ShareLinks
+}
+
 // newTestService fills the collaborators deps leaves unset with the
 // integration defaults: an audit recorder, a no-op signal publisher, the
 // creative content store, the Artist test doubles and the owners' adapters.
-func newTestService(t *testing.T, deps Deps) *Service {
+func newTestService(t *testing.T, deps integrationDeps) *artist.Service {
 	t.Helper()
 	if deps.Audit == nil {
 		deps.Audit = &audittest.Recorder{}
@@ -56,7 +86,7 @@ func newTestService(t *testing.T, deps Deps) *Service {
 		deps.Members = artistIntegrationMemberProjection{db: deps.DB}
 	}
 	if deps.Runtime == nil {
-		deps.Runtime = newArtistIntegrationRuntime(deps.DB, "")
+		deps.Runtime = newArtistRuntimeForTest(deps.DB, "")
 	}
 	if deps.Labels == nil {
 		deps.Labels = labeladapter.NewArtistLinks()
@@ -73,9 +103,30 @@ func newTestService(t *testing.T, deps Deps) *Service {
 	if deps.ShareLinks == nil {
 		deps.ShareLinks = sharelinkadapter.NewCatalogLinks()
 	}
-	service, err := NewService(deps)
+	units, err := artistpostgres.NewUnits(deps.DB, artistpostgres.Deps{
+		ContentBlocks: deps.ContentBlocks, Publisher: deps.Publisher, Checkpoints: deps.Checkpoints,
+		Translation: deps.Translation, Runtime: deps.Runtime, Labels: deps.Labels, Releases: deps.Releases,
+		ProgramEvents: deps.ProgramEvents, Works: deps.Works, ShareLinks: deps.ShareLinks,
+	})
+	require.NoError(t, err)
+	service, err := artist.NewService(artist.Deps{
+		Units: units, SpiceDB: deps.SpiceDB, Fence: identitystate.PostgresFence{}, Audit: deps.Audit, Members: deps.Members,
+	})
 	require.NoError(t, err)
 	return service
+}
+
+// newArtistRuntimeForTest is the Artist runtime adapter with an OG refresher
+// over the integration render configuration.
+func newArtistRuntimeForTest(db *gorm.DB, cdnDomain string) artistpostgres.Runtime {
+	return artistadapter.NewRuntime(cdnDomain, newArtistOGRefresher(db, cdnDomain))
+}
+
+// seedArtistSourceTitle stores the Artist's title in locale through the
+// Artist store.
+func seedArtistSourceTitle(t *testing.T, db *gorm.DB, artistID, locale, title string, now time.Time) {
+	t.Helper()
+	require.NoError(t, artistpostgres.Bind(db, artistpostgres.Deps{}).SaveLocaleTitle(t.Context(), artistID, locale, title, now))
 }
 
 type noopArtistAsyncPublisher struct{}

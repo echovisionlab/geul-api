@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
+	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
@@ -255,4 +256,4 @@ func (*Runtime) IsResourceRouteAvailable(
 	return routeregistry.IsResourceRouteAvailable(ctx, db, pathPrefix, slug)
 }
 
-var _ artistdomain.Runtime = (*Runtime)(nil)
+var _ artistpostgres.Runtime = (*Runtime)(nil)

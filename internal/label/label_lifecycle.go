@@ -10,28 +10,18 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/routeregistry"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+const creativeContentProfile = "compact"
 
 // CreateLabelCommand creates a draft Label owned by the caller. Optional
 // strings left nil are not set; a blank one is stored as NULL.
@@ -50,29 +40,35 @@ type CreateLabelCommand struct {
 
 // CreateLabel creates a Label, its content document and its source-locale
 // title, and makes the caller its first Owner.
-func (s *Service) CreateLabel(ctx context.Context, command CreateLabelCommand) (*managev1.Label, error) {
+func (s *Service) CreateLabel(ctx context.Context, command CreateLabelCommand) (View, error) {
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return nil, errAuthenticationRequired
+		return View{}, errAuthenticationRequired
 	}
 	name := strings.TrimSpace(command.Name)
 	if name == "" {
-		return nil, domainerr.Required("name")
+		return View{}, domainerr.Required("name")
 	}
 	if err := s.validateNewLabelSlug(ctx, command.Slug); err != nil {
-		return nil, err
+		return View{}, err
 	}
 	label := newLabel(command)
 	ownerMemberID := user.MemberID.String()
 	var ownerIdentityID string
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[string]{
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[string, Store]{
 		// A new Label has no resource row to lock yet. The fresh check locks
 		// the canonical principal before the first durable state change and
 		// keeps that lock for the rest of the transaction.
 		Access: mutation.FreshAdminCan(policyv1.Label.Create()),
-		Change: func(ctx context.Context, tx *gorm.DB) (string, error) {
+		Lock: func(ctx context.Context, store Store) error {
+			if label.ParentLabelID == nil {
+				return nil
+			}
+			return store.LockParentGraph(ctx)
+		},
+		Change: func(ctx context.Context, store Store) (string, error) {
 			var err error
-			ownerIdentityID, err = s.createLabelWithDB(ctx, tx, &label, name, command.Document, ownerMemberID, command.AcceptLanguage)
+			ownerIdentityID, err = createLabel(ctx, store, &label, name, command.Document, ownerMemberID, command.AcceptLanguage)
 			return label.ID, err
 		},
 		Audit: func(id string) mutation.Audit {
@@ -85,28 +81,30 @@ func (s *Service) CreateLabel(ctx context.Context, command CreateLabelCommand) (
 		},
 	})
 	if err != nil {
-		return nil, err
+		return View{}, err
 	}
 	document, err := s.overlayLabelSourceLocaleDocument(ctx, &label)
 	if err != nil {
-		return nil, err
+		return View{}, err
 	}
-	return s.labelWithReadyOg(ctx, &label, document, nil)
+	return s.labelWithReadyOg(ctx, label, document, nil)
 }
 
 func (s *Service) validateNewLabelSlug(ctx context.Context, slug *string) error {
 	if slug == nil || *slug == "" {
 		return nil
 	}
-	if err := s.checkSlugAvailable(ctx, *slug, ""); err != nil {
-		return err
-	}
-	return routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "label", "labels", *slug)
+	return s.units.Read(ctx, func(store Store) error {
+		if err := checkSlugAvailable(ctx, store, *slug, ""); err != nil {
+			return err
+		}
+		return store.CheckResourceRoute(ctx, *slug)
+	})
 }
 
-func newLabel(command CreateLabelCommand) model.Label {
-	label := model.Label{
-		Status: model.LabelStatusDraft,
+func newLabel(command CreateLabelCommand) Label {
+	label := Label{
+		Status: StatusDraft,
 		Slug:   command.Slug, SocialLinks: command.SocialLinks,
 	}
 	if countryCode, present := normalizeOptionalNullableString(command.CountryCode); present {
@@ -121,23 +119,36 @@ func newLabel(command CreateLabelCommand) model.Label {
 	return label
 }
 
-// createLabelWithDB stores label with its content document, owner and
+func normalizeOptionalNullableString(value *string) (*string, bool) {
+	if value == nil {
+		return nil, false
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil, true
+	}
+	return &trimmed, true
+}
+
+// createLabel stores label with its content document, owner and
 // source-locale title, and returns the owner's Identity.
-func (s *Service) createLabelWithDB(
+func createLabel(
 	ctx context.Context,
-	tx *gorm.DB,
-	label *model.Label,
+	store Store,
+	label *Label,
 	name string,
 	documentInput *contentv1.RichTextDocument,
 	ownerMemberID string,
 	acceptLanguage string,
 ) (string, error) {
-	if err := requireLabelRouteAvailableWithDB(ctx, tx, label.Slug); err != nil {
-		return "", err
+	if label.Slug != nil && *label.Slug != "" {
+		if err := store.LockResourceRoute(ctx, *label.Slug); err != nil {
+			return "", err
+		}
 	}
-	sourceLocale := s.translation.ResolveInitialSourceLocale(ctx, tx, acceptLanguage)
+	sourceLocale := store.ResolveInitialSourceLocale(ctx, acceptLanguage)
 	label.SourceLocale = sourceLocale
-	document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
+	document, err := store.CreateContentDocument(ctx, contentblock.CreateInput{
 		Profile:      creativeContentProfile,
 		SourceLocale: sourceLocale,
 	})
@@ -146,91 +157,47 @@ func (s *Service) createLabelWithDB(
 	}
 	contentDocumentID := document.Document.ID.String()
 	label.ContentDocumentID = &contentDocumentID
-	if err := tx.Clauses(clause.Returning{Columns: []clause.Column{
-		{Name: "id"}, {Name: "created_at"}, {Name: "updated_at"},
-	}}).Create(label).Error; err != nil {
-		if dberrors.IsUniqueViolation(err) {
+	if err := store.InsertLabel(ctx, label); err != nil {
+		if errors.Is(err, ErrSlugTaken) {
 			return "", domainerr.New(domainerr.AlreadyExists, "", "label with this slug already exists").WithCause(err)
 		}
 		return "", err
 	}
 	if label.ParentLabelID != nil {
-		if err := labelEntity.ValidateParentTransition(ctx, tx, label.ID, *label.ParentLabelID); err != nil {
+		if err := labelEntity.ValidateParentTransition(ctx, store, label.ID, *label.ParentLabelID); err != nil {
 			return "", err
 		}
 	}
-	if err := insertLabelOwner(tx, label.ID, ownerMemberID); err != nil {
+	if err := store.InsertCreatorOwner(ctx, label.ID, ownerMemberID); err != nil {
 		return "", err
 	}
-	owner, err := authorizationtarget.RequireLocked(ctx, tx, ownerMemberID)
+	ownerIdentityID, err := store.LockMemberIdentity(ctx, ownerMemberID)
 	if err != nil {
 		return "", err
 	}
-	if _, err := initializeCreativeContentDocument(ctx, tx, s.contentBlocks, label.ID, sourceLocale, document, documentInput); err != nil {
+	if _, err := initializeCreativeContentDocument(ctx, store, label.ID, sourceLocale, document, documentInput); err != nil {
 		return "", err
 	}
 	now := time.Now().UTC()
-	if err := saveLabelSourceLocaleDocumentState(ctx, tx, label.ID, sourceLocale, translationLocaleDocumentSaveInput{
-		Title: &name, OverwriteNullFields: true, Now: now,
-	}); err != nil {
+	if err := saveLabelSourceTitle(ctx, store, label.ID, sourceLocale, &name, now); err != nil {
 		return "", err
 	}
-	return owner.IdentityID, touchLabelRootUpdatedAt(ctx, tx, label.ID, now)
+	return ownerIdentityID, touchLabel(ctx, store, label.ID, now)
 }
 
-func requireLabelRouteAvailableWithDB(ctx context.Context, tx *gorm.DB, slug *string) error {
-	if slug == nil || *slug == "" {
-		return nil
-	}
-	return routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "label", "labels", *slug)
-}
-
-func insertLabelOwner(tx *gorm.DB, labelID, memberID string) error {
-	return tx.Exec(`
-		INSERT INTO label_owner (label_id, member_id, created_at)
-		VALUES (?::uuid, ?::uuid, now())
-	`, labelID, memberID).Error
-}
-
-type labelDeletionImpactRow struct {
-	Kind        int32  `gorm:"column:kind"`
-	EntityID    string `gorm:"column:entity_id"`
-	DisplayName string `gorm:"column:display_name"`
-}
-
-// loadLabelDeletionImpacts lists what references the Label: its child
-// Labels, then the Artists, Program Events and Releases linked to it, each
-// ordered by ID text.
-func (s *Service) loadLabelDeletionImpacts(ctx context.Context, db *gorm.DB, labelID string) ([]labelDeletionImpactRow, error) {
-	var rows []labelDeletionImpactRow
-	if err := db.WithContext(ctx).Raw(fmt.Sprintf(`
-		SELECT 1::integer AS kind, child.id::text AS entity_id, %s AS display_name
-		FROM label AS child
-		WHERE child.parent_label_id = ?::uuid
-		ORDER BY child.id::text
-	`, LabelSourceTitleSQL("child")), labelID).Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-	for _, related := range []struct {
-		kind int32
-		load func(context.Context, *gorm.DB, string) ([]entityparticipant.Related, error)
-	}{
-		{kind: 2, load: s.artists.ArtistsOfLabel},
-		{kind: 3, load: s.programEvents.ProgramEventsOfLabel},
-		{kind: 4, load: s.releases.ReleasesOfLabel},
-	} {
-		entities, err := related.load(ctx, db, labelID)
-		if err != nil {
-			return nil, err
+// touchLabel moves the Label's updated_at; a missing Label answers not
+// found.
+func touchLabel(ctx context.Context, store Store, labelID string, now time.Time) error {
+	if err := store.TouchLabel(ctx, labelID, now); err != nil {
+		if errors.Is(err, ErrLabelNotFound) {
+			return domainerr.ResourceNotFound("label", labelID)
 		}
-		for _, entity := range entities {
-			rows = append(rows, labelDeletionImpactRow{Kind: related.kind, EntityID: entity.ID, DisplayName: entity.DisplayName})
-		}
+		return err
 	}
-	return rows, nil
+	return nil
 }
 
-func labelDeletionRevision(rows []labelDeletionImpactRow) string {
+func labelDeletionRevision(rows []DeletionImpact) string {
 	hash := sha256.New()
 	for _, row := range rows {
 		_, _ = fmt.Fprintf(hash, "%d\x00%s\n", row.Kind, row.EntityID)
@@ -238,25 +205,11 @@ func labelDeletionRevision(rows []labelDeletionImpactRow) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-func labelDeletionPreview(rows []labelDeletionImpactRow) *managev1.PreviewDeleteLabelResponse {
-	response := &managev1.PreviewDeleteLabelResponse{Revision: labelDeletionRevision(rows)}
-	for _, row := range rows {
-		kind := managev1.LabelDeletionImpactKind(row.Kind)
-		response.Impacts = append(response.Impacts, &managev1.LabelDeletionImpact{
-			Kind: kind, EntityId: row.EntityID, DisplayName: row.DisplayName,
-		})
-		switch kind {
-		case managev1.LabelDeletionImpactKind_LABEL_DELETION_IMPACT_KIND_CHILD_LABEL:
-			response.ChildLabelCount++
-		case managev1.LabelDeletionImpactKind_LABEL_DELETION_IMPACT_KIND_ARTIST:
-			response.ArtistCount++
-		case managev1.LabelDeletionImpactKind_LABEL_DELETION_IMPACT_KIND_PROGRAM_EVENT:
-			response.ProgramEventCount++
-		case managev1.LabelDeletionImpactKind_LABEL_DELETION_IMPACT_KIND_RELEASE:
-			response.ReleaseCount++
-		}
-	}
-	return response
+// DeletionPreview is what deleting a Label would detach, with the
+// revision DeleteLabel checks.
+type DeletionPreview struct {
+	Revision string
+	Impacts  []DeletionImpact
 }
 
 // PreviewDeleteLabelQuery reads what deleting a Label would detach.
@@ -264,31 +217,40 @@ type PreviewDeleteLabelQuery struct {
 	ID string
 }
 
+// requireLabelExists answers a missing Label not found before its
+// authorization.
+func (s *Service) requireLabelExists(ctx context.Context, labelID string) error {
+	err := s.units.Read(ctx, func(store Store) error {
+		_, err := store.FindLabelID(ctx, labelID)
+		return err
+	})
+	if errors.Is(err, ErrLabelNotFound) {
+		return domainerr.ResourceNotFound("label", labelID)
+	}
+	return err
+}
+
 // PreviewDeleteLabel lists the child Labels, Artists, Program Events and
 // Releases that reference the Label, with the revision DeleteLabel checks.
-func (s *Service) PreviewDeleteLabel(ctx context.Context, query PreviewDeleteLabelQuery) (_ *managev1.PreviewDeleteLabelResponse, returnErr error) {
+func (s *Service) PreviewDeleteLabel(ctx context.Context, query PreviewDeleteLabelQuery) (_ DeletionPreview, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("label_id", query.ID))
 
-	var label model.Label
-	if err := s.db.WithContext(ctx).Select("id").First(&label, "id = ?", query.ID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, domainerr.ResourceNotFound("label", query.ID)
-		}
-		return nil, err
+	if err := s.requireLabelExists(ctx, query.ID); err != nil {
+		return DeletionPreview{}, err
 	}
 	if err := labelEntity.RequirePermission(ctx, s.spiceDB, query.ID, policyv1.Label.Delete); err != nil {
-		return nil, err
+		return DeletionPreview{}, err
 	}
-	var rows []labelDeletionImpactRow
-	err := mutation.Read(ctx, s.db, func(tx *gorm.DB) error {
+	var rows []DeletionImpact
+	err := s.units.Read(ctx, func(store Store) error {
 		var err error
-		rows, err = s.loadLabelDeletionImpacts(ctx, tx, query.ID)
+		rows, err = store.DeletionImpacts(ctx, query.ID)
 		return err
 	})
 	if err != nil {
-		return nil, err
+		return DeletionPreview{}, err
 	}
-	return labelDeletionPreview(rows), nil
+	return DeletionPreview{Revision: labelDeletionRevision(rows), Impacts: rows}, nil
 }
 
 // DeleteLabelCommand deletes a Label whose usage still matches the preview
@@ -312,38 +274,32 @@ func (s *Service) DeleteLabel(ctx context.Context, command DeleteLabelCommand) (
 	if strings.TrimSpace(command.PreviewRevision) == "" {
 		return domainerr.Precondition("delete preview is required")
 	}
-	var label model.Label
-	if err := s.db.WithContext(ctx).
-		Select("id").
-		First(&label, "id = ?", command.ID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return domainerr.ResourceNotFound("label", command.ID)
-		}
+	if err := s.requireLabelExists(ctx, command.ID); err != nil {
 		return err
 	}
 	snapshotPlan, err := policyv1.Label.Snapshot(command.ID)
 	if err != nil {
 		return domainerr.InvalidField("id", "must identify a Label")
 	}
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[labelDeletion]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[labelDeletion, Store]{
+		Lock: func(ctx context.Context, store Store) error {
 			// Freeze every relation represented by the preview revision until
 			// the Label delete commits. Deletion is rare; one short table lock
 			// keeps the exact-impact CAS honest without adding cross-domain
-			// state.
-			if err := tx.Exec(`
-				LOCK TABLE label, artist_label, program_event_label, release_label
-				IN SHARE ROW EXCLUSIVE MODE
-			`).Error; err != nil {
+			// state. The parent graph comes first, as in every hierarchy
+			// change.
+			if err := store.LockParentGraph(ctx); err != nil {
 				return err
 			}
-			return tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-				Select("id").
-				First(&label, "id = ?", command.ID).Error
+			if err := store.LockLabelRelations(ctx); err != nil {
+				return err
+			}
+			_, err := store.LockLabelID(ctx, command.ID)
+			return err
 		},
 		Access: labelEntity.LockedAccess(s.spiceDB, command.ID, policyv1.Label.Delete),
-		Change: func(ctx context.Context, tx *gorm.DB) (labelDeletion, error) {
-			return s.deleteLabelWithDB(ctx, tx, command, snapshotPlan)
+		Change: func(ctx context.Context, store Store) (labelDeletion, error) {
+			return s.deleteLabel(ctx, store, command, snapshotPlan)
 		},
 		Audit: func(labelDeletion) mutation.Audit {
 			return mutation.RequestAudit(sharedtelemetry.AuditLabelDeleted, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
@@ -357,8 +313,8 @@ func (s *Service) DeleteLabel(ctx context.Context, command DeleteLabelCommand) (
 	return err
 }
 
-func (s *Service) deleteLabelWithDB(ctx context.Context, tx *gorm.DB, command DeleteLabelCommand, snapshotPlan policyv1.RelationshipSnapshotPlan) (labelDeletion, error) {
-	impacts, err := s.loadLabelDeletionImpacts(ctx, tx, command.ID)
+func (s *Service) deleteLabel(ctx context.Context, store Store, command DeleteLabelCommand, snapshotPlan policyv1.RelationshipSnapshotPlan) (labelDeletion, error) {
+	impacts, err := store.DeletionImpacts(ctx, command.ID)
 	if err != nil {
 		return labelDeletion{}, err
 	}
@@ -376,30 +332,37 @@ func (s *Service) deleteLabelWithDB(ctx context.Context, tx *gorm.DB, command De
 	if err := validateResourceDeletionAuthorizationBatchSize("label", deleted, restored); err != nil {
 		return labelDeletion{}, err
 	}
-	if err := s.shareLinks.DeleteLabelShareLinks(ctx, tx, command.ID); err != nil {
+	if err := store.DeleteShareLinks(ctx, command.ID); err != nil {
 		return labelDeletion{}, err
 	}
-	if err := s.runtime.CancelAndReleaseOGWithDB(ctx, tx, command.ID); err != nil {
+	if err := store.CancelOG(ctx, command.ID); err != nil {
 		return labelDeletion{}, err
 	}
-	if err := s.runtime.ReleaseExactPublicAssetBindings(ctx, tx, "label", command.ID, []string{"logo_light", "logo_dark"}); err != nil {
+	if err := store.ReleaseLogoBindings(ctx, command.ID); err != nil {
 		return labelDeletion{}, err
 	}
-	documentID, err := loadLabelContentDocumentID(ctx, tx, command.ID)
+	documentID, err := loadLabelContentDocumentID(ctx, store, command.ID)
 	if err != nil {
 		return labelDeletion{}, err
 	}
-	if err := s.contentBlocks.DeleteDocument(ctx, tx, documentID, labelContentDocumentFence(command.ID)); err != nil {
+	if err := store.DeleteContentDocument(ctx, documentID, labelContentDocumentFence(command.ID)); err != nil {
 		return labelDeletion{}, normalizeLabelContentBlockError(err)
 	}
-	result := tx.Delete(&model.Label{}, "id = ?", command.ID)
-	if result.Error != nil {
-		return labelDeletion{}, result.Error
-	}
-	if result.RowsAffected == 0 {
-		return labelDeletion{}, domainerr.ResourceNotFound("label", command.ID)
+	if err := store.DeleteLabel(ctx, command.ID); err != nil {
+		if errors.Is(err, ErrLabelNotFound) {
+			return labelDeletion{}, domainerr.ResourceNotFound("label", command.ID)
+		}
+		return labelDeletion{}, err
 	}
 	return labelDeletion{deleted: deleted, restored: restored}, nil
+}
+
+func validateResourceDeletionAuthorizationBatchSize(resourceName string, deleted, restored []policyv1.RelationshipMutation) error {
+	const maxMutations = 1000
+	if len(deleted) <= maxMutations && len(restored) <= maxMutations {
+		return nil
+	}
+	return domainerr.Precondition(fmt.Sprintf("%s has too many authorization relationships to delete atomically; remove participant relationships or reparent dependent resources first", resourceName))
 }
 
 // PublishLabelCommand publishes a draft Label.
@@ -412,16 +375,23 @@ type UnpublishLabelCommand struct {
 	ID string
 }
 
+// LifecycleResult is the Label's lifecycle after a publish or unpublish.
+type LifecycleResult struct {
+	ID          string
+	Changed     bool
+	Status      Status
+	PublishedAt *time.Time
+	UpdatedAt   time.Time
+}
+
 // PublishLabel publishes the Label; a published Label is left unchanged.
-func (s *Service) PublishLabel(ctx context.Context, command PublishLabelCommand) (_ *managev1.LabelLifecycleMutationResponse, returnErr error) {
+func (s *Service) PublishLabel(ctx context.Context, command PublishLabelCommand) (_ LifecycleResult, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("label_id", command.ID))
 	return s.transitionLabel(ctx, command.ID, labelTransition{
-		target: model.LabelStatusPublished, previous: sharedtelemetry.AuditStateDraft, next: sharedtelemetry.AuditStatePublished,
-		fields: func(now time.Time) structured.Fields {
-			return structured.Fields{"status": model.LabelStatusPublished, "published_at": now, "updated_at": now}
-		},
-		apply: func(label *model.Label, now time.Time) {
-			label.Status = model.LabelStatusPublished
+		target: StatusPublished, previous: sharedtelemetry.AuditStateDraft, next: sharedtelemetry.AuditStatePublished,
+		stampsPublication: true,
+		apply: func(label *Label, now time.Time) {
+			label.Status = StatusPublished
 			label.PublishedAt = &now
 			label.UpdatedAt = now
 		},
@@ -429,44 +399,48 @@ func (s *Service) PublishLabel(ctx context.Context, command PublishLabelCommand)
 }
 
 // UnpublishLabel returns the Label to draft; a draft Label is left unchanged.
-func (s *Service) UnpublishLabel(ctx context.Context, command UnpublishLabelCommand) (_ *managev1.LabelLifecycleMutationResponse, returnErr error) {
+func (s *Service) UnpublishLabel(ctx context.Context, command UnpublishLabelCommand) (_ LifecycleResult, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("label_id", command.ID))
 	return s.transitionLabel(ctx, command.ID, labelTransition{
-		target: model.LabelStatusDraft, previous: sharedtelemetry.AuditStatePublished, next: sharedtelemetry.AuditStateDraft,
-		fields: func(now time.Time) structured.Fields {
-			return structured.Fields{"status": model.LabelStatusDraft, "updated_at": now}
-		},
-		apply: func(label *model.Label, now time.Time) {
-			label.Status = model.LabelStatusDraft
+		target: StatusDraft, previous: sharedtelemetry.AuditStatePublished, next: sharedtelemetry.AuditStateDraft,
+		apply: func(label *Label, now time.Time) {
+			label.Status = StatusDraft
 			label.UpdatedAt = now
 		},
 	})
 }
 
-// labelTransition moves a Label to target; fields are the stored columns
-// and apply mirrors them on the locked row for the response.
+// labelTransition moves a Label to target, stamping published_at when
+// stampsPublication is set; apply mirrors the stored change on the locked
+// row for the response.
 type labelTransition struct {
-	target         model.LabelStatus
-	previous, next sharedtelemetry.AuditState
-	fields         func(time.Time) structured.Fields
-	apply          func(*model.Label, time.Time)
+	target            Status
+	previous, next    sharedtelemetry.AuditState
+	stampsPublication bool
+	apply             func(*Label, time.Time)
 }
 
 // transitionLabel locks the Label row before the fresh Publish check, so a
 // role revoked while the transition waited on the row is observed.
-func (s *Service) transitionLabel(ctx context.Context, id string, transition labelTransition) (*managev1.LabelLifecycleMutationResponse, error) {
-	var label model.Label
+func (s *Service) transitionLabel(ctx context.Context, id string, transition labelTransition) (LifecycleResult, error) {
+	var label Label
 	now := dbtime.Now()
-	changed, err := mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
-			return tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&label, "id = ?", id).Error
+	changed, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[bool, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			var err error
+			label, err = store.LockLabel(ctx, id)
+			return err
 		},
 		Access: labelEntity.LockedAccess(s.spiceDB, id, policyv1.Label.Publish),
-		Change: func(_ context.Context, tx *gorm.DB) (bool, error) {
+		Change: func(ctx context.Context, store Store) (bool, error) {
 			if label.Status == transition.target {
 				return false, nil
 			}
-			return true, tx.Model(&label).Updates(transition.fields(now)).Error
+			var publishedAt *time.Time
+			if transition.stampsPublication {
+				publishedAt = &now
+			}
+			return true, store.SetLabelStatus(ctx, id, transition.target, publishedAt, now)
 		},
 		Audit: func(changed bool) mutation.Audit {
 			if !changed {
@@ -476,25 +450,24 @@ func (s *Service) transitionLabel(ctx context.Context, id string, transition lab
 				return sharedtelemetry.NewLabelLifecycleAuditRecord(m, label.ID, transition.previous, transition.next)
 			})
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, changed bool) error {
+		Outbox: func(ctx context.Context, store Store, changed bool) error {
 			if !changed {
 				return nil
 			}
-			return contentsignal.PublishInTransaction(ctx, tx, s.publisher, buildLabelStateTransitionContentUpdatedEvent(label.ID))
+			return store.PublishContentUpdate(ctx, ContentUpdate{LabelID: label.ID, Kind: StateUpdate})
 		},
 	})
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, domainerr.ResourceNotFound("label", id)
+		if errors.Is(err, ErrLabelNotFound) {
+			return LifecycleResult{}, domainerr.ResourceNotFound("label", id)
 		}
-		return nil, err
+		return LifecycleResult{}, err
 	}
 	if changed {
 		transition.apply(&label, now)
 	}
-	return &managev1.LabelLifecycleMutationResponse{
-		Id: label.ID, Changed: changed,
-		Status:      labelStatusToProto(label.Status),
-		PublishedAt: timestampProtoPtr(label.PublishedAt), UpdatedAt: timestamppb.New(label.UpdatedAt),
+	return LifecycleResult{
+		ID: label.ID, Changed: changed, Status: label.Status,
+		PublishedAt: label.PublishedAt, UpdatedAt: label.UpdatedAt,
 	}, nil
 }

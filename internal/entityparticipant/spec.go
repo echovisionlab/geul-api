@@ -44,12 +44,10 @@ type Spec struct {
 	// Article is Title with its indefinite article ("an Artist").
 	Article string
 
-	Table           string
-	IDColumn        string
-	OwnerTable      string
-	ManagerTable    string
-	ParentColumn    string
-	ParentGraphLock string
+	// IDColumn names the entity ID in failure attributes ("artist_id"), and
+	// ParentColumn the parent field in validation errors ("parent_artist_id").
+	IDColumn     string
+	ParentColumn string
 
 	Policy Policy
 }

@@ -127,5 +127,5 @@ func mapArtistAIDocumentMutationError(err error) error {
 	if errors.As(err, &targetConflict) {
 		return targetConflict
 	}
-	return normalizeCreativeContentBlockError(artistContentEntity, err)
+	return normalizeCreativeContentBlockError(err)
 }

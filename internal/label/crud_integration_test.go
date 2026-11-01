@@ -1,8 +1,9 @@
 //go:build integration
 
-package label
+package label_test
 
 import (
+	label "github.com/echovisionlab/geul-api/internal/label"
 	"testing"
 
 	"gorm.io/gorm"
@@ -13,9 +14,9 @@ import (
 
 // newLabelIntegrationService returns the manage Connect adapter of a Label
 // service whose administrator is adminID.
-func newLabelIntegrationService(t *testing.T, db *gorm.DB, adminID string) *ConnectHandler {
+func newLabelIntegrationService(t *testing.T, db *gorm.DB, adminID string) *label.ConnectHandler {
 	t.Helper()
 	stack := testutil.SetupOryStack(t)
-	syncArtistIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
-	return NewConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: stack.SpiceDBClient}))
+	syncLabelIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
+	return label.NewConnectHandler(newTestService(t, integrationDeps{DB: db, SpiceDB: stack.SpiceDBClient}))
 }
