@@ -50,8 +50,8 @@ func (runtime *fakeMCPFileRuntime) ImportRemoteFile(_ context.Context, input fil
 // sent, so the assertions read the native field names.
 func (runtime *fakeMCPFileRuntime) InitiateMultipartUpload(_ context.Context, command filemediadomain.InitiateMultipartUploadCommand) (*filemediadomain.MultipartUpload, error) {
 	runtime.initiateRequest = &managev1.InitiateMultipartUploadRequest{
-		UploadType: command.UploadType, EntityId: command.EntityID, FileSize: command.FileSize,
-		MimeType: command.MimeType, EntityType: command.EntityType, FileName: command.FileName,
+		UploadType: managev1.UploadType(command.UploadType), EntityId: command.EntityID, FileSize: command.FileSize,
+		MimeType: command.MimeType, EntityType: (*managev1.TranscodeEntityType)(command.EntityType), FileName: command.FileName,
 		FileLastModified: command.FileLastModified, SlotId: command.SlotID, ExpectedCurrentFileId: command.ExpectedCurrentFileID,
 	}
 	if runtime.initiateError != nil {
@@ -62,9 +62,9 @@ func (runtime *fakeMCPFileRuntime) InitiateMultipartUpload(_ context.Context, co
 
 func (runtime *fakeMCPFileRuntime) FindMultipartUploadCandidate(_ context.Context, query filemediadomain.FindMultipartUploadCandidateQuery) (*filemediadomain.MultipartCandidate, error) {
 	runtime.findRequest = &managev1.FindMultipartUploadCandidateRequest{
-		UploadType: query.UploadType, EntityId: query.EntityID, FileId: query.FileID, FileName: query.FileName,
+		UploadType: managev1.UploadType(query.UploadType), EntityId: query.EntityID, FileId: query.FileID, FileName: query.FileName,
 		FileSize: query.FileSize, MimeType: query.MimeType, FileLastModified: query.FileLastModified,
-		EntityType: query.EntityType, SlotId: query.SlotID, UploadId: query.UploadID, ExpectedCurrentFileId: query.ExpectedCurrentFileID,
+		EntityType: (*managev1.TranscodeEntityType)(query.EntityType), SlotId: query.SlotID, UploadId: query.UploadID, ExpectedCurrentFileId: query.ExpectedCurrentFileID,
 	}
 	if runtime.findError != nil {
 		return nil, runtime.findError
@@ -85,7 +85,7 @@ func (runtime *fakeMCPFileRuntime) CompleteMultipartUpload(_ context.Context, co
 
 func (runtime *fakeMCPFileRuntime) DownloadFromURL(_ context.Context, command filemediadomain.DownloadFromURLCommand) (*filemediadomain.ImportedFile, error) {
 	runtime.downloadRequest = &managev1.DownloadFromUrlRequest{
-		UploadType: command.UploadType, EntityId: command.EntityID, Url: command.URL, EntityType: command.EntityType,
+		UploadType: managev1.UploadType(command.UploadType), EntityId: command.EntityID, Url: command.URL, EntityType: (*managev1.TranscodeEntityType)(command.EntityType),
 		CorrelationId: optionalFakeString(command.CorrelationID), SlotId: optionalFakeString(command.SlotID),
 		ExpectedCurrentFileId: command.ExpectedCurrentFileID,
 	}
@@ -137,7 +137,7 @@ func TestMCPFileUploadUsesStandaloneNativeImportForAllKinds(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := filemediadomain.RemoteFileImportInput{UploadType: uploadType, SourceURL: "https://example.com/download?sig=private", FileName: "original.txt", CorrelationID: correlationID}
+			want := filemediadomain.RemoteFileImportInput{UploadType: filemediadomain.UploadType(uploadType), SourceURL: "https://example.com/download?sig=private", FileName: "original.txt", CorrelationID: correlationID}
 			if runtime.importInput == nil || *runtime.importInput != want || file.ID != fileID || file.MIMEType != "text/plain" {
 				t.Fatalf("input/file = %+v / %+v", runtime.importInput, file)
 			}

@@ -20,8 +20,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const (
@@ -90,10 +88,10 @@ var remoteImportNonPublicPrefixes = []netip.Prefix{
 }
 
 type remoteFileImportOptions struct {
-	uploadType            managev1.UploadType
+	uploadType            UploadType
 	entityID              string
 	entityType            string
-	transcodeEntityType   managev1.TranscodeEntityType
+	transcodeEntityType   EntityType
 	sourceURL             string
 	fileName              string
 	actorMemberID         string
@@ -111,7 +109,7 @@ type remoteFileImportOptions struct {
 // streamed remote ingest authority. FileName is a display hint; MIME and the
 // canonical extension always come from verified bytes.
 type RemoteFileImportInput struct {
-	UploadType    managev1.UploadType
+	UploadType    UploadType
 	SourceURL     string
 	FileName      string
 	CorrelationID string
@@ -122,7 +120,7 @@ func (s *Service) ImportRemoteFile(ctx context.Context, input RemoteFileImportIn
 		resultErr = failurecause.WithAttrs(failurecause.WithPrivate(resultErr, input.FileName), slog.String("correlation_id", input.CorrelationID), slog.String("upload_type", input.UploadType.String()))
 	}()
 
-	if input.UploadType != managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE && !isEditorFileIngestUploadType(input.UploadType) {
+	if input.UploadType != UploadGeneralFile && !isEditorFileIngestUploadType(input.UploadType) {
 		return nil, domainerr.InvalidField("upload_type", "standalone File import requires a File library upload kind")
 	}
 	user := auth.GetUser(ctx)
@@ -330,9 +328,9 @@ func newRemoteImportHTTPClient(
 // DownloadFromURLCommand imports a remote HTTPS file as a File for an
 // upload type and its target entity.
 type DownloadFromURLCommand struct {
-	UploadType            managev1.UploadType
+	UploadType            UploadType
 	EntityID              string
-	EntityType            *managev1.TranscodeEntityType
+	EntityType            *EntityType
 	URL                   string
 	CorrelationID         string
 	SlotID                string
@@ -342,7 +340,7 @@ type DownloadFromURLCommand struct {
 // DownloadFromURL downloads a file from an external URL and stores it.
 func (s *Service) DownloadFromURL(ctx context.Context, command DownloadFromURLCommand) (*ImportedFile, error) {
 	var entityType string
-	transcodeEntityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED
+	transcodeEntityType := EntityUnspecified
 	if command.EntityType != nil {
 		entityType = command.EntityType.String()
 		transcodeEntityType = *command.EntityType

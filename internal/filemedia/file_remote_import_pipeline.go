@@ -19,12 +19,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type preparedRemoteImport struct {
 	opts               remoteFileImportOptions
-	uploadType         managev1.UploadType
+	uploadType         UploadType
 	config             *domain.UploadConfig
 	entityType         string
 	entityID           string
@@ -79,7 +78,7 @@ func (s *Service) prepareRemoteImport(ctx context.Context, opts remoteFileImport
 	if request.config == nil {
 		return request, domainerr.InvalidField("upload_type", fmt.Sprintf("invalid upload type: %s", opts.uploadType.String()))
 	}
-	if (request.uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE ||
+	if (request.uploadType == UploadGeneralFile ||
 		isEditorFileIngestUploadType(request.uploadType)) && request.entityID != "" {
 		return request, domainerr.InvalidField("entity_id", "File library upload must omit document entity ID")
 	}
@@ -100,7 +99,7 @@ func (s *Service) prepareRemoteImport(ctx context.Context, opts remoteFileImport
 	// General imports only become durable when a correlation is supplied. Scope
 	// that newly durable identity to its authenticated owner, leaving existing
 	// editor and entity-bound retry identities unchanged.
-	if request.uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE && opts.checkPermission && strings.TrimSpace(opts.correlationID) != "" {
+	if request.uploadType == UploadGeneralFile && opts.checkPermission && strings.TrimSpace(opts.correlationID) != "" {
 		opts.actorMemberID = auth.GetUser(ctx).MemberID.String()
 		request.opts.actorMemberID = opts.actorMemberID
 	}
@@ -171,7 +170,7 @@ func (s *Service) newRemoteImportEmitter(ctx context.Context, request preparedRe
 	emitter := newFileIngestEventEmitter(
 		ctx,
 		s.asyncPublisher,
-		managev1.FileIngestSource_FILE_INGEST_SOURCE_REMOTE_URL,
+		IngestSourceRemoteURL,
 		request.opts.transcodeEntityType,
 		request.entityID,
 		correlationID,

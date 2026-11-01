@@ -21,7 +21,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const (
@@ -35,19 +34,19 @@ const (
 	managedRemoteImportMinDimension   = 512
 )
 
-func isManagedRasterUploadType(uploadType managev1.UploadType) bool {
+func isManagedRasterUploadType(uploadType UploadType) bool {
 	switch uploadType {
-	case managev1.UploadType_UPLOAD_TYPE_USER_AVATAR,
-		managev1.UploadType_UPLOAD_TYPE_ARTIST_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_WORK_FEATURED_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_SERIES_FEATURED_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_FORM_FEATURED_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_PROGRAM_EVENT_POSTER,
-		managev1.UploadType_UPLOAD_TYPE_MAP_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_RELEASE_ARTWORK,
-		managev1.UploadType_UPLOAD_TYPE_SITE_OG_BACKGROUND:
+	case UploadUserAvatar,
+		UploadArtistImage,
+		UploadEditorImage,
+		UploadFeaturedImage,
+		UploadWorkFeaturedImage,
+		UploadSeriesFeaturedImage,
+		UploadFormFeaturedImage,
+		UploadProgramEventPoster,
+		UploadMapImage,
+		UploadReleaseArtwork,
+		UploadSiteOGBackground:
 		return true
 	default:
 		return false
@@ -63,11 +62,11 @@ func isNormalizableManagedRasterMimeType(mimeType string) bool {
 	}
 }
 
-func shouldNormalizeManagedRemoteImport(uploadType managev1.UploadType, mimeType string) bool {
+func shouldNormalizeManagedRemoteImport(uploadType UploadType, mimeType string) bool {
 	return isManagedRasterUploadType(uploadType) && isNormalizableManagedRasterMimeType(mimeType)
 }
 
-func getRemoteImportSelectionMaxSize(uploadType managev1.UploadType, fallbackMaxSize int64) int64 {
+func getRemoteImportSelectionMaxSize(uploadType UploadType, fallbackMaxSize int64) int64 {
 	if isManagedRasterUploadType(uploadType) && fallbackMaxSize > managedRemoteImportSelectionLimit {
 		return managedRemoteImportSelectionLimit
 	}

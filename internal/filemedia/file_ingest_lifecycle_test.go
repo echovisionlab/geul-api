@@ -26,9 +26,8 @@ func TestFileIngestEventEmitterPublishesTypedEvents(t *testing.T) {
 	fileKey := "media/" + fileID + ".mp3"
 	emitter := newFileIngestEventEmitter(
 		context.Background(),
-		asyncPublisher,
-		managev1.FileIngestSource_FILE_INGEST_SOURCE_REMOTE_URL,
-		managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED,
+		asyncPublisher, IngestSourceRemoteURL, EntityUnspecified,
+
 		"",
 		correlationID,
 		fileID,
@@ -69,8 +68,8 @@ func TestFileIngestMediaKindFromUploadTypeIncludesEditorMesh(t *testing.T) {
 
 	require.Equal(
 		t,
-		managev1.FileIngestMediaKind_FILE_INGEST_MEDIA_KIND_EDITOR_MESH,
-		fileIngestMediaKindFromUploadType(managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH),
+		IngestMediaEditorMesh,
+		fileIngestMediaKindFromUploadType(UploadEditorMesh),
 	)
 }
 
@@ -83,9 +82,8 @@ func TestFileIngestEventEmitterUsesUploadSessionSequenceAllocator(t *testing.T) 
 	uploadID := randomFileIngestUUID()
 	emitter := newFileIngestEventEmitter(
 		context.Background(),
-		asyncPublisher,
-		managev1.FileIngestSource_FILE_INGEST_SOURCE_DIRECT_UPLOAD,
-		managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
+		asyncPublisher, IngestSourceDirectUpload, EntityTrack,
+
 		trackID,
 		"",
 		fileID,
@@ -131,9 +129,8 @@ func TestFileIngestEventEmitterSkipsDuplicateProgressWithinPublishInterval(t *te
 	fileID := randomFileIngestUUID()
 	emitter := newFileIngestEventEmitter(
 		context.Background(),
-		asyncPublisher,
-		managev1.FileIngestSource_FILE_INGEST_SOURCE_REMOTE_URL,
-		managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED,
+		asyncPublisher, IngestSourceRemoteURL, EntityUnspecified,
+
 		"",
 		correlationID,
 		fileID,

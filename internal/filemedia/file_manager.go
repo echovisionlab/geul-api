@@ -16,8 +16,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -164,8 +162,8 @@ type ListFileManagerItemsQuery struct {
 	MimeTypePrefix     string
 	PageToken          string
 	PageSize           int32
-	SortField          managev1.FileManagerSortField
-	SortOrder          commonv1.SortOrder
+	SortField          LibrarySortField
+	SortOrder          SortOrder
 }
 
 // FileManagerItemPage is one page of File library items.
@@ -249,8 +247,8 @@ type fileManagerCatalogFilter struct {
 	query          string
 	mimePrefix     string
 	includeFolders bool
-	sortField      managev1.FileManagerSortField
-	sortOrder      commonv1.SortOrder
+	sortField      LibrarySortField
+	sortOrder      SortOrder
 	pageSize       int
 	offset         int
 }
@@ -335,14 +333,14 @@ func fileManagerItemsFromCatalog(
 func (s *Service) queryFileManagerCatalog(ctx context.Context, filter fileManagerCatalogFilter) ([]fileManagerCatalogRow, error) {
 	sort := domain.CatalogSortName
 	switch filter.sortField {
-	case managev1.FileManagerSortField_FILE_MANAGER_SORT_FIELD_CREATED_AT:
+	case LibrarySortCreatedAt:
 		sort = domain.CatalogSortCreated
-	case managev1.FileManagerSortField_FILE_MANAGER_SORT_FIELD_UPDATED_AT:
+	case LibrarySortUpdatedAt:
 		sort = domain.CatalogSortUpdated
-	case managev1.FileManagerSortField_FILE_MANAGER_SORT_FIELD_FILE_SIZE:
+	case LibrarySortFileSize:
 		sort = domain.CatalogSortSize
 	}
-	query := domain.CatalogQuery{Parent: filter.parent, Uploader: filter.uploader, Query: filter.query, MimePrefix: filter.mimePrefix, IncludeFolders: filter.includeFolders, SortField: sort, Descending: filter.sortOrder == commonv1.SortOrder_SORT_ORDER_DESC, PageSize: filter.pageSize, Offset: filter.offset}
+	query := domain.CatalogQuery{Parent: filter.parent, Uploader: filter.uploader, Query: filter.query, MimePrefix: filter.mimePrefix, IncludeFolders: filter.includeFolders, SortField: sort, Descending: filter.sortOrder == SortDesc, PageSize: filter.pageSize, Offset: filter.offset}
 	var rows []fileManagerCatalogRow
 	err := s.units.Read(ctx, func(store Store) error { var err error; rows, err = store.Catalog(ctx, query); return err })
 	return rows, err

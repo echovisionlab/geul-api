@@ -18,7 +18,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -33,7 +32,7 @@ const (
 )
 
 type fileDownloadPolicySelector struct {
-	EntityType    managev1.TranscodeEntityType
+	EntityType    EntityType
 	EntityID      string
 	BlockID       *string
 	ReferencePath *string
@@ -50,7 +49,7 @@ type fileDownloadPolicyRelation struct {
 // FileDownloadPolicyTarget names one File attachment: a File Block of a
 // document, or a Track's original audio.
 type FileDownloadPolicyTarget struct {
-	EntityType    managev1.TranscodeEntityType
+	EntityType    EntityType
 	EntityID      string
 	BlockID       *string
 	ReferencePath *string
@@ -91,7 +90,7 @@ func (s *Service) GetFileDownloadPolicy(ctx context.Context, query GetFileDownlo
 
 // FileDownloadPolicyState is a download audience with its segments.
 type FileDownloadPolicyState struct {
-	Audience           managev1.FileDownloadAudience
+	Audience           DownloadAudience
 	AudienceSegmentIDs []string
 }
 
@@ -321,13 +320,13 @@ func mergeObservedFileDownloadSegmentIDs(current, observed, desired []string) []
 }
 
 func validateFileDownloadPolicySelector(
-	entityType managev1.TranscodeEntityType,
+	entityType EntityType,
 	entityID string,
 	blockID *string,
 	referencePath *string,
 ) (fileDownloadPolicySelector, error) {
 	entityID = strings.TrimSpace(entityID)
-	if entityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
+	if entityType == EntityUnspecified {
 		return fileDownloadPolicySelector{}, domainerr.Required("entity_type")
 	}
 	parsedEntityID, err := uuid.Parse(entityID)
@@ -336,7 +335,7 @@ func validateFileDownloadPolicySelector(
 	}
 	entityID = parsedEntityID.String()
 	selector := fileDownloadPolicySelector{EntityType: entityType, EntityID: entityID}
-	if entityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK {
+	if entityType == EntityTrack {
 		if blockID != nil || referencePath != nil {
 			return fileDownloadPolicySelector{}, domainerr.InvalidField("block_id", "Track policy does not accept a Content Block selector")
 		}
@@ -369,7 +368,7 @@ func validateFileDownloadPolicySelector(
 func (s *Service) resolveFileDownloadPolicyRelation(ctx context.Context, store Store, selector fileDownloadPolicySelector, lock bool) (fileDownloadPolicyRelation, error) {
 	row, err := store.ResolveDownloadPolicyRelation(ctx, selector.storage(), lock)
 	if errors.Is(err, domain.ErrPolicyRelationNotFound) {
-		if selector.EntityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK {
+		if selector.EntityType == EntityTrack {
 			return fileDownloadPolicyRelation{}, domainerr.ResourceNotFound("Track original audio", selector.EntityID)
 		}
 		return fileDownloadPolicyRelation{}, domainerr.ResourceNotFound("File Block attachment", *selector.BlockID)
@@ -399,15 +398,15 @@ func requireFileDownloadPolicyActor(ctx context.Context) error {
 	return nil
 }
 
-func contentBlockFilePolicyOwner(entityType managev1.TranscodeEntityType) (string, bool) {
+func contentBlockFilePolicyOwner(entityType EntityType) (string, bool) {
 	switch entityType {
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST:
+	case EntityPost:
 		return "post", true
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE:
+	case EntityPage:
 		return "page", true
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_WORK:
+	case EntityWork:
 		return "work", true
-	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PROGRAM_EVENT:
+	case EntityProgramEvent:
 		return "program_event", true
 	default:
 		return "", false
@@ -549,15 +548,15 @@ func uniqueUUIDs(values []string, field string) ([]string, error) {
 	return result, nil
 }
 
-func storedFileDownloadAudience(audience managev1.FileDownloadAudience) (mediaasset.FileDownloadAudience, bool) {
+func storedFileDownloadAudience(audience DownloadAudience) (mediaasset.FileDownloadAudience, bool) {
 	switch audience {
-	case managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_DISABLED:
+	case DownloadAudienceDisabled:
 		return mediaasset.FileDownloadAudienceDisabled, true
-	case managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC:
+	case DownloadAudiencePublic:
 		return mediaasset.FileDownloadAudiencePublic, true
-	case managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_AUTHENTICATED:
+	case DownloadAudienceAuthenticated:
 		return mediaasset.FileDownloadAudienceAuthenticated, true
-	case managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED:
+	case DownloadAudienceRestricted:
 		return mediaasset.FileDownloadAudienceRestricted, true
 	default:
 		return "", false

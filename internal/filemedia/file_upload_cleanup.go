@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // IncompleteUploadRetention is the maximum idle lifetime of an unfinished
@@ -82,7 +81,7 @@ func (s *Service) abortUploadSession(
 	progressEmitter := newFileIngestEventEmitter(
 		ctx,
 		s.asyncPublisher,
-		managev1.FileIngestSource_FILE_INGEST_SOURCE_DIRECT_UPLOAD,
+		IngestSourceDirectUpload,
 		uploadSessionEntityTypeToEnum(session.EntityType),
 		session.EntityID,
 		"",

@@ -18,7 +18,7 @@ func meshCandidateMessage(value *MeshCandidateView) *managev1.MeshOptimizationCa
 		SourceFileId:       candidate.SourceFileID,
 		Method:             meshOptimizationResponseMethod(candidate.Method),
 		TargetRatioPercent: candidate.TargetRatioPercent,
-		Profile:            meshOptimizationProfileForPipelineVersion(candidate.PipelineVersion),
+		Profile:            managev1.MeshOptimizationProfile(meshOptimizationProfileForPipelineVersion(candidate.PipelineVersion)),
 		Status:             meshOptimizationCandidateStatus(candidate.Status),
 		CreatedAt:          timestamppb.New(candidate.CreatedAt),
 		UpdatedAt:          timestamppb.New(candidate.UpdatedAt),

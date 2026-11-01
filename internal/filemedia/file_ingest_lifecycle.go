@@ -9,7 +9,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const fileIngestProgressPublishInterval = 250 * time.Millisecond
@@ -18,9 +17,9 @@ type fileIngestEventEmitter struct {
 	ctx            context.Context
 	publisher      AsyncPublisher
 	nextSequence   fileIngestSequenceAllocator
-	source         managev1.FileIngestSource
-	mediaKind      managev1.FileIngestMediaKind
-	entityType     managev1.TranscodeEntityType
+	source         IngestSource
+	mediaKind      IngestMediaKind
+	entityType     EntityType
 	entityID       string
 	correlationID  string
 	fileID         string
@@ -42,18 +41,18 @@ type fileIngestSequenceAllocator func(ctx context.Context, uploadID string) (int
 func newFileIngestEventEmitter(
 	ctx context.Context,
 	publisher AsyncPublisher,
-	source managev1.FileIngestSource,
-	entityType managev1.TranscodeEntityType,
+	source IngestSource,
+	entityType EntityType,
 	entityID string,
 	correlationID string,
 	fileID string,
 	totalBytes int64,
 ) *fileIngestEventEmitter {
-	if entityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED && fileID != "" {
-		entityType = managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_FILE
+	if entityType == EntityUnspecified && fileID != "" {
+		entityType = EntityFile
 		entityID = fileID
 	}
-	if publisher == nil || entityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED || entityID == "" || fileID == "" {
+	if publisher == nil || entityType == EntityUnspecified || entityID == "" || fileID == "" {
 		return nil
 	}
 
@@ -99,11 +98,11 @@ func (e *fileIngestEventEmitter) setUploadIdentity(session domain.UploadSession)
 	}
 }
 
-func (e *fileIngestEventEmitter) setRequestIdentity(uploadType managev1.UploadType, slotID string, attemptID string) {
+func (e *fileIngestEventEmitter) setRequestIdentity(uploadType UploadType, slotID string, attemptID string) {
 	if e == nil {
 		return
 	}
-	if uploadType != managev1.UploadType_UPLOAD_TYPE_UNSPECIFIED {
+	if uploadType != UploadUnspecified {
 		e.uploadType = uploadType.String()
 		e.mediaKind = fileIngestMediaKindFromUploadType(uploadType)
 	}
@@ -121,29 +120,29 @@ func (e *fileIngestEventEmitter) setProjectionIdentity(
 	return nil
 }
 
-func fileIngestMediaKindFromUploadTypeString(uploadType string) managev1.FileIngestMediaKind {
-	if value, ok := managev1.UploadType_value[uploadType]; ok {
-		return fileIngestMediaKindFromUploadType(managev1.UploadType(value))
+func fileIngestMediaKindFromUploadTypeString(uploadType string) IngestMediaKind {
+	if value, ok := domain.ParseUploadType(uploadType); ok {
+		return fileIngestMediaKindFromUploadType(UploadType(value))
 	}
-	return managev1.FileIngestMediaKind_FILE_INGEST_MEDIA_KIND_OTHER
+	return IngestMediaOther
 }
 
-func fileIngestMediaKindFromUploadType(uploadType managev1.UploadType) managev1.FileIngestMediaKind {
+func fileIngestMediaKindFromUploadType(uploadType UploadType) IngestMediaKind {
 	switch uploadType {
-	case managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE:
-		return managev1.FileIngestMediaKind_FILE_INGEST_MEDIA_KIND_EDITOR_IMAGE
-	case managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO:
-		return managev1.FileIngestMediaKind_FILE_INGEST_MEDIA_KIND_EDITOR_AUDIO
-	case managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO:
-		return managev1.FileIngestMediaKind_FILE_INGEST_MEDIA_KIND_EDITOR_VIDEO
-	case managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT:
-		return managev1.FileIngestMediaKind_FILE_INGEST_MEDIA_KIND_EDITOR_ATTACHMENT
-	case managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH:
-		return managev1.FileIngestMediaKind_FILE_INGEST_MEDIA_KIND_EDITOR_MESH
-	case managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO:
-		return managev1.FileIngestMediaKind_FILE_INGEST_MEDIA_KIND_TRACK_AUDIO
+	case UploadEditorImage:
+		return IngestMediaEditorImage
+	case UploadEditorAudio:
+		return IngestMediaEditorAudio
+	case UploadEditorVideo:
+		return IngestMediaEditorVideo
+	case UploadEditorAttachment:
+		return IngestMediaEditorAttachment
+	case UploadEditorMesh:
+		return IngestMediaEditorMesh
+	case UploadTrackAudio:
+		return IngestMediaTrackAudio
 	default:
-		return managev1.FileIngestMediaKind_FILE_INGEST_MEDIA_KIND_OTHER
+		return IngestMediaOther
 	}
 }
 
@@ -155,24 +154,24 @@ func optionalIngestString(value string) *string {
 	return &next
 }
 
-func fileIngestFailureReason(errText string) managev1.FileIngestFailureReason {
+func fileIngestFailureReason(errText string) IngestFailureReason {
 	lower := strings.ToLower(errText)
 	switch {
 	case strings.Contains(lower, "abort") || strings.Contains(lower, "cancel"):
-		return managev1.FileIngestFailureReason_FILE_INGEST_FAILURE_REASON_ABORTED
+		return IngestFailureAborted
 	case strings.Contains(lower, "mime") ||
 		strings.Contains(lower, "unsupported") ||
 		strings.Contains(lower, "invalid") ||
 		strings.Contains(lower, "exceed") ||
 		strings.Contains(lower, "below minimum") ||
 		strings.Contains(lower, "not allowed"):
-		return managev1.FileIngestFailureReason_FILE_INGEST_FAILURE_REASON_REJECTED
+		return IngestFailureRejected
 	case strings.Contains(lower, "s3") ||
 		strings.Contains(lower, "multipart") ||
 		strings.Contains(lower, "storage"):
-		return managev1.FileIngestFailureReason_FILE_INGEST_FAILURE_REASON_STORAGE_FAILED
+		return IngestFailureStorageFailed
 	default:
-		return managev1.FileIngestFailureReason_FILE_INGEST_FAILURE_REASON_INTERNAL
+		return IngestFailureInternal
 	}
 }
 
@@ -337,8 +336,8 @@ func (e *fileIngestEventEmitter) publishAttachedConfirmed(
 	if e == nil {
 		return fmt.Errorf("file ingest emitter is required")
 	}
-	if e.entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK ||
-		e.mediaKind != managev1.FileIngestMediaKind_FILE_INGEST_MEDIA_KIND_TRACK_AUDIO {
+	if e.entityType != EntityTrack ||
+		e.mediaKind != IngestMediaTrackAudio {
 		return fmt.Errorf("file ingest attached is reserved for Track original audio")
 	}
 	correlationID, identity, sequence, timestampMs, ok := e.nextEventFields()

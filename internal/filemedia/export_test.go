@@ -16,7 +16,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func ExportLibraryService(units mutation.UnitOfWork[Store], authorizer mutation.Authorizer, fence identitystate.Fence, audit domainaudit.Appender, members MemberSummaries) *Service {
@@ -122,7 +121,7 @@ func ExportRejectUploadPart(s *Service, w http.ResponseWriter, r *http.Request, 
 }
 
 func ExportValidateCompletedFile(s *Service, ctx context.Context, row domain.UploadSession, uploadType, entityType int32) error {
-	return s.validateCompletedFileRecord(ctx, row, managev1.UploadType(uploadType), managev1.TranscodeEntityType(entityType))
+	return s.validateCompletedFileRecord(ctx, row, UploadType(uploadType), EntityType(entityType))
 }
 
 func ExportLoadFinishedFile(s *Service, ctx context.Context, id string) (File, int32, error) {
@@ -140,9 +139,10 @@ func ExportClientBundleFixture(t *testing.T, kind string) (domain.UploadSession,
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := PrepareClientMediaUploadCommand{FileID: row.FileID, UploadID: row.UploadID, Kind: managev1.ClientMediaKind_CLIENT_MEDIA_KIND_AUDIO, DurationSeconds: plan.DurationSeconds}
+	command := PrepareClientMediaUploadCommand{FileID: row.FileID, UploadID: row.UploadID, Kind: ClientMediaAudio, DurationSeconds: plan.DurationSeconds}
 	if kind == "video" {
-		command.Kind = managev1.ClientMediaKind_CLIENT_MEDIA_KIND_VIDEO
+		command.Kind = ClientMediaVideo
+
 	}
 	for _, artifact := range plan.Artifacts {
 		command.Artifacts = append(command.Artifacts, ClientMediaUploadArtifact{Path: artifact.Path, MimeType: artifact.MimeType, Size: artifact.Size, SHA256: artifact.SHA256, DerivativeType: DerivativeKind(artifact.DerivativeType)})
@@ -161,7 +161,7 @@ func ExportCreateVerifiedFile(s *Service, ctx context.Context, file File, upload
 			return err
 		}
 	}
-	return s.createVerifiedFileIngestRecord(ctx, fileIngestRecord{id: file.ID, fileName: file.FileName, mimeType: file.MimeType, fileSize: file.FileSize, extension: file.Extension, sha256: file.SHA256, ingestSlotID: derefString(file.IngestSlotID), ingestAttemptID: derefString(file.IngestAttemptID)}, managev1.UploadType(uploadType), managev1.TranscodeEntityType(entityType), entityID, authority)
+	return s.createVerifiedFileIngestRecord(ctx, fileIngestRecord{id: file.ID, fileName: file.FileName, mimeType: file.MimeType, fileSize: file.FileSize, extension: file.Extension, sha256: file.SHA256, ingestSlotID: derefString(file.IngestSlotID), ingestAttemptID: derefString(file.IngestAttemptID)}, UploadType(uploadType), EntityType(entityType), entityID, authority)
 }
 
 func ExportArtifactWritable(s *Service, ctx context.Context, row domain.UploadSession) (bool, error) {
@@ -176,7 +176,7 @@ func ExportRestoreRemoteReceipt(s *Service, ctx context.Context, id, slot, attem
 	if err := validateCompletedRemoteImportFile(file, slot, remoteImportOperationIdentity{fileID: id, attemptID: attempt}); err != nil {
 		return File{}, true, err
 	}
-	err = s.validateCompletedRemoteImportBinding(ctx, id, entityID, remoteFileImportOptions{uploadType: managev1.UploadType(uploadType), transcodeEntityType: managev1.TranscodeEntityType(entityType)})
+	err = s.validateCompletedRemoteImportBinding(ctx, id, entityID, remoteFileImportOptions{uploadType: UploadType(uploadType), transcodeEntityType: EntityType(entityType)})
 	return File(file), true, err
 }
 

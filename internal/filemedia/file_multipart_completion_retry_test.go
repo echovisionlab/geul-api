@@ -17,7 +17,6 @@ import (
 	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestVerifyMultipartCompletionTransientFetchFailureKeepsFinalizing(t *testing.T) {
@@ -96,7 +95,8 @@ func TestPersistMultipartCompletionDatabaseFailureKeepsFinalizing(t *testing.T) 
 	db := newMultipartCompletionRetryDB(t)
 	service := withNativeFileUnits(&Service{}, db, nativeFilePorts{})
 	completion := insertFinalizingCompletion(t, db, 10)
-	completion.uploadType = managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO
+	completion.uploadType = UploadTrackAudio
+
 	completion.session.FileName = "field-recording.wav"
 	completion.session.DetectedMime = new("audio/wav")
 
@@ -133,7 +133,8 @@ func TestMultipartPublicAssetPromotionRetryPreservesVerifiedSourceAndFinalizingS
 			UploadID: uploadID, FileID: file.ID, FileName: file.FileName,
 			FileSize: file.FileSize, Status: domain.UploadSessionStatusFinalizing,
 		},
-		uploadType:   managev1.UploadType_UPLOAD_TYPE_CLIENT_LOGO,
+		uploadType: UploadClientLogo,
+
 		verifiedMime: file.MimeType,
 		objectKey:    "media/" + file.ID + "." + file.Extension,
 	}
@@ -182,7 +183,8 @@ func TestMultipartFaviconCommitAmbiguityPreservesSourceAndFinalizingSession(t *t
 			UploadID: uploadID, FileID: fileID, FileName: "favicon.png",
 			FileSize: int64(len(source)), Status: domain.UploadSessionStatusFinalizing,
 		},
-		uploadType:   managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON,
+		uploadType: UploadSiteFavicon,
+
 		verifiedMime: "image/png",
 		objectKey:    "media/" + fileID + ".png",
 	}

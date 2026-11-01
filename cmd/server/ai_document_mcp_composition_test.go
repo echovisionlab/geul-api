@@ -380,7 +380,7 @@ func TestAIDocumentCompositionDispatchesStandaloneUploadAndFileDeletion(t *testi
 	require.Contains(t, response.Body.String(), compositionFileID)
 	require.NotContains(t, response.Body.String(), "signature=secret")
 	require.NotNil(t, files.importInput)
-	require.Equal(t, managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE, files.importInput.UploadType)
+	require.Equal(t, filemedia.UploadEditorImage, files.importInput.UploadType)
 	require.Equal(t, "diagram.png", files.importInput.FileName)
 	require.Equal(t, "b2011513-d89a-4c34-90e5-b59b3cb874f2", files.importInput.CorrelationID)
 	require.NotNil(t, files.principal)

@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const (
@@ -75,7 +74,7 @@ func validateClientMediaPlanHeader(plan clientMediaPlan, session domain.UploadSe
 	if plan.Version != clientMediaPlanVersion || (plan.Kind != "audio" && plan.Kind != "video") || !strings.HasPrefix(session.RequestedMime, plan.Kind+"/") {
 		return fmt.Errorf("client media kind does not match original")
 	}
-	uploadType := managev1.UploadType(managev1.UploadType_value[session.UploadType])
+	uploadType, _ := domain.ParseUploadType(session.UploadType)
 	if !supportsClientMedia(uploadType) {
 		return fmt.Errorf("upload type does not support client media")
 	}
@@ -186,7 +185,7 @@ func clientMediaStagingKey(bundleID, path string) string {
 
 // Direct browser media must arrive with completed derivatives. Remote imports
 // use artifact separate ingest path and retain their server processing workflow.
-func requireDirectClientMediaBundle(uploadType managev1.UploadType, verifiedMime string, session domain.UploadSession, bundleID string) error {
+func requireDirectClientMediaBundle(uploadType UploadType, verifiedMime string, session domain.UploadSession, bundleID string) error {
 	if !supportsClientMedia(uploadType) {
 		return nil
 	}
@@ -209,10 +208,10 @@ func requireDirectClientMediaBundle(uploadType managev1.UploadType, verifiedMime
 	return nil
 }
 
-func supportsClientMedia(uploadType managev1.UploadType) bool {
+func supportsClientMedia(uploadType UploadType) bool {
 	switch uploadType {
-	case managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO, managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO, managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO:
+	case UploadGeneralFile, UploadEditorAttachment,
+		UploadEditorAudio, UploadEditorVideo, UploadTrackAudio:
 		return true
 	default:
 		return false

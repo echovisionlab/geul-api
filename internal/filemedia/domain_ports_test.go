@@ -99,8 +99,8 @@ func TestPostUploadAuthorizationUsesOneStatusAwareDomainAction(t *testing.T) {
 		access := &recordingPostAccess{}
 		service := withNativeFileUnits(&Service{}, newPostAccessUnitDB(t), nativeFilePorts{Posts: access})
 		err := service.checkEntityPermission(
-			ctx,
-			managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE,
+			ctx, UploadFeaturedImage,
+
 			"",
 			postID,
 			principal.MemberID.String(),

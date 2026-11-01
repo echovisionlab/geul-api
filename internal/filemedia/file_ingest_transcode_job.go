@@ -13,7 +13,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 var fileIngestFinalizerNamespace = uuid.MustParse("ed84d962-d876-5d52-973c-9b5b4bdaf357")
@@ -29,7 +28,7 @@ func newStableFileIngestAudioTranscodeJob(
 	ctx context.Context,
 	store Store,
 	file File,
-	entityType managev1.TranscodeEntityType,
+	entityType EntityType,
 	entityID string,
 ) (*domain.IngestTranscodeCommand, bool, error) {
 	source, err := domain.CanonicalObjectTarget(file)
@@ -55,7 +54,7 @@ func newStableFileIngestVideoTranscodeJob(
 	ctx context.Context,
 	store Store,
 	file File,
-	entityType managev1.TranscodeEntityType,
+	entityType EntityType,
 	entityID string,
 ) (*domain.IngestTranscodeCommand, bool, error) {
 	source, err := domain.CanonicalObjectTarget(file)

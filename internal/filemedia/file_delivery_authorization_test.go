@@ -231,15 +231,15 @@ func TestArchivedPostFileBoundariesAllowAuthorViewAndRequireAdminEdit(t *testing
 		filePolicyOwnerEdit,
 	))
 	require.Equal(t, connect.CodeNotFound, errs.CodeOf(service.checkEntityPermission(
-		authorCtx,
-		managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE,
+		authorCtx, UploadFeaturedImage,
+
 		"",
 		postID,
 		author.MemberID,
 	)))
 	require.NoError(t, service.checkEntityPermission(
-		adminCtx,
-		managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE,
+		adminCtx, UploadFeaturedImage,
+
 		"",
 		postID,
 		admin.MemberID,

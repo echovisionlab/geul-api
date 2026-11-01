@@ -61,7 +61,7 @@ func (h *ConnectHandler) ListFileManagerItems(ctx context.Context, req *connect.
 		FolderID: req.Msg.GetFolderId(), UploadedByMemberID: req.Msg.GetUploadedByMemberId(),
 		Query: req.Msg.GetQuery(), MimeTypePrefix: req.Msg.GetMimeTypePrefix(),
 		PageToken: req.Msg.GetPageToken(), PageSize: req.Msg.PageSize,
-		SortField: req.Msg.SortField, SortOrder: req.Msg.SortOrder,
+		SortField: LibrarySortField(req.Msg.SortField), SortOrder: SortOrder(req.Msg.SortOrder),
 	})
 	return respond(&managev1.ListFileManagerItemsResponse{Items: libraryItemsMessage(page.Items), NextPageToken: page.NextPageToken, Total: page.Total}, err)
 }
@@ -123,7 +123,7 @@ func (h *ConnectHandler) DeleteFile(ctx context.Context, req *connect.Request[ma
 
 func (h *ConnectHandler) InitiateMultipartUpload(ctx context.Context, req *connect.Request[managev1.InitiateMultipartUploadRequest]) (*connect.Response[managev1.InitiateMultipartUploadResponse], error) {
 	value, err := h.files.InitiateMultipartUpload(ctx, InitiateMultipartUploadCommand{
-		UploadType: req.Msg.UploadType, EntityID: req.Msg.EntityId, EntityType: req.Msg.EntityType,
+		UploadType: UploadType(req.Msg.UploadType), EntityID: req.Msg.EntityId, EntityType: entityTypeValue(req.Msg.EntityType),
 		FileName: req.Msg.FileName, FileSize: req.Msg.FileSize, MimeType: req.Msg.MimeType,
 		FileLastModified: req.Msg.FileLastModified, SlotID: req.Msg.SlotId,
 		ExpectedCurrentFileID: req.Msg.ExpectedCurrentFileId,
@@ -145,7 +145,7 @@ func prepareClientMediaUploadCommand(request *managev1.PrepareClientMediaUploadR
 		})
 	}
 	return PrepareClientMediaUploadCommand{
-		FileID: request.FileId, UploadID: request.UploadId, Kind: request.Kind,
+		FileID: request.FileId, UploadID: request.UploadId, Kind: ClientMediaKind(request.Kind),
 		DurationSeconds: request.DurationSeconds, Artifacts: artifacts,
 	}
 }
@@ -167,7 +167,7 @@ func (h *ConnectHandler) AbortMultipartUpload(ctx context.Context, req *connect.
 
 func (h *ConnectHandler) FindMultipartUploadCandidate(ctx context.Context, req *connect.Request[managev1.FindMultipartUploadCandidateRequest]) (*connect.Response[managev1.FindMultipartUploadCandidateResponse], error) {
 	value, err := h.files.FindMultipartUploadCandidate(ctx, FindMultipartUploadCandidateQuery{
-		UploadType: req.Msg.UploadType, EntityID: req.Msg.EntityId, EntityType: req.Msg.EntityType,
+		UploadType: UploadType(req.Msg.UploadType), EntityID: req.Msg.EntityId, EntityType: entityTypeValue(req.Msg.EntityType),
 		FileID: req.Msg.FileId, UploadID: req.Msg.UploadId, FileName: req.Msg.FileName,
 		FileSize: req.Msg.FileSize, MimeType: req.Msg.MimeType, FileLastModified: req.Msg.FileLastModified,
 		SlotID: req.Msg.SlotId, ExpectedCurrentFileID: req.Msg.ExpectedCurrentFileId,
@@ -177,7 +177,7 @@ func (h *ConnectHandler) FindMultipartUploadCandidate(ctx context.Context, req *
 
 func (h *ConnectHandler) DownloadFromUrl(ctx context.Context, req *connect.Request[managev1.DownloadFromUrlRequest]) (*connect.Response[managev1.DownloadFromUrlResponse], error) {
 	value, err := h.files.DownloadFromURL(ctx, DownloadFromURLCommand{
-		UploadType: req.Msg.UploadType, EntityID: req.Msg.EntityId, EntityType: req.Msg.EntityType,
+		UploadType: UploadType(req.Msg.UploadType), EntityID: req.Msg.EntityId, EntityType: entityTypeValue(req.Msg.EntityType),
 		URL: req.Msg.Url, CorrelationID: req.Msg.GetCorrelationId(), SlotID: req.Msg.GetSlotId(),
 		ExpectedCurrentFileID: req.Msg.ExpectedCurrentFileId,
 	})
@@ -195,7 +195,7 @@ func (h *ConnectHandler) GetBulkMediaDeliveries(ctx context.Context, req *connec
 }
 
 func fileDownloadPolicyTarget(entityType managev1.TranscodeEntityType, entityID string, blockID, referencePath *string) FileDownloadPolicyTarget {
-	return FileDownloadPolicyTarget{EntityType: entityType, EntityID: entityID, BlockID: blockID, ReferencePath: referencePath}
+	return FileDownloadPolicyTarget{EntityType: EntityType(entityType), EntityID: entityID, BlockID: blockID, ReferencePath: referencePath}
 }
 
 func (h *ConnectHandler) GetFileDownloadPolicy(ctx context.Context, req *connect.Request[managev1.GetFileDownloadPolicyRequest]) (*connect.Response[managev1.GetFileDownloadPolicyResponse], error) {
@@ -209,17 +209,17 @@ func (h *ConnectHandler) UpdateFileDownloadPolicy(ctx context.Context, req *conn
 	command := UpdateFileDownloadPolicyCommand{
 		Target:         fileDownloadPolicyTarget(req.Msg.EntityType, req.Msg.EntityId, req.Msg.BlockId, req.Msg.ReferencePath),
 		ExpectedFileID: req.Msg.ExpectedFileId,
-		Policy:         FileDownloadPolicyState{Audience: req.Msg.Audience, AudienceSegmentIDs: req.Msg.AudienceSegmentIds},
+		Policy:         FileDownloadPolicyState{Audience: DownloadAudience(req.Msg.Audience), AudienceSegmentIDs: req.Msg.AudienceSegmentIds},
 	}
 	if observed := req.Msg.ObservedPolicy; observed != nil {
-		command.Observed = &FileDownloadPolicyState{Audience: observed.Audience, AudienceSegmentIDs: observed.AudienceSegmentIds}
+		command.Observed = &FileDownloadPolicyState{Audience: DownloadAudience(observed.Audience), AudienceSegmentIDs: observed.AudienceSegmentIds}
 	}
 	policy, err := h.files.UpdateFileDownloadPolicy(ctx, command)
 	return respond(&managev1.UpdateFileDownloadPolicyResponse{Policy: downloadPolicyMessage(policy)}, err)
 }
 
 func meshOptimizationCandidatesQuery(sourceFileID string, entityType managev1.TranscodeEntityType, entityID string, profile managev1.MeshOptimizationProfile) ListMeshOptimizationCandidatesQuery {
-	return ListMeshOptimizationCandidatesQuery{SourceFileID: sourceFileID, EntityType: entityType, EntityID: entityID, Profile: profile}
+	return ListMeshOptimizationCandidatesQuery{SourceFileID: sourceFileID, EntityType: EntityType(entityType), EntityID: entityID, Profile: MeshProfile(profile)}
 }
 
 func (h *ConnectHandler) ListMeshOptimizationCandidates(ctx context.Context, req *connect.Request[managev1.ListMeshOptimizationCandidatesRequest]) (*connect.Response[managev1.ListMeshOptimizationCandidatesResponse], error) {
@@ -229,8 +229,8 @@ func (h *ConnectHandler) ListMeshOptimizationCandidates(ctx context.Context, req
 
 func (h *ConnectHandler) GenerateMeshOptimizationCandidate(ctx context.Context, req *connect.Request[managev1.GenerateMeshOptimizationCandidateRequest]) (*connect.Response[managev1.GenerateMeshOptimizationCandidateResponse], error) {
 	value, err := h.files.GenerateMeshOptimizationCandidate(ctx, GenerateMeshOptimizationCandidateCommand{
-		SourceFileID: req.Msg.SourceFileId, EntityType: req.Msg.EntityType, EntityID: req.Msg.EntityId,
-		TargetRatioPercent: req.Msg.TargetRatioPercent, Method: req.Msg.Method, Profile: req.Msg.Profile,
+		SourceFileID: req.Msg.SourceFileId, EntityType: EntityType(req.Msg.EntityType), EntityID: req.Msg.EntityId,
+		TargetRatioPercent: req.Msg.TargetRatioPercent, Method: MeshCompressionMethod(req.Msg.Method), Profile: MeshProfile(req.Msg.Profile),
 	})
 	return respond(meshGenerationMessage(value), err)
 }
@@ -268,4 +268,11 @@ func (h *LinkPreviewConnectHandler) GetLinkPreview(ctx context.Context, req *con
 		return nil, errs.Wrap(err)
 	}
 	return connect.NewResponse(&managev1.GetLinkPreviewResponse{ResolvedUrl: result.ResolvedURL, Title: result.Title, Description: result.Description, SiteName: result.SiteName, ImageSource: result.ImageSource, IconSource: result.IconSource}), nil
+}
+
+func entityTypeValue(value *managev1.TranscodeEntityType) *EntityType {
+	if value == nil {
+		return nil
+	}
+	return new(EntityType(*value))
 }

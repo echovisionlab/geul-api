@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func (s *Service) meshOptimizationService() *MeshOptimizationService {
@@ -16,9 +15,9 @@ func (s *Service) meshOptimizationService() *MeshOptimizationService {
 // 3D model File attached to an entity.
 type ListMeshOptimizationCandidatesQuery struct {
 	SourceFileID string
-	EntityType   managev1.TranscodeEntityType
+	EntityType   EntityType
 	EntityID     string
-	Profile      managev1.MeshOptimizationProfile
+	Profile      MeshProfile
 }
 
 func (q ListMeshOptimizationCandidatesQuery) input() MeshOptimizationListInput {
@@ -50,11 +49,11 @@ func (s *Service) ListMeshOptimizationCandidates(ctx context.Context, query List
 // candidate of a 3D model File.
 type GenerateMeshOptimizationCandidateCommand struct {
 	SourceFileID       string
-	EntityType         managev1.TranscodeEntityType
+	EntityType         EntityType
 	EntityID           string
 	TargetRatioPercent int32
-	Method             managev1.MeshOptimizationCompressionMethod
-	Profile            managev1.MeshOptimizationProfile
+	Method             MeshCompressionMethod
+	Profile            MeshProfile
 }
 
 func (s *Service) GenerateMeshOptimizationCandidate(ctx context.Context, command GenerateMeshOptimizationCandidateCommand) (*MeshCandidateGeneration, error) {
@@ -139,11 +138,11 @@ func meshOptimizationCandidateHasUsableOutput(candidate domain.MeshCandidate) bo
 }
 
 func meshOptimizationRequestMethod(
-	method managev1.MeshOptimizationCompressionMethod,
+	method MeshCompressionMethod,
 ) string {
 	switch method {
-	case managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_UNSPECIFIED,
-		managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_DRACO:
+	case MeshCompressionUnspecified,
+		MeshCompressionDraco:
 		return domain.MeshMethodDraco
 	default:
 		return ""

@@ -8,12 +8,11 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type multipartCandidateSearch struct {
 	request            FindMultipartUploadCandidateQuery
-	uploadType         managev1.UploadType
+	uploadType         UploadType
 	entityType         string
 	entityID           string
 	fileName           string
@@ -70,7 +69,7 @@ func validateIndependentFileCandidateIdentity(
 	request FindMultipartUploadCandidateQuery,
 	entityID string,
 ) error {
-	if request.UploadType != managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE &&
+	if request.UploadType != UploadGeneralFile &&
 		!isEditorFileIngestUploadType(request.UploadType) {
 		return nil
 	}

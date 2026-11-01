@@ -15,8 +15,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/google/uuid"
-
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // HandleUploadSource downloads verified original bytes without creating a file
@@ -111,11 +109,11 @@ func parseUploadSourceQuery(rawQuery string) (remoteFileImportOptions, error) {
 	if err != nil {
 		return remoteFileImportOptions{}, fmt.Errorf("invalid uploadType")
 	}
-	if _, ok := managev1.UploadType_name[int32(value)]; !ok || value == 0 {
+	if ok := UploadType(value).Valid(); !ok || value == 0 {
 		return remoteFileImportOptions{}, fmt.Errorf("invalid uploadType")
 	}
 	opts := remoteFileImportOptions{
-		uploadType: managev1.UploadType(value), sourceURL: query.Get("url"),
+		uploadType: UploadType(value), sourceURL: query.Get("url"),
 		entityID: strings.TrimSpace(query.Get("entityId")), slotID: strings.TrimSpace(query.Get("slotId")),
 		checkPermission: true,
 		// Preparation validates ingest identities, but the relay never uses or
@@ -135,13 +133,13 @@ func parseUploadSourceQuery(rawQuery string) (remoteFileImportOptions, error) {
 		if err != nil {
 			return opts, fmt.Errorf("invalid entityType")
 		}
-		if _, ok := managev1.TranscodeEntityType_name[int32(value)]; !ok || value == 0 {
+		if ok := EntityType(value).Valid(); !ok || value == 0 {
 			return opts, fmt.Errorf("invalid entityType")
 		}
-		opts.transcodeEntityType = managev1.TranscodeEntityType(value)
+		opts.transcodeEntityType = EntityType(value)
 		opts.entityType = opts.transcodeEntityType.String()
 	}
-	if (opts.uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE || isEditorFileIngestUploadType(opts.uploadType)) && (query.Has("entityId") || query.Has("entityType")) {
+	if (opts.uploadType == UploadGeneralFile || isEditorFileIngestUploadType(opts.uploadType)) && (query.Has("entityId") || query.Has("entityType")) {
 		return opts, fmt.Errorf("File library upload must omit entityId and entityType")
 	}
 	if query.Has("expectedCurrentFileId") {

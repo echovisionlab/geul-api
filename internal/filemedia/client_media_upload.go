@@ -20,7 +20,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // PrepareClientMediaUploadCommand registers the browser-built media bundle
@@ -28,7 +27,7 @@ import (
 type PrepareClientMediaUploadCommand struct {
 	FileID          string
 	UploadID        string
-	Kind            managev1.ClientMediaKind
+	Kind            ClientMediaKind
 	DurationSeconds float64
 	Artifacts       []ClientMediaUploadArtifact
 }
@@ -69,9 +68,9 @@ func (s *Service) PrepareClientMediaUpload(ctx context.Context, command PrepareC
 func clientMediaPlanFromCommand(command PrepareClientMediaUploadCommand, memberID string) (clientMediaPlan, error) {
 	plan := clientMediaPlan{Version: clientMediaPlanVersion, DurationSeconds: command.DurationSeconds, MemberID: memberID}
 	switch command.Kind {
-	case managev1.ClientMediaKind_CLIENT_MEDIA_KIND_AUDIO:
+	case ClientMediaAudio:
 		plan.Kind = "audio"
-	case managev1.ClientMediaKind_CLIENT_MEDIA_KIND_VIDEO:
+	case ClientMediaVideo:
 		plan.Kind = "video"
 	default:
 		return plan, domainerr.InvalidField("kind", "unsupported media kind")

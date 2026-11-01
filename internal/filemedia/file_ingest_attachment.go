@@ -8,7 +8,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type fileIngestTargetMode = domain.UploadTargetMode
@@ -30,13 +29,13 @@ func (target fileIngestProjectionIdentity) requiresDurableAttachment() bool {
 	return target.mode == fileIngestTargetModeTrackProjection
 }
 
-func isEditorFileIngestUploadType(uploadType managev1.UploadType) bool {
+func isEditorFileIngestUploadType(uploadType UploadType) bool {
 	switch uploadType {
-	case managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT,
-		managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH:
+	case UploadEditorImage,
+		UploadEditorAudio,
+		UploadEditorVideo,
+		UploadEditorAttachment,
+		UploadEditorMesh:
 		return true
 	default:
 		return false
@@ -66,8 +65,8 @@ func normalizeExpectedCurrentFileID(value *string) (*string, error) {
 // normalizeFileIngestProjectionIdentity is the single semantic target policy
 // for multipart, remote import, resume and projection finalization paths.
 func normalizeFileIngestProjectionIdentity(
-	uploadType managev1.UploadType,
-	entityType managev1.TranscodeEntityType,
+	uploadType UploadType,
+	entityType EntityType,
 	slotID string,
 	expectedCurrentFileID *string,
 ) (fileIngestProjectionIdentity, error) {
@@ -76,7 +75,7 @@ func normalizeFileIngestProjectionIdentity(
 	if err != nil {
 		return fileIngestProjectionIdentity{}, err
 	}
-	if uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE {
+	if uploadType == UploadGeneralFile {
 		return normalizeGeneralFileIngestProjectionIdentity(
 			entityType, normalizedSlotID, expected,
 		)
@@ -88,8 +87,8 @@ func normalizeFileIngestProjectionIdentity(
 		)
 	}
 
-	if uploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO {
-		if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK {
+	if uploadType == UploadTrackAudio {
+		if entityType != EntityTrack {
 			return fileIngestProjectionIdentity{}, domainerr.InvalidField("entity_type", "track audio attachment requires a track entity")
 		}
 		if normalizedSlotID != "" {
@@ -111,11 +110,11 @@ func normalizeFileIngestProjectionIdentity(
 }
 
 func normalizeGeneralFileIngestProjectionIdentity(
-	entityType managev1.TranscodeEntityType,
+	entityType EntityType,
 	slotID string,
 	expectedCurrentFileID *string,
 ) (fileIngestProjectionIdentity, error) {
-	if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
+	if entityType != EntityUnspecified {
 		return fileIngestProjectionIdentity{}, domainerr.InvalidField("entity_type", "general File Manager upload must omit entity type")
 	}
 	if slotID != "" || expectedCurrentFileID != nil {
@@ -125,12 +124,12 @@ func normalizeGeneralFileIngestProjectionIdentity(
 }
 
 func normalizeEditorFileIngestProjectionIdentity(
-	uploadType managev1.UploadType,
-	entityType managev1.TranscodeEntityType,
+	uploadType UploadType,
+	entityType EntityType,
 	slotID string,
 	expectedCurrentFileID *string,
 ) (fileIngestProjectionIdentity, error) {
-	if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
+	if entityType != EntityUnspecified {
 		return fileIngestProjectionIdentity{}, domainerr.InvalidField("entity_type", "editor File upload must omit document entity type")
 	}
 	if slotID != "" || expectedCurrentFileID != nil {
@@ -145,7 +144,7 @@ func normalizeEditorFileIngestProjectionIdentity(
 func fileIngestTargetFromStoredSession(
 	session domain.UploadSession,
 ) (fileIngestProjectionIdentity, error) {
-	uploadTypeValue, ok := managev1.UploadType_value[session.UploadType]
+	uploadTypeValue, ok := domain.ParseUploadType(session.UploadType)
 	if !ok {
 		return fileIngestProjectionIdentity{}, fmt.Errorf(
 			"unsupported stored upload type %q",
@@ -153,7 +152,7 @@ func fileIngestTargetFromStoredSession(
 		)
 	}
 	target, err := normalizeFileIngestProjectionIdentity(
-		managev1.UploadType(uploadTypeValue),
+		UploadType(uploadTypeValue),
 		uploadSessionEntityTypeToEnum(session.EntityType),
 		derefString(session.SlotID),
 		session.ExpectedFileID,

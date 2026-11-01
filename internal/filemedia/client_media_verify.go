@@ -23,7 +23,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/transcoding/hls"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type clientTSValidator struct{ offset int64 }
@@ -224,11 +223,11 @@ func (s *Service) publishClientMediaReady(ctx context.Context, completion *multi
 			outputs.ThumbnailAssetID = &id
 		}
 	}
-	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_FILE
+	entityType := EntityFile
 	entityID := fileID
 	var trackID, releaseID *string
 	if completion.target.requiresDurableAttachment() {
-		entityType = managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK
+		entityType = EntityTrack
 		entityID = completion.session.EntityID
 		trackID = &entityID
 		var release string

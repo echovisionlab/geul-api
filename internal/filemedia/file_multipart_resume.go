@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // multipartResumeReconciliation carries the current lifecycle state and the
@@ -70,7 +69,7 @@ func (s *Service) publishMultipartResumeProgress(
 	emitter := newFileIngestEventEmitter(
 		ctx,
 		s.asyncPublisher,
-		managev1.FileIngestSource_FILE_INGEST_SOURCE_DIRECT_UPLOAD,
+		IngestSourceDirectUpload,
 		uploadSessionEntityTypeToEnum(session.EntityType),
 		session.EntityID,
 		"",

@@ -55,7 +55,7 @@ func TestMediaDeliveryFromRemoteImportPreservesPurposeSpecificRefs(t *testing.T)
 }
 
 func TestRemoteImportGeneralCorrelationIsDurableAndMemberScoped(t *testing.T) {
-	opts := remoteFileImportOptions{uploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE}
+	opts := remoteFileImportOptions{uploadType: UploadGeneralFile}
 	legacy, err := resolveRemoteImportOperationIdentity(opts, "", "", fileIngestProjectionIdentity{})
 	if err != nil || legacy.durable {
 		t.Fatalf("legacy general identity = %+v / %v", legacy, err)
@@ -84,12 +84,12 @@ func TestRemoteImportGeneralCorrelationIsDurableAndMemberScoped(t *testing.T) {
 func TestRemoteFileImportRejectsEntityKindsAndUnauthenticatedCaller(t *testing.T) {
 	service := &Service{}
 	for _, kind := range []managev1.UploadType{managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO, managev1.UploadType_UPLOAD_TYPE_RELEASE_ARTWORK, managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE} {
-		response, err := service.ImportRemoteFile(t.Context(), RemoteFileImportInput{UploadType: kind, SourceURL: "https://example.com/attachment", CorrelationID: uuid.NewString()})
+		response, err := service.ImportRemoteFile(t.Context(), RemoteFileImportInput{UploadType: UploadType(kind), SourceURL: "https://example.com/attachment", CorrelationID: uuid.NewString()})
 		if response != nil || errs.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Fatalf("entity import kind accepted: %v / %v", kind, err)
 		}
 	}
-	response, err := service.ImportRemoteFile(t.Context(), RemoteFileImportInput{UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, SourceURL: "https://example.com/attachment", CorrelationID: uuid.NewString()})
+	response, err := service.ImportRemoteFile(t.Context(), RemoteFileImportInput{UploadType: UploadGeneralFile, SourceURL: "https://example.com/attachment", CorrelationID: uuid.NewString()})
 	if response != nil || errs.CodeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("unauthenticated import = %+v / %v", response, err)
 	}
@@ -147,8 +147,9 @@ func TestResolveRemoteImportOperationIdentityRequiresDurableCorrelation(t *testi
 
 	_, err := resolveRemoteImportOperationIdentity(
 		remoteFileImportOptions{
-			uploadType:          managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-			transcodeEntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_FILE,
+			uploadType: UploadEditorImage,
+
+			transcodeEntityType: EntityFile,
 		},
 		"",
 		"",
@@ -160,9 +161,11 @@ func TestResolveRemoteImportOperationIdentityRequiresDurableCorrelation(t *testi
 
 	_, err = resolveRemoteImportOperationIdentity(
 		remoteFileImportOptions{
-			uploadType:          managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
-			transcodeEntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
-			correlationID:       "not-a-uuid",
+			uploadType: UploadTrackAudio,
+
+			transcodeEntityType: EntityTrack,
+
+			correlationID: "not-a-uuid",
 		},
 		uuid.NewString(),
 		"",
@@ -179,7 +182,8 @@ func TestResolveRemoteImportOperationIdentityIsDurableForDedicatedPublicAsset(t 
 	correlationID := uuid.NewString()
 	entityID := uuid.NewString()
 	opts := remoteFileImportOptions{
-		uploadType:    managev1.UploadType_UPLOAD_TYPE_CLIENT_LOGO,
+		uploadType: UploadClientLogo,
+
 		correlationID: correlationID,
 	}
 	first, err := resolveRemoteImportOperationIdentity(opts, entityID, "", fileIngestProjectionIdentity{})
@@ -200,10 +204,12 @@ func TestResolveRemoteImportOperationIdentityIsDeterministicForIndependentFile(t
 
 	correlationID := uuid.NewString()
 	opts := remoteFileImportOptions{
-		uploadType:          managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO,
-		transcodeEntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_FILE,
-		correlationID:       strings.ToUpper(correlationID),
-		sourceURL:           "https://first.example/audio.wav",
+		uploadType: UploadEditorAudio,
+
+		transcodeEntityType: EntityFile,
+
+		correlationID: strings.ToUpper(correlationID),
+		sourceURL:     "https://first.example/audio.wav",
 	}
 	projection := fileIngestProjectionIdentity{
 		mode: fileIngestTargetModeEditorFile,
@@ -659,7 +665,7 @@ func TestShouldNormalizeManagedRemoteImport(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := shouldNormalizeManagedRemoteImport(tt.uploadType, tt.mimeType); got != tt.want {
+			if got := shouldNormalizeManagedRemoteImport(UploadType(tt.uploadType), tt.mimeType); got != tt.want {
 				t.Fatalf("shouldNormalizeManagedRemoteImport(%v, %q) = %v, want %v", tt.uploadType, tt.mimeType, got, tt.want)
 			}
 		})
@@ -669,11 +675,15 @@ func TestShouldNormalizeManagedRemoteImport(t *testing.T) {
 func TestGetRemoteImportSelectionMaxSize(t *testing.T) {
 	t.Parallel()
 
-	if got := getRemoteImportSelectionMaxSize(managev1.UploadType_UPLOAD_TYPE_USER_AVATAR, 30*1024*1024); got != managedRemoteImportSelectionLimit {
+	if got := getRemoteImportSelectionMaxSize(UploadUserAvatar,
+
+		30*1024*1024); got != managedRemoteImportSelectionLimit {
 		t.Fatalf("managed raster selection max size = %d, want %d", got, managedRemoteImportSelectionLimit)
 	}
 
-	if got := getRemoteImportSelectionMaxSize(managev1.UploadType_UPLOAD_TYPE_CLIENT_LOGO, 10*1024*1024); got != 10*1024*1024 {
+	if got := getRemoteImportSelectionMaxSize(UploadClientLogo,
+
+		10*1024*1024); got != 10*1024*1024 {
 		t.Fatalf("non-managed selection max size = %d, want %d", got, 10*1024*1024)
 	}
 }

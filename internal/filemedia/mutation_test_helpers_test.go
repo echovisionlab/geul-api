@@ -103,5 +103,5 @@ func testFilePorts(s *Service) filemediapostgres.Ports {
 }
 
 func freshFileIngestAuthorityForTest(ctx context.Context, tx *gorm.DB, service *Service, upload managev1.UploadType, entity managev1.TranscodeEntityType, id string) error {
-	return requireFreshFileIngestAuthority(ctx, testFileStore(service, tx), service, upload, entity, id, func(user *auth.UserInfo) (bool, error) { return identitystate.LockActivePrincipal(ctx, tx, user) })
+	return requireFreshFileIngestAuthority(ctx, testFileStore(service, tx), service, UploadType(upload), EntityType(entity), id, func(user *auth.UserInfo) (bool, error) { return identitystate.LockActivePrincipal(ctx, tx, user) })
 }

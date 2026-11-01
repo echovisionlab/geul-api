@@ -533,7 +533,7 @@ type recordingFileBlockManagement struct {
 // have sent, so the assertions read the native field names.
 func (manager *recordingFileBlockManagement) GetFileDownloadPolicy(_ context.Context, query fileauthority.GetFileDownloadPolicyQuery) (*fileauthority.DownloadPolicy, error) {
 	manager.getRequest = connect.NewRequest(&managev1.GetFileDownloadPolicyRequest{
-		EntityType: query.Target.EntityType, EntityId: query.Target.EntityID,
+		EntityType: managev1.TranscodeEntityType(query.Target.EntityType), EntityId: query.Target.EntityID,
 		BlockId: query.Target.BlockID, ReferencePath: query.Target.ReferencePath,
 	})
 	return manager.policy, manager.err
@@ -541,12 +541,12 @@ func (manager *recordingFileBlockManagement) GetFileDownloadPolicy(_ context.Con
 
 func (manager *recordingFileBlockManagement) UpdateFileDownloadPolicy(_ context.Context, command fileauthority.UpdateFileDownloadPolicyCommand) (*fileauthority.DownloadPolicy, error) {
 	request := &managev1.UpdateFileDownloadPolicyRequest{
-		EntityType: command.Target.EntityType, EntityId: command.Target.EntityID,
+		EntityType: managev1.TranscodeEntityType(command.Target.EntityType), EntityId: command.Target.EntityID,
 		BlockId: command.Target.BlockID, ReferencePath: command.Target.ReferencePath,
-		ExpectedFileId: command.ExpectedFileID, Audience: command.Policy.Audience, AudienceSegmentIds: command.Policy.AudienceSegmentIDs,
+		ExpectedFileId: command.ExpectedFileID, Audience: managev1.FileDownloadAudience(command.Policy.Audience), AudienceSegmentIds: command.Policy.AudienceSegmentIDs,
 	}
 	if observed := command.Observed; observed != nil {
-		request.ObservedPolicy = &managev1.FileDownloadPolicyObservedState{Audience: observed.Audience, AudienceSegmentIds: observed.AudienceSegmentIDs}
+		request.ObservedPolicy = &managev1.FileDownloadPolicyObservedState{Audience: managev1.FileDownloadAudience(observed.Audience), AudienceSegmentIds: observed.AudienceSegmentIDs}
 	}
 	manager.updateRequest = connect.NewRequest(request)
 	return manager.policy, manager.err

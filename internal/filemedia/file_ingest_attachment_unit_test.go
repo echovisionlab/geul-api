@@ -18,9 +18,8 @@ func TestEditorFileIngestHasNoDocumentAttachmentTarget(t *testing.T) {
 		managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT,
 		managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH,
 	} {
-		target, err := normalizeFileIngestProjectionIdentity(
-			uploadType,
-			managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED,
+		target, err := normalizeFileIngestProjectionIdentity(UploadType(uploadType), EntityUnspecified,
+
 			"",
 			nil,
 		)
@@ -28,24 +27,21 @@ func TestEditorFileIngestHasNoDocumentAttachmentTarget(t *testing.T) {
 		require.Equal(t, fileIngestTargetModeEditorFile, target.mode)
 		require.False(t, target.requiresDurableAttachment())
 
-		_, err = normalizeFileIngestProjectionIdentity(
-			uploadType,
-			managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
+		_, err = normalizeFileIngestProjectionIdentity(UploadType(uploadType), EntityPost,
+
 			"",
 			nil,
 		)
 		require.ErrorContains(t, err, "must omit document entity type")
-		_, err = normalizeFileIngestProjectionIdentity(
-			uploadType,
-			managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED,
+		_, err = normalizeFileIngestProjectionIdentity(UploadType(uploadType), EntityUnspecified,
+
 			"block-or-slot",
 			nil,
 		)
 		require.ErrorContains(t, err, "independent of document block attachment")
 		expected := uuid.NewString()
-		_, err = normalizeFileIngestProjectionIdentity(
-			uploadType,
-			managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED,
+		_, err = normalizeFileIngestProjectionIdentity(UploadType(uploadType), EntityUnspecified,
+
 			"",
 			&expected,
 		)

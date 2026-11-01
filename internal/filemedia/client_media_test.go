@@ -242,29 +242,35 @@ func TestDirectMediaCompletionRequiresBrowserBundle(t *testing.T) {
 		for _, mime := range []string{"audio/mpeg", "video/mp4"} {
 			t.Run(uploadType.String()+mime, func(t *testing.T) {
 				session := domain.UploadSession{}
-				err := requireDirectClientMediaBundle(uploadType, mime, session, "")
+				err := requireDirectClientMediaBundle(UploadType(uploadType), mime, session, "")
 				require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 				require.Contains(t, err.Error(), "clientMediaBundleRequired")
 				nonce := uuid.NewString()
 				session.ClientMediaBundleID = &nonce
-				require.Error(t, requireDirectClientMediaBundle(uploadType, mime, session, nonce), "nonce without immutable manifest is insufficient")
+				require.Error(t, requireDirectClientMediaBundle(UploadType(uploadType), mime, session, nonce), "nonce without immutable manifest is insufficient")
 				kind := strings.SplitN(mime, "/", 2)[0]
 				session, _ = clientMediaTestBundle(t, kind)
 				session.UploadType = uploadType.String()
 				nonce = *session.ClientMediaBundleID
-				require.NoError(t, requireDirectClientMediaBundle(uploadType, mime, session, nonce))
+				require.NoError(t, requireDirectClientMediaBundle(UploadType(uploadType), mime, session, nonce))
 				otherKind := "video/mp4"
 				if kind == "video" {
 					otherKind = "audio/mp4"
 				}
-				require.ErrorContains(t, requireDirectClientMediaBundle(uploadType, otherKind, session, nonce), "differs from verified original")
-				require.Error(t, requireDirectClientMediaBundle(uploadType, mime, session, uuid.NewString()))
+				require.ErrorContains(t, requireDirectClientMediaBundle(UploadType(uploadType), otherKind, session, nonce), "differs from verified original")
+				require.Error(t, requireDirectClientMediaBundle(UploadType(uploadType), mime, session, uuid.NewString()))
 			})
 		}
 	}
-	require.NoError(t, requireDirectClientMediaBundle(managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, "application/pdf", domain.UploadSession{}, ""))
-	require.NoError(t, requireDirectClientMediaBundle(managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT, "application/pdf", domain.UploadSession{}, ""))
-	require.NoError(t, requireDirectClientMediaBundle(managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE, "image/png", domain.UploadSession{}, ""))
+	require.NoError(t, requireDirectClientMediaBundle(UploadGeneralFile,
+
+		"application/pdf", domain.UploadSession{}, ""))
+	require.NoError(t, requireDirectClientMediaBundle(UploadEditorAttachment,
+
+		"application/pdf", domain.UploadSession{}, ""))
+	require.NoError(t, requireDirectClientMediaBundle(UploadEditorImage,
+
+		"image/png", domain.UploadSession{}, ""))
 }
 
 func TestClientMediaPlanBoundsAggregatePlaylistMemory(t *testing.T) {

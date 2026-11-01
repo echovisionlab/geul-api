@@ -13,7 +13,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const (
@@ -256,8 +255,8 @@ func (tools *ReferenceDiscoveryTools) listFiles(ctx context.Context, arguments m
 	}
 	response, err := tools.files.ListFileManagerItems(ctx, filemedia.ListFileManagerItemsQuery{
 		FolderID: optionalString(input.FolderID), Query: optionalString(input.Query), MimeTypePrefix: optionalString(input.MIMETypePrefix),
-		SortField: managev1.FileManagerSortField_FILE_MANAGER_SORT_FIELD_UPDATED_AT,
-		SortOrder: commonv1.SortOrder_SORT_ORDER_DESC, PageSize: input.PageSize, PageToken: optionalString(input.PageToken),
+		SortField: filemedia.LibrarySortUpdatedAt,
+		SortOrder: filemedia.SortDesc, PageSize: input.PageSize, PageToken: optionalString(input.PageToken),
 	})
 	if err != nil {
 		return expectedToolError(err)
