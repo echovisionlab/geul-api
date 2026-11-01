@@ -88,8 +88,8 @@ var fileBlockTools = []mcpserver.Tool{
 // used by MCP. The adapter supplies relation selectors and never trusts a
 // caller-provided File ID as relation authority.
 type FileBlockManagement interface {
-	GetFileDownloadPolicy(context.Context, filemedia.GetFileDownloadPolicyQuery) (*managev1.FileDownloadPolicy, error)
-	UpdateFileDownloadPolicy(context.Context, filemedia.UpdateFileDownloadPolicyCommand) (*managev1.FileDownloadPolicy, error)
+	GetFileDownloadPolicy(context.Context, filemedia.GetFileDownloadPolicyQuery) (*filemedia.DownloadPolicy, error)
+	UpdateFileDownloadPolicy(context.Context, filemedia.UpdateFileDownloadPolicyCommand) (*filemedia.DownloadPolicy, error)
 	ListFileUsages(context.Context, filemedia.ListFileUsagesQuery) (filemedia.FileUsagePage, error)
 }
 
@@ -489,24 +489,24 @@ func fileDownloadAudience(value string) (managev1.FileDownloadAudience, error) {
 	}
 }
 
-func fileBlockPolicyResult(policy *managev1.FileDownloadPolicy) (mcpserver.ToolResult, error) {
-	if policy == nil || policy.BlockId == nil || policy.ReferencePath == nil || policy.GetReferencePath() != fileBlockReferencePath {
+func fileBlockPolicyResult(policy *filemedia.DownloadPolicy) (mcpserver.ToolResult, error) {
+	if policy == nil || policy.BlockID == nil || policy.ReferencePath == nil || *policy.ReferencePath != fileBlockReferencePath {
 		return mcpserver.ToolResult{}, errors.New("file policy service returned an invalid File Block selector")
 	}
-	documentType, err := documentTypeFromFileBlockEntity(policy.EntityType)
+	documentType, err := documentTypeFromFileBlockEntity(managev1.TranscodeEntityType(policy.EntityType))
 	if err != nil {
 		return mcpserver.ToolResult{}, err
 	}
-	if _, err := canonicalFileBlockUUID(policy.EntityId, "policy document_id"); err != nil {
+	if _, err := canonicalFileBlockUUID(policy.EntityID, "policy document_id"); err != nil {
 		return mcpserver.ToolResult{}, err
 	}
-	if _, err := canonicalFileBlockUUID(policy.GetBlockId(), "policy block_id"); err != nil {
+	if _, err := canonicalFileBlockUUID(*policy.BlockID, "policy block_id"); err != nil {
 		return mcpserver.ToolResult{}, err
 	}
-	if _, err := canonicalFileBlockUUID(policy.FileId, "policy file_id"); err != nil {
+	if _, err := canonicalFileBlockUUID(policy.FileID, "policy file_id"); err != nil {
 		return mcpserver.ToolResult{}, err
 	}
-	audience := strings.ToLower(strings.TrimPrefix(policy.Audience.String(), "FILE_DOWNLOAD_AUDIENCE_"))
+	audience := string(policy.Audience)
 	if _, err := fileDownloadAudience(audience); err != nil {
 		return mcpserver.ToolResult{}, errors.New("file policy service returned an invalid audience")
 	}
@@ -518,18 +518,18 @@ func fileBlockPolicyResult(policy *managev1.FileDownloadPolicy) (mcpserver.ToolR
 		if segment == nil {
 			return mcpserver.ToolResult{}, errors.New("file policy service returned an empty audience segment")
 		}
-		if _, err := canonicalFileBlockUUID(segment.Id, "policy audience segment ID"); err != nil {
+		if _, err := canonicalFileBlockUUID(segment.ID, "policy audience segment ID"); err != nil {
 			return mcpserver.ToolResult{}, err
 		}
-		segments = append(segments, map[string]any{"id": segment.Id, "name": segment.Name})
+		segments = append(segments, map[string]any{"id": segment.ID, "name": segment.Name})
 	}
 	if audience != "restricted" && len(segments) != 0 {
 		return mcpserver.ToolResult{}, errors.New("file policy service returned audience segments for a non-restricted policy")
 	}
 	return contentResult(map[string]any{
-		"document_type": documentType, "document_id": policy.EntityId,
-		"block_id": policy.GetBlockId(), "reference_path": policy.GetReferencePath(),
-		"file_id": policy.FileId, "audience": audience, "audience_segments": segments,
+		"document_type": documentType, "document_id": policy.EntityID,
+		"block_id": *policy.BlockID, "reference_path": *policy.ReferencePath,
+		"file_id": policy.FileID, "audience": audience, "audience_segments": segments,
 	})
 }
 

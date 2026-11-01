@@ -38,3 +38,5 @@ const (
 	DerivativeFaviconManifest512   = domain.DerivativeFaviconManifest512
 	DerivativeOptimizedMesh        = domain.DerivativeOptimizedMesh
 )
+
+type ScopedContentMediaItem = domain.ScopedContentMediaItem

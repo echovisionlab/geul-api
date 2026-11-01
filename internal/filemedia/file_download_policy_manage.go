@@ -65,12 +65,12 @@ type GetFileDownloadPolicyQuery struct {
 	Target FileDownloadPolicyTarget
 }
 
-func (s *Service) GetFileDownloadPolicy(ctx context.Context, query GetFileDownloadPolicyQuery) (*managev1.FileDownloadPolicy, error) {
+func (s *Service) GetFileDownloadPolicy(ctx context.Context, query GetFileDownloadPolicyQuery) (*DownloadPolicy, error) {
 	selector, err := query.Target.selector()
 	if err != nil {
 		return nil, err
 	}
-	var policy *managev1.FileDownloadPolicy
+	var policy *DownloadPolicy
 	err = s.units.ReadLocked(ctx, func(tx Store) error {
 		relation, resolveErr := s.resolveFileDownloadPolicyRelation(ctx, tx, selector, false)
 		if resolveErr != nil {
@@ -165,7 +165,7 @@ func tooManyFileDownloadAudienceSegments(field string) error {
 	return domainerr.InvalidField(field, fmt.Sprintf("at most %d audience segments are allowed", maxFileDownloadAudienceSegments))
 }
 
-func (s *Service) UpdateFileDownloadPolicy(ctx context.Context, command UpdateFileDownloadPolicyCommand) (*managev1.FileDownloadPolicy, error) {
+func (s *Service) UpdateFileDownloadPolicy(ctx context.Context, command UpdateFileDownloadPolicyCommand) (*DownloadPolicy, error) {
 	change, err := validateFileDownloadPolicyChange(command)
 	if err != nil {
 		return nil, err
@@ -225,7 +225,7 @@ func (s *Service) UpdateFileDownloadPolicy(ctx context.Context, command UpdateFi
 // fileDownloadPolicyUpdate is the policy an update leaves, and when it
 // changed, the attachment it changed and the record of the change.
 type fileDownloadPolicyUpdate struct {
-	policy   *managev1.FileDownloadPolicy
+	policy   *DownloadPolicy
 	changed  bool
 	relation fileDownloadPolicyRelation
 	audit    mutation.Audit
@@ -425,8 +425,8 @@ func (s *Service) loadManageFileDownloadPolicy(
 	ctx context.Context,
 	store Store,
 	relation fileDownloadPolicyRelation,
-) (*managev1.FileDownloadPolicy, error) {
-	audienceValue, ok := manageFileDownloadAudience(relation.Audience)
+) (*DownloadPolicy, error) {
+	audienceValue, ok := validatedStoredFileDownloadAudience(relation.Audience)
 	if !ok {
 		return nil, errors.New("attachment has invalid download audience")
 	}
@@ -442,20 +442,19 @@ func (s *Service) loadManageFileDownloadPolicy(
 		}
 	}
 
-	summaries := make([]*managev1.AudienceSegmentSummary, 0, len(segments))
+	summaries := make([]*domain.PolicySegment, 0, len(segments))
 	for i := range segments {
-		summary, valid := policySegmentSummaryProto(segments[i])
-		if !valid {
+		if !segments[i].Eligible {
 			return nil, errors.New("attachment references an ineligible audience segment")
 		}
-		summaries = append(summaries, summary)
+		summaries = append(summaries, &segments[i])
 	}
-	return &managev1.FileDownloadPolicy{
-		EntityType:       relation.Selector.EntityType,
-		EntityId:         relation.Selector.EntityID,
-		BlockId:          relation.Selector.BlockID,
+	return &DownloadPolicy{
+		EntityType:       int32(relation.Selector.EntityType),
+		EntityID:         relation.Selector.EntityID,
+		BlockID:          relation.Selector.BlockID,
 		ReferencePath:    relation.Selector.ReferencePath,
-		FileId:           relation.FileID,
+		FileID:           relation.FileID,
 		Audience:         audienceValue,
 		AudienceSegments: summaries,
 	}, nil
@@ -550,21 +549,6 @@ func uniqueUUIDs(values []string, field string) ([]string, error) {
 	return result, nil
 }
 
-func manageFileDownloadAudience(audience mediaasset.FileDownloadAudience) (managev1.FileDownloadAudience, bool) {
-	switch audience {
-	case mediaasset.FileDownloadAudienceDisabled:
-		return managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_DISABLED, true
-	case mediaasset.FileDownloadAudiencePublic:
-		return managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC, true
-	case mediaasset.FileDownloadAudienceAuthenticated:
-		return managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_AUTHENTICATED, true
-	case mediaasset.FileDownloadAudienceRestricted:
-		return managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, true
-	default:
-		return managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_UNSPECIFIED, false
-	}
-}
-
 func storedFileDownloadAudience(audience managev1.FileDownloadAudience) (mediaasset.FileDownloadAudience, bool) {
 	switch audience {
 	case managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_DISABLED:
@@ -575,6 +559,15 @@ func storedFileDownloadAudience(audience managev1.FileDownloadAudience) (mediaas
 		return mediaasset.FileDownloadAudienceAuthenticated, true
 	case managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED:
 		return mediaasset.FileDownloadAudienceRestricted, true
+	default:
+		return "", false
+	}
+}
+
+func validatedStoredFileDownloadAudience(audience mediaasset.FileDownloadAudience) (mediaasset.FileDownloadAudience, bool) {
+	switch audience {
+	case mediaasset.FileDownloadAudienceDisabled, mediaasset.FileDownloadAudiencePublic, mediaasset.FileDownloadAudienceAuthenticated, mediaasset.FileDownloadAudienceRestricted:
+		return audience, true
 	default:
 		return "", false
 	}

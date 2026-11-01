@@ -202,7 +202,7 @@ func (h *ConnectHandler) GetFileDownloadPolicy(ctx context.Context, req *connect
 	policy, err := h.files.GetFileDownloadPolicy(ctx, GetFileDownloadPolicyQuery{
 		Target: fileDownloadPolicyTarget(req.Msg.EntityType, req.Msg.EntityId, req.Msg.BlockId, req.Msg.ReferencePath),
 	})
-	return respond(&managev1.GetFileDownloadPolicyResponse{Policy: policy}, err)
+	return respond(&managev1.GetFileDownloadPolicyResponse{Policy: downloadPolicyMessage(policy)}, err)
 }
 
 func (h *ConnectHandler) UpdateFileDownloadPolicy(ctx context.Context, req *connect.Request[managev1.UpdateFileDownloadPolicyRequest]) (*connect.Response[managev1.UpdateFileDownloadPolicyResponse], error) {
@@ -215,7 +215,7 @@ func (h *ConnectHandler) UpdateFileDownloadPolicy(ctx context.Context, req *conn
 		command.Observed = &FileDownloadPolicyState{Audience: observed.Audience, AudienceSegmentIDs: observed.AudienceSegmentIds}
 	}
 	policy, err := h.files.UpdateFileDownloadPolicy(ctx, command)
-	return respond(&managev1.UpdateFileDownloadPolicyResponse{Policy: policy}, err)
+	return respond(&managev1.UpdateFileDownloadPolicyResponse{Policy: downloadPolicyMessage(policy)}, err)
 }
 
 func meshOptimizationCandidatesQuery(sourceFileID string, entityType managev1.TranscodeEntityType, entityID string, profile managev1.MeshOptimizationProfile) ListMeshOptimizationCandidatesQuery {

@@ -14,10 +14,8 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/proto"
 )
 
 type scopedContentOwner string
@@ -115,61 +113,6 @@ func (s *Service) resolveAuthorizedFeaturedImage(
 	return delivery, err
 }
 
-// HydrateAuthorizedPageBlockMedia adds private editor delivery while
-// the Page owner keeps its root, principal, document, File, and exact
-// attachment witnesses in one transaction.
-func (s *Service) HydrateAuthorizedPageBlockMedia(
-	ctx context.Context,
-	joined Joined,
-	pageID string,
-	documentID uuid.UUID,
-	principal *auth.UserInfo,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
-	return s.hydrateAuthorizedContentBlockMedia(
-		ctx, joined, scopedContentOwnerPage, pageID, documentID, principal, items,
-	)
-}
-
-// HydrateAuthorizedPostBlockMedia adds private editor delivery while
-// Post holds its owner, principal, document, and exact attachment witnesses.
-func (s *Service) HydrateAuthorizedPostBlockMedia(
-	ctx context.Context, joined Joined, postID string, documentID uuid.UUID,
-	principal *auth.UserInfo, items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
-	return s.hydrateAuthorizedContentBlockMedia(ctx, joined, scopedContentOwnerPost, postID, documentID, principal, items)
-}
-
-// HydrateAuthorizedWorkBlockMedia adds private editor delivery while
-// the Work owner keeps its exact authorization and lifecycle fence.
-func (s *Service) HydrateAuthorizedWorkBlockMedia(
-	ctx context.Context,
-	joined Joined,
-	workID string,
-	documentID uuid.UUID,
-	principal *auth.UserInfo,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
-	return s.hydrateAuthorizedContentBlockMedia(
-		ctx, joined, scopedContentOwnerWork, workID, documentID, principal, items,
-	)
-}
-
-// HydrateAuthorizedProgramEventBlockMedia adds private editor delivery
-// while Program Event keeps its exact authorization and lifecycle fence.
-func (s *Service) HydrateAuthorizedProgramEventBlockMedia(
-	ctx context.Context,
-	joined Joined,
-	eventID string,
-	documentID uuid.UUID,
-	principal *auth.UserInfo,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
-	return s.hydrateAuthorizedContentBlockMedia(
-		ctx, joined, scopedContentOwnerProgramEvent, eventID, documentID, principal, items,
-	)
-}
-
 func (s *Service) hydrateAuthorizedContentBlockMedia(
 	ctx context.Context,
 	joined Joined,
@@ -177,8 +120,8 @@ func (s *Service) hydrateAuthorizedContentBlockMedia(
 	ownerID string,
 	documentID uuid.UUID,
 	principal *auth.UserInfo,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	items []*ScopedContentMediaItem,
+) ([]*ScopedContentMediaItem, error) {
 	if s == nil || joined.Store == nil {
 		return nil, errors.New("scoped content media transaction is required")
 	}
@@ -221,21 +164,20 @@ func (s *Service) hydrateAuthorizedContentBlockMedia(
 
 // undeliveredContentBlockMediaItems clones the items without delivery or
 // download action and collects the File and Block IDs they reference.
-func undeliveredContentBlockMediaItems(items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, map[string]struct{}, map[string]struct{}) {
-	cloned := make([]*contentv1.ContentBlockMediaItem, 0, len(items))
+func undeliveredContentBlockMediaItems(items []*ScopedContentMediaItem) ([]*ScopedContentMediaItem, map[string]struct{}, map[string]struct{}) {
+	cloned := make([]*ScopedContentMediaItem, 0, len(items))
 	requestedFileIDs := make(map[string]struct{}, len(items))
 	requestedBlockIDs := make(map[string]struct{}, len(items))
 	for _, item := range items {
 		if item == nil {
 			continue
 		}
-		copy := proto.Clone(item).(*contentv1.ContentBlockMediaItem)
+		copy := new(*item)
 		copy.Delivery = nil
-		copy.DownloadAvailability = contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_UNAVAILABLE
-		copy.DownloadAction = contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_NONE
+		copy.DownloadAllowed = false
 		cloned = append(cloned, copy)
-		fileID := strings.TrimSpace(copy.GetAttachment().GetActiveFileId())
-		blockID := strings.TrimSpace(copy.GetSelector().GetBlockId())
+		fileID := strings.TrimSpace(copy.FileID)
+		blockID := strings.TrimSpace(copy.BlockID)
 		if fileID == "" || blockID == "" || !IsValidUUID(fileID) || !IsValidUUID(blockID) {
 			continue
 		}
@@ -265,16 +207,16 @@ func (s *Service) hasScopedLibraryDownload(ctx context.Context, principal *auth.
 // still references a live File that File's delivery, with the download when
 // the principal may download it.
 func deliverScopedContentBlockMediaItem(
-	item *contentv1.ContentBlockMediaItem,
+	item *ScopedContentMediaItem,
 	relations map[string]domain.ScopedAttachment,
 	files map[string]File,
 	responses map[string]*MediaDeliveryResult,
 	principal *auth.UserInfo,
 	hasLibraryDownload bool,
 ) {
-	fileID := strings.TrimSpace(item.GetAttachment().GetActiveFileId())
-	key := strings.TrimSpace(item.GetSelector().GetBlockId()) + "\x00" +
-		strings.TrimSpace(item.GetSelector().GetReferencePath()) + "\x00" + fileID
+	fileID := strings.TrimSpace(item.FileID)
+	key := strings.TrimSpace(item.BlockID) + "\x00" +
+		strings.TrimSpace(item.ReferencePath) + "\x00" + fileID
 	if _, ok := relations[key]; !ok {
 		return
 	}
@@ -292,10 +234,9 @@ func deliverScopedContentBlockMediaItem(
 	if !allowDownload {
 		delivery.Download = nil
 	} else {
-		item.DownloadAvailability = contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_AVAILABLE
-		item.DownloadAction = contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_DOWNLOAD
+		item.DownloadAllowed = true
 	}
-	item.Delivery = DeliveryMessage(delivery)
+	item.Delivery = delivery
 }
 
 func (s *Service) buildLockedInlineDelivery(
