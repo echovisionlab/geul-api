@@ -57,44 +57,14 @@ func (s *Service) authorizeManageFileDeliveriesWithWitness(
 	if user.Banned {
 		return nil, errs.AccountBanned()
 	}
-
-	uniqueFileIDs := make([]string, 0, len(fileIDs))
-	seen := make(map[string]struct{}, len(fileIDs))
-	for _, rawFileID := range fileIDs {
-		fileID := strings.TrimSpace(rawFileID)
-		if !IsValidUUID(fileID) {
-			return nil, errs.InvalidArgument("file_id", "must be a valid UUID")
-		}
-		if _, ok := seen[fileID]; ok {
-			continue
-		}
-		seen[fileID] = struct{}{}
-		uniqueFileIDs = append(uniqueFileIDs, fileID)
+	uniqueFileIDs, err := sortedUniqueManageDeliveryFileIDs(fileIDs)
+	if err != nil {
+		return nil, err
 	}
-	sort.Strings(uniqueFileIDs)
-
-	var files []model.File
-	if err := s.db.WithContext(ctx).
-		Select("id", "uploaded_by_member_id", "delete_requested_at").
-		Where("id IN ?", uniqueFileIDs).
-		Find(&files).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("load File ownership: %w", err))
+	fileByID, err := s.loadManageDeliveryFiles(ctx, uniqueFileIDs)
+	if err != nil {
+		return nil, err
 	}
-	fileByID := make(map[string]model.File, len(files))
-	eligibleFileIDs := make(map[string]struct{}, len(files))
-	for _, file := range files {
-		if file.DeleteRequestedAt != nil {
-			continue
-		}
-		eligibleFileIDs[file.ID] = struct{}{}
-		fileByID[file.ID] = file
-	}
-	for _, fileID := range uniqueFileIDs {
-		if _, ok := eligibleFileIDs[fileID]; !ok {
-			return nil, errs.PermissionDenied("file access denied")
-		}
-	}
-
 	listCan, err := policyv1.File.List()
 	if err != nil {
 		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
@@ -113,7 +83,6 @@ func (s *Service) authorizeManageFileDeliveriesWithWitness(
 		}
 		return authorization, nil
 	}
-
 	bindings, err := s.loadOptionalManageFileIngestBindings(ctx, uniqueFileIDs)
 	if err != nil {
 		return nil, err
@@ -123,54 +92,116 @@ func (s *Service) authorizeManageFileDeliveriesWithWitness(
 		return nil, err
 	}
 	for _, fileID := range uniqueFileIDs {
-		file := fileByID[fileID]
-		ownerKind := manageFileOwnerDeliveryKind(user, file, bindings[fileID])
-		if ownerKind != "" {
-			grant := manageFileDeliveryGrant{lockFile: true}
-			if ownerKind == "avatar" {
-				grant.expectedAvatarOwner = user.MemberID.String()
-			} else {
-				grant.expectedUploader = user.MemberID.String()
-			}
+		if grant, owned := manageFileOwnerDeliveryGrant(user, fileByID[fileID], bindings[fileID]); owned {
 			authorization.files[fileID] = grant
 			continue
 		}
-		usages := usagesByFileID[fileID]
-		if len(usages) == 0 {
-			return nil, errs.PermissionDenied("file access denied")
+		grant, err := s.manageFileUsageDeliveryGrant(ctx, user, usagesByFileID[fileID])
+		if err != nil {
+			return nil, err
 		}
-		authorizedTargets := make(map[string]bool)
-		authorizedUsages := make([]manageFileDeliveryUsageWitness, 0, len(usages))
-		var denied error
-		for _, usage := range usages {
-			target := manageFilePermissionTarget{resourceType: usage.resourceType, resourceID: usage.resourceID}
-			allowed, checked := authorizedTargets[target.key()]
-			if !checked {
-				err := s.authorizeManageFilePermissionTarget(ctx, user, target)
-				if err == nil {
-					allowed = true
-				} else if errs.CodeOf(err) == connect.CodePermissionDenied || errs.CodeOf(err) == connect.CodeNotFound {
-					if denied == nil {
-						denied = err
-					}
-				} else {
-					return nil, err
-				}
-				authorizedTargets[target.key()] = allowed
-			}
-			if allowed {
-				authorizedUsages = append(authorizedUsages, usage)
-			}
-		}
-		if len(authorizedUsages) == 0 {
-			if denied != nil {
-				return nil, denied
-			}
-			return nil, errs.PermissionDenied("file access denied")
-		}
-		authorization.files[fileID] = manageFileDeliveryGrant{usageWitnesses: authorizedUsages}
+		authorization.files[fileID] = grant
 	}
 	return authorization, nil
+}
+
+func sortedUniqueManageDeliveryFileIDs(fileIDs []string) ([]string, error) {
+	uniqueFileIDs := make([]string, 0, len(fileIDs))
+	seen := make(map[string]struct{}, len(fileIDs))
+	for _, rawFileID := range fileIDs {
+		fileID := strings.TrimSpace(rawFileID)
+		if !IsValidUUID(fileID) {
+			return nil, errs.InvalidArgument("file_id", "must be a valid UUID")
+		}
+		if _, ok := seen[fileID]; ok {
+			continue
+		}
+		seen[fileID] = struct{}{}
+		uniqueFileIDs = append(uniqueFileIDs, fileID)
+	}
+	sort.Strings(uniqueFileIDs)
+	return uniqueFileIDs, nil
+}
+
+// loadManageDeliveryFiles reads the ownership of each File, denying the
+// request when one is missing or pending deletion.
+func (s *Service) loadManageDeliveryFiles(ctx context.Context, fileIDs []string) (map[string]model.File, error) {
+	var files []model.File
+	if err := s.db.WithContext(ctx).
+		Select("id", "uploaded_by_member_id", "delete_requested_at").
+		Where("id IN ?", fileIDs).
+		Find(&files).Error; err != nil {
+		return nil, errs.Internal(fmt.Errorf("load File ownership: %w", err))
+	}
+	fileByID := make(map[string]model.File, len(files))
+	for _, file := range files {
+		if file.DeleteRequestedAt != nil {
+			continue
+		}
+		fileByID[file.ID] = file
+	}
+	for _, fileID := range fileIDs {
+		if _, ok := fileByID[fileID]; !ok {
+			return nil, errs.PermissionDenied("file access denied")
+		}
+	}
+	return fileByID, nil
+}
+
+// manageFileOwnerDeliveryGrant grants the File's uploader, or the Member
+// whose avatar it is, a delivery fenced on that ownership.
+func manageFileOwnerDeliveryGrant(user *auth.UserInfo, file model.File, binding model.FileIngestBinding) (manageFileDeliveryGrant, bool) {
+	ownerKind := manageFileOwnerDeliveryKind(user, file, binding)
+	if ownerKind == "" {
+		return manageFileDeliveryGrant{}, false
+	}
+	grant := manageFileDeliveryGrant{lockFile: true}
+	if ownerKind == "avatar" {
+		grant.expectedAvatarOwner = user.MemberID.String()
+	} else {
+		grant.expectedUploader = user.MemberID.String()
+	}
+	return grant, true
+}
+
+// manageFileUsageDeliveryGrant grants a delivery witnessed by each usage
+// whose owner the principal may manage, answering the first owner denial
+// when there is none.
+func (s *Service) manageFileUsageDeliveryGrant(ctx context.Context, user *auth.UserInfo, usages []manageFileDeliveryUsageWitness) (manageFileDeliveryGrant, error) {
+	if len(usages) == 0 {
+		return manageFileDeliveryGrant{}, errs.PermissionDenied("file access denied")
+	}
+	authorizedTargets := make(map[string]bool)
+	authorizedUsages := make([]manageFileDeliveryUsageWitness, 0, len(usages))
+	var denied error
+	for _, usage := range usages {
+		target := manageFilePermissionTarget{resourceType: usage.resourceType, resourceID: usage.resourceID}
+		allowed, checked := authorizedTargets[target.key()]
+		if !checked {
+			err := s.authorizeManageFilePermissionTarget(ctx, user, target)
+			switch {
+			case err == nil:
+				allowed = true
+			case errs.CodeOf(err) == connect.CodePermissionDenied || errs.CodeOf(err) == connect.CodeNotFound:
+				if denied == nil {
+					denied = err
+				}
+			default:
+				return manageFileDeliveryGrant{}, err
+			}
+			authorizedTargets[target.key()] = allowed
+		}
+		if allowed {
+			authorizedUsages = append(authorizedUsages, usage)
+		}
+	}
+	if len(authorizedUsages) == 0 {
+		if denied != nil {
+			return manageFileDeliveryGrant{}, denied
+		}
+		return manageFileDeliveryGrant{}, errs.PermissionDenied("file access denied")
+	}
+	return manageFileDeliveryGrant{usageWitnesses: authorizedUsages}, nil
 }
 
 type currentContentFileDeliveryOwner struct {

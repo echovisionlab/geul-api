@@ -224,6 +224,35 @@ func (s *Service) filterVisibleFileUsages(ctx context.Context, rows []fileUsageR
 		return nil, errs.DependencyUnavailable("SpiceDB")
 	}
 
+	releaseIDByTrackID, err := s.fileUsageTrackReleaseIDs(ctx, rows)
+	if err != nil {
+		return nil, err
+	}
+	allowedTargets, err := s.editableFileUsageTargets(ctx, rows, releaseIDByTrackID)
+	if err != nil {
+		return nil, err
+	}
+
+	visible := make([]fileUsageRow, 0, len(rows))
+	for _, row := range rows {
+		if row.Domain == "map_place" {
+			visible = append(visible, row)
+			continue
+		}
+		resourceType, resourceID, ok := fileUsageResourceTarget(row, releaseIDByTrackID)
+		if !ok {
+			continue
+		}
+		if _, allowed := allowedTargets[resourceType+"\x00"+resourceID]; allowed {
+			visible = append(visible, row)
+		}
+	}
+	return visible, nil
+}
+
+// fileUsageTrackReleaseIDs maps each Track a usage names to its Release,
+// whose authority governs the usage.
+func (s *Service) fileUsageTrackReleaseIDs(ctx context.Context, rows []fileUsageRow) (map[string]string, error) {
 	trackIDs := make([]string, 0)
 	for _, row := range rows {
 		if row.Domain == "track" {
@@ -231,19 +260,25 @@ func (s *Service) filterVisibleFileUsages(ctx context.Context, rows []fileUsageR
 		}
 	}
 	releaseIDByTrackID := make(map[string]string, len(trackIDs))
-	if len(trackIDs) > 0 {
-		var tracks []struct {
-			ID        string `gorm:"column:id"`
-			ReleaseID string `gorm:"column:release_id"`
-		}
-		if err := s.db.WithContext(ctx).Table("track").Select("id, release_id").Where("id IN ?", sliceutil.SortedUniqueTrimmed(trackIDs)).Find(&tracks).Error; err != nil {
-			return nil, err
-		}
-		for _, track := range tracks {
-			releaseIDByTrackID[track.ID] = track.ReleaseID
-		}
+	if len(trackIDs) == 0 {
+		return releaseIDByTrackID, nil
 	}
+	var tracks []struct {
+		ID        string `gorm:"column:id"`
+		ReleaseID string `gorm:"column:release_id"`
+	}
+	if err := s.db.WithContext(ctx).Table("track").Select("id, release_id").Where("id IN ?", sliceutil.SortedUniqueTrimmed(trackIDs)).Find(&tracks).Error; err != nil {
+		return nil, err
+	}
+	for _, track := range tracks {
+		releaseIDByTrackID[track.ID] = track.ReleaseID
+	}
+	return releaseIDByTrackID, nil
+}
 
+// editableFileUsageTargets checks, in key order, which usage owners the
+// viewer may edit, keyed by resource type and ID.
+func (s *Service) editableFileUsageTargets(ctx context.Context, rows []fileUsageRow, releaseIDByTrackID map[string]string) (map[string]struct{}, error) {
 	type permissionTarget struct {
 		resourceType string
 		resourceID   string
@@ -280,22 +315,7 @@ func (s *Service) filterVisibleFileUsages(ctx context.Context, rows []fileUsageR
 			allowedTargets[key] = struct{}{}
 		}
 	}
-
-	visible := make([]fileUsageRow, 0, len(rows))
-	for _, row := range rows {
-		if row.Domain == "map_place" {
-			visible = append(visible, row)
-			continue
-		}
-		resourceType, resourceID, ok := fileUsageResourceTarget(row, releaseIDByTrackID)
-		if !ok {
-			continue
-		}
-		if _, allowed := allowedTargets[resourceType+"\x00"+resourceID]; allowed {
-			visible = append(visible, row)
-		}
-	}
-	return visible, nil
+	return allowedTargets, nil
 }
 
 func fileUsageDomain(domain string) managev1.FileUsageDomain {
