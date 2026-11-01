@@ -97,6 +97,15 @@ func (p principal) context(t *testing.T) context.Context {
 	return auth.WithUser(ctx, p.user())
 }
 
+// collabContext is a request the collaboration service propagates as its
+// system actor.
+func collabContext(t *testing.T) context.Context {
+	t.Helper()
+	requestContext, err := sharedtelemetry.NewPropagatedRequestContext(uuid.NewString(), sharedtelemetry.SystemActor{ServiceName: "geul-collab"})
+	require.NoError(t, err)
+	return sharedtelemetry.WithRequestContext(t.Context(), requestContext)
+}
+
 // member stores p as an active Member with a nickname.
 func (h *harness) member(p principal, nickname string) principal {
 	h.store.PutMember(p.memberID, posttest.Member{IdentityID: p.identityID, Nickname: nickname, Active: true})

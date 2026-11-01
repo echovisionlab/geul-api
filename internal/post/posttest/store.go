@@ -143,8 +143,8 @@ var _ post.Store = (*Store)(nil)
 func NewStore() *Store {
 	return &Store{state: state{
 		posts: map[string]post.Post{}, locales: map[localeKey]localeRow{},
-		taxonomy: map[post.Taxonomy]map[string]bool{post.Categories: {}, post.Tags: {}},
-		links:    map[post.Taxonomy]map[string][]string{post.Categories: {}, post.Tags: {}},
+		taxonomy:  map[post.Taxonomy]map[string]bool{post.Categories: {}, post.Tags: {}},
+		links:     map[post.Taxonomy]map[string][]string{post.Categories: {}, post.Tags: {}},
 		relations: map[relationKey]time.Time{}, members: map[string]Member{}, comments: map[string]post.Comment{},
 		versions: map[string][]post.StoredVersion{}, documents: map[uuid.UUID]Document{},
 		mapPlaces: map[string]bool{}, files: map[string]bool{}, routes: map[string]bool{},

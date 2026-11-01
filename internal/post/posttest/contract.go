@@ -679,7 +679,9 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		require.Equal(t, created.Document.Revision, stale.CurrentRevision)
 		transact(t, h, func(ctx context.Context, store post.Store) error {
 			unchanged, err := store.AdvanceContentRevision(ctx, contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: created.Document.Revision}, fence,
-				func(context.Context, post.Store) (contentblock.MetadataEffect, error) { return contentblock.MetadataEffect{}, nil })
+				func(context.Context, post.Store) (contentblock.MetadataEffect, error) {
+					return contentblock.MetadataEffect{}, nil
+				})
 			require.NoError(t, err)
 			require.Equal(t, contentblock.AdvanceResult{DocumentRevision: created.Document.Revision}, unchanged, "an unchanged effect keeps the revision")
 			advanced, err := store.AdvanceContentRevision(ctx, contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: created.Document.Revision}, fence, changed)

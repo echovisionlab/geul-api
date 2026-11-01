@@ -23,8 +23,12 @@ func (s *Store) FindPost(_ context.Context, postID string) (post.Post, error) {
 	return s.withRelations(stored), nil
 }
 
-func (s *Store) ReadPost(_ context.Context, postID string) (post.Post, error) { return s.lookup(postID) }
-func (s *Store) TakePost(_ context.Context, postID string) (post.Post, error) { return s.lookup(postID) }
+func (s *Store) ReadPost(_ context.Context, postID string) (post.Post, error) {
+	return s.lookup(postID)
+}
+func (s *Store) TakePost(_ context.Context, postID string) (post.Post, error) {
+	return s.lookup(postID)
+}
 
 func (s *Store) FindPostID(_ context.Context, postID string) error {
 	_, err := s.lookup(postID)
@@ -36,7 +40,9 @@ func (s *Store) status(postID string) (post.Status, error) {
 	return stored.Status, err
 }
 
-func (s *Store) PostStatus(_ context.Context, postID string) (post.Status, error) { return s.status(postID) }
+func (s *Store) PostStatus(_ context.Context, postID string) (post.Status, error) {
+	return s.status(postID)
+}
 
 func (s *Store) LockPostStatus(_ context.Context, postID string) (post.Status, error) {
 	if err := s.fail("LockPostStatus"); err != nil {
