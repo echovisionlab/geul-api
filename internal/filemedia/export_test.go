@@ -3,6 +3,7 @@ package filemedia
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -60,4 +61,26 @@ func ExportPromotionService(units mutation.UnitOfWork[Store], client *s3.Client)
 func ExportPromotionStorage(t *testing.T, file File, body []byte) (*s3.Client, func(bool), func() []string) {
 	f := newSourceAssetPromotionS3Fixture(t, model.File(file), body)
 	return f.client, f.setFailTransfer, f.deletedKeys
+}
+
+func ExportSessionService(units mutation.UnitOfWork[Store]) *Service { return &Service{units: units} }
+
+var ExportDeleteCompletedUploadSession = (*Service).deleteCompletedUploadSession
+var ExportDeleteAbortedUploadSession = (*Service).deleteAbortedUploadSession
+var ExportClaimUploadPartActivity = (*Service).claimUploadPartActivity
+var ExportClaimUploadSessionAbort = (*Service).claimUploadSessionAbort
+
+func ExportClaimMultipartCompletion(s *Service, ctx context.Context, upload, file string, now time.Time) (bool, []domain.UploadPart, error) {
+	claimed, parts, err := s.claimMultipartCompletion(ctx, model.UploadSession{UploadID: upload, FileID: file}, now)
+	var result []domain.UploadPart
+	if parts != nil {
+		result = make([]domain.UploadPart, len(parts))
+		for i, p := range parts {
+			result[i] = domain.UploadPart(p)
+		}
+	}
+	return claimed, result, err
+}
+func ExportRetryableMultipartFailure(s *Service, ctx context.Context, upload, file string, now time.Time) error {
+	return s.recordRetryableMultipartPartFailure(ctx, model.UploadSession{UploadID: upload, FileID: file}, now)
 }
