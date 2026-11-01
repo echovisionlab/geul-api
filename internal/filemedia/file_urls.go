@@ -7,48 +7,20 @@ import (
 	"strings"
 	"time"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-type storedFileDeliveryRow struct {
-	ClientMediaBundleID *string `gorm:"column:client_media_bundle_id"`
-	ID                  string  `gorm:"column:id"`
-	Extension           string  `gorm:"column:extension"`
-	MimeType            string  `gorm:"column:mime_type"`
-	FileSize            int64   `gorm:"column:file_size"`
-	DurationSeconds     *int    `gorm:"column:duration_seconds"`
-	FileName            *string `gorm:"column:file_name"`
-	IngestSlotID        *string `gorm:"column:ingest_slot_id"`
-	IngestAttemptID     *string `gorm:"column:ingest_attempt_id"`
-}
-
-type storedDerivativeDeliveryRow struct {
-	FileID                  string  `gorm:"column:file_id"`
-	Type                    string  `gorm:"column:type"`
-	AssetID                 *string `gorm:"column:asset_id"`
-	AssetKind               *string `gorm:"column:asset_kind"`
-	AssetExtension          *string `gorm:"column:asset_extension"`
-	AssetMimeType           *string `gorm:"column:asset_mime_type"`
-	AssetFileSize           *int64  `gorm:"column:asset_file_size"`
-	AssetSHA256             []byte  `gorm:"column:asset_sha256"`
-	AssetDisposition        *string `gorm:"column:asset_disposition"`
-	AssetDownloadFilename   *string `gorm:"column:asset_download_filename"`
-	AssetStatus             *string `gorm:"column:asset_status"`
-	MediaGenerationID       *string `gorm:"column:media_generation_id"`
-	MediaGenerationFileID   *string `gorm:"column:media_generation_file_id"`
-	MediaGenerationManifest *string `gorm:"column:media_generation_manifest"`
-	MediaGenerationStatus   *string `gorm:"column:media_generation_status"`
-}
+type storedFileDeliveryRow = domain.StoredFileDelivery
+type storedDerivativeDeliveryRow = domain.StoredDerivativeDelivery
 
 // resolveContentFileDeliveries preloads private inline refs for File Manager
 // generated-output projection. The caller must apply the final File and exact
@@ -76,13 +48,14 @@ func (s *Service) resolveContentFileDeliveries(
 	}
 
 	var files []storedFileDeliveryRow
-	if err := s.db.WithContext(ctx).
-		Table("file").
-		Select("id", "extension", "mime_type", "file_size", "duration_seconds", "file_name").
-		Where("id IN ? AND delete_requested_at IS NULL", unique).
-		Find(&files).Error; err != nil {
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		files, err = store.StoredFileDeliveries(ctx, unique, false)
+		return err
+	}); err != nil {
 		return nil, fmt.Errorf("load content file deliveries: %w", err)
 	}
+
 	for _, file := range files {
 		inline, err := buildExpiringMediaFileRef(
 			s.mediaDomain,
@@ -200,11 +173,11 @@ func (s *Service) loadFileURLResponses(
 		return map[string]*managev1.GetMediaDeliveryResponse{}, nil
 	}
 	var files []storedFileDeliveryRow
-	if err := s.db.WithContext(ctx).
-		Table("file").
-		Select("id", "extension", "mime_type", "file_size", "duration_seconds", "file_name", "ingest_slot_id", "ingest_attempt_id", "client_media_bundle_id").
-		Where("id IN ? AND delete_requested_at IS NULL", fileIDs).
-		Find(&files).Error; err != nil {
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		files, err = store.StoredFileDeliveries(ctx, fileIDs, true)
+		return err
+	}); err != nil {
 		return nil, fmt.Errorf("failed to query files: %w", err)
 	}
 
@@ -237,11 +210,11 @@ func (s *Service) loadFileURLResponses(
 			meshFileIDs = append(meshFileIDs, file.ID)
 		}
 	}
-	imageAssets, err := mediaasset.ReferenceMapResultProto(mediaasset.LoadReadyPublicAssetRefsForSourceFiles(ctx, mediaassetpostgres.NewUnits(s.db), s.cdnDomain, "image", imageFileIDs))
+	imageAssets, err := mediaasset.ReferenceMapResultProto(s.sourceAssetReferences(ctx, "image", imageFileIDs))
 	if err != nil {
 		return nil, err
 	}
-	meshAssets, err := mediaasset.ReferenceMapResultProto(mediaasset.LoadReadyPublicAssetRefsForSourceFiles(ctx, mediaassetpostgres.NewUnits(s.db), s.cdnDomain, "mesh", meshFileIDs))
+	meshAssets, err := mediaasset.ReferenceMapResultProto(s.sourceAssetReferences(ctx, "mesh", meshFileIDs))
 	if err != nil {
 		return nil, err
 	}
@@ -319,28 +292,11 @@ func (s *Service) loadStoredDerivativeDeliveries(
 		return nil, nil
 	}
 	var rows []storedDerivativeDeliveryRow
-	err := s.db.WithContext(ctx).
-		Table("file_derivative AS fd").
-		Select(`
-			fd.file_id,
-			fd.type,
-			pa.id AS asset_id,
-			pa.kind AS asset_kind,
-			pa.extension AS asset_extension,
-			pa.mime_type AS asset_mime_type,
-			pa.file_size AS asset_file_size,
-			pa.sha256 AS asset_sha256,
-			pa.disposition AS asset_disposition,
-			pa.download_filename AS asset_download_filename,
-			pa.status AS asset_status,
-			mg.id AS media_generation_id,
-			mg.file_id AS media_generation_file_id,
-			mg.manifest_name AS media_generation_manifest,
-			mg.status AS media_generation_status`).
-		Joins("LEFT JOIN public_asset pa ON pa.id = fd.asset_id").
-		Joins("LEFT JOIN media_generation mg ON mg.id = fd.media_generation_id").
-		Where("fd.file_id IN ?", fileIDs).
-		Find(&rows).Error
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		rows, err = store.StoredDerivativeDeliveries(ctx, fileIDs)
+		return err
+	})
 	return rows, err
 }
 
@@ -466,7 +422,7 @@ func (s *Service) attachFileDerivativeURLs(
 }
 
 func (s *Service) assetRefForDerivative(row storedDerivativeDeliveryRow) (*commonv1.AssetRef, error) {
-	if row.AssetID == nil || row.AssetStatus == nil || *row.AssetStatus != model.PublicAssetStatusReady {
+	if row.AssetID == nil || row.AssetStatus == nil || *row.AssetStatus != string(mediaasset.AssetReady) {
 		return nil, nil
 	}
 	if row.AssetExtension == nil || row.AssetMimeType == nil || row.AssetFileSize == nil || len(row.AssetSHA256) != 32 {
@@ -499,7 +455,7 @@ func (s *Service) assetRefForDerivative(row storedDerivativeDeliveryRow) (*commo
 }
 
 func (s *Service) hlsPlaybackRef(fileID string, row storedDerivativeDeliveryRow) (*commonv1.HlsMediaRef, error) {
-	if row.MediaGenerationID == nil || row.MediaGenerationStatus == nil || *row.MediaGenerationStatus != model.MediaGenerationStatusReady {
+	if row.MediaGenerationID == nil || row.MediaGenerationStatus == nil || *row.MediaGenerationStatus != string(mediaasset.GenerationReady) {
 		return nil, nil
 	}
 	if row.MediaGenerationFileID == nil || *row.MediaGenerationFileID != fileID {
@@ -525,4 +481,17 @@ func (s *Service) effectiveDownloadTTL() time.Duration {
 		return min(s.downloadTTL, mediaauth.DownloadTTL)
 	}
 	return mediaauth.DownloadTTL
+}
+
+func (s *Service) sourceAssetReferences(ctx context.Context, kind string, ids []string) (map[string]*mediaasset.Reference, error) {
+	if len(ids) == 0 {
+		return map[string]*mediaasset.Reference{}, nil
+	}
+	var refs map[string]*mediaasset.Reference
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		refs, err = store.SourceAssetReferences(ctx, s.cdnDomain, kind, ids)
+		return err
+	})
+	return refs, err
 }

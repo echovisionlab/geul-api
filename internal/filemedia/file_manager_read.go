@@ -6,7 +6,7 @@ import (
 	"sort"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -70,11 +70,7 @@ func (s *Service) GetFile(ctx context.Context, query GetFileQuery) (*managev1.Ge
 	return &managev1.GetFileResponse{File: file, DomainUsageSummary: summary, GeneratedOutputs: generatedOutputs}, nil
 }
 
-type fileManagerMeshOutputRow struct {
-	ID           string  `gorm:"column:id"`
-	Status       string  `gorm:"column:status"`
-	OutputFileID *string `gorm:"column:output_file_id"`
-}
+type fileManagerMeshOutputRow = domain.MeshDeliveryOutput
 
 func (s *Service) loadFileGeneratedOutputs(ctx context.Context, fileID string) ([]*managev1.FileGeneratedOutput, error) {
 	derivatives, err := s.loadStoredDerivativeDeliveries(ctx, []string{fileID})
@@ -120,16 +116,16 @@ func (s *Service) loadFileGeneratedOutputs(ctx context.Context, fileID string) (
 	}
 
 	var meshRows []fileManagerMeshOutputRow
-	if err := s.db.WithContext(ctx).Table("mesh_optimization_candidate").
-		Select("id", "status", "output_file_id").
-		Where("source_file_id = ? AND output_file_id IS NOT NULL", fileID).
-		Order("created_at DESC, id DESC").
-		Find(&meshRows).Error; err != nil {
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		meshRows, err = store.MeshDeliveryOutputs(ctx, fileID)
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	readyFileIDs := make([]string, 0, len(meshRows))
 	for _, row := range meshRows {
-		if row.Status == model.MeshOptimizationCandidateStatusReady && row.OutputFileID != nil {
+		if row.Status == "ready" && row.OutputFileID != nil {
 			readyFileIDs = append(readyFileIDs, *row.OutputFileID)
 		}
 	}

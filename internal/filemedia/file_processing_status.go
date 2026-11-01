@@ -4,9 +4,8 @@ import (
 	"context"
 	"strings"
 
-	transcodepostgres "github.com/echovisionlab/geul-api/internal/transcode/postgres"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
 type fileProcessingSnapshot struct {
@@ -105,19 +104,17 @@ func (s *Service) populateFileProcessingStatus(
 		}
 	}
 
-	audioTranscodeFailures, err := transcodepostgres.FailedTranscodeCounts(ctx, s.db, audioIDs, eventpkg.QueueTranscoderAudio)
-	if err != nil {
-		return err
-	}
-	videoTranscodeFailures, err := transcodepostgres.FailedTranscodeCounts(ctx, s.db, videoIDs, eventpkg.QueueTranscoderVideo)
-	if err != nil {
-		return err
-	}
-	waveformFailures, err := transcodepostgres.FailedWaveformCounts(ctx, s.db, audioIDs)
-	if err != nil {
-		return err
-	}
+	var failures domain.ProcessingFailureCounts
+	if len(audioIDs)+len(videoIDs) > 0 {
+		if err := s.units.Read(ctx, func(store Store) error {
+			var err error
+			failures, err = store.DeliveryProcessingFailures(ctx, audioIDs, videoIDs)
+			return err
+		}); err != nil {
+			return err
+		}
 
+	}
 	for fileID, response := range responses {
 		if response == nil {
 			continue
@@ -127,8 +124,8 @@ func (s *Service) populateFileProcessingStatus(
 			response.GetPlayback() != nil && response.GetPlayback().GetUrl() != "",
 			response.GetWaveform() != nil && response.GetWaveform().GetUrl() != "",
 			response.GetSpectrogram() != nil && response.GetSpectrogram().GetUrl() != "",
-			audioTranscodeFailures[fileID]+videoTranscodeFailures[fileID],
-			waveformFailures[fileID],
+			failures.Audio[fileID]+failures.Video[fileID],
+			failures.Waveform[fileID],
 		)
 		response.ProcessingStatus = snapshot.Status
 		response.ProcessingPercentage = snapshot.Percentage

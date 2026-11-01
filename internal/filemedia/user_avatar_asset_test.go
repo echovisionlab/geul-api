@@ -1,6 +1,8 @@
 package filemedia
 
 import (
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -53,7 +55,7 @@ func TestPromoteUserAvatarAssetStreamsWebPAndReusesReadyAsset(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	service := &Service{
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db:        db,
 		s3Bucket:  "bucket",
 		cdnDomain: "https://cdn.example.com",
@@ -103,7 +105,7 @@ func TestPromoteUserAvatarAssetMarksAllocationFailedWithoutDeletingSharedObject(
 	}))
 	t.Cleanup(server.Close)
 
-	service := &Service{
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db:        db,
 		s3Bucket:  "bucket",
 		cdnDomain: "https://cdn.example.com",
@@ -165,7 +167,7 @@ func TestPromoteUserAvatarAssetResumesAllocatedAsset(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	service := &Service{
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db:        db,
 		s3Bucket:  "bucket",
 		cdnDomain: "https://cdn.example.com",

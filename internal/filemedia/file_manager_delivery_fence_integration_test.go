@@ -337,7 +337,7 @@ func TestFileManagerAuthorCanDownloadUnattachedFileIntegration(t *testing.T) {
 	db := testutil.NewIntegrationDB(t)
 	adminCtx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	user := auth.GetUser(adminCtx)
-	service := withTestMutations(&Service{
+	service := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, spiceDB: spiceDB,
 		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
 		mediaSecret: "file-manager-unattached-secret", downloadTTL: time.Hour,
@@ -1191,7 +1191,7 @@ func newFileManagerDeliveryFenceFixture(
 	t.Helper()
 	db, spiceDB := newLocalKratosConcurrentServiceIntegrationDB(t)
 	ctx := integrationAdminCtxWithIdentity(t, db, spiceDB)
-	service := withTestMutations(&Service{
+	service := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, spiceDB: spiceDB,
 		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
 		mediaSecret: "file-manager-fence-secret", downloadTTL: time.Hour,
@@ -1216,7 +1216,7 @@ func newManagePostCollaboratorFenceFixture(
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
-	service := withTestMutations(&Service{
+	service := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, spiceDB: spiceDB,
 		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
 		mediaSecret: "manage-usage-fence-secret", downloadTTL: time.Hour,

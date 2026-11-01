@@ -1,6 +1,8 @@
 package filemedia
 
 import (
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -42,7 +44,7 @@ func TestDeleteCompletedUploadSessionFailurePreservesRetry(t *testing.T) {
 			SELECT RAISE(ABORT, 'injected upload session delete failure');
 		END`).Error)
 
-	service := &Service{db: db}
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db}
 	err = service.deleteCompletedUploadSession(context.Background(), uploadID)
 	require.Error(t, err)
 
@@ -77,7 +79,7 @@ func TestDeleteAbortedUploadSessionFailureDoesNotReportCleanupSuccess(t *testing
 			SELECT RAISE(ABORT, 'injected aborted upload session delete failure');
 		END`).Error)
 
-	service := &Service{db: db}
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db}
 	err = service.deleteAbortedUploadSession(context.Background(), uploadID)
 	require.Error(t, err)
 
@@ -260,7 +262,7 @@ func TestClaimUploadPartActivityOnlyRefreshesWritableSessions(t *testing.T) {
 		).Error)
 	}
 
-	service := &Service{db: db}
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db}
 	now := time.Now().UTC()
 	claimed, err := service.claimUploadPartActivity(context.Background(), "uploading", "file-1", now)
 	require.NoError(t, err)
@@ -308,7 +310,7 @@ func TestRecordUploadedPartCannotOverwriteFinalizingOrAbortedState(t *testing.T)
 		session.UploadID, session.FileID, session.Status, now, now,
 	).Error)
 	part := model.UploadPart{UploadID: session.UploadID, PartNumber: 1, ETag: "etag", Size: 10, CreatedAt: now, UpdatedAt: now}
-	service := &Service{db: db}
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db}
 
 	recorded, err := service.recordUploadedPart(context.Background(), session, part)
 	require.NoError(t, err)
@@ -392,7 +394,7 @@ func TestRecordRetryableMultipartPartFailurePreservesResumableStatus(t *testing.
 	).Error)
 
 	now := time.Now().UTC()
-	service := &Service{db: db}
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db}
 	require.NoError(t, service.recordRetryableMultipartPartFailure(context.Background(), session, now))
 
 	var stored struct {
@@ -460,7 +462,7 @@ func TestClaimMultipartCompletionDoesNotResurrectTerminalSession(t *testing.T) {
 		).Error)
 	}
 
-	service := &Service{db: db}
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db}
 	now := time.Now().UTC()
 	for _, uploadID := range []string{"uploading", "finalizing"} {
 		claimed, _, err := service.claimMultipartCompletion(context.Background(), model.UploadSession{
@@ -526,7 +528,7 @@ func TestClaimUploadSessionAbortRejectsFinalizingSession(t *testing.T) {
 		).Error)
 	}
 
-	service := &Service{db: db}
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db}
 	now := time.Now().UTC()
 	for _, uploadID := range []string{"uploading", "failed"} {
 		claimed, err := service.claimUploadSessionAbort(context.Background(), uploadID, "file-1", now)

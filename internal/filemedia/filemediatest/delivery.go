@@ -1,10 +1,14 @@
 package filemediatest
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
@@ -129,4 +133,107 @@ func (s *LibraryStore) LockExactDeliveryUsage(_ context.Context, w domain.Delive
 		return false, fmt.Errorf("unsupported manage delivery usage witness %q", w.Kind)
 	}
 	return s.ExactUsages[w.Key()], nil
+}
+
+func (s *LibraryStore) DeliveryFileOwnership(_ context.Context, ids []string) ([]domain.File, error) {
+	if s.Fail != nil {
+		return nil, s.Fail
+	}
+	result := make([]domain.File, 0, len(ids))
+	for _, id := range ids {
+		if r, ok := s.Files[id]; ok {
+			f := deliveryFile(r)
+			result = append(result, domain.File{ID: id, UploadedByMemberID: f.UploadedByMemberID, DeleteRequestedAt: f.DeleteRequestedAt})
+		}
+	}
+	return result, nil
+}
+func (s *LibraryStore) DeliveryIngestBindings(_ context.Context, ids []string) ([]domain.IngestBinding, error) {
+	if s.Fail != nil {
+		return nil, s.Fail
+	}
+	result := make([]domain.IngestBinding, 0, len(ids))
+	for _, id := range ids {
+		if b, ok := s.IngestBindings[id]; ok {
+			result = append(result, b)
+		}
+	}
+	return result, nil
+}
+func (s *LibraryStore) CurrentDeliveryUsages(_ context.Context, ids []string) ([]domain.CurrentDeliveryUsage, error) {
+	if s.Fail != nil {
+		return nil, s.Fail
+	}
+	result := []domain.CurrentDeliveryUsage{}
+	for _, u := range s.DeliveryUsages {
+		if slices.Contains(ids, u.FileID) {
+			result = append(result, u)
+		}
+	}
+	return result, nil
+}
+
+func (s *LibraryStore) StoredFileDeliveries(_ context.Context, ids []string, withIngest bool) ([]domain.StoredFileDelivery, error) {
+	if s.Fail != nil {
+		return nil, s.Fail
+	}
+	result := []domain.StoredFileDelivery{}
+	for _, id := range ids {
+		r, ok := s.Files[id]
+		if !ok || r.PendingDeletion {
+			continue
+		}
+		f := deliveryFile(r)
+		row := domain.StoredFileDelivery{ID: id, FileName: &f.FileName, Extension: f.Extension, MimeType: f.MimeType, FileSize: f.FileSize, DurationSeconds: f.DurationSeconds}
+		if withIngest {
+			row.IngestSlotID = f.IngestSlotID
+			row.IngestAttemptID = f.IngestAttemptID
+			row.ClientMediaBundleID = f.ClientMediaBundleID
+		}
+		result = append(result, row)
+	}
+	return result, nil
+}
+func (s *LibraryStore) StoredDerivativeDeliveries(_ context.Context, ids []string) ([]domain.StoredDerivativeDelivery, error) {
+	if s.Fail != nil {
+		return nil, s.Fail
+	}
+	result := []domain.StoredDerivativeDelivery{}
+	for _, id := range ids {
+		result = append(result, s.Derivatives[id]...)
+	}
+	return result, nil
+}
+func (s *LibraryStore) MeshDeliveryOutputs(_ context.Context, id string) ([]domain.MeshDeliveryOutput, error) {
+	if s.Fail != nil {
+		return nil, s.Fail
+	}
+	result := []domain.MeshDeliveryOutput{}
+	for _, r := range s.MeshRecords {
+		w := r.Witness
+		if w.SourceFileID == id && w.OutputFileID != "" {
+			out := w.OutputFileID
+			result = append(result, domain.MeshDeliveryOutput{ID: w.CandidateID, Status: r.Status, OutputFileID: &out})
+		}
+	}
+	slices.SortFunc(result, func(a, b domain.MeshDeliveryOutput) int { return cmp.Compare(b.ID, a.ID) })
+	return result, nil
+}
+func (s *LibraryStore) SourceAssetReferences(ctx context.Context, cdn, kind string, ids []string) (map[string]*mediaasset.Reference, error) {
+	if s.Fail != nil {
+		return nil, s.Fail
+	}
+	return mediaasset.LoadReadyPublicAssetRefsForSourceFiles(ctx, mutationtest.New[mediaasset.Store](s.MediaAssets), cdn, kind, ids)
+}
+func (s *LibraryStore) DeliveryProcessingFailures(_ context.Context, audio, video []string) (domain.ProcessingFailureCounts, error) {
+	filter := func(counts map[string]int64, ids []string) map[string]int64 {
+		m := map[string]int64{}
+		for _, id := range ids {
+			if n := counts[id]; n > 0 {
+				m[id] = n
+			}
+		}
+		return m
+	}
+	return domain.ProcessingFailureCounts{Audio: filter(s.Failures.Audio, audio), Video: filter(s.Failures.Video, video), Waveform: filter(s.Failures.Waveform, audio)}, s.Fail
 }

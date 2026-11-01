@@ -1,6 +1,8 @@
 package filemedia
 
 import (
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
 	"context"
 	"errors"
 	"fmt"
@@ -111,7 +113,7 @@ func TestTriggerFileScopedProcessingPublishesAudioWithoutManualOptions(t *testin
 	publisher := &recordingFileTranscoderPublisher{}
 	db := newTranscodeTargetUnitDB(t)
 	fileID := seedTranscodeTargetSource(t, db, "mp3", "audio/mpeg")
-	svc := &Service{db: db, publisher: publisher, asyncPublisher: publisher}
+	svc := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db, publisher: publisher, asyncPublisher: publisher}
 	err := svc.triggerFileScopedProcessingIfNeeded(context.Background(), fileID)
 	require.NoError(t, err)
 
@@ -149,7 +151,7 @@ func TestTriggerFileScopedProcessingPublishesVideo(t *testing.T) {
 	publisher := &recordingFileTranscoderPublisher{}
 	db := newTranscodeTargetUnitDB(t)
 	fileID := seedTranscodeTargetSource(t, db, "mp4", "video/mp4")
-	svc := &Service{db: db, publisher: publisher, asyncPublisher: publisher}
+	svc := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db, publisher: publisher, asyncPublisher: publisher}
 	err := svc.triggerFileScopedProcessingIfNeeded(context.Background(), fileID)
 	require.NoError(t, err)
 
@@ -183,7 +185,7 @@ func TestTriggerFileScopedProcessingRejectsPendingDelete(t *testing.T) {
 	publisher := &recordingFileTranscoderPublisher{}
 	db := newTranscodeTargetUnitDB(t)
 	fileID := seedTranscodeTargetSource(t, db, "mp3", "audio/mpeg")
-	svc := &Service{db: db, publisher: publisher, asyncPublisher: publisher}
+	svc := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db, publisher: publisher, asyncPublisher: publisher}
 	now := time.Now().UTC()
 	require.NoError(t, db.Model(&model.File{}).Where("id = ?", fileID).Update("delete_requested_at", now).Error)
 	err := svc.triggerFileScopedProcessingIfNeeded(context.Background(), fileID)
@@ -200,7 +202,7 @@ func TestTriggerFileScopedProcessingRetriesSameStableCommandAfterPublishError(t 
 	publisher := &recordingFileTranscoderPublisher{err: errors.New("confirm unavailable")}
 	db := newTranscodeTargetUnitDB(t)
 	fileID := seedTranscodeTargetSource(t, db, "mp3", "audio/mpeg")
-	svc := &Service{db: db, publisher: publisher, asyncPublisher: publisher}
+	svc := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db, publisher: publisher, asyncPublisher: publisher}
 	err := svc.triggerFileScopedProcessingIfNeeded(context.Background(), fileID)
 	require.ErrorContains(t, err, "enqueue File audio transcode job")
 

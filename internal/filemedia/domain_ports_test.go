@@ -1,6 +1,8 @@
 package filemedia
 
 import (
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
 	"context"
 	"testing"
 
@@ -127,7 +129,7 @@ func TestVerifiedPostFileMutationPassesOuterTransactionToOneEditAction(t *testin
 
 	db := newPostAccessUnitDB(t)
 	access := &recordingPostAccess{}
-	service := &Service{db: db, postAccess: access}
+	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db, postAccess: access}
 	ctx := auditedUserContext(context.Background(), postAccessPrincipal())
 	postID := uuid.NewString()
 

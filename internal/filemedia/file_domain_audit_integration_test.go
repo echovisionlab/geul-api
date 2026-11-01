@@ -3,6 +3,8 @@
 package filemedia
 
 import (
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
 	"context"
 	"fmt"
 	"testing"
@@ -29,7 +31,7 @@ func TestFileManagerDomainAuditIntegration(t *testing.T) {
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := releaseAuditContext(t, identityID, memberID)
 	writer := apitelemetry.NewDurableWriter(db)
-	service := withTestMutations(&Service{
+	service := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, spiceDB: spiceDB, cdnDomain: "https://cdn.example.test", mediaSecret: "file-audit",
 		downloadTTL: time.Hour, asyncPublisher: &capturingAsyncPublisher{}, auditWriter: writer,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
@@ -68,7 +70,7 @@ func TestFileManagerDomainAuditIntegration(t *testing.T) {
 	}
 	require.Equal(t, []string{"file_folder.created", "file_folder.created", "file_folder.updated", "file_folder.updated", "file.updated", "file.updated", "file.deleted"}, []string{rows[0].Action, rows[1].Action, rows[2].Action, rows[3].Action, rows[4].Action, rows[5].Action, rows[6].Action})
 
-	failing := withTestMutations(&Service{
+	failing := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, spiceDB: spiceDB, auditWriter: fileFailingAuditAppender{},
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
 	})
@@ -89,7 +91,7 @@ func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *t
 	ctx := releaseAuditContext(t, identityID, memberID)
 	writer := apitelemetry.NewDurableWriter(db)
 	publisher := &capturingAsyncPublisher{}
-	service := withTestMutations(&Service{
+	service := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, spiceDB: spiceDB, asyncPublisher: publisher, auditWriter: writer,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
 	})
@@ -109,7 +111,7 @@ func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *t
 	require.JSONEq(t, `{}`, string(createdRows[0].Attributes))
 
 	failingIngestID := testutil.IntegrationUUID()
-	failingIngest := withTestMutations(&Service{db: db, spiceDB: spiceDB, auditWriter: fileFailingAuditAppender{}})
+	failingIngest := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db, spiceDB: spiceDB, auditWriter: fileFailingAuditAppender{}})
 	err = failingIngest.createVerifiedFileIngestRecord(ctx, fileIngestRecord{
 		id: failingIngestID, fileName: "must-rollback", mimeType: "image/jpeg", fileSize: 1024, extension: "jpg", sha256: make([]byte, 32), ingestAttemptID: testutil.IntegrationUUID(),
 	}, managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, "", trustedSystemFileIngestAuthority{})
@@ -144,7 +146,7 @@ func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *t
 	rollbackChild, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{ParentId: &rollbackRoot.Msg.Folder.Id, Name: "Rollback child"}))
 	require.NoError(t, err)
 	rollbackFileID := seedFileManagerFile(t, db, rollbackChild.Msg.Folder.Id, memberID, "rollback-file", "jpg", "image/jpeg")
-	failingDelete := withTestMutations(&Service{
+	failingDelete := withTestMutations(&Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
 		db: db, spiceDB: spiceDB, asyncPublisher: &capturingAsyncPublisher{}, auditWriter: fileFailingAuditAppender{},
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
 	})

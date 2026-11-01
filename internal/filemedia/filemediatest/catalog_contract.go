@@ -1,11 +1,14 @@
 package filemediatest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
@@ -15,6 +18,9 @@ import (
 
 type CatalogHarness struct {
 	mutationtest.Harness[domain.Store]
+	SeedAsset         func(*testing.T, mediaasset.Asset)
+	SeedGeneration    func(*testing.T, mediaasset.Generation)
+	SeedDerivative    func(*testing.T, domain.StoredDerivativeDelivery)
 	SeedFile          func(*testing.T, domain.CatalogRow, bool, bool)
 	SeedAvatar        func(*testing.T, string, string)
 	SeedMesh          func(*testing.T, domain.MeshDeliveryWitness, string)
@@ -24,6 +30,85 @@ type CatalogHarness struct {
 func RunCatalogContract(t *testing.T, open func(*testing.T) CatalogHarness) {
 	t.Helper()
 	cases := map[string]func(*testing.T, CatalogHarness){
+		"delivery read projections retain asset generation and mesh facts": func(t *testing.T, h CatalogHarness) {
+			row, output, pending := CatalogFile("original", nil), CatalogFile("output", nil), CatalogFile("pending", nil)
+			h.SeedFile(t, row, false, false)
+			h.SeedFile(t, output, false, false)
+			h.SeedFile(t, pending, true, false)
+			now := time.Now().UTC()
+			assetID, generationID := uuid.NewString(), uuid.NewString()
+			size := int64(123)
+			count := int32(2)
+			source := mediaasset.Asset{ID: assetID, SourceFileID: &row.ID, Kind: "image", ObjectKey: "asset/" + assetID + ".webp", Extension: "webp", MimeType: "image/webp", FileSize: &size, SHA256: bytes.Repeat([]byte{7}, 32), Disposition: "inline", Status: mediaasset.AssetReady, ReadyAt: &now, CreatedAt: now, UpdatedAt: now}
+			h.SeedAsset(t, source)
+			h.SeedGeneration(t, mediaasset.Generation{ID: generationID, FileID: row.ID, Kind: "hls", ObjectPrefix: "media/" + row.ID + "/hls/" + generationID, ManifestName: "master.m3u8", ManifestSHA256: bytes.Repeat([]byte{8}, 32), ObjectCount: &count, TotalSize: &size, Status: mediaasset.GenerationReady, ReadyAt: &now, CreatedAt: now, UpdatedAt: now})
+			asset := domain.StoredDerivativeDelivery{FileID: row.ID, Type: "FILE_DERIVATIVE_TYPE_THUMBNAIL", AssetID: &assetID, AssetKind: new("image"), AssetExtension: new("webp"), AssetMimeType: new("image/webp"), AssetFileSize: &size, AssetSHA256: source.SHA256, AssetDisposition: new("inline"), AssetStatus: new("ready")}
+			generation := domain.StoredDerivativeDelivery{FileID: row.ID, Type: "FILE_DERIVATIVE_TYPE_HLS", MediaGenerationID: &generationID, MediaGenerationFileID: &row.ID, MediaGenerationManifest: new("master.m3u8"), MediaGenerationStatus: new("ready")}
+			h.SeedDerivative(t, asset)
+			h.SeedDerivative(t, generation)
+			witness := domain.MeshDeliveryWitness{CandidateID: uuid.NewString(), SourceFileID: row.ID, OutputFileID: output.ID}
+			h.SeedMesh(t, witness, "ready")
+			require.NoError(t, mutationtest.Read(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				for _, full := range []bool{false, true} {
+					rows, err := s.StoredFileDeliveries(ctx, []string{row.ID, pending.ID, uuid.NewString()}, full)
+					require.NoError(t, err)
+					require.Len(t, rows, 1)
+					got := rows[0]
+					require.Equal(t, row.ID, got.ID)
+					require.Equal(t, &row.Name, got.FileName)
+					require.Equal(t, *row.Extension, got.Extension)
+					require.Equal(t, *row.MimeType, got.MimeType)
+					require.Equal(t, *row.FileSize, got.FileSize)
+					require.Equal(t, int(*row.DurationSeconds), *got.DurationSeconds)
+				}
+				derivatives, err := s.StoredDerivativeDeliveries(ctx, []string{row.ID})
+				require.NoError(t, err)
+				require.ElementsMatch(t, []domain.StoredDerivativeDelivery{asset, generation}, derivatives)
+				refs, err := s.SourceAssetReferences(ctx, "https://cdn.example.com", "image", []string{row.ID, output.ID})
+				require.NoError(t, err)
+				require.Len(t, refs, 1)
+				require.Equal(t, assetID, refs[row.ID].AssetID)
+				require.Equal(t, "https://cdn.example.com/asset/"+assetID+"/image.webp", refs[row.ID].URL)
+				require.Equal(t, source.SHA256, refs[row.ID].SHA256)
+				mesh, err := s.MeshDeliveryOutputs(ctx, row.ID)
+				require.NoError(t, err)
+				require.Equal(t, []domain.MeshDeliveryOutput{{ID: witness.CandidateID, Status: "ready", OutputFileID: &output.ID}}, mesh)
+				failures, err := s.DeliveryProcessingFailures(ctx, []string{row.ID}, []string{output.ID})
+				require.NoError(t, err)
+				require.Empty(t, failures.Audio)
+				require.Empty(t, failures.Video)
+				require.Empty(t, failures.Waveform)
+				return nil
+			}))
+		},
+
+		"delivery authorization facts include pending and exact current owner": func(t *testing.T, h CatalogHarness) {
+			row := CatalogFile("authorization", nil)
+			h.SeedFile(t, row, true, false)
+			owner, doc, avatar := uuid.NewString(), uuid.NewString(), uuid.NewString()
+			h.SeedAvatar(t, row.ID, avatar)
+			h.SeedDeliveryOwner(t, "post", owner, doc, "POST_STATUS_PUBLISHED", row.ID)
+			require.NoError(t, mutationtest.Read(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				files, err := s.DeliveryFileOwnership(ctx, []string{row.ID, uuid.NewString()})
+				require.NoError(t, err)
+				require.Len(t, files, 1)
+				require.Equal(t, row.ID, files[0].ID)
+				require.NotNil(t, files[0].DeleteRequestedAt)
+				require.Empty(t, files[0].FileName)
+				bindings, err := s.DeliveryIngestBindings(ctx, []string{row.ID, uuid.NewString()})
+				require.NoError(t, err)
+				require.Len(t, bindings, 1)
+				require.Equal(t, avatar, bindings[0].EntityID)
+				require.Equal(t, "UPLOAD_TYPE_USER_AVATAR", bindings[0].UploadType)
+				usages, err := s.CurrentDeliveryUsages(ctx, []string{row.ID, uuid.NewString()})
+				require.NoError(t, err)
+				require.Equal(t, []domain.CurrentDeliveryUsage{{Kind: "featured_image", FileID: row.ID, ResourceType: "post", ResourceID: owner, RelationID: owner, ReferencePath: "featured_image", OwnerFingerprint: doc + ":POST_STATUS_PUBLISHED"}}, usages)
+				usages, err = s.CurrentDeliveryUsages(ctx, nil)
+				require.Empty(t, usages)
+				return err
+			}))
+		},
+
 		"delivery projections preserve each locking scope": func(t *testing.T, h CatalogHarness) {
 			parent := insertFolder(t, h.Harness, nil, "parent")
 			row := CatalogFile("delivery", &parent.ID)
