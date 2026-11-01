@@ -85,15 +85,17 @@ func main() {
 		memberadapter.AccountEmailProjection{},
 		directRoles,
 	)
+	loginRoles, err := authentication.NewService(authentication.Deps{
+		DB: stack.Postgres.DB, SpiceDB: stack.SpiceDBClient, Audit: telemetryWriter, Roles: directRoles,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "start backend integration login roles: %v\n", failurecause.Message(err))
+		os.Exit(1)
+	}
 	loginHooks := authentication.NewLoginHookService(
 		stack.KratosClient,
 		authenticationadapter.NewLoginMemberProvisioner(registrationMembers),
-		authentication.NewAuthBootstrapService(
-			stack.Postgres.DB,
-			stack.SpiceDBClient,
-			telemetryWriter,
-			directRoles,
-		),
+		loginRoles,
 	)
 	registrationHooks := authentication.NewRegistrationHookPolicy(
 		authenticationadapter.NewRegistrationReuseHoldChecker(stack.Postgres.DB),

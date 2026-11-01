@@ -10,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/menu"
+	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
@@ -151,9 +152,9 @@ func (r *recordingMenuDiscovery) ListMenus(ctx context.Context, query menu.ListM
 	return &managev1.ListMenusResponse{Menus: r.menus, Pagination: r.pagination}, r.err
 }
 
-func (r *recordingMenuDiscovery) GetSetting(ctx context.Context, req *connect.Request[managev1.GetSettingRequest]) (*connect.Response[managev1.GetSettingResponse], error) {
+func (r *recordingMenuDiscovery) GetSetting(ctx context.Context, query sitesettings.GetSettingQuery) (*managev1.SiteSetting, error) {
 	r.calls++
 	r.actor = auth.GetUser(ctx)
-	r.keys = append(r.keys, req.Msg.Key)
-	return connect.NewResponse(&managev1.GetSettingResponse{Setting: &managev1.SiteSetting{Key: req.Msg.Key, Value: r.values[req.Msg.Key]}}), r.err
+	r.keys = append(r.keys, query.Key)
+	return &managev1.SiteSetting{Key: query.Key, Value: r.values[query.Key]}, r.err
 }

@@ -118,17 +118,8 @@ func (p *KratosPublicProxy) ServeHTTP(w http.ResponseWriter, request *http.Reque
 		p.proxy.ServeHTTP(w, request)
 		return
 	}
-	if strings.TrimSpace(issuance.Recipient) == "" {
-		issuance.Recipient, err = p.resolveFlowRecipient(request, issuance)
-		if err != nil {
-			recordAuthenticationFailure(request.Context(), issuanceFailure("resolve flow recipient", issuance, err))
-			if errors.Is(err, errKratosFlowLookupUnavailable) {
-				writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
-				return
-			}
-			writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
-			return
-		}
+	if !p.completeRecipient(w, request, &issuance) {
+		return
 	}
 
 	issuance.ClientIP = authCodeClientIP(request)
@@ -143,28 +134,8 @@ func (p *KratosPublicProxy) ServeHTTP(w http.ResponseWriter, request *http.Reque
 		writeKratosProxyError(request.Context(), w, http.StatusTooManyRequests, "please wait before requesting another code", retryAfter)
 		return
 	}
-	provenance, err := NewAuthCodeIssuanceProvenance(
-		p.issuanceKey,
-		issuance.EventKey,
-		issuance.Recipient,
-		reservation.token,
-		reservation.issuedAt,
-	)
-	if err != nil {
-		p.releaseReservation(request, reservation)
-		recordAuthenticationFailure(request.Context(), issuanceFailure("create issuance provenance", issuance, err), issuance.Recipient, reservation.token)
-		writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
-		return
-	}
-	body, err = injectAuthCodeIssuanceProvenance(
-		request.Header.Get("Content-Type"),
-		body,
-		provenance,
-	)
-	if err != nil {
-		p.releaseReservation(request, reservation)
-		recordAuthenticationFailure(request.Context(), issuanceFailure("inject issuance provenance", issuance, err), issuance.Recipient, reservation.token)
-		writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
+	body, ok := p.withProvenance(w, request, issuance, reservation, body)
+	if !ok {
 		return
 	}
 	request.Body = io.NopCloser(bytes.NewReader(body))
@@ -177,6 +148,63 @@ func (p *KratosPublicProxy) ServeHTTP(w http.ResponseWriter, request *http.Reque
 	}
 
 	p.releaseReservation(request, reservation)
+}
+
+// completeRecipient fills a code request without a recipient from its Kratos
+// flow. When the flow has none, it has answered w and reports false.
+func (p *KratosPublicProxy) completeRecipient(w http.ResponseWriter, request *http.Request, issuance *AuthCodeIssuanceRequest) bool {
+	if strings.TrimSpace(issuance.Recipient) != "" {
+		return true
+	}
+	recipient, err := p.resolveFlowRecipient(request, *issuance)
+	if err != nil {
+		recordAuthenticationFailure(request.Context(), issuanceFailure("resolve flow recipient", *issuance, err))
+		if errors.Is(err, errKratosFlowLookupUnavailable) {
+			writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+			return false
+		}
+		writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
+		return false
+	}
+	issuance.Recipient = recipient
+	return true
+}
+
+// withProvenance returns body carrying the signed provenance of reservation.
+// When it cannot, it releases the reservation, has answered w and reports
+// false.
+func (p *KratosPublicProxy) withProvenance(
+	w http.ResponseWriter,
+	request *http.Request,
+	issuance AuthCodeIssuanceRequest,
+	reservation AuthCodeIssuanceReservation,
+	body []byte,
+) ([]byte, bool) {
+	provenance, err := NewAuthCodeIssuanceProvenance(
+		p.issuanceKey,
+		issuance.EventKey,
+		issuance.Recipient,
+		reservation.token,
+		reservation.issuedAt,
+	)
+	if err != nil {
+		p.releaseReservation(request, reservation)
+		recordAuthenticationFailure(request.Context(), issuanceFailure("create issuance provenance", issuance, err), issuance.Recipient, reservation.token)
+		writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
+		return nil, false
+	}
+	body, err = injectAuthCodeIssuanceProvenance(
+		request.Header.Get("Content-Type"),
+		body,
+		provenance,
+	)
+	if err != nil {
+		p.releaseReservation(request, reservation)
+		recordAuthenticationFailure(request.Context(), issuanceFailure("inject issuance provenance", issuance, err), issuance.Recipient, reservation.token)
+		writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
+		return nil, false
+	}
+	return body, true
 }
 
 // issuanceFailure names the failed code issuance step and its template for the
@@ -232,6 +260,12 @@ func (p *KratosPublicProxy) resolveFlowRecipient(
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", errKratosFlowLookupUnavailable, err)
 	}
+	return flowRecipient(body)
+}
+
+// flowRecipient is the first delivery address among the identifier and email
+// nodes of a Kratos flow body.
+func flowRecipient(body []byte) (string, error) {
 	var flow struct {
 		UI struct {
 			Nodes []struct {

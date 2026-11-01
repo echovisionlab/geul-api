@@ -1,8 +1,13 @@
 package authentication
 
 import (
+	"strings"
 	"testing"
 
+	"connectrpc.com/connect"
+	"github.com/stretchr/testify/require"
+
+	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -42,6 +47,30 @@ func TestGatewayAuthorizationCanUsesSharedAuthorizationRole(t *testing.T) {
 			if can.EngineKey() != want.EngineKey() || can.Action().Name() != want.Action().Name() {
 				t.Fatalf("gatewayAuthorizationCan(%s) = (%q, %q), want (%q, %q)", tt.role, can.Action().Name(), can.EngineKey(), want.Action().Name(), want.EngineKey())
 			}
+		})
+	}
+}
+
+func TestAuthorizeGatewayAccessRejectsMalformedRequestsAsBefore(t *testing.T) {
+	handler := NewConnectHandler(&Service{})
+	valid := "aaaaaaaa-1111-4111-8111-111111111111"
+	tests := []struct {
+		name    string
+		request *connect.Request[intrav1.AuthorizeGatewayAccessRequest]
+		code    connect.Code
+		message string
+	}{
+		{name: "missing message", request: &connect.Request[intrav1.AuthorizeGatewayAccessRequest]{}, code: connect.CodeInvalidArgument, message: "request: request is required"},
+		{name: "non-canonical identity", request: connect.NewRequest(&intrav1.AuthorizeGatewayAccessRequest{AccountIdentityId: strings.ToUpper(valid), SessionId: valid}), code: connect.CodeUnauthenticated, message: "invalid or expired session"},
+		{name: "missing session", request: connect.NewRequest(&intrav1.AuthorizeGatewayAccessRequest{AccountIdentityId: valid}), code: connect.CodeUnauthenticated, message: "invalid or expired session"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := handler.AuthorizeGatewayAccess(t.Context(), tt.request)
+			var connectErr *connect.Error
+			require.ErrorAs(t, err, &connectErr)
+			require.Equal(t, tt.code, connectErr.Code())
+			require.Equal(t, tt.message, connectErr.Message())
 		})
 	}
 }

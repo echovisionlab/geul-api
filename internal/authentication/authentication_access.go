@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/securityaccess"
 	"gorm.io/gorm"
 )
@@ -49,7 +50,7 @@ func NewAuthenticationAccessRecorder(
 		return auth.ResolveAuthenticatedPrincipalBySessionID(ctx, db, sessionID)
 	}
 	recorder.firstSession = func(ctx context.Context, sessionID string) (bool, error) {
-		return firstIssuedIdentitySession(ctx, db, sessionID)
+		return identityread.FirstSession(ctx, db, sessionID)
 	}
 	recorder.resolveIncoming = recorder.resolveIncomingMember
 	return recorder, nil

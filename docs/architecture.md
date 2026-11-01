@@ -386,6 +386,7 @@ func LeftJoinLinked(member, alias string) string // the same, keeping Members wi
 func BannedSQL(alias string) string              // administrator-facing ban state of the joined Identity
 const ExistsSQL = `EXISTS (SELECT 1 FROM kratos.identities WHERE id = ?::uuid)`
 func Exists(ctx context.Context, db *gorm.DB, identityID string) (bool, error)
+func FirstSession(ctx context.Context, db *gorm.DB, sessionID string) (bool, error) // the session is its Identity's first
 ```
 
 A query that needs another Kratos column or table gets a new fragment here

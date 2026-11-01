@@ -21,12 +21,10 @@ func TestAuthBootstrapServiceSynchronizesMissingRolesWithoutDowngradingExistingR
 	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	testutil.ResetFirstAdminBootstrapFixture(t, stack.DB)
-	service := NewAuthBootstrapService(
-		stack.DB,
-		stack.SpiceDBClient,
-		apitelemetry.NewDurableWriter(stack.DB),
-		integrationDirectRoleTransition{},
-	)
+	service, err := NewService(Deps{
+		DB: stack.DB, SpiceDB: stack.SpiceDBClient, Audit: apitelemetry.NewDurableWriter(stack.DB), Roles: integrationDirectRoleTransition{},
+	})
+	require.NoError(t, err)
 	ctx := context.Background()
 
 	first := stack.CreateUser(t, policyv1.Role.User().ID())
@@ -80,7 +78,8 @@ func TestAuthBootstrapServiceRestoresDirectRoleAfterConfirmedCallbackRollbackInt
 	subject := requireAccountIdentitySubject(t, user.IdentityID)
 	_, err := stack.SpiceDBClient.DeleteAllAccountIdentityRelationships(t.Context(), subject)
 	require.NoError(t, err)
-	service := NewAuthBootstrapService(stack.DB, stack.SpiceDBClient, failingAuthBootstrapAuditAppender{}, integrationDirectRoleTransition{})
+	service, err := NewService(Deps{DB: stack.DB, SpiceDB: stack.SpiceDBClient, Audit: failingAuthBootstrapAuditAppender{}, Roles: integrationDirectRoleTransition{}})
+	require.NoError(t, err)
 
 	result, err := service.SyncLoginRole(t.Context(), user.IdentityID, user.MemberID)
 	require.Empty(t, result)

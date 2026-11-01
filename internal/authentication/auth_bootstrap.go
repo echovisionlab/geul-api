@@ -10,42 +10,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
-
-type AuthBootstrapService struct {
-	db          *gorm.DB
-	spicedb     *auth.SpiceDBClient
-	auditWriter domainaudit.Appender
-	roles       DirectRoleTransition
-}
-
-// NewAuthBootstrapService constructs the hard-cut login role bootstrap
-// service. Kratos remains AuthN; SpiceDB is the sole role authority.
-func NewAuthBootstrapService(
-	db *gorm.DB,
-	spicedb *auth.SpiceDBClient,
-	auditWriter domainaudit.Appender,
-	roles DirectRoleTransition,
-) *AuthBootstrapService {
-	if db == nil {
-		panic("db is required")
-	}
-	if spicedb == nil {
-		panic("SpiceDB role authority is required")
-	}
-	if auditWriter == nil {
-		panic("auth bootstrap audit writer is required")
-	}
-	if roles == nil {
-		panic("direct role transition is required")
-	}
-	return &AuthBootstrapService{
-		db: db, spicedb: spicedb, auditWriter: auditWriter, roles: roles,
-	}
-}
 
 type LoginRoleSyncResult struct {
 	Role       policyv1.RoleID
@@ -54,17 +23,12 @@ type LoginRoleSyncResult struct {
 
 var errLoginRoleUnchanged = errors.New("login role is unchanged")
 
-func (s *AuthBootstrapService) resolveBootstrapRole(
-	tx *gorm.DB,
-	identityID string,
-	memberID string,
-	desiredRole policyv1.RoleID,
-) (policyv1.RoleID, bool, bool, error) {
-	if tx == nil {
-		return policyv1.RoleID{}, false, false, gorm.ErrInvalidDB
-	}
+// claimFirstAdmin claims the first-admin bootstrap for identityID when the
+// greenfield allows it, and reports whether identityID holds the claim and
+// whether this call made it.
+func claimFirstAdmin(tx *gorm.DB, identityID, memberID string) (owner bool, claimedNow bool, err error) {
 	if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "geul:first-admin-bootstrap").Error; err != nil {
-		return policyv1.RoleID{}, false, false, err
+		return false, false, err
 	}
 
 	// Runtime bootstrap is only valid for an explicitly empty greenfield.
@@ -76,15 +40,12 @@ func (s *AuthBootstrapService) resolveBootstrapRole(
 		WHERE EXISTS (
 			SELECT 1
 			FROM member
-			JOIN kratos.identities AS identity
-			  ON identity.id = member.account_identity_id
-			 AND identity.external_id = member.id::text
+			`+identityread.JoinLinked("member", "identity")+`
 			WHERE member.id = ?::uuid
 			  AND identity.id = ?::uuid
 			  AND member.deleted_at IS NULL
 			  AND member.onboarded = TRUE
-			  AND identity.state = 'active'
-			  AND NOT COALESCE((identity.metadata_admin->>'banned')::boolean, false)
+			  AND NOT `+identityread.BannedSQL("identity")+`
 		)
 		AND NOT EXISTS (
 			SELECT 1 FROM public.account_identity
@@ -94,104 +55,122 @@ func (s *AuthBootstrapService) resolveBootstrapRole(
 		"first_admin", identityID, memberID, memberID, identityID, identityID,
 	)
 	if insert.Error != nil {
-		return policyv1.RoleID{}, false, false, insert.Error
+		return false, false, insert.Error
 	}
-	claimedNow := insert.RowsAffected > 0
+	claimedNow = insert.RowsAffected > 0
 
 	var claimOwnerID string
 	if err := tx.Raw(
 		`SELECT COALESCE(identity_id::text, '') FROM auth_bootstrap_state WHERE key = ?`,
 		"first_admin",
 	).Scan(&claimOwnerID).Error; err != nil {
-		return policyv1.RoleID{}, false, false, err
+		return false, false, err
 	}
-	if claimOwnerID == identityID {
-		return policyv1.Role.Admin(), claimedNow, true, nil
-	}
-	return desiredRole, claimedNow, false, nil
+	return claimOwnerID == identityID, claimedNow, nil
+}
+
+// loginRole is the direct global role one login converges on.
+type loginRole struct {
+	subject    auth.AccountIdentitySubject
+	current    policyv1.RoleID
+	found      bool
+	desired    policyv1.RoleID
+	firstAdmin bool
 }
 
 // SyncLoginRole performs first-admin bootstrap and role repair
 // using account_identity UUIDs as the sole authorization subject. It never
 // reads or writes Kratos role metadata and does not use Member as a subject.
-func (s *AuthBootstrapService) SyncLoginRole(
+func (s *Service) SyncLoginRole(
 	ctx context.Context,
 	identityID string,
 	memberID string,
 ) (LoginRoleSyncResult, error) {
-	if s == nil || s.db == nil || s.spicedb == nil {
-		return LoginRoleSyncResult{}, fmt.Errorf("SpiceDB login role authority is required")
-	}
 	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
 	if err != nil {
 		return LoginRoleSyncResult{}, err
 	}
-	var desiredRole policyv1.RoleID
-	var firstAdmin bool
+	role := loginRole{subject: subject}
 	mutationCtx, cancel := context.WithTimeout(ctx, identitystate.MutationTimeout)
 	defer cancel()
-	_, err = authzmutation.Execute(mutationCtx, s.db, s.spicedb, func(
+	_, err = authzmutation.Execute(mutationCtx, s.db, s.spiceDB, func(
 		tx *gorm.DB,
 		write authzmutation.WriteRelationships,
 	) error {
 		if err := identitystate.Lock(tx, identityID); err != nil {
 			return err
 		}
-		currentRole, found, err := s.spicedb.ReadDirectGlobalRole(mutationCtx, subject)
-		if err != nil {
-			return fmt.Errorf("read login direct global role: %w", err)
-		}
-		desiredRole = currentRole
-		if !found {
-			desiredRole = policyv1.Role.User()
-		}
-		resolvedRole, claimedNow, _, err := s.resolveBootstrapRole(tx, identityID, memberID, desiredRole)
-		if err != nil {
+		if err := s.resolveLoginRole(mutationCtx, tx, identityID, memberID, &role); err != nil {
 			return err
 		}
-		desiredRole = resolvedRole
-		firstAdmin = claimedNow
-		if found && desiredRole == currentRole && !claimedNow {
+		if role.found && role.desired == role.current && !role.firstAdmin {
 			return errLoginRoleUnchanged
 		}
-		apply, compensate, err := s.roles.Transition(subject, desiredRole, currentRole, found)
-		if err != nil {
-			return fmt.Errorf("build login direct global role transition: %w", err)
-		}
-		if err := write(apply, compensate); err != nil {
-			return fmt.Errorf("replace login direct global role: %w", err)
-		}
-		if claimedNow {
-			if err := domainaudit.AppendSystem(
-				mutationCtx,
-				tx,
-				s.auditWriter,
-				sharedtelemetry.ServiceBackend,
-				sharedtelemetry.AuditMemberUpdated,
-				func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-					return sharedtelemetry.NewMemberRoleUpdatedAuditRecord(metadata, memberID, policyv1.Role.User().ID(), policyv1.Role.Admin().ID())
-				},
-			); err != nil {
-				return err
-			}
-		}
-		return nil
+		return s.replaceLoginRole(mutationCtx, tx, write, memberID, role)
 	})
 	// Execute returns the sentinel unchanged only after a successful rollback.
 	// A joined rollback failure must still reach the caller.
 	if err == errLoginRoleUnchanged { //nolint:errorlint // identity: a joined rollback failure must not match
-		return LoginRoleSyncResult{Role: desiredRole, FirstAdmin: firstAdmin}, nil
+		return LoginRoleSyncResult{Role: role.desired, FirstAdmin: role.firstAdmin}, nil
 	}
 	if err != nil {
 		return LoginRoleSyncResult{}, err
 	}
-	return LoginRoleSyncResult{Role: desiredRole, FirstAdmin: firstAdmin}, nil
+	return LoginRoleSyncResult{Role: role.desired, FirstAdmin: role.firstAdmin}, nil
+}
+
+// resolveLoginRole reads the current direct role into role and decides the
+// desired one: the first-admin claimant becomes an administrator, and a
+// subject without a direct role becomes a user.
+func (s *Service) resolveLoginRole(ctx context.Context, tx *gorm.DB, identityID, memberID string, role *loginRole) error {
+	current, found, err := s.spiceDB.ReadDirectGlobalRole(ctx, role.subject)
+	if err != nil {
+		return fmt.Errorf("read login direct global role: %w", err)
+	}
+	role.current, role.found, role.desired = current, found, current
+	if !found {
+		role.desired = policyv1.Role.User()
+	}
+	owner, claimedNow, err := claimFirstAdmin(tx, identityID, memberID)
+	if err != nil {
+		return err
+	}
+	if owner {
+		role.desired = policyv1.Role.Admin()
+	}
+	role.firstAdmin = claimedNow
+	return nil
+}
+
+// replaceLoginRole writes the desired direct role and audits a first-admin
+// claim as the backend's.
+func (s *Service) replaceLoginRole(ctx context.Context, tx *gorm.DB, write authzmutation.WriteRelationships, memberID string, role loginRole) error {
+	apply, compensate, err := s.roles.Transition(role.subject, role.desired, role.current, role.found)
+	if err != nil {
+		return fmt.Errorf("build login direct global role transition: %w", err)
+	}
+	if err := write(apply, compensate); err != nil {
+		return fmt.Errorf("replace login direct global role: %w", err)
+	}
+	if !role.firstAdmin {
+		return nil
+	}
+	return domainaudit.AppendSystem(
+		ctx,
+		tx,
+		s.audit,
+		sharedtelemetry.ServiceBackend,
+		sharedtelemetry.AuditMemberUpdated,
+		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewMemberRoleUpdatedAuditRecord(metadata, memberID, policyv1.Role.User().ID(), policyv1.Role.Admin().ID())
+		},
+	)
 }
 
 // EnsureLoginRole is the handler-facing hard-cut contract. It returns only
 // whether this login claimed the first-admin bootstrap; callers must not use a
 // role string from authentication as an authorization decision.
-func (s *AuthBootstrapService) EnsureLoginRole(
+func (s *Service) EnsureLoginRole(
 	ctx context.Context,
 	identityID string,
 	memberID string,

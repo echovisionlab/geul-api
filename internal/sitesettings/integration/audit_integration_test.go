@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
@@ -31,15 +30,7 @@ func TestSiteSettingsAuditCommitsExactChangesAndSkipsNoOpIntegration(t *testing.
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Site Settings audit admin")
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	service := sitesettings.NewAuditedSiteSettingService(
-		db,
-		"https://www.example.test",
-		sitesettingsadapter.NewAssets("https://cdn.example.test"),
-		sitesettingsadapter.NewReferences(),
-		newSiteSettingsOGInvalidatorForTest(db, "https://cdn.example.test"),
-		apitelemetry.NewDurableWriter(db),
-		spiceDB,
-	)
+	service := newSiteSettingsHandler(t, sitesettings.Deps{DB: db, SpiceDB: spiceDB, Audit: apitelemetry.NewDurableWriter(db)})
 	ctx := siteSettingsAuditedMemberContext(t, identityID, memberID)
 	request := connect.NewRequest(&managev1.SetManySettingsRequest{Settings: []*managev1.SiteSetting{
 		{Key: "site_title", Value: structpb.NewStringValue("Audit title")},
@@ -85,15 +76,7 @@ func TestSiteSettingsAuditFailureRollsBackMutationIntegration(t *testing.T) {
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Site Settings rollback admin")
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	service := sitesettings.NewAuditedSiteSettingService(
-		db,
-		"https://www.example.test",
-		sitesettingsadapter.NewAssets("https://cdn.example.test"),
-		sitesettingsadapter.NewReferences(),
-		newSiteSettingsOGInvalidatorForTest(db, "https://cdn.example.test"),
-		failingDomainAuditAppender{},
-		spiceDB,
-	)
+	service := newSiteSettingsHandler(t, sitesettings.Deps{DB: db, SpiceDB: spiceDB, Audit: failingDomainAuditAppender{}})
 	_, err := service.SetSetting(
 		siteSettingsAuditedMemberContext(t, identityID, memberID),
 		connect.NewRequest(&managev1.SetSettingRequest{
@@ -115,10 +98,7 @@ func TestSiteSettingsNestedOgAuditUsesAggregateFieldAndRollsBackIntegration(t *t
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := siteSettingsAuditedMemberContext(t, identityID, memberID)
-	service := sitesettings.NewAuditedSiteSettingService(
-		db, "https://www.example.test", sitesettingsadapter.NewAssets("https://cdn.example.test"), sitesettingsadapter.NewReferences(),
-		newSiteSettingsOGInvalidatorForTest(db, "https://cdn.example.test"), apitelemetry.NewDurableWriter(db), spiceDB,
-	)
+	service := newSiteSettingsHandler(t, sitesettings.Deps{DB: db, SpiceDB: spiceDB, Audit: apitelemetry.NewDurableWriter(db)})
 
 	_, err := service.SetSetting(ctx, connect.NewRequest(&managev1.SetSettingRequest{
 		Key: "og_image_config.home", Value: structpb.NewStructValue(&structpb.Struct{Fields: map[string]*structpb.Value{
@@ -134,10 +114,7 @@ func TestSiteSettingsNestedOgAuditUsesAggregateFieldAndRollsBackIntegration(t *t
 		FROM domain_audit WHERE action = ? ORDER BY occurred_at DESC, audit_id DESC LIMIT 1`, sharedtelemetry.AuditSiteSettingsUpdated).Scan(&attributes).Error)
 	require.Equal(t, pq.StringArray{"og_image_config"}, attributes.ChangedFields)
 
-	failing := sitesettings.NewAuditedSiteSettingService(
-		db, "https://www.example.test", sitesettingsadapter.NewAssets("https://cdn.example.test"), sitesettingsadapter.NewReferences(),
-		newSiteSettingsOGInvalidatorForTest(db, "https://cdn.example.test"), failingDomainAuditAppender{}, spiceDB,
-	)
+	failing := newSiteSettingsHandler(t, sitesettings.Deps{DB: db, SpiceDB: spiceDB, Audit: failingDomainAuditAppender{}})
 	_, err = failing.SetSetting(ctx, connect.NewRequest(&managev1.SetSettingRequest{
 		Key: "og_image_config.content", Value: structpb.NewStructValue(&structpb.Struct{Fields: map[string]*structpb.Value{
 			"background_color": structpb.NewStringValue("#654321"),

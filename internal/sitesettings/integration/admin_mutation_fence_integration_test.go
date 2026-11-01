@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -24,14 +23,9 @@ func TestSiteSettingsMutationRechecksAuthorityAfterRootLockIntegration(t *testin
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	mutationDB, applicationName := newSiteSettingsFenceMutationDB(t)
-	service := sitesettings.NewSiteSettingService(
-		mutationDB,
-		"https://www.example.test",
-		sitesettingsadapter.NewAssets("https://cdn.example.test"),
-		sitesettingsadapter.NewReferences(),
-		newSiteSettingsOGInvalidatorForTest(db, "https://cdn.example.test"),
-		spiceDB,
-	)
+	service := newSiteSettingsHandler(t, sitesettings.Deps{
+		DB: mutationDB, SpiceDB: spiceDB, OG: newSiteSettingsOGInvalidatorForTest(db, "https://cdn.example.test"),
+	})
 
 	lockTx := lockSiteSettingsMutationRoot(t, db, "site_settings", "id = 1")
 	result := make(chan error, 1)
@@ -55,14 +49,7 @@ func TestSiteSettingsNoOpMutationStillRequiresFreshAdminIntegration(t *testing.T
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
-	service := sitesettings.NewSiteSettingService(
-		db,
-		"https://www.example.test",
-		sitesettingsadapter.NewAssets("https://cdn.example.test"),
-		sitesettingsadapter.NewReferences(),
-		newSiteSettingsOGInvalidatorForTest(db, "https://cdn.example.test"),
-		spiceDB,
-	)
+	service := newSiteSettingsHandler(t, sitesettings.Deps{DB: db, SpiceDB: spiceDB})
 
 	_, err := service.SetSetting(ctx, connect.NewRequest(&managev1.SetSettingRequest{
 		Key: "company_name", Value: structpb.NewStringValue("same value"),

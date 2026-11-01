@@ -68,16 +68,19 @@ func (r publicServiceRegistration) register() error {
 	legalRuntime := r.legalRuntime
 	formDependencies := r.formDependencies
 	// Public API services (no auth required - exposed via Oathkeeper public rules)
-	manifestService := publicsitesettings.NewManifestService(
-		cfg.SiteOrigin,
-		sitesettingsadapter.NewPublicProjection(
+	manifestService, err := publicsitesettings.NewService(publicsitesettings.Deps{
+		Projection: sitesettingsadapter.NewPublicProjection(
 			db,
 			sitesettingsadapter.NewAssets(cfg.CDNURL),
 			sitesettingsadapter.ManifestMenus{},
 		),
-		spicedbClient,
-	)
-	manifestPath, manifestHandler := openv1connect.NewManifestServiceHandler(manifestService, publicHandlerOpts...)
+		SpiceDB:    spicedbClient,
+		SiteOrigin: cfg.SiteOrigin,
+	})
+	if err != nil {
+		return fmt.Errorf("initialize public site settings service: %w", err)
+	}
+	manifestPath, manifestHandler := openv1connect.NewManifestServiceHandler(publicsitesettings.NewConnectHandler(manifestService), publicHandlerOpts...)
 	mux.Handle(manifestPath, manifestHandler)
 	slog.Info("Registered public service", "path", manifestPath)
 

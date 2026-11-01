@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 
-	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/menu"
+	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -25,7 +25,7 @@ type MenuDiscovery interface {
 }
 
 type MenuLocationReader interface {
-	GetSetting(context.Context, *connect.Request[managev1.GetSettingRequest]) (*connect.Response[managev1.GetSettingResponse], error)
+	GetSetting(context.Context, sitesettings.GetSettingQuery) (*managev1.SiteSetting, error)
 }
 
 var menuDiscoveryTools = []mcpserver.Tool{
@@ -95,11 +95,10 @@ func (tools *MenuDiscoveryTools) CallTool(ctx context.Context, _ mcpserver.Princ
 		}
 		output := make(map[string]any, 4)
 		for _, key := range []string{"menu_header_id", "menu_secondary_id", "menu_footer_id", "menu_avatar_dropdown_id"} {
-			response, err := tools.settings.GetSetting(ctx, connect.NewRequest(&managev1.GetSettingRequest{Key: key}))
+			setting, err := tools.settings.GetSetting(ctx, sitesettings.GetSettingQuery{Key: key})
 			if err != nil {
 				return expectedToolError(err)
 			}
-			setting := response.Msg.GetSetting()
 			if setting == nil || setting.Key != key || setting.Value == nil {
 				return mcpserver.ToolResult{}, fmt.Errorf("Site Settings returned an invalid menu assignment for %s", key)
 			}

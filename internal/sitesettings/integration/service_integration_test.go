@@ -21,17 +21,13 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func newSiteSettingIntegrationService(t *testing.T, db *gorm.DB) (*sitesettings.SiteSettingService, context.Context) {
+func newSiteSettingIntegrationService(t *testing.T, db *gorm.DB) (*sitesettings.ConnectHandler, context.Context) {
 	t.Helper()
 	ctx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
-	return sitesettings.NewSiteSettingService(
-		db,
-		"https://www.example.test",
-		sitesettingsadapter.NewAssets("https://cdn.example.com"),
-		sitesettingsadapter.NewReferences(),
-		newSiteSettingsOGInvalidatorForTest(db, "https://cdn.example.com"),
-		spiceDB,
-	), ctx
+	return newSiteSettingsHandler(t, sitesettings.Deps{
+		DB: db, SpiceDB: spiceDB, Assets: sitesettingsadapter.NewAssets("https://cdn.example.com"),
+		OG: newSiteSettingsOGInvalidatorForTest(db, "https://cdn.example.com"),
+	}), ctx
 }
 
 func TestSiteSettingServiceThemeLogoSettingsIntegration(t *testing.T) {

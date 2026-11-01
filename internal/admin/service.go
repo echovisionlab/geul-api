@@ -2,14 +2,17 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"math"
+	"slices"
+	"strings"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -26,31 +29,53 @@ func safeInt32(n int64) int32 {
 	return int32(n)
 }
 
-type Service struct {
-	OG
-	db      *gorm.DB
-	spiceDB *auth.SpiceDBClient
+// Deps are the collaborators of the Admin dashboard use case. Every field is
+// required; NewService rejects a missing one.
+type Deps struct {
+	DB        *gorm.DB
+	SpiceDB   *auth.SpiceDBClient
+	Members   Members
+	Posts     Posts
+	Pages     Pages
+	Campaigns Campaigns
 }
 
-func NewService(
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	ogService OG,
-) *Service {
-	if db == nil {
-		panic("db is required")
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Members": d.Members == nil,
+		"Posts": d.Posts == nil, "Pages": d.Pages == nil, "Campaigns": d.Campaigns == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
+		}
 	}
-	if spiceDB == nil {
-		panic("spiceDB is required")
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("admin dependencies are required: " + strings.Join(missing, ", "))
 	}
-	if ogService == nil {
-		panic("OG admin service is required")
+	return nil
+}
+
+// Service holds the Admin dashboard use case.
+type Service struct {
+	db        *gorm.DB
+	spiceDB   *auth.SpiceDBClient
+	members   Members
+	posts     Posts
+	pages     Pages
+	campaigns Campaigns
+}
+
+// NewService validates deps and returns the Admin use cases.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
 	}
 	return &Service{
-		OG:      ogService,
-		db:      db,
-		spiceDB: spiceDB,
-	}
+		db: deps.DB, spiceDB: deps.SpiceDB, members: deps.Members,
+		posts: deps.Posts, pages: deps.Pages, campaigns: deps.Campaigns,
+	}, nil
 }
 
 // checkAdminAccess validates that the user has admin access.
@@ -58,64 +83,48 @@ func NewService(
 func checkAdminAccess(ctx context.Context, spiceDB *auth.SpiceDBClient) error {
 	user := auth.GetUser(ctx)
 	if user == nil || user.Banned {
-		return errs.AdminRequired()
+		return domainerr.AdminRequired()
 	}
 	can, err := policyv1.Platform.IsAdmin()
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return authz.RequireAdminCan(ctx, spiceDB, can)
 }
 
-// GetDashboardStats returns aggregate statistics for the admin dashboard
-func (s *Service) GetDashboardStats(
-	ctx context.Context,
-	req *connect.Request[managev1.GetDashboardStatsRequest],
-) (*connect.Response[managev1.GetDashboardStatsResponse], error) {
+// DashboardStats returns aggregate statistics for the admin dashboard, read
+// from one snapshot.
+func (s *Service) DashboardStats(ctx context.Context) (*managev1.DashboardStats, error) {
 	if err := checkAdminAccess(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
-
-	var memberCount int64
-	if err := s.db.Raw(`
-		SELECT COUNT(*)
-		FROM member
-		JOIN kratos.identities AS identity
-		  ON identity.id = member.account_identity_id
-		WHERE member.deleted_at IS NULL
-		  AND identity.state = ?
-		  AND COALESCE((identity.metadata_admin->>'banned')::boolean, FALSE) = FALSE
-	`, auth.KratosStateActive).Scan(&memberCount).Error; err != nil {
-		return nil, errs.Internal(err)
+	var members, posts, pages, comments, campaigns int64
+	err := mutation.Read(ctx, s.db, func(tx *gorm.DB) error {
+		for _, count := range []struct {
+			into  *int64
+			count func(context.Context, *gorm.DB) (int64, error)
+		}{
+			{&members, s.members.CountActive},
+			{&posts, s.posts.CountPosts},
+			{&pages, s.pages.CountPages},
+			{&comments, s.posts.CountComments},
+			{&campaigns, s.campaigns.CountCampaigns},
+		} {
+			var err error
+			if *count.into, err = count.count(ctx, tx); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
-
-	var postCount int64
-	if err := s.db.Table("post").Count(&postCount).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	var pageCount int64
-	if err := s.db.Table("page").Count(&pageCount).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	var commentCount int64
-	if err := s.db.Table("comment").Where("is_deleted = false").Count(&commentCount).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	var campaignCount int64
-	if err := s.db.Table("campaign").Count(&campaignCount).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	return connect.NewResponse(&managev1.GetDashboardStatsResponse{
-		Stats: &managev1.DashboardStats{
-			TotalMembers:   safeInt32(memberCount),
-			TotalPosts:     safeInt32(postCount),
-			TotalPages:     safeInt32(pageCount),
-			TotalComments:  safeInt32(commentCount),
-			TotalCampaigns: safeInt32(campaignCount),
-		},
-	}), nil
+	return &managev1.DashboardStats{
+		TotalMembers:   safeInt32(members),
+		TotalPosts:     safeInt32(posts),
+		TotalPages:     safeInt32(pages),
+		TotalComments:  safeInt32(comments),
+		TotalCampaigns: safeInt32(campaigns),
+	}, nil
 }

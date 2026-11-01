@@ -17,16 +17,11 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestNewAuthBootstrapServiceRejectsMissingRequiredDependencies(t *testing.T) {
-	db := &gorm.DB{}
-	spicedb := &auth.SpiceDBClient{}
-
-	require.Panics(t, func() {
-		NewAuthBootstrapService(nil, spicedb, nil, nil)
-	})
-	require.Panics(t, func() {
-		NewAuthBootstrapService(db, nil, nil, nil)
-	})
+func TestNewServiceRejectsMissingRequiredDependencies(t *testing.T) {
+	_, err := NewService(Deps{SpiceDB: &auth.SpiceDBClient{}})
+	require.EqualError(t, err, "authentication dependencies are required: Audit, DB, Roles")
+	_, err = NewService(Deps{DB: &gorm.DB{}})
+	require.EqualError(t, err, "authentication dependencies are required: Audit, Roles, SpiceDB")
 }
 
 type unchangedLoginRoleServer struct {
@@ -73,7 +68,7 @@ func TestUnchangedLoginRoleDoesNotHideRollbackFailure(t *testing.T) {
 			if rollbackFails {
 				rollback.WillReturnError(rollbackErr)
 			}
-			service := &AuthBootstrapService{db: db, spicedb: spiceDB}
+			service := &Service{db: db, spiceDB: spiceDB}
 			result, err := service.SyncLoginRole(t.Context(), "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222")
 			if rollbackFails {
 				require.ErrorIs(t, err, rollbackErr)

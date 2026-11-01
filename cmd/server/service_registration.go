@@ -194,9 +194,14 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		secret:                    cfg.TokenSigningSecret,
 		internalServiceHeaderName: cfg.InternalServiceHeaderName,
 	}
-	gatewayAuthorizationService := authentication.NewGatewayAuthorizationService(db, spicedbClient)
+	authenticationService, err := authentication.NewService(authentication.Deps{
+		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, Roles: accountadapter.AccountDirectRoleTransition{},
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize authentication service: %w", err)
+	}
 	gatewayAuthorizationPath, gatewayAuthorizationHandler := intrav1connect.NewInternalGatewayAuthorizationServiceHandler(
-		gatewayAuthorizationService,
+		authentication.NewConnectHandler(authenticationService),
 		internalHandlerOpts...,
 	)
 	mux.Handle(gatewayAuthorizationPath, internalRPCTrust.identity(gatewayAuthorizationHandler))
@@ -368,7 +373,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	loginHooks := authentication.NewLoginHookService(
 		kratosClient,
 		authenticationadapter.NewLoginMemberProvisioner(registrationMembers),
-		authentication.NewAuthBootstrapService(db, spicedbClient, telemetryWriter, directRoles),
+		authenticationService,
 	)
 	registrationHooks := authentication.NewRegistrationHookPolicy(
 		authenticationadapter.NewRegistrationReuseHoldChecker(db),
@@ -729,16 +734,14 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(audiencePath, audienceHandler)
 	slog.Info("Registered service", "path", audiencePath)
 
-	siteSettingService := sitesettings.NewAuditedSiteSettingService(
-		db,
-		cfg.SiteOrigin,
-		sitesettingsadapter.NewAssets(cfg.CDNURL),
-		sitesettingsadapter.NewReferences(),
-		ogDeps.siteInvalidator(),
-		telemetryWriter,
-		spicedbClient,
-	)
-	siteSettingPath, siteSettingHandler := managev1connect.NewSiteSettingServiceHandler(siteSettingService, handlerOpts...)
+	siteSettingService, err := sitesettings.NewService(sitesettings.Deps{
+		DB: db, SpiceDB: spicedbClient, Assets: sitesettingsadapter.NewAssets(cfg.CDNURL), References: sitesettingsadapter.NewReferences(),
+		OG: ogDeps.siteInvalidator(), Audit: telemetryWriter, SiteOrigin: cfg.SiteOrigin,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize site settings service: %w", err)
+	}
+	siteSettingPath, siteSettingHandler := managev1connect.NewSiteSettingServiceHandler(sitesettings.NewConnectHandler(siteSettingService), handlerOpts...)
 	mux.Handle(siteSettingPath, siteSettingHandler)
 	slog.Info("Registered service", "path", siteSettingPath)
 
@@ -751,8 +754,14 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		ogadapter.NewAuthorization(spicedbClient),
 		labeladapter.NewGlobalReconciler(),
 	)
-	adminService := admin.NewService(db, spicedbClient, ogAdmin)
-	adminPath, adminHandler := managev1connect.NewAdminServiceHandler(adminService, handlerOpts...)
+	adminService, err := admin.NewService(admin.Deps{
+		DB: db, SpiceDB: spicedbClient, Members: memberadapter.DashboardMembers{}, Posts: postadapter.DashboardPosts{},
+		Pages: pageadapter.DashboardPages{}, Campaigns: campaignadapter.DashboardCampaigns{},
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize admin service: %w", err)
+	}
+	adminPath, adminHandler := managev1connect.NewAdminServiceHandler(admin.NewConnectHandler(adminService, ogAdmin), handlerOpts...)
 	mux.Handle(adminPath, adminHandler)
 	slog.Info("Registered service", "path", adminPath)
 

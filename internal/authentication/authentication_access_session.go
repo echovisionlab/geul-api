@@ -15,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"go.opentelemetry.io/otel/propagation"
-	"gorm.io/gorm"
 )
 
 func (recorder *AuthenticationAccessRecorder) resolveIncomingMember(request *http.Request) *auth.UserInfo {
@@ -104,21 +103,6 @@ func (recorder *AuthenticationAccessRecorder) sessionIDFromWhoAmI(
 		return "", nil
 	}
 	return strings.TrimSpace(session.ID), nil
-}
-
-func firstIssuedIdentitySession(ctx context.Context, db *gorm.DB, sessionID string) (bool, error) {
-	var first bool
-	result := db.WithContext(ctx).Raw(`
-		SELECT NOT EXISTS (
-			SELECT 1
-			FROM kratos.sessions AS other
-			JOIN kratos.sessions AS current ON current.id = ?::uuid
-			WHERE other.identity_id = current.identity_id
-			  AND other.id <> current.id
-			  AND other.created_at <= current.created_at
-		) AS first
-	`, sessionID).Scan(&first)
-	return first, result.Error
 }
 
 func kratosErrorID(body []byte) string {
