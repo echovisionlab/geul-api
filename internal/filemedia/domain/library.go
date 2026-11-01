@@ -20,6 +20,7 @@ type FileFolder struct {
 	CreatedAt, UpdatedAt time.Time
 }
 type Store interface {
+	MeshStore
 	FaviconStore
 	IngestMediaStore
 	VerifiedIngestStore

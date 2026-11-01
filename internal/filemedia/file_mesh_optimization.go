@@ -6,18 +6,12 @@ import (
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func (s *Service) meshOptimizationService() *MeshOptimizationService {
-	var publisher MeshOptimizationJobPublisher
-	if meshPublisher, ok := s.publisher.(MeshOptimizationJobPublisher); ok {
-		publisher = meshPublisher
-	} else if meshPublisher, ok := s.asyncPublisher.(MeshOptimizationJobPublisher); ok {
-		publisher = meshPublisher
-	}
-	return NewMeshOptimizationService(s.db, publisher, s, s.spiceDB)
+	return NewMeshOptimizationService(MeshOptimizationDeps{Units: s.units, FileDeleter: s, Authorizer: s.spiceDB})
 }
 
 // ListMeshOptimizationCandidatesQuery lists the optimized candidates of a
@@ -126,7 +120,7 @@ func (s *Service) ClearMeshOptimizationCandidates(ctx context.Context, command C
 }
 
 func (s *Service) meshOptimizationCandidateResponse(
-	candidate model.MeshOptimizationCandidate,
+	candidate domain.MeshCandidate,
 ) (*managev1.MeshOptimizationCandidate, error) {
 	response := &managev1.MeshOptimizationCandidate{
 		Id:                 candidate.ID,
@@ -180,8 +174,8 @@ func (s *Service) meshOptimizationCandidateResponse(
 	return response, nil
 }
 
-func meshOptimizationCandidateHasUsableOutput(candidate model.MeshOptimizationCandidate) bool {
-	return candidate.Status == model.MeshOptimizationCandidateStatusReady &&
+func meshOptimizationCandidateHasUsableOutput(candidate domain.MeshCandidate) bool {
+	return candidate.Status == domain.MeshStatusReady &&
 		candidate.OutputFileID != nil &&
 		strings.TrimSpace(*candidate.OutputFileID) != ""
 }
@@ -192,14 +186,14 @@ func meshOptimizationRequestMethod(
 	switch method {
 	case managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_UNSPECIFIED,
 		managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_DRACO:
-		return model.MeshOptimizationMethodDraco
+		return domain.MeshMethodDraco
 	default:
 		return ""
 	}
 }
 
 func meshOptimizationResponseMethod(method string) managev1.MeshOptimizationCompressionMethod {
-	if strings.EqualFold(strings.TrimSpace(method), model.MeshOptimizationMethodDraco) {
+	if strings.EqualFold(strings.TrimSpace(method), domain.MeshMethodDraco) {
 		return managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_DRACO
 	}
 	return managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_UNSPECIFIED
@@ -207,15 +201,15 @@ func meshOptimizationResponseMethod(method string) managev1.MeshOptimizationComp
 
 func meshOptimizationCandidateStatus(status string) managev1.MeshOptimizationCandidateStatus {
 	switch status {
-	case model.MeshOptimizationCandidateStatusPending:
+	case domain.MeshStatusPending:
 		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_PENDING
-	case model.MeshOptimizationCandidateStatusProcessing:
+	case domain.MeshStatusProcessing:
 		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_PROCESSING
-	case model.MeshOptimizationCandidateStatusReady:
+	case domain.MeshStatusReady:
 		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_READY
-	case model.MeshOptimizationCandidateStatusFailed:
+	case domain.MeshStatusFailed:
 		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_FAILED
-	case model.MeshOptimizationCandidateStatusCancelled:
+	case domain.MeshStatusCancelled:
 		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_CANCELLED
 	default:
 		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_UNSPECIFIED

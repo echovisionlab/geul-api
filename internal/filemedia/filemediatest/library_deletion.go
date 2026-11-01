@@ -177,12 +177,20 @@ func (s *LibraryStore) CancelDeletionMeshCandidate(_ context.Context, id string,
 		m.UpdatedAt = now
 		s.MeshRecords[id] = m
 	}
+	if row, ok := s.MeshCandidateRows[id]; ok {
+		row.Status = domain.MeshStatusCancelled
+		row.CancelledAt = new(now)
+		row.ExpiresAt = new(expires)
+		row.UpdatedAt = now
+		s.PutMeshCandidate(row)
+	}
 	return nil
 }
 func (s *LibraryStore) DeleteDeletionMeshCandidate(_ context.Context, id string) error {
 	if s.Fail != nil {
 		return s.Fail
 	}
+	delete(s.MeshCandidateRows, id)
 	delete(s.MeshRecords, id)
 	delete(s.ReadyMeshes, id)
 	return nil

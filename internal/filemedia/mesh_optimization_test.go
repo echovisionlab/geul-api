@@ -1,17 +1,16 @@
 package filemedia
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
 func TestValidateMeshOptimizationRequest(t *testing.T) {
@@ -117,8 +116,8 @@ func TestMeshOptimizationJobFromCandidateUsesGeneratedContract(t *testing.T) {
 	slotID := "page-block:immersive-scene:mesh"
 	attemptID := "attempt-id"
 
-	job, err := meshOptimizationJobFromCandidate(
-		model.MeshOptimizationCandidate{
+	command, err := meshOptimizationJobFromCandidate(
+		domain.MeshCandidate{
 			ID:                 "candidate-id",
 			SourceFileID:       sourceFileID,
 			OutputObjectID:     outputFileID,
@@ -130,7 +129,7 @@ func TestMeshOptimizationJobFromCandidateUsesGeneratedContract(t *testing.T) {
 			PipelineVersion:    model.MeshOptimizationPipelineVersionParticleMeshV1,
 			JobID:              &jobID,
 		},
-		model.File{
+		File{
 			ID:              sourceFileID,
 			Extension:       "glb",
 			MimeType:        "model/gltf-binary",
@@ -140,6 +139,7 @@ func TestMeshOptimizationJobFromCandidateUsesGeneratedContract(t *testing.T) {
 	)
 
 	require.NoError(t, err)
+	job := filemediaqueue.MeshJobEvent(*command)
 	require.Equal(t, jobID, job.GetJobId())
 	require.Equal(t, "candidate-id", job.GetCorrelationId())
 	require.Equal(t, outputKey, job.GetOutput().GetObjectKey())
@@ -209,22 +209,6 @@ func TestMeshOptimizationEventsRequireJobID(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestFileServiceMeshOptimizationServiceUsesAsyncPublisherFallback(t *testing.T) {
-	t.Parallel()
-
-	asyncPublisher := &recordingFileMeshAsyncPublisher{}
-	service := withTestStorage(&Service{
-		db:             newMeshOptimizationUnitDB(t),
-		asyncPublisher: asyncPublisher,
-		publisher:      fileMeshTranscoderOnlyPublisher{},
-		spiceDB:        nil,
-	})
-
-	meshOptimization := service.meshOptimizationService()
-
-	require.Same(t, asyncPublisher, meshOptimization.publisher)
-}
-
 func TestFileServiceMeshOptimizationCandidateResponseHidesFailedOutputTarget(t *testing.T) {
 	t.Parallel()
 
@@ -232,7 +216,7 @@ func TestFileServiceMeshOptimizationCandidateResponseHidesFailedOutputTarget(t *
 	errorMessage := "mesh optimization publisher is not configured"
 	service := &Service{cdnDomain: "cdn.example.com"}
 
-	response, err := service.meshOptimizationCandidateResponse(model.MeshOptimizationCandidate{
+	response, err := service.meshOptimizationCandidateResponse(domain.MeshCandidate{
 		ID:                 "candidate-id",
 		SourceFileID:       "source-file-id",
 		TargetRatioPercent: 40,
@@ -269,7 +253,7 @@ func TestFileServiceMeshOptimizationCandidateResponseIncludesReadyOutputFile(t *
 	outputFileSize := int64(512)
 	service := &Service{cdnDomain: "cdn.example.com", mediaSecret: "secret"}
 
-	response, err := service.meshOptimizationCandidateResponse(model.MeshOptimizationCandidate{
+	response, err := service.meshOptimizationCandidateResponse(domain.MeshCandidate{
 		ID:                 "candidate-id",
 		SourceFileID:       "source-file-id",
 		OutputObjectID:     outputFileID,
@@ -297,51 +281,4 @@ func TestFileServiceMeshOptimizationCandidateResponseIncludesReadyOutputFile(t *
 		managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_PARTICLE_MESH_V1,
 		response.GetProfile(),
 	)
-}
-
-type fileMeshTranscoderOnlyPublisher struct{}
-
-func (fileMeshTranscoderOnlyPublisher) PublishTranscodeAudio(context.Context, *managev1.TranscodeAudioEvent) error {
-	return nil
-}
-
-func (fileMeshTranscoderOnlyPublisher) PublishTranscodeVideo(context.Context, *managev1.TranscodeVideoEvent) error {
-	return nil
-}
-
-func (fileMeshTranscoderOnlyPublisher) PublishWaveformCancel(context.Context, *managev1.WaveformCancelEvent) error {
-	return nil
-}
-
-type recordingFileMeshAsyncPublisher struct {
-	jobs []*managev1.MeshOptimizationJob
-}
-
-func (p *recordingFileMeshAsyncPublisher) EnqueueProtobuf(context.Context, string, string, proto.Message) error {
-	return nil
-}
-
-func (p *recordingFileMeshAsyncPublisher) NotifyProtobuf(context.Context, string, proto.Message) error {
-	return nil
-}
-
-func (p *recordingFileMeshAsyncPublisher) EnqueueProtobufWithExecutor(
-	_ context.Context,
-	executor eventpkg.DBTX,
-	_ string,
-	_ string,
-	_ proto.Message,
-) error {
-	if executor == nil {
-		return errNilTransactionalExecutor
-	}
-	return nil
-}
-
-func (p *recordingFileMeshAsyncPublisher) PublishMeshOptimizationJob(
-	_ context.Context,
-	job *managev1.MeshOptimizationJob,
-) error {
-	p.jobs = append(p.jobs, job)
-	return nil
 }

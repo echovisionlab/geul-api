@@ -19,6 +19,7 @@ import (
 )
 
 type CatalogHarness struct {
+	MeshJobs         func(*testing.T) []domain.MeshJob
 	IngestCommands   func(*testing.T) []domain.IngestTranscodeCommand
 	SeedScoped       func(*testing.T, string, string, ScopedOwner, domain.ScopedAttachment)
 	SeedPolicy       func(*testing.T, domain.PolicyRelation, []string)
@@ -499,6 +500,9 @@ func RunCatalogContract(t *testing.T, open func(*testing.T) CatalogHarness) {
 		cases[name] = run
 	}
 	for name, run := range verifiedIngestCases() {
+		cases[name] = run
+	}
+	for name, run := range meshCases() {
 		cases[name] = run
 	}
 	for name, run := range faviconCases() {
