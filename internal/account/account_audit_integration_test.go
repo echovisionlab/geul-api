@@ -30,16 +30,7 @@ func TestAccountAuditRecordsOnlyExactAuthorityTransitionsIntegration(t *testing.
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())
 	writer := apitelemetry.NewDurableWriter(stack.DB)
-	service := NewAuditedAccountService(
-		stack.DB,
-		stack.KratosClient,
-		stack.SpiceDBClient,
-		"https://www.example.test",
-		accountRoleNoopLifecyclePublisher{},
-		writer,
-		WithMemberDeletion(memberDeletionIntegrationAdapter{}),
-		WithMemberEmailProjection(memberEmailProjectionIntegration{}),
-	)
+	service := newTestHandler(t, Deps{DB: stack.DB, Identity: stack.KratosClient, SpiceDB: stack.SpiceDBClient, Publisher: accountRoleNoopLifecyclePublisher{}, Audit: writer, MemberDeletion: memberDeletionIntegrationAdapter{}, MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 	ctx := auditedOryMemberContext(t, actor)
 
 	roleRequest := connect.NewRequest(&managev1.SetAccountRoleRequest{
@@ -164,15 +155,7 @@ func TestSetAccountRoleRestoresDirectRoleWhenAuditFailsIntegration(t *testing.T)
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())
-	service := NewAuditedAccountService(
-		stack.DB,
-		stack.KratosClient,
-		stack.SpiceDBClient,
-		"https://www.example.test",
-		accountRoleNoopLifecyclePublisher{},
-		failingAccountRoleAuditAppender{},
-		WithMemberEmailProjection(memberEmailProjectionIntegration{}),
-	)
+	service := newTestHandler(t, Deps{DB: stack.DB, Identity: stack.KratosClient, SpiceDB: stack.SpiceDBClient, Publisher: accountRoleNoopLifecyclePublisher{}, Audit: failingAccountRoleAuditAppender{}, MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 
 	response, err := service.SetAccountRole(
 		auditedOryMemberContext(t, actor),
@@ -224,14 +207,7 @@ func TestSetAccountRoleRevalidatesActorLifecycleUnderIdentityFencesIntegration(t
 			stack := testutil.SetupOryStack(t)
 			actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 			target := stack.CreateUser(t, policyv1.Role.User().ID())
-			service := NewAccountService(
-				stack.DB,
-				stack.KratosClient,
-				stack.SpiceDBClient,
-				"https://www.example.test",
-				accountRoleNoopLifecyclePublisher{},
-				WithMemberEmailProjection(memberEmailProjectionIntegration{}),
-			)
+			service := newTestHandler(t, Deps{DB: stack.DB, Identity: stack.KratosClient, SpiceDB: stack.SpiceDBClient, Publisher: accountRoleNoopLifecyclePublisher{}, MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 			testCase.invalidate(t, stack, actor)
 
 			response, err := service.SetAccountRole(
@@ -254,15 +230,7 @@ func TestSetAccountRoleSynchronizesSpiceDBRoleAndWritesAuditIntegration(t *testi
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())
-	service := NewAuditedAccountService(
-		stack.DB,
-		stack.KratosClient,
-		stack.SpiceDBClient,
-		"https://www.example.test",
-		accountRoleNoopLifecyclePublisher{},
-		apitelemetry.NewDurableWriter(stack.DB),
-		WithMemberEmailProjection(memberEmailProjectionIntegration{}),
-	)
+	service := newTestHandler(t, Deps{DB: stack.DB, Identity: stack.KratosClient, SpiceDB: stack.SpiceDBClient, Publisher: accountRoleNoopLifecyclePublisher{}, Audit: apitelemetry.NewDurableWriter(stack.DB), MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 
 	_, err := service.SetAccountRole(
 		auditedOryMemberContext(t, actor),
@@ -285,15 +253,7 @@ func TestSetAccountRoleSynchronizesEveryDirectRoleTransitionIntegration(t *testi
 	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	service := NewAuditedAccountService(
-		stack.DB,
-		stack.KratosClient,
-		stack.SpiceDBClient,
-		"https://www.example.test",
-		accountRoleNoopLifecyclePublisher{},
-		apitelemetry.NewDurableWriter(stack.DB),
-		WithMemberEmailProjection(memberEmailProjectionIntegration{}),
-	)
+	service := newTestHandler(t, Deps{DB: stack.DB, Identity: stack.KratosClient, SpiceDB: stack.SpiceDBClient, Publisher: accountRoleNoopLifecyclePublisher{}, Audit: apitelemetry.NewDurableWriter(stack.DB), MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 
 	for _, transition := range []struct {
 		name string
@@ -329,15 +289,7 @@ func TestSetAccountRoleSameRoleDoesNotWriteAuditIntegration(t *testing.T) {
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.Author().ID())
-	service := NewAuditedAccountService(
-		stack.DB,
-		stack.KratosClient,
-		stack.SpiceDBClient,
-		"https://www.example.test",
-		accountRoleNoopLifecyclePublisher{},
-		apitelemetry.NewDurableWriter(stack.DB),
-		WithMemberEmailProjection(memberEmailProjectionIntegration{}),
-	)
+	service := newTestHandler(t, Deps{DB: stack.DB, Identity: stack.KratosClient, SpiceDB: stack.SpiceDBClient, Publisher: accountRoleNoopLifecyclePublisher{}, Audit: apitelemetry.NewDurableWriter(stack.DB), MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 
 	_, err := service.SetAccountRole(
 		auditedOryMemberContext(t, actor),
@@ -364,7 +316,11 @@ func (w closingAccountRoleAuditAppender) AppendDomainAuditInTransaction(context.
 	return errors.Join(errors.New("audit unavailable"), w.spicedb.Close())
 }
 
-func TestSetAccountRoleSurfacesSpiceDBRestoreFailureIntegration(t *testing.T) {
+// The audit record is appended before the SpiceDB batch, so a failing
+// audit stops the role change before it reaches SpiceDB: a client that dies
+// with the audit leaves nothing to compensate. Compensation of a failure
+// after the batch is internal/authzmutation's own contract.
+func TestSetAccountRoleAuditFailureStopsBeforeSpiceDBIntegration(t *testing.T) {
 	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
@@ -372,15 +328,7 @@ func TestSetAccountRoleSurfacesSpiceDBRestoreFailureIntegration(t *testing.T) {
 	roleClient, err := auth.NewSpiceDBClient(stack.SpiceDBEndpoint, stack.SpiceDBToken, true)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = roleClient.Close() })
-	service := NewAuditedAccountService(
-		stack.DB,
-		stack.KratosClient,
-		roleClient,
-		"https://www.example.test",
-		accountRoleNoopLifecyclePublisher{},
-		closingAccountRoleAuditAppender{spicedb: roleClient},
-		WithMemberEmailProjection(memberEmailProjectionIntegration{}),
-	)
+	service := newTestHandler(t, Deps{DB: stack.DB, Identity: stack.KratosClient, SpiceDB: roleClient, Publisher: accountRoleNoopLifecyclePublisher{}, Audit: closingAccountRoleAuditAppender{spicedb: roleClient}, MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 
 	_, err = service.SetAccountRole(
 		auditedOryMemberContext(t, actor),
@@ -390,10 +338,9 @@ func TestSetAccountRoleSurfacesSpiceDBRestoreFailureIntegration(t *testing.T) {
 		}),
 	)
 	require.ErrorContains(t, err, "audit unavailable")
-	// SpiceDB compensation runs while the database transaction still holds its
-	// locks, before the failed transaction rolls back. This keeps an uncertain
-	// relationship write from becoming visible to a concurrent transaction.
-	require.ErrorContains(t, err, "compensate authorization relationships before database rollback")
+	require.NotContains(t, err.Error(), "compensate authorization relationships")
+	requireGlobalRolePermission(t, t.Context(), stack.SpiceDBClient, target.IdentityID, policyv1.Platform.IsUser, true)
+	requireGlobalRolePermission(t, t.Context(), stack.SpiceDBClient, target.IdentityID, policyv1.Platform.IsAuthor, false)
 }
 
 func auditedOryMemberContext(t *testing.T, user *testutil.OryUser) context.Context {

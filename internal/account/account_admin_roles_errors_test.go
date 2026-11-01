@@ -69,8 +69,8 @@ func TestUnchangedAccountRoleDoesNotHideRollbackFailure(t *testing.T) {
 				rollback.WillReturnError(rollbackErr)
 			}
 			ctx := auth.WithUser(t.Context(), &auth.UserInfo{IdentityID: auth.IdentityID(actorIdentityID), MemberID: auth.MemberID(actorMemberID), SessionID: "55555555-5555-4555-8555-555555555555", Authenticated: true})
-			service := &AccountService{db: db, spicedb: newUnchangedRoleTestClient(t)}
-			err := service.setAccountRoleWithIdentityMutation(ctx, target, policyv1.Role.User())
+			service := newTestService(t, Deps{DB: db, SpiceDB: newUnchangedRoleTestClient(t)})
+			err := service.replaceAccountRole(ctx, auth.GetUser(ctx), target, policyv1.Role.User())
 			if rollbackFails {
 				require.ErrorIs(t, err, rollbackErr)
 				require.ErrorIs(t, err, errAccountRoleUnchanged)

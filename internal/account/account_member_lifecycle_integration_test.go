@@ -30,15 +30,7 @@ func TestAccountRoleMutationKeepsUnonboardedMemberOutOfLastAdminCountIntegration
 		`UPDATE member SET onboarded=FALSE WHERE id IN (?::uuid, ?::uuid)`, roleTarget.MemberID, falseAdmin.MemberID,
 	).Error)
 
-	service := NewAuditedAccountService(
-		stack.DB,
-		stack.KratosClient,
-		stack.SpiceDBClient,
-		"https://www.example.test",
-		accountRoleNoopLifecyclePublisher{},
-		apitelemetry.NewDurableWriter(stack.DB),
-		WithMemberEmailProjection(memberEmailProjectionIntegration{}),
-	)
+	service := newTestHandler(t, Deps{DB: stack.DB, Identity: stack.KratosClient, SpiceDB: stack.SpiceDBClient, Publisher: accountRoleNoopLifecyclePublisher{}, Audit: apitelemetry.NewDurableWriter(stack.DB), MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 	ctx := auditedOryMemberContext(t, actor)
 	response, err := service.SetAccountRole(
 		ctx,

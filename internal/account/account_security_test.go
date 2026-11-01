@@ -63,7 +63,7 @@ func TestDeliveryPrimaryEmailForIdentityReadsExactActiveBilateralMember(t *testi
 		VALUES ('member-1', 'identity-1', 'selected@example.test', NULL)
 	`).Error)
 
-	service := &AccountService{db: db, memberEmails: memberEmailProjectionStub{memberID: "member-1", identityID: "identity-1", primary: "selected@example.test"}}
+	service := &Service{db: db, memberEmails: memberEmailProjectionStub{memberID: "member-1", identityID: "identity-1", primary: "selected@example.test"}}
 	email, err := service.deliveryPrimaryEmailForIdentity(t.Context(), "member-1", "identity-1")
 	require.NoError(t, err)
 	require.Equal(t, "selected@example.test", email)
@@ -105,7 +105,7 @@ func TestSecurityForIdentityRejectsNonCanonicalMemberPrimaryProjection(t *testin
 			{Via: "email", Value: selectedEmail, Verified: true},
 		},
 	}
-	service := &AccountService{
+	service := &Service{
 		db:           db,
 		identity:     accountSecurityIdentityManager{identity: identity},
 		memberEmails: memberEmailProjectionStub{primary: selectedEmail},

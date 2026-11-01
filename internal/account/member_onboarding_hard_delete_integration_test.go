@@ -44,12 +44,7 @@ func TestAdminUnonboardedDeleteQueuesHardDeleteWithActorAudit(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, testutil.PurgePGMQQueue(t.Context(), sqlDB, eventpkg.QueueUserDeleteIdentity))
 	identity := &guardedUnonboardedIdentityManager{accountIdentityManager: stack.KratosClient}
-	service := NewAuditedAccountService(
-		stack.DB, identity, stack.SpiceDBClient, "https://www.example.test", publisher,
-		apitelemetry.NewDurableWriter(stack.DB),
-		WithMemberDeletion(memberDeletionIntegrationAdapter{}),
-		WithMemberEmailProjection(memberEmailProjectionIntegration{}),
-	)
+	service := newTestHandler(t, Deps{DB: stack.DB, Identity: identity, SpiceDB: stack.SpiceDBClient, Publisher: publisher, Audit: apitelemetry.NewDurableWriter(stack.DB), MemberDeletion: memberDeletionIntegrationAdapter{}, MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 
 	response, err := service.DeleteAccount(
 		auditedOryMemberContext(t, admin),
@@ -109,14 +104,11 @@ func TestUnonboardedDeleteAuditFailureRollsBackQueueInsert(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, testutil.PurgePGMQQueue(t.Context(), sqlDB, eventpkg.QueueUserDeleteIdentity))
 
-	accepted, err := EnqueueUnonboardedMemberHardDelete(
-		auditedOryMemberContext(t, admin),
-		stack.DB,
-		publisher,
-		memberDeletionIntegrationAdapter{},
-		failingUnonboardedDeleteAuditWriter{},
-		target.MemberID,
-	)
+	service := newTestService(t, Deps{
+		DB: stack.DB, SpiceDB: stack.SpiceDBClient, Publisher: publisher,
+		MemberDeletion: memberDeletionIntegrationAdapter{}, Audit: failingUnonboardedDeleteAuditWriter{},
+	})
+	accepted, err := service.enqueueUnonboardedHardDelete(auditedOryMemberContext(t, admin), target.MemberID)
 	require.False(t, accepted)
 	require.ErrorContains(t, err, "audit unavailable")
 	messages, err := testutil.ReadPGMQ(t.Context(), sqlDB, eventpkg.QueueUserDeleteIdentity, time.Minute, 1)

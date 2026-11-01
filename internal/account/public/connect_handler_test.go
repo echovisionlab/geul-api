@@ -29,7 +29,7 @@ func TestPublicAccountLifecycleHandlers(t *testing.T) {
 
 	scheduledAt := time.Date(2026, time.July, 11, 12, 0, 0, 0, time.UTC)
 	lifecycle := &fakePublicAccountLifecycle{scheduledAt: scheduledAt}
-	service := &AccountService{lifecycle: lifecycle}
+	service := NewConnectHandler(lifecycle)
 	ctx := context.Background()
 
 	confirmed, err := service.ConfirmAccountDeletion(ctx, connect.NewRequest(&openv1.ConfirmAccountDeletionRequest{Token: "confirm"}))
@@ -58,7 +58,7 @@ func TestPublicAccountLifecycleHandlersPropagateErrors(t *testing.T) {
 	t.Parallel()
 
 	wantErr := errors.New("lifecycle failed")
-	service := &AccountService{lifecycle: &fakePublicAccountLifecycle{err: wantErr}}
+	service := NewConnectHandler(&fakePublicAccountLifecycle{err: wantErr})
 	ctx := context.Background()
 
 	_, err := service.ConfirmAccountDeletion(ctx, connect.NewRequest(&openv1.ConfirmAccountDeletionRequest{}))
@@ -80,25 +80,25 @@ type fakePublicAccountLifecycle struct {
 	confirmRecoveryToken string
 }
 
-func (f *fakePublicAccountLifecycle) ConfirmDeletion(_ context.Context, token string) (*accountdomain.AccountDeletionScheduledResult, error) {
-	f.confirmDeletionToken = token
+func (f *fakePublicAccountLifecycle) ConfirmAccountDeletion(_ context.Context, command accountdomain.ConfirmAccountDeletionCommand) (accountdomain.AccountDeletionScheduledResult, error) {
+	f.confirmDeletionToken = command.Token
 	if f.err != nil {
-		return nil, f.err
+		return accountdomain.AccountDeletionScheduledResult{}, f.err
 	}
-	return &accountdomain.AccountDeletionScheduledResult{ScheduledAt: f.scheduledAt}, nil
+	return accountdomain.AccountDeletionScheduledResult{ScheduledAt: f.scheduledAt}, nil
 }
 
-func (f *fakePublicAccountLifecycle) CancelDeletion(_ context.Context, token string) error {
-	f.cancelDeletionToken = token
+func (f *fakePublicAccountLifecycle) CancelAccountDeletion(_ context.Context, command accountdomain.CancelAccountDeletionCommand) error {
+	f.cancelDeletionToken = command.Token
 	return f.err
 }
 
-func (f *fakePublicAccountLifecycle) RequestRecovery(_ context.Context, email string) error {
-	f.recoveryEmail = email
+func (f *fakePublicAccountLifecycle) RequestAccountRecovery(_ context.Context, command accountdomain.RequestAccountRecoveryCommand) error {
+	f.recoveryEmail = command.Email
 	return f.err
 }
 
-func (f *fakePublicAccountLifecycle) ConfirmRecovery(_ context.Context, token string) error {
-	f.confirmRecoveryToken = token
+func (f *fakePublicAccountLifecycle) ConfirmAccountRecovery(_ context.Context, command accountdomain.ConfirmAccountRecoveryCommand) error {
+	f.confirmRecoveryToken = command.Token
 	return f.err
 }

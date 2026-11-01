@@ -20,10 +20,7 @@ func TestSetAccountRoleRejectsSelfBeforeMutation(t *testing.T) {
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	memberID := actor.MemberID
 	ctx := auth.WithUser(context.Background(), actor.AuthUserInfo())
-	service := NewAccountService(
-		stack.DB, stack.KratosClient, stack.SpiceDBClient, "https://www.example.test", accountRoleNoopLifecyclePublisher{},
-		WithMemberEmailProjection(memberEmailProjectionStub{}),
-	)
+	service := newTestHandler(t, Deps{DB: stack.DB, Identity: stack.KratosClient, SpiceDB: stack.SpiceDBClient, Publisher: accountRoleNoopLifecyclePublisher{}, MemberEmails: memberEmailProjectionStub{}, SiteOrigin: "https://www.example.test"})
 
 	response, err := service.SetAccountRole(ctx, connect.NewRequest(&managev1.SetAccountRoleRequest{
 		MemberId: memberID,

@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,20 +36,20 @@ func (accountBanNoopLifecyclePublisher) PublishUserDeleteAvatar(
 	return nil
 }
 
+func (accountBanNoopLifecyclePublisher) PublishUserDeleteIdentityWithExecutor(
+	context.Context,
+	eventpkg.DBTX,
+	*managev1.UserDeleteIdentityCommand,
+) error {
+	return nil
+}
+
 func TestBanAccountRejectsAdminTargetWithoutIdentityMutationIntegration(t *testing.T) {
 	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	service := NewAuditedAccountService(
-		stack.DB,
-		stack.KratosClient,
-		stack.SpiceDBClient,
-		"https://www.example.test",
-		accountBanNoopLifecyclePublisher{},
-		apitelemetry.NewDurableWriter(stack.DB),
-		WithMemberEmailProjection(memberEmailProjectionIntegration{}),
-	)
+	service := newTestHandler(t, Deps{DB: stack.DB, Identity: stack.KratosClient, SpiceDB: stack.SpiceDBClient, Publisher: accountBanNoopLifecyclePublisher{}, Audit: apitelemetry.NewDurableWriter(stack.DB), MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 	ctx := auditedOryMemberContext(t, actor)
 
 	response, err := service.BanAccount(ctx, connect.NewRequest(&managev1.BanAccountRequest{
@@ -71,15 +72,7 @@ func TestBanAccountRejectsTargetAfterRolePromotionIntegration(t *testing.T) {
 	stack := testutil.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())
-	service := NewAuditedAccountService(
-		stack.DB,
-		stack.KratosClient,
-		stack.SpiceDBClient,
-		"https://www.example.test",
-		accountBanNoopLifecyclePublisher{},
-		apitelemetry.NewDurableWriter(stack.DB),
-		WithMemberEmailProjection(memberEmailProjectionIntegration{}),
-	)
+	service := newTestHandler(t, Deps{DB: stack.DB, Identity: stack.KratosClient, SpiceDB: stack.SpiceDBClient, Publisher: accountBanNoopLifecyclePublisher{}, Audit: apitelemetry.NewDurableWriter(stack.DB), MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 	ctx := auditedOryMemberContext(t, actor)
 
 	_, err := service.SetAccountRole(ctx, connect.NewRequest(&managev1.SetAccountRoleRequest{

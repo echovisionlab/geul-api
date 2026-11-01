@@ -20,16 +20,7 @@ func TestAccountNewsletterSubscriptionAuditRecordsOnlyCommittedTransitionsIntegr
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	member := stack.CreateUser(t, policyv1.Role.User().ID())
-	service := NewAuditedAccountService(
-		stack.DB,
-		stack.KratosClient,
-		stack.SpiceDBClient,
-		"https://www.example.test",
-		accountRoleNoopLifecyclePublisher{},
-		apitelemetry.NewDurableWriter(stack.DB),
-		WithNewsletterSubscription(memberNewsletterSubscriptionIntegration{}),
-		WithMemberEmailProjection(memberEmailProjectionIntegration{}),
-	)
+	service := newTestHandler(t, Deps{DB: stack.DB, Identity: stack.KratosClient, SpiceDB: stack.SpiceDBClient, Publisher: accountRoleNoopLifecyclePublisher{}, Audit: apitelemetry.NewDurableWriter(stack.DB), Newsletter: memberNewsletterSubscriptionIntegration{}, MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 	memberCtx := auditedOryMemberContext(t, member)
 	adminCtx := auditedOryMemberContext(t, admin)
 
@@ -70,16 +61,7 @@ func TestAccountNewsletterSubscriptionAuditFailureRollsBackIntegration(t *testin
 	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	member := stack.CreateUser(t, policyv1.Role.User().ID())
-	service := NewAuditedAccountService(
-		stack.DB,
-		stack.KratosClient,
-		stack.SpiceDBClient,
-		"https://www.example.test",
-		accountRoleNoopLifecyclePublisher{},
-		failingDomainAuditAppender{},
-		WithNewsletterSubscription(memberNewsletterSubscriptionIntegration{}),
-		WithMemberEmailProjection(memberEmailProjectionIntegration{}),
-	)
+	service := newTestHandler(t, Deps{DB: stack.DB, Identity: stack.KratosClient, SpiceDB: stack.SpiceDBClient, Publisher: accountRoleNoopLifecyclePublisher{}, Audit: failingDomainAuditAppender{}, Newsletter: memberNewsletterSubscriptionIntegration{}, MemberEmails: memberEmailProjectionIntegration{}, SiteOrigin: "https://www.example.test"})
 
 	_, err := service.SetMyNewsletterSubscription(
 		auditedOryMemberContext(t, member),

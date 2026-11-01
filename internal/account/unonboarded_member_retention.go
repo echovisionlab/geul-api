@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
@@ -105,69 +105,48 @@ func enqueueExpiredUnonboardedMember(
 	return accepted, err
 }
 
-// EnqueueUnonboardedMemberHardDelete is the admin-requested counterpart to
-// the retention scheduler. It records the request actor's scheduled deletion
-// transition and the hard-delete command in one transaction, while leaving
-// all external cleanup to the worker.
-func EnqueueUnonboardedMemberHardDelete(
-	ctx context.Context,
-	db *gorm.DB,
-	publisher UserDeletionIdentityDispatchPublisher,
-	members MemberDeletionLifecycle,
-	auditWriter domainaudit.Appender,
-	memberID string,
-) (bool, error) {
-	if db == nil || publisher == nil || members == nil || auditWriter == nil {
-		return false, fmt.Errorf("unonboarded Member deletion dependencies are required")
+// enqueueUnonboardedHardDelete is the admin-requested counterpart to the
+// retention scheduler. It records the administrator's scheduled deletion
+// transition and the hard-delete command in one mutation, while leaving all
+// external cleanup to the worker. It reports false when the Member is not an
+// unonboarded one, so the caller tombstones it instead.
+func (s *Service) enqueueUnonboardedHardDelete(ctx context.Context, memberID string) (bool, error) {
+	// The Member owner resolves the current link before the Account fence;
+	// the same owner rechecks it after the fence.
+	identityID, found, err := s.memberDeletion.UnonboardedIdentity(ctx, s.db, memberID)
+	if err != nil || !found {
+		return false, err
 	}
-	var accepted bool
-	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// The Member owner resolves the current link before the Account fence;
-		// the same owner rechecks it after the fence below.
-		candidateIdentity, found, err := members.UnonboardedIdentity(ctx, tx, memberID)
-		if err != nil {
-			return err
-		}
-		if !found {
-			return nil
-		}
-		if candidateIdentity == "" {
-			return fmt.Errorf("unonboarded Member has no account identity")
-		}
-		if err := identitystate.Lock(tx, candidateIdentity); err != nil {
-			return err
-		}
-		eligible, err := members.RecheckUnonboarded(ctx, tx, memberID, candidateIdentity, nil)
-		if err != nil || !eligible {
-			return err
-		}
-		executor, err := contentsignal.TransactionExecutor(tx)
-		if err != nil {
-			return err
-		}
-		command := &managev1.UserDeleteIdentityCommand{
-			Mode:       managev1.UserDeleteIdentityMode_UNONBOARDED_HARD_DELETE,
-			MemberId:   memberID,
-			IdentityId: candidateIdentity,
-		}
-		if err := publisher.PublishUserDeleteIdentityWithExecutor(ctx, executor, command); err != nil {
-			return err
-		}
-		if err := domainaudit.AppendRequest(
-			ctx,
-			tx,
-			auditWriter,
-			sharedtelemetry.AuditAccountUpdated,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewAccountDeletionScheduledAuditRecord(
-					metadata, memberID, sharedtelemetry.AuditStateNone,
-				)
-			},
-		); err != nil {
-			return err
-		}
-		accepted = true
-		return nil
+	if identityID == "" {
+		return false, errors.New("unonboarded Member has no account identity")
+	}
+	return mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
+		Subjects: []string{identityID},
+		Access:   freshAdmin(),
+		Change: func(ctx context.Context, tx *gorm.DB) (bool, error) {
+			return s.memberDeletion.RecheckUnonboarded(ctx, tx, memberID, identityID, nil)
+		},
+		Audit: func(eligible bool) mutation.Audit {
+			if !eligible {
+				return mutation.Unchanged()
+			}
+			return mutation.RequestAudit(sharedtelemetry.AuditAccountUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewAccountDeletionScheduledAuditRecord(metadata, memberID, sharedtelemetry.AuditStateNone)
+			})
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, eligible bool) error {
+			if !eligible {
+				return nil
+			}
+			executor, err := contentsignal.TransactionExecutor(tx)
+			if err != nil {
+				return err
+			}
+			return s.publisher.PublishUserDeleteIdentityWithExecutor(ctx, executor, &managev1.UserDeleteIdentityCommand{
+				Mode:       managev1.UserDeleteIdentityMode_UNONBOARDED_HARD_DELETE,
+				MemberId:   memberID,
+				IdentityId: identityID,
+			})
+		},
 	})
-	return accepted, err
 }

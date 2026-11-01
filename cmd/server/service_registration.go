@@ -113,7 +113,7 @@ type serviceRegistrationDependencies struct {
 type registeredServices struct {
 	authInterceptor             *auth.AuthInterceptor
 	accountEmailChangeLifecycle *account.AccountEmailChangeLifecycle
-	accountLifecycle            *account.AccountLifecycleService
+	accountLifecycle            *account.Service
 	mcpAuthorAdmissionHandler   http.Handler
 	oathkeeperPATHandler        http.Handler
 }
@@ -308,23 +308,26 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize member service: %w", err)
 	}
-	accountBaseService := account.NewAuditedAccountService(
-		db,
-		kratosClient,
-		spicedbClient,
-		cfg.SiteOrigin,
-		workerPublisher,
-		telemetryWriter,
-		account.WithNewsletterSubscription(accountadapter.NewsletterSubscription{}),
-		account.WithMemberDeletion(accountadapter.MemberDeletion{}),
-		account.WithMemberEmailProjection(accountadapter.MemberEmailProjection{}),
-	)
+	accounts, err := account.NewService(account.Deps{
+		DB:             db,
+		SpiceDB:        spicedbClient,
+		Identity:       kratosClient,
+		Publisher:      workerPublisher,
+		Newsletter:     accountadapter.NewsletterSubscription{},
+		MemberDeletion: accountadapter.MemberDeletion{},
+		MemberEmails:   accountadapter.MemberEmailProjection{},
+		Audit:          telemetryWriter,
+		SiteOrigin:     cfg.SiteOrigin,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize account service: %w", err)
+	}
 	personalAccessTokenRepository, err := memberpatadapter.NewPersonalAccessTokenRepository(db)
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize personal access token repository: %w", err)
 	}
 	personalAccessTokenHandlers, err := newPersonalAccessTokenComposition(
-		accountBaseService,
+		account.NewConnectHandler(accounts),
 		personalAccessTokenRepository,
 		memberpatadapter.SystemClock{},
 		rand.Reader,
@@ -380,16 +383,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		telemetryWriter,
 		hooksPublisher,
 		accountadapter.MemberEmailProjection{},
-	)
-	accountLifecycle := account.NewAuditedAccountLifecycleService(
-		db,
-		kratosClient,
-		spicedbClient,
-		cfg.SiteOrigin,
-		workerPublisher,
-		telemetryWriter,
-		account.WithLifecycleMemberDeletion(accountadapter.MemberDeletion{}),
-		account.WithLifecycleMemberEmailProjection(accountadapter.MemberEmailProjection{}),
 	)
 	// Hooks handler (for Kratos webhooks)
 	authenticationHooks := authenticationadapter.NewHooksHandler(loginHooks, registrationHooks)
@@ -935,6 +928,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		workRuntime:      workRuntime,
 		legalRuntime:     legalRuntime,
 		formDependencies: formDependencies,
+		accounts:         accounts,
 	}).register(); err != nil {
 		return registeredServices{}, err
 	}
@@ -942,7 +936,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	return registeredServices{
 		authInterceptor:             authInterceptor,
 		accountEmailChangeLifecycle: accountEmailChangeLifecycle,
-		accountLifecycle:            accountLifecycle,
+		accountLifecycle:            accounts,
 		mcpAuthorAdmissionHandler:   mcpAuthorAdmissionHandler,
 		oathkeeperPATHandler:        oathkeeperPATHandler,
 	}, nil

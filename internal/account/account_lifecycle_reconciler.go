@@ -18,7 +18,7 @@ import (
 // Start restores the external identity state implied by terminal cancellation
 // and recovery facts. It does not publish notifications or persist broker
 // progress; explicit requests remain the only notification trigger.
-func (s *AccountLifecycleService) Start(ctx context.Context) {
+func (s *Service) Start(ctx context.Context) {
 	reconcile := func() error {
 		return postgreslock.WithAdvisoryLeader(
 			ctx,
@@ -52,7 +52,7 @@ func (s *AccountLifecycleService) Start(ctx context.Context) {
 // ReconcileScheduledIdentityStates repairs the external deactivation and
 // session-revocation consequences of a committed deletion deadline. Starting
 // recovery does not cancel or pause that deadline; only confirmed recovery does.
-func (s *AccountLifecycleService) ReconcileScheduledIdentityStates(ctx context.Context) error {
+func (s *Service) ReconcileScheduledIdentityStates(ctx context.Context) error {
 	var candidates []model.UserDeletionRequest
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT request.*
@@ -83,12 +83,12 @@ func (s *AccountLifecycleService) ReconcileScheduledIdentityStates(ctx context.C
 	return errors.Join(reconcileErrors...)
 }
 
-func (s *AccountLifecycleService) ensureScheduledIdentityInactive(
+func (s *Service) ensureScheduledIdentityInactive(
 	ctx context.Context,
 	requestID string,
 	identityID string,
 ) error {
-	return ensureScheduledIdentityInactive(ctx, s.db, s.kratosClient, requestID, identityID)
+	return ensureScheduledIdentityInactive(ctx, s.db, s.identity, requestID, identityID)
 }
 
 func ensureScheduledIdentityInactive(
@@ -126,7 +126,7 @@ func ensureScheduledIdentityInactive(
 // ReconcileTerminalIdentityStates activates identities whose durable deletion
 // lifecycle fact is cancelled or recovered but whose Kratos state is still
 // inactive. The cross-schema predicate keeps each pass bounded to actual drift.
-func (s *AccountLifecycleService) ReconcileTerminalIdentityStates(ctx context.Context) error {
+func (s *Service) ReconcileTerminalIdentityStates(ctx context.Context) error {
 	var candidates []model.UserDeletionRequest
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT request.*
@@ -152,7 +152,7 @@ func (s *AccountLifecycleService) ReconcileTerminalIdentityStates(ctx context.Co
 	return errors.Join(reconcileErrors...)
 }
 
-func (s *AccountLifecycleService) ensureTerminalIdentityActive(
+func (s *Service) ensureTerminalIdentityActive(
 	ctx context.Context,
 	requestID string,
 	identityID string,
@@ -169,7 +169,7 @@ func (s *AccountLifecycleService) ensureTerminalIdentityActive(
 			}
 			return err
 		}
-		identity, err := s.kratosClient.GetIdentity(mutationCtx, current.IdentityID)
+		identity, err := s.identity.GetIdentity(mutationCtx, current.IdentityID)
 		if err != nil {
 			return err
 		}
@@ -182,7 +182,7 @@ func (s *AccountLifecycleService) ensureTerminalIdentityActive(
 		if !current.UpdatedAt.After(identity.UpdatedAt) || identityMetadataBanned(identity) {
 			return nil
 		}
-		return s.kratosClient.SetIdentityState(mutationCtx, current.IdentityID, auth.KratosStateActive)
+		return s.identity.SetIdentityState(mutationCtx, current.IdentityID, auth.KratosStateActive)
 	})
 }
 

@@ -5,8 +5,8 @@ import (
 	"log/slog"
 
 	"connectrpc.com/connect"
+	accountdomain "github.com/echovisionlab/geul-api/internal/account"
 	accountpublic "github.com/echovisionlab/geul-api/internal/account/public"
-	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	pageruntime "github.com/echovisionlab/geul-api/internal/adapters/page/runtime"
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
@@ -47,6 +47,7 @@ type publicServiceRegistration struct {
 	workRuntime      *workadapter.Runtime
 	legalRuntime     *legaladapter.Runtime
 	formDependencies formdomain.Dependencies
+	accounts         *accountdomain.Service
 }
 
 func (r publicServiceRegistration) register() error {
@@ -55,8 +56,6 @@ func (r publicServiceRegistration) register() error {
 	cfg := deps.cfg
 	db := deps.db
 	spicedbClient := deps.spicedbClient
-	kratosClient := deps.kratosClient
-	workerPublisher := deps.workerPublisher
 	passwordHasher := deps.passwordHasher
 	telemetryWriter := deps.telemetryWriter
 	contentBlockStore := deps.contentBlockStore
@@ -140,17 +139,7 @@ func (r publicServiceRegistration) register() error {
 	publicMemberPath, publicMemberHandler := openv1connect.NewMemberServiceHandler(publicMemberService, publicHandlerOpts...)
 	mux.Handle(publicMemberPath, publicMemberHandler)
 	slog.Info("Registered public service", "path", publicMemberPath)
-	publicAccountService := accountpublic.NewAuditedAccountService(
-		db,
-		kratosClient,
-		spicedbClient,
-		cfg.SiteOrigin,
-		workerPublisher,
-		accountadapter.MemberDeletion{},
-		accountadapter.MemberEmailProjection{},
-		telemetryWriter,
-	)
-	publicAccountPath, publicAccountHandler := openv1connect.NewAccountServiceHandler(publicAccountService, publicHandlerOpts...)
+	publicAccountPath, publicAccountHandler := openv1connect.NewAccountServiceHandler(accountpublic.NewConnectHandler(r.accounts), publicHandlerOpts...)
 	mux.Handle(publicAccountPath, publicAccountHandler)
 	slog.Info("Registered public service", "path", publicAccountPath)
 

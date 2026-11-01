@@ -2,11 +2,12 @@ package account
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -24,10 +25,10 @@ func NewUserStateService(identityManager auth.IdentityManager) *UserStateService
 func (s *UserStateService) Ban(ctx context.Context, userID string, reason *string, until *time.Time) error {
 	identity, err := s.identityManager.GetIdentity(ctx, userID)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if identity == nil {
-		return errs.InternalMsg("identity is required")
+		return errors.New("identity is required")
 	}
 	metadataAdmin := cloneIdentityMetadataAdmin(identity.MetadataAdmin)
 	metadataAdmin["banned"] = true
@@ -46,13 +47,13 @@ func (s *UserStateService) Ban(ctx context.Context, userID string, reason *strin
 	// and must never become the only persisted ban fact while sessions remain
 	// usable after a partial failure.
 	if err := s.identityManager.SetIdentityState(ctx, userID, auth.KratosStateInactive); err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if err := s.identityManager.UpdateIdentityMetadataAdmin(ctx, userID, metadataAdmin); err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if err := s.identityManager.DeleteIdentitySessions(ctx, userID); err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }
@@ -60,20 +61,20 @@ func (s *UserStateService) Ban(ctx context.Context, userID string, reason *strin
 func (s *UserStateService) ClearBan(ctx context.Context, userID string) error {
 	identity, err := s.identityManager.GetIdentity(ctx, userID)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if identity == nil {
-		return errs.InternalMsg("identity is required")
+		return errors.New("identity is required")
 	}
 	metadataAdmin := cloneIdentityMetadataAdmin(identity.MetadataAdmin)
 	metadataAdmin["banned"] = false
 	metadataAdmin["ban_reason"] = nil
 	metadataAdmin["ban_expires"] = nil
 	if err := s.identityManager.SetIdentityState(ctx, userID, auth.KratosStateActive); err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if err := s.identityManager.UpdateIdentityMetadataAdmin(ctx, userID, metadataAdmin); err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }

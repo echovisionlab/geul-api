@@ -59,7 +59,7 @@ func TestAccountSecurityMutationsRejectStaleCurrentSessionIntegration(t *testing
 		SessionID:     auth.SessionID(sessionID),
 		Authenticated: true,
 	})
-	service := &AccountService{db: db}
+	service := NewConnectHandler(&Service{db: db})
 
 	tests := []struct {
 		name string

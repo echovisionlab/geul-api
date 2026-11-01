@@ -29,44 +29,28 @@ func hasPendingAccountDeletion(tx *gorm.DB, identityID string) (bool, error) {
 	return pendingDeletionCount > 0, nil
 }
 
-func clearUserBan(
-	ctx context.Context,
-	db *gorm.DB,
-	identityManager auth.IdentityManager,
-	identityID string,
-	afterClear func(context.Context, *gorm.DB) error,
-) (bool, error) {
-	cleared := false
-	err := identitystate.WithMutation(ctx, db, identityID, func(mutationCtx context.Context, tx *gorm.DB) error {
-		pendingDeletion, err := hasPendingAccountDeletion(tx, identityID)
-		if err != nil {
-			return err
-		}
-		if pendingDeletion {
-			return ErrPendingAccountDeletion
-		}
-		identity, err := identityManager.GetIdentity(mutationCtx, identityID)
-		if err != nil {
-			return err
-		}
-		if identity == nil {
-			return errors.New("unban identity was not found")
-		}
-		if !identity.IsBanned() {
-			return nil
-		}
-		if err := NewUserStateService(identityManager).ClearBan(mutationCtx, identityID); err != nil {
-			return err
-		}
-		if afterClear != nil {
-			if err := afterClear(mutationCtx, tx); err != nil {
-				return err
-			}
-		}
-		cleared = true
-		return nil
-	})
-	return cleared, err
+// clearUserBan lifts the ban of identityID in tx, which holds its Identity
+// fence, and reports whether it was banned. A pending deletion keeps the
+// Identity inactive.
+func clearUserBan(ctx context.Context, tx *gorm.DB, identityManager auth.IdentityManager, identityID string) (bool, error) {
+	pendingDeletion, err := hasPendingAccountDeletion(tx, identityID)
+	if err != nil {
+		return false, err
+	}
+	if pendingDeletion {
+		return false, ErrPendingAccountDeletion
+	}
+	identity, err := identityManager.GetIdentity(ctx, identityID)
+	if err != nil {
+		return false, err
+	}
+	if identity == nil {
+		return false, errors.New("unban identity was not found")
+	}
+	if !identity.IsBanned() {
+		return false, nil
+	}
+	return true, NewUserStateService(identityManager).ClearBan(ctx, identityID)
 }
 
 // ClearExpiredTimedBan clears an expired timed ban only after re-reading both
@@ -79,7 +63,7 @@ func ClearExpiredTimedBan(
 	identityManager auth.IdentityManager,
 	identityID string,
 	now time.Time,
-	auditWriters ...domainaudit.Appender,
+	auditWriter domainaudit.Appender,
 ) (bool, error) {
 	if identityManager == nil {
 		return false, fmt.Errorf("expired ban reconciliation requires identity manager")
@@ -90,10 +74,6 @@ func ClearExpiredTimedBan(
 	}
 
 	cleared := false
-	var auditWriter domainaudit.Appender
-	if len(auditWriters) > 0 {
-		auditWriter = auditWriters[0]
-	}
 	err := identitystate.WithMutation(ctx, db, identityID, func(mutationCtx context.Context, tx *gorm.DB) error {
 		pendingDeletion, err := hasPendingAccountDeletion(tx, identityID)
 		if err != nil {
@@ -117,26 +97,24 @@ func ClearExpiredTimedBan(
 		if err := NewUserStateService(identityManager).ClearBan(mutationCtx, identityID); err != nil {
 			return err
 		}
-		if auditWriter != nil {
-			memberID, err := authorizationtarget.ActiveMemberIDForIdentity(mutationCtx, tx, identityID)
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errors.New("expired ban member was not found")
-			}
-			if err != nil {
-				return err
-			}
-			if err := domainaudit.AppendSystem(
-				mutationCtx,
-				tx,
-				auditWriter,
-				sharedtelemetry.ServiceBackend,
-				sharedtelemetry.AuditMemberUpdated,
-				func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-					return sharedtelemetry.NewMemberUnbannedAuditRecord(metadata, memberID)
-				},
-			); err != nil {
-				return err
-			}
+		memberID, err := authorizationtarget.ActiveMemberIDForIdentity(mutationCtx, tx, identityID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return errors.New("expired ban member was not found")
+		}
+		if err != nil {
+			return err
+		}
+		if err := domainaudit.AppendSystem(
+			mutationCtx,
+			tx,
+			auditWriter,
+			sharedtelemetry.ServiceBackend,
+			sharedtelemetry.AuditMemberUpdated,
+			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewMemberUnbannedAuditRecord(metadata, memberID)
+			},
+		); err != nil {
+			return err
 		}
 		cleared = true
 		return nil

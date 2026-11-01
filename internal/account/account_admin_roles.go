@@ -4,204 +4,163 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
-	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
 )
 
-func (s *AccountService) accountSummaryForAdmin(
-	ctx context.Context,
-	memberID string,
-) (*connect.Response[managev1.AccountSummary], error) {
+// adminAccountSummary is the Account summary an administrator mutation
+// answers with.
+func (s *Service) adminAccountSummary(ctx context.Context, memberID string) (*managev1.AccountSummary, error) {
 	if _, err := authorizationtarget.RequireGlobalAdmin(ctx, s.spicedb); err != nil {
 		return nil, err
 	}
-	summary, err := accountSummaryForMember(ctx, s.db, s.spicedb, memberID)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(summary), nil
+	return accountSummaryForMember(ctx, s.db, s.spicedb, memberID)
 }
 
-func (s *AccountService) SetAccountRole(
-	ctx context.Context,
-	req *connect.Request[managev1.SetAccountRoleRequest],
-) (*connect.Response[managev1.AccountSummary], error) {
+// SetAccountRoleCommand replaces a Member's direct global role. A zero Role
+// is not a valid account role.
+type SetAccountRoleCommand struct {
+	MemberID string
+	Role     policyv1.RoleID
+}
+
+// SetAccountRole replaces the direct global role of another live Member.
+func (s *Service) SetAccountRole(ctx context.Context, command SetAccountRoleCommand) (*managev1.AccountSummary, error) {
 	actor, err := authorizationtarget.RequireGlobalAdmin(ctx, s.spicedb)
 	if err != nil {
 		return nil, err
 	}
-	if req.Msg.MemberId == actor.MemberID.String() {
-		return nil, errs.InvalidArgument("member_id", "cannot change your own role")
+	if command.MemberID == actor.MemberID.String() {
+		return nil, domainerr.InvalidField("member_id", "cannot change your own role")
 	}
-	role, err := accountRoleForProto(req.Msg.Role)
+	if !command.Role.Valid() {
+		return nil, domainerr.InvalidField("role", "invalid account role")
+	}
+	target, err := authorizationtarget.RequireLive(ctx, s.db, command.MemberID)
 	if err != nil {
 		return nil, err
 	}
-	target, err := authorizationtarget.RequireLive(ctx, s.db, req.Msg.MemberId)
-	if err != nil {
+	if err := s.replaceAccountRole(ctx, actor, target, command.Role); err != nil {
 		return nil, err
 	}
-	err = s.setAccountRoleWithIdentityMutation(ctx, target, role)
-	if err != nil {
-		var connectErr *connect.Error
-		if errors.As(err, &connectErr) {
-			return nil, connectErr
-		}
-		return nil, errs.Internal(err)
-	}
-	return s.accountSummaryForAdmin(ctx, req.Msg.MemberId)
+	return s.adminAccountSummary(ctx, command.MemberID)
 }
 
 var errAccountRoleUnchanged = errors.New("account role is unchanged")
 
-func (s *AccountService) setAccountRoleWithIdentityMutation(
-	ctx context.Context,
-	target authorizationtarget.Target,
-	role policyv1.RoleID,
-) error {
-	mutationCtx, cancel := context.WithTimeout(ctx, identitystate.MutationTimeout)
-	defer cancel()
-	_, err := authzmutation.Execute(mutationCtx, s.db, s.spicedb, func(
-		tx *gorm.DB,
-		write authzmutation.WriteRelationships,
-	) error {
-		actor, err := authorizationtarget.RequireGlobalAdmin(mutationCtx, s.spicedb)
+// accountRoleChange is the direct global role a replacement found.
+type accountRoleChange struct {
+	subject       auth.AccountIdentitySubject
+	previous      policyv1.RoleID
+	previousFound bool
+}
+
+// replaceAccountRole writes the target's direct global role in the
+// authorization batch of one mutation. Both Identities are locked before the
+// last-admin fence, the order every fence holder takes, and the fence is held
+// before authorization so a demotion and a deletion of the remaining admins
+// cannot both pass.
+func (s *Service) replaceAccountRole(ctx context.Context, actor *auth.UserInfo, target authorizationtarget.Target, role policyv1.RoleID) error {
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[accountRoleChange]{
+		Subjects: []string{actor.IdentityID.String(), target.IdentityID},
+		Lock: func(_ context.Context, tx *gorm.DB) error {
+			return tx.Exec("SELECT pg_advisory_xact_lock(?)", userDeletionAdminFenceKey).Error
+		},
+		Access: s.liveAdmin(actor),
+		Change: func(ctx context.Context, tx *gorm.DB) (accountRoleChange, error) {
+			return s.prepareAccountRole(ctx, tx, target, role)
+		},
+		Audit: func(change accountRoleChange) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditMemberUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewMemberRoleUpdatedAuditRecord(metadata, target.MemberID, change.previous.ID(), role.ID())
+			})
+		},
+		Relationships: func(change accountRoleChange) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			apply, err := accountRoleReplacementMutations(change.subject, role)
+			if err != nil {
+				return nil, nil, fmt.Errorf("build direct global role replacement: %w", err)
+			}
+			compensate, err := accountRoleRestoreMutations(change.subject, change.previous, change.previousFound)
+			if err != nil {
+				return nil, nil, fmt.Errorf("build inverse direct global role replacement: %w", err)
+			}
+			return apply, compensate, nil
+		},
+	})
+	// Run returns the sentinel unchanged only after a successful rollback.
+	// A joined rollback failure must still reach the caller.
+	if err == errAccountRoleUnchanged { //nolint:errorlint // identity: a joined rollback failure must not match
+		return nil
+	}
+	return err
+}
+
+// liveAdmin requires the actor to still be a live Member under the same
+// Identity and to hold the global admin role, read with full consistency. A
+// retired actor answers NotFound, as a retired target does, which
+// FreshAdminCan's fence cannot express.
+func (s *Service) liveAdmin(actor *auth.UserInfo) mutation.Access {
+	return mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+		current, err := authorizationtarget.RequireLive(ctx, tx, actor.MemberID.String())
 		if err != nil {
 			return err
 		}
-		if err := lockAccountRoleIdentityFences(tx, actor.IdentityID.String(), target.IdentityID); err != nil {
-			return err
-		}
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", userDeletionAdminFenceKey).Error; err != nil {
-			return err
-		}
-		currentActor, err := authorizationtarget.RequireLive(mutationCtx, tx, actor.MemberID.String())
-		if err != nil {
-			return err
-		}
-		if currentActor.IdentityID != actor.IdentityID.String() {
-			return errs.InvalidSession()
+		if current.IdentityID != actor.IdentityID.String() {
+			return domainerr.InvalidSession()
 		}
 		adminCan, err := policyv1.Platform.IsAdmin()
 		if err != nil {
 			return err
 		}
-		decision, err := auth.AuthorizationDecision(mutationCtx, adminCan)
+		decision, err := auth.AuthorizationDecision(ctx, adminCan)
 		if err != nil {
-			return errs.WithCause(errs.InvalidSession(), err)
+			return domainerr.InvalidSession().WithCause(err)
 		}
-		isAdmin, err := s.spicedb.Can(mutationCtx, decision)
+		isAdmin, err := s.spicedb.Can(ctx, decision)
 		if err != nil {
 			return fmt.Errorf("check current global admin role: %w", err)
 		}
 		if !isAdmin {
-			return errs.AdminRequired()
-		}
-		currentTarget, err := authorizationtarget.RequireLive(mutationCtx, tx, target.MemberID)
-		if err != nil {
-			return err
-		}
-		if currentTarget.IdentityID != target.IdentityID {
-			return errs.NotFound("member", target.MemberID)
-		}
-		targetSubject, err := auth.NewAccountIdentitySubject(auth.IdentityID(target.IdentityID))
-		if err != nil {
-			return err
-		}
-		previousRole, previousFound, err := s.spicedb.ReadDirectGlobalRole(mutationCtx, targetSubject)
-		if err != nil {
-			return fmt.Errorf("read current direct global role: %w", err)
-		}
-		if previousFound && previousRole == role {
-			return errAccountRoleUnchanged
-		}
-		if role != policyv1.Role.Admin() {
-			if err := ValidateLastActiveAdminDeletionWithAuthorization(
-				mutationCtx,
-				tx,
-				target.MemberID,
-				target.IdentityID,
-				s.spicedb,
-			); err != nil {
-				return err
-			}
-		}
-		if s.auditWriter == nil {
-			return fmt.Errorf("account role audit writer is required")
-		}
-		apply, err := accountRoleReplacementMutations(targetSubject, role)
-		if err != nil {
-			return fmt.Errorf("build direct global role replacement: %w", err)
-		}
-		compensate, err := accountRoleRestoreMutations(targetSubject, previousRole, previousFound)
-		if err != nil {
-			return fmt.Errorf("build inverse direct global role replacement: %w", err)
-		}
-		if err := write(apply, compensate); err != nil {
-			return fmt.Errorf("replace direct global role: %w", err)
-		}
-		if err := domainaudit.AppendRequest(
-			mutationCtx,
-			tx,
-			s.auditWriter,
-			sharedtelemetry.AuditMemberUpdated,
-			func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-				return sharedtelemetry.NewMemberRoleUpdatedAuditRecord(
-					metadata, target.MemberID, previousRole.ID(), role.ID(),
-				)
-			},
-		); err != nil {
-			return err
+			return domainerr.AdminRequired()
 		}
 		return nil
 	})
-	// Execute returns the sentinel unchanged only after a successful rollback.
-	// A joined rollback failure must still reach the caller.
-	if err == errAccountRoleUnchanged { //nolint:errorlint // identity: a joined rollback failure must not match
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
-// lockAccountRoleIdentityFences holds both lifecycle transaction fences in
-// canonical identity order so opposing role changes cannot deadlock.
-func lockAccountRoleIdentityFences(
-	tx *gorm.DB,
-	actorIdentityID string,
-	targetIdentityID string,
-) error {
-	if tx == nil {
-		return fmt.Errorf("account role transaction is required")
+// prepareAccountRole re-reads the target under its Identity lock and reads
+// the role it replaces. An unchanged role rolls the mutation back.
+func (s *Service) prepareAccountRole(ctx context.Context, tx *gorm.DB, target authorizationtarget.Target, role policyv1.RoleID) (accountRoleChange, error) {
+	current, err := authorizationtarget.RequireLive(ctx, tx, target.MemberID)
+	if err != nil {
+		return accountRoleChange{}, err
 	}
-	identityIDs := []string{strings.TrimSpace(actorIdentityID), strings.TrimSpace(targetIdentityID)}
-	if identityIDs[0] == "" || identityIDs[1] == "" {
-		return fmt.Errorf("account role identity mutation requires identity ids")
+	if current.IdentityID != target.IdentityID {
+		return accountRoleChange{}, domainerr.ResourceNotFound("member", target.MemberID)
 	}
-	sort.Strings(identityIDs)
-	for index, identityID := range identityIDs {
-		if index > 0 && identityID == identityIDs[index-1] {
-			continue
+	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(target.IdentityID))
+	if err != nil {
+		return accountRoleChange{}, err
+	}
+	previous, previousFound, err := s.spicedb.ReadDirectGlobalRole(ctx, subject)
+	if err != nil {
+		return accountRoleChange{}, fmt.Errorf("read current direct global role: %w", err)
+	}
+	if previousFound && previous == role {
+		return accountRoleChange{}, errAccountRoleUnchanged
+	}
+	if role != policyv1.Role.Admin() {
+		if err := ValidateLastActiveAdminDeletionWithAuthorization(ctx, tx, target.MemberID, target.IdentityID, s.spicedb); err != nil {
+			return accountRoleChange{}, err
 		}
-		if err := identitystate.Lock(tx, identityID); err != nil {
-			return err
-		}
 	}
-	return nil
+	return accountRoleChange{subject: subject, previous: previous, previousFound: previousFound}, nil
 }
 
 func globalRoleForActor(

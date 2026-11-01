@@ -13,12 +13,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/crypto"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
 
@@ -128,64 +129,84 @@ func ValidateLastActiveAdminDeletionWithAuthorization(
 	return nil
 }
 
-func scheduleImmediateUserDeletion(
-	ctx context.Context,
-	db *gorm.DB,
-	identity auth.IdentityManager,
-	publisher UserDeletionDispatchPublisher,
-	spicedb *auth.SpiceDBClient,
-	members MemberDeletionLifecycle,
-	memberID string,
-	identityID string,
-	onScheduled func(context.Context, *gorm.DB, string) error,
-	memberEmails MemberEmailProjection,
-) error {
-	if db == nil || identity == nil || publisher == nil || spicedb == nil || members == nil {
-		return fmt.Errorf("user deletion dependencies are required")
-	}
-	if memberEmails == nil {
-		return fmt.Errorf("member email projection is required")
-	}
-	projection := memberEmails
-	if err := validateDeletionIDPair(memberID, identityID); err != nil {
+// immediateDeletion is the outcome of scheduling an administrator's
+// immediate deletion: the request to dispatch, and the state it replaced
+// when it is new.
+type immediateDeletion struct {
+	request   model.UserDeletionRequest
+	scheduled bool
+	previous  string
+}
+
+// scheduleImmediateDeletion schedules another Member's deletion for now and
+// dispatches it. A deletion already scheduled is dispatched as it stands.
+func (s *Service) scheduleImmediateDeletion(ctx context.Context, memberID, identityID string) error {
+	request, err := s.immediateDeletionRequest(ctx, memberID, identityID)
+	if err != nil {
 		return err
 	}
-	if err := authorizationtarget.ValidateActivePair(ctx, db, memberID, identityID); err != nil {
-		return fmt.Errorf("validate active member identity pair: %w", err)
-	}
-
-	if _, err := NewAccountEmailService(db, identity, projection).
-		SyncMemberEmailProjection(ctx, identityID, nil, nil); err != nil {
-		return fmt.Errorf("sync deletion Member email projection: %w", err)
-	}
-	accountEmail, _, err := ResolveMemberPrimaryEmailForIdentity(ctx, db, projection, identity, identityID)
+	result, err := mutation.Run(ctx, s.mutations, mutation.Spec[immediateDeletion]{
+		Subjects: []string{identityID},
+		Access:   freshAdmin(),
+		Change: func(ctx context.Context, tx *gorm.DB) (immediateDeletion, error) {
+			return s.storeImmediateDeletion(ctx, tx, request)
+		},
+		Audit: func(result immediateDeletion) mutation.Audit {
+			if !result.scheduled {
+				return mutation.Unchanged()
+			}
+			return mutation.RequestAudit(sharedtelemetry.AuditAccountUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewAccountDeletionScheduledAuditRecord(metadata, memberID, sharedtelemetry.AuditState(result.previous))
+			})
+		},
+	})
 	if err != nil {
-		return fmt.Errorf("resolve deletion email snapshot: %w", err)
+		return err
+	}
+	if err := ensureScheduledIdentityInactive(ctx, s.db, s.identity, result.request.ID, identityID); err != nil {
+		return fmt.Errorf("converge immediate deletion identity: %w", err)
+	}
+	return DispatchScheduledUserDeletion(ctx, s.db, s.publisher, s.spicedb, s.memberDeletion, result.request.ID, time.Now().UTC())
+}
+
+// immediateDeletionRequest builds the scheduled deletion request of an
+// active pair, with the verified notification snapshot the worker needs
+// after the Identity is gone.
+func (s *Service) immediateDeletionRequest(ctx context.Context, memberID, identityID string) (model.UserDeletionRequest, error) {
+	if err := validateDeletionIDPair(memberID, identityID); err != nil {
+		return model.UserDeletionRequest{}, err
+	}
+	if err := authorizationtarget.ValidateActivePair(ctx, s.db, memberID, identityID); err != nil {
+		return model.UserDeletionRequest{}, fmt.Errorf("validate active member identity pair: %w", err)
+	}
+	if _, err := NewAccountEmailService(s.db, s.identity, s.memberEmails).
+		SyncMemberEmailProjection(ctx, identityID, nil, nil); err != nil {
+		return model.UserDeletionRequest{}, fmt.Errorf("sync deletion Member email projection: %w", err)
+	}
+	accountEmail, _, err := ResolveMemberPrimaryEmailForIdentity(ctx, s.db, s.memberEmails, s.identity, identityID)
+	if err != nil {
+		return model.UserDeletionRequest{}, fmt.Errorf("resolve deletion email snapshot: %w", err)
 	}
 	if accountEmail == nil {
-		return fmt.Errorf("verified Member primary email is required for permanent deletion")
+		return model.UserDeletionRequest{}, errors.New("verified Member primary email is required for permanent deletion")
 	}
-	member, err := members.NotificationSnapshot(ctx, db, memberID, identityID)
+	member, err := s.memberDeletion.NotificationSnapshot(ctx, s.db, memberID, identityID)
 	if err != nil {
-		return err
+		return model.UserDeletionRequest{}, err
 	}
-	nickname := strings.TrimSpace(member.Nickname)
 	normalizedEmail := normalizeAccountEmail(accountEmail.Email)
 	if normalizedEmail == "" {
-		return fmt.Errorf("member primary email is required for permanent deletion")
+		return model.UserDeletionRequest{}, errors.New("member primary email is required for permanent deletion")
 	}
 	if member.PrimaryEmail == "" || !accountEmailsEqual(member.PrimaryEmail, normalizedEmail) {
-		return fmt.Errorf("member primary email is not synchronized")
+		return model.UserDeletionRequest{}, errors.New("member primary email is not synchronized")
 	}
 	var locale *string
 	if member.Locale != nil {
-		if normalized := localization.NormalizeSupportedLocale(*member.Locale); normalized != nil {
-			locale = normalized
-		}
+		locale = localization.NormalizeSupportedLocale(*member.Locale)
 	}
-
 	now := time.Now().UTC()
-	request := model.UserDeletionRequest{
+	return model.UserDeletionRequest{
 		ID:                          uuid.NewString(),
 		MemberID:                    memberID,
 		IdentityID:                  identityID,
@@ -196,61 +217,48 @@ func scheduleImmediateUserDeletion(
 		LifecycleState:              accountLifecycleStateScheduled,
 		NotificationEmail:           &normalizedEmail,
 		NotificationEmailVerifiedAt: &now,
-		NotificationName:            accountLifecycleStringPointer(nickname),
+		NotificationName:            accountLifecycleStringPointer(strings.TrimSpace(member.Nickname)),
 		NotificationLocale:          locale,
 		CreatedAt:                   now,
 		UpdatedAt:                   now,
+	}, nil
+}
+
+// storeImmediateDeletion rechecks the pair under its Identity fence and the
+// last-admin fence, then replaces the pair's request with request unless a
+// deletion is already scheduled.
+func (s *Service) storeImmediateDeletion(ctx context.Context, tx *gorm.DB, request model.UserDeletionRequest) (immediateDeletion, error) {
+	current, err := authorizationtarget.LinkedMemberForMember(tx.WithContext(ctx), request.MemberID, true)
+	if err != nil {
+		if errors.Is(err, authorizationtarget.ErrIneligible) {
+			return immediateDeletion{}, authorizationtarget.ErrIneligible
+		}
+		return immediateDeletion{}, err
 	}
-	if err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := identitystate.Lock(tx, identityID); err != nil {
-			return err
-		}
-		current, err := authorizationtarget.LinkedMemberForMember(tx.WithContext(ctx), memberID, true)
-		if err != nil {
-			if errors.Is(err, authorizationtarget.ErrIneligible) {
-				return authorizationtarget.ErrIneligible
-			}
-			return err
-		}
-		if current.IdentityID != identityID {
-			return authorizationtarget.ErrIneligible
-		}
-		if err := ValidateLastActiveAdminDeletionWithAuthorization(ctx, tx, memberID, identityID, spicedb); err != nil {
-			return err
-		}
-		previousState := "none"
-		var currentRequest model.UserDeletionRequest
-		loadErr := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			Where("member_id = ?::uuid AND identity_id = ?::uuid", memberID, identityID).
-			Take(&currentRequest).Error
-		if loadErr == nil {
-			if currentRequest.LifecycleState == accountLifecycleStateScheduled ||
-				currentRequest.LifecycleState == accountLifecycleStateRecoveryConfirmationPending {
-				request = currentRequest
-				return nil
-			}
-			previousState = currentRequest.LifecycleState
-		} else if !errors.Is(loadErr, gorm.ErrRecordNotFound) {
-			return loadErr
-		}
-		if err := tx.Where("member_id = ?::uuid AND identity_id = ?::uuid", memberID, identityID).
-			Delete(&model.UserDeletionRequest{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Create(&request).Error; err != nil {
-			return err
-		}
-		if onScheduled == nil {
-			return nil
-		}
-		return onScheduled(ctx, tx, previousState)
-	}); err != nil {
-		return err
+	if current.IdentityID != request.IdentityID {
+		return immediateDeletion{}, authorizationtarget.ErrIneligible
 	}
-	if err := ensureScheduledIdentityInactive(ctx, db, identity, request.ID, identityID); err != nil {
-		return fmt.Errorf("converge immediate deletion identity: %w", err)
+	if err := ValidateLastActiveAdminDeletionWithAuthorization(ctx, tx, request.MemberID, request.IdentityID, s.spicedb); err != nil {
+		return immediateDeletion{}, err
 	}
-	return DispatchScheduledUserDeletion(ctx, db, publisher, spicedb, members, request.ID, time.Now().UTC())
+	const pair = "member_id = ?::uuid AND identity_id = ?::uuid"
+	result := immediateDeletion{request: request, scheduled: true, previous: "none"}
+	var existing model.UserDeletionRequest
+	err = tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
+		Where(pair, request.MemberID, request.IdentityID).Take(&existing).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+	case err != nil:
+		return immediateDeletion{}, err
+	case existing.LifecycleState == accountLifecycleStateScheduled || existing.LifecycleState == accountLifecycleStateRecoveryConfirmationPending:
+		return immediateDeletion{request: existing}, nil
+	default:
+		result.previous = existing.LifecycleState
+	}
+	if err := tx.Where(pair, request.MemberID, request.IdentityID).Delete(&model.UserDeletionRequest{}).Error; err != nil {
+		return immediateDeletion{}, err
+	}
+	return result, tx.Create(&result.request).Error
 }
 
 // DispatchScheduledUserDeletion deletes the lifecycle row only after the

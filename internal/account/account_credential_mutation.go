@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -78,7 +78,7 @@ func (s *AccountCredentialMutationService) RemoveOIDCProvider(
 	provider = auth.NormalizeOIDCProvider(provider)
 	identifier = strings.TrimSpace(identifier)
 	if provider == "" || identifier == "" {
-		return errs.FailedPrecondition("SSO provider identity is incomplete")
+		return domainerr.Precondition("SSO provider identity is incomplete")
 	}
 	return identitystate.WithMutation(ctx, s.db, identityID, func(mutationCtx context.Context, tx *gorm.DB) error {
 		identity, err := s.LoadIdentity(mutationCtx, identityID)
@@ -114,7 +114,7 @@ func (s *AccountCredentialMutationService) removeOIDCProviderIfPresent(
 		return nil
 	}
 	if inventory.RecoverableAuthenticationMethodCountAfterOIDCRemoval(provider, identifier) == 0 {
-		return errs.FailedPrecondition("keep email sign-in or another social sign-in method before removing this provider")
+		return domainerr.Precondition("keep email sign-in or another social sign-in method before removing this provider")
 	}
 	if err := validateCanonicalEmailAfterOIDCRemoval(ctx, provider, identifier, identity); err != nil {
 		return err
@@ -151,7 +151,7 @@ func validateCanonicalEmailAfterOIDCRemoval(
 	afterCandidates := ResolveAccountEmailProviderCandidates(ctx, withoutProvider.Credentials)
 	after := findProjectionRow(projectedAccountEmailRows(withoutProvider, afterCandidates), canonical)
 	if after == nil || !hasIndependentAccountEmailProof(*after) {
-		return errs.FailedPrecondition("choose another account email before removing the provider that proves the current account email")
+		return domainerr.Precondition("choose another account email before removing the provider that proves the current account email")
 	}
 	return nil
 }
