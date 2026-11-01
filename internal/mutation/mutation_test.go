@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"testing"
 
+	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/glebarez/sqlite"
@@ -25,6 +28,11 @@ type note struct {
 
 func newTestRunner(t *testing.T, recorder *audittest.Recorder) (*Runner, *gorm.DB) {
 	t.Helper()
+	return newTestRunnerWith(t, authztest.AllowAll(), &identitystatetest.Fence{}, recorder)
+}
+
+func newTestRunnerWith(t *testing.T, checker *authztest.Checker, fence *identitystatetest.Fence, recorder *audittest.Recorder) (*Runner, *gorm.DB) {
+	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -32,7 +40,7 @@ func newTestRunner(t *testing.T, recorder *audittest.Recorder) (*Runner, *gorm.D
 	sqlDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 	require.NoError(t, db.AutoMigrate(&note{}))
-	runner, err := NewRunner(db, &auth.SpiceDBClient{}, recorder)
+	runner, err := NewRunner(db, checker, fence, recorder)
 	require.NoError(t, err)
 	return runner, db
 }
@@ -46,7 +54,7 @@ func memberRequestContext(t *testing.T) context.Context {
 }
 
 func recordingAccess(steps *[]string, err error) Access {
-	return Access{check: func(context.Context, *gorm.DB, *auth.SpiceDBClient) error {
+	return Access{check: func(context.Context, *gorm.DB, authority) error {
 		*steps = append(*steps, "access")
 		return err
 	}}
@@ -301,11 +309,14 @@ func TestIsDeniedRecognizesFreshCheckDenials(t *testing.T) {
 
 func TestNewRunnerRequiresEveryCollaborator(t *testing.T) {
 	db := &gorm.DB{}
-	_, err := NewRunner(nil, &auth.SpiceDBClient{}, &audittest.Recorder{})
+	checker, fence := authztest.AllowAll(), &identitystatetest.Fence{}
+	_, err := NewRunner(nil, checker, fence, &audittest.Recorder{})
 	require.ErrorContains(t, err, "database")
-	_, err = NewRunner(db, nil, &audittest.Recorder{})
+	_, err = NewRunner(db, nil, fence, &audittest.Recorder{})
 	require.ErrorContains(t, err, "SpiceDB")
-	_, err = NewRunner(db, &auth.SpiceDBClient{}, nil)
+	_, err = NewRunner(db, checker, nil, &audittest.Recorder{})
+	require.ErrorContains(t, err, "identity fence")
+	_, err = NewRunner(db, checker, fence, nil)
 	require.ErrorContains(t, err, "audit")
 }
 
@@ -367,5 +378,110 @@ func TestRunTakesDomainLocksBeforeAccess(t *testing.T) {
 	_, err = Run(memberRequestContext(t), runner, spec)
 	require.ErrorIs(t, err, missing)
 	require.Equal(t, []string{"lock"}, steps)
+	require.EqualValues(t, 1, noteCount(t, db))
+}
+
+func principalContext(t *testing.T) (context.Context, *auth.UserInfo) {
+	t.Helper()
+	principal := &auth.UserInfo{
+		IdentityID: auth.IdentityID(uuid.NewString()), MemberID: auth.MemberID(uuid.NewString()),
+		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
+	}
+	return auth.WithUser(memberRequestContext(t), principal), principal
+}
+
+func TestFreshAccessAsksTheFenceThenTheAuthorizer(t *testing.T) {
+	can, err := policyv1.Platform.IsAdmin()
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name     string
+		checker  func() *authztest.Checker
+		inactive bool
+		access   func() Access
+		want     connect.Code
+		checked  bool
+	}{
+		{name: "allowed", checker: authztest.AllowAll, access: func() Access { return FreshCan(can, nil) }, checked: true},
+		{
+			name: "denied", checker: func() *authztest.Checker { return &authztest.Checker{} },
+			access: func() Access { return FreshCan(can, nil) }, want: connect.CodePermissionDenied, checked: true,
+		},
+		{
+			name: "admin denied", checker: func() *authztest.Checker { return &authztest.Checker{} },
+			access: func() Access { return FreshAdminCan(can, nil) }, want: connect.CodePermissionDenied, checked: true,
+		},
+		{
+			name: "inactive principal", checker: authztest.AllowAll, inactive: true,
+			access: func() Access { return FreshCan(can, nil) }, want: connect.CodePermissionDenied,
+		},
+		{
+			name: "locked", checker: authztest.AllowAll, checked: true,
+			access: func() Access {
+				return Locked(func(_ context.Context, _ *gorm.DB, require Require) error { return require(can) })
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, principal := principalContext(t)
+			checker, fence := tc.checker(), &identitystatetest.Fence{}
+			if tc.inactive {
+				fence.Deactivate(principal.IdentityID.String())
+			}
+			runner, db := newTestRunnerWith(t, checker, fence, &audittest.Recorder{})
+			var steps []string
+			spec := noteSpec(&steps, "fresh")
+			spec.Access = tc.access()
+
+			_, err := Run(ctx, runner, spec)
+
+			if tc.want == 0 {
+				require.NoError(t, err)
+				require.EqualValues(t, 1, noteCount(t, db))
+			} else {
+				require.Equal(t, tc.want, errs.Wrap(err).Code())
+				require.Zero(t, noteCount(t, db))
+			}
+			require.Equal(t, []string{principal.IdentityID.String()}, fence.Locked())
+			if tc.checked {
+				require.Equal(t, []authztest.Check{authztest.Of(principal.IdentityID.String(), can, nil)}, checker.Checks())
+			} else {
+				require.Empty(t, checker.Checks())
+			}
+		})
+	}
+}
+
+func TestRunLocksSubjectsThroughTheFenceAndWritesRelationshipsThroughTheAuthorizer(t *testing.T) {
+	checker, fence := authztest.AllowAll(), &identitystatetest.Fence{}
+	runner, db := newTestRunnerWith(t, checker, fence, &audittest.Recorder{})
+	ctx, principal := principalContext(t)
+	can, err := policyv1.Platform.IsAdmin()
+	require.NoError(t, err)
+	touch, err := policyv1.SiteSetting.TouchPolicy("1")
+	require.NoError(t, err)
+	remove, err := policyv1.SiteSetting.DeletePolicy("1")
+	require.NoError(t, err)
+	var steps []string
+	spec := noteSpec(&steps, "with relationships")
+	spec.Access = FreshAdminCan(can, nil)
+	spec.Subjects = []string{"b", "a"}
+	spec.Relationships = func(note) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+		return []policyv1.RelationshipMutation{touch}, []policyv1.RelationshipMutation{remove}, nil
+	}
+
+	_, err = Run(ctx, runner, spec)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"a", "b", principal.IdentityID.String()}, fence.Locked())
+	require.Equal(t, [][]policyv1.RelationshipMutation{{touch}}, checker.Applied())
+	require.Empty(t, checker.Compensated())
+	require.EqualValues(t, 1, noteCount(t, db))
+
+	steps = nil
+	outboxDown := errors.New("queue unavailable")
+	spec.Outbox = func(context.Context, *gorm.DB, note) error { return outboxDown }
+	_, err = Run(ctx, runner, spec)
+	require.ErrorIs(t, err, outboxDown)
+	require.Len(t, checker.Applied(), 1, "a failure before the write applies nothing")
 	require.EqualValues(t, 1, noteCount(t, db))
 }

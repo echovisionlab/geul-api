@@ -26,6 +26,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -35,26 +36,43 @@ import (
 	"gorm.io/gorm"
 )
 
+// Authorizer answers the fresh checks of Access and writes the Relationships
+// batch. *auth.SpiceDBClient is the production Authorizer; authztest.Checker
+// stands in for it in unit tests.
+type Authorizer interface {
+	authz.AuthorizationDecisionChecker
+	authzmutation.RelationshipWriter
+}
+
 // Runner holds the collaborators every mutation needs.
 type Runner struct {
-	db      *gorm.DB
-	spiceDB *auth.SpiceDBClient
-	audit   domainaudit.Appender
+	db        *gorm.DB
+	authority authority
+	audit     domainaudit.Appender
+}
+
+// authority is what Access consults inside the transaction.
+type authority struct {
+	checker Authorizer
+	fence   identitystate.Fence
 }
 
 // NewRunner returns a Runner. Every collaborator is required: a mutation
-// cannot skip authorization or audit.
-func NewRunner(db *gorm.DB, spiceDB *auth.SpiceDBClient, audit domainaudit.Appender) (*Runner, error) {
+// cannot skip authorization, the identity fence or audit.
+func NewRunner(db *gorm.DB, spiceDB Authorizer, fence identitystate.Fence, audit domainaudit.Appender) (*Runner, error) {
 	if db == nil {
 		return nil, errors.New("mutation database is required")
 	}
 	if spiceDB == nil {
 		return nil, errors.New("mutation SpiceDB client is required")
 	}
+	if fence == nil {
+		return nil, errors.New("mutation identity fence is required")
+	}
 	if audit == nil {
 		return nil, errors.New("mutation audit appender is required")
 	}
-	return &Runner{db: db, spiceDB: spiceDB, audit: audit}, nil
+	return &Runner{db: db, authority: authority{checker: spiceDB, fence: fence}, audit: audit}, nil
 }
 
 // Spec describes one mutation. Access, Change and Audit are required.
@@ -106,7 +124,7 @@ func Run[R any](ctx context.Context, runner *Runner, spec Spec[R]) (R, error) {
 	}
 	work := func(tx *gorm.DB) error {
 		for _, subject := range subjects {
-			if err := identitystate.Lock(tx, subject); err != nil {
+			if err := runner.authority.fence.Lock(tx, subject); err != nil {
 				return fmt.Errorf("lock identity state: %w", err)
 			}
 		}
@@ -115,7 +133,7 @@ func Run[R any](ctx context.Context, runner *Runner, spec Spec[R]) (R, error) {
 				return err
 			}
 		}
-		if err := spec.Access.authorize(ctx, tx, runner.spiceDB); err != nil {
+		if err := spec.Access.authorize(ctx, tx, runner.authority); err != nil {
 			return err
 		}
 		var err error
@@ -131,7 +149,7 @@ func Run[R any](ctx context.Context, runner *Runner, spec Spec[R]) (R, error) {
 		return nil
 	}
 	if spec.Relationships != nil {
-		_, err = authzmutation.Execute(ctx, runner.db, runner.spiceDB, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
+		_, err = authzmutation.Execute(ctx, runner.db, runner.authority.checker, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
 			if err := work(tx); err != nil {
 				return err
 			}
@@ -175,15 +193,15 @@ func lockOrder(subjects []string) ([]string, error) {
 
 // Access decides inside the transaction whether the caller may mutate.
 type Access struct {
-	check func(context.Context, *gorm.DB, *auth.SpiceDBClient) error
+	check func(context.Context, *gorm.DB, authority) error
 	err   error
 }
 
-func (a Access) authorize(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient) error {
+func (a Access) authorize(ctx context.Context, tx *gorm.DB, with authority) error {
 	if a.err != nil {
 		return a.err
 	}
-	return a.check(ctx, tx, spiceDB)
+	return a.check(ctx, tx, with)
 }
 
 // FreshCan requires an active, onboarded principal that holds can, read with
@@ -193,8 +211,8 @@ func FreshCan(can policyv1.Can, err error) Access {
 	if err != nil {
 		return Access{err: fmt.Errorf("build authorization check: %w", err)}
 	}
-	return Access{check: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient) error {
-		return identitystate.RequireFreshCan(ctx, tx, spiceDB, can)
+	return Access{check: func(ctx context.Context, tx *gorm.DB, with authority) error {
+		return identitystate.RequireFreshCan(ctx, tx, with.fence, with.checker, can)
 	}}
 }
 
@@ -204,8 +222,8 @@ func FreshAdminCan(can policyv1.Can, err error) Access {
 	if err != nil {
 		return Access{err: fmt.Errorf("build authorization check: %w", err)}
 	}
-	return Access{check: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient) error {
-		return identitystate.RequireFreshAdminCan(ctx, tx, spiceDB, can)
+	return Access{check: func(ctx context.Context, tx *gorm.DB, with authority) error {
+		return identitystate.RequireFreshAdminCan(ctx, tx, with.fence, with.checker, can)
 	}}
 }
 
@@ -220,9 +238,9 @@ func Locked(check func(ctx context.Context, tx *gorm.DB, require Require) error)
 	if check == nil {
 		return Access{err: errors.New("mutation locked access check is required")}
 	}
-	return Access{check: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient) error {
+	return Access{check: func(ctx context.Context, tx *gorm.DB, with authority) error {
 		return check(ctx, tx, func(can policyv1.Can) error {
-			return identitystate.RequireFreshCan(ctx, tx, spiceDB, can)
+			return identitystate.RequireFreshCan(ctx, tx, with.fence, with.checker, can)
 		})
 	}}
 }
@@ -266,8 +284,8 @@ func PrincipalFence(principal *auth.UserInfo) Access {
 		return Access{err: errors.New("mutation principal is required")}
 	}
 	identityID := principal.IdentityID.String()
-	return Access{check: func(_ context.Context, tx *gorm.DB, _ *auth.SpiceDBClient) error {
-		if err := identitystate.Lock(tx, identityID); err != nil {
+	return Access{check: func(_ context.Context, tx *gorm.DB, with authority) error {
+		if err := with.fence.Lock(tx, identityID); err != nil {
 			return fmt.Errorf("lock identity state: %w", err)
 		}
 		return nil
@@ -281,7 +299,7 @@ func Checked(check func(ctx context.Context, tx *gorm.DB) error) Access {
 	if check == nil {
 		return Access{err: errors.New("mutation access check is required")}
 	}
-	return Access{check: func(ctx context.Context, tx *gorm.DB, _ *auth.SpiceDBClient) error {
+	return Access{check: func(ctx context.Context, tx *gorm.DB, _ authority) error {
 		return check(ctx, tx)
 	}}
 }

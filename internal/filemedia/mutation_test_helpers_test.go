@@ -7,6 +7,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -27,7 +28,7 @@ func withTestMutations(service *Service) *Service {
 	if spiceDB == nil {
 		spiceDB = &auth.SpiceDBClient{}
 	}
-	runner, err := mutation.NewRunner(service.db, spiceDB, audit)
+	runner, err := mutation.NewRunner(service.db, spiceDB, identitystate.PostgresFence{}, audit)
 	if err != nil {
 		panic(err)
 	}

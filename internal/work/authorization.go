@@ -140,7 +140,7 @@ func lockWorkAuthorizationRoot(ctx context.Context, tx *gorm.DB, workID string) 
 
 func freshRequire(ctx context.Context, tx *gorm.DB, checker authz.AuthorizationDecisionChecker) mutation.Require {
 	return func(can policyv1.Can) error {
-		return identitystate.RequireFreshCan(ctx, tx, checker, can)
+		return identitystate.RequireFreshCan(ctx, tx, identitystate.PostgresFence{}, checker, can)
 	}
 }
 

@@ -21,13 +21,20 @@ type WriteRelationships = func(
 	compensate []policyv1.RelationshipMutation,
 ) error
 
+// RelationshipWriter writes an exact relationship batch against its expected
+// pre-state and restores it. *auth.SpiceDBClient is the production writer.
+type RelationshipWriter interface {
+	ApplyRelationshipsExpecting(ctx context.Context, apply, compensate []policyv1.RelationshipMutation) (auth.ZedToken, error)
+	CompensateRelationshipsExpecting(ctx context.Context, restore, expectedCurrent []policyv1.RelationshipMutation) (auth.ZedToken, error)
+}
+
 // Execute keeps a product database transaction open while
 // its exact SpiceDB relationship change is applied. The callback must invoke
 // write exactly once and must supply the exact inverse relationship batch.
 func Execute(
 	ctx context.Context,
 	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB RelationshipWriter,
 	callback func(*gorm.DB, WriteRelationships) error,
 ) (auth.ZedToken, error) {
 	if db == nil {

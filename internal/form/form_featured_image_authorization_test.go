@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -46,7 +47,7 @@ func TestFormFeaturedImageMutationsRequireSiteAdmin(t *testing.T) {
 		require.NoError(t, cleanupErr)
 	})
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, principal.IdentityID.String(), policyv1.Role.User())
-	mutations, err := mutation.NewRunner(db, spiceDB, &audittest.Recorder{})
+	mutations, err := mutation.NewRunner(db, spiceDB, identitystate.PostgresFence{}, &audittest.Recorder{})
 	require.NoError(t, err)
 	service := NewConnectHandler(&Service{
 		db: db, spiceDB: spiceDB, mutations: mutations,

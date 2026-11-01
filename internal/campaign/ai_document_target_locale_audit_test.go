@@ -7,6 +7,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 
 	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
@@ -38,7 +39,7 @@ func runCampaignLocaleAudit(t *testing.T, capture *campaignLocaleAuditCapture, r
 	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE mutation_fact (id TEXT PRIMARY KEY)`).Error)
-	runner, err := mutation.NewRunner(db, &auth.SpiceDBClient{}, capture)
+	runner, err := mutation.NewRunner(db, &auth.SpiceDBClient{}, identitystate.PostgresFence{}, capture)
 	require.NoError(t, err)
 	_, err = mutation.Run(t.Context(), runner, mutation.Spec[struct{}]{
 		Access: emailcontent.CollaborationAccess,

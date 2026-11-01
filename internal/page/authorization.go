@@ -131,7 +131,7 @@ func (s *Service) freshPageCreate() mutation.Access {
 		if err != nil {
 			return err
 		}
-		if err := identitystate.RequireFreshCan(ctx, tx, s.permissions, can); err != nil {
+		if err := identitystate.RequireFreshCan(ctx, tx, identitystate.PostgresFence{}, s.permissions, can); err != nil {
 			if mutation.IsDenied(err) {
 				return domainerr.AdminRequired()
 			}
@@ -197,7 +197,7 @@ func authorizePagePermissionAfterRootLock(
 	if err != nil {
 		return nil, domainerr.ResourceNotFound("page", pageID).WithCause(err)
 	}
-	if err := identitystate.RequireFreshCan(ctx, tx, checker, can); err != nil {
+	if err := identitystate.RequireFreshCan(ctx, tx, identitystate.PostgresFence{}, checker, can); err != nil {
 		if mutation.IsDenied(err) {
 			return nil, domainerr.ResourceNotFound("page", pageID).WithCause(err)
 		}

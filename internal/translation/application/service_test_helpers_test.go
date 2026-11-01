@@ -8,6 +8,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -104,7 +105,7 @@ func withTestMutations(t *testing.T, manager *TranslationJobManager) *Translatio
 	if db == nil {
 		db = &gorm.DB{}
 	}
-	mutations, err := mutation.NewRunner(db, &auth.SpiceDBClient{}, &audittest.Recorder{})
+	mutations, err := mutation.NewRunner(db, &auth.SpiceDBClient{}, identitystate.PostgresFence{}, &audittest.Recorder{})
 	require.NoError(t, err)
 	manager.mutations = mutations
 	return manager

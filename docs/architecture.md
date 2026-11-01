@@ -130,7 +130,7 @@ nothing about whether the target exists.
 `internal/mutation` runs every mutation of a migrated domain:
 
 ```go
-func NewRunner(db *gorm.DB, spiceDB *auth.SpiceDBClient, audit domainaudit.Appender) (*Runner, error)
+func NewRunner(db *gorm.DB, spiceDB Authorizer, fence identitystate.Fence, audit domainaudit.Appender) (*Runner, error)
 func Run[R any](ctx context.Context, runner *Runner, spec Spec[R]) (R, error)
 
 type Spec[R any] struct {
@@ -169,6 +169,14 @@ func ReadCurrent(ctx context.Context, db *gorm.DB, read func(*gorm.DB) error) er
 
 `FreshCan` and `FreshAdminCan` take a generated descriptor's two results
 directly: `mutation.FreshCan(policyv1.Post.Edit(id))`.
+
+`Authorizer` is `authz.AuthorizationDecisionChecker` plus
+`authzmutation.RelationshipWriter`; production passes the
+`*auth.SpiceDBClient`. `identitystate.Fence` is the Identity fence
+(`Lock`, `LockActivePrincipal`, `WithMutation`); production passes
+`identitystate.PostgresFence{}`. `Access` answers through these two ports
+and nothing else, so a use case runs on SQLite with the fakes in
+[Composition](#composition).
 
 `Run` fixes the order inside one transaction:
 
@@ -338,6 +346,19 @@ func NewConnectHandler(members *Service) *ConnectHandler
 - There is no constructor without audit. Tests pass
   `audittest.Recorder` (`internal/domainaudit/audittest`), or
   `audittest.Recorder{Err: ...}` to make every append fail.
+- Authorization and the Identity fence are ports as well. A domain whose
+  use cases need only checks and the mutation pipeline types `SpiceDB` as
+  `mutation.Authorizer` (or `authz.AuthorizationDecisionChecker` without
+  `mutation.Run`) and takes `Fence identitystate.Fence`; `cmd/server` passes
+  the SpiceDB client and `identitystate.PostgresFence{}`. Unit tests pass
+  `authztest.Checker` (`internal/authz/authztest`: allow or deny per
+  generated descriptor and identity, records checks and relationship
+  batches) and `identitystatetest.Fence` (every principal active unless
+  deactivated, records fenced Identities). A use case that still takes
+  `*auth.SpiceDBClient` gets the same rules from `Checker.Client(t)`, a
+  loopback SpiceDB that answers CheckPermission. These fakes know no schema
+  and take no lock: the SpiceDB contract tests and one fence integration
+  test per domain keep those semantics.
 - In the domain's tests, a `newTestService(t, Deps{...})` helper fills unset
   collaborators with stand-ins that fail when reached
   (`internal/member/service_test_helpers_test.go`).

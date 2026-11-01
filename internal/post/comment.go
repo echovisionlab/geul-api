@@ -72,7 +72,7 @@ func NewCommentService(deps CommentDeps) (*CommentService, error) {
 		slices.Sort(missing)
 		return nil, errors.New("comment dependencies are required: " + strings.Join(missing, ", "))
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, deps.Audit)
+	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
