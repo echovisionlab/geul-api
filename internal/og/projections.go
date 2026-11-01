@@ -95,6 +95,16 @@ func (p *TranslationProjection) Complete(
 	})
 }
 
+// ReferencesAsset reports whether a translation row, or the entity row the
+// family completes for a localeless target, points at assetID.
+func (p *TranslationProjection) ReferencesAsset(ctx context.Context, tx *gorm.DB, assetID string) (bool, error) {
+	referenced, err := pointsAt(ctx, tx, p.translationTable(), "og_asset_id", assetID)
+	if err != nil || referenced || p.spec.Localeless != LocalelessEntityRow {
+		return referenced, err
+	}
+	return pointsAt(ctx, tx, p.spec.EntityType, "og_asset_id", assetID)
+}
+
 func (p *TranslationProjection) locale(target Target) (string, error) {
 	if !p.Handles(target) {
 		return "", errs.InvalidEntityType(target.EntityType)
@@ -170,6 +180,20 @@ func (p *EntityProjection) Complete(
 	})
 }
 
+// ReferencesAsset reports whether an entity row points at assetID.
+func (p *EntityProjection) ReferencesAsset(ctx context.Context, tx *gorm.DB, assetID string) (bool, error) {
+	return pointsAt(ctx, tx, p.entityType, "og_asset_id", assetID)
+}
+
+// pointsAt reports whether any row of table has column = assetID.
+func pointsAt(ctx context.Context, tx *gorm.DB, table, column, assetID string) (bool, error) {
+	var referenced bool
+	err := tx.WithContext(ctx).
+		Raw("SELECT EXISTS (SELECT 1 FROM "+table+" WHERE "+column+" = ?)", assetID).
+		Scan(&referenced).Error
+	return referenced, err
+}
+
 // updateOGPointer points one projection row at the generated asset and
 // answers missing when no row matched.
 func updateOGPointer(
@@ -194,6 +218,8 @@ func updateOGPointer(
 }
 
 var (
-	_ Projection = (*TranslationProjection)(nil)
-	_ Projection = (*EntityProjection)(nil)
+	_ Projection     = (*TranslationProjection)(nil)
+	_ Projection     = (*EntityProjection)(nil)
+	_ AssetReference = (*TranslationProjection)(nil)
+	_ AssetReference = (*EntityProjection)(nil)
 )

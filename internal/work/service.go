@@ -286,7 +286,8 @@ func (s *Service) GetWork(ctx context.Context, query GetWorkQuery) (*managev1.Wo
 		return nil, err
 	}
 	overlayWorkSourceLocaleDocument(&work, sourceState)
-	if err := s.hydrateWorkContentProjection(ctx, &work); err != nil {
+	content, err := s.hydrateWorkContentProjection(ctx, &work)
+	if err != nil {
 		return nil, err
 	}
 	imageAsset := s.getWorkFeaturedImageAsset(ctx, work.ID)
@@ -294,7 +295,7 @@ func (s *Service) GetWork(ctx context.Context, query GetWorkQuery) (*managev1.Wo
 	if err != nil {
 		return nil, err
 	}
-	protoWork := s.toProtoWork(ctx, &work, imageAsset, ogAsset)
+	protoWork := s.toProtoWork(ctx, &work, content, imageAsset, ogAsset)
 	protoWork.Clients, err = s.getWorkClients(ctx, work.ID)
 	if err != nil {
 		return nil, err
@@ -332,7 +333,8 @@ func (s *Service) ListWorksAdmin(ctx context.Context, query ListWorksAdminQuery)
 	for i := range works {
 		overlayWorkSourceLocaleDocument(&works[i], sourceStates[works[i].ID])
 	}
-	if err := s.hydrateWorkContentProjections(ctx, works); err != nil {
+	contents, err := s.hydrateWorkContentProjections(ctx, works)
+	if err != nil {
 		return nil, err
 	}
 	readyOgAssets, err := s.loadReadyWorkOgAssets(ctx, works)
@@ -348,7 +350,7 @@ func (s *Service) ListWorksAdmin(ctx context.Context, query ListWorksAdminQuery)
 	for i := range works {
 		imageAsset := s.getWorkFeaturedImageAsset(ctx, works[i].ID)
 		protoWorks[i] = &managev1.WorkWithStats{
-			Work:        s.toProtoWork(ctx, &works[i], imageAsset, manageOgAssetFromReadyMap(readyOgAssets, works[i].OgAssetID)),
+			Work:        s.toProtoWork(ctx, &works[i], contents[i], imageAsset, manageOgAssetFromReadyMap(readyOgAssets, works[i].OgAssetID)),
 			CreditCount: creditCounts[works[i].ID],
 			ClientCount: clientCounts[works[i].ID],
 		}

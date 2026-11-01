@@ -16,6 +16,7 @@ import (
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -79,8 +80,13 @@ func (testTranslationDomains) RequireTranslationSourceMutable(context.Context, *
 	return nil
 }
 
-func (testTranslationDomains) AppendSourceLocaleAudit(context.Context, *gorm.DB, string, string, string, string) error {
-	return nil
+func (testTranslationDomains) SourceLocaleAudit(_ context.Context, _ *gorm.DB, entityType, entityID, previousLocale, newLocale string) (SourceLocaleAudit, error) {
+	return SourceLocaleAudit{
+		Action: sharedtelemetry.AuditPostUpdated,
+		Build: func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewPostSourceLocaleAuditRecord(metadata, entityID, previousLocale, newLocale)
+		},
+	}, nil
 }
 
 func (testTranslationDomains) RequestLocaleOG(context.Context, *gorm.DB, *og.Planner, *og.Refresher, string, string, string, string) (bool, error) {

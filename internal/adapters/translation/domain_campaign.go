@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func campaignDomainRegistration(auditWriter domainaudit.Appender) domainRegistration {
+func campaignDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	permissions := translationCanSet{
 		view: policyv1.Campaign.View,
 		edit: policyv1.Campaign.Edit,
@@ -26,9 +26,9 @@ func campaignDomainRegistration(auditWriter domainaudit.Appender) domainRegistra
 		},
 		buildCandidate: core.BuildRichTextCandidate,
 		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			return campaign.ApplyTranslationCandidate(ctx, tx, store, job, candidate, input, auditWriter)
+			return campaign.ApplyTranslationCandidate(ctx, tx, store, job, candidate, input, audit)
 		},
-		appendSourceLocaleAudit: sourceLocaleAudit(auditWriter, sharedtelemetry.AuditCampaignUpdated, sharedtelemetry.NewCampaignSourceLocaleAuditRecord),
+		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditCampaignUpdated, sharedtelemetry.NewCampaignSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
 			return fmt.Sprintf(`SELECT locale, subject AS title, NULL::text AS summary, content_html, content_text, NULL::jsonb AS content_json, updated_at, NULL::uuid AS og_asset_id FROM %s`, table)
 		},

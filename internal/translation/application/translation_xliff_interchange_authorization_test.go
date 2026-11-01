@@ -44,7 +44,7 @@ func TestTranslationInterchangeArchivedAuthorCanExportButCannotImport(t *testing
 	domains := &translationInterchangeAuthorizationDomains{
 		editErr: errs.NoPermission("edit_archived", "legal policy"),
 	}
-	service := &TranslationService{domains: domains}
+	service := &Service{domains: domains}
 
 	if err := service.requireTranslationInterchangeView(
 		context.Background(), nil, "terms", "policy-a",
@@ -66,7 +66,7 @@ func TestTranslationInterchangeArchivedAuthorCanExportButCannotImport(t *testing
 
 func TestTranslationInterchangeAdminCanExportAndImport(t *testing.T) {
 	domains := &translationInterchangeAuthorizationDomains{}
-	service := &TranslationService{domains: domains}
+	service := &Service{domains: domains}
 
 	if err := service.requireTranslationInterchangeView(
 		context.Background(), nil, "terms", "policy-a",
@@ -88,7 +88,7 @@ func TestTranslationInterchangeAdminCanExportAndImport(t *testing.T) {
 
 func TestTranslationInterchangeOrdinaryAuthorCanExportAndImport(t *testing.T) {
 	domains := &translationInterchangeAuthorizationDomains{}
-	service := &TranslationService{domains: domains}
+	service := &Service{domains: domains}
 
 	if err := service.requireTranslationInterchangeView(
 		context.Background(), nil, "post", "post-a",

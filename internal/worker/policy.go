@@ -13,14 +13,13 @@ import (
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
 
 func (h *Handlers) handleActivateTerms(ctx context.Context) error {
 	return h.handleActivateLegal(ctx, legalActivationSpec{
 		model: &model.Terms{}, resource: "terms",
-		scheduledStatus: managev1.TermsStatus_TERMS_STATUS_SCHEDULED.String(),
+		scheduledStatus: model.TermsStatusScheduled,
 		referenceType:   legaldomain.EmailDeliveryReferenceTypeTerms,
 		effectiveEvent:  email.EventTermsEffective.String(),
 		logMessage:      "Activated pending terms",
@@ -30,7 +29,7 @@ func (h *Handlers) handleActivateTerms(ctx context.Context) error {
 func (h *Handlers) handleActivatePrivacy(ctx context.Context) error {
 	return h.handleActivateLegal(ctx, legalActivationSpec{
 		model: &model.Privacy{}, resource: "privacy",
-		scheduledStatus: managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String(),
+		scheduledStatus: model.PrivacyStatusScheduled,
 		referenceType:   legaldomain.EmailDeliveryReferenceTypePrivacy,
 		effectiveEvent:  email.EventPrivacyEffective.String(),
 		logMessage:      "Activated pending privacy policies",
@@ -40,7 +39,7 @@ func (h *Handlers) handleActivatePrivacy(ctx context.Context) error {
 type legalActivationSpec struct {
 	model           structured.Value
 	resource        string
-	scheduledStatus string
+	scheduledStatus model.LegalPolicyStatus
 	referenceType   string
 	effectiveEvent  string
 	logMessage      string
@@ -108,7 +107,7 @@ func (h *Handlers) handleActivateLegal(ctx context.Context, spec legalActivation
 	activatedCount := 0
 	if activated {
 		activatedCount = 1
-		if h.publisher != nil && h.spicedbClient != nil && h.auditWriter != nil {
+		if h.publisher != nil && h.spicedbClient != nil {
 			noticeRuntime = legaladapter.NewNoticeRuntime(h.newCampaignDeliveryDispatcher())
 		}
 		legaldomain.DispatchCommittedLegalEffectiveNoticeAfterActivation(

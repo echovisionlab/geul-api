@@ -6,9 +6,11 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
 )
 
@@ -30,7 +32,7 @@ type DomainRegistry interface {
 	RequireJobRead(context.Context, *gorm.DB, *auth.SpiceDBClient, string, string) error
 	RequireSourceLocaleEdit(context.Context, *gorm.DB, *auth.SpiceDBClient, string, string) error
 	PrepareSourceLocale(context.Context, *gorm.DB, string, string, string, string, time.Time) error
-	AppendSourceLocaleAudit(context.Context, *gorm.DB, string, string, string, string) error
+	SourceLocaleAudit(context.Context, *gorm.DB, string, string, string, string) (SourceLocaleAudit, error)
 	RequireLegalEditable(context.Context, *gorm.DB, *auth.SpiceDBClient, string, string) error
 	RequireDocumentContributors(context.Context, *gorm.DB, []string) error
 	RequireTranslationSourceMutable(context.Context, *gorm.DB, string, string) error
@@ -46,4 +48,11 @@ type AppliedTranslationTarget struct {
 	DocumentRevision     string
 	DocumentStateChanged bool
 	TargetRevision       string
+}
+
+// SourceLocaleAudit is the owning domain's record of a source-locale switch,
+// appended by the switch's mutation.
+type SourceLocaleAudit struct {
+	Action sharedtelemetry.AuditAction
+	Build  domainaudit.Builder
 }

@@ -58,9 +58,9 @@ func translationRuntimeSettingsFromProto(proto *managev1.TranslationSettings) (t
 
 func applyTranslationRuntimeSettingsUpdate(
 	current translationRuntimeSettings,
-	request *managev1.UpdateTranslationSettingsRequest,
+	request UpdateTranslationSettingsCommand,
 ) (translationRuntimeSettings, error) {
-	if request == nil || request.Settings == nil {
+	if request.Settings == nil {
 		return translationRuntimeSettings{}, fmt.Errorf("translation settings are required")
 	}
 	if request.UpdateMask == nil {

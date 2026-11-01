@@ -12,6 +12,7 @@ import (
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/documentlayout"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
@@ -189,7 +190,7 @@ func (p *pagePort) project(identity core.DocumentIdentity, locale core.Locale, s
 		return core.Document{}, fmt.Errorf("project Page AI document: %w", err)
 	}
 	metadata := core.Node{ID: pageMetadataBlockID, Kind: pageMetadataBlockKind}
-	layout, err := state.Page.DocumentLayout.Proto()
+	layout, err := documentlayout.ToProto(state.Page.DocumentLayout)
 	if err != nil {
 		return core.Document{}, fmt.Errorf("project Page document layout: %w", err)
 	}
@@ -318,7 +319,7 @@ func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatc
 		if patch.SetDocumentLayout {
 			current = patch.DocumentLayout
 		}
-		currentLayout, err := current.Proto()
+		currentLayout, err := documentlayout.ToProto(current)
 		if err != nil {
 			return issue(core.IssueInvalidOperation, "current Page document layout is invalid; set the whole layout")
 		}
@@ -352,7 +353,7 @@ func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatc
 	if len(target.Path) == 0 && !hideTableOfContentsSet {
 		return issue(core.IssueInvalidOperation, "Page document layout replacement requires hideTableOfContents")
 	}
-	layout, err := model.DocumentLayoutFromProto(next)
+	layout, err := documentlayout.FromProto(next)
 	if err != nil {
 		return issue(core.IssueInvalidOperation, err.Error())
 	}

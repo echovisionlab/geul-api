@@ -13,9 +13,13 @@ import (
 	"fmt"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-const table = "kratos.identities"
+const (
+	table         = "kratos.identities"
+	sessionsTable = "kratos.sessions"
+)
 
 // JoinLinked returns the JOIN of the Identity linked bilaterally to the Member
 // row aliased member, aliased alias. Rows without that live link drop out.
@@ -41,6 +45,39 @@ func BannedSQL(alias string) string {
 	COALESCE((%s.metadata_admin ->> 'banned')::boolean, false)
 	OR COALESCE(%s.state::text = 'inactive', false)
 )`, alias, alias)
+}
+
+// ActiveSQL is true when the Identity aliased alias is active and not banned
+// in admin metadata, the state a principal needs to act.
+func ActiveSQL(alias string) string {
+	return fmt.Sprintf(`(%s.state = 'active' AND NOT COALESCE((%s.metadata_admin->>'banned')::boolean, false))`, alias, alias)
+}
+
+// LockLinked share-locks the Identity identityID linked to memberID for the
+// rest of tx; it answers gorm.ErrRecordNotFound when that link is absent.
+func LockLinked(ctx context.Context, tx *gorm.DB, identityID, memberID string) error {
+	var identity struct {
+		ID string `gorm:"column:id"`
+	}
+	return tx.WithContext(ctx).
+		Table(table).
+		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
+		Select("id").
+		Where("id = ?::uuid AND external_id = ?", identityID, memberID).
+		Take(&identity).Error
+}
+
+// SessionIdentitySQL joins the Kratos session aliased session to its
+// Identity aliased alias, for a FROM clause.
+func SessionIdentitySQL(session, alias string) string {
+	return fmt.Sprintf("%s AS %s JOIN %s AS %s ON %s.id = %s.identity_id",
+		sessionsTable, session, table, alias, alias, session)
+}
+
+// LiveSessionSQL is true when the session aliased session is active and has
+// not expired.
+func LiveSessionSQL(session string) string {
+	return fmt.Sprintf("%s.active = TRUE AND %s.expires_at > NOW()", session, session)
 }
 
 // ExistsSQL is true when an Identity has the id bound to its one parameter.

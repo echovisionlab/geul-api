@@ -102,7 +102,6 @@ type serviceRegistrationDependencies struct {
 	spicedbClient           *auth.SpiceDBClient
 	kratosClient            *auth.KratosClient
 	passwordHasher          *crypto.PasswordHasher
-	metadataAIJobs          *ai.MetadataJobManager
 	contentBlockStore       *contentblock.Store
 	authCodeIssuanceLimiter *authentication.AuthCodeIssuanceLimiter
 	adapterLoader           *email.AdapterLoader
@@ -156,7 +155,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	spicedbClient := deps.spicedbClient
 	kratosClient := deps.kratosClient
 	passwordHasher := deps.passwordHasher
-	metadataAIJobs := deps.metadataAIJobs
 	contentBlockStore := deps.contentBlockStore
 	adapterLoader := deps.adapterLoader
 	telemetryWriter := deps.telemetryWriter
@@ -451,13 +449,21 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	}
 	music.registerTaxonomy(referenceCatalog)
 
-	aiService := ai.NewService(metadataAIJobs)
-	aiPath, aiHandler := managev1connect.NewAIServiceHandler(aiService, handlerOpts...)
+	aiService, err := ai.NewService(ai.Deps{
+		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, Publisher: servicePublisher,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize AI service: %w", err)
+	}
+	aiPath, aiHandler := managev1connect.NewAIServiceHandler(ai.NewConnectHandler(aiService), handlerOpts...)
 	mux.Handle(aiPath, aiHandler)
 	slog.Info("Registered service", "path", aiPath)
 
 	emailAuthoringReferences := emailauthoringadapter.NewCampaignDeliveryReferences()
-	translationRegistry := translationadapter.NewDomainRegistry(emailAuthoringReferences, telemetryWriter)
+	translationRegistry, err := translationadapter.NewDomainRegistry(emailAuthoringReferences, telemetryWriter)
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize translation domain registry: %w", err)
+	}
 	memberPath, memberHandler := managev1connect.NewMemberServiceHandler(member.NewConnectHandler(memberService), handlerOpts...)
 	mux.Handle(memberPath, memberHandler)
 	slog.Info("Registered service", "path", memberPath)

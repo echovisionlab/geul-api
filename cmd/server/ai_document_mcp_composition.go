@@ -15,7 +15,6 @@ import (
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 const mcpServerImplementationVersion = "19"
@@ -157,7 +156,7 @@ func newAIDocumentMCPComposition(
 	},
 	artists mcpadapter.ArtistDocumentDiscovery,
 	references contentMCPApplications,
-	translation managev1connect.TranslationServiceHandler,
+	translation mcpadapter.TranslationApplication,
 	files interface {
 		filemediaadapter.MCPFileRuntime
 		mcpadapter.FileBlockManagement

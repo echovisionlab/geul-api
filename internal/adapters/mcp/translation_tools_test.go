@@ -18,9 +18,9 @@ import (
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	menudomain "github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -313,14 +313,14 @@ func TestTranslationOptionalArgumentsPreserveOmissionAndEmptyValues(t *testing.T
 		}
 	}
 	for _, selection := range []string{"", `,"u":[]`} {
-		request, err := translationXLIFFExportRequest(toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"replace"`+selection+`}`))
-		if err != nil || len(request.GetUnitHandles()) != 0 {
-			t.Fatalf("replace export selection %q: request=%+v, error=%v", selection, request, err)
+		command, err := translationXLIFFExportCommand(toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"replace"`+selection+`}`))
+		if err != nil || len(command.UnitHandles) != 0 {
+			t.Fatalf("replace export selection %q: command=%+v, error=%v", selection, command, err)
 		}
 	}
-	request, err := translationXLIFFImportRequest(toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"patch","f":"`+testTranslationArtifactID+`"}`))
-	if err != nil || request.ExpectedTargetRevision != nil {
-		t.Fatalf("omitted import revision: request=%+v, error=%v", request, err)
+	command, err := translationXLIFFImportCommand(toolArguments(t, `{"p":"post","d":"post-a","l":"en","m":"patch","f":"`+testTranslationArtifactID+`"}`))
+	if err != nil || command.ExpectedTargetRevision != nil {
+		t.Fatalf("omitted import revision: command=%+v, error=%v", command, err)
 	}
 }
 
@@ -482,8 +482,6 @@ func testTranslationJob(id string, status managev1.TranslationJobStatus) *manage
 }
 
 type recordingTranslationApplication struct {
-	managev1connect.UnimplementedTranslationServiceHandler
-
 	listJobsRequest          *managev1.ListTranslationJobsRequest
 	cancelRequest            *managev1.CancelTranslationJobRequest
 	listTranslationsRequest  *managev1.ListEntityTranslationsRequest
@@ -508,47 +506,52 @@ type recordingTranslationApplication struct {
 	importError              error
 }
 
-func (application *recordingTranslationApplication) ListTranslationJobs(_ context.Context, request *connect.Request[managev1.ListTranslationJobsRequest]) (*connect.Response[managev1.ListTranslationJobsResponse], error) {
-	application.listJobsRequest = request.Msg
-	return connectResponse(application.listJobsResponse), application.listJobsError
-}
-
-func (application *recordingTranslationApplication) CancelTranslationJob(_ context.Context, request *connect.Request[managev1.CancelTranslationJobRequest]) (*connect.Response[managev1.CancelTranslationJobResponse], error) {
-	application.cancelRequest = request.Msg
-	return connectResponse(application.cancelResponse), application.cancelError
-}
-
-func (application *recordingTranslationApplication) ListEntityTranslations(_ context.Context, request *connect.Request[managev1.ListEntityTranslationsRequest]) (*connect.Response[managev1.ListEntityTranslationsResponse], error) {
-	application.listTranslationsRequest = request.Msg
-	return connectResponse(application.listTranslationsResponse), application.listTranslationsError
-}
-
-func (application *recordingTranslationApplication) GetEntityTranslation(_ context.Context, request *connect.Request[managev1.GetEntityTranslationRequest]) (*connect.Response[managev1.GetEntityTranslationResponse], error) {
-	application.getTranslationRequest = request.Msg
-	return connectResponse(application.getTranslationResponse), application.getTranslationError
-}
-
-func (application *recordingTranslationApplication) RegenerateEntityTranslations(ctx context.Context, request *connect.Request[managev1.RegenerateEntityTranslationsRequest]) (*connect.Response[managev1.RegenerateEntityTranslationsResponse], error) {
-	application.regenerateContext = ctx
-	application.regenerateRequest = request.Msg
-	return connectResponse(application.regenerateResponse), application.regenerateError
-}
-
-func (application *recordingTranslationApplication) ExportEntityTranslationXLIFF(_ context.Context, request *connect.Request[managev1.ExportEntityTranslationXLIFFRequest]) (*connect.Response[managev1.ExportEntityTranslationXLIFFResponse], error) {
-	application.exportRequest = request.Msg
-	return connectResponse(application.exportResponse), application.exportError
-}
-
-func (application *recordingTranslationApplication) ImportEntityTranslationXLIFF(_ context.Context, request *connect.Request[managev1.ImportEntityTranslationXLIFFRequest]) (*connect.Response[managev1.ImportEntityTranslationXLIFFResponse], error) {
-	application.importRequest = request.Msg
-	return connectResponse(application.importResponse), application.importError
-}
-
-func connectResponse[T any](message *T) *connect.Response[T] {
-	if message == nil {
-		return nil
+// The recording application stores each use-case input as the generated
+// request it corresponds to, so assertions read the wire-level fields.
+func (application *recordingTranslationApplication) ListTranslationJobs(_ context.Context, query translationapp.ListTranslationJobsQuery) (translationapp.JobPage, error) {
+	application.listJobsRequest = &managev1.ListTranslationJobsRequest{
+		Pagination: &commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset},
+		Filters:    query.Filters, Sorts: query.Sorts,
 	}
-	return connect.NewResponse(message)
+	response := application.listJobsResponse
+	return translationapp.JobPage{Jobs: response.GetJobs(), Pagination: response.GetPagination()}, application.listJobsError
+}
+
+func (application *recordingTranslationApplication) CancelTranslationJob(_ context.Context, command translationapp.CancelTranslationJobCommand) error {
+	application.cancelRequest = &managev1.CancelTranslationJobRequest{JobId: command.JobID}
+	return application.cancelError
+}
+
+func (application *recordingTranslationApplication) ListEntityTranslations(_ context.Context, query translationapp.ListEntityTranslationsQuery) (translationapp.EntityTranslations, error) {
+	application.listTranslationsRequest = &managev1.ListEntityTranslationsRequest{Target: query.Target}
+	response := application.listTranslationsResponse
+	return translationapp.EntityTranslations{SourceLocale: response.GetSourceLocale(), Entries: response.GetEntries()}, application.listTranslationsError
+}
+
+func (application *recordingTranslationApplication) GetEntityTranslation(_ context.Context, query translationapp.GetEntityTranslationQuery) (*managev1.TranslationEntry, error) {
+	application.getTranslationRequest = &managev1.GetEntityTranslationRequest{Target: query.Target, Locale: query.Locale}
+	return application.getTranslationResponse.GetEntry(), application.getTranslationError
+}
+
+func (application *recordingTranslationApplication) RegenerateEntityTranslations(ctx context.Context, command translationapp.RegenerateEntityTranslationsCommand) ([]*managev1.TranslationJob, error) {
+	application.regenerateContext = ctx
+	application.regenerateRequest = &managev1.RegenerateEntityTranslationsRequest{Target: command.Target, Locales: command.Locales}
+	return application.regenerateResponse.GetJobs(), application.regenerateError
+}
+
+func (application *recordingTranslationApplication) ExportEntityTranslationXLIFF(_ context.Context, command translationapp.ExportTranslationXLIFFCommand) (*managev1.ExportEntityTranslationXLIFFResponse, error) {
+	application.exportRequest = &managev1.ExportEntityTranslationXLIFFRequest{
+		Target: command.Target, TargetLocale: command.TargetLocale, Mode: command.Mode, UnitHandles: command.UnitHandles,
+	}
+	return application.exportResponse, application.exportError
+}
+
+func (application *recordingTranslationApplication) ImportEntityTranslationXLIFF(_ context.Context, command translationapp.ImportTranslationXLIFFCommand) (*managev1.ImportEntityTranslationXLIFFResponse, error) {
+	application.importRequest = &managev1.ImportEntityTranslationXLIFFRequest{
+		Target: command.Target, TargetLocale: command.TargetLocale, Mode: command.Mode,
+		FileId: command.FileID, ExpectedTargetRevision: command.ExpectedTargetRevision,
+	}
+	return application.importResponse, application.importError
 }
 
 func mustTranslationTools(t *testing.T, application *recordingTranslationApplication) *TranslationTools {

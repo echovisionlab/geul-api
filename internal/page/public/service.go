@@ -20,6 +20,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/documentlayout"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -476,7 +477,7 @@ func (s *Service) toOpenPage(ctx context.Context, result *pageReadResult) (*open
 		return nil, err
 	}
 	pagedomain.OverlayPageSourceLocaleMetadataForPublic(page, result.sourceMetadata)
-	documentLayout, err := page.DocumentLayout.Proto()
+	documentLayout, err := documentlayout.ToProto(page.DocumentLayout)
 	if err != nil {
 		return nil, err
 	}

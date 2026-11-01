@@ -12,18 +12,18 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	core "github.com/echovisionlab/geul-api/internal/translation"
+	"github.com/echovisionlab/geul-api/internal/translation/application"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
 )
 
-func privacyDomainRegistration(auditWriter domainaudit.Appender) domainRegistration {
+func privacyDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	return legalDomainRegistration(
 		core.KindPrivacy,
-		auditWriter,
+		audit,
 		policyv1.PrivacyHistory.Edit,
 		legalSourceLocaleAudit(
-			auditWriter,
 			"privacy_history",
 			"privacy",
 			sharedtelemetry.NewPrivacySourceLocaleAuditRecord,
@@ -37,9 +37,9 @@ func privacyDomainRegistration(auditWriter domainaudit.Appender) domainRegistrat
 // Terms history (or vice versa).
 func legalDomainRegistration(
 	kind core.Kind,
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 	jobEdit func(string) (policyv1.Can, error),
-	appendSourceLocaleAudit func(context.Context, *gorm.DB, string, string, string) error,
+	sourceLocaleAudit func(context.Context, *gorm.DB, string, string, string) (application.SourceLocaleAudit, error),
 ) domainRegistration {
 	entityType := string(kind)
 	return newConfiguredDomainPort(kind, domainPortFunctions{
@@ -59,7 +59,7 @@ func legalDomainRegistration(
 			return legaldomain.BuildTranslationCandidate(plan, source, results)
 		},
 		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, _ core.EntryWrite) error {
-			return legaldomain.ApplyTypedTranslationCandidateWithDB(ctx, tx, store, job, candidate, auditWriter)
+			return legaldomain.ApplyTypedTranslationCandidateWithDB(ctx, tx, store, job, candidate, audit)
 		},
 		requestLocaleOG: func(ctx context.Context, tx *gorm.DB, planner *og.Planner, _ *og.Refresher, entityID string, locale string, reason string) (bool, error) {
 			_, err := legaladapter.RequestSaved(ctx, tx, planner, entityType, entityID, locale, false, reason)
@@ -68,7 +68,7 @@ func legalDomainRegistration(
 		translationEntrySelectSQL: func(table string) string {
 			return fmt.Sprintf(`SELECT locale, title, NULL::text AS summary, content_html, content_text, NULL::jsonb AS content_json, updated_at, NULL::uuid AS og_asset_id FROM %s`, table)
 		},
-		appendSourceLocaleAudit: appendSourceLocaleAudit,
+		sourceLocaleAudit: sourceLocaleAudit,
 		requireInterchangeView: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, entityID string) error {
 			return legaldomain.RequireTranslationInterchangeViewWithDB(ctx, tx, spiceDB, entityType, entityID)
 		},

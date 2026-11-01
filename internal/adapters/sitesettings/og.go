@@ -281,6 +281,15 @@ func (p *Projection) Complete(
 	})
 }
 
+// ReferencesAsset reports whether the site OG image is assetID.
+func (*Projection) ReferencesAsset(ctx context.Context, tx *gorm.DB, assetID string) (bool, error) {
+	var referenced bool
+	err := tx.WithContext(ctx).
+		Raw("SELECT EXISTS (SELECT 1 FROM site_settings WHERE site_og_asset_id = ?)", assetID).
+		Scan(&referenced).Error
+	return referenced, err
+}
+
 type renderSnapshot struct {
 	SiteTitle     string          `json:"site_title"`
 	PrimaryColor  string          `json:"primary_color"`

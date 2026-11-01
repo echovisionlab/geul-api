@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -80,7 +81,7 @@ func TestValidateImportedXLIFFRejectsUnitMissingFromCurrentGraph(t *testing.T) {
 
 	if _, _, err := validateImportedXLIFFAgainstCurrentPlan(
 		imported, plan, managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
-	); connect.CodeOf(err) != connect.CodeInvalidArgument {
+	); errs.Wrap(err).Code() != connect.CodeInvalidArgument {
 		t.Fatalf("XLIFF unit missing from the current graph error = %v, want invalid argument", err)
 	}
 }
@@ -139,13 +140,13 @@ func TestValidateImportedXLIFFRequiresModeSpecificManifest(t *testing.T) {
 	}
 	if _, _, err := validateImportedXLIFFAgainstCurrentPlan(
 		partial, plan, managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
-	); connect.CodeOf(err) != connect.CodeInvalidArgument {
+	); errs.Wrap(err).Code() != connect.CodeInvalidArgument {
 		t.Fatalf("partial REPLACE error = %v, want invalid argument", err)
 	}
 	if _, _, err := validateImportedXLIFFAgainstCurrentPlan(
 		translation.XLIFFDocument{Version: translation.XLIFFVersion, SourceLocale: "ko", TargetLocale: "en", File: translation.XLIFFFile{ID: "post:post-a"}},
 		plan, managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
-	); connect.CodeOf(err) != connect.CodeInvalidArgument {
+	); errs.Wrap(err).Code() != connect.CodeInvalidArgument {
 		t.Fatalf("empty PATCH error = %v, want invalid argument", err)
 	}
 

@@ -1,9 +1,6 @@
 # Nil checks on audit writers per package. Audit is mandatory; lower with
 # -update.
 3 internal/account
-11 internal/adapters/translation
 1 internal/campaign
 2 internal/menu
 2 internal/series
-5 internal/translation/application
-2 internal/worker

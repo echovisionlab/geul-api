@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -76,8 +77,8 @@ func (d *recordingTranslationAuthorizationDomains) RequireSourceLocaleEdit(
 func TestTranslationRegenerationUsesLockedSourceEditAuthority(t *testing.T) {
 	wantErr := errors.New("source edit denied")
 	domains := &recordingTranslationAuthorizationDomains{err: wantErr}
-	service := &TranslationService{domains: domains}
-	err := service.validateTranslationRegenerationWithDB(
+	service := &Service{domains: domains}
+	err := service.requireTranslationRegenerationAuthority(
 		context.Background(), &gorm.DB{}, "post", uuid.NewString(),
 	)
 	require.ErrorIs(t, err, wantErr)
@@ -87,12 +88,10 @@ func TestTranslationRegenerationUsesLockedSourceEditAuthority(t *testing.T) {
 func TestSourceLocaleSwitchLocksRootAndLifecycleBeforeOneExactAuthorityDecision(t *testing.T) {
 	wantErr := errors.New("source edit denied")
 	domains := &orderedSourceLocaleAuthorizationDomains{err: wantErr}
-	service := &TranslationService{domains: domains}
-	err := service.lockSourceLocaleSwitch(
-		context.Background(),
-		&gorm.DB{},
-		&sourceLocaleSwitchState{entityType: "work", entityID: uuid.NewString()},
-	)
+	service := &Service{domains: domains}
+	state := &sourceLocaleSwitchState{entityType: "work", entityID: uuid.NewString()}
+	require.NoError(t, service.lockSourceLocaleSwitch(context.Background(), &gorm.DB{}, state))
+	err := domains.RequireSourceLocaleEdit(context.Background(), &gorm.DB{}, nil, state.entityType, state.entityID)
 	require.ErrorIs(t, err, wantErr)
 	require.Equal(t, []string{"root", "lifecycle", "editable", "authority"}, domains.callOrder)
 }
@@ -100,34 +99,28 @@ func TestSourceLocaleSwitchLocksRootAndLifecycleBeforeOneExactAuthorityDecision(
 func TestTranslationCancelUsesSourceEditAuthorityAndTerminalCAS(t *testing.T) {
 	db := newTranslationRetryTestDB(t)
 	domains := &recordingTranslationAuthorizationDomains{}
-	service := &TranslationService{
-		db: db, domains: domains, now: func() time.Time { return time.Unix(1_700_000_300, 0).UTC() },
-		metrics: newTranslationMetrics(),
-	}
+	service := newTestService(t, Deps{DB: db, Domains: domains})
+	service.now = func() time.Time { return time.Unix(1_700_000_300, 0).UTC() }
 	ctx := auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(uuid.NewString()), MemberID: auth.MemberID(uuid.NewString()),
 		Authenticated: true, Onboarded: true,
 	})
 	running := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "cancel", uuid.NewString())
 
-	response, err := service.CancelTranslationJob(ctx, connect.NewRequest(&managev1.CancelTranslationJobRequest{JobId: running.ID}))
-	require.NoError(t, err)
-	require.NotNil(t, response.Msg)
+	require.NoError(t, service.CancelTranslationJob(ctx, CancelTranslationJobCommand{JobID: running.ID}))
 	require.Equal(t, 1, domains.authorityCalls)
 	require.ErrorIs(t, db.First(&model.TranslationJob{}, "id = ?", running.ID).Error, gorm.ErrRecordNotFound)
 
-	_, err = service.CancelTranslationJob(ctx, connect.NewRequest(&managev1.CancelTranslationJobRequest{JobId: running.ID}))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	err := service.CancelTranslationJob(ctx, CancelTranslationJobCommand{JobID: running.ID})
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 	require.Equal(t, 1, domains.authorityCalls)
 }
 
 func TestTranslationCancelRequiresAuthenticatedRequesterBeforeAuthority(t *testing.T) {
 	domains := &recordingTranslationAuthorizationDomains{}
-	service := &TranslationService{domains: domains, metrics: newTranslationMetrics()}
-	_, err := service.CancelTranslationJob(
-		context.Background(), connect.NewRequest(&managev1.CancelTranslationJobRequest{JobId: uuid.NewString()}),
-	)
-	require.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(err))
+	service := &Service{domains: domains, metrics: newTranslationMetrics()}
+	err := service.CancelTranslationJob(context.Background(), CancelTranslationJobCommand{JobID: uuid.NewString()})
+	require.Equal(t, connect.CodeUnauthenticated, errs.CodeOf(err))
 	require.Zero(t, domains.authorityCalls)
 }
 

@@ -16,6 +16,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/geoip"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/requestip"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	"gorm.io/gorm"
@@ -447,15 +448,12 @@ func resolveAuthenticatedPrincipalBySessionID(
 			session.authenticated_at AS authenticated_at,
 			COALESCE((i.metadata_admin ->> 'banned')::boolean, false) AS banned,
 			m.onboarded AS onboarded
-		FROM kratos.sessions AS session
-		JOIN kratos.identities AS i
-		  ON i.id = session.identity_id
+		FROM ` + identityread.SessionIdentitySQL("session", "i") + `
 		JOIN member AS m
 		  ON m.account_identity_id = i.id
 		 AND m.id::text = i.external_id
 		WHERE session.id = ?::uuid
-		  AND session.active = TRUE
-		  AND session.expires_at > NOW()
+		  AND ` + identityread.LiveSessionSQL("session") + `
 		  AND i.state = 'active'
 		  AND m.deleted_at IS NULL
 		LIMIT 1

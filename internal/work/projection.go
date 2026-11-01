@@ -171,17 +171,26 @@ func (s *Service) workResponseWithReadyOg(
 	work *model.Work,
 	imageAsset *commonv1.AssetRef,
 ) (*managev1.Work, error) {
-	if err := s.hydrateWorkContentProjection(ctx, work); err != nil {
+	content, err := s.hydrateWorkContentProjection(ctx, work)
+	if err != nil {
 		return nil, err
 	}
 	ogAsset, err := readyManageOgAssetRef(ctx, s.runtime, s.db, work.OgAssetID)
 	if err != nil {
 		return nil, err
 	}
-	return s.toProtoWork(ctx, work, imageAsset, ogAsset), nil
+	return s.toProtoWork(ctx, work, content, imageAsset, ogAsset), nil
 }
 
-func (s *Service) hydrateWorkContentProjection(ctx context.Context, work *model.Work) error {
+// workContent is the content projection a manage read attaches to a Work.
+type workContent struct {
+	document   *contentv1.RichTextDocument
+	blockMedia []*contentv1.ContentBlockMediaItem
+}
+
+// hydrateWorkContentProjection reads the Work's source-locale document and
+// its block media, and records the document revision on work.
+func (s *Service) hydrateWorkContentProjection(ctx context.Context, work *model.Work) (workContent, error) {
 	var source *workSourceLocaleMetadata
 	var snapshot contentblock.Snapshot
 	var mediaItems []*contentv1.ContentBlockMediaItem
@@ -216,25 +225,25 @@ func (s *Service) hydrateWorkContentProjection(ctx context.Context, work *model.
 		return loadErr
 	})
 	if err != nil {
-		return normalizeWorkContentBlockError(err)
+		return workContent{}, normalizeWorkContentBlockError(err)
 	}
 	document, err := contentblock.SnapshotToRichTextDocument(snapshot)
 	if err != nil {
-		return normalizeWorkContentBlockError(err)
+		return workContent{}, normalizeWorkContentBlockError(err)
 	}
-	work.ContentDocument = document
 	work.ContentRevision = snapshot.Document.Revision.String()
-	work.BlockMedia = mediaItems
-	return nil
+	return workContent{document: document, blockMedia: mediaItems}, nil
 }
 
-func (s *Service) hydrateWorkContentProjections(ctx context.Context, works []model.Work) error {
+func (s *Service) hydrateWorkContentProjections(ctx context.Context, works []model.Work) ([]workContent, error) {
+	contents := make([]workContent, len(works))
 	for index := range works {
-		if err := s.hydrateWorkContentProjection(ctx, &works[index]); err != nil {
-			return err
+		var err error
+		if contents[index], err = s.hydrateWorkContentProjection(ctx, &works[index]); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	return contents, nil
 }
 
 func LoadLocalizedWorkContentProjectionForPublic(
@@ -280,6 +289,7 @@ func LoadLocalizedWorkContentProjectionForPublic(
 func (s *Service) toProtoWork(
 	ctx context.Context,
 	w *model.Work,
+	content workContent,
 	imageAsset *commonv1.AssetRef,
 	ogAsset *commonv1.AssetRef,
 ) *managev1.Work {
@@ -295,10 +305,10 @@ func (s *Service) toProtoWork(
 		CreatedAt:    timestamppb.New(w.CreatedAt),
 		UpdatedAt:    timestamppb.New(w.UpdatedAt),
 		OgAsset:      ogAsset,
-		Document:     w.ContentDocument,
+		Document:     content.document,
 		Revision:     w.ContentRevision,
 		SourceLocale: w.SourceLocale,
-		BlockMedia:   w.BlockMedia,
+		BlockMedia:   content.blockMedia,
 	}
 
 	if w.Slug != nil {

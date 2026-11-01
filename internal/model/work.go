@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/structured"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/lib/pq"
 )
 
@@ -21,31 +20,29 @@ const (
 
 // Work represents the work table
 type Work struct {
-	ID                   string                             `gorm:"column:id;type:uuid;primaryKey;default:gen_random_uuid()"`
-	ContentDocumentID    *string                            `gorm:"column:content_document_id;type:uuid;uniqueIndex"`
-	SourceLocale         string                             `gorm:"column:source_locale;type:text;not null;default:en"`
-	ContentDocument      *contentv1.RichTextDocument        `gorm:"-"`
-	ContentRevision      string                             `gorm:"-"`
-	ContentCanonicalHash string                             `gorm:"-"`
-	BlockMedia           []*contentv1.ContentBlockMediaItem `gorm:"-"`
-	Title                string                             `gorm:"-"`
-	Slug                 *string                            `gorm:"column:slug;type:varchar(255);uniqueIndex"`
-	Type                 string                             `gorm:"column:type;type:varchar(30);not null;default:WORK_TYPE_MUSIC_PROJECT"`
-	Year                 int32                              `gorm:"column:year;type:int;not null"`
-	Month                int32                              `gorm:"column:month;type:int;not null"`
-	UntilYear            *int32                             `gorm:"column:until_year;type:int"`
-	UntilMonth           *int32                             `gorm:"column:until_month;type:int"`
-	IsPresent            bool                               `gorm:"column:is_present;type:boolean;not null;default:false"`
-	Summary              *string                            `gorm:"-"`
-	MapPlaceID           *string                            `gorm:"column:map_place_id;type:uuid"`
-	FeaturedImageFileID  *string                            `gorm:"column:featured_image_file_id;type:uuid"`
-	Metadata             structured.Fields                  `gorm:"column:metadata;type:jsonb;serializer:json"`
-	Featured             bool                               `gorm:"column:featured;type:boolean;not null;default:false"`
-	Status               WorkStatus                         `gorm:"column:status;type:varchar(50);not null;default:WORK_STATUS_DRAFT"`
-	OgAssetID            *string                            `gorm:"-"`
-	CreatedAt            time.Time                          `gorm:"column:created_at;not null;default:now()"`
-	UpdatedAt            time.Time                          `gorm:"column:updated_at;not null;default:now()"`
-	PublishedAt          *time.Time                         `gorm:"column:published_at"`
+	ID                   string            `gorm:"column:id;type:uuid;primaryKey;default:gen_random_uuid()"`
+	ContentDocumentID    *string           `gorm:"column:content_document_id;type:uuid;uniqueIndex"`
+	SourceLocale         string            `gorm:"column:source_locale;type:text;not null;default:en"`
+	ContentRevision      string            `gorm:"-"`
+	ContentCanonicalHash string            `gorm:"-"`
+	Title                string            `gorm:"-"`
+	Slug                 *string           `gorm:"column:slug;type:varchar(255);uniqueIndex"`
+	Type                 string            `gorm:"column:type;type:varchar(30);not null;default:WORK_TYPE_MUSIC_PROJECT"`
+	Year                 int32             `gorm:"column:year;type:int;not null"`
+	Month                int32             `gorm:"column:month;type:int;not null"`
+	UntilYear            *int32            `gorm:"column:until_year;type:int"`
+	UntilMonth           *int32            `gorm:"column:until_month;type:int"`
+	IsPresent            bool              `gorm:"column:is_present;type:boolean;not null;default:false"`
+	Summary              *string           `gorm:"-"`
+	MapPlaceID           *string           `gorm:"column:map_place_id;type:uuid"`
+	FeaturedImageFileID  *string           `gorm:"column:featured_image_file_id;type:uuid"`
+	Metadata             structured.Fields `gorm:"column:metadata;type:jsonb;serializer:json"`
+	Featured             bool              `gorm:"column:featured;type:boolean;not null;default:false"`
+	Status               WorkStatus        `gorm:"column:status;type:varchar(50);not null;default:WORK_STATUS_DRAFT"`
+	OgAssetID            *string           `gorm:"-"`
+	CreatedAt            time.Time         `gorm:"column:created_at;not null;default:now()"`
+	UpdatedAt            time.Time         `gorm:"column:updated_at;not null;default:now()"`
+	PublishedAt          *time.Time        `gorm:"column:published_at"`
 
 	MapPlace *MapPlace `gorm:"foreignKey:MapPlaceID"`
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/adapters/ogprojection"
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	mediaassetdomain "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
@@ -34,7 +35,7 @@ func mediaAssetCleanupForIntegration(h *Handlers) *mediaassetdomain.Cleanup {
 
 func ogCleanupForIntegration(h *Handlers) *og.Cleanup {
 	if h.ogCleanup == nil {
-		h.ogCleanup = og.NewCleanup(h.db)
+		h.ogCleanup = og.NewCleanup(h.db, ogprojection.AssetReferences()...)
 	}
 	return h.ogCleanup
 }

@@ -38,6 +38,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/series"
+	translationapplication "github.com/echovisionlab/geul-api/internal/translation/application"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
@@ -94,7 +95,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
 		references,
-		managev1connect.UnimplementedTranslationServiceHandler{},
+		&translationapplication.Service{},
 		&compositionFileRuntime{},
 		aiDocumentMCPConfig{
 			internalServiceSecret:     compositionInternalSecret,
@@ -204,7 +205,7 @@ func TestAIDocumentCompositionContainsEveryDocumentedDomain(t *testing.T) {
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
 		compositionContentApplications(),
-		managev1connect.UnimplementedTranslationServiceHandler{},
+		&translationapplication.Service{},
 		&compositionFileRuntime{},
 		aiDocumentMCPConfig{
 			internalServiceSecret:     compositionInternalSecret,
@@ -230,7 +231,7 @@ func TestAIDocumentRPCAndMCPUseOneApplicationWithoutRepeatedCredentialLookup(t *
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
 		compositionContentApplications(),
-		managev1connect.UnimplementedTranslationServiceHandler{},
+		&translationapplication.Service{},
 		&compositionFileRuntime{},
 		aiDocumentMCPConfig{
 			internalServiceSecret:     compositionInternalSecret,
@@ -280,7 +281,7 @@ func TestAIDocumentCompositionListsAndDispatchesFileToolsWithOneAuthenticatedCon
 		&compositionReleaseApplication{},
 		&compositionArtistApplication{},
 		compositionContentApplications(),
-		managev1connect.UnimplementedTranslationServiceHandler{},
+		&translationapplication.Service{},
 		files,
 		aiDocumentMCPConfig{
 			internalServiceSecret:     compositionInternalSecret,
@@ -361,7 +362,7 @@ func TestAIDocumentCompositionDispatchesStandaloneUploadAndFileDeletion(t *testi
 		completeTestAIDocumentRegistrations(&compositionDomainPort{}),
 		&compositionPostApplication{}, &compositionWorkApplication{}, &compositionPageApplication{},
 		&programevent.Service{}, &compositionReleaseApplication{}, &compositionArtistApplication{},
-		compositionContentApplications(), managev1connect.UnimplementedTranslationServiceHandler{}, files,
+		compositionContentApplications(), &translationapplication.Service{}, files,
 		aiDocumentMCPConfig{
 			internalServiceSecret: compositionInternalSecret, authHeaderName: compositionAuthHeaderName,
 			internalServiceHeaderName: compositionInternalServiceHeaderName,
@@ -761,7 +762,7 @@ func TestAIDocumentCompositionDiscoversReleasesAndArtistsWithAuthenticatedContex
 	composition, err := newAIDocumentMCPComposition(
 		completeTestAIDocumentRegistrations(&compositionDomainPort{}),
 		&compositionPostApplication{}, &compositionWorkApplication{}, &compositionPageApplication{}, &programevent.Service{},
-		releases, artists, compositionContentApplications(), managev1connect.UnimplementedTranslationServiceHandler{}, &compositionFileRuntime{},
+		releases, artists, compositionContentApplications(), &translationapplication.Service{}, &compositionFileRuntime{},
 		aiDocumentMCPConfig{
 			internalServiceSecret:     compositionInternalSecret,
 			authHeaderName:            compositionAuthHeaderName,

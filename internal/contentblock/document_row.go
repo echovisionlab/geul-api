@@ -25,3 +25,15 @@ func CurrentRevision(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (uu
 	err := tx.WithContext(ctx).Table("content_document").Select("revision").Where("id = ?", documentID).Take(&current).Error
 	return current.Revision, err
 }
+
+// DocumentLocales lists the distinct locales any block of the document
+// stores, in no particular order.
+func DocumentLocales(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) ([]string, error) {
+	var locales []string
+	err := tx.WithContext(ctx).Raw(
+		`SELECT DISTINCT locale FROM content_block_locale
+		 WHERE block_id IN (SELECT id FROM content_block WHERE document_id = ?)`,
+		documentID,
+	).Scan(&locales).Error
+	return locales, err
+}

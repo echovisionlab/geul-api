@@ -81,10 +81,10 @@ func TestFailedJobUpdatesBoundedReasonBeforeMetricProjection(t *testing.T) {
 	db := newTranslationRetryTestDB(t)
 	now := time.Unix(1_700_000_500, 0).UTC()
 	job := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "operation", uuid.NewString())
-	manager := &TranslationJobManager{
+	manager := withTestMutations(t, &TranslationJobManager{
 		db: db, publisher: stubTranslationJobPublisher{},
 		now: func() time.Time { return now }, metrics: newTranslationMetrics(),
-	}
+	})
 
 	require.NoError(t, manager.failJob(context.Background(), job, now.Add(-time.Second), errTranslationOgHandoffFailed))
 	require.Equal(t, translationJobStatusFailed, job.Status)

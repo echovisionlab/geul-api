@@ -5,6 +5,10 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -140,7 +144,7 @@ func TestGenerateValidatedTranslationSubmitsWholeMultiGroupXLIFFOnce(t *testing.
 	session := &scriptedTranslationGeneratorSession{
 		initialResponses: []*translation.ProviderResponse{documentTranslationResponse(request)},
 	}
-	manager := &TranslationJobManager{}
+	manager := withTestMutations(t, &TranslationJobManager{})
 	generator := &scriptedTranslationGenerator{session: session}
 
 	response, err := manager.generateValidatedTranslationWithGenerator(
@@ -245,7 +249,10 @@ func TestTranslationJobManagerConstructorsConfigureResolvers(t *testing.T) {
 
 	planner := &og.Planner{}
 	refresher := &og.Refresher{}
-	manager, err := NewTranslationJobManager(db, publisher, planner, refresher)
+	manager, err := NewTranslationJobManager(JobManagerDeps{
+		DB: db, SpiceDB: &auth.SpiceDBClient{}, Audit: &audittest.Recorder{}, Publisher: publisher,
+		ContentBlocks: &contentblock.Store{}, OGPlanner: planner, OGRefresher: refresher, Domains: testTranslationDomains{},
+	})
 	require.NoError(t, err)
 	assert.Same(t, db, manager.db)
 	assert.NotNil(t, manager.generatorResolver)
@@ -271,7 +278,7 @@ func TestGenerateValidatedTranslationRejectsMissingUnitsWithoutRepair(t *testing
 			translation.UnitResult{UnitID: "block:1:text:0", TranslatedText: "[fr] Bonjour"},
 		)},
 	}
-	manager := &TranslationJobManager{}
+	manager := withTestMutations(t, &TranslationJobManager{})
 	generator := &scriptedTranslationGenerator{session: session}
 	job := &model.TranslationJob{}
 
@@ -297,7 +304,7 @@ func TestGenerateValidatedTranslationDoesNotFallbackToNextProvider(t *testing.T)
 			translation.UnitResult{UnitID: "block:1:text:0", TranslatedText: "[fr] Bonjour"},
 		)},
 	}
-	manager := &TranslationJobManager{}
+	manager := withTestMutations(t, &TranslationJobManager{})
 	job := &model.TranslationJob{ID: "job-1"}
 	primary := &scriptedTranslationGenerator{session: primarySession}
 	fallback := &scriptedTranslationGenerator{session: fallbackSession}
@@ -330,7 +337,7 @@ func TestGenerateValidatedTranslationRejectsUnknownUnitsWithoutRepair(t *testing
 			translation.UnitResult{UnitID: "unknown:text:0", TranslatedText: "[fr] Inconnu"},
 		)},
 	}
-	manager := &TranslationJobManager{}
+	manager := withTestMutations(t, &TranslationJobManager{})
 	generator := &scriptedTranslationGenerator{session: session}
 
 	response, err := manager.generateValidatedTranslationWithGenerator(
@@ -357,7 +364,7 @@ func TestGenerateValidatedTranslationRejectsDuplicateUnitsWithoutRepair(t *testi
 			translation.UnitResult{UnitID: "block:1:text:0", TranslatedText: "[fr] Salut"},
 		)},
 	}
-	manager := &TranslationJobManager{}
+	manager := withTestMutations(t, &TranslationJobManager{})
 	generator := &scriptedTranslationGenerator{session: session}
 
 	response, err := manager.generateValidatedTranslationWithGenerator(
@@ -383,7 +390,7 @@ func TestGenerateValidatedTranslationRejectsPlaceholderMismatchWithoutRepair(t *
 			translation.UnitResult{UnitID: "block:1:text:0", TranslatedText: "[fr] Bonjour"},
 		)},
 	}
-	manager := &TranslationJobManager{}
+	manager := withTestMutations(t, &TranslationJobManager{})
 	generator := &scriptedTranslationGenerator{session: session}
 	job := &model.TranslationJob{}
 
@@ -406,7 +413,7 @@ func TestGenerateValidatedTranslationRejectsLineBreakMismatchWithoutRepair(t *te
 			translation.UnitResult{UnitID: "block:1:text:0", TranslatedText: "[fr] Ligne un Ligne deux"},
 		)},
 	}
-	manager := &TranslationJobManager{}
+	manager := withTestMutations(t, &TranslationJobManager{})
 	generator := &scriptedTranslationGenerator{session: session}
 	job := &model.TranslationJob{}
 

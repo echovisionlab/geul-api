@@ -10,6 +10,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/documentlayout"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -31,7 +32,7 @@ func (s *Service) ListMyPosts(ctx context.Context, query ListPostsQuery) (*manag
 	if err != nil {
 		return nil, err
 	}
-	if err := s.hydratePostContentProjections(ctx, page.posts); err != nil {
+	if page.contents, err = s.hydratePostContentProjections(ctx, page.posts); err != nil {
 		return nil, err
 	}
 	if err := s.loadPostListProjections(ctx, &page); err != nil {
@@ -97,7 +98,8 @@ func (s *Service) postResponseWithReadyOg(
 	ctx context.Context,
 	post *model.Post,
 ) (*managev1.Post, error) {
-	if err := s.hydratePostContentProjection(ctx, post); err != nil {
+	content, err := s.hydratePostContentProjection(ctx, post)
+	if err != nil {
 		return nil, err
 	}
 	ogAsset, err := readyManageOgAssetRef(
@@ -124,6 +126,7 @@ func (s *Service) postResponseWithReadyOg(
 	}
 	protoPost, err := s.toProtoPostWithProjection(
 		post,
+		content,
 		ogAsset,
 		authors[post.ID],
 		featuredDelivery,
@@ -135,15 +138,24 @@ func (s *Service) postResponseWithReadyOg(
 	return protoPost, nil
 }
 
-func (s *Service) hydratePostContentProjection(ctx context.Context, post *model.Post) error {
+// postContent is the content projection a manage read attaches to a Post.
+type postContent struct {
+	document   *contentv1.RichTextDocument
+	blockMedia []*contentv1.ContentBlockMediaItem
+}
+
+// hydratePostContentProjection reads the Post's source-locale document and
+// its block media, and records the document revision on post.
+func (s *Service) hydratePostContentProjection(ctx context.Context, post *model.Post) (postContent, error) {
 	if strings.TrimSpace(post.SourceLocale) == "" {
-		return domainerr.Precondition("Post source locale is not initialized")
+		return postContent{}, domainerr.Precondition("Post source locale is not initialized")
 	}
 	documentID, err := loadPostContentDocumentID(ctx, s.db, post.ID)
 	if err != nil {
-		return err
+		return postContent{}, err
 	}
-	return mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
+	var content postContent
+	err = mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
 		root, err := lockPostContentDocumentRoot(ctx, tx, post.ID, documentID, true)
 		if err != nil {
 			return err
@@ -166,20 +178,22 @@ func (s *Service) hydratePostContentProjection(ctx context.Context, post *model.
 		if err != nil {
 			return err
 		}
-		post.ContentDocument = document
 		post.ContentRevision = snapshot.Document.Revision.String()
-		post.BlockMedia = mediaItems
+		content = postContent{document: document, blockMedia: mediaItems}
 		return nil
 	})
+	return content, err
 }
 
-func (s *Service) hydratePostContentProjections(ctx context.Context, posts []model.Post) error {
+func (s *Service) hydratePostContentProjections(ctx context.Context, posts []model.Post) ([]postContent, error) {
+	contents := make([]postContent, len(posts))
 	for i := range posts {
-		if err := s.hydratePostContentProjection(ctx, &posts[i]); err != nil {
-			return err
+		var err error
+		if contents[i], err = s.hydratePostContentProjection(ctx, &posts[i]); err != nil {
+			return nil, err
 		}
 	}
-	return nil
+	return contents, nil
 }
 
 // LoadLocalizedPostContentProjectionForPublic materializes a selected locale
@@ -228,12 +242,13 @@ func LoadLocalizedPostContentProjectionForPublic(
 
 func (s *Service) toProtoPostWithProjection(
 	p *model.Post,
+	content postContent,
 	ogAsset *commonv1.AssetRef,
 	authors []*commonv1.MemberSummary,
 	featuredImage *commonv1.MediaDelivery,
 	authority PostAuthority,
 ) (*managev1.Post, error) {
-	post, err := s.toProtoPost(p, ogAsset)
+	post, err := s.toProtoPost(p, content, ogAsset)
 	if err != nil {
 		return nil, err
 	}
@@ -392,8 +407,8 @@ var postSortConfig = queryutil.SortConfig{
 
 // toProtoPost converts a model.Post to protobuf Post (Domain Object -> DTO)
 // Note: Author is not populated here - use toProtoPostWithAuthor for that
-func (s *Service) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) (*managev1.Post, error) {
-	documentLayout, err := p.DocumentLayout.Proto()
+func (s *Service) toProtoPost(p *model.Post, content postContent, ogAsset *commonv1.AssetRef) (*managev1.Post, error) {
+	documentLayout, err := documentlayout.ToProto(p.DocumentLayout)
 	if err != nil {
 		return nil, err
 	}
@@ -401,10 +416,10 @@ func (s *Service) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) (*manag
 		Id:                    p.ID,
 		Title:                 p.Title,
 		SourceLocale:          p.SourceLocale,
-		Document:              p.ContentDocument,
+		Document:              content.document,
 		Revision:              p.ContentRevision,
 		ConfigurationRevision: p.ConfigurationRevision,
-		BlockMedia:            p.BlockMedia,
+		BlockMedia:            content.blockMedia,
 		Status:                postStatusToProto(p.Status),
 		CommentsEnabled:       p.CommentsEnabled,
 		DocumentLayout:        documentLayout,

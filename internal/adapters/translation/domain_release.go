@@ -16,7 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func releaseDomainRegistration(auditWriter domainaudit.Appender) domainRegistration {
+func releaseDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	return newConfiguredDomainPort(core.KindRelease, domainPortFunctions{
 		loadSourceDocument: func(ctx context.Context, db *gorm.DB, store *contentblock.Store, releaseID string) (*core.SourceDocument, error) {
 			source, err := release.LoadTypedTranslationSourceDocument(ctx, db, store, releaseID)
@@ -25,9 +25,9 @@ func releaseDomainRegistration(auditWriter domainaudit.Appender) domainRegistrat
 		buildExtractionPlan: release.BuildTranslationExtractionPlan,
 		buildCandidate:      release.BuildTranslationCandidate,
 		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			return releaseConnectError(release.ApplyTypedTranslationCandidateWithDB(ctx, tx, store, job, candidate, input, auditWriter))
+			return releaseConnectError(release.ApplyTypedTranslationCandidateWithDB(ctx, tx, store, job, candidate, input, audit))
 		},
-		appendSourceLocaleAudit: sourceLocaleAudit(auditWriter, sharedtelemetry.AuditReleaseUpdated, sharedtelemetry.NewReleaseSourceLocaleAuditRecord),
+		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditReleaseUpdated, sharedtelemetry.NewReleaseSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
 			return fmt.Sprintf(`SELECT locale, NULL::text AS title, NULL::text AS summary, NULL::text AS content_html, NULL::text AS content_text, NULL::jsonb AS content_json, updated_at, NULL::uuid AS og_asset_id FROM %s`, table)
 		},

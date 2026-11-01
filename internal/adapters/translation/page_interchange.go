@@ -16,18 +16,18 @@ import (
 // PageInterchangePort maps Translation application's generic XLIFF command to
 // the Page-owned lock, CAS and exact locale mutation boundary.
 type PageInterchangePort struct {
-	auditWriter  domainaudit.Appender
+	audit        domainaudit.Appender
 	auditBuilder LocaleContentAuditBuilder
 }
 
 func NewPageInterchangePort(
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 	auditBuilder LocaleContentAuditBuilder,
 ) *PageInterchangePort {
-	if auditWriter == nil || auditBuilder == nil {
+	if audit == nil || auditBuilder == nil {
 		panic("Page translation interchange Audit dependencies are required")
 	}
-	return &PageInterchangePort{auditWriter: auditWriter, auditBuilder: auditBuilder}
+	return &PageInterchangePort{audit: audit, auditBuilder: auditBuilder}
 }
 
 func (*PageInterchangePort) LoadTranslationInterchangeTarget(
@@ -92,7 +92,7 @@ func (p *PageInterchangePort) ApplyTranslationInterchange(
 	}
 	if result.Changed {
 		if err := appendLocaleContentInterchangeAudit(
-			ctx, db, p.auditWriter, p.auditBuilder, sharedtelemetry.AuditPageUpdated,
+			ctx, db, p.audit, p.auditBuilder, sharedtelemetry.AuditPageUpdated,
 			memberID, command.EntityID, command.TargetLocale, result.TargetPreviouslyExists,
 		); err != nil {
 			return application.TranslationInterchangeApplyResult{}, err

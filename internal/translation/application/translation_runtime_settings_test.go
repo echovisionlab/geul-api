@@ -43,7 +43,7 @@ func TestMergeProtectedTermsDeltaCanExplicitlyClearObservedTerms(t *testing.T) {
 
 func TestApplyTranslationRuntimeSettingsUpdatePreservesUntouchedFields(t *testing.T) {
 	baseline := translationRuntimeSettings{DefaultLocale: "en", ProtectedTerms: []string{"Observed term"}}
-	localePatch := &managev1.UpdateTranslationSettingsRequest{
+	localePatch := UpdateTranslationSettingsCommand{
 		Settings:   &managev1.TranslationSettings{DefaultLocale: "ko"},
 		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"default_locale"}},
 	}
@@ -52,7 +52,7 @@ func TestApplyTranslationRuntimeSettingsUpdatePreservesUntouchedFields(t *testin
 	require.Equal(t, "ko", updatedLocale.DefaultLocale)
 	require.Equal(t, []string{"Observed term"}, updatedLocale.ProtectedTerms)
 
-	staleTermsPatch := &managev1.UpdateTranslationSettingsRequest{
+	staleTermsPatch := UpdateTranslationSettingsCommand{
 		Settings:   &managev1.TranslationSettings{ProtectedTerms: []string{"Observed term", "Local addition"}},
 		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"protected_terms"}},
 		BaseSettings: &managev1.TranslationSettings{
@@ -70,7 +70,7 @@ func TestApplyTranslationRuntimeSettingsUpdateMergesConcurrentProtectedTermChang
 		DefaultLocale:  "en",
 		ProtectedTerms: []string{"Observed term", "Remote addition", "Remove me"},
 	}
-	request := &managev1.UpdateTranslationSettingsRequest{
+	request := UpdateTranslationSettingsCommand{
 		Settings:   &managev1.TranslationSettings{ProtectedTerms: []string{"Observed term", "Local addition"}},
 		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"protected_terms"}},
 		BaseSettings: &managev1.TranslationSettings{
@@ -85,7 +85,7 @@ func TestApplyTranslationRuntimeSettingsUpdateMergesConcurrentProtectedTermChang
 
 func TestApplyTranslationRuntimeSettingsUpdateRequiresMask(t *testing.T) {
 	current := translationRuntimeSettings{DefaultLocale: "ko", ProtectedTerms: []string{"Existing term"}}
-	request := &managev1.UpdateTranslationSettingsRequest{
+	request := UpdateTranslationSettingsCommand{
 		Settings: &managev1.TranslationSettings{DefaultLocale: "ja", ProtectedTerms: []string{"Replacement term"}},
 	}
 	_, err := applyTranslationRuntimeSettingsUpdate(current, request)
@@ -98,7 +98,7 @@ func TestApplyTranslationRuntimeSettingsUpdateRequiresMask(t *testing.T) {
 
 func TestApplyTranslationRuntimeSettingsUpdateRequiresObservedBaseForProtectedTerms(t *testing.T) {
 	current := translationRuntimeSettings{DefaultLocale: "en", ProtectedTerms: []string{"Existing term"}}
-	request := &managev1.UpdateTranslationSettingsRequest{
+	request := UpdateTranslationSettingsCommand{
 		Settings:   &managev1.TranslationSettings{ProtectedTerms: []string{"Replacement term"}},
 		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"protected_terms"}},
 	}

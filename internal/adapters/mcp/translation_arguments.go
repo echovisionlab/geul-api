@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
+	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -110,23 +111,23 @@ func translationProfile(entityType managev1.TranslationEntityType) (core.Domain,
 	return value, ok
 }
 
-func translationJobsListRequest(input translationJobsListArguments) (*managev1.ListTranslationJobsRequest, error) {
+func translationJobsListQuery(input translationJobsListArguments) (translationapp.ListTranslationJobsQuery, error) {
 	if input.Limit < 0 || input.Limit > 100 {
-		return nil, errors.New("translation Job list limit must be between 0 and 100")
+		return translationapp.ListTranslationJobsQuery{}, errors.New("translation Job list limit must be between 0 and 100")
 	}
 	if input.Offset < 0 {
-		return nil, errors.New("translation Job list offset cannot be negative")
+		return translationapp.ListTranslationJobsQuery{}, errors.New("translation Job list offset cannot be negative")
 	}
-	request := &managev1.ListTranslationJobsRequest{Pagination: &commonv1.PaginationRequest{Limit: input.Limit, Offset: input.Offset}}
+	query := translationapp.ListTranslationJobsQuery{Limit: input.Limit, Offset: input.Offset}
 	if (input.Profile == nil) != (input.Document == nil) {
-		return nil, errors.New("job list document profile and reference must be provided together")
+		return translationapp.ListTranslationJobsQuery{}, errors.New("job list document profile and reference must be provided together")
 	}
 	if input.Profile != nil {
 		target, err := translationTarget(translationTargetArguments{Profile: *input.Profile, Document: *input.Document})
 		if err != nil {
-			return nil, err
+			return translationapp.ListTranslationJobsQuery{}, err
 		}
-		request.Filters = append(request.Filters,
+		query.Filters = append(query.Filters,
 			&commonv1.FilterSpec{Field: "entity_type", Op: commonv1.FilterOp_FILTER_OP_EQ, Value: translationStorageEntityType(target.EntityType)},
 			&commonv1.FilterSpec{Field: "entity_id", Op: commonv1.FilterOp_FILTER_OP_EQ, Value: target.EntityId},
 		)
@@ -139,36 +140,36 @@ func translationJobsListRequest(input translationJobsListArguments) (*managev1.L
 			continue
 		}
 		if err := validateCompactLocale(*filter.value); err != nil {
-			return nil, err
+			return translationapp.ListTranslationJobsQuery{}, err
 		}
-		request.Filters = append(request.Filters, &commonv1.FilterSpec{Field: filter.field, Op: commonv1.FilterOp_FILTER_OP_EQ, Value: string(*filter.value)})
+		query.Filters = append(query.Filters, &commonv1.FilterSpec{Field: filter.field, Op: commonv1.FilterOp_FILTER_OP_EQ, Value: string(*filter.value)})
 	}
 	if len(input.Statuses) != 0 {
 		seen := make(map[string]struct{}, len(input.Statuses))
 		for _, status := range input.Statuses {
 			if _, ok := translationJobStatusesByName[status]; !ok {
-				return nil, fmt.Errorf("unsupported translation Job status %q", status)
+				return translationapp.ListTranslationJobsQuery{}, fmt.Errorf("unsupported translation Job status %q", status)
 			}
 			if _, duplicate := seen[status]; duplicate {
-				return nil, fmt.Errorf("translation Job status %q is repeated", status)
+				return translationapp.ListTranslationJobsQuery{}, fmt.Errorf("translation Job status %q is repeated", status)
 			}
 			seen[status] = struct{}{}
 		}
-		request.Filters = append(request.Filters, &commonv1.FilterSpec{Field: "status", Op: commonv1.FilterOp_FILTER_OP_IN, Values: append([]string(nil), input.Statuses...)})
+		query.Filters = append(query.Filters, &commonv1.FilterSpec{Field: "status", Op: commonv1.FilterOp_FILTER_OP_IN, Values: append([]string(nil), input.Statuses...)})
 	}
 	if input.Sort != "" {
 		if !validTranslationJobSort(input.Sort) {
-			return nil, fmt.Errorf("unsupported translation Job sort %q", input.Sort)
+			return translationapp.ListTranslationJobsQuery{}, fmt.Errorf("unsupported translation Job sort %q", input.Sort)
 		}
 		order := commonv1.SortOrder_SORT_ORDER_ASC
 		if input.Descending != nil && *input.Descending {
 			order = commonv1.SortOrder_SORT_ORDER_DESC
 		}
-		request.Sorts = []*commonv1.SortSpec{{Field: input.Sort, Order: order}}
+		query.Sorts = []*commonv1.SortSpec{{Field: input.Sort, Order: order}}
 	} else if input.Descending != nil {
-		return nil, errors.New("sort direction requires an explicit sort field")
+		return translationapp.ListTranslationJobsQuery{}, errors.New("sort direction requires an explicit sort field")
 	}
-	return request, nil
+	return query, nil
 }
 
 func translationStorageEntityType(entityType managev1.TranslationEntityType) string {

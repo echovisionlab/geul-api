@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/email"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -20,7 +20,7 @@ import (
 func translationTargetDefinition(entityType string) (translation.Definition, error) {
 	definition, ok := translation.DefinitionForKind(entityType)
 	if !ok {
-		return translation.Definition{}, errs.InvalidArgument(
+		return translation.Definition{}, domainerr.InvalidField(
 			"target.entity_type",
 			fmt.Sprintf("unsupported translation entity type %q", entityType),
 		)

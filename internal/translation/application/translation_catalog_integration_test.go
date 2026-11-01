@@ -15,7 +15,7 @@ import (
 func TestTranslationOverviewUsesCompleteCatalogIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
-	service := &TranslationService{db: db}
+	service := &Service{db: db}
 	_, err := service.getTranslationOverviewStats(t.Context())
 	require.NoError(t, err)
 	_, err = service.listTranslationLocaleHealth(t.Context())

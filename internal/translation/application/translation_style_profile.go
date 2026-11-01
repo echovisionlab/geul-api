@@ -1,8 +1,9 @@
 package application
 
 import (
-	"github.com/echovisionlab/geul-api/internal/translation"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/localization"
 )

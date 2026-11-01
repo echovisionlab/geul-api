@@ -9,11 +9,12 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
@@ -23,6 +24,7 @@ type sourceLocaleSwitchResult struct {
 	now              time.Time
 	documentRevision string
 	changedLocales   []string
+	audit            SourceLocaleAudit
 }
 
 type sourceLocaleSwitchState struct {
@@ -48,7 +50,7 @@ func parseExpectedTranslationDocumentRevision(
 	normalized := strings.TrimSpace(value)
 	revision, err := uuid.Parse(normalized)
 	if err != nil || revision == uuid.Nil || revision.String() != normalized {
-		return uuid.Nil, errs.InvalidArgument(
+		return uuid.Nil, domainerr.InvalidField(
 			"expected_document_revision",
 			"a canonical Content Document revision UUID is required",
 		)
@@ -58,18 +60,18 @@ func parseExpectedTranslationDocumentRevision(
 
 func validateRequestedSourceLocale(ctx context.Context, db *gorm.DB, locale string) error {
 	if strings.TrimSpace(locale) == "" {
-		return errs.InvalidArgument("source_locale", "source locale is required")
+		return domainerr.InvalidField("source_locale", "source locale is required")
 	}
 	if _, err := localization.NewCatalog(db).Find(ctx, locale); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.InvalidArgument("source_locale", "unsupported locale")
+			return domainerr.InvalidField("source_locale", "unsupported locale")
 		}
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }
 
-func (s *TranslationService) applySourceLocaleSwitch(
+func (s *Service) applySourceLocaleSwitch(
 	ctx context.Context,
 	entityType string,
 	entityID string,
@@ -88,31 +90,43 @@ func (s *TranslationService) applySourceLocaleSwitch(
 			now: s.now().UTC(),
 		},
 	}
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.lockSourceLocaleSwitch(ctx, tx, &state); err != nil {
-			return err
-		}
-		authority, err := loadTranslationDocumentAuthority(ctx, tx, state.entityType, state.entityID)
-		if err != nil {
-			return err
-		}
-		state.previousLocale = authority.SourceLocale
-		if err := s.domains.RequireDocumentContributors(ctx, tx, []string{state.contributorMemberID}); err != nil {
-			return err
-		}
-		if err := s.performSourceLocaleSwitch(ctx, tx, &state, authority); err != nil {
-			return err
-		}
-		if state.result.unchanged {
-			return nil
-		}
-		return contentsignal.PublishInTransaction(ctx, tx, s.publisher, buildTypedSourceLocaleUpdatedEvent(
-			state.entityType,
-			state.entityID,
-			state.result.documentRevision,
-		))
+	return mutation.Run(ctx, s.mutations, mutation.Spec[sourceLocaleSwitchResult]{
+		Lock: func(ctx context.Context, tx *gorm.DB) error {
+			return s.lockSourceLocaleSwitch(ctx, tx, &state)
+		},
+		// Source-locale reassignment is one authoritative operation. The owning
+		// domain selects Edit or EditArchived from the already locked lifecycle
+		// and performs exactly one current-principal ReBAC decision here.
+		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+			return s.domains.RequireSourceLocaleEdit(ctx, tx, s.spiceDB, state.entityType, state.entityID)
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (sourceLocaleSwitchResult, error) {
+			authority, err := loadTranslationDocumentAuthority(ctx, tx, state.entityType, state.entityID)
+			if err != nil {
+				return sourceLocaleSwitchResult{}, err
+			}
+			state.previousLocale = authority.SourceLocale
+			if err := s.domains.RequireDocumentContributors(ctx, tx, []string{state.contributorMemberID}); err != nil {
+				return sourceLocaleSwitchResult{}, err
+			}
+			err = s.performSourceLocaleSwitch(ctx, tx, &state, authority)
+			return state.result, err
+		},
+		Audit: func(result sourceLocaleSwitchResult) mutation.Audit {
+			if result.unchanged {
+				return mutation.Unchanged()
+			}
+			return mutation.RequestAudit(result.audit.Action, result.audit.Build)
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, result sourceLocaleSwitchResult) error {
+			if result.unchanged {
+				return nil
+			}
+			return contentsignal.PublishInTransaction(ctx, tx, s.publisher, buildTypedSourceLocaleUpdatedEvent(
+				state.entityType, state.entityID, result.documentRevision,
+			))
+		},
 	})
-	return state.result, err
 }
 
 func loadTranslationDocumentAuthority(
@@ -123,36 +137,40 @@ func loadTranslationDocumentAuthority(
 ) (translationDocumentAuthority, error) {
 	definition, ok := translation.DefinitionForKind(entityType)
 	if !ok {
-		return translationDocumentAuthority{}, errs.InvalidArgument("target.entity_type", "unsupported translation entity type")
+		return translationDocumentAuthority{}, domainerr.InvalidField("target.entity_type", "unsupported translation entity type")
 	}
 	var authority translationDocumentAuthority
 	result := db.WithContext(ctx).Raw(
-		"SELECT root.source_locale, root.content_document_id, document.revision AS document_revision FROM "+definition.RootTable+" AS root "+
-			"JOIN content_document AS document ON document.id = root.content_document_id "+
-			"WHERE root.id = ?",
+		"SELECT source_locale, content_document_id FROM "+definition.RootTable+" WHERE id = ?",
 		entityID,
 	).Scan(&authority)
 	if result.Error != nil {
-		return translationDocumentAuthority{}, errs.Internal(result.Error)
+		return translationDocumentAuthority{}, result.Error
 	}
-	if result.RowsAffected != 1 {
-		return translationDocumentAuthority{}, errs.NotFound(entityType, entityID)
+	// A root without its Content Document is as absent as a missing root.
+	if result.RowsAffected != 1 || authority.DocumentID == uuid.Nil {
+		return translationDocumentAuthority{}, domainerr.ResourceNotFound(entityType, entityID)
 	}
+	revision, err := contentblock.CurrentRevision(ctx, db, authority.DocumentID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return translationDocumentAuthority{}, domainerr.ResourceNotFound(entityType, entityID)
+	}
+	if err != nil {
+		return translationDocumentAuthority{}, err
+	}
+	authority.DocumentRevision = revision
 	if strings.TrimSpace(authority.SourceLocale) == "" || authority.DocumentID == uuid.Nil ||
 		authority.DocumentRevision == uuid.Nil {
-		return translationDocumentAuthority{}, errs.FailedPrecondition("Content Document authority is not initialized")
+		return translationDocumentAuthority{}, domainerr.Precondition("Content Document authority is not initialized")
 	}
 	return authority, nil
 }
 
-func (s *TranslationService) lockSourceLocaleSwitch(
+func (s *Service) lockSourceLocaleSwitch(
 	ctx context.Context,
 	tx *gorm.DB,
 	state *sourceLocaleSwitchState,
 ) error {
-	if s.domains == nil {
-		return errs.InternalMsg("translation domain registry is required")
-	}
 	if err := s.domains.LockRoot(ctx, tx, state.entityType, state.entityID); err != nil {
 		return err
 	}
@@ -161,32 +179,18 @@ func (s *TranslationService) lockSourceLocaleSwitch(
 	); err != nil {
 		return err
 	}
-	if err := requireEditableTranslationDomain(ctx, tx, s.domains, state.entityType, state.entityID); err != nil {
-		return err
-	}
-	// Source-locale reassignment is one authoritative operation. The owning
-	// domain selects Edit or EditArchived from the already locked lifecycle and
-	// performs exactly one current-principal ReBAC decision here.
-	if err := s.domains.RequireSourceLocaleEdit(
-		ctx, tx, s.spiceDB, state.entityType, state.entityID,
-	); err != nil {
-		return err
-	}
-	return nil
+	return s.domains.RequireEditable(ctx, tx, state.entityType, state.entityID)
 }
 
-func (s *TranslationService) performSourceLocaleSwitch(
+func (s *Service) performSourceLocaleSwitch(
 	ctx context.Context,
 	tx *gorm.DB,
 	state *sourceLocaleSwitchState,
 	authority translationDocumentAuthority,
 ) error {
-	if state.contentBlocks == nil {
-		return errs.InternalMsg("Content Document store is required")
-	}
 	definition, ok := translation.DefinitionForKind(state.entityType)
 	if !ok {
-		return errs.InvalidArgument("target.entity_type", "unsupported translation entity type")
+		return domainerr.InvalidField("target.entity_type", "unsupported translation entity type")
 	}
 	changedLocales, err := listSourceSwitchLocales(
 		ctx, tx, definition.EntryTable, state.entityID, authority.DocumentID,
@@ -197,7 +201,7 @@ func (s *TranslationService) performSourceLocaleSwitch(
 	}
 	contributor, parseErr := uuid.Parse(state.contributorMemberID)
 	if parseErr != nil || contributor == uuid.Nil || contributor.String() != state.contributorMemberID {
-		return errs.InternalMsg("authenticated translation requester Member is invalid")
+		return errors.New("authenticated translation requester Member is invalid")
 	}
 	switched, err := state.contentBlocks.SwitchSourceLocale(
 		ctx,
@@ -237,7 +241,7 @@ func (s *TranslationService) performSourceLocaleSwitch(
 				authority.DocumentID,
 			)
 			if updated.Error != nil {
-				return contentblock.MetadataEffect{}, errs.Internal(updated.Error)
+				return contentblock.MetadataEffect{}, updated.Error
 			}
 			if updated.RowsAffected != 1 {
 				return contentblock.MetadataEffect{}, translation.ErrSourceNoLongerCurrent
@@ -260,7 +264,10 @@ func (s *TranslationService) performSourceLocaleSwitch(
 	if err := s.requestSourceLocaleSwitchOg(ctx, tx, state); err != nil {
 		return err
 	}
-	return s.appendSourceLocaleSwitchAudit(ctx, tx, state)
+	state.result.audit, err = s.domains.SourceLocaleAudit(
+		ctx, tx, state.entityType, state.entityID, state.previousLocale, state.requestedLocale,
+	)
+	return err
 }
 
 func listSourceSwitchLocales(
@@ -276,47 +283,27 @@ func listSourceSwitchLocales(
 	var entryLocales []string
 	if err := tx.WithContext(ctx).Table(entryTable).
 		Where("entity_id = ?", entityID).Pluck("locale", &entryLocales).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	locales = append(locales, entryLocales...)
-	var blockLocales []string
-	if err := tx.WithContext(ctx).Raw(
-		`SELECT DISTINCT locale FROM content_block_locale
-		 WHERE block_id IN (SELECT id FROM content_block WHERE document_id = ?)`,
-		documentID,
-	).Scan(&blockLocales).Error; err != nil {
-		return nil, errs.Internal(err)
+	blockLocales, err := contentblock.DocumentLocales(ctx, tx, documentID)
+	if err != nil {
+		return nil, err
 	}
 	locales = sliceutil.UniqueNonZero(append(locales, blockLocales...))
 	slices.Sort(locales)
 	return locales, nil
 }
 
-func (s *TranslationService) requestSourceLocaleSwitchOg(
+func (s *Service) requestSourceLocaleSwitchOg(
 	ctx context.Context,
 	tx *gorm.DB,
 	state *sourceLocaleSwitchState,
 ) error {
 	reason := state.entityType + "_source_locale_changed"
-	if s.domains == nil {
-		return errs.InternalMsg("translation domain registry is required")
-	}
 	_, err := s.domains.RequestLocaleOG(
 		ctx, tx, s.ogPlanner, s.ogRefresher,
 		state.entityType, state.entityID, state.requestedLocale, reason,
 	)
 	return err
-}
-
-func (s *TranslationService) appendSourceLocaleSwitchAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	state *sourceLocaleSwitchState,
-) error {
-	if s.domains == nil {
-		return errs.InternalMsg("translation domain registry is required")
-	}
-	return s.domains.AppendSourceLocaleAudit(
-		ctx, tx, state.entityType, state.entityID, state.previousLocale, state.requestedLocale,
-	)
 }

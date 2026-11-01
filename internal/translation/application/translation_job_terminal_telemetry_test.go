@@ -21,7 +21,7 @@ func TestTranslationTerminalTelemetryEmitsAppliedResults(t *testing.T) {
 	job := &model.TranslationJob{
 		ID: uuid.NewString(), EntityType: "post", EntityID: uuid.NewString(), TargetLocale: "ko", Status: translationJobStatusApplied,
 	}
-	manager := &TranslationJobManager{publisher: stubTranslationJobPublisher{}, now: func() time.Time { return now }, metrics: newTranslationMetrics()}
+	manager := withTestMutations(t, &TranslationJobManager{publisher: stubTranslationJobPublisher{}, now: func() time.Time { return now }, metrics: newTranslationMetrics()})
 
 	events := captureTranslationTerminalEvents(t, func() {
 		require.NoError(t, manager.finalizeAppliedTranslationDelivery(context.Background(), &translationDeliveryExecution{
@@ -38,7 +38,7 @@ func TestTranslationTerminalTelemetryEmitsFailedResultsAfterRunningAndQueuedTran
 		db := newTranslationRetryTestDB(t)
 		now := time.Unix(1_700_001_200, 0).UTC()
 		job := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "operation", uuid.NewString())
-		manager := &TranslationJobManager{db: db, publisher: stubTranslationJobPublisher{}, now: func() time.Time { return now }, metrics: newTranslationMetrics()}
+		manager := withTestMutations(t, &TranslationJobManager{db: db, publisher: stubTranslationJobPublisher{}, now: func() time.Time { return now }, metrics: newTranslationMetrics()})
 
 		events := captureTranslationTerminalEvents(t, func() {
 			require.NoError(t, manager.failJob(context.Background(), job, now.Add(-2*time.Second), errTranslationOgHandoffFailed))
@@ -53,7 +53,7 @@ func TestTranslationTerminalTelemetryEmitsFailedResultsAfterRunningAndQueuedTran
 		db := newTranslationRetryTestDB(t)
 		now := time.Unix(1_700_001_300, 0).UTC()
 		job := seedTranslationRetryTestJob(t, db, translationJobStatusQueued, "operation", uuid.NewString())
-		manager := &TranslationJobManager{db: db, publisher: stubTranslationJobPublisher{}, now: func() time.Time { return now }, metrics: newTranslationMetrics()}
+		manager := withTestMutations(t, &TranslationJobManager{db: db, publisher: stubTranslationJobPublisher{}, now: func() time.Time { return now }, metrics: newTranslationMetrics()})
 
 		events := captureTranslationTerminalEvents(t, func() {
 			require.NoError(t, manager.failQueuedJob(context.Background(), job, errTranslationProviderUnavailable))
@@ -71,7 +71,7 @@ func TestTranslationTerminalTelemetryDoesNotEmitAfterAnotherHandlerDeletedJob(t 
 	now := time.Unix(1_700_001_400, 0).UTC()
 	job := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "operation", uuid.NewString())
 	require.NoError(t, db.Delete(&model.TranslationJob{}, "id = ?", job.ID).Error)
-	manager := &TranslationJobManager{db: db, publisher: stubTranslationJobPublisher{}, now: func() time.Time { return now }, metrics: newTranslationMetrics()}
+	manager := withTestMutations(t, &TranslationJobManager{db: db, publisher: stubTranslationJobPublisher{}, now: func() time.Time { return now }, metrics: newTranslationMetrics()})
 
 	events := captureTranslationTerminalEvents(t, func() {
 		require.NoError(t, manager.failJob(context.Background(), job, now.Add(-time.Second), errTranslationProviderUnavailable))
@@ -87,7 +87,7 @@ func TestTranslationTerminalTelemetryCorrelatesNewRequestAfterFailure(t *testing
 	entityID := uuid.NewString()
 	job := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "operation", entityID)
 	failedJob := *job
-	manager := &TranslationJobManager{db: db, publisher: stubTranslationJobPublisher{}, now: func() time.Time { return now }, metrics: newTranslationMetrics()}
+	manager := withTestMutations(t, &TranslationJobManager{db: db, publisher: stubTranslationJobPublisher{}, now: func() time.Time { return now }, metrics: newTranslationMetrics()})
 
 	events := captureTranslationTerminalEvents(t, func() {
 		require.NoError(t, manager.failJob(context.Background(), job, failedAt.Add(-time.Second), errTranslationProviderUnavailable))

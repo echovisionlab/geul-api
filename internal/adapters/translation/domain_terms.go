@@ -7,13 +7,12 @@ import (
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-func termsDomainRegistration(auditWriter domainaudit.Appender) domainRegistration {
+func termsDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	return legalDomainRegistration(
 		core.KindTerms,
-		auditWriter,
+		audit,
 		policyv1.TermsHistory.Edit,
 		legalSourceLocaleAudit(
-			auditWriter,
 			"terms_history",
 			"terms",
 			sharedtelemetry.NewTermsSourceLocaleAuditRecord,

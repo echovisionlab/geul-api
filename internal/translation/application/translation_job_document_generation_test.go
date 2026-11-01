@@ -371,7 +371,7 @@ func runningDocumentTranslationTestManager(
 	db := newTranslationRetryTestDB(t)
 	now := time.Unix(1_700_000_500, 0).UTC()
 	job := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "operation", "entity-document")
-	manager := &TranslationJobManager{db: db, now: func() time.Time { return now }}
+	manager := withTestMutations(t, &TranslationJobManager{db: db, now: func() time.Time { return now }})
 	require.NoError(t, manager.updateRunningJobProvider(
 		context.Background(), job.ID,
 		namedStubTranslationGenerator{providerName: provider, modelName: modelName},

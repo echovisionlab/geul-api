@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	menuadapter "github.com/echovisionlab/geul-api/internal/adapters/menu"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -16,7 +17,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func menuDomainRegistration(auditWriter domainaudit.Appender) domainRegistration {
+func menuDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	return newConfiguredDomainPort(core.KindMenu, domainPortFunctions{
 		loadSourceDocument: func(ctx context.Context, db *gorm.DB, _ *contentblock.Store, entityID string) (*core.SourceDocument, error) {
 			return menu.LoadTranslationSourceDocument(ctx, db, entityID)
@@ -33,9 +34,9 @@ func menuDomainRegistration(auditWriter domainaudit.Appender) domainRegistration
 			input.ContentJSON = candidate.ContentJSON
 			input.ContentHTML = candidate.ContentHTML
 			input.ContentText = candidate.ContentText
-			return menu.ApplyProviderTranslationCandidateWithDB(ctx, tx, job, candidate, input, auditWriter)
+			return menu.ApplyProviderTranslationCandidateWithDB(ctx, tx, job, candidate, input, audit)
 		},
-		appendSourceLocaleAudit: sourceLocaleAudit(auditWriter, sharedtelemetry.AuditMenuUpdated, sharedtelemetry.NewMenuSourceLocaleAuditRecord),
+		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditMenuUpdated, sharedtelemetry.NewMenuSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
 			return fmt.Sprintf(`SELECT locale, NULL::text AS title, NULL::text AS summary, NULL::text AS content_html, NULL::text AS content_text, items_json AS content_json, updated_at, NULL::uuid AS og_asset_id FROM %s`, table)
 		},
@@ -54,22 +55,8 @@ func prepareMenuSourceLocale(
 	requestedLocale string,
 	now time.Time,
 ) error {
-	empty, err := menu.EncodeTranslationLabelValues(nil)
-	if err != nil {
+	if err := menuadapter.EnsureTranslationLocale(ctx, db, entityID, requestedLocale, now); err != nil {
 		return errs.Internal(err)
-	}
-	result := db.WithContext(ctx).Exec(
-		`INSERT INTO menu_translation (entity_id, locale, items_json, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT (entity_id, locale) DO NOTHING`,
-		entityID,
-		requestedLocale,
-		string(empty),
-		now.UTC(),
-		now.UTC(),
-	)
-	if result.Error != nil {
-		return errs.Internal(result.Error)
 	}
 	return nil
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
+	"github.com/echovisionlab/geul-api/internal/documentlayout"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -367,6 +368,9 @@ type postListPage struct {
 	authors     map[string][]*commonv1.MemberSummary
 	featured    map[string]*commonv1.MediaDelivery
 	authorities map[string]PostAuthority
+	// contents are the hydrated content projections of posts, by index; a
+	// metadata-only list leaves them unset.
+	contents []postContent
 }
 
 // listPostPage filters, counts and pages stored, then loads the projections
@@ -413,7 +417,11 @@ func (s *Service) loadPostListProjections(ctx context.Context, page *postListPag
 
 func (s *Service) projectListedPost(page postListPage, index int) (*managev1.Post, error) {
 	post := &page.posts[index]
-	return s.toProtoPostWithProjection(post, manageOgAssetFromReadyMap(
+	var content postContent
+	if page.contents != nil {
+		content = page.contents[index]
+	}
+	return s.toProtoPostWithProjection(post, content, manageOgAssetFromReadyMap(
 		page.readyOg, post.SourceLocaleOgAssetID, post.OgAssetID,
 	), page.authors[post.ID], page.featured[post.ID], page.authorities[post.ID])
 }
@@ -517,7 +525,7 @@ func (s *Service) UpdatePost(ctx context.Context, command UpdatePostCommand) (_ 
 	if err != nil {
 		return nil, err
 	}
-	documentLayout, err := post.DocumentLayout.Proto()
+	documentLayout, err := documentlayout.ToProto(post.DocumentLayout)
 	if err != nil {
 		return nil, err
 	}
@@ -580,7 +588,7 @@ func (s *Service) buildPostUpdate(ctx context.Context, command UpdatePostCommand
 		update.fields["map_place_id"] = optionalPostStringValue(mapPlaceID)
 	}
 	if command.DocumentLayout != nil {
-		documentLayout, err := model.DocumentLayoutFromProto(command.DocumentLayout)
+		documentLayout, err := documentlayout.FromProto(command.DocumentLayout)
 		if err != nil {
 			return postUpdate{}, domainerr.New(domainerr.Invalid, "", err.Error())
 		}

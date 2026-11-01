@@ -24,7 +24,7 @@ func TestTranslationSettingsAuditOmitsProtectedTermValuesIntegration(t *testing.
 	admin := seedTranslationProviderAuditAdmin(t, stack.Postgres.DB)
 	grantTranslationProviderIntegrationAdmin(t, stack.SpiceDBClient, admin)
 	ctx := translationProviderAuditedMemberContext(t, admin)
-	service := newAuditedTranslationProviderService(
+	service := newAuditedTranslationProviderService(t,
 		stack.Postgres.DB, apitelemetry.NewDurableWriter(stack.Postgres.DB), stack.SpiceDBClient,
 	)
 	_, err = service.UpdateTranslationSettings(ctx, connect.NewRequest(

@@ -16,7 +16,7 @@ import (
 
 func emailTemplateDomainRegistration(
 	references emailauthoring.CampaignDeliveryReferences,
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 ) domainRegistration {
 	return newConfiguredDomainPort(core.KindEmailTemplate, domainPortFunctions{
 		loadSourceDocument: emailauthoring.LoadTemplateTranslationSourceDocument,
@@ -33,10 +33,10 @@ func emailTemplateDomainRegistration(
 			input core.EntryWrite,
 		) error {
 			return emailauthoring.ApplyTemplateTranslationCandidate(
-				ctx, tx, store, job, candidate, input, auditWriter,
+				ctx, tx, store, job, candidate, input, audit,
 			)
 		},
-		appendSourceLocaleAudit: sourceLocaleAudit(auditWriter, sharedtelemetry.AuditEmailTemplateUpdated, sharedtelemetry.NewEmailTemplateSourceLocaleAuditRecord),
+		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditEmailTemplateUpdated, sharedtelemetry.NewEmailTemplateSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
 			return fmt.Sprintf(
 				`SELECT locale, subject AS title, NULL::text AS summary, content_html, content_text, NULL::jsonb AS content_json, updated_at, NULL::uuid AS og_asset_id FROM %s`,

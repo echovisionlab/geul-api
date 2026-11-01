@@ -36,7 +36,7 @@ type translationServiceRegistration struct {
 	fileService              *filemedia.FileService
 }
 
-func (r translationServiceRegistration) register() (*translationapplication.TranslationService, error) {
+func (r translationServiceRegistration) register() (*translationapplication.Service, error) {
 	deps := r.dependencies
 	mux := deps.mux
 	cfg := deps.cfg
@@ -145,14 +145,18 @@ func (r translationServiceRegistration) register() (*translationapplication.Tran
 	if err != nil {
 		return nil, fmt.Errorf("initialize Translation XLIFF File runtime: %w", err)
 	}
-	translationService := translationapplication.NewAuditedTranslationService(
-		db, workerPublisher, cfg.CDNURL, telemetryWriter, spicedbClient, ogDeps.planner, ogDeps.refresher,
-		translationapplication.WithTranslationServiceContentBlockStore(contentBlockStore),
-		translationapplication.WithTranslationServiceDomainRegistry(translationRegistry),
-		translationapplication.WithTranslationServiceXLIFFFiles(translationXLIFFFiles),
-		translationapplication.WithTranslationServiceInterchangeDomains(translationInterchangeRegistry),
+	translationService, err := translationapplication.NewService(translationapplication.Deps{
+		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, Publisher: workerPublisher,
+		ContentBlocks: contentBlockStore, OGPlanner: ogDeps.planner, OGRefresher: ogDeps.refresher,
+		Domains: translationRegistry, XLIFFFiles: translationXLIFFFiles,
+		InterchangeDomains: translationInterchangeRegistry, CDNDomain: cfg.CDNURL,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize Translation service: %w", err)
+	}
+	translationPath, translationHandler := managev1connect.NewTranslationServiceHandler(
+		translationapplication.NewConnectHandler(translationService), handlerOpts...,
 	)
-	translationPath, translationHandler := managev1connect.NewTranslationServiceHandler(translationService, handlerOpts...)
 	mux.Handle(translationPath, translationHandler)
 	slog.Info("Registered service", "path", translationPath)
 

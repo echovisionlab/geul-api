@@ -6,6 +6,7 @@ import (
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
+	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -37,63 +38,63 @@ var translationInterchangeModeNames = func() map[managev1.TranslationInterchange
 	return names
 }()
 
-func translationXLIFFExportRequest(arguments mcpserver.ToolArguments) (*managev1.ExportEntityTranslationXLIFFRequest, error) {
+func translationXLIFFExportCommand(arguments mcpserver.ToolArguments) (translationapp.ExportTranslationXLIFFCommand, error) {
 	if err := rejectNullArguments(arguments, "u"); err != nil {
-		return nil, err
+		return translationapp.ExportTranslationXLIFFCommand{}, err
 	}
 	var input translationXLIFFExportArguments
 	if err := decodeArguments(arguments, &input); err != nil {
-		return nil, err
+		return translationapp.ExportTranslationXLIFFCommand{}, err
 	}
 	target, err := translationTarget(input.translationTargetArguments)
 	if err != nil {
-		return nil, err
+		return translationapp.ExportTranslationXLIFFCommand{}, err
 	}
 	if err := validateCompactLocale(input.TargetLocale); err != nil {
-		return nil, err
+		return translationapp.ExportTranslationXLIFFCommand{}, err
 	}
 	mode, err := translationInterchangeMode(input.Mode)
 	if err != nil {
-		return nil, err
+		return translationapp.ExportTranslationXLIFFCommand{}, err
 	}
 	if err := validateXLIFFSelection(mode, input.UnitHandles); err != nil {
-		return nil, err
+		return translationapp.ExportTranslationXLIFFCommand{}, err
 	}
-	return &managev1.ExportEntityTranslationXLIFFRequest{
+	return translationapp.ExportTranslationXLIFFCommand{
 		Target: target, TargetLocale: string(input.TargetLocale), Mode: mode,
 		UnitHandles: append([]string(nil), input.UnitHandles...),
 	}, nil
 }
 
-func translationXLIFFImportRequest(arguments mcpserver.ToolArguments) (*managev1.ImportEntityTranslationXLIFFRequest, error) {
+func translationXLIFFImportCommand(arguments mcpserver.ToolArguments) (translationapp.ImportTranslationXLIFFCommand, error) {
 	if err := rejectNullArguments(arguments, "er"); err != nil {
-		return nil, err
+		return translationapp.ImportTranslationXLIFFCommand{}, err
 	}
 	var input translationXLIFFImportArguments
 	if err := decodeArguments(arguments, &input); err != nil {
-		return nil, err
+		return translationapp.ImportTranslationXLIFFCommand{}, err
 	}
 	target, err := translationTarget(input.translationTargetArguments)
 	if err != nil {
-		return nil, err
+		return translationapp.ImportTranslationXLIFFCommand{}, err
 	}
 	if err := validateCompactLocale(input.TargetLocale); err != nil {
-		return nil, err
+		return translationapp.ImportTranslationXLIFFCommand{}, err
 	}
 	mode, err := translationInterchangeMode(input.Mode)
 	if err != nil {
-		return nil, err
+		return translationapp.ImportTranslationXLIFFCommand{}, err
 	}
 	if err := validateUUID("existing uploaded file ID", input.FileID); err != nil {
-		return nil, err
+		return translationapp.ImportTranslationXLIFFCommand{}, err
 	}
 	if input.ExpectedTargetRevision != nil {
 		if err := validateCompactOpaque("expected target revision", *input.ExpectedTargetRevision, 256); err != nil {
-			return nil, err
+			return translationapp.ImportTranslationXLIFFCommand{}, err
 		}
 	}
-	return &managev1.ImportEntityTranslationXLIFFRequest{
-		Target: target, TargetLocale: string(input.TargetLocale), Mode: mode, FileId: input.FileID,
+	return translationapp.ImportTranslationXLIFFCommand{
+		Target: target, TargetLocale: string(input.TargetLocale), Mode: mode, FileID: input.FileID,
 		ExpectedTargetRevision: input.ExpectedTargetRevision,
 	}, nil
 }

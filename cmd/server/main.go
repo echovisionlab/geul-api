@@ -77,7 +77,6 @@ func run() int {
 		spicedbClient:           deps.spicedbClient,
 		kratosClient:            deps.kratosClient,
 		passwordHasher:          deps.passwordHasher,
-		metadataAIJobs:          deps.metadataAIJobs,
 		contentBlockStore:       deps.contentBlockStore,
 		authCodeIssuanceLimiter: deps.authCodeIssuanceLimiter,
 		adapterLoader:           deps.adapterLoader,

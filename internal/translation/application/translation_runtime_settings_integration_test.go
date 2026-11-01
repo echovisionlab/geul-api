@@ -27,7 +27,7 @@ func TestTranslationProtectedTermsPersistCanonicallyAndBindOnlyCurrentSourceOccu
 	ctx := translationProviderAuditedMemberContext(t, admin)
 	writeTime := time.Date(2026, time.October, 2, 3, 4, 5, 123456789, time.UTC)
 	db := stack.Postgres.DB.Session(&gorm.Session{NowFunc: func() time.Time { return writeTime }})
-	service := &TranslationService{db: db, spiceDB: stack.SpiceDBClient}
+	service := NewConnectHandler(newTestService(t, Deps{DB: db, SpiceDB: stack.SpiceDBClient}))
 
 	response, err := service.UpdateTranslationSettings(ctx, connect.NewRequest(
 		&managev1.UpdateTranslationSettingsRequest{Settings: &managev1.TranslationSettings{

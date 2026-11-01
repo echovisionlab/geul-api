@@ -17,18 +17,18 @@ import (
 // ArtistInterchange adapts XLIFF target projection and exact sparse mutation
 // to Artist's existing typed Content Block transaction seam.
 type ArtistInterchange struct {
-	auditWriter  domainaudit.Appender
+	audit        domainaudit.Appender
 	auditBuilder LocaleContentAuditBuilder
 }
 
 func NewArtistInterchange(
-	auditWriter domainaudit.Appender,
+	audit domainaudit.Appender,
 	auditBuilder LocaleContentAuditBuilder,
 ) *ArtistInterchange {
-	if auditWriter == nil || auditBuilder == nil {
+	if audit == nil || auditBuilder == nil {
 		panic("Artist translation interchange Audit dependencies are required")
 	}
-	return &ArtistInterchange{auditWriter: auditWriter, auditBuilder: auditBuilder}
+	return &ArtistInterchange{audit: audit, auditBuilder: auditBuilder}
 }
 
 func (*ArtistInterchange) LoadTranslationInterchangeTarget(
@@ -89,7 +89,7 @@ func (a *ArtistInterchange) ApplyTranslationInterchange(
 	changed := after.state.Revision != current.state.Revision
 	if changed {
 		if err := appendLocaleContentInterchangeAudit(
-			ctx, db, a.auditWriter, a.auditBuilder, sharedtelemetry.AuditArtistUpdated,
+			ctx, db, a.audit, a.auditBuilder, sharedtelemetry.AuditArtistUpdated,
 			memberID, command.EntityID, command.TargetLocale, current.state.Exists,
 		); err != nil {
 			return application.TranslationInterchangeApplyResult{}, err

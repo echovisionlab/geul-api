@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func formDomainRegistration(auditWriter domainaudit.Appender) domainRegistration {
+func formDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	permissions := translationCanSet{
 		view: policyv1.Form.View,
 		edit: policyv1.Form.Edit,
@@ -35,9 +35,9 @@ func formDomainRegistration(auditWriter domainaudit.Appender) domainRegistration
 			input.ContentJSON = candidate.ContentJSON
 			input.ContentHTML = candidate.ContentHTML
 			input.ContentText = candidate.ContentText
-			return form.ApplyProviderTranslationCandidateWithDB(ctx, tx, store, job, candidate, input, auditWriter)
+			return form.ApplyProviderTranslationCandidateWithDB(ctx, tx, store, job, candidate, input, audit)
 		},
-		appendSourceLocaleAudit: sourceLocaleAudit(auditWriter, sharedtelemetry.AuditFormUpdated, sharedtelemetry.NewFormSourceLocaleAuditRecord),
+		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditFormUpdated, sharedtelemetry.NewFormSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(string) string {
 			return form.TranslationEntrySelectSQL()
 		},

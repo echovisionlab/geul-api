@@ -166,12 +166,12 @@ func TestRecoverExpiredMetadataJobsRepublishesOnlyWhenTransportMessageIsMissing(
 	require.NoError(t, db.Model(&metadataJobRecord{}).Where("id IN ?", []string{pending.ID, orphan.ID}).Update("updated_at", old).Error)
 	require.NoError(t, db.Exec(`INSERT INTO pgmq."q_ai.metadata.generate" (message) VALUES (?)`, fmt.Sprintf(`{"message_id":%q}`, pending.ID)).Error)
 
-	recovered, err := manager.RecoverExpiredJobs(context.Background(), 25)
+	recovered, err := recoverExpiredMetadataJobs(context.Background(), manager, 25)
 	require.NoError(t, err)
 	require.Equal(t, 1, recovered)
 	require.Equal(t, 1, publisher.calls)
 
-	recovered, err = manager.RecoverExpiredJobs(context.Background(), 25)
+	recovered, err = recoverExpiredMetadataJobs(context.Background(), manager, 25)
 	require.NoError(t, err)
 	require.Zero(t, recovered, "the updated_at cooldown must prevent repeat enqueue")
 	require.Equal(t, 1, publisher.calls)
@@ -190,7 +190,7 @@ func TestRecoverExpiredMetadataJobsRepublishesStaleRunningLease(t *testing.T) {
 	oldUpdatedAt := time.Now().Add(-metadataAIJobRecoveryDelay - time.Minute).UTC().Truncate(time.Microsecond)
 	require.NoError(t, db.Model(&metadataJobRecord{}).Where("id = ?", job.ID).Update("updated_at", oldUpdatedAt).Error)
 
-	recovered, err := manager.RecoverExpiredJobs(context.Background(), 25)
+	recovered, err := recoverExpiredMetadataJobs(context.Background(), manager, 25)
 	require.NoError(t, err)
 	require.Equal(t, 1, recovered)
 	require.Equal(t, 1, publisher.calls)
@@ -307,4 +307,16 @@ func (p *metadataJobTestPublisher) EnqueueProtobufWithExecutor(
 		p.calls++
 	}
 	return err
+}
+
+// recoverExpiredMetadataJobs runs one recovery batch in its own transaction,
+// as the worker's scheduler job does.
+func recoverExpiredMetadataJobs(ctx context.Context, manager *MetadataJobManager, limit int) (int, error) {
+	recovered := 0
+	err := manager.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var err error
+		recovered, err = manager.RecoverExpiredJobs(ctx, tx, limit)
+		return err
+	})
+	return recovered, err
 }

@@ -1,16 +1,10 @@
 # Inline generated status name conversions (.String() on a *_STATUS_* value,
 # *Status_value lookups) per package. Map stored statuses in one function per
 # domain (docs/architecture.md); lower with -update.
-5 internal/adapters/collaboration
 10 internal/adapters/mcp
-2 internal/adapters/series/public
-12 internal/adapters/sharelink
-9 internal/adapters/sitemap
-1 internal/adapters/translation
 9 internal/artist/public
 16 internal/filemedia/public
 2 internal/label/public
 3 internal/programevent/public
 2 internal/referencecatalog/public
 3 internal/transcode/application
-2 internal/worker

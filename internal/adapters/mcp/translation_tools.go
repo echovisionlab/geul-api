@@ -5,7 +5,8 @@ import (
 	"errors"
 
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
+	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const (
@@ -77,13 +78,21 @@ var translationTools = []mcpserver.Tool{
 	},
 }
 
-// TranslationApplication is the exact generated TranslationService handler
-// contract used by the normal Connect transport. MCP calls the same
-// application object so PAT actor context, owning-domain authorization, Job
-// lifecycle and XLIFF authority are not reimplemented here. This public MCP
-// adapter does not own or call Web AI Chat, browser sessions, prompts, models,
-// provider credentials or an in-editor provider loop.
-type TranslationApplication = managev1connect.TranslationServiceHandler
+// TranslationApplication is the Translation use cases the tools call, the
+// same ones the Connect transport serves, so PAT actor context,
+// owning-domain authorization, Job lifecycle and XLIFF authority are not
+// reimplemented here. This public MCP adapter does not own or call Web AI
+// Chat, browser sessions, prompts, models, provider credentials or an
+// in-editor provider loop.
+type TranslationApplication interface {
+	ListTranslationJobs(context.Context, translationapp.ListTranslationJobsQuery) (translationapp.JobPage, error)
+	ListEntityTranslations(context.Context, translationapp.ListEntityTranslationsQuery) (translationapp.EntityTranslations, error)
+	GetEntityTranslation(context.Context, translationapp.GetEntityTranslationQuery) (*managev1.TranslationEntry, error)
+	CancelTranslationJob(context.Context, translationapp.CancelTranslationJobCommand) error
+	RegenerateEntityTranslations(context.Context, translationapp.RegenerateEntityTranslationsCommand) ([]*managev1.TranslationJob, error)
+	ExportEntityTranslationXLIFF(context.Context, translationapp.ExportTranslationXLIFFCommand) (*managev1.ExportEntityTranslationXLIFFResponse, error)
+	ImportEntityTranslationXLIFF(context.Context, translationapp.ImportTranslationXLIFFCommand) (*managev1.ImportEntityTranslationXLIFFResponse, error)
+}
 
 type TranslationTools struct {
 	application TranslationApplication

@@ -33,7 +33,7 @@ func TestListTranslationJobsAllowsExactManagedEntityScope(t *testing.T) {
 	require.NoError(t, err)
 	_, err = stack.SpiceDBClient.ApplyRelationships(t.Context(), touchCollaborator)
 	require.NoError(t, err)
-	svc := newTranslationServiceForOGTest(db, &stubTranslationServicePublisher{}, "", stack.SpiceDBClient)
+	svc := newTranslationServiceForOGTest(t, db, &stubTranslationServicePublisher{}, "", stack.SpiceDBClient)
 	ctx := auth.WithUser(context.Background(), user.AuthUserInfo())
 
 	response, err := svc.ListTranslationJobs(ctx, connect.NewRequest(&managev1.ListTranslationJobsRequest{
@@ -63,7 +63,7 @@ func TestListTranslationJobsRejectsUnscopedOrUnmanagedNonAdmin(t *testing.T) {
 	db := newTranslationRetryTestDB(t)
 	stack := testutil.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
-	svc := newTranslationServiceForOGTest(db, &stubTranslationServicePublisher{}, "", stack.SpiceDBClient)
+	svc := newTranslationServiceForOGTest(t, db, &stubTranslationServicePublisher{}, "", stack.SpiceDBClient)
 	ctx := auth.WithUser(context.Background(), user.AuthUserInfo())
 
 	_, err := svc.ListTranslationJobs(ctx, connect.NewRequest(&managev1.ListTranslationJobsRequest{}))
@@ -84,7 +84,7 @@ func TestListTranslationJobsRejectsManagedWorkScopeForNonAdmin(t *testing.T) {
 	entityID := uuid.NewString()
 	stack := testutil.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
-	svc := newTranslationServiceForOGTest(db, &stubTranslationServicePublisher{}, "", stack.SpiceDBClient)
+	svc := newTranslationServiceForOGTest(t, db, &stubTranslationServicePublisher{}, "", stack.SpiceDBClient)
 	ctx := auth.WithUser(context.Background(), user.AuthUserInfo())
 
 	_, err := svc.ListTranslationJobs(ctx, connect.NewRequest(&managev1.ListTranslationJobsRequest{
@@ -102,7 +102,7 @@ func TestListTranslationJobsRejectsInvalidNonAdminScopeShapes(t *testing.T) {
 	entityID := uuid.NewString()
 	stack := testutil.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
-	svc := newTranslationServiceForOGTest(db, &stubTranslationServicePublisher{}, "", stack.SpiceDBClient)
+	svc := newTranslationServiceForOGTest(t, db, &stubTranslationServicePublisher{}, "", stack.SpiceDBClient)
 	authenticatedCtx := auth.WithUser(context.Background(), user.AuthUserInfo())
 
 	tests := []struct {

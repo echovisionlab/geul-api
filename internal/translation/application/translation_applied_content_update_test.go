@@ -206,7 +206,7 @@ func TestAppliedTranslationContentUpdateNoopDoesNotPublish(t *testing.T) {
 	t.Parallel()
 
 	publisher := &appliedContentUpdatePublisher{}
-	manager := &TranslationJobManager{publisher: publisher}
+	manager := withTestMutations(t, &TranslationJobManager{publisher: publisher})
 	require.NoError(t, manager.publishAppliedTranslationContentUpdated(
 		context.Background(),
 		nil,
@@ -228,7 +228,7 @@ func TestAppliedTranslationContentUpdateFailureRollsBackMutationAndJobDeletion(t
 	)
 	require.NoError(t, db.Exec(`CREATE TABLE applied_translation_result (job_id TEXT PRIMARY KEY)`).Error)
 	publisher := &appliedContentUpdatePublisher{err: errors.New("notify unavailable")}
-	manager := &TranslationJobManager{publisher: publisher}
+	manager := withTestMutations(t, &TranslationJobManager{publisher: publisher})
 
 	err := db.Transaction(func(tx *gorm.DB) error {
 		if insertErr := tx.Exec(

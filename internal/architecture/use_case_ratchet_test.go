@@ -19,6 +19,7 @@ const (
 // migration lands.
 var pipelineDomains = []string{
 	"internal/admin",
+	"internal/ai",
 	"internal/artist",
 	"internal/audience",
 	"internal/campaign",
@@ -39,6 +40,7 @@ var pipelineDomains = []string{
 	"internal/series",
 	"internal/sharelink",
 	"internal/sitesettings",
+	"internal/translation",
 	"internal/work",
 }
 

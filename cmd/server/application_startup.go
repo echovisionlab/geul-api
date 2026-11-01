@@ -22,6 +22,7 @@ import (
 	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	filemediaruntime "github.com/echovisionlab/geul-api/internal/adapters/filemedia/runtime"
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/adapters/ogprojection"
 	translationadapter "github.com/echovisionlab/geul-api/internal/adapters/translation"
 	"github.com/echovisionlab/geul-api/internal/ai"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -128,9 +129,7 @@ func initializeApplicationDependencies(
 	deps.workerPublisher = deps.hooksPublisher
 	deps.transcodeTracker = transcode.NewTracker(deps.db, deps.workerPublisher)
 	deps.adapterLoader = email.NewAdapterLoader(deps.db, nil)
-	deps.metadataAIJobs, err = ai.NewMetadataJobManager(
-		deps.db, deps.spicedbClient, cfg.GoogleAIAPIKey, deps.servicePublisher,
-	)
+	deps.metadataAIJobs, err = ai.NewMetadataJobManager(deps.db, cfg.GoogleAIAPIKey, deps.servicePublisher)
 	if err != nil {
 		return nil, fmt.Errorf("initialize metadata AI job manager: %w", err)
 	}
@@ -141,18 +140,18 @@ func initializeApplicationDependencies(
 		return nil, fmt.Errorf("initialize Content Block store: %w", err)
 	}
 	deps.og = newOGDependencies(deps.db, cfg.CDNURL)
-	translationRegistry := translationadapter.NewDomainRegistry(
+	translationRegistry, err := translationadapter.NewDomainRegistry(
 		emailauthoringadapter.NewCampaignDeliveryReferences(),
 		deps.telemetryWriter,
 	)
-	deps.translationJobs, err = translationapplication.NewTranslationJobManager(
-		deps.db,
-		deps.workerPublisher,
-		deps.og.planner,
-		deps.og.refresher,
-		translationapplication.WithTranslationJobContentBlockStore(deps.contentBlockStore),
-		translationapplication.WithTranslationJobDomainRegistry(translationRegistry),
-	)
+	if err != nil {
+		return nil, fmt.Errorf("initialize translation domain registry: %w", err)
+	}
+	deps.translationJobs, err = translationapplication.NewTranslationJobManager(translationapplication.JobManagerDeps{
+		DB: deps.db, SpiceDB: deps.spicedbClient, Audit: deps.telemetryWriter, Publisher: deps.workerPublisher,
+		ContentBlocks: deps.contentBlockStore, OGPlanner: deps.og.planner, OGRefresher: deps.og.refresher,
+		Domains: translationRegistry,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize translation job manager: %w", err)
 	}
@@ -166,7 +165,7 @@ func initializeApplicationDependencies(
 		filemediaruntime.NewAuthorizationDeletion(deps.spicedbClient, nil),
 	)
 	cleanupStorage := mediaassetadapter.NewCleanupStorage(deps.s3Client, cfg.S3Bucket)
-	ogCleanup := og.NewCleanup(deps.db)
+	ogCleanup := og.NewCleanup(deps.db, ogprojection.AssetReferences()...)
 	mediaCleanup := mediaasset.NewCleanup(deps.db, cleanupStorage)
 	publicAssetCache := mediaassetadapter.NewPublicAssetCache(
 		cfg.CDNURL,
@@ -197,7 +196,7 @@ func initializeApplicationDependencies(
 		FaviconCleanup:   faviconCleanup,
 		MetadataAI:       deps.metadataAIJobs,
 		TranslationJobs:  deps.translationJobs,
-		AuditWriter:      deps.telemetryWriter,
+		Audit:            deps.telemetryWriter,
 		SpiceDB:          deps.spicedbClient,
 		OGPlanner:        deps.og.planner,
 		MemberDeletion:   accountadapter.MemberDeletion{},
