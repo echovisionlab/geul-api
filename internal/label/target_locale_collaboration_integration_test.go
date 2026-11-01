@@ -450,10 +450,11 @@ func labelFirstBlockText(t *testing.T, document *contentv1.LocalizedRichTextDocu
 
 func labelDocumentIDForIntegration(t *testing.T, db *gorm.DB, labelID string) uuid.UUID {
 	t.Helper()
-	var documentID uuid.UUID
-	require.NoError(t, db.Table("label").Select("content_document_id").Where("id = ?", labelID).Scan(&documentID).Error)
-	require.NotEqual(t, uuid.Nil, documentID)
-	return documentID
+	var documentID string
+	require.NoError(t, db.Table("label").Select("content_document_id::text").Where("id = ?", labelID).Scan(&documentID).Error)
+	parsed, err := uuid.Parse(documentID)
+	require.NoError(t, err)
+	return parsed
 }
 
 func labelOwnerIDForIntegration(t *testing.T, db *gorm.DB, labelID string) uuid.UUID {
