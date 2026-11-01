@@ -18,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
 
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -156,7 +157,7 @@ type remoteFileImportResult struct {
 	slotID                string
 	attemptID             string
 	expectedCurrentFileID *string
-	asset                 *commonv1.AssetRef
+	asset                 *mediaasset.Reference
 }
 
 type countingReader struct {
@@ -388,6 +389,6 @@ func mediaDeliveryFromRemoteImport(result *remoteFileImportResult) *commonv1.Med
 		FileName:  &fileName,
 		Inline:    result.inline,
 		Download:  result.download,
-		Asset:     result.asset,
+		Asset:     mediaasset.ReferenceProto(result.asset),
 	}
 }

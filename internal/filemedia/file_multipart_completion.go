@@ -33,7 +33,7 @@ type multipartCompletion struct {
 	correlationID   string
 	uploadedParts   []domain.UploadPart
 	domainApplied   bool
-	promotedAsset   *commonv1.AssetRef
+	promotedAsset   *mediaasset.Reference
 	delivery        *commonv1.MediaDelivery
 	progressEmitter *fileIngestEventEmitter
 }
@@ -361,7 +361,7 @@ func (s *Service) requireFinishedClientMediaBundle(ctx context.Context, file Fil
 	return nil
 }
 
-func (s *Service) signFinishedMultipartDelivery(file File, promotedAsset *commonv1.AssetRef) (*commonv1.MediaDelivery, error) {
+func (s *Service) signFinishedMultipartDelivery(file File, promotedAsset *mediaasset.Reference) (*commonv1.MediaDelivery, error) {
 	inline, err := buildExpiringMediaFileRef(
 		s.mediaDomain,
 		s.mediaSecret,
@@ -395,7 +395,7 @@ func (s *Service) signFinishedMultipartDelivery(file File, promotedAsset *common
 		MimeType:  file.MimeType,
 		FileSize:  file.FileSize,
 		FileName:  &downloadFileName,
-		Asset:     promotedAsset,
+		Asset:     mediaasset.ReferenceProto(promotedAsset),
 		Inline:    inline,
 		Download:  download,
 	}, nil
@@ -406,7 +406,7 @@ func (s *Service) restoreFinishedMultipartPromotedAsset(
 	uploadType managev1.UploadType,
 	slotID string,
 	fileID string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	if uploadType == managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON {
 		set, err := s.loadFaviconSet(ctx, fileID)
 		if err != nil {
@@ -415,7 +415,7 @@ func (s *Service) restoreFinishedMultipartPromotedAsset(
 		if set == nil || set.IconPNG32 == nil {
 			return nil, domainerr.Precondition("completed favicon asset is not ready")
 		}
-		return mediaasset.ReferenceProto(set.IconPNG32), nil
+		return set.IconPNG32, nil
 	}
 	kind, promoted := dedicatedPublicAssetKind(uploadType, slotID)
 	if !promoted {
@@ -430,7 +430,7 @@ func (s *Service) restoreFinishedMultipartPromotedAsset(
 	if err != nil {
 		return nil, err
 	}
-	return mediaasset.ReferenceProto(asset), nil
+	return asset, nil
 }
 
 func (s *Service) completeMultipartObject(
@@ -756,7 +756,7 @@ func (s *Service) attachOrProjectMultipartCompletion(
 		MimeType:  completion.verifiedMime,
 		FileSize:  completion.session.FileSize,
 		FileName:  &completion.session.FileName,
-		Asset:     completion.promotedAsset,
+		Asset:     mediaasset.ReferenceProto(completion.promotedAsset),
 		Inline:    inline,
 		Download:  download,
 	}

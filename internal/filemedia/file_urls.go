@@ -399,7 +399,7 @@ func (s *Service) attachFileDerivativeURLs(
 		if err != nil {
 			return err
 		}
-		response.Delivery.Thumbnail = ref
+		response.Delivery.Thumbnail = mediaasset.ReferenceProto(ref)
 	}
 	if hls, ok := derivs[managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS.String()]; ok {
 		ref, err := s.hlsPlaybackRef(fileID, hls)
@@ -413,19 +413,19 @@ func (s *Service) attachFileDerivativeURLs(
 		if err != nil {
 			return err
 		}
-		response.Delivery.Spectrogram = ref
+		response.Delivery.Spectrogram = mediaasset.ReferenceProto(ref)
 	}
 	if waveform, ok := derivs[managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_WAVEFORM.String()]; ok {
 		ref, err := s.assetRefForDerivative(waveform)
 		if err != nil {
 			return err
 		}
-		response.Delivery.Waveform = ref
+		response.Delivery.Waveform = mediaasset.ReferenceProto(ref)
 	}
 	return nil
 }
 
-func (s *Service) assetRefForDerivative(row storedDerivativeDeliveryRow) (*commonv1.AssetRef, error) {
+func (s *Service) assetRefForDerivative(row storedDerivativeDeliveryRow) (*mediaasset.Reference, error) {
 	if row.AssetID == nil || row.AssetStatus == nil || *row.AssetStatus != string(mediaasset.AssetReady) {
 		return nil, nil
 	}
@@ -447,14 +447,14 @@ func (s *Service) assetRefForDerivative(row storedDerivativeDeliveryRow) (*commo
 	if *row.AssetKind == "waveform" || *row.AssetKind == "spectrogram" {
 		origin = s.mediaDomain
 	}
-	return &commonv1.AssetRef{
-		AssetId:     *row.AssetID,
-		Url:         mediaauth.JoinOrigin(origin, assetPath),
+	return &mediaasset.Reference{
+		AssetID:     *row.AssetID,
+		URL:         mediaauth.JoinOrigin(origin, assetPath),
 		Extension:   *row.AssetExtension,
 		MimeType:    *row.AssetMimeType,
 		FileSize:    *row.AssetFileSize,
-		Sha256:      append([]byte(nil), row.AssetSHA256...),
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
+		SHA256:      append([]byte(nil), row.AssetSHA256...),
+		Disposition: mediaasset.DispositionInline,
 	}, nil
 }
 

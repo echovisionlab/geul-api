@@ -24,7 +24,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -67,7 +66,7 @@ func (s *Service) promoteDedicatedPublicUploadAsset(
 	uploadType managev1.UploadType,
 	slotID string,
 	fileID string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	if uploadType == managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON {
 		return s.generateFaviconBundle(ctx, fileID)
 	}
@@ -82,7 +81,7 @@ func (s *Service) promoteSourceFileToPublicAsset(
 	ctx context.Context,
 	sourceFileID string,
 	kind string,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	sourceFileID = strings.TrimSpace(sourceFileID)
 	if !IsValidUUID(sourceFileID) {
 		return nil, domainerr.InvalidField("file_id", "invalid UUID format")
@@ -511,12 +510,12 @@ func recoverSourceAssetPromotionCompletion(
 	}
 }
 
-func (s *Service) readySourcePromotionReference(ctx context.Context, id string) (*commonv1.AssetRef, error) {
+func (s *Service) readySourcePromotionReference(ctx context.Context, id string) (*mediaasset.Reference, error) {
 	var ref *mediaasset.Reference
 	err := s.units.Read(ctx, func(store Store) error {
 		var err error
 		ref, err = store.ReadyPromotionReference(ctx, s.cdnDomain, id)
 		return err
 	})
-	return mediaasset.ReferenceResultProto(ref, err)
+	return ref, err
 }

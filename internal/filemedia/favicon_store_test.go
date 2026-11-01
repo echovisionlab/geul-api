@@ -30,7 +30,7 @@ func TestFaviconBundleCompletesAndReusesVerifiedPNGAndSVGAssets(t *testing.T) {
 			service := filemedia.ExportFaviconService(units, filemediatest.FaviconCommits{Units: units}, storage, processor)
 			asset, err := filemedia.ExportGenerateFavicon(service, t.Context(), id)
 			require.NoError(t, err)
-			require.Equal(t, "image/png", asset.GetMimeType())
+			require.Equal(t, "image/png", asset.MimeType)
 			expected := 7
 			if kind == "svg" {
 				expected = 8
@@ -40,7 +40,7 @@ func TestFaviconBundleCompletesAndReusesVerifiedPNGAndSVGAssets(t *testing.T) {
 			require.Len(t, s.Derivatives[id], 7)
 			again, err := filemedia.ExportGenerateFavicon(service, t.Context(), id)
 			require.NoError(t, err)
-			require.Equal(t, asset.GetAssetId(), again.GetAssetId())
+			require.Equal(t, asset.AssetID, again.AssetID)
 			require.Len(t, writes(), expected)
 			require.Empty(t, deletes())
 			set, err := s.FaviconSet(t.Context(), "https://cdn.example.com", id)
@@ -188,7 +188,11 @@ func TestConcurrentFaviconFinalizersConvergeAndScheduleTheLosingBundle(t *testin
 	for range 2 {
 		go func() {
 			asset, err := filemedia.ExportGenerateFavicon(service, t.Context(), id)
-			results <- result{asset.GetAssetId(), err}
+			assetID := ""
+			if asset != nil {
+				assetID = asset.AssetID
+			}
+			results <- result{assetID, err}
 		}()
 	}
 	<-entered

@@ -3,13 +3,9 @@ package filemedia
 import (
 	"context"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
 )
 
-type UserAvatarAssetPromoter interface {
-	PromoteUserAvatarAsset(ctx context.Context, sourceFileID string) (*commonv1.AssetRef, error)
-}
-
-func (s *Service) PromoteUserAvatarAsset(ctx context.Context, sourceFileID string) (*commonv1.AssetRef, error) {
+func (s *Service) PromoteUserAvatarAsset(ctx context.Context, sourceFileID string) (*mediaasset.Reference, error) {
 	return s.promoteSourceFileToPublicAsset(ctx, sourceFileID, "avatar")
 }

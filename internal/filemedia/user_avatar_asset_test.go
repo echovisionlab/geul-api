@@ -57,15 +57,15 @@ func TestPromoteUserAvatarAssetStreamsWebPAndReusesReadyAsset(t *testing.T) {
 	ref, err := service.PromoteUserAvatarAsset(t.Context(), fileID)
 
 	require.NoError(t, err)
-	require.Equal(t, "webp", ref.GetExtension())
-	require.Equal(t, "image/webp", ref.GetMimeType())
-	require.True(t, strings.HasSuffix(ref.GetUrl(), "/asset/"+ref.GetAssetId()+"/avatar.webp"))
-	require.Equal(t, digest[:], ref.GetSha256())
+	require.Equal(t, "webp", ref.Extension)
+	require.Equal(t, "image/webp", ref.MimeType)
+	require.True(t, strings.HasSuffix(ref.URL, "/asset/"+ref.AssetID+"/avatar.webp"))
+	require.Equal(t, digest[:], ref.SHA256)
 	require.Equal(t, 2, requestCount)
 
 	reused, err := service.PromoteUserAvatarAsset(t.Context(), fileID)
 	require.NoError(t, err)
-	require.Equal(t, ref.GetAssetId(), reused.GetAssetId())
+	require.Equal(t, ref.AssetID, reused.AssetID)
 	require.Equal(t, 2, requestCount)
 }
 
@@ -113,7 +113,7 @@ func TestPromoteUserAvatarAssetMarksAllocationFailedWithoutDeletingSharedObject(
 	failWrite = false
 	retried, err := service.PromoteUserAvatarAsset(t.Context(), fileID)
 	require.NoError(t, err)
-	require.Equal(t, asset.ID, retried.GetAssetId())
+	require.Equal(t, asset.ID, retried.AssetID)
 	var retriedAsset model.PublicAsset
 	require.NoError(t, db.First(&retriedAsset, "id = ?", asset.ID).Error)
 	require.Equal(t, model.PublicAssetStatusReady, retriedAsset.Status)
@@ -159,8 +159,8 @@ func TestPromoteUserAvatarAssetResumesAllocatedAsset(t *testing.T) {
 	ref, err := service.PromoteUserAvatarAsset(t.Context(), fileID)
 
 	require.NoError(t, err)
-	require.Equal(t, allocated.ID, ref.GetAssetId())
-	require.Equal(t, digest[:], ref.GetSha256())
+	require.Equal(t, allocated.ID, ref.AssetID)
+	require.Equal(t, digest[:], ref.SHA256)
 }
 
 func newUserAvatarAssetUnitDB(t *testing.T) *gorm.DB {
