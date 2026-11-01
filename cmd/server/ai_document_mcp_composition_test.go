@@ -593,11 +593,11 @@ func (runtime *compositionFileRuntime) GetMediaDelivery(ctx context.Context, que
 	}}, nil
 }
 
-func (*compositionFileRuntime) GetFileDownloadPolicy(context.Context, filemedia.GetFileDownloadPolicyQuery) (*managev1.FileDownloadPolicy, error) {
+func (*compositionFileRuntime) GetFileDownloadPolicy(context.Context, filemedia.GetFileDownloadPolicyQuery) (*filemedia.DownloadPolicy, error) {
 	return nil, nil
 }
 
-func (*compositionFileRuntime) UpdateFileDownloadPolicy(context.Context, filemedia.UpdateFileDownloadPolicyCommand) (*managev1.FileDownloadPolicy, error) {
+func (*compositionFileRuntime) UpdateFileDownloadPolicy(context.Context, filemedia.UpdateFileDownloadPolicyCommand) (*filemedia.DownloadPolicy, error) {
 	return nil, nil
 }
 

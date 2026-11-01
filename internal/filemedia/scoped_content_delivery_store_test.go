@@ -39,6 +39,8 @@ func TestScopedContentDeliveryUsesJoinedStoreAndExactReferences(t *testing.T) {
 			bound.ScopedAttachments = []filemediatest.ScopedAttachmentRecord{{OwnerKind: "page", OwnerID: owner, DocumentID: document.String(), Attachment: attachment}}
 			item := &contentv1.ContentBlockMediaItem{Selector: &contentv1.ContentBlockMediaSelector{BlockId: block, ReferencePath: "file"}, Attachment: &contentv1.FileAttachment{State: &contentv1.FileAttachment_ActiveFileId{ActiveFileId: row.ID}}, Delivery: &commonv1.MediaDelivery{FileId: "stale"}}
 			item.ProtoReflect().SetUnknown([]byte{0xa0, 0x06, 0x01})
+			item.Selector.ProtoReflect().SetUnknown([]byte{0xa0, 0x06, 0x02})
+			item.Attachment.ProtoReflect().SetUnknown([]byte{0xa0, 0x06, 0x03})
 			if state == "wrong document" {
 				document = uuid.New()
 			}
@@ -59,6 +61,11 @@ func TestScopedContentDeliveryUsesJoinedStoreAndExactReferences(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, got, 1)
 			require.Equal(t, item.ProtoReflect().GetUnknown(), got[0].ProtoReflect().GetUnknown())
+			require.NotSame(t, item, got[0])
+			require.NotSame(t, item.Selector, got[0].Selector)
+			require.NotSame(t, item.Attachment, got[0].Attachment)
+			require.Equal(t, item.Selector.ProtoReflect().GetUnknown(), got[0].Selector.ProtoReflect().GetUnknown())
+			require.Equal(t, item.Attachment.ProtoReflect().GetUnknown(), got[0].Attachment.ProtoReflect().GetUnknown())
 			if state != "current" && state != "uploader" {
 				require.Nil(t, got[0].Delivery)
 				require.Equal(t, contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_NONE, got[0].DownloadAction)

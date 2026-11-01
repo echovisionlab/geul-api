@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"connectrpc.com/connect"
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	fileauthority "github.com/echovisionlab/geul-api/internal/filemedia"
@@ -316,7 +319,7 @@ func TestDocumentFileDownloadPolicyUsesServerResolvedRelationAndFileCAS(t *testi
 	}
 
 	manager.policy = testFileBlockPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED)
-	manager.policy.AudienceSegments = []*managev1.AudienceSegmentSummary{{Id: fileBlockSegmentID, Name: "Members"}}
+	manager.policy.AudienceSegments = []*filemediadomain.PolicySegment{{ID: fileBlockSegmentID, Name: "Members"}}
 	result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
 		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
 		"expected_file_id":"`+fileBlockTestFileID+`","audience":"restricted","audience_segment_ids":["`+fileBlockSegmentID+`"],
@@ -505,13 +508,13 @@ func fileBlockMutationArguments(t *testing.T, suffix string) mcpserver.ToolArgum
 	}`)
 }
 
-func testFileBlockPolicy(audience managev1.FileDownloadAudience) *managev1.FileDownloadPolicy {
+func testFileBlockPolicy(audience managev1.FileDownloadAudience) *fileauthority.DownloadPolicy {
 	blockID := fileBlockTestBlockID
 	referencePath := "file"
-	return &managev1.FileDownloadPolicy{
-		EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
-		EntityId:   fileBlockTestDocumentID, BlockId: &blockID, ReferencePath: &referencePath,
-		FileId: fileBlockTestFileID, Audience: audience,
+	return &fileauthority.DownloadPolicy{
+		EntityType: int32(managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST),
+		EntityID:   fileBlockTestDocumentID, BlockID: &blockID, ReferencePath: &referencePath,
+		FileID: fileBlockTestFileID, Audience: mediaasset.FileDownloadAudience(strings.ToLower(strings.TrimPrefix(audience.String(), "FILE_DOWNLOAD_AUDIENCE_"))),
 	}
 }
 
@@ -521,14 +524,14 @@ type recordingFileBlockManagement struct {
 	getRequest    *connect.Request[managev1.GetFileDownloadPolicyRequest]
 	updateRequest *connect.Request[managev1.UpdateFileDownloadPolicyRequest]
 	usageRequest  *connect.Request[managev1.ListFileUsagesRequest]
-	policy        *managev1.FileDownloadPolicy
+	policy        *fileauthority.DownloadPolicy
 	usages        *fileauthority.FileUsagePage
 	err           error
 }
 
 // The fake records each use-case call as the request a Connect client would
 // have sent, so the assertions read the native field names.
-func (manager *recordingFileBlockManagement) GetFileDownloadPolicy(_ context.Context, query fileauthority.GetFileDownloadPolicyQuery) (*managev1.FileDownloadPolicy, error) {
+func (manager *recordingFileBlockManagement) GetFileDownloadPolicy(_ context.Context, query fileauthority.GetFileDownloadPolicyQuery) (*fileauthority.DownloadPolicy, error) {
 	manager.getRequest = connect.NewRequest(&managev1.GetFileDownloadPolicyRequest{
 		EntityType: query.Target.EntityType, EntityId: query.Target.EntityID,
 		BlockId: query.Target.BlockID, ReferencePath: query.Target.ReferencePath,
@@ -536,7 +539,7 @@ func (manager *recordingFileBlockManagement) GetFileDownloadPolicy(_ context.Con
 	return manager.policy, manager.err
 }
 
-func (manager *recordingFileBlockManagement) UpdateFileDownloadPolicy(_ context.Context, command fileauthority.UpdateFileDownloadPolicyCommand) (*managev1.FileDownloadPolicy, error) {
+func (manager *recordingFileBlockManagement) UpdateFileDownloadPolicy(_ context.Context, command fileauthority.UpdateFileDownloadPolicyCommand) (*fileauthority.DownloadPolicy, error) {
 	request := &managev1.UpdateFileDownloadPolicyRequest{
 		EntityType: command.Target.EntityType, EntityId: command.Target.EntityID,
 		BlockId: command.Target.BlockID, ReferencePath: command.Target.ReferencePath,

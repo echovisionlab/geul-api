@@ -39,3 +39,12 @@ type DownloadPolicyStore interface {
 	RequirePolicyOwner(context.Context, string, string, bool) error
 	PublishPolicyChange(context.Context, PolicyChangeSignal) error
 }
+
+type DownloadPolicy struct {
+	EntityType             int32
+	EntityID               string
+	BlockID, ReferencePath *string
+	FileID                 string
+	Audience               mediaasset.FileDownloadAudience
+	AudienceSegments       []*PolicySegment
+}

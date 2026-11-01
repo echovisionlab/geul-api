@@ -84,3 +84,9 @@ func clonePointer[T any](value *T) *T {
 	}
 	return new(*value)
 }
+
+type ScopedContentMediaItem struct {
+	FileID, BlockID, ReferencePath string
+	Delivery                       *Delivery
+	DownloadAllowed                bool
+}

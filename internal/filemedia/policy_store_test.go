@@ -42,10 +42,10 @@ func TestFilePolicyStoreMergesIndependentSegmentChanges(t *testing.T) {
 	command.Policy = filemedia.FileDownloadPolicyState{Audience: managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, AudienceSegmentIDs: []string{ids[0], ids[2]}}
 	got, err := f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.NoError(t, err)
-	require.Equal(t, managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, got.Audience)
+	require.Equal(t, mediaasset.FileDownloadAudienceRestricted, got.Audience)
 	require.Len(t, got.AudienceSegments, 3)
 	for i, summary := range got.AudienceSegments {
-		require.Equal(t, ids[i], summary.Id)
+		require.Equal(t, ids[i], summary.ID)
 	}
 	stored := f.store.Policies[filemediatest.PolicyKey(relation.Selector)]
 	sorted := slices.Sorted(slices.Values(ids))
@@ -126,8 +126,8 @@ func TestPolicySegmentsDeduplicateAndRejectInvalidRequests(t *testing.T) {
 	got, err = f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.NoError(t, err)
 	require.Len(t, got.AudienceSegments, 1)
-	require.Equal(t, id, got.AudienceSegments[0].Id)
-	require.Equal(t, managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS, got.AudienceSegments[0].SegmentType)
+	require.Equal(t, id, got.AudienceSegments[0].ID)
+	require.Equal(t, "SEGMENT_TYPE_MEMBER_TAGS", got.AudienceSegments[0].Kind)
 	command.Observed.AudienceSegmentIDs = []string{id}
 	command.Policy.Audience = managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC
 	_, err = f.files.UpdateFileDownloadPolicy(f.ctx, command)
@@ -147,6 +147,6 @@ func TestPolicyUsesCurrentRelationAndIgnoresIngestProvenance(t *testing.T) {
 	command.Policy.Audience = managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC
 	got, err := f.files.UpdateFileDownloadPolicy(f.ctx, command)
 	require.NoError(t, err)
-	require.Equal(t, relation.ResourceID, got.EntityId)
-	require.Equal(t, managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC, got.Audience)
+	require.Equal(t, relation.ResourceID, got.EntityID)
+	require.Equal(t, mediaasset.FileDownloadAudiencePublic, got.Audience)
 }
