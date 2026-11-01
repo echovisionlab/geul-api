@@ -25,9 +25,10 @@ func (s *Service) GetFile(ctx context.Context, query GetFileQuery) (*managev1.Ge
 		return nil, err
 	}
 	var row fileManagerCatalogRow
-	if err := s.db.WithContext(ctx).Raw(`SELECT 'file' AS item_type, id, folder_id AS parent_id, file_name AS name, extension, mime_type, file_size, duration_seconds, uploaded_by_member_id AS member_id, created_at, updated_at, 1 AS total FROM file WHERE id = ? AND delete_requested_at IS NULL`, *fileID).Scan(&row).Error; err != nil {
+	if err := s.units.Read(ctx, func(store Store) error { var err error; row, err = store.FileCatalog(ctx, *fileID); return err }); err != nil {
 		return nil, err
 	}
+
 	if row.ID == "" {
 		return nil, domainerr.ResourceNotFound("file", *fileID)
 	}

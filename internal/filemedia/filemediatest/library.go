@@ -10,11 +10,14 @@ import (
 
 type LibraryStore struct {
 	Folders map[string]domain.FileFolder
+	Files   map[string]CatalogFileRecord
 	Fail    error
 	Writes  int
 }
 
-func NewLibraryStore() *LibraryStore { return &LibraryStore{Folders: map[string]domain.FileFolder{}} }
+func NewLibraryStore() *LibraryStore {
+	return &LibraryStore{Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
+}
 func (s *LibraryStore) Savepoint() func() {
 	saved := maps.Clone(s.Folders)
 	writes := s.Writes

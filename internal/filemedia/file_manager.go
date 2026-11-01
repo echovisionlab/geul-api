@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
+
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -58,21 +58,7 @@ func requireFileManagerAdmin(ctx context.Context, spiceDB *auth.SpiceDBClient) (
 	return user, nil
 }
 
-type fileManagerCatalogRow struct {
-	ItemType        string    `gorm:"column:item_type"`
-	ID              string    `gorm:"column:id"`
-	ParentID        *string   `gorm:"column:parent_id"`
-	Name            string    `gorm:"column:name"`
-	Extension       *string   `gorm:"column:extension"`
-	MimeType        *string   `gorm:"column:mime_type"`
-	FileSize        *int64    `gorm:"column:file_size"`
-	DurationSeconds *int32    `gorm:"column:duration_seconds"`
-	MemberID        *string   `gorm:"column:member_id"`
-	CreatedAt       time.Time `gorm:"column:created_at"`
-	UpdatedAt       time.Time `gorm:"column:updated_at"`
-	Total           int64     `gorm:"column:total"`
-	FolderPath      []byte    `gorm:"column:folder_path"`
-}
+type fileManagerCatalogRow = domain.CatalogRow
 
 type fileManagerPathSegmentJSON struct {
 	ID   string `json:"id"`
@@ -207,23 +193,6 @@ func (s *Service) requireFileManagerFolder(ctx context.Context, folderID *string
 		}
 		return nil
 	})
-}
-
-func fileManagerSortClause(field managev1.FileManagerSortField, order commonv1.SortOrder, prefix string) string {
-	direction := "ASC"
-	if order == commonv1.SortOrder_SORT_ORDER_DESC {
-		direction = "DESC"
-	}
-	column := "LOWER(" + prefix + "name)"
-	switch field {
-	case managev1.FileManagerSortField_FILE_MANAGER_SORT_FIELD_CREATED_AT:
-		column = prefix + "created_at"
-	case managev1.FileManagerSortField_FILE_MANAGER_SORT_FIELD_UPDATED_AT:
-		column = prefix + "updated_at"
-	case managev1.FileManagerSortField_FILE_MANAGER_SORT_FIELD_FILE_SIZE:
-		column = "COALESCE(" + prefix + "file_size, 0)"
-	}
-	return "CASE WHEN " + prefix + "item_type = 'folder' THEN 0 ELSE 1 END ASC, " + column + " " + direction + ", " + prefix + "id ASC"
 }
 
 func fileManagerFolderPath(raw []byte) ([]*managev1.FileManagerPathSegment, error) {
@@ -379,102 +348,6 @@ func (s *Service) fileManagerCatalogFilter(ctx context.Context, req ListFileMana
 	return filter, nil
 }
 
-func (s *Service) queryFileManagerCatalog(ctx context.Context, filter fileManagerCatalogFilter) ([]fileManagerCatalogRow, error) {
-	const directoryCatalogSQL = `WITH catalog AS (
-		SELECT 'folder'::text AS item_type, id, parent_id, name, NULL::text AS extension,
-		       NULL::text AS mime_type, NULL::bigint AS file_size, NULL::integer AS duration_seconds,
-		       created_by_member_id AS member_id, created_at, updated_at
-		  FROM file_folder
-		 WHERE ? AND ((? = '' AND parent_id IS NULL) OR parent_id::text = ?)
-		UNION ALL
-		SELECT 'file'::text, id, folder_id, file_name, extension, mime_type, file_size,
-		       duration_seconds, uploaded_by_member_id, created_at, updated_at
-		  FROM file
-		 WHERE delete_requested_at IS NULL
-		   AND NOT EXISTS (SELECT 1 FROM mesh_optimization_candidate moc WHERE moc.output_file_id = file.id)
-		   AND ((? = '' AND folder_id IS NULL) OR folder_id::text = ?)
-		   AND (? = '' OR mime_type ILIKE ? || '%%')
-		   AND (? = '' OR uploaded_by_member_id::text = ?)
-	)
-	SELECT *, COUNT(*) OVER() AS total, '[]'::jsonb AS folder_path
-	  FROM catalog ORDER BY %s LIMIT ? OFFSET ?`
-
-	const searchCatalogSQL = `WITH RECURSIVE search_scope AS (
-		SELECT id
-		  FROM file_folder
-		 WHERE id::text = ?
-		UNION ALL
-		SELECT child.id
-		  FROM file_folder child
-		  JOIN search_scope parent ON child.parent_id = parent.id
-	), catalog AS (
-		SELECT 'folder'::text AS item_type, id, parent_id, name, NULL::text AS extension,
-		       NULL::text AS mime_type, NULL::bigint AS file_size, NULL::integer AS duration_seconds,
-		       created_by_member_id AS member_id, created_at, updated_at
-		  FROM file_folder
-		 WHERE ? AND name ILIKE '%%' || ? || '%%'
-		   AND (? = '' OR (id IN (SELECT id FROM search_scope) AND id::text <> ?))
-		UNION ALL
-		SELECT 'file'::text, id, folder_id, file_name, extension, mime_type, file_size,
-		       duration_seconds, uploaded_by_member_id, created_at, updated_at
-		  FROM file
-		 WHERE delete_requested_at IS NULL
-		   AND NOT EXISTS (SELECT 1 FROM mesh_optimization_candidate moc WHERE moc.output_file_id = file.id)
-		   AND (file_name || '.' || extension) ILIKE '%%' || ? || '%%'
-		   AND (? = '' OR folder_id IN (SELECT id FROM search_scope))
-		   AND (? = '' OR mime_type ILIKE ? || '%%')
-		   AND (? = '' OR uploaded_by_member_id::text = ?)
-	), paged AS (
-		SELECT *, COUNT(*) OVER() AS total FROM catalog ORDER BY %s LIMIT ? OFFSET ?
-	), path_walk AS (
-		SELECT paged.item_type, paged.id AS item_id, folder.id AS folder_id, folder.parent_id,
-		       folder.name, 1 AS depth
-		  FROM paged
-		  JOIN file_folder folder
-		    ON folder.id = CASE WHEN paged.item_type = 'folder' THEN paged.id ELSE paged.parent_id END
-		UNION ALL
-		SELECT path_walk.item_type, path_walk.item_id, parent.id, parent.parent_id,
-		       parent.name, path_walk.depth + 1
-		  FROM path_walk
-		  JOIN file_folder parent ON parent.id = path_walk.parent_id
-	), paths AS (
-		SELECT item_type, item_id,
-		       jsonb_agg(jsonb_build_object('id', folder_id::text, 'name', name) ORDER BY depth DESC) AS folder_path
-		  FROM path_walk
-		 GROUP BY item_type, item_id
-	)
-	SELECT paged.*, COALESCE(paths.folder_path, '[]'::jsonb) AS folder_path
-	  FROM paged
-	  LEFT JOIN paths ON paths.item_type = paged.item_type AND paths.item_id = paged.id
-	 ORDER BY %s`
-
-	parent, uploader, mimePrefix := filter.parent, filter.uploader, filter.mimePrefix
-	sortClause := fileManagerSortClause(filter.sortField, filter.sortOrder, "")
-	var rows []fileManagerCatalogRow
-	var queryResult *gorm.DB
-	if filter.query == "" {
-		sql := fmt.Sprintf(directoryCatalogSQL, sortClause)
-		queryResult = s.db.WithContext(ctx).Raw(sql,
-			filter.includeFolders, parent, parent,
-			parent, parent, mimePrefix, mimePrefix, uploader, uploader,
-			filter.pageSize, filter.offset,
-		).Scan(&rows)
-	} else {
-		sql := fmt.Sprintf(searchCatalogSQL, sortClause, fileManagerSortClause(filter.sortField, filter.sortOrder, "paged."))
-		queryResult = s.db.WithContext(ctx).Raw(sql,
-			parent,
-			filter.includeFolders, filter.query, parent, parent,
-			filter.query, parent,
-			mimePrefix, mimePrefix, uploader, uploader,
-			filter.pageSize, filter.offset,
-		).Scan(&rows)
-	}
-	if err := queryResult.Error; err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
-
 // fileManagerItemsFromCatalog renders catalog rows in order, with each File
 // as the delivery fence built it.
 func fileManagerItemsFromCatalog(
@@ -512,4 +385,20 @@ func fileManagerItemsFromCatalog(
 		})
 	}
 	return items, nil
+}
+
+func (s *Service) queryFileManagerCatalog(ctx context.Context, filter fileManagerCatalogFilter) ([]fileManagerCatalogRow, error) {
+	sort := domain.CatalogSortName
+	switch filter.sortField {
+	case managev1.FileManagerSortField_FILE_MANAGER_SORT_FIELD_CREATED_AT:
+		sort = domain.CatalogSortCreated
+	case managev1.FileManagerSortField_FILE_MANAGER_SORT_FIELD_UPDATED_AT:
+		sort = domain.CatalogSortUpdated
+	case managev1.FileManagerSortField_FILE_MANAGER_SORT_FIELD_FILE_SIZE:
+		sort = domain.CatalogSortSize
+	}
+	query := domain.CatalogQuery{Parent: filter.parent, Uploader: filter.uploader, Query: filter.query, MimePrefix: filter.mimePrefix, IncludeFolders: filter.includeFolders, SortField: sort, Descending: filter.sortOrder == commonv1.SortOrder_SORT_ORDER_DESC, PageSize: filter.pageSize, Offset: filter.offset}
+	var rows []fileManagerCatalogRow
+	err := s.units.Read(ctx, func(store Store) error { var err error; rows, err = store.Catalog(ctx, query); return err })
+	return rows, err
 }
