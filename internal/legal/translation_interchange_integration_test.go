@@ -162,7 +162,7 @@ func TestLegalTranslationInterchangeCreateDeleteRecreateAndCASIntegration(t *tes
 			staleCommand := application.TranslationInterchangeApply{
 				EntityType: testCase.name, EntityID: entityID,
 				SourceLocale: "en", TargetLocale: "ko",
-				Mode:             managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+				Mode:             application.InterchangeModePatch,
 				ExpectedRevision: &firstTargetRevision,
 				Source:           source, Plan: plan,
 				Targets: map[string]translation.UnitResult{
@@ -256,7 +256,7 @@ func legalInterchangeReplaceCommandIntegration(
 	return application.TranslationInterchangeApply{
 		EntityType: entityType, EntityID: entityID,
 		SourceLocale: plan.SourceLocale, TargetLocale: plan.TargetLocale,
-		Mode:   managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		Mode:   application.InterchangeModeReplace,
 		Source: source, Plan: plan, Targets: targets, UnitHandles: handles,
 	}
 }

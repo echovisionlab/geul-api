@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 )
 
 // InterchangeDomainRegistration binds one Translation target to its owning
@@ -19,14 +20,14 @@ import (
 // port; this common registry only validates completeness and routes calls.
 type InterchangeDomainRegistration struct {
 	Domain core.Kind
-	Port   application.TranslationInterchangeDomains
+	Port   translationpostgres.InterchangeRegistry
 }
 
 // InterchangeRegistry is the complete fail-closed router used by the shared
 // Translation application. Each domain can implement and test its port in an
 // independent adapter file without adding a central persistence type-switch.
 type InterchangeRegistry struct {
-	ports map[core.Kind]application.TranslationInterchangeDomains
+	ports map[core.Kind]translationpostgres.InterchangeRegistry
 }
 
 func NewInterchangeRegistry(registrations ...InterchangeDomainRegistration) (*InterchangeRegistry, error) {
@@ -36,7 +37,7 @@ func NewInterchangeRegistry(registrations ...InterchangeDomainRegistration) (*In
 		supported[definition.Kind] = struct{}{}
 	}
 
-	ports := make(map[core.Kind]application.TranslationInterchangeDomains, len(definitions))
+	ports := make(map[core.Kind]translationpostgres.InterchangeRegistry, len(definitions))
 	for index, registration := range registrations {
 		if _, ok := supported[registration.Domain]; !ok {
 			return nil, fmt.Errorf("translation interchange registration %d has unsupported domain %q", index, registration.Domain)
@@ -104,7 +105,7 @@ func (r *InterchangeRegistry) ApplyTranslationInterchange(
 	return port.ApplyTranslationInterchange(ctx, db, store, command)
 }
 
-func (r *InterchangeRegistry) domainPort(entityType string) (application.TranslationInterchangeDomains, error) {
+func (r *InterchangeRegistry) domainPort(entityType string) (translationpostgres.InterchangeRegistry, error) {
 	if r == nil {
 		return nil, errors.New("translation interchange registry is required")
 	}
@@ -119,7 +120,7 @@ func (r *InterchangeRegistry) domainPort(entityType string) (application.Transla
 	return port, nil
 }
 
-func interchangePortIsNil(port application.TranslationInterchangeDomains) bool {
+func interchangePortIsNil(port translationpostgres.InterchangeRegistry) bool {
 	if port == nil {
 		return true
 	}
@@ -132,4 +133,4 @@ func interchangePortIsNil(port application.TranslationInterchangeDomains) bool {
 	}
 }
 
-var _ application.TranslationInterchangeDomains = (*InterchangeRegistry)(nil)
+var _ translationpostgres.InterchangeRegistry = (*InterchangeRegistry)(nil)

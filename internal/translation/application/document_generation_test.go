@@ -1,4 +1,4 @@
-package application
+package application_test
 
 import (
 	"context"
@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	"github.com/echovisionlab/geul-api/internal/translation/application"
+	"github.com/echovisionlab/geul-api/internal/translation/translationtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -136,8 +137,8 @@ func TestResumableDocumentUploadPersistsPollsAndDownloadsWholeXLIFF(t *testing.T
 	}
 	generator := &scriptedDocumentGenerator{provider: "deepl", model: "quality_optimized", session: session}
 
-	response, err := manager.generateValidatedTranslationWithGenerator(
-		context.Background(), job, request, generator,
+	response, err := manager.GenerateForTest(
+		context.Background(), job, request, generator, false,
 	)
 	require.NoError(t, err)
 	require.Len(t, translation.XLIFFTargets(response.Document), 2)
@@ -159,8 +160,8 @@ func TestResumableDocumentRedeliveryResumesPersistedHandleWithoutUpload(t *testi
 	manager, job := runningDocumentTranslationTestManager(t, "deepl", "quality_optimized")
 	request := multiGroupDocumentTranslationRequest()
 	handle := providerDocumentHandleForServiceTest(t, "document-resume", "secret-key-resume")
-	require.NoError(t, manager.persistTranslationProviderDocumentHandle(
-		context.Background(), job.ID, "deepl", "quality_optimized", handle, manager.now().UTC(),
+	require.NoError(t, manager.PersistDocumentHandleForTest(
+		context.Background(), job.ID, "deepl", "quality_optimized", handle, manager.now,
 	))
 	job = loadDocumentTranslationTestJob(t, manager, job.ID)
 	session := &scriptedDocumentSession{
@@ -169,7 +170,7 @@ func TestResumableDocumentRedeliveryResumesPersistedHandleWithoutUpload(t *testi
 	}
 	generator := &scriptedDocumentGenerator{provider: "deepl", model: "quality_optimized", session: session}
 
-	_, err := manager.generateValidatedTranslationWithGenerator(context.Background(), job, request, generator)
+	_, err := manager.GenerateForTest(context.Background(), job, request, generator, false)
 	require.NoError(t, err)
 	require.Zero(t, session.uploadCalls)
 	require.Equal(t, 1, session.checkCalls)
@@ -181,27 +182,27 @@ func TestExactTranslationProviderDocumentGeneratorIgnoresConfigurationOrder(t *t
 	submittedAt := time.Unix(1_700_000_400, 0).UTC()
 	provider := "provider-b"
 	modelName := "model-b"
-	job := &model.TranslationJob{
+	job := &application.Job{
 		Provider:                    &provider,
 		Model:                       &modelName,
-		ProviderDocumentID:          translationProviderDocumentStringPointer(handle.DocumentID()),
-		ProviderDocumentKey:         translationProviderDocumentStringPointer(handle.DocumentKey()),
+		ProviderDocumentID:          stringPointer(handle.DocumentID()),
+		ProviderDocumentKey:         stringPointer(handle.DocumentKey()),
 		ProviderDocumentSubmittedAt: &submittedAt,
 	}
 	first := namedStubTranslationGenerator{providerName: "provider-a", modelName: "model-a"}
 	exact := &scriptedDocumentGenerator{provider: provider, model: modelName, session: &scriptedDocumentSession{}}
 
-	selected, err := exactTranslationProviderDocumentGenerator(job, []translation.Generator{first, exact})
+	selected, err := application.ExactProviderDocumentGeneratorForTest(job, []translation.Generator{first, exact})
 	require.NoError(t, err)
 	require.Len(t, selected, 1)
 	require.Same(t, exact, selected[0])
 
-	_, err = exactTranslationProviderDocumentGenerator(job, []translation.Generator{first})
-	require.ErrorIs(t, err, errTranslationProviderUnavailable)
+	_, err = application.ExactProviderDocumentGeneratorForTest(job, []translation.Generator{first})
+	require.ErrorIs(t, err, application.ErrProviderUnavailableForTest)
 
 	ambiguous := &scriptedDocumentGenerator{provider: provider, model: modelName, session: &scriptedDocumentSession{}}
-	_, err = exactTranslationProviderDocumentGenerator(job, []translation.Generator{exact, ambiguous})
-	require.ErrorIs(t, err, errTranslationProviderUnavailable)
+	_, err = application.ExactProviderDocumentGeneratorForTest(job, []translation.Generator{exact, ambiguous})
+	require.ErrorIs(t, err, application.ErrProviderUnavailableForTest)
 }
 
 func TestResumableDocumentNotFoundFailsWithoutAutomaticReupload(t *testing.T) {
@@ -216,7 +217,7 @@ func TestResumableDocumentNotFoundFailsWithoutAutomaticReupload(t *testing.T) {
 	}
 	generator := &scriptedDocumentGenerator{provider: "deepl", model: "quality_optimized", session: session}
 
-	_, err := manager.generateValidatedTranslationWithGenerator(context.Background(), job, request, generator)
+	_, err := manager.GenerateForTest(context.Background(), job, request, generator, false)
 	require.ErrorIs(t, err, translation.ErrProviderDocumentNotFound)
 	require.Equal(t, 1, session.uploadCalls)
 	stored := loadDocumentTranslationTestJob(t, manager, job.ID)
@@ -230,8 +231,8 @@ func TestExplicitRetryReplacesPersistedDocumentOnlyAfterTypedNotFound(t *testing
 	request := multiGroupDocumentTranslationRequest()
 	expiredHandle := providerDocumentHandleForServiceTest(t, "document-expired", "secret-key-expired")
 	replacementHandle := providerDocumentHandleForServiceTest(t, "document-replacement", "secret-key-replacement")
-	require.NoError(t, manager.persistTranslationProviderDocumentHandle(
-		context.Background(), job.ID, "deepl", "quality_optimized", expiredHandle, manager.now().UTC(),
+	require.NoError(t, manager.PersistDocumentHandleForTest(
+		context.Background(), job.ID, "deepl", "quality_optimized", expiredHandle, manager.now,
 	))
 	job = loadDocumentTranslationTestJob(t, manager, job.ID)
 	session := &scriptedDocumentSession{
@@ -244,7 +245,7 @@ func TestExplicitRetryReplacesPersistedDocumentOnlyAfterTypedNotFound(t *testing
 	}
 	generator := &scriptedDocumentGenerator{provider: "deepl", model: "quality_optimized", session: session}
 
-	response, err := manager.generateValidatedTranslationWithGenerator(
+	response, err := manager.GenerateForTest(
 		context.Background(), job, request, generator, true,
 	)
 	require.NoError(t, err)
@@ -263,19 +264,19 @@ func TestQueuedProviderDocumentReplacementRequiresExplicitRetryMarker(t *testing
 	documentID := "document-id"
 	documentKey := "document-key"
 	submittedAt := time.Now().UTC()
-	job := &model.TranslationJob{
-		Status:                      translationJobStatusQueued,
+	job := &application.Job{
+		Status:                      application.JobQueued,
 		Provider:                    &provider,
 		Model:                       &modelName,
 		ProviderDocumentID:          &documentID,
 		ProviderDocumentKey:         &documentKey,
 		ProviderDocumentSubmittedAt: &submittedAt,
 	}
-	require.False(t, queuedTranslationJobHasProviderDocument(job))
+	require.False(t, application.QueuedJobHasProviderDocumentForTest(job))
 	job.RequestedByMemberID = requestedBy
-	require.True(t, queuedTranslationJobHasProviderDocument(job))
-	job.Status = translationJobStatusRunning
-	require.False(t, queuedTranslationJobHasProviderDocument(job))
+	require.True(t, application.QueuedJobHasProviderDocumentForTest(job))
+	job.Status = application.JobRunning
+	require.False(t, application.QueuedJobHasProviderDocumentForTest(job))
 }
 
 func TestResumableDocumentErrorRetainsHandleAndDoesNotFallback(t *testing.T) {
@@ -294,10 +295,10 @@ func TestResumableDocumentErrorRetainsHandleAndDoesNotFallback(t *testing.T) {
 	}
 	fallback := &scriptedTranslationGenerator{session: fallbackSession}
 
-	_, used, err := manager.generateValidatedTranslation(
+	_, used, err := manager.GenerateWithProvidersForTest(
 		context.Background(), job, request, []translation.Generator{primary, fallback},
 	)
-	require.ErrorIs(t, err, errTranslationProviderDocumentRejected)
+	require.ErrorIs(t, err, application.ErrProviderDocumentRejectedForTest)
 	require.NotContains(t, err.Error(), handle.DocumentKey())
 	require.Same(t, primary, used)
 	require.Zero(t, fallbackSession.initialCalls)
@@ -324,7 +325,7 @@ func TestResumableDocumentUploadFailureDoesNotFallback(t *testing.T) {
 	}
 	fallback := &scriptedTranslationGenerator{session: fallbackSession}
 
-	response, used, err := manager.generateValidatedTranslation(
+	response, used, err := manager.GenerateWithProvidersForTest(
 		context.Background(), job, request, []translation.Generator{primary, fallback},
 	)
 	require.Error(t, err)
@@ -350,11 +351,11 @@ func TestResumableDocumentValidatesRawResponseWithoutRepair(t *testing.T) {
 	}
 	generator := &scriptedDocumentGenerator{provider: "deepl", model: "quality_optimized", session: session}
 
-	response, err := manager.generateValidatedTranslationWithGenerator(
-		context.Background(), job, request, generator,
+	response, err := manager.GenerateForTest(
+		context.Background(), job, request, generator, false,
 	)
 	require.Nil(t, response)
-	require.ErrorIs(t, err, errTranslationProviderResponseInvalid)
+	require.ErrorIs(t, err, application.ErrProviderResponseInvalidForTest)
 	require.Zero(t, generator.synchronousStarts)
 	require.Equal(t, 1, session.uploadCalls)
 	require.Equal(t, 1, session.downloadCalls)
@@ -366,29 +367,37 @@ func runningDocumentTranslationTestManager(
 	t *testing.T,
 	provider string,
 	modelName string,
-) (*TranslationJobManager, *model.TranslationJob) {
+) (*documentTestRunner, *application.Job) {
 	t.Helper()
-	db := newTranslationRetryTestDB(t)
 	now := time.Unix(1_700_000_500, 0).UTC()
-	job := seedTranslationRetryTestJob(t, db, translationJobStatusRunning, "operation", "entity-document")
-	manager := withTestMutations(t, &TranslationJobManager{db: db, now: func() time.Time { return now }})
-	require.NoError(t, manager.updateRunningJobProvider(
+	env := newEnv(t)
+	env.runner.SetClockForTest(func() time.Time { return now })
+	job := env.seedRunningJob(t, now)
+	require.NoError(t, env.runner.UpdateRunningJobProviderForTest(
 		context.Background(), job.ID,
 		namedStubTranslationGenerator{providerName: provider, modelName: modelName},
 	))
-	return manager, loadDocumentTranslationTestJob(t, manager, job.ID)
+	runner := &documentTestRunner{TranslationJobManager: env.runner, store: env.store, now: now}
+	return runner, loadDocumentTranslationTestJob(t, runner, job.ID)
+}
+
+// documentTestRunner is a runner whose job rows the test reads back.
+type documentTestRunner struct {
+	*application.TranslationJobManager
+	store *translationtest.Store
+	now   time.Time
 }
 
 func loadDocumentTranslationTestJob(
 	t *testing.T,
-	manager *TranslationJobManager,
+	runner *documentTestRunner,
 	jobID string,
-) *model.TranslationJob {
+) *application.Job {
 	t.Helper()
-	job, err := manager.loadTranslationJob(context.Background(), jobID)
+	job, found, err := runner.store.Job(context.Background(), jobID)
 	require.NoError(t, err)
-	require.NotNil(t, job)
-	return job
+	require.True(t, found)
+	return &job
 }
 
 func multiGroupDocumentTranslationRequest() translation.ProviderRequest {

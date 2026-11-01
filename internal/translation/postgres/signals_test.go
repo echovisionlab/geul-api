@@ -1,73 +1,16 @@
-package application
+package translationpostgres
 
 import (
-	"context"
-	"errors"
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
-	"gorm.io/gorm"
+
+	"github.com/echovisionlab/geul-api/internal/translation"
+	"github.com/echovisionlab/geul-api/internal/translation/application"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
-
-type appliedContentUpdatePublisher struct {
-	events       []*managev1.ContentUpdatedEvent
-	executor     eventpkg.DBTX
-	err          error
-	lifecycleErr error
-}
-
-func (*appliedContentUpdatePublisher) EnqueueProtobuf(
-	context.Context,
-	string,
-	string,
-	proto.Message,
-) error {
-	return nil
-}
-
-func (*appliedContentUpdatePublisher) NotifyProtobuf(
-	context.Context,
-	string,
-	proto.Message,
-) error {
-	return nil
-}
-
-func (*appliedContentUpdatePublisher) PublishTranslationGenerate(
-	context.Context,
-	*managev1.TranslationGenerateEvent,
-) error {
-	return nil
-}
-
-func (publisher *appliedContentUpdatePublisher) PublishTranslationLifecycle(
-	context.Context,
-	*managev1.TranslationLifecycleEvent,
-) error {
-	return publisher.lifecycleErr
-}
-
-func (publisher *appliedContentUpdatePublisher) NotifyProtobufWithExecutor(
-	_ context.Context,
-	executor eventpkg.DBTX,
-	signal string,
-	message proto.Message,
-) error {
-	event, ok := message.(*managev1.ContentUpdatedEvent)
-	if signal != eventpkg.SignalContentUpdated || !ok {
-		return errors.New("unexpected transactional signal")
-	}
-	publisher.executor = executor
-	publisher.events = append(publisher.events, event)
-	return publisher.err
-}
 
 func TestBuildAppliedTranslationContentUpdatedUsesExactTargetFence(t *testing.T) {
 	t.Parallel()
@@ -77,11 +20,11 @@ func TestBuildAppliedTranslationContentUpdatedUsesExactTargetFence(t *testing.T)
 	targetRevision := "tr1_exact"
 	now := time.Unix(1_700_000_300, 0).UTC()
 	event, err := buildAppliedTranslationContentUpdated(
-		&model.TranslationJob{
+		application.Job{
 			EntityType: "campaign", EntityID: uuid.NewString(), TargetLocale: "ko",
 			RequestedByMemberID: memberID,
 		},
-		AppliedTranslationTarget{
+		application.AppliedTranslationTarget{
 			Changed: true, DocumentRevision: documentRevision, TargetRevision: targetRevision,
 		},
 		now,
@@ -110,11 +53,11 @@ func TestBuildAppliedTranslationContentUpdatedUsesSourceRoleAfterLocaleSwitch(t 
 
 	documentRevision := uuid.NewString()
 	event, err := buildAppliedTranslationContentUpdated(
-		&model.TranslationJob{
+		application.Job{
 			EntityType: "post", EntityID: uuid.NewString(), TargetLocale: "ko",
 			RequestedByMemberID: uuid.NewString(),
 		},
-		AppliedTranslationTarget{
+		application.AppliedTranslationTarget{
 			Changed: true, DocumentRevision: documentRevision, DocumentStateChanged: true,
 		},
 		time.Now(),
@@ -130,11 +73,11 @@ func TestBuildAppliedTranslationContentUpdatedUsesSourceRoleAfterLocaleSwitch(t 
 func TestBuildAppliedTranslationContentUpdatedRejectsMixedLocaleRoleFences(t *testing.T) {
 	t.Parallel()
 
-	job := &model.TranslationJob{
+	job := application.Job{
 		EntityType: "post", EntityID: uuid.NewString(), TargetLocale: "ko",
 		RequestedByMemberID: uuid.NewString(),
 	}
-	for name, result := range map[string]AppliedTranslationTarget{
+	for name, result := range map[string]application.AppliedTranslationTarget{
 		"source with target revision": {
 			Changed: true, DocumentRevision: uuid.NewString(), DocumentStateChanged: true,
 			TargetRevision: "tr1_exact",
@@ -161,11 +104,11 @@ func TestBuildAppliedTranslationContentUpdatedUsesCompleteTranslationCatalog(t *
 			t.Parallel()
 
 			event, err := buildAppliedTranslationContentUpdated(
-				&model.TranslationJob{
+				application.Job{
 					EntityType: string(definition.Kind), EntityID: uuid.NewString(), TargetLocale: "ko",
 					RequestedByMemberID: uuid.NewString(),
 				},
-				AppliedTranslationTarget{
+				application.AppliedTranslationTarget{
 					Changed: true, DocumentRevision: uuid.NewString(), TargetRevision: "tr1_exact",
 				},
 				time.Now(),
@@ -188,11 +131,11 @@ func TestBuildAppliedTranslationContentUpdatedRequiresCanonicalRequesterMember(t
 			t.Parallel()
 
 			_, err := buildAppliedTranslationContentUpdated(
-				&model.TranslationJob{
+				application.Job{
 					EntityType: "campaign", EntityID: uuid.NewString(), TargetLocale: "ko",
 					RequestedByMemberID: requestedBy,
 				},
-				AppliedTranslationTarget{
+				application.AppliedTranslationTarget{
 					Changed: true, DocumentRevision: uuid.NewString(), TargetRevision: "tr1_exact",
 				},
 				time.Now(),
@@ -202,60 +145,23 @@ func TestBuildAppliedTranslationContentUpdatedRequiresCanonicalRequesterMember(t
 	}
 }
 
-func TestAppliedTranslationContentUpdateNoopDoesNotPublish(t *testing.T) {
-	t.Parallel()
-
-	publisher := &appliedContentUpdatePublisher{}
-	manager := withTestMutations(t, &TranslationJobManager{publisher: publisher})
-	require.NoError(t, manager.publishAppliedTranslationContentUpdated(
-		context.Background(),
-		nil,
-		&model.TranslationJob{},
-		AppliedTranslationTarget{},
-		time.Now(),
-	))
-	require.Empty(t, publisher.events)
+func TestSourceLocaleUpdatedEventUsesCompleteTranslationCatalog(t *testing.T) {
+	for _, definition := range translation.Definitions() {
+		event := buildTypedSourceLocaleUpdatedEvent(string(definition.Kind), "entity-1", "revision-1")
+		if event == nil {
+			t.Fatalf("buildTypedSourceLocaleUpdatedEvent(%q) returned nil", definition.Kind)
+		}
+		if event.EntityType != definition.ContentEntityType {
+			t.Fatalf("buildTypedSourceLocaleUpdatedEvent(%q).entity_type = %v, want %v", definition.Kind, event.EntityType, definition.ContentEntityType)
+		}
+		if !event.DocumentStateChanged || event.DocumentRevision == nil || *event.DocumentRevision != "revision-1" {
+			t.Fatalf("buildTypedSourceLocaleUpdatedEvent(%q) lost document revision fence: %#v", definition.Kind, event)
+		}
+	}
 }
 
-func TestAppliedTranslationContentUpdateFailureRollsBackMutationAndJobDeletion(t *testing.T) {
-	db := newTranslationRetryTestDB(t)
-	job := seedTranslationRetryTestJob(
-		t,
-		db,
-		translationJobStatusRunning,
-		"transactional-content-update",
-		uuid.NewString(),
-	)
-	require.NoError(t, db.Exec(`CREATE TABLE applied_translation_result (job_id TEXT PRIMARY KEY)`).Error)
-	publisher := &appliedContentUpdatePublisher{err: errors.New("notify unavailable")}
-	manager := withTestMutations(t, &TranslationJobManager{publisher: publisher})
-
-	err := db.Transaction(func(tx *gorm.DB) error {
-		if insertErr := tx.Exec(
-			`INSERT INTO applied_translation_result (job_id) VALUES (?)`,
-			job.ID,
-		).Error; insertErr != nil {
-			return insertErr
-		}
-		if deleteErr := completeAppliedTranslationJob(t.Context(), tx, job.ID); deleteErr != nil {
-			return deleteErr
-		}
-		return manager.publishAppliedTranslationContentUpdated(
-			t.Context(),
-			tx,
-			job,
-			AppliedTranslationTarget{
-				Changed: true, DocumentRevision: uuid.NewString(), TargetRevision: "tr1_exact",
-			},
-			time.Now(),
-		)
-	})
-	require.ErrorContains(t, err, "notify unavailable")
-	require.NotNil(t, publisher.executor)
-	require.Len(t, publisher.events, 1)
-
-	var appliedCount int64
-	require.NoError(t, db.Table("applied_translation_result").Count(&appliedCount).Error)
-	require.Zero(t, appliedCount)
-	require.NoError(t, db.First(&model.TranslationJob{}, "id = ?", job.ID).Error)
+func TestSourceLocaleUpdatedEventRejectsUnknownDomain(t *testing.T) {
+	if event := buildTypedSourceLocaleUpdatedEvent("unknown", "entity-1", "revision-1"); event != nil {
+		t.Fatalf("unknown Translation domain produced event %#v", event)
+	}
 }

@@ -10,6 +10,7 @@ import (
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 )
 
 type formTranslationInterchangeDomain interface {
@@ -67,7 +68,7 @@ func (a *FormInterchange) ApplyTranslationInterchange(
 	}
 	result, err := a.domain.ApplyTranslationInterchange(ctx, db, formdomain.TranslationInterchangeMutation{
 		FormID: command.EntityID, SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
-		Mode: command.Mode, ExpectedRevision: command.ExpectedRevision,
+		Mode: application.InterchangeModeMessage(command.Mode), ExpectedRevision: command.ExpectedRevision,
 		Source: command.Source, Plan: command.Plan, Targets: command.Targets,
 		UnitHandles: command.UnitHandles, Now: command.Now,
 	})
@@ -80,4 +81,4 @@ func (a *FormInterchange) ApplyTranslationInterchange(
 	}, nil
 }
 
-var _ application.TranslationInterchangeDomains = (*FormInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*FormInterchange)(nil)

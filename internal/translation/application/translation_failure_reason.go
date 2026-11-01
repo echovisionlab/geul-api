@@ -4,11 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/llm"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type boundedTranslationFailureError struct {
@@ -29,21 +27,22 @@ func boundTranslationFailure(cause error) error {
 	}
 	reason := classifyTranslationFailure(cause)
 	if reason == "" {
-		return fmt.Errorf("%s", translationFailureInternal)
+		return fmt.Errorf("%s", FailureInternal)
 	}
 	return boundedTranslationFailureError{reason: reason, cause: cause}
 }
 
+// The bounded failure reasons of a failed job.
 const (
-	translationFailureProviderConfiguration   = "provider_configuration"
-	translationFailureProviderAuthentication  = "provider_authentication"
-	translationFailureProviderRateLimited     = "provider_rate_limited"
-	translationFailureProviderUnavailable     = "provider_unavailable"
-	translationFailureProviderRejected        = "provider_rejected"
-	translationFailureProviderResponseInvalid = "provider_response_invalid"
-	translationFailureTargetApplyFailed       = "target_apply_failed"
-	translationFailureOgHandoffFailed         = "og_handoff_failed"
-	translationFailureInternal                = "internal"
+	FailureProviderConfiguration   = "provider_configuration"
+	FailureProviderAuthentication  = "provider_authentication"
+	FailureProviderRateLimited     = "provider_rate_limited"
+	FailureProviderUnavailable     = "provider_unavailable"
+	FailureProviderRejected        = "provider_rejected"
+	FailureProviderResponseInvalid = "provider_response_invalid"
+	FailureTargetApplyFailed       = "target_apply_failed"
+	FailureOgHandoffFailed         = "og_handoff_failed"
+	FailureInternal                = "internal"
 )
 
 var errTranslationTargetApplyFailed = errors.New("translation target apply failed")
@@ -61,67 +60,39 @@ func classifyTranslationFailure(cause error) string {
 	if details, ok := llm.ProviderFailureDetailsFromError(cause); ok {
 		switch details.Category {
 		case llm.ProviderFailureConfiguration:
-			return translationFailureProviderConfiguration
+			return FailureProviderConfiguration
 		case llm.ProviderFailureAuthentication:
-			return translationFailureProviderAuthentication
+			return FailureProviderAuthentication
 		case llm.ProviderFailureRateLimited:
-			return translationFailureProviderRateLimited
+			return FailureProviderRateLimited
 		case llm.ProviderFailureUnavailable:
-			return translationFailureProviderUnavailable
+			return FailureProviderUnavailable
 		case llm.ProviderFailureRejected:
-			return translationFailureProviderRejected
+			return FailureProviderRejected
 		case llm.ProviderFailureResponseInvalid:
-			return translationFailureProviderResponseInvalid
+			return FailureProviderResponseInvalid
 		case llm.ProviderFailureInternal:
-			return translationFailureInternal
+			return FailureInternal
 		}
 	}
 	switch {
 	case errors.Is(cause, errTranslationProviderUnavailable):
-		return translationFailureProviderUnavailable
+		return FailureProviderUnavailable
 	case errors.Is(cause, translation.ErrProviderDocumentNotFound):
-		return translationFailureProviderUnavailable
+		return FailureProviderUnavailable
 	case errors.Is(cause, context.DeadlineExceeded):
-		return translationFailureProviderUnavailable
+		return FailureProviderUnavailable
 	case errors.Is(cause, translation.ErrProviderProfileUnsupported):
-		return translationFailureProviderConfiguration
+		return FailureProviderConfiguration
 	case errors.Is(cause, errTranslationProviderDocumentRejected):
-		return translationFailureProviderRejected
+		return FailureProviderRejected
 	case errors.Is(cause, translation.ErrProviderResponseInvalid):
-		return translationFailureProviderResponseInvalid
+		return FailureProviderResponseInvalid
 	case errors.Is(cause, errTranslationOgHandoffFailed):
-		return translationFailureOgHandoffFailed
+		return FailureOgHandoffFailed
 	case errors.Is(cause, errTranslationTargetApplyFailed):
-		return translationFailureTargetApplyFailed
+		return FailureTargetApplyFailed
 	default:
-		return translationFailureInternal
-	}
-}
-
-func toProtoTranslationFailureReason(reason *string) managev1.TranslationFailureReason {
-	if reason == nil {
-		return managev1.TranslationFailureReason_TRANSLATION_FAILURE_REASON_UNSPECIFIED
-	}
-	switch strings.TrimSpace(*reason) {
-	case translationFailureProviderConfiguration:
-		return managev1.TranslationFailureReason_TRANSLATION_FAILURE_REASON_PROVIDER_CONFIGURATION
-	case translationFailureProviderAuthentication:
-		return managev1.TranslationFailureReason_TRANSLATION_FAILURE_REASON_PROVIDER_AUTHENTICATION
-	case translationFailureProviderRateLimited:
-		return managev1.TranslationFailureReason_TRANSLATION_FAILURE_REASON_PROVIDER_RATE_LIMITED
-	case translationFailureProviderUnavailable:
-		return managev1.TranslationFailureReason_TRANSLATION_FAILURE_REASON_PROVIDER_UNAVAILABLE
-	case translationFailureProviderRejected:
-		return managev1.TranslationFailureReason_TRANSLATION_FAILURE_REASON_PROVIDER_REJECTED
-	case translationFailureProviderResponseInvalid:
-		return managev1.TranslationFailureReason_TRANSLATION_FAILURE_REASON_PROVIDER_RESPONSE_INVALID
-	case translationFailureTargetApplyFailed:
-		return managev1.TranslationFailureReason_TRANSLATION_FAILURE_REASON_TARGET_APPLY_FAILED
-	case translationFailureOgHandoffFailed:
-		return managev1.TranslationFailureReason_TRANSLATION_FAILURE_REASON_OG_HANDOFF_FAILED
-	case translationFailureInternal:
-		return managev1.TranslationFailureReason_TRANSLATION_FAILURE_REASON_INTERNAL
-	default:
-		return managev1.TranslationFailureReason_TRANSLATION_FAILURE_REASON_INTERNAL
+		return FailureInternal
 	}
 }

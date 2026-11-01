@@ -1,6 +1,6 @@
 //go:build integration
 
-package application
+package translationpostgres
 
 import (
 	"testing"
@@ -9,25 +9,24 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func TestTranslationOverviewUsesCompleteCatalogIntegration(t *testing.T) {
+func TestOverviewRunsAcrossTheWholeCatalogIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
-	service := &Service{db: db}
-	_, err := service.getTranslationOverviewStats(t.Context())
+	store := &store{tx: db}
+	_, err := store.OverviewStats(t.Context())
 	require.NoError(t, err)
-	_, err = service.listTranslationLocaleHealth(t.Context())
+	_, err = store.LocaleHealth(t.Context())
 	require.NoError(t, err)
 
-	health, err := service.listTranslationEntityHealth(t.Context())
+	health, err := store.EntityHealth(t.Context())
 	require.NoError(t, err)
 	require.Len(t, health, len(translation.Definitions()))
 
-	want := make(map[managev1.TranslationEntityType]struct{}, len(health))
+	want := make(map[string]struct{}, len(health))
 	for _, definition := range translation.Definitions() {
-		want[definition.Proto] = struct{}{}
+		want[string(definition.Kind)] = struct{}{}
 	}
 	for _, item := range health {
 		delete(want, item.EntityType)

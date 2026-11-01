@@ -1,15 +1,14 @@
-package application
+package translationpostgres
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
-	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
+	"github.com/echovisionlab/geul-api/internal/translation/application"
 )
 
 type translationOverviewStatsRow struct {
@@ -43,9 +42,7 @@ type translationEntityHealthRow struct {
 	LastSourceUpdateAt sql.NullTime `gorm:"column:last_source_update_at"`
 }
 
-func (s *Service) getTranslationOverviewStats(
-	ctx context.Context,
-) (*managev1.TranslationOverviewStats, error) {
+func (s *store) OverviewStats(ctx context.Context) (application.OverviewStats, error) {
 	query := fmt.Sprintf(`
 WITH locale_totals AS (
 	SELECT
@@ -86,30 +83,25 @@ CROSS JOIN job_totals
 `,
 		translationOverviewSourceUnionSQL(),
 		translationOverviewEntryUnionSQL(),
-		translationJobStatusQueued,
-		translationJobStatusRunning,
+		statusQueued,
+		statusRunning,
 	)
 
 	var row translationOverviewStatsRow
-	if err := s.db.WithContext(ctx).Raw(query).Scan(&row).Error; err != nil {
-		return nil, err
+	if err := s.tx.WithContext(ctx).Raw(query).Scan(&row).Error; err != nil {
+		return application.OverviewStats{}, err
 	}
-
-	stats := &managev1.TranslationOverviewStats{
-		TotalLocales:    int32(row.TotalLocales),
-		EnabledLocales:  int32(row.EnabledLocales),
-		PublicLocales:   int32(row.PublicLocales),
-		SourceEntities:  int32(row.SourceEntities),
-		ActiveJobs:      int32(row.ActiveJobs),
-		ExistingEntries: int32(row.ExistingEntries),
-	}
-
-	return stats, nil
+	return application.OverviewStats{
+		TotalLocales:    row.TotalLocales,
+		EnabledLocales:  row.EnabledLocales,
+		PublicLocales:   row.PublicLocales,
+		SourceEntities:  row.SourceEntities,
+		ActiveJobs:      row.ActiveJobs,
+		ExistingEntries: row.ExistingEntries,
+	}, nil
 }
 
-func (s *Service) listTranslationLocaleHealth(
-	ctx context.Context,
-) ([]*managev1.TranslationLocaleHealth, error) {
+func (s *store) LocaleHealth(ctx context.Context) ([]application.LocaleHealth, error) {
 	query := fmt.Sprintf(`
 WITH entry_counts AS (
 	SELECT
@@ -147,45 +139,37 @@ LEFT JOIN job_counts ON job_counts.locale = l.code
 ORDER BY l.sort_order ASC, l.code ASC
 `,
 		translationOverviewEntryUnionSQL(),
-		translationJobStatusQueued,
-		translationJobStatusRunning,
+		statusQueued,
+		statusRunning,
 	)
 
 	var rows []translationLocaleHealthRow
-	if err := s.db.WithContext(ctx).Raw(query).Scan(&rows).Error; err != nil {
+	if err := s.tx.WithContext(ctx).Raw(query).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 
-	resp := make([]*managev1.TranslationLocaleHealth, 0, len(rows))
+	health := make([]application.LocaleHealth, 0, len(rows))
 	for _, row := range rows {
-		locale := localization.RuntimeLocale{
-			Code:                      row.Code,
-			DisplayName:               row.DisplayName,
-			Enabled:                   row.Enabled,
-			IsPublic:                  row.IsPublic,
-			Dir:                       row.Dir,
-			MachineTranslationAllowed: row.MachineTranslationAllowed,
-			FontProfile:               nullableStringPointer(row.FontProfile),
-			SortOrder:                 row.SortOrder,
-		}
-
-		item := &managev1.TranslationLocaleHealth{
-			Locale:          toProtoTranslationLocale(locale),
-			ExistingEntries: int32(row.ExistingEntries),
-			ActiveJobs:      int32(row.ActiveJobs),
-		}
-		if row.LastTargetUpdateAt.Valid {
-			item.LastTargetUpdateAt = timestamppb.New(row.LastTargetUpdateAt.Time)
-		}
-		resp = append(resp, item)
+		health = append(health, application.LocaleHealth{
+			Locale: application.Locale{
+				Code:                      row.Code,
+				DisplayName:               row.DisplayName,
+				Enabled:                   row.Enabled,
+				IsPublic:                  row.IsPublic,
+				Dir:                       row.Dir,
+				MachineTranslationAllowed: row.MachineTranslationAllowed,
+				FontProfile:               nullableStringPointer(row.FontProfile),
+				SortOrder:                 row.SortOrder,
+			},
+			ExistingEntries:    row.ExistingEntries,
+			ActiveJobs:         row.ActiveJobs,
+			LastTargetUpdateAt: nullableTimePointer(row.LastTargetUpdateAt),
+		})
 	}
-
-	return resp, nil
+	return health, nil
 }
 
-func (s *Service) listTranslationEntityHealth(
-	ctx context.Context,
-) ([]*managev1.TranslationEntityHealth, error) {
+func (s *store) EntityHealth(ctx context.Context) ([]application.EntityHealth, error) {
 	query := fmt.Sprintf(`
 	WITH entity_types(entity_type, sort_order) AS (
 		%s
@@ -232,31 +216,26 @@ ORDER BY entity_types.sort_order ASC
 		translationOverviewEntityValuesSQL(),
 		translationOverviewSourceUnionSQL(),
 		translationOverviewEntryUnionSQL(),
-		translationJobStatusQueued,
-		translationJobStatusRunning,
+		statusQueued,
+		statusRunning,
 	)
 
 	var rows []translationEntityHealthRow
-	if err := s.db.WithContext(ctx).Raw(query).Scan(&rows).Error; err != nil {
+	if err := s.tx.WithContext(ctx).Raw(query).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 
-	resp := make([]*managev1.TranslationEntityHealth, 0, len(rows))
+	health := make([]application.EntityHealth, 0, len(rows))
 	for _, row := range rows {
-		definition, _ := translation.DefinitionForKind(row.EntityType)
-		item := &managev1.TranslationEntityHealth{
-			EntityType:      definition.Proto,
-			SourceEntities:  int32(row.SourceEntities),
-			ExistingEntries: int32(row.ExistingEntries),
-			ActiveJobs:      int32(row.ActiveJobs),
-		}
-		if row.LastSourceUpdateAt.Valid {
-			item.LastSourceUpdateAt = timestamppb.New(row.LastSourceUpdateAt.Time)
-		}
-		resp = append(resp, item)
+		health = append(health, application.EntityHealth{
+			EntityType:         row.EntityType,
+			SourceEntities:     row.SourceEntities,
+			ExistingEntries:    row.ExistingEntries,
+			ActiveJobs:         row.ActiveJobs,
+			LastSourceUpdateAt: nullableTimePointer(row.LastSourceUpdateAt),
+		})
 	}
-
-	return resp, nil
+	return health, nil
 }
 
 func translationOverviewEntryUnionSQL() string {
@@ -303,5 +282,13 @@ func nullableStringPointer(value sql.NullString) *string {
 		return nil
 	}
 	result := value.String
+	return &result
+}
+
+func nullableTimePointer(value sql.NullTime) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	result := value.Time
 	return &result
 }

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"go.opentelemetry.io/otel/attribute"
@@ -17,7 +16,7 @@ import (
 
 func (m *TranslationJobManager) handleQueuedDeliveryFailure(
 	ctx context.Context,
-	job *model.TranslationJob,
+	job *Job,
 	cause error,
 ) error {
 	logCause := cause
@@ -45,7 +44,7 @@ func (m *TranslationJobManager) handleQueuedDeliveryFailure(
 
 func (m *TranslationJobManager) handleRunningDeliveryFailure(
 	ctx context.Context,
-	job *model.TranslationJob,
+	job *Job,
 	startedAt time.Time,
 	cause error,
 ) error {
@@ -84,7 +83,7 @@ func (m *TranslationJobManager) handleRunningDeliveryFailure(
 // translationJobFailedLogFields builds the bounded translation.job.failed
 // record. Response issue kinds also go on the delivery span already in ctx,
 // because provider validation can run after the provider span has ended.
-func translationJobFailedLogFields(ctx context.Context, job *model.TranslationJob, cause error, logCause error) []any {
+func translationJobFailedLogFields(ctx context.Context, job *Job, cause error, logCause error) []any {
 	fields := []any{"domain", "translation", "event", "translation.job.failed", "reason", classifyTranslationFailure(cause), failurecause.Attr(logCause)}
 	if job != nil {
 		fields = append(fields, "job_id", job.ID, "operation_id", job.OperationID, "entity_type", job.EntityType, "entity_id", job.EntityID, "target_locale", job.TargetLocale)

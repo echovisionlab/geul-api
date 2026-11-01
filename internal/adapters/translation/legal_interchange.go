@@ -20,8 +20,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/legal"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type legalTranslationInterchangeDomain interface {
@@ -222,11 +222,11 @@ func validateLegalInterchangeApply(command application.TranslationInterchangeApp
 		known[unit.UnitID] = struct{}{}
 	}
 	switch command.Mode {
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH:
+	case application.InterchangeModePatch:
 		if len(command.UnitHandles) == 0 {
 			return errs.InvalidArgument("file_id", "Legal XLIFF PATCH requires an explicit stable unit selection")
 		}
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE:
+	case application.InterchangeModeReplace:
 		if len(command.UnitHandles) != len(known) {
 			return errs.InvalidArgument("file_id", "Legal XLIFF REPLACE requires the complete current stable unit manifest")
 		}
@@ -345,7 +345,7 @@ func buildLegalInterchangeMutation(
 		EntityType: command.EntityType, EntityID: command.EntityID, Locale: command.TargetLocale,
 		ExpectedRevision: current.contentRevision, ContributorMemberID: current.memberID,
 		ExpectedTargetRevision:         command.ExpectedRevision,
-		AuthoritativeTargetReplacement: command.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		AuthoritativeTargetReplacement: command.Mode == application.InterchangeModeReplace,
 	}
 	if !current.state.Exists {
 		mutation.Translation = legal.AITranslationCreate
@@ -404,4 +404,4 @@ func changedLegalInterchangeHandles(
 	return affected
 }
 
-var _ application.TranslationInterchangeDomains = (*LegalInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*LegalInterchange)(nil)

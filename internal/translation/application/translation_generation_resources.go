@@ -5,27 +5,25 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	"gorm.io/gorm"
 )
 
 func loadTranslationGenerationResources(
 	ctx context.Context,
-	db *gorm.DB,
-	job *model.TranslationJob,
+	store JobStore,
+	job *Job,
 	request translation.ProviderRequest,
 ) (translation.ProviderRequest, error) {
-	if db == nil || job == nil {
+	if store == nil || job == nil {
 		return request, nil
 	}
 
-	settings, err := loadTranslationRuntimeSettings(ctx, db)
+	settings, err := store.RuntimeSettings(ctx)
 	if err != nil {
 		return translation.ProviderRequest{}, err
 	}
-	var siteSettings model.SiteSettings
-	if err := db.WithContext(ctx).Select("site_title", "company_name").Where("id = 1").Take(&siteSettings).Error; err != nil {
+	siteTitle, companyName, err := store.SiteNames(ctx)
+	if err != nil {
 		return translation.ProviderRequest{}, err
 	}
 	request.Profile.ProtectedTerms = translation.NormalizeProtectedTerms(append(
@@ -33,7 +31,7 @@ func loadTranslationGenerationResources(
 		matchingTranslationProtectedTerms(request.Document, settings.ProtectedTerms)...,
 	))
 	// Settings values are literal spellings; retain even their edge whitespace.
-	for _, term := range matchingTranslationProtectedTerms(request.Document, []string{siteSettings.SiteTitle, siteSettings.CompanyName}) {
+	for _, term := range matchingTranslationProtectedTerms(request.Document, []string{siteTitle, companyName}) {
 		if strings.TrimSpace(term) != "" && !slices.Contains(request.Profile.ProtectedTerms, term) {
 			request.Profile.ProtectedTerms = append(request.Profile.ProtectedTerms, term)
 		}

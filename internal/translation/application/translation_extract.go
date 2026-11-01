@@ -3,13 +3,12 @@ package application
 import (
 	"fmt"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
 
 func buildTranslationExtractionPlan(
-	domains DomainRegistry,
-	job *model.TranslationJob,
+	plans DomainPlans,
+	job *Job,
 	source *translation.SourceDocument,
 ) (*translation.ExtractionPlan, error) {
 	if job == nil {
@@ -19,10 +18,10 @@ func buildTranslationExtractionPlan(
 		return nil, fmt.Errorf("translation source document is required")
 	}
 
-	if domains == nil {
+	if plans == nil {
 		return nil, fmt.Errorf("translation domain registry is required")
 	}
-	return domains.BuildExtractionPlan(job, source)
+	return plans.BuildExtractionPlan(*job, source)
 }
 
 func hasStructuredContentUnits(units []translation.Unit) bool {

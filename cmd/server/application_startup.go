@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"gorm.io/gorm"
 
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
@@ -40,6 +41,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/transcode"
 	translationapplication "github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	"github.com/echovisionlab/geul-api/internal/worker"
 )
 
@@ -147,10 +149,19 @@ func initializeApplicationDependencies(
 	if err != nil {
 		return nil, fmt.Errorf("initialize translation domain registry: %w", err)
 	}
+	translationJobUnits, err := translationpostgres.NewJobUnits(deps.db, translationStorePorts(
+		translationRegistry, deps.contentBlockStore, deps.og, deps.spicedbClient, deps.workerPublisher, cfg.CDNURL,
+	))
+	if err != nil {
+		return nil, fmt.Errorf("initialize translation job store: %w", err)
+	}
+	translationLifecycle, err := translationadapter.NewLifecyclePublisher(deps.workerPublisher)
+	if err != nil {
+		return nil, fmt.Errorf("initialize translation lifecycle publisher: %w", err)
+	}
 	deps.translationJobs, err = translationapplication.NewTranslationJobManager(translationapplication.JobManagerDeps{
-		DB: deps.db, SpiceDB: deps.spicedbClient, Audit: deps.telemetryWriter, Publisher: deps.workerPublisher,
-		ContentBlocks: deps.contentBlockStore, OGPlanner: deps.og.planner, OGRefresher: deps.og.refresher,
-		Domains: translationRegistry,
+		Units: translationJobUnits, SpiceDB: deps.spicedbClient, Fence: identitystate.PostgresFence{},
+		Audit: deps.telemetryWriter, Plans: translationRegistry, Lifecycle: translationLifecycle,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize translation job manager: %w", err)
