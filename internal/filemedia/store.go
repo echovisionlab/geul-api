@@ -10,3 +10,5 @@ var (
 	ErrFolderNameExists = domain.ErrFolderNameExists
 	ErrFolderCycle      = domain.ErrFolderCycle
 )
+
+type Joined = domain.Joined

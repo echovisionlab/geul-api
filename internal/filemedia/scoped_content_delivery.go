@@ -3,19 +3,16 @@ package filemedia
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -34,16 +31,6 @@ const (
 	scopedContentOwnerWork         scopedContentOwner = "work"
 )
 
-type scopedContentAttachmentRow struct {
-	BlockID       string `gorm:"column:block_id"`
-	ReferencePath string `gorm:"column:reference_path"`
-	FileID        string `gorm:"column:file_id"`
-}
-
-func (row scopedContentAttachmentRow) key() string {
-	return row.BlockID + "\x00" + row.ReferencePath + "\x00" + row.FileID
-}
-
 // ResolveAuthorizedPostFeaturedImage is the final private-inline issuance
 // boundary for one Post featured-image slot. The Post owner locks lifecycle
 // and the active principal in the same transaction used to re-read the slot,
@@ -53,13 +40,11 @@ func (s *Service) ResolveAuthorizedPostFeaturedImage(
 	postID string,
 	expectedFileID string,
 ) (*commonv1.MediaDelivery, error) {
-	access := s.postAccess
 	return s.resolveAuthorizedFeaturedImage(
 		ctx,
 		scopedContentOwnerPost,
 		postID,
 		expectedFileID,
-		func(tx *gorm.DB) error { return access.RequireLockedView(ctx, tx, postID) },
 	)
 }
 
@@ -70,13 +55,11 @@ func (s *Service) ResolveAuthorizedPageFeaturedImage(
 	pageID string,
 	expectedFileID string,
 ) (*commonv1.MediaDelivery, error) {
-	access := s.pagePolicyAccess
 	return s.resolveAuthorizedFeaturedImage(
 		ctx,
 		scopedContentOwnerPage,
 		pageID,
 		expectedFileID,
-		func(tx *gorm.DB) error { return access.RequireLockedView(ctx, tx, pageID) },
 	)
 }
 
@@ -85,7 +68,6 @@ func (s *Service) resolveAuthorizedFeaturedImage(
 	owner scopedContentOwner,
 	ownerID string,
 	expectedFileID string,
-	authorize func(*gorm.DB) error,
 ) (*commonv1.MediaDelivery, error) {
 	if _, err := uuidutil.ParseCanonical(strings.TrimSpace(ownerID), "owner_id"); err != nil {
 		return nil, domainerr.InvalidField("owner_id", "must be a canonical UUID")
@@ -96,37 +78,29 @@ func (s *Service) resolveAuthorizedFeaturedImage(
 			return nil, domainerr.InvalidField("expected_file_id", "must be a canonical UUID")
 		}
 	}
-	if authorize == nil {
-		return nil, errors.New("featured image authorization is required")
-	}
 
 	var delivery *commonv1.MediaDelivery
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := authorize(tx); err != nil {
+	err := s.units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error {
+		store := tx.Store()
+		if err := store.RequirePolicyOwner(ctx, string(owner), ownerID, false); err != nil {
 			return err
 		}
-		var slot struct {
-			FileID *string `gorm:"column:featured_image_file_id"`
-		}
-		if err := tx.WithContext(ctx).
-			Table(string(owner)).
-			Select("featured_image_file_id").
-			Where("id = ?", ownerID).
-			Take(&slot).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return domainerr.ResourceNotFound(string(owner), ownerID)
-			}
+		slotID, found, err := store.FeaturedFileID(ctx, string(owner), ownerID)
+		if err != nil {
 			return err
+		}
+		if !found {
+			return domainerr.ResourceNotFound(string(owner), ownerID)
 		}
 		currentFileID := ""
-		if slot.FileID != nil {
-			currentFileID = strings.TrimSpace(*slot.FileID)
+		if slotID != nil {
+			currentFileID = strings.TrimSpace(*slotID)
 		}
 		if currentFileID != expectedFileID || currentFileID == "" {
 			return nil
 		}
 
-		files, err := lockScopedDeliveryFiles(ctx, tx, []string{currentFileID})
+		files, err := store.LockScopedFiles(ctx, []string{currentFileID})
 		if err != nil {
 			return err
 		}
@@ -134,7 +108,7 @@ func (s *Service) resolveAuthorizedFeaturedImage(
 		if !ok || file.DeleteRequestedAt != nil {
 			return nil
 		}
-		delivery, err = s.buildLockedInlineDelivery(ctx, tx, file)
+		delivery, err = s.buildLockedInlineDelivery(ctx, store, file)
 		if err == nil && s.testAfterScopedFeaturedSigned != nil {
 			s.testAfterScopedFeaturedSigned(string(owner), ownerID, currentFileID)
 		}
@@ -143,71 +117,71 @@ func (s *Service) resolveAuthorizedFeaturedImage(
 	return delivery, err
 }
 
-// HydrateAuthorizedPageBlockMediaWithDB adds private editor delivery while
+// HydrateAuthorizedPageBlockMedia adds private editor delivery while
 // the Page owner keeps its root, principal, document, File, and exact
 // attachment witnesses in one transaction.
-func (s *Service) HydrateAuthorizedPageBlockMediaWithDB(
+func (s *Service) HydrateAuthorizedPageBlockMedia(
 	ctx context.Context,
-	tx *gorm.DB,
+	joined Joined,
 	pageID string,
 	documentID uuid.UUID,
 	principal *auth.UserInfo,
 	items []*contentv1.ContentBlockMediaItem,
 ) ([]*contentv1.ContentBlockMediaItem, error) {
-	return s.hydrateAuthorizedContentBlockMediaWithDB(
-		ctx, tx, scopedContentOwnerPage, pageID, documentID, principal, items,
+	return s.hydrateAuthorizedContentBlockMedia(
+		ctx, joined, scopedContentOwnerPage, pageID, documentID, principal, items,
 	)
 }
 
-// HydrateAuthorizedPostBlockMediaWithDB adds private editor delivery while
+// HydrateAuthorizedPostBlockMedia adds private editor delivery while
 // Post holds its owner, principal, document, and exact attachment witnesses.
-func (s *Service) HydrateAuthorizedPostBlockMediaWithDB(
-	ctx context.Context, tx *gorm.DB, postID string, documentID uuid.UUID,
+func (s *Service) HydrateAuthorizedPostBlockMedia(
+	ctx context.Context, joined Joined, postID string, documentID uuid.UUID,
 	principal *auth.UserInfo, items []*contentv1.ContentBlockMediaItem,
 ) ([]*contentv1.ContentBlockMediaItem, error) {
-	return s.hydrateAuthorizedContentBlockMediaWithDB(ctx, tx, scopedContentOwnerPost, postID, documentID, principal, items)
+	return s.hydrateAuthorizedContentBlockMedia(ctx, joined, scopedContentOwnerPost, postID, documentID, principal, items)
 }
 
-// HydrateAuthorizedWorkBlockMediaWithDB adds private editor delivery while
+// HydrateAuthorizedWorkBlockMedia adds private editor delivery while
 // the Work owner keeps its exact authorization and lifecycle fence.
-func (s *Service) HydrateAuthorizedWorkBlockMediaWithDB(
+func (s *Service) HydrateAuthorizedWorkBlockMedia(
 	ctx context.Context,
-	tx *gorm.DB,
+	joined Joined,
 	workID string,
 	documentID uuid.UUID,
 	principal *auth.UserInfo,
 	items []*contentv1.ContentBlockMediaItem,
 ) ([]*contentv1.ContentBlockMediaItem, error) {
-	return s.hydrateAuthorizedContentBlockMediaWithDB(
-		ctx, tx, scopedContentOwnerWork, workID, documentID, principal, items,
+	return s.hydrateAuthorizedContentBlockMedia(
+		ctx, joined, scopedContentOwnerWork, workID, documentID, principal, items,
 	)
 }
 
-// HydrateAuthorizedProgramEventBlockMediaWithDB adds private editor delivery
+// HydrateAuthorizedProgramEventBlockMedia adds private editor delivery
 // while Program Event keeps its exact authorization and lifecycle fence.
-func (s *Service) HydrateAuthorizedProgramEventBlockMediaWithDB(
+func (s *Service) HydrateAuthorizedProgramEventBlockMedia(
 	ctx context.Context,
-	tx *gorm.DB,
+	joined Joined,
 	eventID string,
 	documentID uuid.UUID,
 	principal *auth.UserInfo,
 	items []*contentv1.ContentBlockMediaItem,
 ) ([]*contentv1.ContentBlockMediaItem, error) {
-	return s.hydrateAuthorizedContentBlockMediaWithDB(
-		ctx, tx, scopedContentOwnerProgramEvent, eventID, documentID, principal, items,
+	return s.hydrateAuthorizedContentBlockMedia(
+		ctx, joined, scopedContentOwnerProgramEvent, eventID, documentID, principal, items,
 	)
 }
 
-func (s *Service) hydrateAuthorizedContentBlockMediaWithDB(
+func (s *Service) hydrateAuthorizedContentBlockMedia(
 	ctx context.Context,
-	tx *gorm.DB,
+	joined Joined,
 	owner scopedContentOwner,
 	ownerID string,
 	documentID uuid.UUID,
 	principal *auth.UserInfo,
 	items []*contentv1.ContentBlockMediaItem,
 ) ([]*contentv1.ContentBlockMediaItem, error) {
-	if s == nil || tx == nil {
+	if s == nil || joined.Store == nil {
 		return nil, errors.New("scoped content media transaction is required")
 	}
 	if _, err := uuidutil.ParseCanonical(strings.TrimSpace(ownerID), "owner_id"); err != nil {
@@ -220,11 +194,11 @@ func (s *Service) hydrateAuthorizedContentBlockMediaWithDB(
 	scopedCtx := auth.WithUser(ctx, principal)
 	hasLibraryDownload := s.hasScopedLibraryDownload(scopedCtx, principal)
 
-	files, err := lockScopedDeliveryFiles(scopedCtx, tx, sortedStringSet(requestedFileIDs))
+	files, err := joined.Store.LockScopedFiles(scopedCtx, sortedStringSet(requestedFileIDs))
 	if err != nil {
 		return nil, err
 	}
-	relations, err := lockScopedContentAttachments(scopedCtx, tx, owner, ownerID, documentID, sortedStringSet(requestedBlockIDs))
+	relations, err := joined.Store.LockScopedAttachments(scopedCtx, string(owner), ownerID, documentID.String(), sortedStringSet(requestedBlockIDs))
 	if err != nil {
 		return nil, err
 	}
@@ -234,9 +208,7 @@ func (s *Service) hydrateAuthorizedContentBlockMediaWithDB(
 			currentFileIDs[relation.FileID] = struct{}{}
 		}
 	}
-	scopedService := *s
-	scopedService.db = tx
-	responses, err := scopedService.loadFileURLResponses(scopedCtx, sortedStringSet(currentFileIDs))
+	responses, err := s.loadFileURLResponsesWithReader(scopedCtx, boundDeliveryReader{joined.Store}, sortedStringSet(currentFileIDs))
 	if err != nil {
 		return nil, err
 	}
@@ -296,8 +268,8 @@ func (s *Service) hasScopedLibraryDownload(ctx context.Context, principal *auth.
 // the principal may download it.
 func deliverScopedContentBlockMediaItem(
 	item *contentv1.ContentBlockMediaItem,
-	relations map[string]scopedContentAttachmentRow,
-	files map[string]model.File,
+	relations map[string]domain.ScopedAttachment,
+	files map[string]File,
 	responses map[string]*managev1.GetMediaDeliveryResponse,
 	principal *auth.UserInfo,
 	hasLibraryDownload bool,
@@ -328,75 +300,10 @@ func deliverScopedContentBlockMediaItem(
 	item.Delivery = delivery
 }
 
-func lockScopedDeliveryFiles(
-	ctx context.Context,
-	tx *gorm.DB,
-	fileIDs []string,
-) (map[string]model.File, error) {
-	result := make(map[string]model.File, len(fileIDs))
-	if len(fileIDs) == 0 {
-		return result, nil
-	}
-	var files []model.File
-	query := tx.WithContext(ctx).
-		Table("file").
-		Select("id", "file_name", "extension", "mime_type", "file_size", "duration_seconds", "uploaded_by_member_id", "delete_requested_at").
-		Where("id IN ?", fileIDs).
-		Order("id ASC")
-	if tx.Dialector.Name() == "postgres" {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
-	}
-	if err := query.Find(&files).Error; err != nil {
-		return nil, fmt.Errorf("lock scoped delivery Files: %w", err)
-	}
-	for _, file := range files {
-		result[file.ID] = file
-	}
-	return result, nil
-}
-
-func lockScopedContentAttachments(
-	ctx context.Context,
-	tx *gorm.DB,
-	owner scopedContentOwner,
-	ownerID string,
-	documentID uuid.UUID,
-	blockIDs []string,
-) (map[string]scopedContentAttachmentRow, error) {
-	result := make(map[string]scopedContentAttachmentRow)
-	if len(blockIDs) == 0 {
-		return result, nil
-	}
-	ownerTable := string(owner)
-	switch owner {
-	case scopedContentOwnerPage, scopedContentOwnerPost, scopedContentOwnerProgramEvent, scopedContentOwnerWork:
-	default:
-		return nil, errors.New("unsupported scoped content owner")
-	}
-	var rows []scopedContentAttachmentRow
-	query := tx.WithContext(ctx).
-		Table("content_block_attachment AS attachment").
-		Select("attachment.block_id::text AS block_id", "attachment.reference_path", "attachment.file_id::text AS file_id").
-		Joins("JOIN content_block AS block ON block.id = attachment.block_id").
-		Joins("JOIN "+ownerTable+" AS owner ON owner.content_document_id = block.document_id").
-		Where("owner.id = ? AND owner.content_document_id = ? AND attachment.selector_kind = 'active' AND attachment.block_id IN ?", ownerID, documentID, blockIDs).
-		Order("attachment.block_id ASC, attachment.reference_path ASC")
-	if tx.Dialector.Name() == "postgres" {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare, Table: clause.Table{Name: "attachment"}})
-	}
-	if err := query.Find(&rows).Error; err != nil {
-		return nil, fmt.Errorf("lock exact scoped content attachments: %w", err)
-	}
-	for _, row := range rows {
-		result[row.key()] = row
-	}
-	return result, nil
-}
-
 func (s *Service) buildLockedInlineDelivery(
 	ctx context.Context,
-	tx *gorm.DB,
-	file model.File,
+	store Store,
+	file File,
 ) (*commonv1.MediaDelivery, error) {
 	inline, err := buildExpiringMediaFileRef(
 		s.mediaDomain,
@@ -423,9 +330,7 @@ func (s *Service) buildLockedInlineDelivery(
 		duration := int32(*file.DurationSeconds)
 		delivery.DurationSeconds = &duration
 	}
-	scopedService := *s
-	scopedService.db = tx
-	if err := scopedService.populateFileProcessingStatus(ctx, map[string]*commonv1.MediaDelivery{file.ID: delivery}); err != nil {
+	if err := s.populateFileProcessingStatusWithReader(ctx, boundDeliveryReader{store}, map[string]*commonv1.MediaDelivery{file.ID: delivery}); err != nil {
 		slog.ErrorContext(ctx, "Failed to populate scoped featured-image processing status", failurecause.Attr(err), "fileId", file.ID)
 	}
 	return delivery, nil

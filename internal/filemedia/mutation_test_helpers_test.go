@@ -78,5 +78,5 @@ func withTestStorage(service *Service) *Service {
 }
 
 func testFileStore(s *Service, tx *gorm.DB) Store {
-	return filemediapostgres.Bind(tx, filemediapostgres.Ports{DeletionQueue: filemediaqueue.Async(s.asyncPublisher), PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: s.postAccess, Pages: s.pagePolicyAccess, Works: s.workPolicyAccess, Events: s.programEventAttachment, Releases: s.releasePolicyAccess, SpiceDB: s.spiceDB}), PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(s.asyncPublisher)})
+	return filemediapostgres.NewStore(tx, filemediapostgres.Ports{DeletionQueue: filemediaqueue.Async(s.asyncPublisher), PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: s.postAccess, Pages: s.pagePolicyAccess, Works: s.workPolicyAccess, Events: s.programEventAttachment, Releases: s.releasePolicyAccess, SpiceDB: s.spiceDB}), PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(s.asyncPublisher)})
 }

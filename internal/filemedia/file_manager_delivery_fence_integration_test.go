@@ -1076,7 +1076,7 @@ func TestManagePageAndWorkContentWitnessRejectsCommittedDocumentChangeIntegratio
 			require.NoError(t, db.Exec("INSERT INTO content_document (id, profile) VALUES (?::uuid, ?)", replacementDocumentID, resourceType).Error)
 			require.NoError(t, db.Table(resourceType).Where("id = ?", resourceID).Update("content_document_id", replacementDocumentID).Error)
 			require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-				current, lockErr := lockManageDeliveryUsageOwners(ctx, filemediapostgres.Bind(tx, filemediapostgres.Ports{}), []manageFileDeliveryUsageWitness{witness})
+				current, lockErr := lockManageDeliveryUsageOwners(ctx, filemediapostgres.NewStore(tx, filemediapostgres.Ports{}), []manageFileDeliveryUsageWitness{witness})
 				require.NoError(t, lockErr)
 				require.False(t, current[witness.resourceType+"\x00"+witness.resourceID])
 				return nil

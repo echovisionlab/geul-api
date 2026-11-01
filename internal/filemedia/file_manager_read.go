@@ -73,7 +73,7 @@ func (s *Service) GetFile(ctx context.Context, query GetFileQuery) (*managev1.Ge
 type fileManagerMeshOutputRow = domain.MeshDeliveryOutput
 
 func (s *Service) loadFileGeneratedOutputs(ctx context.Context, fileID string) ([]*managev1.FileGeneratedOutput, error) {
-	derivatives, err := s.loadStoredDerivativeDeliveries(ctx, []string{fileID})
+	derivatives, err := s.loadStoredDerivativeDeliveries(ctx, s.units, []string{fileID})
 	if err != nil {
 		return nil, err
 	}

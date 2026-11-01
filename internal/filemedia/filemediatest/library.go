@@ -24,6 +24,8 @@ type MeshRecord struct {
 }
 
 type LibraryStore struct {
+	ScopedOwners            map[string]ScopedOwner
+	ScopedAttachments       []ScopedAttachmentRecord
 	ValidatedPolicySegments [][]string
 	Policies                map[string]PolicyRecord
 	Segments                map[string]domain.PolicySegment
@@ -61,7 +63,7 @@ type LibraryStore struct {
 
 func NewLibraryStore() *LibraryStore {
 	assets, _ := mediaassettest.New()
-	return &LibraryStore{Policies: map[string]PolicyRecord{}, Segments: map[string]domain.PolicySegment{}, PolicyDenied: map[string]error{}, AssetIDs: map[string]bool{}, Generations: map[string]mediaasset.Generation{}, References: map[string][]string{}, TrackReleases: map[string]string{}, MediaAssets: assets, MeshRecords: map[string]MeshRecord{}, Derivatives: map[string][]domain.StoredDerivativeDelivery{}, IngestBindings: map[string]domain.IngestBinding{}, PrincipalFence: &identitystatetest.Fence{}, ReadyMeshes: map[string]domain.MeshDeliveryWitness{}, AvatarOwners: map[string]string{}, DeliveryOwners: map[string]domain.DeliveryOwner{}, ExactUsages: map[string]bool{}, Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
+	return &LibraryStore{ScopedOwners: map[string]ScopedOwner{}, Policies: map[string]PolicyRecord{}, Segments: map[string]domain.PolicySegment{}, PolicyDenied: map[string]error{}, AssetIDs: map[string]bool{}, Generations: map[string]mediaasset.Generation{}, References: map[string][]string{}, TrackReleases: map[string]string{}, MediaAssets: assets, MeshRecords: map[string]MeshRecord{}, Derivatives: map[string][]domain.StoredDerivativeDelivery{}, IngestBindings: map[string]domain.IngestBinding{}, PrincipalFence: &identitystatetest.Fence{}, ReadyMeshes: map[string]domain.MeshDeliveryWitness{}, AvatarOwners: map[string]string{}, DeliveryOwners: map[string]domain.DeliveryOwner{}, ExactUsages: map[string]bool{}, Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
 }
 func (s *LibraryStore) Savepoint() func() {
 	saved := maps.Clone(s.Folders)

@@ -32,6 +32,7 @@ import (
 	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediacontent"
 	"github.com/echovisionlab/geul-api/internal/adapters/filemediapolicy"
 	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
 	formadapter "github.com/echovisionlab/geul-api/internal/adapters/form"
@@ -275,6 +276,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize file service: %w", err)
 	}
+	fileContentMedia := filemediacontent.New(fileService)
 	formAssets := formadapter.NewAssets(cfg.CDNURL)
 	pageRuntime := pageadapter.NewRuntime(cfg.CDNURL, ogDeps.refresher)
 	workRuntime := workadapter.NewRuntime(db, cfg.CDNURL, ogDeps.refresher)
@@ -510,7 +512,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 
 	workUnits, err := workpostgres.NewUnits(db, workpostgres.Ports{
 		ContentBlocks: contentBlockStore, Signals: servicePublisher, Checkpoints: collaborationRuntime.Checkpoints,
-		Runtime: workRuntime, Media: fileService, ShareLinks: sharelinkadapter.EntityLinks{Type: sharelink.EntityWork},
+		Runtime: workRuntime, Media: fileContentMedia, ShareLinks: sharelinkadapter.EntityLinks{Type: sharelink.EntityWork},
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize Work store: %w", err)
@@ -538,7 +540,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	postUnits, err := postpostgres.NewUnits(db, postpostgres.Deps{
 		ContentBlocks: contentBlockStore, Signals: servicePublisher, OG: ogDeps.refresher,
 		ShareLinkCleanup: sharelinkadapter.EntityLinks{Type: sharelink.EntityPost},
-		MediaLoader:      postMedia, Media: fileService, VersionRestore: postVersionRestore, CDNDomain: cfg.CDNURL,
+		MediaLoader:      postMedia, Media: fileContentMedia, VersionRestore: postVersionRestore, CDNDomain: cfg.CDNURL,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize Post store: %w", err)
@@ -563,7 +565,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 
 	programEventUnits, err := programeventpostgres.NewUnits(db, programeventpostgres.Ports{
 		ContentBlocks: contentBlockStore, Signals: servicePublisher, Media: programeventadapter.NewRuntime(cfg.CDNURL),
-		Files: programeventadapter.NewFiles(fileService), Members: memberadapter.ContentMembers{},
+		Files: programeventadapter.NewFiles(fileContentMedia), Members: memberadapter.ContentMembers{},
 		CreditArtists: artistadapter.CreditArtists{}, Checkpoints: collaborationRuntime.Checkpoints,
 	})
 	if err != nil {
@@ -593,7 +595,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered service", "path", tagPath)
 
 	pageUnits, err := pagepostgres.NewUnits(db, pagepostgres.Ports{
-		ContentBlocks: contentBlockStore, Signals: servicePublisher, Runtime: pageRuntime, MediaHydrator: fileService,
+		ContentBlocks: contentBlockStore, Signals: servicePublisher, Runtime: pageRuntime, MediaHydrator: fileContentMedia,
 		MenuTargets: menuadapter.NewTargetLifecycle(telemetryWriter), Members: memberadapter.PageMembers{},
 		ShareLinks: sharelinkadapter.PageLinks{},
 	})

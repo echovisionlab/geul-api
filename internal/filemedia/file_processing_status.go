@@ -86,6 +86,9 @@ func (s *Service) populateFileProcessingStatus(
 	ctx context.Context,
 	responses map[string]*commonv1.MediaDelivery,
 ) error {
+	return s.populateFileProcessingStatusWithReader(ctx, s.units, responses)
+}
+func (s *Service) populateFileProcessingStatusWithReader(ctx context.Context, reader fileDeliveryReader, responses map[string]*commonv1.MediaDelivery) error {
 	if len(responses) == 0 {
 		return nil
 	}
@@ -106,7 +109,7 @@ func (s *Service) populateFileProcessingStatus(
 
 	var failures domain.ProcessingFailureCounts
 	if len(audioIDs)+len(videoIDs) > 0 {
-		if err := s.units.Read(ctx, func(store Store) error {
+		if err := reader.Read(ctx, func(store Store) error {
 			var err error
 			failures, err = store.DeliveryProcessingFailures(ctx, audioIDs, videoIDs)
 			return err
