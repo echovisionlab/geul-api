@@ -161,3 +161,20 @@ func TestEstimateSegmentCountCountsTheUnsavedFilter(t *testing.T) {
 	require.Equal(t, "admin access required", errs.Wrap(err).Message())
 	require.Empty(t, denied.counter.segments)
 }
+
+func TestCreateSegmentRejectsAnIneligibleExcludedMember(t *testing.T) {
+	h := newHarness(t)
+	for name, memberID := range map[string]string{
+		"not onboarded": h.store.SeedMember(false),
+		"missing":       uuid.NewString(),
+	} {
+		_, err := h.service.CreateSegment(h.admin, audience.CreateSegmentCommand{
+			Name: "Excluding", SegmentType: audience.SegmentMembersByFilter,
+			Config: &audience.SegmentConfigInput{ExcludeMemberIDs: []string{memberID}},
+		})
+		require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code(), name)
+		require.Equal(t, "every excluded member must be an onboarded Member with an exact Identity link", errs.Wrap(err).Message(), name)
+	}
+	require.Zero(t, h.store.SegmentCount())
+	require.Empty(t, h.checker.Applied())
+}

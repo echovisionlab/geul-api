@@ -155,7 +155,7 @@ func replaceConfig(ctx context.Context, store Store, segmentID string, config Co
 			return err
 		}
 		if len(eligible) != len(config.ExcludeMemberIDs) {
-			return fmt.Errorf("every excluded member must be an onboarded Member with an exact Identity link")
+			return invalidSegment("every excluded member must be an onboarded Member with an exact Identity link")
 		}
 	}
 	return store.ReplaceConfig(ctx, segmentID, config)
