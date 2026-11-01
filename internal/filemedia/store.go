@@ -13,3 +13,8 @@ var (
 )
 
 type Joined = domain.Joined
+
+type UsageDomain = domain.UsageDomain
+type UsageView = domain.UsageView
+type UsageDomainCount = domain.UsageDomainCount
+type DeletionImpact = domain.DeletionImpact

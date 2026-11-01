@@ -291,43 +291,43 @@ func (s *Service) editableFileUsageTargets(ctx context.Context, rows []fileUsage
 	return allowedTargets, nil
 }
 
-func fileUsageDomain(domain string) managev1.FileUsageDomain {
-	switch domain {
+func fileUsageDomain(kind string) UsageDomain {
+	switch kind {
 	case "post":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_POST
+		return domain.UsagePost
 	case "page":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_PAGE
+		return domain.UsagePage
 	case "work":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_WORK
+		return domain.UsageWork
 	case "site_settings":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_SITE_SETTINGS
+		return domain.UsageSiteSettings
 	case "release":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_RELEASE
+		return domain.UsageRelease
 	case "track":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_TRACK
+		return domain.UsageTrack
 	case "artist":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_ARTIST
+		return domain.UsageArtist
 	case "label":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_LABEL
+		return domain.UsageLabel
 	case "client":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_CLIENT
+		return domain.UsageClient
 	case "series":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_SERIES
+		return domain.UsageSeries
 	case "form":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_FORM
+		return domain.UsageForm
 	case "program_event":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_PROGRAM_EVENT
+		return domain.UsageProgramEvent
 	case "map_place":
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_MAP_PLACE
+		return domain.UsageMapPlace
 	default:
-		return managev1.FileUsageDomain_FILE_USAGE_DOMAIN_UNSPECIFIED
+		return domain.UsageUnspecified
 	}
 }
 
-func fileUsageProto(row fileUsageRow) *managev1.FileUsage {
-	return &managev1.FileUsage{
-		Domain: fileUsageDomain(row.Domain), EntityId: row.EntityID, ReferencePath: row.ReferencePath,
-		BlockId: row.BlockID, Count: 1, BlockType: row.BlockType, Title: row.Title, Link: row.Link,
+func fileUsageView(row fileUsageRow) *UsageView {
+	return &UsageView{
+		Domain: fileUsageDomain(row.Domain), EntityID: row.EntityID, ReferencePath: row.ReferencePath,
+		BlockID: row.BlockID, Count: 1, BlockType: row.BlockType, Title: row.Title, Link: row.Link,
 	}
 }
 
@@ -340,7 +340,7 @@ type ListFileUsagesQuery struct {
 
 // FileUsagePage is one page of a File's usages.
 type FileUsagePage struct {
-	Usages        []*managev1.FileUsage
+	Usages        []*UsageView
 	NextPageToken *string
 	Total         int64
 }
@@ -373,9 +373,9 @@ func (s *Service) ListFileUsages(ctx context.Context, req ListFileUsagesQuery) (
 	start := min(offset, total)
 	end := min(start+pageSize, total)
 	rows = rows[start:end]
-	usages := make([]*managev1.FileUsage, 0, len(rows))
+	usages := make([]*UsageView, 0, len(rows))
 	for _, row := range rows {
-		usages = append(usages, fileUsageProto(row))
+		usages = append(usages, fileUsageView(row))
 	}
 	var next *string
 	if offset+len(rows) < total {

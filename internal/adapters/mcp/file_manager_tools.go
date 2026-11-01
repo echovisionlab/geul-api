@@ -26,7 +26,7 @@ const (
 // FileManager consumes the native administrator File Manager boundary. The
 // owning service retains fresh authorization, no-op handling and durable audit.
 type FileManager interface {
-	GetFileDeletionImpact(context.Context, filemedia.GetFileDeletionImpactQuery) ([]*managev1.FileDeletionImpact, error)
+	GetFileDeletionImpact(context.Context, filemedia.GetFileDeletionImpactQuery) ([]*filemedia.DeletionImpact, error)
 	DeleteFiles(context.Context, filemedia.DeleteFilesCommand) (filemedia.FileDeletionOutcome, error)
 	RenameFile(context.Context, filemedia.RenameFileCommand) (*managev1.FileManagerFile, error)
 	MoveFiles(context.Context, filemedia.MoveFilesCommand) ([]*managev1.FileManagerFile, error)
@@ -344,23 +344,23 @@ type fileManagerImpact struct {
 	HasMore      bool                     `json:"has_more_usages"`
 }
 
-func projectFileManagerImpacts(impacts []*managev1.FileDeletionImpact) ([]fileManagerImpact, error) {
+func projectFileManagerImpacts(impacts []*filemedia.DeletionImpact) ([]fileManagerImpact, error) {
 	result := make([]fileManagerImpact, 0, len(impacts))
 	for _, impact := range impacts {
-		item := fileManagerImpact{FileID: impact.FileId, Total: impact.TotalUsageCount, DomainCounts: make([]fileManagerDomainCount, 0, len(impact.DomainCounts)), FirstUsages: make([]fileManagerUsage, 0, len(impact.FirstUsages)), HasMore: impact.HasMoreUsages}
+		item := fileManagerImpact{FileID: impact.FileID, Total: impact.TotalUsageCount, DomainCounts: make([]fileManagerDomainCount, 0, len(impact.DomainCounts)), FirstUsages: make([]fileManagerUsage, 0, len(impact.FirstUsages)), HasMore: impact.HasMoreUsages}
 		for _, count := range impact.DomainCounts {
-			domain, err := fileUsageDomainName(count.Domain)
+			domain, err := fileUsageDomainName(managev1.FileUsageDomain(count.Domain))
 			if err != nil {
 				return nil, err
 			}
 			item.DomainCounts = append(item.DomainCounts, fileManagerDomainCount{domain, count.Count})
 		}
 		for _, usage := range impact.FirstUsages {
-			domain, err := fileUsageDomainName(usage.Domain)
+			domain, err := fileUsageDomainName(managev1.FileUsageDomain(usage.Domain))
 			if err != nil {
 				return nil, err
 			}
-			item.FirstUsages = append(item.FirstUsages, fileManagerUsage{domain, usage.EntityId, usage.ReferencePath, usage.BlockId, usage.Count, usage.BlockType, usage.Title, usage.Link})
+			item.FirstUsages = append(item.FirstUsages, fileManagerUsage{domain, usage.EntityID, usage.ReferencePath, usage.BlockID, usage.Count, usage.BlockType, usage.Title, usage.Link})
 		}
 		result = append(result, item)
 	}

@@ -68,7 +68,7 @@ func (s *Service) GetFile(ctx context.Context, query GetFileQuery) (*managev1.Ge
 	if changed || file == nil {
 		return nil, domainerr.ResourceNotFound("file", *fileID)
 	}
-	return &managev1.GetFileResponse{File: file, DomainUsageSummary: summary, GeneratedOutputs: generatedOutputs}, nil
+	return &managev1.GetFileResponse{File: file, DomainUsageSummary: fileUsageViewsProto(summary), GeneratedOutputs: generatedOutputs}, nil
 }
 
 type fileManagerMeshOutputRow = domain.MeshDeliveryOutput
@@ -174,7 +174,7 @@ func fileManagerProcessingStatus(status string) commonv1.MediaProcessingStatus {
 	}
 }
 
-func summarizeFileUsages(rows []fileUsageRow) []*managev1.FileUsage {
+func summarizeFileUsages(rows []fileUsageRow) []*UsageView {
 	type key struct{ domain, entity, slot, block string }
 	counts := make(map[key]int32)
 	byKey := make(map[key]fileUsageRow)
@@ -194,9 +194,9 @@ func summarizeFileUsages(rows []fileUsageRow) []*managev1.FileUsage {
 	sort.Slice(keys, func(i, j int) bool {
 		return fmt.Sprintf("%s\x00%s\x00%s\x00%s", keys[i].domain, keys[i].entity, keys[i].slot, keys[i].block) < fmt.Sprintf("%s\x00%s\x00%s\x00%s", keys[j].domain, keys[j].entity, keys[j].slot, keys[j].block)
 	})
-	result := make([]*managev1.FileUsage, 0, len(keys))
+	result := make([]*UsageView, 0, len(keys))
 	for _, k := range keys {
-		usage := fileUsageProto(byKey[k])
+		usage := fileUsageView(byKey[k])
 		usage.Count = counts[k]
 		result = append(result, usage)
 	}

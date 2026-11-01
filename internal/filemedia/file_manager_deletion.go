@@ -9,7 +9,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // GetFileDeletionImpactQuery reads what deleting each File would affect.
@@ -17,7 +16,7 @@ type GetFileDeletionImpactQuery struct {
 	FileIDs []string
 }
 
-func (s *Service) GetFileDeletionImpact(ctx context.Context, query GetFileDeletionImpactQuery) ([]*managev1.FileDeletionImpact, error) {
+func (s *Service) GetFileDeletionImpact(ctx context.Context, query GetFileDeletionImpactQuery) ([]*DeletionImpact, error) {
 	if _, err := requireFileManagerAdmin(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
@@ -44,7 +43,7 @@ type DeleteFilesCommand struct {
 // referenced Files it rejected.
 type FileDeletionOutcome struct {
 	AcceptedFileIDs []string
-	RejectedFiles   []*managev1.FileDeletionImpact
+	RejectedFiles   []*DeletionImpact
 }
 
 func (s *Service) DeleteFiles(ctx context.Context, command DeleteFilesCommand) (FileDeletionOutcome, error) {
@@ -85,7 +84,7 @@ func (s *Service) DeleteFiles(ctx context.Context, command DeleteFilesCommand) (
 // deletion it newly requested, and the deletion commands to publish.
 type fileManagerDeletion struct {
 	accepted  []string
-	rejected  []*managev1.FileDeletionImpact
+	rejected  []*DeletionImpact
 	requested []string
 	mutations []*FileDeletionMutation
 }
@@ -93,7 +92,7 @@ type fileManagerDeletion struct {
 func requestFileManagerDeletions(ctx context.Context, store Store, fileIDs []string, now time.Time) (fileManagerDeletion, error) {
 	deletion := fileManagerDeletion{
 		accepted:  make([]string, 0, len(fileIDs)),
-		rejected:  make([]*managev1.FileDeletionImpact, 0),
+		rejected:  make([]*DeletionImpact, 0),
 		mutations: make([]*FileDeletionMutation, 0, len(fileIDs)),
 	}
 	files, err := lockFileManagerDeletionRows(ctx, store, fileIDs)

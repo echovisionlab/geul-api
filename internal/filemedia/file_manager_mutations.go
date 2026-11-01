@@ -200,26 +200,26 @@ func (s *Service) loadFileManagerFilesByIDs(ctx context.Context, fileIDs []strin
 	return result, nil
 }
 
-func buildFileDeletionImpact(fileID string, rows []fileUsageRow) *managev1.FileDeletionImpact {
-	counts := make(map[managev1.FileUsageDomain]int64)
+func buildFileDeletionImpact(fileID string, rows []fileUsageRow) *DeletionImpact {
+	counts := make(map[UsageDomain]int64)
 	for _, row := range rows {
 		counts[fileUsageDomain(row.Domain)]++
 	}
-	domains := make([]managev1.FileUsageDomain, 0, len(counts))
+	domains := make([]UsageDomain, 0, len(counts))
 	for domain := range counts {
 		domains = append(domains, domain)
 	}
 	slices.Sort(domains)
-	domainCounts := make([]*managev1.FileUsageDomainCount, 0, len(domains))
+	domainCounts := make([]*UsageDomainCount, 0, len(domains))
 	for _, domain := range domains {
-		domainCounts = append(domainCounts, &managev1.FileUsageDomainCount{Domain: domain, Count: counts[domain]})
+		domainCounts = append(domainCounts, &UsageDomainCount{Domain: domain, Count: counts[domain]})
 	}
 	previewSize := min(fileDeletionImpactPreviewSize, len(rows))
-	preview := make([]*managev1.FileUsage, 0, previewSize)
+	preview := make([]*UsageView, 0, previewSize)
 	for _, row := range rows[:previewSize] {
-		preview = append(preview, fileUsageProto(row))
+		preview = append(preview, fileUsageView(row))
 	}
-	return &managev1.FileDeletionImpact{FileId: fileID, TotalUsageCount: int64(len(rows)), DomainCounts: domainCounts, FirstUsages: preview, HasMoreUsages: len(rows) > previewSize}
+	return &DeletionImpact{FileID: fileID, TotalUsageCount: int64(len(rows)), DomainCounts: domainCounts, FirstUsages: preview, HasMoreUsages: len(rows) > previewSize}
 }
 
 func pointerValue(value *string) string {
@@ -229,12 +229,12 @@ func pointerValue(value *string) string {
 	return *value
 }
 
-func impactsForFiles(fileIDs []string, rows []fileUsageRow) []*managev1.FileDeletionImpact {
+func impactsForFiles(fileIDs []string, rows []fileUsageRow) []*DeletionImpact {
 	byFile := make(map[string][]fileUsageRow, len(fileIDs))
 	for _, row := range rows {
 		byFile[row.FileID] = append(byFile[row.FileID], row)
 	}
-	result := make([]*managev1.FileDeletionImpact, 0, len(fileIDs))
+	result := make([]*DeletionImpact, 0, len(fileIDs))
 	for _, fileID := range fileIDs {
 		result = append(result, buildFileDeletionImpact(fileID, byFile[fileID]))
 	}
