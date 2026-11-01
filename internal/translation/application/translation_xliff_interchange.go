@@ -10,13 +10,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediaauth"
+
 	"github.com/google/uuid"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 const translationXLIFFMaximumBytes = 20 << 20
@@ -54,7 +55,7 @@ type VerifiedTranslationXLIFF struct {
 // ingest/storage. Export creates a short-lived File delivery reference; import
 // reads an already verified upload and never accepts caller-supplied XML.
 type TranslationXLIFFFiles interface {
-	CreateTranslationXLIFF(context.Context, TranslationXLIFFArtifact) (*commonv1.ExpiringMediaRef, error)
+	CreateTranslationXLIFF(context.Context, TranslationXLIFFArtifact) (*mediaauth.Reference, error)
 	ReadVerifiedTranslationXLIFF(context.Context, string, int64) (VerifiedTranslationXLIFF, error)
 }
 
@@ -104,7 +105,7 @@ type ExportTranslationXLIFFCommand struct {
 // XLIFFExport is a stored XLIFF export and the target it describes.
 // TargetRevision is nil while the target locale has no values.
 type XLIFFExport struct {
-	Artifact       *commonv1.ExpiringMediaRef
+	Artifact       *mediaauth.Reference
 	SourceLocale   string
 	TargetLocale   string
 	TargetRevision *string
@@ -591,27 +592,27 @@ func validateVerifiedTranslationXLIFF(upload VerifiedTranslationXLIFF, expectedF
 	return nil
 }
 
-func validateTranslationXLIFFArtifactRef(ref *commonv1.ExpiringMediaRef, now time.Time) error {
+func validateTranslationXLIFFArtifactRef(ref *mediaauth.Reference, now time.Time) error {
 	if ref == nil {
 		return fmt.Errorf("translation XLIFF artifact reference is required")
 	}
-	if _, err := canonicalTranslationXLIFFFileID(ref.FileId); err != nil {
+	if _, err := canonicalTranslationXLIFFFileID(ref.FileID); err != nil {
 		return fmt.Errorf("translation XLIFF artifact returned an invalid File ID: %w", err)
 	}
-	parsed, err := url.Parse(ref.Url)
+	parsed, err := url.Parse(ref.URL)
 	if err != nil {
 		return failurecause.WithAttrs(
 			fmt.Errorf("translation XLIFF artifact returned an invalid delivery URL: %w", err),
-			slog.String("file_id", ref.FileId),
+			slog.String("file_id", ref.FileID),
 		)
 	}
 	if (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
 		return fmt.Errorf("translation XLIFF artifact returned an invalid delivery URL")
 	}
-	if ref.ExpiresAt == nil || !ref.ExpiresAt.IsValid() || !ref.ExpiresAt.AsTime().After(now) {
+	if ref.ExpiresAt.UTC().Year() < 1 || ref.ExpiresAt.UTC().Year() > 9999 || !ref.ExpiresAt.After(now) {
 		return fmt.Errorf("translation XLIFF artifact must be short-lived")
 	}
-	if ref.Purpose != commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_DOWNLOAD {
+	if ref.Purpose != mediaauth.PurposeDownload {
 		return fmt.Errorf("translation XLIFF artifact must use download delivery")
 	}
 	return nil

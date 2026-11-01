@@ -8,10 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediaauth"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
@@ -22,7 +23,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	"github.com/echovisionlab/geul-api/internal/translation/translationtest"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -154,12 +154,12 @@ type recordingXLIFFFiles struct {
 	upload  application.VerifiedTranslationXLIFF
 }
 
-func (f *recordingXLIFFFiles) CreateTranslationXLIFF(_ context.Context, artifact application.TranslationXLIFFArtifact) (*commonv1.ExpiringMediaRef, error) {
+func (f *recordingXLIFFFiles) CreateTranslationXLIFF(_ context.Context, artifact application.TranslationXLIFFArtifact) (*mediaauth.Reference, error) {
 	f.created = append(f.created, artifact)
-	return &commonv1.ExpiringMediaRef{
-		FileId: uuid.NewString(), Url: "https://cdn.example/xliff/signed",
-		ExpiresAt: timestamppb.New(time.Now().Add(time.Hour)),
-		Purpose:   commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_DOWNLOAD,
+	return &mediaauth.Reference{
+		FileID: uuid.NewString(), URL: "https://cdn.example/xliff/signed",
+		ExpiresAt: time.Now().Add(time.Hour),
+		Purpose:   mediaauth.PurposeDownload,
 	}, nil
 }
 
