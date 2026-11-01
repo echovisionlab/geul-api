@@ -136,6 +136,9 @@ func (s *Service) UnbanAccount(ctx context.Context, command UnbanAccountCommand)
 			})
 		},
 	}); err != nil {
+		if errors.Is(err, ErrPendingAccountDeletion) {
+			return nil, domainerr.Precondition("an account pending deletion cannot be unbanned").WithCause(err)
+		}
 		return nil, err
 	}
 	return s.adminAccountSummary(ctx, command.MemberID)
