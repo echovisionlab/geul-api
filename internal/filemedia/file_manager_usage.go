@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
@@ -42,11 +42,11 @@ func (s *Service) loadVisibleFileUsageCounts(ctx context.Context, fileIDs []stri
 	user := auth.GetUser(ctx)
 	can, err := policyv1.File.ManageLibrary()
 	if err != nil {
-		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	isAdmin, err := checkSpiceDBCan(ctx, user, can, s.spiceDB)
 	if err != nil {
-		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if isAdmin {
 		return loadFileUsageCounts(ctx, s.db, fileIDs)
@@ -208,11 +208,11 @@ func (s *Service) filterVisibleFileUsages(ctx context.Context, rows []fileUsageR
 	user := auth.GetUser(ctx)
 	can, err := policyv1.File.ManageLibrary()
 	if err != nil {
-		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	isAdmin, err := checkSpiceDBCan(ctx, user, can, s.spiceDB)
 	if err != nil {
-		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if isAdmin || len(rows) == 0 {
 		return rows, nil
@@ -221,7 +221,7 @@ func (s *Service) filterVisibleFileUsages(ctx context.Context, rows []fileUsageR
 		return nil, fmt.Errorf("file usage viewer is missing")
 	}
 	if user.IdentityID.String() == "" {
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, domainerr.DependencyUnavailable("SpiceDB")
 	}
 
 	releaseIDByTrackID, err := s.fileUsageTrackReleaseIDs(ctx, rows)
@@ -305,11 +305,11 @@ func (s *Service) editableFileUsageTargets(ctx context.Context, rows []fileUsage
 		}
 		decision, decisionErr := auth.AuthorizationDecision(ctx, can)
 		if decisionErr != nil {
-			return nil, errs.WithCause(errs.AuthenticationRequired(), decisionErr)
+			return nil, domainerr.AuthenticationRequired().WithCause(decisionErr)
 		}
 		allowed, checkErr := s.spiceDB.Can(ctx, decision)
 		if checkErr != nil {
-			return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), checkErr)
+			return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(checkErr)
 		}
 		if allowed {
 			allowedTargets[key] = struct{}{}
@@ -414,10 +414,10 @@ func (s *Service) ListFileUsages(ctx context.Context, req ListFileUsagesQuery) (
 func (s *Service) requireFileManagerFile(ctx context.Context, fileID string) error {
 	var count int64
 	if err := s.db.WithContext(ctx).Table("file").Where("id = ? AND delete_requested_at IS NULL", fileID).Count(&count).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if count == 0 {
-		return errs.NotFound("file", fileID)
+		return domainerr.ResourceNotFound("file", fileID)
 	}
 	return nil
 }

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 var (
@@ -129,16 +127,16 @@ func ValidateAutomaticEmailTemplateData(eventKey string, data map[string]string)
 	return fmt.Errorf("automatic email %s has unknown template variables: %s", eventKey, strings.Join(unknown, ", "))
 }
 
-func verifiedSystemEmailTemplateVariables(eventKey interface{ String() string }) model.EmailTemplateVariables {
+func verifiedSystemEmailTemplateVariables(eventKey interface{ String() string }) []TemplateVariable {
 	names := verifiedSystemEmailTemplateVariableNames(eventKey)
-	vars := make(model.EmailTemplateVariables, 0, len(names))
+	vars := make([]TemplateVariable, 0, len(names))
 	for _, name := range names {
-		vars = append(vars, model.EmailTemplateVariable{Name: name})
+		vars = append(vars, TemplateVariable{Name: name})
 	}
 	return vars
 }
 
-func verifiedSystemEmailTemplateMetadata(templateKey string) (*string, model.EmailTemplateVariables, bool) {
+func verifiedSystemEmailTemplateMetadata(templateKey string) (*string, []TemplateVariable, bool) {
 	templateKey = strings.TrimSpace(templateKey)
 	for _, eventKey := range automaticEmailEventKeys() {
 		if eventKey.String() != templateKey {

@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -32,10 +32,7 @@ func (s *Service) prepareMultipartCandidateSearch(
 ) (multipartCandidateSearch, error) {
 	search := multipartCandidateSearch{request: request, uploadType: request.UploadType}
 	if s.getUploadConfig(search.uploadType) == nil {
-		return search, errs.InvalidArgument(
-			"upload_type",
-			fmt.Sprintf("invalid upload type: %s", search.uploadType.String()),
-		)
+		return search, domainerr.InvalidField("upload_type", fmt.Sprintf("invalid upload type: %s", search.uploadType.String()))
 	}
 	if request.EntityType != nil {
 		search.entityType = request.EntityType.String()
@@ -83,16 +80,13 @@ func validateIndependentFileCandidateIdentity(
 		return nil
 	}
 	if entityID != "" {
-		return errs.InvalidArgument(
-			"entity_id",
-			"independent File upload must omit entity ID",
-		)
+		return domainerr.InvalidField("entity_id", "independent File upload must omit entity ID")
 	}
 	if strings.TrimSpace(derefString(request.FileID)) == "" {
-		return errs.Required("file_id")
+		return domainerr.Required("file_id")
 	}
 	if strings.TrimSpace(derefString(request.UploadID)) == "" {
-		return errs.Required("upload_id")
+		return domainerr.Required("upload_id")
 	}
 	return nil
 }
@@ -103,7 +97,7 @@ func normalizeOptionalCandidateFilename(fileName string) (string, error) {
 	}
 	normalized, err := normalizeNewDownloadFilename(fileName)
 	if err != nil {
-		return "", errs.InvalidArgument("file_name", err.Error())
+		return "", domainerr.InvalidField("file_name", err.Error())
 	}
 	return normalized, nil
 }
@@ -183,7 +177,7 @@ func applyMultipartCandidateProjectionFilters(
 	case fileIngestTargetModeGeneral:
 		query = applyGeneralMultipartCandidateSlot(query, search.uploadType, identity.slotID)
 	case fileIngestTargetModeUnknown:
-		return nil, errs.Internal(fmt.Errorf("upload target classification is missing"))
+		return nil, fmt.Errorf("upload target classification is missing")
 	}
 	if identity.expectedCurrentFileID == nil {
 		return query.Where("expected_current_file_id IS NULL"), nil

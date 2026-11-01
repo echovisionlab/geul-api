@@ -2,11 +2,13 @@ package translationadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -15,11 +17,13 @@ import (
 )
 
 func emailTemplateDomainRegistration(
-	references emailauthoring.CampaignDeliveryReferences,
+	references emailauthoringpostgres.DeliveryReferences,
 	audit domainaudit.Appender,
 ) domainRegistration {
 	return newConfiguredDomainPort(core.KindEmailTemplate, domainPortFunctions{
-		loadSourceDocument: emailauthoring.LoadTemplateTranslationSourceDocument,
+		loadSourceDocument: func(ctx context.Context, db *gorm.DB, store *contentblock.Store, templateID string) (*core.SourceDocument, error) {
+			return emailauthoring.LoadTemplateTranslationSourceDocument(ctx, emailAuthoringStore(db, store, references), templateID)
+		},
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
 			return core.BuildRichTextExtractionPlan(job, source, core.RichTextDocumentFields{Title: true})
 		},
@@ -32,8 +36,12 @@ func emailTemplateDomainRegistration(
 			candidate *core.Candidate,
 			input core.EntryWrite,
 		) error {
+			if job == nil {
+				return errors.New("typed Email Template translation candidate is required")
+			}
 			return emailauthoring.ApplyTemplateTranslationCandidate(
-				ctx, tx, store, job, candidate, input, audit,
+				ctx, emailauthoringpostgres.Bind(tx, emailAuthoringPorts(store, references), audit),
+				emailContentTranslationJob(job), candidate, input,
 			)
 		},
 		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditEmailTemplateUpdated, sharedtelemetry.NewEmailTemplateSourceLocaleAuditRecord),
@@ -56,7 +64,7 @@ func emailTemplateDomainRegistration(
 		requireJobRead: requireJobEdit(policyv1.EmailTemplate.Edit),
 		requireSourceMutable: func(ctx context.Context, db *gorm.DB, entityID string) error {
 			return emailauthoring.RequireTranslationSourceMutable(
-				ctx, db, references, string(core.KindEmailTemplate), entityID,
+				ctx, emailAuthoringStore(db, nil, references), string(core.KindEmailTemplate), entityID,
 			)
 		},
 	})

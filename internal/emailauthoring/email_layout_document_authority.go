@@ -7,49 +7,34 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
 
-type emailLayoutDocumentAuthority struct {
-	LayoutID         string    `gorm:"column:layout_id"`
-	SourceLocale     string    `gorm:"column:source_locale"`
-	DocumentID       uuid.UUID `gorm:"column:content_document_id"`
-	DocumentRevision uuid.UUID `gorm:"column:document_revision"`
-}
-
+// loadEmailLayoutDocumentAuthority reads the layout root with its content
+// document revision, locking the root with lock.
 func loadEmailLayoutDocumentAuthority(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	layoutID string,
-	lock string,
-) (emailLayoutDocumentAuthority, error) {
+	lock emailcontent.RowLock,
+) (LayoutAuthority, error) {
 	if strings.TrimSpace(layoutID) == "" {
-		return emailLayoutDocumentAuthority{}, domainerr.InvalidField("email_layout_id", "is required")
+		return LayoutAuthority{}, domainerr.InvalidField("email_layout_id", "is required")
 	}
-	query := db.WithContext(ctx).
-		Table("email_layout AS root").
-		Select("root.id AS layout_id, root.source_locale, root.content_document_id, document.revision AS document_revision").
-		Joins("JOIN content_document AS document ON document.id = root.content_document_id").
-		Where("root.id = ?", layoutID)
-	if lock != "" {
-		query = query.Clauses(clause.Locking{Strength: lock, Table: clause.Table{Name: "root"}})
+	authority, err := store.LayoutAuthority(ctx, layoutID, lock)
+	if errors.Is(err, ErrLayoutNotFound) {
+		return LayoutAuthority{}, domainerr.ResourceNotFound("email layout", layoutID)
 	}
-	var authority emailLayoutDocumentAuthority
-	if err := query.Take(&authority).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return emailLayoutDocumentAuthority{}, domainerr.ResourceNotFound("email layout", layoutID)
-		}
-		return emailLayoutDocumentAuthority{}, err
+	if err != nil {
+		return LayoutAuthority{}, err
 	}
 	if authority.DocumentID == uuid.Nil || authority.DocumentRevision == uuid.Nil || strings.TrimSpace(authority.SourceLocale) == "" {
-		return emailLayoutDocumentAuthority{}, domainerr.Precondition("Email Layout Content Document authority is not initialized")
+		return LayoutAuthority{}, domainerr.Precondition("Email Layout Content Document authority is not initialized")
 	}
 	return authority, nil
 }
@@ -63,19 +48,18 @@ func parseEmailLayoutDocumentRevision(value string) (uuid.UUID, error) {
 	return revision, nil
 }
 
-func emailLayoutContentFence(
-	references CampaignDeliveryReferences,
-	layoutID string,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, layoutID, clause.LockingStrengthUpdate)
+// emailLayoutContentFence is the fence of a layout content write: the layout
+// keeps its document, and no active delivery renders it.
+func emailLayoutContentFence(store Store, layoutID string) emailcontent.Fence {
+	return func(ctx context.Context, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		authority, err := loadEmailLayoutDocumentAuthority(ctx, store, layoutID, emailcontent.UpdateLock)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if authority.DocumentID != documentID {
 			return contentblock.DomainContext{}, domainerr.Precondition("Email Layout Content Document changed")
 		}
-		if err := references.RequireLayoutMutable(ctx, tx, layoutID); err != nil {
+		if err := store.RequireLayoutMutable(ctx, layoutID); err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		return contentblock.DomainContext{SourceLocale: authority.SourceLocale}, nil
@@ -104,24 +88,22 @@ func deriveEmailLayoutTargetRevision(
 // changes nothing but still proves the revision and the content fence.
 func saveEmailLayoutSource(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	references CampaignDeliveryReferences,
+	store Store,
 	layoutID string,
-	authority emailLayoutDocumentAuthority,
+	authority LayoutAuthority,
 	expected uuid.UUID,
 	document *emailutil.LayoutTranslationDocument,
 	now time.Time,
 ) (contentblock.AdvanceResult, error) {
-	return store.AdvanceRevision(
-		ctx, tx,
+	return store.AdvanceContentRevision(
+		ctx,
 		contentblock.AdvanceInput{DocumentID: authority.DocumentID, ExpectedRevision: expected},
-		emailLayoutContentFence(references, layoutID),
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+		emailLayoutContentFence(store, layoutID),
+		func(ctx context.Context) (contentblock.MetadataEffect, error) {
 			if document == nil {
 				return contentblock.MetadataEffect{}, nil
 			}
-			if err := emailutil.SaveLayoutSourceLocaleDocument(ctx, emailpostgres.Bind(tx), layoutID, authority.SourceLocale, *document, now); err != nil {
+			if err := store.SaveLayoutSource(ctx, layoutID, authority.SourceLocale, *document, now); err != nil {
 				return contentblock.MetadataEffect{}, err
 			}
 			return contentblock.MetadataEffect{
@@ -137,7 +119,7 @@ func saveEmailLayoutSource(
 // updated_at.
 func saveEmailLayoutTarget(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	layoutID string,
 	locale string,
 	sourceHTML string,
@@ -150,8 +132,8 @@ func saveEmailLayoutTarget(
 		return time.Time{}, domainerr.InvalidField("content", err.Error())
 	}
 	updatedAt := translation.NextTargetUpdatedAt(now, previous)
-	return updatedAt, emailutil.UpsertLayoutTranslationEntry(
-		ctx, emailpostgres.Bind(tx), layoutID, locale,
+	return updatedAt, store.UpsertLayoutTranslation(
+		ctx, layoutID, locale,
 		translation.EntryWrite{ContentHTML: contentHTML, ContentText: contentText, Now: updatedAt},
 	)
 }

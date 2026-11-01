@@ -341,7 +341,7 @@ func (s *Service) validateRelayedMultipartUploadPart(
 		return false
 	}
 	if err := validateMultipartPartContentLength(request.session, request.partNumber, r.ContentLength); err != nil {
-		writeMultipartPartFailure(w, progressEmitter, err.Error(), http.StatusBadRequest)
+		writeMultipartPartFailure(w, progressEmitter, clientErrorText(err), http.StatusBadRequest)
 		return false
 	}
 	claimed, err := s.claimMultipartUploadPartActivity(r.Context(), request.session.UploadID, request.session.FileID)
@@ -438,7 +438,7 @@ func (s *Service) prepareMultipartFirstPart(
 		return nil, "", false
 	}
 	if err := validateMultipartFirstPartGLB(prefix, request.session, detected); err != nil {
-		s.rejectMultipartFirstPart(w, r, request.session, err.Error())
+		s.rejectMultipartFirstPart(w, r, request.session, clientErrorText(err))
 		return nil, "", false
 	}
 	if requestedCanonical != "" && requestedCanonical != detected {
@@ -485,7 +485,7 @@ func (s *Service) HandleVerifyUploadPrefix(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := validateMultipartFirstPartGLB(prefix, request.session, detected); err != nil {
-		s.rejectMultipartFirstPart(w, r, request.session, err.Error())
+		s.rejectMultipartFirstPart(w, r, request.session, clientErrorText(err))
 		return
 	}
 	if requestedCanonical != "" && requestedCanonical != detected {

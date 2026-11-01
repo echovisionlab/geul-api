@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
@@ -47,10 +47,10 @@ type ContentBlockFileSelector struct {
 func (s *Service) AuthorizeDownload(ctx context.Context, query AuthorizeDownloadQuery) (*openv1.AuthorizeDownloadResponse, error) {
 	entityID := strings.TrimSpace(query.EntityID)
 	if entityID == "" {
-		return nil, errs.Required("entity_id")
+		return nil, domainerr.Required("entity_id")
 	}
 	if _, err := uuid.Parse(entityID); err != nil {
-		return nil, errs.InvalidArgument("entity_id", "must be a valid UUID")
+		return nil, domainerr.InvalidField("entity_id", "must be a valid UUID")
 	}
 	var target fileDownloadTarget
 	var err error
@@ -86,15 +86,15 @@ type fileDownloadTarget struct {
 
 func (s *Service) contentBlockDownloadTarget(entityType openv1.PublicMediaEntityType, entityID string, selector *ContentBlockFileSelector) (fileDownloadTarget, error) {
 	if selector == nil {
-		return fileDownloadTarget{}, errs.Required("content_block")
+		return fileDownloadTarget{}, domainerr.Required("content_block")
 	}
 	blockID := strings.TrimSpace(selector.BlockID)
 	if _, err := uuid.Parse(blockID); err != nil {
-		return fileDownloadTarget{}, errs.InvalidArgument("selector.block_id", "must be a valid UUID")
+		return fileDownloadTarget{}, domainerr.InvalidField("selector.block_id", "must be a valid UUID")
 	}
 	referencePath := strings.TrimSpace(selector.ReferencePath)
 	if referencePath == "" || len(referencePath) > 512 || strings.IndexFunc(referencePath, unicode.IsControl) >= 0 {
-		return fileDownloadTarget{}, errs.InvalidArgument("selector.reference_path", "must be non-empty, control-free, and at most 512 bytes")
+		return fileDownloadTarget{}, domainerr.InvalidField("selector.reference_path", "must be non-empty, control-free, and at most 512 bytes")
 	}
 	return fileDownloadTarget{
 		resolve: func(ctx context.Context, tx *gorm.DB, locked bool) (mediaasset.FileDownloadSource, string, bool, error) {
@@ -112,7 +112,7 @@ func (s *Service) contentBlockDownloadTarget(entityType openv1.PublicMediaEntity
 			}
 			reason, err := pageaccesspostgres.EvaluateStored(ctx, tx, s.spiceDB, entityID)
 			if err != nil {
-				return false, errs.Internal(err)
+				return false, err
 			}
 			return reason == pageaccess.ReasonAllowed, nil
 		},
@@ -123,7 +123,7 @@ func (s *Service) contentBlockDownloadTarget(entityType openv1.PublicMediaEntity
 func (s *Service) releaseTrackDownloadTarget(releaseID, trackID string) (fileDownloadTarget, error) {
 	trackID = strings.TrimSpace(trackID)
 	if _, err := uuid.Parse(trackID); err != nil {
-		return fileDownloadTarget{}, errs.InvalidArgument("track_id", "must be a valid UUID")
+		return fileDownloadTarget{}, domainerr.InvalidField("track_id", "must be a valid UUID")
 	}
 	return fileDownloadTarget{
 		resolve: func(ctx context.Context, tx *gorm.DB, locked bool) (mediaasset.FileDownloadSource, string, bool, error) {
@@ -136,7 +136,7 @@ func (s *Service) releaseTrackDownloadTarget(releaseID, trackID string) (fileDow
 			}
 			allowed, err := hasDraftResourceView(ctx, s.spiceDB, policyv1.Release.View, releaseID)
 			if err != nil {
-				return mediaAccess, false, errs.Internal(err)
+				return mediaAccess, false, err
 			}
 			if !allowed {
 				return mediaAccess, false, nil
@@ -220,7 +220,7 @@ func (s *Service) evaluateFileDownload(ctx context.Context, tx *gorm.DB, target 
 func (s *Service) revalidateFileDownload(ctx context.Context, tx *gorm.DB, target fileDownloadTarget, evaluation fileDownloadEvaluation) (*openv1.AuthorizeDownloadResponse, error) {
 	evaluatedSources := map[string]mediaasset.FileDownloadSource{evaluation.source.PolicyKey: evaluation.source}
 	if err := mediaasset.LockFileDownloadPolicySegments(ctx, tx, evaluatedSources); err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	ownerStatus, ownerFound, err := target.lockOwner(ctx, tx)
 	if err != nil {
@@ -240,14 +240,14 @@ func (s *Service) revalidateFileDownload(ctx context.Context, tx *gorm.DB, targe
 	}
 	draftPrincipalActive, err := lockDirectDraftDownloadPrincipal(ctx, tx, evaluation.mediaAccess)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if !draftPrincipalActive {
 		return unavailableFileDownloadResponse(), nil
 	}
 	viewerActive, err := mediaasset.LockFileDownloadViewerFacts(ctx, tx, evaluatedSources, auth.GetUser(ctx))
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	dependsOnViewer := fileDownloadDecisionDependsOnActiveViewer(evaluation.source, evaluation.access)
 	if dependsOnViewer && !viewerActive {
@@ -277,11 +277,11 @@ func (s *Service) fileDownloadFingerprints(ctx context.Context, tx *gorm.DB, sou
 	sources := map[string]mediaasset.FileDownloadSource{source.PolicyKey: source}
 	fingerprints, err := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, sources, s.segments)
 	if err != nil {
-		return "", "", errs.Internal(err)
+		return "", "", err
 	}
 	viewerFingerprint, err := mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, sources, auth.GetUser(ctx))
 	if err != nil {
-		return "", "", errs.Internal(err)
+		return "", "", err
 	}
 	return fingerprints[source.PolicyKey], viewerFingerprint, nil
 }
@@ -294,7 +294,7 @@ func (s *Service) lockContentDownloadOwner(
 ) (string, bool, error) {
 	ownerTable, ok := contentDownloadOwnerTable(entityType)
 	if !ok {
-		return "", false, errs.InvalidArgument("entity_type", "unsupported Content Block owner")
+		return "", false, domainerr.InvalidField("entity_type", "unsupported Content Block owner")
 	}
 	var owner struct {
 		Status string `gorm:"column:status"`
@@ -306,7 +306,7 @@ func (s *Service) lockContentDownloadOwner(
 		return "", false, nil
 	}
 	if result.Error != nil {
-		return "", false, errs.Internal(result.Error)
+		return "", false, result.Error
 	}
 	return owner.Status, true, nil
 }
@@ -326,7 +326,7 @@ func (s *Service) lockReleaseDownloadOwner(
 		return "", false, nil
 	}
 	if result.Error != nil {
-		return "", false, errs.Internal(result.Error)
+		return "", false, result.Error
 	}
 	return owner.Status, true, nil
 }
@@ -357,7 +357,7 @@ func (s *Service) resolveContentBlockDownloadSource(
 ) (mediaasset.FileDownloadSource, string, bool, error) {
 	ownerTable, ok := contentDownloadOwnerTable(entityType)
 	if !ok {
-		return mediaasset.FileDownloadSource{}, "", false, errs.InvalidArgument("entity_type", "unsupported Content Block owner")
+		return mediaasset.FileDownloadSource{}, "", false, domainerr.InvalidField("entity_type", "unsupported Content Block owner")
 	}
 
 	var owner struct {
@@ -377,13 +377,13 @@ func (s *Service) resolveContentBlockDownloadSource(
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return mediaasset.FileDownloadSource{}, "", false, nil
 		}
-		return mediaasset.FileDownloadSource{}, "", false, errs.Internal(result.Error)
+		return mediaasset.FileDownloadSource{}, "", false, result.Error
 	}
 	sources, err := mediaasset.LoadContentBlockDownloadSources(ctx, db, []mediaasset.ContentBlockDownloadSelector{{
 		BlockID: blockID, ReferencePath: referencePath,
 	}})
 	if err != nil {
-		return mediaasset.FileDownloadSource{}, "", false, errs.Internal(err)
+		return mediaasset.FileDownloadSource{}, "", false, err
 	}
 	source, found := sources[mediaasset.ContentBlockDownloadPolicyKey(blockID, referencePath)]
 	return source, owner.Status, found, nil
@@ -412,11 +412,11 @@ func (s *Service) resolveReleaseTrackDownloadSource(
 		return mediaasset.FileDownloadSource{}, "", false, nil
 	}
 	if result.Error != nil {
-		return mediaasset.FileDownloadSource{}, "", false, errs.Internal(result.Error)
+		return mediaasset.FileDownloadSource{}, "", false, result.Error
 	}
 	sources, err := mediaasset.LoadTrackDownloadSources(ctx, db, []string{trackID})
 	if err != nil {
-		return mediaasset.FileDownloadSource{}, "", false, errs.Internal(err)
+		return mediaasset.FileDownloadSource{}, "", false, err
 	}
 	source, found := sources[trackID]
 	return source, owner.Status, found, nil
@@ -445,7 +445,7 @@ func (s *Service) resolveContentOwnerDownloadAccess(
 		viewAction = policyv1.ProgramEvent.View
 		publicStatuses = []string{string(model.ProgramEventStatusPublished), string(model.ProgramEventStatusArchived)}
 	default:
-		return resolvedMediaAccess{}, false, errs.InvalidArgument("entity_type", "unsupported Content Block owner")
+		return resolvedMediaAccess{}, false, domainerr.InvalidField("entity_type", "unsupported Content Block owner")
 	}
 	if slices.Contains(publicStatuses, ownerStatus) {
 		if entityType == openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_PAGE {
@@ -494,14 +494,14 @@ func (s *Service) evaluateReferencedFileDownload(
 	user := auth.GetUser(ctx)
 	allowed, err := mediaasset.EvaluateFileDownloadAccess(ctx, db, s.spiceDB, source, user, s.segments)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	signInActionable := source.Audience == mediaasset.FileDownloadAudienceAuthenticated
 	if source.Audience == mediaasset.FileDownloadAudienceRestricted &&
 		(user == nil || !user.Authenticated || user.MemberID == "") {
 		presence, err := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, db, map[string]mediaasset.FileDownloadSource{source.PolicyKey: source})
 		if err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 		signInActionable = presence[source.PolicyKey]
 	}
@@ -538,7 +538,7 @@ func (s *Service) signReferencedFileDownload(
 		downloadTTL,
 	)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	response.Download = download
 	return response, nil

@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,7 +32,7 @@ func TestCompileEmailLayoutTargetValuesKeepsStableWrapper(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, units, 2)
 
-	contentHTML, contentText, err := compileEmailLayoutTargetValues(source, []*intrav1.EmailLayoutLocaleValue{
+	contentHTML, contentText, err := compileEmailLayoutTargetValues(source, []*LayoutUnitValue{
 		{Handle: units[0].Handle, Value: "번역 제목"},
 		{Handle: units[1].Handle, Value: "번역 본문"},
 	})
@@ -66,7 +65,7 @@ func TestCompileEmailLayoutTargetValuesPreservesExplicitEmptyAndSparseAbsence(t 
 	require.NoError(t, err)
 	require.Len(t, units, 2)
 
-	contentHTML, _, err := compileEmailLayoutTargetValues(source, []*intrav1.EmailLayoutLocaleValue{
+	contentHTML, _, err := compileEmailLayoutTargetValues(source, []*LayoutUnitValue{
 		{Handle: units[0].Handle, Value: ""},
 	})
 	require.NoError(t, err)
@@ -88,12 +87,12 @@ func TestCompileEmailLayoutTargetValuesRejectsUnknownAndDuplicateHandles(t *test
 	require.NoError(t, err)
 	require.Len(t, units, 1)
 
-	_, _, err = compileEmailLayoutTargetValues(source, []*intrav1.EmailLayoutLocaleValue{
+	_, _, err = compileEmailLayoutTargetValues(source, []*LayoutUnitValue{
 		{Handle: "unknown", Value: "invalid"},
 	})
 	require.Error(t, err)
 
-	_, _, err = compileEmailLayoutTargetValues(source, []*intrav1.EmailLayoutLocaleValue{
+	_, _, err = compileEmailLayoutTargetValues(source, []*LayoutUnitValue{
 		{Handle: units[0].Handle, Value: "first"},
 		{Handle: units[0].Handle, Value: "second"},
 	})

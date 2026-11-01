@@ -31,8 +31,9 @@ const integrationHarnessPackage = "./scripts/test/integration"
 // integrationProcessDependencies lists packages whose tests start other module
 // binaries; a change to such a binary's dependencies selects them as well.
 var integrationProcessDependencies = map[string][]string{
-	"./cmd/server/runtimetest": {"./cmd/server"},
-	"./internal/filemedia":     {"./cmd/server"},
+	"./cmd/server/runtimetest":         {"./cmd/server"},
+	"./internal/filemedia":             {"./cmd/server"},
+	"./internal/filemedia/runtimetest": {"./cmd/server"},
 }
 
 var integrationCatalog = []integrationBand{
@@ -59,6 +60,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/authentication/postgres",
 			"./internal/contentblock",
 			"./internal/email/postgres",
+			"./internal/emailauthoring/postgres",
 			"./internal/emaildelivery/postgres",
 			"./internal/form/postgres",
 			"./internal/form/public/postgres",
@@ -116,6 +118,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/authorizationtarget",
 			"./internal/campaign",
 			"./internal/emailauthoring",
+			"./internal/filemedia",
 			"./internal/filemedia/public",
 			"./internal/form",
 			"./internal/identitystate",
@@ -151,7 +154,7 @@ var integrationCatalog = []integrationBand{
 		Packages: []string{
 			"./cmd/backend-integration-stack",
 			"./cmd/server/runtimetest",
-			"./internal/filemedia",
+			"./internal/filemedia/runtimetest",
 			"./internal/testutil",
 		},
 	},

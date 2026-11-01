@@ -247,14 +247,6 @@ func seedFileDeleteLifecycleGenerationDerivative(t *testing.T, db *gorm.DB, file
 	return generation
 }
 
-func requireFileDeleteLifecycleFileAbsent(t *testing.T, db *gorm.DB, fileID string) {
-	t.Helper()
-
-	var file model.File
-	err := db.First(&file, "id = ?", fileID).Error
-	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
-}
-
 func requireFileDeleteLifecyclePending(t *testing.T, db *gorm.DB, fileID string) {
 	t.Helper()
 	var file model.File

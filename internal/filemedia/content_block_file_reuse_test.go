@@ -4,9 +4,14 @@ import (
 	"context"
 	"testing"
 
+	"connectrpc.com/connect"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -58,6 +63,46 @@ func TestContentBlockFileReuseAuthority(t *testing.T) {
 		)
 		require.ErrorContains(t, err, "SpiceDB File reuse authorization is not configured")
 	})
+}
+
+// A foreign library File is admitted by File list authority alone; the owning
+// domain checks document edit authority at its locked mutation boundary.
+func TestContentBlockForeignFileReuseUsesFileListAdmission(t *testing.T) {
+	t.Parallel()
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE file ( client_media_bundle_id TEXT,id TEXT PRIMARY KEY, uploaded_by_member_id TEXT)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE content_block (id TEXT PRIMARY KEY, document_id TEXT NOT NULL)`).Error)
+	require.NoError(t, db.Exec(`CREATE TABLE content_block_attachment (block_id TEXT NOT NULL, reference_path TEXT NOT NULL, selector_kind TEXT NOT NULL, file_id TEXT, missing_kind TEXT)`).Error)
+	fileID := uuid.New()
+	require.NoError(t, db.Exec(`INSERT INTO file (id, uploaded_by_member_id) VALUES (?, ?)`, fileID, uuid.NewString()).Error)
+	file := contentblock.File{ID: fileID, MIMEType: "image/png"}
+
+	for _, test := range []struct {
+		name    string
+		checker *authztest.Checker
+		wantErr bool
+	}{
+		{name: "File list allowed", checker: (&authztest.Checker{}).Allow(policyv1.File.List())},
+		{name: "File list denied", checker: &authztest.Checker{}, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			authorizer := NewContentBlockFileReuseAuthorizer(test.checker.Client(t))
+			err := authorizer.AuthorizeFileReuse(
+				auditedUserContext(context.Background(), newUnitUser().AuthUserInfo()),
+				db,
+				contentblock.Document{ID: uuid.New()},
+				contentblock.FullBlock{},
+				contentblock.FileReference{},
+				file,
+			)
+			if test.wantErr {
+				require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
 
 func contentBlockReuseTestContext(memberID string) context.Context {

@@ -202,14 +202,14 @@ func campaignLocaleMetadataProjection(state emailcontent.ExactLocaleState, local
 	if state.TargetMetadata == nil {
 		return nil
 	}
-	subject := state.SourceMetadata.Subject.String
-	if state.TargetMetadata.Subject.Valid {
-		subject = state.TargetMetadata.Subject.String
+	subject := ptrStringValue(state.SourceMetadata.Subject)
+	if state.TargetMetadata.Subject != nil {
+		subject = *state.TargetMetadata.Subject
 	}
 	return &intrav1.CampaignLocaleMetadata{Locale: locale, Subject: &subject}
 }
 
 func campaignSourceMetadataProjection(state emailcontent.ExactLocaleState) *intrav1.CampaignLocaleMetadata {
-	subject := state.SourceMetadata.Subject.String
+	subject := ptrStringValue(state.SourceMetadata.Subject)
 	return &intrav1.CampaignLocaleMetadata{Locale: state.SourceLocale, Subject: &subject}
 }

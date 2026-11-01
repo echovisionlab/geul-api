@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -42,18 +42,18 @@ func validateTrackOriginalAudioTarget(command AttachTrackOriginalAudioCommand) (
 		attemptID: strings.TrimSpace(command.IngestAttemptID),
 	}
 	if _, err := uuid.Parse(target.trackID); err != nil {
-		return target, errs.InvalidArgument("track_id", "must be a UUID")
+		return target, domainerr.InvalidField("track_id", "must be a UUID")
 	}
 	if _, err := uuid.Parse(target.fileID); err != nil {
-		return target, errs.InvalidArgument("verified_file_id", "must be a UUID")
+		return target, domainerr.InvalidField("verified_file_id", "must be a UUID")
 	}
 	if _, err := uuid.Parse(target.attemptID); err != nil {
-		return target, errs.InvalidArgument("ingest_attempt_id", "must be a UUID")
+		return target, domainerr.InvalidField("ingest_attempt_id", "must be a UUID")
 	}
 	if command.ExpectedCurrentFileID != nil {
 		expected := strings.TrimSpace(*command.ExpectedCurrentFileID)
 		if _, err := uuid.Parse(expected); err != nil {
-			return target, errs.InvalidArgument("expected_current_file_id", "must be a UUID when present")
+			return target, domainerr.InvalidField("expected_current_file_id", "must be a UUID when present")
 		}
 		target.expectedCurrentFileID = &expected
 	}
@@ -74,7 +74,7 @@ func (s *Service) AttachTrackOriginalAudio(ctx context.Context, command AttachTr
 		return attachErr
 	})
 	if err != nil {
-		return TrackOriginalAudioAttachment{}, errs.Internal(err)
+		return TrackOriginalAudioAttachment{}, err
 	}
 	return attachment, nil
 }
@@ -95,7 +95,7 @@ func (s *Service) attachTrackOriginalAudioWithDB(ctx context.Context, tx *gorm.D
 		return TrackOriginalAudioAttachment{}, err
 	}
 	if file.ClientMediaBundleID != nil && !ready {
-		return TrackOriginalAudioAttachment{}, errs.FailedPrecondition("client media derivatives are not ready")
+		return TrackOriginalAudioAttachment{}, domainerr.Precondition("client media derivatives are not ready")
 	}
 	attachment, err := s.trackAttachment.AttachOriginalWithDB(ctx, tx, TrackOriginalAudioInput{
 		TrackID: target.trackID, VerifiedFileID: target.fileID, ExpectedCurrentFileID: target.expectedCurrentFileID,
@@ -113,30 +113,30 @@ func loadTrackOriginalAudioFile(tx *gorm.DB, target trackOriginalAudioTarget) (m
 	var file model.File
 	if err := tx.Where("id = ?", target.fileID).Take(&file).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return file, errs.NotFound("file", target.fileID)
+			return file, domainerr.ResourceNotFound("file", target.fileID)
 		}
 		return file, err
 	}
 	if file.DeleteRequestedAt != nil {
-		return file, errs.FailedPrecondition("verified File is pending deletion")
+		return file, domainerr.Precondition("verified File is pending deletion")
 	}
 	if file.IngestAttemptID == nil || strings.TrimSpace(*file.IngestAttemptID) != target.attemptID {
-		return file, errs.FailedPrecondition("File ingest attempt does not match")
+		return file, domainerr.Precondition("File ingest attempt does not match")
 	}
 	if _, err := CanonicalMediaObjectTargetForFile(file); err != nil {
-		return file, errs.WithCause(errs.FailedPrecondition("verified File metadata is not canonical"), failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", file.ID))))
+		return file, domainerr.Precondition("verified File metadata is not canonical").WithCause(failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", file.ID))))
 	}
 	var binding model.FileIngestBinding
 	if err := tx.Where("file_id = ?", target.fileID).Take(&binding).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return file, errs.FailedPrecondition("File ingest binding is missing")
+			return file, domainerr.Precondition("File ingest binding is missing")
 		}
 		return file, err
 	}
 	trackEntityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK.String()
 	if binding.UploadType != managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() ||
 		binding.EntityID != target.trackID || binding.EntityType == nil || *binding.EntityType != trackEntityType {
-		return file, errs.FailedPrecondition("File ingest binding does not match the Track")
+		return file, domainerr.Precondition("File ingest binding does not match the Track")
 	}
 	return file, nil
 }

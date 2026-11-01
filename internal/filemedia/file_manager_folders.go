@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/dberrors"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -126,7 +126,7 @@ func lockFileFolderForUpdate(ctx context.Context, tx *gorm.DB, folderID string, 
 	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("id = ?", folderID).First(folder).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFound("folder", folderID)
+			return domainerr.ResourceNotFound("folder", folderID)
 		}
 		return err
 	}
@@ -154,7 +154,7 @@ func (s *Service) MoveFileFolder(ctx context.Context, command MoveFileFolderComm
 		return nil, err
 	}
 	if parentID != nil && *parentID == *folderID {
-		return nil, errs.FailedPrecondition("folder cannot be moved into itself")
+		return nil, domainerr.Precondition("folder cannot be moved into itself")
 	}
 	var folder model.FileFolder
 	change, err := mutation.Run(ctx, s.mutations, mutation.Spec[fileFolderChange]{
@@ -221,7 +221,7 @@ func lockFileFolderMove(ctx context.Context, tx *gorm.DB, folderID string, paren
 		return err
 	}
 	if cycleFound {
-		return errs.FailedPrecondition("folder move would create a cycle")
+		return domainerr.Precondition("folder move would create a cycle")
 	}
 	return nil
 }
@@ -229,12 +229,12 @@ func lockFileFolderMove(ctx context.Context, tx *gorm.DB, folderID string, paren
 func fileManagerMutationError(err error, message string, privateName string) error {
 	cause := failurecause.WithPrivate(err, privateName)
 	if dberrors.IsUniqueViolation(err) {
-		return errs.WithCause(errs.AlreadyExistsMsg(message), cause)
+		return domainerr.New(domainerr.AlreadyExists, "", message).WithCause(cause)
 	}
 	if value := strings.ToLower(err.Error()); strings.Contains(value, "cycle") || strings.Contains(value, "cannot be its own parent") {
-		return errs.WithCause(errs.FailedPrecondition(message), cause)
+		return domainerr.Precondition(message).WithCause(cause)
 	}
-	return errs.Internal(cause)
+	return cause
 }
 
 func (s *Service) fileFolderProto(ctx context.Context, folder model.FileFolder) (*managev1.FileFolder, error) {
@@ -243,7 +243,7 @@ func (s *Service) fileFolderProto(ctx context.Context, folder model.FileFolder) 
 		memberSummaries := s.memberSummaries
 		members, err := memberSummaries.Load(ctx, []string{*folder.CreatedByMemberID})
 		if err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 		result.CreatedByMember = members[*folder.CreatedByMemberID]
 	}

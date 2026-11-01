@@ -11,51 +11,13 @@ func detectISOBaseMediaMime(body []byte, allowedSet map[string]struct{}) string 
 	}
 
 	limit := min(len(body), 64*1024)
-
-	isMP4Brand := func(brand string) bool {
-		switch brand {
-		case "isom", "iso2", "mp41", "mp42", "avc1", "hvc1", "hev1", "mmp4", "M4V ", "MSNV":
-			return true
-		default:
-			return false
-		}
-	}
-
-	isAudioMP4Brand := func(brand string) bool {
-		switch brand {
-		case "M4A ", "M4B ", "M4P ", "M4R ", "f4a ", "F4A ":
-			return true
-		default:
-			return false
-		}
-	}
-
-	resolveBrand := func(brand string) string {
-		if brand == "qt  " {
-			if _, ok := allowedSet["video/quicktime"]; ok {
-				return "video/quicktime"
-			}
-		}
-		if isAudioMP4Brand(brand) {
-			if _, ok := allowedSet["audio/mp4"]; ok {
-				return "audio/mp4"
-			}
-		}
-		if isMP4Brand(brand) {
-			if _, ok := allowedSet["video/mp4"]; ok {
-				return "video/mp4"
-			}
-		}
-		return ""
-	}
-
 	for off := 4; off+12 <= limit; off++ {
 		if !bytes.Equal(body[off:off+4], []byte("ftyp")) {
 			continue
 		}
 
 		major := string(body[off+4 : off+8])
-		if mime := resolveBrand(major); mime != "" {
+		if mime := resolveISOBaseMediaBrand(major, allowedSet); mime != "" {
 			return mime
 		}
 
@@ -67,13 +29,49 @@ func detectISOBaseMediaMime(body []byte, allowedSet map[string]struct{}) string 
 		}
 
 		for p := off + 8; p+4 <= boxEnd; p += 4 {
-			if mime := resolveBrand(string(body[p : p+4])); mime != "" {
+			if mime := resolveISOBaseMediaBrand(string(body[p:p+4]), allowedSet); mime != "" {
 				return mime
 			}
 		}
 	}
 
 	return ""
+}
+
+// resolveISOBaseMediaBrand is the allowed MIME type an ftyp brand declares.
+func resolveISOBaseMediaBrand(brand string, allowedSet map[string]struct{}) string {
+	allowed := func(mime string) bool {
+		_, ok := allowedSet[mime]
+		return ok
+	}
+	switch {
+	case brand == "qt  " && allowed("video/quicktime"):
+		return "video/quicktime"
+	case isAudioMP4Brand(brand) && allowed("audio/mp4"):
+		return "audio/mp4"
+	case isMP4Brand(brand) && allowed("video/mp4"):
+		return "video/mp4"
+	default:
+		return ""
+	}
+}
+
+func isMP4Brand(brand string) bool {
+	switch brand {
+	case "isom", "iso2", "mp41", "mp42", "avc1", "hvc1", "hev1", "mmp4", "M4V ", "MSNV":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAudioMP4Brand(brand string) bool {
+	switch brand {
+	case "M4A ", "M4B ", "M4P ", "M4R ", "f4a ", "F4A ":
+		return true
+	default:
+		return false
+	}
 }
 
 func detectRIFFMime(body []byte, allowedSet map[string]struct{}) string {

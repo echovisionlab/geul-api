@@ -6,12 +6,10 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -19,28 +17,27 @@ import (
 )
 
 // LoadTranslationSourceDocument returns the owner's typed source document
-// and subject for the shared translation orchestrator. sourceSubject reads
-// the owner's source subject.
-func (o Owner) LoadTranslationSourceDocument(
+// and subject for the shared translation orchestrator, read through store.
+// sourceSubject reads the owner's source subject.
+func (o Owner[S]) LoadTranslationSourceDocument(
 	ctx context.Context,
-	db *gorm.DB,
-	store *contentblock.Store,
+	store S,
 	id string,
-	sourceSubject func(ctx context.Context, db *gorm.DB, id, sourceLocale string) (string, error),
+	sourceSubject func(ctx context.Context, store S, id, sourceLocale string) (string, error),
 ) (*translation.SourceDocument, error) {
-	domain, err := o.Rows.SourceContext(ctx, db, id, false)
+	domain, err := o.Rows.SourceContext(ctx, store, id, false)
 	if err != nil {
 		return nil, err
 	}
-	subject, err := sourceSubject(ctx, db, id, domain.SourceLocale)
+	subject, err := sourceSubject(ctx, store, id, domain.SourceLocale)
 	if err != nil {
 		return nil, err
 	}
-	documentID, err := o.Rows.DocumentID(ctx, db, id)
+	documentID, err := o.Rows.DocumentID(ctx, store, id)
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := store.LoadSnapshot(ctx, db, documentID, domain.SourceLocale)
+	snapshot, err := store.ContentSnapshot(ctx, documentID, domain.SourceLocale)
 	if err != nil {
 		return nil, o.NormalizeContentBlockError(err)
 	}
@@ -59,42 +56,42 @@ func (o Owner) LoadTranslationSourceDocument(
 
 // TranslationCandidate is one accepted TranslationJob's generated target.
 type TranslationCandidate struct {
-	Job       *model.TranslationJob
+	Job       *TranslationJob
 	Candidate *translation.Candidate
 	Input     translation.EntryWrite
 	// Fence is the owner's job-apply fence: an accepted job finishes while
 	// the owner still exists, whatever its lifecycle now.
-	Fence contentblock.DomainFence
+	Fence Fence
 }
 
 // ApplyTranslationCandidate replaces one generated target against the
 // current document revision; a provider result whose target is the source
 // locale rewrites the source and its subject. Request-time revisions are
 // source artifacts, not target CAS tokens, so intervening target edits do not
-// cancel an accepted replacement.
-func (o Owner) ApplyTranslationCandidate(
+// cancel an accepted replacement. store and auditWriter are bound to the
+// translation delivery's transaction.
+func (o Owner[S]) ApplyTranslationCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store S,
 	apply TranslationCandidate,
 	auditWriter domainaudit.Appender,
 ) error {
 	job, candidate := apply.Job, apply.Candidate
-	if store == nil || job == nil || candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
+	if job == nil || candidate == nil || candidate.ContentBlockLocaleOverlay == nil {
 		return errors.New("typed " + o.Name + " translation candidate and content Block store are required")
 	}
 	if candidate.ContentBlockLocaleOverlay.GetLocale() != job.TargetLocale {
 		return errs.FailedPrecondition("translated " + o.Name + " Block overlay locale does not match the target locale")
 	}
-	documentID, err := o.Rows.DocumentID(ctx, tx, job.EntityID)
+	documentID, err := o.Rows.DocumentID(ctx, store, job.EntityID)
 	if err != nil {
 		return err
 	}
-	domain, err := apply.Fence(ctx, tx, documentID)
+	domain, err := apply.Fence(ctx, documentID)
 	if err != nil {
 		return err
 	}
-	currentSnapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
+	currentSnapshot, err := store.LockedContentSnapshot(ctx, documentID, domain.SourceLocale)
 	if err != nil {
 		return o.NormalizeContentBlockError(err)
 	}
@@ -107,17 +104,17 @@ func (o Owner) ApplyTranslationCandidate(
 	if err != nil {
 		return o.NormalizeContentBlockError(err)
 	}
-	write := typedTranslationWrite{owner: o, store: store, apply: apply, documentID: documentID, sourceLocale: domain.SourceLocale, batch: batch, audit: auditWriter}
+	write := typedTranslationWrite[S]{owner: o, store: store, apply: apply, documentID: documentID, sourceLocale: domain.SourceLocale, batch: batch, audit: auditWriter}
 	if candidate.HasProviderUnitPatch() && job.TargetLocale == domain.SourceLocale {
-		return write.source(ctx, tx)
+		return write.source(ctx)
 	}
-	return write.target(ctx, tx, currentSnapshot.Document.Revision)
+	return write.target(ctx, currentSnapshot.Document.Revision)
 }
 
 // typedTranslationWrite is one validated translation batch.
-type typedTranslationWrite struct {
-	owner        Owner
-	store        *contentblock.Store
+type typedTranslationWrite[S Store] struct {
+	owner        Owner[S]
+	store        S
 	apply        TranslationCandidate
 	documentID   uuid.UUID
 	sourceLocale string
@@ -127,7 +124,7 @@ type typedTranslationWrite struct {
 
 // source writes a provider result whose target is the source locale: the
 // source Blocks and subject change as one source revision.
-func (w typedTranslationWrite) source(ctx context.Context, tx *gorm.DB) error {
+func (w typedTranslationWrite[S]) source(ctx context.Context) error {
 	o, job, now := w.owner, w.apply.Job, w.apply.Input.Now
 	memberID, parseErr := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
 	if parseErr != nil || memberID == uuid.Nil || memberID.String() != strings.TrimSpace(job.RequestedByMemberID) {
@@ -135,9 +132,9 @@ func (w typedTranslationWrite) source(ctx context.Context, tx *gorm.DB) error {
 	}
 	batch := w.batch
 	batch.ContributorMemberIDs = []uuid.UUID{memberID}
-	result, err := w.store.ApplyBatchWithMetadata(ctx, tx, batch, w.apply.Fence,
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-			return o.ApplySubject(ctx, tx, AIDocumentMutation{
+	result, err := w.store.ApplyContentBatchWithMetadata(ctx, batch, w.apply.Fence,
+		func(ctx context.Context) (contentblock.MetadataEffect, error) {
+			return o.ApplySubject(ctx, w.store, AIDocumentMutation{
 				Reference: job.EntityID, Locale: w.sourceLocale, ExpectedSource: w.sourceLocale,
 				ExpectedPresence: true, SetSubject: true, Subject: strings.TrimSpace(*w.apply.Candidate.Title),
 			}, now)
@@ -152,20 +149,20 @@ func (w typedTranslationWrite) source(ctx context.Context, tx *gorm.DB) error {
 	if !result.TranslationSourceChanged {
 		return errs.InternalMsg("provider source " + o.Name + " translation did not advance source state")
 	}
-	if err := o.refreshSource(ctx, tx, w.store, job.EntityID, w.documentID, w.sourceLocale, true, now); err != nil {
+	if err := o.refreshSource(ctx, w.store, job.EntityID, w.documentID, w.sourceLocale, true, now); err != nil {
 		return err
 	}
 	return o.appendLocaleContentAudit(
-		ctx, tx, w.audit, memberID.String(), job.EntityID, w.sourceLocale,
+		ctx, w.audit, memberID.String(), job.EntityID, w.sourceLocale,
 		LocaleContentOperation(true, false, false, true),
 	)
 }
 
 // target creates or overwrites the target locale and its subject, then
 // returns the target's materialized content on the candidate.
-func (w typedTranslationWrite) target(ctx context.Context, tx *gorm.DB, currentRevision uuid.UUID) error {
+func (w typedTranslationWrite[S]) target(ctx context.Context, currentRevision uuid.UUID) error {
 	o, job, candidate := w.owner, w.apply.Job, w.apply.Candidate
-	output, err := o.ApplyTargetLocaleMutation(ctx, tx, w.store, TargetLocaleMutation{
+	output, err := o.ApplyTargetLocaleMutation(ctx, w.store, TargetLocaleMutation{
 		ID: job.EntityID, DocumentID: w.documentID, Locale: job.TargetLocale,
 		Batch: w.batch, ExpectedDocumentRevision: currentRevision,
 		Policy:     targetlocale.Policy{AllowCreate: true, AllowLocaleDeletes: true, RevisionMode: targetlocale.RevisionCurrent},
@@ -183,13 +180,13 @@ func (w typedTranslationWrite) target(ctx context.Context, tx *gorm.DB, currentR
 			return errs.InternalMsg(o.Name + " translation audit requires requester Member")
 		}
 		if err := o.appendLocaleContentAudit(
-			ctx, tx, w.audit, strings.TrimSpace(job.RequestedByMemberID), job.EntityID, job.TargetLocale,
+			ctx, w.audit, strings.TrimSpace(job.RequestedByMemberID), job.EntityID, job.TargetLocale,
 			LocaleContentOperation(false, output.LocaleCreated, false, !output.LocaleCreated),
 		); err != nil {
 			return err
 		}
 	}
-	resultSnapshot, err := w.store.LoadSnapshotInTransaction(ctx, tx, w.documentID, w.sourceLocale)
+	resultSnapshot, err := w.store.LockedContentSnapshot(ctx, w.documentID, w.sourceLocale)
 	if err != nil {
 		return o.NormalizeContentBlockError(err)
 	}

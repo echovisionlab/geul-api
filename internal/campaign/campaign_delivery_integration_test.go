@@ -684,7 +684,7 @@ func TestCampaignDeliveryDispatcherEnqueuesDueRunInPGMQIntegration(t *testing.T)
 	publishCampaignSourceBlocksForIntegration(t, db, stack.SpiceDBClient, campaignID, emailutil.StripHTML(content))
 	seedBulkEmailAudienceIdentity(t, db, "queue-scheduled-"+uuid.NewString()+"@example.com", time.Now().UTC())
 
-	scheduledAt := time.Now().Add(2 * time.Second)
+	scheduledAt := time.Now().Add(time.Hour)
 	_, err = campaignSvc.ScheduleCampaign(ctx, connect.NewRequest(&managev1.ScheduleCampaignRequest{
 		Id:          campaignID,
 		ScheduledAt: timestamppb.New(scheduledAt),
@@ -700,15 +700,10 @@ func TestCampaignDeliveryDispatcherEnqueuesDueRunInPGMQIntegration(t *testing.T)
 		publisher,
 		&campaignLocaleAuditCapture{},
 	)
-	var (
-		dispatched  int
-		dispatchErr error
-	)
-	require.Eventually(t, func() bool {
-		dispatched, dispatchErr = dispatchDueRuns(ctx, db, dispatcher, 10)
-		return dispatchErr == nil && dispatched == 1
-	}, 5*time.Second, 20*time.Millisecond)
-	require.NoError(t, dispatchErr)
+	// The dispatcher's clock reaches the scheduled time without waiting for it.
+	dispatcher.now = func() time.Time { return scheduledAt.Add(time.Second) }
+	dispatched, err := dispatchDueRuns(ctx, db, dispatcher, 10)
+	require.NoError(t, err)
 	require.Equal(t, 1, dispatched)
 
 	campaignEvent := requirePGMQCampaignEvent(t, sqlDB)

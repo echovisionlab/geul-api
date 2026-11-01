@@ -2,6 +2,7 @@ package translationadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/email"
 	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
@@ -19,7 +21,7 @@ import (
 )
 
 func emailLayoutDomainRegistration(
-	references emailauthoring.CampaignDeliveryReferences,
+	references emailauthoringpostgres.DeliveryReferences,
 	audit domainaudit.Appender,
 ) domainRegistration {
 	return newConfiguredDomainPort(core.KindEmailLayout, domainPortFunctions{
@@ -57,8 +59,12 @@ func emailLayoutDomainRegistration(
 			input.ContentJSON = candidate.ContentJSON
 			input.ContentHTML = candidate.ContentHTML
 			input.ContentText = candidate.ContentText
+			if job == nil {
+				return errors.New("email layout provider translation dependencies are required")
+			}
 			return emailauthoring.ApplyEmailLayoutProviderTranslationCandidate(
-				ctx, tx, store, references, job, candidate, input, audit,
+				ctx, emailauthoringpostgres.Bind(tx, emailAuthoringPorts(store, references), audit),
+				emailContentTranslationJob(job), candidate, input,
 			)
 		},
 		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditEmailLayoutUpdated, sharedtelemetry.NewEmailLayoutSourceLocaleAuditRecord),
@@ -90,7 +96,7 @@ func emailLayoutDomainRegistration(
 		},
 		requireSourceMutable: func(ctx context.Context, db *gorm.DB, entityID string) error {
 			return emailauthoring.RequireTranslationSourceMutable(
-				ctx, db, references, string(core.KindEmailLayout), entityID,
+				ctx, emailAuthoringStore(db, nil, references), string(core.KindEmailLayout), entityID,
 			)
 		},
 	})

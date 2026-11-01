@@ -3,15 +3,12 @@ package emailauthoring
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -101,7 +98,7 @@ type TemplateUpdate struct {
 // emailTemplateUpdate is the committed change of an update and the audit
 // records it names.
 type emailTemplateUpdate struct {
-	template         model.EmailTemplate
+	template         Template
 	changed          bool
 	metadataFields   []string
 	previousLayoutID string
@@ -131,33 +128,34 @@ func (s *Service) UpdateEmailTemplate(ctx context.Context, command UpdateEmailTe
 	if err != nil {
 		return TemplateUpdate{}, err
 	}
-	var template model.EmailTemplate
+	var template Template
 	var observedLayoutID string
-	var lockedLayouts map[string]model.EmailLayout
-	update, err := mutation.Run(ctx, s.mutations, mutation.Spec[emailTemplateUpdate]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	var lockedLayouts []string
+	update, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[emailTemplateUpdate, Store]{
+		Lock: func(ctx context.Context, store Store) error {
 			var err error
-			observedLayoutID, lockedLayouts, err = observeAndLockEmailTemplateLayouts(ctx, tx, command.ID, command.LayoutID)
+			observedLayoutID, lockedLayouts, err = observeAndLockEmailTemplateLayouts(ctx, store, command.ID, command.LayoutID)
 			if err != nil {
 				return err
 			}
-			return lockEmailTemplateForUpdate(ctx, tx, command.ID, &template)
+			template, err = lockTemplateForUpdate(ctx, store, command.ID)
+			return err
 		},
 		Access: access,
-		Change: func(ctx context.Context, tx *gorm.DB) (emailTemplateUpdate, error) {
+		Change: func(ctx context.Context, store Store) (emailTemplateUpdate, error) {
 			plan, err := buildEmailTemplateUpdatePlan(command, dbtime.Now())
 			if err != nil {
 				return emailTemplateUpdate{}, err
 			}
-			if err := validateEmailTemplateUpdate(ctx, tx, s.references, &template, plan, observedLayoutID, lockedLayouts); err != nil {
+			if err := validateEmailTemplateUpdate(ctx, store, &template, plan, observedLayoutID, lockedLayouts); err != nil {
 				return emailTemplateUpdate{}, err
 			}
-			return applyEmailTemplateUpdate(ctx, tx, template, plan)
+			return applyEmailTemplateUpdate(ctx, store, template, plan)
 		},
 		Audit: emailTemplateUpdate.audit,
 	})
 	if err != nil {
-		if !mutation.IsClassified(err) && errors.Is(err, gorm.ErrRecordNotFound) {
+		if !mutation.IsClassified(err) && errors.Is(err, ErrTemplateNotFound) {
 			return TemplateUpdate{}, domainerr.ResourceNotFound("email template", command.ID)
 		}
 		return TemplateUpdate{}, err
@@ -174,7 +172,7 @@ func (s *Service) UpdateEmailTemplate(ctx context.Context, command UpdateEmailTe
 
 // applyEmailTemplateUpdate writes the changed fields of plan to the locked
 // template.
-func applyEmailTemplateUpdate(ctx context.Context, tx *gorm.DB, template model.EmailTemplate, plan emailTemplateUpdatePlan) (emailTemplateUpdate, error) {
+func applyEmailTemplateUpdate(ctx context.Context, store Store, template Template, plan emailTemplateUpdatePlan) (emailTemplateUpdate, error) {
 	update := emailTemplateUpdate{
 		metadataFields:   emailTemplateMetadataChangedFields(template, plan),
 		previousLayoutID: strings.TrimSpace(ptrStringValue(template.LayoutID)),
@@ -186,8 +184,7 @@ func applyEmailTemplateUpdate(ctx context.Context, tx *gorm.DB, template model.E
 	layoutChanged := update.previousLayoutID != update.nextLayoutID
 	if len(update.metadataFields) > 0 || layoutChanged {
 		update.changed = true
-		plan.updates["updated_at"] = plan.now
-		if err := tx.WithContext(ctx).Model(&template).Updates(plan.updates).Error; err != nil {
+		if err := store.UpdateTemplate(ctx, template.ID, plan.change()); err != nil {
 			return emailTemplateUpdate{}, err
 		}
 		applyEmailTemplateUpdateFields(&template, plan)
@@ -198,7 +195,28 @@ func applyEmailTemplateUpdate(ctx context.Context, tx *gorm.DB, template model.E
 	return update, nil
 }
 
-func applyEmailTemplateUpdateFields(template *model.EmailTemplate, plan emailTemplateUpdatePlan) {
+// change is the template change of the fields the plan still holds.
+func (plan emailTemplateUpdatePlan) change() TemplateChange {
+	change := TemplateChange{UpdatedAt: plan.now}
+	if name, ok := plan.updates["name"].(string); ok {
+		change.Name = &name
+	}
+	if description, ok := plan.updates["description"].(string); ok {
+		change.Description = &description
+	}
+	if active, ok := plan.updates["is_active"].(bool); ok {
+		change.IsActive = &active
+	}
+	if layout, exists := plan.updates["layout_id"]; exists {
+		change.SetLayout = true
+		if layoutID, ok := layout.(string); ok {
+			change.LayoutID = &layoutID
+		}
+	}
+	return change
+}
+
+func applyEmailTemplateUpdateFields(template *Template, plan emailTemplateUpdatePlan) {
 	if name, ok := plan.updates["name"].(string); ok {
 		template.Name = name
 	}
@@ -217,7 +235,7 @@ func applyEmailTemplateUpdateFields(template *model.EmailTemplate, plan emailTem
 	}
 }
 
-func emailTemplateMetadataChangedFields(template model.EmailTemplate, plan emailTemplateUpdatePlan) []string {
+func emailTemplateMetadataChangedFields(template Template, plan emailTemplateUpdatePlan) []string {
 	fields := make([]string, 0, 3)
 	if value, ok := plan.updates["name"].(string); ok && value != template.Name {
 		fields = append(fields, "name")
@@ -247,65 +265,42 @@ func emailTemplateMetadataChangedFields(template model.EmailTemplate, plan email
 
 func observeAndLockEmailTemplateLayouts(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	templateID string,
 	requestedLayoutID *string,
-) (string, map[string]model.EmailLayout, error) {
+) (string, []string, error) {
 	if requestedLayoutID == nil {
 		return "", nil, nil
 	}
-	var observed struct {
-		LayoutID *string `gorm:"column:layout_id"`
+	observed, err := store.TemplateLayoutID(ctx, templateID)
+	if errors.Is(err, ErrTemplateNotFound) {
+		return "", nil, domainerr.ResourceNotFound("email template", templateID)
 	}
-	if err := tx.WithContext(ctx).
-		Model(&model.EmailTemplate{}).
-		Select("layout_id").
-		First(&observed, "id = ?", templateID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", nil, domainerr.ResourceNotFound("email template", templateID)
-		}
+	if err != nil {
 		return "", nil, err
 	}
-	observedLayoutID := strings.TrimSpace(ptrStringValue(observed.LayoutID))
+	observedLayoutID := strings.TrimSpace(ptrStringValue(observed))
 	locked, err := lockEmailLayoutsForRelationMutation(
 		ctx,
-		tx,
+		store,
 		observedLayoutID,
 		strings.TrimSpace(*requestedLayoutID),
 	)
 	return observedLayoutID, locked, err
 }
 
-func lockEmailTemplateForUpdate(
-	ctx context.Context,
-	tx *gorm.DB,
-	templateID string,
-	template *model.EmailTemplate,
-) error {
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		First(template, "id = ?", templateID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return domainerr.ResourceNotFound("email template", templateID)
-		}
-		return err
-	}
-	return nil
-}
-
 func validateEmailTemplateUpdate(
 	ctx context.Context,
-	tx *gorm.DB,
-	references CampaignDeliveryReferences,
-	template *model.EmailTemplate,
+	store Store,
+	template *Template,
 	plan emailTemplateUpdatePlan,
 	observedLayoutID string,
-	lockedLayouts map[string]model.EmailLayout,
+	lockedLayouts []string,
 ) error {
 	if plan.layoutMutation && strings.TrimSpace(ptrStringValue(template.LayoutID)) != observedLayoutID {
 		return domainerr.Precondition("email template layout assignment changed; retry")
 	}
-	if err := references.RequireTemplateMutable(ctx, tx, template.ID); err != nil {
+	if err := store.RequireTemplateMutable(ctx, template.ID); err != nil {
 		return err
 	}
 	if plan.isActive != nil && !*plan.isActive && strings.TrimSpace(ptrStringValue(template.EventKey)) != "" {
@@ -316,7 +311,7 @@ func validateEmailTemplateUpdate(
 	if !plan.layoutMutation || plan.requestedLayoutID == "" {
 		return nil
 	}
-	if _, ok := lockedLayouts[plan.requestedLayoutID]; !ok {
+	if !slices.Contains(lockedLayouts, plan.requestedLayoutID) {
 		return domainerr.New(domainerr.NotFound, "", "email layout not found")
 	}
 	return nil

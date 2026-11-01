@@ -4,8 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -141,4 +143,38 @@ func TestCheckPartUploadPermissionRejectsDocumentTargetForEditorMesh(t *testing.
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "omit document entity type")
+}
+
+func TestCheckEntityPermissionAllowsLibraryManagerProgramEventPosterForSeriesID(t *testing.T) {
+	t.Parallel()
+
+	admin := newUnitUser()
+	checker := (&authztest.Checker{}).For(admin.IdentityID).Allow(policyv1.File.ManageLibrary())
+	svc := &Service{spiceDB: checker.Client(t)}
+	ctx := auditedUserContext(context.Background(), admin.AuthUserInfo())
+	target, err := resolveUploadPermissionTarget(managev1.UploadType_UPLOAD_TYPE_PROGRAM_EVENT_POSTER, "")
+	require.NoError(t, err)
+
+	require.NoError(t, svc.checkRoleAndSpiceDBUploadPermission(ctx, target, "program-event-series-id", admin.MemberID))
+	manageLibrary, err := policyv1.File.ManageLibrary()
+	require.NoError(t, err)
+	require.Equal(t, []authztest.Check{authztest.Of(admin.IdentityID, manageLibrary, nil)}, checker.Checks())
+}
+
+func TestCheckEntityPermissionRejectsProgramEventPosterWithoutLibraryManagement(t *testing.T) {
+	t.Parallel()
+
+	user := newUnitUser()
+	checker := &authztest.Checker{}
+	svc := &Service{spiceDB: checker.Client(t)}
+	ctx := auditedUserContext(context.Background(), user.AuthUserInfo())
+	target, err := resolveUploadPermissionTarget(managev1.UploadType_UPLOAD_TYPE_PROGRAM_EVENT_POSTER, "")
+	require.NoError(t, err)
+
+	err = svc.checkRoleAndSpiceDBUploadPermission(ctx, target, "program-event-series-id", user.MemberID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "admin")
+	manageLibrary, err := policyv1.File.ManageLibrary()
+	require.NoError(t, err)
+	require.Equal(t, []authztest.Check{authztest.Of(user.IdentityID, manageLibrary, nil)}, checker.Checks())
 }

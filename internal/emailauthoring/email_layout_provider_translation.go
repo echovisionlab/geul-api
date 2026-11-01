@@ -8,18 +8,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // ApplyEmailLayoutProviderTranslationCandidate applies the request-time unit
@@ -27,15 +23,13 @@ import (
 // became source-owned advances the shared Content Document revision.
 func ApplyEmailLayoutProviderTranslationCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	references CampaignDeliveryReferences,
-	job *model.TranslationJob,
+	joined Joined,
+	job emailcontent.TranslationJob,
 	candidate *translation.Candidate,
 	input translation.EntryWrite,
-	auditWriter domainaudit.Appender,
 ) error {
-	if job == nil || job.EntityType != "email_layout" || candidate == nil || !candidate.HasProviderUnitPatch() {
+	store := joined.Store
+	if job.EntityType != "email_layout" || candidate == nil || !candidate.HasProviderUnitPatch() {
 		return errors.New("email layout provider translation dependencies are required")
 	}
 	memberID, err := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
@@ -46,15 +40,15 @@ func ApplyEmailLayoutProviderTranslationCandidate(
 	if now.IsZero() {
 		return errors.New("Email Layout provider translation time is required")
 	}
-	apply, err := loadEmailLayoutProviderApply(ctx, tx, references, job, candidate)
+	apply, err := loadEmailLayoutProviderApply(ctx, store, job, candidate)
 	if err != nil || apply.unchanged() {
 		return err
 	}
 	operation := sharedtelemetry.AuditItemOperationUpdated
 	if job.TargetLocale == apply.authority.SourceLocale {
-		err = apply.saveSource(ctx, tx, store, references, now)
+		err = apply.saveSource(ctx, store, now)
 	} else {
-		_, err = saveEmailLayoutTarget(ctx, tx, job.EntityID, job.TargetLocale, apply.sourceHTML, apply.next, now, emailLayoutInterchangeUpdatedAt(apply.entry))
+		_, err = saveEmailLayoutTarget(ctx, store, job.EntityID, job.TargetLocale, apply.sourceHTML, apply.next, now, emailLayoutInterchangeUpdatedAt(apply.entry))
 		if apply.entry == nil {
 			operation = sharedtelemetry.AuditItemOperationCreated
 		}
@@ -62,7 +56,7 @@ func ApplyEmailLayoutProviderTranslationCandidate(
 	if err != nil {
 		return err
 	}
-	return domainaudit.AppendMember(ctx, tx, auditWriter, memberID.String(), sharedtelemetry.AuditEmailLayoutUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+	return domainaudit.AppendMember(ctx, nil, joined.Audit, memberID.String(), sharedtelemetry.AuditEmailLayoutUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 		return sharedtelemetry.NewEmailLayoutLocaleContentAuditRecord(metadata, job.EntityID, job.TargetLocale, operation)
 	})
 }
@@ -70,7 +64,7 @@ func ApplyEmailLayoutProviderTranslationCandidate(
 // layoutProviderApply is a provider translation's current and patched unit
 // values under the locked layout authority.
 type layoutProviderApply struct {
-	authority  emailLayoutDocumentAuthority
+	authority  LayoutAuthority
 	sourceHTML string
 	entry      *emailutil.LayoutTranslationEntry
 	current    map[string]string
@@ -86,22 +80,21 @@ func (a layoutProviderApply) unchanged() bool {
 // the current source still marks.
 func loadEmailLayoutProviderApply(
 	ctx context.Context,
-	tx *gorm.DB,
-	references CampaignDeliveryReferences,
-	job *model.TranslationJob,
+	store Store,
+	job emailcontent.TranslationJob,
 	candidate *translation.Candidate,
 ) (layoutProviderApply, error) {
-	if err := lockEmailLayoutAIDocumentRoot(ctx, tx, job.EntityID, clause.LockingStrengthUpdate); err != nil {
+	if err := lockEmailLayoutAIDocumentRoot(ctx, store, job.EntityID, emailcontent.UpdateLock); err != nil {
 		return layoutProviderApply{}, err
 	}
-	if err := references.RequireLayoutMutable(ctx, tx, job.EntityID); err != nil {
+	if err := store.RequireLayoutMutable(ctx, job.EntityID); err != nil {
 		return layoutProviderApply{}, err
 	}
-	authority, err := loadEmailLayoutDocumentAuthority(ctx, tx, job.EntityID, clause.LockingStrengthUpdate)
+	authority, err := loadEmailLayoutDocumentAuthority(ctx, store, job.EntityID, emailcontent.UpdateLock)
 	if err != nil {
 		return layoutProviderApply{}, err
 	}
-	source, err := emailutil.LoadCanonicalLayoutTranslationDocument(ctx, emailpostgres.Bind(tx), job.EntityID, authority.SourceLocale)
+	source, err := store.CanonicalLayoutSource(ctx, job.EntityID, authority.SourceLocale)
 	if err != nil {
 		return layoutProviderApply{}, err
 	}
@@ -110,7 +103,7 @@ func loadEmailLayoutProviderApply(
 	if err != nil {
 		return layoutProviderApply{}, domainerr.Precondition("Email Layout source unit markers require repair before provider apply").WithCause(failurecause.ServerFault(err))
 	}
-	if apply.entry, err = loadEmailLayoutInterchangeEntry(ctx, tx, job.EntityID, job.TargetLocale, clause.LockingStrengthUpdate); err != nil {
+	if apply.entry, err = store.LockLayoutTranslationEntry(ctx, job.EntityID, job.TargetLocale, emailcontent.UpdateLock); err != nil {
 		return layoutProviderApply{}, err
 	}
 	if job.TargetLocale == authority.SourceLocale {
@@ -142,13 +135,13 @@ func loadEmailLayoutProviderApply(
 
 // saveSource stores the patched values as the source locale's next document
 // revision, which must advance the translation source.
-func (a layoutProviderApply) saveSource(ctx context.Context, tx *gorm.DB, store *contentblock.Store, references CampaignDeliveryReferences, now time.Time) error {
+func (a layoutProviderApply) saveSource(ctx context.Context, store Store, now time.Time) error {
 	contentHTML, contentText, err := emailutil.ApplyLayoutSourceValues(a.sourceHTML, a.next)
 	if err != nil {
 		return domainerr.InvalidField("content", err.Error())
 	}
 	result, err := saveEmailLayoutSource(
-		ctx, tx, store, references, a.authority.LayoutID, a.authority, a.authority.DocumentRevision,
+		ctx, store, a.authority.LayoutID, a.authority, a.authority.DocumentRevision,
 		&emailutil.LayoutTranslationDocument{ContentHTML: contentHTML, ContentText: contentText}, now,
 	)
 	if err != nil {

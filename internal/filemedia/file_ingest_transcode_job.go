@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
@@ -37,7 +37,7 @@ func newStableFileIngestAudioTranscodeJob(
 ) (*managev1.TranscodeAudioEvent, bool, error) {
 	source, err := CanonicalMediaObjectTargetForFile(file)
 	if err != nil {
-		return nil, false, errs.WithCause(errs.FailedPrecondition("source file metadata is not canonical"), failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", file.ID), slog.String("entity_type", entityType.String()), slog.String("entity_id", entityID))))
+		return nil, false, domainerr.Precondition("source file metadata is not canonical").WithCause(failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", file.ID), slog.String("entity_type", entityType.String()), slog.String("entity_id", entityID))))
 	}
 	hls, spectrogram, shouldPublish, err := ensureStableFileIngestAudioOutputs(ctx, db, file.ID)
 	if err != nil {
@@ -63,7 +63,7 @@ func newStableFileIngestVideoTranscodeJob(
 ) (*managev1.TranscodeVideoEvent, bool, error) {
 	source, err := CanonicalMediaObjectTargetForFile(file)
 	if err != nil {
-		return nil, false, errs.WithCause(errs.FailedPrecondition("source file metadata is not canonical"), failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", file.ID), slog.String("entity_type", entityType.String()), slog.String("entity_id", entityID))))
+		return nil, false, domainerr.Precondition("source file metadata is not canonical").WithCause(failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", file.ID), slog.String("entity_type", entityType.String()), slog.String("entity_id", entityID))))
 	}
 	hls, thumbnail, shouldPublish, err := ensureStableFileIngestVideoOutputs(ctx, db, file.ID)
 	if err != nil {
@@ -137,7 +137,7 @@ func ensureStableFileIngestMediaGeneration(
 	generationID := stableFileIngestFinalizerID(fileID, "hls")
 	objectPrefix, err := mediaauth.MediaHLSObjectPrefix(fileID, generationID)
 	if err != nil {
-		return nil, false, errs.InvalidArgument("file_id", err.Error())
+		return nil, false, domainerr.InvalidField("file_id", err.Error())
 	}
 	now := time.Now().UTC()
 	row := model.MediaGeneration{
@@ -151,16 +151,16 @@ func ensureStableFileIngestMediaGeneration(
 		UpdatedAt:    now,
 	}
 	if err := db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
-		return nil, false, errs.Internal(err)
+		return nil, false, err
 	}
 	if err := db.WithContext(ctx).Where("id = ?", generationID).Take(&row).Error; err != nil {
-		return nil, false, errs.Internal(err)
+		return nil, false, err
 	}
 	if row.FileID != fileID || row.Kind != "hls" || row.ObjectPrefix != objectPrefix || row.ManifestName != "master.m3u8" {
-		return nil, false, errs.FailedPrecondition("stable media generation allocation conflicts with existing domain state")
+		return nil, false, domainerr.Precondition("stable media generation allocation conflicts with existing domain state")
 	}
 	if row.Status == "" {
-		return nil, false, errs.FailedPrecondition("stable media generation status is missing")
+		return nil, false, domainerr.Precondition("stable media generation status is missing")
 	}
 	return &commonv1.MediaGenerationWriteTarget{
 		GenerationId: row.ID,
@@ -180,7 +180,7 @@ func ensureStableFileIngestPublicAsset(
 	assetID := stableFileIngestFinalizerID(fileID, kind)
 	objectKey, err := mediaauth.AssetObjectKey(assetID, extension)
 	if err != nil {
-		return nil, false, errs.InvalidArgument("extension", err.Error())
+		return nil, false, domainerr.InvalidField("extension", err.Error())
 	}
 	now := time.Now().UTC()
 	row := model.PublicAsset{
@@ -196,18 +196,18 @@ func ensureStableFileIngestPublicAsset(
 		UpdatedAt:    now,
 	}
 	if err := db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
-		return nil, false, errs.Internal(err)
+		return nil, false, err
 	}
 	if err := db.WithContext(ctx).Where("id = ?", assetID).Take(&row).Error; err != nil {
-		return nil, false, errs.Internal(err)
+		return nil, false, err
 	}
 	if row.SourceFileID == nil || *row.SourceFileID != fileID ||
 		row.Kind != kind || row.ObjectKey != objectKey || row.Extension != extension ||
 		row.MimeType != mimeType || row.Disposition != "inline" {
-		return nil, false, errs.FailedPrecondition("stable public asset allocation conflicts with existing domain state")
+		return nil, false, domainerr.Precondition("stable public asset allocation conflicts with existing domain state")
 	}
 	if row.Status == "" {
-		return nil, false, errs.FailedPrecondition("stable public asset status is missing")
+		return nil, false, domainerr.Precondition("stable public asset status is missing")
 	}
 	return &commonv1.AssetWriteTarget{
 		AssetId:     row.ID,
