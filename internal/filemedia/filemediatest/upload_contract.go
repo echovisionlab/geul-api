@@ -167,6 +167,9 @@ func RunUploadContract(t *testing.T, open func(*testing.T) UploadHarness) {
 	for name, run := range uploadPartCases() {
 		cases[name] = run
 	}
+	for name, run := range uploadCreationCases() {
+		cases[name] = run
+	}
 	for name, run := range cases {
 		t.Run(name, func(t *testing.T) { t.Parallel(); run(t, open(t)) })
 	}

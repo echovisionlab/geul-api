@@ -21,6 +21,7 @@ type FileFolder struct {
 }
 type Store interface {
 	UploadPartStore
+	UploadCreationStore
 	UploadSelectionStore
 	UploadSessionStore
 	SourcePromotionStore

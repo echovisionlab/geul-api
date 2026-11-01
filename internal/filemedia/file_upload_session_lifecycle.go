@@ -6,9 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -19,29 +18,30 @@ func (s *Service) createUploadSession(ctx context.Context, session *model.Upload
 	if session == nil {
 		return fmt.Errorf("upload session is required")
 	}
-	if session.UploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE.String() {
-		return s.db.WithContext(ctx).Omit("EntityID").Create(session).Error
+	mode := domain.UploadTargetUnknown
+	switch {
+	case session.UploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE.String():
+		mode = domain.UploadTargetGeneral
+	case session.UploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String():
+		mode = domain.UploadTargetTrackProjection
+	default:
+		if value, ok := managev1.UploadType_value[session.UploadType]; ok && isEditorFileIngestUploadType(managev1.UploadType(value)) {
+			mode = domain.UploadTargetEditorFile
+		}
 	}
-	if session.UploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() {
-		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			trackAttachment := s.trackAttachment
-			if err := trackAttachment.LockExistsWithDB(ctx, tx, session.EntityID); err != nil {
+	return s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		store := unit.Store()
+		if mode == domain.UploadTargetTrackProjection {
+			if err := store.RequireUploadTrack(ctx, session.EntityID); err != nil {
 				return err
 			}
-			return tx.Create(session).Error
-		})
-	}
-
-	uploadTypeValue, ok := managev1.UploadType_value[session.UploadType]
-	if !ok || !isEditorFileIngestUploadType(managev1.UploadType(uploadTypeValue)) {
-		return s.db.WithContext(ctx).Create(session).Error
-	}
-	if err := s.db.WithContext(ctx).
-		Omit("EntityID", "EntityType", "SlotID", "ExpectedFileID").
-		Create(session).Error; err != nil {
+		}
+		row, err := store.InsertUploadSession(ctx, uploadSessionToStore(*session), mode)
+		if err == nil {
+			*session = uploadSessionFromStore(row)
+		}
 		return err
-	}
-	return nil
+	})
 }
 
 func (s *Service) refreshUploadSessionActivity(ctx context.Context, uploadID string) {

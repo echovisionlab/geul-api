@@ -849,7 +849,7 @@ func newDirectTrackService(t *testing.T, stack *testutil.RuntimeStack, fileServi
 		DB: stack.DB, SpiceDB: stack.SpiceDBClient,
 		Transcodes:   releaseadapter.NewTrackTranscodes(&recordingFileTranscoderPublisher{}),
 		WaveformJobs: releaseadapter.NewWaveformJobs(stack.DB, &recordingFileTranscoderPublisher{}),
-		Files:        fileService,
+		Files:        directTrackFileManager{fileService},
 		Members:      releaseadapter.NewMemberSummaries(stack.DB, stack.CDNURL),
 	}))
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/programevent"
@@ -261,7 +262,7 @@ func (m *TrackFileManager) RequireNoTrackUploadSessionsWithDB(
 	tx *gorm.DB,
 	trackID string,
 ) error {
-	err := m.files.RequireNoTrackUploadSessionsWithDB(ctx, tx, trackID)
+	err := m.files.RequireNoTrackUploadSessions(ctx, filemediapostgres.Bind(tx, filemediapostgres.Ports{}, nil), trackID)
 	if errors.Is(err, filemediadomain.ErrTrackUploadSessionsChanged) {
 		return releasedomain.ErrTrackUploadSessionsChanged
 	}
