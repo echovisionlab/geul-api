@@ -10,6 +10,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/documentlayout"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -393,7 +394,7 @@ var postSortConfig = queryutil.SortConfig{
 // toProtoPost converts a model.Post to protobuf Post (Domain Object -> DTO)
 // Note: Author is not populated here - use toProtoPostWithAuthor for that
 func (s *Service) toProtoPost(p *model.Post, ogAsset *commonv1.AssetRef) (*managev1.Post, error) {
-	documentLayout, err := p.DocumentLayout.Proto()
+	documentLayout, err := documentlayout.ToProto(p.DocumentLayout)
 	if err != nil {
 		return nil, err
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
+	"github.com/echovisionlab/geul-api/internal/documentlayout"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -517,7 +518,7 @@ func (s *Service) UpdatePost(ctx context.Context, command UpdatePostCommand) (_ 
 	if err != nil {
 		return nil, err
 	}
-	documentLayout, err := post.DocumentLayout.Proto()
+	documentLayout, err := documentlayout.ToProto(post.DocumentLayout)
 	if err != nil {
 		return nil, err
 	}
@@ -580,7 +581,7 @@ func (s *Service) buildPostUpdate(ctx context.Context, command UpdatePostCommand
 		update.fields["map_place_id"] = optionalPostStringValue(mapPlaceID)
 	}
 	if command.DocumentLayout != nil {
-		documentLayout, err := model.DocumentLayoutFromProto(command.DocumentLayout)
+		documentLayout, err := documentlayout.FromProto(command.DocumentLayout)
 		if err != nil {
 			return postUpdate{}, domainerr.New(domainerr.Invalid, "", err.Error())
 		}

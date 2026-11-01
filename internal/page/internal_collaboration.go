@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
+	"github.com/echovisionlab/geul-api/internal/documentlayout"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -142,7 +143,7 @@ func (s *Service) LoadPageBlockDocument(ctx context.Context, query LoadPageBlock
 	if err != nil {
 		return nil, normalizePageContentBlockError(err)
 	}
-	documentLayout, err := loaded.documentLayout.Proto()
+	documentLayout, err := documentlayout.ToProto(loaded.documentLayout)
 	if err != nil {
 		return nil, err
 	}
@@ -646,7 +647,7 @@ func (s *Service) UpdatePageDocumentMetadata(ctx context.Context, command Update
 	if err != nil {
 		return nil, err
 	}
-	nextLayout, err := model.DocumentLayoutFromProto(command.DocumentLayout)
+	nextLayout, err := documentlayout.FromProto(command.DocumentLayout)
 	if err != nil {
 		return nil, domainerr.InvalidField("document_layout", err.Error())
 	}

@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/documentlayout"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -97,7 +98,7 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	require.True(t, proto.Equal(author, decoded.AuthorMembers[0]))
 	require.True(t, proto.Equal(featured, decoded.FeaturedImageDelivery))
 	require.True(t, proto.Equal(og, decoded.OgAsset))
-	layoutProto, err := layout.Proto()
+	layoutProto, err := documentlayout.ToProto(layout)
 	require.NoError(t, err)
 	require.True(t, proto.Equal(layoutProto, decoded.DocumentLayout))
 	require.True(t, decoded.CommentsEnabled)

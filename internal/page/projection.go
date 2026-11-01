@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dberrors"
+	"github.com/echovisionlab/geul-api/internal/documentlayout"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -177,7 +178,7 @@ func toProtoPage(
 	if err != nil {
 		return nil, err
 	}
-	documentLayout, err := p.DocumentLayout.Proto()
+	documentLayout, err := documentlayout.ToProto(p.DocumentLayout)
 	if err != nil {
 		return nil, err
 	}

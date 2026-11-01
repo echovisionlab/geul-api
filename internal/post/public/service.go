@@ -15,6 +15,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/documentlayout"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mapcluster"
@@ -788,7 +789,7 @@ func (s *Service) buildPostResponse(
 	document := projection.document
 	revision := projection.revision
 	ctx = mediaasset.WithContentDownloadOwnerAuthorization(ctx, projection.mediaAuthorization)
-	documentLayout, err := post.DocumentLayout.Proto()
+	documentLayout, err := documentlayout.ToProto(post.DocumentLayout)
 	if err != nil {
 		return nil, err
 	}
