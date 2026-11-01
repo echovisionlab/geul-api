@@ -141,17 +141,24 @@ func loadTranslationDocumentAuthority(
 	}
 	var authority translationDocumentAuthority
 	result := db.WithContext(ctx).Raw(
-		"SELECT root.source_locale, root.content_document_id, document.revision AS document_revision FROM "+definition.RootTable+" AS root "+
-			"JOIN content_document AS document ON document.id = root.content_document_id "+
-			"WHERE root.id = ?",
+		"SELECT source_locale, content_document_id FROM "+definition.RootTable+" WHERE id = ?",
 		entityID,
 	).Scan(&authority)
 	if result.Error != nil {
 		return translationDocumentAuthority{}, result.Error
 	}
-	if result.RowsAffected != 1 {
+	// A root without its Content Document is as absent as a missing root.
+	if result.RowsAffected != 1 || authority.DocumentID == uuid.Nil {
 		return translationDocumentAuthority{}, domainerr.ResourceNotFound(entityType, entityID)
 	}
+	revision, err := contentblock.CurrentRevision(ctx, db, authority.DocumentID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return translationDocumentAuthority{}, domainerr.ResourceNotFound(entityType, entityID)
+	}
+	if err != nil {
+		return translationDocumentAuthority{}, err
+	}
+	authority.DocumentRevision = revision
 	if strings.TrimSpace(authority.SourceLocale) == "" || authority.DocumentID == uuid.Nil ||
 		authority.DocumentRevision == uuid.Nil {
 		return translationDocumentAuthority{}, domainerr.Precondition("Content Document authority is not initialized")
@@ -279,12 +286,8 @@ func listSourceSwitchLocales(
 		return nil, err
 	}
 	locales = append(locales, entryLocales...)
-	var blockLocales []string
-	if err := tx.WithContext(ctx).Raw(
-		`SELECT DISTINCT locale FROM content_block_locale
-		 WHERE block_id IN (SELECT id FROM content_block WHERE document_id = ?)`,
-		documentID,
-	).Scan(&blockLocales).Error; err != nil {
+	blockLocales, err := contentblock.DocumentLocales(ctx, tx, documentID)
+	if err != nil {
 		return nil, err
 	}
 	locales = sliceutil.UniqueNonZero(append(locales, blockLocales...))
