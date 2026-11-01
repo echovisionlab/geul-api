@@ -3,10 +3,10 @@ package worker
 import (
 	"context"
 	stderrors "errors"
-	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"log/slog"
 	"time"
 
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	mediaassetdomain "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"

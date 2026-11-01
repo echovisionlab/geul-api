@@ -1,10 +1,10 @@
 package application
 
 import (
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"testing"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )

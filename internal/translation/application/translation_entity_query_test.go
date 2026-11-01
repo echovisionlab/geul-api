@@ -2,7 +2,6 @@ package application
 
 import (
 	"errors"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"testing"
 	"time"
 
@@ -10,6 +9,8 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 )
 
 type translationEntryQueryTestDomains struct{ DomainRegistry }
