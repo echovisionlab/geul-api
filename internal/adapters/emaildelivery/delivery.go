@@ -49,7 +49,12 @@ func (s *CampaignDeliveryStore) ClaimDelivery(ctx context.Context, recipientID s
 		return "", false, fmt.Errorf("campaign delivery database is required")
 	}
 	claimID := uuid.NewString()
-	claimed, err := campaign.ClaimCampaignDeliveryRecipient(ctx, s.db, recipientID, claimID)
+	claimed := false
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var err error
+		claimed, err = campaign.ClaimCampaignDeliveryRecipient(ctx, tx, recipientID, claimID)
+		return err
+	})
 	if err != nil || !claimed {
 		return "", false, err
 	}
@@ -60,7 +65,9 @@ func (s *CampaignDeliveryStore) ReleaseDeliveryClaim(ctx context.Context, recipi
 	if s == nil || s.db == nil {
 		return fmt.Errorf("campaign delivery database is required")
 	}
-	return campaign.ReleaseCampaignDeliveryRecipientClaim(ctx, s.db, recipientID, claimID)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return campaign.ReleaseCampaignDeliveryRecipientClaim(ctx, tx, recipientID, claimID)
+	})
 }
 
 func (s *CampaignDeliveryStore) MarkClaimedResult(
@@ -74,9 +81,11 @@ func (s *CampaignDeliveryStore) MarkClaimedResult(
 	if s == nil || s.db == nil || s.audit == nil || s.metrics == nil {
 		return fmt.Errorf("campaign delivery persistence dependencies are required")
 	}
-	return campaign.MarkClaimedCampaignDeliveryRecipientResultWithAudit(
-		ctx, s.db, s.audit, recipientID, claimID, status, providerMessageID, errorType, s.metrics,
-	)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return campaign.MarkClaimedCampaignDeliveryRecipientResultWithAudit(
+			ctx, tx, s.audit, recipientID, claimID, status, providerMessageID, errorType, s.metrics,
+		)
+	})
 }
 
 func (s *CampaignDeliveryStore) MarkResult(
@@ -89,9 +98,15 @@ func (s *CampaignDeliveryStore) MarkResult(
 	if s == nil || s.db == nil || s.audit == nil || s.metrics == nil {
 		return fmt.Errorf("campaign delivery persistence dependencies are required")
 	}
-	return campaign.MarkCampaignDeliveryRecipientResultWithAudit(
-		ctx, s.db, s.audit, recipientID, status, providerMessageID, errorType, s.metrics,
-	)
+	if strings.TrimSpace(recipientID) == "" {
+		// A direct send has no Campaign recipient to record.
+		return nil
+	}
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return campaign.MarkCampaignDeliveryRecipientResultWithAudit(
+			ctx, tx, s.audit, recipientID, status, providerMessageID, errorType, s.metrics,
+		)
+	})
 }
 
 func (s *SuppressionStore) Find(ctx context.Context, recipient string) (*emaildelivery.Suppression, error) {
@@ -147,7 +162,9 @@ func (s *BulkCampaignStore) Materialize(ctx context.Context, runID string) error
 	if s == nil || s.db == nil || s.spiceDB == nil {
 		return fmt.Errorf("bulk campaign materialization dependencies are required")
 	}
-	return campaign.MaterializeCampaignDeliveryRun(ctx, s.db, s.spiceDB, runID)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return campaign.MaterializeCampaignDeliveryRun(ctx, tx, s.spiceDB, runID)
+	})
 }
 
 func (s *BulkCampaignStore) ListPending(
@@ -186,9 +203,11 @@ func (s *BulkCampaignStore) MarkResult(
 	if s == nil || s.db == nil || s.audit == nil || s.metrics == nil {
 		return fmt.Errorf("bulk campaign delivery persistence dependencies are required")
 	}
-	return campaign.MarkCampaignDeliveryRecipientResultWithAudit(
-		ctx, s.db, s.audit, recipientID, status, "", errorType, s.metrics,
-	)
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return campaign.MarkCampaignDeliveryRecipientResultWithAudit(
+			ctx, tx, s.audit, recipientID, status, "", errorType, s.metrics,
+		)
+	})
 }
 
 func (s *BulkCampaignStore) BuildCommand(

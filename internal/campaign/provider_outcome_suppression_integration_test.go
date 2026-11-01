@@ -92,13 +92,13 @@ func TestSESProviderOutcomeUpdatesCampaignHistoryAndDeduplicatesSuppressionInteg
 	}).Error)
 
 	deliveryAt := now.Add(time.Minute)
-	result, err := ApplySESProviderOutcome(t.Context(), db, providerMessageID, SESProviderOutcomeDelivered, deliveryAt, "")
+	result, err := applySESProviderOutcome(t.Context(), db, providerMessageID, SESProviderOutcomeDelivered, deliveryAt, "")
 	require.NoError(t, err)
 	require.Equal(t, 1, result.UpdatedRecipients)
 	require.Equal(t, []string{emailutil.NormalizeAddressForDelivery(recipientEmail)}, result.MatchedRecipientEmails)
 
 	complaintAt := deliveryAt.Add(time.Minute)
-	result, err = ApplySESProviderOutcome(t.Context(), db, providerMessageID, SESProviderOutcomeComplained, complaintAt, "complaint")
+	result, err = applySESProviderOutcome(t.Context(), db, providerMessageID, SESProviderOutcomeComplained, complaintAt, "complaint")
 	require.NoError(t, err)
 	require.Equal(t, 1, result.UpdatedRecipients)
 	require.NoError(t, emaildelivery.SuppressEmailAddress(
@@ -110,7 +110,7 @@ func TestSESProviderOutcomeUpdatesCampaignHistoryAndDeduplicatesSuppressionInteg
 	var firstSuppression model.EmailSuppression
 	require.NoError(t, db.Where("LOWER(email) = ? AND released_at IS NULL", emailutil.NormalizeAddressForDelivery(recipientEmail)).First(&firstSuppression).Error)
 
-	result, err = ApplySESProviderOutcome(t.Context(), db, providerMessageID, SESProviderOutcomeComplained, complaintAt.Add(time.Minute), "complaint")
+	result, err = applySESProviderOutcome(t.Context(), db, providerMessageID, SESProviderOutcomeComplained, complaintAt.Add(time.Minute), "complaint")
 	require.NoError(t, err)
 	require.Zero(t, result.UpdatedRecipients)
 	require.NoError(t, emaildelivery.SuppressEmailAddress(

@@ -109,7 +109,7 @@ func TestCampaignDeliveryRecipientClaimFencesConcurrentAndExpiredWorkersIntegrat
 		go func() {
 			defer workers.Done()
 			<-start
-			claimed, claimErr := ClaimCampaignDeliveryRecipient(ctx, db, recipient.ID, claimID)
+			claimed, claimErr := claimRecipient(ctx, db, recipient.ID, claimID)
 			results <- claimResult{id: claimID, claimed: claimed, err: claimErr}
 		}()
 	}
@@ -129,7 +129,7 @@ func TestCampaignDeliveryRecipientClaimFencesConcurrentAndExpiredWorkersIntegrat
 	pending, err := ListPendingCampaignDeliveryRecipients(ctx, db, run.ID, "", 10)
 	require.NoError(t, err)
 	require.Empty(t, pending, "an unexpired claim must keep the recipient out of pending dispatch")
-	require.ErrorIs(t, MarkCampaignDeliveryRecipientResultWithAudit(
+	require.ErrorIs(t, markRecipientResult(
 		ctx, db, &audittest.Recorder{}, recipient.ID, CampaignDeliveryRecipientStatusSent, "provider-message", "", nil,
 	), ErrCampaignDeliveryRecipientClaimed)
 
@@ -137,16 +137,16 @@ func TestCampaignDeliveryRecipientClaimFencesConcurrentAndExpiredWorkersIntegrat
 	require.NoError(t, db.Model(&model.CampaignDeliveryRecipient{}).
 		Where("id = ?", recipient.ID).
 		Update("delivery_claim_expires_at", time.Now().UTC().Add(-time.Second)).Error)
-	claimed, err := ClaimCampaignDeliveryRecipient(ctx, db, recipient.ID, reclaimedID)
+	claimed, err := claimRecipient(ctx, db, recipient.ID, reclaimedID)
 	require.NoError(t, err)
 	require.True(t, claimed, "an expired claim must be reclaimable")
-	require.NoError(t, ReleaseCampaignDeliveryRecipientClaim(ctx, db, recipient.ID, winner))
-	require.ErrorIs(t, MarkClaimedCampaignDeliveryRecipientResultWithAudit(
+	require.NoError(t, releaseRecipientClaim(ctx, db, recipient.ID, winner))
+	require.ErrorIs(t, markClaimedRecipientResult(
 		ctx, db, &audittest.Recorder{}, recipient.ID, winner,
 		CampaignDeliveryRecipientStatusPermanentFailed, "", "stale_worker", nil,
 	), ErrCampaignDeliveryClaimLost)
 
-	require.NoError(t, MarkClaimedCampaignDeliveryRecipientResultWithAudit(
+	require.NoError(t, markClaimedRecipientResult(
 		ctx, db, &audittest.Recorder{}, recipient.ID, reclaimedID,
 		CampaignDeliveryRecipientStatusSent, "provider-message", "", nil,
 	))

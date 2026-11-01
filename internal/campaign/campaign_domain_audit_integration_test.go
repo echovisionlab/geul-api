@@ -175,7 +175,7 @@ func TestCampaignDeliveryTerminalAuditIntegration(t *testing.T) {
 	recipient.NormalizedRecipientEmail = emailutil.NormalizeAddressForDelivery(recipient.RecipientEmail)
 	require.NoError(t, db.Create(&recipient).Error)
 	ctx = campaignRequestContext(t)
-	require.NoError(t, MarkCampaignDeliveryRecipientResultWithAudit(
+	require.NoError(t, markRecipientResult(
 		ctx, db, apitelemetry.NewDurableWriter(db), recipient.ID, CampaignDeliveryRecipientStatusSent, "provider-terminal-audit", "",
 		nil,
 	))

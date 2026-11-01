@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 
+	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -116,26 +117,24 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 	require.Zero(t, countAutomaticLegalPreviewLinks(t, db, automaticToken))
 
 	failingPublisher := &failingLegalNoticeBulkPublisher{}
-	err = campaign.NewAuditedCampaignDeliveryDispatcher(
-		db,
+	err = campaignadapter.NewDeliveryDispatcher(db, campaign.NewAuditedCampaignDeliveryDispatcher(
 		spiceDB,
 		failingPublisher,
 		noopDomainAuditAppender{},
 		campaign.WithLegalNoticeDeliveryPort(legaladapter.NewRuntime()),
-	).
+	)).
 		DispatchEmailDeliveryRun(t.Context(), run.ID)
 	require.NoError(t, err)
 	require.Zero(t, failingPublisher.calls)
 	require.Equal(t, int64(1), countAutomaticLegalPreviewLinks(t, db, automaticToken))
 
 	retryPublisher := &recordingLegalEmailPublisher{}
-	resumed, err := campaign.NewAuditedCampaignDeliveryDispatcher(
-		db,
+	resumed, err := campaignadapter.NewDeliveryDispatcher(db, campaign.NewAuditedCampaignDeliveryDispatcher(
 		spiceDB,
 		retryPublisher,
 		noopDomainAuditAppender{},
 		campaign.WithLegalNoticeDeliveryPort(legaladapter.NewRuntime()),
-	).
+	)).
 		ResumeActiveEmailDeliveryRuns(t.Context(), 25)
 	require.NoError(t, err)
 	require.Equal(t, 1, resumed)

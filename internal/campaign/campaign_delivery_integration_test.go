@@ -332,7 +332,7 @@ func TestCampaignDeliveryMutationEntryPointsLockCampaignBeforeRunIntegration(
 				_ *recordingCampaignPublisher,
 				runID string,
 			) error {
-				return MaterializeCampaignDeliveryRun(ctx, db, spiceDB, runID)
+				return materializeRun(ctx, db, spiceDB, runID)
 			},
 			wantRunStatus: CampaignDeliveryRunStatusSending,
 			wantCampaignStatus: managev1.
@@ -355,7 +355,7 @@ func TestCampaignDeliveryMutationEntryPointsLockCampaignBeforeRunIntegration(
 					First(&recipient, "run_id = ?", runID).Error; err != nil {
 					return err
 				}
-				return MarkCampaignDeliveryRecipientResultWithAudit(
+				return markRecipientResult(
 					ctx,
 					db,
 					&audittest.Recorder{},
@@ -696,7 +696,6 @@ func TestCampaignDeliveryDispatcherEnqueuesDueRunInPGMQIntegration(t *testing.T)
 	require.WithinDuration(t, scheduledAt, run.ScheduledAt, time.Millisecond)
 
 	dispatcher := NewAuditedCampaignDeliveryDispatcher(
-		db,
 		stack.SpiceDBClient,
 		publisher,
 		&campaignLocaleAuditCapture{},
@@ -706,7 +705,7 @@ func TestCampaignDeliveryDispatcherEnqueuesDueRunInPGMQIntegration(t *testing.T)
 		dispatchErr error
 	)
 	require.Eventually(t, func() bool {
-		dispatched, dispatchErr = dispatcher.DispatchDueEmailDeliveryRuns(ctx, 10)
+		dispatched, dispatchErr = dispatchDueRuns(ctx, db, dispatcher, 10)
 		return dispatchErr == nil && dispatched == 1
 	}, 5*time.Second, 20*time.Millisecond)
 	require.NoError(t, dispatchErr)

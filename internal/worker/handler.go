@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/echovisionlab/geul-api/internal/account"
+	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
 	filemediaruntime "github.com/echovisionlab/geul-api/internal/adapters/filemedia/runtime"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -249,14 +250,13 @@ func (h *Handlers) HandleScheduled(ctx context.Context, job scheduler.Job) error
 	}
 }
 
-func (h *Handlers) newCampaignDeliveryDispatcher() *campaign.CampaignDeliveryDispatcher {
-	return campaign.NewAuditedCampaignDeliveryDispatcher(
-		h.db,
+func (h *Handlers) newCampaignDeliveryDispatcher() *campaignadapter.DeliveryDispatcher {
+	return campaignadapter.NewDeliveryDispatcher(h.db, campaign.NewAuditedCampaignDeliveryDispatcher(
 		h.spicedbClient,
 		h.publisher,
 		h.auditWriter,
 		campaign.WithLegalNoticeDeliveryPort(legaladapter.NewRuntime()),
-	)
+	))
 }
 
 // HandleEmailSend handles transactional email delivery events.

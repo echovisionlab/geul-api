@@ -217,13 +217,12 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		filepublic.WithDownloadSegmentConfigs(mediaassetadapter.NewSegmentConfigs()),
 	)
 	legalRuntime := legaladapter.NewOGRuntime(cfg.CDNURL, ogDeps.planner)
-	campaignDeliveryDispatcher := campaign.NewAuditedCampaignDeliveryDispatcher(
-		db,
+	campaignDeliveryDispatcher := campaignadapter.NewDeliveryDispatcher(db, campaign.NewAuditedCampaignDeliveryDispatcher(
 		spicedbClient,
 		workerPublisher,
 		telemetryWriter,
 		campaign.WithLegalNoticeDeliveryPort(legalRuntime),
-	)
+	))
 	legalDependencies := legal.Dependencies{
 		OG:     legalRuntime,
 		Notice: legaladapter.NewNoticeRuntime(campaignDeliveryDispatcher),

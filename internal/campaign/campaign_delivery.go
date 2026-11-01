@@ -113,8 +113,12 @@ type CampaignBulkPublisher interface {
 	PublishSendBulkEmail(ctx context.Context, job *managev1.SendBulkEmailBatchEvent) error
 }
 
+// CampaignDeliveryDispatcher moves due delivery runs to sending and resumes
+// active ones. The delivery worker has no request principal to run
+// mutation.Run for, so the dispatcher opens no transaction: its caller
+// (internal/adapters/campaign) passes the database for reads and one
+// transaction per run for each write.
 type CampaignDeliveryDispatcher struct {
-	db          *gorm.DB
 	spiceDB     *auth.SpiceDBClient
 	publisher   CampaignBulkPublisher
 	auditWriter domainaudit.Appender
@@ -131,21 +135,16 @@ func WithLegalNoticeDeliveryPort(port LegalNoticeDeliveryPort) CampaignDeliveryD
 
 // NewAuditedCampaignDeliveryDispatcher is used by API and worker production
 // paths.
-func NewAuditedCampaignDeliveryDispatcher(db *gorm.DB, spiceDB *auth.SpiceDBClient, publisher CampaignBulkPublisher, auditWriter domainaudit.Appender, options ...CampaignDeliveryDispatcherOption) *CampaignDeliveryDispatcher {
+func NewAuditedCampaignDeliveryDispatcher(spiceDB *auth.SpiceDBClient, publisher CampaignBulkPublisher, auditWriter domainaudit.Appender, options ...CampaignDeliveryDispatcherOption) *CampaignDeliveryDispatcher {
 	if auditWriter == nil {
 		panic("CampaignDeliveryDispatcher: audit writer is required")
 	}
 	dependencycheck.MustNotNil(spiceDB, "spiceDB")
-	dispatcher := &CampaignDeliveryDispatcher{db: db, spiceDB: spiceDB, publisher: publisher, auditWriter: auditWriter}
+	dispatcher := &CampaignDeliveryDispatcher{spiceDB: spiceDB, publisher: publisher, auditWriter: auditWriter}
 	for _, option := range options {
 		option(dispatcher)
 	}
 	return dispatcher
-}
-
-func (d *CampaignDeliveryDispatcher) DispatchEmailDeliveryRun(ctx context.Context, runID string) error {
-	_, err := d.dispatchRun(ctx, runID, "")
-	return err
 }
 
 // enqueueStartedCampaignDeliveryRun records the first email.campaign command
@@ -178,159 +177,125 @@ func enqueueStartedCampaignDeliveryRun(
 	return nil
 }
 
-func (d *CampaignDeliveryDispatcher) DispatchDueEmailDeliveryRuns(ctx context.Context, limit int) (int, error) {
+// DueEmailDeliveryRuns lists up to limit scheduled runs whose time has come,
+// earliest first.
+func (*CampaignDeliveryDispatcher) DueEmailDeliveryRuns(ctx context.Context, db *gorm.DB, limit int) ([]model.CampaignDeliveryRun, error) {
 	if limit <= 0 {
 		limit = 25
 	}
-
 	var runs []model.CampaignDeliveryRun
-	now := time.Now()
-	if err := d.db.WithContext(ctx).
-		Where("status = ? AND scheduled_at <= ?", CampaignDeliveryRunStatusScheduled, now).
+	err := db.WithContext(ctx).
+		Where("status = ? AND scheduled_at <= ?", CampaignDeliveryRunStatusScheduled, time.Now()).
 		Order("scheduled_at ASC, id ASC").
 		Limit(limit).
-		Find(&runs).Error; err != nil {
-		return 0, err
-	}
-
-	dispatched := 0
-	for _, run := range runs {
-		published, err := d.dispatchRun(ctx, run.ID, "SKIP LOCKED")
-		if err != nil {
-			slog.ErrorContext(ctx, "failed to dispatch email delivery run", "run_id", run.ID, "run_kind", run.RunKind, failurecause.Attr(err))
-			continue
-		}
-		if published {
-			dispatched++
-		}
-	}
-
-	return dispatched, nil
+		Find(&runs).Error
+	return runs, err
 }
 
-func (d *CampaignDeliveryDispatcher) ResumeActiveEmailDeliveryRuns(ctx context.Context, limit int) (int, error) {
+// ActiveEmailDeliveryRuns lists up to limit sending runs that have not
+// completed, least recently updated first.
+func (*CampaignDeliveryDispatcher) ActiveEmailDeliveryRuns(ctx context.Context, db *gorm.DB, limit int) ([]model.CampaignDeliveryRun, error) {
 	if limit <= 0 {
 		limit = 25
 	}
-
 	var runs []model.CampaignDeliveryRun
-	if err := d.db.WithContext(ctx).
+	err := db.WithContext(ctx).
 		Where("status = ?", CampaignDeliveryRunStatusSending).
 		Where("completed_at IS NULL").
 		Order("updated_at ASC, id ASC").
 		Limit(limit).
-		Find(&runs).Error; err != nil {
-		return 0, err
-	}
-
-	resumed := 0
-	for _, run := range runs {
-		target, err := loadCampaignDeliveryTarget(ctx, d.db, run)
-		if err != nil {
-			slog.ErrorContext(ctx, "failed to load campaign delivery target", "run_id", run.ID, failurecause.Attr(err))
-			continue
-		}
-		if _, err := campaignDeliveryTargetRecipientSelection(target); err != nil {
-			slog.ErrorContext(ctx, "failed to reconstruct campaign delivery target", "run_id", run.ID, failurecause.Attr(err))
-			continue
-		}
-		job := newEmailDeliveryBulkJob(run.ID)
-		if err := MaterializeCampaignDeliveryRun(ctx, d.db, d.spiceDB, run.ID); err != nil {
-			slog.ErrorContext(ctx, "failed to recover campaign delivery materialization", "run_id", run.ID, failurecause.Attr(err))
-			continue
-		}
-
-		pending, err := HasPendingCampaignDeliveryRecipients(ctx, d.db, run.ID)
-		if err != nil {
-			slog.ErrorContext(ctx, "failed to inspect pending campaign recipients", "run_id", run.ID, failurecause.Attr(err))
-			continue
-		}
-		if !pending {
-			continue
-		}
-		if err := d.publisher.PublishSendBulkEmail(ctx, job); err != nil {
-			slog.ErrorContext(ctx, "failed to publish campaign delivery resume job", "run_id", run.ID, failurecause.Attr(err))
-			continue
-		}
-		resumed++
-	}
-	return resumed, nil
+		Find(&runs).Error
+	return runs, err
 }
 
-func (d *CampaignDeliveryDispatcher) dispatchRun(ctx context.Context, runID string, lockOptions string) (bool, error) {
-	_, published, err := d.prepareDeliveryRunDispatch(ctx, runID, lockOptions)
-	return published, err
-}
-
-func (d *CampaignDeliveryDispatcher) prepareDeliveryRunDispatch(
-	ctx context.Context,
-	runID string,
-	lockOptions string,
-) (model.CampaignDeliveryRun, bool, error) {
-	var run model.CampaignDeliveryRun
-	skippedLockedRow := false
-	err := d.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		locked, skipped, err := lockEmailDeliveryRunForMutation(
-			ctx,
-			tx,
-			runID,
-			lockOptions,
-		)
-		if err != nil {
-			return err
-		}
-		if skipped {
-			skippedLockedRow = true
-			return nil
-		}
-		run = locked.Run
-		if run.Status != CampaignDeliveryRunStatusScheduled {
-			return nil
-		}
-		now := time.Now().UTC()
-		if run.ScheduledAt.After(now) {
-			return nil
-		}
-
-		target, err := loadCampaignDeliveryTarget(ctx, tx, run)
-		if err != nil {
-			return err
-		}
-		selection, err := campaignDeliveryTargetRecipientSelection(target)
-		if err != nil {
-			return err
-		}
-		count, err := countBulkEmailRecipients(ctx, tx, d.spiceDB, selection)
-		if err != nil {
-			return err
-		}
-		switch strings.TrimSpace(run.RunKind) {
-		case EmailDeliveryRunKindCampaign:
-			if err := transitionCampaignDeliveryRunToDispatch(ctx, tx, d.auditWriter, locked.Campaign, &run, count, now); err != nil {
-				return err
-			}
-		case EmailDeliveryRunKindLegalNotice:
-			if err := transitionLegalNoticeDeliveryRunToDispatch(ctx, tx, d.legalNotice, &run, count, now); err != nil {
-				return err
-			}
-		default:
-			return fmt.Errorf("unsupported email delivery run kind: %s", run.RunKind)
-		}
-		if run.Status != CampaignDeliveryRunStatusSending {
-			return nil
-		}
-		if err := publishCampaignDurableProtoInTransaction(ctx, d.publisher, tx, eventpkg.QueueEmailCampaign, run.ID, newEmailDeliveryBulkJob(run.ID)); err != nil {
-			return fmt.Errorf("enqueue email campaign %s: %w", run.ID, err)
-		}
-		return nil
-	})
+// ResumableEmailDeliveryRun reports whether the active run's frozen target
+// still reconstructs, and logs why when it does not.
+func (*CampaignDeliveryDispatcher) ResumableEmailDeliveryRun(ctx context.Context, db *gorm.DB, run model.CampaignDeliveryRun) bool {
+	target, err := loadCampaignDeliveryTarget(ctx, db, run)
 	if err != nil {
-		return model.CampaignDeliveryRun{}, false, err
+		slog.ErrorContext(ctx, "failed to load campaign delivery target", "run_id", run.ID, failurecause.Attr(err))
+		return false
 	}
-	if skippedLockedRow || run.Status != CampaignDeliveryRunStatusSending {
-		return run, false, nil
+	if _, err := campaignDeliveryTargetRecipientSelection(target); err != nil {
+		slog.ErrorContext(ctx, "failed to reconstruct campaign delivery target", "run_id", run.ID, failurecause.Attr(err))
+		return false
 	}
-	return run, true, nil
+	return true
+}
+
+// MaterializeEmailDeliveryRun materializes the run's recipients in tx.
+func (d *CampaignDeliveryDispatcher) MaterializeEmailDeliveryRun(ctx context.Context, tx *gorm.DB, runID string) error {
+	return MaterializeCampaignDeliveryRun(ctx, tx, d.spiceDB, runID)
+}
+
+// PublishResumedEmailDeliveryRun hands a materialized run that still has
+// pending recipients back to bulk delivery. It reports whether it did, and
+// logs a failure.
+func (d *CampaignDeliveryDispatcher) PublishResumedEmailDeliveryRun(ctx context.Context, db *gorm.DB, runID string) bool {
+	pending, err := HasPendingCampaignDeliveryRecipients(ctx, db, runID)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to inspect pending campaign recipients", "run_id", runID, failurecause.Attr(err))
+		return false
+	}
+	if !pending {
+		return false
+	}
+	if err := d.publisher.PublishSendBulkEmail(ctx, newEmailDeliveryBulkJob(runID)); err != nil {
+		slog.ErrorContext(ctx, "failed to publish campaign delivery resume job", "run_id", runID, failurecause.Attr(err))
+		return false
+	}
+	return true
+}
+
+// DispatchEmailDeliveryRun moves the due run to sending in tx and enqueues
+// its first batch beside it; skipLocked passes over a run another
+// dispatcher holds. It reports whether the run was handed to delivery,
+// which holds once tx commits.
+func (d *CampaignDeliveryDispatcher) DispatchEmailDeliveryRun(ctx context.Context, tx *gorm.DB, runID string, skipLocked bool) (bool, error) {
+	tx = tx.WithContext(ctx)
+	lockOptions := ""
+	if skipLocked {
+		lockOptions = clause.LockingOptionsSkipLocked
+	}
+	locked, skipped, err := lockEmailDeliveryRunForMutation(ctx, tx, runID, lockOptions)
+	if err != nil || skipped {
+		return false, err
+	}
+	run := locked.Run
+	if run.Status != CampaignDeliveryRunStatusScheduled {
+		return false, nil
+	}
+	now := time.Now().UTC()
+	if run.ScheduledAt.After(now) {
+		return false, nil
+	}
+	target, err := loadCampaignDeliveryTarget(ctx, tx, run)
+	if err != nil {
+		return false, err
+	}
+	selection, err := campaignDeliveryTargetRecipientSelection(target)
+	if err != nil {
+		return false, err
+	}
+	count, err := countBulkEmailRecipients(ctx, tx, d.spiceDB, selection)
+	if err != nil {
+		return false, err
+	}
+	switch strings.TrimSpace(run.RunKind) {
+	case EmailDeliveryRunKindCampaign:
+		err = transitionCampaignDeliveryRunToDispatch(ctx, tx, d.auditWriter, locked.Campaign, &run, count, now)
+	case EmailDeliveryRunKindLegalNotice:
+		err = transitionLegalNoticeDeliveryRunToDispatch(ctx, tx, d.legalNotice, &run, count, now)
+	default:
+		err = fmt.Errorf("unsupported email delivery run kind: %s", run.RunKind)
+	}
+	if err != nil || run.Status != CampaignDeliveryRunStatusSending {
+		return false, err
+	}
+	if err := publishCampaignDurableProtoInTransaction(ctx, d.publisher, tx, eventpkg.QueueEmailCampaign, run.ID, newEmailDeliveryBulkJob(run.ID)); err != nil {
+		return false, fmt.Errorf("enqueue email campaign %s: %w", run.ID, err)
+	}
+	return true, nil
 }
 
 func transitionCampaignDeliveryRunToDispatch(
