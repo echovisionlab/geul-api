@@ -46,9 +46,7 @@
 6 internal/form/public model
 2 internal/form/public spicedb client
 12 internal/label generated contracts
-3 internal/label/public generated contracts
-1 internal/label/public gorm
-3 internal/label/public model
+2 internal/label/public generated contracts
 10 internal/legal generated contracts
 17 internal/legal gorm
 10 internal/legal model

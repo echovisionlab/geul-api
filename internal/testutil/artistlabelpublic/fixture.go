@@ -32,6 +32,7 @@ import (
 	labeldomain "github.com/echovisionlab/geul-api/internal/label"
 	labelpostgres "github.com/echovisionlab/geul-api/internal/label/postgres"
 	labelpublic "github.com/echovisionlab/geul-api/internal/label/public"
+	labelpublicpostgres "github.com/echovisionlab/geul-api/internal/label/public/postgres"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
@@ -153,7 +154,9 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	require.NoError(t, err)
 	publicArtist := artistpublic.NewConnectHandler(publicArtistService)
 	labelRuntime := labeladapter.NewPublicRuntime(db, artistLabelPublicCDN, spiceDB, contentBlocks)
-	publicLabelService, err := labelpublic.NewService(labelpublic.Deps{DB: db, Content: labelRuntime, Draft: labelRuntime, Media: labelRuntime})
+	publicLabelUnits, err := labelpublicpostgres.NewUnits(db, labelRuntime, labelRuntime)
+	require.NoError(t, err)
+	publicLabelService, err := labelpublic.NewService(labelpublic.Deps{Units: publicLabelUnits, Draft: labelRuntime})
 	require.NoError(t, err)
 	publicLabel := labelpublic.NewConnectHandler(publicLabelService)
 

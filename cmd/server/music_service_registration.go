@@ -22,6 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/label"
 	labelpostgres "github.com/echovisionlab/geul-api/internal/label/postgres"
 	labelpublic "github.com/echovisionlab/geul-api/internal/label/public"
+	labelpublicpostgres "github.com/echovisionlab/geul-api/internal/label/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
@@ -114,9 +115,11 @@ func (m musicServiceRegistration) registerLabel() (*label.Service, error) {
 	m.registerInternal(intrav1connect.NewInternalLabelServiceHandler(label.NewInternalConnectHandler(labelService), m.internalOptions...))
 
 	labelPublicRuntime := labeladapter.NewPublicRuntime(deps.db, deps.cfg.CDNURL, deps.spicedbClient, deps.contentBlockStore)
-	publicLabelService, err := labelpublic.NewService(labelpublic.Deps{
-		DB: deps.db, Content: labelPublicRuntime, Draft: labelPublicRuntime, Media: labelPublicRuntime,
-	})
+	publicLabelUnits, err := labelpublicpostgres.NewUnits(deps.db, labelPublicRuntime, labelPublicRuntime)
+	if err != nil {
+		return nil, fmt.Errorf("initialize public label store: %w", err)
+	}
+	publicLabelService, err := labelpublic.NewService(labelpublic.Deps{Units: publicLabelUnits, Draft: labelPublicRuntime})
 	if err != nil {
 		return nil, fmt.Errorf("initialize public label service: %w", err)
 	}

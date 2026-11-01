@@ -14,6 +14,7 @@ import (
 
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	labelpublic "github.com/echovisionlab/geul-api/internal/label/public"
+	labelpublicpostgres "github.com/echovisionlab/geul-api/internal/label/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -131,7 +132,9 @@ func TestLabelPublicReadsHideDraftsAndExposePublishedRelationsIntegration(t *tes
 		db, "https://cdn.example.com", fixture.SpiceDB,
 		testutil.NewCreativeContentStore(t, fixture.SpiceDB),
 	)
-	managerLabelService, err := labelpublic.NewService(labelpublic.Deps{DB: db, Content: managerRuntime, Draft: managerRuntime, Media: managerRuntime})
+	managerUnits, err := labelpublicpostgres.NewUnits(db, managerRuntime, managerRuntime)
+	require.NoError(t, err)
+	managerLabelService, err := labelpublic.NewService(labelpublic.Deps{Units: managerUnits, Draft: managerRuntime})
 	require.NoError(t, err)
 	managerLabelSvc := labelpublic.NewConnectHandler(managerLabelService)
 	managerReq := connect.NewRequest(&openv1.GetLabelRequest{Slug: draftLabel.GetSlug()})
