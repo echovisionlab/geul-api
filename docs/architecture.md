@@ -875,3 +875,34 @@ it.
 - **The catalog.** Add `./internal/<domain>/postgres` to the `db` band in
   `scripts/test/integration/catalog.go`, and remove a package whose last
   integration test is gone; the catalog drift test fails otherwise.
+- **A mutation on no principal's behalf.** A system boundary that changes
+  an Identity's own state with no request principal (the login role
+  convergence a Kratos hook drives) still runs through `mutation.Run`:
+  `PrincipalFence` of that Identity is its Access, and `SystemAudit` names
+  its record. Run puts the audit before the relationship write, so a
+  failed audit rolls back before SpiceDB is written. A no-op returns a
+  sentinel from `Change`; Run hands it back after the rollback, and the use
+  case matches it by identity so a joined rollback failure still surfaces
+  (`authentication.SyncLoginRole`).
+- **Admission bookkeeping.** A write that no principal authorizes and no
+  audit record describes, such as the auth code issuance reservation of an
+  anonymous request, is not a domain mutation. It calls
+  `units.Transaction(ctx, false, ...)`, the one read-committed transaction
+  it always opened, or `units.Read` directly; its Store methods are
+  contract cases like any other (`authentication.AuthCodeIssuanceLimiter`).
+- **Per-request reads outside a snapshot.** A read made on every request
+  of a hot path (the session principal Oathkeeper's gateway check needs)
+  stays one statement behind a port outside the unit of work
+  (`authentication.Sessions`), because a read-only snapshot adds a BEGIN
+  and a COMMIT to every request.
+- **HTTP components.** A domain's HTTP handlers that are not Connect RPCs
+  (the Kratos public proxy, the unified login facade, the access recorder,
+  the MCP gateway admission) keep their decisions in the handler, take
+  their collaborators as ports (the reservation limiter, the Kratos
+  identity finder, `Sessions`, the admission checker), and are tested with
+  `httptest` on fakes. The command, use case and translator split applies
+  to the Connect RPCs only.
+- **Unexported seams in use-case tests.** A test in `<domain>_test` that
+  needs an unexported clock or result field reaches it through
+  `export_test.go`. An internal test cannot import `<domain>test` (it
+  imports the domain), so it keeps a small local stub of the port.
