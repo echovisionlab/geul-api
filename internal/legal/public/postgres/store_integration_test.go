@@ -48,7 +48,7 @@ func TestPublicStoreReadsPublishedVersionsIntegration(t *testing.T) {
 	shareType := managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY.String()
 	require.NoError(t, db.Create(&[]model.ShareLink{
 		{ID: uuid.NewString(), Token: "open", EntityType: shareType, EntityID: next.ID, ExpiresAt: at(time.Hour), PasswordHash: &hash, CreatedAt: now},
-		{ID: uuid.NewString(), Token: "expired", EntityType: shareType, EntityID: next.ID, ExpiresAt: at(-time.Minute), CreatedAt: now},
+		{ID: uuid.NewString(), Token: "expired", EntityType: shareType, EntityID: next.ID, ExpiresAt: at(-time.Minute), CreatedAt: now.Add(-2 * time.Hour)},
 	}).Error)
 
 	require.NoError(t, units.Read(t.Context(), func(store public.Store) error {

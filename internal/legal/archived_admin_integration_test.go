@@ -161,7 +161,9 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 
 			store := legalpostgres.Bind(db, legalpostgres.Ports{}, nil).Store
 			lockActive := func(ctx context.Context) legaldomain.LockActive {
-				return func(principal *auth.UserInfo) (bool, error) { return identitystate.LockActivePrincipal(ctx, db, principal) }
+				return func(principal *auth.UserInfo) (bool, error) {
+					return identitystate.LockActivePrincipal(ctx, db, principal)
+				}
 			}
 			require.NoError(t, legaldomain.RequireTranslationInterchangeView(authorCtx, store, spiceDB, lockActive(authorCtx), string(testCase.kind), id),
 				"a global Author may export an archived legal translation read-only")

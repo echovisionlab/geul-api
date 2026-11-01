@@ -215,11 +215,11 @@ func typedTranslation(t *testing.T, h *harness, kind legal.PolicyKind, id, title
 		Text: &contentv1.RichTextStyledText{Text: text},
 	}}}
 	return legal.TranslationJob{
-			EntityType: string(kind), EntityID: id, SourceLocale: source.SourceLocale, TargetLocale: "ko",
-			RequestedByMemberID: uuid.NewString(),
-		}, &translation.Candidate{
-			Title: &title, ContentDocumentRevision: source.ContentDocumentRevision, ContentBlockLocaleOverlay: overlay,
-		}
+		EntityType: string(kind), EntityID: id, SourceLocale: source.SourceLocale, TargetLocale: "ko",
+		RequestedByMemberID: uuid.NewString(),
+	}, &translation.Candidate{
+		Title: &title, ContentDocumentRevision: source.ContentDocumentRevision, ContentBlockLocaleOverlay: overlay,
+	}
 }
 
 func TestApplyTypedTranslationCandidateWritesTheTargetLocaleInEveryLifecycle(t *testing.T) {
@@ -265,7 +265,9 @@ func TestApplyTypedTranslationCandidateRejectsWhatItCannotApply(t *testing.T) {
 		"a non-canonical target":    {change: func(j *legal.TranslationJob, _ *translation.Candidate) { j.TargetLocale = "ko-KR" }, code: connect.CodeInvalidArgument, answer: "locale: must be an exact canonical locale"},
 		"an overlay of another one": {change: func(j *legal.TranslationJob, _ *translation.Candidate) { j.TargetLocale = "ja" }, code: connect.CodeInvalidArgument, answer: "document.locale_overlay.locale: must match the translation target locale"},
 		"a blank title":             {change: func(_ *legal.TranslationJob, c *translation.Candidate) { c.Title = &blank }, code: connect.CodeFailedPrecondition, answer: "legal target locale title is required"},
-		"a missing version":         {change: func(j *legal.TranslationJob, _ *translation.Candidate) { j.EntityID = "e0b0a3b9-0000-4000-8000-000000000000" }, code: connect.CodeNotFound, answer: "privacy not found: e0b0a3b9-0000-4000-8000-000000000000"},
+		"a missing version": {change: func(j *legal.TranslationJob, _ *translation.Candidate) {
+			j.EntityID = "e0b0a3b9-0000-4000-8000-000000000000"
+		}, code: connect.CodeNotFound, answer: "privacy not found: e0b0a3b9-0000-4000-8000-000000000000"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			job, candidate := job, *candidate
