@@ -114,62 +114,44 @@ func (p *formPort) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 
-	run := newExactMutationRun("Form")
-	domainResult, err := p.service.ExecuteAIDocumentMutation(ctx, formdomain.ExecuteAIDocumentMutationCommand{
-		FormID: string(identity.Reference), Locale: string(request.Locale), Mode: mode,
-		Compile: func(state formdomain.AIDocumentState) (formdomain.AIDocumentMutation, error) {
-			current, err := p.document(identity, request.Locale, state)
-			if err != nil {
-				return formdomain.AIDocumentMutation{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return formdomain.AIDocumentMutation{}, err
-			}
+	return executeExactMutation(request, exactMutationSpec[formdomain.AIDocumentState, formdomain.AIDocumentMutation, formdomain.AIDocumentMutationResult]{
+		Domain:       "Form",
+		ValidateOnly: mode == formdomain.AIDocumentExecutionValidate,
+		Execute: func(compiler func(formdomain.AIDocumentState) (formdomain.AIDocumentMutation, error)) (formdomain.AIDocumentMutationResult, error) {
+			return p.service.ExecuteAIDocumentMutation(ctx, formdomain.ExecuteAIDocumentMutationCommand{
+				FormID:  string(identity.Reference),
+				Locale:  string(request.Locale),
+				Mode:    mode,
+				Compile: compiler,
+			})
+		},
+		Project: func(state formdomain.AIDocumentState) (core.Document, error) {
+			return p.document(identity, request.Locale, state)
+		},
+		Compile: func(state formdomain.AIDocumentState, current core.Document, command core.ValidatedApply) (formdomain.AIDocumentMutation, []core.OperationIssue, error) {
 			contributor, err := canonicalFormContributor(state.ViewerMemberID)
 			if err != nil {
-				return formdomain.AIDocumentMutation{}, err
+				return formdomain.AIDocumentMutation{}, nil, err
 			}
-			mutation, issues, err := p.compile(state, current, contributor, run.command.Operations)
+			mutation, issues, err := p.compile(state, current, contributor, command.Operations)
 			if err != nil {
-				return formdomain.AIDocumentMutation{}, err
+				return formdomain.AIDocumentMutation{}, nil, err
 			}
-			if err := run.rejectIssues(issues); err != nil {
-				return formdomain.AIDocumentMutation{}, err
+			return mutation, issues, nil
+		},
+		Result: func(domainResult formdomain.AIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			output := core.ApplyResult{
+				DocumentRevision: core.Revision(domainResult.DocumentRevision),
+				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
+				Changed:          domainResult.Changed,
 			}
-			return mutation, nil
+			output = withOperationChanges(command, output, func(operation core.Operation) []string {
+				return compactOperationHandles(operation, command.Locale, "form")
+			})
+
+			return output, nil
 		},
 	})
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == formdomain.AIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *core.RevisionConflict
-		if errors.As(err, &conflict) {
-			return core.ValidationResult{}, core.ApplyResult{}, formConflict(conflict, run.command.AffectedHandles)
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == formdomain.AIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
-
-	output := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.DocumentRevision),
-		TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
-		Changed:          domainResult.Changed,
-	}
-	if domainResult.Changed {
-		for index, operation := range run.command.Operations {
-			output.Changes = append(output.Changes, core.Change{
-				Operation: index, Kind: operation.Kind,
-				AffectedHandles: compactOperationHandles(operation, run.command.Locale, "form"),
-			})
-		}
-	}
-	accepted, err := run.accept(output)
-	return run.validation, accepted, err
 }
 
 func (p *formPort) document(identity core.DocumentIdentity, locale core.Locale, state formdomain.AIDocumentState) (core.Document, error) {
@@ -301,17 +283,6 @@ func validateFormDocumentIdentity(identity core.DocumentIdentity) error {
 		return errors.New("form AI document reference must be a canonical UUID")
 	}
 	return nil
-}
-func formConflict(conflict *core.RevisionConflict, handles []string) error {
-	code := core.ConflictDocumentRevision
-	if conflict.Kind == core.ConflictTargetRevision {
-		code = core.ConflictTargetRevision
-	}
-	return &core.ConflictError{Conflict: core.Conflict{
-		Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-		CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
-		AffectedHandles:       append([]string(nil), handles...),
-	}}
 }
 
 func projectFormNodes(state formdomain.AIDocumentState) ([]core.Node, error) {

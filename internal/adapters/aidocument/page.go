@@ -103,83 +103,46 @@ func (p *pagePort) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 
-	run := newExactMutationRun("Page")
-	domainResult, err := p.application.ExecuteAIDocumentMutation(ctx, pagedomain.ExecuteAIDocumentMutationCommand{
-		PageID: string(identity.Reference), Locale: string(request.Locale), Mode: mode,
-		Compile: func(state pagedomain.AIDocumentState) (pagedomain.AIDocumentMutation, error) {
-			current, err := p.project(identity, request.Locale, state)
-			if err != nil {
-				return pagedomain.AIDocumentMutation{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return pagedomain.AIDocumentMutation{}, err
-			}
-			if err := run.rejectIssues(p.codec.validateRichOperations(current.Nodes, run.command.Operations)); err != nil {
-				return pagedomain.AIDocumentMutation{}, err
+	return executeExactMutation(request, exactMutationSpec[pagedomain.AIDocumentState, pagedomain.AIDocumentMutation, pagedomain.AIDocumentMutationResult]{
+		Domain:       "Page",
+		ValidateOnly: mode == pagedomain.AIDocumentExecutionValidate,
+		Execute: func(compiler func(pagedomain.AIDocumentState) (pagedomain.AIDocumentMutation, error)) (pagedomain.AIDocumentMutationResult, error) {
+			return p.application.ExecuteAIDocumentMutation(ctx, pagedomain.ExecuteAIDocumentMutationCommand{
+				PageID:  string(identity.Reference),
+				Locale:  string(request.Locale),
+				Mode:    mode,
+				Compile: compiler,
+			})
+		},
+		Project: func(state pagedomain.AIDocumentState) (core.Document, error) {
+			return p.project(identity, request.Locale, state)
+		},
+		Compile: func(state pagedomain.AIDocumentState, current core.Document, command core.ValidatedApply) (pagedomain.AIDocumentMutation, []core.OperationIssue, error) {
+			if issues := p.codec.validateRichOperations(current.Nodes, command.Operations); len(issues) != 0 {
+				return pagedomain.AIDocumentMutation{}, issues, nil
 			}
 			contributor, err := canonicalPageContributor(state.ViewerMemberID)
 			if err != nil {
-				return pagedomain.AIDocumentMutation{}, err
+				return pagedomain.AIDocumentMutation{}, nil, err
 			}
-			mutation, issues, err := p.compile(ctx, state, contributor, current, run.command.Operations)
+			mutation, issues, err := p.compile(ctx, state, contributor, current, command.Operations)
 			if err != nil {
-				return pagedomain.AIDocumentMutation{}, err
+				return pagedomain.AIDocumentMutation{}, nil, err
 			}
-			if err := run.rejectIssues(issues); err != nil {
-				return pagedomain.AIDocumentMutation{}, err
-			}
-			return mutation, nil
+			return mutation, issues, nil
 		},
-	})
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == pagedomain.AIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *core.RevisionConflict
-		if errors.As(err, &conflict) {
-			code := core.ConflictDocumentRevision
-			if conflict.Kind == core.ConflictTargetRevision {
-				code = core.ConflictTargetRevision
+		Result: func(domainResult pagedomain.AIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			output := core.ApplyResult{
+				DocumentRevision: core.Revision(domainResult.DocumentRevision),
+				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
+				Changed:          domainResult.Changed,
 			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
-				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
-				AffectedHandles:       append([]string(nil), run.command.AffectedHandles...),
-			}}
-		}
-		operations := run.command.Operations
-		if len(operations) == 0 {
-			operations = request.Operations
-		}
-		if issue := pageDomainIssue(err, operations); issue != nil {
-			run.validation.Issues = append(run.validation.Issues, *issue)
-			if mode == pagedomain.AIDocumentExecutionValidate {
-				return run.validation, core.ApplyResult{}, nil
-			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ValidationError{Result: run.validation}
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == pagedomain.AIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
+			output = withOperationChanges(command, output, func(operation core.Operation) []string { return pageOperationHandles(operation) })
 
-	output := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.DocumentRevision),
-		TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
-		Changed:          domainResult.Changed,
-	}
-	if domainResult.Changed {
-		for index, operation := range run.command.Operations {
-			output.Changes = append(output.Changes, core.Change{
-				Operation: index, Kind: operation.Kind, AffectedHandles: pageOperationHandles(operation),
-			})
-		}
-	}
-	accepted, err := run.accept(output)
-	return run.validation, accepted, err
+			return output, nil
+		},
+		DomainIssue: pageDomainIssue,
+	})
 }
 
 func (p *pagePort) project(identity core.DocumentIdentity, locale core.Locale, state pagedomain.AIDocumentState) (core.Document, error) {

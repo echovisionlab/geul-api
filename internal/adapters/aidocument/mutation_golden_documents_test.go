@@ -275,13 +275,17 @@ func TestEmailRichTextExactMutationGolden(t *testing.T) {
 				},
 				conflict: func(target bool) error {
 					if target {
-						return &emailRichTextRevisionConflict{
-							kind: core.ConflictTargetRevision, currentDocumentRevision: goldenDocumentRevision,
-							currentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+						return &core.RevisionConflict{
+							Kind:                    core.ConflictTargetRevision,
+							CurrentDocumentRevision: goldenDocumentRevision,
+							CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+							Message:                 fmt.Sprintf("Email profile AI document revision conflict: current revision is %q", goldenDocumentRevision),
 						}
 					}
-					return &emailRichTextRevisionConflict{
-						kind: core.ConflictDocumentRevision, currentDocumentRevision: goldenCurrentDocumentRevision,
+					return &core.RevisionConflict{
+						Kind:                    core.ConflictDocumentRevision,
+						CurrentDocumentRevision: goldenCurrentDocumentRevision,
+						Message:                 fmt.Sprintf("Email profile AI document revision conflict: current revision is %q", goldenCurrentDocumentRevision),
 					}
 				},
 				sourceOps: []core.Operation{

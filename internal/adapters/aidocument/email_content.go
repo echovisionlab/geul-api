@@ -2,7 +2,6 @@ package aidocumentadapter
 
 import (
 	"context"
-	"errors"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -80,17 +79,6 @@ func (d *emailContentAIDocumentDomain) Execute(
 		},
 	)
 	if err != nil {
-		var conflict *core.RevisionConflict
-		if errors.As(err, &conflict) {
-			code := core.ConflictDocumentRevision
-			if conflict.Kind == core.ConflictTargetRevision {
-				code = core.ConflictTargetRevision
-			}
-			return emailRichTextMutationResult{}, &emailRichTextRevisionConflict{
-				kind: code, currentDocumentRevision: conflict.CurrentDocumentRevision,
-				currentTargetRevision: conflict.CurrentTargetRevision,
-			}
-		}
 		return emailRichTextMutationResult{}, err
 	}
 	return emailRichTextMutationResult{

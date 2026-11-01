@@ -84,74 +84,34 @@ func (p *labelPort) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 
-	run := newExactMutationRun("Label")
-	domainResult, err := p.api.ExecuteAIDocumentMutation(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(state labeldomain.AIDocumentState) (labeldomain.AIDocumentMutation, error) {
-			current, err := p.document(identity, request.Locale, state)
-			if err != nil {
-				return labeldomain.AIDocumentMutation{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return labeldomain.AIDocumentMutation{}, err
-			}
+	return executeExactMutation(request, exactMutationSpec[labeldomain.AIDocumentState, labeldomain.AIDocumentMutation, labeldomain.AIDocumentMutationResult]{
+		Domain:       "Label",
+		ValidateOnly: mode == labeldomain.AIDocumentExecutionValidate,
+		Execute: func(compiler func(labeldomain.AIDocumentState) (labeldomain.AIDocumentMutation, error)) (labeldomain.AIDocumentMutationResult, error) {
+			return p.api.ExecuteAIDocumentMutation(ctx, string(identity.Reference), string(request.Locale), mode, compiler)
+		},
+		Project: func(state labeldomain.AIDocumentState) (core.Document, error) {
+			return p.document(identity, request.Locale, state)
+		},
+		Compile: func(state labeldomain.AIDocumentState, current core.Document, command core.ValidatedApply) (labeldomain.AIDocumentMutation, []core.OperationIssue, error) {
 			contributor, err := labelContributorID(state.ViewerMemberID)
 			if err != nil {
-				return labeldomain.AIDocumentMutation{}, err
+				return labeldomain.AIDocumentMutation{}, nil, err
 			}
-			mutation, issues, err := p.compileMutation(state, current, contributor, run.command.Operations)
+			mutation, issues, err := p.compileMutation(state, current, contributor, command.Operations)
 			if err != nil {
-				return labeldomain.AIDocumentMutation{}, err
+				return labeldomain.AIDocumentMutation{}, nil, err
 			}
-			if err := run.rejectIssues(issues); err != nil {
-				return labeldomain.AIDocumentMutation{}, err
-			}
-			return mutation, nil
+			return mutation, issues, nil
 		},
-	)
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == labeldomain.AIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *core.RevisionConflict
-		if errors.As(err, &conflict) {
-			code := core.ConflictDocumentRevision
-			if conflict.Kind == core.ConflictTargetRevision {
-				code = core.ConflictTargetRevision
-			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
-				Code:                    code,
-				CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision:   core.OptionalRevision(conflict.CurrentTargetRevision),
-				AffectedHandles:         append([]string(nil), run.command.AffectedHandles...),
-			}}
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == labeldomain.AIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
+		Result: func(domainResult labeldomain.AIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			output := core.ApplyResult{DocumentRevision: core.Revision(domainResult.Content.DocumentRevision.String()), Changed: domainResult.Content.Changed}
+			output.TargetRevision = core.OptionalRevision(domainResult.TargetRevision)
+			output = withOperationChanges(command, output, func(operation core.Operation) []string { return labelOperationHandles(operation, command.Locale) })
 
-	output := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.Content.DocumentRevision.String()),
-		Changed:          domainResult.Content.Changed,
-	}
-	output.TargetRevision = core.OptionalRevision(domainResult.TargetRevision)
-	if domainResult.Content.Changed {
-		for index, operation := range run.command.Operations {
-			output.Changes = append(output.Changes, core.Change{
-				Operation: index, Kind: operation.Kind,
-				AffectedHandles: labelOperationHandles(operation, run.command.Locale),
-			})
-		}
-	}
-	accepted, err := run.accept(output)
-	return run.validation, accepted, err
+			return output, nil
+		},
+	})
 }
 
 func (p *labelPort) compileMutation(

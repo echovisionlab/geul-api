@@ -103,80 +103,38 @@ func (p *workPort) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 
-	run := newExactMutationRun("Work")
-	domainResult, err := p.application.ExecuteAIDocumentMutation(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(state workdomain.AIDocumentState) (workdomain.AIDocumentMutation, error) {
-			current, err := p.project(identity, request.Locale, state)
-			if err != nil {
-				return workdomain.AIDocumentMutation{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return workdomain.AIDocumentMutation{}, err
-			}
+	return executeExactMutation(request, exactMutationSpec[workdomain.AIDocumentState, workdomain.AIDocumentMutation, workdomain.AIDocumentMutationResult]{
+		Domain:       "Work",
+		ValidateOnly: mode == workdomain.AIDocumentExecutionValidate,
+		Execute: func(compiler func(workdomain.AIDocumentState) (workdomain.AIDocumentMutation, error)) (workdomain.AIDocumentMutationResult, error) {
+			return p.application.ExecuteAIDocumentMutation(ctx, string(identity.Reference), string(request.Locale), mode, compiler)
+		},
+		Project: func(state workdomain.AIDocumentState) (core.Document, error) {
+			return p.project(identity, request.Locale, state)
+		},
+		Compile: func(state workdomain.AIDocumentState, current core.Document, command core.ValidatedApply) (workdomain.AIDocumentMutation, []core.OperationIssue, error) {
 			contributor, err := canonicalWorkContributor(state.ViewerMemberID)
 			if err != nil {
-				return workdomain.AIDocumentMutation{}, err
+				return workdomain.AIDocumentMutation{}, nil, err
 			}
-			mutation, issues, err := p.compile(state, contributor, current, run.command.Operations)
+			mutation, issues, err := p.compile(state, contributor, current, command.Operations)
 			if err != nil {
-				return workdomain.AIDocumentMutation{}, err
+				return workdomain.AIDocumentMutation{}, nil, err
 			}
-			if err := run.rejectIssues(issues); err != nil {
-				return workdomain.AIDocumentMutation{}, err
-			}
-			return mutation, nil
+			return mutation, issues, nil
 		},
-	)
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == workdomain.AIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *core.RevisionConflict
-		if errors.As(err, &conflict) {
-			code := core.ConflictDocumentRevision
-			if conflict.Kind == core.ConflictTargetRevision {
-				code = core.ConflictTargetRevision
+		Result: func(domainResult workdomain.AIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			output := core.ApplyResult{
+				DocumentRevision: core.Revision(domainResult.Content.DocumentRevision.String()),
+				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
+				Changed:          domainResult.Content.Changed,
 			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
-				Code:                    code,
-				CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision:   core.OptionalRevision(conflict.CurrentTargetRevision),
-				AffectedHandles:         append([]string(nil), run.command.AffectedHandles...),
-			}}
-		}
-		if issue := workDomainIssue(err); issue != nil {
-			run.validation.Issues = append(run.validation.Issues, *issue)
-			if mode == workdomain.AIDocumentExecutionValidate {
-				return run.validation, core.ApplyResult{}, nil
-			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ValidationError{Result: run.validation}
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == workdomain.AIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
+			output = withOperationChanges(command, output, func(operation core.Operation) []string { return workOperationHandles(operation) })
 
-	output := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.Content.DocumentRevision.String()),
-		TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
-		Changed:          domainResult.Content.Changed,
-	}
-	if domainResult.Content.Changed {
-		for index, operation := range run.command.Operations {
-			output.Changes = append(output.Changes, core.Change{
-				Operation: index, Kind: operation.Kind, AffectedHandles: workOperationHandles(operation),
-			})
-		}
-	}
-	accepted, err := run.accept(output)
-	return run.validation, accepted, err
+			return output, nil
+		},
+		DomainIssue: func(err error, _ []core.Operation) *core.OperationIssue { return workDomainIssue(err) },
+	})
 }
 
 func (p *workPort) project(identity core.DocumentIdentity, locale core.Locale, state workdomain.AIDocumentState) (core.Document, error) {

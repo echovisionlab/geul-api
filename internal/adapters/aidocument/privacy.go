@@ -110,87 +110,54 @@ func (p *legalAIDocumentPort) executeMutation(
 ) (core.ValidationResult, core.ApplyResult, error) {
 	identity := request.Identity()
 	if identity.Domain != p.domain {
-		return core.ValidationResult{}, core.ApplyResult{}, fmt.Errorf(
-			"legal AI document domain %q does not own %q",
-			p.domain,
-			identity.Domain,
-		)
+		return core.ValidationResult{}, core.ApplyResult{}, fmt.Errorf("legal AI document domain %q does not own %q", p.domain, identity.Domain)
 	}
 
-	run := newExactMutationRun("Legal")
-	domainResult, err := p.application.ExecuteAIDocumentMutation(
-		ctx,
-		p.entityType,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(raw legal.AIDocument) (legal.AIDocumentMutation, error) {
-			current, err := p.project(identity, request.Locale, raw)
-			if err != nil {
-				return legal.AIDocumentMutation{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return legal.AIDocumentMutation{}, err
-			}
+	return executeExactMutation(request, exactMutationSpec[legal.AIDocument, legal.AIDocumentMutation, legal.AIDocumentMutationResult]{
+		Domain:       "Legal",
+		ValidateOnly: mode == legal.AIDocumentExecutionValidate,
+		Execute: func(compiler func(legal.AIDocument) (legal.AIDocumentMutation, error)) (legal.AIDocumentMutationResult, error) {
+			return p.application.ExecuteAIDocumentMutation(ctx, p.entityType, string(identity.Reference), string(request.Locale), mode, compiler)
+		},
+		Project: func(raw legal.AIDocument) (core.Document, error) {
+			return p.project(identity, request.Locale, raw)
+		},
+		Compile: func(raw legal.AIDocument, current core.Document, command core.ValidatedApply) (legal.AIDocumentMutation, []core.OperationIssue, error) {
 			contributor, err := uuid.Parse(raw.ViewerMemberID)
 			if err != nil || contributor == uuid.Nil || contributor.String() != raw.ViewerMemberID {
-				return legal.AIDocumentMutation{}, errors.New("legal AI document contributor Member UUID is invalid")
+				return legal.AIDocumentMutation{}, nil, errors.New("legal AI document contributor Member UUID is invalid")
 			}
-			compiled, issues, err := p.compile(raw, current, contributor, run.command.Operations)
+			compiled, issues, err := p.compile(raw, current, contributor, command.Operations)
 			if err != nil {
-				return legal.AIDocumentMutation{}, err
-			}
-			if err := run.rejectIssues(issues); err != nil {
-				return legal.AIDocumentMutation{}, err
+				return legal.AIDocumentMutation{}, nil, err
 			}
 			return legal.AIDocumentMutation{
-				EntityType: p.entityType, EntityID: string(identity.Reference), Locale: string(request.Locale),
-				ExpectedRevision: raw.Revision, ContributorMemberID: contributor.String(),
-				ExpectedTargetRevision: core.OptionalRevisionString(run.command.ExpectedTargetRevision),
-				Content:                compiled.content, SetTitle: compiled.setTitle, Title: compiled.title,
-				Translation: compiled.translation,
-			}, nil
+				EntityType:             p.entityType,
+				EntityID:               string(identity.Reference),
+				Locale:                 string(request.Locale),
+				ExpectedRevision:       raw.Revision,
+				ContributorMemberID:    contributor.String(),
+				ExpectedTargetRevision: core.OptionalRevisionString(command.ExpectedTargetRevision),
+				Content:                compiled.content,
+				SetTitle:               compiled.setTitle,
+				Title:                  compiled.title,
+				Translation:            compiled.translation,
+			}, issues, nil
 		},
-	)
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == legal.AIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *core.RevisionConflict
-		if errors.As(err, &conflict) {
-			code := core.ConflictDocumentRevision
-			if conflict.Kind == core.ConflictTargetRevision {
-				code = core.ConflictTargetRevision
+		Result: func(domainResult legal.AIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			accepted := core.ApplyResult{
+				DocumentRevision: core.Revision(domainResult.Revision),
+				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
+				Changed:          domainResult.Changed,
 			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
-				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
-				AffectedHandles:       legalRequestAffectedHandles(request),
-			}}
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == legal.AIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
+			accepted = withOperationChanges(command, accepted, func(operation core.Operation) []string { return legalOperationHandles(operation) })
 
-	accepted := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.Revision),
-		TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
-		Changed:          domainResult.Changed,
-	}
-	if domainResult.Changed {
-		for index, operation := range run.command.Operations {
-			accepted.Changes = append(accepted.Changes, core.Change{
-				Operation: index, Kind: operation.Kind,
-				AffectedHandles: legalOperationHandles(operation),
-			})
-		}
-	}
-	result, err := run.accept(accepted)
-	return run.validation, result, err
+			return accepted, nil
+		},
+		ConflictHandles: func(_ *core.RevisionConflict, _ core.ValidatedApply) []string {
+			return legalRequestAffectedHandles(request)
+		},
+	})
 }
 
 func legalRequestAffectedHandles(request core.ApplyRequest) []string {

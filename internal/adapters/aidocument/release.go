@@ -94,71 +94,41 @@ func (p *releasePort) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 
-	run := newExactMutationRun("Release")
-	domainResult, err := p.service.ExecuteAIDocumentMutation(ctx, releasedomain.ExecuteAIDocumentMutationCommand{
-		ReleaseID: string(identity.Reference),
-		Locale:    string(request.Locale),
-		Mode:      mode,
-		Compiler: func(state releasedomain.AIDocumentState) (releasedomain.AIDocumentMutation, error) {
-			current, err := p.document(identity, request.Locale, state)
-			if err != nil {
-				return releasedomain.AIDocumentMutation{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return releasedomain.AIDocumentMutation{}, err
-			}
+	return executeExactMutation(request, exactMutationSpec[releasedomain.AIDocumentState, releasedomain.AIDocumentMutation, releasedomain.AIDocumentMutationResult]{
+		Domain:       "Release",
+		ValidateOnly: mode == releasedomain.AIDocumentExecutionValidate,
+		Execute: func(compiler func(releasedomain.AIDocumentState) (releasedomain.AIDocumentMutation, error)) (releasedomain.AIDocumentMutationResult, error) {
+			return p.service.ExecuteAIDocumentMutation(ctx, releasedomain.ExecuteAIDocumentMutationCommand{
+				ReleaseID: string(identity.Reference),
+				Locale:    string(request.Locale),
+				Mode:      mode,
+				Compiler:  compiler,
+			})
+		},
+		Project: func(state releasedomain.AIDocumentState) (core.Document, error) {
+			return p.document(identity, request.Locale, state)
+		},
+		Compile: func(state releasedomain.AIDocumentState, current core.Document, command core.ValidatedApply) (releasedomain.AIDocumentMutation, []core.OperationIssue, error) {
 			contributor, err := releaseContributorID(state.ViewerMemberID)
 			if err != nil {
-				return releasedomain.AIDocumentMutation{}, err
+				return releasedomain.AIDocumentMutation{}, nil, err
 			}
-			mutation, issues, err := p.compile(state, current, contributor, run.command.Operations)
+			mutation, issues, err := p.compile(state, current, contributor, command.Operations)
 			if err != nil {
-				return releasedomain.AIDocumentMutation{}, err
+				return releasedomain.AIDocumentMutation{}, nil, err
 			}
-			if err := run.rejectIssues(issues); err != nil {
-				return releasedomain.AIDocumentMutation{}, err
-			}
-			return mutation, nil
+			return mutation, issues, nil
+		},
+		Result: func(domainResult releasedomain.AIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			output := core.ApplyResult{DocumentRevision: core.Revision(domainResult.DocumentRevision), Changed: domainResult.Changed}
+			output.TargetRevision = core.OptionalRevision(domainResult.TargetRevision)
+			output = withOperationChanges(command, output, func(operation core.Operation) []string {
+				return compactOperationHandles(operation, command.Locale, "release")
+			})
+
+			return output, nil
 		},
 	})
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == releasedomain.AIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *core.RevisionConflict
-		if errors.As(err, &conflict) {
-			code := core.ConflictDocumentRevision
-			if conflict.Kind == core.ConflictTargetRevision {
-				code = core.ConflictTargetRevision
-			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
-				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
-				AffectedHandles:       append([]string(nil), run.command.AffectedHandles...),
-			}}
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == releasedomain.AIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
-
-	output := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.DocumentRevision), Changed: domainResult.Changed,
-	}
-	output.TargetRevision = core.OptionalRevision(domainResult.TargetRevision)
-	if domainResult.Changed {
-		for index, operation := range run.command.Operations {
-			output.Changes = append(output.Changes, core.Change{
-				Operation: index, Kind: operation.Kind,
-				AffectedHandles: compactOperationHandles(operation, run.command.Locale, "release"),
-			})
-		}
-	}
-	accepted, err := run.accept(output)
-	return run.validation, accepted, err
 }
 
 func (p *releasePort) document(identity core.DocumentIdentity, locale core.Locale, state releasedomain.AIDocumentState) (core.Document, error) {

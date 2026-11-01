@@ -278,7 +278,7 @@
         "fs",
         "fs"
       ],
-      "domain_error": "*aidocumentadapter.emailRichTextRevisionConflict: Email profile AI document revision conflict: current revision is \"0a000000-0000-4000-8000-000000000003\"",
+      "domain_error": "*aidocument.RevisionConflict: Email profile AI document revision conflict: current revision is \"0a000000-0000-4000-8000-000000000003\"",
       "validate": {
         "error": {
           "type": "*aidocument.ConflictError",
@@ -315,7 +315,7 @@
         "fs",
         "fs"
       ],
-      "domain_error": "*aidocumentadapter.emailRichTextRevisionConflict: Email profile AI document revision conflict: current revision is \"0a000000-0000-4000-8000-000000000001\"",
+      "domain_error": "*aidocument.RevisionConflict: Email profile AI document revision conflict: current revision is \"0a000000-0000-4000-8000-000000000001\"",
       "validate": {
         "error": {
           "type": "*aidocument.ConflictError",
