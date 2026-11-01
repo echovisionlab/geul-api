@@ -24,6 +24,7 @@ type MeshRecord struct {
 }
 
 type LibraryStore struct {
+	UploadTracks            map[string]bool
 	UploadSessions          map[string]domain.UploadSession
 	UploadPartRows          map[string][]domain.UploadPart
 	ScopedOwners            map[string]ScopedOwner

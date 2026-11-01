@@ -9,13 +9,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -127,15 +125,18 @@ func (s *Service) CleanupTrackUploadSessions(
 
 func (s *Service) claimTrackUploadSessionsForCleanup(ctx context.Context, trackID string) ([]model.UploadSession, error) {
 	var sessions []model.UploadSession
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		trackAttachment := s.trackAttachment
-		if err := trackAttachment.LockExistsWithDB(ctx, tx, trackID); err != nil {
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		store := unit.Store()
+		if err := store.RequireUploadTrack(ctx, trackID); err != nil {
 			return err
 		}
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			Where("upload_type = ? AND entity_id = ?", managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(), trackID).
-			Find(&sessions).Error; err != nil {
+		rows, err := store.TrackUploadSessions(ctx, trackID)
+		if err != nil {
 			return err
+		}
+		sessions = make([]model.UploadSession, len(rows))
+		for i, row := range rows {
+			sessions[i] = uploadSessionFromStore(row)
 		}
 		if containsFinalizingUploadSession(sessions) {
 			return mediaasset.ErrUploadSessionNotAbortable
@@ -143,25 +144,15 @@ func (s *Service) claimTrackUploadSessionsForCleanup(ctx context.Context, trackI
 		if len(sessions) == 0 {
 			return nil
 		}
-		uploadIDs := make([]string, 0, len(sessions))
-		for _, session := range sessions {
-			uploadIDs = append(uploadIDs, session.UploadID)
+		ids := make([]string, len(sessions))
+		for i, row := range sessions {
+			ids[i] = row.UploadID
 		}
-		now := time.Now()
-		result := tx.Model(&model.UploadSession{}).
-			Where("upload_id IN ? AND status IN ?", uploadIDs, []model.UploadSessionStatus{
-				model.UploadSessionStatusInitiated,
-				model.UploadSessionStatusUploading,
-				model.UploadSessionStatusFailed,
-				model.UploadSessionStatusAborted,
-			}).
-			Updates(structured.Fields{
-				"status": model.UploadSessionStatusAborted, "last_activity_at": now, "updated_at": now,
-			})
-		if result.Error != nil {
-			return result.Error
+		count, err := store.AbortUploadSessions(ctx, ids, time.Now())
+		if err != nil {
+			return err
 		}
-		if result.RowsAffected != int64(len(sessions)) {
+		if count != int64(len(sessions)) {
 			return mediaasset.ErrUploadSessionNotAbortable
 		}
 		return nil
@@ -169,16 +160,12 @@ func (s *Service) claimTrackUploadSessionsForCleanup(ctx context.Context, trackI
 	return sessions, err
 }
 
-// RequireNoTrackUploadSessionsWithDB enforces the File-owned upload-session
-// invariant inside the Release caller's Track-deletion transaction.
-func (s *Service) RequireNoTrackUploadSessionsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
-	var count int64
-	if err := tx.WithContext(ctx).Model(&model.UploadSession{}).
-		Where("upload_type = ? AND entity_id = ?", managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(), trackID).
-		Count(&count).Error; err != nil {
+func (s *Service) RequireNoTrackUploadSessions(ctx context.Context, joined Joined, trackID string) error {
+	exists, err := joined.Store.HasTrackUploadSessions(ctx, trackID)
+	if err != nil {
 		return err
 	}
-	if count != 0 {
+	if exists {
 		return ErrTrackUploadSessionsChanged
 	}
 	return nil

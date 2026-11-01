@@ -100,3 +100,18 @@ func ExportReconcileUploadParts(s *Service, ctx context.Context, row domain.Uplo
 	}
 	return s.reconcileMultipartResumePartCache(ctx, uploadSessionFromStore(row), rows)
 }
+
+func ExportCreateUploadSession(s *Service, ctx context.Context, row domain.UploadSession) (domain.UploadSession, error) {
+	stored := uploadSessionFromStore(row)
+	err := s.createUploadSession(ctx, &stored)
+	return uploadSessionToStore(stored), err
+}
+
+func ExportClaimTrackUploadCleanup(s *Service, ctx context.Context, id string) ([]domain.UploadSession, error) {
+	rows, err := s.claimTrackUploadSessionsForCleanup(ctx, id)
+	result := make([]domain.UploadSession, len(rows))
+	for i, row := range rows {
+		result[i] = uploadSessionToStore(row)
+	}
+	return result, err
+}

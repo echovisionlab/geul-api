@@ -58,7 +58,7 @@ func newTestService(deps Deps) *Service {
 	}
 	if deps.Units == nil {
 		deps.Units = mutation.Postgres(deps.DB, func(tx *gorm.DB) Store {
-			return testFileStore(&Service{asyncPublisher: deps.AsyncPublisher, postAccess: deps.PostAccess, pagePolicyAccess: deps.PagePolicyAccess, workPolicyAccess: deps.WorkPolicyAccess, programEventAttachment: deps.ProgramEventAttachment, releasePolicyAccess: deps.ReleasePolicyAccess, spiceDB: deps.SpiceDB}, tx)
+			return testFileStore(&Service{trackAttachment: deps.TrackAttachment, asyncPublisher: deps.AsyncPublisher, postAccess: deps.PostAccess, pagePolicyAccess: deps.PagePolicyAccess, workPolicyAccess: deps.WorkPolicyAccess, programEventAttachment: deps.ProgramEventAttachment, releasePolicyAccess: deps.ReleasePolicyAccess, spiceDB: deps.SpiceDB}, tx)
 		})
 	}
 

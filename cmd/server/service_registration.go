@@ -255,10 +255,11 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	fileWorkAccess := workadapter.NewPolicyAccess(spicedbClient)
 	fileEventAccess := filemediaadapter.NewProgramEventAttachment(db)
 	fileReleaseAccess := releaseadapter.NewPolicyAccess(spicedbClient)
+	fileTrackAttachment := filemediaadapter.NewTrackAttachment(telemetryWriter)
 	filePolicyOwners := filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: filePostAccess, Pages: filePageAccess, Works: fileWorkAccess, Events: fileEventAccess, Releases: fileReleaseAccess, SpiceDB: spicedbClient})
 
 	fileService, err := filemedia.NewService(filemedia.Deps{
-		Units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{DeletionQueue: filemediaqueue.Async(servicePublisher), PolicyOwners: filePolicyOwners, PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(servicePublisher)}), Fence: identitystate.PostgresFence{},
+		Units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{UploadTracks: fileTrackAttachment, DeletionQueue: filemediaqueue.Async(servicePublisher), PolicyOwners: filePolicyOwners, PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(servicePublisher)}), Fence: identitystate.PostgresFence{},
 		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, S3: s3Client, Presigner: s3PresignClient,
 		AsyncPublisher: servicePublisher, Transcoder: transcodeTracker, S3Bucket: cfg.S3Bucket,
 		CDNDomain: cfg.CDNURL, MediaDomain: cfg.MediaURL, MediaSecret: cfg.MediaSigningSecret,
@@ -268,7 +269,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		WorkAttachment:         filemediaadapter.NewWorkAttachment(db),
 		WorkPolicyAccess:       fileWorkAccess,
 		ProgramEventAttachment: fileEventAccess,
-		TrackAttachment:        filemediaadapter.NewTrackAttachment(telemetryWriter),
+		TrackAttachment:        fileTrackAttachment,
 		ReleasePolicyAccess:    fileReleaseAccess,
 
 		MemberSummaries: filemediaadapter.NewMemberSummaries(db, cfg.CDNURL),

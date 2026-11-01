@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
@@ -41,6 +42,12 @@ type postSeriesAuditRow struct {
 	ActorMemberID string `gorm:"column:actor_member_id"`
 	RequestID     string `gorm:"column:request_id"`
 	Attributes    []byte `gorm:"column:attributes"`
+}
+
+type directTrackFileManager struct{ *Service }
+
+func (m directTrackFileManager) RequireNoTrackUploadSessionsWithDB(ctx context.Context, tx *gorm.DB, id string) error {
+	return m.RequireNoTrackUploadSessions(ctx, filemediapostgres.Bind(tx, filemediapostgres.Ports{}, nil), id)
 }
 
 func TestMain(m *testing.M) {
