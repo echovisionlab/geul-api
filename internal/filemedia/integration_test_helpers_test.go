@@ -325,10 +325,15 @@ func requireEditorUploadSessionAbsent(t *testing.T, db *gorm.DB, uploadID string
 	require.Zero(t, count)
 }
 
-// memberRequestContext is a request of a Member no test fixture names, for a
-// use case that audits but does not authorize its caller.
+// memberRequestContext carries the request context the domain audit
+// attributes its records to, without a principal, for a File boundary that
+// audits but neither authorizes nor attributes the upload to its caller.
 func memberRequestContext() context.Context {
-	return auditedUserContext(context.Background(), &auth.UserInfo{
-		IdentityID: auth.IdentityID(uuid.NewString()), MemberID: auth.MemberID(uuid.NewString()), Authenticated: true,
+	request, err := sharedtelemetry.NewPropagatedRequestContext(uuid.NewString(), sharedtelemetry.MemberActor{
+		IdentityID: uuid.NewString(), MemberID: uuid.NewString(), SessionID: uuid.NewString(),
 	})
+	if err != nil {
+		panic(err)
+	}
+	return sharedtelemetry.WithRequestContext(context.Background(), request)
 }
