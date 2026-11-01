@@ -24,7 +24,8 @@ import (
 func TestPostgresStoreKeepsTheReleaseStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	releasetest.RunStoreContract(t, func(t *testing.T) releasetest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		// The Kratos stub backs the credited Member lock (identitystate).
+		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 		// The contract reaches the Release tables and the summary readers;
 		// content, media, signals and collaboration stay with their own tests.
 		ports := releasepostgres.Ports{
