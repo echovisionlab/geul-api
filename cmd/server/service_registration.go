@@ -1,120 +1,37 @@
 package main
 
 import (
-	"crypto/rand"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/adapters/filemediamembers"
-
-	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
-
-	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
 	transcodepostgres "github.com/echovisionlab/geul-api/internal/transcode/postgres"
 
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"go.akshayshah.org/connectproto"
-	"google.golang.org/protobuf/encoding/protojson"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/account"
-	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
-	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
-	aidocumentadapter "github.com/echovisionlab/geul-api/internal/adapters/aidocument"
-	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
-	audienceadapter "github.com/echovisionlab/geul-api/internal/adapters/audience"
-	authenticationadapter "github.com/echovisionlab/geul-api/internal/adapters/authentication"
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
-	collaborationadapter "github.com/echovisionlab/geul-api/internal/adapters/collaboration"
 	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
-	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
-	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	"github.com/echovisionlab/geul-api/internal/adapters/filemediacontent"
-	"github.com/echovisionlab/geul-api/internal/adapters/filemediapolicy"
-	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
 	formadapter "github.com/echovisionlab/geul-api/internal/adapters/form"
-	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
-	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
-	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
-	memberpatadapter "github.com/echovisionlab/geul-api/internal/adapters/memberpat"
-	menuadapter "github.com/echovisionlab/geul-api/internal/adapters/menu"
-	ogadapter "github.com/echovisionlab/geul-api/internal/adapters/og"
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
-	pageruntime "github.com/echovisionlab/geul-api/internal/adapters/page/runtime"
-	"github.com/echovisionlab/geul-api/internal/adapters/patauth"
-	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
-	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
-	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
-	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
-	referencecatalogmenuadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog/menu"
-	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
-	seriesadapter "github.com/echovisionlab/geul-api/internal/adapters/series"
-	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
-	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	translationadapter "github.com/echovisionlab/geul-api/internal/adapters/translation"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
-	"github.com/echovisionlab/geul-api/internal/admin"
-	adminpostgres "github.com/echovisionlab/geul-api/internal/admin/postgres"
-	"github.com/echovisionlab/geul-api/internal/ai"
-	aipostgres "github.com/echovisionlab/geul-api/internal/ai/postgres"
-	"github.com/echovisionlab/geul-api/internal/aieditor"
-	"github.com/echovisionlab/geul-api/internal/audience"
-	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authentication"
-	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
-	"github.com/echovisionlab/geul-api/internal/campaign"
-	"github.com/echovisionlab/geul-api/internal/collaboration"
 	"github.com/echovisionlab/geul-api/internal/config"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/emailauthoring"
-	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
-	"github.com/echovisionlab/geul-api/internal/emaildelivery"
-	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
-	filepublic "github.com/echovisionlab/geul-api/internal/filemedia/public"
-	filepublicpostgres "github.com/echovisionlab/geul-api/internal/filemedia/public/postgres"
-	formdomain "github.com/echovisionlab/geul-api/internal/form"
-	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/legal"
-	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
-	llmproviders "github.com/echovisionlab/geul-api/internal/llm/providers"
-	"github.com/echovisionlab/geul-api/internal/maptheme"
-	mapthemepostgres "github.com/echovisionlab/geul-api/internal/maptheme/postgres"
 	"github.com/echovisionlab/geul-api/internal/member"
-	memberpat "github.com/echovisionlab/geul-api/internal/member/pat"
-	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
-	"github.com/echovisionlab/geul-api/internal/menu"
-	menupostgres "github.com/echovisionlab/geul-api/internal/menu/postgres"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/og"
-	"github.com/echovisionlab/geul-api/internal/page"
-	pagepostgres "github.com/echovisionlab/geul-api/internal/page/postgres"
-	"github.com/echovisionlab/geul-api/internal/post"
-	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
-	"github.com/echovisionlab/geul-api/internal/programevent"
-	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
-	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
-	"github.com/echovisionlab/geul-api/internal/series"
-	seriespostgres "github.com/echovisionlab/geul-api/internal/series/postgres"
-	"github.com/echovisionlab/geul-api/internal/sharelink"
-	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
-	"github.com/echovisionlab/geul-api/internal/sitesettings"
-	sitesettingspostgres "github.com/echovisionlab/geul-api/internal/sitesettings/postgres"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/work"
-	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
@@ -148,319 +65,69 @@ type registeredServices struct {
 	oathkeeperPATHandler        http.Handler
 }
 
-type personalAccessTokenComposition struct {
-	tokens         *memberpat.Service
-	accountHandler *accountadapter.PersonalAccessTokenHandler
-}
-
-func newPersonalAccessTokenComposition(
-	delegate managev1connect.AccountServiceHandler,
-	repository memberpat.Repository,
-	clock memberpat.Clock,
-	random io.Reader,
-) (personalAccessTokenComposition, error) {
-	tokens, err := memberpat.NewService(repository, clock, random)
-	if err != nil {
-		return personalAccessTokenComposition{}, fmt.Errorf("initialize personal access token service: %w", err)
-	}
-	accountHandler, err := accountadapter.NewPersonalAccessTokenHandler(delegate, tokens)
-	if err != nil {
-		return personalAccessTokenComposition{}, fmt.Errorf("initialize Account personal access token handler: %w", err)
-	}
-	return personalAccessTokenComposition{
-		tokens: tokens, accountHandler: accountHandler,
-	}, nil
+type serviceRegistration struct {
+	dependencies          serviceRegistrationDependencies
+	manageOptions         []connect.HandlerOption
+	internalOptions       []connect.HandlerOption
+	publicOptions         []connect.HandlerOption
+	internalTrust         internalRPCTrustBoundary
+	authInterceptor       *auth.AuthInterceptor
+	authenticationService *authentication.Service
 }
 
 func registerServices(deps serviceRegistrationDependencies) (registeredServices, error) {
+	r, err := newServiceRegistration(deps)
+	if err != nil {
+		return registeredServices{}, err
+	}
 	mux := deps.mux
 	cfg := deps.cfg
 	db := deps.db
-	s3Client := deps.s3Client
-	s3PresignClient := deps.s3PresignClient
-	servicePublisher := deps.servicePublisher
 	workerPublisher := deps.workerPublisher
-	hooksPublisher := deps.hooksPublisher
-	ogPublisher := deps.ogPublisher
-	transcodeTracker := deps.transcodeTracker
 	spicedbClient := deps.spicedbClient
-	kratosClient := deps.kratosClient
-	passwordHasher := deps.passwordHasher
-	contentBlockStore := deps.contentBlockStore
-	adapterLoader := deps.adapterLoader
 	telemetryWriter := deps.telemetryWriter
 	ogDeps := deps.og
-
-	// Oathkeeper validates the Kratos session and projects only the asserted
-	// session id. The API resolves account_identity/member from that session.
-	authInterceptor := auth.NewAuthInterceptor(cfg.KratosPublicURL, db)
-
-	// Use connectproto for JSON codec with EmitUnpopulated to always include boolean fields
-	jsonCodec := connectproto.WithJSON(
-		protojson.MarshalOptions{EmitUnpopulated: true},
-		protojson.UnmarshalOptions{DiscardUnknown: true},
-	)
-
-	// Request logging wraps authentication so denied requests also receive one
-	// terminal record. The request scope observes the actor resolved by auth.
-	// connectInterceptors places the failure boundary between the two.
-	accessLogInterceptor := telemetry.NewAccessLogInterceptor(telemetryWriter)
-	tracingInterceptor := telemetry.NewTracingInterceptor()
-	handlerOpts := []connect.HandlerOption{
-		connectInterceptors(tracingInterceptor, accessLogInterceptor, authInterceptor, auth.ExpectedMemberInterceptor(), contentsignal.ClientOriginInterceptor()),
-		jsonCodec,
-	}
-	// Internal handlers do not use browser/session auth. Each registration below
-	// is additionally wrapped in its exact caller-scoped service credential;
-	// private network placement is only defense in depth. Public handlers still
-	// use the auth interceptor so logged-in users can optionally hydrate context
-	// for draft previews while anonymous public requests remain allowed.
-	internalHandlerOpts := []connect.HandlerOption{
-		connectInterceptors(tracingInterceptor, accessLogInterceptor),
-		jsonCodec,
-	}
-	internalRPCTrust := internalRPCTrustBoundary{
-		secret:                    cfg.TokenSigningSecret,
-		internalServiceHeaderName: cfg.InternalServiceHeaderName,
-	}
-	authenticationService, err := authentication.NewService(authentication.Deps{
-		Units: authenticationpostgres.NewUnits(db), SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{},
-		Audit: telemetryWriter, Roles: accountadapter.AccountDirectRoleTransition{}, Sessions: authenticationpostgres.NewSessions(db),
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize authentication service: %w", err)
-	}
-	gatewayAuthorizationPath, gatewayAuthorizationHandler := intrav1connect.NewInternalGatewayAuthorizationServiceHandler(
-		authentication.NewConnectHandler(authenticationService),
-		internalHandlerOpts...,
-	)
-	mux.Handle(gatewayAuthorizationPath, internalRPCTrust.identity(gatewayAuthorizationHandler))
-	publicHandlerOpts := []connect.HandlerOption{
-		connectInterceptors(tracingInterceptor, accessLogInterceptor, authInterceptor),
-		jsonCodec,
-	}
 
 	// Register Connect services
 	// FileService first (needed by other services for file deletion)
 	downloadTTL := time.Duration(cfg.MediaDownloadTTLSec) * time.Second
-	publicFileService, err := filepublic.NewService(filepublic.Deps{
-		Units: filepublicpostgres.NewUnits(db, filepublicpostgres.Ports{Segments: mediaassetadapter.NewSegmentConfigs()}), SpiceDB: spicedbClient,
-		CDNDomain: cfg.CDNURL, MediaDomain: cfg.MediaURL, MediaSecret: cfg.MediaSigningSecret, DownloadTTL: downloadTTL,
-	})
+	publicFileService, err := r.newPublicFiles(downloadTTL)
 	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize public file service: %w", err)
+		return registeredServices{}, err
 	}
 	legalRuntime := legaladapter.NewOGRuntime(cfg.CDNURL, ogDeps.planner)
 	campaignDeliveryDispatcher := campaignadapter.NewDeliveryDispatcher(db, spicedbClient, workerPublisher, telemetryWriter, legalRuntime)
-	filePostAccess := filemediaadapter.NewPostAccess(spicedbClient)
-	filePageAccess := pageadapter.NewPolicyAccess(page.NewPolicyAuthority(spicedbClient))
-	fileWorkAccess := workadapter.NewPolicyAccess(spicedbClient)
-	fileEventAccess := &filemediaadapter.ProgramEventAttachment{}
-	fileReleaseAccess := releaseadapter.NewPolicyAccess(spicedbClient)
-	fileTrackAttachment := filemediaadapter.NewTrackAttachment(telemetryWriter)
-	filePolicyOwners := filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: filePostAccess, Pages: filePageAccess, Works: fileWorkAccess, Events: fileEventAccess, Releases: fileReleaseAccess, SpiceDB: spicedbClient})
-
-	fileMediaPorts := filemediapostgres.Ports{UploadWorks: filemediapolicy.WorkExistence{}, MeshJobs: filemediaqueue.Mesh(transcodeTracker, servicePublisher), IngestTranscodes: filemediaqueue.Transcodes(transcodeTracker, servicePublisher), UploadTracks: fileTrackAttachment, DeletionQueue: filemediaqueue.Async(servicePublisher), PolicyOwners: filePolicyOwners, PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(servicePublisher)}
-	fileService, err := filemedia.NewService(filemedia.Deps{
-		IngestLocks:        filemediapostgres.NewIngestLocks(db, fileMediaPorts),
-		FaviconCommits:     filemediapostgres.NewFaviconCommits(db, fileMediaPorts),
-		Units:              filemediapostgres.NewUnits(db, fileMediaPorts),
-		Fence:              identitystate.PostgresFence{},
-		SpiceDB:            spicedbClient,
-		Audit:              telemetryWriter,
-		S3:                 s3Client,
-		Presigner:          s3PresignClient,
-		AsyncPublisher:     filemediaqueue.Lifecycle(servicePublisher),
-		S3Bucket:           cfg.S3Bucket,
-		CDNDomain:          cfg.CDNURL,
-		MediaDomain:        cfg.MediaURL,
-		MediaSecret:        cfg.MediaSigningSecret,
-		DownloadTTL:        downloadTTL,
-		EditorImageMaxSize: cfg.EditorImageMaxSize,
-		LegalRoutes:        legalRuntime,
-		MemberSummaries:    filemediamembers.NewMemberSummaries(db, cfg.CDNURL),
-	})
+	fileService, err := r.newFiles(downloadTTL, legalRuntime)
 	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize file service: %w", err)
+		return registeredServices{}, err
 	}
+
 	fileContentMedia := filemediacontent.New(fileService)
 	formAssets := formadapter.NewAssets(cfg.CDNURL)
 	pageRuntime := pageadapter.NewRuntime(cfg.CDNURL, ogDeps.refresher)
 	workRuntime := workadapter.NewRuntime(db, cfg.CDNURL, ogDeps.refresher)
-	filePath, fileHandler := managev1connect.NewFileServiceHandler(filemedia.NewConnectHandler(fileService), handlerOpts...)
-	mux.Handle(filePath, fileHandler)
-	slog.Info("Registered service", "path", filePath)
-	linkPreviewPath, linkPreviewHandler := managev1connect.NewLinkPreviewServiceHandler(
-		filemedia.NewLinkPreviewConnectHandler(filemedia.NewLinkPreviewService(spicedbClient)),
-		handlerOpts...,
-	)
-	mux.Handle(linkPreviewPath, linkPreviewHandler)
-	slog.Info("Registered service", "path", linkPreviewPath)
-	internalFileIngestService := filemedia.NewInternalConnectHandler(fileService)
-	internalFileIngestPath, internalFileIngestHandler := intrav1connect.NewInternalFileIngestServiceHandler(
-		internalFileIngestService,
-		internalHandlerOpts...,
-	)
-	mux.Handle(internalFileIngestPath, internalRPCTrust.collab(internalFileIngestHandler))
-	slog.Info("Registered internal service", "path", internalFileIngestPath)
-	collaborationRuntime := collaborationadapter.NewRuntime(db, spicedbClient, cfg.CDNURL)
-	internalCollaborationAuthorizationService := collaboration.NewService(
-		db,
-		collaborationRuntime.Registry,
-		collaborationRuntime.Members,
-	)
-	internalCollaborationAuthorizationPath, internalCollaborationAuthorizationHandler := intrav1connect.NewInternalCollaborationAuthorizationServiceHandler(
-		internalCollaborationAuthorizationService,
-		internalHandlerOpts...,
-	)
-	mux.Handle(internalCollaborationAuthorizationPath, internalRPCTrust.collab(internalCollaborationAuthorizationHandler))
-	slog.Info("Registered internal service", "path", internalCollaborationAuthorizationPath)
+	r.registerFileRoutes(fileService)
 
-	accountUnits, err := accountpostgres.NewUnits(db, accountpostgres.Ports{
-		Members: accountadapter.MemberDeletion{}, MemberEmails: accountadapter.MemberEmailProjection{},
-		Newsletter: accountadapter.NewsletterSubscription{}, Publisher: workerPublisher,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize account units: %w", err)
-	}
-	accounts, err := account.NewService(account.Deps{
-		Units:      accountUnits,
-		SpiceDB:    spicedbClient,
-		Fence:      identitystate.PostgresFence{},
-		Identity:   kratosClient,
-		Emails:     accountpostgres.EmailCommands{Publisher: workerPublisher},
-		Members:    accountpostgres.MemberAuthorizations(db, accountadapter.MemberDeletion{}, spicedbClient),
-		Audit:      telemetryWriter,
-		SiteOrigin: cfg.SiteOrigin,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize account service: %w", err)
-	}
-	accountEmailProjection := memberadapter.AccountEmailProjection{Units: accountUnits, Identity: kratosClient}
-	memberUnits, err := memberpostgres.NewUnits(db, memberpostgres.Ports{
-		WelcomeEmails: servicePublisher, WelcomeRecipients: accountEmailProjection, CDNDomain: cfg.CDNURL,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize member units: %w", err)
-	}
-	memberService, err := member.NewService(member.Deps{
-		Units:       memberUnits,
-		SpiceDB:     spicedbClient,
-		Fence:       identitystate.PostgresFence{},
-		Identity:    kratosClient,
-		AvatarFiles: memberadapter.AvatarFiles{Files: fileService},
-		Accounts:    memberadapter.Accounts{Accounts: accounts},
-		Audit:       telemetryWriter,
-		SiteOrigin:  cfg.SiteOrigin,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize member service: %w", err)
-	}
-	personalAccessTokenRepository, err := memberpatadapter.NewPersonalAccessTokenRepository(db)
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize personal access token repository: %w", err)
-	}
-	personalAccessTokenHandlers, err := newPersonalAccessTokenComposition(
-		account.NewConnectHandler(accounts),
-		personalAccessTokenRepository,
-		memberpatadapter.SystemClock{},
-		rand.Reader,
-	)
+	collaborationRuntime := r.registerCollaboration()
+
+	accountComposition, err := r.registerAccounts(fileService)
 	if err != nil {
 		return registeredServices{}, err
 	}
-	if err := registerPATVerification(mux, cfg.PATVerificationSecret, personalAccessTokenHandlers.tokens); err != nil { //nolint:staticcheck // legacy Worker verifier credential, retained for migration
-		return registeredServices{}, fmt.Errorf("initialize PAT verification: %w", err)
-	}
-	oathkeeperPATHandler, err := patauth.NewOathkeeper(cfg.TokenSigningSecret, cfg.InternalServiceHeaderName, personalAccessTokenHandlers.tokens)
+
+	accountHooks, err := r.registerAccountHooks(accountComposition)
 	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Oathkeeper PAT verification: %w", err)
-	}
-	accountService := personalAccessTokenHandlers.accountHandler
-	mcpAuthorAdmissionHandler, err := authentication.NewMCPGatewayAuthorAdmissionHandler(
-		cfg.TokenSigningSecret,
-		cfg.AuthHeaderName,
-		cfg.InternalServiceHeaderName,
-		spicedbClient,
-	)
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize MCP gateway author admission: %w", err)
+		return registeredServices{}, err
 	}
 
-	accountEmailChangeLifecycle := account.NewAccountEmailChangeLifecycle(
-		accountUnits,
-		kratosClient,
-		accountpostgres.EmailCommands{Publisher: hooksPublisher},
-	)
-	directRoles := accountadapter.AccountDirectRoleTransition{}
-	registrationMembers := member.NewMemberProvisioner(
-		memberUnits,
-		kratosClient,
-		spicedbClient,
-		accountEmailProjection,
-		directRoles,
-	)
-	loginHooks := authentication.NewLoginHookService(
-		kratosClient,
-		authenticationadapter.NewLoginMemberProvisioner(registrationMembers),
-		authenticationService,
-	)
-	registrationHooks := authentication.NewRegistrationHookPolicy(
-		authenticationadapter.NewRegistrationReuseHoldChecker(db),
-	)
-	accountSettingsHooks := account.NewAccountSettingsHookService(kratosClient, accountEmailChangeLifecycle)
-	credentialHooks := account.NewAccountCredentialHookLifecycle(
-		accountUnits,
-		kratosClient,
-		telemetryWriter,
-		accountpostgres.EmailCommands{Publisher: hooksPublisher},
-	)
-	// Hooks handler (for Kratos webhooks)
-	authenticationHooks := authenticationadapter.NewHooksHandler(loginHooks, registrationHooks)
-	accountHooks := accountadapter.NewSettingsHooksHandler(accountSettingsHooks, credentialHooks)
-	protectInternalHook := func(h http.HandlerFunc) http.Handler {
-		return internalRPCTrust.identity(h)
-	}
-	authenticationHooks.RegisterRoutes(mux, protectInternalHook)
-	accountHooks.RegisterRoutes(mux, protectInternalHook)
+	r.registerEmailProviderCallbacks()
 
-	if strings.TrimSpace(cfg.SESEventSNSTopicARN) != "" {
-		providerNotifications := emaildelivery.NewProviderNotificationProcessor(
-			emaildeliveryadapter.NewCampaignProviderOutcomeStore(db),
-			emaildeliveryadapter.NewSuppressionStore(db),
-		)
-		sesEventHandler := emaildeliveryadapter.NewSESEventHandler(cfg.SESEventSNSTopicARN, providerNotifications)
-		mux.Handle(emaildeliveryadapter.SESEventCallbackPath, sesEventHandler)
-		slog.Info("Registered SES event callback", "path", emaildeliveryadapter.SESEventCallbackPath)
-	}
-
-	// Authenticated multipart upload plane. Managed public-asset bytes are
-	// relayed through the API; approved editor and large-media types use the
-	// short-lived public S3 presigned control endpoints.
-	mux.Handle("/upload/media-artifact", auth.RequireGatewaySession(db, filemedia.WithUploadIdleTimeout(http.HandlerFunc(fileService.HandleClientMediaArtifact))))
-	mux.Handle("/upload/source", auth.RequireGatewaySession(db, filemedia.WithUploadIdleTimeout(http.HandlerFunc(fileService.HandleUploadSource))))
-	mux.Handle(
-		"/upload/part",
-		auth.RequireGatewaySession(db, filemedia.WithUploadIdleTimeout(http.HandlerFunc(fileService.HandleUploadPart))),
-	)
-	mux.Handle(
-		"/upload/prefix",
-		auth.RequireGatewaySession(db, filemedia.WithUploadIdleTimeout(http.HandlerFunc(fileService.HandleVerifyUploadPrefix))),
-	)
-	mux.Handle(
-		"/upload/part/presign",
-		auth.RequireGatewaySession(db, http.HandlerFunc(fileService.HandlePresignUploadPart)),
-	)
-	mux.Handle(
-		"/upload/part/confirm",
-		auth.RequireGatewaySession(db, http.HandlerFunc(fileService.HandleConfirmUploadPart)),
-	)
-	slog.Info("Registered handlers", "paths", []string{"/upload/source", "/upload/part", "/upload/prefix", "/upload/part/presign", "/upload/part/confirm"})
+	r.registerUploadRoutes(fileService)
 
 	music := musicServiceRegistration{
 		dependencies: deps, files: fileService, checkpoints: collaborationRuntime.Checkpoints,
-		manageOptions: handlerOpts, internalOptions: internalHandlerOpts, publicOptions: publicHandlerOpts,
-		internalTrust: internalRPCTrust, downloadTTL: downloadTTL,
+		manageOptions: r.manageOptions, internalOptions: r.internalOptions, publicOptions: r.publicOptions,
+		internalTrust: r.internalTrust, downloadTTL: downloadTTL,
 	}
 	artistService, err := music.registerArtist()
 	if err != nil {
@@ -474,419 +141,133 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if err != nil {
 		return registeredServices{}, err
 	}
-	referenceCatalogUnits, err := referencecatalogpostgres.NewUnits(db, referencecatalogpostgres.Ports{
-		Assets:      referencecatalogadapter.NewAssets(cfg.CDNURL),
-		Members:     referencecatalogadapter.NewMemberSummaries(cfg.CDNURL),
-		MenuTargets: referencecatalogmenuadapter.NewTargets(telemetryWriter),
-		ClientWorks: workadapter.ClientWorks{},
-	})
+	referenceCatalog, err := r.registerReferenceCatalog()
 	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize reference catalog store: %w", err)
+		return registeredServices{}, err
 	}
-	referenceCatalog, err := referencecatalog.NewService(referencecatalog.Deps{
-		Units: referenceCatalogUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize reference catalog service: %w", err)
-	}
+
 	music.registerTaxonomy(referenceCatalog)
 
-	aiUnits, err := aipostgres.NewUnits(db, servicePublisher)
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize AI store: %w", err)
+	if err := r.registerAI(); err != nil {
+		return registeredServices{}, err
 	}
-	aiService, err := ai.NewService(ai.Deps{
-		Units: aiUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize AI service: %w", err)
-	}
-	aiPath, aiHandler := managev1connect.NewAIServiceHandler(ai.NewConnectHandler(aiService), handlerOpts...)
-	mux.Handle(aiPath, aiHandler)
-	slog.Info("Registered service", "path", aiPath)
 
 	emailAuthoringReferences := emailauthoringadapter.NewCampaignDeliveryReferences()
 	translationRegistry, err := translationadapter.NewDomainRegistry(emailAuthoringReferences, telemetryWriter)
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize translation domain registry: %w", err)
 	}
-	memberPath, memberHandler := managev1connect.NewMemberServiceHandler(member.NewConnectHandler(memberService), handlerOpts...)
+	memberPath, memberHandler := managev1connect.NewMemberServiceHandler(member.NewConnectHandler(accountComposition.members), r.manageOptions...)
 	mux.Handle(memberPath, memberHandler)
 	slog.Info("Registered service", "path", memberPath)
-	accountPath, accountHandler := managev1connect.NewAccountServiceHandler(accountService, handlerOpts...)
+	accountPath, accountHandler := managev1connect.NewAccountServiceHandler(accountHooks.account, r.manageOptions...)
 	mux.Handle(accountPath, accountHandler)
 	slog.Info("Registered service", "path", accountPath)
 
-	workUnits, err := workpostgres.NewUnits(db, workpostgres.Ports{
-		ContentBlocks: contentBlockStore, Signals: servicePublisher, Checkpoints: collaborationRuntime.Checkpoints,
-		Runtime: workRuntime, Media: fileContentMedia, ShareLinks: sharelinkadapter.EntityLinks{Type: sharelink.EntityWork},
-	})
+	workService, err := r.registerWork(fileContentMedia, workRuntime, collaborationRuntime)
 	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Work store: %w", err)
+		return registeredServices{}, err
 	}
-	workService, err := work.NewService(work.Deps{
-		Units: workUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
-		Members: workadapter.NewMemberSummaries(db, cfg.CDNURL),
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Work service: %w", err)
-	}
-	workPath, workHandler := managev1connect.NewWorkServiceHandler(work.NewConnectHandler(workService), handlerOpts...)
-	mux.Handle(workPath, workHandler)
-	slog.Info("Registered service", "path", workPath)
-	internalWorkPath, internalWorkHandler := intrav1connect.NewInternalWorkServiceHandler(work.NewInternalConnectHandler(workService), internalHandlerOpts...)
-	mux.Handle(internalWorkPath, internalRPCTrust.collab(internalWorkHandler))
-	slog.Info("Registered internal service", "path", internalWorkPath)
 
 	// Phase 2: CMS Services
-	postMembers := postadapter.NewMemberSummaries(db, cfg.CDNURL)
-	postShareLinks := postruntime.ShareLinks{}
-	postMedia := postruntime.ContentBlockMedia{}
-	postFiles := postadapter.NewFiles(fileService, publicFileService)
-	postVersionRestore := postruntime.VersionRestore{}
-	postUnits, err := postpostgres.NewUnits(db, postpostgres.Deps{
-		ContentBlocks: contentBlockStore, Signals: servicePublisher, OG: ogDeps.refresher,
-		ShareLinkCleanup: sharelinkadapter.EntityLinks{Type: sharelink.EntityPost},
-		MediaLoader:      postMedia, Media: fileContentMedia, VersionRestore: postVersionRestore, CDNDomain: cfg.CDNURL,
-	})
+	postComposition, err := r.registerPost(publicFileService, fileService, fileContentMedia)
 	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Post store: %w", err)
+		return registeredServices{}, err
 	}
-	postService, err := post.NewService(post.Deps{
-		Units: postUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
-		Files: postFiles, Members: postMembers,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Post service: %w", err)
-	}
-	postPath, postHandler := managev1connect.NewPostServiceHandler(post.NewConnectHandler(postService), handlerOpts...)
-	mux.Handle(postPath, postHandler)
-	slog.Info("Registered service", "path", postPath)
-	internalPostPath, internalPostHandler := intrav1connect.NewInternalPostServiceHandler(post.NewInternalConnectHandler(postService), internalHandlerOpts...)
-	mux.Handle(internalPostPath, internalRPCTrust.collab(internalPostHandler))
-	slog.Info("Registered internal service", "path", internalPostPath)
 
-	categoryPath, categoryHandler := managev1connect.NewCategoryServiceHandler(referencecatalog.NewCategoryConnectHandler(referenceCatalog), handlerOpts...)
+	categoryPath, categoryHandler := managev1connect.NewCategoryServiceHandler(referencecatalog.NewCategoryConnectHandler(referenceCatalog), r.manageOptions...)
 	mux.Handle(categoryPath, categoryHandler)
 	slog.Info("Registered service", "path", categoryPath)
 
-	programEventUnits, err := programeventpostgres.NewUnits(db, programeventpostgres.Ports{
-		ContentBlocks: contentBlockStore, Signals: servicePublisher, Media: programeventadapter.NewRuntime(cfg.CDNURL),
-		Files: programeventadapter.NewFiles(fileContentMedia), Members: memberadapter.ContentMembers{},
-		CreditArtists: artistadapter.CreditArtists{}, Checkpoints: collaborationRuntime.Checkpoints,
-	})
+	programEventService, err := r.registerProgramEvent(fileContentMedia, collaborationRuntime)
 	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize program event store: %w", err)
+		return registeredServices{}, err
 	}
-	programEventService, err := programevent.NewService(programevent.Deps{
-		Units: programEventUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
-		CreditMembers: programeventadapter.NewCreditMemberSummaries(db, cfg.CDNURL),
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize program event service: %w", err)
-	}
-	programEventTypePath, programEventTypeHandler := managev1connect.NewProgramEventTypeServiceHandler(programevent.NewTypeConnectHandler(programEventService), handlerOpts...)
-	mux.Handle(programEventTypePath, programEventTypeHandler)
-	slog.Info("Registered service", "path", programEventTypePath)
 
-	programEventSeriesPath, programEventSeriesHandler := managev1connect.NewProgramEventSeriesServiceHandler(programevent.NewSeriesConnectHandler(programEventService), handlerOpts...)
-	mux.Handle(programEventSeriesPath, programEventSeriesHandler)
-	slog.Info("Registered service", "path", programEventSeriesPath)
-
-	programEventPath, programEventHandler := managev1connect.NewProgramEventServiceHandler(programevent.NewConnectHandler(programEventService), handlerOpts...)
-	mux.Handle(programEventPath, programEventHandler)
-	slog.Info("Registered service", "path", programEventPath)
-
-	tagPath, tagHandler := managev1connect.NewTagServiceHandler(referencecatalog.NewTagConnectHandler(referenceCatalog), handlerOpts...)
+	tagPath, tagHandler := managev1connect.NewTagServiceHandler(referencecatalog.NewTagConnectHandler(referenceCatalog), r.manageOptions...)
 	mux.Handle(tagPath, tagHandler)
 	slog.Info("Registered service", "path", tagPath)
 
-	pageUnits, err := pagepostgres.NewUnits(db, pagepostgres.Ports{
-		ContentBlocks: contentBlockStore, Signals: servicePublisher, Runtime: pageRuntime, MediaHydrator: fileContentMedia,
-		MenuTargets: menuadapter.NewTargetLifecycle(telemetryWriter), Members: memberadapter.PageMembers{},
-		ShareLinks: sharelinkadapter.PageLinks{},
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Page store: %w", err)
-	}
-	pageService, err := page.NewService(page.Deps{
-		Units: pageUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
-		Files: pageruntime.NewFiles(fileService),
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Page service: %w", err)
-	}
-	pagePath, pageHandler := managev1connect.NewPageServiceHandler(page.NewConnectHandler(pageService), handlerOpts...)
-	mux.Handle(pagePath, pageHandler)
-	slog.Info("Registered service", "path", pagePath)
-	internalPagePath, internalPageHandler := intrav1connect.NewInternalPageServiceHandler(
-		page.NewInternalConnectHandler(pageService), internalHandlerOpts...,
-	)
-	mux.Handle(internalPagePath, internalRPCTrust.collab(internalPageHandler))
-	slog.Info("Registered internal service", "path", internalPagePath)
-
-	menuService, err := menu.NewService(menu.Deps{
-		Units: menupostgres.NewUnits(db, menupostgres.Ports{
-			SiteSettings: menuadapter.NewSiteSettingsReferences(telemetryWriter),
-			Checkpoints:  collaborationRuntime.Checkpoints,
-		}),
-		SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
-	})
+	pageService, err := r.registerPage(fileService, fileContentMedia, pageRuntime)
 	if err != nil {
 		return registeredServices{}, err
 	}
-	menuPath, menuHandler := managev1connect.NewMenuServiceHandler(menu.NewConnectHandler(menuService), handlerOpts...)
-	mux.Handle(menuPath, menuHandler)
-	slog.Info("Registered service", "path", menuPath)
-	internalMenuPath, internalMenuHandler := intrav1connect.NewInternalMenuServiceHandler(
-		menu.NewInternalConnectHandler(menuService), internalHandlerOpts...,
-	)
-	mux.Handle(internalMenuPath, internalRPCTrust.collab(internalMenuHandler))
-	slog.Info("Registered internal service", "path", internalMenuPath)
 
-	formUnits, err := formpostgres.NewUnits(db, formpostgres.Ports{
-		ContentBlocks: contentBlockStore, Signals: servicePublisher, Assets: formAssets,
-		OG: formogadapter.NewOG(cfg.CDNURL, ogDeps.refresher), Routes: formadapter.NewRoutes(),
-		Collaboration: formadapter.NewCollaboration(spicedbClient), Members: memberadapter.PreferredLocales{},
-		ShareLinks: sharelinkadapter.FormLinks{},
-	})
+	menuService, err := r.registerMenu(collaborationRuntime)
 	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Form store: %w", err)
+		return registeredServices{}, err
 	}
-	formService, err := formdomain.NewService(formdomain.Deps{
-		Units: formUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
-		Password: passwordHasher,
-	})
+
+	formService, err := r.registerForm(formAssets)
 	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Form service: %w", err)
+		return registeredServices{}, err
 	}
-	formPath, formHandler := managev1connect.NewFormServiceHandler(formdomain.NewConnectHandler(formService), handlerOpts...)
-	mux.Handle(formPath, formHandler)
-	slog.Info("Registered service", "path", formPath)
-	internalFormPath, internalFormHandler := intrav1connect.NewInternalFormServiceHandler(
-		formdomain.NewInternalConnectHandler(formService), internalHandlerOpts...,
-	)
-	mux.Handle(internalFormPath, internalRPCTrust.collab(internalFormHandler))
-	slog.Info("Registered internal service", "path", internalFormPath)
 
 	// Phase 3: Reference Data Services
-	seriesRuntime := seriesadapter.NewRuntime(db, cfg.CDNURL, ogDeps.refresher)
-	seriesMenuTargets := menuadapter.NewTargetLifecycle(telemetryWriter)
-	seriesPostAccess := seriesadapter.PostAccess{}
-	seriesUnits, err := seriespostgres.NewUnits(db, seriespostgres.Collaborators{
-		Media: seriesRuntime, MenuTargets: seriesMenuTargets, Posts: postadapter.SeriesMembership{},
-		PostAccess: seriesPostAccess, SpiceDB: spicedbClient, Checkpoints: collaborationRuntime.Checkpoints,
-	})
+	seriesService, err := r.registerSeries(collaborationRuntime)
 	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Post Series store: %w", err)
+		return registeredServices{}, err
 	}
-	seriesLocales, err := seriespostgres.NewLocales(db)
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Post Series locales: %w", err)
-	}
-	seriesService, err := series.NewService(series.Deps{
-		Units: seriesUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
-		Media: seriesRuntime, Reads: seriesRuntime, Members: seriesadapter.NewMemberSummaries(db, cfg.CDNURL),
-		Locales: seriesLocales,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Post Series service: %w", err)
-	}
-	seriesPath, seriesHandler := managev1connect.NewSeriesServiceHandler(series.NewConnectHandler(seriesService), handlerOpts...)
-	mux.Handle(seriesPath, seriesHandler)
-	slog.Info("Registered service", "path", seriesPath)
-	internalPostSeriesPath, internalPostSeriesHandler := intrav1connect.NewInternalPostSeriesServiceHandler(
-		series.NewInternalConnectHandler(seriesService), internalHandlerOpts...,
-	)
-	mux.Handle(internalPostSeriesPath, internalRPCTrust.collab(internalPostSeriesHandler))
-	slog.Info("Registered internal service", "path", internalPostSeriesPath)
 
-	clientPath, clientHandler := managev1connect.NewClientServiceHandler(referencecatalog.NewClientConnectHandler(referenceCatalog), handlerOpts...)
+	clientPath, clientHandler := managev1connect.NewClientServiceHandler(referencecatalog.NewClientConnectHandler(referenceCatalog), r.manageOptions...)
 	mux.Handle(clientPath, clientHandler)
 	slog.Info("Registered service", "path", clientPath)
 
-	legalUnits, err := legalpostgres.NewUnits(db, legalpostgres.Ports{
-		ContentBlocks: contentBlockStore,
-		Routes:        legalRuntime,
-		Notices:       legaladapter.NewNoticeRuntime(),
-		PreviewLinks:  sharelinkadapter.LegalPreviewLinks{},
-		Members:       memberadapter.PreferredLocales{},
-		Checkpoints:   collaborationRuntime.Checkpoints,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize legal store: %w", err)
-	}
-	legalPolicyService, err := legal.NewService(legal.Deps{
-		Units:    legalUnits,
-		SpiceDB:  spicedbClient,
-		Fence:    identitystate.PostgresFence{},
-		Audit:    telemetryWriter,
-		Dispatch: legaladapter.NewNoticeDispatch(db, campaignDeliveryDispatcher),
-		OGAssets: legaladapter.NewOGAssets(db, cfg.CDNURL),
-		BaseURL:  cfg.SiteOrigin,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize legal policy service: %w", err)
-	}
-	privacyPath, privacyHandler := managev1connect.NewPrivacyServiceHandler(legal.NewPrivacyConnectHandler(legalPolicyService), handlerOpts...)
-	mux.Handle(privacyPath, privacyHandler)
-	slog.Info("Registered service", "path", privacyPath)
-
-	termsPath, termsHandler := managev1connect.NewTermsServiceHandler(legal.NewTermsConnectHandler(legalPolicyService), handlerOpts...)
-	mux.Handle(termsPath, termsHandler)
-	slog.Info("Registered service", "path", termsPath)
-
-	mapPlacePath, mapPlaceHandler := managev1connect.NewMapPlaceServiceHandler(referencecatalog.NewMapPlaceConnectHandler(referenceCatalog), handlerOpts...)
-	mux.Handle(mapPlacePath, mapPlaceHandler)
-	slog.Info("Registered service", "path", mapPlacePath)
-
-	mapThemeService, err := maptheme.NewService(maptheme.Deps{
-		Units: mapthemepostgres.NewUnits(db), SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize map theme service: %w", err)
-	}
-	mapThemePath, mapThemeHandler := managev1connect.NewMapThemeServiceHandler(maptheme.NewConnectHandler(mapThemeService), handlerOpts...)
-	mux.Handle(mapThemePath, mapThemeHandler)
-	slog.Info("Registered service", "path", mapThemePath)
-
-	emailAuthoringRuntime := emailauthoringadapter.NewRuntime()
-	emailAuthoringUnits, err := emailauthoringpostgres.NewUnits(db, emailauthoringpostgres.Ports{
-		ContentBlocks: contentBlockStore, References: emailAuthoringReferences, Members: memberadapter.ContributorMembers{},
-		Checkpoints: collaborationRuntime.Checkpoints, Rendering: emailAuthoringRuntime,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize email authoring store: %w", err)
-	}
-	emailAuthoringService, err := emailauthoring.NewService(emailauthoring.Deps{
-		Units: emailAuthoringUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
-		TestEmails: emailauthoringadapter.NewTestEmails(workerPublisher), Locales: emailAuthoringRuntime,
-		CDNDomain: cfg.CDNURL, SiteOrigin: cfg.SiteOrigin,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize email authoring service: %w", err)
-	}
-	emailTemplatePath, emailTemplateHandler := managev1connect.NewEmailTemplateServiceHandler(emailauthoring.NewTemplateConnectHandler(emailAuthoringService), handlerOpts...)
-	mux.Handle(emailTemplatePath, emailTemplateHandler)
-	slog.Info("Registered service", "path", emailTemplatePath)
-
-	emailLayoutPath, emailLayoutHandler := managev1connect.NewEmailLayoutServiceHandler(emailauthoring.NewLayoutConnectHandler(emailAuthoringService), handlerOpts...)
-	mux.Handle(emailLayoutPath, emailLayoutHandler)
-	slog.Info("Registered service", "path", emailLayoutPath)
-
-	mailAdapterService, err := emaildelivery.NewService(emaildelivery.Deps{
-		Units:          emaildeliverypostgres.NewUnits(db),
-		SpiceDB:        spicedbClient,
-		Fence:          identitystate.PostgresFence{},
-		Audit:          telemetryWriter,
-		Providers:      emaildeliveryadapter.MailProviders{},
-		AdapterCache:   adapterLoader,
-		AdapterChanges: emaildeliveryadapter.NewMailAdapterChanges(ogPublisher),
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize email delivery service: %w", err)
-	}
-	mailAdapterPath, mailAdapterHandler := managev1connect.NewMailAdapterServiceHandler(emaildelivery.NewMailAdapterConnectHandler(mailAdapterService), handlerOpts...)
-	mux.Handle(mailAdapterPath, mailAdapterHandler)
-	slog.Info("Registered service", "path", mailAdapterPath)
-
-	emailSuppressionPath, emailSuppressionHandler := managev1connect.NewEmailSuppressionServiceHandler(emaildelivery.NewEmailSuppressionConnectHandler(mailAdapterService), handlerOpts...)
-	mux.Handle(emailSuppressionPath, emailSuppressionHandler)
-	slog.Info("Registered service", "path", emailSuppressionPath)
-
-	commentService, err := post.NewCommentService(post.CommentDeps{
-		Units: postUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Members: postMembers, Audit: telemetryWriter,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize Post comment service: %w", err)
-	}
-	commentPath, commentHandler := managev1connect.NewCommentServiceHandler(post.NewCommentConnectHandler(commentService), handlerOpts...)
-	mux.Handle(commentPath, commentHandler)
-	slog.Info("Registered service", "path", commentPath)
-
-	campaignRuntime := campaignadapter.NewRuntime(workerPublisher, telemetryWriter)
-
-	campaignUnits, err := campaignpostgres.NewUnits(db, campaignpostgres.Ports{
-		ContentBlocks: contentBlockStore, Publisher: campaignRuntime, Routes: campaignRuntime, SpiceDB: spicedbClient,
-		EmailAuthoring: campaignadapter.NewEmailAuthoring(), EmailRendering: campaignadapter.NewEmailRendering(), AudienceTargets: campaignadapter.NewAudienceTargets(),
-		Members: memberadapter.ContributorMembers{}, Checkpoints: collaborationRuntime.Checkpoints,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize campaign store: %w", err)
-	}
-	campaignService, err := campaign.NewService(campaign.Deps{
-		Units: campaignUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter, Runtime: campaignRuntime, Clock: time.Now,
-		CDNDomain: cfg.CDNURL, SiteOrigin: cfg.SiteOrigin,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize campaign service: %w", err)
-	}
-	campaignPath, campaignHandler := managev1connect.NewCampaignServiceHandler(campaign.NewConnectHandler(campaignService), handlerOpts...)
-	mux.Handle(campaignPath, campaignHandler)
-	slog.Info("Registered service", "path", campaignPath)
-
-	audienceService, err := audience.NewService(audience.Deps{
-		Units:            audiencepostgres.NewUnits(db, campaignpostgres.SegmentUsage{}),
-		SpiceDB:          spicedbClient,
-		Fence:            identitystate.PostgresFence{},
-		Audit:            telemetryWriter,
-		RecipientCounter: audienceadapter.NewRecipientCounter(db, spicedbClient),
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize audience service: %w", err)
-	}
-	audiencePath, audienceHandler := managev1connect.NewAudienceServiceHandler(audience.NewConnectHandler(audienceService), handlerOpts...)
-	mux.Handle(audiencePath, audienceHandler)
-	slog.Info("Registered service", "path", audiencePath)
-
-	siteSettingUnits, err := sitesettingspostgres.NewUnits(db, sitesettingspostgres.Ports{
-		Assets: sitesettingsadapter.NewAssets(cfg.CDNURL), References: sitesettingsadapter.NewReferences(), OG: ogDeps.siteInvalidator(),
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize site settings store: %w", err)
-	}
-	siteSettingService, err := sitesettings.NewService(sitesettings.Deps{
-		Units: siteSettingUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
-		SiteOrigin: cfg.SiteOrigin,
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize site settings service: %w", err)
-	}
-	siteSettingPath, siteSettingHandler := managev1connect.NewSiteSettingServiceHandler(sitesettings.NewConnectHandler(siteSettingService), handlerOpts...)
-	mux.Handle(siteSettingPath, siteSettingHandler)
-	slog.Info("Registered service", "path", siteSettingPath)
-
-	ogAdmin := og.NewAdminConnectHandler(og.NewAdmin(ogDeps.units, ogadapter.NewAuthorization(spicedbClient)))
-	adminUnits, err := adminpostgres.NewUnits(db, adminpostgres.Ports{
-		Members: memberadapter.DashboardMembers{}, Posts: postadapter.DashboardPosts{},
-		Pages: pageadapter.DashboardPages{}, Campaigns: campaignadapter.DashboardCampaigns{},
-	})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize admin store: %w", err)
-	}
-	adminService, err := admin.NewService(admin.Deps{Units: adminUnits, SpiceDB: spicedbClient})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize admin service: %w", err)
-	}
-	adminPath, adminHandler := managev1connect.NewAdminServiceHandler(admin.NewConnectHandler(adminService, ogAdmin), handlerOpts...)
-	mux.Handle(adminPath, adminHandler)
-	slog.Info("Registered service", "path", adminPath)
-
-	shareLinkService, err := sharelink.NewService(sharelink.Deps{
-		Units: sharelinkpostgres.NewUnits(db), SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
-	})
+	legalUnits, legalPolicyService, err := r.registerLegal(legalRuntime, campaignDeliveryDispatcher, collaborationRuntime)
 	if err != nil {
 		return registeredServices{}, err
 	}
-	shareLinkPath, shareLinkHandler := managev1connect.NewShareLinkServiceHandler(sharelink.NewConnectHandler(shareLinkService), handlerOpts...)
-	mux.Handle(shareLinkPath, shareLinkHandler)
-	slog.Info("Registered service", "path", shareLinkPath)
+
+	mapPlacePath, mapPlaceHandler := managev1connect.NewMapPlaceServiceHandler(referencecatalog.NewMapPlaceConnectHandler(referenceCatalog), r.manageOptions...)
+	mux.Handle(mapPlacePath, mapPlaceHandler)
+	slog.Info("Registered service", "path", mapPlacePath)
+
+	mapThemeService, err := r.registerMapTheme()
+	if err != nil {
+		return registeredServices{}, err
+	}
+
+	emailAuthoringUnits, err := r.registerEmailAuthoring(collaborationRuntime, emailAuthoringReferences)
+	if err != nil {
+		return registeredServices{}, err
+	}
+
+	mailAdapterService, err := r.registerEmailDelivery()
+	if err != nil {
+		return registeredServices{}, err
+	}
+
+	if err := r.registerComments(postComposition.members, postComposition.units); err != nil {
+		return registeredServices{}, err
+	}
+
+	campaignUnits, err := r.registerCampaign(collaborationRuntime)
+	if err != nil {
+		return registeredServices{}, err
+	}
+
+	if err := r.registerAudience(); err != nil {
+		return registeredServices{}, err
+	}
+
+	siteSettingService, err := r.registerSiteSettings()
+	if err != nil {
+		return registeredServices{}, err
+	}
+
+	if err := r.registerAdmin(); err != nil {
+		return registeredServices{}, err
+	}
+
+	if err := r.registerShareLinks(); err != nil {
+		return registeredServices{}, err
+	}
 
 	internalServices, err := (internalContentServiceRegistration{
 		dependencies:                deps,
-		handlerOptions:              internalHandlerOpts,
-		internalTrust:               internalRPCTrust,
-		accountEmailChangeLifecycle: accountEmailChangeLifecycle,
+		handlerOptions:              r.internalOptions,
+		internalTrust:               r.internalTrust,
+		accountEmailChangeLifecycle: accountHooks.emailChanges,
 		programEvents:               programEventService,
 		emailAuthoringUnits:         emailAuthoringUnits,
 		campaignUnits:               campaignUnits,
@@ -901,7 +282,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	legalAIDocumentService := internalServices.legalDocuments
 	translationService, err := (translationServiceRegistration{
 		dependencies:             deps,
-		handlerOptions:           handlerOpts,
+		handlerOptions:           r.manageOptions,
 		domainRegistry:           translationRegistry,
 		emailAuthoringReferences: emailAuthoringReferences,
 		legalDocuments:           legalAIDocumentService,
@@ -911,150 +292,70 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if err != nil {
 		return registeredServices{}, err
 	}
-	aiDocumentRegistrations := aiDocumentDomainRegistrations{}
-	if aiDocumentRegistrations.post, err = aidocumentadapter.NewPostRegistration(postService); err != nil {
-		return registeredServices{}, fmt.Errorf("register Post AI document domain: %w", err)
-	}
-	if aiDocumentRegistrations.page, err = aidocumentadapter.NewPageRegistration(pageService); err != nil {
-		return registeredServices{}, fmt.Errorf("register Page AI document domain: %w", err)
-	}
-	if aiDocumentRegistrations.work, err = aidocumentadapter.NewWorkRegistration(workService); err != nil {
-		return registeredServices{}, fmt.Errorf("register Work AI document domain: %w", err)
-	}
-	if aiDocumentRegistrations.programEvent, err = aidocumentadapter.NewProgramEventRegistration(programEventService); err != nil {
-		return registeredServices{}, fmt.Errorf("register Program Event AI document domain: %w", err)
-	}
-	if aiDocumentRegistrations.release, err = aidocumentadapter.NewReleaseRegistration(releaseService); err != nil {
-		return registeredServices{}, fmt.Errorf("register Release AI document domain: %w", err)
-	}
-	if aiDocumentRegistrations.artist, err = aidocumentadapter.NewArtistRegistration(artistService); err != nil {
-		return registeredServices{}, fmt.Errorf("register Artist AI document domain: %w", err)
-	}
-	if aiDocumentRegistrations.label, err = aidocumentadapter.NewLabelRegistration(labelService); err != nil {
-		return registeredServices{}, fmt.Errorf("register Label AI document domain: %w", err)
-	}
-	if aiDocumentRegistrations.menu, err = aidocumentadapter.NewMenuRegistration(menuService); err != nil {
-		return registeredServices{}, fmt.Errorf("register Menu AI document domain: %w", err)
-	}
-	if aiDocumentRegistrations.emailTemplate, err = aidocumentadapter.NewEmailTemplateRegistration(internalEmailAuthoringService); err != nil {
-		return registeredServices{}, fmt.Errorf("register Email Template AI document domain: %w", err)
-	}
-	if aiDocumentRegistrations.emailLayout, err = aidocumentadapter.NewEmailLayoutRegistration(internalEmailAuthoringService); err != nil {
-		return registeredServices{}, fmt.Errorf("register Email Layout AI document domain: %w", err)
-	}
-	if aiDocumentRegistrations.campaign, err = aidocumentadapter.NewCampaignRegistration(internalCampaignService); err != nil {
-		return registeredServices{}, fmt.Errorf("register Campaign AI document domain: %w", err)
-	}
-	if aiDocumentRegistrations.form, err = aidocumentadapter.NewFormRegistration(formService); err != nil {
-		return registeredServices{}, fmt.Errorf("register Form AI document domain: %w", err)
-	}
-	if aiDocumentRegistrations.privacy, err = aidocumentadapter.NewPrivacyRegistration(legalAIDocumentService); err != nil {
-		return registeredServices{}, fmt.Errorf("register Privacy AI document domain: %w", err)
-	}
-	if aiDocumentRegistrations.terms, err = aidocumentadapter.NewTermsRegistration(legalAIDocumentService); err != nil {
-		return registeredServices{}, fmt.Errorf("register Terms AI document domain: %w", err)
-	}
-	if aiDocumentRegistrations.postSeries, err = aidocumentadapter.NewPostSeriesRegistration(
-		seriesService,
-	); err != nil {
-		return registeredServices{}, fmt.Errorf("register Post Series AI document domain: %w", err)
-	}
-	aiDocumentMCP, err := newAIDocumentMCPComposition(
-		aiDocumentRegistrations,
-		postService,
-		workService,
-		pageService,
-		programEventService,
-		releaseService,
-		artistService,
-		contentMCPApplications{
-			legalPolicies: legalPolicyService,
-			categories:    referenceCatalog,
-			tags:          referenceCatalog,
-			clients:       referenceCatalog,
-			mapPlaces:     referenceCatalog,
-			members:       memberService,
-			artists:       artistService,
-			files:         fileService,
-			eventTypes:    programEventService,
-			eventSeries:   programEventService,
-			labels:        labelService,
-			genres:        referenceCatalog,
-			styles:        referenceCatalog,
-			formats:       referenceCatalog,
-			forms:         formService,
-			postSeries:    seriesService,
-			tracks:        releaseService,
-			mapThemes:     mapThemeService,
-			menus:         menuService,
-			menuSettings:  siteSettingService,
-			siteSettings:  siteSettingService,
-			mailAdapters:  mailAdapterService,
-		},
-		translationService,
-		fileService,
-		aiDocumentMCPConfig{
-			internalServiceSecret:     cfg.TokenSigningSecret,
-			authHeaderName:            cfg.AuthHeaderName,
-			internalServiceHeaderName: cfg.InternalServiceHeaderName,
-			editorCollabURL:           cfg.EditorCollabURL,
-			editorCollabHTTPClient:    &http.Client{Timeout: time.Duration(cfg.HTTPWriteTimeoutSec) * time.Second},
-			allowedOrigins:            cfg.CORSOrigins,
-		},
-		deps.servicePublisher,
-		sitesettingsadapter.NewMCPServerTitleSource(db),
-	)
-	if err != nil {
+	if err := r.registerAIDocuments(aiDocumentApplications{
+		post:           postComposition.service,
+		page:           pageService,
+		work:           workService,
+		programEvent:   programEventService,
+		release:        releaseService,
+		artist:         artistService,
+		label:          labelService,
+		menu:           menuService,
+		emailAuthoring: internalEmailAuthoringService,
+		campaign:       internalCampaignService,
+		form:           formService,
+		legal:          legalAIDocumentService,
+		series:         seriesService,
+	}, contentMCPApplications{
+		legalPolicies: legalPolicyService,
+		categories:    referenceCatalog,
+		tags:          referenceCatalog,
+		clients:       referenceCatalog,
+		mapPlaces:     referenceCatalog,
+		members:       accountComposition.members,
+		artists:       artistService,
+		files:         fileService,
+		eventTypes:    programEventService,
+		eventSeries:   programEventService,
+		labels:        labelService,
+		genres:        referenceCatalog,
+		styles:        referenceCatalog,
+		formats:       referenceCatalog,
+		forms:         formService,
+		postSeries:    seriesService,
+		tracks:        releaseService,
+		mapThemes:     mapThemeService,
+		menus:         menuService,
+		menuSettings:  siteSettingService,
+		siteSettings:  siteSettingService,
+		mailAdapters:  mailAdapterService,
+	}, translationService, fileService); err != nil {
 		return registeredServices{}, err
 	}
-	aiDocumentPath, aiDocumentHandler := managev1connect.NewAIDocumentServiceHandler(
-		aiDocumentMCP.connectService,
-		handlerOpts...,
-	)
-	mux.Handle(aiDocumentPath, aiDocumentHandler)
-	slog.Info("Registered service", "path", aiDocumentPath)
-	aiEditorProvider, err := llmproviders.NewGeminiProvider(llmproviders.GeminiConfig{APIKey: cfg.GoogleAIAPIKey})
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize AI Editor Gemini provider: %w", err)
-	}
-	aiEditorService, err := aieditor.NewService(aiDocumentMCP.editorApplication, aiEditorProvider)
-	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize AI Editor service: %w", err)
-	}
-	aiEditorPath, aiEditorHandler := managev1connect.NewAIEditorOrchestrationServiceHandler(
-		aiEditorService,
-		handlerOpts...,
-	)
-	mux.Handle(aiEditorPath, aiEditorHandler)
-	slog.Info("Registered service", "path", aiEditorPath)
-	if err := registerMCPRoutes(mux, aiDocumentMCP.mcpHandler); err != nil {
-		return registeredServices{}, err
-	}
-	slog.Info("Registered MCP handler", "path", "/mcp", "methods", []string{http.MethodGet, http.MethodPost})
 
 	internalOgService := og.NewInternalConnectHandler(og.NewLifecycle(ogDeps.units))
-	internalOgPath, internalOgHandler := intrav1connect.NewInternalOgServiceHandler(internalOgService, internalHandlerOpts...)
-	mux.Handle(internalOgPath, internalRPCTrust.og(internalOgHandler))
+	internalOgPath, internalOgHandler := intrav1connect.NewInternalOgServiceHandler(internalOgService, r.internalOptions...)
+	mux.Handle(internalOgPath, r.internalTrust.og(internalOgHandler))
 	slog.Info("Registered internal service", "path", internalOgPath)
 	if err := (publicServiceRegistration{
 		dependencies:   deps,
-		handlerOptions: publicHandlerOpts,
+		handlerOptions: r.publicOptions,
 		fileService:    publicFileService,
-		postShareLinks: postShareLinks,
-		postMembers:    postMembers,
+		postShareLinks: postComposition.shareLinks,
+		postMembers:    postComposition.members,
 		workRuntime:    workRuntime,
 		legalRuntime:   legalRuntime,
 		formAssets:     formAssets,
-		accounts:       accounts,
+		accounts:       accountComposition.account,
 	}).register(); err != nil {
 		return registeredServices{}, err
 	}
 
 	return registeredServices{
-		authInterceptor:             authInterceptor,
-		accountEmailChangeLifecycle: accountEmailChangeLifecycle,
-		accountLifecycle:            accounts,
-		mcpAuthorAdmissionHandler:   mcpAuthorAdmissionHandler,
-		oathkeeperPATHandler:        oathkeeperPATHandler,
+		authInterceptor:             r.authInterceptor,
+		accountEmailChangeLifecycle: accountHooks.emailChanges,
+		accountLifecycle:            accountComposition.account,
+		mcpAuthorAdmissionHandler:   accountHooks.mcpAdmission,
+		oathkeeperPATHandler:        accountHooks.oathkeeper,
 	}, nil
 }
