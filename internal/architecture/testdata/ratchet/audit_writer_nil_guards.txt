@@ -11,4 +11,3 @@
 2 internal/menu
 2 internal/series
 1 internal/sitesettings
-2 internal/worker

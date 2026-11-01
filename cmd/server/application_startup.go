@@ -196,7 +196,7 @@ func initializeApplicationDependencies(
 		FaviconCleanup:   faviconCleanup,
 		MetadataAI:       deps.metadataAIJobs,
 		TranslationJobs:  deps.translationJobs,
-		AuditWriter:      deps.telemetryWriter,
+		Audit:            deps.telemetryWriter,
 		SpiceDB:          deps.spicedbClient,
 		OGPlanner:        deps.og.planner,
 		MemberDeletion:   accountadapter.MemberDeletion{},

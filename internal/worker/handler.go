@@ -129,7 +129,7 @@ type HandlerDeps struct {
 	FaviconCleanup   *favicon.Cleanup
 	MetadataAI       MetadataAIJobProcessor
 	TranslationJobs  TranslationJobProcessor
-	AuditWriter      *telemetry.DurableWriter
+	Audit            *telemetry.DurableWriter
 	SpiceDB          *auth.SpiceDBClient
 	OGPlanner        *og.Planner
 	MemberDeletion   account.MemberDeletionLifecycle
@@ -161,8 +161,8 @@ func NewHandlers(deps HandlerDeps) *Handlers {
 	if deps.MediaCleanup == nil || deps.PublicAssets == nil || deps.OGCleanup == nil || deps.FaviconCleanup == nil {
 		panic("worker.NewHandlers: MediaAsset, OG, and Favicon cleanup applications are required")
 	}
-	if deps.AuditWriter == nil {
-		panic("worker.NewHandlers: auditWriter is required")
+	if deps.Audit == nil {
+		panic("worker.NewHandlers: audit writer is required")
 	}
 	if deps.SpiceDB == nil {
 		panic("worker.NewHandlers: SpiceDB client is required")
@@ -191,7 +191,7 @@ func NewHandlers(deps HandlerDeps) *Handlers {
 		translationJobs:  deps.TranslationJobs,
 		mailMetrics:      newMailMetrics(),
 		httpClient:       http.DefaultClient,
-		auditWriter:      deps.AuditWriter,
+		auditWriter:      deps.Audit,
 		ogPlanner:        deps.OGPlanner,
 		memberDeletion:   deps.MemberDeletion,
 		campaignEmail:    deps.CampaignEmail,
