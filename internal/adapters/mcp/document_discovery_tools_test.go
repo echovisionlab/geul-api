@@ -195,8 +195,8 @@ func (discovery *recordingPostDocumentDiscovery) ListAIDocuments(
 
 type recordingWorkDocumentDiscovery struct{}
 
-func (*recordingWorkDocumentDiscovery) ListWorksAdmin(context.Context, workdomain.ListWorksAdminQuery) (*managev1.ListWorksAdminResponse, error) {
-	return &managev1.ListWorksAdminResponse{}, nil
+func (*recordingWorkDocumentDiscovery) ListWorksAdmin(context.Context, workdomain.ListWorksAdminQuery) (workdomain.AdminWorkPage, error) {
+	return workdomain.AdminWorkPage{}, nil
 }
 
 type recordingPageDocumentDiscovery struct {

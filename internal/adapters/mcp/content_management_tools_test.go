@@ -588,27 +588,30 @@ type recordingWorkManagement struct {
 	WorkManagementApplication
 	create      *work.CreateWorkCommand
 	get         *work.GetWorkQuery
-	getResponse *managev1.Work
+	getResponse work.View
 	getErr      error
 	update      *work.UpdateWorkCommand
 }
 
-func (r *recordingWorkManagement) GetWork(_ context.Context, query work.GetWorkQuery) (*managev1.Work, error) {
+func (r *recordingWorkManagement) GetWork(_ context.Context, query work.GetWorkQuery) (work.View, error) {
 	r.get = &query
 	if r.getErr != nil {
-		return nil, r.getErr
+		return work.View{}, r.getErr
 	}
 	return r.getResponse, nil
 }
 
-func (r *recordingWorkManagement) UpdateWork(_ context.Context, command work.UpdateWorkCommand) (*managev1.UpdateWorkResponse, error) {
+func (r *recordingWorkManagement) UpdateWork(_ context.Context, command work.UpdateWorkCommand) (work.Update, error) {
 	r.update = &command
-	return &managev1.UpdateWorkResponse{Id: command.ID, Changed: true, UpdatedAt: timestamppb.Now()}, nil
+	return work.Update{Work: work.Work{ID: command.ID, UpdatedAt: time.Now()}, Changed: true}, nil
 }
 
-func (r *recordingWorkManagement) CreateWork(_ context.Context, command work.CreateWorkCommand) (*managev1.Work, error) {
+func (r *recordingWorkManagement) CreateWork(_ context.Context, command work.CreateWorkCommand) (work.View, error) {
 	r.create = &command
-	return &managev1.Work{Id: managementWorkID, Title: command.Title, Type: managev1.WorkType(managev1.WorkType_value[command.Type]), SourceLocale: command.SourceLocale, Status: managev1.WorkStatus_WORK_STATUS_DRAFT, Revision: "work-revision"}, nil
+	return work.View{
+		Work:  work.Work{ID: managementWorkID, Type: command.Type, SourceLocale: command.SourceLocale, Status: work.StatusDraft},
+		Title: command.Title, Revision: "work-revision",
+	}, nil
 }
 
 type recordingPageManagement struct {
@@ -655,10 +658,12 @@ func TestWorkSettingsReadSuppliesExactObservedBaselineForUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	works := &recordingWorkManagement{getResponse: &managev1.Work{
-		Id: managementWorkID, Type: managev1.WorkType_WORK_TYPE_PORTFOLIO,
-		Metadata: metadata, Clients: []*managev1.WorkClient{{Id: managementPostID}},
-		Year: 2026, Month: 10, IsPresent: true, Revision: "content-revision",
+	works := &recordingWorkManagement{getResponse: work.View{
+		Work: work.Work{
+			ID: managementWorkID, Type: managev1.WorkType_WORK_TYPE_PORTFOLIO.String(),
+			Metadata: metadata.AsMap(), Year: 2026, Month: 10, IsPresent: true,
+		},
+		Clients: []work.Client{{ID: managementPostID}}, Revision: "content-revision",
 	}}
 	tools, err := NewContentManagementTools(&recordingPostManagement{}, works, &recordingPageManagement{})
 	if err != nil {

@@ -1,4 +1,4 @@
-package public
+package workpublicpostgres
 
 import (
 	"testing"
@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	workdomain "github.com/echovisionlab/geul-api/internal/work"
+	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
 )
 
 func TestWorkFilterConfigSearchUsesSourceLocaleTitle(t *testing.T) {
@@ -14,5 +14,5 @@ func TestWorkFilterConfigSearchUsesSourceLocaleTitle(t *testing.T) {
 
 	field, ok := workFilterConfig.Fields["search"]
 	require.True(t, ok)
-	assert.Equal(t, []string{workdomain.WorkSourceTitleSQL("work")}, field.SearchColumns)
+	assert.Equal(t, []string{workpostgres.WorkSourceTitleSQL("work")}, field.SearchColumns)
 }

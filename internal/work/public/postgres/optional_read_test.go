@@ -1,27 +1,17 @@
-package public
+package workpublicpostgres
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
-	"log/slog"
-	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/echovisionlab/geul-api/internal/model"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
-func TestOptionalRelationReadFailuresLogCauseAndPreserveFallback(t *testing.T) {
-	var output bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(sharedtelemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, nil))))
-	t.Cleanup(func() { slog.SetDefault(previous) })
+func TestOptionalRelationReadFailuresRollBackTheirSavepoint(t *testing.T) {
 	sqlDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, sqlDB.Close()); require.NoError(t, mock.ExpectationsWereMet()) })
@@ -37,22 +27,18 @@ func TestOptionalRelationReadFailuresLogCauseAndPreserveFallback(t *testing.T) {
 	mock.ExpectExec("ROLLBACK TO SAVEPOINT").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectCommit()
 	mock.ExpectClose()
-	service := &Service{db: db}
 	err = db.Transaction(func(tx *gorm.DB) error {
-		snapshot, readErr := service.loadWorkPublicRelationsSnapshot(t.Context(), tx, &model.Work{ID: "work-1"})
+		reads := store{tx: tx}
+		groups, readErr := reads.CreditGroups(t.Context(), "work-1")
+		require.ErrorContains(t, readErr, "credit groups unavailable")
+		require.Empty(t, groups)
+		credits, readErr := reads.Credits(t.Context(), "work-1")
 		require.NoError(t, readErr)
-		require.Empty(t, snapshot.CreditGroups)
-		require.Empty(t, snapshot.Clients)
-		return readErr
+		require.Empty(t, credits)
+		clients, readErr := reads.Clients(t.Context(), "work-1")
+		require.ErrorContains(t, readErr, "clients unavailable")
+		require.Empty(t, clients)
+		return nil
 	})
 	require.NoError(t, err)
-	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-	require.Len(t, lines, 2)
-	for i, cause := range []string{"credit groups unavailable", "clients unavailable"} {
-		var entry map[string]any
-		require.NoError(t, json.Unmarshal([]byte(lines[i]), &entry))
-		require.Equal(t, "ERROR", entry["level"])
-		require.Equal(t, cause, entry["failure_cause"])
-		require.Equal(t, "work-1", entry["work_id"])
-	}
 }

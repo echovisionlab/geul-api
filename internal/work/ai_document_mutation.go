@@ -6,19 +6,12 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/optional"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-
-	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	"github.com/google/uuid"
 )
 
 // AIDocumentExecutionMode selects whether the exact Work mutation transaction
@@ -79,27 +72,27 @@ func (s *Service) ExecuteAIDocumentMutation(
 	if err := validateWorkAIDocumentIdentity(workID, locale); err != nil {
 		return AIDocumentMutationResult{}, err
 	}
-	var root model.Work
+	var root Work
 	var documentID uuid.UUID
 	var principal *auth.UserInfo
 	var state AIDocumentState
 	var compiled AIDocumentMutation
 	var validated AIDocumentMutationResult
-	applied, err := mutation.Run(ctx, s.mutations, mutation.Spec[workAIDocumentApply]{
-		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+	applied, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[workAIDocumentApply, Store]{
+		Access: mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
 			var err error
-			if root, documentID, err = loadWorkAIDocumentRoot(ctx, tx, workID, clause.LockingStrengthUpdate); err != nil {
+			if root, documentID, err = loadWorkAIDocumentRoot(ctx, store, workID, UpdateLock); err != nil {
 				return err
 			}
-			principal, err = authorizeWorkAIDocument(ctx, tx, s.spiceDB, root, workAuthorizationMutation)
+			principal, err = authorizeWorkAIDocument(ctx, lockActive, s.spiceDB, root, workAuthorizationMutation)
 			if mutation.IsUnauthenticated(err) || mutation.IsDenied(err) {
 				return domainerr.ResourceNotFound("work", workID)
 			}
 			return err
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (workAIDocumentApply, error) {
+		Change: func(ctx context.Context, store Store) (workAIDocumentApply, error) {
 			var err error
-			if state, err = s.loadAIDocumentStateAfterAuthorization(ctx, tx, root, documentID, locale, principal.MemberID.String()); err != nil {
+			if state, err = loadAIDocumentStateAfterAuthorization(ctx, store, root, documentID, locale, principal.MemberID.String()); err != nil {
 				return workAIDocumentApply{}, err
 			}
 			if compiled, err = compiler(state); err != nil {
@@ -108,7 +101,7 @@ func (s *Service) ExecuteAIDocumentMutation(
 			if err := validateCompiledWorkAIDocumentMutation(state, compiled); err != nil {
 				return workAIDocumentApply{}, err
 			}
-			applied, err := s.applyAIDocumentMutationInTransaction(ctx, tx,
+			applied, err := applyAIDocumentMutationInTransaction(ctx, store,
 				compiled, workAuthorizedAIDocumentFence(root.ID, documentID, contentblock.DomainContext{SourceLocale: state.SourceLocale}, compiled.ContributorMemberID),
 			)
 			if err == nil && mode == AIDocumentExecutionValidate {
@@ -123,18 +116,19 @@ func (s *Service) ExecuteAIDocumentMutation(
 			}
 			return workLocaleContentAudit(compiled.ContributorMemberID, compiled.WorkID, compiled.Locale, applied.operation)
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, applied workAIDocumentApply) error {
+		Outbox: func(ctx context.Context, store Store, applied workAIDocumentApply) error {
 			content := applied.result.Content
 			// Like the editor, a new title requests that locale's OG image. Public
 			// reads show a translation only once its OG generation exists.
 			if content.Changed && workAIDocumentTitleChanged(state, compiled) {
-				if _, err := s.requestWorkOG(ctx, tx, compiled.WorkID, compiled.Locale, "work_ai_document_saved"); err != nil {
+				if _, err := requestWorkOG(ctx, store, compiled.WorkID, compiled.Locale, "work_ai_document_saved"); err != nil {
 					return err
 				}
 			}
-			return contentsignal.PublishInteractive(ctx, tx, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
-				compiled.WorkID, compiled.Locale, content.DocumentRevision.String(), applied.result.TargetRevision,
-				content.Changed, compiled.DeleteTranslation, compiled.ContributorMemberID)
+			return store.PublishContentUpdate(ctx, ContentUpdate{WorkID: compiled.WorkID, Kind: InteractiveUpdate, Interactive: InteractiveChange{
+				Locale: compiled.Locale, DocumentRevision: content.DocumentRevision.String(), TargetRevision: applied.result.TargetRevision,
+				Changed: content.Changed, LocaleDeleted: compiled.DeleteTranslation, ContributorID: compiled.ContributorMemberID,
+			}})
 		},
 	})
 	if errors.Is(err, errRollbackWorkAIDocumentValidation) {
@@ -210,12 +204,12 @@ func workAuthorizedAIDocumentFence(
 	documentID uuid.UUID,
 	domain contentblock.DomainContext,
 	contributorMemberID string,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {
+) ContentFence {
+	return func(ctx context.Context, store Store, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {
 		if strings.TrimSpace(workID) == "" || documentID == uuid.Nil || requestedDocumentID != documentID {
 			return contentblock.DomainContext{}, domainerr.Precondition("Work content document changed; reload before saving")
 		}
-		if err := requireDocumentContributors(ctx, tx, []string{contributorMemberID}); err != nil {
+		if err := requireDocumentContributors(ctx, store, []string{contributorMemberID}); err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		return domain, nil

@@ -1,4 +1,4 @@
-package work
+package workpostgres
 
 import (
 	"context"
@@ -47,9 +47,7 @@ func mockWorkSignalDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 func TestWorkContentUpdatedEventsSatisfySignalContract(t *testing.T) {
 	targetRevision := "target-revision"
 	events := map[string]*managev1.ContentUpdatedEvent{
-		"manage update": buildManageWorkContentUpdatedEvent(UpdateWorkCommand{
-			ID: "work-1", Featured: proto.Bool(true),
-		}),
+		"manage update": buildManageWorkContentUpdatedEvent("work-1", []string{"featured"}),
 		"lifecycle": buildManageStateTransitionContentUpdatedEvent(
 			"work-1", []string{"state.status"},
 		),

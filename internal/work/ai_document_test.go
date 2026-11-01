@@ -1,26 +1,40 @@
 package work
 
 import (
-	"context"
-	"database/sql"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
+// aiDocumentMetadataStore holds one Work whose source locale is en with the
+// title Source, recording the source rows it stores.
+func aiDocumentMetadataStore(workID string, stored *[]LocaleMetadata) stubStore {
+	title := "Source"
+	return stubStore{
+		lockSourceLocale: func(string) (string, error) { return "en", nil },
+		lockedLocaleText: func(id, locale string) (LocaleMetadata, bool, error) {
+			if id != workID || locale != "en" {
+				return LocaleMetadata{}, false, nil
+			}
+			return LocaleMetadata{Locale: "en", Title: &title}, true, nil
+		},
+		upsertSourceLocale: func(_, locale string, title, summary *string) error {
+			*stored = append(*stored, LocaleMetadata{Locale: locale, Title: title, Summary: summary})
+			return nil
+		},
+	}
+}
+
 func TestWorkAIDocumentSourceMetadataPreservesExplicitEmptySummary(t *testing.T) {
-	db := newWorkAIDocumentMetadataDB(t)
 	workID := uuid.NewString()
-	seedWorkAIDocumentSource(t, db, workID, "en", "Source")
+	var stored []LocaleMetadata
 	empty := ""
 	now := time.Date(2026, 8, 23, 1, 2, 3, 0, time.UTC)
 
 	effect, err := applyWorkAIDocumentMetadata(
-		context.Background(), db, workID, "en", true,
+		t.Context(), aiDocumentMetadataStore(workID, &stored), workID, "en", true,
 		AIDocumentMetadataPatch{SetSummary: true, Summary: &empty},
 		now,
 	)
@@ -28,6 +42,8 @@ func TestWorkAIDocumentSourceMetadataPreservesExplicitEmptySummary(t *testing.T)
 	require.True(t, effect.Changed)
 	require.True(t, effect.AffectsTranslationSource)
 	require.Equal(t, []string{"en"}, effect.ChangedLocales)
+	require.Len(t, stored, 1)
+	require.Equal(t, "", *stored[0].Summary)
 }
 
 func TestWorkAIDocumentIdentityRequiresExactCanonicalLocale(t *testing.T) {
@@ -38,49 +54,27 @@ func TestWorkAIDocumentIdentityRequiresExactCanonicalLocale(t *testing.T) {
 }
 
 func TestWorkAIDocumentMetadataRejectsPresenceRaceAndEmptySourceTitle(t *testing.T) {
-	db := newWorkAIDocumentMetadataDB(t)
 	workID := uuid.NewString()
-	seedWorkAIDocumentSource(t, db, workID, "en", "Source")
+	var stored []LocaleMetadata
+	store := aiDocumentMetadataStore(workID, &stored)
 	empty := ""
 
 	_, err := applyWorkAIDocumentMetadata(
-		context.Background(), db, workID, "en", true,
+		t.Context(), store, workID, "en", true,
 		AIDocumentMetadataPatch{SetTitle: true, Title: &empty}, time.Now().UTC(),
 	)
 	require.ErrorContains(t, err, "source title cannot be empty")
 
 	_, err = applyWorkAIDocumentMetadata(
-		context.Background(), db, workID, "ko", true,
+		t.Context(), store, workID, "ko", true,
 		AIDocumentMetadataPatch{SetSummary: true, Summary: &empty}, time.Now().UTC(),
 	)
 	require.ErrorContains(t, err, "current source locale")
-}
 
-func newWorkAIDocumentMetadataDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE work (
-		id TEXT PRIMARY KEY,
-		source_locale TEXT NOT NULL
-	)`).Error)
-	require.NoError(t, db.Exec(`CREATE TABLE work_translation (
-		entity_id TEXT NOT NULL,
-		locale TEXT NOT NULL,
-		title TEXT,
-		summary TEXT,
-		created_at DATETIME NOT NULL,
-		updated_at DATETIME NOT NULL,
-		PRIMARY KEY (entity_id, locale)
-	)`).Error)
-	return db
-}
-
-func seedWorkAIDocumentSource(t *testing.T, db *gorm.DB, workID, locale, title string) {
-	t.Helper()
-	now := time.Now().UTC()
-	require.NoError(t, db.Exec(`INSERT INTO work (id, source_locale) VALUES (?, ?)`, workID, locale).Error)
-	require.NoError(t, db.Exec(`INSERT INTO work_translation (
-		entity_id, locale, title, summary, created_at, updated_at
-	) VALUES (?, ?, ?, ?, ?, ?)`, workID, locale, title, sql.NullString{}, now, now).Error)
+	_, err = applyWorkAIDocumentMetadata(
+		t.Context(), store, workID, "en", false,
+		AIDocumentMetadataPatch{SetSummary: true, Summary: &empty}, time.Now().UTC(),
+	)
+	require.ErrorContains(t, err, "presence changed")
+	require.Empty(t, stored)
 }

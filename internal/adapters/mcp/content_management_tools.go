@@ -90,11 +90,11 @@ type PostManagementApplication interface {
 }
 
 type WorkManagementApplication interface {
-	GetWork(context.Context, work.GetWorkQuery) (*managev1.Work, error)
-	CreateWork(context.Context, work.CreateWorkCommand) (*managev1.Work, error)
-	UpdateWork(context.Context, work.UpdateWorkCommand) (*managev1.UpdateWorkResponse, error)
-	PublishWork(context.Context, work.PublishWorkCommand) (*managev1.WorkLifecycleMutationResponse, error)
-	UnpublishWork(context.Context, work.UnpublishWorkCommand) (*managev1.WorkLifecycleMutationResponse, error)
+	GetWork(context.Context, work.GetWorkQuery) (work.View, error)
+	CreateWork(context.Context, work.CreateWorkCommand) (work.View, error)
+	UpdateWork(context.Context, work.UpdateWorkCommand) (work.Update, error)
+	PublishWork(context.Context, work.PublishWorkCommand) (work.LifecycleChange, error)
+	UnpublishWork(context.Context, work.UnpublishWorkCommand) (work.LifecycleChange, error)
 	DeleteWork(context.Context, work.DeleteWorkCommand) error
 }
 
@@ -432,7 +432,7 @@ func (tools *ContentManagementTools) createWork(ctx context.Context, arguments m
 	} else if input.UntilYear == nil || input.UntilMonth == nil {
 		return executionError(errors.New("until_year and until_month are required unless is_present is true"))
 	}
-	created, err := tools.works.CreateWork(ctx, work.CreateWorkCommand{
+	view, err := tools.works.CreateWork(ctx, work.CreateWorkCommand{
 		Title: input.Title, Slug: input.Slug, Type: workType.String(), Summary: input.Summary, Metadata: metadata, Featured: input.Featured,
 		Year: input.Year, Month: input.Month, UntilYear: input.UntilYear, UntilMonth: input.UntilMonth, IsPresent: input.IsPresent,
 		SourceLocale: input.SourceLocale, Document: emptyRichTextDocument(contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK, input.SourceLocale),
@@ -441,6 +441,7 @@ func (tools *ContentManagementTools) createWork(ctx context.Context, arguments m
 	if err != nil {
 		return expectedToolError(err)
 	}
+	created := work.WorkMessage(ctx, view)
 	return contentResult(map[string]any{"document_type": "work", "document_id": created.Id, "changed": true, "title": created.Title, "slug": optionalStringValue(created.Slug), "source_locale": created.SourceLocale, "status": contentStatus(created.Status.String(), "WORK_STATUS_"), "document_revision": created.Revision})
 }
 
@@ -466,19 +467,18 @@ func (tools *ContentManagementTools) getWorkSettings(ctx context.Context, argume
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
-	stored, err := tools.works.GetWork(ctx, work.GetWorkQuery{ID: input.DocumentID})
+	view, err := tools.works.GetWork(ctx, work.GetWorkQuery{ID: input.DocumentID})
 	if err != nil {
 		return expectedToolError(err)
 	}
+	stored := work.WorkMessage(ctx, view)
 	metadata := map[string]any{}
 	if stored.Metadata != nil {
 		metadata = stored.Metadata.AsMap()
 	}
-	clientIDs := make([]string, 0, len(stored.Clients))
-	for _, client := range stored.Clients {
-		if client != nil {
-			clientIDs = append(clientIDs, client.Id)
-		}
+	clientIDs := make([]string, 0, len(view.Clients))
+	for _, client := range view.Clients {
+		clientIDs = append(clientIDs, client.ID)
 	}
 	output := map[string]any{
 		"document_type": "work", "document_id": stored.Id,
@@ -534,7 +534,7 @@ func (tools *ContentManagementTools) updateWork(ctx context.Context, arguments m
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(map[string]any{"document_type": "work", "document_id": updated.Id, "changed": updated.Changed, "slug": optionalStringValue(updated.Slug), "updated_at": timestampString(updated.UpdatedAt)})
+	return contentResult(map[string]any{"document_type": "work", "document_id": updated.Work.ID, "changed": updated.Changed, "slug": optionalStringValue(updated.Work.Slug), "updated_at": timestampString(timestamppb.New(updated.Work.UpdatedAt))})
 }
 
 func (tools *ContentManagementTools) mutateWork(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -548,7 +548,7 @@ func (tools *ContentManagementTools) mutateWork(ctx context.Context, name string
 		}
 		return contentResult(map[string]any{"document_type": "work", "document_id": input.DocumentID, "changed": true, "deleted": true})
 	}
-	var result *managev1.WorkLifecycleMutationResponse
+	var result work.LifecycleChange
 	var err error
 	if name == ToolWorkPublish {
 		result, err = tools.works.PublishWork(ctx, work.PublishWorkCommand{ID: input.DocumentID})
@@ -558,7 +558,7 @@ func (tools *ContentManagementTools) mutateWork(ctx context.Context, name string
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(map[string]any{"document_type": "work", "document_id": result.Id, "changed": result.Changed, "status": contentStatus(result.Status.String(), "WORK_STATUS_"), "updated_at": timestampString(result.UpdatedAt)})
+	return contentResult(map[string]any{"document_type": "work", "document_id": result.ID, "changed": result.Changed, "status": contentStatus(work.WorkStatusName(result.Status), "WORK_STATUS_"), "updated_at": timestampString(timestamppb.New(result.UpdatedAt))})
 }
 
 type pageCreateArguments struct {

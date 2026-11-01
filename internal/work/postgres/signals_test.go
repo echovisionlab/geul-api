@@ -1,4 +1,4 @@
-package work
+package workpostgres
 
 import (
 	"testing"
@@ -65,10 +65,7 @@ func TestBuildWorkTargetContentUpdatedEventCarriesExactLocaleFence(t *testing.T)
 }
 
 func TestBuildManageWorkContentUpdatedEventWithGlobalMetadataChange(t *testing.T) {
-	event := buildManageWorkContentUpdatedEvent(UpdateWorkCommand{
-		ID:       "work-1",
-		Featured: new(true),
-	})
+	event := buildManageWorkContentUpdatedEvent("work-1", []string{"featured"})
 	require.NotNil(t, event)
 	assert.Equal(t, managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE, event.Source)
 	assert.False(t, event.DocumentStateChanged)

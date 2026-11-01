@@ -14,25 +14,16 @@ import (
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // workEntityName names the owner in shared content document messages.
 const workEntityName = "Work"
 
-type workLocaleMetadataRow struct {
-	Locale    string    `gorm:"column:locale"`
-	Title     *string   `gorm:"column:title"`
-	Summary   *string   `gorm:"column:summary"`
-	UpdatedAt time.Time `gorm:"column:updated_at"`
-}
-
 type workTargetLocaleState struct {
 	Snapshot       contentblock.Snapshot
 	SourceLocale   string
-	SourceMetadata workLocaleMetadataRow
-	TargetMetadata *workLocaleMetadataRow
+	SourceMetadata LocaleMetadata
+	TargetMetadata *LocaleMetadata
 	TargetRevision string
 }
 
@@ -56,12 +47,8 @@ type workTargetMetadataPatch struct {
 // row may intentionally omit one nullable value; that value falls back to the
 // current source value for resident/public reads while exact mutation state
 // continues to preserve the target row's sparse presence.
-func workTargetMetadataProjection(
-	source workLocaleMetadataRow,
-	target *workLocaleMetadataRow,
-	locale string,
-) workLocaleMetadataRow {
-	projected := workLocaleMetadataRow{
+func workTargetMetadataProjection(source LocaleMetadata, target *LocaleMetadata, locale string) LocaleMetadata {
+	projected := LocaleMetadata{
 		Locale:  locale,
 		Title:   cloneOptionalString(source.Title),
 		Summary: cloneOptionalString(source.Summary),
@@ -87,14 +74,14 @@ func normalizeWorkDocumentLocale(locale string) (string, error) {
 	return *normalized, nil
 }
 
-func workSourceRoomFence(locale string, base contentblock.DomainFence) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		domain, err := base(ctx, tx, documentID)
+func workSourceRoomFence(locale string, base ContentFence) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		domain, err := base(ctx, store, documentID)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if domain.SourceLocale != locale {
-			return contentblock.DomainContext{}, contentblock.LocaleOwnershipConflict(ctx, tx, documentID,
+			return contentblock.DomainContext{}, store.LocaleOwnershipConflict(ctx, documentID,
 				"Work source locale changed since the room was loaded; reload before saving",
 			)
 		}
@@ -102,23 +89,7 @@ func workSourceRoomFence(locale string, base contentblock.DomainFence) contentbl
 	}
 }
 
-func loadOptionalWorkLocaleMetadataRow(ctx context.Context, tx *gorm.DB, workID, locale string, forUpdate bool) (workLocaleMetadataRow, bool, error) {
-	query := tx.WithContext(ctx).Table("work_translation").Select("locale", "title", "summary", "updated_at").
-		Where("entity_id = ?::uuid AND locale = ?", workID, locale)
-	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
-	}
-	var row workLocaleMetadataRow
-	if err := query.Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return workLocaleMetadataRow{}, false, nil
-		}
-		return workLocaleMetadataRow{}, false, err
-	}
-	return row, true, nil
-}
-
-func deriveWorkTargetRevision(documentRevision string, metadata workLocaleMetadataRow) (string, error) {
+func deriveWorkTargetRevision(documentRevision string, metadata LocaleMetadata) (string, error) {
 	updatedAt := metadata.UpdatedAt
 	revision, err := translation.DeriveTargetRevision(translation.TargetRevisionFacts{
 		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &updatedAt,
@@ -144,34 +115,34 @@ func validateWorkSourceStorage(
 	return nil
 }
 
-func loadWorkTargetLocaleState(ctx context.Context, tx *gorm.DB, store *contentblock.Store, workID string, documentID uuid.UUID, locale string, forUpdate bool) (workTargetLocaleState, error) {
+func loadWorkTargetLocaleState(ctx context.Context, store Store, workID string, documentID uuid.UUID, locale string, forUpdate bool) (workTargetLocaleState, error) {
 	locale, err := normalizeWorkDocumentLocale(locale)
 	if err != nil {
 		return workTargetLocaleState{}, err
 	}
-	lock := clause.LockingStrengthShare
+	lock := ShareLock
 	if forUpdate {
-		lock = clause.LockingStrengthUpdate
+		lock = UpdateLock
 	}
-	_, lockedDocumentID, err := loadWorkAIDocumentRoot(ctx, tx, workID, lock)
+	_, lockedDocumentID, err := loadWorkAIDocumentRoot(ctx, store, workID, lock)
 	if err != nil {
 		return workTargetLocaleState{}, err
 	}
 	if lockedDocumentID != documentID {
 		return workTargetLocaleState{}, domainerr.Precondition("Work content document changed; reload before saving")
 	}
-	domain, err := loadWorkContentDomainContext(ctx, tx, workID)
+	domain, err := loadWorkContentDomainContext(ctx, store, workID)
 	if err != nil {
 		return workTargetLocaleState{}, err
 	}
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, domain.SourceLocale)
 	if err != nil {
 		return workTargetLocaleState{}, normalizeWorkContentBlockError(err)
 	}
 	if snapshot.SourceLocale != domain.SourceLocale || snapshot.Document.Profile != workContentDocumentProfile {
 		return workTargetLocaleState{}, domainerr.Precondition("Work content document source or profile is inconsistent")
 	}
-	sourceMetadata, sourceExists, err := loadOptionalWorkLocaleMetadataRow(ctx, tx, workID, domain.SourceLocale, forUpdate)
+	sourceMetadata, sourceExists, err := store.LocaleMetadata(ctx, workID, domain.SourceLocale, forUpdate)
 	if err != nil {
 		return workTargetLocaleState{}, err
 	}
@@ -183,7 +154,7 @@ func loadWorkTargetLocaleState(ctx context.Context, tx *gorm.DB, store *contentb
 		state.TargetMetadata = &sourceMetadata
 		return state, nil
 	}
-	target, exists, err := loadOptionalWorkLocaleMetadataRow(ctx, tx, workID, locale, forUpdate)
+	target, exists, err := store.LocaleMetadata(ctx, workID, locale, forUpdate)
 	if err != nil {
 		return workTargetLocaleState{}, err
 	}
@@ -211,21 +182,20 @@ type workTargetLocaleMutationInput struct {
 	Patch                  workTargetMetadataPatch
 	Policy                 targetlocale.Policy
 	Now                    time.Time
-	Fence                  contentblock.DomainFence
+	Fence                  ContentFence
 }
 
 func applyWorkTargetLocaleMutation(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	input workTargetLocaleMutationInput,
 ) (contentblock.Result, *string, error) {
 	workID, documentID, locale, patch := input.WorkID, input.DocumentID, input.Locale, input.Patch
-	domain, err := input.Fence(ctx, tx, documentID)
+	domain, err := input.Fence(ctx, store, documentID)
 	if err != nil {
 		return contentblock.Result{}, nil, err
 	}
-	state, err := loadWorkTargetLocaleState(ctx, tx, store, workID, documentID, locale, true)
+	state, err := loadWorkTargetLocaleState(ctx, store, workID, documentID, locale, true)
 	if err != nil {
 		return contentblock.Result{}, nil, err
 	}
@@ -256,15 +226,12 @@ func applyWorkTargetLocaleMutation(
 	write := &workTargetMetadataWrite{
 		workID: workID, locale: locale, state: state, patch: patch, seedSource: input.Policy.SeedSource, now: now,
 	}
-	result, err := store.ApplyTargetLocaleBatchWithMetadata(
-		ctx, tx, batch, locale, contentblock.LockedFence(workEntityName, documentID, domain), write.apply,
-	)
+	result, err := store.ApplyTargetLocaleContentBatch(ctx, batch, locale, lockedContentFence(documentID, domain), write.apply)
 	if err != nil {
 		return contentblock.Result{}, nil, normalizeWorkContentBlockError(err)
 	}
 	if result.Changed {
-		if err := tx.WithContext(ctx).Table("work").Where("id = ?::uuid", workID).
-			UpdateColumn("updated_at", now).Error; err != nil {
+		if err := store.StampWork(ctx, workID, now); err != nil {
 			return contentblock.Result{}, nil, err
 		}
 	}
@@ -287,25 +254,24 @@ type workTargetMetadataWrite struct {
 	patch      workTargetMetadataPatch
 	seedSource bool
 	now        time.Time
-	final      workLocaleMetadataRow
+	final      LocaleMetadata
 }
 
-func (w *workTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
+func (w *workTargetMetadataWrite) apply(ctx context.Context, store Store, contentChanged bool) (contentblock.MetadataEffect, error) {
 	switch {
 	case w.patch.DeleteLocale:
-		deleted := tx.WithContext(ctx).Exec("DELETE FROM work_translation WHERE entity_id = ?::uuid AND locale = ?", w.workID, w.locale)
-		if deleted.Error != nil {
-			return contentblock.MetadataEffect{}, deleted.Error
-		}
-		if deleted.RowsAffected != 1 {
-			return contentblock.MetadataEffect{}, errors.New("Work target locale disappeared while deleting")
+		if err := store.DeleteTargetLocale(ctx, w.workID, w.locale); err != nil {
+			if errors.Is(err, ErrRowChanged) {
+				return contentblock.MetadataEffect{}, errors.New("Work target locale disappeared while deleting")
+			}
+			return contentblock.MetadataEffect{}, err
 		}
 	case w.state.TargetMetadata == nil:
-		if err := w.create(ctx, tx); err != nil {
+		if err := w.create(ctx, store); err != nil {
 			return contentblock.MetadataEffect{}, err
 		}
 	default:
-		changed, err := w.update(ctx, tx, contentChanged)
+		changed, err := w.update(ctx, store, contentChanged)
 		if err != nil || !changed {
 			return contentblock.MetadataEffect{}, err
 		}
@@ -313,7 +279,7 @@ func (w *workTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, conten
 	return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{w.locale}}, nil
 }
 
-func (w *workTargetMetadataWrite) create(ctx context.Context, tx *gorm.DB) error {
+func (w *workTargetMetadataWrite) create(ctx context.Context, store Store) error {
 	title, summary := w.patch.Title, w.patch.Summary
 	if w.seedSource {
 		title = cloneOptionalString(w.state.SourceMetadata.Title)
@@ -325,41 +291,37 @@ func (w *workTargetMetadataWrite) create(ctx context.Context, tx *gorm.DB) error
 			summary = cloneOptionalString(w.patch.Summary)
 		}
 	}
-	created := tx.WithContext(ctx).Exec(
-		"INSERT INTO work_translation (entity_id, locale, title, summary, created_at, updated_at) VALUES (?::uuid, ?, ?, ?, ?, ?)",
-		w.workID, w.locale, title, summary, w.now, w.now,
-	)
-	if created.Error != nil {
-		return created.Error
+	created := LocaleMetadata{Locale: w.locale, Title: cloneOptionalString(title), Summary: cloneOptionalString(summary), UpdatedAt: w.now}
+	if err := store.InsertTargetLocale(ctx, w.workID, created); err != nil {
+		if errors.Is(err, ErrRowChanged) {
+			return errors.New("Work target locale could not be created")
+		}
+		return err
 	}
-	if created.RowsAffected != 1 {
-		return errors.New("Work target locale could not be created")
-	}
-	w.final = workLocaleMetadataRow{Locale: w.locale, Title: cloneOptionalString(title), Summary: cloneOptionalString(summary), UpdatedAt: w.now}
+	w.final = created
 	return nil
 }
 
-func (w *workTargetMetadataWrite) update(ctx context.Context, tx *gorm.DB, contentChanged bool) (bool, error) {
+func (w *workTargetMetadataWrite) update(ctx context.Context, store Store, contentChanged bool) (bool, error) {
 	w.final = *w.state.TargetMetadata
-	updates := map[string]any{}
+	change := LocaleTextChange{}
 	metadataChanged := false
 	if w.patch.UpdateTitle && !nullableStringEqual(w.final.Title, w.patch.Title) {
-		w.final.Title, updates["title"], metadataChanged = cloneOptionalString(w.patch.Title), w.patch.Title, true
+		w.final.Title, change.SetTitle, change.Title, metadataChanged = cloneOptionalString(w.patch.Title), true, w.patch.Title, true
 	}
 	if w.patch.UpdateSummary && !nullableStringEqual(w.final.Summary, w.patch.Summary) {
-		w.final.Summary, updates["summary"], metadataChanged = cloneOptionalString(w.patch.Summary), w.patch.Summary, true
+		w.final.Summary, change.SetSummary, change.Summary, metadataChanged = cloneOptionalString(w.patch.Summary), true, w.patch.Summary, true
 	}
 	if !contentChanged && !metadataChanged {
 		return false, nil
 	}
 	w.final.UpdatedAt = translation.NextTargetUpdatedAt(w.now, w.final.UpdatedAt)
-	updates["updated_at"] = w.final.UpdatedAt
-	updated := tx.WithContext(ctx).Table("work_translation").Where("entity_id = ?::uuid AND locale = ?", w.workID, w.locale).Updates(updates)
-	if updated.Error != nil {
-		return false, updated.Error
-	}
-	if updated.RowsAffected != 1 {
-		return false, errors.New("Work target locale disappeared while saving")
+	change.UpdatedAt = w.final.UpdatedAt
+	if err := store.UpdateTargetLocale(ctx, w.workID, w.locale, change); err != nil {
+		if errors.Is(err, ErrRowChanged) {
+			return false, errors.New("Work target locale disappeared while saving")
+		}
+		return false, err
 	}
 	return true, nil
 }

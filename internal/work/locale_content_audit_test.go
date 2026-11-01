@@ -28,7 +28,7 @@ func TestWorkLocaleContentAuditAttributesSourceAndTargetToOriginMember(t *testin
 	capture := &workLocaleContentAuditCapture{}
 	for _, locale := range []string{"en", "ko"} {
 		require.NoError(t, appendWorkTranslationAudit(
-			t.Context(), nil, capture, memberID, "work-1", locale,
+			t.Context(), capture, memberID, "work-1", locale,
 			sharedtelemetry.AuditItemOperationUpdated,
 		))
 	}

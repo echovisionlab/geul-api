@@ -1,14 +1,59 @@
-package work
+package workpostgres
 
 import (
+	"context"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/work"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/lib/pq"
 )
+
+func (s *store) PublishContentUpdate(ctx context.Context, update work.ContentUpdate) error {
+	if update.Kind == work.InteractiveUpdate {
+		change := update.Interactive
+		return contentsignal.PublishInteractive(ctx, s.tx, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
+			update.WorkID, change.Locale, change.DocumentRevision, change.TargetRevision,
+			change.Changed, change.LocaleDeleted, change.ContributorID)
+	}
+	return contentsignal.PublishInTransaction(ctx, s.tx, s.ports.Signals, contentUpdatedEvent(update))
+}
+
+// contentUpdatedEvent renders a Work's content.updated signal; nil when the
+// update describes no observable change.
+func contentUpdatedEvent(update work.ContentUpdate) *managev1.ContentUpdatedEvent {
+	switch update.Kind {
+	case work.SettingsUpdate:
+		return buildManageWorkContentUpdatedEvent(update.WorkID, update.Fields)
+	case work.StateUpdate:
+		return buildManageStateTransitionContentUpdatedEvent(update.WorkID, update.Fields)
+	case work.MediaUpdate:
+		return buildManageMediaMutationContentUpdatedEvent(managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK, update.WorkID, "media.featured_image")
+	case work.LocaleUpdate:
+		change := update.Locale
+		return buildWorkLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID: update.WorkID, Fields: change.Fields, DocumentRevision: change.DocumentRevision,
+			Contributors: change.Contributors, Source: updateSource(change.Source), Locale: change.Locale,
+			TargetRevision: change.TargetRevision, DocumentStateChanged: change.DocumentStateChanged,
+		})
+	default:
+		return nil
+	}
+}
+
+func updateSource(source work.UpdateSource) managev1.ContentUpdateSource {
+	switch source {
+	case work.SourceManage:
+		return managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE
+	case work.SourceCollaboration:
+		return managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB
+	default:
+		return managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_UNSPECIFIED
+	}
+}
 
 type contentUpdatedFieldSpec struct {
 	path string
@@ -29,44 +74,10 @@ var workContentUpdatedFieldSpecs = map[string]contentUpdatedFieldSpec{
 	"slug":       {path: "settings.slug", kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION},
 }
 
-func buildManageWorkContentUpdatedEvent(request UpdateWorkCommand) *managev1.ContentUpdatedEvent {
-	fields := make([]string, 0, 11)
-	if request.Slug != nil {
-		fields = append(fields, "slug")
-	}
-	if request.Type != nil {
-		fields = append(fields, "type")
-	}
-	if request.Metadata != nil {
-		fields = append(fields, "metadata")
-	}
-	if request.Featured != nil {
-		fields = append(fields, "featured")
-	}
-	if request.Clients != nil {
-		fields = append(fields, "clients")
-	}
-	if request.Year != nil {
-		fields = append(fields, "year")
-	}
-	if request.Month != nil {
-		fields = append(fields, "month")
-	}
-	if request.MapPlaceID != nil {
-		fields = append(fields, "mapPlaceId")
-	}
-	if request.UntilYear != nil {
-		fields = append(fields, "untilYear")
-	}
-	if request.UntilMonth != nil {
-		fields = append(fields, "untilMonth")
-	}
-	if request.IsPresent != nil {
-		fields = append(fields, "isPresent")
-	}
+func buildManageWorkContentUpdatedEvent(workID string, fields []string) *managev1.ContentUpdatedEvent {
 	return buildContentUpdatedEvent(
 		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
-		request.ID,
+		workID,
 		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
 		buildContentUpdatedFields(fields, workContentUpdatedFieldSpecs),
 		false, "", nil,

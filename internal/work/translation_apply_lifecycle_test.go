@@ -3,68 +3,41 @@ package work
 import (
 	"testing"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-
 	"connectrpc.com/connect"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
+
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 )
 
 func TestWorkTranslationApplyFenceAllowsNonDeletedLifecycleStates(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE work (
-			id TEXT PRIMARY KEY,
-			status TEXT NOT NULL,
-			content_document_id TEXT,
-			source_locale TEXT NOT NULL
-		)
-	`).Error)
-
-	for _, status := range []string{
-		managev1.WorkStatus_WORK_STATUS_DRAFT.String(),
-		managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(),
-	} {
-		t.Run(status, func(t *testing.T) {
+	for _, status := range []Status{StatusDraft, StatusArchived} {
+		t.Run(string(status), func(t *testing.T) {
 			workID := uuid.NewString()
 			documentID := uuid.New()
-			require.NoError(t, db.Exec(
-				`INSERT INTO work (id, status, content_document_id, source_locale) VALUES (?, ?, ?, ?)`,
-				workID, status, documentID.String(), "en",
-			).Error)
+			store := stubStore{
+				lockDocumentRoot: func(id uuid.UUID) (Root, error) {
+					require.Equal(t, documentID, id)
+					return Root{ID: workID, Status: status}, nil
+				},
+				sourceLocale: func(string) (string, error) { return "en", nil },
+			}
 
-			fence := workSystemTranslationDocumentFence(workID)
-			domain, err := fence(t.Context(), db, documentID)
+			domain, err := workSystemTranslationDocumentFence(workID)(t.Context(), store, documentID)
 			require.NoError(t, err)
 			require.Equal(t, "en", domain.SourceLocale)
 		})
 	}
 }
 
-func TestWorkTranslationApplyFenceRejectsDeletedRoot(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE work (
-			id TEXT PRIMARY KEY,
-			status TEXT NOT NULL,
-			content_document_id TEXT,
-			source_locale TEXT NOT NULL
-		)
-	`).Error)
-
+func TestWorkTranslationApplyFenceRejectsDeletedOrMovedRoot(t *testing.T) {
 	workID := uuid.NewString()
-	documentID := uuid.New()
-	require.NoError(t, db.Exec(
-		`INSERT INTO work (id, status, content_document_id, source_locale) VALUES (?, ?, ?, ?)`,
-		workID, managev1.WorkStatus_WORK_STATUS_DRAFT.String(), documentID.String(), "en",
-	).Error)
-	require.NoError(t, db.Exec(`DELETE FROM work WHERE id = ?`, workID).Error)
+	store := stubStore{lockDocumentRoot: func(uuid.UUID) (Root, error) { return Root{}, ErrWorkNotFound }}
 
-	_, err = workSystemTranslationDocumentFence(workID)(t.Context(), db, documentID)
+	_, err := workSystemTranslationDocumentFence(workID)(t.Context(), store, uuid.New())
 	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
+
+	store.lockDocumentRoot = func(uuid.UUID) (Root, error) { return Root{ID: uuid.NewString()}, nil }
+	_, err = workSystemTranslationDocumentFence(workID)(t.Context(), store, uuid.New())
+	require.ErrorContains(t, err, "changed during translation apply")
 }

@@ -36,6 +36,7 @@ import (
 	sitemappublic "github.com/echovisionlab/geul-api/internal/sitemap/public"
 	publicsitesettings "github.com/echovisionlab/geul-api/internal/sitesettings/public"
 	workpublic "github.com/echovisionlab/geul-api/internal/work/public"
+	workpublicpostgres "github.com/echovisionlab/geul-api/internal/work/public/postgres"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
 
@@ -113,10 +114,15 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicPostPath, publicPostHandler)
 	slog.Info("Registered public service", "path", publicPostPath)
 
+	publicWorkUnits, err := workpublicpostgres.NewUnits(db, workpublicpostgres.Ports{
+		ContentBlocks: contentBlockStore, MapPlaces: referencecatalogadapter.PublicMapPlaces{}, Assets: workRuntime,
+	})
+	if err != nil {
+		return fmt.Errorf("initialize public Work store: %w", err)
+	}
 	publicWorkService, err := workpublic.NewService(workpublic.Deps{
-		DB: db, SpiceDB: spicedbClient, BlockMedia: publicFileService, Assets: workRuntime,
-		Members:   workadapter.NewMemberSummaries(db, cfg.CDNURL),
-		MapPlaces: referencecatalogadapter.PublicMapPlaces{}, ContentBlocks: contentBlockStore,
+		Units: publicWorkUnits, SpiceDB: spicedbClient, BlockMedia: publicFileService, Assets: workRuntime,
+		Members: workadapter.NewMemberSummaries(db, cfg.CDNURL),
 	})
 	if err != nil {
 		return fmt.Errorf("initialize public Work service: %w", err)

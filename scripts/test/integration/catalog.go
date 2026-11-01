@@ -126,8 +126,6 @@ var integrationCatalog = []integrationBand{
 			"./internal/sitesettings/integration",
 			"./internal/sitesettings/public/integration",
 			"./internal/translation/application",
-			"./internal/work/integration",
-			"./internal/work/public/integration",
 			"./internal/worker",
 		},
 	},
