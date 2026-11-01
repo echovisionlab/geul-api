@@ -115,12 +115,19 @@ type Checkpoint struct {
 func (s *Service) LoadPostBlockDocument(ctx context.Context, query LoadPostBlockDocumentQuery) (_ RoomDocument, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("post_id", query.PostID))
 
+	// The content document is resolved on its own before the room's
+	// snapshot opens, so a load holds one connection at a time.
+	if _, err := validatePostAIDocumentIdentity(query.PostID, query.Locale); err != nil {
+		return RoomDocument{}, err
+	}
+	documentID, err := s.contentDocumentID(ctx, query.PostID)
+	if err != nil {
+		return RoomDocument{}, err
+	}
 	var room RoomDocument
-	err := s.units.ReadLocked(ctx, func(store Store) error {
+	err = s.units.ReadLocked(ctx, func(store Store) error {
 		var err error
-		room, err = s.loadPostBlockDocument(ctx, func(postID string) (uuid.UUID, error) {
-			return readStore(ctx, s, func(lookup Store) (uuid.UUID, error) { return loadPostContentDocumentID(ctx, lookup, postID) })
-		}, store, query)
+		room, err = s.loadPostBlockDocument(ctx, func(string) (uuid.UUID, error) { return documentID, nil }, store, query)
 		return err
 	})
 	return room, err
