@@ -33,7 +33,7 @@ func (s *Service) GetFile(ctx context.Context, query GetFileQuery) (*managev1.Ge
 	if row.ID == "" {
 		return nil, domainerr.ResourceNotFound("file", *fileID)
 	}
-	members := map[string]*commonv1.MemberSummary{}
+	members := map[string]MemberSummary{}
 	if row.MemberID != nil {
 		memberSummaries := s.memberSummaries
 		members, err = memberSummaries.Load(ctx, []string{*row.MemberID})

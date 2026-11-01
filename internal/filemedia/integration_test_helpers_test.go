@@ -10,7 +10,7 @@ import (
 	"os"
 	"testing"
 
-	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediamembers"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -23,7 +23,6 @@ import (
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -103,20 +102,8 @@ func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient {
 	return testutil.SetupOryStack(t).SpiceDBClient
 }
 
-type integrationMemberSummaries struct {
-	db        *gorm.DB
-	cdnDomain string
-}
-
 func newIntegrationMemberSummaries(db *gorm.DB, cdnDomain string) MemberSummaries {
-	return &integrationMemberSummaries{db: db, cdnDomain: cdnDomain}
-}
-
-func (s *integrationMemberSummaries) Load(
-	ctx context.Context,
-	memberIDs []string,
-) (map[string]*commonv1.MemberSummary, error) {
-	return memberpostgres.LoadSummaries(ctx, s.db, s.cdnDomain, memberIDs)
+	return filemediamembers.NewMemberSummaries(db, cdnDomain)
 }
 
 func releaseAuditContext(t *testing.T, identityID, memberID string) context.Context {

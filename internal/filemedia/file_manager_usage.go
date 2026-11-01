@@ -16,7 +16,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -57,7 +56,7 @@ func (s *Service) loadVisibleFileUsageCounts(ctx context.Context, fileIDs []stri
 
 func (s *Service) fileManagerFileFromCatalogRow(
 	row fileManagerCatalogRow,
-	members map[string]*commonv1.MemberSummary,
+	members map[string]MemberSummary,
 	usageCount int32,
 ) (*managev1.FileManagerFile, error) {
 	if row.Extension == nil || row.MimeType == nil || row.FileSize == nil {
@@ -75,7 +74,7 @@ func (s *Service) fileManagerFileFromCatalogRow(
 		Delivery: deliveryResponse.Delivery, UsageCount: usageCount,
 	}
 	if row.MemberID != nil {
-		file.UploadedByMember = members[*row.MemberID]
+		file.UploadedByMember = memberSummaryProto(members, *row.MemberID)
 	}
 	return file, nil
 }

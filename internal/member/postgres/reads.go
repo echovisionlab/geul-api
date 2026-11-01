@@ -13,11 +13,16 @@ import (
 
 const memberEmailRetentionCleanupBatchSize = 500
 
+// ReadSummaries returns plain Member references without opening a transaction.
+func ReadSummaries(ctx context.Context, db *gorm.DB, cdnDomain string, memberIDs []string) (map[string]member.Summary, error) {
+	return member.LoadSummaries(ctx, store{tx: db, ports: Ports{CDNDomain: cdnDomain}}, memberIDs)
+}
+
 // LoadSummaries reads the summary of each Member in memberIDs that exists,
 // for the Member references other domains show. Its reads run on db
 // directly, as their callers' own reads do.
 func LoadSummaries(ctx context.Context, db *gorm.DB, cdnDomain string, memberIDs []string) (map[string]*commonv1.MemberSummary, error) {
-	summaries, err := member.LoadSummaries(ctx, store{tx: db, ports: Ports{CDNDomain: cdnDomain}}, memberIDs)
+	summaries, err := ReadSummaries(ctx, db, cdnDomain, memberIDs)
 	if err != nil {
 		return nil, err
 	}

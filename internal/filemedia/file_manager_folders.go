@@ -233,7 +233,7 @@ func (s *Service) fileFolderProto(ctx context.Context, folder FileFolder) (*mana
 		if err != nil {
 			return nil, err
 		}
-		result.CreatedByMember = members[*folder.CreatedByMemberID]
+		result.CreatedByMember = memberSummaryProto(members, *folder.CreatedByMemberID)
 	}
 	return result, nil
 }
