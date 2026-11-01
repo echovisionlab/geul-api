@@ -71,6 +71,7 @@ func auditedUserContext(ctx context.Context, user *auth.UserInfo) context.Contex
 
 func withTestStorage(service *Service) *Service {
 	if service.db != nil {
+		service.ingestLocks = filemediapostgres.NewIngestLocks(service.db, testFilePorts(service))
 		service.faviconCommits = filemediapostgres.NewFaviconCommits(service.db, filemediapostgres.Ports{})
 		service.units = mutation.Postgres(service.db, func(tx *gorm.DB) Store {
 			return testFileStore(service, tx)
@@ -80,7 +81,11 @@ func withTestStorage(service *Service) *Service {
 }
 
 func testFileStore(s *Service, tx *gorm.DB) Store {
-	return filemediapostgres.NewStore(tx, filemediapostgres.Ports{MeshJobs: filemediaqueue.Mesh(s.publisher, s.asyncPublisher), IngestTranscodes: filemediaqueue.Transcodes(s.publisher, s.asyncPublisher), UploadTracks: s.trackAttachment, DeletionQueue: filemediaqueue.Async(s.asyncPublisher), PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: s.postAccess, Pages: s.pagePolicyAccess, Works: s.workPolicyAccess, Events: s.programEventAttachment, Releases: s.releasePolicyAccess, SpiceDB: s.spiceDB}), PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(s.asyncPublisher)})
+	return filemediapostgres.NewStore(tx, testFilePorts(s))
+}
+
+func testFilePorts(s *Service) filemediapostgres.Ports {
+	return filemediapostgres.Ports{UploadWorks: filemediapolicy.WorkExistence{}, MeshJobs: filemediaqueue.Mesh(s.publisher, s.asyncPublisher), IngestTranscodes: filemediaqueue.Transcodes(s.publisher, s.asyncPublisher), UploadTracks: s.trackAttachment, DeletionQueue: filemediaqueue.Async(s.asyncPublisher), PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: s.postAccess, Pages: s.pagePolicyAccess, Works: s.workPolicyAccess, Events: s.programEventAttachment, Releases: s.releasePolicyAccess, SpiceDB: s.spiceDB}), PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(s.asyncPublisher)}
 }
 
 func freshFileIngestAuthorityForTest(ctx context.Context, tx *gorm.DB, service *Service, upload managev1.UploadType, entity managev1.TranscodeEntityType, id string) error {

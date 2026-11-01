@@ -10,7 +10,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
@@ -104,14 +103,14 @@ func (s *Service) reconcileWritableMultipartResumeParts(
 ) (multipartResumeReconciliation, error) {
 	result := multipartResumeReconciliation{session: session}
 	var parts []model.UploadPart
-	err := withMultipartCompletionAdvisoryLock(
-		ctx,
-		s.db,
+	err := s.ingestLocks.Multipart(ctx,
 		session.UploadID,
 		session.FileID,
-		func(connection *gorm.DB) error {
-			lockedService := *s
-			lockedService.db = connection
+		func(scope domain.IngestSession) error {
+			lockedService, err := s.ingestService(scope)
+			if err != nil {
+				return err
+			}
 			current, cachedParts, err := lockedService.loadMultipartResumeSessionState(ctx, session)
 			if err != nil {
 				return fmt.Errorf("recheck multipart resume session: %w", err)

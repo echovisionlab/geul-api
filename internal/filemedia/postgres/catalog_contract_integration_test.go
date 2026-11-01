@@ -117,7 +117,7 @@ func TestPostgresCatalogStoreContractIntegration(t *testing.T) {
 				expires = *m.ExpiresAt
 			}
 			return filemediatest.MeshRecord{Status: m.Status, CancelledAt: m.CancelledAt, ExpiresAt: expires, UpdatedAt: updated}, true
-		}, Harness: mutationtest.PostgresHarness(db, filemediapostgres.NewUnits(db, filemediapostgres.Ports{MeshJobs: meshContractOutputs{}, IngestTranscodes: deletionContractOutputs{}, DeletionQueue: deletionContractOutputs{}, PolicyAudiences: filemediapolicy.Audiences{}})), SeedAsset: func(t *testing.T, a mediaasset.Asset) {
+		}, Harness: mutationtest.PostgresHarness(db, filemediapostgres.NewUnits(db, filemediapostgres.Ports{UploadWorks: filemediapolicy.WorkExistence{}, MeshJobs: meshContractOutputs{}, IngestTranscodes: deletionContractOutputs{}, DeletionQueue: deletionContractOutputs{}, PolicyAudiences: filemediapolicy.Audiences{}})), SeedAsset: func(t *testing.T, a mediaasset.Asset) {
 			r := mediaassetpostgres.AssetRow(a)
 			require.NoError(t, db.Create(&r).Error)
 		}, SeedGeneration: func(t *testing.T, g mediaasset.Generation) {

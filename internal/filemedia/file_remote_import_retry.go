@@ -3,27 +3,20 @@ package filemedia
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/postgreslock"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 var remoteImportFileNamespace = uuid.MustParse("1b9e8e7d-3051-52c6-a782-3cb87f5b82cc")
-
-const maxConcurrentRemoteImportAdvisoryLocks = 2
-
-var remoteImportAdvisoryLockSlots = make(chan struct{}, maxConcurrentRemoteImportAdvisoryLocks)
 
 type remoteImportOperationIdentity struct {
 	fileID    string
@@ -91,27 +84,6 @@ func stringValueOrEmpty(value *string) string {
 		return ""
 	}
 	return *value
-}
-
-func remoteImportAdvisoryLockKey(fileID string) int64 {
-	digest := sha256.Sum256([]byte(strings.TrimSpace(fileID)))
-	return int64(binary.BigEndian.Uint64(digest[:8]))
-}
-
-func withRemoteImportAdvisoryLock(
-	ctx context.Context,
-	db *gorm.DB,
-	fileID string,
-	operation func(*gorm.DB) error,
-) error {
-	return postgreslock.WithBoundedAdvisoryLock(
-		ctx,
-		db,
-		remoteImportAdvisoryLockKey(fileID),
-		remoteImportAdvisoryLockSlots,
-		"remote import",
-		operation,
-	)
 }
 
 func (s *Service) restoreCompletedRemoteImport(

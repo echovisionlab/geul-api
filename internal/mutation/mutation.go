@@ -95,6 +95,12 @@ func NewStoreRunner[S any](units UnitOfWork[S], spiceDB Authorizer, fence identi
 	return &StoreRunner[S]{units: units, authority: authority{checker: spiceDB, fence: fence}, audit: audit}, nil
 }
 
+// WithUnits returns a runner on another unit of work with the same authority,
+// identity fence and audit appender. The original runner remains unchanged.
+func (r *StoreRunner[S]) WithUnits(units UnitOfWork[S]) (*StoreRunner[S], error) {
+	return NewStoreRunner(units, r.authority.checker, r.authority.fence, r.audit)
+}
+
 // StoreSpec describes one mutation of a domain whose steps work on the store
 // S its unit of work binds to the transaction. Access, Change and Audit are
 // required.

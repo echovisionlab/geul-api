@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,7 @@ func uploadSourceTestService(t *testing.T, handler http.Handler, maxSize int64) 
 	t.Cleanup(upstream.Close)
 	access := &recordingPostAccess{}
 	service := &Service{
-		postAccess: access,
+		units: mutationtest.New[Store](&sourcePreflightStore{access: access}),
 		uploadConfigs: map[managev1.UploadType]*model.UploadConfig{
 			managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE: {PermittedMimeTypes: []string{"image/png"}, MaxSize: maxSize},
 		},
@@ -38,8 +39,7 @@ func uploadSourceTestService(t *testing.T, handler http.Handler, maxSize int64) 
 			return new(net.Dialer).DialContext(ctx, network, upstream.Listener.Addr().String())
 		},
 	}
-	// db, S3, processing, and async dependencies remain nil: a successful relay
-	// must never access those persistence or lifecycle dependencies.
+	// A source relay only needs owner authorization; it does not persist an upload.
 	return service, access
 }
 
@@ -99,7 +99,7 @@ func TestUploadSourceOriginalBytesAndMetadata(t *testing.T) {
 				require.Equal(t, strconv.Itoa(len(original)), rec.Header().Get("Content-Length"))
 				require.Equal(t, strconv.Itoa(len(original)), rec.Header().Get("X-Upload-Source-Size"))
 			}
-			require.Equal(t, 1, access.requireEditCount)
+			require.Equal(t, 1, access.requireLockedEditCount)
 		})
 	}
 }
@@ -314,4 +314,17 @@ func TestUploadSourcePublicRedirectPreservesDownload(t *testing.T) {
 	service.HandleUploadSource(rec, uploadSourceTestRequest(t))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, original, rec.Body.Bytes())
+}
+
+type sourcePreflightStore struct {
+	Store
+	access *recordingPostAccess
+}
+
+func (s *sourcePreflightStore) Savepoint() func() { return func() {} }
+func (s *sourcePreflightStore) RequirePolicyOwner(ctx context.Context, kind, id string, edit bool) error {
+	if kind != "post" || !edit {
+		panic("unexpected source owner permission")
+	}
+	return s.access.RequireLockedEdit(ctx, nil, id)
 }

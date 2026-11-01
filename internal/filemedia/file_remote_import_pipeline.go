@@ -14,11 +14,10 @@ import (
 	"net/url"
 	"strings"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -148,9 +147,11 @@ func (s *Service) importRemoteFileWithLock(ctx context.Context, request prepared
 	nextOpts.operationIdentity = &request.identity
 	nextOpts.operationLockHeld = true
 	var result *remoteFileImportResult
-	err := withRemoteImportAdvisoryLock(ctx, s.db, request.identity.fileID, func(connection *gorm.DB) error {
-		lockedService := *s
-		lockedService.db = connection
+	err := s.ingestLocks.RemoteImport(ctx, request.identity.fileID, func(session domain.IngestSession) error {
+		lockedService, err := s.ingestService(session)
+		if err != nil {
+			return err
+		}
 		var operationErr error
 		result, operationErr = lockedService.importRemoteFile(ctx, nextOpts)
 		return operationErr

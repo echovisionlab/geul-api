@@ -571,12 +571,10 @@ func (s *Service) checkEntityPermission(ctx context.Context, uploadType managev1
 		}
 	}
 	if target.resourceType == "post" {
-		access := s.postAccess
-		return access.RequireEdit(ctx, entityID)
+		return s.requireOwnerPreflight(ctx, "post", entityID, true)
 	}
 	if target.resourceType == "program_event" {
-		access := s.programEventAttachment
-		return access.RequireEdit(ctx, s.spiceDB, entityID)
+		return s.requireOwnerPreflight(ctx, "program_event", entityID, true)
 	}
 	if handled, err := s.checkUploadResourceAuthority(ctx, target, entityID, user); handled {
 		return err

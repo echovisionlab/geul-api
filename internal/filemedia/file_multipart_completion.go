@@ -11,7 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -21,7 +20,6 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/postgreslock"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -39,36 +37,6 @@ type multipartCompletion struct {
 	promotedAsset   *commonv1.AssetRef
 	delivery        *commonv1.MediaDelivery
 	progressEmitter *fileIngestEventEmitter
-}
-
-const maxConcurrentMultipartCompletionAdvisoryLocks = 2
-
-var multipartCompletionAdvisoryLockSlots = make(
-	chan struct{},
-	maxConcurrentMultipartCompletionAdvisoryLocks,
-)
-
-func multipartCompletionAdvisoryLockKey(uploadID, fileID string) int64 {
-	return remoteImportAdvisoryLockKey(
-		"multipart-completion:" + strings.TrimSpace(uploadID) + "\x00" + strings.TrimSpace(fileID),
-	)
-}
-
-func withMultipartCompletionAdvisoryLock(
-	ctx context.Context,
-	db *gorm.DB,
-	uploadID string,
-	fileID string,
-	operation func(*gorm.DB) error,
-) error {
-	return postgreslock.WithBoundedAdvisoryLock(
-		ctx,
-		db,
-		multipartCompletionAdvisoryLockKey(uploadID, fileID),
-		multipartCompletionAdvisoryLockSlots,
-		"multipart completion",
-		operation,
-	)
 }
 
 func (completion *multipartCompletion) publishFailure(err error) error {
@@ -98,14 +66,14 @@ func (s *Service) CompleteMultipartUpload(
 	command CompleteMultipartUploadCommand,
 ) (*managev1.CompleteMultipartUploadResponse, error) {
 	var response *managev1.CompleteMultipartUploadResponse
-	err := withMultipartCompletionAdvisoryLock(
-		ctx,
-		s.db,
+	err := s.ingestLocks.Multipart(ctx,
 		command.UploadID,
 		command.FileID,
-		func(connection *gorm.DB) error {
-			lockedService := *s
-			lockedService.db = connection
+		func(session domain.IngestSession) error {
+			lockedService, err := s.ingestService(session)
+			if err != nil {
+				return err
+			}
 			completion, found, err := lockedService.loadAuthorizedMultipartCompletion(ctx, command)
 			if err != nil {
 				return err

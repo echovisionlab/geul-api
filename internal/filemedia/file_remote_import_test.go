@@ -20,9 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/postgreslock"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 type remoteImportTestResolver struct {
@@ -237,29 +235,6 @@ func TestResolveRemoteImportOperationIdentityIsDeterministicForIndependentFile(t
 	}
 	if changedCorrelation.fileID == first.fileID {
 		t.Fatal("different durable correlation reused deterministic file ID")
-	}
-}
-
-func TestWithRemoteImportAdvisoryLockNoOpsForTestDialect(t *testing.T) {
-	t.Parallel()
-
-	db, err := gorm.Open(sqlite.Open("file:remote-import-lock-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	called := false
-	err = withRemoteImportAdvisoryLock(context.Background(), db, uuid.NewString(), func(locked *gorm.DB) error {
-		called = true
-		if locked == nil {
-			t.Fatal("test dialect lock callback received nil database")
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !called {
-		t.Fatal("test dialect lock callback was not called")
 	}
 }
 
