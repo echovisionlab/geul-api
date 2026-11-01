@@ -16,14 +16,16 @@ import (
 	aipostgres "github.com/echovisionlab/geul-api/internal/ai/postgres"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
 func openStore(t *testing.T) (*gorm.DB, *mq.Publisher) {
 	t.Helper()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	publisher, err := mq.NewPublisher(sqlDB)
@@ -40,7 +42,7 @@ func TestPostgresStoreKeepsTheMetadataAIStoreContractIntegration(t *testing.T) {
 		return aitest.Harness{
 			Harness: mutationtest.PostgresHarness(db, units),
 			SeedMember: func(t *testing.T) string {
-				return testutil.SeedPostIntegrationIdentity(t, db, uuid.NewString(), "Metadata requester")
+				return orytest.SeedPostIntegrationIdentity(t, db, uuid.NewString(), "Metadata requester")
 			},
 			SeedTransport: func(t *testing.T, jobID string) {
 				require.NoError(t, publisher.EnqueueProtobuf(t.Context(), eventpkg.QueueAiMetadataGenerate, jobID,
@@ -58,7 +60,7 @@ func TestRecoverySkipsTheJobsAnotherRecoveryLockedIntegration(t *testing.T) {
 	units, err := aipostgres.NewUnits(db, publisher)
 	require.NoError(t, err)
 	h := mutationtest.PostgresHarness(db, units)
-	member := testutil.SeedPostIntegrationIdentity(t, db, uuid.NewString(), "Metadata requester")
+	member := orytest.SeedPostIntegrationIdentity(t, db, uuid.NewString(), "Metadata requester")
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	var job ai.Job
 	require.NoError(t, mutationtest.Transact(t, h, func(ctx context.Context, store ai.Store) (err error) {

@@ -21,7 +21,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mq"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -39,7 +40,7 @@ func (r runtimeRemoteImportResolver) LookupIP(context.Context, string, string) (
 
 func TestEditorFileRemoteImportIsIndependentDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
 
 	body := []byte("runtime remote editor File\n")
@@ -138,7 +139,7 @@ func requireRuntimeCanonicalFileRecord(
 	return file
 }
 
-func runtimeS3Client(t *testing.T, stack *testutil.RuntimeStack) *s3.Client {
+func runtimeS3Client(t *testing.T, stack *runtimetest.RuntimeStack) *s3.Client {
 	t.Helper()
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(

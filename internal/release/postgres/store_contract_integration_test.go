@@ -18,14 +18,14 @@ import (
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	"github.com/echovisionlab/geul-api/internal/release/releasetest"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestPostgresStoreKeepsTheReleaseStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	releasetest.RunStoreContract(t, func(t *testing.T) releasetest.Harness {
 		// The Kratos stub backs the credited Member lock (identitystate).
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 		// The contract reaches the Release tables and the summary readers;
 		// content, media, signals and collaboration stay with their own tests.
 		ports := releasepostgres.Ports{

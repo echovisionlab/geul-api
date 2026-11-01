@@ -22,7 +22,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -43,7 +44,7 @@ func newPorts(t *testing.T) ports {
 	t.Helper()
 	db := newDatabase(t)
 	identityID := uuid.NewString()
-	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Catalog editor")
+	memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "Catalog editor")
 	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.72")
 	require.NoError(t, err)
 	ctx := auth.WithUser(sharedtelemetry.WithRequestContext(t.Context(), requestContext), &auth.UserInfo{

@@ -18,13 +18,13 @@ import (
 	labelpostgres "github.com/echovisionlab/geul-api/internal/label/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestPostgresStoreKeepsTheLabelStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	labeltest.RunStoreContract(t, func(t *testing.T) labeltest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		// The contract reaches the label rows and the relation readers;
 		// content, media and collaboration stay with their own tests.
 		deps := labelpostgres.Deps{

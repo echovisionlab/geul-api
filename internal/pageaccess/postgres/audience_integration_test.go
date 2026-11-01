@@ -15,18 +15,19 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	pageaccesspostgres "github.com/echovisionlab/geul-api/internal/pageaccess/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func seedReader(t *testing.T, db *gorm.DB) *auth.UserInfo {
 	t.Helper()
 	identityID, memberID := uuid.NewString(), uuid.NewString()
 	email := identityID + "@example.test"
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Email: email, Name: "Page reader"})
+	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{ID: identityID, Email: email, Name: "Page reader"})
 	require.NoError(t, db.Exec("UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid", memberID, identityID).Error)
 	require.NoError(t, db.Exec("INSERT INTO account_identity (id) VALUES (?::uuid)", identityID).Error)
 	// The test soft-deletes this Member with the database clock.
-	now := testutil.DatabaseNow(t, db)
+	now := pgtest.DatabaseNow(t, db)
 	require.NoError(t, db.Create(&model.Member{ID: memberID, AccountIdentityID: &identityID, Nickname: "Page reader " + memberID, Onboarded: true, PrimaryEmail: &email, AvailableEmails: []string{email}, SocialLinks: map[string]string{}, CreatedAt: now, UpdatedAt: now}).Error)
 	return &auth.UserInfo{IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID), Authenticated: true, Onboarded: true}
 }
@@ -44,7 +45,7 @@ func audienceRead[T any](t *testing.T, db *gorm.DB, read func(ctx context.Contex
 
 func TestAudienceReadsTagsAndSubscriptionsIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 	reader := seedReader(t, db)
 	tagA, tagB := uuid.NewString(), uuid.NewString()
 	for _, id := range []string{tagA, tagB} {
@@ -73,7 +74,7 @@ func TestAudienceReadsTagsAndSubscriptionsIntegration(t *testing.T) {
 // Member and its Kratos Identity over the request principal.
 func TestAudienceFencesTheStoredIdentityStateIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 	reader := seedReader(t, db)
 	active := func() bool {
 		return audienceRead(t, db, func(ctx context.Context, tx *gorm.DB) (bool, error) {

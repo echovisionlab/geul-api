@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -15,7 +17,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"github.com/stretchr/testify/require"
@@ -40,7 +43,7 @@ func integrationService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, 
 		audit = &audittest.Recorder{}
 	}
 	runtime := campaignadapter.NewRuntime(unusedPublisher{}, &audittest.Recorder{})
-	units, err := campaignpostgres.NewUnits(db, campaignpostgres.Ports{ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB), Publisher: runtime, Routes: runtime, SpiceDB: spiceDB, EmailAuthoring: campaignadapter.NewEmailAuthoring(), EmailRendering: campaignadapter.NewEmailRendering(), AudienceTargets: campaignadapter.NewAudienceTargets(), Members: memberadapter.ContributorMembers{}, Checkpoints: unusedCheckpoint{}})
+	units, err := campaignpostgres.NewUnits(db, campaignpostgres.Ports{ContentBlocks: contenttest.NewEmailContentBlockStore(t), Publisher: runtime, Routes: runtime, SpiceDB: spiceDB, EmailAuthoring: campaignadapter.NewEmailAuthoring(), EmailRendering: campaignadapter.NewEmailRendering(), AudienceTargets: campaignadapter.NewAudienceTargets(), Members: memberadapter.ContributorMembers{}, Checkpoints: unusedCheckpoint{}})
 	require.NoError(t, err)
 	for _, transform := range transforms {
 		units = transform(units)
@@ -51,5 +54,5 @@ func integrationService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, 
 }
 func integrationPrincipal(t *testing.T, user *auth.UserInfo) context.Context {
 	t.Helper()
-	return auth.WithUser(testutil.NewAuditContext(t, user.IdentityID.String(), user.MemberID.String()), user)
+	return auth.WithUser(orytest.NewAuditContext(t, user.IdentityID.String(), user.MemberID.String()), user)
 }

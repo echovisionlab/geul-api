@@ -15,7 +15,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -28,13 +29,13 @@ import (
 
 func TestReleaseServiceArtworkReplacementAndUnlinkPreserveFilesIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	adminID := testutil.IntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release Artwork Admin")
+	db := orytest.NewIntegrationDB(t)
+	adminID := orytest.IntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Release Artwork Admin")
 	ctx := releaseIntegrationAdminCtx(adminID)
 
 	spiceDB := integrationSpiceDB(t)
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	releaseSvc := releasepkg.NewConnectHandler(newReleaseArtworkUseCases(t, db, spiceDB))
 	releaseResp, err := releaseSvc.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title:    "Release Artwork Lifecycle",
@@ -43,7 +44,7 @@ func TestReleaseServiceArtworkReplacementAndUnlinkPreserveFilesIntegration(t *te
 	}))
 	require.NoError(t, err)
 
-	firstFileID := testutil.IntegrationUUID()
+	firstFileID := orytest.IntegrationUUID()
 	seedFileDeleteLifecycleFile(t, db, firstFileID, "first", "image/webp", "webp")
 	firstAsset := seedHardCutReadyPublicAsset(t, db, "artwork", "webp", "image/webp", &firstFileID)
 	firstSet, err := releaseSvc.SetReleaseArtwork(ctx, connect.NewRequest(&managev1.SetReleaseArtworkRequest{
@@ -53,7 +54,7 @@ func TestReleaseServiceArtworkReplacementAndUnlinkPreserveFilesIntegration(t *te
 	require.NoError(t, err)
 	require.Empty(t, firstSet.Msg.GetOgGenerationRunId())
 
-	secondFileID := testutil.IntegrationUUID()
+	secondFileID := orytest.IntegrationUUID()
 	seedFileDeleteLifecycleFile(t, db, secondFileID, "second", "image/webp", "webp")
 	secondAsset := seedHardCutReadyPublicAsset(t, db, "artwork", "webp", "image/webp", &secondFileID)
 	secondSet, err := releaseSvc.SetReleaseArtwork(ctx, connect.NewRequest(&managev1.SetReleaseArtworkRequest{

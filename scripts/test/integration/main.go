@@ -9,11 +9,11 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 type suiteBackend struct {
-	Lease   *testutil.AppIntegrationBackendLease
+	Lease   *pgtest.AppIntegrationBackendLease
 	closeFn func() error
 	resetFn func(context.Context) error
 }
@@ -132,7 +132,7 @@ func run() (runErr error) {
 	}()
 	preflight := []string{
 		"test", "-p", "1", "-parallel", "1", "-timeout", "30m", "-count=1", "-tags=integration",
-		"./internal/testutil", "-run", "^TestStartAppPostgresAdminLeasesAreDistinctAndDropped$",
+		"./internal/testutil/pgtest", "-run", "^TestStartAppPostgresAdminLeasesAreDistinctAndDropped$",
 		"-args", "-geul-integration-lease-file=" + leasePath,
 	}
 	if err := runSuiteCommand(ctx, repoRoot, options.GoWork, options.MinIOImage, preflight); err != nil {

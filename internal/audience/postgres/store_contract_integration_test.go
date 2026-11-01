@@ -18,13 +18,14 @@ import (
 	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	audiencetest.RunStoreContract(t, func(t *testing.T) audiencetest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 		return audiencetest.Harness{
 			Harness:  mutationtest.PostgresHarness(db, audiencepostgres.NewUnits(db, campaignpostgres.SegmentUsage{})),
 			Fixtures: postgresFixtures{db: db},
@@ -51,7 +52,7 @@ func (f postgresFixtures) MemberTag(t *testing.T) string {
 func (f postgresFixtures) Member(t *testing.T, eligible bool) string {
 	t.Helper()
 	identityID := uuid.NewString()
-	memberID := testutil.SeedPostIntegrationIdentity(t, f.db, identityID, "Audience Member "+identityID)
+	memberID := orytest.SeedPostIntegrationIdentity(t, f.db, identityID, "Audience Member "+identityID)
 	if !eligible {
 		require.NoError(t, f.db.Exec(`UPDATE kratos.identities SET external_id = NULL WHERE id = ?::uuid`, identityID).Error)
 	}

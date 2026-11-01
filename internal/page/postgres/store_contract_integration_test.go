@@ -15,13 +15,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/page/pagetest"
 	pagepostgres "github.com/echovisionlab/geul-api/internal/page/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestPostgresStoreKeepsThePageStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	pagetest.RunStoreContract(t, func(t *testing.T) pagetest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		// The contract reaches the page tables; the content, media, Member,
 		// Share Link and Menu runtimes stay with their own tests.
 		units := mutation.Postgres(db, func(tx *gorm.DB) page.Store { return pagepostgres.NewStore(tx, pagepostgres.Ports{}) })

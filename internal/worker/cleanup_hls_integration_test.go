@@ -29,7 +29,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/scheduler"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -426,7 +427,7 @@ func newWorkerIntegrationS3FromSharedLease(ctx context.Context) (*s3.Client, *co
 }
 
 func sharedWorkerIntegrationS3Config() (*config.Config, error) {
-	backend, err := testutil.CurrentAppIntegrationBackendLease()
+	backend, err := pgtest.CurrentAppIntegrationBackendLease()
 	if err != nil {
 		return nil, fmt.Errorf("load shared worker integration backend lease: %w", err)
 	}

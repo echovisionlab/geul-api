@@ -18,7 +18,8 @@ import (
 	filemediaapplication "github.com/echovisionlab/geul-api/internal/filemedia/application"
 	filemediaapplicationpostgres "github.com/echovisionlab/geul-api/internal/filemedia/application/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -135,7 +136,7 @@ func TestFileDeleteFinalizerUsesGlobalAuthorizationMutationFenceIntegration(t *t
 		finalized <- deletion.Finalize(context.Background(), filemediaapplication.DeletionTargetFromProto(event))
 	}()
 
-	testutil.RequireLockWaiters(t, db, 1)
+	pgtest.RequireLockWaiters(t, db, 1)
 	select {
 	case <-authorizationCalled:
 		t.Fatal("File authorization deletion bypassed the global mutation fence")

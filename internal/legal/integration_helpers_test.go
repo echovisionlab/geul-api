@@ -30,7 +30,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -38,14 +39,14 @@ import (
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "start Legal integration suite: %v\n", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		fmt.Fprintf(os.Stderr, "close Legal integration suite: %v\n", err)
 		code = 1
@@ -60,7 +61,7 @@ func TestMain(m *testing.M) {
 // tests fail it with serialization errors.
 func newLegalLocalKratosIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	return testutil.SetupOryStackWithLocalKratos(t).DB
+	return orytest.SetupOryStackWithLocalKratos(t).DB
 }
 
 type legalTestRenderConfig struct{}
@@ -132,7 +133,7 @@ func legalIntegrationAdminCtxWithIdentityAndSpiceDB(
 	db *gorm.DB,
 ) (context.Context, *auth.SpiceDBClient) {
 	t.Helper()
-	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+	ctx, spiceDB := orytest.IntegrationAdminContext(t, db)
 	user := auth.GetUser(ctx)
 	require.NotNil(t, user)
 	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.99")
@@ -167,10 +168,10 @@ func seedBulkEmailAudienceIdentity(
 ) string {
 	t.Helper()
 	identityID := uuid.NewString()
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
+	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{
 		ID: identityID, Email: email, Name: "Legal notice recipient", CreatedAt: createdAt,
 	})
-	memberID := testutil.PostIntegrationMemberID(identityID)
+	memberID := orytest.PostIntegrationMemberID(identityID)
 	require.NoError(t, db.Exec(`
 		INSERT INTO account_identity (id, created_at)
 		SELECT id, created_at FROM kratos.identities WHERE id = ?::uuid

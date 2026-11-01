@@ -11,7 +11,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -21,7 +22,7 @@ import (
 
 func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorityIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 

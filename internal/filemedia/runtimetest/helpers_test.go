@@ -39,16 +39,19 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+
+	// The File upload protocol's part and prefix sizes, as the API process uses
+	// them.
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 )
 
-// The File upload protocol's part and prefix sizes, as the API process uses
-// them.
 const (
 	chunkSize           = 10 * 1024 * 1024
 	multipartSniffBytes = 64 * 1024
@@ -106,7 +109,7 @@ func clientMediaTestObjects(t *testing.T, kind string) map[string][]byte {
 func uploadMultipartPart(
 	t *testing.T,
 	baseURL string,
-	user *testutil.OryUser,
+	user *orytest.OryUser,
 	fileID string,
 	uploadID string,
 	partNumber int,
@@ -119,7 +122,7 @@ func uploadMultipartPart(
 func uploadMultipartBody(
 	t *testing.T,
 	baseURL string,
-	user *testutil.OryUser,
+	user *orytest.OryUser,
 	session *managev1.InitiateMultipartUploadResponse,
 	body []byte,
 ) {
@@ -181,14 +184,14 @@ func expectedUploadPartCount(bodySize int, chunkSize int) int {
 func waitForRuntimeMediaDelivery(
 	t *testing.T,
 	fileClient managev1connect.FileServiceClient,
-	user *testutil.OryUser,
+	user *orytest.OryUser,
 	fileID string,
 	ready func(*commonv1.MediaDelivery) bool,
 ) *commonv1.MediaDelivery {
 	t.Helper()
 
 	var last *commonv1.MediaDelivery
-	testutil.WaitForFileProcessingComplete(t, 3*time.Minute, func() (bool, string, error) {
+	runtimetest.WaitForFileProcessingComplete(t, 3*time.Minute, func() (bool, string, error) {
 		getReq := connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID})
 		setAuthHeaders(getReq.Header(), user)
 
@@ -219,9 +222,9 @@ func waitForRuntimeMediaDelivery(
 
 func completeRuntimeEditorMediaUploadAndWait(
 	t *testing.T,
-	stack *testutil.RuntimeStack,
+	stack *runtimetest.RuntimeStack,
 	fileClient managev1connect.FileServiceClient,
-	manager *testutil.OryUser,
+	manager *orytest.OryUser,
 	uploadType managev1.UploadType,
 	mimeType string,
 	fileName string,
@@ -307,9 +310,9 @@ func runRuntimeClientMediaCommand(t *testing.T, name string, args ...string) []b
 
 func prepareRuntimeClientVideoBundle(
 	t *testing.T,
-	stack *testutil.RuntimeStack,
+	stack *runtimetest.RuntimeStack,
 	client managev1connect.FileServiceClient,
-	manager *testutil.OryUser,
+	manager *orytest.OryUser,
 	upload *managev1.InitiateMultipartUploadResponse,
 	original []byte,
 ) (string, map[string][]byte) {
@@ -354,7 +357,7 @@ func uploadRuntimeClientMediaBundle(
 	t *testing.T,
 	fileClient managev1connect.FileServiceClient,
 	backendURL string,
-	user *testutil.OryUser,
+	user *orytest.OryUser,
 	upload *managev1.InitiateMultipartUploadResponse,
 	kind string,
 	durationSeconds float64,
@@ -417,7 +420,7 @@ func getRuntimePublicMediaBytes(t *testing.T, mediaURL string) []byte {
 func uploadMultipartPartWithCorrelation(
 	t *testing.T,
 	baseURL string,
-	user *testutil.OryUser,
+	user *orytest.OryUser,
 	fileID string,
 	uploadID string,
 	partNumber int,
@@ -461,7 +464,7 @@ func uploadMultipartPartWithCorrelation(
 
 	presignReq, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/upload/part/presign?%s", baseURL, query.Encode()), nil)
 	require.NoError(t, err)
-	testutil.ApplyAuthHeaders(presignReq.Header, user)
+	orytest.ApplyAuthHeaders(presignReq.Header, user)
 	presignResp, err := client.Do(presignReq)
 	require.NoError(t, err)
 	defer presignResp.Body.Close()
@@ -482,7 +485,7 @@ func uploadMultipartPartWithCorrelation(
 
 	confirmReq, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/upload/part/confirm?%s", baseURL, query.Encode()), nil)
 	require.NoError(t, err)
-	testutil.ApplyAuthHeaders(confirmReq.Header, user)
+	orytest.ApplyAuthHeaders(confirmReq.Header, user)
 	confirmResp, err := client.Do(confirmReq)
 	require.NoError(t, err)
 	defer confirmResp.Body.Close()
@@ -497,7 +500,7 @@ func uploadMultipartPartWithCorrelation(
 func requestMultipartPartPresign(
 	t *testing.T,
 	baseURL string,
-	user *testutil.OryUser,
+	user *orytest.OryUser,
 	fileID string,
 	uploadID string,
 	partNumber int,
@@ -513,7 +516,7 @@ func requestMultipartPartPresign(
 	}
 	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/upload/part/presign?%s", baseURL, query.Encode()), nil)
 	require.NoError(t, err)
-	testutil.ApplyAuthHeaders(req.Header, user)
+	orytest.ApplyAuthHeaders(req.Header, user)
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -619,8 +622,8 @@ func requireNoFileIngestFailedEvent(
 	}
 }
 
-func setAuthHeaders(header http.Header, user *testutil.OryUser) {
-	testutil.ApplyAuthHeaders(header, user)
+func setAuthHeaders(header http.Header, user *orytest.OryUser) {
+	orytest.ApplyAuthHeaders(header, user)
 }
 
 func runtimePtr[T interface{}](value T) *T {
@@ -703,7 +706,7 @@ func requireRuntimeCanonicalFileRecord(
 
 func abortMultipartInStorage(
 	t *testing.T,
-	stack *testutil.RuntimeStack,
+	stack *runtimetest.RuntimeStack,
 	fileKey string,
 	uploadID string,
 ) {
@@ -726,7 +729,7 @@ func runtimeMediaObjectKey(t *testing.T, fileID string, extension string) string
 	return key
 }
 
-func runtimeS3Client(t *testing.T, stack *testutil.RuntimeStack) *s3.Client {
+func runtimeS3Client(t *testing.T, stack *runtimetest.RuntimeStack) *s3.Client {
 	t.Helper()
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(

@@ -20,13 +20,15 @@ import (
 	"github.com/echovisionlab/geul-api/internal/og"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-)
 
-// The Series OG requests and projection are og's SQL over the Series rows;
-// these tests pin them with PostgreSQL alone.
+	// The Series OG requests and projection are og's SQL over the Series rows;
+	// these tests pin them with PostgreSQL alone.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+)
 
 type seriesOgSnapshot struct {
 	Title string `json:"title"`
@@ -34,8 +36,8 @@ type seriesOgSnapshot struct {
 
 func TestResolveSeriesOgGenerationUsesLocaleTitlesAndAllowsNoFeaturedImageIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
-	seriesID := seedSeriesRow(t, db, "English Series", "localized-series-"+testutil.IntegrationUUID(), model.SeriesStatusPublished)
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	seriesID := seedSeriesRow(t, db, "English Series", "localized-series-"+orytest.IntegrationUUID(), model.SeriesStatusPublished)
 	now := time.Now().UTC()
 	require.NoError(t, db.Exec(`
 		INSERT INTO series_translation (
@@ -80,12 +82,12 @@ func TestResolveSeriesOgGenerationUsesLocaleTitlesAndAllowsNoFeaturedImageIntegr
 
 func TestSeriesOgRequestReleasesStaleLocaleProjectionUntilReplacementIsReadyIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	seriesID := seedSeriesRow(
 		t,
 		db,
 		"Pending Fallback Series",
-		"pending-fallback-series-"+testutil.IntegrationUUID(),
+		"pending-fallback-series-"+orytest.IntegrationUUID(),
 		model.SeriesStatusPublished,
 	)
 	oldAsset := seedHardCutReadyPublicAsset(t, db, "og", "webp", "image/webp", nil)
@@ -161,7 +163,7 @@ func requirePublicAssetDeletePending(t *testing.T, db *gorm.DB, assetID string) 
 
 func TestAutomaticOgRequestReloadsCanonicalSeriesSnapshotAfterTargetLockIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 
@@ -214,7 +216,7 @@ func TestAutomaticOgRequestReloadsCanonicalSeriesSnapshotAfterTargetLockIntegrat
 			err  error
 		}{plan: plan, err: err}
 	}()
-	testutil.RequireLockWaiters(t, db, 1)
+	pgtest.RequireLockWaiters(t, db, 1)
 	require.NoError(t, db.WithContext(ctx).Table("series_translation").
 		Where("entity_id = ? AND locale = ?", seriesID, "en").
 		Updates(structured.Fields{"title": "Title B", "updated_at": time.Now().UTC()}).Error)

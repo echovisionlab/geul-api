@@ -26,7 +26,9 @@ import (
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -58,14 +60,14 @@ func (m directTrackFileManager) RequireNoTrackUploadSessionsWithDB(ctx context.C
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "start File/Media integration suite: %v\n", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		fmt.Fprintf(os.Stderr, "close File/Media integration suite: %v\n", err)
 		code = 1
@@ -75,7 +77,7 @@ func TestMain(m *testing.M) {
 
 func newConcurrentServiceIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	stack := testutil.PrepareOryIntegrationConcurrentTest(t)
+	stack := orytest.PrepareOryIntegrationConcurrentTest(t)
 	require.NotNil(t, stack)
 	return openConcurrentServiceIntegrationDB(t, stack)
 }
@@ -85,11 +87,11 @@ func newConcurrentServiceIntegrationDB(t *testing.T) *gorm.DB {
 // whose remote REPEATABLE READ transactions do not wait like production.
 func newLocalKratosConcurrentServiceIntegrationDB(t *testing.T) (*gorm.DB, *auth.SpiceDBClient) {
 	t.Helper()
-	stack := testutil.SetupOryStackWithLocalKratos(t)
+	stack := orytest.SetupOryStackWithLocalKratos(t)
 	return openConcurrentServiceIntegrationDB(t, stack), stack.SpiceDBClient
 }
 
-func openConcurrentServiceIntegrationDB(t *testing.T, stack *testutil.OryStack) *gorm.DB {
+func openConcurrentServiceIntegrationDB(t *testing.T, stack *orytest.OryStack) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(gormpostgres.Open(stack.PostgresDSN), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -103,7 +105,7 @@ func openConcurrentServiceIntegrationDB(t *testing.T, stack *testutil.OryStack) 
 
 func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient {
 	t.Helper()
-	return testutil.SetupOryStack(t).SpiceDBClient
+	return orytest.SetupOryStack(t).SpiceDBClient
 }
 
 func newIntegrationMemberSummaries(db *gorm.DB, cdnDomain string) MemberSummaries {
@@ -112,9 +114,9 @@ func newIntegrationMemberSummaries(db *gorm.DB, cdnDomain string) MemberSummarie
 
 func releaseAuditContext(t *testing.T, identityID, memberID string) context.Context {
 	t.Helper()
-	sessionID := testutil.IntegrationUUID()
+	sessionID := orytest.IntegrationUUID()
 	request, err := sharedtelemetry.NewPropagatedRequestContext(
-		testutil.IntegrationUUID(),
+		orytest.IntegrationUUID(),
 		sharedtelemetry.MemberActor{
 			IdentityID: identityID,
 			MemberID:   memberID,
@@ -136,12 +138,12 @@ func integrationAdminCtxWithIdentityAndSpiceDB(t *testing.T, db *gorm.DB) (conte
 
 func integrationAdminCtxWithIdentity(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) context.Context {
 	t.Helper()
-	identityID := testutil.IntegrationUUID()
-	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "File/Media integration Admin")
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	identityID := orytest.IntegrationUUID()
+	memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "File/Media integration Admin")
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	return auditedUserContext(context.Background(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
-		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
+		SessionID: auth.SessionID(orytest.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
 }
 
@@ -183,7 +185,7 @@ func seedAudiencePostFileAttachment(t *testing.T, db *gorm.DB, postID, fileID st
 	`, blockID, fileID).Error)
 }
 
-func newEditorUploadSerializationFileService(stack *testutil.RuntimeStack, s3Client *s3.Client) *Service {
+func newEditorUploadSerializationFileService(stack *runtimetest.RuntimeStack, s3Client *s3.Client) *Service {
 	return newTestService(Deps{
 		S3:             s3Client,
 		AsyncPublisher: &hardCutAsyncPublisher{},

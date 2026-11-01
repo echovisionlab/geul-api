@@ -5,16 +5,15 @@ package worker
 import (
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/testutil"
 )
 
 // newWorkerIntegrationPostgres returns a database owned by the calling test.
-func newWorkerIntegrationPostgres(t *testing.T) *testutil.AppPostgres {
+func newWorkerIntegrationPostgres(t *testing.T) *pgtest.AppPostgres {
 	t.Helper()
 
-	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
+	return pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{
 		BootstrapKratosStub: true,
 		ApplyAppSchemaSQL:   true,
 	})

@@ -15,11 +15,13 @@ import (
 	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
+
+	// contractUnits binds the Member rows only; the contract reaches no welcome
+	// email port.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 )
 
-// contractUnits binds the Member rows only; the contract reaches no welcome
-// email port.
 func contractUnits(db *gorm.DB) mutation.UnitOfWork[member.Store] {
 	return mutation.Postgres(db, func(tx *gorm.DB) member.Store { return memberpostgres.Bind(tx) })
 }
@@ -29,7 +31,7 @@ func contractUnits(db *gorm.DB) mutation.UnitOfWork[member.Store] {
 func seedLinked(t *testing.T, db *gorm.DB, nickname string, onboarded bool) (string, string) {
 	t.Helper()
 	memberID, identityID := uuid.NewString(), uuid.NewString()
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Email: identityID + "@example.test", Name: nickname, CreatedAt: time.Now().UTC()})
+	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{ID: identityID, Email: identityID + "@example.test", Name: nickname, CreatedAt: time.Now().UTC()})
 	require.NoError(t, db.Exec("UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid", memberID, identityID).Error)
 	require.NoError(t, db.Exec("INSERT INTO account_identity (id) VALUES (?::uuid)", identityID).Error)
 	// A linked Member has an email projection (chk_member_active_profile).
@@ -45,7 +47,7 @@ func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	membertest.RunStoreContract(t, func(t *testing.T) membertest.Fixture {
 		// The Kratos stub backs the bilateral Member and Identity link.
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 		return membertest.Fixture{
 			Harness: mutationtest.PostgresHarness(db, contractUnits(db)),
 			SeedLinked: func(t *testing.T, nickname string, onboarded bool) (string, string) {

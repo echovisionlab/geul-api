@@ -14,12 +14,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/member"
 	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func emailDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+	return pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 }
 
 func insertDeletedMemberEmailFixture(t *testing.T, db *gorm.DB, deletedAt time.Time, emails []string) string {

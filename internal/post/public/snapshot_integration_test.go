@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	"connectrpc.com/connect"
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
@@ -17,8 +19,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
 	postpublicpostgres "github.com/echovisionlab/geul-api/internal/post/public/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -34,17 +38,17 @@ import (
 
 func TestPostPublicReadKeepsPublishedStatusAndBodyAcrossUnpublishIntegration(t *testing.T) {
 	t.Parallel()
-	stack, err := testutil.StartBackendIntegrationStack(t.Context())
+	stack, err := runtimetest.StartBackendIntegrationStack(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, stack.Close()) })
 	db := stack.Postgres.DB
 
 	identityID := uuid.NewString()
-	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Public Snapshot Admin")
+	orytest.SeedPostIntegrationIdentity(t, db, identityID, "Public Snapshot Admin")
 	spiceDB := stack.SpiceDBClient
-	testutil.GrantPostIntegrationRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	adminCtx := testutil.PostIntegrationContext(identityID)
-	store := testutil.NewPostContentBlockStore(t)
+	orytest.GrantPostIntegrationRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	adminCtx := orytest.PostIntegrationContext(identityID)
+	store := contenttest.NewPostContentBlockStore(t)
 	management := postintegration.NewPostDomainService(
 		t, db, "", spiceDB, store,
 	)

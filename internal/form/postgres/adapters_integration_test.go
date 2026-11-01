@@ -21,7 +21,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -56,7 +57,7 @@ func seedLocale(t *testing.T, db *gorm.DB, formID, locale, title string) {
 
 func TestFeaturedImageReleaseKeepsTheFileAndItsAssetIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	bind := adapterStore(t, db)
 	formID := seedForm(t, db)
 	fileID := uuid.NewString()
@@ -103,7 +104,7 @@ func TestFeaturedImageReleaseKeepsTheFileAndItsAssetIntegration(t *testing.T) {
 
 func TestOGCancellationFailureFailsTheTransactionIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	bind := adapterStore(t, db)
 	formID := seedForm(t, db)
 	locale := "en"
@@ -153,7 +154,7 @@ EXECUTE FUNCTION fail_test_og_cancel()`, plan.GenerationIDs[0])).Error)
 
 func TestOGRequestsTitleEachLocaleExactlyIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	formID := seedForm(t, db)
 	seedLocale(t, db, formID, "ko", "원본 신청서 제목")
 	seedLocale(t, db, formID, "ja", "日本語フォーム題名")

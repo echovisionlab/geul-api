@@ -20,12 +20,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestMediaAssetLifecycleBindRechecksReadyAfterAssetLockIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	asset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
 	ownerID := uuid.NewString()
 
@@ -47,7 +47,7 @@ func TestMediaAssetLifecycleBindRechecksReadyAfterAssetLockIntegration(t *testin
 			},
 		)
 	}()
-	testutil.RequireLockWaiters(t, db, 1)
+	pgtest.RequireLockWaiters(t, db, 1)
 	require.NoError(t, blocker.Model(&model.PublicAsset{}).
 		Where("id = ?", asset.ID).
 		Updates(structured.Fields{
@@ -68,7 +68,7 @@ func TestMediaAssetLifecycleBindRechecksReadyAfterAssetLockIntegration(t *testin
 
 func TestMediaAssetLifecycleRebindFailsClosedWhenBindingChangesWhileWaitingIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	oldAsset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
 	newAsset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
 	concurrentAsset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
@@ -96,7 +96,7 @@ func TestMediaAssetLifecycleRebindFailsClosedWhenBindingChangesWhileWaitingInteg
 			AssetID: newAsset.ID, OwnerType: "page", OwnerID: ownerID, BindingKey: bindingKey,
 		})
 	}()
-	testutil.RequireLockWaiters(t, db, 1)
+	pgtest.RequireLockWaiters(t, db, 1)
 	require.NoError(t, blocker.Model(&model.PublicAssetBinding{}).
 		Where("owner_type = ? AND owner_id = ? AND binding_key = ?", "page", ownerID, bindingKey).
 		Updates(structured.Fields{
@@ -117,7 +117,7 @@ func TestMediaAssetLifecycleRebindFailsClosedWhenBindingChangesWhileWaitingInteg
 
 func TestMediaAssetLifecycleConcurrentFirstBindConvergesIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	firstAsset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
 	secondAsset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
 	ownerID := uuid.NewString()

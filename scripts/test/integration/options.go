@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 type suiteOptions struct {
@@ -43,8 +43,8 @@ func parseOptions(args []string) (suiteOptions, error) {
 	flags.BoolVar(&options.ListImages, "list-images", false, "list the Docker images the selected packages require")
 	flags.StringVar(&options.GoWork, "go-work", integrationGoWorkOff, "Go workspace: off or an absolute go.work path")
 	flags.StringVar(&options.SchemaRoot, "schema-root", "../geul-schema", "reviewed schema asset root")
-	flags.StringVar(&options.PostgresImage, "postgres-image", testutil.AppIntegrationPostgresImage, "local PostgreSQL image")
-	flags.StringVar(&options.MinIOImage, "minio-image", testutil.MinIOIntegrationImage(), "local MinIO image")
+	flags.StringVar(&options.PostgresImage, "postgres-image", pgtest.AppIntegrationPostgresImage, "local PostgreSQL image")
+	flags.StringVar(&options.MinIOImage, "minio-image", pgtest.MinIOIntegrationImage(), "local MinIO image")
 	if err := flags.Parse(args); err != nil {
 		return suiteOptions{}, err
 	}

@@ -5,9 +5,12 @@ package artist_test
 import (
 	"context"
 	"errors"
-	artist "github.com/echovisionlab/geul-api/internal/artist"
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
+	artist "github.com/echovisionlab/geul-api/internal/artist"
 
 	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
@@ -24,7 +27,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
 
@@ -74,7 +77,7 @@ func newTestService(t *testing.T, deps integrationDeps) *artist.Service {
 		deps.Publisher = noopArtistAsyncPublisher{}
 	}
 	if deps.ContentBlocks == nil {
-		deps.ContentBlocks = testutil.NewCreativeContentStore(t, deps.SpiceDB)
+		deps.ContentBlocks = contenttest.NewCreativeContentStore(t)
 	}
 	if deps.Checkpoints == nil {
 		deps.Checkpoints = testcollaboration.NewCheckpoints(deps.DB, deps.SpiceDB)

@@ -6,13 +6,13 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMailEventStorageMigrationBoundaryIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 
 	var emailEventTable sql.NullString
 	require.NoError(t, db.Raw(`SELECT to_regclass(?)`, "public.email_event").Scan(&emailEventTable).Error)

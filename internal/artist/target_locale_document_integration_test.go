@@ -7,13 +7,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	artist "github.com/echovisionlab/geul-api/internal/artist"
 	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -40,9 +43,9 @@ var _ domainaudit.Appender = (*artistTranslationAuditAppender)(nil)
 
 func TestArtistTargetLocaleBatchUsesExactCASWithoutAdvancingSharedRevisionIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
-	store := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)
+	db := orytest.NewIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
+	store := contenttest.NewEmailContentBlockStore(t)
 	identityID := uuid.NewString()
 	contributor := uuid.MustParse(seedArtistIdentity(t, db, identityID, "Artist target admin"))
 	requireInternalResourceAdmin(t, stack.SpiceDBClient, identityID)

@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	patdomain "github.com/echovisionlab/geul-api/internal/member/pat"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 // PostgreSQL keeps microseconds. Regenerate compares the stored updated_at with
@@ -17,7 +17,7 @@ import (
 func TestServiceRegeneratesWithSystemClockOnPostgreSQLIntegration(t *testing.T) {
 	t.Parallel()
 
-	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
+	postgres := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{
 		BootstrapKratosStub: true,
 		ApplyAppSchemaSQL:   true,
 	})

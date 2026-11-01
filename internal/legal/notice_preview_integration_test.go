@@ -26,7 +26,8 @@ import (
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
@@ -65,7 +66,7 @@ func TestScheduledLegalNoticeCreatesOneAutomaticPreviewAndSentNoticeBlocksCancel
 ) {
 	t.Parallel()
 	db := newLegalLocalKratosIntegrationDB(t)
-	testutil.EnsureKratosIdentityFixtureColumns(t, db)
+	orytest.EnsureKratosIdentityFixtureColumns(t, db)
 	now := time.Now().UTC()
 	seedBulkEmailAudienceIdentity(
 		t,

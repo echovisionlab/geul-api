@@ -20,7 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/member/membertest"
 	"github.com/echovisionlab/geul-api/internal/member/public"
 	memberpublicpostgres "github.com/echovisionlab/geul-api/internal/member/public/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 type statementLogger struct {
@@ -44,7 +44,7 @@ func (l *statementLogger) snapshot() []string {
 
 func publicDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	return pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 }
 
 // seedMember stores an onboarded Member whose Identity link is the anchor

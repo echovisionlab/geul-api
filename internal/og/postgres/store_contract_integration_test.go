@@ -18,14 +18,15 @@ import (
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/og/ogtest"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	ogtest.RunStoreContract(t, func(t *testing.T) ogtest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		references := &referenceSet{assets: map[string]bool{}}
 		units, err := ogpostgres.NewUnits(db, ogpostgres.Ports{
 			CDNDomain: ogtest.CDNDomain, RenderConfig: renderConfig{}, Projections: []ogpostgres.Projection{projection{}},

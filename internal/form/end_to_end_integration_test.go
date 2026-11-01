@@ -29,28 +29,30 @@ import (
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/securityaccess"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-)
 
-// These tests keep what only the whole stack shows: the Form policy
-// relationships SpiceDB holds and their compensation, and authority
-// rechecked over real Kratos rows after waiting on the Form root lock. Every
-// other Form scenario runs on the fake Store, and the form tables on the
-// Store contract.
+	// These tests keep what only the whole stack shows: the Form policy
+	// relationships SpiceDB holds and their compensation, and authority
+	// rechecked over real Kratos rows after waiting on the Form root lock. Every
+	// other Form scenario runs on the fake Store, and the form tables on the
+	// Store contract.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+)
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "start Form integration suite: %v\n", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		fmt.Fprintf(os.Stderr, "close Form integration suite: %v\n", err)
 		code = 1
@@ -83,32 +85,32 @@ func newStackForms(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, audit
 
 func TestFormPolicyRelationshipsFollowTheFormIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	adminCtx, spiceDB := testutil.IntegrationAdminContext(t, db)
+	db := orytest.NewIntegrationDB(t)
+	adminCtx, spiceDB := orytest.IntegrationAdminContext(t, db)
 	principal := auth.GetUser(adminCtx)
 	require.NotNil(t, principal)
 	identityID := principal.IdentityID.String()
-	ctx := testutil.NewAuditContext(t, identityID, principal.MemberID.String())
+	ctx := orytest.NewAuditContext(t, identityID, principal.MemberID.String())
 	writer := apitelemetry.NewDurableWriter(db)
 	forms := newStackForms(t, db, spiceDB, stackAudit{security: writer, audit: writer})
 
 	created, err := forms.CreateForm(ctx, connect.NewRequest(&managev1.CreateFormRequest{Title: "Policy Form", Schema: stackSchema()}))
 	require.NoError(t, err)
 	formID := created.Msg.Id
-	testutil.RequireSynchronousResourceAuthorization(t, spiceDB, policyv1.Form.Manage, formID, identityID, true)
+	orytest.RequireSynchronousResourceAuthorization(t, spiceDB, policyv1.Form.Manage, formID, identityID, true)
 
 	// A deletion whose audit fails rolls the row back and restores the
 	// policy it removed.
 	failing := newStackForms(t, db, spiceDB, stackAudit{security: writer, audit: failingAudit{}})
 	_, err = failing.DeleteForm(ctx, connect.NewRequest(&managev1.DeleteFormRequest{Id: formID}))
 	require.Error(t, err)
-	testutil.RequireSynchronousResourceAuthorization(t, spiceDB, policyv1.Form.Manage, formID, identityID, true)
+	orytest.RequireSynchronousResourceAuthorization(t, spiceDB, policyv1.Form.Manage, formID, identityID, true)
 	_, err = forms.GetForm(ctx, connect.NewRequest(&managev1.GetFormRequest{Id: formID}))
 	require.NoError(t, err)
 
 	_, err = forms.DeleteForm(ctx, connect.NewRequest(&managev1.DeleteFormRequest{Id: formID}))
 	require.NoError(t, err)
-	testutil.RequireSynchronousResourceAuthorization(t, spiceDB, policyv1.Form.Manage, formID, identityID, false)
+	orytest.RequireSynchronousResourceAuthorization(t, spiceDB, policyv1.Form.Manage, formID, identityID, false)
 	var remaining int64
 	require.NoError(t, db.Table("form").Where("id = ?", formID).Count(&remaining).Error)
 	require.Zero(t, remaining)
@@ -116,16 +118,16 @@ func TestFormPolicyRelationshipsFollowTheFormIntegration(t *testing.T) {
 
 func TestFormAdminMutationRechecksAuthorityAfterRootLockIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	adminCtx, spiceDB := testutil.IntegrationAdminContext(t, db)
+	db := orytest.NewIntegrationDB(t)
+	adminCtx, spiceDB := orytest.IntegrationAdminContext(t, db)
 	principal := auth.GetUser(adminCtx)
 	require.NotNil(t, principal)
-	ctx := testutil.NewAuditContext(t, principal.IdentityID.String(), principal.MemberID.String())
+	ctx := orytest.NewAuditContext(t, principal.IdentityID.String(), principal.MemberID.String())
 	ctx = auth.WithUser(ctx, principal)
 	writer := apitelemetry.NewDurableWriter(db)
 	forms := newStackForms(t, db, spiceDB, stackAudit{security: writer, audit: writer})
 
-	slug := "authority-fence-" + testutil.IntegrationUUID()[:8]
+	slug := "authority-fence-" + orytest.IntegrationUUID()[:8]
 	created, err := forms.CreateForm(ctx, connect.NewRequest(&managev1.CreateFormRequest{
 		Title: "Authority fence Form", Slug: &slug, Schema: stackSchema(),
 	}))
@@ -142,8 +144,8 @@ func TestFormAdminMutationRechecksAuthorityAfterRootLockIntegration(t *testing.T
 		_, updateErr := forms.UpdateForm(ctx, connect.NewRequest(&managev1.UpdateFormRequest{Id: created.Msg.Id, IsPublic: &isPublic}))
 		result <- updateErr
 	}()
-	testutil.RequireLockWaiters(t, db, 1)
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, principal.IdentityID.String(), policyv1.Role.User())
+	pgtest.RequireLockWaiters(t, db, 1)
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, principal.IdentityID.String(), policyv1.Role.User())
 	require.NoError(t, lockTx.Commit().Error)
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(<-result))
 

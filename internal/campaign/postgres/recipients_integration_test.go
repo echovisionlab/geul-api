@@ -7,25 +7,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/campaign/campaigntest"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	// The atomic selection crosses Member, newsletter and tag rows and uses the
+	// bilateral identity join. It needs PostgreSQL's joined reads and constraints.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 )
 
-// The atomic selection crosses Member, newsletter and tag rows and uses the
-// bilateral identity join. It needs PostgreSQL's joined reads and constraints.
 func TestRecipientSelectionAndMaterializationUseEligibleLinkedMembersIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true, BootstrapKratosStub: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true, BootstrapKratosStub: true}).DB
 	identityID := uuid.NewString()
 	email := "eligible@example.test"
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Email: email})
+	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{ID: identityID, Email: email})
 	memberID := seedCampaignActiveMemberEmailPair(t, db, identityID, email)
 	all := &bulkEmailRecipientSelection{Mode: campaign.CampaignDeliveryTargetModeAllUsers}
 	count, err := countBulkEmailRecipients(t.Context(), db, nil, all)
@@ -55,7 +60,7 @@ func TestRecipientSelectionAndMaterializationUseEligibleLinkedMembersIntegration
 		return err
 	}), "must be onboarded")
 	require.NoError(t, db.Model(&model.Member{}).Where("id = ?", memberID).Update("onboarded", true).Error)
-	ports := Ports{ContentBlocks: testutil.NewEmailContentBlockStore(t, nil)}
+	ports := Ports{ContentBlocks: contenttest.NewEmailContentBlockStore(t)}
 	units := mutation.Postgres(db, func(tx *gorm.DB) campaign.Store { return NewStore(tx, ports) })
 	h := campaigntest.Harness{Harness: mutationtest.PostgresHarness(db, units)}
 	c := campaigntest.SeedCampaign(t, h)

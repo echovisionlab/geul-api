@@ -12,7 +12,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +21,7 @@ import (
 func TestPostgresDeletionStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	filemediatest.RunDeletionContract(t, func(t *testing.T) filemediatest.DeletionHarness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		return filemediatest.DeletionHarness{Harness: mutationtest.PostgresHarness(db, NewDeletionUnits(db)), SeedFile: func(t *testing.T, f filemedia.File) {
 			row := model.File{ID: f.ID, FileName: f.FileName, MimeType: f.MimeType, FileSize: f.FileSize, Extension: f.Extension, CreatedAt: f.CreatedAt, DeleteRequestedAt: f.DeleteRequestedAt}
 			hash := sha256.Sum256([]byte(f.ID))

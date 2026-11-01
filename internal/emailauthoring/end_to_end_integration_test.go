@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -23,15 +25,18 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+
+	// endToEnd is the Email Authoring use cases as the server wires them, over
+	// a database and SpiceDB.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 )
 
-// endToEnd is the Email Authoring use cases as the server wires them, over
-// a database and SpiceDB.
 type endToEnd struct {
 	db       *gorm.DB
 	ctx      context.Context
@@ -43,10 +48,10 @@ type endToEnd struct {
 
 func newEndToEnd(t *testing.T, db *gorm.DB) endToEnd {
 	t.Helper()
-	ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
+	ctx, spiceDB := orytest.IntegrationAdminAuditContext(t, db)
 	runtime := emailauthoringadapter.NewRuntime()
 	ports := emailauthoringpostgres.Ports{
-		ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB), References: emailauthoringadapter.NewCampaignDeliveryReferences(),
+		ContentBlocks: contenttest.NewEmailContentBlockStore(t), References: emailauthoringadapter.NewCampaignDeliveryReferences(),
 		Members: memberadapter.ContributorMembers{}, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB), Rendering: runtime,
 	}
 	units, err := emailauthoringpostgres.NewUnits(db, ports)
@@ -84,7 +89,7 @@ func lockRow(t *testing.T, db *gorm.DB, table, id string) *gorm.DB {
 // is denied once the lock is released: the fresh check runs after the lock.
 func TestEmailTemplateUpdateRechecksAuthorityAfterWaitingOnItsRootIntegration(t *testing.T) {
 	t.Parallel()
-	e := newEndToEnd(t, testutil.NewConcurrentPostIntegrationDB(t))
+	e := newEndToEnd(t, orytest.NewConcurrentPostIntegrationDB(t))
 	created, err := e.service.CreateEmailTemplate(e.ctx, emailauthoring.CreateEmailTemplateCommand{
 		Key: uniqueKey("fence"), Name: "Original template", Subject: "Subject", SourceLocale: "en",
 	})
@@ -97,8 +102,8 @@ func TestEmailTemplateUpdateRechecksAuthorityAfterWaitingOnItsRootIntegration(t 
 		_, err := e.service.UpdateEmailTemplate(e.ctx, emailauthoring.UpdateEmailTemplateCommand{ID: created.ID, Name: &name})
 		result <- err
 	}()
-	testutil.RequireLockWaiters(t, e.db, 1)
-	testutil.GrantIntegrationGlobalRole(t, e.spiceDB, auth.GetUser(e.ctx).IdentityID.String(), policyv1.Role.User())
+	pgtest.RequireLockWaiters(t, e.db, 1)
+	orytest.GrantIntegrationGlobalRole(t, e.spiceDB, auth.GetUser(e.ctx).IdentityID.String(), policyv1.Role.User())
 	require.NoError(t, lockTx.Commit().Error)
 
 	require.Equal(t, connect.CodePermissionDenied, codeOf(<-result))
@@ -112,7 +117,7 @@ func TestEmailTemplateUpdateRechecksAuthorityAfterWaitingOnItsRootIntegration(t 
 // the state the winner left.
 func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(t *testing.T) {
 	t.Parallel()
-	e := newEndToEnd(t, testutil.NewConcurrentPostIntegrationDB(t))
+	e := newEndToEnd(t, orytest.NewConcurrentPostIntegrationDB(t))
 	layout, err := e.service.CreateEmailLayout(e.ctx, emailauthoring.CreateEmailLayoutCommand{
 		Name: "Race layout", Key: uniqueKey("race_layout"), HTMLContent: "<html><body>{{content}}</body></html>", SourceLocale: "en",
 	})
@@ -131,7 +136,7 @@ func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(t *testi
 		_, err := e.service.UpdateEmailTemplate(e.ctx, emailauthoring.UpdateEmailTemplateCommand{ID: template.ID, LayoutID: &layout.ID})
 		assigned <- err
 	}()
-	testutil.RequireLockWaiters(t, e.db, 2)
+	pgtest.RequireLockWaiters(t, e.db, 2)
 	require.NoError(t, lockTx.Rollback().Error)
 	deleteErr, assignErr := <-deleted, <-assigned
 
@@ -154,19 +159,19 @@ func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(t *testi
 // projection and the custom variables.
 func TestEmailTemplateTargetsKeepTheSharedRevisionAcrossWritersIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupOryStackWithLocalKratos(t).DB
+	db := orytest.SetupOryStackWithLocalKratos(t).DB
 	e := newEndToEnd(t, db)
 	created, err := e.service.CreateEmailTemplate(e.ctx, emailauthoring.CreateEmailTemplateCommand{
 		Key: uniqueKey("exact_target"), Name: "Exact target Template", Subject: "Source subject", SourceLocale: "en",
 	})
 	require.NoError(t, err)
-	contributorID := testutil.IntegrationUUID()
-	testutil.InsertAuthorizedDocumentContributor(t, db, e.spiceDB, contributorID)
-	collab := testutil.NewAuditContext(t, auth.GetUser(e.ctx).IdentityID.String(), contributorID)
+	contributorID := orytest.IntegrationUUID()
+	orytest.InsertAuthorizedDocumentContributor(t, db, e.spiceDB, contributorID)
+	collab := orytest.NewAuditContext(t, auth.GetUser(e.ctx).IdentityID.String(), contributorID)
 
 	sourceWrite, err := e.internal.ApplyTemplateBlockBatch(collab, emailauthoring.ApplyTemplateBlockBatchCommand{
 		TemplateID: created.ID, Locale: "en",
-		Batch: testutil.NewParagraphBatch(created.Projection.Document, created.Projection.Revision, "en",
+		Batch: contenttest.NewParagraphBatch(created.Projection.Document, created.Projection.Revision, "en",
 			"Source body {{ Recipient_Name }} {{custom_code}} {{recipient_name}}", []string{contributorID}),
 	})
 	require.NoError(t, err)

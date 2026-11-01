@@ -21,7 +21,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -281,7 +282,7 @@ func TestHydrateContentBlockMediaDoesNotAttachSharedFileDeliveryToReplacedRelati
 
 func TestAuthorizeDownloadRequiresCurrentActivePrincipalForAuthenticatedPolicyIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.PrepareOryIntegrationTest(t)
+	stack := orytest.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	postID, _, blockID, fileID := seedDownloadRelationForPrincipalFenceIntegration(
 		t, db, managev1.PostStatus_POST_STATUS_PUBLISHED.String(), mediaasset.FileDownloadAudienceAuthenticated,
@@ -331,7 +332,7 @@ func TestAuthorizeDownloadRequiresCurrentActivePrincipalForAuthenticatedPolicyIn
 
 func TestAuthorizeDownloadRestrictedAllMembersRequiresCurrentActiveMemberIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.PrepareOryIntegrationTest(t)
+	stack := orytest.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	postID, _, blockID, _ := seedDownloadRelationForPrincipalFenceIntegration(
 		t, db, managev1.PostStatus_POST_STATUS_PUBLISHED.String(), mediaasset.FileDownloadAudienceRestricted,
@@ -382,13 +383,13 @@ func TestAuthorizeDownloadRestrictedAllMembersRequiresCurrentActiveMemberIntegra
 
 func TestAuthorizeDownloadDraftPublicPolicyRejectsPrincipalRevokedAfterPhaseOneIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.PrepareOryIntegrationTest(t)
+	stack := orytest.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	postID, _, blockID, _ := seedDownloadRelationForPrincipalFenceIntegration(
 		t, db, managev1.PostStatus_POST_STATUS_DRAFT.String(), mediaasset.FileDownloadAudiencePublic,
 	)
 	member := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	testutil.GrantPostIntegrationRole(t, stack.SpiceDBClient, member.IdentityID, policyv1.Role.Admin())
+	orytest.GrantPostIntegrationRole(t, stack.SpiceDBClient, member.IdentityID, policyv1.Role.Admin())
 	ctx := auth.WithUser(t.Context(), member.AuthUserInfo())
 
 	loaded, release := make(chan struct{}), make(chan struct{})

@@ -11,7 +11,8 @@ import (
 	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -25,7 +26,7 @@ func (f uploadTrackAuthority) LockExistsWithDB(ctx context.Context, tx *gorm.DB,
 
 func TestUploadTrackAuthorityUsesFileTransactionIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	track, upload := uuid.NewString(), uuid.NewString()
 	row := model.UploadSession{UploadID: upload, FileID: uuid.NewString(), UploadType: "UPLOAD_TYPE_GENERAL_FILE", FileName: "file", FileSize: 6, RequestedMime: "image/webp", TotalParts: 1, ChunkSize: 6, Status: model.UploadSessionStatusInitiated}
 	require.NoError(t, db.Omit("EntityID").Create(&row).Error)

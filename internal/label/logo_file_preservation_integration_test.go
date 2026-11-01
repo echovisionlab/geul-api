@@ -15,16 +15,17 @@ import (
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	adminID := testutil.IntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Label Logo Admin")
+	db := orytest.NewIntegrationDB(t)
+	adminID := orytest.IntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Label Logo Admin")
 	ctx := labelIntegrationAdminCtx(adminID)
 	labelService := newLabelIntegrationService(t, db, adminID)
 
@@ -42,8 +43,8 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 				t,
 				labelService,
 				ctx,
-				"Label Logo "+tt.name+" "+testutil.IntegrationUUID(),
-				"label-logo-"+tt.name+"-"+testutil.IntegrationUUID(),
+				"Label Logo "+tt.name+" "+orytest.IntegrationUUID(),
+				"label-logo-"+tt.name+"-"+orytest.IntegrationUUID(),
 			)
 			originalFileID := seedImageBindingUploadedFileFixtureForKind(t, db, "label/"+labelID+"/original-"+tt.name+".webp", "logo")
 			replacementFileID := seedImageBindingUploadedFileFixtureForKind(t, db, "label/"+labelID+"/replacement-"+tt.name+".webp", "logo")
@@ -80,8 +81,8 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 			t,
 			labelService,
 			ctx,
-			"Label Effective Logo "+testutil.IntegrationUUID(),
-			"label-effective-logo-"+testutil.IntegrationUUID(),
+			"Label Effective Logo "+orytest.IntegrationUUID(),
+			"label-effective-logo-"+orytest.IntegrationUUID(),
 		)
 		lightFileID := seedImageBindingUploadedFileFixtureForKind(t, db, "label/"+labelID+"/light.webp", "logo")
 		darkFileID := seedImageBindingUploadedFileFixtureForKind(t, db, "label/"+labelID+"/dark.webp", "logo")
@@ -147,8 +148,8 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 			t,
 			labelService,
 			ctx,
-			"Label Global Reconcile "+testutil.IntegrationUUID(),
-			"label-global-reconcile-"+testutil.IntegrationUUID(),
+			"Label Global Reconcile "+orytest.IntegrationUUID(),
+			"label-global-reconcile-"+orytest.IntegrationUUID(),
 		)
 		darkFileID := seedImageBindingUploadedFileFixtureForKind(t, db, "label/"+labelID+"/global-dark.webp", "logo")
 		_, err := labelService.SetLabelImage(ctx, connect.NewRequest(&managev1.SetLabelImageRequest{
@@ -194,8 +195,8 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 			t,
 			labelService,
 			ctx,
-			"Label Delete Assets "+testutil.IntegrationUUID(),
-			"label-delete-assets-"+testutil.IntegrationUUID(),
+			"Label Delete Assets "+orytest.IntegrationUUID(),
+			"label-delete-assets-"+orytest.IntegrationUUID(),
 		)
 		lightFileID := seedImageBindingUploadedFileFixtureForKind(t, db, "label/"+labelID+"/delete-light.webp", "logo")
 		darkFileID := seedImageBindingUploadedFileFixtureForKind(t, db, "label/"+labelID+"/delete-dark.webp", "logo")

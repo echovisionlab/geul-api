@@ -9,7 +9,8 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -24,7 +25,7 @@ func TestProjectionBindsCanonicalLocalizedLegalRoutesIntegration(t *testing.T) {
 		{kind: "terms", status: "TERMS_STATUS_ACTIVE"},
 	} {
 		t.Run(testCase.kind, func(t *testing.T) {
-			pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
+			pg := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true})
 			db := pg.DB
 			now := time.Now().UTC()
 			documentID, assetID := uuid.NewString(), uuid.NewString()

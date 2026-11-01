@@ -11,7 +11,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -30,7 +31,7 @@ func TestDeleteRechecksAuthorityRevokedDuringUploadCleanupIntegration(t *testing
 		fixture.seedUploadSession(t, fixture.trackIDs[0])
 		rows, relationships, audits := fixture.rows(t), fixture.relationships(t), fixture.auditActions(t)
 		fixture.cleaner.cleanup = func(trackID string) error {
-			testutil.GrantIntegrationGlobalRole(t, fixture.spiceDB, fixture.adminID, policyv1.Role.User())
+			orytest.GrantIntegrationGlobalRole(t, fixture.spiceDB, fixture.adminID, policyv1.Role.User())
 			return fixture.deleteUploadSessions(trackID)
 		}
 
@@ -50,7 +51,7 @@ func TestDeleteRechecksAuthorityRevokedDuringUploadCleanupIntegration(t *testing
 			DB: fixture.db, SpiceDB: fixture.spiceDB, Audit: &audittest.Recorder{}, Files: fixture.cleaner,
 		}))
 		fixture.cleaner.cleanup = func(trackID string) error {
-			testutil.GrantIntegrationGlobalRole(t, fixture.spiceDB, fixture.adminID, policyv1.Role.User())
+			orytest.GrantIntegrationGlobalRole(t, fixture.spiceDB, fixture.adminID, policyv1.Role.User())
 			return fixture.deleteUploadSessions(trackID)
 		}
 

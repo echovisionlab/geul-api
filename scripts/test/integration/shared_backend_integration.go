@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	"github.com/testcontainers/testcontainers-go"
 )
 
@@ -27,7 +27,7 @@ func startSuiteBackend(ctx context.Context, leasePath string) (*suiteBackend, er
 	if err != nil {
 		return nil, err
 	}
-	stack, err := testutil.StartBackendIntegrationStackWithOptions(ctx, testutil.BackendIntegrationStackOptions{
+	stack, err := runtimetest.StartBackendIntegrationStackWithOptions(ctx, runtimetest.BackendIntegrationStackOptions{
 		HookBaseURL: hookProxy.DockerBaseURL(),
 	})
 	if err != nil {

@@ -16,7 +16,8 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -52,7 +53,7 @@ func (postgresPersistenceReuseAuthorizer) AuthorizeFileReuse(
 
 func TestPostgresReplaceSnapshotPersistsGeneratedRichTextJSONB(t *testing.T) {
 	t.Parallel()
-	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
+	postgres := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{
 		BootstrapKratosStub: true,
 		ApplyAppSchemaSQL:   true,
 	})
@@ -116,7 +117,7 @@ func TestPostgresReplaceSnapshotPersistsGeneratedRichTextJSONB(t *testing.T) {
 
 func TestPostgresLocaleEditUsesOneCASStatementAndRollsBackInvalidPayload(t *testing.T) {
 	t.Parallel()
-	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
+	postgres := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{
 		BootstrapKratosStub: true,
 		ApplyAppSchemaSQL:   true,
 	})

@@ -14,7 +14,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
@@ -23,8 +24,8 @@ import (
 
 func TestAuthBootstrapServiceSynchronizesMissingRolesWithoutDowngradingExistingRolesIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
-	testutil.ResetFirstAdminBootstrapFixture(t, stack.DB)
+	stack := orytest.SetupOryStack(t)
+	orytest.ResetFirstAdminBootstrapFixture(t, stack.DB)
 	service := newIntegrationLoginRoles(t, stack, apitelemetry.NewDurableWriter(stack.DB))
 	ctx := context.Background()
 
@@ -75,8 +76,8 @@ func (failingAuthBootstrapAuditAppender) AppendDomainAuditInTransaction(context.
 // write, so real SpiceDB keeps no direct role.
 func TestAuthBootstrapServiceLeavesNoDirectRoleWhenTheClaimRollsBackIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
-	testutil.ResetFirstAdminBootstrapFixture(t, stack.DB)
+	stack := orytest.SetupOryStack(t)
+	orytest.ResetFirstAdminBootstrapFixture(t, stack.DB)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
 	subject := requireAccountIdentitySubject(t, user.IdentityID)
 	_, err := stack.SpiceDBClient.DeleteAllAccountIdentityRelationships(t.Context(), subject)
@@ -93,7 +94,7 @@ func TestAuthBootstrapServiceLeavesNoDirectRoleWhenTheClaimRollsBackIntegration(
 
 // newIntegrationLoginRoles runs the login role sync on the stack's
 // PostgreSQL, Kratos rows and SpiceDB, with the production role transition.
-func newIntegrationLoginRoles(t *testing.T, stack *testutil.OryStack, audit domainaudit.Appender) *authentication.Service {
+func newIntegrationLoginRoles(t *testing.T, stack *orytest.OryStack, audit domainaudit.Appender) *authentication.Service {
 	t.Helper()
 	service, err := authentication.NewService(authentication.Deps{
 		Units: authenticationpostgres.NewUnits(stack.DB), SpiceDB: stack.SpiceDBClient, Fence: identitystate.PostgresFence{},

@@ -6,6 +6,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -21,7 +23,8 @@ import (
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -40,7 +43,7 @@ func TestManagePostFeaturedImageUsesExactFinalOwnerBoundaryIntegration(t *testin
 		fixture := newManagePostFeaturedDeliveryFixture(t)
 		fixture.files.beforeExact = func() {
 			_, err := fixture.posts.RemovePostCollaborator(fixture.adminCtx, connect.NewRequest(&managev1.RemovePostCollaboratorRequest{
-				PostId: fixture.postID, MemberId: testutil.PostIntegrationMemberID(fixture.editorID),
+				PostId: fixture.postID, MemberId: orytest.PostIntegrationMemberID(fixture.editorID),
 			}))
 			require.NoError(t, err)
 		}
@@ -52,7 +55,7 @@ func TestManagePostFeaturedImageUsesExactFinalOwnerBoundaryIntegration(t *testin
 
 	t.Run("featured replacement after pre-read cannot sign stale file", func(t *testing.T) {
 		fixture := newManagePostFeaturedDeliveryFixture(t)
-		replacementID := testutil.PostIntegrationUUID()
+		replacementID := orytest.PostIntegrationUUID()
 		seedManagePostFeaturedFile(t, fixture.db, replacementID)
 		fixture.files.beforeExact = func() {
 			require.NoError(t, fixture.db.Table("post").Where("id = ?::uuid", fixture.postID).
@@ -91,17 +94,17 @@ type managePostFeaturedDeliveryFixture struct {
 
 func newManagePostFeaturedDeliveryFixture(t *testing.T) managePostFeaturedDeliveryFixture {
 	t.Helper()
-	db := testutil.NewPostIntegrationDB(t)
-	adminID := testutil.PostIntegrationUUID()
-	editorID := testutil.PostIntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Manage Post featured admin")
-	testutil.SeedPostIntegrationIdentity(t, db, editorID, "Manage Post featured collaborator")
-	spiceDB := testutil.PostIntegrationSpiceDB(t)
-	testutil.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	testutil.GrantPostIntegrationRole(t, spiceDB, editorID, policyv1.Role.User())
-	adminCtx := testutil.PostIntegrationContext(adminID)
-	editorCtx := testutil.PostIntegrationContext(editorID)
-	store := testutil.NewPostContentBlockStore(t)
+	db := orytest.NewPostIntegrationDB(t)
+	adminID := orytest.PostIntegrationUUID()
+	editorID := orytest.PostIntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Manage Post featured admin")
+	orytest.SeedPostIntegrationIdentity(t, db, editorID, "Manage Post featured collaborator")
+	spiceDB := orytest.PostIntegrationSpiceDB(t)
+	orytest.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	orytest.GrantPostIntegrationRole(t, spiceDB, editorID, policyv1.Role.User())
+	adminCtx := orytest.PostIntegrationContext(adminID)
+	editorCtx := orytest.PostIntegrationContext(editorID)
+	store := contenttest.NewPostContentBlockStore(t)
 
 	filePostAccess := filemediaadapter.NewPostAccess(spiceDB)
 	filePorts := filemediapostgres.Ports{PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: filePostAccess, SpiceDB: spiceDB}), PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(postFeaturedAsyncPublisher{})}
@@ -132,18 +135,18 @@ func newManagePostFeaturedDeliveryFixture(t *testing.T) managePostFeaturedDelive
 		store,
 		postFiles,
 	)
-	slug := "manage-featured-" + testutil.PostIntegrationUUID()
+	slug := "manage-featured-" + orytest.PostIntegrationUUID()
 	created, err := posts.CreatePost(adminCtx, connect.NewRequest(&managev1.CreatePostRequest{
 		Title: "Manage featured delivery", Slug: &slug,
 	}))
 	require.NoError(t, err)
 	_, err = posts.AddPostCollaborator(adminCtx, connect.NewRequest(&managev1.AddPostCollaboratorRequest{
-		PostId: created.Msg.Id, MemberId: testutil.PostIntegrationMemberID(editorID),
+		PostId: created.Msg.Id, MemberId: orytest.PostIntegrationMemberID(editorID),
 	}))
 	require.NoError(t, err)
 	_, err = posts.PublishPost(adminCtx, connect.NewRequest(&managev1.PublishPostRequest{Id: created.Msg.Id}))
 	require.NoError(t, err)
-	fileID := testutil.PostIntegrationUUID()
+	fileID := orytest.PostIntegrationUUID()
 	seedManagePostFeaturedFile(t, db, fileID)
 	require.NoError(t, db.Table("post").Where("id = ?::uuid", created.Msg.Id).
 		Update("featured_image_file_id", fileID).Error)

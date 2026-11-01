@@ -14,7 +14,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -33,12 +34,12 @@ func TestShareLinkMutationsRejectStaleIdentityIntegration(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			stack := testutil.SetupOryStack(t)
+			stack := orytest.SetupOryStack(t)
 			db := stack.DB
 			adminID := uuid.NewString()
-			testutil.SeedPostIntegrationIdentity(t, db, adminID, "Share Link Admin")
-			testutil.GrantPostIntegrationRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
-			ctx := testutil.NewAuditContext(t, adminID, testutil.PostIntegrationMemberID(adminID))
+			orytest.SeedPostIntegrationIdentity(t, db, adminID, "Share Link Admin")
+			orytest.GrantPostIntegrationRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
+			ctx := orytest.NewAuditContext(t, adminID, orytest.PostIntegrationMemberID(adminID))
 			labelID, documentID := uuid.NewString(), uuid.NewString()
 			require.NoError(t, db.Exec(`INSERT INTO content_document (id, profile) VALUES (?, 'compact')`, documentID).Error)
 			require.NoError(t, db.Exec(`INSERT INTO label (id, content_document_id) VALUES (?, ?)`, labelID, documentID).Error)

@@ -14,7 +14,8 @@ import (
 
 	sitemapadapter "github.com/echovisionlab/geul-api/internal/adapters/sitemap"
 	sitemapdomain "github.com/echovisionlab/geul-api/internal/sitemap"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
@@ -190,7 +191,7 @@ func TestPostgresSitemapSnapshotStoreRoundTripIntegration(t *testing.T) {
 
 func newSitemapIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	return pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 }
 
 func insertSitemapContentDocument(t *testing.T, db *gorm.DB, profile string) string {

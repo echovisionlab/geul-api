@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func writeSuiteLease(postgres *suitePostgres) (string, func() error, error) {
@@ -32,8 +32,8 @@ func writeSuiteLease(postgres *suitePostgres) (string, func() error, error) {
 	if err := file.Chmod(0o600); err != nil {
 		return "", nil, fmt.Errorf("protect integration lease descriptor: %w", err)
 	}
-	descriptor := testutil.AppIntegrationLeaseDescriptor{
-		Version:              testutil.AppIntegrationLeaseVersion,
+	descriptor := pgtest.AppIntegrationLeaseDescriptor{
+		Version:              pgtest.AppIntegrationLeaseVersion,
 		PostgresAdminDSN:     postgres.AdminDSN,
 		PostgresContainerID:  postgres.ContainerID,
 		PostgresTemplateName: postgres.Template,
@@ -51,12 +51,12 @@ func writeSuiteLease(postgres *suitePostgres) (string, func() error, error) {
 	return path, remove, nil
 }
 
-func updateSuiteLeaseBackend(path string, backend *testutil.AppIntegrationBackendLease) error {
+func updateSuiteLeaseBackend(path string, backend *pgtest.AppIntegrationBackendLease) error {
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read integration lease descriptor: %w", err)
 	}
-	var descriptor testutil.AppIntegrationLeaseDescriptor
+	var descriptor pgtest.AppIntegrationLeaseDescriptor
 	if err := json.Unmarshal(contents, &descriptor); err != nil {
 		return fmt.Errorf("decode integration lease descriptor for backend update: %w", err)
 	}

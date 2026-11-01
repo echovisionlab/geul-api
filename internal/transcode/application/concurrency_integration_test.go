@@ -12,8 +12,6 @@ import (
 
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
-
 	"github.com/echovisionlab/geul-api/internal/transcode/application"
 	applicationpostgres "github.com/echovisionlab/geul-api/internal/transcode/application/postgres"
 
@@ -22,6 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	transcodepkg "github.com/echovisionlab/geul-api/internal/transcode"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -394,9 +393,9 @@ func requireWorkerTranscodeDerivativeAbsent(t *testing.T, db *gorm.DB, fileID st
 	require.Equal(t, int64(0), count)
 }
 
-func newWorkerIntegrationPostgres(t *testing.T) *testutil.AppPostgres {
+func newWorkerIntegrationPostgres(t *testing.T) *pgtest.AppPostgres {
 	t.Helper()
-	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
+	return pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{
 		BootstrapKratosStub: true,
 		ApplyAppSchemaSQL:   true,
 	})

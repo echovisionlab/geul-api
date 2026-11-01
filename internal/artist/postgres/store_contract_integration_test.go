@@ -15,13 +15,13 @@ import (
 	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestPostgresStoreKeepsTheArtistStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	artisttest.RunStoreContract(t, func(t *testing.T) artisttest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		// The contract reaches the artist rows and the Label links; content,
 		// media, collaboration and the other relation readers stay with
 		// their own tests.

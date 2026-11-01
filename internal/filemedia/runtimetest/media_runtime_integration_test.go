@@ -22,7 +22,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
@@ -31,12 +32,12 @@ import (
 
 func TestRuntimeEditorFileUploadIsIndependentAndFileScoped(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupSharedRuntimeStack(t)
+	stack := runtimetest.SetupSharedRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
 	fileClient := managev1connect.NewFileServiceClient(&http.Client{Timeout: 30 * time.Second}, stack.BackendURL)
 	// The direct browser image path normalizes pixels to WebP before upload.
 	imagePath := filepath.Join(t.TempDir(), "normalized.webp")
-	runRuntimeClientMediaCommand(t, "cwebp", "-q", "90", testutil.RepositoryTestImageJPEG(t), "-o", imagePath)
+	runRuntimeClientMediaCommand(t, "cwebp", "-q", "90", runtimetest.RepositoryTestImageJPEG(t), "-o", imagePath)
 	imageBytes, err := os.ReadFile(imagePath)
 	require.NoError(t, err)
 	fileID, delivery := completeRuntimeEditorMediaUploadAndWait(
@@ -81,14 +82,14 @@ func TestRuntimeEditorFileUploadIsIndependentAndFileScoped(t *testing.T) {
 
 func TestRuntimeTrackAudioUploadAPIFlows(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupRuntimeStack(t)
+	stack := runtimetest.SetupRuntimeStack(t)
 	stack.BackendReadTimeoutSec = 1
 	stack.StartBackend(t)
 
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	staleManager := stack.CreateUser(t, policyv1.Role.Author().ID())
 	outsider := stack.CreateUser(t, policyv1.Role.User().ID())
-	releaseID := testutil.CreateReleaseViaAPI(t, stack.BackendURL, manager)
+	releaseID := runtimetest.CreateReleaseViaAPI(t, stack.BackendURL, manager)
 
 	fileClient := managev1connect.NewFileServiceClient(&http.Client{Timeout: 30 * time.Second}, stack.BackendURL)
 	trackClient := managev1connect.NewTrackServiceClient(&http.Client{Timeout: 30 * time.Second}, stack.BackendURL)
@@ -112,9 +113,9 @@ func TestRuntimeTrackAudioUploadAPIFlows(t *testing.T) {
 	require.NoError(t, err)
 	trackID := createResp.Msg.Id
 	require.NotEmpty(t, trackID)
-	testutil.AssertManagedReleaseTrackAuthority(t, stack.DB, releaseID, trackID)
+	runtimetest.AssertManagedReleaseTrackAuthority(t, stack.DB, releaseID, trackID)
 
-	fixturePath := testutil.RepositoryTestAudioMP3(t)
+	fixturePath := runtimetest.RepositoryTestAudioMP3(t)
 	fixtureBytes, err := os.ReadFile(fixturePath)
 	require.NoError(t, err)
 	audioMimeType := "audio/mpeg"
@@ -418,7 +419,7 @@ func TestRuntimeTrackAudioUploadAPIFlows(t *testing.T) {
 
 func TestRuntimeIntegratedOGGenerationThroughAuthenticatedAPI(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupSharedRuntimeStack(t)
+	stack := runtimetest.SetupSharedRuntimeStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	client := managev1connect.NewAdminServiceClient(http.DefaultClient, stack.BackendURL)
 	request := connect.NewRequest(&managev1.RegenerateOgImageRequest{
@@ -452,11 +453,11 @@ func TestRuntimeIntegratedOGGenerationThroughAuthenticatedAPI(t *testing.T) {
 
 func TestRuntimeClientVideoAndMeshOptimization(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupSharedRuntimeStack(t)
+	stack := runtimetest.SetupSharedRuntimeStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	client := managev1connect.NewFileServiceClient(&http.Client{Timeout: 30 * time.Second}, stack.BackendURL)
 	t.Run("video", func(t *testing.T) {
-		body, err := os.ReadFile(testutil.RepositoryTestVideoMP4(t))
+		body, err := os.ReadFile(runtimetest.RepositoryTestVideoMP4(t))
 		require.NoError(t, err)
 		_, delivery := completeRuntimeEditorMediaUploadAndWait(t, stack, client, admin, managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO, "video/mp4", runtimeTestFileName("integrated-video.mp4"), body, func(d *commonv1.MediaDelivery) bool {
 			return d.GetProcessingStatus() == commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY && d.GetPlayback().GetUrl() != ""
@@ -472,7 +473,7 @@ func TestRuntimeClientVideoAndMeshOptimization(t *testing.T) {
 		require.True(t, strings.Contains(string(playlist), ".ts"), "client playlist must reference MPEG-TS media")
 	})
 	t.Run("mesh", func(t *testing.T) {
-		body, err := os.ReadFile(testutil.RepositoryTestMeshGLB(t))
+		body, err := os.ReadFile(runtimetest.RepositoryTestMeshGLB(t))
 		require.NoError(t, err)
 		fileID, _ := completeRuntimeEditorMediaUploadAndWait(t, stack, client, admin, managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH, "model/gltf-binary", runtimeTestFileName("integrated-mesh.glb"), body, func(d *commonv1.MediaDelivery) bool {
 			return d.GetProcessingStatus() == commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY
@@ -502,11 +503,11 @@ func TestRuntimeClientVideoAndMeshOptimization(t *testing.T) {
 // origin.
 func TestRuntimeEditorMeshUploadServesGLBThroughCDN(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupSharedRuntimeStackWithCDN(t)
+	stack := runtimetest.SetupSharedRuntimeStackWithCDN(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
 	fileClient := managev1connect.NewFileServiceClient(&http.Client{Timeout: 30 * time.Second}, stack.BackendURL)
 
-	meshBody, err := os.ReadFile(testutil.RepositoryTestMeshGLB(t))
+	meshBody, err := os.ReadFile(runtimetest.RepositoryTestMeshGLB(t))
 	require.NoError(t, err)
 	require.NotEmpty(t, meshBody)
 

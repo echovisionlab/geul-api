@@ -5,14 +5,13 @@ package scheduler
 import (
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/stretchr/testify/require"
-
-	"github.com/echovisionlab/geul-api/internal/testutil"
 )
 
 func TestPostgresLeaderTransfersLockAcrossTwoConnectionsIntegration(t *testing.T) {
 	t.Parallel()
-	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{})
+	postgres := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{})
 	postgres.SQLDB.SetMaxOpenConns(4)
 
 	firstConn, err := postgres.SQLDB.Conn(t.Context())

@@ -17,7 +17,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -37,10 +38,10 @@ func newReleaseTrackAuthorityRaceFixture(t *testing.T) releaseTrackAuthorityRace
 	t.Helper()
 
 	db := newConcurrentServiceIntegrationDB(t)
-	identityID := testutil.IntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Release Track authority race")
+	identityID := orytest.IntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, identityID, "Release Track authority race")
 	spiceDB := integrationSpiceDB(t)
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := releaseIntegrationAdminCtx(identityID)
 	service := releasetest.NewService(t, releasetest.Deps{
 		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{},
@@ -84,7 +85,7 @@ func (f releaseTrackAuthorityRaceFixture) createTrack(t *testing.T, title string
 
 func (f releaseTrackAuthorityRaceFixture) revokeAdmin(t *testing.T) {
 	t.Helper()
-	testutil.GrantIntegrationGlobalRole(t, f.spiceDB, f.identity, policyv1.Role.User())
+	orytest.GrantIntegrationGlobalRole(t, f.spiceDB, f.identity, policyv1.Role.User())
 }
 
 func lockReleaseAuthorityRaceRoot(t *testing.T, db *gorm.DB, releaseID string) *gorm.DB {
@@ -186,7 +187,7 @@ func TestReleaseMutationsRecheckCurrentAdminAfterRootLockIntegration(t *testing.
 
 	t.Run("artwork", func(t *testing.T) {
 		fixture := newReleaseTrackAuthorityRaceFixture(t)
-		fileID := testutil.IntegrationUUID()
+		fileID := orytest.IntegrationUUID()
 		seedFileDeleteLifecycleFile(t, fixture.db, fileID, "authority-race", "image/webp", "webp")
 		seedHardCutReadyPublicAsset(t, fixture.db, "artwork", "webp", "image/webp", &fileID)
 		lockTx := lockReleaseAuthorityRaceRoot(t, fixture.db, fixture.release)

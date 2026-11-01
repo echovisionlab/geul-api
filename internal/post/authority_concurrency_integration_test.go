@@ -6,6 +6,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 
 	"connectrpc.com/connect"
@@ -14,7 +16,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -73,7 +76,7 @@ func TestPostMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
 			db, spiceDB, actorID, actorMemberID, postID := seedPostAuthorityRaceFixtureWithSpiceDB(t)
 			service := postintegration.NewPostDomainService(
 				t, db, "", spiceDB,
-				testutil.NewPostContentBlockStore(t),
+				contenttest.NewPostContentBlockStore(t),
 			)
 			revision := requirePostConfigurationRevision(t, db, postID)
 
@@ -111,7 +114,7 @@ func TestPostUpdateRechecksExistenceAfterRootLockIntegration(t *testing.T) {
 	db, spiceDB, actorID, _, postID := seedPostAuthorityRaceFixtureWithSpiceDB(t)
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
-		testutil.NewPostContentBlockStore(t),
+		contenttest.NewPostContentBlockStore(t),
 	)
 	revision := requirePostConfigurationRevision(t, db, postID)
 
@@ -179,7 +182,7 @@ func TestPostMutationRejectsMemberTombstonedBeforePrincipalLockIntegration(t *te
 	db, spiceDB, actorID, actorMemberID, postID := seedPostAuthorityRaceFixtureWithSpiceDB(t)
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
-		testutil.NewPostContentBlockStore(t),
+		contenttest.NewPostContentBlockStore(t),
 	)
 
 	revokeTx := db.Begin()
@@ -213,15 +216,15 @@ func TestPostMutationRejectsMemberTombstonedBeforePrincipalLockIntegration(t *te
 
 func TestCreatePostRejectsRoleDemotedBeforeIdentityLockIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewConcurrentPostIntegrationDB(t)
-	actorID := testutil.PostIntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, actorID, "Create role race "+actorID[:8])
-	spiceDB := testutil.PostIntegrationSpiceDB(t)
-	testutil.GrantPostIntegrationRole(t, spiceDB, actorID, policyv1.Role.Author())
+	db := orytest.NewConcurrentPostIntegrationDB(t)
+	actorID := orytest.PostIntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, actorID, "Create role race "+actorID[:8])
+	spiceDB := orytest.PostIntegrationSpiceDB(t)
+	orytest.GrantPostIntegrationRole(t, spiceDB, actorID, policyv1.Role.Author())
 
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
-		testutil.NewPostContentBlockStore(t),
+		contenttest.NewPostContentBlockStore(t),
 	)
 	demoteTx := db.Begin()
 	require.NoError(t, demoteTx.Error)
@@ -233,12 +236,12 @@ func TestCreatePostRejectsRoleDemotedBeforeIdentityLockIntegration(t *testing.T)
 		_, err := service.CreatePost(postAuthorRaceContext(actorID), connect.NewRequest(&managev1.CreatePostRequest{
 			Title:    "Role race",
 			Slug:     &slug,
-			Document: testutil.EmptyPostDocument("en"),
+			Document: contenttest.EmptyPostDocument("en"),
 		}))
 		result <- err
 	}()
 	requireMutationWaiting(t, db, 1, result)
-	testutil.GrantPostIntegrationRole(t, spiceDB, actorID, policyv1.Role.User())
+	orytest.GrantPostIntegrationRole(t, spiceDB, actorID, policyv1.Role.User())
 	require.NoError(t, demoteTx.Commit().Error)
 
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(<-result))
@@ -250,10 +253,10 @@ func TestCreatePostRejectsRoleDemotedBeforeIdentityLockIntegration(t *testing.T)
 func TestAddPostAuthorRejectsTargetRoleDemotedBeforeIdentityLockIntegration(t *testing.T) {
 	t.Parallel()
 	db, spiceDB, actorID, _, postID := seedPostAuthorityRaceFixtureWithSpiceDB(t)
-	targetID := testutil.PostIntegrationUUID()
-	targetMemberID := testutil.PostIntegrationMemberID(targetID)
-	testutil.SeedPostIntegrationIdentity(t, db, targetID, "Target role race "+targetID[:8])
-	testutil.GrantPostIntegrationRole(t, spiceDB, targetID, policyv1.Role.Author())
+	targetID := orytest.PostIntegrationUUID()
+	targetMemberID := orytest.PostIntegrationMemberID(targetID)
+	orytest.SeedPostIntegrationIdentity(t, db, targetID, "Target role race "+targetID[:8])
+	orytest.GrantPostIntegrationRole(t, spiceDB, targetID, policyv1.Role.Author())
 
 	demoteTx := db.Begin()
 	require.NoError(t, demoteTx.Error)
@@ -262,14 +265,14 @@ func TestAddPostAuthorRejectsTargetRoleDemotedBeforeIdentityLockIntegration(t *t
 	go func() {
 		_, err := postintegration.NewPostDomainService(
 			t, db, "", spiceDB,
-			testutil.NewPostContentBlockStore(t),
+			contenttest.NewPostContentBlockStore(t),
 		).AddPostAuthor(postAuthorRaceContext(actorID), connect.NewRequest(&managev1.AddPostAuthorRequest{
 			PostId: postID, MemberId: targetMemberID,
 		}))
 		result <- err
 	}()
 	requireMutationWaiting(t, db, 1, result)
-	testutil.GrantPostIntegrationRole(t, spiceDB, targetID, policyv1.Role.User())
+	orytest.GrantPostIntegrationRole(t, spiceDB, targetID, policyv1.Role.User())
 	require.NoError(t, demoteTx.Commit().Error)
 
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(<-result))
@@ -280,13 +283,13 @@ func TestAddPostAuthorRejectsTargetRoleDemotedBeforeIdentityLockIntegration(t *t
 
 func seedPostAuthorityRaceFixture(t *testing.T) (*gorm.DB, string, string, string) {
 	t.Helper()
-	db := testutil.NewConcurrentPostIntegrationDB(t)
-	actorID := testutil.PostIntegrationUUID()
-	adminID := testutil.PostIntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, actorID, "Race author "+actorID[:8])
-	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Race admin "+adminID[:8])
-	postID := testutil.PostIntegrationUUID()
-	documentID := testutil.SeedPostContentDocument(t, db)
+	db := orytest.NewConcurrentPostIntegrationDB(t)
+	actorID := orytest.PostIntegrationUUID()
+	adminID := orytest.PostIntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, actorID, "Race author "+actorID[:8])
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Race admin "+adminID[:8])
+	postID := orytest.PostIntegrationUUID()
+	documentID := orytest.SeedPostContentDocument(t, db)
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec(`
 			INSERT INTO post (id, status, comments_enabled, content_document_id, created_at, updated_at)
@@ -297,16 +300,16 @@ func seedPostAuthorityRaceFixture(t *testing.T) (*gorm.DB, string, string, strin
 		return tx.Exec(`
 			INSERT INTO post_author (post_id, member_id, created_at)
 			VALUES (?::uuid, ?::uuid, NOW()), (?::uuid, ?::uuid, NOW())
-		`, postID, testutil.PostIntegrationMemberID(actorID), postID, testutil.PostIntegrationMemberID(adminID)).Error
+		`, postID, orytest.PostIntegrationMemberID(actorID), postID, orytest.PostIntegrationMemberID(adminID)).Error
 	}))
-	return db, actorID, testutil.PostIntegrationMemberID(actorID), postID
+	return db, actorID, orytest.PostIntegrationMemberID(actorID), postID
 }
 
 func seedPostAuthorityRaceFixtureWithSpiceDB(t *testing.T) (*gorm.DB, *auth.SpiceDBClient, string, string, string) {
 	t.Helper()
 	db, actorID, memberID, postID := seedPostAuthorityRaceFixture(t)
-	spiceDB := testutil.PostIntegrationSpiceDB(t)
-	testutil.GrantPostIntegrationRole(t, spiceDB, actorID, policyv1.Role.Author())
+	spiceDB := orytest.PostIntegrationSpiceDB(t)
+	orytest.GrantPostIntegrationRole(t, spiceDB, actorID, policyv1.Role.Author())
 	actor, err := policyv1.NewAccountIdentityActor(actorID)
 	require.NoError(t, err)
 	policy, err := policyv1.Post.TouchPolicy(postID)
@@ -329,6 +332,5 @@ func removePostAuthorRelation(t *testing.T, spiceDB *auth.SpiceDBClient, identit
 }
 
 func postAuthorRaceContext(identityID string) context.Context {
-	return testutil.PostIntegrationContext(identityID)
+	return orytest.PostIntegrationContext(identityID)
 }
-

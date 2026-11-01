@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func runSuiteCommand(ctx context.Context, repoRoot, goWork, minioImage string, arguments []string) error {
@@ -26,7 +26,7 @@ func runSuiteCommand(ctx context.Context, repoRoot, goWork, minioImage string, a
 }
 
 func environmentWithMinIOImage(base []string, image string) []string {
-	key := testutil.AppIntegrationMinIOImageEnv + "="
+	key := pgtest.AppIntegrationMinIOImageEnv + "="
 	environment := make([]string, 0, len(base)+1)
 	for _, entry := range base {
 		if strings.HasPrefix(entry, key) {
@@ -38,7 +38,7 @@ func environmentWithMinIOImage(base []string, image string) []string {
 }
 
 func configureSuiteMinIOImage(image string) error {
-	return os.Setenv(testutil.AppIntegrationMinIOImageEnv, image)
+	return os.Setenv(pgtest.AppIntegrationMinIOImageEnv, image)
 }
 
 func runCommandInProcessGroup(command *exec.Cmd, terminationGrace time.Duration) error {

@@ -25,7 +25,8 @@ import (
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -132,11 +133,11 @@ type releaseDeleteFixture struct {
 // audited Release service.
 func newReleaseDeleteFixture(t *testing.T, trackCount int) releaseDeleteFixture {
 	t.Helper()
-	db := testutil.NewIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
-	adminID := testutil.IntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release delete characterization admin")
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	adminID := orytest.IntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Release delete characterization admin")
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	ctx := withAuditedRequestContext(t, releaseIntegrationAdminCtx(adminID))
 	cleaner := &releaseDeleteCleaner{}
 	waveforms := &recordingReleaseWaveformJobs{}
@@ -169,7 +170,7 @@ func newReleaseDeleteFixture(t *testing.T, trackCount int) releaseDeleteFixture 
 		trackIDs = append(trackIDs, track.Msg.Id)
 	}
 
-	creditID := testutil.IntegrationUUID()
+	creditID := orytest.IntegrationUUID()
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	require.NoError(t, db.Exec(`INSERT INTO release_credit (id, release_id, credited_name, created_at) VALUES (?::uuid, ?::uuid, 'Credited', ?)`, creditID, releaseID, now).Error)
 	require.NoError(t, db.Exec(`INSERT INTO release_credit_locale (credit_id, locale, note, updated_at) VALUES (?::uuid, 'en', 'Note', ?)`, creditID, now).Error)
@@ -208,7 +209,7 @@ type releaseDeleteRows struct {
 func (f releaseDeleteFixture) rows(t *testing.T) releaseDeleteRows {
 	t.Helper()
 	var rows releaseDeleteRows
-	trackIDs := append([]string{testutil.IntegrationUUID()}, f.trackIDs...)
+	trackIDs := append([]string{orytest.IntegrationUUID()}, f.trackIDs...)
 	require.NoError(t, f.db.Raw(`
 		SELECT
 		  (SELECT COUNT(*) FROM release WHERE id = ?::uuid) AS release,
@@ -259,10 +260,10 @@ func (f releaseDeleteFixture) auditActions(t *testing.T) []string {
 
 func (f releaseDeleteFixture) seedUploadSession(t *testing.T, trackID string) {
 	t.Helper()
-	fileID := testutil.IntegrationUUID()
+	fileID := orytest.IntegrationUUID()
 	seedIntegrationFile(t, f.db, fileID, "upload", "audio/wav", nil)
 	require.NoError(t, f.db.Create(&model.UploadSession{
-		UploadID: "upload-" + testutil.IntegrationUUID(), FileID: fileID,
+		UploadID: "upload-" + orytest.IntegrationUUID(), FileID: fileID,
 		UploadType: managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(), EntityID: trackID,
 		FileName: "upload.wav", FileSize: 1024, RequestedMime: "audio/wav", TotalParts: 1, ChunkSize: 1024,
 		Status: model.UploadSessionStatusUploading,
@@ -325,8 +326,8 @@ func TestDeleteReleaseRejectionsCharacterizationIntegration(t *testing.T) {
 		t.Parallel()
 		fixture := newReleaseDeleteFixture(t, 1)
 		rows, relationships, audits := fixture.rows(t), fixture.relationships(t), fixture.auditActions(t)
-		memberIdentity := testutil.IntegrationUUID()
-		testutil.SeedPostIntegrationIdentity(t, fixture.db, memberIdentity, "Release delete outsider")
+		memberIdentity := orytest.IntegrationUUID()
+		orytest.SeedPostIntegrationIdentity(t, fixture.db, memberIdentity, "Release delete outsider")
 		ctx := withAuditedRequestContext(t, releaseIntegrationAdminCtx(memberIdentity))
 		response, err := fixture.service.DeleteRelease(ctx, connect.NewRequest(&managev1.DeleteReleaseRequest{Id: fixture.releaseID}))
 		require.Nil(t, response)

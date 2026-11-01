@@ -15,7 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	managev1connect "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	openv1connect "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -24,14 +25,14 @@ import (
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "start server runtime integration suite: %v\n", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		fmt.Fprintf(os.Stderr, "close server runtime integration suite: %v\n", err)
 		code = 1
@@ -43,18 +44,18 @@ func TestMain(m *testing.M) {
 // These contracts survived the split while their handlers disappeared.
 func TestMusicRoutesRegisteredInRunningAPIIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupRuntimeStack(t)
+	stack := runtimetest.SetupRuntimeStack(t)
 	stack.StartBackend(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	member := stack.CreateUser(t, policyv1.Role.User().ID())
 	client := &http.Client{Timeout: 15 * time.Second}
-	request := func(t *testing.T, path string, user *testutil.OryUser, status int) {
+	request := func(t *testing.T, path string, user *orytest.OryUser, status int) {
 		t.Helper()
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, stack.BackendURL+path, bytes.NewBufferString(`{}`))
 		require.NoError(t, err)
 		req.Header.Set("Content-Type", "application/json")
 		if user != nil {
-			testutil.ApplyAuthHeaders(req.Header, user)
+			orytest.ApplyAuthHeaders(req.Header, user)
 		}
 		response, err := client.Do(req)
 		require.NoError(t, err)

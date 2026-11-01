@@ -6,6 +6,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
@@ -13,17 +15,18 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+	// This checks the production Email Authoring adapter's row lock behind Ports.
 )
 
-// This checks the production Email Authoring adapter's row lock behind Ports.
 func TestLayoutPortLocksTheReferencedLayoutIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
-	contents := testutil.NewEmailContentBlockStore(t, nil)
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	contents := contenttest.NewEmailContentBlockStore(t)
 	var layout model.EmailLayout
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		doc, err := contents.CreateDocument(t.Context(), tx, contentblock.CreateInput{Profile: "compact", SourceLocale: "en"})

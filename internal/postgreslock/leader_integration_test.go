@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -85,7 +85,7 @@ func TestWithAdvisoryLeaderReleasesAfterCancellationAndWorkErrorIntegration(t *t
 
 func newConcurrentPostgres(t *testing.T) *gorm.DB {
 	t.Helper()
-	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{})
+	pg := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{})
 	db, err := gorm.Open(postgres.Open(pg.DSN), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()

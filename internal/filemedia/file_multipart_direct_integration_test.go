@@ -31,8 +31,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -47,7 +49,7 @@ type directEditorMultipartFixture struct {
 
 func prepareDirectEditorImageMultipart(
 	t *testing.T,
-	stack *testutil.RuntimeStack,
+	stack *runtimetest.RuntimeStack,
 	s3Client *s3.Client,
 	asyncPublisher AsyncPublisher,
 ) directEditorMultipartFixture {
@@ -64,7 +66,7 @@ func prepareDirectEditorImageMultipart(
 		SpiceDB: stack.SpiceDBClient,
 	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
-	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
+	body, err := os.ReadFile(runtimetest.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	response, err := NewConnectHandler(service).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
@@ -112,7 +114,7 @@ func prepareDirectEditorImageMultipart(
 
 func TestUploadSessionEditorFileTargetShapeDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	now := time.Now().UTC()
 
 	valid := model.UploadSession{
@@ -147,7 +149,7 @@ func TestUploadSessionEditorFileTargetShapeDirectIntegration(t *testing.T) {
 
 func TestFinalizingMultipartSessionRejectsAbortAndReplacementDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	asyncPublisher := &hardCutAsyncPublisher{}
 	fixture := prepareDirectEditorImageMultipart(
 		t,
@@ -194,10 +196,10 @@ func TestFinalizingMultipartSessionRejectsAbortAndReplacementDirectIntegration(t
 
 func TestDeleteTrackGuardsFinalizingUploadSessionDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	releaseID := testutil.CreateReleaseFixture(t, stack.DB)
-	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Guarded Track Delete")
+	releaseID := runtimetest.CreateReleaseFixture(t, stack.DB)
+	trackID := runtimetest.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Guarded Track Delete")
 	requireTrackPolicyFixture(t, stack.SpiceDBClient, trackID)
 	asyncPublisher := &hardCutAsyncPublisher{}
 	fileService := newTestService(Deps{
@@ -266,10 +268,10 @@ func TestConcurrentTrackInitiateAndDeleteLeavesNoMultipartOrSessionDirectIntegra
 		{name: "session is visible before delete", pauseBeforeInsert: false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			stack := testutil.SetupDirectMediaRuntimeStack(t)
+			stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 			manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
-			releaseID := testutil.CreateReleaseFixture(t, stack.DB)
-			trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Concurrent Track Delete")
+			releaseID := runtimetest.CreateReleaseFixture(t, stack.DB)
+			trackID := runtimetest.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Concurrent Track Delete")
 			requireTrackPolicyFixture(t, stack.SpiceDBClient, trackID)
 			asyncPublisher := &hardCutAsyncPublisher{}
 			s3Client := runtimeS3Client(t, stack)
@@ -400,7 +402,7 @@ func requireTrackPolicyFixture(t *testing.T, spiceDB *auth.SpiceDBClient, trackI
 
 func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	observer := &multipartCompletionObservingTransport{returnNoSuchAfterCompletion: true}
 	asyncPublisher := &hardCutAsyncPublisher{}
 	fixture := prepareDirectEditorImageMultipart(
@@ -480,7 +482,7 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 
 func TestCompleteMultipartUploadRestoresDedicatedAssetAfterResponseLossDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.User().ID())
 	asyncPublisher := &hardCutAsyncPublisher{}
 	service := newTestService(Deps{
@@ -541,9 +543,9 @@ func TestCompleteMultipartUploadRestoresDedicatedAssetAfterResponseLossDirectInt
 
 func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
-	imageBody, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
+	imageBody, err := os.ReadFile(runtimetest.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	require.NotEmpty(t, imageBody)
 	asyncPublisher := &hardCutAsyncPublisher{}
@@ -672,10 +674,10 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 
 func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	starter := stack.CreateUser(t, policyv1.Role.Author().ID())
 	completer := stack.CreateUser(t, policyv1.Role.Author().ID())
-	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
+	body, err := os.ReadFile(runtimetest.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 
 	svc := newTestService(Deps{
@@ -766,7 +768,7 @@ func ptrInt64(value int64) *int64 {
 func handleMultipartPartRelayed(
 	t *testing.T,
 	svc *Service,
-	user *testutil.OryUser,
+	user *orytest.OryUser,
 	fileID string,
 	uploadID string,
 	partNumber int,
@@ -779,7 +781,7 @@ func handleMultipartPartRelayed(
 	query.Set("uploadId", uploadID)
 	query.Set("partNumber", fmt.Sprintf("%d", partNumber))
 	req := httptest.NewRequest(http.MethodPut, "/upload/part?"+query.Encode(), bytes.NewReader(body))
-	testutil.ApplyAuthHeaders(req.Header, user)
+	orytest.ApplyAuthHeaders(req.Header, user)
 	req.ContentLength = int64(len(body))
 	rec := httptest.NewRecorder()
 	auth.RequireGatewaySession(testFileDB(svc), http.HandlerFunc(svc.HandleUploadPart)).ServeHTTP(rec, req)
@@ -794,7 +796,7 @@ func handleMultipartPartRelayed(
 func requireMultipartPartRelayRejected(
 	t *testing.T,
 	svc *Service,
-	user *testutil.OryUser,
+	user *orytest.OryUser,
 	fileID string,
 	uploadID string,
 	partNumber int,
@@ -806,7 +808,7 @@ func requireMultipartPartRelayRejected(
 	query.Set("uploadId", uploadID)
 	query.Set("partNumber", fmt.Sprintf("%d", partNumber))
 	req := httptest.NewRequest(http.MethodPut, "/upload/part?"+query.Encode(), bytes.NewReader(body))
-	testutil.ApplyAuthHeaders(req.Header, user)
+	orytest.ApplyAuthHeaders(req.Header, user)
 	req.ContentLength = int64(len(body))
 	rec := httptest.NewRecorder()
 	auth.RequireGatewaySession(testFileDB(svc), http.HandlerFunc(svc.HandleUploadPart)).ServeHTTP(rec, req)
@@ -816,7 +818,7 @@ func requireMultipartPartRelayRejected(
 func requireDirectMultipartPrefixRejected(
 	t *testing.T,
 	svc *Service,
-	user *testutil.OryUser,
+	user *orytest.OryUser,
 	fileID string,
 	uploadID string,
 	body []byte,
@@ -827,7 +829,7 @@ func requireDirectMultipartPrefixRejected(
 	query.Set("uploadId", uploadID)
 	prefixSize := min(len(body), multipartSniffBytes)
 	req := httptest.NewRequest(http.MethodPost, "/upload/prefix?"+query.Encode(), bytes.NewReader(body[:prefixSize]))
-	testutil.ApplyAuthHeaders(req.Header, user)
+	orytest.ApplyAuthHeaders(req.Header, user)
 	req.ContentLength = int64(prefixSize)
 	rec := httptest.NewRecorder()
 	auth.RequireGatewaySession(testFileDB(svc), http.HandlerFunc(svc.HandleVerifyUploadPrefix)).ServeHTTP(rec, req)
@@ -836,7 +838,7 @@ func requireDirectMultipartPrefixRejected(
 
 // newDirectTrackService wires the Track RPCs to fileService as in
 // production.
-func newDirectTrackService(t *testing.T, stack *testutil.RuntimeStack, fileService *Service) *releasepkg.TrackConnectHandler {
+func newDirectTrackService(t *testing.T, stack *runtimetest.RuntimeStack, fileService *Service) *releasepkg.TrackConnectHandler {
 	t.Helper()
 	return releasepkg.NewTrackConnectHandler(releasetest.NewService(t, releasetest.Deps{
 		DB: stack.DB, SpiceDB: stack.SpiceDBClient,

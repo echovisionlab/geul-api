@@ -15,7 +15,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -23,8 +24,8 @@ import (
 
 func TestFileServiceDeleteFilePersistsRequestAndPublishesDeleteEventIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	db := orytest.NewIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	publisher := &hardCutAsyncPublisher{}
 	service := withTestMutations(withNativeFileUnits(&Service{s3Bucket: "media-bucket", spiceDB: stack.SpiceDBClient, asyncPublisher: publisher}, db, nativeFilePorts{}))
@@ -96,8 +97,8 @@ func TestFileServiceDeleteFilePersistsRequestAndPublishesDeleteEventIntegration(
 
 func TestFileServiceDeleteFileCleansUnselectedMeshOptimizationCandidatesIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	db := orytest.NewIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	publisher := &hardCutAsyncPublisher{}
 	service := withTestMutations(withNativeFileUnits(&Service{s3Bucket: "media-bucket", spiceDB: stack.SpiceDBClient, asyncPublisher: publisher}, db, nativeFilePorts{}))

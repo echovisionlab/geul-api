@@ -9,7 +9,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -57,7 +58,7 @@ func (s postgresNotes) Bump(ctx context.Context, name string, expected int) erro
 func TestPostgresNotesKeepTheNotesContractIntegration(t *testing.T) {
 	t.Parallel()
 	mutationtest.RunContract(t, func(t *testing.T) mutationtest.Harness[notes] {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		require.NoError(t, db.Exec(`CREATE TABLE contract_note (name text PRIMARY KEY, revision integer NOT NULL)`).Error)
 		units := mutation.Postgres(db, func(tx *gorm.DB) notes { return postgresNotes{tx: tx} })
 		return mutationtest.PostgresHarness(db, units)

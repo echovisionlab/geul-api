@@ -17,7 +17,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/legal/public"
 	legalpublicpostgres "github.com/echovisionlab/geul-api/internal/legal/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -147,7 +148,7 @@ func TestPublicStoreReadsPublishedVersionsIntegration(t *testing.T) {
 
 func newPublicIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	return pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 }
 
 type publicLegalFileReuseAuthorizer struct{}

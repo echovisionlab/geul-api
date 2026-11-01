@@ -10,14 +10,15 @@ import (
 	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPostgresUploadStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	filemediatest.RunUploadContract(t, func(t *testing.T) filemediatest.UploadHarness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		return filemediatest.UploadHarness{Harness: mutationtest.PostgresHarness(db, filemediapostgres.NewUnits(db, filemediapostgres.Ports{})), Seed: func(t *testing.T, row domain.UploadSession, parts []domain.UploadPart) {
 			r := filemediapostgres.UploadSessionRow(row)
 			q := db

@@ -14,21 +14,24 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
+	// An update that waited on a concurrent writer's segment lock checks the
+	// administrator's authority as SpiceDB answers once it proceeds, so a role
+	// revoked while it waited denies it.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 )
 
-// An update that waited on a concurrent writer's segment lock checks the
-// administrator's authority as SpiceDB answers once it proceeds, so a role
-// revoked while it waited denies it.
 func TestAudienceMutationRechecksAdminAfterWaitingOnTheRootLockIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.PrepareOryIntegrationConcurrentTest(t)
+	stack := orytest.PrepareOryIntegrationConcurrentTest(t)
 	db, spiceDB := stack.DB, stack.SpiceDBClient
-	actorID := testutil.IntegrationUUID()
-	memberID := testutil.SeedPostIntegrationIdentity(t, db, actorID, "Audience authority race")
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, actorID, policyv1.Role.Admin())
-	segmentID := testutil.IntegrationUUID()
+	actorID := orytest.IntegrationUUID()
+	memberID := orytest.SeedPostIntegrationIdentity(t, db, actorID, "Audience authority race")
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, actorID, policyv1.Role.Admin())
+	segmentID := orytest.IntegrationUUID()
 	now := time.Now().UTC()
 	require.NoError(t, db.Exec(`
 		INSERT INTO audience_segment (id, name, segment_type, created_at, updated_at)
@@ -48,14 +51,14 @@ func TestAudienceMutationRechecksAdminAfterWaitingOnTheRootLockIntegration(t *te
 	go func() {
 		ctx := auth.WithUser(context.Background(), &auth.UserInfo{
 			IdentityID: auth.IdentityID(actorID), MemberID: auth.MemberID(memberID),
-			SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true,
+			SessionID: auth.SessionID(orytest.IntegrationUUID()), Authenticated: true,
 		})
 		name := "must not update"
 		_, err := service.UpdateSegment(ctx, audiencedomain.UpdateSegmentCommand{ID: segmentID, Name: &name})
 		result <- err
 	}()
-	testutil.RequireLockWaiters(t, db, 1)
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, actorID, policyv1.Role.User())
+	pgtest.RequireLockWaiters(t, db, 1)
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, actorID, policyv1.Role.User())
 	require.NoError(t, rootLock.Commit().Error)
 
 	err = <-result

@@ -14,13 +14,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
 	"github.com/echovisionlab/geul-api/internal/sharelink/sharelinktest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	sharelinktest.RunStoreContract(t, func(t *testing.T) sharelinktest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		return sharelinktest.Harness{
 			Harness: mutationtest.PostgresHarness(db, sharelinkpostgres.NewUnits(db)),
 			SeedTarget: func(t *testing.T, entityType sharelink.EntityType, state sharelink.Target) string {

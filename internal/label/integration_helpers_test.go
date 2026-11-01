@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
 	label "github.com/echovisionlab/geul-api/internal/label"
@@ -35,7 +37,9 @@ import (
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -49,18 +53,18 @@ import (
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "start Label integration suite: %v\n", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	if err := testutil.RunIntegrationSuiteCleanups(); err != nil {
+	if err := pgtest.RunIntegrationSuiteCleanups(); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "cleanup Label integration suite: %v\n", err)
 		code = 1
 	}
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		_, _ = fmt.Fprintf(os.Stderr, "close Label integration suite: %v\n", err)
 		code = 1
@@ -149,8 +153,8 @@ func newTestService(t *testing.T, deps integrationDeps) *label.Service {
 
 func labelIntegrationAdminCtx(identityID string) context.Context {
 	return auth.WithUser(requestBackground(), &auth.UserInfo{
-		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(testutil.PostIntegrationMemberID(identityID)),
-		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
+		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(orytest.PostIntegrationMemberID(identityID)),
+		SessionID: auth.SessionID(orytest.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
 }
 
@@ -192,7 +196,7 @@ func newLabelRuntimeForTest(db *gorm.DB, cdnDomain string) labelpostgres.Runtime
 
 func newCreativeContentIntegrationStore(t *testing.T, spiceDB *auth.SpiceDBClient) *contentblock.Store {
 	t.Helper()
-	return testutil.NewEmailContentBlockStore(t, spiceDB)
+	return contenttest.NewEmailContentBlockStore(t)
 }
 
 func creativeContentIntegrationDocument(sourceLocale, text string) *contentv1.RichTextDocument {
@@ -320,7 +324,7 @@ func labelTargetMemberContext(t *testing.T, identityID string) context.Context {
 		uuid.NewString(),
 		sharedtelemetry.MemberActor{
 			IdentityID: identityID,
-			MemberID:   testutil.PostIntegrationMemberID(identityID),
+			MemberID:   orytest.PostIntegrationMemberID(identityID),
 			SessionID:  uuid.NewString(),
 		},
 	)

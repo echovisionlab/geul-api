@@ -5,8 +5,11 @@ package post_test
 import (
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
@@ -18,7 +21,7 @@ func TestPostConfigurationRevisionSerializesConcurrentUpdatesIntegration(t *test
 	db, spiceDB, actorID, _, postID := seedPostAuthorityRaceFixtureWithSpiceDB(t)
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
-		testutil.NewPostContentBlockStore(t),
+		contenttest.NewPostContentBlockStore(t),
 	)
 	revision := requirePostConfigurationRevision(t, db, postID)
 
@@ -35,7 +38,7 @@ func TestPostConfigurationRevisionSerializesConcurrentUpdatesIntegration(t *test
 	results := make(chan updateResult, 2)
 	pending := make(chan error, 2)
 	commentsEnabled := false
-	newSlug := "post-concurrent-" + testutil.PostIntegrationUUID()
+	newSlug := "post-concurrent-" + orytest.PostIntegrationUUID()
 	go func() {
 		start <- struct{}{}
 		response, err := service.UpdatePost(postAuthorRaceContext(actorID), connect.NewRequest(&managev1.UpdatePostRequest{

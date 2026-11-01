@@ -20,19 +20,22 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/series"
 	"github.com/echovisionlab/geul-api/internal/series/seriestest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
+	// The Series transaction carries the Post, media, OG and Menu adapters of
+	// other domains. Their SQL is theirs, but whether it runs in the Series
+	// transaction and sees its rows is the Series store's binding, which only
+	// PostgreSQL shows. SpiceDB and the identity fence stay fakes.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 )
 
-// The Series transaction carries the Post, media, OG and Menu adapters of
-// other domains. Their SQL is theirs, but whether it runs in the Series
-// transaction and sees its rows is the Series store's binding, which only
-// PostgreSQL shows. SpiceDB and the identity fence stay fakes.
 func TestSeriesTransactionsBindTheOtherDomainsIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	spiceDB := seriestest.NewAuthorizer(authztest.AllowAll())
 	service := newIntegrationService(t, db, integrationDeps{spiceDB: spiceDB, fence: &identitystatetest.Fence{}, postAccess: allowedPostEdits{}})
 	ctx := principalContext(t, uuid.NewString(), uuid.NewString())
@@ -49,9 +52,9 @@ func TestSeriesTransactionsBindTheOtherDomainsIntegration(t *testing.T) {
 	// updated_at only for the Posts that moved.
 	stale := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	posts := []string{
-		testutil.SeedPostBaseRow(t, db, managev1.PostStatus_POST_STATUS_DRAFT.String()),
-		testutil.SeedPostBaseRow(t, db, managev1.PostStatus_POST_STATUS_DRAFT.String()),
-		testutil.SeedPostBaseRow(t, db, managev1.PostStatus_POST_STATUS_DRAFT.String()),
+		orytest.SeedPostBaseRow(t, db, managev1.PostStatus_POST_STATUS_DRAFT.String()),
+		orytest.SeedPostBaseRow(t, db, managev1.PostStatus_POST_STATUS_DRAFT.String()),
+		orytest.SeedPostBaseRow(t, db, managev1.PostStatus_POST_STATUS_DRAFT.String()),
 	}
 	backdate := func() {
 		require.NoError(t, db.Exec(`UPDATE post SET updated_at = ? WHERE id IN ?`, stale, posts).Error)
@@ -143,7 +146,7 @@ func (l queryCounter) Trace(ctx context.Context, begin time.Time, fc func() (str
 // projections, whatever the page size.
 func TestSeriesAdminListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	for index := range 12 {
 		seedSeriesRow(t, db, "Query Series "+suffix, "query-series-"+suffix+"-"+string(rune('a'+index)), model.SeriesStatusDraft)
@@ -167,7 +170,7 @@ func TestSeriesAdminListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
 // The admin filter and sort are SQL over the source copy.
 func TestSeriesAdminListFiltersAndSortsBySourceTitleIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
 	alpha := seedSeriesRow(t, db, "Alpha "+suffix, "alpha-"+suffix, model.SeriesStatusPublished)
 	seedSeriesRow(t, db, "Alphabet "+suffix, "alphabet-"+suffix, model.SeriesStatusDraft)

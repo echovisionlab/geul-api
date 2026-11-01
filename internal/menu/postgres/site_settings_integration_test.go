@@ -18,7 +18,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
 	"github.com/echovisionlab/geul-api/internal/menu"
 	menupostgres "github.com/echovisionlab/geul-api/internal/menu/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -57,7 +58,7 @@ func siteSettingsAudits(audit *audittest.Recorder) []sharedtelemetry.AuditRecord
 // transaction, through the Site Settings adapter the Store is bound to.
 func TestMenuDeleteUnbindsTheSelectedSlotsInItsTransactionIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	ctx := memberContext(t)
 	audit := &audittest.Recorder{}
 	service := siteSettingsMenuService(t, db, audit)

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	"github.com/echovisionlab/geul-api/internal/mediamime"
 
 	"connectrpc.com/connect"
@@ -45,7 +47,8 @@ import (
 	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	"github.com/echovisionlab/geul-api/internal/testutil/sharelinktest"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
@@ -55,13 +58,15 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+
+	// ArtistLabelPublicFixture contains only the cross-domain records consumed by
+	// the Artist and Label public read integration tests. Assertions stay in each
+	// owning public package.
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 )
 
 const artistLabelPublicCDN = "https://cdn.example.com"
 
-// ArtistLabelPublicFixture contains only the cross-domain records consumed by
-// the Artist and Label public read integration tests. Assertions stay in each
-// owning public package.
 type ArtistLabelPublicFixture struct {
 	DB               *gorm.DB
 	SpiceDB          *auth.SpiceDBClient
@@ -106,18 +111,18 @@ type ArtistLabelPublicFixture struct {
 func New(t *testing.T) *ArtistLabelPublicFixture {
 	t.Helper()
 
-	stack, err := testutil.StartBackendIntegrationStack(t.Context())
+	stack, err := runtimetest.StartBackendIntegrationStack(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, stack.Close()) })
 	db := stack.Postgres.DB
 	spiceDB := stack.SpiceDBClient
 
 	adminID := uuid.NewString()
-	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Public Artist Label Admin")
-	testutil.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	ctx := testutil.NewAuditContext(t, adminID, testutil.PostIntegrationMemberID(adminID))
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Public Artist Label Admin")
+	orytest.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	ctx := orytest.NewAuditContext(t, adminID, orytest.PostIntegrationMemberID(adminID))
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
-	contentBlocks := testutil.NewCreativeContentStore(t, spiceDB)
+	contentBlocks := contenttest.NewCreativeContentStore(t)
 	publisher := artistLabelAsyncPublisher{}
 	fileDeleter := artistLabelFileDeleter{}
 	artistRuntime := artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher())
@@ -226,7 +231,7 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	)
 	childArtist, err := manageArtist.CreateArtist(ctx, connect.NewRequest(&managev1.CreateArtistRequest{
 		Name: "Public Child Artist " + suffix, Slug: stringPointer("public-child-artist-" + suffix),
-		ParentArtistId: &mainArtist.Id, Document: testutil.CreativeContentDocument("en", "Public Child Artist "+suffix),
+		ParentArtistId: &mainArtist.Id, Document: contenttest.CreativeContentDocument("en", "Public Child Artist "+suffix),
 	}))
 	require.NoError(t, err)
 	_, err = manageArtist.PublishArtist(ctx, connect.NewRequest(&managev1.PublishArtistRequest{Id: childArtist.Msg.Id}))
@@ -247,7 +252,7 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	releaseResponse, err := manageRelease.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title: "Public Artist Label Release " + suffix, Slug: stringPointer("public-artist-label-release-" + suffix),
 		Type: managev1.ReleaseType_RELEASE_TYPE_ALBUM, ReleaseDate: timestamppb.New(releaseDate),
-		Document: testutil.CreativeContentDocument("en", "Public Artist Label Release "+suffix),
+		Document: contenttest.CreativeContentDocument("en", "Public Artist Label Release "+suffix),
 	}))
 	require.NoError(t, err)
 	_, err = manageRelease.SetReleaseArtists(ctx, connect.NewRequest(&managev1.SetReleaseArtistsRequest{
@@ -276,7 +281,7 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 		Title: "Public Artist Label Bare Release " + suffix,
 		Slug:  stringPointer("public-artist-label-bare-release-" + suffix),
 		Type:  managev1.ReleaseType_RELEASE_TYPE_SINGLE, ReleaseDate: timestamppb.New(releaseDate.AddDate(0, 1, 0)),
-		Document: testutil.CreativeContentDocument("en", "Public Artist Label Bare Release "+suffix),
+		Document: contenttest.CreativeContentDocument("en", "Public Artist Label Bare Release "+suffix),
 	}))
 	require.NoError(t, err)
 	_, err = manageRelease.SetReleaseArtists(ctx, connect.NewRequest(&managev1.SetReleaseArtistsRequest{
@@ -297,7 +302,7 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	draftRelease, err := manageRelease.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title:    "Public Artist Label Draft Release " + suffix,
 		Type:     managev1.ReleaseType_RELEASE_TYPE_SINGLE,
-		Document: testutil.CreativeContentDocument("en", "Public Artist Label Draft Release "+suffix),
+		Document: contenttest.CreativeContentDocument("en", "Public Artist Label Draft Release "+suffix),
 	}))
 	require.NoError(t, err)
 	_, err = manageRelease.SetReleaseArtists(ctx, connect.NewRequest(&managev1.SetReleaseArtistsRequest{
@@ -459,7 +464,7 @@ func createDraftArtistLabelFixtureArtist(
 	website := "https://example.com/" + slug
 	response, err := service.CreateArtist(ctx, connect.NewRequest(&managev1.CreateArtistRequest{
 		Name: name, Slug: &slug, RealName: &realName,
-		Document: testutil.CreativeContentDocument("en", bio), CountryCode: &countryCode, Website: &website,
+		Document: contenttest.CreativeContentDocument("en", bio), CountryCode: &countryCode, Website: &website,
 		SocialLinks: map[string]string{"homepage": "https://social.example.com/" + slug},
 	}))
 	require.NoError(t, err)
@@ -501,7 +506,7 @@ func createDraftArtistLabelFixtureLabel(
 	countryCode := "KR"
 	website := "https://example.com/" + slug
 	response, err := service.CreateLabel(ctx, connect.NewRequest(&managev1.CreateLabelRequest{
-		Name: name, Slug: &slug, Document: testutil.CreativeContentDocument("en", description),
+		Name: name, Slug: &slug, Document: contenttest.CreativeContentDocument("en", description),
 		CountryCode: &countryCode, Website: &website,
 		SocialLinks:   map[string]string{"homepage": "https://social.example.com/" + slug},
 		ParentLabelId: parentLabelID,

@@ -17,7 +17,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -44,10 +46,10 @@ type runtimeMultipartCompletionFailureResult struct {
 // Web fault header or production test backdoor.
 func TestRuntimeReleaseTrackCompleteMultipartFailureIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupSharedRuntimeCompleteMultipartFailureStack(t)
+	stack := runtimetest.SetupSharedRuntimeCompleteMultipartFailureStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	releaseID := testutil.CreateReleaseViaAPI(t, stack.BackendURL, admin)
-	trackID := testutil.CreateManagedReleaseTrackViaAPI(
+	releaseID := runtimetest.CreateReleaseViaAPI(t, stack.BackendURL, admin)
+	trackID := runtimetest.CreateManagedReleaseTrackViaAPI(
 		t,
 		stack.BackendURL,
 		admin,
@@ -55,7 +57,7 @@ func TestRuntimeReleaseTrackCompleteMultipartFailureIntegration(t *testing.T) {
 		"Runtime multipart completion failure",
 	)
 
-	body, err := os.ReadFile(testutil.RepositoryTestAudioMP3(t))
+	body, err := os.ReadFile(runtimetest.RepositoryTestAudioMP3(t))
 	require.NoError(t, err)
 	result := runRuntimeMultipartCompletionFailure(t, stack, admin, runtimeMultipartCompletionFailureInput{
 		uploadType: managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
@@ -99,16 +101,16 @@ func TestRuntimeReleaseTrackCompleteMultipartFailureIntegration(t *testing.T) {
 // relations, regardless of the media kind.
 func TestRuntimeEditorMediaCompleteMultipartFailureIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupSharedRuntimeCompleteMultipartFailureStack(t)
+	stack := runtimetest.SetupSharedRuntimeCompleteMultipartFailureStack(t)
 
 	editorCases := []struct {
 		name      string
-		blockType testutil.EditorMediaBlockType
+		blockType runtimetest.EditorMediaBlockType
 	}{
-		{name: "audio", blockType: testutil.EditorMediaBlockTypeAudio},
-		{name: "video", blockType: testutil.EditorMediaBlockTypeVideo},
-		{name: "image", blockType: testutil.EditorMediaBlockTypeImage},
-		{name: "attachment", blockType: testutil.EditorMediaBlockTypeAttachment},
+		{name: "audio", blockType: runtimetest.EditorMediaBlockTypeAudio},
+		{name: "video", blockType: runtimetest.EditorMediaBlockTypeVideo},
+		{name: "image", blockType: runtimetest.EditorMediaBlockTypeImage},
+		{name: "attachment", blockType: runtimetest.EditorMediaBlockTypeAttachment},
 	}
 
 	for _, tc := range editorCases {
@@ -152,8 +154,8 @@ func TestRuntimeEditorMediaCompleteMultipartFailureIntegration(t *testing.T) {
 
 func runRuntimeMultipartCompletionFailure(
 	t *testing.T,
-	stack *testutil.RuntimeStack,
-	user *testutil.OryUser,
+	stack *runtimetest.RuntimeStack,
+	user *orytest.OryUser,
 	input runtimeMultipartCompletionFailureInput,
 ) runtimeMultipartCompletionFailureResult {
 	t.Helper()
@@ -250,7 +252,7 @@ func prepareRuntimeCompletionFailureMediaBundle(
 	t *testing.T,
 	fileClient managev1connect.FileServiceClient,
 	backendURL string,
-	user *testutil.OryUser,
+	user *orytest.OryUser,
 	upload *managev1.InitiateMultipartUploadResponse,
 	kind string,
 ) string {
@@ -264,7 +266,7 @@ func prepareRuntimeCompletionFailureMediaBundle(
 func uploadRuntimeMultipartBody(
 	t *testing.T,
 	backendURL string,
-	user *testutil.OryUser,
+	user *orytest.OryUser,
 	fileID string,
 	uploadID string,
 	body []byte,
@@ -283,7 +285,7 @@ func uploadRuntimeMultipartBody(
 
 func runtimeEditorCompletionFailureFixture(
 	t *testing.T,
-	blockType testutil.EditorMediaBlockType,
+	blockType runtimetest.EditorMediaBlockType,
 ) (managev1.UploadType, string, string, []byte) {
 	t.Helper()
 
@@ -294,22 +296,22 @@ func runtimeEditorCompletionFailureFixture(
 		path       string
 	)
 	switch blockType {
-	case testutil.EditorMediaBlockTypeAudio:
+	case runtimetest.EditorMediaBlockTypeAudio:
 		uploadType = managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO
 		fileName = "editor-complete-failure.mp3"
 		mimeType = "audio/mpeg"
-		path = testutil.RepositoryTestAudioMP3(t)
-	case testutil.EditorMediaBlockTypeVideo:
+		path = runtimetest.RepositoryTestAudioMP3(t)
+	case runtimetest.EditorMediaBlockTypeVideo:
 		uploadType = managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO
 		fileName = "editor-complete-failure.mp4"
 		mimeType = "video/mp4"
-		path = testutil.RepositoryTestVideoMP4(t)
-	case testutil.EditorMediaBlockTypeImage:
+		path = runtimetest.RepositoryTestVideoMP4(t)
+	case runtimetest.EditorMediaBlockTypeImage:
 		uploadType = managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE
 		fileName = "editor-complete-failure.jpg"
 		mimeType = "image/jpeg"
-		path = testutil.RepositoryTestImageJPEG(t)
-	case testutil.EditorMediaBlockTypeAttachment:
+		path = runtimetest.RepositoryTestImageJPEG(t)
+	case runtimetest.EditorMediaBlockTypeAttachment:
 		return managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT,
 			"editor-complete-failure.txt",
 			"text/plain",

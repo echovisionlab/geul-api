@@ -9,13 +9,16 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -24,31 +27,31 @@ import (
 
 func TestPostManageReadQueryBudgetsStayConstant(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewPostIntegrationDB(t)
-	adminID := testutil.PostIntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Post query admin")
-	spiceDB := testutil.PostIntegrationSpiceDB(t)
-	testutil.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	ctx := testutil.PostIntegrationContext(adminID)
-	contentBlocks := testutil.NewPostContentBlockStore(t)
+	db := orytest.NewPostIntegrationDB(t)
+	adminID := orytest.PostIntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Post query admin")
+	spiceDB := orytest.PostIntegrationSpiceDB(t)
+	orytest.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	ctx := orytest.PostIntegrationContext(adminID)
+	contentBlocks := contenttest.NewPostContentBlockStore(t)
 	seedService := postintegration.NewPostDomainService(
 		t, db, "", spiceDB, contentBlocks,
 	)
 
 	postIDs := make([]string, 0, 12)
 	for index := 0; index < 12; index++ {
-		slug := fmt.Sprintf("pq-%s-%02d", strings.ReplaceAll(testutil.PostIntegrationUUID(), "-", ""), index)
+		slug := fmt.Sprintf("pq-%s-%02d", strings.ReplaceAll(orytest.PostIntegrationUUID(), "-", ""), index)
 		created, err := seedService.CreatePost(ctx, connect.NewRequest(&managev1.CreatePostRequest{
 			Title:    fmt.Sprintf("Post query budget %02d", index),
 			Slug:     &slug,
-			Document: testutil.EmptyPostDocument("en"),
+			Document: contenttest.EmptyPostDocument("en"),
 		}))
 		require.NoError(t, err)
 		postIDs = append(postIDs, created.Msg.Id)
 	}
 
 	var queryCount atomic.Int64
-	countedDB := db.Session(&gorm.Session{Logger: testutil.QueryCounter{
+	countedDB := db.Session(&gorm.Session{Logger: orytest.QueryCounter{
 		Interface: db.Config.Logger,
 		Count:     &queryCount,
 	}})
@@ -83,11 +86,11 @@ func TestPostManageReadQueryBudgetsStayConstant(t *testing.T) {
 	}
 	oneParticipantQueries := participantCount()
 	for index := 0; index < 8; index++ {
-		identityID := testutil.PostIntegrationUUID()
-		testutil.SeedPostIntegrationIdentity(t, db, identityID, fmt.Sprintf("Post collaborator %02d", index))
+		identityID := orytest.PostIntegrationUUID()
+		orytest.SeedPostIntegrationIdentity(t, db, identityID, fmt.Sprintf("Post collaborator %02d", index))
 		require.NoError(t, db.Exec(
 			`INSERT INTO post_collaborator (post_id, member_id, created_at) VALUES (?::uuid, ?::uuid, NOW())`,
-			postIDs[0], testutil.PostIntegrationMemberID(identityID),
+			postIDs[0], orytest.PostIntegrationMemberID(identityID),
 		).Error)
 	}
 	nineParticipantQueries := participantCount()
@@ -97,32 +100,32 @@ func TestPostManageReadQueryBudgetsStayConstant(t *testing.T) {
 
 func TestPostServiceParticipantWorkflowIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewPostIntegrationDB(t)
-	adminID := testutil.PostIntegrationUUID()
-	authorID := testutil.PostIntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Post Admin")
-	testutil.SeedPostIntegrationIdentity(t, db, authorID, "Post Author")
-	spiceDB := testutil.PostIntegrationSpiceDB(t)
-	testutil.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	testutil.GrantPostIntegrationRole(t, spiceDB, authorID, policyv1.Role.Author())
-	adminMemberID := testutil.PostIntegrationMemberID(adminID)
-	authorMemberID := testutil.PostIntegrationMemberID(authorID)
+	db := orytest.NewPostIntegrationDB(t)
+	adminID := orytest.PostIntegrationUUID()
+	authorID := orytest.PostIntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Post Admin")
+	orytest.SeedPostIntegrationIdentity(t, db, authorID, "Post Author")
+	spiceDB := orytest.PostIntegrationSpiceDB(t)
+	orytest.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	orytest.GrantPostIntegrationRole(t, spiceDB, authorID, policyv1.Role.Author())
+	adminMemberID := orytest.PostIntegrationMemberID(adminID)
+	authorMemberID := orytest.PostIntegrationMemberID(authorID)
 
 	postSvc := postintegration.NewPostDomainService(
 		t, db, "https://cdn.example.com", spiceDB,
-		testutil.NewPostContentBlockStore(t),
+		contenttest.NewPostContentBlockStore(t),
 	)
 
-	adminCtx := testutil.PostIntegrationContext(adminID)
+	adminCtx := orytest.PostIntegrationContext(adminID)
 	authorCtx := auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(authorID),
 		MemberID:      auth.MemberID(authorMemberID),
-		SessionID:     auth.SessionID(testutil.PostIntegrationUUID()),
+		SessionID:     auth.SessionID(orytest.PostIntegrationUUID()),
 		Authenticated: true,
 	})
-	suffix := strings.ReplaceAll(testutil.PostIntegrationUUID(), "-", "")
-	categoryID := testutil.SeedPostIntegrationCategory(t, db, "Post Category "+suffix, "pc-"+suffix)
-	tagID := testutil.SeedPostIntegrationTag(t, db, "Post Tag "+suffix, "pt-"+suffix)
+	suffix := strings.ReplaceAll(orytest.PostIntegrationUUID(), "-", "")
+	categoryID := orytest.SeedPostIntegrationCategory(t, db, "Post Category "+suffix, "pc-"+suffix)
+	tagID := orytest.SeedPostIntegrationTag(t, db, "Post Tag "+suffix, "pt-"+suffix)
 	slug := "post-" + suffix
 
 	created, err := postSvc.CreatePost(adminCtx, connect.NewRequest(&managev1.CreatePostRequest{
@@ -132,10 +135,10 @@ func TestPostServiceParticipantWorkflowIntegration(t *testing.T) {
 		CommentsEnabled: true,
 		CategoryIds:     []string{categoryID},
 		TagIds:          []string{tagID},
-		Document:        testutil.EmptyPostDocument("en"),
+		Document:        contenttest.EmptyPostDocument("en"),
 	}))
 	require.NoError(t, err)
-	testutil.RequirePostMemberRelation(t, db, "post_author", created.Msg.Id, adminMemberID, true)
+	orytest.RequirePostMemberRelation(t, db, "post_author", created.Msg.Id, adminMemberID, true)
 
 	adminList, err := postSvc.ListPostsAdmin(adminCtx, connect.NewRequest(&managev1.ListPostsAdminRequest{
 		Pagination: &commonv1.PaginationRequest{Limit: 10},
@@ -158,17 +161,17 @@ func TestPostServiceParticipantWorkflowIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, authorMemberID, added.Msg.GetMember().GetId())
 	require.Equal(t, managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_AUTHOR, added.Msg.GetRole())
-	testutil.RequirePostMemberRelation(t, db, "post_author", created.Msg.Id, authorMemberID, true)
-	testutil.RequirePostAuthorization(t, spiceDB, created.Msg.Id, authorID, policyv1.Post.Edit, true)
-	testutil.RequirePostAuthorization(t, spiceDB, created.Msg.Id, authorID, policyv1.Post.Manage, true)
+	orytest.RequirePostMemberRelation(t, db, "post_author", created.Msg.Id, authorMemberID, true)
+	orytest.RequirePostAuthorization(t, spiceDB, created.Msg.Id, authorID, policyv1.Post.Edit, true)
+	orytest.RequirePostAuthorization(t, spiceDB, created.Msg.Id, authorID, policyv1.Post.Manage, true)
 
 	idempotentAuthor, err := postSvc.AddPostAuthor(adminCtx, connect.NewRequest(&managev1.AddPostAuthorRequest{
 		PostId: created.Msg.Id, MemberId: authorMemberID,
 	}))
 	require.NoError(t, err)
 	require.Equal(t, authorMemberID, idempotentAuthor.Msg.GetMember().GetId())
-	testutil.RequirePostMemberRelation(t, db, "post_author", created.Msg.Id, authorMemberID, true)
-	testutil.RequirePostMemberRelation(t, db, "post_collaborator", created.Msg.Id, authorMemberID, false)
+	orytest.RequirePostMemberRelation(t, db, "post_author", created.Msg.Id, authorMemberID, true)
+	orytest.RequirePostMemberRelation(t, db, "post_collaborator", created.Msg.Id, authorMemberID, false)
 
 	myPosts, err := postSvc.ListMyPosts(authorCtx, connect.NewRequest(&managev1.ListMyPostsRequest{
 		Pagination: &commonv1.PaginationRequest{Limit: 10},
@@ -200,7 +203,7 @@ func TestPostServiceParticipantWorkflowIntegration(t *testing.T) {
 		PostId: created.Msg.Id, MemberId: adminMemberID,
 	}))
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
-	testutil.RequirePostMemberRelation(t, db, "post_author", created.Msg.Id, adminMemberID, true)
+	orytest.RequirePostMemberRelation(t, db, "post_author", created.Msg.Id, adminMemberID, true)
 
 	_, err = postSvc.AddPostCollaborator(authorCtx, connect.NewRequest(&managev1.AddPostCollaboratorRequest{
 		PostId: created.Msg.Id, MemberId: adminMemberID,
@@ -212,10 +215,10 @@ func TestPostServiceParticipantWorkflowIntegration(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	require.Equal(t, managev1.PostParticipantRole_POST_PARTICIPANT_ROLE_COLLABORATOR, reassigned.Msg.GetRole())
-	testutil.RequirePostMemberRelation(t, db, "post_author", created.Msg.Id, authorMemberID, false)
-	testutil.RequirePostMemberRelation(t, db, "post_collaborator", created.Msg.Id, authorMemberID, true)
-	testutil.RequirePostAuthorization(t, spiceDB, created.Msg.Id, authorID, policyv1.Post.Edit, true)
-	testutil.RequirePostAuthorization(t, spiceDB, created.Msg.Id, authorID, policyv1.Post.Manage, false)
+	orytest.RequirePostMemberRelation(t, db, "post_author", created.Msg.Id, authorMemberID, false)
+	orytest.RequirePostMemberRelation(t, db, "post_collaborator", created.Msg.Id, authorMemberID, true)
+	orytest.RequirePostAuthorization(t, spiceDB, created.Msg.Id, authorID, policyv1.Post.Edit, true)
+	orytest.RequirePostAuthorization(t, spiceDB, created.Msg.Id, authorID, policyv1.Post.Manage, false)
 
 	// Reassigning the last durable Author is rejected by the Post transaction
 	// and rolls back, preserving the Author relation.
@@ -223,16 +226,16 @@ func TestPostServiceParticipantWorkflowIntegration(t *testing.T) {
 		PostId: created.Msg.Id, MemberId: adminMemberID,
 	}))
 	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
-	testutil.RequirePostMemberRelation(t, db, "post_author", created.Msg.Id, adminMemberID, true)
-	testutil.RequirePostMemberRelation(t, db, "post_collaborator", created.Msg.Id, adminMemberID, false)
+	orytest.RequirePostMemberRelation(t, db, "post_author", created.Msg.Id, adminMemberID, true)
+	orytest.RequirePostMemberRelation(t, db, "post_collaborator", created.Msg.Id, adminMemberID, false)
 
 	removed, err := postSvc.RemovePostCollaborator(adminCtx, connect.NewRequest(&managev1.RemovePostCollaboratorRequest{
 		PostId: created.Msg.Id, MemberId: authorMemberID,
 	}))
 	require.NoError(t, err)
 	require.True(t, removed.Msg.Success)
-	testutil.RequirePostMemberRelation(t, db, "post_collaborator", created.Msg.Id, authorMemberID, false)
-	testutil.RequirePostAuthorization(t, spiceDB, created.Msg.Id, authorID, policyv1.Post.Edit, false)
+	orytest.RequirePostMemberRelation(t, db, "post_collaborator", created.Msg.Id, authorMemberID, false)
+	orytest.RequirePostAuthorization(t, spiceDB, created.Msg.Id, authorID, policyv1.Post.Edit, false)
 
 	emptyMine, err := postSvc.ListMyPosts(authorCtx, connect.NewRequest(&managev1.ListMyPostsRequest{}))
 	require.NoError(t, err)

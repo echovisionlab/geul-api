@@ -8,6 +8,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
@@ -23,7 +25,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
@@ -70,7 +72,7 @@ func NewServiceAndUnits(t *testing.T, deps Deps) (*release.Service, mutation.Uni
 	trackFiles := releaseadapter.NewTrackFiles(deps.Files)
 	ports := deps.Ports
 	if ports.ContentBlocks == nil {
-		ports.ContentBlocks = testutil.NewCreativeContentStore(t, deps.SpiceDB)
+		ports.ContentBlocks = contenttest.NewCreativeContentStore(t)
 	}
 	if ports.Checkpoints == nil {
 		ports.Checkpoints = testcollaboration.NewCheckpoints(deps.DB, deps.SpiceDB)

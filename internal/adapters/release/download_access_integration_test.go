@@ -12,7 +12,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	releasepublic "github.com/echovisionlab/geul-api/internal/release/public"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -74,7 +75,7 @@ func TestDownloadAccessRejectsReleaseOrShareRevokedAfterPhaseOneIntegration(t *t
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
+			pg := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true})
 			db := pg.DB
 			releaseID, documentID, trackID, fileID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 			now := time.Now().UTC()
@@ -169,7 +170,7 @@ func TestDownloadAccessHoldsReleaseShareAndTrackFencesThroughSigningIntegration(
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
+			pg := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true})
 			db := pg.DB
 			releaseID, documentID, trackID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 			fileID, replacementFileID := uuid.NewString(), uuid.NewString()

@@ -5,16 +5,15 @@ package filemedia
 import (
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/testutil"
 )
 
 func TestAuthorizeManageFileDeliveriesUsesCurrentPostAttachmentCurrentSchemaIntegration(t *testing.T) {
 	t.Parallel()
-	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
+	pg := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{
 		BootstrapKratosStub: true,
 		ApplyAppSchemaSQL:   true,
 	})

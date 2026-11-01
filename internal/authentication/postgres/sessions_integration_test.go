@@ -11,7 +11,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authentication"
 	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -22,7 +23,7 @@ import (
 // durable writer, on PostgreSQL with the Kratos stub only.
 func TestAuthenticationAccessPersistsAuthoritativeSuccessWithoutCredentialDataIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()
 	sessionID := uuid.NewString()

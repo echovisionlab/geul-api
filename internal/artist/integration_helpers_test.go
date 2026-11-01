@@ -24,7 +24,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/og"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -37,18 +39,18 @@ import (
 func TestMain(m *testing.M) {
 	flag.Parse()
 	code := 1
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "start Artist integration suite: %v\n", err)
 		os.Exit(code)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code = m.Run()
-	if err := testutil.RunIntegrationSuiteCleanups(); err != nil {
+	if err := pgtest.RunIntegrationSuiteCleanups(); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "cleanup Artist integration suite: %v\n", err)
 		code = 1
 	}
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "close Artist integration suite: %v\n", err)
 		code = 1
@@ -66,7 +68,7 @@ func artistMemberID(identityID string) string {
 func seedArtistIdentity(t *testing.T, db *gorm.DB, identityID, name string) string {
 	t.Helper()
 	email := identityID + "@artist.test"
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
+	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{
 		ID: identityID, Email: email, Name: name,
 	})
 	memberID := artistMemberID(identityID)

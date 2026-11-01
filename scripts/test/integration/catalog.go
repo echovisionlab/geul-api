@@ -163,7 +163,9 @@ var integrationCatalog = []integrationBand{
 			"./cmd/backend-integration-stack",
 			"./cmd/server/runtimetest",
 			"./internal/filemedia/runtimetest",
-			"./internal/testutil",
+			"./internal/testutil/orytest",
+			"./internal/testutil/pgtest",
+			"./internal/testutil/runtimetest",
 		},
 	},
 }

@@ -17,12 +17,14 @@ import (
 	"github.com/echovisionlab/geul-api/internal/menu"
 	menupostgres "github.com/echovisionlab/geul-api/internal/menu/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-)
 
-// These tests need what no fake has: SpiceDB relationship semantics, and
-// authority read after a real row lock wait through the Kratos-backed fence.
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
+	// These tests need what no fake has: SpiceDB relationship semantics, and
+	// authority read after a real row lock wait through the Kratos-backed fence.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+)
 
 func newPostgresMenuService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *menu.Service {
 	t.Helper()
@@ -37,9 +39,9 @@ func newPostgresMenuService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClie
 
 func TestMenuUpdateRejectsAdminRevokedWhileRootLockWaitsIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := testutil.NewAuditContext(t, actor.IdentityID, actor.MemberID)
+	ctx := orytest.NewAuditContext(t, actor.IdentityID, actor.MemberID)
 	service := newPostgresMenuService(t, stack.DB, stack.SpiceDBClient)
 	created, err := service.CreateMenu(ctx, menu.CreateMenuCommand{Name: "authority-fence-menu", Items: []menu.Item{customItem("before", "/before")}})
 	require.NoError(t, err)
@@ -55,7 +57,7 @@ func TestMenuUpdateRejectsAdminRevokedWhileRootLockWaitsIntegration(t *testing.T
 		_, updateErr := service.UpdateMenu(ctx, menu.UpdateMenuCommand{ID: created.ID, Name: stringPointer("must-not-persist")})
 		result <- updateErr
 	}()
-	testutil.RequireLockWaiters(t, stack.DB, 1)
+	pgtest.RequireLockWaiters(t, stack.DB, 1)
 
 	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(actor.IdentityID))
 	require.NoError(t, err)
@@ -71,9 +73,9 @@ func TestMenuUpdateRejectsAdminRevokedWhileRootLockWaitsIntegration(t *testing.T
 
 func TestMenuCreateAndDeleteWriteAndRemoveThePolicyRelationshipIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := testutil.NewAuditContext(t, admin.IdentityID, admin.MemberID)
+	ctx := orytest.NewAuditContext(t, admin.IdentityID, admin.MemberID)
 	spiceDB := stack.SpiceDBClient
 	service := newPostgresMenuService(t, stack.DB, spiceDB)
 	actor, err := policyv1.NewAccountIdentityActor(admin.IdentityID)
