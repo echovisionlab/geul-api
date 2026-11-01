@@ -57,10 +57,9 @@ func TestGetPolicyServesTheEffectiveVersionAndAnnouncesTheNextOne(t *testing.T) 
 	for _, kind := range []legaldomain.PolicyKind{legaldomain.Terms, legaldomain.Privacy} {
 		t.Run(string(kind), func(t *testing.T) {
 			h := newPublicHarness(t)
-			h.put(kind, "active", at(-48*time.Hour), at(-time.Hour))
+			h.put(kind, "archived", at(-48*time.Hour), at(-time.Hour))
 			current := h.put(kind, "active", at(-time.Hour), nil)
 			next := h.put(kind, "scheduled", at(time.Hour), nil)
-			h.put(kind, "scheduled", at(2*time.Hour), nil)
 			h.put(kind, "draft", nil, nil)
 			image := &public.Asset{ID: "og", URL: "https://cdn.example.test/og.webp", Disposition: public.DispositionInline}
 			h.ogImages.Images[string(kind)+"/en"] = image
@@ -108,9 +107,8 @@ func TestGetPolicyOpensAShareLinkOnlyForItsExactVersion(t *testing.T) {
 			now := time.Now().UTC()
 			archived := h.put(kind, "archived", at(-48*time.Hour), at(-time.Hour))
 			scheduled := h.put(kind, "scheduled", at(time.Hour), nil)
-			passed := h.put(kind, "scheduled", at(-time.Minute), nil)
 			draft := h.put(kind, "draft", nil, nil)
-			for _, version := range []legaldomain.Version{archived, scheduled, passed, draft} {
+			for _, version := range []legaldomain.Version{archived, scheduled, draft} {
 				h.reads.PutShareLink(legaltest.ShareLink{Token: "token-" + version.ID, EntityType: shareType, EntityID: version.ID, ExpiresAt: now.Add(time.Hour)})
 			}
 			h.reads.PutShareLink(legaltest.ShareLink{Token: "protected", EntityType: shareType, EntityID: scheduled.ID, ExpiresAt: now.Add(time.Hour), Password: "secret"})
@@ -132,12 +130,16 @@ func TestGetPolicyOpensAShareLinkOnlyForItsExactVersion(t *testing.T) {
 
 			require.Equal(t, public.PublicPolicies{}, get(archived.ID, "token-"+scheduled.ID, ""), "a token opens only its own version")
 			require.Equal(t, public.PublicPolicies{}, get("", "token-"+scheduled.ID, ""))
-			require.Equal(t, public.PublicPolicies{}, get(passed.ID, "token-"+passed.ID, ""), "a schedule that took effect is not a preview")
 			require.Equal(t, public.PublicPolicies{}, get(draft.ID, "token-"+draft.ID, ""))
 			require.Equal(t, public.PublicPolicies{}, get(archived.ID, "expired", ""))
 			require.Equal(t, public.PublicPolicies{}, get(scheduled.ID, "protected", ""))
 			require.Equal(t, public.PublicPolicies{}, get(scheduled.ID, "protected", "wrong"))
 			require.Equal(t, scheduled.ID, get(scheduled.ID, "protected", "secret").Scheduled.ID)
+
+			passed := scheduled
+			passed.EffectiveFrom = at(-time.Minute)
+			h.store.PutVersion(kind, passed, "en")
+			require.Equal(t, public.PublicPolicies{}, get(scheduled.ID, "token-"+scheduled.ID, ""), "a schedule that took effect is not a preview")
 		})
 	}
 }

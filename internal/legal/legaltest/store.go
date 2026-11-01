@@ -223,8 +223,31 @@ func (s *Store) PutVersion(kind legal.PolicyKind, version legal.Version, sourceL
 		id := document.ID.String()
 		version.ContentDocumentID = &id
 	}
+	if s.holdsSingleStatusLocked(kind, version.Status, version.ID) {
+		panic("legaltest: a kind holds one " + string(version.Status) + " version at a time")
+	}
 	s.versions[versionKey{kind, version.ID}] = Record{Version: version, SourceLocale: sourceLocale}
 	return version
+}
+
+// holdsSingleStatusLocked reports whether a version of kind other than id
+// already holds a status of which a kind keeps one: active or scheduled.
+func (s *Store) holdsSingleStatusLocked(kind legal.PolicyKind, state legal.Status, id string) bool {
+	if state != status(kind, "active") && state != status(kind, "scheduled") {
+		return false
+	}
+	for key, record := range s.versions {
+		if key.kind == kind && key.id != id && record.Status == state {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) holdsSingleStatus(kind legal.PolicyKind, state legal.Status, id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.holdsSingleStatusLocked(kind, state, id)
 }
 
 // PutDocument replaces the stored document of a version's ID.
@@ -500,6 +523,9 @@ func (s *Store) Schedule(_ context.Context, kind legal.PolicyKind, id string, ef
 	if err := s.fail("Schedule"); err != nil {
 		return err
 	}
+	if s.holdsSingleStatus(kind, status(kind, "scheduled"), id) {
+		return errSingleStatus
+	}
 	s.update(kind, id, func(record *Record) {
 		record.Status, record.EffectiveFrom, record.UpdatedAt = status(kind, "scheduled"), &effectiveFrom, at
 	})
@@ -586,6 +612,9 @@ func (s *Store) Activate(_ context.Context, kind legal.PolicyKind, id string, fr
 	record, err := s.record(kind, id)
 	if err != nil || !slices.Contains(from, record.Status) {
 		return legal.ErrPolicyNotFound
+	}
+	if s.holdsSingleStatus(kind, status(kind, "active"), id) {
+		return errSingleStatus
 	}
 	s.update(kind, id, func(record *Record) {
 		record.Status, record.UpdatedAt = status(kind, "active"), at

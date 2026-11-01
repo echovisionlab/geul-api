@@ -19,6 +19,9 @@ var (
 	errNoticeStarted        = domainerr.Precondition("legal notice delivery has already started")
 	errPreviewTokenBound    = errors.New("automatic legal preview token is already bound to a different share link")
 	errDuplicateTranslation = errors.New("legal translation locale already exists")
+	// errSingleStatus is the unique index that keeps one active and one
+	// scheduled version of a kind.
+	errSingleStatus = errors.New("a kind holds one active and one scheduled version")
 )
 
 // The fake content document keeps what the Terms and Privacy use cases

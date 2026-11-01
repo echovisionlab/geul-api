@@ -36,13 +36,13 @@ func TestPublicStoreReadsPublishedVersionsIntegration(t *testing.T) {
 	privacy := func(version int, status managev1.PrivacyStatus, from, until *time.Time) model.Privacy {
 		return seedPublicPrivacyPolicy(t, db, contents, version, "Privacy "+status.String(), "Body", status.String(), from, until)
 	}
-	expired := privacy(1, managev1.PrivacyStatus_PRIVACY_STATUS_ACTIVE, at(-72*time.Hour), at(-48*time.Hour))
 	older := privacy(2, managev1.PrivacyStatus_PRIVACY_STATUS_ARCHIVED, at(-96*time.Hour), at(-72*time.Hour))
 	archived := privacy(3, managev1.PrivacyStatus_PRIVACY_STATUS_ARCHIVED, at(-48*time.Hour), at(-time.Hour))
 	current := privacy(4, managev1.PrivacyStatus_PRIVACY_STATUS_ACTIVE, at(-time.Hour), nil)
-	later := privacy(5, managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED, at(2*time.Hour), nil)
 	next := privacy(6, managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED, at(time.Hour), nil)
 	draft := privacy(7, managev1.PrivacyStatus_PRIVACY_STATUS_DRAFT, nil, nil)
+	// A kind holds one active version; an expired one is a Terms version.
+	seedPublicTermsPolicy(t, db, contents, 1, "Expired terms", "Body", managev1.TermsStatus_TERMS_STATUS_ACTIVE.String(), at(-72*time.Hour), at(-48*time.Hour))
 	hash, err := crypto.NewPasswordHasher(nil).Hash("secret")
 	require.NoError(t, err)
 	shareType := managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PRIVACY.String()
@@ -81,16 +81,17 @@ func TestPublicStoreReadsPublishedVersionsIntegration(t *testing.T) {
 		effective, found, err := store.EffectiveVersion(ctx, legaldomain.Privacy, now)
 		require.NoError(t, err)
 		require.True(t, found)
-		require.Equal(t, current.ID, effective.ID, "an active version past its effective_until is not current")
+		require.Equal(t, current.ID, effective.ID)
+		_, found, err = store.EffectiveVersion(ctx, legaldomain.Terms, now)
+		require.NoError(t, err)
+		require.False(t, found, "an active version past its effective_until is not current")
 		scheduled, found, err := store.NextScheduledVersion(ctx, legaldomain.Privacy, now)
 		require.NoError(t, err)
 		require.True(t, found)
 		require.Equal(t, next.ID, scheduled.ID)
 		_, found, err = store.NextScheduledVersion(ctx, legaldomain.Privacy, now.Add(3*time.Hour))
 		require.NoError(t, err)
-		require.False(t, found)
-		_ = later
-		_ = expired
+		require.False(t, found, "a scheduled version due before now is no longer next")
 
 		total, err := store.CountArchived(ctx, legaldomain.Privacy)
 		require.NoError(t, err)

@@ -403,8 +403,8 @@ func TestDeletePolicyKeepsNoticeHistoryAndRevokesTheVersion(t *testing.T) {
 		t.Run(string(kind), func(t *testing.T) {
 			h := newHarness(t)
 			ctx := newPrincipal().context(t)
-			past := time.Now().Add(-time.Hour)
-			fallback, _ := h.putVersion(t, kind, "active", func(v *legal.Version) { v.EffectiveFrom = &past })
+			past, future := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
+			fallback, _ := h.putVersion(t, kind, "scheduled", func(v *legal.Version) { v.EffectiveFrom = &future })
 			current, revision := h.putVersion(t, kind, "active", func(v *legal.Version) { v.EffectiveFrom = &past })
 			sent := h.store.PutRun(legaltest.Run{Kind: kind, PolicyID: current.ID, EventKey: string(kind) + "_effective", Status: legaltest.RunSent})
 			h.store.PutTranslation(kind, current.ID, legal.Translation{Locale: "ko", Title: ptr("Korean")})
