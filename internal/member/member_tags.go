@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -154,6 +155,9 @@ func (s *Service) CreateMemberTag(ctx context.Context, command CreateMemberTagCo
 			}
 			tag := model.UserTag{Name: name}
 			if err := tx.Create(&tag).Error; err != nil {
+				if dberrors.IsUniqueViolation(err) {
+					return Tag{}, domainerr.Duplicate("member tag", "name", name).WithCause(err)
+				}
 				return Tag{}, err
 			}
 			return Tag{ID: tag.ID, Name: tag.Name, CreatedAt: tag.CreatedAt}, nil

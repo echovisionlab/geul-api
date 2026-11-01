@@ -237,7 +237,8 @@ func TestMemberTagAuditsCommitExactLifecycleAndSkipRejectedMutationsIntegration(
 	require.Equal(t, "Featured members", created.Msg.Name)
 	assertMemberTagAudit(t, db, sharedtelemetry.AuditMemberTagCreated, created.Msg.Id, admin.MemberID, "Featured members")
 	_, err = service.CreateMemberTag(ctx, connect.NewRequest(&managev1.CreateMemberTagRequest{Name: "Featured members"}))
-	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
+	require.Equal(t, connect.CodeAlreadyExists, connect.CodeOf(err))
+	require.ErrorContains(t, err, "member tag with name 'Featured members' already exists")
 	var sameNameTagCount int64
 	require.NoError(t, db.Model(&model.UserTag{}).Where("name = ?", "Featured members").Count(&sameNameTagCount).Error)
 	require.Equal(t, int64(1), sameNameTagCount)
