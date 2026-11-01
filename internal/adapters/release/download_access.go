@@ -13,7 +13,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepublic "github.com/echovisionlab/geul-api/internal/release/public"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -54,7 +53,7 @@ func (a *DownloadAccess) Resolve(
 
 	user := auth.GetUser(ctx)
 	var evaluatedSources map[string]mediaasset.FileDownloadSource
-	var evaluatedAccess map[string]*openv1.FileDownloadAccess
+	var evaluatedAccess map[string]*releasepublic.DownloadAccess
 	var evaluatedFingerprints map[string]string
 	var evaluatedViewerFingerprint string
 	err := a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -102,7 +101,7 @@ func (a *DownloadAccess) Resolve(
 				signIn[id] = present
 			}
 		}
-		access := make(map[string]*openv1.FileDownloadAccess, len(sources))
+		access := make(map[string]*releasepublic.DownloadAccess, len(sources))
 		for id, source := range sources {
 			access[id] = trackDownloadAccess(source, user, allowed[id], signIn[id])
 		}
@@ -185,7 +184,7 @@ func (a *DownloadAccess) Resolve(
 				continue
 			}
 			authorization := releasepublic.TrackDownloadAuthorization{Access: decision}
-			if authorization.Access.GetAction() == openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD && signer != nil {
+			if downloadAction(authorization.Access) == releasepublic.DownloadActionDownload && signer != nil {
 				download, signErr := signer(releasepublic.MediaFile{
 					ID: current.FileID, Extension: current.Extension, MimeType: current.MimeType, FileName: current.FileName,
 				})
@@ -313,25 +312,33 @@ func sameReleaseDownloadTime(left, right *time.Time) bool {
 	return (left == nil && right == nil) || (left != nil && right != nil && left.Equal(*right))
 }
 
-func trackDownloadAccess(source mediaasset.FileDownloadSource, user *auth.UserInfo, allowed, signIn bool) *openv1.FileDownloadAccess {
+func trackDownloadAccess(source mediaasset.FileDownloadSource, user *auth.UserInfo, allowed, signIn bool) *releasepublic.DownloadAccess {
 	if allowed {
-		return &openv1.FileDownloadAccess{Availability: openv1.FileDownloadAvailability_FILE_DOWNLOAD_AVAILABILITY_AVAILABLE, Action: openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD}
+		return &releasepublic.DownloadAccess{Availability: releasepublic.DownloadAvailable, Action: releasepublic.DownloadActionDownload}
 	}
 	if (source.Audience == mediaasset.FileDownloadAudienceAuthenticated || source.Audience == mediaasset.FileDownloadAudienceRestricted) &&
 		(user == nil || !user.Authenticated || user.MemberID == "") && signIn {
-		return &openv1.FileDownloadAccess{Availability: openv1.FileDownloadAvailability_FILE_DOWNLOAD_AVAILABILITY_AVAILABLE, Action: openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_SIGN_IN}
+		return &releasepublic.DownloadAccess{Availability: releasepublic.DownloadAvailable, Action: releasepublic.DownloadActionSignIn}
 	}
 	return unavailableTrackDownloadAccess()
 }
 
-func unavailableTrackDownloadAccess() *openv1.FileDownloadAccess {
-	return &openv1.FileDownloadAccess{Availability: openv1.FileDownloadAvailability_FILE_DOWNLOAD_AVAILABILITY_UNAVAILABLE, Action: openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE}
+func unavailableTrackDownloadAccess() *releasepublic.DownloadAccess {
+	return &releasepublic.DownloadAccess{Availability: releasepublic.DownloadUnavailable, Action: releasepublic.DownloadActionNone}
+}
+
+// downloadAction is the action of access; none when there is no decision.
+func downloadAction(access *releasepublic.DownloadAccess) releasepublic.DownloadAction {
+	if access == nil {
+		return releasepublic.DownloadActionNone
+	}
+	return access.Action
 }
 
 func trackDownloadDecisionDependsOnActiveViewer(
 	source mediaasset.FileDownloadSource,
-	access *openv1.FileDownloadAccess,
+	access *releasepublic.DownloadAccess,
 ) bool {
-	return access.GetAction() == openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD &&
+	return downloadAction(access) == releasepublic.DownloadActionDownload &&
 		(source.Audience == mediaasset.FileDownloadAudienceAuthenticated || source.Audience == mediaasset.FileDownloadAudienceRestricted)
 }

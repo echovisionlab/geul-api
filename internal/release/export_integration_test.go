@@ -6,11 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 )
 
@@ -19,30 +18,36 @@ import (
 // that refuse to create one. It returns the new target revision.
 func SeedReleaseTargetLocaleForTest(
 	t *testing.T,
-	db *gorm.DB,
-	store *contentblock.Store,
+	units mutation.UnitOfWork[Store],
 	releaseID, locale, title string,
 	notes map[string]string,
 ) string {
 	t.Helper()
 	ctx := t.Context()
-	documentID, err := loadReleaseContentDocumentID(ctx, db, releaseID)
-	require.NoError(t, err)
-	var revisionText string
-	require.NoError(t, db.Raw(`SELECT revision::text FROM content_document WHERE id = ?`, documentID).Scan(&revisionText).Error)
-	revision, err := uuid.Parse(revisionText)
-	require.NoError(t, err)
 	var result releaseTargetLocaleMutationResult
-	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		var applyErr error
-		result, applyErr = applyReleaseTargetLocaleMutation(ctx, tx, store, releaseTargetLocaleMutationInput{
+	require.NoError(t, units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error {
+		store := tx.Store()
+		documentID, err := loadReleaseContentDocumentID(ctx, store, releaseID, Unlocked)
+		if err != nil {
+			return err
+		}
+		release, err := store.FindRelease(ctx, releaseID)
+		if err != nil {
+			return err
+		}
+		snapshot, err := store.ContentSnapshot(ctx, documentID, release.SourceLocale)
+		if err != nil {
+			return err
+		}
+		revision := snapshot.Document.Revision
+		result, err = applyReleaseTargetLocaleMutation(ctx, store, releaseTargetLocaleMutationInput{
 			ReleaseID: releaseID, DocumentID: documentID, Locale: locale,
 			ExpectedDocumentRevision: revision, Policy: targetlocale.Policy{AllowCreate: true, SeedSource: true},
 			Batch:    contentblock.Batch{DocumentID: documentID, ExpectedRevision: revision},
 			SetTitle: true, Title: &title, CreditNotePatch: notes,
 			Now: time.Now().UTC(), Fence: internalReleaseContentFence(releaseID),
 		})
-		return applyErr
+		return err
 	}))
 	require.True(t, result.LocaleCreated)
 	return result.TargetRevision

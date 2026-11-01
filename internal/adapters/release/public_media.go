@@ -7,6 +7,7 @@ import (
 
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	releasepublic "github.com/echovisionlab/geul-api/internal/release/public"
+	releasepublicpostgres "github.com/echovisionlab/geul-api/internal/release/public/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
@@ -85,4 +86,5 @@ func (m *PublicMedia) DownloadRef(file releasepublic.MediaFile) (*commonv1.Expir
 	)
 }
 
-var _ releasepublic.MediaRuntime = (*PublicMedia)(nil)
+var _ releasepublicpostgres.Media = (*PublicMedia)(nil)
+var _ releasepublic.DownloadSigner = (*PublicMedia)(nil)

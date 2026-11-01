@@ -65,6 +65,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/menu/postgres",
 			"./internal/mq",
 			"./internal/postgreslock",
+			"./internal/release/postgres",
 			"./internal/scheduler",
 			"./internal/series/postgres",
 			"./internal/sharelink/postgres",

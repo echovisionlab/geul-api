@@ -1,11 +1,11 @@
 package release
 
 import (
+	"reflect"
 	"testing"
 
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -37,7 +37,7 @@ func TestMergeReleaseLabelsUsesObservedAttributeDeltas(t *testing.T) {
 	peerValue := "changed by peer"
 	baselineValue := "old"
 	userValue := "changed by this user"
-	current := []model.ReleaseLabel{
+	current := []ReleaseLabel{
 		{LabelID: "label-a", CatalogNumber: &peerValue, SortOrder: 0},
 		{LabelID: "label-peer", CatalogNumber: stringPointer("peer catalog"), SortOrder: 1},
 	}
@@ -108,7 +108,7 @@ func TestApplyRelationOrderIntentUsesNextThenPreviousThenAppend(t *testing.T) {
 func TestMergeReleaseCreditsPreservesStableIDsAndConcurrentCredits(t *testing.T) {
 	role := "Vocals"
 	newRole := "Producer"
-	current := []model.ReleaseCredit{
+	current := []ReleaseCredit{
 		{ID: "credit-stable", CreditRole: &role, SortOrder: 0, CreditedName: stringPointer("A")},
 		{ID: "credit-peer", CreditRole: stringPointer("Guitar"), SortOrder: 1, CreditedName: stringPointer("B")},
 	}
@@ -134,7 +134,7 @@ func TestMergeReleaseCreditsPreservesStableIDsAndConcurrentCredits(t *testing.T)
 func TestMergeTrackCreditsPreservesConcurrentRowsAndUntouchedValues(t *testing.T) {
 	oldName := "Old"
 	peerName := "Changed elsewhere"
-	current := []model.TrackCredit{
+	current := []TrackCredit{
 		{ID: "credit-stable", TrackID: "track-1", CreditedName: &peerName, SortOrder: 0},
 		{ID: "credit-peer", TrackID: "track-1", CreditedName: stringPointer("Peer"), SortOrder: 1},
 	}
@@ -150,7 +150,7 @@ func TestMergeTrackCreditsPreservesConcurrentRowsAndUntouchedValues(t *testing.T
 }
 
 func TestMergeTrackCreditsDoesNotRecreateObservedCreditDeletedByPeer(t *testing.T) {
-	current := []model.TrackCredit{{
+	current := []TrackCredit{{
 		ID: "credit-stable", TrackID: "track-1", CreditedName: stringPointer("Still present"), SortOrder: 0,
 	}}
 	observed := []*CreditInput{
@@ -176,7 +176,7 @@ func TestMergeTrackCreditsRoleAlreadyAppliedIsUnchanged(t *testing.T) {
 	stored := "producer"
 	observedRole := "mixer"
 	desiredRole := "producer"
-	current := []model.TrackCredit{{ID: "credit-a", TrackID: "track-1", CreditedName: proto.String("A"), CreditRole: &stored}}
+	current := []TrackCredit{{ID: "credit-a", TrackID: "track-1", CreditedName: proto.String("A"), CreditRole: &stored}}
 	next := mergeTrackCredits(
 		"track-1",
 		current,
@@ -186,7 +186,7 @@ func TestMergeTrackCreditsRoleAlreadyAppliedIsUnchanged(t *testing.T) {
 	if len(next) != 1 {
 		t.Fatalf("merged credits = %d, want 1", len(next))
 	}
-	if !sameTrackCredit(current[0], next[0]) {
+	if !reflect.DeepEqual(current[0], next[0]) {
 		t.Fatalf("credit with the same role value was treated as changed: %+v", next[0])
 	}
 }

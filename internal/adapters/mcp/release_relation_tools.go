@@ -38,7 +38,7 @@ var releaseRelationTools = []mcpserver.Tool{
 
 // ReleaseRelationApplication retains the native observed-merge and permission boundaries.
 type ReleaseRelationApplication interface {
-	GetReleaseRelations(context.Context, releasedomain.GetReleaseRelationsQuery) (*managev1.GetReleaseRelationsResponse, error)
+	GetReleaseRelations(context.Context, releasedomain.GetReleaseRelationsQuery) (releasedomain.Relations, error)
 	SetReleaseArtists(context.Context, releasedomain.SetReleaseArtistsCommand) error
 	SetReleaseLabels(context.Context, releasedomain.SetReleaseLabelsCommand) error
 	SetReleaseCategories(context.Context, releasedomain.SetReleaseCategoriesCommand) error
@@ -78,7 +78,7 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 		if err != nil {
 			return expectedToolError(err)
 		}
-		return releaseRelationsResult(projectReleaseRelations(relations))
+		return releaseRelationsResult(projectReleaseRelations(releasedomain.RelationsMessage(relations)))
 	case ToolReleaseArtistsSet:
 		var input struct {
 			ReleaseID   string                         `json:"release_id"`

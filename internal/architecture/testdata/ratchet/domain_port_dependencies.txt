@@ -86,14 +86,8 @@
 7 internal/referencecatalog/public generated contracts
 3 internal/referencecatalog/public gorm
 3 internal/referencecatalog/public model
-17 internal/release generated contracts
-30 internal/release gorm
-19 internal/release model
-5 internal/release spicedb client
-6 internal/release/public generated contracts
-4 internal/release/public gorm
-5 internal/release/public model
-3 internal/release/public spicedb client
+12 internal/release generated contracts
+4 internal/release/public generated contracts
 2 internal/series generated contracts
 1 internal/series/public generated contracts
 3 internal/sitesettings generated contracts

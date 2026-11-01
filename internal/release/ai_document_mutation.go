@@ -14,11 +14,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 var errRollbackReleaseAIDocumentValidation = errors.New("rollback Release AI document validation")
@@ -61,20 +58,20 @@ func (s *Service) ExecuteAIDocumentMutation(ctx context.Context, command Execute
 	if err != nil {
 		return AIDocumentMutationResult{}, err
 	}
-	var root releaseAIDocumentRoot
+	var root DocumentRoot
 	var applied aiDocumentApplied
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[aiDocumentApplied]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[aiDocumentApplied, Store]{
+		Lock: func(ctx context.Context, store Store) error {
 			var err error
-			root, err = loadReleaseAIDocumentRoot(ctx, tx, canonicalReleaseID.String(), clause.LockingStrengthUpdate)
+			root, err = loadReleaseAIDocumentRoot(ctx, store, canonicalReleaseID.String(), UpdateLock)
 			return err
 		},
-		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-			return requireActiveReleaseAction(ctx, tx, s.spiceDB, root.ID, releaseActionEdit)
+		Access: mutation.Fenced(func(ctx context.Context, _ Store, lock lockActive) error {
+			return requireActiveReleaseAction(ctx, lock, s.spiceDB, root.ID, releaseActionEdit)
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (aiDocumentApplied, error) {
+		Change: func(ctx context.Context, store Store) (aiDocumentApplied, error) {
 			var err error
-			applied, err = s.applyAIDocumentMutation(ctx, tx, root, locale, command.Compiler)
+			applied, err = applyAIDocumentMutation(ctx, store, root, locale, command.Compiler)
 			return applied, err
 		},
 		Audit: func(applied aiDocumentApplied) mutation.Audit {
@@ -89,9 +86,9 @@ func (s *Service) ExecuteAIDocumentMutation(ctx context.Context, command Execute
 				return mutation.Unchanged()
 			}
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, applied aiDocumentApplied) error {
+		Outbox: func(ctx context.Context, store Store, applied aiDocumentApplied) error {
 			if applied.sourceChanged {
-				if err := s.contentOG.RequestCurrent(ctx, tx, root.ID, "release_ai_document_saved"); err != nil {
+				if err := store.RequestOG(ctx, root.ID, "release_ai_document_saved"); err != nil {
 					return err
 				}
 			}
@@ -101,7 +98,7 @@ func (s *Service) ExecuteAIDocumentMutation(ctx context.Context, command Execute
 			if !applied.output.Changed {
 				return nil
 			}
-			return s.publishContentUpdated(ctx, tx, releaseAIDocumentContentUpdatedEvent(applied.input, applied.output, applied.input.ContributorMemberID.String()))
+			return publishContentUpdated(ctx, store, releaseAIDocumentContentUpdatedEvent(applied.input, applied.output, applied.input.ContributorMemberID.String()))
 		},
 	})
 	if errors.Is(err, errRollbackReleaseAIDocumentValidation) {
@@ -115,10 +112,10 @@ func (s *Service) ExecuteAIDocumentMutation(ctx context.Context, command Execute
 
 // applyAIDocumentMutation compiles the mutation against the locked state of
 // the caller's Member and applies it.
-func (s *Service) applyAIDocumentMutation(
+func applyAIDocumentMutation(
 	ctx context.Context,
-	tx *gorm.DB,
-	root releaseAIDocumentRoot,
+	store Store,
+	root DocumentRoot,
 	locale string,
 	compiler AIDocumentMutationCompiler,
 ) (aiDocumentApplied, error) {
@@ -130,7 +127,7 @@ func (s *Service) applyAIDocumentMutation(
 	if err != nil {
 		return aiDocumentApplied{}, releaseNotFound(root.ID).WithCause(err)
 	}
-	state, err := s.loadAIDocumentStateAfterAuthorization(ctx, tx, root, locale, memberID.String())
+	state, err := loadAIDocumentStateAfterAuthorization(ctx, store, root, locale, memberID.String())
 	if err != nil {
 		return aiDocumentApplied{}, err
 	}
@@ -143,11 +140,11 @@ func (s *Service) applyAIDocumentMutation(
 	if err != nil {
 		return applied, err
 	}
-	if err := requireDocumentContributors(ctx, tx, []string{memberID.String()}); err != nil {
+	if err := requireDocumentContributors(ctx, store, []string{memberID.String()}); err != nil {
 		return applied, err
 	}
 	fence := releaseAuthorizedAIDocumentFence(root, state.SourceLocale)
-	output, sourceResult, err := s.applyAIDocumentMode(ctx, tx, input, expected, memberID, *root.DocumentID, fence)
+	output, sourceResult, err := applyAIDocumentMode(ctx, store, input, expected, memberID, *root.DocumentID, fence)
 	if err != nil {
 		return applied, err
 	}
@@ -197,7 +194,7 @@ func validateCompiledReleaseAIDocumentMutation(state AIDocumentState, input AIDo
 	return expected, nil
 }
 
-func (s *Service) applyAIDocumentMode(ctx context.Context, tx *gorm.DB, input AIDocumentMutation, expected, memberID, documentID uuid.UUID, fence contentblock.DomainFence) (AIDocumentMutationResult, contentblock.Result, error) {
+func applyAIDocumentMode(ctx context.Context, store Store, input AIDocumentMutation, expected, memberID, documentID uuid.UUID, fence ContentFence) (AIDocumentMutationResult, contentblock.Result, error) {
 	batch := contentblock.Batch{DocumentID: documentID, ExpectedRevision: expected, ContributorMemberIDs: []uuid.UUID{memberID}}
 	if input.Batch != nil {
 		batch = contentblock.CloneBatch(*input.Batch)
@@ -206,13 +203,13 @@ func (s *Service) applyAIDocumentMode(ctx context.Context, tx *gorm.DB, input AI
 	}
 	if input.Locale != input.ExpectedSource {
 		if input.DeleteTranslation {
-			result, err := deleteReleaseTargetLocale(ctx, tx, s.contentBlocks, input.ReleaseID, documentID, input.Locale, expected, input.ExpectedTargetRevision, []uuid.UUID{memberID}, fence)
+			result, err := deleteReleaseTargetLocale(ctx, store, input.ReleaseID, documentID, input.Locale, expected, input.ExpectedTargetRevision, []uuid.UUID{memberID}, fence)
 			if err != nil {
 				return AIDocumentMutationResult{}, contentblock.Result{}, err
 			}
 			return AIDocumentMutationResult{DocumentRevision: result.DocumentRevision.String(), Changed: result.Changed}, contentblock.Result{}, nil
 		}
-		target, err := applyReleaseTargetLocaleMutation(ctx, tx, s.contentBlocks, releaseTargetLocaleMutationInput{
+		target, err := applyReleaseTargetLocaleMutation(ctx, store, releaseTargetLocaleMutationInput{
 			ReleaseID: input.ReleaseID, DocumentID: documentID, Locale: input.Locale,
 			ExpectedDocumentRevision: expected, ExpectedTargetRevision: input.ExpectedTargetRevision,
 			// A missing target is an explicit lifecycle boundary.  Editing a
@@ -234,8 +231,8 @@ func (s *Service) applyAIDocumentMode(ctx context.Context, tx *gorm.DB, input AI
 	if input.CreateTranslation || input.DeleteTranslation {
 		return AIDocumentMutationResult{}, contentblock.Result{}, domainerr.InvalidField("locale", "Release source translation lifecycle cannot be changed")
 	}
-	result, err := s.contentBlocks.ApplyBatchWithMetadata(ctx, tx, batch, fence, func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-		changed, err := applyReleaseSourceAIDocumentMetadata(ctx, tx, input, time.Now().UTC())
+	result, err := store.ApplyContentBatchWithMetadata(ctx, batch, fence, func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
+		changed, err := applyReleaseSourceAIDocumentMetadata(ctx, store, input, time.Now().UTC())
 		return contentblock.MetadataEffect{Changed: changed, AffectsTranslationSource: changed, SourceLocale: input.ExpectedSource, ChangedLocales: []string{input.ExpectedSource}}, err
 	})
 	if err != nil {
@@ -244,15 +241,15 @@ func (s *Service) applyAIDocumentMode(ctx context.Context, tx *gorm.DB, input AI
 	return AIDocumentMutationResult{DocumentRevision: result.DocumentRevision.String(), Changed: result.Changed}, result, nil
 }
 
-func applyReleaseSourceAIDocumentMetadata(ctx context.Context, tx *gorm.DB, input AIDocumentMutation, now time.Time) (bool, error) {
-	row, exists, err := loadOptionalReleaseLocaleMetadataRow(ctx, tx, input.ReleaseID, input.ExpectedSource, true)
+func applyReleaseSourceAIDocumentMetadata(ctx context.Context, store Store, input AIDocumentMutation, now time.Time) (bool, error) {
+	row, exists, err := store.LocaleMetadata(ctx, input.ReleaseID, input.ExpectedSource, true)
 	if err != nil {
 		return false, err
 	}
 	if !exists {
 		return false, domainerr.Precondition("Release source locale metadata is missing")
 	}
-	currentNotes, err := loadReleaseCreditLocaleNotes(ctx, tx, input.ReleaseID, input.ExpectedSource)
+	currentNotes, err := store.CreditNotes(ctx, input.ReleaseID, input.ExpectedSource)
 	if err != nil {
 		return false, err
 	}
@@ -273,7 +270,7 @@ func applyReleaseSourceAIDocumentMetadata(ctx context.Context, tx *gorm.DB, inpu
 	maps.DeleteFunc(nextNotes, func(_ string, note string) bool {
 		return strings.TrimSpace(note) == ""
 	})
-	if err := validateReleaseCreditNoteIdentityMap(ctx, tx, input.ReleaseID, nextNotes); err != nil {
+	if err := validateReleaseCreditNoteIdentityMap(ctx, store, input.ReleaseID, nextNotes); err != nil {
 		return false, err
 	}
 	titleChanged := !releaseOptionalStringsEqual(row.Title, nextTitle)
@@ -282,27 +279,27 @@ func applyReleaseSourceAIDocumentMetadata(ctx context.Context, tx *gorm.DB, inpu
 		return false, nil
 	}
 	if titleChanged {
-		if err := tx.WithContext(ctx).Table("release_translation").Where("entity_id = ?::uuid AND locale = ?", input.ReleaseID, input.ExpectedSource).Updates(map[string]any{"title": nextTitle, "updated_at": now}).Error; err != nil {
+		if _, err := store.UpdateLocaleTitle(ctx, input.ReleaseID, input.ExpectedSource, nextTitle, now); err != nil {
 			return false, err
 		}
 	}
 	if notesChanged {
-		if err := replaceReleaseCreditLocaleNotes(ctx, tx, input.ReleaseID, input.ExpectedSource, nextNotes, now); err != nil {
+		if err := store.ReplaceCreditNotes(ctx, input.ReleaseID, input.ExpectedSource, nextNotes, now); err != nil {
 			return false, err
 		}
 	}
-	if err := touchReleaseSourceLocaleState(ctx, tx, input.ReleaseID, now); err != nil {
+	if err := touchReleaseSourceLocaleState(ctx, store, input.ReleaseID, now); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-func releaseAuthorizedAIDocumentFence(root releaseAIDocumentRoot, expectedSource string) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
+func releaseAuthorizedAIDocumentFence(root DocumentRoot, expectedSource string) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		if root.ID == "" || root.DocumentID == nil || documentID != *root.DocumentID {
 			return contentblock.DomainContext{}, domainerr.Precondition("Release content document changed; reload before saving")
 		}
-		domain, err := lockReleaseTranslationSourceContext(ctx, tx, root.ID)
+		domain, err := lockReleaseTranslationSourceContext(ctx, store, root.ID)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
@@ -313,42 +310,26 @@ func releaseAuthorizedAIDocumentFence(root releaseAIDocumentRoot, expectedSource
 	}
 }
 
-func deleteReleaseAIDocumentTranslation(ctx context.Context, tx *gorm.DB, releaseID, locale string) (bool, error) {
-	if err := tx.WithContext(ctx).Exec("DELETE FROM release_credit_locale AS localized USING release_credit AS credit WHERE localized.credit_id = credit.id AND credit.release_id = ?::uuid AND localized.locale = ?", releaseID, locale).Error; err != nil {
-		return false, err
-	}
-	result := tx.WithContext(ctx).Exec("DELETE FROM release_translation WHERE entity_id = ?::uuid AND locale = ?", releaseID, locale)
-	return result.RowsAffected != 0, result.Error
-}
-
-func releaseAIDocumentContentUpdatedEvent(input AIDocumentMutation, result AIDocumentMutationResult, contributor string) *managev1.ContentUpdatedEvent {
+func releaseAIDocumentContentUpdatedEvent(input AIDocumentMutation, result AIDocumentMutationResult, contributor string) *ContentUpdate {
 	if !result.Changed {
 		return nil
 	}
 	revision := result.DocumentRevision
-	fields := make([]*managev1.ContentUpdatedField, 0, 3)
+	fields := make([]ChangedField, 0, 3)
 	if input.SetTitle {
-		fields = append(fields, &managev1.ContentUpdatedField{
-			Path: "title", Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_TEXT,
-		})
+		fields = append(fields, ChangedField{Path: "title", Kind: FieldText})
 	}
 	if input.Batch != nil || input.CreateTranslation || input.DeleteTranslation {
-		fields = append(fields, &managev1.ContentUpdatedField{
-			Path: "document.content", Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_TEXT,
-		})
+		fields = append(fields, ChangedField{Path: "document.content", Kind: FieldText})
 	}
 	if len(input.CreditNotePatch) != 0 {
-		fields = append(fields, &managev1.ContentUpdatedField{
-			Path: "document.credits", Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_TEXT,
-		})
+		fields = append(fields, ChangedField{Path: "document.credits", Kind: FieldText})
 	}
 	if len(fields) == 0 {
 		// A translation lifecycle operation can be represented without a
 		// content field, but the subscriber still needs a meaningful invalidation
 		// signal. Keep the document content path as the stable Release surface.
-		fields = append(fields, &managev1.ContentUpdatedField{
-			Path: "document.content", Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_TEXT,
-		})
+		fields = append(fields, ChangedField{Path: "document.content", Kind: FieldText})
 	}
 	sourcePath := input.Locale == input.ExpectedSource
 	exists := !input.DeleteTranslation
@@ -358,13 +339,11 @@ func releaseAIDocumentContentUpdatedEvent(input AIDocumentMutation, result AIDoc
 	if !sourcePath && exists && result.TargetRevision == nil {
 		return nil
 	}
-	event := &managev1.ContentUpdatedEvent{
-		EntityType:    managev1.ContentEntityType_CONTENT_ENTITY_TYPE_RELEASE,
-		EntityId:      input.ReleaseID,
-		Source:        managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
-		ChangedFields: fields, ContributorMemberIds: []string{contributor},
+	event := &ContentUpdate{
+		ReleaseID: input.ReleaseID, Source: SourceAI,
+		Fields: fields, ContributorMemberIDs: []string{contributor},
 		DocumentStateChanged: sourcePath, DocumentRevision: &revision,
-		Locale: &input.Locale, LocaleExists: &exists, TimestampMs: time.Now().UnixMilli(),
+		Locale: &input.Locale, LocaleExists: &exists,
 	}
 	if !sourcePath && exists && result.TargetRevision != nil {
 		targetRevision := *result.TargetRevision

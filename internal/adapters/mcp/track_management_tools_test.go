@@ -13,7 +13,6 @@ import (
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 var _ TrackManagementApplication = (*releasedomain.Service)(nil)
@@ -38,17 +37,17 @@ type recordingTrackApplication struct {
 }
 
 func (a *recordingTrackApplication) record(ctx context.Context) { a.calls++; a.ctx = ctx }
-func (a *recordingTrackApplication) ListTracksByRelease(ctx context.Context, query releasedomain.ListTracksQuery) ([]*managev1.TrackWithCredits, error) {
+func (a *recordingTrackApplication) ListTracksByRelease(ctx context.Context, query releasedomain.ListTracksQuery) ([]releasedomain.TrackWithCredits, error) {
 	a.record(ctx)
 	a.list = query
-	return []*managev1.TrackWithCredits{trackWithCreditsFixture()}, a.err
+	return []releasedomain.TrackWithCredits{trackWithCreditsFixture()}, a.err
 }
-func (a *recordingTrackApplication) CreateTrack(ctx context.Context, command releasedomain.CreateTrackCommand) (*managev1.Track, error) {
+func (a *recordingTrackApplication) CreateTrack(ctx context.Context, command releasedomain.CreateTrackCommand) (releasedomain.Track, error) {
 	a.record(ctx)
 	a.create = command
 	return trackWithCreditsFixture().Track, a.err
 }
-func (a *recordingTrackApplication) UpdateTrack(ctx context.Context, command releasedomain.UpdateTrackCommand) (*managev1.Track, error) {
+func (a *recordingTrackApplication) UpdateTrack(ctx context.Context, command releasedomain.UpdateTrackCommand) (releasedomain.Track, error) {
 	a.record(ctx)
 	a.update = command
 	return trackWithCreditsFixture().Track, a.err
@@ -58,24 +57,29 @@ func (a *recordingTrackApplication) DeleteTrack(ctx context.Context, command rel
 	a.delete = command
 	return a.err
 }
-func (a *recordingTrackApplication) SetTrackCredits(ctx context.Context, command releasedomain.SetTrackCreditsCommand) (*managev1.TrackWithCredits, error) {
+func (a *recordingTrackApplication) SetTrackCredits(ctx context.Context, command releasedomain.SetTrackCreditsCommand) (releasedomain.TrackWithCredits, error) {
 	a.record(ctx)
 	a.credits = command
 	return trackWithCreditsFixture(), a.err
 }
-func (a *recordingTrackApplication) ReorderTracks(ctx context.Context, command releasedomain.ReorderTracksCommand) ([]*managev1.TrackWithCredits, error) {
+func (a *recordingTrackApplication) ReorderTracks(ctx context.Context, command releasedomain.ReorderTracksCommand) ([]releasedomain.TrackWithCredits, error) {
 	a.record(ctx)
 	a.reorder = command
-	return []*managev1.TrackWithCredits{trackWithCreditsFixture()}, a.err
+	return []releasedomain.TrackWithCredits{trackWithCreditsFixture()}, a.err
 }
 
-func trackWithCreditsFixture() *managev1.TrackWithCredits {
+func trackWithCreditsFixture() releasedomain.TrackWithCredits {
 	artist, role, lyrics, status, fileID, private := trackTestArtist, "producer", "lyrics", "completed", trackTestArtist, "private hydrated value"
-	duration := int32(0)
-	metadata, _ := structpb.NewStruct(map[string]any{"private_metadata": private})
-	return &managev1.TrackWithCredits{
-		Track:   &managev1.Track{Id: trackTestID, ReleaseId: trackTestRelease, TrackNumber: 2, Title: "Track", DurationSeconds: &duration, Lyrics: &lyrics, ProcessingStatus: &status, AudioOriginalFileId: &fileID, Metadata: metadata},
-		Credits: []*managev1.TrackCredit{{Id: trackTestCredit, ArtistId: &artist, ArtistName: &private, ArtistSlug: &private, CreditRole: &role, SortOrder: 0, Member: &commonv1.MemberSummary{Id: private}}},
+	duration := 0
+	return releasedomain.TrackWithCredits{
+		Track: releasedomain.Track{
+			ID: trackTestID, ReleaseID: trackTestRelease, TrackNumber: 2, Title: "Track", DurationSeconds: &duration,
+			Lyrics: &lyrics, ProcessingStatus: &status, AudioOriginalFileID: &fileID, Metadata: map[string]any{"private_metadata": private},
+		},
+		Credits: []releasedomain.TrackCreditView{{
+			CreditRow:  releasedomain.CreditRow{ID: trackTestCredit, ArtistID: &artist, CreditRole: &role, SortOrder: 0},
+			ArtistName: &private, ArtistSlug: &private, Member: &commonv1.MemberSummary{Id: private},
+		}},
 	}
 }
 

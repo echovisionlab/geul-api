@@ -9,7 +9,6 @@ import (
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	"github.com/echovisionlab/geul-api/internal/model"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -41,8 +40,8 @@ var releaseManagementTools = []mcpserver.Tool{
 }
 
 type ReleaseManagementApplication interface {
-	GetRelease(context.Context, releasedomain.GetReleaseQuery) (*managev1.Release, error)
-	CreateRelease(context.Context, releasedomain.CreateReleaseCommand) (*managev1.Release, error)
+	GetRelease(context.Context, releasedomain.GetReleaseQuery) (releasedomain.View, error)
+	CreateRelease(context.Context, releasedomain.CreateReleaseCommand) (releasedomain.View, error)
 	UpdateRelease(context.Context, releasedomain.UpdateReleaseCommand) (releasedomain.ReleaseUpdate, error)
 	PublishRelease(context.Context, releasedomain.PublishReleaseCommand) (releasedomain.LifecycleChange, error)
 	UnpublishRelease(context.Context, releasedomain.UnpublishReleaseCommand) (releasedomain.LifecycleChange, error)
@@ -135,7 +134,7 @@ func (tools *ReleaseManagementTools) create(ctx context.Context, arguments mcpse
 	if err != nil {
 		return expectedToolError(err)
 	}
-	output := releaseSettingsOutput(created)
+	output := releaseSettingsOutput(releasedomain.ReleaseMessage(created))
 	output["changed"] = true
 	return contentResult(output)
 }
@@ -152,7 +151,7 @@ func (tools *ReleaseManagementTools) getSettings(ctx context.Context, arguments 
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(releaseSettingsOutput(release))
+	return contentResult(releaseSettingsOutput(releasedomain.ReleaseMessage(release)))
 }
 
 type releaseSettingsArguments struct {
@@ -319,16 +318,16 @@ func (tools *ReleaseManagementTools) checkSlug(ctx context.Context, arguments mc
 	return contentResult(map[string]any{"document_type": "release", "slug": input.Slug, "available": available})
 }
 
-func parseReleaseType(value string) (model.ReleaseType, error) {
+func parseReleaseType(value string) (releasedomain.Type, error) {
 	switch value {
 	case "album":
-		return model.ReleaseTypeAlbum, nil
+		return releasedomain.TypeAlbum, nil
 	case "ep":
-		return model.ReleaseTypeEP, nil
+		return releasedomain.TypeEP, nil
 	case "single":
-		return model.ReleaseTypeSingle, nil
+		return releasedomain.TypeSingle, nil
 	case "compilation":
-		return model.ReleaseTypeCompilation, nil
+		return releasedomain.TypeCompilation, nil
 	default:
 		return "", errors.New("type must be album, ep, single, or compilation")
 	}

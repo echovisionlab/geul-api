@@ -2,53 +2,43 @@ package release
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
 
 type releaseManageContentProjection struct {
-	Document        *contentv1.RichTextDocument
-	Revision        string
-	SnapshotDigest  string
-	SourceTitle     string
-	SourceOgAssetID *string
+	Document    *contentv1.RichTextDocument
+	Revision    string
+	SourceTitle string
 }
 
-func loadReleaseManageContentProjection(
+// loadReleaseManageContentProjection reads the Release's content document
+// and source title in one snapshot that share-locks the root, after
+// loadRoot, when set, read the root in it.
+func (s *Service) loadReleaseManageContentProjection(
 	ctx context.Context,
-	db *gorm.DB,
-	store *contentblock.Store,
 	releaseID string,
-	localeAwareOG bool,
-	loadRoot ...func(context.Context, *gorm.DB) error,
+	loadRoot func(context.Context, Store) error,
 ) (releaseManageContentProjection, error) {
 	var projection releaseManageContentProjection
-	err := mutation.ReadLocked(ctx, db, func(tx *gorm.DB) error {
-		for _, load := range loadRoot {
-			if load != nil {
-				if err := load(ctx, tx); err != nil {
-					return err
-				}
+	err := s.units.ReadLocked(ctx, func(store Store) error {
+		if loadRoot != nil {
+			if err := loadRoot(ctx, store); err != nil {
+				return err
 			}
 		}
-		snapshot, source, err := loadReleaseContentSnapshotInTransaction(
-			ctx, tx, store, releaseID,
-		)
+		snapshot, sourceLocale, err := loadReleaseContentSnapshotInTransaction(ctx, store, releaseID)
 		if err != nil {
 			return err
 		}
@@ -56,57 +46,37 @@ func loadReleaseManageContentProjection(
 		if err != nil {
 			return normalizeReleaseContentBlockError(err)
 		}
-		title, err := loadReleaseSourceTitle(ctx, tx, releaseID, source.SourceLocale)
+		title, err := loadReleaseSourceTitle(ctx, store, releaseID, sourceLocale)
 		if err != nil {
 			return err
 		}
-		var sourceOgAssetID *string
-		if localeAwareOG {
-			var row struct {
-				OgAssetID *string `gorm:"column:og_asset_id"`
-			}
-			if queryErr := tx.WithContext(ctx).Table("release_translation").
-				Select("og_asset_id").
-				Where("entity_id = ? AND locale = ?", releaseID, source.SourceLocale).
-				Take(&row).Error; queryErr != nil {
-				return queryErr
-			}
-			sourceOgAssetID = row.OgAssetID
-		}
 		projection = releaseManageContentProjection{
-			Document:        document,
-			Revision:        snapshot.Document.Revision.String(),
-			SnapshotDigest:  snapshot.SnapshotDigest,
-			SourceTitle:     title,
-			SourceOgAssetID: sourceOgAssetID,
+			Document: document, Revision: snapshot.Document.Revision.String(), SourceTitle: title,
 		}
 		return nil
 	})
 	return projection, err
 }
 
-func loadReleaseSourceTitle(
-	ctx context.Context,
-	db *gorm.DB,
-	releaseID string,
-	locale string,
-) (string, error) {
-	var row struct {
-		Title string `gorm:"column:title"`
+// loadReleaseSourceTitle reads the title of the Release's source locale; a
+// missing locale answers not found.
+func loadReleaseSourceTitle(ctx context.Context, store Store, releaseID, locale string) (string, error) {
+	metadata, exists, err := store.LocaleMetadata(ctx, releaseID, locale, false)
+	if err != nil {
+		return "", err
 	}
-	if err := db.WithContext(ctx).
-		Table("release_translation").
-		Select("title").
-		Where("entity_id = ? AND locale = ?", releaseID, locale).
-		Take(&row).Error; err != nil {
-		return "", missingAs(err, domainerr.ResourceNotFound("release_translation", releaseID))
+	if !exists {
+		return "", domainerr.ResourceNotFound("release_translation", releaseID)
 	}
-	return row.Title, nil
+	if metadata.Title == nil {
+		return "", nil
+	}
+	return *metadata.Title, nil
 }
 
 func saveReleaseSourceLocaleMetadata(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	releaseID string,
 	locale string,
 	input translationLocaleDocumentSaveInput,
@@ -114,125 +84,58 @@ func saveReleaseSourceLocaleMetadata(
 	if input.Title == nil || strings.TrimSpace(*input.Title) == "" {
 		return domainerr.InvalidField("title", "must not be empty")
 	}
-	source, err := loadReleaseSourceLocale(ctx, db, releaseID)
+	sourceLocale, err := loadReleaseSourceLocale(ctx, store, releaseID, Unlocked)
 	if err != nil {
 		return err
 	}
-	if source.SourceLocale != locale {
+	if sourceLocale != locale {
 		return domainerr.Precondition("source locale metadata must match translation source authority")
 	}
 	now := input.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	return db.WithContext(ctx).Exec(
-		`INSERT INTO release_translation (
-		 entity_id, locale, title, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT (entity_id, locale) DO UPDATE SET
-		 title = EXCLUDED.title,
-		 updated_at = EXCLUDED.updated_at`,
-		releaseID, locale, strings.TrimSpace(*input.Title),
-		now, now,
-	).Error
+	return store.SaveSourceLocaleTitle(ctx, releaseID, locale, strings.TrimSpace(*input.Title), now)
 }
 
-type releaseLocaleMetadataState struct {
-	Title *string `gorm:"column:title"`
-}
-
-func loadReleaseLocaleMetadataState(
-	ctx context.Context,
-	db *gorm.DB,
-	releaseID string,
-	locale string,
-) (*releaseLocaleMetadataState, error) {
-	var row releaseLocaleMetadataState
-	result := db.WithContext(ctx).
-		Table("release_translation").
-		Select("title").
-		Where("entity_id = ? AND locale = ?", releaseID, locale).
-		Take(&row)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	return &row, nil
-}
-
-type releaseSourceLocale struct {
-	SourceLocale string `gorm:"column:source_locale"`
-}
-
-func loadReleaseSourceLocale(
-	ctx context.Context,
-	db *gorm.DB,
-	releaseID string,
-) (releaseSourceLocale, error) {
-	return loadReleaseSourceLocaleWithStrength(
-		ctx, db, releaseID, "",
-	)
-}
-
-func loadReleaseSourceLocaleWithStrength(
-	ctx context.Context,
-	db *gorm.DB,
-	releaseID string,
-	strength string,
-) (releaseSourceLocale, error) {
-	var state releaseSourceLocale
-	query := db.WithContext(ctx).
-		Table("release").
-		Select("source_locale").
-		Where("id = ?", releaseID)
-	if strength != "" {
-		query = query.Clauses(clause.Locking{Strength: strength})
-	}
-	if err := query.Take(&state).Error; err != nil {
-		return releaseSourceLocale{}, missingAs(err, releaseNotFound(releaseID))
-	}
-	return state, nil
-}
-
-func loadReleaseContentSnapshotInTransaction(
-	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	releaseID string,
-) (contentblock.Snapshot, releaseSourceLocale, error) {
-	documentID, err := loadReleaseContentDocumentIDWithStrength(
-		ctx, tx, releaseID, clause.LockingStrengthShare,
-	)
+// loadReleaseSourceLocale reads the Release's source locale with lock; a
+// missing Release answers not found.
+func loadReleaseSourceLocale(ctx context.Context, store Store, releaseID string, lock RowLock) (string, error) {
+	sourceLocale, err := store.SourceLocale(ctx, releaseID, lock)
 	if err != nil {
-		return contentblock.Snapshot{}, releaseSourceLocale{}, err
+		return "", releaseMissingAs(err, releaseNotFound(releaseID))
 	}
-	source, err := loadReleaseSourceLocaleWithStrength(
-		ctx, tx, releaseID, clause.LockingStrengthShare,
-	)
+	return sourceLocale, nil
+}
+
+// loadReleaseContentSnapshotInTransaction share-locks the Release root and
+// reads its content document in the source locale.
+func loadReleaseContentSnapshotInTransaction(ctx context.Context, store Store, releaseID string) (contentblock.Snapshot, string, error) {
+	documentID, err := loadReleaseContentDocumentID(ctx, store, releaseID, ShareLock)
 	if err != nil {
-		return contentblock.Snapshot{}, releaseSourceLocale{}, err
+		return contentblock.Snapshot{}, "", err
 	}
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, source.SourceLocale)
+	sourceLocale, err := loadReleaseSourceLocale(ctx, store, releaseID, ShareLock)
 	if err != nil {
-		return contentblock.Snapshot{}, releaseSourceLocale{}, normalizeReleaseContentBlockError(err)
+		return contentblock.Snapshot{}, "", err
 	}
-	if strings.TrimSpace(snapshot.SourceLocale) != source.SourceLocale {
-		return contentblock.Snapshot{}, releaseSourceLocale{}, errors.New("content document source locale does not match release root")
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, sourceLocale)
+	if err != nil {
+		return contentblock.Snapshot{}, "", normalizeReleaseContentBlockError(err)
 	}
-	return snapshot, source, nil
+	if strings.TrimSpace(snapshot.SourceLocale) != sourceLocale {
+		return contentblock.Snapshot{}, "", errors.New("content document source locale does not match release root")
+	}
+	return snapshot, sourceLocale, nil
 }
 
 func initializeReleaseContentDocument(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	releaseID string,
 	sourceLocale string,
 	created contentblock.Snapshot,
 	input *contentv1.RichTextDocument,
-	authorize func(context.Context, *gorm.DB) error,
 ) (contentblock.Result, error) {
 	if input == nil {
 		return contentblock.Result{}, nil
@@ -251,12 +154,7 @@ func initializeReleaseContentDocument(
 	if err != nil {
 		return contentblock.Result{}, normalizeReleaseContentBlockError(err)
 	}
-	result, err := store.ReplaceSnapshot(
-		ctx,
-		tx,
-		replace,
-		releaseContentCreationFence(releaseID, sourceLocale, authorize),
-	)
+	result, err := store.ReplaceContentSnapshot(ctx, replace, releaseContentCreationFence(releaseID, sourceLocale))
 	if err != nil {
 		return contentblock.Result{}, normalizeReleaseContentBlockError(err)
 	}
@@ -264,56 +162,47 @@ func initializeReleaseContentDocument(
 }
 
 type releaseContentBootstrapSnapshot struct {
-	Snapshot contentblock.Snapshot
-	Source   releaseSourceLocale
+	Snapshot     contentblock.Snapshot
+	SourceLocale string
 }
 
 // loadReleaseContentBlockBootstrap reads the Release content snapshot a
 // collaboration room opens, after resolving the room's principal from its
 // session and checking its exact Release edit permission. loadMetadata
 // reads the room's metadata in the same snapshot.
-func loadReleaseContentBlockBootstrap(
+func (s *Service) loadReleaseContentBlockBootstrap(
 	ctx context.Context,
-	db *gorm.DB,
-	store *contentblock.Store,
-	spiceDB CollaborationPermissionChecker,
 	releaseID string,
 	principal *CollaborationPrincipal,
-	loadMetadata func(context.Context, *gorm.DB) error,
+	loadMetadata func(context.Context, Store) error,
 ) (releaseContentBootstrapSnapshot, error) {
 	if principal == nil {
 		return releaseContentBootstrapSnapshot{}, authenticationRequired()
 	}
 	var output releaseContentBootstrapSnapshot
-	err := mutation.ReadLocked(ctx, db, func(tx *gorm.DB) error {
-		documentID, err := loadReleaseContentDocumentIDWithStrength(
-			ctx, tx, releaseID, clause.LockingStrengthShare,
-		)
+	err := s.units.ReadLocked(ctx, func(store Store) error {
+		documentID, err := loadReleaseContentDocumentID(ctx, store, releaseID, ShareLock)
 		if err != nil {
 			return err
 		}
-		if err := requireCollaborationSession(ctx, tx, spiceDB, releaseID, principal.SessionID); err != nil {
+		if err := requireCollaborationSession(ctx, store, s.spiceDB, releaseID, principal.SessionID); err != nil {
 			return err
 		}
-		source, err := loadReleaseSourceLocaleWithStrength(
-			ctx, tx, releaseID, clause.LockingStrengthShare,
-		)
+		sourceLocale, err := loadReleaseSourceLocale(ctx, store, releaseID, ShareLock)
 		if err != nil {
 			return err
 		}
-		snapshot, err := store.LoadSnapshotInTransaction(
-			ctx, tx, documentID, source.SourceLocale,
-		)
+		snapshot, err := store.LockedContentSnapshot(ctx, documentID, sourceLocale)
 		if err != nil {
 			return normalizeReleaseContentBlockError(err)
 		}
-		if snapshot.SourceLocale != source.SourceLocale {
+		if snapshot.SourceLocale != sourceLocale {
 			return errors.New("content document source locale does not match translation authority")
 		}
-		if err := loadMetadata(ctx, tx); err != nil {
+		if err := loadMetadata(ctx, store); err != nil {
 			return err
 		}
-		output = releaseContentBootstrapSnapshot{Snapshot: snapshot, Source: source}
+		output = releaseContentBootstrapSnapshot{Snapshot: snapshot, SourceLocale: sourceLocale}
 		return nil
 	})
 	return output, err
@@ -323,12 +212,12 @@ func loadReleaseContentBlockBootstrap(
 // room's session and requires its exact Release edit permission.
 func requireCollaborationSession(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	spiceDB CollaborationPermissionChecker,
 	releaseID string,
 	sessionID string,
 ) error {
-	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, tx, sessionID)
+	principal, err := store.ResolveSessionPrincipal(ctx, sessionID)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
 		return authenticationRequired().WithCause(err)
 	}
@@ -343,9 +232,7 @@ func requireCollaborationSession(
 	case !principal.Onboarded:
 		return noPermission("edit", releaseContentEntity)
 	}
-	return RequireCollaborationEdit(
-		ctx, spiceDB, intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_RELEASE, releaseID, principal,
-	)
+	return requireCollaborationEdit(ctx, spiceDB, releaseID, principal)
 }
 
 const (
@@ -353,83 +240,52 @@ const (
 	releaseContentProfile = "compact"
 )
 
-type releaseContentDocumentRoot struct {
-	ID                string         `gorm:"column:id"`
-	ContentDocumentID sql.NullString `gorm:"column:content_document_id"`
-}
-
-func internalReleaseContentFence(releaseID string) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		if err := lockReleaseContentDocumentRoot(
-			ctx,
-			tx,
-			releaseID,
-			documentID,
-		); err != nil {
-			return contentblock.DomainContext{}, err
-		}
-		domain, err := lockReleaseTranslationSourceContext(ctx, tx, releaseID)
-		if err != nil {
-			return contentblock.DomainContext{}, err
+// lockedContentFence admits only documentID and answers with the domain
+// context the caller already authorized under its lock
+// (contentblock.LockedFence).
+func lockedContentFence(documentID uuid.UUID, domain contentblock.DomainContext) ContentFence {
+	return func(_ context.Context, _ Store, requested uuid.UUID) (contentblock.DomainContext, error) {
+		if requested != documentID {
+			return contentblock.DomainContext{}, domainerr.Precondition(releaseEntityName + " content document changed; reload before saving")
 		}
 		return domain, nil
 	}
 }
 
-func releaseContentDocumentFence(
-	releaseID string,
-	authorize func(context.Context, *gorm.DB) error,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		if err := lockReleaseContentDocumentRoot(ctx, tx, releaseID, documentID); err != nil {
+func internalReleaseContentFence(releaseID string) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		if err := lockReleaseContentDocumentRoot(ctx, store, releaseID, documentID); err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		if authorize == nil {
-			return contentblock.DomainContext{}, errors.New("content document authorization is required")
-		}
-		if err := authorize(ctx, tx); err != nil {
-			return contentblock.DomainContext{}, err
-		}
-		return contentblock.DomainContext{}, nil
+		return lockReleaseTranslationSourceContext(ctx, store, releaseID)
 	}
 }
 
-func releaseContentCreationFence(
-	releaseID string,
-	sourceLocale string,
-	authorize func(context.Context, *gorm.DB) error,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		if err := lockReleaseContentDocumentRoot(ctx, tx, releaseID, documentID); err != nil {
-			return contentblock.DomainContext{}, err
-		}
-		if authorize == nil {
-			return contentblock.DomainContext{}, errors.New("content document authorization is required")
-		}
-		if err := authorize(ctx, tx); err != nil {
+// releaseContentDocumentFence locks the Release row of the document the
+// mutation, already authorized, removes.
+func releaseContentDocumentFence(releaseID string) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		return contentblock.DomainContext{}, lockReleaseContentDocumentRoot(ctx, store, releaseID, documentID)
+	}
+}
+
+// releaseContentCreationFence locks the new Release row and names its
+// source locale while the creation, already authorized, fills its document.
+func releaseContentCreationFence(releaseID, sourceLocale string) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		if err := lockReleaseContentDocumentRoot(ctx, store, releaseID, documentID); err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		return contentblock.DomainContext{SourceLocale: sourceLocale}, nil
 	}
 }
 
-func lockReleaseTranslationSourceContext(
-	ctx context.Context,
-	tx *gorm.DB,
-	releaseID string,
-) (contentblock.DomainContext, error) {
-	var source struct {
-		SourceLocale string `gorm:"column:source_locale"`
+func lockReleaseTranslationSourceContext(ctx context.Context, store Store, releaseID string) (contentblock.DomainContext, error) {
+	sourceLocale, err := loadReleaseSourceLocale(ctx, store, releaseID, UpdateLock)
+	if err != nil {
+		return contentblock.DomainContext{}, err
 	}
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Table("release").
-		Select("source_locale").
-		Where("id = ?", releaseID).
-		Take(&source).Error; err != nil {
-		return contentblock.DomainContext{}, missingAs(err, releaseNotFound(releaseID))
-	}
-	return contentblock.DomainContext{SourceLocale: source.SourceLocale}, nil
+	return contentblock.DomainContext{SourceLocale: sourceLocale}, nil
 }
 
 // normalizeReleaseContentBlockError answers the Content Block store's
@@ -467,26 +323,21 @@ func releaseConflict(reason intrav1.CollaborationConflictReason, message string,
 	return fmt.Errorf("%w: %w", domainerr.CollaborationConflict(reason, message, domainerr.CollaborationRevisionsOf(cause)), cause)
 }
 
-func loadReleaseContentDocumentID(
-	ctx context.Context,
-	db *gorm.DB,
-	releaseID string,
-) (uuid.UUID, error) {
-	return loadReleaseContentDocumentIDWithLock(ctx, db, releaseID, false)
+// readReleaseContentDocumentID is loadReleaseContentDocumentID unlocked in
+// its own read snapshot, for a use case that names the document before its
+// mutation.
+func (s *Service) readReleaseContentDocumentID(ctx context.Context, releaseID string) (uuid.UUID, error) {
+	var documentID uuid.UUID
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		documentID, err = loadReleaseContentDocumentID(ctx, store, releaseID, Unlocked)
+		return err
+	})
+	return documentID, err
 }
 
-func lockReleaseContentDocumentRoot(
-	ctx context.Context,
-	tx *gorm.DB,
-	releaseID string,
-	expectedDocumentID uuid.UUID,
-) error {
-	documentID, err := loadReleaseContentDocumentIDWithLock(
-		ctx,
-		tx,
-		releaseID,
-		true,
-	)
+func lockReleaseContentDocumentRoot(ctx context.Context, store Store, releaseID string, expectedDocumentID uuid.UUID) error {
+	documentID, err := loadReleaseContentDocumentID(ctx, store, releaseID, UpdateLock)
 	if err != nil {
 		return err
 	}
@@ -496,44 +347,26 @@ func lockReleaseContentDocumentRoot(
 	return nil
 }
 
-func loadReleaseContentDocumentIDWithLock(
-	ctx context.Context,
-	db *gorm.DB,
-	releaseID string,
-	lock bool,
-) (uuid.UUID, error) {
-	strength := ""
-	if lock {
-		strength = clause.LockingStrengthUpdate
+// loadReleaseContentDocumentID reads the Release's content document with
+// lock; a missing Release answers not found.
+func loadReleaseContentDocumentID(ctx context.Context, store Store, releaseID string, lock RowLock) (uuid.UUID, error) {
+	documentID, err := store.ContentDocumentID(ctx, releaseID, lock)
+	if err != nil {
+		return uuid.Nil, releaseMissingAs(err, releaseNotFound(releaseID))
 	}
-	return loadReleaseContentDocumentIDWithStrength(
-		ctx, db, releaseID, strength,
-	)
-}
-
-func loadReleaseContentDocumentIDWithStrength(
-	ctx context.Context,
-	db *gorm.DB,
-	releaseID string,
-	strength string,
-) (uuid.UUID, error) {
-	query := db.WithContext(ctx).
-		Table("release").
-		Select("id", "content_document_id").
-		Where("id = ?", releaseID)
-	if strength != "" {
-		query = query.Clauses(clause.Locking{Strength: strength})
-	}
-	var root releaseContentDocumentRoot
-	if err := query.Take(&root).Error; err != nil {
-		return uuid.Nil, missingAs(err, releaseNotFound(releaseID))
-	}
-	if !root.ContentDocumentID.Valid || root.ContentDocumentID.String == "" {
+	if documentID == nil {
 		return uuid.Nil, domainerr.Precondition("content document is not initialized")
 	}
-	documentID, err := uuid.Parse(root.ContentDocumentID.String)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("invalid release content_document_id: %w", err)
-	}
-	return documentID, nil
+	return *documentID, nil
+}
+
+// touchReleaseSourceLocaleState moves the Release's updated_at after a
+// source locale change; a missing Release answers not found.
+func touchReleaseSourceLocaleState(ctx context.Context, store Store, releaseID string, now time.Time) error {
+	return releaseMissingAs(store.TouchRelease(ctx, releaseID, now), releaseNotFound(releaseID))
+}
+
+type translationLocaleDocumentSaveInput struct {
+	Title *string
+	Now   time.Time
 }

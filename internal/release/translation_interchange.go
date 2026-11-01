@@ -6,7 +6,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	"gorm.io/gorm"
 )
 
 // TranslationInterchangeTarget is Release's raw sparse target projection.
@@ -20,8 +19,7 @@ type TranslationInterchangeTarget struct {
 
 func LoadTypedTranslationInterchangeTarget(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	releaseID string,
 	targetLocale string,
 ) (TranslationInterchangeTarget, error) {
@@ -32,11 +30,11 @@ func LoadTypedTranslationInterchangeTarget(
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}
-	documentID, err := loadReleaseContentDocumentID(ctx, tx, releaseID)
+	documentID, err := loadReleaseContentDocumentID(ctx, store, releaseID, Unlocked)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}
-	target, err := loadReleaseTargetLocaleState(ctx, tx, store, releaseID, documentID, targetLocale, false)
+	target, err := loadReleaseTargetLocaleState(ctx, store, releaseID, documentID, targetLocale, false)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}

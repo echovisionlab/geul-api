@@ -28,7 +28,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
+	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	publicrelease "github.com/echovisionlab/geul-api/internal/release/public"
+	releasepublicpostgres "github.com/echovisionlab/geul-api/internal/release/public/postgres"
+	"github.com/echovisionlab/geul-api/internal/sharelink"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
@@ -141,19 +144,24 @@ func (m musicServiceRegistration) registerLabel() (*label.Service, error) {
 
 func (m musicServiceRegistration) registerRelease() (*releasepkg.Service, error) {
 	deps := m.dependencies
-	trackFileManager := filemediaadapter.NewTrackFileManager(m.files)
+	trackFiles := releaseadapter.NewTrackFiles(filemediaadapter.NewTrackFileManager(m.files))
 	artistSummaries := releaseadapter.NewArtistSummaries(deps.db)
 	memberSummaries := releaseadapter.NewMemberSummaries(deps.db, deps.cfg.CDNURL)
 	labelSummaries := releaseadapter.NewLabelSummaries(deps.db)
+	releaseUnits, err := releasepostgres.NewUnits(deps.db, releasepostgres.Ports{
+		ContentBlocks: deps.contentBlockStore, Publisher: deps.servicePublisher, Checkpoints: m.checkpoints,
+		TrackFiles: trackFiles, Assets: releaseadapter.NewAssets(deps.cfg.CDNURL), OG: releaseadapter.NewOG(deps.cfg.CDNURL),
+		ContentOG: releaseadapter.NewContentOG(deps.og.refresher), Artists: artistSummaries, Labels: labelSummaries,
+		ShareLinks: sharelinkadapter.EntityLinks{Type: sharelink.EntityRelease},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize Release store: %w", err)
+	}
 	releaseService, err := releasepkg.NewService(releasepkg.Deps{
-		DB: deps.db, SpiceDB: deps.spicedbClient, Audit: deps.telemetryWriter, ContentBlocks: deps.contentBlockStore,
-		Checkpoints: m.checkpoints, ContentSignals: deps.servicePublisher,
-		TrackFiles:   releaseadapter.NewTrackFiles(trackFileManager),
+		Units: releaseUnits, SpiceDB: deps.spicedbClient, Fence: identitystate.PostgresFence{}, Audit: deps.telemetryWriter,
+		Members: memberSummaries, TrackFiles: trackFiles,
 		Transcodes:   releaseadapter.NewTrackTranscodes(deps.transcodeTracker),
 		WaveformJobs: releaseadapter.NewWaveformJobs(deps.db, deps.transcodeTracker),
-		Assets:       releaseadapter.NewAssets(deps.cfg.CDNURL), OG: releaseadapter.NewOG(deps.cfg.CDNURL),
-		ContentOG: releaseadapter.NewContentOG(deps.og.refresher), Members: memberSummaries, Artists: artistSummaries,
-		Labels: labelSummaries,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize Release service: %w", err)
@@ -162,13 +170,19 @@ func (m musicServiceRegistration) registerRelease() (*releasepkg.Service, error)
 	m.registerManage(managev1connect.NewTrackServiceHandler(releasepkg.NewTrackConnectHandler(releaseService), m.manageOptions...))
 	m.registerInternal(intrav1connect.NewInternalReleaseServiceHandler(releasepkg.NewInternalConnectHandler(releaseService), m.internalOptions...))
 
+	publicMedia := releaseadapter.NewPublicMedia(
+		deps.cfg.CDNURL, deps.cfg.MediaURL, deps.cfg.MediaSigningSecret, m.downloadTTL,
+	)
+	publicReleaseUnits, err := releasepublicpostgres.NewUnits(deps.db, releasepublicpostgres.Ports{
+		ContentBlocks: deps.contentBlockStore, Media: publicMedia, Artists: artistSummaries, Labels: labelSummaries,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize public Release store: %w", err)
+	}
 	publicReleaseService, err := publicrelease.NewService(publicrelease.Deps{
-		DB: deps.db, SpiceDB: deps.spicedbClient, ContentBlocks: deps.contentBlockStore,
-		Media: releaseadapter.NewPublicMedia(
-			deps.cfg.CDNURL, deps.cfg.MediaURL, deps.cfg.MediaSigningSecret, m.downloadTTL,
-		),
+		Units: publicReleaseUnits, SpiceDB: deps.spicedbClient, Signer: publicMedia,
 		Downloads: releaseadapter.NewDownloadAccess(deps.db, deps.spicedbClient, mediaassetadapter.NewSegmentConfigs()),
-		Members:   memberSummaries, Artists: artistSummaries, Labels: labelSummaries,
+		Members:   memberSummaries,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("initialize public Release service: %w", err)

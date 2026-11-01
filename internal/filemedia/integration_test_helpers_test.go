@@ -15,12 +15,14 @@ import (
 	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/campaign"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
+	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -247,15 +249,15 @@ func newEditorUploadSerializationFileService(stack *testutil.RuntimeStack, s3Cli
 }
 
 type directTrackAttachment struct {
-	authority *releasepkg.TrackAuthority
+	audit domainaudit.Appender
 }
 
 func newDirectTrackAttachment(db *gorm.DB) TrackAttachment {
-	return &directTrackAttachment{authority: releasepkg.NewTrackAuthority(apitelemetry.NewDurableWriter(db))}
+	return &directTrackAttachment{audit: apitelemetry.NewDurableWriter(db)}
 }
 
 func (a *directTrackAttachment) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
-	return releaseConnectError(a.authority.LockExistsWithDB(ctx, tx, trackID))
+	return releaseConnectError(releasepkg.LockTrackForUpload(ctx, releasepostgres.NewStore(tx, releasepostgres.Ports{}), trackID))
 }
 
 func (a *directTrackAttachment) AttachOriginalWithDB(
@@ -263,7 +265,7 @@ func (a *directTrackAttachment) AttachOriginalWithDB(
 	tx *gorm.DB,
 	input TrackOriginalAudioInput,
 ) (TrackOriginalAudioAttachment, error) {
-	attachment, err := a.authority.AttachOriginalWithDB(ctx, tx, releasepkg.TrackOriginalAudioInput{
+	attachment, err := releasepkg.AttachTrackOriginalAudio(ctx, releasepostgres.Bind(tx, releasepostgres.Ports{}, a.audit), releasepkg.TrackOriginalAudioInput{
 		TrackID:               input.TrackID,
 		VerifiedFileID:        input.VerifiedFileID,
 		ExpectedCurrentFileID: input.ExpectedCurrentFileID,

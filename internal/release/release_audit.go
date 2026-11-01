@@ -1,12 +1,9 @@
 package release
 
-import (
-	"github.com/echovisionlab/geul-api/internal/model"
-	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-)
+import sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 
-func releaseAuditState(status model.ReleaseStatus) sharedtelemetry.AuditState {
-	if status == model.ReleaseStatusPublished {
+func releaseAuditState(status Status) sharedtelemetry.AuditState {
+	if status == StatusPublished {
 		return sharedtelemetry.AuditStatePublished
 	}
 	return sharedtelemetry.AuditStateDraft

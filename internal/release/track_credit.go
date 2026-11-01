@@ -4,70 +4,74 @@ import (
 	"context"
 	"fmt"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-// trackCreditAudit is one credit a Track credit edit added, changed or
-// removed.
-type trackCreditAudit struct {
-	creditID string
-	op       sharedtelemetry.AuditItemOperation
-}
-
 // SetTrackCredits applies a Track credit set edit (Track editors) and
 // returns the Track with its credits.
-func (s *Service) SetTrackCredits(ctx context.Context, command SetTrackCreditsCommand) (*managev1.TrackWithCredits, error) {
+func (s *Service) SetTrackCredits(ctx context.Context, command SetTrackCreditsCommand) (TrackWithCredits, error) {
 	if command.TrackID == "" {
-		return nil, domainerr.Required("track_id")
+		return TrackWithCredits{}, domainerr.Required("track_id")
 	}
-	var track model.Track
-	if err := s.db.WithContext(ctx).Where("id = ?", command.TrackID).First(&track).Error; err != nil {
-		return nil, missingAs(err, trackNotFound())
+	var track Track
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		track, err = store.FindTrack(ctx, command.TrackID)
+		return err
+	}); err != nil {
+		return TrackWithCredits{}, missingAs(err, ErrTrackNotFound, trackNotFound())
 	}
 	if err := s.validateTrackCreditArtists(ctx, command.Credits); err != nil {
-		return nil, err
+		return TrackWithCredits{}, err
 	}
-	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[[]trackCreditAudit]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
-			return tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&model.Track{}, "id = ?", command.TrackID).Error
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[[]TrackCreditChange, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			_, err := store.LockTrack(ctx, command.TrackID)
+			return err
 		},
 		Access: s.trackAccess(command.TrackID, trackActionEdit),
-		Change: func(ctx context.Context, tx *gorm.DB) ([]trackCreditAudit, error) {
+		Change: func(ctx context.Context, store Store) ([]TrackCreditChange, error) {
 			if err := requireObservedRelationSnapshot(command.Observed); err != nil {
 				return nil, err
 			}
-			var existing []model.TrackCredit
-			if err := tx.Where("track_id = ?", command.TrackID).Order("sort_order ASC, id ASC").Find(&existing).Error; err != nil {
+			existing, err := store.TrackCredits(ctx, command.TrackID)
+			if err != nil {
 				return nil, err
 			}
-			return mergeAndPersistObservedTrackCredits(ctx, tx, track.ID, existing, command.Observed.Items, command.Credits)
+			return mergeAndPersistObservedTrackCredits(ctx, store, track.ID, existing, command.Observed.Items, command.Credits)
 		},
-		Audit: func(audits []trackCreditAudit) mutation.Audit {
-			if len(audits) == 0 {
+		Audit: func(changes []TrackCreditChange) mutation.Audit {
+			if len(changes) == 0 {
 				return mutation.Unchanged()
 			}
-			records := make([]mutation.Audit, 0, len(audits))
-			for _, audit := range audits {
-				records = append(records, releaseTrackAudit(track.ReleaseID, audit.creditID, audit.op))
+			records := make([]mutation.Audit, 0, len(changes))
+			for _, change := range changes {
+				records = append(records, releaseTrackAudit(track.ReleaseID, change.CreditID, change.Kind.auditOperation()))
 			}
 			return mutation.Audits(records...)
 		},
 	}); err != nil {
-		return nil, err
+		return TrackWithCredits{}, err
 	}
 	credits, err := s.getCreditsForTrack(ctx, command.TrackID)
 	if err != nil {
-		return nil, err
+		return TrackWithCredits{}, err
 	}
-	return &managev1.TrackWithCredits{Track: trackMessage(ctx, &track), Credits: credits}, nil
+	return TrackWithCredits{Track: track, Credits: credits}, nil
+}
+
+// auditOperation is the audit operation of a relation row change.
+func (kind ChangeKind) auditOperation() sharedtelemetry.AuditItemOperation {
+	switch kind {
+	case ChangeCreated:
+		return sharedtelemetry.AuditItemOperationCreated
+	case ChangeDeleted:
+		return sharedtelemetry.AuditItemOperationDeleted
+	default:
+		return sharedtelemetry.AuditItemOperationUpdated
+	}
 }
 
 // validateTrackCreditArtists rejects a null credit or a credit of an Artist
@@ -80,7 +84,7 @@ func (s *Service) validateTrackCreditArtists(ctx context.Context, credits []*Cre
 		if credit.ArtistID == nil || *credit.ArtistID == "" {
 			continue
 		}
-		artists, err := s.artists.LoadArtistSummaries(ctx, []string{*credit.ArtistID})
+		artists, err := s.readArtistSummaries(ctx, []string{*credit.ArtistID})
 		if err != nil {
 			return err
 		}
@@ -97,32 +101,32 @@ func (s *Service) validateTrackCreditArtists(ctx context.Context, credits []*Cre
 // returning the audit of each credit it removed, changed or added.
 func mergeAndPersistObservedTrackCredits(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	trackID string,
-	current []model.TrackCredit,
+	current []TrackCredit,
 	observed, desired []*CreditInput,
-) ([]trackCreditAudit, error) {
-	currentByID := make(map[string]model.TrackCredit, len(current))
+) ([]TrackCreditChange, error) {
+	currentByID := make(map[string]TrackCredit, len(current))
 	for _, row := range current {
 		currentByID[row.ID] = row
 	}
 	if err := validateDesiredTrackCredits(trackID, currentByID, observed, desired); err != nil {
 		return nil, err
 	}
-	if err := authorizationtarget.LockReferences(ctx, tx, trackCreditMemberReferences(desired)); err != nil {
+	if err := store.LockMemberReferences(ctx, trackCreditMemberReferences(desired)); err != nil {
 		return nil, err
 	}
 	// Existing rows retain their order unless membership changed. New rows append in the
 	// request's desired order; a stale full snapshot never moves rows added by another tab.
 	next := mergeTrackCredits(trackID, current, observed, desired)
-	return persistTrackCredits(tx, current, currentByID, next)
+	return store.ReplaceTrackCredits(ctx, current, next)
 }
 
 // validateDesiredTrackCredits checks each desired credit and numbers it by
 // its request position.
 func validateDesiredTrackCredits(
 	trackID string,
-	currentByID map[string]model.TrackCredit,
+	currentByID map[string]TrackCredit,
 	observed, desired []*CreditInput,
 ) error {
 	observedIDs := make(map[string]struct{}, len(observed))
@@ -149,7 +153,7 @@ func validateDesiredTrackCredits(
 
 // checkDesiredTrackCreditID accepts a new credit (empty ID) or the unique ID
 // of a credit the Track has or the client observed.
-func checkDesiredTrackCreditID(id string, seen map[string]bool, currentByID map[string]model.TrackCredit, observedIDs map[string]struct{}) error {
+func checkDesiredTrackCreditID(id string, seen map[string]bool, currentByID map[string]TrackCredit, observedIDs map[string]struct{}) error {
 	if id == "" {
 		return nil
 	}
@@ -169,64 +173,13 @@ func checkDesiredTrackCreditID(id string, seen map[string]bool, currentByID map[
 	return nil
 }
 
-// persistTrackCredits stores next in place of current: removed credits
-// first, then changed and added credits in their new order.
-func persistTrackCredits(
-	tx *gorm.DB,
-	current []model.TrackCredit,
-	currentByID map[string]model.TrackCredit,
-	next []model.TrackCredit,
-) ([]trackCreditAudit, error) {
-	var audits []trackCreditAudit
-	nextByID := make(map[string]model.TrackCredit, len(next))
-	for _, row := range next {
-		if row.ID != "" {
-			nextByID[row.ID] = row
-		}
-	}
-	for _, row := range current {
-		if _, keep := nextByID[row.ID]; keep {
-			continue
-		}
-		if err := tx.Delete(&model.TrackCredit{}, "id = ?", row.ID).Error; err != nil {
-			return nil, err
-		}
-		audits = append(audits, trackCreditAudit{row.ID, sharedtelemetry.AuditItemOperationDeleted})
-	}
-	for _, row := range next {
-		if previous, exists := currentByID[row.ID]; exists && row.ID != "" {
-			if sameTrackCredit(previous, row) {
-				continue
-			}
-			updates := creditUpdateMap(
-				creditValues{previous.ArtistID, previous.MemberID, previous.CreditedName, previous.CreditRole, previous.SortOrder},
-				creditValues{row.ArtistID, row.MemberID, row.CreditedName, row.CreditRole, row.SortOrder},
-			)
-			if err := tx.Model(&model.TrackCredit{}).Where("id = ?", row.ID).Updates(updates).Error; err != nil {
-				return nil, err
-			}
-			audits = append(audits, trackCreditAudit{row.ID, sharedtelemetry.AuditItemOperationUpdated})
-			continue
-		}
-		if err := tx.Clauses(clause.Returning{}).Create(&row).Error; err != nil {
-			return nil, err
-		}
-		audits = append(audits, trackCreditAudit{row.ID, sharedtelemetry.AuditItemOperationCreated})
-	}
-	return audits, nil
-}
-
-func sameTrackCredit(left, right model.TrackCredit) bool {
-	return sameOptionalString(left.CreditRole, right.CreditRole) && left.SortOrder == right.SortOrder && sameOptionalString(left.ArtistID, right.ArtistID) && sameOptionalString(left.MemberID, right.MemberID) && sameOptionalString(left.CreditedName, right.CreditedName)
-}
-
-func trackCreditMemberReferences(inputs []*CreditInput) []authorizationtarget.Reference {
-	references := make([]authorizationtarget.Reference, 0, len(inputs))
+func trackCreditMemberReferences(inputs []*CreditInput) []MemberReference {
+	references := make([]MemberReference, 0, len(inputs))
 	for index, input := range inputs {
 		if input.MemberID == nil || *input.MemberID == "" {
 			continue
 		}
-		references = append(references, authorizationtarget.Reference{
+		references = append(references, MemberReference{
 			MemberID: *input.MemberID,
 			Field:    fmt.Sprintf("credit[%d].member_id", index),
 		})
@@ -234,11 +187,11 @@ func trackCreditMemberReferences(inputs []*CreditInput) []authorizationtarget.Re
 	return references
 }
 
-func newTrackCredit(trackID string, input *CreditInput) (model.TrackCredit, error) {
+func newTrackCredit(trackID string, input *CreditInput) (TrackCredit, error) {
 	if !trackCreditHasAttribution(input) {
-		return model.TrackCredit{}, fmt.Errorf("credit must have artist_id, user_id, or credited_name")
+		return TrackCredit{}, fmt.Errorf("credit must have artist_id, user_id, or credited_name")
 	}
-	credit := model.TrackCredit{
+	credit := TrackCredit{
 		TrackID:    trackID,
 		CreditRole: input.CreditRole,
 		SortOrder:  int(input.SortOrder),

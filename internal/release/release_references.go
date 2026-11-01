@@ -5,11 +5,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
@@ -50,12 +47,12 @@ type SetReleaseCreditsCommand struct {
 
 // SetReleaseArtists applies an Artist set edit.
 func (s *Service) SetReleaseArtists(ctx context.Context, command SetReleaseArtistsCommand) error {
-	return s.setReleaseRelation(ctx, command.ReleaseID, "artists", func(_ context.Context, tx *gorm.DB) (bool, error) {
+	return s.setReleaseRelation(ctx, command.ReleaseID, "artists", func(ctx context.Context, store Store) (bool, error) {
 		if err := requireObservedRelationSnapshot(command.Observed); err != nil {
 			return false, err
 		}
-		var existing []model.ReleaseArtist
-		if err := tx.Where("release_id = ?", command.ReleaseID).Order("sort_order ASC, artist_id ASC").Find(&existing).Error; err != nil {
+		existing, err := store.ReleaseArtists(ctx, command.ReleaseID)
+		if err != nil {
 			return false, err
 		}
 		if err := requireNoNullEntries("artists", command.Artists); err != nil {
@@ -65,18 +62,18 @@ func (s *Service) SetReleaseArtists(ctx context.Context, command SetReleaseArtis
 		if sameReleaseArtistRows(existing, next) {
 			return false, nil
 		}
-		return true, persistReleaseArtists(tx, command.ReleaseID, existing, next)
+		return true, store.ReplaceReleaseArtists(ctx, command.ReleaseID, existing, next)
 	})
 }
 
 // SetReleaseLabels applies a Label set edit.
 func (s *Service) SetReleaseLabels(ctx context.Context, command SetReleaseLabelsCommand) error {
-	return s.setReleaseRelation(ctx, command.ReleaseID, "labels", func(_ context.Context, tx *gorm.DB) (bool, error) {
+	return s.setReleaseRelation(ctx, command.ReleaseID, "labels", func(ctx context.Context, store Store) (bool, error) {
 		if err := requireObservedRelationSnapshot(command.Observed); err != nil {
 			return false, err
 		}
-		var existing []model.ReleaseLabel
-		if err := tx.Where("release_id = ?", command.ReleaseID).Order("sort_order ASC, label_id ASC").Find(&existing).Error; err != nil {
+		existing, err := store.ReleaseLabels(ctx, command.ReleaseID)
+		if err != nil {
 			return false, err
 		}
 		if err := requireNoNullEntries("labels", command.Labels); err != nil {
@@ -86,18 +83,18 @@ func (s *Service) SetReleaseLabels(ctx context.Context, command SetReleaseLabels
 		if sameReleaseLabelRows(existing, next) {
 			return false, nil
 		}
-		return true, persistReleaseLabels(tx, command.ReleaseID, existing, next)
+		return true, store.ReplaceReleaseLabels(ctx, command.ReleaseID, existing, next)
 	})
 }
 
 // SetReleaseFormats applies a Format set edit.
 func (s *Service) SetReleaseFormats(ctx context.Context, command SetReleaseFormatsCommand) error {
-	return s.setReleaseRelation(ctx, command.ReleaseID, "formats", func(_ context.Context, tx *gorm.DB) (bool, error) {
+	return s.setReleaseRelation(ctx, command.ReleaseID, "formats", func(ctx context.Context, store Store) (bool, error) {
 		if err := requireObservedRelationSnapshot(command.Observed); err != nil {
 			return false, err
 		}
-		var existing []model.ReleaseFormat
-		if err := tx.Where("release_id = ?", command.ReleaseID).Order("format_id ASC").Find(&existing).Error; err != nil {
+		existing, err := store.ReleaseFormats(ctx, command.ReleaseID)
+		if err != nil {
 			return false, err
 		}
 		if err := requireNoNullEntries("formats", command.Formats); err != nil {
@@ -107,19 +104,19 @@ func (s *Service) SetReleaseFormats(ctx context.Context, command SetReleaseForma
 		if sameReleaseFormatRows(existing, next) {
 			return false, nil
 		}
-		return true, persistReleaseFormats(tx, command.ReleaseID, existing, next)
+		return true, store.ReplaceReleaseFormats(ctx, command.ReleaseID, existing, next)
 	})
 }
 
 // SetReleaseCredits applies a credit set edit. A desired credit without an
 // ID is new and gets one here.
 func (s *Service) SetReleaseCredits(ctx context.Context, command SetReleaseCreditsCommand) error {
-	return s.setReleaseRelation(ctx, command.ReleaseID, "credits", func(ctx context.Context, tx *gorm.DB) (bool, error) {
+	return s.setReleaseRelation(ctx, command.ReleaseID, "credits", func(ctx context.Context, store Store) (bool, error) {
 		if err := requireObservedRelationSnapshot(command.Observed); err != nil {
 			return false, err
 		}
-		var existing []model.ReleaseCredit
-		if err := tx.Where("release_id = ?", command.ReleaseID).Order("sort_order ASC, id ASC").Find(&existing).Error; err != nil {
+		existing, err := store.ReleaseCredits(ctx, command.ReleaseID)
+		if err != nil {
 			return false, err
 		}
 		if err := requireNoNullEntries("credits", command.Credits); err != nil {
@@ -135,22 +132,22 @@ func (s *Service) SetReleaseCredits(ctx context.Context, command SetReleaseCredi
 		if sameReleaseCreditRows(existing, next) {
 			return false, nil
 		}
-		if err := authorizationtarget.LockReferences(ctx, tx, releaseCreditMemberReferences(command.Credits)); err != nil {
+		if err := store.LockMemberReferences(ctx, releaseCreditMemberReferences(command.Credits)); err != nil {
 			return false, err
 		}
-		return true, persistReleaseCredits(tx, command.ReleaseID, existing, next)
+		return true, store.ReplaceReleaseCredits(ctx, command.ReleaseID, existing, next)
 	})
 }
 
 // releaseCreditMemberReferences names each credited Member, which must stay
 // a live Member while the credit is written.
-func releaseCreditMemberReferences(credits []*CreditInput) []authorizationtarget.Reference {
-	references := make([]authorizationtarget.Reference, 0, len(credits))
+func releaseCreditMemberReferences(credits []*CreditInput) []MemberReference {
+	references := make([]MemberReference, 0, len(credits))
 	for i, credit := range credits {
 		if credit.MemberID == nil {
 			continue
 		}
-		references = append(references, authorizationtarget.Reference{
+		references = append(references, MemberReference{
 			MemberID: *credit.MemberID,
 			Field:    fmt.Sprintf("credit[%d].member_id", i),
 		})
@@ -165,17 +162,17 @@ func (s *Service) setReleaseRelation(
 	ctx context.Context,
 	releaseID string,
 	relation string,
-	change func(context.Context, *gorm.DB) (bool, error),
+	change func(context.Context, Store) (bool, error),
 ) error {
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[bool, Store]{
 		Lock:   lockReleaseRow(releaseID, nil),
 		Access: s.releaseAccess(releaseID, releaseActionManage),
-		Change: func(ctx context.Context, tx *gorm.DB) (bool, error) {
-			changed, err := change(ctx, tx)
+		Change: func(ctx context.Context, store Store) (bool, error) {
+			changed, err := change(ctx, store)
 			if err != nil || !changed {
 				return false, err
 			}
-			return true, touchRelease(tx, releaseID)
+			return true, touchRelease(ctx, store, releaseID)
 		},
 		Audit: func(changed bool) mutation.Audit {
 			if !changed {
@@ -183,16 +180,16 @@ func (s *Service) setReleaseRelation(
 			}
 			return releaseMetadataAudit(releaseID, []string{relation})
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, changed bool) error {
+		Outbox: func(ctx context.Context, store Store, changed bool) error {
 			if !changed {
 				return nil
 			}
-			return s.publishContentUpdated(ctx, tx, buildReleaseRelationMutationContentUpdatedEvent(
+			return publishContentUpdated(ctx, store, buildReleaseRelationMutationContentUpdatedEvent(
 				releaseID, []string{"relations." + relation},
 			))
 		},
 	})
-	return missingAs(err, releaseNotFound(releaseID))
+	return releaseMissingAs(err, releaseNotFound(releaseID))
 }
 
 func requireObservedRelationSnapshot[T any](observed *Snapshot[T]) error {

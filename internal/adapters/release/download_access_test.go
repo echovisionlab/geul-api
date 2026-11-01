@@ -10,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepublic "github.com/echovisionlab/geul-api/internal/release/public"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -60,9 +59,9 @@ func TestDownloadAccessKeepsSameFilePolicyPerExactTrackRelation(t *testing.T) {
 		return &commonv1.ExpiringMediaRef{Url: "signed:" + file.ID}, nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD, result[publicTrackID].Access.GetAction())
+	require.Equal(t, releasepublic.DownloadActionDownload, result[publicTrackID].Access.Action)
 	require.Equal(t, "signed:"+fileID, result[publicTrackID].Download.GetUrl())
-	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, result[disabledTrackID].Access.GetAction())
+	require.Equal(t, releasepublic.DownloadActionNone, result[disabledTrackID].Access.Action)
 	require.Nil(t, result[disabledTrackID].Download)
 
 	require.NoError(t, db.Exec(`UPDATE release SET status = 'RELEASE_STATUS_DRAFT' WHERE id = ?`, releaseID).Error)
@@ -73,7 +72,7 @@ func TestDownloadAccessKeepsSameFilePolicyPerExactTrackRelation(t *testing.T) {
 		return &commonv1.ExpiringMediaRef{Url: "stale:" + file.ID}, nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, result[publicTrackID].Access.GetAction())
+	require.Equal(t, releasepublic.DownloadActionNone, result[publicTrackID].Access.Action)
 	require.Nil(t, result[publicTrackID].Download)
 
 	shareID := uuid.NewString()
@@ -90,6 +89,6 @@ func TestDownloadAccessKeepsSameFilePolicyPerExactTrackRelation(t *testing.T) {
 		return &commonv1.ExpiringMediaRef{Url: "stale:" + file.ID}, nil
 	})
 	require.NoError(t, err)
-	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, result[publicTrackID].Access.GetAction())
+	require.Equal(t, releasepublic.DownloadActionNone, result[publicTrackID].Access.Action)
 	require.Nil(t, result[publicTrackID].Download)
 }

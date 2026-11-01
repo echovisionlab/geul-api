@@ -86,11 +86,10 @@ func (a *ReleaseInterchange) ApplyTranslationInterchange(
 		SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
 		RequestedByMemberID: memberID,
 	}
-	if err := releasedomain.ApplyTypedTranslationInterchangeCandidateWithDB(
+	if err := releasedomain.ApplyTypedTranslationInterchangeCandidate(
 		ctx,
-		db,
-		store,
-		job,
+		releaseStore(db, store),
+		releaseTranslationJob(job),
 		candidate,
 		core.EntryWrite{Now: command.Now.UTC()},
 		command.ExpectedRevision,
@@ -135,7 +134,7 @@ func loadReleaseInterchangeTarget(
 	if err := validateCreativeInterchangeLoad(db, store, entityType, entityID, locale, plan, string(core.KindRelease)); err != nil {
 		return releaseInterchangeTarget{}, err
 	}
-	target, err := releasedomain.LoadTypedTranslationInterchangeTarget(ctx, db, store, entityID, locale)
+	target, err := releasedomain.LoadTypedTranslationInterchangeTarget(ctx, releaseStore(db, store), entityID, locale)
 	if err != nil {
 		return releaseInterchangeTarget{}, releaseConnectError(err)
 	}

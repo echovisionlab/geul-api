@@ -4,17 +4,18 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"gorm.io/gorm"
 )
 
 // RequireLockedSourceLocaleEdit locks the Release root before checking the
-// same authority so source-locale changes serialize with Release mutations.
+// same authority so source-locale changes serialize with Release mutations,
+// in the translation domain's transaction store is bound to. lock locks the
+// principal's Identity in that transaction.
 func RequireLockedSourceLocaleEdit(
 	ctx context.Context,
-	tx *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
+	store Store,
+	lock func(*auth.UserInfo) (bool, error),
+	checker CollaborationPermissionChecker,
 	releaseID string,
 ) error {
-	err := requireLockedReleaseAction(ctx, tx, spiceDB, releaseID, releaseActionEdit)
-	return err
+	return requireLockedReleaseAction(ctx, store, lock, checker, releaseID, releaseActionEdit)
 }

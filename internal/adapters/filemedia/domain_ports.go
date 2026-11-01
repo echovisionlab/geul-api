@@ -19,6 +19,7 @@ import (
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
+	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -203,14 +204,24 @@ func (a *MemberSummaries) Load(
 	return memberdomain.LoadSummaries(ctx, a.db, a.cdnDomain, memberIDs)
 }
 
-type TrackAttachment struct{ authority *releasedomain.TrackAuthority }
+// TrackAttachment runs the Release-owned Track steps of a File ingest in
+// the ingest's transaction.
+type TrackAttachment struct{ audit domainaudit.Appender }
 
+// NewTrackAttachment returns the Track steps of File ingest; audit is
+// required.
 func NewTrackAttachment(audit domainaudit.Appender) *TrackAttachment {
-	return &TrackAttachment{authority: releasedomain.NewTrackAuthority(audit)}
+	if audit == nil {
+		panic("release track authority audit appender is required")
+	}
+	return &TrackAttachment{audit: audit}
 }
 
+// LockExistsWithDB serializes File-owned Track upload-session work with
+// Track mutation and deletion while preserving the caller's outer
+// transaction.
 func (a *TrackAttachment) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
-	return releaseConnectError(a.authority.LockExistsWithDB(ctx, tx, trackID))
+	return releaseConnectError(releasedomain.LockTrackForUpload(ctx, releasepostgres.NewStore(tx, releasepostgres.Ports{}), trackID))
 }
 
 func (a *TrackAttachment) AttachOriginalWithDB(
@@ -218,7 +229,7 @@ func (a *TrackAttachment) AttachOriginalWithDB(
 	tx *gorm.DB,
 	input filemediadomain.TrackOriginalAudioInput,
 ) (filemediadomain.TrackOriginalAudioAttachment, error) {
-	attachment, err := a.authority.AttachOriginalWithDB(ctx, tx, releasedomain.TrackOriginalAudioInput{
+	attachment, err := releasedomain.AttachTrackOriginalAudio(ctx, releasepostgres.Bind(tx, releasepostgres.Ports{}, a.audit), releasedomain.TrackOriginalAudioInput{
 		ClientMediaReady:      input.ClientMediaReady,
 		DurationSeconds:       input.DurationSeconds,
 		TrackID:               input.TrackID,
@@ -269,4 +280,5 @@ func (m *TrackFileManager) RequireNoTrackUploadSessionsWithDB(
 	return err
 }
 
-var _ releasedomain.TrackFileManager = (*TrackFileManager)(nil)
+var _ releasedomain.TrackUploads = (*TrackFileManager)(nil)
+var _ releasepostgres.TrackFiles = (*TrackFileManager)(nil)

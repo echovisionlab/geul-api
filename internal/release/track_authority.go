@@ -2,63 +2,29 @@ package release
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-// TrackAuthority owns Track-row serialization and mutations used by File
-// ingest. File identity, upload sessions, output allocation, and transcode
-// commands remain owned by the File domain.
-type TrackAuthority struct {
-	audit domainaudit.Appender
+// RequireLockedView and RequireLockedEdit lock the Release root and the
+// active principal in the joined transaction, then check exactly one
+// object permission, for an exact Track download policy consumer.
+func RequireLockedView(ctx context.Context, store Store, lock func(*auth.UserInfo) (bool, error), checker CollaborationPermissionChecker, releaseID string) error {
+	return requireLockedReleaseAction(ctx, store, lock, checker, releaseID, releaseActionView)
 }
 
-// PolicyAuthority exposes the Release-owned root and active-principal fence to
-// exact Track download policy consumers.
-type PolicyAuthority struct{}
-
-func NewPolicyAuthority() *PolicyAuthority { return &PolicyAuthority{} }
-
-func (*PolicyAuthority) RequireLockedView(
-	ctx context.Context,
-	tx *gorm.DB,
-	checker *auth.SpiceDBClient,
-	releaseID string,
-) error {
-	err := requireLockedReleaseAction(ctx, tx, checker, releaseID, releaseActionView)
-	return err
+func RequireLockedEdit(ctx context.Context, store Store, lock func(*auth.UserInfo) (bool, error), checker CollaborationPermissionChecker, releaseID string) error {
+	return requireLockedReleaseAction(ctx, store, lock, checker, releaseID, releaseActionEdit)
 }
 
-func (*PolicyAuthority) RequireLockedEdit(
-	ctx context.Context,
-	tx *gorm.DB,
-	checker *auth.SpiceDBClient,
-	releaseID string,
-) error {
-	err := requireLockedReleaseAction(ctx, tx, checker, releaseID, releaseActionEdit)
-	return err
-}
-
-// NewTrackAuthority returns the Track authority of File ingest; audit is
-// required.
-func NewTrackAuthority(audit domainaudit.Appender) *TrackAuthority {
-	if audit == nil {
-		panic("release track authority audit appender is required")
-	}
-	return &TrackAuthority{audit: audit}
-}
-
+// TrackOriginalAudioInput is the verified original audio a File ingest
+// attaches to a Track.
 type TrackOriginalAudioInput struct {
 	ClientMediaReady      bool
 	DurationSeconds       *int
@@ -67,51 +33,37 @@ type TrackOriginalAudioInput struct {
 	ExpectedCurrentFileID *string
 }
 
+// TrackOriginalAudioAttachment is the Track's original audio after an
+// attachment.
 type TrackOriginalAudioAttachment struct {
 	AlreadyApplied bool
 	CurrentFileID  string
 	ReleaseID      string
 }
 
-// LockExistsWithDB serializes File-owned Track upload-session work with Track
-// mutation and deletion while preserving the caller's outer transaction.
-func (a *TrackAuthority) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
+// LockTrackForUpload serializes File-owned Track upload-session work with
+// Track mutation and deletion in the File ingest's transaction.
+func LockTrackForUpload(ctx context.Context, store Store, trackID string) error {
 	trackID = strings.TrimSpace(trackID)
 	if _, err := uuid.Parse(trackID); err != nil {
 		return domainerr.InvalidField("track_id", "must be a UUID")
 	}
-	if err := lockTrackDownloadAudienceSegments(ctx, tx, trackID); err != nil {
+	if err := store.LockTrackDownloadSegments(ctx, trackID); err != nil {
 		return err
 	}
-	if err := lockTrackForUploadMutation(tx.WithContext(ctx), trackID); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return domainerr.ResourceNotFound("track", trackID)
-		}
-		return err
+	if err := store.LockTrackID(ctx, trackID); err != nil {
+		return missingAs(err, ErrTrackNotFound, domainerr.ResourceNotFound("track", trackID))
 	}
 	return nil
 }
 
-func lockTrackDownloadAudienceSegments(ctx context.Context, tx *gorm.DB, trackID string) error {
-	var rows []struct {
-		ID string `gorm:"column:id"`
-	}
-	return tx.WithContext(ctx).
-		Table("audience_segment AS segment").
-		Select("segment.id").
-		Joins("JOIN track_download_audience_segment AS association ON association.audience_segment_id = segment.id").
-		Where("association.track_id = ?", trackID).
-		Order("segment.id").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "segment"}}).
-		Find(&rows).Error
-}
-
-// AttachOriginalWithDB performs only the Track-owned CAS, processing-state
-// transition, and audit append in the caller's transaction. The caller must
-// validate and lock the verified File before invoking it.
-func (a *TrackAuthority) AttachOriginalWithDB(
+// AttachTrackOriginalAudio performs only the Track-owned CAS,
+// processing-state transition, and audit append in the File ingest's
+// transaction. The caller must validate and lock the verified File before
+// invoking it.
+func AttachTrackOriginalAudio(
 	ctx context.Context,
-	tx *gorm.DB,
+	joined Joined,
 	input TrackOriginalAudioInput,
 ) (TrackOriginalAudioAttachment, error) {
 	input.TrackID = strings.TrimSpace(input.TrackID)
@@ -130,12 +82,9 @@ func (a *TrackAuthority) AttachOriginalWithDB(
 		input.ExpectedCurrentFileID = &expected
 	}
 
-	var track model.Track
-	if err := tx.WithContext(ctx).Where("id = ?", input.TrackID).Take(&track).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return TrackOriginalAudioAttachment{}, domainerr.ResourceNotFound("track", input.TrackID)
-		}
-		return TrackOriginalAudioAttachment{}, err
+	track, err := joined.Store.FindTrack(ctx, input.TrackID)
+	if err != nil {
+		return TrackOriginalAudioAttachment{}, missingAs(err, ErrTrackNotFound, domainerr.ResourceNotFound("track", input.TrackID))
 	}
 	output := TrackOriginalAudioAttachment{ReleaseID: track.ReleaseID}
 	if track.AudioOriginalFileID != nil {
@@ -148,28 +97,16 @@ func (a *TrackAuthority) AttachOriginalWithDB(
 	if !sameOptionalString(track.AudioOriginalFileID, input.ExpectedCurrentFileID) {
 		return TrackOriginalAudioAttachment{}, domainerr.Precondition("Track original audio changed before attachment")
 	}
-	updates := structured.Fields{"audio_original_file_id": input.VerifiedFileID, "processing_status": string(model.TrackProcessingStatusProcessing), "download_audience": "disabled"}
-	if input.ClientMediaReady {
-		updates["processing_status"] = string(model.TrackProcessingStatusCompleted)
-		updates["duration_seconds"] = input.DurationSeconds
-	}
-	if err := tx.WithContext(ctx).Model(&track).Updates(updates).Error; err != nil {
+	if err := joined.Store.AttachTrackAudio(ctx, track.ID, TrackAudio{
+		FileID: input.VerifiedFileID, Completed: input.ClientMediaReady, DurationSeconds: input.DurationSeconds,
+	}); err != nil {
 		return TrackOriginalAudioAttachment{}, err
 	}
-	if err := tx.WithContext(ctx).Where("track_id = ?", track.ID).
-		Delete(&model.TrackDownloadAudienceSegment{}).Error; err != nil {
-		return TrackOriginalAudioAttachment{}, err
-	}
-	if err := domainaudit.AppendSystem(ctx, tx, a.audit, sharedtelemetry.ServiceEditorCollab, sharedtelemetry.AuditReleaseUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+	if err := domainaudit.AppendSystem(ctx, nil, joined.Audit, sharedtelemetry.ServiceEditorCollab, sharedtelemetry.AuditReleaseUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 		return sharedtelemetry.NewReleaseTrackAudioAuditRecord(m, track.ReleaseID, track.ID, input.VerifiedFileID, sharedtelemetry.AuditCollectionOperationAdded)
 	}); err != nil {
 		return TrackOriginalAudioAttachment{}, err
 	}
 	output.CurrentFileID = input.VerifiedFileID
 	return output, nil
-}
-
-func lockTrackForUploadMutation(tx *gorm.DB, trackID string) error {
-	var track model.Track
-	return tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id").Where("id = ?", trackID).Take(&track).Error
 }

@@ -32,7 +32,7 @@ func TestReleaseTrackSynchronousAuthorizationLifecycleIntegration(t *testing.T) 
 	releasesBeforeFailure, err := spiceDB.LookupResources(ctx, policyv1.Release.LookupManage(), actor)
 	require.NoError(t, err)
 
-	failing := releasepkg.NewConnectHandler(newReleaseIntegrationUseCases(t, db, spiceDB, &recordingArtistFileDeleter{}, releaseFailingAuditAppender{}))
+	failing := releasepkg.NewConnectHandler(newReleaseIntegrationUseCases(t, db, spiceDB, releaseFailingAuditAppender{}))
 	_, err = failing.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title:    "authorization rollback",
 		Type:     managev1.ReleaseType_RELEASE_TYPE_ALBUM,
@@ -43,7 +43,7 @@ func TestReleaseTrackSynchronousAuthorizationLifecycleIntegration(t *testing.T) 
 	require.NoError(t, err)
 	require.ElementsMatch(t, releasesBeforeFailure, releasesAfterFailure, "known DB rollback must compensate the policy touch")
 
-	service := newReleaseIntegrationUseCases(t, db, spiceDB, &recordingTrackFileDeleter{}, apitelemetry.NewDurableWriter(db))
+	service := newReleaseIntegrationUseCases(t, db, spiceDB, apitelemetry.NewDurableWriter(db))
 	releases := releasepkg.NewConnectHandler(service)
 	tracks := releasepkg.NewTrackConnectHandler(service)
 

@@ -10,19 +10,19 @@ import (
 
 func TestProjectTrackMediaDeliveryIncludesOwningReleaseDownloadRef(t *testing.T) {
 	download := &commonv1.ExpiringMediaRef{FileId: "file-1", Url: "https://cdn.example/download"}
-	delivery := projectTrackMediaDelivery(
+	delivery := trackMediaDelivery(
 		nil,
-		trackMediaDeliveryRefs{
-			source: scopedMediaFile{
+		TrackMedia{
+			Source: MediaFile{
 				ID:        "file-1",
 				Extension: "wav",
 				MimeType:  "audio/wav",
 				FileSize:  1024,
 			},
-			playback:    &commonv1.HlsMediaRef{FileId: "file-1", Url: "https://cdn.example/playback"},
-			download:    download,
-			waveform:    &commonv1.AssetRef{AssetId: "waveform-1"},
-			spectrogram: &commonv1.AssetRef{AssetId: "spectrogram-1"},
+			Playback:    &commonv1.HlsMediaRef{FileId: "file-1", Url: "https://cdn.example/playback"},
+			Download:    download,
+			Waveform:    &commonv1.AssetRef{AssetId: "waveform-1"},
+			Spectrogram: &commonv1.AssetRef{AssetId: "spectrogram-1"},
 		},
 	)
 	require.Same(t, download, delivery.GetDownload())

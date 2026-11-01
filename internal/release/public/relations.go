@@ -4,40 +4,13 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
-	releasepkg "github.com/echovisionlab/geul-api/internal/release"
+	"github.com/echovisionlab/geul-api/internal/release"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
 // loadReleaseArtists gets actual artists for every Release in one relation query.
-func (s *Service) loadReleaseArtists(ctx context.Context, releaseIDs []string) (map[string][]*openv1.ReleaseArtist, error) {
-	var artists []struct {
-		ReleaseID   string  `gorm:"column:release_id"`
-		ArtistID    string  `gorm:"column:artist_id"`
-		ArtistName  string  `gorm:"column:artist_name"`
-		ArtistSlug  *string `gorm:"column:artist_slug"`
-		ImageFileID *string `gorm:"column:image_file_id"`
-	}
-
-	err := s.db.WithContext(ctx).
-		Table("release_artist").
-		Select(`
-			release_artist.release_id,
-			release_artist.artist_id,
-			artist_image.file_id AS image_file_id
-		`).
-		Joins(`LEFT JOIN LATERAL (
-			SELECT af.file_id
-			FROM artist_file AS af
-			WHERE af.artist_id = release_artist.artist_id
-			ORDER BY af.sort_order ASC, af.created_at ASC
-			LIMIT 1
-		) AS artist_image ON TRUE`).
-		Where("release_artist.release_id IN ?", releaseIDs).
-		Order("release_artist.release_id ASC, release_artist.sort_order ASC, release_artist.created_at ASC").
-		Scan(&artists).Error
-
+func loadReleaseArtists(ctx context.Context, store Store, releaseIDs []string) (map[string][]Artist, error) {
+	artists, err := store.ReleaseArtists(ctx, releaseIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -45,62 +18,40 @@ func (s *Service) loadReleaseArtists(ctx context.Context, releaseIDs []string) (
 	for _, artist := range artists {
 		artistIDs = append(artistIDs, artist.ArtistID)
 	}
-	summaries, err := s.artists.LoadArtistSummariesWithDB(ctx, s.db, artistIDs)
+	summaries, err := store.ArtistSummaries(ctx, artistIDs)
 	if err != nil {
 		return nil, err
 	}
-
 	imageFileIDs := make([]string, 0, len(artists))
 	for _, artist := range artists {
 		if artist.ImageFileID != nil {
 			imageFileIDs = append(imageFileIDs, *artist.ImageFileID)
 		}
 	}
-	imageAssets, err := s.media.ReadySourceAssets(ctx, s.db, imageFileIDs, "image")
+	imageAssets, err := store.ReadySourceAssets(ctx, imageFileIDs, "image")
 	if err != nil {
 		return nil, err
 	}
-	result := make(map[string][]*openv1.ReleaseArtist, len(releaseIDs))
+	result := make(map[string][]Artist, len(releaseIDs))
 	for _, releaseArtist := range artists {
 		summary := summaries[releaseArtist.ArtistID]
-		artist := &openv1.ReleaseArtist{
-			Id:   releaseArtist.ArtistID,
-			Name: summary.Title,
-			Role: "primary",
-		}
+		artist := Artist{ID: releaseArtist.ArtistID, Name: summary.Title, Role: "primary"}
 		if summary.Slug != "" {
 			artist.Slug = &summary.Slug
 		}
 		if releaseArtist.ImageFileID != nil {
 			if asset, ok := imageAssets[*releaseArtist.ImageFileID]; ok {
-				artist.ImageAsset = asset
+				artist.Image = asset
 			}
 		}
 		result[releaseArtist.ReleaseID] = append(result[releaseArtist.ReleaseID], artist)
 	}
-
 	return result, nil
 }
 
-// getReleaseLabels gets release labels.
-func (s *Service) getReleaseLabels(ctx context.Context, releaseID string) ([]*openv1.ReleaseLabel, error) {
-	var labels []struct {
-		ID            string  `gorm:"column:id"`
-		Name          string  `gorm:"column:name"`
-		Slug          *string `gorm:"column:slug"`
-		CatalogNumber *string `gorm:"column:catalog_number"`
-	}
-
-	err := s.db.WithContext(ctx).
-		Table("release_label").
-		Select(`
-			release_label.label_id as id,
-			release_label.catalog_number as catalog_number
-		`).
-		Where("release_label.release_id = ?", releaseID).
-		Order("release_label.sort_order ASC").
-		Scan(&labels).Error
-
+// loadReleaseLabels gets release labels.
+func loadReleaseLabels(ctx context.Context, store Store, releaseID string) ([]Label, error) {
+	labels, err := store.ReleaseLabels(ctx, releaseID)
 	if err != nil {
 		return nil, err
 	}
@@ -108,196 +59,39 @@ func (s *Service) getReleaseLabels(ctx context.Context, releaseID string) ([]*op
 	for _, label := range labels {
 		labelIDs = append(labelIDs, label.ID)
 	}
-	summaries, err := s.labels.LoadLabelSummariesWithDB(ctx, s.db, labelIDs)
+	summaries, err := store.LabelSummaries(ctx, labelIDs)
 	if err != nil {
 		return nil, err
 	}
-
-	protoLabels := make([]*openv1.ReleaseLabel, 0, len(labels))
+	result := make([]Label, 0, len(labels))
 	for _, label := range labels {
 		summary := summaries[label.ID]
-		protoLabel := &openv1.ReleaseLabel{
-			Id:   label.ID,
-			Name: summary.Title,
-		}
+		projected := Label{ID: label.ID, Name: summary.Title, CatalogNumber: label.CatalogNumber}
 		if summary.Slug != "" {
-			protoLabel.Slug = &summary.Slug
+			projected.Slug = &summary.Slug
 		}
-		if label.CatalogNumber != nil {
-			protoLabel.CatalogNumber = label.CatalogNumber
-		}
-		protoLabels = append(protoLabels, protoLabel)
+		result = append(result, projected)
 	}
-
-	return protoLabels, nil
+	return result, nil
 }
 
-func (s *Service) getReleaseGenres(ctx context.Context, releaseID string) ([]*openv1.ReleaseReference, error) {
-	var genres []struct {
-		ID   string `gorm:"column:id"`
-		Name string `gorm:"column:name"`
-		Slug string `gorm:"column:slug"`
-	}
-
-	err := s.db.WithContext(ctx).
-		Table("release_genre").
-		Select("genre.id as id, genre.name as name, genre.slug as slug").
-		Joins("JOIN genre ON genre.id = release_genre.genre_id").
-		Where("release_genre.release_id = ?", releaseID).
-		Order("genre.name ASC").
-		Scan(&genres).Error
-
-	if err != nil {
-		return nil, err
-	}
-
-	protoGenres := make([]*openv1.ReleaseReference, 0, len(genres))
-	for _, genre := range genres {
-		protoGenre := &openv1.ReleaseReference{
-			Id:   genre.ID,
-			Name: genre.Name,
-		}
-		if genre.Slug != "" {
-			protoGenre.Slug = &genre.Slug
-		}
-		protoGenres = append(protoGenres, protoGenre)
-	}
-
-	return protoGenres, nil
+// releaseCreditProjection is what a credit's display needs besides its row:
+// its Artist summary, its Member, its image and its note.
+type releaseCreditProjection struct {
+	artists        map[string]release.ArtistSummary
+	members        map[string]*commonv1.MemberSummary
+	imageAssets    map[string]*commonv1.AssetRef
+	noteByCreditID map[string]string
 }
 
-func (s *Service) getReleaseStyles(ctx context.Context, releaseID string) ([]*openv1.ReleaseReference, error) {
-	var styles []struct {
-		ID   string `gorm:"column:id"`
-		Name string `gorm:"column:name"`
-		Slug string `gorm:"column:slug"`
-	}
-
-	err := s.db.WithContext(ctx).
-		Table("release_style").
-		Select("style.id as id, style.name as name, style.slug as slug").
-		Joins("JOIN style ON style.id = release_style.style_id").
-		Where("release_style.release_id = ?", releaseID).
-		Order("style.name ASC").
-		Scan(&styles).Error
-
-	if err != nil {
-		return nil, err
-	}
-
-	protoStyles := make([]*openv1.ReleaseReference, 0, len(styles))
-	for _, style := range styles {
-		protoStyle := &openv1.ReleaseReference{
-			Id:   style.ID,
-			Name: style.Name,
-		}
-		if style.Slug != "" {
-			protoStyle.Slug = &style.Slug
-		}
-		protoStyles = append(protoStyles, protoStyle)
-	}
-
-	return protoStyles, nil
-}
-
-func (s *Service) getReleaseFormats(ctx context.Context, releaseID string) ([]*openv1.ReleaseFormat, error) {
-	var formats []struct {
-		ID          string  `gorm:"column:id"`
-		Name        string  `gorm:"column:name"`
-		Slug        string  `gorm:"column:slug"`
-		Description *string `gorm:"column:description"`
-	}
-
-	err := s.db.WithContext(ctx).
-		Table("release_format").
-		Select(`
-			format.id as id,
-			format.name as name,
-			format.slug as slug,
-			release_format.format_description as description
-		`).
-		Joins("JOIN format ON format.id = release_format.format_id").
-		Where("release_format.release_id = ?", releaseID).
-		Order("format.name ASC").
-		Scan(&formats).Error
-
-	if err != nil {
-		return nil, err
-	}
-
-	protoFormats := make([]*openv1.ReleaseFormat, 0, len(formats))
-	for _, format := range formats {
-		protoFormat := &openv1.ReleaseFormat{
-			Id:   format.ID,
-			Name: format.Name,
-		}
-		if format.Slug != "" {
-			protoFormat.Slug = &format.Slug
-		}
-		if format.Description != nil {
-			protoFormat.Description = format.Description
-		}
-		protoFormats = append(protoFormats, protoFormat)
-	}
-
-	return protoFormats, nil
-}
-
-func (s *Service) getReleaseCredits(
+func (s *Service) loadReleaseCredits(
 	ctx context.Context,
+	store Store,
 	releaseID string,
 	sourceLocale string,
 	displayedLocale string,
-) ([]*openv1.ReleaseCredit, error) {
-	credits, err := s.loadReleaseCreditRows(ctx, releaseID)
-	if err != nil {
-		return nil, err
-	}
-	projection, err := s.loadReleaseCreditProjection(
-		ctx, releaseID, credits, sourceLocale, displayedLocale,
-	)
-	if err != nil {
-		return nil, err
-	}
-	protoCredits := make([]*openv1.ReleaseCredit, 0, len(credits))
-	for _, credit := range credits {
-		if protoCredit := s.projectReleaseCredit(credit, projection); protoCredit != nil {
-			protoCredits = append(protoCredits, protoCredit)
-		}
-	}
-	return protoCredits, nil
-}
-
-type publicReleaseCreditRow struct {
-	ID           string  `gorm:"column:id"`
-	ArtistName   *string `gorm:"column:artist_name"`
-	CreditedName *string `gorm:"column:credited_name"`
-	Slug         *string `gorm:"column:slug"`
-	CreditRole   *string `gorm:"column:credit_role"`
-	ArtistID     *string `gorm:"column:artist_id"`
-	MemberID     *string `gorm:"column:member_id"`
-	ImageFileID  *string `gorm:"column:image_file_id"`
-}
-
-func (s *Service) loadReleaseCreditRows(ctx context.Context, releaseID string) ([]publicReleaseCreditRow, error) {
-	var credits []publicReleaseCreditRow
-	err := s.db.WithContext(ctx).Raw(`
-			SELECT
-			rc.id,
-			rc.credited_name,
-			rc.credit_role,
-			rc.artist_id,
-			rc.member_id,
-			afi.file_id AS image_file_id
-		FROM release_credit rc
-		LEFT JOIN (
-			SELECT DISTINCT ON (artist_id) artist_id, file_id
-			FROM artist_file
-			ORDER BY artist_id, sort_order ASC, created_at ASC
-		) afi ON afi.artist_id = rc.artist_id
-		WHERE rc.release_id = ?
-		ORDER BY rc.sort_order ASC, rc.created_at ASC
-		`, releaseID).Scan(&credits).Error
+) ([]Credit, error) {
+	credits, err := store.Credits(ctx, releaseID)
 	if err != nil {
 		return nil, err
 	}
@@ -307,38 +101,10 @@ func (s *Service) loadReleaseCreditRows(ctx context.Context, releaseID string) (
 			artistIDs = append(artistIDs, *credit.ArtistID)
 		}
 	}
-	summaries, err := s.artists.LoadArtistSummariesWithDB(ctx, s.db, artistIDs)
-	if err != nil {
+	projection := releaseCreditProjection{}
+	if projection.artists, err = store.ArtistSummaries(ctx, artistIDs); err != nil {
 		return nil, err
 	}
-	for index := range credits {
-		if credits[index].ArtistID == nil {
-			continue
-		}
-		summary := summaries[*credits[index].ArtistID]
-		if summary.Title != "" {
-			credits[index].ArtistName = &summary.Title
-		}
-		if summary.Slug != "" {
-			credits[index].Slug = &summary.Slug
-		}
-	}
-	return credits, nil
-}
-
-type releaseCreditProjection struct {
-	members        map[string]*commonv1.MemberSummary
-	imageAssets    map[string]*commonv1.AssetRef
-	noteByCreditID map[string]string
-}
-
-func (s *Service) loadReleaseCreditProjection(
-	ctx context.Context,
-	releaseID string,
-	credits []publicReleaseCreditRow,
-	sourceLocale string,
-	displayedLocale string,
-) (releaseCreditProjection, error) {
 	creditIDs := make([]string, 0, len(credits))
 	memberIDs := make([]string, 0, len(credits))
 	imageFileIDs := make([]string, 0, len(credits))
@@ -351,98 +117,98 @@ func (s *Service) loadReleaseCreditProjection(
 			imageFileIDs = append(imageFileIDs, *credit.ImageFileID)
 		}
 	}
-	members, err := s.members.LoadMemberSummaries(ctx, memberIDs)
-	if err != nil {
-		return releaseCreditProjection{}, err
+	if projection.members, err = s.members.LoadMemberSummaries(ctx, memberIDs); err != nil {
+		return nil, err
 	}
-	imageAssets, err := s.media.ReadySourceAssets(ctx, s.db, imageFileIDs, "image")
-	if err != nil {
-		return releaseCreditProjection{}, err
+	if projection.imageAssets, err = store.ReadySourceAssets(ctx, imageFileIDs, "image"); err != nil {
+		return nil, err
 	}
-	notes, err := releasepkg.LoadReleaseCreditNotesForDisplay(
-		ctx, s.db, releaseID, sourceLocale, displayedLocale, creditIDs,
-	)
-	if err != nil {
-		return releaseCreditProjection{}, err
+	if projection.noteByCreditID, err = creditNotesForDisplay(ctx, store, releaseID, sourceLocale, displayedLocale, creditIDs); err != nil {
+		return nil, err
 	}
-	return releaseCreditProjection{
-		members:        members,
-		imageAssets:    imageAssets,
-		noteByCreditID: notes,
-	}, nil
-}
-
-func (s *Service) projectReleaseCredit(
-	credit publicReleaseCreditRow,
-	projection releaseCreditProjection,
-) *openv1.ReleaseCredit {
-	name := releaseCreditDisplayName(credit, projection.members)
-	if name == "" {
-		return nil
-	}
-	protoCredit := &openv1.ReleaseCredit{
-		Id:         credit.ID,
-		Name:       name,
-		Slug:       credit.Slug,
-		CreditRole: credit.CreditRole,
-		ArtistId:   credit.ArtistID,
-		MemberId:   credit.MemberID,
-	}
-	if credit.MemberID != nil {
-		protoCredit.Member = projection.members[*credit.MemberID]
-	}
-	if note, ok := projection.noteByCreditID[credit.ID]; ok {
-		protoCredit.Note = &note
-	}
-	protoCredit.ImageAsset = projectReleaseCreditImage(credit, protoCredit.Member, projection.imageAssets)
-	return protoCredit
-}
-
-func projectReleaseCreditImage(
-	credit publicReleaseCreditRow,
-	member *commonv1.MemberSummary,
-	imageAssets map[string]*commonv1.AssetRef,
-) *commonv1.AssetRef {
-	if credit.ImageFileID == nil {
-		if member == nil {
-			return nil
+	result := make([]Credit, 0, len(credits))
+	for _, credit := range credits {
+		if projected, ok := projectReleaseCredit(credit, projection); ok {
+			result = append(result, projected)
 		}
-		return member.AvatarAsset
 	}
-	return imageAssets[*credit.ImageFileID]
+	return result, nil
 }
 
-func releaseCreditDisplayName(credit publicReleaseCreditRow, members map[string]*commonv1.MemberSummary) string {
-	if credit.ArtistName != nil {
-		return *credit.ArtistName
-	}
-	if credit.MemberID != nil && members[*credit.MemberID] != nil {
-		return members[*credit.MemberID].GetNickname()
-	}
-	if credit.CreditedName != nil {
-		return *credit.CreditedName
-	}
-	return ""
-}
-
-// getReleaseTracks gets tracks for a release
-func (s *Service) getReleaseTracks(
-	ctx context.Context,
-	releaseID string,
-	releaseStatus string,
-	mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization,
-) ([]*openv1.ReleaseTrack, error) {
-	var tracks []model.Track
-
-	err := s.db.WithContext(ctx).
-		Where("release_id = ?", releaseID).
-		Order("track_number ASC").
-		Find(&tracks).Error
-
+// creditNotesForDisplay overlays the displayed locale on the source-locale
+// credit notes.
+func creditNotesForDisplay(ctx context.Context, store Store, releaseID, sourceLocale, displayedLocale string, creditIDs []string) (map[string]string, error) {
+	source, err := store.CreditNotes(ctx, releaseID, sourceLocale)
 	if err != nil {
 		return nil, err
 	}
+	localized := source
+	if displayedLocale != sourceLocale {
+		localized, err = store.CreditNotes(ctx, releaseID, displayedLocale)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return release.MergeCreditNotesForDisplay(source, localized, creditIDs), nil
+}
 
+// projectReleaseCredit shows a credit by its Artist, Member or credited
+// name, in that order; a credit with none of them is not shown.
+func projectReleaseCredit(credit CreditRow, projection releaseCreditProjection) (Credit, bool) {
+	var artistName, slug *string
+	if credit.ArtistID != nil {
+		summary := projection.artists[*credit.ArtistID]
+		if summary.Title != "" {
+			artistName = &summary.Title
+		}
+		if summary.Slug != "" {
+			slug = &summary.Slug
+		}
+	}
+	name := ""
+	switch {
+	case artistName != nil:
+		name = *artistName
+	case credit.MemberID != nil && projection.members[*credit.MemberID] != nil:
+		name = projection.members[*credit.MemberID].GetNickname()
+	case credit.CreditedName != nil:
+		name = *credit.CreditedName
+	}
+	if name == "" {
+		return Credit{}, false
+	}
+	projected := Credit{
+		ID: credit.ID, Name: name, Slug: slug, CreditRole: credit.CreditRole,
+		ArtistID: credit.ArtistID, MemberID: credit.MemberID,
+	}
+	if credit.MemberID != nil {
+		projected.Member = projection.members[*credit.MemberID]
+	}
+	if note, ok := projection.noteByCreditID[credit.ID]; ok {
+		projected.Note = &note
+	}
+	switch {
+	case credit.ImageFileID != nil:
+		projected.Image = projection.imageAssets[*credit.ImageFileID]
+	case projected.Member != nil:
+		projected.Image = projected.Member.AvatarAsset
+	}
+	return projected, true
+}
+
+// loadReleaseTracks gets the tracks of a release with their media and
+// download access.
+func (s *Service) loadReleaseTracks(
+	ctx context.Context,
+	store Store,
+	releaseID string,
+	releaseStatus string,
+	mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization,
+) ([]Track, error) {
+	tracks, err := store.Tracks(ctx, releaseID)
+	if err != nil {
+		return nil, err
+	}
 	audioFileIDs := make([]string, 0, len(tracks))
 	downloadRequests := make([]TrackDownloadAccessRequest, 0, len(tracks))
 	for _, track := range tracks {
@@ -453,155 +219,71 @@ func (s *Service) getReleaseTracks(
 			})
 		}
 	}
-	originalFiles, err := loadTrackOriginalFiles(ctx, s.db, audioFileIDs)
-	if err != nil {
+	var sources releaseTrackMediaSources
+	if sources.originalFiles, err = store.TrackFiles(ctx, audioFileIDs); err != nil {
 		return nil, err
 	}
-	waveformRefs, err := s.media.TrackWaveforms(ctx, s.db, audioFileIDs)
-	if err != nil {
+	if sources.waveformRefs, err = store.TrackWaveforms(ctx, audioFileIDs); err != nil {
 		return nil, err
 	}
-	spectrogramRefs, err := s.media.TrackSpectrograms(ctx, s.db, audioFileIDs)
-	if err != nil {
+	if sources.spectrogramRefs, err = store.TrackSpectrograms(ctx, audioFileIDs); err != nil {
 		return nil, err
 	}
-	hlsRefs, err := s.media.TrackHLS(ctx, s.db, audioFileIDs)
-	if err != nil {
+	if sources.playbackRefs, err = store.TrackHLS(ctx, audioFileIDs); err != nil {
 		return nil, err
 	}
-	downloadByTrackID, err := s.downloads.Resolve(ctx, releaseID, releaseStatus, mediaAuthorization, downloadRequests, func(file MediaFile) (*commonv1.ExpiringMediaRef, error) {
-		return s.media.DownloadRef(file)
-	})
+	sources.downloadByTrackID, err = s.downloads.Resolve(ctx, releaseID, releaseStatus, mediaAuthorization, downloadRequests, s.signer.DownloadRef)
 	if err != nil {
 		return nil, err
 	}
 	trackIDs := make([]string, 0, len(tracks))
-	for i := range tracks {
-		trackIDs = append(trackIDs, tracks[i].ID)
+	for _, track := range tracks {
+		trackIDs = append(trackIDs, track.ID)
 	}
-	creditsByTrack, err := s.loadTrackCredits(ctx, trackIDs)
+	creditsByTrack, err := loadTrackCredits(ctx, store, trackIDs)
 	if err != nil {
 		return nil, err
 	}
-
-	protoTracks := make([]*openv1.ReleaseTrack, 0, len(tracks))
-	mediaSources := releaseTrackMediaSources{
-		originalFiles:     originalFiles,
-		playbackRefs:      hlsRefs,
-		waveformRefs:      waveformRefs,
-		spectrogramRefs:   spectrogramRefs,
-		downloadByTrackID: downloadByTrackID,
-	}
+	result := make([]Track, 0, len(tracks))
 	for _, track := range tracks {
-		mediaRefs, downloadAccess := s.resolveReleaseTrackMedia(track, mediaSources)
-
-		protoTracks = append(protoTracks, projectPublicReleaseTrack(
-			track,
-			mediaRefs,
-			creditsByTrack[track.ID],
-			downloadAccess,
-		))
+		media, download := resolveReleaseTrackMedia(track, sources)
+		result = append(result, Track{
+			ID: track.ID, Title: track.Title, TrackNumber: track.TrackNumber, DurationSeconds: track.DurationSeconds,
+			Credits: creditsByTrack[track.ID], Media: media, Download: download,
+		})
 	}
-
-	return protoTracks, nil
+	return result, nil
 }
 
 type releaseTrackMediaSources struct {
-	originalFiles     map[string]scopedMediaFile
+	originalFiles     map[string]MediaFile
 	playbackRefs      map[string]*commonv1.HlsMediaRef
 	waveformRefs      map[string]*commonv1.AssetRef
 	spectrogramRefs   map[string]*commonv1.AssetRef
 	downloadByTrackID map[string]TrackDownloadAuthorization
 }
 
-func (s *Service) resolveReleaseTrackMedia(
-	track model.Track,
-	sources releaseTrackMediaSources,
-) (trackMediaDeliveryRefs, *openv1.FileDownloadAccess) {
-	mediaRefs := trackMediaDeliveryRefs{}
-	downloadAccess := unavailableFileDownloadAccess()
+func resolveReleaseTrackMedia(track release.Track, sources releaseTrackMediaSources) (TrackMedia, DownloadAccess) {
+	media := TrackMedia{}
+	download := unavailableDownloadAccess
 	if track.AudioOriginalFileID == nil || *track.AudioOriginalFileID == "" {
-		return mediaRefs, downloadAccess
+		return media, download
 	}
 	fileID := *track.AudioOriginalFileID
-	mediaRefs.source = sources.originalFiles[fileID]
-	mediaRefs.playback = sources.playbackRefs[fileID]
-	mediaRefs.waveform = sources.waveformRefs[fileID]
-	mediaRefs.spectrogram = sources.spectrogramRefs[fileID]
+	media.Source = sources.originalFiles[fileID]
+	media.Playback = sources.playbackRefs[fileID]
+	media.Waveform = sources.waveformRefs[fileID]
+	media.Spectrogram = sources.spectrogramRefs[fileID]
 	if resolved, exists := sources.downloadByTrackID[track.ID]; exists && resolved.Access != nil {
-		downloadAccess = resolved.Access
-		mediaRefs.download = resolved.Download
+		download = *resolved.Access
+		media.Download = resolved.Download
 	}
-	if downloadAccess.GetAction() != openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD {
-		return mediaRefs, downloadAccess
-	}
-	return mediaRefs, downloadAccess
-}
-
-func projectPublicReleaseTrack(
-	track model.Track,
-	mediaRefs trackMediaDeliveryRefs,
-	credits []*openv1.TrackCredit,
-	downloadAccess *openv1.FileDownloadAccess,
-) *openv1.ReleaseTrack {
-	pt := &openv1.ReleaseTrack{
-		Id:          track.ID,
-		Title:       track.Title,
-		TrackNumber: int32(track.TrackNumber),
-		Credits:     credits,
-	}
-	if downloadAccess == nil {
-		downloadAccess = unavailableFileDownloadAccess()
-	}
-	pt.DownloadAvailability = downloadAccess.Availability
-	pt.DownloadAction = downloadAccess.Action
-
-	if track.DurationSeconds != nil {
-		durationMs := int32(*track.DurationSeconds * 1000)
-		pt.DurationMs = &durationMs
-	}
-
-	pt.Delivery = projectTrackMediaDelivery(track.DurationSeconds, mediaRefs)
-
-	return pt
+	return media, download
 }
 
 // loadTrackCredits gets credits for every Track in one relation query.
-type publicTrackCreditRow struct {
-	TrackID      string  `gorm:"column:track_id"`
-	ID           string  `gorm:"column:id"`
-	CreditedName *string `gorm:"column:credited_name"`
-	RoleName     *string `gorm:"column:role_name"`
-	ArtistID     *string `gorm:"column:artist_id"`
-	ArtistName   *string `gorm:"column:artist_name"`
-	ArtistSlug   *string `gorm:"column:artist_slug"`
-	ImageFileID  *string `gorm:"column:image_file_id"`
-}
-
-func (s *Service) loadTrackCredits(ctx context.Context, trackIDs []string) (map[string][]*openv1.TrackCredit, error) {
-	var credits []publicTrackCreditRow
-
-	err := s.db.WithContext(ctx).
-		Table("track_credit").
-		Select(`
-			track_credit.track_id,
-			track_credit.id,
-			track_credit.credited_name,
-			track_credit.credit_role as role_name,
-			track_credit.artist_id,
-			artist_image.file_id AS image_file_id
-		`).
-		Joins(`LEFT JOIN LATERAL (
-			SELECT af.file_id
-			FROM artist_file AS af
-			WHERE af.artist_id = track_credit.artist_id
-			ORDER BY af.sort_order ASC, af.created_at ASC
-			LIMIT 1
-		) AS artist_image ON TRUE`).
-		Where("track_credit.track_id IN ?", trackIDs).
-		Order("track_credit.track_id ASC, track_credit.sort_order ASC, track_credit.created_at ASC").
-		Scan(&credits).Error
-
+func loadTrackCredits(ctx context.Context, store Store, trackIDs []string) (map[string][]TrackCredit, error) {
+	credits, err := store.TrackCredits(ctx, trackIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -611,66 +293,35 @@ func (s *Service) loadTrackCredits(ctx context.Context, trackIDs []string) (map[
 			artistIDs = append(artistIDs, *credit.ArtistID)
 		}
 	}
-	summaries, err := s.artists.LoadArtistSummariesWithDB(ctx, s.db, artistIDs)
+	summaries, err := store.ArtistSummaries(ctx, artistIDs)
 	if err != nil {
 		return nil, err
 	}
-	for index := range credits {
-		if credits[index].ArtistID == nil {
-			continue
-		}
-		summary := summaries[*credits[index].ArtistID]
-		if summary.Title != "" {
-			credits[index].ArtistName = &summary.Title
-		}
-		if summary.Slug != "" {
-			credits[index].ArtistSlug = &summary.Slug
-		}
-	}
-
 	imageFileIDs := make([]string, 0, len(credits))
 	for _, credit := range credits {
 		if credit.ImageFileID != nil {
 			imageFileIDs = append(imageFileIDs, *credit.ImageFileID)
 		}
 	}
-	imageAssets, err := s.media.ReadySourceAssets(ctx, s.db, imageFileIDs, "image")
+	imageAssets, err := store.ReadySourceAssets(ctx, imageFileIDs, "image")
 	if err != nil {
 		return nil, err
 	}
-	result := make(map[string][]*openv1.TrackCredit, len(trackIDs))
+	result := make(map[string][]TrackCredit, len(trackIDs))
 	for _, credit := range credits {
-		result[credit.TrackID] = append(result[credit.TrackID], s.projectTrackCredit(credit, imageAssets))
+		projected := TrackCredit{ID: credit.ID, Name: credit.CreditedName, CreditRole: credit.RoleName}
+		if credit.ArtistID != nil {
+			summary := summaries[*credit.ArtistID]
+			artist := &Artist{ID: *credit.ArtistID, Name: summary.Title, Role: "credit"}
+			if summary.Slug != "" {
+				artist.Slug = &summary.Slug
+			}
+			if credit.ImageFileID != nil {
+				artist.Image = imageAssets[*credit.ImageFileID]
+			}
+			projected.Artist = artist
+		}
+		result[credit.TrackID] = append(result[credit.TrackID], projected)
 	}
-
 	return result, nil
-}
-
-func (s *Service) projectTrackCredit(
-	credit publicTrackCreditRow,
-	imageAssets map[string]*commonv1.AssetRef,
-) *openv1.TrackCredit {
-	projected := &openv1.TrackCredit{
-		Id: credit.ID, Name: credit.CreditedName, CreditRole: credit.RoleName,
-	}
-	if credit.ArtistID == nil {
-		return projected
-	}
-	artist := &openv1.ReleaseArtist{Id: *credit.ArtistID, Role: "credit", Slug: credit.ArtistSlug}
-	if credit.ArtistName != nil {
-		artist.Name = *credit.ArtistName
-	}
-	artist.ImageAsset = projectTrackCreditArtistImage(credit.ImageFileID, imageAssets)
-	projected.Artist = artist
-	return projected
-}
-
-func projectTrackCreditArtistImage(
-	fileID *string,
-	imageAssets map[string]*commonv1.AssetRef,
-) *commonv1.AssetRef {
-	if fileID == nil {
-		return nil
-	}
-	return imageAssets[*fileID]
 }

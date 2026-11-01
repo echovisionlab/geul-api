@@ -15,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -128,7 +127,7 @@ func TestDownloadAccessRejectsReleaseOrShareRevokedAfterPhaseOneIntegration(t *t
 			close(releasePhase)
 			got := <-resolved
 			require.NoError(t, got.err)
-			require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, got.authorizations[trackID].Access.GetAction())
+			require.Equal(t, releasepublic.DownloadActionNone, got.authorizations[trackID].Access.Action)
 			require.Nil(t, got.authorizations[trackID].Download)
 		})
 	}
@@ -236,7 +235,7 @@ func TestDownloadAccessHoldsReleaseShareAndTrackFencesThroughSigningIntegration(
 			close(releaseSigning)
 			got := <-resolved
 			require.NoError(t, got.err)
-			require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD, got.authorizations[trackID].Access.GetAction())
+			require.Equal(t, releasepublic.DownloadActionDownload, got.authorizations[trackID].Access.Action)
 			require.Equal(t, "signed:"+fileID, got.authorizations[trackID].Download.GetUrl())
 			select {
 			case err := <-mutationDone:

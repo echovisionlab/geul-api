@@ -3,7 +3,6 @@ package release
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -24,7 +23,7 @@ func TestReleaseStatusMappingCoversEveryAPIStatus(t *testing.T) {
 			t.Fatalf("%s maps to %q (known %t) and back to %s", name, stored, known, releaseStatusToProto(stored))
 		}
 	}
-	if got := releaseStatusToProto(model.ReleaseStatus("RELEASE_STATUS_ARCHIVED")); got != managev1.ReleaseStatus_RELEASE_STATUS_UNSPECIFIED {
+	if got := releaseStatusToProto(Status("RELEASE_STATUS_ARCHIVED")); got != managev1.ReleaseStatus_RELEASE_STATUS_UNSPECIFIED {
 		t.Fatalf("unknown stored status mapped to %s", got)
 	}
 }
@@ -37,7 +36,7 @@ func TestReleaseTypeMappingCoversEveryAPIType(t *testing.T) {
 		releaseType := managev1.ReleaseType(value)
 		stored := releaseTypeFromProto(releaseType)
 		if releaseType == managev1.ReleaseType_RELEASE_TYPE_UNSPECIFIED {
-			if stored != model.ReleaseTypeAlbum {
+			if stored != TypeAlbum {
 				t.Fatalf("UNSPECIFIED stored as %q", stored)
 			}
 			continue
@@ -46,7 +45,7 @@ func TestReleaseTypeMappingCoversEveryAPIType(t *testing.T) {
 			t.Fatalf("%s stored as %q and read back as %s", name, stored, releaseTypeToProto(stored))
 		}
 	}
-	if got := releaseTypeToProto(model.ReleaseType("RELEASE_TYPE_MIXTAPE")); got != managev1.ReleaseType_RELEASE_TYPE_ALBUM {
+	if got := releaseTypeToProto(Type("RELEASE_TYPE_MIXTAPE")); got != managev1.ReleaseType_RELEASE_TYPE_ALBUM {
 		t.Fatalf("unknown stored type read as %s", got)
 	}
 }

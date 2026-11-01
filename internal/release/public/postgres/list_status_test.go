@@ -1,4 +1,4 @@
-package public
+package releasepublicpostgres_test
 
 import (
 	"context"
@@ -19,11 +19,16 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	releasepkg "github.com/echovisionlab/geul-api/internal/release"
+	"github.com/echovisionlab/geul-api/internal/release"
+	"github.com/echovisionlab/geul-api/internal/release/public"
+	releasepublicpostgres "github.com/echovisionlab/geul-api/internal/release/public/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 const releaseListTestDriverName = "dsub-release-public-list-test"
@@ -78,8 +83,18 @@ func (*releaseListTestConnection) Prepare(string) (driver.Stmt, error) {
 func (*releaseListTestConnection) Close() error { return nil }
 
 func (*releaseListTestConnection) Begin() (driver.Tx, error) {
-	return nil, errors.New("transactions are not supported")
+	return releaseListTestTx{}, nil
 }
+
+// BeginTx admits the read-only snapshot the public reads open.
+func (*releaseListTestConnection) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
+	return releaseListTestTx{}, nil
+}
+
+type releaseListTestTx struct{}
+
+func (releaseListTestTx) Commit() error   { return nil }
+func (releaseListTestTx) Rollback() error { return nil }
 
 func (connection *releaseListTestConnection) QueryContext(
 	_ context.Context,
@@ -127,7 +142,10 @@ func (connection *releaseListTestConnection) QueryContext(
 	}
 }
 
-var _ driver.QueryerContext = (*releaseListTestConnection)(nil)
+var (
+	_ driver.QueryerContext = (*releaseListTestConnection)(nil)
+	_ driver.ConnBeginTx    = (*releaseListTestConnection)(nil)
+)
 
 func requirePublishedReleaseListQuery(query string, args []driver.NamedValue) error {
 	if !strings.Contains(query, "status =") {
@@ -193,25 +211,35 @@ func (releaseListTestMedia) TrackHLS(context.Context, *gorm.DB, []string) (map[s
 	return map[string]*commonv1.HlsMediaRef{}, nil
 }
 
-func (releaseListTestMedia) DownloadRef(MediaFile) (*commonv1.ExpiringMediaRef, error) {
+func (releaseListTestMedia) DownloadRef(public.MediaFile) (*commonv1.ExpiringMediaRef, error) {
 	return nil, nil
 }
 
-type releaseListTestArtists struct{}
+type releaseListTestSummaries struct{}
 
-func (releaseListTestArtists) LoadArtistSummaries(context.Context, []string) (map[string]releasepkg.ArtistSummary, error) {
-	return map[string]releasepkg.ArtistSummary{}, nil
+func (releaseListTestSummaries) LoadArtistSummariesWithDB(context.Context, *gorm.DB, []string) (map[string]release.ArtistSummary, error) {
+	return map[string]release.ArtistSummary{}, nil
 }
 
-func (releaseListTestArtists) LoadArtistSummariesWithDB(
-	context.Context,
-	*gorm.DB,
-	[]string,
-) (map[string]releasepkg.ArtistSummary, error) {
-	return map[string]releasepkg.ArtistSummary{}, nil
+func (releaseListTestSummaries) LoadLabelSummariesWithDB(context.Context, *gorm.DB, []string) (map[string]release.LabelSummary, error) {
+	return map[string]release.LabelSummary{}, nil
 }
 
-func newReleaseListTestService(t *testing.T) (*ConnectHandler, *releaseListTestScenario) {
+type releaseListTestUnused struct{}
+
+func (releaseListTestUnused) Can(context.Context, policyv1.AuthorizationDecision) (bool, error) {
+	return false, errors.New("unused")
+}
+
+func (releaseListTestUnused) Resolve(context.Context, string, string, mediaasset.ContentDownloadOwnerAuthorization, []public.TrackDownloadAccessRequest, public.TrackDownloadSigner) (map[string]public.TrackDownloadAuthorization, error) {
+	return nil, errors.New("unused")
+}
+
+func (releaseListTestUnused) LoadMemberSummaries(context.Context, []string) (map[string]*commonv1.MemberSummary, error) {
+	return nil, errors.New("unused")
+}
+
+func newReleaseListTestService(t *testing.T) (*public.ConnectHandler, *releaseListTestScenario) {
 	t.Helper()
 	registerReleaseListTestDriver.Do(func() {
 		sql.Register(releaseListTestDriverName, releaseListTestDriver{})
@@ -230,7 +258,17 @@ func newReleaseListTestService(t *testing.T) (*ConnectHandler, *releaseListTestS
 		Logger:               logger.Default.LogMode(logger.Silent),
 	})
 	require.NoError(t, err)
-	return NewConnectHandler(&Service{db: db, media: releaseListTestMedia{}, artists: releaseListTestArtists{}}), scenario
+	units, err := releasepublicpostgres.NewUnits(db, releasepublicpostgres.Ports{
+		ContentBlocks: &contentblock.Store{}, Media: releaseListTestMedia{},
+		Artists: releaseListTestSummaries{}, Labels: releaseListTestSummaries{},
+	})
+	require.NoError(t, err)
+	service, err := public.NewService(public.Deps{
+		Units: units, SpiceDB: releaseListTestUnused{}, Signer: releaseListTestMedia{},
+		Downloads: releaseListTestUnused{}, Members: releaseListTestUnused{},
+	})
+	require.NoError(t, err)
+	return public.NewConnectHandler(service), scenario
 }
 
 func TestReleaseListDefaultsToPublishedAndReachesDatabase(t *testing.T) {

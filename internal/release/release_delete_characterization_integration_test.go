@@ -5,6 +5,7 @@ package release_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -16,18 +17,19 @@ import (
 	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 
-	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
+	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -68,17 +70,47 @@ func (*releaseDeleteCleaner) RequireNoTrackUploadSessionsWithDB(context.Context,
 	return nil
 }
 
-func (*releaseDeleteCleaner) DeleteFileByID(context.Context, string) error { return nil }
-
+// recordingReleaseWaveformJobs records the Tracks whose waveform work a
+// deletion cancels; the adapter names the user-deleted reason.
 type recordingReleaseWaveformJobs struct {
-	calls   [][]string
-	reasons []managev1.TranscodeCancelReason
+	calls [][]string
 }
 
-func (w *recordingReleaseWaveformJobs) CancelTracks(_ context.Context, trackIDs []string, reason managev1.TranscodeCancelReason) error {
+func (w *recordingReleaseWaveformJobs) CancelDeletedTracks(_ context.Context, trackIDs []string) error {
 	w.calls = append(w.calls, slices.Clone(trackIDs))
-	w.reasons = append(w.reasons, reason)
 	return nil
+}
+
+// recordingReleaseAsyncPublisher counts every content signal so a test can
+// pin that an operation emits none.
+type recordingReleaseAsyncPublisher struct{ calls int }
+
+func (p *recordingReleaseAsyncPublisher) NotifyProtobufWithExecutor(context.Context, eventpkg.DBTX, string, proto.Message) error {
+	p.calls++
+	return nil
+}
+
+type releaseAuditRow struct {
+	Action string
+}
+
+func readReleaseAuditRows(t *testing.T, db *gorm.DB, releaseID string) []releaseAuditRow {
+	t.Helper()
+	var rows []releaseAuditRow
+	require.NoError(t, db.Raw(`
+		SELECT action FROM public.domain_audit
+		WHERE target_type = 'release' AND target_id = ?
+		ORDER BY occurred_at, audit_id`, releaseID).Scan(&rows).Error)
+	return rows
+}
+
+func requireConnectError(t *testing.T, err error, code connect.Code, message string) {
+	t.Helper()
+	require.Error(t, err)
+	var connectErr *connect.Error
+	require.True(t, errors.As(err, &connectErr), "error %v is not a Connect error", err)
+	require.Equal(t, code, connectErr.Code(), "error: %v", err)
+	require.Equal(t, message, connectErr.Message())
 }
 
 type releaseDeleteFixture struct {
@@ -110,10 +142,11 @@ func newReleaseDeleteFixture(t *testing.T, trackCount int) releaseDeleteFixture 
 	waveforms := &recordingReleaseWaveformJobs{}
 	publisher := &recordingReleaseAsyncPublisher{}
 	store := newPageIntegrationContentBlockStore(t, spiceDB)
-	service := releasepkg.NewConnectHandler(releasetest.NewService(t, releasepkg.Deps{
-		DB: db, SpiceDB: spiceDB, Audit: apitelemetry.NewDurableWriter(db), ContentBlocks: store,
-		ContentSignals: publisher, TrackFiles: releaseadapter.NewTrackFiles(cleaner), WaveformJobs: waveforms,
-	}))
+	useCases, units := releasetest.NewServiceAndUnits(t, releasetest.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: apitelemetry.NewDurableWriter(db),
+		Ports: releasepostgres.Ports{ContentBlocks: store, Publisher: publisher}, Files: cleaner, WaveformJobs: waveforms,
+	})
+	service := releasepkg.NewConnectHandler(useCases)
 	created, err := service.CreateRelease(ctx, connect.NewRequest(&managev1.CreateReleaseRequest{
 		Title:    "Release delete characterization",
 		Type:     managev1.ReleaseType_RELEASE_TYPE_ALBUM,
@@ -123,9 +156,9 @@ func newReleaseDeleteFixture(t *testing.T, trackCount int) releaseDeleteFixture 
 	releaseID := created.Msg.Id
 
 	// The Tracks are fixture state: their creation audit stays in memory.
-	tracks := releasepkg.NewTrackConnectHandler(releasetest.NewService(t, releasepkg.Deps{
-		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{}, ContentBlocks: store,
-		TrackFiles: releaseadapter.NewTrackFiles(&releaseDeleteCleaner{}),
+	tracks := releasepkg.NewTrackConnectHandler(releasetest.NewService(t, releasetest.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{},
+		Ports: releasepostgres.Ports{ContentBlocks: store}, Files: &releaseDeleteCleaner{},
 	}))
 	trackIDs := make([]string, 0, trackCount)
 	for index := range trackCount {
@@ -151,7 +184,7 @@ func newReleaseDeleteFixture(t *testing.T, trackCount int) releaseDeleteFixture 
 		Token: strings.ReplaceAll(releaseID, "-", ""), EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE.String(),
 		EntityID: releaseID, Label: &shareLabel, CreatedAt: time.Now(), ExpiresAt: &shareExpiresAt,
 	}).Error)
-	releasepkg.SeedReleaseTargetLocaleForTest(t, db, store, releaseID, "fr", "Titre", nil)
+	releasepkg.SeedReleaseTargetLocaleForTest(t, units, releaseID, "fr", "Titre", nil)
 
 	var documentID string
 	require.NoError(t, db.Raw(`SELECT content_document_id::text FROM release WHERE id = ?`, releaseID).Scan(&documentID).Error)
@@ -282,7 +315,6 @@ func TestDeleteReleaseCascadeCharacterizationIntegration(t *testing.T) {
 	require.Empty(t, calls, "no upload session means no cleanup call")
 	require.Len(t, fixture.waveforms.calls, 1)
 	require.ElementsMatch(t, fixture.trackIDs, fixture.waveforms.calls[0])
-	require.Equal(t, []managev1.TranscodeCancelReason{managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_DELETED}, fixture.waveforms.reasons)
 	require.Zero(t, fixture.publisher.calls, "DeleteRelease publishes no content event")
 }
 

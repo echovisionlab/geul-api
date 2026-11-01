@@ -19,8 +19,6 @@ type trackFilesStub struct {
 	reason     string
 }
 
-func (*trackFilesStub) DeleteFileByID(context.Context, string) error { return nil }
-
 func (s *trackFilesStub) CleanupTrackUploadSessions(_ context.Context, trackID, reason string) error {
 	s.trackID = trackID
 	s.reason = reason
@@ -79,10 +77,9 @@ func TestTrackTranscodesCancelsEachFileOnce(t *testing.T) {
 	fileID := "file-1"
 	empty := ""
 
-	adapter.CancelFiles(
+	adapter.CancelDeletedTrackFiles(
 		t.Context(),
 		"track-1",
-		managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_DELETED,
 		nil,
 		&empty,
 		&fileID,

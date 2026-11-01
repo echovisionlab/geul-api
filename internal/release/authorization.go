@@ -6,10 +6,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"gorm.io/gorm"
 )
 
 type releaseObjectAction uint8
@@ -160,9 +158,14 @@ func requireTrackAction(
 	return nil
 }
 
+// lockActive locks a principal's Identity through the identity fence and
+// reports whether it is still active, onboarded and unbanned
+// (identitystate.Fence.LockActivePrincipal).
+type lockActive = func(*auth.UserInfo) (bool, error)
+
 func requireActiveTrackAction(
 	ctx context.Context,
-	tx *gorm.DB,
+	lock lockActive,
 	checker CollaborationPermissionChecker,
 	trackID string,
 	action trackObjectAction,
@@ -171,7 +174,7 @@ func requireActiveTrackAction(
 	if principal == nil {
 		return authenticationRequired()
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	active, err := lock(principal)
 	if err != nil {
 		return err
 	}
@@ -186,20 +189,21 @@ func requireActiveTrackAction(
 // permission is checked for the requested action.
 func requireLockedReleaseAction(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
+	lock lockActive,
 	checker CollaborationPermissionChecker,
 	releaseID string,
 	action releaseObjectAction,
 ) error {
-	if _, err := lockReleaseForUpdate(ctx, tx, releaseID); err != nil {
+	if _, err := store.LockRelease(ctx, releaseID, UpdateLock); err != nil {
 		return err
 	}
-	return requireActiveReleaseAction(ctx, tx, checker, releaseID, action)
+	return requireActiveReleaseAction(ctx, lock, checker, releaseID, action)
 }
 
 func requireActiveReleaseAction(
 	ctx context.Context,
-	tx *gorm.DB,
+	lock lockActive,
 	checker CollaborationPermissionChecker,
 	releaseID string,
 	action releaseObjectAction,
@@ -208,7 +212,7 @@ func requireActiveReleaseAction(
 	if principal == nil {
 		return authenticationRequired()
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	active, err := lock(principal)
 	if err != nil {
 		return err
 	}
@@ -225,14 +229,14 @@ func requireActiveReleaseAction(
 // fence and the exact object permission, read inside the transaction. A
 // denial answers not found, as the Release RPCs always have.
 func (s *Service) releaseAccess(releaseID string, action releaseObjectAction) mutation.Access {
-	return mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-		return requireActiveReleaseAction(ctx, tx, s.spiceDB, releaseID, action)
+	return mutation.Fenced(func(ctx context.Context, _ Store, lock lockActive) error {
+		return requireActiveReleaseAction(ctx, lock, s.spiceDB, releaseID, action)
 	})
 }
 
 // trackAccess is the Access of a Track mutation.
 func (s *Service) trackAccess(trackID string, action trackObjectAction) mutation.Access {
-	return mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-		return requireActiveTrackAction(ctx, tx, s.spiceDB, trackID, action)
+	return mutation.Fenced(func(ctx context.Context, _ Store, lock lockActive) error {
+		return requireActiveTrackAction(ctx, lock, s.spiceDB, trackID, action)
 	})
 }

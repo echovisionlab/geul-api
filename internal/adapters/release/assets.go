@@ -7,7 +7,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	releasedomain "github.com/echovisionlab/geul-api/internal/release"
+	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
@@ -99,4 +99,4 @@ func normalizedAssetIDs(candidateIDs []*string) []string {
 	return ids
 }
 
-var _ releasedomain.Assets = (*Assets)(nil)
+var _ releasepostgres.Assets = (*Assets)(nil)
