@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -15,10 +15,10 @@ import (
 
 func TestApplyTemplateTranslationCandidateRejectsAnotherDomain(t *testing.T) {
 	err := ApplyTemplateTranslationCandidate(
-		context.Background(), nil, &contentblock.Store{},
-		&model.TranslationJob{EntityType: "campaign"},
+		context.Background(), Joined{},
+		emailcontent.TranslationJob{EntityType: "campaign"},
 		&translation.Candidate{ContentBlockLocaleOverlay: &contentv1.RichTextLocaleOverlay{}},
-		translation.EntryWrite{}, nil,
+		translation.EntryWrite{},
 	)
 	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 }

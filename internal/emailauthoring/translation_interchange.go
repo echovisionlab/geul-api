@@ -3,38 +3,33 @@ package emailauthoring
 import (
 	"context"
 
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
 )
 
-// LoadTemplateTranslationInterchangeTarget loads one target without applying
-// source fallback. The Translation application has already locked the root and
-// authorized source-locale editing in the same transaction.
+// LoadTemplateTranslationInterchangeTarget reads one Email Template target
+// without source fallback, through store in the translation domain's
+// transaction.
 func LoadTemplateTranslationInterchangeTarget(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	templateID string,
 	targetLocale string,
 ) (emailcontent.InterchangeTarget, error) {
-	return emailTemplateContent.LoadInterchangeTarget(ctx, tx, store, templateID, targetLocale)
+	return emailTemplateContent.LoadInterchangeTarget(ctx, store, templateID, targetLocale)
 }
 
-// ApplyTemplateTranslationInterchange applies one sparse target overlay and
-// subject under the Email Template lifecycle fence and Content Document CAS.
+// ApplyTemplateTranslationInterchange applies one XLIFF target behind the
+// template's delivery lifecycle fence, through store in the translation
+// domain's transaction.
 func ApplyTemplateTranslationInterchange(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	references CampaignDeliveryReferences,
+	store Store,
 	templateID string,
 	sourceLocale string,
 	input emailcontent.InterchangeMutation,
 ) (emailcontent.InterchangeMutationResult, error) {
 	return emailTemplateContent.ApplyInterchange(
-		ctx, tx, store, templateID, sourceLocale, input,
-		emailTemplateContentFence(references, templateID),
+		ctx, store, templateID, sourceLocale, input,
+		emailTemplateContentFence(store, templateID),
 	)
 }

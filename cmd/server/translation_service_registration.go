@@ -7,7 +7,7 @@ import (
 	"connectrpc.com/connect"
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	translationadapter "github.com/echovisionlab/geul-api/internal/adapters/translation"
-	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
@@ -24,7 +24,7 @@ type translationServiceRegistration struct {
 	dependencies             serviceRegistrationDependencies
 	handlerOptions           []connect.HandlerOption
 	domainRegistry           *translationadapter.DomainRegistry
-	emailAuthoringReferences emailauthoring.CampaignDeliveryReferences
+	emailAuthoringReferences emailauthoringpostgres.DeliveryReferences
 	legalDocuments           *legal.AIDocumentService
 	seriesService            *series.Service
 	fileService              *filemedia.Service

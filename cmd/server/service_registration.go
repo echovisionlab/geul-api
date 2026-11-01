@@ -62,6 +62,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
@@ -715,10 +716,17 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered service", "path", mapThemePath)
 
 	emailAuthoringRuntime := emailauthoringadapter.NewRuntime()
+	emailAuthoringUnits, err := emailauthoringpostgres.NewUnits(db, emailauthoringpostgres.Ports{
+		ContentBlocks: contentBlockStore, References: emailAuthoringReferences, Members: memberadapter.ContributorMembers{},
+		Checkpoints: collaborationRuntime.Checkpoints, Rendering: emailAuthoringRuntime,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize email authoring store: %w", err)
+	}
 	emailAuthoringService, err := emailauthoring.NewService(emailauthoring.Deps{
-		DB: db, SpiceDB: spicedbClient, ContentBlocks: contentBlockStore, Publisher: workerPublisher,
-		Runtime: emailAuthoringRuntime, RenderData: emailAuthoringRuntime, References: emailAuthoringReferences,
-		Audit: telemetryWriter, CDNDomain: cfg.CDNURL, SiteOrigin: cfg.SiteOrigin,
+		Units: emailAuthoringUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
+		TestEmails: emailauthoringadapter.NewTestEmails(workerPublisher), Locales: emailAuthoringRuntime,
+		CDNDomain: cfg.CDNURL, SiteOrigin: cfg.SiteOrigin,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize email authoring service: %w", err)
@@ -848,7 +856,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		accountEmailChangeLifecycle: accountEmailChangeLifecycle,
 		collaborationRuntime:        collaborationRuntime,
 		programEvents:               programEventService,
-		emailAuthoringReferences:    emailAuthoringReferences,
+		emailAuthoringUnits:         emailAuthoringUnits,
 		legalUnits:                  legalUnits,
 		mapThemes:                   mapThemeService,
 	}).register()

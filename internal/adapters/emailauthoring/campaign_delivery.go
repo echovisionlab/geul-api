@@ -4,6 +4,7 @@ import (
 	"context"
 
 	emailauthoringdomain "github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"gorm.io/gorm"
 )
@@ -143,4 +144,4 @@ func detachTerminalHistory(
 		Update(column, nil).Error
 }
 
-var _ emailauthoringdomain.CampaignDeliveryReferences = (*CampaignDeliveryReferences)(nil)
+var _ emailauthoringpostgres.DeliveryReferences = (*CampaignDeliveryReferences)(nil)

@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 func TestVerifiedSystemEmailTemplateMetadataRecognizesEverySystemEvent(t *testing.T) {
@@ -111,7 +110,7 @@ func TestUniqueEmailTemplateVariableNamesNormalizesAndDeduplicates(t *testing.T)
 	)
 }
 
-func emailTemplateVariableNames(variables model.EmailTemplateVariables) []string {
+func emailTemplateVariableNames(variables []TemplateVariable) []string {
 	names := make([]string, 0, len(variables))
 	for _, variable := range variables {
 		names = append(names, variable.Name)

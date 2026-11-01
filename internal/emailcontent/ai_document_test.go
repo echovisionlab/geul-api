@@ -4,11 +4,13 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-var testOwner = Owner{Name: "Campaign", Entity: "campaign", IDField: "campaign_id"}
+var testOwner = Owner[Store]{Name: "Campaign", Entity: "campaign", IDField: "campaign_id"}
 
 func TestNormalizeAIDocumentMutationKeepsLocaleLifecycleExclusive(t *testing.T) {
 	t.Parallel()
@@ -72,4 +74,13 @@ func withDelete(input AIDocumentMutation) AIDocumentMutation {
 	input.ExpectedPresence = true
 	input.DeleteTranslation = true
 	return input
+}
+
+func TestLocaleContentOperationDistinguishesSourceAndTargetCRUD(t *testing.T) {
+	t.Parallel()
+	require.Equal(t, sharedtelemetry.AuditItemOperationUpdated, LocaleContentOperation(true, false, false, true))
+	require.Equal(t, sharedtelemetry.AuditItemOperationCreated, LocaleContentOperation(false, true, false, false))
+	require.Equal(t, sharedtelemetry.AuditItemOperationCreated, LocaleContentOperation(false, false, false, false))
+	require.Equal(t, sharedtelemetry.AuditItemOperationUpdated, LocaleContentOperation(false, false, false, true))
+	require.Equal(t, sharedtelemetry.AuditItemOperationDeleted, LocaleContentOperation(false, false, true, true))
 }
