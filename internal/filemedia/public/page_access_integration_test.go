@@ -1,11 +1,13 @@
 //go:build integration
 
-package public
+package public_test
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	. "github.com/echovisionlab/geul-api/internal/filemedia/public"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -34,7 +36,7 @@ func TestPageAudienceOverridesPublicFileAudienceIntegration(t *testing.T) {
 	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	pageID, documentID, _, request := seedPublicPageDownload(t, db)
-	svc := newTestService(Deps{DB: db, SpiceDB: publicIntegrationSpiceDBClient(t), CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
+	svc := newTestService(testDeps{DB: db, SpiceDB: publicIntegrationSpiceDBClient(t), CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
 	initial, err := NewConnectHandler(svc).AuthorizeDownload(t.Context(), request)
 	require.NoError(t, err)
 	require.NotEmpty(t, initial.Msg.GetDownload().GetUrl())
@@ -70,7 +72,7 @@ func TestPageAudienceChangeBetweenSigningPhasesIntegration(t *testing.T) {
 		}
 	}()
 	serviceDB := db.Session(&gorm.Session{Logger: &relationSourceBlockingLogger{Interface: db.Logger, loaded: loaded, release: release, trigger: 1}})
-	svc := newTestService(Deps{DB: serviceDB, SpiceDB: publicIntegrationSpiceDBClient(t), CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
+	svc := newTestService(testDeps{DB: serviceDB, SpiceDB: publicIntegrationSpiceDBClient(t), CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
 	type result struct {
 		response *connect.Response[openv1.AuthorizeDownloadResponse]
 		err      error

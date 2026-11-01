@@ -75,6 +75,7 @@ import (
 	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filepublic "github.com/echovisionlab/geul-api/internal/filemedia/public"
+	filepublicpostgres "github.com/echovisionlab/geul-api/internal/filemedia/public/postgres"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
@@ -236,7 +237,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	// FileService first (needed by other services for file deletion)
 	downloadTTL := time.Duration(cfg.MediaDownloadTTLSec) * time.Second
 	publicFileService, err := filepublic.NewService(filepublic.Deps{
-		DB: db, SpiceDB: spicedbClient, Segments: mediaassetadapter.NewSegmentConfigs(),
+		Units: filepublicpostgres.NewUnits(db, filepublicpostgres.Ports{Segments: mediaassetadapter.NewSegmentConfigs()}), SpiceDB: spicedbClient,
 		CDNDomain: cfg.CDNURL, MediaDomain: cfg.MediaURL, MediaSecret: cfg.MediaSigningSecret, DownloadTTL: downloadTTL,
 	})
 	if err != nil {

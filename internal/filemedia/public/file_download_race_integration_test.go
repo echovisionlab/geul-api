@@ -1,6 +1,6 @@
 //go:build integration
 
-package public
+package public_test
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	. "github.com/echovisionlab/geul-api/internal/filemedia/public"
 
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
@@ -77,7 +79,7 @@ func TestAuthorizeDownloadRejectsStalePhase1AfterReplacementIntegration(t *testi
 			BlockId: blockID, ReferencePath: "file",
 		}},
 	})
-	initialService := newTestService(Deps{DB: db, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
+	initialService := newTestService(testDeps{DB: db, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
 	initial, err := NewConnectHandler(initialService).AuthorizeDownload(t.Context(), request)
 	require.NoError(t, err)
 	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD, initial.Msg.GetAccess().GetAction())
@@ -90,7 +92,7 @@ func TestAuthorizeDownloadRejectsStalePhase1AfterReplacementIntegration(t *testi
 		release:   release,
 		trigger:   1,
 	}})
-	svc := newTestService(Deps{DB: serviceDB, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
+	svc := newTestService(testDeps{DB: serviceDB, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
 	type authorizationResult struct {
 		response *connect.Response[openv1.AuthorizeDownloadResponse]
 		err      error
@@ -151,7 +153,7 @@ func TestAuthorizeDownloadHoldsPhaseTwoRelationThroughSigningIntegration(t *test
 	serviceDB := db.Session(&gorm.Session{Logger: &relationSourceBlockingLogger{
 		Interface: db.Logger, loaded: loaded, release: release, trigger: 2,
 	}})
-	svc := newTestService(Deps{DB: serviceDB, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
+	svc := newTestService(testDeps{DB: serviceDB, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
 	request := connect.NewRequest(&openv1.AuthorizeDownloadRequest{
 		EntityType: openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_POST,
 		EntityId:   postID,
@@ -229,7 +231,7 @@ func TestHydrateContentBlockMediaDoesNotAttachSharedFileDeliveryToReplacedRelati
 	serviceDB := db.Session(&gorm.Session{Logger: &relationSourceBlockingLogger{
 		Interface: db.Logger, loaded: loaded, release: release, trigger: 1,
 	}})
-	svc := newTestService(Deps{DB: serviceDB, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
+	svc := newTestService(testDeps{DB: serviceDB, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
 	hydrationContext := mediaasset.WithContentDownloadOwnerAuthorization(t.Context(), mediaasset.ContentDownloadOwnerAuthorization{
 		ResourceType: "post", ResourceID: postID, Status: managev1.PostStatus_POST_STATUS_PUBLISHED.String(), DocumentID: documentID,
 		Mode: mediaasset.ContentDownloadOwnerAccessPublic,
@@ -286,7 +288,7 @@ func TestAuthorizeDownloadRequiresCurrentActivePrincipalForAuthenticatedPolicyIn
 	)
 	member := stack.CreateUser(t, policyv1.Role.User().ID())
 	ctx := auth.WithUser(t.Context(), member.AuthUserInfo())
-	svc := newTestService(Deps{DB: db, SpiceDB: stack.SpiceDBClient, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
+	svc := newTestService(testDeps{DB: db, SpiceDB: stack.SpiceDBClient, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
 	request := connect.NewRequest(&openv1.AuthorizeDownloadRequest{
 		EntityType: openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_POST,
 		EntityId:   postID,
@@ -339,7 +341,7 @@ func TestAuthorizeDownloadRestrictedAllMembersRequiresCurrentActiveMemberIntegra
 	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment_download_audience_segment (block_id, reference_path, audience_segment_id) VALUES (?::uuid, 'file', ?::uuid)`, blockID, segmentID).Error)
 	member := stack.CreateUser(t, policyv1.Role.User().ID())
 	ctx := auth.WithUser(t.Context(), member.AuthUserInfo())
-	svc := newTestService(Deps{DB: db, SpiceDB: stack.SpiceDBClient, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL, Segments: mediaassetadapter.NewSegmentConfigs()})
+	svc := newTestService(testDeps{DB: db, SpiceDB: stack.SpiceDBClient, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL, Segments: mediaassetadapter.NewSegmentConfigs()})
 	request := connect.NewRequest(&openv1.AuthorizeDownloadRequest{
 		EntityType: openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_POST,
 		EntityId:   postID,
@@ -393,7 +395,7 @@ func TestAuthorizeDownloadDraftPublicPolicyRejectsPrincipalRevokedAfterPhaseOneI
 	serviceDB := db.Session(&gorm.Session{Logger: &relationSourceBlockingLogger{
 		Interface: db.Logger, loaded: loaded, release: release, trigger: 1,
 	}})
-	svc := newTestService(Deps{DB: serviceDB, SpiceDB: stack.SpiceDBClient, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
+	svc := newTestService(testDeps{DB: serviceDB, SpiceDB: stack.SpiceDBClient, CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
 	request := connect.NewRequest(&openv1.AuthorizeDownloadRequest{
 		EntityType: openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_POST,
 		EntityId:   postID,

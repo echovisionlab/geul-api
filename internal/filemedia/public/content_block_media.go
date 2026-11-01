@@ -2,29 +2,14 @@ package public
 
 import (
 	"context"
-	"database/sql"
-	"errors"
-	"sort"
 	"strings"
 	"time"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
-	pageaccesspostgres "github.com/echovisionlab/geul-api/internal/pageaccess/postgres"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"google.golang.org/protobuf/proto"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // hydrateAuthorizedContentBlockMedia adds request-scoped delivery and download
@@ -33,8 +18,8 @@ import (
 // policy reset cannot commit and then receive a newly issued URL for stale data.
 func (s *Service) hydrateAuthorizedContentBlockMedia(
 	ctx context.Context,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	items []*ContentMediaItem,
+) ([]*ContentMediaItem, error) {
 	if len(items) == 0 {
 		return items, nil
 	}
@@ -50,18 +35,18 @@ func (s *Service) hydrateAuthorizedContentBlockMedia(
 	}
 
 	var evaluation downloadEvaluation
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := s.units.ReadLocked(ctx, func(tx Store) error {
 		var err error
 		evaluation, err = s.evaluateContentDownloads(ctx, tx, request)
 		return err
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = s.units.ReadLocked(ctx, func(tx Store) error {
 		return s.revalidateContentDownloads(ctx, tx, request, targets, evaluation)
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -71,17 +56,20 @@ func (s *Service) hydrateAuthorizedContentBlockMedia(
 // contentMediaTarget is an item that references an active file through a
 // content Block selector. Other items are left as loaded.
 type contentMediaTarget struct {
-	item     *contentv1.ContentBlockMediaItem
+	item     *ContentMediaItem
 	fileID   string
 	selector mediaasset.ContentBlockDownloadSelector
 	key      string
 }
 
-func contentMediaTargets(items []*contentv1.ContentBlockMediaItem) []contentMediaTarget {
+func contentMediaTargets(items []*ContentMediaItem) []contentMediaTarget {
 	targets := make([]contentMediaTarget, 0, len(items))
 	for _, item := range items {
-		fileID := strings.TrimSpace(item.GetAttachment().GetActiveFileId())
-		selector := item.GetSelector()
+		if item == nil {
+			continue
+		}
+		fileID := strings.TrimSpace(item.FileID)
+		selector := item.Selector
 		if fileID == "" || selector == nil {
 			continue
 		}
@@ -89,9 +77,9 @@ func contentMediaTargets(items []*contentv1.ContentBlockMediaItem) []contentMedi
 			item:   item,
 			fileID: fileID,
 			selector: mediaasset.ContentBlockDownloadSelector{
-				BlockID: selector.GetBlockId(), ReferencePath: selector.GetReferencePath(),
+				BlockID: selector.BlockID, ReferencePath: selector.ReferencePath,
 			},
-			key: mediaasset.ContentBlockDownloadPolicyKey(selector.GetBlockId(), selector.GetReferencePath()),
+			key: mediaasset.ContentBlockDownloadPolicyKey(selector.BlockID, selector.ReferencePath),
 		})
 	}
 	return targets
@@ -109,7 +97,7 @@ type contentDownloadRequest struct {
 // Maps are keyed by content Block download policy key, owners by Block ID.
 type contentDownloadFacts struct {
 	ownerAuthorized   bool
-	owners            map[string]contentBlockDownloadOwnerWitness
+	owners            map[string]OwnerWitness
 	relations         map[string]string
 	sources           map[string]mediaasset.FileDownloadSource
 	fingerprints      map[string]string
@@ -120,17 +108,17 @@ type contentDownloadFacts struct {
 // decision it made for each source.
 type downloadEvaluation struct {
 	contentDownloadFacts
-	decisions map[string]*openv1.FileDownloadAccess
+	decisions map[string]*DownloadAccess
 }
 
 func (s *Service) evaluateContentDownloads(
 	ctx context.Context,
-	tx *gorm.DB,
+	tx Store,
 	request contentDownloadRequest,
 ) (downloadEvaluation, error) {
 	var evaluation downloadEvaluation
 	var err error
-	evaluation.owners, err = loadContentBlockDownloadOwnerWitnesses(ctx, tx, request.selectors)
+	evaluation.owners, err = tx.ContentOwners(ctx, request.selectors)
 	if err != nil {
 		return downloadEvaluation{}, err
 	}
@@ -140,15 +128,15 @@ func (s *Service) evaluateContentDownloads(
 	if err != nil {
 		return downloadEvaluation{}, err
 	}
-	evaluation.relations, err = loadContentBlockMediaRelations(ctx, tx, request.selectors, false)
+	evaluation.relations, err = tx.ContentRelations(ctx, request.selectors, false)
 	if err != nil {
 		return downloadEvaluation{}, err
 	}
-	evaluation.sources, err = mediaasset.LoadContentBlockDownloadSources(ctx, mediaassetpostgres.BindDownload(tx, nil), request.selectors)
+	evaluation.sources, err = mediaasset.LoadContentBlockDownloadSources(ctx, tx, request.selectors)
 	if err != nil {
 		return downloadEvaluation{}, err
 	}
-	allowed, err := mediaasset.EvaluateFileDownloadAccessBatch(ctx, mediaassetpostgres.BindDownload(tx, s.segments), s.spiceDB, evaluation.sources, request.user)
+	allowed, err := mediaasset.EvaluateFileDownloadAccessBatch(ctx, tx, s.spiceDB, evaluation.sources, request.user)
 	if err != nil {
 		return downloadEvaluation{}, err
 	}
@@ -156,15 +144,15 @@ func (s *Service) evaluateContentDownloads(
 	if err != nil {
 		return downloadEvaluation{}, err
 	}
-	evaluation.fingerprints, err = mediaasset.LoadFileDownloadPolicyFingerprints(ctx, mediaassetpostgres.BindDownload(tx, s.segments), evaluation.sources)
+	evaluation.fingerprints, err = mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, evaluation.sources)
 	if err != nil {
 		return downloadEvaluation{}, err
 	}
-	evaluation.viewerFingerprint, err = mediaasset.LoadFileDownloadViewerFingerprint(ctx, mediaassetpostgres.BindDownload(tx, nil), evaluation.sources, request.user)
+	evaluation.viewerFingerprint, err = mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, evaluation.sources, request.user)
 	if err != nil {
 		return downloadEvaluation{}, err
 	}
-	evaluation.decisions = make(map[string]*openv1.FileDownloadAccess, len(request.selectors))
+	evaluation.decisions = make(map[string]*DownloadAccess, len(request.selectors))
 	for key, source := range evaluation.sources {
 		if evaluation.ownerAuthorized {
 			evaluation.decisions[key] = effectiveFileDownloadAccess(source.Audience, request.user, allowed[key], signIn[key])
@@ -180,7 +168,7 @@ func (s *Service) evaluateContentDownloads(
 // restricted files whose segments exist.
 func contentDownloadSignInHints(
 	ctx context.Context,
-	tx *gorm.DB,
+	tx Store,
 	sources map[string]mediaasset.FileDownloadSource,
 	user *auth.UserInfo,
 ) (map[string]bool, error) {
@@ -197,7 +185,7 @@ func contentDownloadSignInHints(
 			restricted[key] = source
 		}
 	}
-	presence, err := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, mediaassetpostgres.BindDownload(tx, nil), restricted)
+	presence, err := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, tx, restricted)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +207,7 @@ type lockedContentDownloads struct {
 // whose relation changed only gets the unavailable decision.
 func (s *Service) revalidateContentDownloads(
 	ctx context.Context,
-	tx *gorm.DB,
+	tx Store,
 	request contentDownloadRequest,
 	targets []contentMediaTarget,
 	evaluation downloadEvaluation,
@@ -228,7 +216,7 @@ func (s *Service) revalidateContentDownloads(
 	if err != nil {
 		return err
 	}
-	decisions := make(map[string]*openv1.FileDownloadAccess, len(targets))
+	decisions := make(map[string]*DownloadAccess, len(targets))
 	deliveryAccess := make(map[string]resolvedMediaAccess, len(targets))
 	stableRelations := make(map[string]struct{}, len(targets))
 	for _, target := range targets {
@@ -239,7 +227,7 @@ func (s *Service) revalidateContentDownloads(
 			deliveryAccess[target.fileID] = resolvedMediaAccess{}
 		}
 	}
-	deliveries, err := s.buildScopedMediaURLsWithDB(ctx, tx, deliveryAccess)
+	deliveries, err := s.buildScopedMediaURLs(ctx, tx, deliveryAccess)
 	if err != nil {
 		return err
 	}
@@ -263,16 +251,16 @@ func (s *Service) revalidateContentDownloads(
 // every download path uses, then reloads the facts the evaluation used.
 func (s *Service) lockContentDownloads(
 	ctx context.Context,
-	tx *gorm.DB,
+	tx Store,
 	request contentDownloadRequest,
 	evaluation downloadEvaluation,
 ) (lockedContentDownloads, error) {
 	var current lockedContentDownloads
-	if err := mediaasset.LockFileDownloadPolicySegments(ctx, mediaassetpostgres.BindDownload(tx, nil), evaluation.sources); err != nil {
+	if err := mediaasset.LockFileDownloadPolicySegments(ctx, tx, evaluation.sources); err != nil {
 		return current, err
 	}
 	var err error
-	current.owners, err = lockContentBlockDownloadOwners(ctx, tx, evaluation.owners)
+	current.owners, err = tx.LockContentOwners(ctx, evaluation.owners)
 	if err != nil {
 		return current, err
 	}
@@ -282,23 +270,23 @@ func (s *Service) lockContentDownloads(
 	if err != nil {
 		return current, err
 	}
-	current.viewerActive, err = mediaasset.LockFileDownloadViewerFacts(ctx, mediaassetpostgres.BindDownload(tx, nil), evaluation.sources, request.user)
+	current.viewerActive, err = mediaasset.LockFileDownloadViewerFacts(ctx, tx, evaluation.sources, request.user)
 	if err != nil {
 		return current, err
 	}
-	current.relations, err = loadContentBlockMediaRelations(ctx, tx, request.selectors, true)
+	current.relations, err = tx.ContentRelations(ctx, request.selectors, true)
 	if err != nil {
 		return current, err
 	}
-	current.sources, err = mediaasset.LoadContentBlockDownloadSources(ctx, mediaassetpostgres.BindDownload(tx, nil), request.selectors)
+	current.sources, err = mediaasset.LoadContentBlockDownloadSources(ctx, tx, request.selectors)
 	if err != nil {
 		return current, err
 	}
-	current.fingerprints, err = mediaasset.LoadFileDownloadPolicyFingerprints(ctx, mediaassetpostgres.BindDownload(tx, s.segments), current.sources)
+	current.fingerprints, err = mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, current.sources)
 	if err != nil {
 		return current, err
 	}
-	current.viewerFingerprint, err = mediaasset.LoadFileDownloadViewerFingerprint(ctx, mediaassetpostgres.BindDownload(tx, nil), current.sources, request.user)
+	current.viewerFingerprint, err = mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, current.sources, request.user)
 	if err != nil {
 		return current, err
 	}
@@ -313,7 +301,7 @@ func reusableDecision(
 	target contentMediaTarget,
 	evaluated downloadEvaluation,
 	current lockedContentDownloads,
-) (decision *openv1.FileDownloadAccess, stable bool) {
+) (decision *DownloadAccess, stable bool) {
 	blockID, key := target.selector.BlockID, target.key
 	evaluatedOwner, evaluatedOwnerExists := evaluated.owners[blockID]
 	currentOwner, currentOwnerExists := current.owners[blockID]
@@ -343,15 +331,15 @@ func reusableDecision(
 // applyDelivery sets item's delivery, signing a download URL for source when
 // the decision allows a download, and then applies the decision.
 func (s *Service) applyDelivery(
-	item *contentv1.ContentBlockMediaItem,
-	decision *openv1.FileDownloadAccess,
-	delivery *commonv1.MediaDelivery,
+	item *ContentMediaItem,
+	decision *DownloadAccess,
+	delivery *Delivery,
 	source mediaasset.FileDownloadSource,
 ) error {
 	if delivery != nil {
-		item.Delivery = proto.Clone(delivery).(*commonv1.MediaDelivery)
-		if decision.GetAction() == openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD {
-			download, err := mediaauth.ExpiringFileRef(
+		item.Delivery = delivery.Clone()
+		if downloadAction(decision) == ActionDownload {
+			download, err := mediaauth.ExpiringReference(
 				s.mediaDomain, s.mediaSecret, source.FileID, source.Extension,
 				source.MimeType, source.FileName, mediaauth.PurposeDownload, s.effectiveDownloadTTL(),
 			)
@@ -367,10 +355,10 @@ func (s *Service) applyDelivery(
 
 func (s *Service) validateContentDownloadOwnerAuthorization(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	authorization mediaasset.ContentDownloadOwnerAuthorization,
 	present bool,
-	owners map[string]contentBlockDownloadOwnerWitness,
+	owners map[string]OwnerWitness,
 	locked bool,
 ) (bool, error) {
 	if !present || len(owners) == 0 {
@@ -388,7 +376,7 @@ func (s *Service) validateContentDownloadOwnerAuthorization(
 			return false, nil
 		}
 		if authorization.ResourceType == "page" {
-			reason, err := pageaccesspostgres.EvaluateStored(ctx, db, s.spiceDB, authorization.ResourceID)
+			reason, err := store.PageAccess(ctx, s.spiceDB, authorization.ResourceID)
 			return reason == pageaccess.ReasonAllowed, err
 		}
 		return true, nil
@@ -399,7 +387,7 @@ func (s *Service) validateContentDownloadOwnerAuthorization(
 			return false, nil
 		}
 		if locked {
-			return lockContentDownloadOwnerPrincipal(ctx, db, authorization)
+			return lockContentDownloadOwnerPrincipal(ctx, store, authorization)
 		}
 		var action auth.ResourceAction
 		switch authorization.ResourceType {
@@ -416,7 +404,7 @@ func (s *Service) validateContentDownloadOwnerAuthorization(
 		}
 		return hasDraftResourceView(ctx, s.spiceDB, action, authorization.ResourceID)
 	case mediaasset.ContentDownloadOwnerAccessShare:
-		return validateContentDownloadShareLinkWitness(ctx, db, authorization, locked)
+		return validateContentDownloadShareLinkWitness(ctx, store, authorization, locked)
 	default:
 		return false, nil
 	}
@@ -425,13 +413,13 @@ func (s *Service) validateContentDownloadOwnerAuthorization(
 func contentDownloadOwnerStatusIsPublic(resourceType, status string) bool {
 	switch resourceType {
 	case "post":
-		return status == string(model.PostStatusPublished) || status == string(model.PostStatusArchived)
+		return status == ownerPostPublished || status == ownerPostArchived
 	case "page":
-		return status == string(model.PageStatusPublished)
+		return status == ownerPagePublished
 	case "work":
-		return status == string(model.WorkStatusPublished) || status == string(model.WorkStatusArchived)
+		return status == ownerWorkPublished || status == ownerWorkArchived
 	case "program_event":
-		return status == string(model.ProgramEventStatusPublished) || status == string(model.ProgramEventStatusArchived)
+		return status == ownerProgramEventPublished || status == ownerProgramEventArchived
 	default:
 		return false
 	}
@@ -439,7 +427,7 @@ func contentDownloadOwnerStatusIsPublic(resourceType, status string) bool {
 
 func lockContentDownloadOwnerPrincipal(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	authorization mediaasset.ContentDownloadOwnerAuthorization,
 ) (bool, error) {
 	principal := &auth.UserInfo{
@@ -447,12 +435,12 @@ func lockContentDownloadOwnerPrincipal(
 		MemberID:      auth.MemberID(authorization.MemberID),
 		Authenticated: true, Onboarded: true,
 	}
-	return identitystate.LockActivePrincipal(ctx, db, principal)
+	return store.LockActivePrincipal(ctx, principal)
 }
 
 func validateContentDownloadShareLinkWitness(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	authorization mediaasset.ContentDownloadOwnerAuthorization,
 	locked bool,
 ) (bool, error) {
@@ -461,17 +449,14 @@ func validateContentDownloadShareLinkWitness(
 	if witness == nil || witness.ID == "" || expectedEntityType == "" || witness.EntityType != expectedEntityType || witness.EntityID != authorization.ResourceID {
 		return false, nil
 	}
-	var link model.ShareLink
-	query := db.WithContext(ctx).Where("id = ?", witness.ID)
-	if locked {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
-	}
-	if err := query.Take(&link).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, nil
-		}
+	link, found, err := store.ShareLink(ctx, witness.ID, locked)
+	if err != nil {
 		return false, err
 	}
+	if !found {
+		return false, nil
+	}
+
 	if link.ID != witness.ID || link.EntityType != witness.EntityType || link.EntityID != witness.EntityID ||
 		!sameContentDownloadTime(link.ExpiresAt, witness.ExpiresAt) {
 		return false, nil
@@ -482,13 +467,13 @@ func validateContentDownloadShareLinkWitness(
 func contentDownloadShareLinkEntityType(resourceType string) string {
 	switch resourceType {
 	case "post":
-		return managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_POST.String()
+		return "SHARE_LINK_ENTITY_TYPE_POST"
 	case "page":
-		return managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE.String()
+		return "SHARE_LINK_ENTITY_TYPE_PAGE"
 	case "work":
-		return managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_WORK.String()
+		return "SHARE_LINK_ENTITY_TYPE_WORK"
 	case "release":
-		return managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE.String()
+		return "SHARE_LINK_ENTITY_TYPE_RELEASE"
 	default:
 		return ""
 	}
@@ -498,177 +483,25 @@ func sameContentDownloadTime(left, right *time.Time) bool {
 	return (left == nil && right == nil) || (left != nil && right != nil && left.Equal(*right))
 }
 
-type contentBlockDownloadOwnerWitness struct {
-	ResourceType string `gorm:"column:resource_type"`
-	ResourceID   string `gorm:"column:resource_id"`
-	Status       string `gorm:"column:status"`
-	DocumentID   string `gorm:"column:document_id"`
-}
-
-func loadContentBlockDownloadOwnerWitnesses(
-	ctx context.Context,
-	db *gorm.DB,
-	selectors []mediaasset.ContentBlockDownloadSelector,
-) (map[string]contentBlockDownloadOwnerWitness, error) {
-	blockIDs := make([]string, 0, len(selectors))
-	for _, selector := range selectors {
-		if blockID := strings.TrimSpace(selector.BlockID); blockID != "" {
-			blockIDs = append(blockIDs, blockID)
-		}
-	}
-	if len(blockIDs) == 0 {
-		return map[string]contentBlockDownloadOwnerWitness{}, nil
-	}
-	type row struct {
-		BlockID      string `gorm:"column:block_id"`
-		ResourceType string `gorm:"column:resource_type"`
-		ResourceID   string `gorm:"column:resource_id"`
-		Status       string `gorm:"column:status"`
-		DocumentID   string `gorm:"column:document_id"`
-	}
-	var rows []row
-	if err := db.WithContext(ctx).Raw(`
-		SELECT block.id AS block_id, 'post' AS resource_type, owner.id AS resource_id, CAST(owner.status AS TEXT) AS status, owner.content_document_id AS document_id
-		FROM content_block AS block JOIN post AS owner ON owner.content_document_id = block.document_id WHERE block.id IN ?
-		UNION ALL
-		SELECT block.id, 'page', owner.id, CAST(owner.status AS TEXT), owner.content_document_id FROM content_block AS block JOIN page AS owner ON owner.content_document_id = block.document_id WHERE block.id IN ?
-		UNION ALL
-		SELECT block.id, 'work', owner.id, CAST(owner.status AS TEXT), owner.content_document_id FROM content_block AS block JOIN work AS owner ON owner.content_document_id = block.document_id WHERE block.id IN ?
-		UNION ALL
-		SELECT block.id, 'program_event', owner.id, CAST(owner.status AS TEXT), owner.content_document_id FROM content_block AS block JOIN program_event AS owner ON owner.content_document_id = block.document_id WHERE block.id IN ?
-	`, blockIDs, blockIDs, blockIDs, blockIDs).Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-	counts := make(map[string]int, len(rows))
-	result := make(map[string]contentBlockDownloadOwnerWitness, len(rows))
-	for _, row := range rows {
-		counts[row.BlockID]++
-		result[row.BlockID] = contentBlockDownloadOwnerWitness{
-			ResourceType: row.ResourceType, ResourceID: row.ResourceID,
-			Status: row.Status, DocumentID: row.DocumentID,
-		}
-	}
-	for blockID, count := range counts {
-		if count != 1 {
-			delete(result, blockID)
-		}
-	}
-	return result, nil
-}
-
-func lockContentBlockDownloadOwners(
-	ctx context.Context,
-	tx *gorm.DB,
-	expected map[string]contentBlockDownloadOwnerWitness,
-) (map[string]contentBlockDownloadOwnerWitness, error) {
-	type target struct {
-		BlockID string
-		contentBlockDownloadOwnerWitness
-	}
-	targets := make([]target, 0, len(expected))
-	for blockID, owner := range expected {
-		targets = append(targets, target{BlockID: blockID, contentBlockDownloadOwnerWitness: owner})
-	}
-	sort.Slice(targets, func(i, j int) bool {
-		if targets[i].ResourceType == targets[j].ResourceType {
-			return targets[i].ResourceID < targets[j].ResourceID
-		}
-		return targets[i].ResourceType < targets[j].ResourceType
-	})
-	result := make(map[string]contentBlockDownloadOwnerWitness, len(targets))
-	for _, target := range targets {
-		var current contentBlockDownloadOwnerWitness
-		query := tx.WithContext(ctx).Table(target.ResourceType).
-			Select("? AS resource_type, id AS resource_id, status, content_document_id AS document_id", target.ResourceType).
-			Where("id = ?", target.ResourceID).
-			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Take(&current)
-		if query.Error != nil {
-			if errors.Is(query.Error, gorm.ErrRecordNotFound) {
-				continue
-			}
-			return nil, query.Error
-		}
-		if current == target.contentBlockDownloadOwnerWitness {
-			result[target.BlockID] = current
-		}
-	}
-	return result, nil
-}
-
-func loadContentBlockMediaRelations(
-	ctx context.Context,
-	tx *gorm.DB,
-	selectors []mediaasset.ContentBlockDownloadSelector,
-	locked bool,
-) (map[string]string, error) {
-	requested := make(map[string]struct{}, len(selectors))
-	blockIDs := make([]string, 0, len(selectors))
-	for _, selector := range selectors {
-		blockID := strings.TrimSpace(selector.BlockID)
-		referencePath := strings.TrimSpace(selector.ReferencePath)
-		if blockID != "" && referencePath != "" {
-			requested[mediaasset.ContentBlockDownloadPolicyKey(blockID, referencePath)] = struct{}{}
-			blockIDs = append(blockIDs, blockID)
-		}
-	}
-	if len(blockIDs) == 0 {
-		return map[string]string{}, nil
-	}
-	var rows []struct {
-		BlockID       string `gorm:"column:block_id"`
-		ReferencePath string `gorm:"column:reference_path"`
-		FileID        string `gorm:"column:file_id"`
-	}
-	query := tx.WithContext(ctx).
-		Table("content_block_attachment AS attachment").
-		Select("attachment.block_id, attachment.reference_path, attachment.file_id").
-		Joins("JOIN file ON file.id = attachment.file_id").
-		Where("attachment.block_id IN ? AND attachment.selector_kind = 'active' AND file.delete_requested_at IS NULL", blockIDs).
-		Order("attachment.block_id, attachment.reference_path")
-	if locked {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare, Table: clause.Table{Name: "attachment"}})
-	}
-	if err := query.Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	result := make(map[string]string, len(rows))
-	for _, row := range rows {
-		key := mediaasset.ContentBlockDownloadPolicyKey(row.BlockID, row.ReferencePath)
-		if _, ok := requested[key]; ok {
-			result[key] = row.FileID
-		}
-	}
-	return result, nil
-}
-
-// HydrateAuthorizedContentBlockMedia adds delivery to exact references only
+// HydrateContentMedia adds delivery to exact references only
 // after the owning public domain has authorized and loaded its document.
-func (s *Service) HydrateAuthorizedContentBlockMedia(
+func (s *Service) HydrateContentMedia(
 	ctx context.Context,
-	items []*contentv1.ContentBlockMediaItem,
-) ([]*contentv1.ContentBlockMediaItem, error) {
+	items []*ContentMediaItem,
+) ([]*ContentMediaItem, error) {
 	return s.hydrateAuthorizedContentBlockMedia(ctx, items)
 }
 
-func applyContentBlockDownloadDecision(
-	item *contentv1.ContentBlockMediaItem,
-	decision *openv1.FileDownloadAccess,
-) {
+func applyContentBlockDownloadDecision(item *ContentMediaItem, decision *DownloadAccess) {
 	if item == nil || decision == nil {
 		return
 	}
-	switch decision.GetAvailability() {
-	case openv1.FileDownloadAvailability_FILE_DOWNLOAD_AVAILABILITY_AVAILABLE:
-		item.DownloadAvailability = contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_AVAILABLE
-	case openv1.FileDownloadAvailability_FILE_DOWNLOAD_AVAILABILITY_UNAVAILABLE:
-		item.DownloadAvailability = contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_UNAVAILABLE
+	switch decision.Availability {
+	case DownloadAvailable, DownloadUnavailable:
+		item.DownloadAvailability = decision.Availability
 	}
-	switch decision.GetAction() {
-	case openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD:
-		item.DownloadAction = contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_DOWNLOAD
-	case openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_SIGN_IN:
-		item.DownloadAction = contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_SIGN_IN
-	case openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE:
-		item.DownloadAction = contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_NONE
+	switch decision.Action {
+	case ActionDownload, ActionSignIn, ActionNone:
+		item.DownloadAction = decision.Action
 	}
 }
