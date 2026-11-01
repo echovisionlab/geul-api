@@ -275,3 +275,24 @@ func collabContext(t *testing.T) context.Context {
 	require.NoError(t, err)
 	return sharedtelemetry.WithRequestContext(t.Context(), requestContext)
 }
+
+// serializationFailure is the driver error of a repeatable read that lost a
+// race to a committed writer.
+type serializationFailure struct{}
+
+func (serializationFailure) Error() string    { return "could not serialize access due to concurrent delete" }
+func (serializationFailure) SQLState() string { return "40001" }
+
+func TestLoadPageBlockDocumentRetriesASnapshotThatLostARace(t *testing.T) {
+	h := newHarness(t)
+	stored := h.seedPage("Room")
+	editor := h.member(newPrincipal())
+	h.store.PutSession("session", editor.user())
+	h.store.FailOnce = map[string]error{"LockSession": serializationFailure{}}
+
+	room, err := h.service.LoadPageBlockDocument(t.Context(), page.LoadPageBlockDocumentQuery{PageID: stored.ID, Locale: "en", SessionID: "session"})
+
+	require.NoError(t, err)
+	require.Equal(t, "en", room.Locale)
+	require.True(t, h.store.LockedSession("session"))
+}

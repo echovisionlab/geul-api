@@ -11,6 +11,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -137,10 +138,15 @@ func (s *Service) LoadPageBlockDocument(ctx context.Context, query LoadPageBlock
 		return RoomDocument{}, err
 	}
 	var loaded pageBlockDocument
-	if err := s.units.ReadLocked(ctx, func(store Store) error {
-		var err error
-		loaded, err = s.loadPageBlockDocument(ctx, store, query, locale)
-		return err
+	// A session or Identity change that commits while the snapshot waits at
+	// the identity fence aborts it (SQLSTATE 40001); the read is retried and
+	// then answers from the committed state.
+	if err := dberrors.RetrySerializationFailure(ctx, func() error {
+		return s.units.ReadLocked(ctx, func(store Store) error {
+			var err error
+			loaded, err = s.loadPageBlockDocument(ctx, store, query, locale)
+			return err
+		})
 	}); err != nil {
 		return RoomDocument{}, normalizePageContentBlockError(err)
 	}

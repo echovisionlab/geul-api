@@ -122,6 +122,9 @@ type Store struct {
 	OGRunID string
 	// Fail fails the Store method of that name with its error.
 	Fail map[string]error
+	// FailOnce fails the next call of the Store method of that name with
+	// its error.
+	FailOnce map[string]error
 }
 
 // NewStore returns an empty fake Store.
@@ -163,6 +166,12 @@ func (s *Store) Savepoint() func() {
 var _ page.Store = (*Store)(nil)
 
 func (s *Store) fail(method string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err, ok := s.FailOnce[method]; ok {
+		delete(s.FailOnce, method)
+		return err
+	}
 	if s.Fail == nil {
 		return nil
 	}
