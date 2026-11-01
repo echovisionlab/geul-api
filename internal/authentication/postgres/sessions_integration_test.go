@@ -20,7 +20,7 @@ import (
 // The access recorder resolves the completed session's principal through
 // the PostgreSQL session reads and persists the success record with the
 // durable writer, on PostgreSQL with the Kratos stub only.
-func TestAuthenticationAccessPersistsAuthoritativeSuccessWithoutCredentialData(t *testing.T) {
+func TestAuthenticationAccessPersistsAuthoritativeSuccessWithoutCredentialDataIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 	identityID := uuid.NewString()

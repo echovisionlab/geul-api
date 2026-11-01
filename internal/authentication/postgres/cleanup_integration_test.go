@@ -13,7 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testutil"
 )
 
-func TestDeleteExpiredAuthCodeIssuancesIsBounded(t *testing.T) {
+func TestDeleteExpiredAuthCodeIssuancesIsBoundedIntegration(t *testing.T) {
 	t.Parallel()
 	const batchSize = 1000
 	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
