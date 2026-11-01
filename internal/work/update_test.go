@@ -148,3 +148,25 @@ func clientIDs(clients []work.Client) []string {
 	}
 	return ids
 }
+
+func TestUpdateWorkWithTheCurrentMapPlaceIsUnchanged(t *testing.T) {
+	h := newHarness(t)
+	admin := newPrincipal()
+	h.store.PutMapPlace("place-1")
+	placed := h.seedWork(t, "Placed", func(value *work.Work) { value.MapPlaceID = stringPointer("place-1") })
+	unplaced := h.seedWork(t, "Unplaced")
+
+	for workID, place := range map[string]string{placed.ID: " place-1 ", unplaced.ID: ""} {
+		updated, err := h.service.UpdateWork(admin.context(t), work.UpdateWorkCommand{ID: workID, MapPlaceID: stringPointer(place)})
+		require.NoError(t, err)
+		require.False(t, updated.Changed, "the Work already has the requested Map Place")
+	}
+	require.Empty(t, h.audit.Records())
+	require.Empty(t, h.store.Updates())
+
+	updated, err := h.service.UpdateWork(admin.context(t), work.UpdateWorkCommand{ID: placed.ID, MapPlaceID: stringPointer("")})
+	require.NoError(t, err)
+	require.True(t, updated.Changed)
+	require.Nil(t, h.stored(t, placed.ID).MapPlaceID)
+	require.Equal(t, []string{"map_place_id"}, h.audit.Records()[0].ChangedFields)
+}

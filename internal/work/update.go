@@ -10,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -311,7 +312,7 @@ func applyWorkUpdateFields(work *Work, change WorkChange, metadata bool) {
 }
 
 // workUpdateChangedFields names the columns change writes a different value
-// to. A requested Map Place always counts as changed.
+// to.
 func workUpdateChangedFields(work Work, change WorkChange, metadata, mapPlace bool) []string {
 	changed := []string{}
 	if change.ClearSlug {
@@ -345,7 +346,7 @@ func workUpdateChangedFields(work Work, change WorkChange, metadata, mapPlace bo
 	if change.IsPresent != nil && *change.IsPresent != work.IsPresent {
 		changed = append(changed, "is_present")
 	}
-	if mapPlace {
+	if mapPlace && !optional.Equal(change.MapPlaceID, work.MapPlaceID) {
 		changed = append(changed, "map_place_id")
 	}
 	return changed
