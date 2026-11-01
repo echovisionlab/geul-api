@@ -5,7 +5,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -21,14 +20,14 @@ func TestSiteSettingFormatValidation(t *testing.T) {
 		{name: "analytics id", key: "google_analytics_id", value: "analytics-123"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			err := applySettingValue(&model.SiteSettings{}, testCase.key, testCase.value)
+			err := applySettingValue(&Settings{}, testCase.key, testCase.value)
 			require.Error(t, err)
 		})
 	}
 }
 
 func TestContactSettingsUseCanonicalStorageAndPreserveLegalAddress(t *testing.T) {
-	settings := &model.SiteSettings{LegalEmail: "legal@example.test"}
+	settings := &Settings{LegalEmail: "legal@example.test"}
 	before := *settings
 	require.NoError(t, applySettingValue(settings, "contact_email", "contact@example.test"))
 	require.Equal(t, "contact@example.test", settings.ContactEmail)
@@ -44,7 +43,7 @@ func TestContactSettingsUseCanonicalStorageAndPreserveLegalAddress(t *testing.T)
 
 func TestContactSettingsRejectLegacyKeysBeforeBatchMutation(t *testing.T) {
 	for _, key := range []string{"support_email", "privacy_email"} {
-		settings := &model.SiteSettings{ContactEmail: "original@example.test"}
+		settings := &Settings{ContactEmail: "original@example.test"}
 		require.Error(t, applySettingValue(settings, key, "contact@example.test"))
 		_, known := settingValue(settings, key)
 		require.False(t, known)
@@ -59,7 +58,7 @@ func TestContactSettingsRejectLegacyKeysBeforeBatchMutation(t *testing.T) {
 }
 
 func TestSiteSettingFormatValidationAcceptsSupportedValues(t *testing.T) {
-	settings := &model.SiteSettings{}
+	settings := &Settings{}
 
 	require.NoError(t, applySettingValue(settings, "legal_email", "legal@example.com"))
 	require.NoError(t, applySettingValue(settings, "contact_email", ""))

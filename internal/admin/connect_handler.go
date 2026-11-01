@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"math"
 
 	"connectrpc.com/connect"
 
@@ -37,5 +38,23 @@ func (h *ConnectHandler) GetDashboardStats(ctx context.Context, _ *connect.Reque
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}
-	return connect.NewResponse(&managev1.GetDashboardStatsResponse{Stats: stats}), nil
+	return connect.NewResponse(&managev1.GetDashboardStatsResponse{Stats: &managev1.DashboardStats{
+		TotalMembers:   safeInt32(stats.Members),
+		TotalPosts:     safeInt32(stats.Posts),
+		TotalPages:     safeInt32(stats.Pages),
+		TotalComments:  safeInt32(stats.Comments),
+		TotalCampaigns: safeInt32(stats.Campaigns),
+	}}), nil
+}
+
+// safeInt32 safely converts int64 to int32 with overflow protection.
+// Returns math.MaxInt32 if the value exceeds int32 range.
+func safeInt32(n int64) int32 {
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	if n < math.MinInt32 {
+		return math.MinInt32
+	}
+	return int32(n)
 }
