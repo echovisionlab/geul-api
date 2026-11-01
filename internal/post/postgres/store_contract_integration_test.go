@@ -21,7 +21,9 @@ import (
 func TestPostgresStoreKeepsThePostStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	posttest.RunStoreContract(t, func(t *testing.T) posttest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		// Participant reads join the linked Identity; the Kratos stub keeps
+		// the contract on PostgreSQL alone.
+		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 		// The contract reaches the Post rows and the content revision; OG,
 		// media, signals and collaboration stay with their own tests.
 		deps := postpostgres.Deps{ContentBlocks: testutil.NewPostContentBlockStore(t)}
