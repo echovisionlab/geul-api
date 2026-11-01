@@ -9,7 +9,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -189,21 +188,21 @@ func TestMeshOptimizationEventsRequireJobID(t *testing.T) {
 
 	service := &MeshOptimizationService{}
 
-	_, err := service.HandleProgress(t.Context(), &managev1.MeshOptimizationProgressEvent{
-		CorrelationId: "candidate-id",
+	_, err := service.HandleProgress(t.Context(), &domain.MeshProgressEvent{
+		CorrelationID: "candidate-id",
 	})
 	require.Error(t, err)
 
-	_, err = service.HandleComplete(t.Context(), &managev1.MeshOptimizationCompleteEvent{
-		CorrelationId: "candidate-id",
-		Output: &managev1.MeshOptimizationOutput{
-			Written: &commonv1.MediaObjectWriteResult{FileId: "output-file"},
+	_, err = service.HandleComplete(t.Context(), &domain.MeshCompleteEvent{
+		CorrelationID: "candidate-id",
+		Output: &domain.MeshOutput{
+			Written: &domain.MeshWritten{FileID: "output-file"},
 		},
 	})
 	require.Error(t, err)
 
-	_, err = service.HandleFailed(t.Context(), &managev1.MeshOptimizationFailEvent{
-		CorrelationId: "candidate-id",
+	_, err = service.HandleFailed(t.Context(), &domain.MeshFailedEvent{
+		CorrelationID: "candidate-id",
 		Error:         "failed",
 	})
 	require.Error(t, err)

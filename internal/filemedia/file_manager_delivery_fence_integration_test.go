@@ -524,8 +524,8 @@ func TestFileManagerOptimizedOutputSigningCompletesBeforeMeshCompletionIntegrati
 	require.NoError(t, db.Select("id", "file_size", "sha256").Where("id = ?", outputFileID).Take(&output).Error)
 	optimizedSize := output.FileSize
 	completion := meshOptimizationCompletion{
-		event:        &managev1.MeshOptimizationCompleteEvent{},
-		output:       &managev1.MeshOptimizationOutput{OptimizedSizeBytes: &optimizedSize},
+		event:        &domain.MeshCompleteEvent{},
+		output:       &domain.MeshOutput{OptimizedSizeBytes: &optimizedSize},
 		outputFileID: outputFileID, fileSize: output.FileSize, sha256: append([]byte(nil), output.SHA256...),
 		completedAt: time.Now().UTC(), expiresAt: time.Now().UTC().Add(meshOptimizationCandidateTTL),
 	}
