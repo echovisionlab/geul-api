@@ -120,6 +120,9 @@ func TestPostgresCatalogStoreContractIntegration(t *testing.T) {
 			require.NoError(t, db.Exec(`INSERT INTO content_document(id,profile) VALUES (?::uuid,'post')`, doc).Error)
 			require.NoError(t, db.Exec(`INSERT INTO post(id,status,content_document_id,featured_image_file_id) VALUES (?::uuid,?,?::uuid,?::uuid)`, id, status, doc, fileID).Error)
 		}, SeedFile: func(t *testing.T, row domain.CatalogRow, pending, output bool) {
+			if row.MemberID != nil {
+				require.NoError(t, db.Exec(`INSERT INTO member (id,nickname) VALUES (?::uuid,?) ON CONFLICT DO NOTHING`, *row.MemberID, "uploader").Error)
+			}
 			digest := sha256.Sum256([]byte(row.ID))
 			duration := int(*row.DurationSeconds)
 			var deletion *time.Time
@@ -128,7 +131,7 @@ func TestPostgresCatalogStoreContractIntegration(t *testing.T) {
 				deletion = &now
 			}
 			require.NoError(t, db.Create(&model.File{ID: row.ID, FileName: row.Name, Extension: *row.Extension, MimeType: *row.MimeType, FileSize: *row.FileSize, DurationSeconds: &duration, SHA256: digest[:], CreatedAt: row.CreatedAt, DeleteRequestedAt: deletion}).Error)
-			require.NoError(t, db.Table("file").Where("id = ?", row.ID).Updates(structured.Fields{"folder_id": row.ParentID, "updated_at": row.UpdatedAt}).Error)
+			require.NoError(t, db.Table("file").Where("id = ?", row.ID).Updates(structured.Fields{"folder_id": row.ParentID, "uploaded_by_member_id": row.MemberID, "updated_at": row.UpdatedAt}).Error)
 			if output {
 				require.NoError(t, db.Create(&model.MeshOptimizationCandidate{ID: uuid.NewString(), SourceFileID: row.ID, OutputObjectID: uuid.NewString(), OutputFileID: &row.ID, TargetRatioPercent: 50, Method: model.MeshOptimizationMethodDraco, PipelineVersion: model.MeshOptimizationPipelineVersionDracoWebpV1, CacheKey: uuid.NewString(), Status: model.MeshOptimizationCandidateStatusReady}).Error)
 			}

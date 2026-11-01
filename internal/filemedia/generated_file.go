@@ -13,12 +13,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -147,16 +146,17 @@ func (s *Service) ReadVerifiedFileBody(
 		return VerifiedFileBody{}, domainerr.InvalidField("file_id", "File is empty or exceeds the size limit")
 	}
 
-	var stored model.File
-	result := s.db.WithContext(ctx).
-		Select("id", "extension", "mime_type", "file_size", "sha256", "delete_requested_at").
-		Where("id = ? AND delete_requested_at IS NULL", delivery.FileId).
-		Take(&stored)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+	var stored File
+	err = s.units.Read(ctx, func(store Store) error {
+		var readErr error
+		stored, readErr = store.VerifiedFileMetadata(ctx, delivery.FileId)
+		return readErr
+	})
+	if errors.Is(err, domain.ErrFileNotFound) {
 		return VerifiedFileBody{}, domainerr.ResourceNotFound("file", fileID)
 	}
-	if result.Error != nil {
-		return VerifiedFileBody{}, fmt.Errorf("load verified File metadata: %w", result.Error)
+	if err != nil {
+		return VerifiedFileBody{}, fmt.Errorf("load verified File metadata: %w", err)
 	}
 	if stored.ID != delivery.FileId || stored.Extension != delivery.Extension ||
 		stored.MimeType != delivery.MimeType || stored.FileSize != delivery.FileSize {

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediareuse"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -15,7 +17,6 @@ import (
 
 	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
@@ -355,7 +356,7 @@ func newPostVersionRestoreFixture(t *testing.T) *postVersionRestoreFixture {
 	publisher, err := mq.NewPublisher(sqlDB)
 	require.NoError(t, err)
 	writer := apitelemetry.NewDurableWriter(db)
-	contentBlocks, err := contentblock.NewGeneratedStore(filemedia.NewContentBlockFileReuseAuthorizer(spiceDB))
+	contentBlocks, err := contentblock.NewGeneratedStore(filemediareuse.New(spiceDB))
 	require.NoError(t, err)
 	service := postintegration.NewService(t, postintegration.Deps{
 		DB: db, SpiceDB: spiceDB, Files: postAuditFiles{}, Signals: publisher,

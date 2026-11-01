@@ -20,6 +20,9 @@ type FileFolder struct {
 	CreatedAt, UpdatedAt time.Time
 }
 type Store interface {
+	FileAlreadyAttached(context.Context, string, string) (bool, error)
+	FileUploader(context.Context, string) (*string, error)
+	VerifiedFileMetadata(context.Context, string) (File, error)
 	ScopedDeliveryStore
 	DeliveryStore
 	DeletionLifecycleStore
