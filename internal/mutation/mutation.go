@@ -376,6 +376,7 @@ type Audit struct {
 	action    sharedtelemetry.AuditAction
 	build     domainaudit.Builder
 	memberID  string
+	service   sharedtelemetry.ServiceName
 	version   bool
 	anonymous bool
 	unchanged bool
@@ -397,6 +398,13 @@ func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build doma
 // mutation made without a session (a Form submission).
 func AnonymousAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit {
 	return Audit{action: action, build: build, anonymous: true}
+}
+
+// SystemAudit attributes the record to the backend service named service,
+// for a mutation made on no principal's behalf (a login's role convergence
+// that a Kratos hook drives).
+func SystemAudit(service sharedtelemetry.ServiceName, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit {
+	return Audit{action: action, build: build, service: service}
 }
 
 // VersionAudit attributes the record of a version checkpoint to the
@@ -443,6 +451,8 @@ func (r *StoreRunner[S]) appendAudit(ctx context.Context, tx *gorm.DB, audit Aud
 		return errors.New("mutation audit record is required; return Unchanged when nothing changed")
 	case audit.memberID != "":
 		return domainaudit.AppendMember(ctx, tx, r.audit, audit.memberID, audit.action, audit.build)
+	case audit.service != "":
+		return domainaudit.AppendSystem(ctx, tx, r.audit, audit.service, audit.action, audit.build)
 	case audit.version:
 		return domainaudit.AppendVersion(ctx, tx, r.audit, audit.action, audit.build)
 	case audit.anonymous:

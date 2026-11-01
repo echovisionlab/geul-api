@@ -8,10 +8,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
 )
 
 // Campaign delivery values the legal notices of both kinds use.
@@ -25,39 +22,35 @@ const (
 	CampaignDeliveryRunStatusCancelled = "cancelled"
 )
 
-// ActivateDuePolicyWithEffectiveRun activates the kind's scheduled version
-// referenceID once its effective time has come, archives the active one, and
-// seals the required effective notice run in the same transaction; the
-// backend is the actor of the audit records. It reports false, without an
-// error, when the version is gone or not due. The caller dispatches the
-// returned run after commit, so mail-provider availability is not part of
-// this transaction.
-func ActivateDuePolicyWithEffectiveRun(
+// ActivateDuePolicy activates the kind's scheduled version id once its
+// effective time has come, archives the active one, and seals the required
+// effective notice run in the joined transaction; the backend is the actor
+// of the audit records. It reports false, without an error, when the
+// version is gone or not due. The caller dispatches the returned run after
+// commit, so mail-provider availability is not part of this transaction.
+func ActivateDuePolicy(
 	ctx context.Context,
-	tx *gorm.DB,
-	writer domainaudit.Appender,
-	legalOG OG,
-	notice NoticeDelivery,
-	referenceType string,
-	referenceID string,
+	joined Joined,
+	kind PolicyKind,
+	id string,
 	eventKey string,
 	templateData map[string]string,
 	now time.Time,
-) (bool, *model.CampaignDeliveryRun, error) {
-	kind, err := PolicyKind(referenceType).descriptor()
+) (bool, *NoticeRun, error) {
+	descriptor, err := kind.descriptor()
 	if err != nil {
 		return false, nil, err
 	}
-	activation, activated, err := activatePolicyVersion(ctx, tx, legalOG, kind, referenceID, false, now)
+	activation, activated, err := activatePolicyVersion(ctx, joined.Store, descriptor, id, false, now)
 	if err != nil || !activated {
 		return false, nil, err
 	}
 	for _, change := range activation.lifecycleChanges() {
-		if err := domainaudit.AppendSystem(ctx, tx, writer, sharedtelemetry.ServiceBackend, sharedtelemetry.AuditLegalPolicyUpdated, change.record); err != nil {
+		if err := domainaudit.AppendSystem(ctx, nil, joined.Audit, sharedtelemetry.ServiceBackend, sharedtelemetry.AuditLegalPolicyUpdated, change.record); err != nil {
 			return false, nil, err
 		}
 	}
-	run, err := notice.CreateRun(ctx, tx, referenceType, referenceID, eventKey, templateData, now)
+	run, err := joined.Store.SealNoticeRun(ctx, kind, id, eventKey, templateData, now)
 	if err != nil {
 		return false, nil, err
 	}
@@ -69,21 +62,10 @@ type policyActivation struct {
 	kind      *policyKind
 	policyID  string
 	version   int
-	previous  model.LegalPolicyStatus
+	previous  Status
 	immediate bool
 	at        time.Time
-	archived  []archivedPolicyVersion
-}
-
-type archivedPolicyVersion struct {
-	ID      string `gorm:"column:id"`
-	Version int    `gorm:"column:version"`
-}
-
-type activationTarget struct {
-	Status        model.LegalPolicyStatus `gorm:"column:status"`
-	EffectiveFrom *time.Time              `gorm:"column:effective_from"`
-	Version       int                     `gorm:"column:version"`
+	archived  []VersionRef
 }
 
 // activatePolicyVersion makes policyID the kind's active version under the
@@ -93,24 +75,20 @@ type activationTarget struct {
 // activates, and a version that is gone or not due reports false.
 func activatePolicyVersion(
 	ctx context.Context,
-	tx *gorm.DB,
-	legalOG OG,
+	store Store,
 	kind *policyKind,
 	policyID string,
 	immediate bool,
 	now time.Time,
 ) (policyActivation, bool, error) {
-	if err := legalOG.LockActivation(ctx, tx, kind.entity()); err != nil {
+	if err := store.LockActivation(ctx, kind.kind); err != nil {
 		return policyActivation{}, false, err
 	}
-	var current activationTarget
-	result := tx.WithContext(ctx).Raw(
-		"SELECT status, effective_from, version FROM "+kind.table+" WHERE id = ? FOR UPDATE", policyID,
-	).Scan(&current)
-	if result.Error != nil {
-		return policyActivation{}, false, result.Error
+	current, found, err := store.LockLifecycle(ctx, kind.kind, policyID)
+	if err != nil {
+		return policyActivation{}, false, err
 	}
-	if result.RowsAffected == 0 {
+	if !found {
 		if immediate {
 			return policyActivation{}, false, domainerr.ResourceNotFound(kind.notFoundResource, policyID)
 		}
@@ -123,10 +101,10 @@ func activatePolicyVersion(
 		kind: kind, policyID: policyID, version: current.Version, previous: current.Status,
 		immediate: immediate, at: now.UTC(),
 	}
-	if err := activation.archiveActive(ctx, tx); err != nil {
+	if err := activation.archiveActive(ctx, store); err != nil {
 		return policyActivation{}, false, err
 	}
-	if err := activation.activate(ctx, tx); err != nil {
+	if err := activation.activate(ctx, store); err != nil {
 		return policyActivation{}, false, err
 	}
 	return activation, true, nil
@@ -135,7 +113,7 @@ func activatePolicyVersion(
 // activatable reports whether current may activate now. An immediate
 // activation of a version that is neither draft nor scheduled is an error; a
 // due activation of a version that is not due is not.
-func (k *policyKind) activatable(current activationTarget, immediate bool, now time.Time) (bool, error) {
+func (k *policyKind) activatable(current Lifecycle, immediate bool, now time.Time) (bool, error) {
 	if immediate {
 		if current.Status != k.draft && current.Status != k.scheduled {
 			return false, domainerr.Precondition("can only activate draft or scheduled " + k.notFoundResource)
@@ -146,40 +124,29 @@ func (k *policyKind) activatable(current activationTarget, immediate bool, now t
 }
 
 // archiveActive archives every other active version, in ID order.
-func (a *policyActivation) archiveActive(ctx context.Context, tx *gorm.DB) error {
-	if err := tx.WithContext(ctx).Raw(
-		"SELECT id, version FROM "+a.kind.table+" WHERE id <> ? AND status = ? ORDER BY id ASC FOR UPDATE",
-		a.policyID, a.kind.active,
-	).Scan(&a.archived).Error; err != nil {
+func (a *policyActivation) archiveActive(ctx context.Context, store Store) error {
+	var err error
+	if a.archived, err = store.LockActiveVersions(ctx, a.kind.kind, a.policyID); err != nil {
 		return err
 	}
 	for _, previous := range a.archived {
-		if err := tx.WithContext(ctx).Table(a.kind.table).Where("id = ?", previous.ID).Updates(structured.Fields{
-			"status": a.kind.archived, "effective_until": a.at, "updated_at": a.at,
-		}).Error; err != nil {
+		if err := store.Archive(ctx, a.kind.kind, previous.ID, a.at); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (a policyActivation) activate(ctx context.Context, tx *gorm.DB) error {
-	updates := structured.Fields{"status": a.kind.active, "updated_at": a.at}
-	allowed := []model.LegalPolicyStatus{a.kind.scheduled}
+// activate makes the version active: a scheduled one at its effective
+// time, or an immediate draft or scheduled one from now.
+func (a policyActivation) activate(ctx context.Context, store Store) error {
+	from := []Status{a.kind.scheduled}
+	var effectiveFrom *time.Time
 	if a.immediate {
-		updates["effective_from"] = a.at
-		allowed = []model.LegalPolicyStatus{a.kind.draft, a.kind.scheduled}
+		effectiveFrom = &a.at
+		from = []Status{a.kind.draft, a.kind.scheduled}
 	}
-	activation := tx.WithContext(ctx).Table(a.kind.table).
-		Where("id = ? AND status IN ?", a.policyID, allowed).
-		Updates(updates)
-	if activation.Error != nil {
-		return activation.Error
-	}
-	if activation.RowsAffected != 1 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	return store.Activate(ctx, a.kind.kind, a.policyID, from, effectiveFrom, a.at)
 }
 
 // lifecycleChanges returns the lifecycle record of every archived
@@ -208,12 +175,9 @@ func (a policyActivation) lifecycleChanges() []legalLifecycleChange {
 
 // ensureScheduleSlot rejects scheduling policyID while another version of
 // the kind is scheduled.
-func ensureScheduleSlot(ctx context.Context, tx *gorm.DB, kind *policyKind, policyID string) error {
-	var existingIDs []string
-	if err := tx.WithContext(ctx).Raw(
-		"SELECT id FROM "+kind.table+" WHERE id <> ? AND status = ? ORDER BY id ASC FOR UPDATE",
-		policyID, kind.scheduled,
-	).Scan(&existingIDs).Error; err != nil {
+func ensureScheduleSlot(ctx context.Context, store Store, kind *policyKind, policyID string) error {
+	existingIDs, err := store.LockScheduledIDs(ctx, kind.kind, policyID)
+	if err != nil {
 		return err
 	}
 	if len(existingIDs) > 0 {
@@ -224,13 +188,13 @@ func ensureScheduleSlot(ctx context.Context, tx *gorm.DB, kind *policyKind, poli
 
 func dispatchCreatedLegalNoticeRun(
 	ctx context.Context,
-	notice NoticeDelivery,
-	run *model.CampaignDeliveryRun,
+	dispatch NoticeDispatch,
+	run *NoticeRun,
 ) {
-	if run == nil || notice == nil {
+	if run == nil || dispatch == nil {
 		return
 	}
-	if err := notice.DispatchRun(ctx, run.ID); err != nil {
+	if err := dispatch.DispatchRun(ctx, run.ID); err != nil {
 		slog.WarnContext(ctx, "Legal notice delivery run dispatch failed; the scheduler will retry it",
 			"run_id", run.ID,
 			"run_kind", run.RunKind,
@@ -239,19 +203,18 @@ func dispatchCreatedLegalNoticeRun(
 	}
 }
 
-// DispatchCommittedLegalEffectiveNoticeAfterActivation performs only
-// best-effort mail dispatch after the activation transaction has already
-// sealed its required effective-notice run. Provider/PGMQ delivery remains
-// independent of the policy's committed legal effect.
-func DispatchCommittedLegalEffectiveNoticeAfterActivation(
+// DispatchCommittedEffectiveNotice performs only best-effort mail dispatch
+// after the activation transaction has already sealed its required
+// effective-notice run. Provider/PGMQ delivery remains independent of the
+// policy's committed legal effect.
+func DispatchCommittedEffectiveNotice(
 	ctx context.Context,
-	db *gorm.DB,
-	notice NoticeDelivery,
-	referenceType string,
-	referenceID string,
+	dispatch NoticeDispatch,
+	kind PolicyKind,
+	id string,
 	now time.Time,
-	run *model.CampaignDeliveryRun,
+	run *NoticeRun,
 ) {
-	notice.CancelUpdateNoticeAfterActivation(ctx, db, referenceType, referenceID, now)
-	dispatchCreatedLegalNoticeRun(ctx, notice, run)
+	dispatch.CancelUpdateNoticeAfterActivation(ctx, kind, id, now)
+	dispatchCreatedLegalNoticeRun(ctx, dispatch, run)
 }

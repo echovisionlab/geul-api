@@ -6,7 +6,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
@@ -38,23 +37,15 @@ func (checker *recordingLegalPermissionChecker) Can(
 	return true, nil
 }
 
-func (checker *recordingLegalPermissionChecker) CheckActorCan(
-	_ context.Context,
-	_ policyv1.Actor,
-	_ policyv1.Can,
-) (bool, error) {
-	return true, nil
-}
-
 func TestLegalPermissionSelectionUsesArchivedCapabilitiesExclusively(t *testing.T) {
 	t.Parallel()
 
 	for _, entityType := range []string{"terms", "privacy"} {
 		kind, err := legalKind(entityType)
 		require.NoError(t, err)
-		archived := string(kind.archived)
+		archived := kind.archived
 		require.Equal(t, legalActionViewArchived, legalViewAction(kind, archived))
-		current := []string{string(kind.draft), string(kind.scheduled), string(kind.active)}
+		current := []Status{kind.draft, kind.scheduled, kind.active}
 		for _, status := range current {
 			require.Equal(t, legalActionView, legalViewAction(kind, status))
 		}
@@ -86,7 +77,7 @@ func TestRequireLegalPermissionForPrincipalChecksExactObjectActionOnce(t *testin
 	}
 	require.NoError(t, requireLegalPermissionForPrincipal(
 		context.Background(), checker,
-		intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_TERMS_HISTORY,
+		Terms,
 		"22222222-2222-4222-8222-222222222222",
 		legalActionViewArchived,
 		principal,
@@ -109,5 +100,3 @@ func TestLegalTargetLocaleAuditOperationReflectsTranslationLifecycle(t *testing.
 	require.Equal(t, sharedtelemetry.AuditItemOperationUpdated, legalTargetLocaleContentOperation(AITranslationUnchanged, true))
 	require.Equal(t, sharedtelemetry.AuditItemOperationDeleted, legalTargetLocaleContentOperation(AITranslationDelete, true))
 }
-
-var _ CollaborationPermissionChecker = (*recordingLegalPermissionChecker)(nil)

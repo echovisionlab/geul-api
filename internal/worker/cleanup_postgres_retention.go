@@ -5,13 +5,13 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/authentication"
+	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
 )
 
 const authCodeIssuanceCleanupLimit = 1000
 
 func (h *Handlers) handleCleanupAuthCodeIssuance(ctx context.Context) error {
-	deleted, err := authentication.CleanupExpiredAuthCodeIssuances(ctx, h.db, time.Now(), authCodeIssuanceCleanupLimit)
+	deleted, err := authenticationpostgres.CleanupExpiredAuthCodeIssuances(ctx, h.db, time.Now(), authCodeIssuanceCleanupLimit)
 	if err != nil {
 		return err
 	}

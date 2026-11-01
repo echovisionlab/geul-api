@@ -504,7 +504,7 @@ func createCommittedWorkerLegalDeliveryRun(
 	var run *model.CampaignDeliveryRun
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		var err error
-		run, err = legaladapter.NewNoticeRuntime(nil).CreateRun(
+		run, err = legaladapter.NewNoticeRuntime().CreateRun(
 			t.Context(), tx, referenceType, referenceID, templateEvent, templateData, scheduledAt,
 		)
 		return err

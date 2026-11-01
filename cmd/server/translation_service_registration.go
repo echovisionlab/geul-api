@@ -104,11 +104,11 @@ func (r translationServiceRegistration) register() (*translationapplication.Serv
 		},
 		{
 			Domain: translationcore.KindPrivacy,
-			Port:   translationadapter.NewLegalInterchange(legalAIDocumentService),
+			Port:   translationadapter.NewLegalInterchange(legalAIDocumentService, telemetryWriter),
 		},
 		{
 			Domain: translationcore.KindTerms,
-			Port:   translationadapter.NewLegalInterchange(legalAIDocumentService),
+			Port:   translationadapter.NewLegalInterchange(legalAIDocumentService, telemetryWriter),
 		},
 		{
 			Domain: translationcore.KindCampaign,

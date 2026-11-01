@@ -23,6 +23,7 @@ import (
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	publicform "github.com/echovisionlab/geul-api/internal/form/public"
 	legalpublic "github.com/echovisionlab/geul-api/internal/legal/public"
+	legalpublicpostgres "github.com/echovisionlab/geul-api/internal/legal/public/postgres"
 	mapthemepostgres "github.com/echovisionlab/geul-api/internal/maptheme/postgres"
 	mapthemepublic "github.com/echovisionlab/geul-api/internal/maptheme/public"
 	memberpublic "github.com/echovisionlab/geul-api/internal/member/public"
@@ -182,7 +183,14 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicAccountPath, publicAccountHandler)
 	slog.Info("Registered public service", "path", publicAccountPath)
 
-	publicLegalService, err := legalpublic.NewService(legalpublic.Deps{DB: db, ContentBlocks: contentBlockStore, Media: legalRuntime})
+	publicLegalUnits, err := legalpublicpostgres.NewUnits(db, contentBlockStore)
+	if err != nil {
+		return err
+	}
+	publicLegalService, err := legalpublic.NewService(legalpublic.Deps{
+		Units: publicLegalUnits, Localizer: legalpublicpostgres.NewLocalizer(db),
+		OGImages: legalpublicpostgres.NewOGImages(db, legalRuntime),
+	})
 	if err != nil {
 		return err
 	}

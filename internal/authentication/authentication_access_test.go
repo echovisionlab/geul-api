@@ -142,12 +142,12 @@ func TestAuthenticationAccessDoesNotRecordIntermediateChallenges(t *testing.T) {
 func TestAuthenticationAccessClassifiesOIDCFirstSessionAsRegistration(t *testing.T) {
 	writer := &authenticationAccessWriterStub{}
 	recorder := newAuthenticationAccessTestRecorder(writer)
-	recorder.firstSession = func(context.Context, string) (bool, error) { return true, nil }
-	recorder.resolvePrincipal = func(context.Context, string) (*auth.UserInfo, error) {
-		return &auth.UserInfo{
+	recorder.sessions = sessionsStub{
+		principal: &auth.UserInfo{
 			SessionID: auth.SessionID(authenticationTestSessionID), IdentityID: auth.IdentityID(authenticationTestIdentityID),
 			MemberID: auth.MemberID(authenticationTestMemberID), Authenticated: true, Onboarded: false,
-		}, nil
+		},
+		first: true,
 	}
 	handler := recorder.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"session":{"id":"` + authenticationTestSessionID + `"}}`))
@@ -223,15 +223,32 @@ func newAuthenticationAccessTestRecorder(writer securityaccess.Appender) *Authen
 	return &AuthenticationAccessRecorder{
 		writer: writer,
 		now:    func() time.Time { return time.Date(2026, time.August, 10, 1, 2, 3, 0, time.UTC) },
-		resolvePrincipal: func(context.Context, string) (*auth.UserInfo, error) {
-			return &auth.UserInfo{
-				SessionID: auth.SessionID(authenticationTestSessionID), IdentityID: auth.IdentityID(authenticationTestIdentityID),
-				MemberID: auth.MemberID(authenticationTestMemberID), Authenticated: true, Onboarded: true,
-			}, nil
-		},
-		firstSession:    func(context.Context, string) (bool, error) { return false, nil },
+		sessions: sessionsStub{principal: &auth.UserInfo{
+			SessionID: auth.SessionID(authenticationTestSessionID), IdentityID: auth.IdentityID(authenticationTestIdentityID),
+			MemberID: auth.MemberID(authenticationTestMemberID), Authenticated: true, Onboarded: true,
+		}},
 		resolveIncoming: func(*http.Request) *auth.UserInfo { return nil },
 	}
+}
+
+// sessionsStub resolves every session to principal; authenticationtest
+// imports this package, so its Sessions cannot serve an internal test.
+type sessionsStub struct {
+	principal *auth.UserInfo
+	first     bool
+	err       error
+}
+
+func (s sessionsStub) Principal(context.Context, string) (*auth.UserInfo, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	copied := *s.principal
+	return &copied, nil
+}
+
+func (s sessionsStub) FirstSession(context.Context, string) (bool, error) {
+	return s.first, s.err
 }
 
 func authenticationAccessRequest(method, target, body string) *http.Request {

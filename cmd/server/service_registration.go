@@ -53,6 +53,7 @@ import (
 	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authentication"
+	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/collaboration"
 	"github.com/echovisionlab/geul-api/internal/config"
@@ -69,6 +70,7 @@ import (
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/legal"
+	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
 	llmproviders "github.com/echovisionlab/geul-api/internal/llm/providers"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
 	mapthemepostgres "github.com/echovisionlab/geul-api/internal/maptheme/postgres"
@@ -208,7 +210,8 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		internalServiceHeaderName: cfg.InternalServiceHeaderName,
 	}
 	authenticationService, err := authentication.NewService(authentication.Deps{
-		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, Roles: accountadapter.AccountDirectRoleTransition{},
+		Units: authenticationpostgres.NewUnits(db), SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{},
+		Audit: telemetryWriter, Roles: accountadapter.AccountDirectRoleTransition{}, Sessions: authenticationpostgres.NewSessions(db),
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize authentication service: %w", err)
@@ -240,10 +243,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		telemetryWriter,
 		campaign.WithLegalNoticeDeliveryPort(legalRuntime),
 	))
-	legalDependencies := legal.Dependencies{
-		OG:     legalRuntime,
-		Notice: legaladapter.NewNoticeRuntime(campaignDeliveryDispatcher),
-	}
 	fileService, err := filemedia.NewService(filemedia.Deps{
 		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, S3: s3Client, Presigner: s3PresignClient,
 		AsyncPublisher: servicePublisher, Transcoder: transcodeTracker, S3Bucket: cfg.S3Bucket,
@@ -663,16 +662,25 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(clientPath, clientHandler)
 	slog.Info("Registered service", "path", clientPath)
 
-	legalPolicyService, err := legal.NewService(legal.Deps{
-		DB:            db,
-		SpiceDB:       spicedbClient,
+	legalUnits, err := legalpostgres.NewUnits(db, legalpostgres.Ports{
 		ContentBlocks: contentBlockStore,
-		OG:            legalDependencies.OG,
-		Notice:        legalDependencies.Notice,
+		Routes:        legalRuntime,
+		Notices:       legaladapter.NewNoticeRuntime(),
 		PreviewLinks:  sharelinkadapter.LegalPreviewLinks{},
 		Members:       memberadapter.PreferredLocales{},
-		Audit:         telemetryWriter,
-		BaseURL:       cfg.SiteOrigin,
+		Checkpoints:   collaborationRuntime.Checkpoints,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize legal store: %w", err)
+	}
+	legalPolicyService, err := legal.NewService(legal.Deps{
+		Units:    legalUnits,
+		SpiceDB:  spicedbClient,
+		Fence:    identitystate.PostgresFence{},
+		Audit:    telemetryWriter,
+		Dispatch: legaladapter.NewNoticeDispatch(db, campaignDeliveryDispatcher),
+		OGAssets: legaladapter.NewOGAssets(db, cfg.CDNURL),
+		BaseURL:  cfg.SiteOrigin,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize legal policy service: %w", err)
@@ -841,8 +849,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		collaborationRuntime:        collaborationRuntime,
 		programEvents:               programEventService,
 		emailAuthoringUnits:         emailAuthoringUnits,
-		legalRuntime:                legalRuntime,
-		legalDependencies:           legalDependencies,
+		legalUnits:                  legalUnits,
 		mapThemes:                   mapThemeService,
 	}).register()
 	if err != nil {

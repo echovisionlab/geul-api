@@ -25,7 +25,7 @@ func (recorder *AuthenticationAccessRecorder) complete(
 
 	sessionID, sessionLookupErr := recorder.sessionIDFromTerminalResponse(request, observation, response)
 	if sessionID != "" {
-		principal, err := recorder.resolvePrincipal(request.Context(), sessionID)
+		principal, err := recorder.sessions.Principal(request.Context(), sessionID)
 		if err == nil && principal != nil && !principal.Banned {
 			flowKind, flowErr := recorder.successFlowKind(request.Context(), observation, principal, sessionID)
 			if flowErr != nil {
@@ -225,7 +225,7 @@ func (recorder *AuthenticationAccessRecorder) successFlowKind(
 		return sharedtelemetry.AuthenticationFlowReauthentication, nil
 	}
 	if observation.OIDCCallback {
-		first, err := recorder.firstSession(ctx, sessionID)
+		first, err := recorder.sessions.FirstSession(ctx, sessionID)
 		if err != nil {
 			return "", err
 		}

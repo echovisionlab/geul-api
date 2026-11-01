@@ -11,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/account"
 	collaborationadapter "github.com/echovisionlab/geul-api/internal/adapters/collaboration"
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
-	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
@@ -34,8 +33,7 @@ type internalContentServiceRegistration struct {
 	collaborationRuntime        *collaborationadapter.Runtime
 	programEvents               *programevent.Service
 	emailAuthoringUnits         mutation.UnitOfWork[emailauthoring.Store]
-	legalRuntime                *legaladapter.Runtime
-	legalDependencies           legal.Dependencies
+	legalUnits                  mutation.UnitOfWork[legal.Store]
 	mapThemes                   *maptheme.Service
 }
 
@@ -62,8 +60,7 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	internalRPCTrust := r.internalTrust
 	accountEmailChangeLifecycle := r.accountEmailChangeLifecycle
 	collaborationRuntime := r.collaborationRuntime
-	legalRuntime := r.legalRuntime
-	legalDependencies := r.legalDependencies
+	legalUnits := r.legalUnits
 	// Internal API services are not browser/session authenticated and must not
 	// be exposed via Oathkeeper. Every handler is protected below by the exact
 	// caller-scoped service credential; private-network placement is additional
@@ -118,12 +115,7 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	slog.Info("Registered internal service", "path", internalEmailLayoutPath)
 
 	internalLegalService, err := legal.NewInternalService(legal.InternalDeps{
-		DB:            db,
-		ContentBlocks: contentBlockStore,
-		SpiceDB:       spicedbClient,
-		Checkpoints:   collaborationRuntime.Checkpoints,
-		OG:            legalDependencies.OG,
-		Audit:         telemetryWriter,
+		Units: legalUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
 	})
 	if err != nil {
 		return internalContentServices{}, fmt.Errorf("initialize internal legal service: %w", err)
@@ -137,7 +129,7 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	slog.Info("Registered internal service", "path", internalPrivacyPath)
 
 	legalAIDocumentService, err := legal.NewAIDocumentService(legal.AIDocumentDeps{
-		DB: db, ContentBlocks: contentBlockStore, SpiceDB: spicedbClient, OG: legalRuntime, Audit: telemetryWriter,
+		Units: legalUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
 	})
 	if err != nil {
 		return internalContentServices{}, fmt.Errorf("initialize Legal AI document service: %w", err)

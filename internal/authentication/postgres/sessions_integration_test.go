@@ -1,21 +1,28 @@
 //go:build integration
 
-package authentication
+package authenticationpostgres_test
 
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/authentication"
+	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
-func TestAuthenticationAccessPersistsAuthoritativeSuccessWithoutCredentialData(t *testing.T) {
+// The access recorder resolves the completed session's principal through
+// the PostgreSQL session reads and persists the success record with the
+// durable writer, on PostgreSQL with the Kratos stub only.
+func TestAuthenticationAccessPersistsAuthoritativeSuccessWithoutCredentialDataIntegration(t *testing.T) {
 	t.Parallel()
-	db := newAuthenticationIntegrationDB(t)
+	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()
 	sessionID := uuid.NewString()
@@ -37,9 +44,9 @@ func TestAuthenticationAccessPersistsAuthoritativeSuccessWithoutCredentialData(t
 		VALUES (?::uuid, ?::uuid, true)
 	`, sessionID, identityID).Error)
 
-	recorder, err := NewAuthenticationAccessRecorder(
+	recorder, err := authentication.NewAuthenticationAccessRecorder(
 		"http://kratos.invalid",
-		db,
+		authenticationpostgres.NewSessions(db),
 		apitelemetry.NewDurableWriter(db),
 	)
 	require.NoError(t, err)
@@ -98,4 +105,14 @@ func TestAuthenticationAccessPersistsAuthoritativeSuccessWithoutCredentialData(t
 		  AND column_name IN ('email', 'identifier', 'code', 'token', 'cookie', 'raw_error')
 	`).Scan(&forbiddenColumns).Error)
 	require.Zero(t, forbiddenColumns)
+}
+
+func authenticationAccessRequest(method, target, body string) *http.Request {
+	request := httptest.NewRequest(method, target, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.44")
+	if err != nil {
+		panic(err)
+	}
+	return request.WithContext(sharedtelemetry.WithRequestContext(request.Context(), requestContext))
 }
