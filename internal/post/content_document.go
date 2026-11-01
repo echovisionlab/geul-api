@@ -24,7 +24,9 @@ const postContentDocumentProfile = "post"
 // postEntityName names the owner in shared content document messages.
 const postEntityName = "Post"
 
-func loadPostContentDocumentID(ctx context.Context, store Store, postID string) (uuid.UUID, error) {
+func loadPostContentDocumentID(ctx context.Context, store interface {
+	DocumentRoot(ctx context.Context, postID string) (DocumentRoot, error)
+}, postID string) (uuid.UUID, error) {
 	if _, err := uuidutil.ParseCanonical(postID, "post_id"); err != nil {
 		return uuid.Nil, domainerr.InvalidField("post_id", "must be a canonical UUID").WithCause(err)
 	}

@@ -14,7 +14,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
-func postFromRow(row model.Post) post.Post {
+// PostFromRow maps a post row to the domain Post.
+func PostFromRow(row model.Post) post.Post {
 	stored := post.Post{
 		ID: row.ID, ContentDocumentID: row.ContentDocumentID, SourceLocale: row.SourceLocale, Title: row.Title,
 		Summary: row.Summary, Slug: row.Slug, ConfigurationRevision: row.ConfigurationRevision,
@@ -78,7 +79,7 @@ func (s *store) FindPost(ctx context.Context, postID string) (post.Post, error) 
 		First(&row, "id = ?", postID).Error; err != nil {
 		return post.Post{}, notFound(err, post.ErrPostNotFound)
 	}
-	return postFromRow(row), nil
+	return PostFromRow(row), nil
 }
 
 func (s *store) ReadPost(ctx context.Context, postID string) (post.Post, error) {
@@ -86,7 +87,7 @@ func (s *store) ReadPost(ctx context.Context, postID string) (post.Post, error) 
 	if err := s.tx.WithContext(ctx).First(&row, "id = ?", postID).Error; err != nil {
 		return post.Post{}, notFound(err, post.ErrPostNotFound)
 	}
-	return postFromRow(row), nil
+	return PostFromRow(row), nil
 }
 
 func (s *store) TakePost(ctx context.Context, postID string) (post.Post, error) {
@@ -94,7 +95,7 @@ func (s *store) TakePost(ctx context.Context, postID string) (post.Post, error) 
 	if err := s.tx.WithContext(ctx).Take(&row, "id = ?", postID).Error; err != nil {
 		return post.Post{}, notFound(err, post.ErrPostNotFound)
 	}
-	return postFromRow(row), nil
+	return PostFromRow(row), nil
 }
 
 func (s *store) FindPostID(ctx context.Context, postID string) error {
@@ -157,7 +158,7 @@ func (s *store) KeyShareLockPost(ctx context.Context, postID string) (post.Post,
 	if err := s.tx.WithContext(ctx).Clauses(clause.Locking{Strength: "KEY SHARE"}).First(&row, "id = ?", postID).Error; err != nil {
 		return post.Post{}, notFound(err, post.ErrPostNotFound)
 	}
-	return postFromRow(row), nil
+	return PostFromRow(row), nil
 }
 
 func (s *store) LockPostRoot(ctx context.Context, postID string) error {
@@ -256,7 +257,7 @@ func (s *store) InsertPost(ctx context.Context, stored *post.Post) error {
 		}
 		return err
 	}
-	created := postFromRow(row)
+	created := PostFromRow(row)
 	stored.ID, stored.ConfigurationRevision = created.ID, created.ConfigurationRevision
 	stored.CreatedAt, stored.UpdatedAt = created.CreatedAt, created.UpdatedAt
 	return nil
@@ -280,7 +281,7 @@ func (s *store) UpdateSettings(ctx context.Context, stored *post.Post, change po
 	if err := s.tx.WithContext(ctx).Model(&row).Clauses(clause.Returning{}).Updates(fields).Error; err != nil {
 		return err
 	}
-	updated := postFromRow(row)
+	updated := PostFromRow(row)
 	updated.Title, updated.Summary, updated.SourceLocaleOgAssetID = stored.Title, stored.Summary, stored.SourceLocaleOgAssetID
 	*stored = updated
 	return nil
@@ -352,7 +353,7 @@ func (s *store) LockDuePosts(ctx context.Context, limit int) ([]post.Post, error
 	}
 	posts := make([]post.Post, len(due))
 	for index, row := range due {
-		posts[index] = postFromRow(row)
+		posts[index] = PostFromRow(row)
 	}
 	return posts, nil
 }
@@ -459,7 +460,7 @@ func (s *store) ListPosts(ctx context.Context, query post.ListQuery) ([]post.Pos
 	}
 	posts := make([]post.Post, len(rows))
 	for index, row := range rows {
-		posts[index] = postFromRow(row)
+		posts[index] = PostFromRow(row)
 	}
 	return posts, total, nil
 }

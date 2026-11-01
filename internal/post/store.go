@@ -391,6 +391,14 @@ type CommentReads interface {
 	ShareLockCommentPost(ctx context.Context, postID string) (CommentPost, error)
 }
 
+// ContentReads reads a Post's content document in a snapshot that already
+// authorized the Post; the public reads take it.
+type ContentReads interface {
+	SourceLocale(ctx context.Context, postID string) (string, error)
+	DocumentRoot(ctx context.Context, postID string) (DocumentRoot, error)
+	ContentSnapshot(ctx context.Context, documentID uuid.UUID, sourceLocale string) (contentblock.Snapshot, error)
+}
+
 // CommentCursorAt is where a comment page continues.
 type CommentCursorAt struct {
 	ID        string

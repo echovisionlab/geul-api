@@ -16,7 +16,7 @@ import (
 func TestNormalizePostMapViewportTreatsWorldWrappingWidthAsFullLongitude(t *testing.T) {
 	t.Parallel()
 
-	viewport, err := normalizePostMapViewport(&openv1.PostMapViewport{
+	viewport, err := normalizePostMapViewport(mapViewport(&openv1.PostMapViewport{
 		Bounds: &openv1.MapBounds{
 			West:  -54.67106,
 			South: -61.14290,
@@ -28,7 +28,7 @@ func TestNormalizePostMapViewportTreatsWorldWrappingWidthAsFullLongitude(t *test
 		HeightPx:         630,
 		ClusterRadiusPx:  56,
 		MinClusterPoints: 2,
-	})
+	}))
 	if err != nil {
 		t.Fatalf("normalizePostMapViewport returned error: %v", err)
 	}
@@ -50,11 +50,11 @@ func TestClusterPostMapPlaceGroupsKeepsSameCoordinateGroupsAsItemsAtHighZoom(t *
 		{PlaceID: "place-3", Name: "C", Address: "C", Lat: 37.5, Lng: 127.0, PostCount: 1, PrimaryPostID: "post-3", PrimaryPostTitle: "Post 3"},
 	}
 
-	clusters, items := clusterPostMapPlaceGroups(groups, normalizedPostMapViewport{
+	clusters, items := clusterMessages(clusterPostMapPlaceGroups(groups, normalizedPostMapViewport{
 		Zoom:             9,
 		ClusterRadiusPx:  56,
 		MinClusterPoints: 2,
-	})
+	}))
 
 	if len(clusters) != 0 {
 		t.Fatalf("expected no clusters at high zoom for identical coordinates, got %d", len(clusters))
@@ -73,11 +73,11 @@ func TestClusterPostMapPlaceGroupsStillClustersSameCoordinateGroupsAtLowZoom(t *
 		{PlaceID: "place-3", Name: "C", Address: "C", Lat: 37.5, Lng: 127.0, PostCount: 1, PrimaryPostID: "post-3", PrimaryPostTitle: "Post 3"},
 	}
 
-	clusters, items := clusterPostMapPlaceGroups(groups, normalizedPostMapViewport{
+	clusters, items := clusterMessages(clusterPostMapPlaceGroups(groups, normalizedPostMapViewport{
 		Zoom:             4,
 		ClusterRadiusPx:  56,
 		MinClusterPoints: 2,
-	})
+	}))
 
 	if len(clusters) != 1 {
 		t.Fatalf("expected 1 cluster at low zoom for identical coordinates, got %d", len(clusters))
@@ -103,11 +103,11 @@ func TestClusterPostMapPlaceGroupsProvideBreakoutZoomForDistinctCoordinates(t *t
 		{PlaceID: "place-3", Name: "C", Address: "C", Lat: 37.5654, Lng: 126.9768, PostCount: 1, PrimaryPostID: "post-3", PrimaryPostTitle: "Post 3"},
 	}
 
-	clusters, items := clusterPostMapPlaceGroups(groups, normalizedPostMapViewport{
+	clusters, items := clusterMessages(clusterPostMapPlaceGroups(groups, normalizedPostMapViewport{
 		Zoom:             4,
 		ClusterRadiusPx:  56,
 		MinClusterPoints: 2,
-	})
+	}))
 
 	if len(clusters) != 1 {
 		t.Fatalf("expected 1 cluster for nearby coordinates, got %d", len(clusters))
@@ -135,11 +135,11 @@ func TestClusterPostMapPlaceGroupsReturnsItemsWhenBelowMinimumClusterPoints(t *t
 		{PlaceID: "place-1", Name: "A", Address: "A", Lat: 37.5, Lng: 127.0, PostCount: 1, PrimaryPostID: "post-1", PrimaryPostTitle: "Post 1"},
 	}
 
-	clusters, items := clusterPostMapPlaceGroups(groups, normalizedPostMapViewport{
+	clusters, items := clusterMessages(clusterPostMapPlaceGroups(groups, normalizedPostMapViewport{
 		Zoom:             4,
 		ClusterRadiusPx:  56,
 		MinClusterPoints: 2,
-	})
+	}))
 
 	if len(clusters) != 0 {
 		t.Fatalf("expected no clusters below min cluster points, got %d", len(clusters))
@@ -155,7 +155,7 @@ func TestClusterPostMapPlaceGroupsReturnsItemsWhenBelowMinimumClusterPoints(t *t
 func TestNormalizePostMapViewportUsesSharedClusterFallbacks(t *testing.T) {
 	t.Parallel()
 
-	viewport, err := normalizePostMapViewport(&openv1.PostMapViewport{
+	viewport, err := normalizePostMapViewport(mapViewport(&openv1.PostMapViewport{
 		Bounds: &openv1.MapBounds{
 			West:  -54.67106,
 			South: -61.14290,
@@ -167,7 +167,7 @@ func TestNormalizePostMapViewportUsesSharedClusterFallbacks(t *testing.T) {
 		HeightPx:         219,
 		ClusterRadiusPx:  0,
 		MinClusterPoints: 0,
-	})
+	}))
 	if err != nil {
 		t.Fatalf("normalizePostMapViewport returned error: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestNormalizePostMapViewportUsesSharedClusterFallbacks(t *testing.T) {
 func TestNormalizePostMapViewportNormalizesBoundsAndDefaults(t *testing.T) {
 	t.Parallel()
 
-	viewport, err := normalizePostMapViewport(&openv1.PostMapViewport{
+	viewport, err := normalizePostMapViewport(mapViewport(&openv1.PostMapViewport{
 		Bounds: &openv1.MapBounds{
 			West:  -540,
 			South: 90,
@@ -199,7 +199,7 @@ func TestNormalizePostMapViewportNormalizesBoundsAndDefaults(t *testing.T) {
 		HeightPx:         0,
 		ClusterRadiusPx:  -1,
 		MinClusterPoints: -1,
-	})
+	}))
 	if err != nil {
 		t.Fatalf("normalizePostMapViewport returned error: %v", err)
 	}
@@ -227,10 +227,10 @@ func TestNormalizePostMapViewportNormalizesBoundsAndDefaults(t *testing.T) {
 func TestNormalizePostMapViewportRejectsMissingBounds(t *testing.T) {
 	t.Parallel()
 
-	if _, err := normalizePostMapViewport(nil); err == nil {
+	if _, err := normalizePostMapViewport(mapViewport(nil)); err == nil {
 		t.Fatal("expected missing viewport to return an error")
 	}
-	if _, err := normalizePostMapViewport(&openv1.PostMapViewport{}); err == nil {
+	if _, err := normalizePostMapViewport(mapViewport(&openv1.PostMapViewport{})); err == nil {
 		t.Fatal("expected missing bounds to return an error")
 	}
 }
@@ -251,10 +251,10 @@ func TestNormalizePostMapViewportUsesMapLibreWorldSize(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			viewport, err := normalizePostMapViewport(&openv1.PostMapViewport{
+			viewport, err := normalizePostMapViewport(mapViewport(&openv1.PostMapViewport{
 				Bounds: &openv1.MapBounds{West: -100, East: 100, South: -60, North: 60},
 				Zoom:   test.zoom, WidthPx: test.width, HeightPx: 256,
-			})
+			}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -287,10 +287,10 @@ func TestNormalizePostMapViewportPreservesLegacyZoomDefaults(t *testing.T) {
 		{name: "negative zoom missing height", zoom: -0.5, width: 320},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			viewport, err := normalizePostMapViewport(&openv1.PostMapViewport{
+			viewport, err := normalizePostMapViewport(mapViewport(&openv1.PostMapViewport{
 				Bounds: &openv1.MapBounds{West: -20, East: 20, South: -10, North: 10},
 				Zoom:   test.zoom, WidthPx: test.width, HeightPx: test.height,
-			})
+			}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -310,10 +310,10 @@ func TestNormalizePostMapViewportPreservesLegacyZoomDefaults(t *testing.T) {
 func TestNormalizePostMapViewportRejectsNonFiniteZoom(t *testing.T) {
 	t.Parallel()
 	for _, zoom := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
-		if _, err := normalizePostMapViewport(&openv1.PostMapViewport{
+		if _, err := normalizePostMapViewport(mapViewport(&openv1.PostMapViewport{
 			Bounds: &openv1.MapBounds{West: -20, East: 20, South: -10, North: 10},
 			Zoom:   zoom, WidthPx: 320, HeightPx: 320,
-		}); errs.CodeOf(err) != connect.CodeInvalidArgument {
+		})); errs.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Fatalf("non-finite zoom %v error=%v; want InvalidArgument", zoom, err)
 		}
 	}
@@ -338,10 +338,10 @@ func TestNormalizePostMapViewportPreservesSignedMapLibreZoom(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			viewport, err := normalizePostMapViewport(&openv1.PostMapViewport{
+			viewport, err := normalizePostMapViewport(mapViewport(&openv1.PostMapViewport{
 				Bounds: &openv1.MapBounds{West: -100, East: 100, South: -60, North: 60},
 				Zoom:   test.zoom, WidthPx: test.width, HeightPx: test.height,
-			})
+			}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -354,4 +354,10 @@ func TestNormalizePostMapViewportPreservesSignedMapLibreZoom(t *testing.T) {
 			}
 		})
 	}
+}
+
+// clusterMessages renders clustered places as the API answers them.
+func clusterMessages(clusters []MapCluster, items []MapItem) ([]*openv1.PostMapCluster, []*openv1.PostMapItem) {
+	response := mapFeaturesMessage(MapFeatures{Clusters: clusters, Items: items})
+	return response.Clusters, response.Items
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
+	postpublicpostgres "github.com/echovisionlab/geul-api/internal/post/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -240,10 +241,15 @@ var _ postpublic.FileService = referenceSearchFileService{}
 // newPublicPostHandler composes the public Post RPCs over db.
 func newPublicPostHandler(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentblock.Store) *postpublic.ConnectHandler {
 	t.Helper()
+	localization := postadapter.NewLocalization()
+	units, err := postpublicpostgres.NewUnits(db, postpublicpostgres.Deps{
+		ContentBlocks: store, Localization: localization,
+		MapPlaces: referencecatalogadapter.PublicMapPlaces{}, ShareLinks: postruntime.ShareLinks{},
+	})
+	require.NoError(t, err)
 	service, err := postpublic.NewService(postpublic.Deps{
-		DB: db, SpiceDB: spiceDB, Files: referenceSearchFileService{}, ContentBlocks: store,
-		Localizer: postadapter.NewLocalization(), MapPlaces: referencecatalogadapter.PublicMapPlaces{},
-		Members: postadapter.NewMemberSummaries(db, ""), ShareLinks: postruntime.ShareLinks{},
+		Units: units, SpiceDB: spiceDB, Files: referenceSearchFileService{},
+		Localizer: postpublicpostgres.NewLocalizer(db, localization), Members: postadapter.NewMemberSummaries(db, ""),
 	})
 	require.NoError(t, err)
 	return postpublic.NewConnectHandler(service)

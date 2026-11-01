@@ -1,4 +1,4 @@
-package public
+package postpublicpostgres
 
 import (
 	"github.com/echovisionlab/geul-api/internal/model"

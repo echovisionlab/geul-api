@@ -63,10 +63,7 @@
 2 internal/page/public gorm
 2 internal/page/public model
 18 internal/post generated contracts
-7 internal/post/public generated contracts
-4 internal/post/public gorm
-7 internal/post/public model
-3 internal/post/public spicedb client
+5 internal/post/public generated contracts
 19 internal/programevent generated contracts
 22 internal/programevent gorm
 20 internal/programevent model

@@ -1,21 +1,19 @@
 package public
 
 import (
-	"context"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildPostResponseRejectsInvalidStoredDocumentLayout(t *testing.T) {
+func TestBuildPostViewRejectsInvalidStoredDocumentLayout(t *testing.T) {
 	t.Parallel()
 	service := &Service{}
 	require.NotPanics(t, func() {
-		response, err := service.buildPostResponse(context.Background(), "", &publicPostSnapshot{
-			post: model.Post{ID: "post", DocumentLayout: model.DocumentLayout{ContentHeight: "bogus"}},
+		_, err := service.buildPostView(t.Context(), "", &publicPostSnapshot{
+			post: PublicPost{Post: post.Post{ID: "post", DocumentLayout: post.DocumentLayout{ContentHeight: "bogus"}}},
 		})
-		require.Error(t, err)
-		require.Nil(t, response)
+		require.EqualError(t, err, `invalid persisted document layout: invalid contentHeight "bogus"`)
 	})
 }

@@ -175,7 +175,7 @@ func (s *Service) hydratePostContentProjections(ctx context.Context, posts []Pos
 // Post view authorization.
 func LoadLocalizedContent(
 	ctx context.Context,
-	store Store,
+	store ContentReads,
 	postID string,
 	locale string,
 ) (*contentv1.LocalizedRichTextDocument, string, error) {
