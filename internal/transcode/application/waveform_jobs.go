@@ -152,7 +152,7 @@ func (h *Handlers) determineTrackAudioProcessingStatusWithDB(
 		return "", err
 	}
 	if hasHLS && hasWaveform && hasSpectrogram {
-		return managev1.TrackProcessingStatus_TRACK_PROCESSING_STATUS_COMPLETED.String(), nil
+		return string(model.TrackProcessingStatusCompleted), nil
 	}
 
 	transcodeFailures, err := failedTranscodeJobsWithDB(ctx, db, fileID, eventpkg.QueueTranscoderAudio)
@@ -166,10 +166,10 @@ func (h *Handlers) determineTrackAudioProcessingStatusWithDB(
 
 	if ((!hasHLS || !hasSpectrogram) && transcodeFailures > 0) ||
 		(!hasWaveform && waveformFailures > 0) {
-		return managev1.TrackProcessingStatus_TRACK_PROCESSING_STATUS_FAILED.String(), nil
+		return string(model.TrackProcessingStatusFailed), nil
 	}
 
-	return managev1.TrackProcessingStatus_TRACK_PROCESSING_STATUS_PROCESSING.String(), nil
+	return string(model.TrackProcessingStatusProcessing), nil
 }
 
 func loadAudioDerivativePresenceWithDB(

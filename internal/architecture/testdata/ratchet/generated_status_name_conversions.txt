@@ -13,5 +13,4 @@
 2 internal/label/public
 3 internal/programevent/public
 2 internal/referencecatalog/public
-3 internal/transcode/application
 2 internal/worker
