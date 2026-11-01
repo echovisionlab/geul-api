@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
@@ -131,7 +130,7 @@ func (s *Service) evaluateContentDownloads(
 	var err error
 	evaluation.owners, err = loadContentBlockDownloadOwnerWitnesses(ctx, tx, request.selectors)
 	if err != nil {
-		return downloadEvaluation{}, errs.Internal(err)
+		return downloadEvaluation{}, err
 	}
 	evaluation.ownerAuthorized, err = s.validateContentDownloadOwnerAuthorization(
 		ctx, tx, request.ownerAuthorization, request.ownerAuthorizationPresent, evaluation.owners, false,
@@ -141,15 +140,15 @@ func (s *Service) evaluateContentDownloads(
 	}
 	evaluation.relations, err = loadContentBlockMediaRelations(ctx, tx, request.selectors, false)
 	if err != nil {
-		return downloadEvaluation{}, errs.Internal(err)
+		return downloadEvaluation{}, err
 	}
 	evaluation.sources, err = mediaasset.LoadContentBlockDownloadSources(ctx, tx, request.selectors)
 	if err != nil {
-		return downloadEvaluation{}, errs.Internal(err)
+		return downloadEvaluation{}, err
 	}
 	allowed, err := mediaasset.EvaluateFileDownloadAccessBatch(ctx, tx, s.spiceDB, evaluation.sources, request.user, s.segments)
 	if err != nil {
-		return downloadEvaluation{}, errs.Internal(err)
+		return downloadEvaluation{}, err
 	}
 	signIn, err := contentDownloadSignInHints(ctx, tx, evaluation.sources, request.user)
 	if err != nil {
@@ -157,11 +156,11 @@ func (s *Service) evaluateContentDownloads(
 	}
 	evaluation.fingerprints, err = mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, evaluation.sources, s.segments)
 	if err != nil {
-		return downloadEvaluation{}, errs.Internal(err)
+		return downloadEvaluation{}, err
 	}
 	evaluation.viewerFingerprint, err = mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, evaluation.sources, request.user)
 	if err != nil {
-		return downloadEvaluation{}, errs.Internal(err)
+		return downloadEvaluation{}, err
 	}
 	evaluation.decisions = make(map[string]*openv1.FileDownloadAccess, len(request.selectors))
 	for key, source := range evaluation.sources {
@@ -198,7 +197,7 @@ func contentDownloadSignInHints(
 	}
 	presence, err := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, tx, restricted)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for key, present := range presence {
 		signIn[key] = present
@@ -268,12 +267,12 @@ func (s *Service) lockContentDownloads(
 ) (lockedContentDownloads, error) {
 	var current lockedContentDownloads
 	if err := mediaasset.LockFileDownloadPolicySegments(ctx, tx, evaluation.sources); err != nil {
-		return current, errs.Internal(err)
+		return current, err
 	}
 	var err error
 	current.owners, err = lockContentBlockDownloadOwners(ctx, tx, evaluation.owners)
 	if err != nil {
-		return current, errs.Internal(err)
+		return current, err
 	}
 	current.ownerAuthorized, err = s.validateContentDownloadOwnerAuthorization(
 		ctx, tx, request.ownerAuthorization, request.ownerAuthorizationPresent, current.owners, true,
@@ -283,23 +282,23 @@ func (s *Service) lockContentDownloads(
 	}
 	current.viewerActive, err = mediaasset.LockFileDownloadViewerFacts(ctx, tx, evaluation.sources, request.user)
 	if err != nil {
-		return current, errs.Internal(err)
+		return current, err
 	}
 	current.relations, err = loadContentBlockMediaRelations(ctx, tx, request.selectors, true)
 	if err != nil {
-		return current, errs.Internal(err)
+		return current, err
 	}
 	current.sources, err = mediaasset.LoadContentBlockDownloadSources(ctx, tx, request.selectors)
 	if err != nil {
-		return current, errs.Internal(err)
+		return current, err
 	}
 	current.fingerprints, err = mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, current.sources, s.segments)
 	if err != nil {
-		return current, errs.Internal(err)
+		return current, err
 	}
 	current.viewerFingerprint, err = mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, current.sources, request.user)
 	if err != nil {
-		return current, errs.Internal(err)
+		return current, err
 	}
 	return current, nil
 }
@@ -355,7 +354,7 @@ func (s *Service) applyDelivery(
 				source.MimeType, source.FileName, mediaauth.PurposeDownload, s.effectiveDownloadTTL(),
 			)
 			if err != nil {
-				return errs.Internal(err)
+				return err
 			}
 			item.Delivery.Download = download
 		}

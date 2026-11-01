@@ -24,7 +24,7 @@ func TestValidateMultipartCompletionVerifiedMimeRequiresDetectedMime(t *testing.
 	)
 
 	require.Error(t, err)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	require.Contains(t, err.Error(), errs.MsgMimeNotVerified)
 }
 
@@ -47,7 +47,7 @@ func TestValidateMultipartCompletionVerifiedMimeAppliesSiteEmailLogoPNGPolicy(t 
 		cfg,
 	)
 	require.Error(t, err)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 	require.Contains(t, err.Error(), "email logo uploads must be PNG")
 
 	verifiedMime, err := validateMultipartCompletionVerifiedMime(

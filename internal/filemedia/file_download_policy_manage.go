@@ -15,7 +15,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -124,22 +124,22 @@ func validateFileDownloadPolicyChange(command UpdateFileDownloadPolicyCommand) (
 	}
 	parsedExpectedFileID, parseErr := uuid.Parse(strings.TrimSpace(command.ExpectedFileID))
 	if parseErr != nil {
-		return fileDownloadPolicyChange{}, errs.InvalidArgument("expected_file_id", "must be a valid UUID")
+		return fileDownloadPolicyChange{}, domainerr.InvalidField("expected_file_id", "must be a valid UUID")
 	}
 	audience, ok := storedFileDownloadAudience(command.Policy.Audience)
 	if !ok {
-		return fileDownloadPolicyChange{}, errs.InvalidArgument("audience", "unsupported file download audience")
+		return fileDownloadPolicyChange{}, domainerr.InvalidField("audience", "unsupported file download audience")
 	}
 	segmentIDs, err := uniqueUUIDs(command.Policy.AudienceSegmentIDs, "audience_segment_ids")
 	if err != nil {
 		return fileDownloadPolicyChange{}, err
 	}
 	if command.Observed == nil {
-		return fileDownloadPolicyChange{}, errs.InvalidArgument("observed_policy", "is required")
+		return fileDownloadPolicyChange{}, domainerr.InvalidField("observed_policy", "is required")
 	}
 	observedAudience, ok := storedFileDownloadAudience(command.Observed.Audience)
 	if !ok {
-		return fileDownloadPolicyChange{}, errs.InvalidArgument("observed_policy.audience", "unsupported file download audience")
+		return fileDownloadPolicyChange{}, domainerr.InvalidField("observed_policy.audience", "unsupported file download audience")
 	}
 	observedSegmentIDs, err := uniqueUUIDs(command.Observed.AudienceSegmentIDs, "observed_policy.audience_segment_ids")
 	if err != nil {
@@ -152,7 +152,7 @@ func validateFileDownloadPolicyChange(command UpdateFileDownloadPolicyCommand) (
 		return fileDownloadPolicyChange{}, tooManyFileDownloadAudienceSegments("audience_segment_ids")
 	}
 	if audience != mediaasset.FileDownloadAudienceRestricted && len(segmentIDs) > 0 {
-		return fileDownloadPolicyChange{}, errs.InvalidArgument("audience_segment_ids", "audience segments require restricted audience")
+		return fileDownloadPolicyChange{}, domainerr.InvalidField("audience_segment_ids", "audience segments require restricted audience")
 	}
 	slices.Sort(segmentIDs)
 	return fileDownloadPolicyChange{
@@ -163,7 +163,7 @@ func validateFileDownloadPolicyChange(command UpdateFileDownloadPolicyCommand) (
 }
 
 func tooManyFileDownloadAudienceSegments(field string) error {
-	return errs.InvalidArgument(field, fmt.Sprintf("at most %d audience segments are allowed", maxFileDownloadAudienceSegments))
+	return domainerr.InvalidField(field, fmt.Sprintf("at most %d audience segments are allowed", maxFileDownloadAudienceSegments))
 }
 
 func (s *Service) UpdateFileDownloadPolicy(ctx context.Context, command UpdateFileDownloadPolicyCommand) (*managev1.FileDownloadPolicy, error) {
@@ -234,7 +234,7 @@ func (s *Service) applyFileDownloadPolicyChange(ctx context.Context, tx *gorm.DB
 		return fileDownloadPolicyUpdate{}, err
 	}
 	if locked.FileID != change.expectedFileID {
-		return fileDownloadPolicyUpdate{}, errs.FailedPrecondition("File attachment changed; reload before saving download policy")
+		return fileDownloadPolicyUpdate{}, domainerr.Precondition("File attachment changed; reload before saving download policy")
 	}
 	previousSegmentIDs, err := loadFileDownloadPolicySegmentIDs(ctx, tx, locked)
 	if err != nil {
@@ -355,38 +355,38 @@ func validateFileDownloadPolicySelector(
 ) (fileDownloadPolicySelector, error) {
 	entityID = strings.TrimSpace(entityID)
 	if entityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
-		return fileDownloadPolicySelector{}, errs.Required("entity_type")
+		return fileDownloadPolicySelector{}, domainerr.Required("entity_type")
 	}
 	parsedEntityID, err := uuid.Parse(entityID)
 	if err != nil {
-		return fileDownloadPolicySelector{}, errs.InvalidArgument("entity_id", "must be a valid UUID")
+		return fileDownloadPolicySelector{}, domainerr.InvalidField("entity_id", "must be a valid UUID")
 	}
 	entityID = parsedEntityID.String()
 	selector := fileDownloadPolicySelector{EntityType: entityType, EntityID: entityID}
 	if entityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK {
 		if blockID != nil || referencePath != nil {
-			return fileDownloadPolicySelector{}, errs.InvalidArgument("block_id", "Track policy does not accept a Content Block selector")
+			return fileDownloadPolicySelector{}, domainerr.InvalidField("block_id", "Track policy does not accept a Content Block selector")
 		}
 		return selector, nil
 	}
 	if _, _, ok := contentBlockFilePolicyOwner(entityType); !ok {
-		return fileDownloadPolicySelector{}, errs.InvalidArgument("entity_type", "unsupported file download policy owner")
+		return fileDownloadPolicySelector{}, domainerr.InvalidField("entity_type", "unsupported file download policy owner")
 	}
 	if blockID == nil {
-		return fileDownloadPolicySelector{}, errs.Required("block_id")
+		return fileDownloadPolicySelector{}, domainerr.Required("block_id")
 	}
 	if referencePath == nil {
-		return fileDownloadPolicySelector{}, errs.Required("reference_path")
+		return fileDownloadPolicySelector{}, domainerr.Required("reference_path")
 	}
 	normalizedBlockID := strings.TrimSpace(*blockID)
 	parsedBlockID, err := uuid.Parse(normalizedBlockID)
 	if err != nil {
-		return fileDownloadPolicySelector{}, errs.InvalidArgument("block_id", "must be a valid UUID")
+		return fileDownloadPolicySelector{}, domainerr.InvalidField("block_id", "must be a valid UUID")
 	}
 	normalizedBlockID = parsedBlockID.String()
 	normalizedReferencePath := strings.TrimSpace(*referencePath)
 	if normalizedReferencePath != "file" {
-		return fileDownloadPolicySelector{}, errs.InvalidArgument("reference_path", "File Block policy requires the canonical file selector")
+		return fileDownloadPolicySelector{}, domainerr.InvalidField("reference_path", "File Block policy requires the canonical file selector")
 	}
 	selector.BlockID = &normalizedBlockID
 	selector.ReferencePath = &normalizedReferencePath
@@ -415,9 +415,9 @@ func (s *Service) resolveFileDownloadPolicyRelation(
 		}
 		if err := query.Take(&row).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fileDownloadPolicyRelation{}, errs.NotFound("File Block attachment", *selector.BlockID)
+				return fileDownloadPolicyRelation{}, domainerr.ResourceNotFound("File Block attachment", *selector.BlockID)
 			}
-			return fileDownloadPolicyRelation{}, errs.Internal(err)
+			return fileDownloadPolicyRelation{}, err
 		}
 		row.Selector = selector
 		return row, nil
@@ -433,9 +433,9 @@ func (s *Service) resolveFileDownloadPolicyRelation(
 	}
 	if err := query.Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fileDownloadPolicyRelation{}, errs.NotFound("Track original audio", selector.EntityID)
+			return fileDownloadPolicyRelation{}, domainerr.ResourceNotFound("Track original audio", selector.EntityID)
 		}
-		return fileDownloadPolicyRelation{}, errs.Internal(err)
+		return fileDownloadPolicyRelation{}, err
 	}
 	row.Selector = selector
 	return row, nil
@@ -482,16 +482,16 @@ func (s *Service) authorizeFileDownloadPolicyOwner(
 		}
 		return access.RequireLockedEdit(ctx, db, relation.ResourceID)
 	}
-	return errs.Internal(fmt.Errorf("unsupported File policy owner %s", relation.ResourceType))
+	return fmt.Errorf("unsupported File policy owner %s", relation.ResourceType)
 }
 
 func requireFileDownloadPolicyActor(ctx context.Context) error {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || strings.TrimSpace(user.MemberID.String()) == "" {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	if user.Banned {
-		return errs.AccountBanned()
+		return domainerr.AccountBanned()
 	}
 	return nil
 }
@@ -521,7 +521,7 @@ func loadFileDownloadPolicySegmentIDs(ctx context.Context, db *gorm.DB, relation
 			Where("block_id = ? AND reference_path = ?", *relation.Selector.BlockID, *relation.Selector.ReferencePath)
 	}
 	if err := query.Order("audience_segment_id ASC").Pluck("audience_segment_id", &ids).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return ids, nil
 }
@@ -537,11 +537,11 @@ func updateFileDownloadPolicyRelation(
 		if err := tx.WithContext(ctx).Model(&model.Track{}).
 			Where("id = ?", relation.Selector.EntityID).
 			Update("download_audience", string(audience)).Error; err != nil {
-			return errs.Internal(err)
+			return err
 		}
 		if err := tx.WithContext(ctx).Where("track_id = ?", relation.Selector.EntityID).
 			Delete(&model.TrackDownloadAudienceSegment{}).Error; err != nil {
-			return errs.Internal(err)
+			return err
 		}
 		if len(segmentIDs) == 0 {
 			return nil
@@ -552,19 +552,19 @@ func updateFileDownloadPolicyRelation(
 			rows = append(rows, model.TrackDownloadAudienceSegment{TrackID: relation.Selector.EntityID, AudienceSegmentID: segmentID, CreatedAt: now})
 		}
 		if err := tx.WithContext(ctx).Create(&rows).Error; err != nil {
-			return errs.Internal(err)
+			return err
 		}
 		return nil
 	}
 	if err := tx.WithContext(ctx).Table("content_block_attachment").
 		Where("block_id = ? AND reference_path = ?", *relation.Selector.BlockID, *relation.Selector.ReferencePath).
 		Update("download_audience", string(audience)).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if err := tx.WithContext(ctx).
 		Where("block_id = ? AND reference_path = ?", *relation.Selector.BlockID, *relation.Selector.ReferencePath).
 		Delete(&model.ContentBlockAttachmentDownloadAudienceSegment{}).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if len(segmentIDs) == 0 {
 		return nil
@@ -578,7 +578,7 @@ func updateFileDownloadPolicyRelation(
 		})
 	}
 	if err := tx.WithContext(ctx).Create(&rows).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }
@@ -590,7 +590,7 @@ func (s *Service) loadManageFileDownloadPolicy(
 ) (*managev1.FileDownloadPolicy, error) {
 	audience, ok := manageFileDownloadAudience(relation.Audience)
 	if !ok {
-		return nil, errs.InternalMsg("attachment has invalid download audience")
+		return nil, errors.New("attachment has invalid download audience")
 	}
 	segmentIDs, err := loadFileDownloadPolicySegmentIDs(ctx, db, relation)
 	if err != nil {
@@ -601,7 +601,7 @@ func (s *Service) loadManageFileDownloadPolicy(
 		if err := db.WithContext(ctx).
 			Where("id IN ? AND archived_at IS NULL", segmentIDs).
 			Order("LOWER(name) ASC, id ASC").Find(&segments).Error; err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 	}
 	audienceAccess := s.audienceAccess
@@ -609,7 +609,7 @@ func (s *Service) loadManageFileDownloadPolicy(
 	for i := range segments {
 		summary, valid := audienceAccess.AuthenticatedSegmentSummary(&segments[i])
 		if !valid {
-			return nil, errs.InternalMsg("attachment references an ineligible audience segment")
+			return nil, errors.New("attachment references an ineligible audience segment")
 		}
 		summaries = append(summaries, summary)
 	}
@@ -662,7 +662,7 @@ func relationFileDownloadPolicyAudit(
 			return sharedtelemetry.NewReleaseTrackDownloadPolicyAuditRecord(m, relation.ResourceID, relation.Selector.EntityID, relation.FileID, previous, next, previousSegmentIDs, segmentIDs)
 		}
 	default:
-		return mutation.Audit{}, errs.InternalMsg("unsupported File download policy audit owner")
+		return mutation.Audit{}, errors.New("unsupported File download policy audit owner")
 	}
 	return mutation.RequestAudit(action, build), nil
 }
@@ -670,25 +670,25 @@ func relationFileDownloadPolicyAudit(
 func requireFileDownloadAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient) error {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || strings.TrimSpace(user.MemberID.String()) == "" {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	if user.Banned {
-		return errs.AccountBanned()
+		return domainerr.AccountBanned()
 	}
 	can, err := policyv1.File.List()
 	if err != nil {
-		return errs.WithCause(errs.AuthorRequired(), err)
+		return domainerr.AuthorRequired().WithCause(err)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := spiceDB.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.AuthorRequired()
+		return domainerr.AuthorRequired()
 	}
 	return nil
 }
@@ -700,7 +700,7 @@ func uniqueUUIDs(values []string, field string) ([]string, error) {
 		value := strings.TrimSpace(rawValue)
 		parsed, err := uuid.Parse(value)
 		if err != nil {
-			return nil, errs.InvalidArgument(field, fmt.Sprintf("invalid UUID: %s", value))
+			return nil, domainerr.InvalidField(field, fmt.Sprintf("invalid UUID: %s", value))
 		}
 		value = parsed.String()
 		if _, ok := seen[value]; ok {

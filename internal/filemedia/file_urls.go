@@ -7,13 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -80,7 +79,7 @@ func (s *Service) resolveContentFileDeliveries(
 		Select("id", "extension", "mime_type", "file_size", "duration_seconds", "file_name").
 		Where("id IN ? AND delete_requested_at IS NULL", unique).
 		Find(&files).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("load content file deliveries: %w", err))
+		return nil, fmt.Errorf("load content file deliveries: %w", err)
 	}
 	for _, file := range files {
 		inline, err := buildExpiringMediaFileRef(
@@ -94,7 +93,7 @@ func (s *Service) resolveContentFileDeliveries(
 			mediaauth.InlineTTL,
 		)
 		if err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 		delivery := &commonv1.MediaDelivery{
 			FileId:    file.ID,
@@ -130,7 +129,7 @@ func (s *Service) GetMediaDelivery(ctx context.Context, query GetMediaDeliveryQu
 
 func (s *Service) getMediaDelivery(ctx context.Context, fileID string, allowChangedRetry bool) (*managev1.GetMediaDeliveryResponse, error) {
 	if fileID == "" {
-		return nil, errs.Required("file_id")
+		return nil, domainerr.Required("file_id")
 	}
 	authorization, err := s.authorizeManageFileDeliveriesWithWitness(ctx, []string{fileID})
 	if err != nil {
@@ -154,11 +153,11 @@ func (s *Service) getMediaDelivery(ctx context.Context, fileID string, allowChan
 			if retryErr == nil {
 				return retried, nil
 			}
-			if errs.CodeOf(retryErr) != connect.CodePermissionDenied && errs.CodeOf(retryErr) != connect.CodeNotFound {
+			if !mutation.IsDenied(retryErr) && !mutation.IsNotFound(retryErr) {
 				return nil, retryErr
 			}
 		}
-		return nil, errs.NotFound("file", fileID)
+		return nil, domainerr.ResourceNotFound("file", fileID)
 	}
 	return response, nil
 }
@@ -172,10 +171,7 @@ type GetBulkMediaDeliveriesQuery struct {
 // derivatives, keyed by File ID.
 func (s *Service) GetBulkMediaDeliveries(ctx context.Context, query GetBulkMediaDeliveriesQuery) (map[string]*managev1.GetMediaDeliveryResponse, error) {
 	if len(query.FileIDs) > MaxMediaDeliveryBatchSize {
-		return nil, errs.InvalidArgument(
-			"file_ids",
-			fmt.Sprintf("must contain at most %d items", MaxMediaDeliveryBatchSize),
-		)
+		return nil, domainerr.InvalidField("file_ids", fmt.Sprintf("must contain at most %d items", MaxMediaDeliveryBatchSize))
 	}
 	if len(query.FileIDs) == 0 {
 		return make(map[string]*managev1.GetMediaDeliveryResponse), nil
@@ -207,7 +203,7 @@ func (s *Service) loadFileURLResponses(
 		Select("id", "extension", "mime_type", "file_size", "duration_seconds", "file_name", "ingest_slot_id", "ingest_attempt_id", "client_media_bundle_id").
 		Where("id IN ? AND delete_requested_at IS NULL", fileIDs).
 		Find(&files).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to query files: %w", err))
+		return nil, fmt.Errorf("failed to query files: %w", err)
 	}
 
 	fileMap := make(map[string]storedFileDeliveryRow, len(files))
@@ -219,7 +215,7 @@ func (s *Service) loadFileURLResponses(
 
 	derivatives, err := s.loadStoredDerivativeDeliveries(ctx, resolvedFileIDs)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to query file derivatives: %w", err))
+		return nil, fmt.Errorf("failed to query file derivatives: %w", err)
 	}
 
 	derivativeMap := make(map[string]map[string]storedDerivativeDeliveryRow)
@@ -265,7 +261,7 @@ func (s *Service) loadFileURLResponses(
 			file.FileName,
 		)
 		if err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 		response.ClientMediaBundleId = file.ClientMediaBundleID
 		if file.FileName != nil {
@@ -280,7 +276,7 @@ func (s *Service) loadFileURLResponses(
 
 		if derivs, ok := derivativeMap[fileID]; ok {
 			if err := s.attachFileDerivativeURLs(response, fileID, derivs); err != nil {
-				return nil, errs.Internal(err)
+				return nil, err
 			}
 		}
 		if asset := imageAssets[fileID]; asset != nil {
@@ -308,7 +304,7 @@ func (s *Service) getFileUrlsForID(ctx context.Context, fileID string) (*managev
 	}
 	response := responses[fileID]
 	if response == nil {
-		return nil, errs.NotFound("file", fileID)
+		return nil, domainerr.ResourceNotFound("file", fileID)
 	}
 	return response, nil
 }

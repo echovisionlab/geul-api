@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -83,10 +82,6 @@ func observingRuntimeS3Client(
 
 type uploadPartResponse struct {
 	ETag string `json:"etag"`
-}
-
-type fileIngestSignalReceiver struct {
-	conn *pgx.Conn
 }
 
 func requireCanonicalDownloadRef(

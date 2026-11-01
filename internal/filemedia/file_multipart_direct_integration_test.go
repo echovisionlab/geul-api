@@ -9,15 +9,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -165,7 +165,7 @@ func TestFinalizingMultipartSessionRejectsAbortAndReplacementDirectIntegration(t
 	}))
 	require.Error(t, err)
 	require.Nil(t, abortResponse)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 
 	replacement, err := NewConnectHandler(fixture.service).InitiateMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
@@ -232,7 +232,7 @@ func TestDeleteTrackGuardsFinalizingUploadSessionDirectIntegration(t *testing.T)
 	response, err := trackService.DeleteTrack(ctx, connect.NewRequest(&managev1.DeleteTrackRequest{Id: trackID}))
 	require.Error(t, err)
 	require.Nil(t, response)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	requireUploadSessionStatus(
 		t,
 		stack.DB,
@@ -371,7 +371,7 @@ func TestConcurrentTrackInitiateAndDeleteLeavesNoMultipartOrSessionDirectIntegra
 			}
 			if testCase.pauseBeforeInsert {
 				require.Error(t, initiated.err)
-				require.Equal(t, connect.CodeNotFound, connect.CodeOf(initiated.err))
+				require.Equal(t, connect.CodeNotFound, errs.CodeOf(initiated.err))
 				require.Nil(t, initiated.response)
 			} else {
 				require.NoError(t, initiated.err)
@@ -424,7 +424,7 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 		UploadId: wrongUploadID,
 	}))
 	require.Error(t, err)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 	require.Equal(t, 0, observer.count(), "a wrong upload identity must not bypass an active session")
 
 	response, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(fixture.ctx, connect.NewRequest(request))
@@ -467,7 +467,7 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 			require.Equal(t, fixture.fileID, recovered.Msg.GetFileId())
 		} else {
 			require.Error(t, err)
-			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+			require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
 		}
 	}
 
@@ -764,95 +764,6 @@ func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectInt
 	require.Equal(t, completer.ID, *stored.UploadedByMemberID)
 	require.Equal(t, time.Now().UTC().Format("2006/01/02"), stored.FolderPath)
 	require.True(t, stored.BindingTargetNull)
-}
-
-func TestFileServiceMultipartEditorMeshStoresGLBAndServesCDNDirectIntegration(t *testing.T) {
-	t.Parallel()
-	stack := testutil.SetupSharedDirectMediaRuntimeStackWithCDN(t)
-	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
-
-	meshBody, err := os.ReadFile(testutil.RepositoryTestMeshGLB(t))
-	require.NoError(t, err)
-	require.NotEmpty(t, meshBody)
-
-	asyncPublisher := &hardCutAsyncPublisher{}
-	svc := newTestService(Deps{
-		DB:             stack.DB,
-		S3:             runtimeS3Client(t, stack),
-		AsyncPublisher: asyncPublisher,
-		S3Bucket:       stack.S3MediaBucket,
-		CDNDomain:      stack.CDNURL,
-		MediaDomain:    stack.MediaURL,
-		MediaSecret:    stack.MediaSigningSecret,
-		Transcoder:     &recordingFileTranscoderPublisher{},
-		SpiceDB:        stack.SpiceDBClient,
-	})
-	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
-	fileName := fmt.Sprintf("editor-mesh-%d.glb", time.Now().UnixNano())
-	lastModified := time.Now().UnixMilli()
-	initResp, err := NewConnectHandler(svc).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
-		UploadType:       managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH,
-		FileName:         fileName,
-		FileSize:         int64(len(meshBody)),
-		MimeType:         "model/gltf-binary",
-		FileLastModified: &lastModified,
-	}))
-	require.NoError(t, err)
-	require.NotEmpty(t, initResp.Msg.GetUploadId())
-	require.NotEmpty(t, initResp.Msg.GetFileId())
-	require.Equal(t, "glb", initResp.Msg.GetExtension())
-	fileKey, err := mediaauth.MediaObjectKey(initResp.Msg.GetFileId(), initResp.Msg.GetExtension())
-	require.NoError(t, err)
-	require.True(t, strings.HasSuffix(fileKey, ".glb"))
-
-	part := handleMultipartPartDirect(t, svc, manager, initResp.Msg.GetFileId(), initResp.Msg.GetUploadId(), 1, meshBody)
-	require.NotEmpty(t, part.ETag)
-
-	completeResp, err := NewConnectHandler(svc).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
-		FileId:   initResp.Msg.GetFileId(),
-		UploadId: initResp.Msg.GetUploadId(),
-	}))
-	require.NoError(t, err)
-	require.Equal(t, initResp.Msg.GetFileId(), completeResp.Msg.GetFileId())
-	delivery := completeResp.Msg.GetDelivery()
-	require.Equal(t, initResp.Msg.GetFileId(), delivery.GetFileId())
-	require.Equal(t, "glb", delivery.GetExtension())
-	requireCanonicalInlineRef(t, delivery.GetInline(), initResp.Msg.GetFileId(), "glb", "model/gltf-binary")
-	downloadURL := delivery.GetDownload().GetUrl()
-	requireCanonicalDownloadRef(t, delivery.GetDownload(), initResp.Msg.GetFileId(), "glb", "model/gltf-binary")
-	parsedDownloadURL, err := url.Parse(downloadURL)
-	require.NoError(t, err)
-	require.True(t, strings.HasSuffix(parsedDownloadURL.Path, "/"+initResp.Msg.GetFileId()+".glb"))
-
-	var stored model.File
-	require.NoError(t, stack.DB.Where("id = ?", initResp.Msg.GetFileId()).First(&stored).Error)
-	require.Equal(t, strings.TrimSuffix(fileName, ".glb"), stored.FileName)
-	require.Equal(t, "model/gltf-binary", stored.MimeType)
-	require.EqualValues(t, len(meshBody), stored.FileSize)
-	require.Equal(t, "glb", stored.Extension)
-	require.Empty(t, stored.SHA256)
-	require.Nil(t, stored.IngestSlotID)
-
-	s3Client := runtimeS3Client(t, stack)
-	headResp, err := s3Client.HeadObject(context.Background(), &s3.HeadObjectInput{
-		Bucket: aws.String(stack.S3MediaBucket),
-		Key:    aws.String(fileKey),
-	})
-	require.NoError(t, err)
-	require.Equal(t, "model/gltf-binary", aws.ToString(headResp.ContentType))
-
-	cdnReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, downloadURL, nil)
-	require.NoError(t, err)
-	cdnReq.Header.Set("Origin", stack.WebURL)
-	cdnResp, err := http.DefaultClient.Do(cdnReq)
-	require.NoError(t, err)
-	defer cdnResp.Body.Close()
-	require.Equal(t, http.StatusOK, cdnResp.StatusCode)
-	require.Equal(t, stack.WebURL, cdnResp.Header.Get("Access-Control-Allow-Origin"))
-	require.Contains(t, cdnResp.Header.Get("Content-Type"), "model/gltf-binary")
-	deliveredBody, err := io.ReadAll(cdnResp.Body)
-	require.NoError(t, err)
-	require.Equal(t, meshBody, deliveredBody)
 }
 
 func ptrInt64(value int64) *int64 {

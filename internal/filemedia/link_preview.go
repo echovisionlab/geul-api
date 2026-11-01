@@ -17,7 +17,7 @@ import (
 	"golang.org/x/net/html/charset"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -56,23 +56,23 @@ func NewLinkPreviewService(spiceDB *auth.SpiceDBClient) *LinkPreviewService {
 func requirePlatformAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient) error {
 	user := auth.GetUser(ctx)
 	if user == nil || user.IdentityID.String() == "" {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	can, err := policyv1.Platform.IsAuthor()
 	if err != nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	authorizationCtx := auth.WithUser(ctx, user)
 	decision, err := auth.AuthorizationDecision(authorizationCtx, can)
 	if err != nil {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	allowed, err := spiceDB.Can(authorizationCtx, decision)
 	if err != nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	if !allowed {
-		return errs.AuthorRequired()
+		return domainerr.AuthorRequired()
 	}
 	return nil
 }
@@ -88,13 +88,13 @@ func (s *LinkPreviewService) GetLinkPreview(ctx context.Context, query GetLinkPr
 	}
 	parsedURL, err := url.Parse(strings.TrimSpace(query.URL))
 	if err != nil {
-		return nil, errs.InvalidArgument("url", "invalid URL")
+		return nil, domainerr.InvalidField("url", "invalid URL")
 	}
 	ctx, cancel := context.WithTimeout(ctx, linkPreviewTimeout)
 	defer cancel()
 	target, err := validateRemoteImportURL(ctx, s.resolver, parsedURL)
 	if err != nil {
-		return nil, errs.InvalidArgument("url", err.Error())
+		return nil, domainerr.InvalidField("url", err.Error())
 	}
 	client := newRemoteImportHTTPClient(ctx, s.resolver, s.dial, s.baseTransport)
 	defer client.CloseIdleConnections()
@@ -105,17 +105,17 @@ func (s *LinkPreviewService) GetLinkPreview(ctx context.Context, query GetLinkPr
 		nil,
 	)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("create link preview request: %w", err))
+		return nil, fmt.Errorf("create link preview request: %w", err)
 	}
 	httpRequest.Header.Set("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1")
 	httpRequest.Header.Set("User-Agent", linkPreviewUserAgent)
 	response, err := client.Do(httpRequest)
 	if err != nil {
-		return nil, errs.WithCause(errs.FailedPrecondition("the linked page could not be read"), err)
+		return nil, domainerr.Precondition("the linked page could not be read").WithCause(err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, errs.FailedPrecondition(fmt.Sprintf("the linked page returned status %d", response.StatusCode))
+		return nil, domainerr.Precondition(fmt.Sprintf("the linked page returned status %d", response.StatusCode))
 	}
 
 	resolved := response.Request.URL

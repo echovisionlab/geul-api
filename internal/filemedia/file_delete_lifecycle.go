@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
@@ -81,14 +81,14 @@ func (s *Service) DeleteFile(ctx context.Context, command DeleteFileCommand) err
 	fileID := strings.TrimSpace(command.FileID)
 	can, err := policyv1.File.Delete(fileID)
 	if err != nil {
-		return errs.InvalidArgument("file_id", "must be a canonical resource UUID")
+		return domainerr.InvalidField("file_id", "must be a canonical resource UUID")
 	}
 	var file struct {
 		ID string `gorm:"column:id"`
 	}
 	if err := s.db.WithContext(ctx).Table("file").Where("id = ?", fileID).First(&file).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFound("file", fileID)
+			return domainerr.ResourceNotFound("file", fileID)
 		}
 		return err
 	}
@@ -191,7 +191,7 @@ func requestUnboundFileDerivativeAssetsDeletion(
 		return err
 	}
 	if len(assets) != len(assetIDs) {
-		return errs.FailedPrecondition("file derivative references a missing public asset")
+		return domainerr.Precondition("file derivative references a missing public asset")
 	}
 
 	var boundAssetIDs []string
@@ -224,7 +224,7 @@ func requestUnboundFileDerivativeAssetsDeletion(
 			// the existing unready-asset retention path reclaims it.
 			continue
 		default:
-			return errs.FailedPrecondition("file derivative public asset has an unsupported lifecycle state")
+			return domainerr.Precondition("file derivative public asset has an unsupported lifecycle state")
 		}
 	}
 	return nil
@@ -282,7 +282,7 @@ func requestUnboundSourceFileAssetsDeletion(
 			model.PublicAssetStatusAllocated:
 			continue
 		default:
-			return errs.FailedPrecondition("source File public asset has an unsupported lifecycle state")
+			return domainerr.Precondition("source File public asset has an unsupported lifecycle state")
 		}
 	}
 	return nil

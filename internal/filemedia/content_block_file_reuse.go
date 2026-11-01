@@ -6,7 +6,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 )
@@ -33,10 +33,10 @@ func (a *contentBlockFileReuseAuthorizer) AuthorizeFileReuse(
 ) error {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated || !principal.Onboarded || principal.MemberID == "" {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	if principal.Banned {
-		return errs.AccountBanned()
+		return domainerr.AccountBanned()
 	}
 
 	var alreadyInDocument bool
@@ -75,14 +75,14 @@ func (a *contentBlockFileReuseAuthorizer) AuthorizeFileReuse(
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := a.spiceDB.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !allowed {
-		return errs.NoPermission("access", "platform")
+		return domainerr.NoPermission("access", "platform")
 	}
 	return nil
 }

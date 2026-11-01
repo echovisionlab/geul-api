@@ -32,113 +32,125 @@ func executeCompensatedTransaction(
 	if tx.Error != nil {
 		return fmt.Errorf("begin file deletion transaction: %w", tx.Error)
 	}
-
-	var (
-		compensation       func(context.Context) error
-		commitStarted      bool
-		spiceDBConfirmedAt time.Time
-	)
-	register := func(confirmedAt time.Time, next func(context.Context) error) error {
-		if next == nil {
-			return fmt.Errorf("file deletion transaction compensation is required")
-		}
-		if confirmedAt.IsZero() {
-			return fmt.Errorf("file authorization write confirmation time is required")
-		}
-		if compensation != nil {
-			return fmt.Errorf("file deletion transaction compensation may be registered only once")
-		}
-		compensation = next
-		spiceDBConfirmedAt = confirmedAt
-		return nil
-	}
-	compensate := func() error {
-		if compensation == nil {
-			return nil
-		}
-		compensationCtx, cancel := context.WithTimeout(
-			context.WithoutCancel(ctx),
-			transactionCompensationTimeout,
-		)
-		defer cancel()
-		if err := compensation(compensationCtx); err != nil {
-			authzmutation.RecordAuthorizationRollbackCompensationFailed(compensationCtx)
-			return fmt.Errorf("compensate file deletion transaction: %w", err)
-		}
-		return nil
-	}
-	rollback := func() error {
-		if err := tx.Rollback().Error; err != nil {
-			return fmt.Errorf("rollback file deletion transaction: %w", err)
-		}
-		return nil
-	}
-
+	transaction := &compensatedTransaction{ctx: ctx, tx: tx}
 	defer func() {
-		panicValue := recover()
-		if panicValue == nil {
-			return
+		if panicValue := recover(); panicValue != nil {
+			transaction.repanic(panicValue)
 		}
-		cause, stack := failurecause.Panic(panicValue)
-		slog.ErrorContext(ctx, "File deletion transaction panicked", "failure_cause", cause, "cause", cause, "panic_stack", stack)
-		if commitStarted {
-			if compensation != nil {
-				authzmutation.RecordAuthorizationCommitUncertain(
-					context.WithoutCancel(ctx),
-					spiceDBConfirmedAt,
-				)
-			}
-			panic(errors.Join(
-				transactionPanicError(panicValue),
-				fmt.Errorf("file deletion transaction commit outcome is uncertain; rollback and compensation were not attempted"),
-			))
-		}
-		panicErr := transactionPanicError(panicValue)
-		joined := false
-		if compensationErr := compensate(); compensationErr != nil {
-			slog.ErrorContext(ctx, "Failed to compensate panicked file deletion transaction", failurecause.Attr(compensationErr))
-			panicErr = errors.Join(panicErr, compensationErr)
-			joined = true
-		}
-		if rollbackErr := rollback(); rollbackErr != nil {
-			slog.ErrorContext(ctx, "Failed to rollback panicked file deletion transaction", failurecause.Attr(rollbackErr))
-			panicErr = errors.Join(panicErr, rollbackErr)
-			joined = true
-		}
-		if !joined {
-			panic(panicValue)
-		}
-		panic(panicErr)
 	}()
 
-	if callbackErr := callback(tx, register); callbackErr != nil {
+	if callbackErr := callback(tx, transaction.register); callbackErr != nil {
 		result := callbackErr
-		if compensationErr := compensate(); compensationErr != nil {
+		if compensationErr := transaction.compensate(); compensationErr != nil {
 			result = errors.Join(result, compensationErr)
 		}
-		if rollbackErr := rollback(); rollbackErr != nil {
+		if rollbackErr := transaction.rollback(); rollbackErr != nil {
 			result = errors.Join(result, rollbackErr)
 		}
 		return result
 	}
 
-	commitStarted = true
+	transaction.commitStarted = true
 	if commitErr := tx.Commit().Error; commitErr != nil {
-		if compensation != nil {
+		if transaction.compensation != nil {
 			authzmutation.RecordAuthorizationCommitUncertain(
 				context.WithoutCancel(ctx),
-				spiceDBConfirmedAt,
+				transaction.spiceDBConfirmedAt,
 			)
 		}
 		return fmt.Errorf("commit file deletion transaction: %w", commitErr)
 	}
-	if compensation != nil {
+	if transaction.compensation != nil {
 		authzmutation.RecordAuthorizationCommitSucceeded(
 			context.WithoutCancel(ctx),
-			spiceDBConfirmedAt,
+			transaction.spiceDBConfirmedAt,
 		)
 	}
 	return nil
+}
+
+// compensatedTransaction is one file deletion transaction and the single
+// authorization compensation its callback may register.
+type compensatedTransaction struct {
+	ctx                context.Context
+	tx                 *gorm.DB
+	compensation       func(context.Context) error
+	commitStarted      bool
+	spiceDBConfirmedAt time.Time
+}
+
+func (t *compensatedTransaction) register(confirmedAt time.Time, next func(context.Context) error) error {
+	if next == nil {
+		return fmt.Errorf("file deletion transaction compensation is required")
+	}
+	if confirmedAt.IsZero() {
+		return fmt.Errorf("file authorization write confirmation time is required")
+	}
+	if t.compensation != nil {
+		return fmt.Errorf("file deletion transaction compensation may be registered only once")
+	}
+	t.compensation = next
+	t.spiceDBConfirmedAt = confirmedAt
+	return nil
+}
+
+func (t *compensatedTransaction) compensate() error {
+	if t.compensation == nil {
+		return nil
+	}
+	compensationCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(t.ctx),
+		transactionCompensationTimeout,
+	)
+	defer cancel()
+	if err := t.compensation(compensationCtx); err != nil {
+		authzmutation.RecordAuthorizationRollbackCompensationFailed(compensationCtx)
+		return fmt.Errorf("compensate file deletion transaction: %w", err)
+	}
+	return nil
+}
+
+func (t *compensatedTransaction) rollback() error {
+	if err := t.tx.Rollback().Error; err != nil {
+		return fmt.Errorf("rollback file deletion transaction: %w", err)
+	}
+	return nil
+}
+
+// repanic compensates and rolls back a transaction whose callback panicked,
+// then panics again with every failure joined. A panic after the commit began
+// leaves the outcome uncertain, so nothing is undone.
+func (t *compensatedTransaction) repanic(panicValue any) {
+	cause, stack := failurecause.Panic(panicValue)
+	slog.ErrorContext(t.ctx, "File deletion transaction panicked", "failure_cause", cause, "cause", cause, "panic_stack", stack)
+	if t.commitStarted {
+		if t.compensation != nil {
+			authzmutation.RecordAuthorizationCommitUncertain(
+				context.WithoutCancel(t.ctx),
+				t.spiceDBConfirmedAt,
+			)
+		}
+		panic(errors.Join(
+			transactionPanicError(panicValue),
+			fmt.Errorf("file deletion transaction commit outcome is uncertain; rollback and compensation were not attempted"),
+		))
+	}
+	panicErr := transactionPanicError(panicValue)
+	joined := false
+	if compensationErr := t.compensate(); compensationErr != nil {
+		slog.ErrorContext(t.ctx, "Failed to compensate panicked file deletion transaction", failurecause.Attr(compensationErr))
+		panicErr = errors.Join(panicErr, compensationErr)
+		joined = true
+	}
+	if rollbackErr := t.rollback(); rollbackErr != nil {
+		slog.ErrorContext(t.ctx, "Failed to rollback panicked file deletion transaction", failurecause.Attr(rollbackErr))
+		panicErr = errors.Join(panicErr, rollbackErr)
+		joined = true
+	}
+	if !joined {
+		panic(panicValue)
+	}
+	panic(panicErr)
 }
 
 func transactionPanicError(value any) error {

@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -160,10 +160,10 @@ func validateFileManagerMutationIDs(values []string) ([]string, error) {
 		return nil, err
 	}
 	if len(fileIDs) == 0 {
-		return nil, errs.Required("file_ids")
+		return nil, domainerr.Required("file_ids")
 	}
 	if len(fileIDs) > fileManagerMaxMutationSize {
-		return nil, errs.InvalidArgument("file_ids", "at most 100 files are allowed")
+		return nil, domainerr.InvalidField("file_ids", "at most 100 files are allowed")
 	}
 	return fileIDs, nil
 }
@@ -192,7 +192,7 @@ func lockFileManagerDeletionRows(ctx context.Context, tx *gorm.DB, fileIDs []str
 		return nil, err
 	}
 	if len(files) != len(fileIDs) {
-		return nil, errs.FailedPrecondition("one or more files no longer exist")
+		return nil, domainerr.Precondition("one or more files no longer exist")
 	}
 	result := make(map[string]model.File, len(files))
 	for _, file := range files {
@@ -286,7 +286,7 @@ func lockFileFolderSubtree(ctx context.Context, tx *gorm.DB, folderID string) ([
 	var folder model.FileFolder
 	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?", folderID).First(&folder).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("folder", folderID)
+			return nil, domainerr.ResourceNotFound("folder", folderID)
 		}
 		return nil, err
 	}
@@ -325,7 +325,7 @@ func prepareFolderFileDeletionMutations(
 		return nil, err
 	}
 	if len(activeReferences) > 0 || len(usageRows) > 0 {
-		return nil, errs.FailedPrecondition("folder contains one or more files that are still in use")
+		return nil, domainerr.Precondition("folder contains one or more files that are still in use")
 	}
 	mutations := make([]*FileDeletionMutation, 0, len(fileIDs))
 	for _, fileID := range fileIDs {

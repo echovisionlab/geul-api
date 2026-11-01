@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
@@ -79,11 +79,11 @@ func (s *Service) prepareMultipartUploadInitiation(
 	config := s.getUploadConfig(request.UploadType)
 	if config == nil {
 		message := fmt.Sprintf("invalid upload type: %s", request.UploadType.String())
-		return multipartUploadInitiation{}, errs.InvalidArgument("upload_type", message)
+		return multipartUploadInitiation{}, domainerr.InvalidField("upload_type", message)
 	}
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return multipartUploadInitiation{}, errs.AuthenticationRequired()
+		return multipartUploadInitiation{}, domainerr.AuthenticationRequired()
 	}
 
 	initiation, err := normalizeMultipartUploadTarget(s.legalRouteIdentity, request)
@@ -127,16 +127,10 @@ func normalizeMultipartUploadTarget(
 		slotID:        strings.TrimSpace(derefString(request.SlotID)),
 	}
 	if initiation.uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE && initiation.entityID != "" {
-		return multipartUploadInitiation{}, errs.InvalidArgument(
-			"entity_id",
-			"general File Manager upload must omit entity ID",
-		)
+		return multipartUploadInitiation{}, domainerr.InvalidField("entity_id", "general File Manager upload must omit entity ID")
 	}
 	if isEditorFileIngestUploadType(initiation.uploadType) && initiation.entityID != "" {
-		return multipartUploadInitiation{}, errs.InvalidArgument(
-			"entity_id",
-			"editor File upload must omit document entity ID",
-		)
+		return multipartUploadInitiation{}, domainerr.InvalidField("entity_id", "editor File upload must omit document entity ID")
 	}
 	resolvedSiteEntityID, err := resolveSiteUploadEntityID(
 		legalRoutes,
@@ -165,17 +159,17 @@ func validateMultipartUploadFile(
 ) (string, string, error) {
 	if request.FileSize > config.MaxSize {
 		message := fmt.Sprintf("file size %d exceeds maximum %d", request.FileSize, config.MaxSize)
-		return "", "", errs.InvalidArgument("file_size", message)
+		return "", "", domainerr.InvalidField("file_size", message)
 	}
 	if config.MinSize > 0 && request.FileSize < config.MinSize {
 		message := fmt.Sprintf("file size %d is below minimum %d", request.FileSize, config.MinSize)
-		return "", "", errs.InvalidArgument("file_size", message)
+		return "", "", domainerr.InvalidField("file_size", message)
 	}
 
 	allowed, canonicalMime := isMimeAllowed(request.MimeType, buildAllowedMimeSet(config.PermittedMimeTypes))
 	if !allowed {
 		message := unsupportedMimeMessage(request.MimeType, config.PermittedMimeTypes)
-		return "", "", errs.InvalidArgument("mime_type", message)
+		return "", "", domainerr.InvalidField("mime_type", message)
 	}
 	if err := validateMultipartUploadTypeFile(request, slotID, canonicalMime); err != nil {
 		return "", "", err
@@ -183,12 +177,12 @@ func validateMultipartUploadFile(
 
 	fileName, err := normalizeNewDownloadFilename(request.FileName)
 	if err != nil {
-		return "", "", errs.InvalidArgument("file_name", err.Error())
+		return "", "", domainerr.InvalidField("file_name", err.Error())
 	}
 	fileExtension := mediaExtension(&canonicalMime)
 	if !strings.EqualFold(mediaauth.FilenameExtension(fileName), fileExtension) {
 		message := fmt.Sprintf("filename extension must be .%s", fileExtension)
-		return "", "", errs.InvalidArgument("file_name", message)
+		return "", "", domainerr.InvalidField("file_name", message)
 	}
 	fileName = storedFileBasename(fileName, "download", fileExtension) + "." + fileExtension
 	return canonicalMime, fileName, nil
@@ -208,11 +202,11 @@ func validateMultipartUploadTypeFile(
 				maxSize,
 				canonicalMime,
 			)
-			return errs.InvalidArgument("file_size", message)
+			return domainerr.InvalidField("file_size", message)
 		}
 	}
 	if request.UploadType == managev1.UploadType_UPLOAD_TYPE_USER_AVATAR && canonicalMime != "image/webp" {
-		return errs.InvalidArgument("mime_type", "direct avatar uploads must be WebP")
+		return domainerr.InvalidField("mime_type", "direct avatar uploads must be WebP")
 	}
 	return validateSiteEmailLogoMime(request.UploadType, slotID, canonicalMime)
 }
@@ -242,17 +236,13 @@ func (s *Service) resumeOrReplaceMultipartUpload(
 		return response, true, err
 	}
 	if containsFinalizingUploadSession(selection.activeSessions) {
-		return nil, false, errs.FailedPrecondition(
-			"an existing upload is finalizing; retry its completion before replacing it",
-		)
+		return nil, false, domainerr.Precondition("an existing upload is finalizing; retry its completion before replacing it")
 	}
 	if err := s.cleanupSupersededUploadSessions(ctx, selection.activeSessions, "Upload replaced"); err != nil {
 		if errors.Is(err, mediaasset.ErrUploadSessionNotAbortable) {
-			return nil, false, errs.FailedPrecondition(
-				"an existing upload started finalizing before it could be replaced",
-			)
+			return nil, false, domainerr.Precondition("an existing upload started finalizing before it could be replaced")
 		}
-		return nil, false, errs.Internal(fmt.Errorf("failed to cleanup superseded upload sessions: %w", err))
+		return nil, false, fmt.Errorf("failed to cleanup superseded upload sessions: %w", err)
 	}
 	return nil, false, nil
 }
@@ -273,7 +263,7 @@ func (s *Service) createMultipartUploadSession(
 		ContentType: aws.String(initiation.canonicalMime),
 	})
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to create multipart upload: %w", err))
+		return nil, fmt.Errorf("failed to create multipart upload: %w", err)
 	}
 
 	session := newMultipartUploadSession(request, initiation, fileID, *output.UploadId)
@@ -291,9 +281,9 @@ func (s *Service) createMultipartUploadSession(
 
 func multipartFileKeyError(err error) error {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return errs.NotFoundMsg("track not found")
+		return domainerr.New(domainerr.NotFound, "", "track not found")
 	}
-	return errs.Internal(fmt.Errorf("failed to build file key: %w", err))
+	return fmt.Errorf("failed to build file key: %w", err)
 }
 
 func newMultipartUploadSession(
@@ -356,9 +346,9 @@ func (s *Service) abortMultipartUploadAfterInsertFailure(
 
 func multipartSessionInsertError(err error) error {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return errs.NotFoundMsg("track not found")
+		return domainerr.New(domainerr.NotFound, "", "track not found")
 	}
-	return errs.Internal(fmt.Errorf("failed to create upload session: %w", err))
+	return fmt.Errorf("failed to create upload session: %w", err)
 }
 
 func (s *Service) publishMultipartUploadStarted(ctx context.Context, session model.UploadSession) error {
@@ -376,7 +366,7 @@ func (s *Service) publishMultipartUploadStarted(ctx context.Context, session mod
 		return nil
 	}
 	if err := s.bindUploadSessionIngestEmitter(emitter, session); err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	emitter.publishUploading(0, nil)
 	return nil
