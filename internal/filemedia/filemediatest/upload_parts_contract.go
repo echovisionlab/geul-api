@@ -14,6 +14,34 @@ import (
 
 func uploadPartCases() map[string]func(*testing.T, UploadHarness) {
 	cases := map[string]func(*testing.T, UploadHarness){
+		"uploaded byte totals follow replacement and owner rollback": func(t *testing.T, h UploadHarness) {
+			row := contractUpload()
+			h.Seed(t, row, []domain.UploadPart{{UploadID: row.UploadID, PartNumber: 1, ETag: "first", Size: 3, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}, {UploadID: row.UploadID, PartNumber: 2, ETag: "second", Size: 7, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}})
+			abort := errors.New("owner rollback")
+			require.ErrorIs(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				got, err := s.UploadedPartBytes(ctx, row.UploadID)
+				require.NoError(t, err)
+				require.Equal(t, int64(10), got)
+				require.NoError(t, s.UpsertUploadPart(ctx, domain.UploadPart{UploadID: row.UploadID, PartNumber: 1, ETag: "empty", Size: 0, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}))
+				got, err = s.UploadedPartBytes(ctx, row.UploadID)
+				require.NoError(t, err)
+				require.Equal(t, int64(7), got)
+				require.NoError(t, s.DeleteUploadPart(ctx, row.UploadID, 2))
+				got, err = s.UploadedPartBytes(ctx, row.UploadID)
+				require.NoError(t, err)
+				require.Zero(t, got)
+				return abort
+			}), abort)
+			require.NoError(t, mutationtest.Read(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				got, err := s.UploadedPartBytes(ctx, row.UploadID)
+				require.NoError(t, err)
+				require.Equal(t, int64(10), got)
+				got, err = s.UploadedPartBytes(ctx, uuid.NewString())
+				require.NoError(t, err)
+				require.Zero(t, got)
+				return nil
+			}))
+		},
 		"part replay replaces receipt and preserves creation time": func(t *testing.T, h UploadHarness) {
 			row := contractUpload()
 			old := domain.UploadPart{UploadID: row.UploadID, PartNumber: 1, ETag: "old", Size: 3, CreatedAt: row.CreatedAt, UpdatedAt: row.CreatedAt}

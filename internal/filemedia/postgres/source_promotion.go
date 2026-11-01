@@ -67,3 +67,7 @@ func (s *store) CompletePromotionAsset(ctx context.Context, cdn string, input me
 func (s *store) ReadyPromotionReference(ctx context.Context, cdn, id string) (*mediaasset.Reference, error) {
 	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), cdn).ReadyAssetRef(ctx, id)
 }
+
+func (s *store) ReadyPromotionReferenceForFile(ctx context.Context, cdn, file, kind string) (*mediaasset.Reference, error) {
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), cdn).ReadyAssetRefForSourceFile(ctx, file, kind)
+}

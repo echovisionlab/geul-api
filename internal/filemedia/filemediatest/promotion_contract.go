@@ -64,6 +64,13 @@ func promotionContractCases() map[string]func(*testing.T, CatalogHarness) {
 				require.Equal(t, "https://cdn.example.com/asset/"+id+"/image.webp", ref.URL)
 				require.Equal(t, int64(64), ref.FileSize)
 				require.Equal(t, digest, ref.SHA256)
+				byFile, err := s.ReadyPromotionReferenceForFile(ctx, "https://cdn.example.com", row.ID, "image")
+				require.NoError(t, err)
+				require.Equal(t, ref, byFile)
+				_, err = s.ReadyPromotionReferenceForFile(ctx, "https://cdn.example.com", row.ID, "logo")
+				require.Error(t, err)
+				_, err = s.ReadyPromotionReferenceForFile(ctx, "https://cdn.example.com", uuid.NewString(), "image")
+				require.Error(t, err)
 				return nil
 			}))
 			require.NoError(t, mutationtest.Read(t, h.Harness, func(ctx context.Context, s domain.Store) error {
