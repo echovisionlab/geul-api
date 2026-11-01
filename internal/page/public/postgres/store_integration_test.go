@@ -35,9 +35,11 @@ func TestPublicStoreReadsThePublishedProjectionIntegration(t *testing.T) {
 	units, err := pagepublicpostgres.NewUnits(db, contents, unusedShareLinks{})
 	require.NoError(t, err)
 	h := mutationtest.PostgresHarness(db, units)
+	// The public read share-locks its rows, so it reads in a snapshot that
+	// may lock.
 	read := func(work func(ctx context.Context, store pagepublic.Store) error) {
 		t.Helper()
-		require.NoError(t, mutationtest.Read(t, h, work))
+		require.NoError(t, units.ReadLocked(t.Context(), func(store pagepublic.Store) error { return work(t.Context(), store) }))
 	}
 	read(func(ctx context.Context, store pagepublic.Store) error {
 		homepage, err := store.HomepagePageID(ctx)

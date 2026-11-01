@@ -63,6 +63,10 @@ func transact(t *testing.T, h Harness, work func(ctx context.Context, store page
 
 func text(value string) *string { return &value }
 
+// versionSnapshot is a version checkpoint envelope the page_version table
+// accepts.
+var versionSnapshot = json.RawMessage(`{"schemaVersion":1,"sourceLocale":"en","title":"v","summary":null,"document":{}}`)
+
 // stamp is a time PostgreSQL stores exactly.
 func stamp() time.Time { return time.Now().UTC().Truncate(time.Microsecond) }
 
@@ -183,7 +187,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		fileID := h.SeedFile(t)
 		at := stamp().Add(time.Second)
 		hidden := false
-		layout := page.DocumentLayout{ContentHeight: page.ContentHeightViewport, PageChrome: page.PlacementPinned, Footer: page.PlacementFlow, HideTableOfContents: true}
+		layout := page.DocumentLayout{ContentHeight: page.ContentHeightViewport, PageChrome: page.PlacementPinned, Footer: page.PlacementFlow}
 		transact(t, h, func(ctx context.Context, store page.Store) error {
 			require.NoError(t, store.UpdateSettings(ctx, value.ID, page.SettingsChange{
 				SetSlug: true, ShowTitle: &hidden, AccessPolicy: json.RawMessage(`{"mode":"PAGE_ACCESS_MODE_AUTHENTICATED"}`),
@@ -245,7 +249,11 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			locale, exists, err := store.Locale(ctx, value.ID, "ko", page.UpdateLock)
 			require.NoError(t, err)
 			require.True(t, exists)
-			require.Equal(t, page.Locale{Locale: "ko", Summary: text("요약"), IncarnationID: incarnation, UpdatedAt: at}, locale)
+			require.Equal(t, "ko", locale.Locale)
+			require.Nil(t, locale.Title)
+			require.Equal(t, "요약", *locale.Summary)
+			require.Equal(t, incarnation, locale.IncarnationID)
+			require.True(t, at.Equal(locale.UpdatedAt))
 
 			later := at.Add(time.Second)
 			exists, err = store.UpdateLocale(ctx, value.ID, "ko", page.LocaleChange{SetTitle: true, Title: text("제목"), UpdatedAt: later})
@@ -285,7 +293,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		value := insert(t, h, nil)
 		other := insert(t, h, nil)
 		member := uuid.NewString()
-		snapshot := json.RawMessage(`{"schemaVersion":1}`)
+		snapshot := versionSnapshot
 		transact(t, h, func(ctx context.Context, store page.Store) error {
 			for number := int32(1); number <= 3; number++ {
 				version := page.Version{PageID: value.ID, Version: number, Title: text("v"), ContentSnapshot: snapshot, ContributorMemberIDs: []string{member}, CreatedAt: stamp()}
@@ -407,7 +415,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 	"a locked latest version makes a second checkpoint wait": func(t *testing.T, h Harness) {
 		value := insert(t, h, nil)
 		transact(t, h, func(ctx context.Context, store page.Store) error {
-			version := page.Version{PageID: value.ID, Version: 1, ContentSnapshot: json.RawMessage(`{}`), ContributorMemberIDs: []string{}, CreatedAt: stamp()}
+			version := page.Version{PageID: value.ID, Version: 1, ContentSnapshot: versionSnapshot, ContributorMemberIDs: []string{}, CreatedAt: stamp()}
 			return store.InsertVersion(ctx, &version)
 		})
 		err := mutationtest.RequireSecondWaits(t, h.Harness,
