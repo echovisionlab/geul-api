@@ -57,36 +57,58 @@ func (*Service) LoadTranslationInterchangeTarget(
 	if err := validateFormInterchangeIdentity(formID, locale, plan); err != nil {
 		return TranslationInterchangeTarget{}, err
 	}
-	root, err := loadFormAIDocumentRoot(ctx, tx, formID, "KEY SHARE")
+	state, err := loadFormInterchangeState(ctx, tx, formID, locale, plan, "KEY SHARE")
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
+	}
+	return TranslationInterchangeTarget{Exists: state.loaded.CurrentExists, Revision: state.revision, Targets: state.targets}, nil
+}
+
+// formInterchangeState is the target locale of an XLIFF exchange as the
+// locked Form holds it: its rows, target revision and current unit values.
+type formInterchangeState struct {
+	root     formAIDocumentRoot
+	loaded   formAIDocumentLoadedState
+	revision string
+	targets  map[string]translation.UnitResult
+}
+
+// loadFormInterchangeState locks the Form root with lock and reads the
+// target locale of plan. A target that has become the source locale, or a
+// plan of a previous source locale, no longer matches the document.
+func loadFormInterchangeState(
+	ctx context.Context,
+	tx *gorm.DB,
+	formID string,
+	locale string,
+	plan *translation.ExtractionPlan,
+	lock string,
+) (formInterchangeState, error) {
+	root, err := loadFormAIDocumentRoot(ctx, tx, formID, lock)
+	if err != nil {
+		return formInterchangeState{}, err
 	}
 	if _, valid := formAIDocumentLifecycle(root.Status); !valid {
-		return TranslationInterchangeTarget{}, errFormUnsupportedLifecycle
+		return formInterchangeState{}, errFormUnsupportedLifecycle
 	}
-	loaded, err := loadAIDocumentStateAfterAuthorization(
-		ctx, tx, formID, locale, root, "", false,
-	)
+	loaded, err := loadAIDocumentStateAfterAuthorization(ctx, tx, formID, locale, root, "", lock == clause.LockingStrengthUpdate)
 	if err != nil {
-		return TranslationInterchangeTarget{}, err
+		return formInterchangeState{}, err
 	}
 	if loaded.State.SourceLocale != plan.SourceLocale || locale == loaded.State.SourceLocale {
-		return TranslationInterchangeTarget{}, domainerr.InvalidField(
+		return formInterchangeState{}, domainerr.InvalidField(
 			"target_locale", "Form XLIFF locale role no longer matches the owning document",
 		)
 	}
-	state := TranslationInterchangeTarget{Exists: loaded.CurrentExists}
-	if loaded.CurrentExists {
-		state.Revision, err = deriveFormTargetRevision(root.DocumentRevision, loaded.Current)
-		if err != nil {
-			return TranslationInterchangeTarget{}, err
-		}
-		state.Targets, err = projectFormInterchangeTargets(plan, loaded.Current)
-		if err != nil {
-			return TranslationInterchangeTarget{}, err
-		}
-	} else {
-		state.Targets = map[string]translation.UnitResult{}
+	state := formInterchangeState{root: root, loaded: loaded, targets: map[string]translation.UnitResult{}}
+	if !loaded.CurrentExists {
+		return state, nil
+	}
+	if state.revision, err = deriveFormTargetRevision(root.DocumentRevision, loaded.Current); err != nil {
+		return formInterchangeState{}, err
+	}
+	if state.targets, err = projectFormInterchangeTargets(plan, loaded.Current); err != nil {
+		return formInterchangeState{}, err
 	}
 	return state, nil
 }
@@ -94,7 +116,7 @@ func (*Service) LoadTranslationInterchangeTarget(
 // ApplyTranslationInterchange rebuilds the target schema from the current
 // source-owned topology, then stores only locale-owned values. Authorization
 // has already succeeded once in the caller's transaction; this seam owns the
-// locked CAS, persistence, Audit and derived OG request.
+// locked CAS, persistence and Audit.
 func (s *Service) ApplyTranslationInterchange(
 	ctx context.Context,
 	tx *gorm.DB,
@@ -103,99 +125,26 @@ func (s *Service) ApplyTranslationInterchange(
 	if err := validateFormInterchangeMutation(mutation); err != nil {
 		return TranslationInterchangeResult{}, err
 	}
-	root, err := loadFormAIDocumentRoot(ctx, tx, mutation.FormID, clause.LockingStrengthUpdate)
+	state, err := loadFormInterchangeState(ctx, tx, mutation.FormID, mutation.TargetLocale, mutation.Plan, clause.LockingStrengthUpdate)
 	if err != nil {
 		return TranslationInterchangeResult{}, err
 	}
-	if _, valid := formAIDocumentLifecycle(root.Status); !valid {
-		return TranslationInterchangeResult{}, errFormUnsupportedLifecycle
+	exists := state.loaded.CurrentExists
+	if err := translation.ValidateExpectedTargetRevision(mutation.ExpectedRevision, state.revision, exists); err != nil {
+		return TranslationInterchangeResult{}, err
 	}
-	loaded, err := loadAIDocumentStateAfterAuthorization(
-		ctx, tx, mutation.FormID, mutation.TargetLocale, root, "", true,
-	)
+	candidate, err := buildFormInterchangeCandidate(mutation, state)
 	if err != nil {
 		return TranslationInterchangeResult{}, err
 	}
-	if loaded.State.SourceLocale != mutation.SourceLocale || mutation.TargetLocale == loaded.State.SourceLocale {
-		return TranslationInterchangeResult{}, domainerr.InvalidField(
-			"target_locale", "Form XLIFF locale role no longer matches the owning document",
-		)
+	if exists && formInterchangeCandidateEqual(state.loaded.Current, candidate) {
+		return TranslationInterchangeResult{Revision: state.revision}, nil
 	}
-	currentRevision := ""
-	if loaded.CurrentExists {
-		currentRevision, err = deriveFormTargetRevision(root.DocumentRevision, loaded.Current)
-		if err != nil {
-			return TranslationInterchangeResult{}, err
-		}
-	}
-	if err := translation.ValidateExpectedTargetRevision(
-		mutation.ExpectedRevision, currentRevision, loaded.CurrentExists,
-	); err != nil {
+	if err := writeFormInterchangeTarget(ctx, tx, mutation, state, candidate); err != nil {
 		return TranslationInterchangeResult{}, err
-	}
-	currentTargets := map[string]translation.UnitResult{}
-	if loaded.CurrentExists {
-		currentTargets, err = projectFormInterchangeTargets(mutation.Plan, loaded.Current)
-		if err != nil {
-			return TranslationInterchangeResult{}, err
-		}
-	}
-	desired := mergeFormInterchangeTargets(mutation.Mode, currentTargets, mutation.Targets)
-	candidate, err := ApplyTranslationCandidate(mutation.Source, desired)
-	if err != nil {
-		return TranslationInterchangeResult{}, domainerr.InvalidField("file_id", err.Error())
-	}
-	if !formInterchangeHasSchemaTarget(mutation.Plan, desired) {
-		candidate.ContentJSON, err = formAIDocumentEmptyTargetSchema(loaded.Source.Schema)
-		if err != nil {
-			return TranslationInterchangeResult{}, err
-		}
-	}
-	if len(candidate.ContentJSON) != 0 {
-		if err := validateFormAIDocumentTargetSchema(loaded.Source.Schema, candidate.ContentJSON); err != nil {
-			return TranslationInterchangeResult{}, domainerr.InvalidField("file_id", err.Error())
-		}
-	}
-	candidate.ContentText = formCanonicalContentText(candidate.ContentJSON)
-	if loaded.CurrentExists && formInterchangeCandidateEqual(loaded.Current, candidate) {
-		return TranslationInterchangeResult{Revision: currentRevision}, nil
-	}
-
-	now := mutation.Now.UTC()
-	if now.IsZero() {
-		return TranslationInterchangeResult{}, domainerr.InvalidField("now", "Form XLIFF mutation time is required")
-	}
-	if loaded.CurrentExists {
-		now = translation.NextTargetUpdatedAt(now, loaded.Current.UpdatedAt)
-	}
-	affected := changedFormInterchangeHandles(currentTargets, mutation.Targets, mutation.UnitHandles)
-	fields := structured.Fields{
-		"title": candidate.Title, "content_json": formJSONValueOrNil(candidate.ContentJSON),
-		"content_text": candidate.ContentText, "updated_at": now,
-	}
-	if loaded.CurrentExists {
-		result := tx.WithContext(ctx).Table("form_translation").
-			Where("entity_id = ?::uuid AND locale = ?", mutation.FormID, mutation.TargetLocale).
-			Updates(fields)
-		if result.Error != nil {
-			return TranslationInterchangeResult{}, result.Error
-		}
-		if result.RowsAffected != 1 {
-			return TranslationInterchangeResult{}, domainerr.Precondition("Form translation changed; retry")
-		}
-	} else {
-		if err := tx.WithContext(ctx).Exec(
-			`INSERT INTO form_translation (
-				entity_id, locale, title, content_json, content_text, created_at, updated_at
-			) VALUES (?::uuid, ?, ?, ?, ?, ?, ?)`,
-			mutation.FormID, mutation.TargetLocale, candidate.Title,
-			formJSONValueOrNil(candidate.ContentJSON), candidate.ContentText, now, now,
-		).Error; err != nil {
-			return TranslationInterchangeResult{}, err
-		}
 	}
 	operation := sharedtelemetry.AuditItemOperationUpdated
-	if !loaded.CurrentExists {
+	if !exists {
 		operation = sharedtelemetry.AuditItemOperationCreated
 	}
 	if err := domainaudit.AppendRequest(
@@ -204,23 +153,93 @@ func (s *Service) ApplyTranslationInterchange(
 	); err != nil {
 		return TranslationInterchangeResult{}, err
 	}
-	reloaded, exists, err := loadFormAIDocumentLocale(
-		ctx, tx, mutation.FormID, mutation.TargetLocale, false,
-	)
+	nextRevision, err := advancedFormInterchangeRevision(ctx, tx, mutation, state)
 	if err != nil {
 		return TranslationInterchangeResult{}, err
-	}
-	nextRevision, err := deriveFormTargetRevision(root.DocumentRevision, reloaded)
-	if err != nil {
-		return TranslationInterchangeResult{}, err
-	}
-	if !exists || reloaded.Revision == "" || nextRevision == currentRevision {
-		return TranslationInterchangeResult{}, errors.New("Form XLIFF mutation did not advance target revision")
 	}
 	return TranslationInterchangeResult{
 		Revision: nextRevision, Changed: true,
-		AffectedUnitHandles: affected,
+		AffectedUnitHandles: changedFormInterchangeHandles(state.targets, mutation.Targets, mutation.UnitHandles),
 	}, nil
+}
+
+// buildFormInterchangeCandidate merges the imported units over the current
+// ones and rebuilds the target locale on the source topology. Without a
+// schema unit the target keeps an empty overlay of the source schema.
+func buildFormInterchangeCandidate(mutation TranslationInterchangeMutation, state formInterchangeState) (*translation.Candidate, error) {
+	desired := mergeFormInterchangeTargets(mutation.Mode, state.targets, mutation.Targets)
+	candidate, err := ApplyTranslationCandidate(mutation.Source, desired)
+	if err != nil {
+		return nil, domainerr.InvalidField("file_id", err.Error())
+	}
+	sourceSchema := state.loaded.Source.Schema
+	if !formInterchangeHasSchemaTarget(mutation.Plan, desired) {
+		if candidate.ContentJSON, err = formAIDocumentEmptyTargetSchema(sourceSchema); err != nil {
+			return nil, err
+		}
+	}
+	if len(candidate.ContentJSON) != 0 {
+		if err := validateFormAIDocumentTargetSchema(sourceSchema, candidate.ContentJSON); err != nil {
+			return nil, domainerr.InvalidField("file_id", err.Error())
+		}
+	}
+	candidate.ContentText = formCanonicalContentText(candidate.ContentJSON)
+	return candidate, nil
+}
+
+// writeFormInterchangeTarget stores candidate as the target locale row,
+// updating the locked row or inserting a missing one.
+func writeFormInterchangeTarget(
+	ctx context.Context,
+	tx *gorm.DB,
+	mutation TranslationInterchangeMutation,
+	state formInterchangeState,
+	candidate *translation.Candidate,
+) error {
+	now := mutation.Now.UTC()
+	if now.IsZero() {
+		return domainerr.InvalidField("now", "Form XLIFF mutation time is required")
+	}
+	if !state.loaded.CurrentExists {
+		return tx.WithContext(ctx).Exec(
+			`INSERT INTO form_translation (
+				entity_id, locale, title, content_json, content_text, created_at, updated_at
+			) VALUES (?::uuid, ?, ?, ?, ?, ?, ?)`,
+			mutation.FormID, mutation.TargetLocale, candidate.Title,
+			formJSONValueOrNil(candidate.ContentJSON), candidate.ContentText, now, now,
+		).Error
+	}
+	now = translation.NextTargetUpdatedAt(now, state.loaded.Current.UpdatedAt)
+	result := tx.WithContext(ctx).Table("form_translation").
+		Where("entity_id = ?::uuid AND locale = ?", mutation.FormID, mutation.TargetLocale).
+		Updates(structured.Fields{
+			"title": candidate.Title, "content_json": formJSONValueOrNil(candidate.ContentJSON),
+			"content_text": candidate.ContentText, "updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return domainerr.Precondition("Form translation changed; retry")
+	}
+	return nil
+}
+
+// advancedFormInterchangeRevision reads the target revision the write
+// produced; a write that left it unchanged is a server fault.
+func advancedFormInterchangeRevision(ctx context.Context, tx *gorm.DB, mutation TranslationInterchangeMutation, state formInterchangeState) (string, error) {
+	reloaded, exists, err := loadFormAIDocumentLocale(ctx, tx, mutation.FormID, mutation.TargetLocale, false)
+	if err != nil {
+		return "", err
+	}
+	nextRevision, err := deriveFormTargetRevision(state.root.DocumentRevision, reloaded)
+	if err != nil {
+		return "", err
+	}
+	if !exists || reloaded.Revision == "" || nextRevision == state.revision {
+		return "", errors.New("Form XLIFF mutation did not advance target revision")
+	}
+	return nextRevision, nil
 }
 
 func validateFormInterchangeIdentity(formID, locale string, plan *translation.ExtractionPlan) error {
