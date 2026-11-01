@@ -153,7 +153,7 @@ func (p *menuAIDocumentPort) executeMutation(
 				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
 				Changed:          domainResult.Changed,
 			}
-			result = withOperationChanges(command, result, func(operation core.Operation) []string { return menuOperationHandles(operation) })
+			result = withOperationChanges(command, result)
 
 			return result, nil
 		},
@@ -190,27 +190,6 @@ func menuDomainIssues(issues []menudomain.AIDocumentIssue) []core.OperationIssue
 		})
 	}
 	return result
-}
-
-func menuOperationHandles(operation core.Operation) []string {
-	switch operation.Kind {
-	case core.OperationSetField:
-		return []string{string(operation.SetField.Target.Block), string(operation.SetField.Target.Field)}
-	case core.OperationUnsetField:
-		return []string{string(operation.UnsetField.Target.Block), string(operation.UnsetField.Target.Field)}
-	case core.OperationInsertBlock:
-		return []string{string(operation.InsertBlock.Block)}
-	case core.OperationDeleteBlock:
-		return []string{string(operation.DeleteBlock.Block)}
-	case core.OperationMoveBlock:
-		return []string{string(operation.MoveBlock.Block)}
-	case core.OperationReplaceBlockKind:
-		return []string{string(operation.ReplaceBlockKind.Block)}
-	case core.OperationCreateTranslation, core.OperationDeleteTranslation:
-		return []string{"locale"}
-	default:
-		return nil
-	}
 }
 
 func projectMenuAIDocument(snapshot menudomain.AIDocumentSnapshot) core.Document {

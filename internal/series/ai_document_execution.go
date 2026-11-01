@@ -75,7 +75,7 @@ func validateAIDocumentDomain(
 // postSeriesAIOperationIssue is the Series rule an operation breaks, if
 // any.
 func postSeriesAIOperationIssue(ctx context.Context, store Store, loaded core.Document, operation core.Operation) (*core.OperationIssue, error) {
-	handle := func() string { return postSeriesAIOperationHandles(operation)[0] }
+	handle := func() string { return postSeriesAIIssueHandles(operation)[0] }
 	issue := func(code core.IssueCode, message string) *core.OperationIssue {
 		return &core.OperationIssue{Code: code, Handle: handle(), Message: message}
 	}
@@ -297,7 +297,7 @@ func (s *Service) applyAIDocumentCommand(
 		if changed {
 			mutation.changes = append(mutation.changes, core.Change{
 				Operation: index, Kind: operation.Kind,
-				AffectedHandles: postSeriesAIOperationHandles(operation),
+				AffectedHandles: core.OperationHandles(operation, command.Locale),
 			})
 		}
 	}

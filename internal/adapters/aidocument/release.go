@@ -122,9 +122,7 @@ func (p *releasePort) executeMutation(
 		Result: func(domainResult releasedomain.AIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
 			output := core.ApplyResult{DocumentRevision: core.Revision(domainResult.DocumentRevision), Changed: domainResult.Changed}
 			output.TargetRevision = core.OptionalRevision(domainResult.TargetRevision)
-			output = withOperationChanges(command, output, func(operation core.Operation) []string {
-				return compactOperationHandles(operation, command.Locale, "release")
-			})
+			output = withOperationChanges(command, output)
 
 			return output, nil
 		},
@@ -181,7 +179,7 @@ func (p *releasePort) compile(state releasedomain.AIDocumentState, document core
 	contentIndexes := make([]int, 0, len(operations))
 	for index, operation := range operations {
 		if operation.Kind == core.OperationUnsetField && operation.UnsetField != nil && (document.Role() == core.LocaleRoleNonSource || operation.UnsetField.Target.Field == richTextContentField || operation.UnsetField.Target.Block == releaseMetadataBlockID || strings.HasPrefix(string(operation.UnsetField.Target.Block), "credit-")) {
-			return releasedomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: strings.Join(compactOperationHandles(operation, document.Locale, "release"), "/"), Message: "Release locale values use explicit empty instead of unset"}}, nil
+			return releasedomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: compactIssueHandle(operation, document.Locale, "release"), Message: "Release locale values use explicit empty instead of unset"}}, nil
 		}
 		handled, issue := compileReleaseCreditNote(&mutation, operation, index)
 		if handled {

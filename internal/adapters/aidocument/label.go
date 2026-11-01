@@ -107,7 +107,7 @@ func (p *labelPort) executeMutation(
 		Result: func(domainResult labeldomain.AIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
 			output := core.ApplyResult{DocumentRevision: core.Revision(domainResult.Content.DocumentRevision.String()), Changed: domainResult.Content.Changed}
 			output.TargetRevision = core.OptionalRevision(domainResult.TargetRevision)
-			output = withOperationChanges(command, output, func(operation core.Operation) []string { return labelOperationHandles(operation, command.Locale) })
+			output = withOperationChanges(command, output)
 
 			return output, nil
 		},
@@ -186,27 +186,6 @@ func validateLabelIdentity(identity core.DocumentIdentity) error {
 		return errors.New("label AI document reference must be a canonical UUID")
 	}
 	return nil
-}
-
-func labelOperationHandles(operation core.Operation, locale core.Locale) []string {
-	switch operation.Kind {
-	case core.OperationSetField:
-		return []string{"block:" + string(operation.SetField.Target.Block) + "/field:" + string(operation.SetField.Target.Field)}
-	case core.OperationUnsetField:
-		return []string{"block:" + string(operation.UnsetField.Target.Block) + "/field:" + string(operation.UnsetField.Target.Field)}
-	case core.OperationInsertBlock:
-		return []string{"block:" + string(operation.InsertBlock.Block)}
-	case core.OperationDeleteBlock:
-		return []string{"block:" + string(operation.DeleteBlock.Block)}
-	case core.OperationMoveBlock:
-		return []string{"block:" + string(operation.MoveBlock.Block)}
-	case core.OperationReplaceBlockKind:
-		return []string{"block:" + string(operation.ReplaceBlockKind.Block)}
-	case core.OperationCreateTranslation, core.OperationDeleteTranslation:
-		return []string{"translation:" + string(locale)}
-	default:
-		return []string{"label"}
-	}
 }
 
 func labelAPIIsNil(api labelDocumentAPI) bool {

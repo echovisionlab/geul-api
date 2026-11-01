@@ -286,7 +286,7 @@ func (p *emailRichTextPort) validateOperation(
 	invalid := func(message string) *core.OperationIssue {
 		return &core.OperationIssue{
 			Operation: index, Code: core.IssueInvalidOperation,
-			Handle: strings.Join(emailRichTextOperationHandles(operation), "/"), Message: message,
+			Handle: strings.Join(emailRichTextIssuePath(operation), "/"), Message: message,
 		}
 	}
 	switch operation.Kind {
@@ -408,7 +408,7 @@ func emailRichTextSemanticChanges(document core.Document, operations []core.Oper
 		if current.LocaleExists != next.LocaleExists || !reflect.DeepEqual(current.Nodes, next.Nodes) {
 			changes = append(changes, core.Change{
 				Operation: index, Kind: operation.Kind,
-				AffectedHandles: emailRichTextOperationHandles(operation),
+				AffectedHandles: core.OperationHandles(operation, document.Locale),
 			})
 		}
 		current = next
@@ -416,7 +416,7 @@ func emailRichTextSemanticChanges(document core.Document, operations []core.Oper
 	return changes, nil
 }
 
-func emailRichTextOperationHandles(operation core.Operation) []string {
+func emailRichTextIssuePath(operation core.Operation) []string {
 	switch operation.Kind {
 	case core.OperationSetField:
 		return []string{string(operation.SetField.Target.Block) + ":" + string(operation.SetField.Target.Field)}

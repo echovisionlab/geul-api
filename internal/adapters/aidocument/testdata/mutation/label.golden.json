@@ -5,28 +5,28 @@
       "operation": "set field",
       "kind": "fs",
       "handles": [
-        "block:block-a/field:field-a"
+        "field:block-a/field-a"
       ]
     },
     {
       "operation": "set nested field",
       "kind": "fs",
       "handles": [
-        "block:block-a/field:field-a"
+        "field:block-a/field-a/field:nested"
       ]
     },
     {
       "operation": "set relation field",
       "kind": "fs",
       "handles": [
-        "block:block-a/field:field-a"
+        "field:block-a/relation-a/item-a/field-a"
       ]
     },
     {
       "operation": "unset field",
       "kind": "fu",
       "handles": [
-        "block:block-a/field:field-a"
+        "field:block-a/field-a"
       ]
     },
     {
@@ -47,7 +47,8 @@
       "operation": "move block",
       "kind": "bm",
       "handles": [
-        "block:block-a"
+        "block:block-a",
+        "block:parent-a"
       ]
     },
     {
@@ -61,35 +62,39 @@
       "operation": "insert relation item",
       "kind": "ri",
       "handles": [
-        "label"
+        "relation-item:block-a/relation-a/item-b",
+        "relation:block-a/relation-a"
       ]
     },
     {
       "operation": "delete relation item",
       "kind": "rd",
       "handles": [
-        "label"
+        "relation-item:block-a/relation-a/item-a",
+        "relation:block-a/relation-a"
       ]
     },
     {
       "operation": "move relation item",
       "kind": "rm",
       "handles": [
-        "label"
+        "relation-item:block-a/relation-a/item-a",
+        "relation:block-a/relation-a",
+        "relation:block-b/relation-b"
       ]
     },
     {
       "operation": "attach file",
       "kind": "fa",
       "handles": [
-        "label"
+        "field:block-a/file-field"
       ]
     },
     {
       "operation": "detach file",
       "kind": "fd",
       "handles": [
-        "label"
+        "field:block-a/file-field"
       ]
     },
     {
@@ -131,7 +136,7 @@
               "operation": 0,
               "kind": "fs",
               "affected_handles": [
-                "block:0b000000-0000-4000-8000-000000000001/field:content"
+                "field:0b000000-0000-4000-8000-000000000001/content"
               ]
             }
           ],
@@ -243,7 +248,7 @@
               "operation": 0,
               "kind": "fs",
               "affected_handles": [
-                "block:0b000000-0000-4000-8000-000000000001/field:content"
+                "field:0b000000-0000-4000-8000-000000000001/content"
               ]
             }
           ],

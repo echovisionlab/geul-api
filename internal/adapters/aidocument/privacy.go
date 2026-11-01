@@ -150,47 +150,14 @@ func (p *legalAIDocumentPort) executeMutation(
 				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
 				Changed:          domainResult.Changed,
 			}
-			accepted = withOperationChanges(command, accepted, func(operation core.Operation) []string { return legalOperationHandles(operation) })
+			accepted = withOperationChanges(command, accepted)
 
 			return accepted, nil
 		},
 		ConflictHandles: func(_ *core.RevisionConflict, _ core.ValidatedApply) []string {
-			return legalRequestAffectedHandles(request)
+			return core.AffectedHandles(request.Operations, request.Locale)
 		},
 	})
-}
-
-func legalRequestAffectedHandles(request core.ApplyRequest) []string {
-	var handles []string
-	for _, operation := range request.Operations {
-		handles = append(handles, legalOperationHandles(operation)...)
-	}
-	return handles
-}
-
-func legalOperationHandles(operation core.Operation) []string {
-	switch operation.Kind {
-	case core.OperationSetField:
-		return []string{string(operation.SetField.Target.Block), string(operation.SetField.Target.Field)}
-	case core.OperationUnsetField:
-		return []string{string(operation.UnsetField.Target.Block), string(operation.UnsetField.Target.Field)}
-	case core.OperationInsertBlock:
-		return []string{string(operation.InsertBlock.Block)}
-	case core.OperationDeleteBlock:
-		return []string{string(operation.DeleteBlock.Block)}
-	case core.OperationMoveBlock:
-		return []string{string(operation.MoveBlock.Block)}
-	case core.OperationReplaceBlockKind:
-		return []string{string(operation.ReplaceBlockKind.Block)}
-	case core.OperationAttachFile:
-		return []string{string(operation.AttachFile.Target.Block), string(operation.AttachFile.Target.Field), string(operation.AttachFile.File)}
-	case core.OperationDetachFile:
-		return []string{string(operation.DetachFile.Target.Block), string(operation.DetachFile.Target.Field)}
-	case core.OperationCreateTranslation, core.OperationDeleteTranslation:
-		return []string{"locale"}
-	default:
-		return nil
-	}
 }
 
 type compiledLegalMutation struct {

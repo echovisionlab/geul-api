@@ -5,99 +5,110 @@
       "operation": "set field",
       "kind": "fs",
       "handles": [
-        "block-a",
-        "field-a"
+        "field:block-a/field-a"
       ]
     },
     {
       "operation": "set nested field",
       "kind": "fs",
       "handles": [
-        "block-a",
-        "field-a"
+        "field:block-a/field-a/field:nested"
       ]
     },
     {
       "operation": "set relation field",
       "kind": "fs",
       "handles": [
-        "block-a",
-        "field-a"
+        "field:block-a/relation-a/item-a/field-a"
       ]
     },
     {
       "operation": "unset field",
       "kind": "fu",
       "handles": [
-        "block-a",
-        "field-a"
+        "field:block-a/field-a"
       ]
     },
     {
       "operation": "insert block",
       "kind": "bi",
       "handles": [
-        "block-b"
+        "block:block-b"
       ]
     },
     {
       "operation": "delete block",
       "kind": "bd",
       "handles": [
-        "block-a"
+        "block:block-a"
       ]
     },
     {
       "operation": "move block",
       "kind": "bm",
       "handles": [
-        "block-a"
+        "block:block-a",
+        "block:parent-a"
       ]
     },
     {
       "operation": "replace block kind",
       "kind": "bk",
       "handles": [
-        "block-a"
+        "block:block-a"
       ]
     },
     {
       "operation": "insert relation item",
       "kind": "ri",
-      "handles": null
+      "handles": [
+        "relation-item:block-a/relation-a/item-b",
+        "relation:block-a/relation-a"
+      ]
     },
     {
       "operation": "delete relation item",
       "kind": "rd",
-      "handles": null
+      "handles": [
+        "relation-item:block-a/relation-a/item-a",
+        "relation:block-a/relation-a"
+      ]
     },
     {
       "operation": "move relation item",
       "kind": "rm",
-      "handles": null
+      "handles": [
+        "relation-item:block-a/relation-a/item-a",
+        "relation:block-a/relation-a",
+        "relation:block-b/relation-b"
+      ]
     },
     {
       "operation": "attach file",
       "kind": "fa",
-      "handles": null
+      "handles": [
+        "field:block-a/file-field"
+      ]
     },
     {
       "operation": "detach file",
       "kind": "fd",
-      "handles": null
+      "handles": [
+        "field:block-a/file-field"
+      ]
     },
     {
       "operation": "create translation",
       "kind": "lc",
       "handles": [
-        "locale"
+        "translation:ko"
       ]
     },
     {
       "operation": "delete translation",
       "kind": "ld",
       "handles": [
-        "locale"
+        "translation:ko"
       ]
     }
   ],
@@ -125,8 +136,7 @@
               "operation": 0,
               "kind": "fs",
               "affected_handles": [
-                "parent",
-                "label"
+                "field:parent/label"
               ]
             }
           ],
@@ -184,7 +194,7 @@
               "operation": 0,
               "kind": "bd",
               "affected_handles": [
-                "child"
+                "block:child"
               ]
             }
           ],
@@ -218,8 +228,7 @@
               "operation": 0,
               "kind": "fs",
               "affected_handles": [
-                "parent",
-                "label"
+                "field:parent/label"
               ]
             }
           ],

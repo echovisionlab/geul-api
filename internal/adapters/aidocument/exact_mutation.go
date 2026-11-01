@@ -21,11 +21,11 @@ type exactMutationSpec[S, M, R any] struct {
 	DomainIssue       func(error, []core.Operation) *core.OperationIssue
 }
 
-func withOperationChanges(command core.ValidatedApply, result core.ApplyResult, handles func(core.Operation) []string) core.ApplyResult {
+func withOperationChanges(command core.ValidatedApply, result core.ApplyResult) core.ApplyResult {
 	if result.Changed {
 		for index, operation := range command.Operations {
 			result.Changes = append(result.Changes, core.Change{
-				Operation: index, Kind: operation.Kind, AffectedHandles: handles(operation),
+				Operation: index, Kind: operation.Kind, AffectedHandles: core.OperationHandles(operation, command.Locale),
 			})
 		}
 	}

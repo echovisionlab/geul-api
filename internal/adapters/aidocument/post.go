@@ -137,7 +137,7 @@ func (p *postPort) executeMutation(
 				targetRevision := core.Revision(*domainResult.TargetRevision)
 				output.TargetRevision = &targetRevision
 			}
-			output = withOperationChanges(command, output, func(operation core.Operation) []string { return postOperationHandles(operation) })
+			output = withOperationChanges(command, output)
 
 			return output, nil
 		},
@@ -274,7 +274,7 @@ func compilePostMetadataOperation(
 	fail := func(code core.IssueCode, message string) (bool, *core.OperationIssue) {
 		return true, &core.OperationIssue{
 			Operation: index, Code: code,
-			Handle: strings.Join(postOperationHandles(operation), ":"), Message: message,
+			Handle: strings.Join(operationIssuePath(operation), ":"), Message: message,
 		}
 	}
 	if target.Relation != "" || target.Item != "" || len(target.Path) != 0 {
@@ -381,31 +381,6 @@ func postDomainIssue(err error, operations []core.Operation) *core.OperationIssu
 		return nil
 	}
 	return &core.OperationIssue{Operation: index, Code: code, Message: err.Error()}
-}
-
-func postOperationHandles(operation core.Operation) []string {
-	switch operation.Kind {
-	case core.OperationSetField:
-		return []string{string(operation.SetField.Target.Block), string(operation.SetField.Target.Field)}
-	case core.OperationUnsetField:
-		return []string{string(operation.UnsetField.Target.Block), string(operation.UnsetField.Target.Field)}
-	case core.OperationInsertBlock:
-		return []string{string(operation.InsertBlock.Block)}
-	case core.OperationDeleteBlock:
-		return []string{string(operation.DeleteBlock.Block)}
-	case core.OperationMoveBlock:
-		return []string{string(operation.MoveBlock.Block)}
-	case core.OperationReplaceBlockKind:
-		return []string{string(operation.ReplaceBlockKind.Block)}
-	case core.OperationAttachFile:
-		return []string{string(operation.AttachFile.Target.Block), string(operation.AttachFile.Target.Field), string(operation.AttachFile.File)}
-	case core.OperationDetachFile:
-		return []string{string(operation.DetachFile.Target.Block), string(operation.DetachFile.Target.Field)}
-	case core.OperationCreateTranslation, core.OperationDeleteTranslation:
-		return []string{"locale"}
-	default:
-		return nil
-	}
 }
 
 var _ core.DomainPort = (*postPort)(nil)

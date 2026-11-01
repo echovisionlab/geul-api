@@ -145,9 +145,7 @@ func (p *formPort) executeMutation(
 				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
 				Changed:          domainResult.Changed,
 			}
-			output = withOperationChanges(command, output, func(operation core.Operation) []string {
-				return compactOperationHandles(operation, command.Locale, "form")
-			})
+			output = withOperationChanges(command, output)
 
 			return output, nil
 		},
@@ -200,7 +198,7 @@ func (p *formPort) compile(state formdomain.AIDocumentState, document core.Docum
 	}
 	for index, operation := range operations {
 		if operation.Kind == core.OperationUnsetField && operation.UnsetField != nil {
-			return formdomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: strings.Join(compactOperationHandles(operation, document.Locale, "form"), "/"), Message: "Form locale copy uses explicit empty instead of unset"}}, nil
+			return formdomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: compactIssueHandle(operation, document.Locale, "form"), Message: "Form locale copy uses explicit empty instead of unset"}}, nil
 		}
 		if formOperationMutatesRoot(operation) {
 			return formdomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: "block:document", Message: "Form document root cannot be structurally changed"}}, nil
@@ -221,7 +219,7 @@ func (p *formPort) compile(state formdomain.AIDocumentState, document core.Docum
 			if _, err := formObjectFromNode(node); err != nil {
 				return formdomain.AIDocumentMutation{}, []core.OperationIssue{{ //nolint:nilerr // invalid client source is an operation issue, not a failure
 					Operation: index, Code: core.IssueInvalidOperation,
-					Handle: strings.Join(compactOperationHandles(operation, document.Locale, "form"), "/"), Message: err.Error(),
+					Handle: compactIssueHandle(operation, document.Locale, "form"), Message: err.Error(),
 				}}, nil
 			}
 		}

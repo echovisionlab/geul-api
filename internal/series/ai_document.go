@@ -576,11 +576,11 @@ func cloneString(value *string) *string {
 func postSeriesAIOperationError(index int, operation core.Operation, message string) error {
 	return &core.ValidationError{Result: core.ValidationResult{Issues: []core.OperationIssue{{
 		Operation: index, Code: core.IssueInvalidOperation,
-		Handle: strings.Join(postSeriesAIOperationHandles(operation), ","), Message: message,
+		Handle: strings.Join(postSeriesAIIssueHandles(operation), ","), Message: message,
 	}}}}
 }
 
-func postSeriesAIOperationHandles(operation core.Operation) []string {
+func postSeriesAIIssueHandles(operation core.Operation) []string {
 	switch operation.Kind {
 	case core.OperationSetField:
 		return []string{fmt.Sprintf("field:%s/%s", operation.SetField.Target.Block, operation.SetField.Target.Field)}

@@ -248,7 +248,7 @@ func validateEmailLayoutOperation(
 	invalid := func(message string) *core.OperationIssue {
 		return &core.OperationIssue{
 			Operation: index, Code: core.IssueInvalidOperation,
-			Handle:  strings.Join(compactOperationHandles(operation, document.Locale, "email_layout"), "/"),
+			Handle:  compactIssueHandle(operation, document.Locale, "email_layout"),
 			Message: message,
 		}
 	}
@@ -312,7 +312,7 @@ func emailLayoutSemanticChanges(
 		if current.LocaleExists != next.LocaleExists || !reflect.DeepEqual(current.Nodes, next.Nodes) {
 			changes = append(changes, core.Change{
 				Operation: index, Kind: operation.Kind,
-				AffectedHandles: compactOperationHandles(operation, document.Locale, "email_layout"),
+				AffectedHandles: core.OperationHandles(operation, document.Locale),
 			})
 		}
 		current = next

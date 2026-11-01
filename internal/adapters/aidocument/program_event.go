@@ -184,18 +184,10 @@ func (p *programEventPort) executeMutation(
 			return applicationResult, nil
 		},
 		ConflictHandles: func(_ *core.RevisionConflict, _ core.ValidatedApply) []string {
-			return programEventRequestAffectedHandles(request)
+			return core.AffectedHandles(request.Operations, request.Locale)
 		},
 		DomainIssue: programEventDomainIssue,
 	})
-}
-
-func programEventRequestAffectedHandles(request core.ApplyRequest) []string {
-	var handles []string
-	for _, operation := range request.Operations {
-		handles = append(handles, programEventOperationHandles(operation)...)
-	}
-	return handles
 }
 
 func (p *programEventPort) compileCommand(
@@ -270,7 +262,7 @@ func compileProgramEventMetadataOperation(patch *programeventdomain.AIDocumentMe
 		return false, nil
 	}
 	fail := func(code core.IssueCode, message string) (bool, *core.OperationIssue) {
-		return true, &core.OperationIssue{Operation: index, Code: code, Handle: strings.Join(programEventOperationHandles(operation), ":"), Message: message}
+		return true, &core.OperationIssue{Operation: index, Code: code, Handle: strings.Join(programEventIssuePath(operation), ":"), Message: message}
 	}
 	if target.Relation != "" || target.Item != "" || len(target.Path) != 0 {
 		return fail(core.IssueInvalidOperation, "Program Event metadata does not expose nested or relation targets")
@@ -357,7 +349,7 @@ func validateProgramEventOperations(document core.Document, operations []core.Op
 			if ok && rule.Ownership == core.FieldOwnershipLocale {
 				issues = append(issues, core.OperationIssue{
 					Operation: index, Code: core.IssueInvalidOperation,
-					Handle:  strings.Join(programEventOperationHandles(operation), ","),
+					Handle:  strings.Join(programEventIssuePath(operation), ","),
 					Message: "Program Event locale values use explicit empty; locale-owned fields cannot be unset",
 				})
 			}
@@ -389,7 +381,7 @@ func programEventDomainIssue(err error, operations []core.Operation) *core.Opera
 	return &core.OperationIssue{Operation: index, Code: core.IssueInvalidFileReference, Message: err.Error()}
 }
 
-func programEventOperationHandles(operation core.Operation) []string {
+func programEventIssuePath(operation core.Operation) []string {
 	switch operation.Kind {
 	case core.OperationSetField:
 		return []string{string(operation.SetField.Target.Block) + ":" + string(operation.SetField.Target.Field)}
@@ -428,7 +420,7 @@ func programEventSemanticChanges(document core.Document, operations []core.Opera
 		if current.LocaleExists != next.LocaleExists || !reflect.DeepEqual(current.Nodes, next.Nodes) {
 			changes = append(changes, core.Change{
 				Operation: index, Kind: operation.Kind,
-				AffectedHandles: programEventOperationHandles(operation),
+				AffectedHandles: core.OperationHandles(operation, document.Locale),
 			})
 		}
 		current = next

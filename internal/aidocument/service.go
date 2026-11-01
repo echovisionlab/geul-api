@@ -154,7 +154,7 @@ func ValidateLoadedApply(document Document, request ApplyRequest) (ValidatedAppl
 		ExpectedDocumentRevision: request.ExpectedDocumentRevision,
 		ExpectedTargetRevision:   cloneRevision(request.ExpectedTargetRevision),
 		Operations:               validation.Normalized,
-		AffectedHandles:          affectedHandles(request),
+		AffectedHandles:          AffectedHandles(request.Operations, request.Locale),
 	}, validation
 }
 

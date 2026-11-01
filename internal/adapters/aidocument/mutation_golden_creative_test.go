@@ -180,7 +180,7 @@ func TestArtistExactMutationGolden(t *testing.T) {
 	runMutationGolden(t, mutationGoldenSubject{
 		name: "artist", domain: core.DomainArtist, reference: goldenEntityID,
 		sourceLocale: "en", targetLocale: "ko", service: service,
-		handles: func(operation core.Operation) []string { return artistOperationHandles(operation, "ko") },
+		handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 		arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 			locale := goldenLocale(target)
 			api.state = artistdomain.AIDocumentState{
@@ -224,7 +224,7 @@ func TestLabelExactMutationGolden(t *testing.T) {
 	runMutationGolden(t, mutationGoldenSubject{
 		name: "label", domain: core.DomainLabel, reference: goldenEntityID,
 		sourceLocale: "en", targetLocale: "ko", service: service,
-		handles: func(operation core.Operation) []string { return labelOperationHandles(operation, "ko") },
+		handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 		arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 			locale := goldenLocale(target)
 			api.state = labeldomain.AIDocumentState{
@@ -269,7 +269,7 @@ func TestReleaseExactMutationGolden(t *testing.T) {
 	runMutationGolden(t, mutationGoldenSubject{
 		name: "release", domain: core.DomainRelease, reference: goldenEntityID,
 		sourceLocale: "en", targetLocale: "ko", service: service,
-		handles: func(operation core.Operation) []string { return compactOperationHandles(operation, "ko", "release") },
+		handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 		arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 			locale := goldenLocale(target)
 			title := locale + " title"
@@ -321,7 +321,7 @@ func TestWorkExactMutationGolden(t *testing.T) {
 	runMutationGolden(t, mutationGoldenSubject{
 		name: "work", domain: core.DomainWork, reference: goldenEntityID,
 		sourceLocale: "en", targetLocale: "ko", service: service,
-		handles: workOperationHandles,
+		handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 		arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 			locale := goldenLocale(target)
 			title := locale + " title"
@@ -378,7 +378,7 @@ func TestPostExactMutationGolden(t *testing.T) {
 	runMutationGolden(t, mutationGoldenSubject{
 		name: "post", domain: core.DomainPost, reference: goldenEntityID,
 		sourceLocale: "en", targetLocale: "ko", service: service,
-		handles: postOperationHandles,
+		handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 		arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 			locale := goldenLocale(target)
 			title, sourceTitle := locale+" title", "en title"

@@ -105,7 +105,7 @@ func (p *artistPort) executeMutation(
 				Changed:          domainResult.Changed,
 				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
 			}
-			output = withOperationChanges(command, output, func(operation core.Operation) []string { return artistOperationHandles(operation, command.Locale) })
+			output = withOperationChanges(command, output)
 
 			return output, nil
 		},
@@ -145,7 +145,7 @@ func (p *artistPort) compile(state artistdomain.AIDocumentState, document core.D
 	}
 	for index, operation := range operations {
 		if operation.Kind == core.OperationUnsetField && operation.UnsetField != nil && (document.Role() == core.LocaleRoleNonSource || operation.UnsetField.Target.Field == richTextContentField) {
-			return artistdomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: strings.Join(artistOperationHandles(operation, document.Locale), "/"), Message: "Artist locale values use explicit empty instead of unset"}}, nil
+			return artistdomain.AIDocumentMutation{}, []core.OperationIssue{{Operation: index, Code: core.IssueInvalidOperation, Handle: compactIssueHandle(operation, document.Locale, "artist"), Message: "Artist locale values use explicit empty instead of unset"}}, nil
 		}
 	}
 	batch, issues, err := p.codec.Compile(state.DocumentID, state.Document, document.Role(), document.DocumentRevision, contributor, operations)
@@ -174,10 +174,6 @@ func artistContributorID(value string) (uuid.UUID, error) {
 		return uuid.Nil, errors.New("artist contributor Member must be a canonical UUID")
 	}
 	return contributor, nil
-}
-
-func artistOperationHandles(operation core.Operation, locale core.Locale) []string {
-	return compactOperationHandles(operation, locale, "artist")
 }
 
 var _ core.DomainPort = (*artistPort)(nil)
