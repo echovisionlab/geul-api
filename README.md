@@ -389,8 +389,8 @@ Every top-level test in an integration-tagged file starts with `t.Parallel()`;
 `scripts/test/integration` enforces this. A test that must replace
 process-global state may opt out with a `// integration:serial <reason>` doc
 comment. `--jobs` (default 4) bounds both package and test concurrency. The
-runtime band (`cmd/backend-integration-stack`, `internal/filemedia`,
-`internal/referencecatalog`, `internal/testutil`) still runs one test at a time
+runtime band (`cmd/backend-integration-stack`, `cmd/server/runtimetest`,
+`internal/filemedia`, `internal/testutil`) still runs one test at a time
 because its fixtures start shared application processes and register the single
 Kratos hook upstream.
 
