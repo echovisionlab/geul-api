@@ -386,6 +386,8 @@ func LeftJoinLinked(member, alias string) string // the same, keeping Members wi
 func BannedSQL(alias string) string              // administrator-facing ban state of the joined Identity
 func ActiveSQL(alias string) string              // the joined Identity is active and not banned
 func LockLinked(ctx context.Context, tx *gorm.DB, identityID, memberID string) error // share-lock the linked Identity
+func SessionIdentitySQL(session, alias string) string // FROM a Kratos session joined to its Identity
+func LiveSessionSQL(session string) string          // the session is active and unexpired
 const ExistsSQL = `EXISTS (SELECT 1 FROM kratos.identities WHERE id = ?::uuid)`
 func Exists(ctx context.Context, db *gorm.DB, identityID string) (bool, error)
 ```

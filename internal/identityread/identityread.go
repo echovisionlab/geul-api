@@ -15,7 +15,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const table = "kratos.identities"
+const (
+	table         = "kratos.identities"
+	sessionsTable = "kratos.sessions"
+)
 
 // JoinLinked returns the JOIN of the Identity linked bilaterally to the Member
 // row aliased member, aliased alias. Rows without that live link drop out.
@@ -61,6 +64,19 @@ func LockLinked(ctx context.Context, tx *gorm.DB, identityID, memberID string) e
 		Select("id").
 		Where("id = ?::uuid AND external_id = ?", identityID, memberID).
 		Take(&identity).Error
+}
+
+// SessionIdentitySQL joins the Kratos session aliased session to its
+// Identity aliased alias, for a FROM clause.
+func SessionIdentitySQL(session, alias string) string {
+	return fmt.Sprintf("%s AS %s JOIN %s AS %s ON %s.id = %s.identity_id",
+		sessionsTable, session, table, alias, alias, session)
+}
+
+// LiveSessionSQL is true when the session aliased session is active and has
+// not expired.
+func LiveSessionSQL(session string) string {
+	return fmt.Sprintf("%s.active = TRUE AND %s.expires_at > NOW()", session, session)
 }
 
 // ExistsSQL is true when an Identity has the id bound to its one parameter.
