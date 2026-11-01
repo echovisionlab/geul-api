@@ -29,59 +29,59 @@ const (
 	fileBlockReferencePath                = "file"
 )
 
-var fileBlockTools = []mcpserver.Tool{
-	{
+var fileBlockTools = toolRegistry[FileBlockTools]{
+	defineTool(mcpserver.Tool{
 		Name: ToolDocumentFileAdd, Title: "Add an existing File to a document",
 		Description: "Add a new File Block that reuses an existing File; this does not upload or copy bytes. " +
 			"Image Files render as images through the native File Block. An optional caption is saved in the same mutation. " +
 			"Read the document first and pass its exact current revision. New File Block download policy starts disabled." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(documentFileAddInputJSONSchema), OutputSchema: outputSchemaWithSync(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta(),
-	},
-	{
+	}, (*FileBlockTools).add),
+	defineTool(mcpserver.Tool{
 		Name: ToolDocumentFileReplace, Title: "Replace a document File Block attachment",
 		Description: "Replace the existing File attached to one File Block with another existing File; this does not upload or delete File bytes. " +
 			"The server verifies the target is a File Block, preserves its captions, and resets that attachment's download policy to disabled." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(documentFileReplaceInputJSONSchema), OutputSchema: outputSchemaWithSync(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta(),
-	},
-	{
+	}, (*FileBlockTools).replace),
+	defineTool(mcpserver.Tool{
 		Name: ToolDocumentFileRemove, Title: "Remove a File Block from a document",
 		Description: "Remove one verified File Block and its attachment policy from a document. " +
 			"The reusable File and its bytes remain in File Manager." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(documentFileRemoveInputJSONSchema), OutputSchema: outputSchemaWithSync(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta(),
-	},
-	{
+	}, (*FileBlockTools).remove),
+	defineTool(mcpserver.Tool{
 		Name: ToolDocumentFileCaptionUpdate, Title: "Update a File Block caption",
 		Description: "Set the plain-text caption of one existing File Block, including an image. Caption is locale-owned; an empty string explicitly clears it in the requested locale. " +
 			"Read the Block first and pass its exact current document and target revisions. File attachment and bytes are unchanged." + syncRequiredGuidance,
 		InputSchema: json.RawMessage(documentFileCaptionUpdateInputJSONSchema), OutputSchema: outputSchemaWithSync(documentFileMutationOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta(),
-	},
-	{
+	}, (*FileBlockTools).updateCaption),
+	defineTool(mcpserver.Tool{
 		Name: ToolDocumentFileDownloadPolicyGet, Title: "Read a File Block download policy",
 		Description: "Read the download audience owned by one exact File Block attachment. " +
 			"The server resolves the current File from document_type, document_id, and block_id; the caller does not assert File ownership. " +
 			"For an update, copy the returned audience and every audience_segments ID into observed_policy; preserve that exact read baseline.",
 		InputSchema: json.RawMessage(documentFileDownloadPolicyGetInputJSONSchema), OutputSchema: json.RawMessage(documentFileDownloadPolicyOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(true, false, false), Meta: oauthSecurityMeta(),
-	},
-	{
+	}, (*FileBlockTools).getDownloadPolicy),
+	defineTool(mcpserver.Tool{
 		Name: ToolDocumentFileDownloadPolicyUpdate, Title: "Update a File Block download policy",
 		Description: "Set disabled, public, authenticated, or restricted download access on one exact File Block attachment. " +
 			"Pass observed_policy from the prior policy read so independent policy changes can be merged. " +
 			"expected_file_id is only a compare-and-set guard against replacing a different current File; it is not relation authority. Public access can expose the original File outside this site.",
 		InputSchema: json.RawMessage(documentFileDownloadPolicyUpdateInputJSONSchema), OutputSchema: json.RawMessage(documentFileDownloadPolicyOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, true), Meta: oauthSecurityMeta(),
-	},
-	{
+	}, (*FileBlockTools).updateDownloadPolicy),
+	defineTool(mcpserver.Tool{
 		Name: ToolFileUsageList, Title: "List File usages",
 		Description: "List authorized entities and exact Block attachment paths that currently reference one reusable File. " +
 			"Use this before considering a physical File deletion or to find every document placement.",
 		InputSchema: json.RawMessage(fileUsageListInputJSONSchema), OutputSchema: json.RawMessage(fileUsageListOutputJSONSchema),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(true, false, false), Meta: oauthSecurityMeta(),
-	},
+	}, (*FileBlockTools).listUsages),
 }
 
 // FileBlockManagement is the exact-relation authorization and policy surface
@@ -110,31 +110,14 @@ func NewFileBlockTools(documents AIDocumentApplication, files FileBlockManagemen
 	return &FileBlockTools{documents: documents, files: files}, nil
 }
 
-func (*FileBlockTools) ToolNames() []string { return toolDefinitionNames(fileBlockTools) }
+func (*FileBlockTools) ToolNames() []string { return fileBlockTools.names() }
 
 func (*FileBlockTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(fileBlockTools), nil
+	return fileBlockTools.list(), nil
 }
 
 func (tools *FileBlockTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolDocumentFileAdd:
-		return tools.add(ctx, arguments)
-	case ToolDocumentFileReplace:
-		return tools.replace(ctx, arguments)
-	case ToolDocumentFileRemove:
-		return tools.remove(ctx, arguments)
-	case ToolDocumentFileCaptionUpdate:
-		return tools.updateCaption(ctx, arguments)
-	case ToolDocumentFileDownloadPolicyGet:
-		return tools.getDownloadPolicy(ctx, arguments)
-	case ToolDocumentFileDownloadPolicyUpdate:
-		return tools.updateDownloadPolicy(ctx, arguments)
-	case ToolFileUsageList:
-		return tools.listUsages(ctx, arguments)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return fileBlockTools.call(tools, ctx, name, arguments)
 }
 
 type documentFileAddArguments struct {
@@ -191,12 +174,14 @@ type fileUsageListArguments struct {
 	PageToken *string `json:"page_token,omitempty"`
 }
 
-func (tools *FileBlockTools) add(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *FileBlockTools) add(ctx context.Context, _ string, call toolCall[documentFileAddArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	if err := rejectNullArguments(arguments, "caption"); err != nil {
 		return executionError(err)
 	}
 	var input documentFileAddArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateFileBlockMutationIdentity(input.focusedMutationArguments); err != nil {
@@ -224,9 +209,9 @@ func (tools *FileBlockTools) add(ctx context.Context, arguments mcpserver.ToolAr
 	return applyFocusedDocumentRequest(ctx, tools.documents, request, block)
 }
 
-func (tools *FileBlockTools) updateCaption(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *FileBlockTools) updateCaption(ctx context.Context, _ string, call toolCall[documentFileCaptionArguments]) (mcpserver.ToolResult, error) {
 	var input documentFileCaptionArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if input.Caption == nil {
@@ -251,9 +236,9 @@ func (tools *FileBlockTools) updateCaption(ctx context.Context, arguments mcpser
 	return applyFocusedDocumentRequest(ctx, tools.documents, request, "")
 }
 
-func (tools *FileBlockTools) replace(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *FileBlockTools) replace(ctx context.Context, _ string, call toolCall[documentFileReplaceArguments]) (mcpserver.ToolResult, error) {
 	var input documentFileReplaceArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateFileBlockMutationIdentity(input.focusedMutationArguments); err != nil {
@@ -279,9 +264,9 @@ func (tools *FileBlockTools) replace(ctx context.Context, arguments mcpserver.To
 	return applyFocusedDocumentRequest(ctx, tools.documents, request, "")
 }
 
-func (tools *FileBlockTools) remove(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *FileBlockTools) remove(ctx context.Context, _ string, call toolCall[documentFileRemoveArguments]) (mcpserver.ToolResult, error) {
 	var input documentFileRemoveArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateFileBlockMutationIdentity(input.focusedMutationArguments); err != nil {
@@ -343,9 +328,9 @@ func validateFileBlockMutationIdentity(input focusedMutationArguments) error {
 	return err
 }
 
-func (tools *FileBlockTools) getDownloadPolicy(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *FileBlockTools) getDownloadPolicy(ctx context.Context, _ string, call toolCall[documentFilePolicyArguments]) (mcpserver.ToolResult, error) {
 	var input documentFilePolicyArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	target, err := fileBlockPolicySelector(input)
@@ -359,9 +344,9 @@ func (tools *FileBlockTools) getDownloadPolicy(ctx context.Context, arguments mc
 	return fileBlockPolicyResult(policy)
 }
 
-func (tools *FileBlockTools) updateDownloadPolicy(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *FileBlockTools) updateDownloadPolicy(ctx context.Context, _ string, call toolCall[documentFilePolicyUpdateArguments]) (mcpserver.ToolResult, error) {
 	var input documentFilePolicyUpdateArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	selector, err := fileBlockPolicySelector(input.documentFilePolicyArguments)
@@ -533,9 +518,9 @@ func fileBlockPolicyResult(policy *filemedia.DownloadPolicy) (mcpserver.ToolResu
 	})
 }
 
-func (tools *FileBlockTools) listUsages(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *FileBlockTools) listUsages(ctx context.Context, _ string, call toolCall[fileUsageListArguments]) (mcpserver.ToolResult, error) {
 	var input fileUsageListArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	fileID, err := canonicalFileBlockUUID(input.FileID, "file_id")

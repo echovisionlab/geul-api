@@ -20,13 +20,51 @@ const (
 	ToolMapPlaceDelete         = "map_place_delete"
 )
 
-var mapPlaceManagementTools = []mcpserver.Tool{
-	oauthTool(ToolMapPlaceGet, "Get map place", "Read a map place's editable settings by canonical UUID. Use its id as map_place_id in content relations.", mapPlaceGetInputJSONSchema, mapPlaceGetOutputJSONSchema, true, false),
-	oauthTool(ToolMapPlaceGetMany, "Get map places", "Read up to 100 map places in the requested order. Missing IDs are omitted by the native service.", mapPlaceGetManyInputJSONSchema, mapPlaceGetManyOutputJSONSchema, true, false),
-	oauthTool(ToolMapPlaceList, "List map places", "List or search map places by name or address with current administrator permission. Continue with next_offset and the same query.", mapPlaceListInputJSONSchema, mapPlaceListOutputJSONSchema, true, false),
-	oauthTool(ToolMapPlaceCreate, "Create map place", "Create a place with name, address, and coordinates. Optional image_file_id binds a ready map image through the owning service. Requires current author permission.", mapPlaceCreateInputJSONSchema, mapPlaceGetOutputJSONSchema, false, false),
-	oauthTool(ToolMapPlaceSettingsUpdate, "Update map place settings", "Update supplied place fields with current edit permission; omitted fields stay unchanged. Coordinates may be zero. address_components replaces the supplied address components object, including an empty object. clear_image removes the image and takes precedence over image_file_id. Empty google_place_id clears the Google Places link.", mapPlaceSettingsUpdateInputJSONSchema, mapPlaceGetOutputJSONSchema, false, false),
-	oauthTool(ToolMapPlaceDelete, "Delete map place", "Delete a map place with current administrator permission. The owning service rejects places referenced by content and releases image bindings.", mapPlaceGetInputJSONSchema, mapPlaceDeleteOutputJSONSchema, false, true),
+var mapPlaceManagementTools = toolRegistry[MapPlaceManagementTools]{
+	defineTool(oauthTool(ToolMapPlaceGet, "Get map place", "Read a map place's editable settings by canonical UUID. Use its id as map_place_id in content relations.", mapPlaceGetInputJSONSchema, mapPlaceGetOutputJSONSchema, true, false), func(tools *MapPlaceManagementTools, ctx context.Context, name string, call toolCall[mapPlaceGetArguments]) (mcpserver.ToolResult, error) {
+		var input mapPlaceGetArguments
+		if err := call.Decode(&input); err != nil {
+			return executionError(err)
+		}
+		if err := validateUUID("map_place_id", input.ID); err != nil {
+			return executionError(err)
+		}
+		if name == ToolMapPlaceDelete {
+			if err := tools.application.DeleteMapPlace(ctx, referencecatalog.DeleteMapPlaceCommand{ID: input.ID}); err != nil {
+				return expectedToolError(err)
+			}
+			return contentResult(map[string]any{"success": true})
+		}
+		place, err := tools.application.GetMapPlace(ctx, referencecatalog.GetMapPlaceQuery{ID: input.ID})
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return contentResult(map[string]any{"place": projectMapPlaceSettings(place)})
+	}),
+	defineTool(oauthTool(ToolMapPlaceGetMany, "Get map places", "Read up to 100 map places in the requested order. Missing IDs are omitted by the native service.", mapPlaceGetManyInputJSONSchema, mapPlaceGetManyOutputJSONSchema, true, false), (*MapPlaceManagementTools).getPlaces),
+	defineTool(oauthTool(ToolMapPlaceList, "List map places", "List or search map places by name or address with current administrator permission. Continue with next_offset and the same query.", mapPlaceListInputJSONSchema, mapPlaceListOutputJSONSchema, true, false), (*MapPlaceManagementTools).listPlaces),
+	defineTool(oauthTool(ToolMapPlaceCreate, "Create map place", "Create a place with name, address, and coordinates. Optional image_file_id binds a ready map image through the owning service. Requires current author permission.", mapPlaceCreateInputJSONSchema, mapPlaceGetOutputJSONSchema, false, false), (*MapPlaceManagementTools).mutateSettings),
+	defineTool(oauthTool(ToolMapPlaceSettingsUpdate, "Update map place settings", "Update supplied place fields with current edit permission; omitted fields stay unchanged. Coordinates may be zero. address_components replaces the supplied address components object, including an empty object. clear_image removes the image and takes precedence over image_file_id. Empty google_place_id clears the Google Places link.", mapPlaceSettingsUpdateInputJSONSchema, mapPlaceGetOutputJSONSchema, false, false), (*MapPlaceManagementTools).mutateSettings),
+	defineTool(oauthTool(ToolMapPlaceDelete, "Delete map place", "Delete a map place with current administrator permission. The owning service rejects places referenced by content and releases image bindings.", mapPlaceGetInputJSONSchema, mapPlaceDeleteOutputJSONSchema, false, true), func(tools *MapPlaceManagementTools, ctx context.Context, name string, call toolCall[mapPlaceDeleteArguments]) (mcpserver.ToolResult, error) {
+		var input mapPlaceDeleteArguments
+		if err := call.Decode(&input); err != nil {
+			return executionError(err)
+		}
+		if err := validateUUID("map_place_id", input.ID); err != nil {
+			return executionError(err)
+		}
+		if name == ToolMapPlaceDelete {
+			if err := tools.application.DeleteMapPlace(ctx, referencecatalog.DeleteMapPlaceCommand{ID: input.ID}); err != nil {
+				return expectedToolError(err)
+			}
+			return contentResult(map[string]any{"success": true})
+		}
+		place, err := tools.application.GetMapPlace(ctx, referencecatalog.GetMapPlaceQuery{ID: input.ID})
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return contentResult(map[string]any{"place": projectMapPlaceSettings(place)})
+	}),
 }
 
 // MapPlaceManagementApplication keeps authorization, image bindings, references,
@@ -48,52 +86,18 @@ func NewMapPlaceManagementTools(application MapPlaceManagementApplication) (*Map
 	}
 	return &MapPlaceManagementTools{application: application}, nil
 }
-func (*MapPlaceManagementTools) ToolNames() []string {
-	return toolDefinitionNames(mapPlaceManagementTools)
-}
+func (*MapPlaceManagementTools) ToolNames() []string { return mapPlaceManagementTools.names() }
 func (*MapPlaceManagementTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(mapPlaceManagementTools), nil
+	return mapPlaceManagementTools.list(), nil
 }
 
 func (tools *MapPlaceManagementTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolMapPlaceGet, ToolMapPlaceDelete:
-		var input struct {
-			ID string `json:"map_place_id"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
-			return executionError(err)
-		}
-		if err := validateUUID("map_place_id", input.ID); err != nil {
-			return executionError(err)
-		}
-		if name == ToolMapPlaceDelete {
-			if err := tools.application.DeleteMapPlace(ctx, referencecatalog.DeleteMapPlaceCommand{ID: input.ID}); err != nil {
-				return expectedToolError(err)
-			}
-			return contentResult(map[string]any{"success": true})
-		}
-		place, err := tools.application.GetMapPlace(ctx, referencecatalog.GetMapPlaceQuery{ID: input.ID})
-		if err != nil {
-			return expectedToolError(err)
-		}
-		return contentResult(map[string]any{"place": projectMapPlaceSettings(place)})
-	case ToolMapPlaceGetMany:
-		return tools.getPlaces(ctx, arguments)
-	case ToolMapPlaceList:
-		return tools.listPlaces(ctx, arguments)
-	case ToolMapPlaceCreate, ToolMapPlaceSettingsUpdate:
-		return tools.mutateSettings(ctx, name, arguments)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return mapPlaceManagementTools.call(tools, ctx, name, arguments)
 }
 
-func (tools *MapPlaceManagementTools) getPlaces(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	var input struct {
-		IDs []string `json:"map_place_ids"`
-	}
-	if err := decodeArguments(arguments, &input); err != nil {
+func (tools *MapPlaceManagementTools) getPlaces(ctx context.Context, _ string, call toolCall[mapPlaceGetManyArguments]) (mcpserver.ToolResult, error) {
+	var input mapPlaceGetManyArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if len(input.IDs) < 1 || len(input.IDs) > 100 {
@@ -111,16 +115,14 @@ func (tools *MapPlaceManagementTools) getPlaces(ctx context.Context, arguments m
 	return contentResult(map[string]any{"items": projectMapPlaceSettingsMany(places)})
 }
 
-func (tools *MapPlaceManagementTools) listPlaces(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *MapPlaceManagementTools) listPlaces(ctx context.Context, _ string, call toolCall[mapPlaceListArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	if err := rejectNullArguments(arguments, "query", "limit", "offset"); err != nil {
 		return executionError(err)
 	}
-	var input struct {
-		Query  string `json:"query"`
-		Limit  *int32 `json:"limit"`
-		Offset int32  `json:"offset"`
-	}
-	if err := decodeArguments(arguments, &input); err != nil {
+	var input mapPlaceListArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	pagination, err := (programEventReferenceListArguments{Limit: input.Limit, Offset: input.Offset}).pagination()
@@ -157,7 +159,8 @@ type mapPlaceSettingsArguments struct {
 	GooglePlaceID     *string                     `json:"google_place_id"`
 }
 
-func (tools *MapPlaceManagementTools) mutateSettings(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *MapPlaceManagementTools) mutateSettings(ctx context.Context, name string, call toolCall[mapPlaceSettingsArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
 	input, err := decodeMapPlaceSettings(arguments)
 	if err != nil {
 		return executionError(err)
@@ -254,4 +257,22 @@ func projectMapPlaceSettingsMany(places []referencecatalog.MapPlaceView) []map[s
 		items = append(items, projectMapPlaceSettings(place))
 	}
 	return items
+}
+
+type mapPlaceGetManyArguments = struct {
+	IDs []string `json:"map_place_ids"`
+}
+
+type mapPlaceListArguments = struct {
+	Query  string `json:"query"`
+	Limit  *int32 `json:"limit"`
+	Offset int32  `json:"offset"`
+}
+
+type mapPlaceGetArguments = struct {
+	ID string `json:"map_place_id"`
+}
+
+type mapPlaceDeleteArguments = struct {
+	ID string `json:"map_place_id"`
 }

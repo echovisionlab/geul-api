@@ -85,9 +85,11 @@ func validateRichBlockProfile(input focusedMutationArguments, parent core.BlockI
 	return nil
 }
 
-func (tools *AIDocumentTools) mutateHeading(ctx context.Context, arguments mcpserver.ToolArguments, update bool) (mcpserver.ToolResult, error) {
+func (tools *AIDocumentTools) mutateHeading(ctx context.Context, call toolCall[headingArguments], update bool) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	var input headingArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := rejectNullArguments(arguments, "parent_block_id", "after_block_id", "alignment", "level"); err != nil {
@@ -151,9 +153,11 @@ type tableCreateArguments struct {
 	HeaderColumn bool         `json:"header_column,omitempty"`
 }
 
-func (tools *AIDocumentTools) createTable(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *AIDocumentTools) createTable(ctx context.Context, _ string, call toolCall[tableCreateArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	var input tableCreateArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := rejectNullArguments(arguments, "parent_block_id", "after_block_id", "header_row", "header_column", "rows"); err != nil {

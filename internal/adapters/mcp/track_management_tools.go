@@ -19,13 +19,38 @@ const (
 	ToolTrackReorder        = "track_reorder"
 )
 
-var trackManagementTools = []mcpserver.Tool{
-	oauthTool(ToolTrackList, "List Release tracks", "Read all authorized tracks in one Release, their editable settings, credits, and observed credit snapshots. Pass a returned observed snapshot unchanged to track_credits_set. Attach original audio with file_transfer k=track_audio, track_id, and the current audio_original_file_id as expected_current_file_id; omit that expectation when no original is attached. Direct audio requires browser-prepared derivatives before completion. Clear audio with track_settings_update clear_audio_original.", trackListInputJSONSchema, trackListOutputJSONSchema, true, false),
-	oauthTool(ToolTrackCreate, "Create Track", "Append a Track to an active Release. The server assigns its track_number. Set title and optional duration or lyrics; edit credits with track_credits_set after track_list.", trackCreateInputJSONSchema, trackSettingsOutputJSONSchema, false, false),
-	oauthTool(ToolTrackSettingsUpdate, "Update Track settings", "Update supplied Track settings through the owning Release service. Omitted values remain unchanged; clear_duration and clear_lyrics take precedence over supplied values. clear_audio_original removes the original audio association and disables its downloads. Use track_reorder for a complete Release ordering. An empty title leaves the existing title unchanged.", trackSettingsUpdateInputJSONSchema, trackSettingsOutputJSONSchema, false, true),
-	oauthTool(ToolTrackDelete, "Delete Track", "Delete a Track through the owning Release authority, including existing audio-upload cleanup. A finalizing upload must finish before deletion can succeed.", trackIDInputJSONSchema, trackDeleteOutputJSONSchema, false, true),
-	oauthTool(ToolTrackCreditsSet, "Set Track credits", "Apply desired credits against the required observed TrackCreditsSnapshot returned by track_list or track_credits_set. Preserve existing credit IDs; omit IDs for new credits. An empty desired credits array removes observed credits while preserving concurrent additions. The owning service determines new credit order from the desired array and preserves existing order.", trackCreditsSetInputJSONSchema, trackWithCreditsOutputJSONSchema, false, true),
-	oauthTool(ToolTrackReorder, "Reorder Release tracks", "Supply every Track ID in one Release exactly once, in the desired order. Resolve the complete current list with track_list; partial or mixed-Release reorders are rejected by the owning Release service.", trackReorderInputJSONSchema, trackListOutputJSONSchema, false, true),
+var trackManagementTools = toolRegistry[TrackManagementTools]{
+	defineTool(oauthTool(ToolTrackList, "List Release tracks", "Read all authorized tracks in one Release, their editable settings, credits, and observed credit snapshots. Pass a returned observed snapshot unchanged to track_credits_set. Attach original audio with file_transfer k=track_audio, track_id, and the current audio_original_file_id as expected_current_file_id; omit that expectation when no original is attached. Direct audio requires browser-prepared derivatives before completion. Clear audio with track_settings_update clear_audio_original.", trackListInputJSONSchema, trackListOutputJSONSchema, true, false), func(tools *TrackManagementTools, ctx context.Context, name string, call toolCall[trackListArguments]) (mcpserver.ToolResult, error) {
+		var input trackListArguments
+		if err := call.Decode(&input); err != nil {
+			return executionError(err)
+		}
+		if err := validateUUID("release_id", input.ReleaseID); err != nil {
+			return executionError(err)
+		}
+		tracks, err := tools.application.ListTracksByRelease(ctx, releasedomain.ListTracksQuery{ReleaseID: input.ReleaseID})
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return contentResult(trackListOutput(releasedomain.TracksWithCreditsMessage(ctx, tracks)))
+	}),
+	defineTool(oauthTool(ToolTrackCreate, "Create Track", "Append a Track to an active Release. The server assigns its track_number. Set title and optional duration or lyrics; edit credits with track_credits_set after track_list.", trackCreateInputJSONSchema, trackSettingsOutputJSONSchema, false, false), (*TrackManagementTools).create),
+	defineTool(oauthTool(ToolTrackSettingsUpdate, "Update Track settings", "Update supplied Track settings through the owning Release service. Omitted values remain unchanged; clear_duration and clear_lyrics take precedence over supplied values. clear_audio_original removes the original audio association and disables its downloads. Use track_reorder for a complete Release ordering. An empty title leaves the existing title unchanged.", trackSettingsUpdateInputJSONSchema, trackSettingsOutputJSONSchema, false, true), (*TrackManagementTools).update),
+	defineTool(oauthTool(ToolTrackDelete, "Delete Track", "Delete a Track through the owning Release authority, including existing audio-upload cleanup. A finalizing upload must finish before deletion can succeed.", trackIDInputJSONSchema, trackDeleteOutputJSONSchema, false, true), func(tools *TrackManagementTools, ctx context.Context, name string, call toolCall[trackDeleteArguments]) (mcpserver.ToolResult, error) {
+		var input trackDeleteArguments
+		if err := call.Decode(&input); err != nil {
+			return executionError(err)
+		}
+		if err := validateUUID("track_id", input.TrackID); err != nil {
+			return executionError(err)
+		}
+		if err := tools.application.DeleteTrack(ctx, releasedomain.DeleteTrackCommand{ID: input.TrackID}); err != nil {
+			return expectedToolError(err)
+		}
+		return contentResult(map[string]any{"success": true})
+	}),
+	defineTool(oauthTool(ToolTrackCreditsSet, "Set Track credits", "Apply desired credits against the required observed TrackCreditsSnapshot returned by track_list or track_credits_set. Preserve existing credit IDs; omit IDs for new credits. An empty desired credits array removes observed credits while preserving concurrent additions. The owning service determines new credit order from the desired array and preserves existing order.", trackCreditsSetInputJSONSchema, trackWithCreditsOutputJSONSchema, false, true), (*TrackManagementTools).setCredits),
+	defineTool(oauthTool(ToolTrackReorder, "Reorder Release tracks", "Supply every Track ID in one Release exactly once, in the desired order. Resolve the complete current list with track_list; partial or mixed-Release reorders are rejected by the owning Release service.", trackReorderInputJSONSchema, trackListOutputJSONSchema, false, true), (*TrackManagementTools).reorder),
 }
 
 type TrackManagementApplication interface {
@@ -46,54 +71,14 @@ func NewTrackManagementTools(application TrackManagementApplication) (*TrackMana
 	return &TrackManagementTools{application: application}, nil
 }
 
-func (*TrackManagementTools) ToolNames() []string { return toolDefinitionNames(trackManagementTools) }
+func (*TrackManagementTools) ToolNames() []string { return trackManagementTools.names() }
 
 func (*TrackManagementTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(trackManagementTools), nil
+	return trackManagementTools.list(), nil
 }
 
 func (tools *TrackManagementTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolTrackList:
-		var input struct {
-			ReleaseID string `json:"release_id"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
-			return executionError(err)
-		}
-		if err := validateUUID("release_id", input.ReleaseID); err != nil {
-			return executionError(err)
-		}
-		tracks, err := tools.application.ListTracksByRelease(ctx, releasedomain.ListTracksQuery{ReleaseID: input.ReleaseID})
-		if err != nil {
-			return expectedToolError(err)
-		}
-		return contentResult(trackListOutput(releasedomain.TracksWithCreditsMessage(ctx, tracks)))
-	case ToolTrackCreate:
-		return tools.create(ctx, arguments)
-	case ToolTrackSettingsUpdate:
-		return tools.update(ctx, arguments)
-	case ToolTrackDelete:
-		var input struct {
-			TrackID string `json:"track_id"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
-			return executionError(err)
-		}
-		if err := validateUUID("track_id", input.TrackID); err != nil {
-			return executionError(err)
-		}
-		if err := tools.application.DeleteTrack(ctx, releasedomain.DeleteTrackCommand{ID: input.TrackID}); err != nil {
-			return expectedToolError(err)
-		}
-		return contentResult(map[string]any{"success": true})
-	case ToolTrackCreditsSet:
-		return tools.setCredits(ctx, arguments)
-	case ToolTrackReorder:
-		return tools.reorder(ctx, arguments)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return trackManagementTools.call(tools, ctx, name, arguments)
 }
 
 type trackCreateArguments struct {
@@ -103,9 +88,11 @@ type trackCreateArguments struct {
 	Lyrics          *string `json:"lyrics,omitempty"`
 }
 
-func (tools *TrackManagementTools) create(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *TrackManagementTools) create(ctx context.Context, _ string, call toolCall[trackCreateArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	var input trackCreateArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := rejectNullArguments(arguments, "duration_seconds", "lyrics"); err != nil {
@@ -138,9 +125,11 @@ type trackSettingsArguments struct {
 	ClearLyrics        bool    `json:"clear_lyrics,omitempty"`
 }
 
-func (tools *TrackManagementTools) update(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *TrackManagementTools) update(ctx context.Context, _ string, call toolCall[trackSettingsArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	var input trackSettingsArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := rejectNullArguments(arguments, "track_number", "title", "duration_seconds", "processing_status", "lyrics", "clear_duration", "clear_audio_original", "clear_lyrics"); err != nil {
@@ -167,13 +156,9 @@ type trackCreditsSnapshotArguments struct {
 	Credits *[]*managev1.TrackCreditInput `json:"credits"`
 }
 
-func (tools *TrackManagementTools) setCredits(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	var input struct {
-		TrackID  string                         `json:"track_id"`
-		Credits  *[]*managev1.TrackCreditInput  `json:"credits"`
-		Observed *trackCreditsSnapshotArguments `json:"observed"`
-	}
-	if err := decodeArguments(arguments, &input); err != nil {
+func (tools *TrackManagementTools) setCredits(ctx context.Context, _ string, call toolCall[trackSetCreditsArguments]) (mcpserver.ToolResult, error) {
+	var input trackSetCreditsArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateUUID("track_id", input.TrackID); err != nil {
@@ -206,11 +191,9 @@ func (tools *TrackManagementTools) setCredits(ctx context.Context, arguments mcp
 	return contentResult(trackWithCreditsOutput(releasedomain.TrackWithCreditsMessage(ctx, track)))
 }
 
-func (tools *TrackManagementTools) reorder(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	var input struct {
-		TrackIDs []string `json:"track_ids"`
-	}
-	if err := decodeArguments(arguments, &input); err != nil {
+func (tools *TrackManagementTools) reorder(ctx context.Context, _ string, call toolCall[trackReorderArguments]) (mcpserver.ToolResult, error) {
+	var input trackReorderArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if len(input.TrackIDs) == 0 {
@@ -261,4 +244,22 @@ func trackListOutput(values []*managev1.TrackWithCredits) map[string]any {
 		tracks = append(tracks, trackWithCreditsOutput(value))
 	}
 	return map[string]any{"tracks": tracks}
+}
+
+type trackSetCreditsArguments = struct {
+	TrackID  string                         `json:"track_id"`
+	Credits  *[]*managev1.TrackCreditInput  `json:"credits"`
+	Observed *trackCreditsSnapshotArguments `json:"observed"`
+}
+
+type trackReorderArguments = struct {
+	TrackIDs []string `json:"track_ids"`
+}
+
+type trackListArguments = struct {
+	ReleaseID string `json:"release_id"`
+}
+
+type trackDeleteArguments = struct {
+	TrackID string `json:"track_id"`
 }

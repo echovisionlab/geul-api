@@ -70,7 +70,7 @@ func TestReleaseRelationToolsDescriptors(t *testing.T) {
 	listed, err := tools.ListTools(t.Context(), mcpserver.Principal{})
 	require.NoError(t, err)
 	require.Len(t, listed, 8)
-	require.Equal(t, toolDefinitionNames(releaseRelationTools), tools.ToolNames())
+	require.Equal(t, releaseRelationTools.names(), tools.ToolNames())
 	for _, tool := range listed {
 		assertMCPToolOAuthSecurity(t, tool)
 		require.Equal(t, tool.Name == ToolReleaseRelationsGet, tool.Annotations["readOnlyHint"])

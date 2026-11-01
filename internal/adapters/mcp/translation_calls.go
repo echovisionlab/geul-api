@@ -10,12 +10,14 @@ import (
 	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
 )
 
-func (tools *TranslationTools) listJobs(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *TranslationTools) listJobs(ctx context.Context, _ string, call toolCall[translationJobsListArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	if err := rejectNullArguments(arguments, "p", "d", "tl", "sl", "s", "n", "o", "k", "z"); err != nil {
 		return executionError(err)
 	}
 	var input translationJobsListArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	query, err := translationJobsListQuery(input)
@@ -31,9 +33,9 @@ func (tools *TranslationTools) listJobs(ctx context.Context, arguments mcpserver
 	))
 }
 
-func (tools *TranslationTools) listTranslations(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *TranslationTools) listTranslations(ctx context.Context, _ string, call toolCall[translationTargetArguments]) (mcpserver.ToolResult, error) {
 	var input translationTargetArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	target, err := translationTarget(input)
@@ -51,9 +53,9 @@ func (tools *TranslationTools) listTranslations(ctx context.Context, arguments m
 	))
 }
 
-func (tools *TranslationTools) getTranslation(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *TranslationTools) getTranslation(ctx context.Context, _ string, call toolCall[translationGetArguments]) (mcpserver.ToolResult, error) {
 	var input translationGetArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	target, err := translationTarget(input.translationTargetArguments)
@@ -72,9 +74,9 @@ func (tools *TranslationTools) getTranslation(ctx context.Context, arguments mcp
 	return translationStructuredResult(encodeTranslationEntry(target, translationapp.EntryMessage(entry)))
 }
 
-func (tools *TranslationTools) cancelJob(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *TranslationTools) cancelJob(ctx context.Context, _ string, call toolCall[translationJobArguments]) (mcpserver.ToolResult, error) {
 	var input translationJobArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateUUID("job ID", input.JobID); err != nil {
@@ -86,9 +88,9 @@ func (tools *TranslationTools) cancelJob(ctx context.Context, arguments mcpserve
 	return translationStructuredResult(encodeTranslationJobCancellation(input.JobID))
 }
 
-func (tools *TranslationTools) regenerate(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *TranslationTools) regenerate(ctx context.Context, _ string, call toolCall[translationRegenerateArguments]) (mcpserver.ToolResult, error) {
 	var input translationRegenerateArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	target, err := translationTarget(input.translationTargetArguments)
@@ -108,7 +110,8 @@ func (tools *TranslationTools) regenerate(ctx context.Context, arguments mcpserv
 	return translationStructuredResult(encodeTranslationJobs(translationapp.JobMessages(jobs)))
 }
 
-func (tools *TranslationTools) exportXLIFF(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *TranslationTools) exportXLIFF(ctx context.Context, _ string, call toolCall[translationXLIFFExportArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
 	command, err := translationXLIFFExportCommand(arguments)
 	if err != nil {
 		return executionError(err)
@@ -120,7 +123,8 @@ func (tools *TranslationTools) exportXLIFF(ctx context.Context, arguments mcpser
 	return translationStructuredResult(encodeXLIFFExport(exported))
 }
 
-func (tools *TranslationTools) importXLIFF(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *TranslationTools) importXLIFF(ctx context.Context, _ string, call toolCall[translationXLIFFImportArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
 	command, err := translationXLIFFImportCommand(arguments)
 	if err != nil {
 		return executionError(err)

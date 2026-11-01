@@ -21,18 +21,20 @@ import (
 
 const ToolDocumentList = "document_list"
 
-var documentDiscoveryTools = []mcpserver.Tool{{
-	Name:  ToolDocumentList,
-	Title: "List accessible documents",
-	Description: "List Post, Work, Page, Program Event, Release, or Artist documents through the owning services' authorized management lists. document_open checks document access. " +
-		"Search source titles, or Artist source names and real names. Use this before document_open when the document UUID is unknown. " +
-		"Pass the returned d unchanged to document_open; a slug or URL is not a document ID.",
-	InputSchema:     json.RawMessage(documentListInputJSONSchema),
-	OutputSchema:    json.RawMessage(documentListOutputJSONSchema),
-	SecuritySchemes: oauthSecuritySchemes(),
-	Annotations:     toolAnnotations(true, false, false),
-	Meta:            oauthSecurityMeta(),
-}}
+var documentDiscoveryTools = toolRegistry[DocumentDiscoveryTools]{
+	defineTool(mcpserver.Tool{
+		Name:  ToolDocumentList,
+		Title: "List accessible documents",
+		Description: "List Post, Work, Page, Program Event, Release, or Artist documents through the owning services' authorized management lists. document_open checks document access. " +
+			"Search source titles, or Artist source names and real names. Use this before document_open when the document UUID is unknown. " +
+			"Pass the returned d unchanged to document_open; a slug or URL is not a document ID.",
+		InputSchema:     json.RawMessage(documentListInputJSONSchema),
+		OutputSchema:    json.RawMessage(documentListOutputJSONSchema),
+		SecuritySchemes: oauthSecuritySchemes(),
+		Annotations:     toolAnnotations(true, false, false),
+		Meta:            oauthSecurityMeta(),
+	}, (*DocumentDiscoveryTools).list),
+}
 
 // PostDocumentDiscovery is the exact Post-owned read capability consumed by
 // the MCP discovery adapter. Authorization remains in the Post service.
@@ -100,12 +102,10 @@ func NewDocumentDiscoveryTools(
 	return &DocumentDiscoveryTools{posts: posts, works: works, pages: pages, programEvents: programEvents, releases: releases, artists: artists}, nil
 }
 
-func (*DocumentDiscoveryTools) ToolNames() []string {
-	return toolDefinitionNames(documentDiscoveryTools)
-}
+func (*DocumentDiscoveryTools) ToolNames() []string { return documentDiscoveryTools.names() }
 
 func (*DocumentDiscoveryTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(documentDiscoveryTools), nil
+	return documentDiscoveryTools.list(), nil
 }
 
 func (tools *DocumentDiscoveryTools) CallTool(
@@ -114,50 +114,7 @@ func (tools *DocumentDiscoveryTools) CallTool(
 	name string,
 	arguments mcpserver.ToolArguments,
 ) (mcpserver.ToolResult, error) {
-	if name != ToolDocumentList {
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
-	if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
-		return executionError(err)
-	}
-	var input struct {
-		Profile string `json:"p"`
-		Query   string `json:"q,omitempty"`
-		Limit   int    `json:"limit,omitempty"`
-		Offset  int    `json:"offset,omitempty"`
-	}
-	if err := decodeArguments(arguments, &input); err != nil {
-		return executionError(err)
-	}
-	if input.Profile != "post" && input.Profile != "work" && input.Profile != "page" && input.Profile != "program_event" && input.Profile != "release" && input.Profile != "artist" {
-		return executionError(fmt.Errorf("p must be post, work, page, program_event, release, or artist"))
-	}
-	_, limitSupplied := arguments["limit"]
-	if input.Limit < 0 || input.Limit > 50 || (limitSupplied && input.Limit == 0) {
-		return executionError(errors.New("limit must be between 1 and 50, or omitted for the default"))
-	}
-	// The owning management APIs use int32 offsets. Validate before converting
-	// so a large offset cannot wrap around and select a different page.
-	if input.Offset < 0 || input.Offset > 1<<31-1 {
-		return executionError(errors.New("offset must be between 0 and 2147483647"))
-	}
-	documents, total, limit, err := tools.listDocuments(ctx, input.Profile, input.Query, input.Limit, input.Offset)
-	if err != nil {
-		return expectedToolError(err)
-	}
-	var nextOffset any
-	if int64(input.Offset+limit) < total {
-		nextOffset = input.Offset + limit
-	}
-	encoded, err := json.Marshal(map[string]any{
-		"documents":   documents,
-		"total":       total,
-		"next_offset": nextOffset,
-	})
-	if err != nil {
-		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document list: %w", err)
-	}
-	return structuredResult(encoded, false)
+	return documentDiscoveryTools.call(tools, ctx, name, arguments)
 }
 
 func (tools *DocumentDiscoveryTools) listDocuments(
@@ -319,3 +276,49 @@ var (
 	_ mcpserver.ToolDispatcher = (*DocumentDiscoveryTools)(nil)
 	_ ToolProvider             = (*DocumentDiscoveryTools)(nil)
 )
+
+func (tools *DocumentDiscoveryTools) list(ctx context.Context, name string, call toolCall[documentListArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
+	if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
+		return executionError(err)
+	}
+	var input documentListArguments
+	if err := call.Decode(&input); err != nil {
+		return executionError(err)
+	}
+	if input.Profile != "post" && input.Profile != "work" && input.Profile != "page" && input.Profile != "program_event" && input.Profile != "release" && input.Profile != "artist" {
+		return executionError(fmt.Errorf("p must be post, work, page, program_event, release, or artist"))
+	}
+	_, limitSupplied := arguments["limit"]
+	if input.Limit < 0 || input.Limit > 50 || (limitSupplied && input.Limit == 0) {
+		return executionError(errors.New("limit must be between 1 and 50, or omitted for the default"))
+	}
+	if input.Offset < 0 || input.Offset > 1<<31-1 {
+		return executionError(errors.New("offset must be between 0 and 2147483647"))
+	}
+	documents, total, limit, err := tools.listDocuments(ctx, input.Profile, input.Query, input.Limit, input.Offset)
+	if err != nil {
+		return expectedToolError(err)
+	}
+	var nextOffset any
+	if int64(input.Offset+limit) < total {
+		nextOffset = input.Offset + limit
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"documents":   documents,
+		"total":       total,
+		"next_offset": nextOffset,
+	})
+	if err != nil {
+		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document list: %w", err)
+	}
+	return structuredResult(encoded, false)
+}
+
+type documentListArguments = struct {
+	Profile string `json:"p"`
+	Query   string `json:"q,omitempty"`
+	Limit   int    `json:"limit,omitempty"`
+	Offset  int    `json:"offset,omitempty"`
+}

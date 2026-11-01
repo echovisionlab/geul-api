@@ -36,15 +36,15 @@ type FileManager interface {
 	DeleteFileFolder(context.Context, filemedia.DeleteFileFolderCommand) ([]string, error)
 }
 
-var fileManagerTools = []mcpserver.Tool{
-	oauthTool(ToolFileDeletionImpactGet, "Inspect File deletion impact", "Inspect current usage counts and up to five exact usages per File through administrator File authority. Use file_usage_list for remaining usages; references can change before deletion.", fileManagerIDsInputJSONSchema, fileManagerImpactOutputJSONSchema, true, false),
-	oauthTool(ToolFileDelete, "Delete Files", "Request durable deletion of up to 100 Files through administrator File authority. accepted_file_ids means deletion is scheduled, not completed. Referenced Files are rejected with their current impact; no force or bypass is supported.", fileManagerIDsInputJSONSchema, fileManagerDeleteOutputJSONSchema, false, true),
-	oauthTool(ToolFileRename, "Rename a File", "Rename a File through administrator File authority. file_name excludes its extension. Returns actual current metadata; file_read provides delivery references.", fileManagerRenameInputJSONSchema, fileManagerFileOutputJSONSchema, false, false),
-	oauthTool(ToolFileMove, "Move Files", "Move up to 100 Files through administrator File authority. Omit folder_id or pass null for the virtual root. Returns actual current metadata; file_read provides delivery references.", fileManagerMoveInputJSONSchema, fileManagerFilesOutputJSONSchema, false, false),
-	oauthTool(ToolFileFolderCreate, "Create a File folder", "Create a logical File Manager folder through administrator File authority. Omit parent_id or pass null for the virtual root; names must exclude path separators.", fileManagerFolderCreateInputJSONSchema, fileManagerFolderOutputJSONSchema, false, false),
-	oauthTool(ToolFileFolderRename, "Rename a File folder", "Rename a logical File Manager folder through administrator File authority. Native duplicate-name and no-op rules apply.", fileManagerFolderRenameInputJSONSchema, fileManagerFolderOutputJSONSchema, false, false),
-	oauthTool(ToolFileFolderMove, "Move a File folder", "Move a logical File Manager folder through administrator File authority. Omit parent_id or pass null for the virtual root. Native hierarchy, cycle and duplicate-name rules apply.", fileManagerFolderMoveInputJSONSchema, fileManagerFolderOutputJSONSchema, false, false),
-	oauthTool(ToolFileFolderDelete, "Delete a File folder", "Delete a folder and its descendant folders through administrator File authority, scheduling their contained Files for durable deletion. accepted_file_ids means scheduled, not completed. Any active File reference rejects the entire operation; no force or bypass is supported. The virtual root cannot be deleted.", fileManagerFolderIDInputJSONSchema, fileManagerFolderDeleteOutputJSONSchema, false, true),
+var fileManagerTools = toolRegistry[FileManagerTools]{
+	defineTool(oauthTool(ToolFileDeletionImpactGet, "Inspect File deletion impact", "Inspect current usage counts and up to five exact usages per File through administrator File authority. Use file_usage_list for remaining usages; references can change before deletion.", fileManagerIDsInputJSONSchema, fileManagerImpactOutputJSONSchema, true, false), (*FileManagerTools).getDeletionImpact),
+	defineTool(oauthTool(ToolFileDelete, "Delete Files", "Request durable deletion of up to 100 Files through administrator File authority. accepted_file_ids means deletion is scheduled, not completed. Referenced Files are rejected with their current impact; no force or bypass is supported.", fileManagerIDsInputJSONSchema, fileManagerDeleteOutputJSONSchema, false, true), (*FileManagerTools).deleteFiles),
+	defineTool(oauthTool(ToolFileRename, "Rename a File", "Rename a File through administrator File authority. file_name excludes its extension. Returns actual current metadata; file_read provides delivery references.", fileManagerRenameInputJSONSchema, fileManagerFileOutputJSONSchema, false, false), (*FileManagerTools).renameFile),
+	defineTool(oauthTool(ToolFileMove, "Move Files", "Move up to 100 Files through administrator File authority. Omit folder_id or pass null for the virtual root. Returns actual current metadata; file_read provides delivery references.", fileManagerMoveInputJSONSchema, fileManagerFilesOutputJSONSchema, false, false), (*FileManagerTools).moveFiles),
+	defineTool(oauthTool(ToolFileFolderCreate, "Create a File folder", "Create a logical File Manager folder through administrator File authority. Omit parent_id or pass null for the virtual root; names must exclude path separators.", fileManagerFolderCreateInputJSONSchema, fileManagerFolderOutputJSONSchema, false, false), (*FileManagerTools).createFolder),
+	defineTool(oauthTool(ToolFileFolderRename, "Rename a File folder", "Rename a logical File Manager folder through administrator File authority. Native duplicate-name and no-op rules apply.", fileManagerFolderRenameInputJSONSchema, fileManagerFolderOutputJSONSchema, false, false), (*FileManagerTools).renameFolder),
+	defineTool(oauthTool(ToolFileFolderMove, "Move a File folder", "Move a logical File Manager folder through administrator File authority. Omit parent_id or pass null for the virtual root. Native hierarchy, cycle and duplicate-name rules apply.", fileManagerFolderMoveInputJSONSchema, fileManagerFolderOutputJSONSchema, false, false), (*FileManagerTools).moveFolder),
+	defineTool(oauthTool(ToolFileFolderDelete, "Delete a File folder", "Delete a folder and its descendant folders through administrator File authority, scheduling their contained Files for durable deletion. accepted_file_ids means scheduled, not completed. Any active File reference rejects the entire operation; no force or bypass is supported. The virtual root cannot be deleted.", fileManagerFolderIDInputJSONSchema, fileManagerFolderDeleteOutputJSONSchema, false, true), (*FileManagerTools).deleteFolder),
 }
 
 type FileManagerTools struct{ files FileManager }
@@ -55,41 +55,22 @@ func NewFileManagerTools(files FileManager) (*FileManagerTools, error) {
 	}
 	return &FileManagerTools{files: files}, nil
 }
-func (*FileManagerTools) ToolNames() []string { return toolDefinitionNames(fileManagerTools) }
+func (*FileManagerTools) ToolNames() []string { return fileManagerTools.names() }
 func (*FileManagerTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(fileManagerTools), nil
+	return fileManagerTools.list(), nil
 }
 
 func (tools *FileManagerTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, args mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolFileDeletionImpactGet:
-		return tools.getDeletionImpact(ctx, args)
-	case ToolFileDelete:
-		return tools.deleteFiles(ctx, args)
-	case ToolFileRename:
-		return tools.renameFile(ctx, args)
-	case ToolFileMove:
-		return tools.moveFiles(ctx, args)
-	case ToolFileFolderCreate:
-		return tools.createFolder(ctx, args)
-	case ToolFileFolderRename:
-		return tools.renameFolder(ctx, args)
-	case ToolFileFolderMove:
-		return tools.moveFolder(ctx, args)
-	case ToolFileFolderDelete:
-		return tools.deleteFolder(ctx, args)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return fileManagerTools.call(tools, ctx, name, args)
 }
 
 type fileManagerSelectionArguments struct {
 	FileIDs []string `json:"file_ids"`
 }
 
-func (tools *FileManagerTools) getDeletionImpact(ctx context.Context, args mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *FileManagerTools) getDeletionImpact(ctx context.Context, _ string, call toolCall[fileManagerSelectionArguments]) (mcpserver.ToolResult, error) {
 	var input fileManagerSelectionArguments
-	if err := decodeArguments(args, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateFileManagerIDs(input.FileIDs); err != nil {
@@ -108,9 +89,9 @@ func (tools *FileManagerTools) getDeletionImpact(ctx context.Context, args mcpse
 	}{impacts})
 }
 
-func (tools *FileManagerTools) deleteFiles(ctx context.Context, args mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *FileManagerTools) deleteFiles(ctx context.Context, _ string, call toolCall[fileManagerSelectionArguments]) (mcpserver.ToolResult, error) {
 	var input fileManagerSelectionArguments
-	if err := decodeArguments(args, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateFileManagerIDs(input.FileIDs); err != nil {
@@ -130,12 +111,9 @@ func (tools *FileManagerTools) deleteFiles(ctx context.Context, args mcpserver.T
 	}{append([]string{}, response.AcceptedFileIDs...), rejected})
 }
 
-func (tools *FileManagerTools) moveFiles(ctx context.Context, args mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	var input struct {
-		FileIDs  []string `json:"file_ids"`
-		FolderID *string  `json:"folder_id"`
-	}
-	if err := decodeArguments(args, &input); err != nil {
+func (tools *FileManagerTools) moveFiles(ctx context.Context, _ string, call toolCall[fileMoveFilesArguments]) (mcpserver.ToolResult, error) {
+	var input fileMoveFilesArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateFileManagerIDs(input.FileIDs); err != nil {
@@ -159,12 +137,11 @@ func (tools *FileManagerTools) moveFiles(ctx context.Context, args mcpserver.Too
 	}{files})
 }
 
-func (tools *FileManagerTools) renameFile(ctx context.Context, args mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	var input struct {
-		FileID string `json:"file_id"`
-		Name   string `json:"file_name"`
-	}
-	if err := decodeArguments(args, &input); err != nil {
+func (tools *FileManagerTools) renameFile(ctx context.Context, _ string, call toolCall[fileRenameFileArguments]) (mcpserver.ToolResult, error) {
+	args := call.Arguments
+
+	var input fileRenameFileArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := rejectNullArguments(args, "file_name"); err != nil {
@@ -182,12 +159,11 @@ func (tools *FileManagerTools) renameFile(ctx context.Context, args mcpserver.To
 	}{projectFileManagerFile(response)})
 }
 
-func (tools *FileManagerTools) createFolder(ctx context.Context, args mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	var input struct {
-		ParentID *string `json:"parent_id"`
-		Name     string  `json:"name"`
-	}
-	if err := decodeArguments(args, &input); err != nil {
+func (tools *FileManagerTools) createFolder(ctx context.Context, _ string, call toolCall[folderCreateArguments]) (mcpserver.ToolResult, error) {
+	args := call.Arguments
+
+	var input folderCreateArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := rejectNullArguments(args, "name"); err != nil {
@@ -207,12 +183,11 @@ func (tools *FileManagerTools) createFolder(ctx context.Context, args mcpserver.
 	}{projectFileManagerFolder(response)})
 }
 
-func (tools *FileManagerTools) renameFolder(ctx context.Context, args mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	var input struct {
-		FolderID string `json:"folder_id"`
-		Name     string `json:"name"`
-	}
-	if err := decodeArguments(args, &input); err != nil {
+func (tools *FileManagerTools) renameFolder(ctx context.Context, _ string, call toolCall[folderRenameArguments]) (mcpserver.ToolResult, error) {
+	args := call.Arguments
+
+	var input folderRenameArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := rejectNullArguments(args, "name"); err != nil {
@@ -230,12 +205,9 @@ func (tools *FileManagerTools) renameFolder(ctx context.Context, args mcpserver.
 	}{projectFileManagerFolder(response)})
 }
 
-func (tools *FileManagerTools) moveFolder(ctx context.Context, args mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	var input struct {
-		FolderID string  `json:"folder_id"`
-		ParentID *string `json:"parent_id"`
-	}
-	if err := decodeArguments(args, &input); err != nil {
+func (tools *FileManagerTools) moveFolder(ctx context.Context, _ string, call toolCall[folderMoveArguments]) (mcpserver.ToolResult, error) {
+	var input folderMoveArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateUUID("folder_id", input.FolderID); err != nil {
@@ -255,11 +227,9 @@ func (tools *FileManagerTools) moveFolder(ctx context.Context, args mcpserver.To
 	}{projectFileManagerFolder(response)})
 }
 
-func (tools *FileManagerTools) deleteFolder(ctx context.Context, args mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	var input struct {
-		FolderID string `json:"folder_id"`
-	}
-	if err := decodeArguments(args, &input); err != nil {
+func (tools *FileManagerTools) deleteFolder(ctx context.Context, _ string, call toolCall[folderDeleteArguments]) (mcpserver.ToolResult, error) {
+	var input folderDeleteArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateUUID("folder_id", input.FolderID); err != nil {
@@ -372,4 +342,33 @@ func fileManagerResult(value any) (mcpserver.ToolResult, error) {
 		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP File Manager result: %w", err)
 	}
 	return structuredResult(raw, false)
+}
+
+type fileMoveFilesArguments = struct {
+	FileIDs  []string `json:"file_ids"`
+	FolderID *string  `json:"folder_id"`
+}
+
+type fileRenameFileArguments = struct {
+	FileID string `json:"file_id"`
+	Name   string `json:"file_name"`
+}
+
+type folderCreateArguments = struct {
+	ParentID *string `json:"parent_id"`
+	Name     string  `json:"name"`
+}
+
+type folderRenameArguments = struct {
+	FolderID string `json:"folder_id"`
+	Name     string `json:"name"`
+}
+
+type folderMoveArguments = struct {
+	FolderID string  `json:"folder_id"`
+	ParentID *string `json:"parent_id"`
+}
+
+type folderDeleteArguments = struct {
+	FolderID string `json:"folder_id"`
 }

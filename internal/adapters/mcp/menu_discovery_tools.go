@@ -26,39 +26,15 @@ type MenuLocationReader interface {
 	GetSetting(context.Context, sitesettings.GetSettingQuery) (sitesettings.Setting, error)
 }
 
-var menuDiscoveryTools = []mcpserver.Tool{
-	oauthTool(ToolMenuList, "List menus", "List canonical Menu UUIDs, names, and source locales through the existing authorized management list. Use menu_locations_get to identify the site's header, secondary, footer, and avatar menus; menu names do not determine their placement. Pass id unchanged as d with p=menu to document_open/read/catalog/apply. Read current revisions and stable item handles before editing. Continue with next_offset. Menu contents are omitted.", menuListInputJSONSchema, menuListOutputJSONSchema, true, false),
-	oauthTool(ToolMenuLocationsGet, "Get site menu locations", "Read only the four current site menu assignments through existing administrator Site Settings view authority. Null means no menu is assigned. Pass returned UUIDs as d with p=menu to document_open/read/catalog/apply; Menu permissions are checked separately. This tool does not change site settings or return other settings.", menuLocationsInputJSONSchema, menuLocationsOutputJSONSchema, true, false),
-}
+var menuDiscoveryTools = toolRegistry[MenuDiscoveryTools]{
+	defineTool(oauthTool(ToolMenuList, "List menus", "List canonical Menu UUIDs, names, and source locales through the existing authorized management list. Use menu_locations_get to identify the site's header, secondary, footer, and avatar menus; menu names do not determine their placement. Pass id unchanged as d with p=menu to document_open/read/catalog/apply. Read current revisions and stable item handles before editing. Continue with next_offset. Menu contents are omitted.", menuListInputJSONSchema, menuListOutputJSONSchema, true, false), func(tools *MenuDiscoveryTools, ctx context.Context, name string, call toolCall[menuListArguments]) (mcpserver.ToolResult, error) {
+		arguments := call.Arguments
 
-type MenuDiscoveryTools struct {
-	menus    MenuDiscovery
-	settings MenuLocationReader
-}
-
-func NewMenuDiscoveryTools(menus MenuDiscovery, settings MenuLocationReader) (*MenuDiscoveryTools, error) {
-	if interfaceValueIsNil(menus) || interfaceValueIsNil(settings) {
-		return nil, errors.New("MCP Menu discovery and Site Settings reader are required")
-	}
-	return &MenuDiscoveryTools{menus: menus, settings: settings}, nil
-}
-
-func (*MenuDiscoveryTools) ToolNames() []string { return toolDefinitionNames(menuDiscoveryTools) }
-func (*MenuDiscoveryTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(menuDiscoveryTools), nil
-}
-
-func (tools *MenuDiscoveryTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolMenuList:
 		if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
 			return executionError(err)
 		}
-		var input struct {
-			Limit  *int32 `json:"limit,omitempty"`
-			Offset int32  `json:"offset,omitempty"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+		var input menuListArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		limit := int32(20)
@@ -84,8 +60,9 @@ func (tools *MenuDiscoveryTools) CallTool(ctx context.Context, _ mcpserver.Princ
 			output["next_offset"] = int64(input.Offset) + int64(limit)
 		}
 		return contentResult(output)
-	case ToolMenuLocationsGet:
-		if err := decodeArguments(arguments, &struct{}{}); err != nil {
+	}),
+	defineTool(oauthTool(ToolMenuLocationsGet, "Get site menu locations", "Read only the four current site menu assignments through existing administrator Site Settings view authority. Null means no menu is assigned. Pass returned UUIDs as d with p=menu to document_open/read/catalog/apply; Menu permissions are checked separately. This tool does not change site settings or return other settings.", menuLocationsInputJSONSchema, menuLocationsOutputJSONSchema, true, false), func(tools *MenuDiscoveryTools, ctx context.Context, name string, call toolCall[struct{}]) (mcpserver.ToolResult, error) {
+		if err := call.Decode(&struct{}{}); err != nil {
 			return executionError(err)
 		}
 		output := make(map[string]any, 4)
@@ -118,7 +95,31 @@ func (tools *MenuDiscoveryTools) CallTool(ctx context.Context, _ mcpserver.Princ
 			return mcpserver.ToolResult{}, fmt.Errorf("encode menu assignments: %w", err)
 		}
 		return structuredResult(encoded, false)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
+	}),
+}
+
+type MenuDiscoveryTools struct {
+	menus    MenuDiscovery
+	settings MenuLocationReader
+}
+
+func NewMenuDiscoveryTools(menus MenuDiscovery, settings MenuLocationReader) (*MenuDiscoveryTools, error) {
+	if interfaceValueIsNil(menus) || interfaceValueIsNil(settings) {
+		return nil, errors.New("MCP Menu discovery and Site Settings reader are required")
 	}
+	return &MenuDiscoveryTools{menus: menus, settings: settings}, nil
+}
+
+func (*MenuDiscoveryTools) ToolNames() []string { return menuDiscoveryTools.names() }
+func (*MenuDiscoveryTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
+	return menuDiscoveryTools.list(), nil
+}
+
+func (tools *MenuDiscoveryTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	return menuDiscoveryTools.call(tools, ctx, name, arguments)
+}
+
+type menuListArguments = struct {
+	Limit  *int32 `json:"limit,omitempty"`
+	Offset int32  `json:"offset,omitempty"`
 }

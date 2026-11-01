@@ -47,29 +47,29 @@ const (
 	ToolPageDelete         = "page_delete"
 )
 
-var contentManagementTools = []mcpserver.Tool{
-	oauthTool(ToolPostCreate, "Create Post", "Create a new draft Post with an empty typed document in the requested source locale.", postCreateInputJSONSchema, postConfigurationMutationOutputJSONSchema, false, false),
-	oauthTool(ToolPostSettingsGet, "Get Post settings", "Read current source metadata, settings, publication state, and allowed actions through the authorized Post service. Copy configuration_revision unchanged to post_settings_update. Read the body with document_read.", contentIDInputJSONSchema, postSettingsOutputJSONSchema, true, false),
-	oauthTool(ToolPostSettingsUpdate, "Update Post settings", "Update Post slug, comment setting, Map Place relation, or document layout using the exact configuration_revision returned by post_settings_get, document_list, or post_create. Reload after a stale-revision error before applying pending edits. Use document_metadata_update for title, summary, categories, or tags.", postSettingsUpdateInputJSONSchema, postConfigurationMutationOutputJSONSchema, false, true),
-	contentTool(ToolPostPublish, "Publish Post", "Publish a draft or scheduled Post immediately using the existing Post lifecycle rules.", contentIDInputJSONSchema, true),
-	contentTool(ToolPostUnpublish, "Unpublish Post", "Move a published Post, or an archived Post as a site Admin, directly back to draft.", contentIDInputJSONSchema, true),
-	contentTool(ToolPostArchive, "Archive Post", "Archive a published Post. Site Admins may use post_unpublish to move an archived Post directly to draft.", contentIDInputJSONSchema, true),
-	contentTool(ToolPostSchedule, "Schedule Post", "Schedule a Post for publication at an RFC 3339 instant and IANA time zone.", postScheduleInputJSONSchema, true),
-	contentTool(ToolPostScheduleCancel, "Cancel Post schedule", "Cancel the current Post publication schedule.", contentIDInputJSONSchema, true),
-	contentTool(ToolPostRepublish, "Republish Post", "Move an archived Post back to published.", contentIDInputJSONSchema, true),
-	contentTool(ToolPostDelete, "Delete Post", "Permanently delete a Post allowed by its current lifecycle state.", contentIDInputJSONSchema, true),
-	contentTool(ToolWorkCreate, "Create Work", "Create a new draft Work with an empty typed document in the requested source locale. Set is_present true for an ongoing Work, or supply both until_year and until_month.", workCreateInputJSONSchema, false),
-	oauthTool(ToolWorkSettingsGet, "Get Work settings", "Read current Work settings through the authorized Work service. Before editing metadata or client_ids, copy the returned metadata to observed_metadata and client_ids to observed_client_ids for work_settings_update.", contentIDInputJSONSchema, workSettingsOutputJSONSchema, true, false),
-	contentTool(ToolWorkSettingsUpdate, "Update Work settings", "Update Work slug, type, metadata, featured flag, clients, period, or Map Place relation. Read work_settings_get before editing metadata or client_ids and supply its unchanged values as observed_metadata or observed_client_ids; concurrent peer edits are merged using that observed baseline. Use document_metadata_update for title or summary.", workSettingsUpdateInputJSONSchema, true),
-	contentTool(ToolWorkPublish, "Publish Work", "Publish a draft Work or restore a legacy archived Work to published.", contentIDInputJSONSchema, true),
-	contentTool(ToolWorkUnpublish, "Unpublish Work", "Move a published Work back to draft.", contentIDInputJSONSchema, true),
-	contentTool(ToolWorkDelete, "Delete Work", "Permanently delete a Work allowed by its current lifecycle state.", contentIDInputJSONSchema, true),
-	contentTool(ToolPageCreate, "Create Page", "Create a new draft Page with an empty typed Page document in the requested source locale.", pageCreateInputJSONSchema, false),
-	oauthTool(ToolPageSettingsGet, "Get Page settings", "Read current source metadata, settings, layout, and publication state through the authorized Page service. Read the body with document_read.", contentIDInputJSONSchema, pageSettingsOutputJSONSchema, true, false),
-	contentTool(ToolPageSettingsUpdate, "Update Page settings", "Update Page slug, show-title setting, or reader access_policy. access_policy replaces the whole audience. Use document_metadata_update for title or summary.", pageSettingsUpdateInputJSONSchema, true),
-	contentTool(ToolPagePublish, "Publish Page", "Publish a draft Page using the existing Page publication blockers.", contentIDInputJSONSchema, true),
-	contentTool(ToolPageUnpublish, "Unpublish Page", "Move a published Page back to draft.", contentIDInputJSONSchema, true),
-	contentTool(ToolPageDelete, "Delete Page", "Permanently delete a Page and its owned Page state using the existing Page deletion transaction.", contentIDInputJSONSchema, true),
+var contentManagementTools = toolRegistry[ContentManagementTools]{
+	defineTool(oauthTool(ToolPostCreate, "Create Post", "Create a new draft Post with an empty typed document in the requested source locale.", postCreateInputJSONSchema, postConfigurationMutationOutputJSONSchema, false, false), (*ContentManagementTools).createPost),
+	defineTool(oauthTool(ToolPostSettingsGet, "Get Post settings", "Read current source metadata, settings, publication state, and allowed actions through the authorized Post service. Copy configuration_revision unchanged to post_settings_update. Read the body with document_read.", contentIDInputJSONSchema, postSettingsOutputJSONSchema, true, false), (*ContentManagementTools).getPostSettings),
+	defineTool(oauthTool(ToolPostSettingsUpdate, "Update Post settings", "Update Post slug, comment setting, Map Place relation, or document layout using the exact configuration_revision returned by post_settings_get, document_list, or post_create. Reload after a stale-revision error before applying pending edits. Use document_metadata_update for title, summary, categories, or tags.", postSettingsUpdateInputJSONSchema, postConfigurationMutationOutputJSONSchema, false, true), (*ContentManagementTools).updatePost),
+	defineTool(contentTool(ToolPostPublish, "Publish Post", "Publish a draft or scheduled Post immediately using the existing Post lifecycle rules.", contentIDInputJSONSchema, true), (*ContentManagementTools).mutatePost),
+	defineTool(contentTool(ToolPostUnpublish, "Unpublish Post", "Move a published Post, or an archived Post as a site Admin, directly back to draft.", contentIDInputJSONSchema, true), (*ContentManagementTools).mutatePost),
+	defineTool(contentTool(ToolPostArchive, "Archive Post", "Archive a published Post. Site Admins may use post_unpublish to move an archived Post directly to draft.", contentIDInputJSONSchema, true), (*ContentManagementTools).mutatePost),
+	defineTool(contentTool(ToolPostSchedule, "Schedule Post", "Schedule a Post for publication at an RFC 3339 instant and IANA time zone.", postScheduleInputJSONSchema, true), (*ContentManagementTools).schedulePost),
+	defineTool(contentTool(ToolPostScheduleCancel, "Cancel Post schedule", "Cancel the current Post publication schedule.", contentIDInputJSONSchema, true), (*ContentManagementTools).mutatePost),
+	defineTool(contentTool(ToolPostRepublish, "Republish Post", "Move an archived Post back to published.", contentIDInputJSONSchema, true), (*ContentManagementTools).mutatePost),
+	defineTool(contentTool(ToolPostDelete, "Delete Post", "Permanently delete a Post allowed by its current lifecycle state.", contentIDInputJSONSchema, true), (*ContentManagementTools).mutatePost),
+	defineTool(contentTool(ToolWorkCreate, "Create Work", "Create a new draft Work with an empty typed document in the requested source locale. Set is_present true for an ongoing Work, or supply both until_year and until_month.", workCreateInputJSONSchema, false), (*ContentManagementTools).createWork),
+	defineTool(oauthTool(ToolWorkSettingsGet, "Get Work settings", "Read current Work settings through the authorized Work service. Before editing metadata or client_ids, copy the returned metadata to observed_metadata and client_ids to observed_client_ids for work_settings_update.", contentIDInputJSONSchema, workSettingsOutputJSONSchema, true, false), (*ContentManagementTools).getWorkSettings),
+	defineTool(contentTool(ToolWorkSettingsUpdate, "Update Work settings", "Update Work slug, type, metadata, featured flag, clients, period, or Map Place relation. Read work_settings_get before editing metadata or client_ids and supply its unchanged values as observed_metadata or observed_client_ids; concurrent peer edits are merged using that observed baseline. Use document_metadata_update for title or summary.", workSettingsUpdateInputJSONSchema, true), (*ContentManagementTools).updateWork),
+	defineTool(contentTool(ToolWorkPublish, "Publish Work", "Publish a draft Work or restore a legacy archived Work to published.", contentIDInputJSONSchema, true), (*ContentManagementTools).mutateWork),
+	defineTool(contentTool(ToolWorkUnpublish, "Unpublish Work", "Move a published Work back to draft.", contentIDInputJSONSchema, true), (*ContentManagementTools).mutateWork),
+	defineTool(contentTool(ToolWorkDelete, "Delete Work", "Permanently delete a Work allowed by its current lifecycle state.", contentIDInputJSONSchema, true), (*ContentManagementTools).mutateWork),
+	defineTool(contentTool(ToolPageCreate, "Create Page", "Create a new draft Page with an empty typed Page document in the requested source locale.", pageCreateInputJSONSchema, false), (*ContentManagementTools).createPage),
+	defineTool(oauthTool(ToolPageSettingsGet, "Get Page settings", "Read current source metadata, settings, layout, and publication state through the authorized Page service. Read the body with document_read.", contentIDInputJSONSchema, pageSettingsOutputJSONSchema, true, false), (*ContentManagementTools).getPageSettings),
+	defineTool(contentTool(ToolPageSettingsUpdate, "Update Page settings", "Update Page slug, show-title setting, or reader access_policy. access_policy replaces the whole audience. Use document_metadata_update for title or summary.", pageSettingsUpdateInputJSONSchema, true), (*ContentManagementTools).updatePage),
+	defineTool(contentTool(ToolPagePublish, "Publish Page", "Publish a draft Page using the existing Page publication blockers.", contentIDInputJSONSchema, true), (*ContentManagementTools).mutatePage),
+	defineTool(contentTool(ToolPageUnpublish, "Unpublish Page", "Move a published Page back to draft.", contentIDInputJSONSchema, true), (*ContentManagementTools).mutatePage),
+	defineTool(contentTool(ToolPageDelete, "Delete Page", "Permanently delete a Page and its owned Page state using the existing Page deletion transaction.", contentIDInputJSONSchema, true), (*ContentManagementTools).mutatePage),
 }
 
 func contentTool(name, title, description, inputSchema string, destructive bool) mcpserver.Tool {
@@ -128,44 +128,13 @@ func NewContentManagementTools(posts PostManagementApplication, works WorkManage
 	return &ContentManagementTools{posts: posts, works: works, pages: pages}, nil
 }
 
-func (*ContentManagementTools) ToolNames() []string {
-	return toolDefinitionNames(contentManagementTools)
-}
+func (*ContentManagementTools) ToolNames() []string { return contentManagementTools.names() }
 func (*ContentManagementTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(contentManagementTools), nil
+	return contentManagementTools.list(), nil
 }
 
 func (tools *ContentManagementTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolPostCreate:
-		return tools.createPost(ctx, arguments)
-	case ToolPostSettingsGet:
-		return tools.getPostSettings(ctx, arguments)
-	case ToolPostSettingsUpdate:
-		return tools.updatePost(ctx, arguments)
-	case ToolPostPublish, ToolPostUnpublish, ToolPostArchive, ToolPostScheduleCancel, ToolPostRepublish, ToolPostDelete:
-		return tools.mutatePost(ctx, name, arguments)
-	case ToolPostSchedule:
-		return tools.schedulePost(ctx, arguments)
-	case ToolWorkCreate:
-		return tools.createWork(ctx, arguments)
-	case ToolWorkSettingsGet:
-		return tools.getWorkSettings(ctx, arguments)
-	case ToolWorkSettingsUpdate:
-		return tools.updateWork(ctx, arguments)
-	case ToolWorkPublish, ToolWorkUnpublish, ToolWorkDelete:
-		return tools.mutateWork(ctx, name, arguments)
-	case ToolPageCreate:
-		return tools.createPage(ctx, arguments)
-	case ToolPageSettingsGet:
-		return tools.getPageSettings(ctx, arguments)
-	case ToolPageSettingsUpdate:
-		return tools.updatePage(ctx, arguments)
-	case ToolPagePublish, ToolPageUnpublish, ToolPageDelete:
-		return tools.mutatePage(ctx, name, arguments)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return contentManagementTools.call(tools, ctx, name, arguments)
 }
 
 type contentIDArguments struct {
@@ -183,9 +152,9 @@ type postCreateArguments struct {
 	MapPlaceID      *string  `json:"map_place_id,omitempty"`
 }
 
-func (tools *ContentManagementTools) createPost(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentManagementTools) createPost(ctx context.Context, _ string, call toolCall[postCreateArguments]) (mcpserver.ToolResult, error) {
 	var input postCreateArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	commentsEnabled := true
@@ -253,9 +222,9 @@ func documentLayoutOutput(layout *commonv1.DocumentLayout) any {
 	return documentLayoutArguments{ContentHeight: layout.ContentHeight.String(), PageChrome: layout.PageChrome.String(), Footer: layout.Footer.String(), HideTableOfContents: &hideTableOfContents}
 }
 
-func (tools *ContentManagementTools) getPostSettings(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentManagementTools) getPostSettings(ctx context.Context, _ string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	view, err := tools.posts.GetPost(ctx, postdomain.GetPostQuery{ID: input.DocumentID})
@@ -307,12 +276,14 @@ func (tools *ContentManagementTools) getPostSettings(ctx context.Context, argume
 	return contentResult(output)
 }
 
-func (tools *ContentManagementTools) updatePost(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentManagementTools) updatePost(ctx context.Context, _ string, call toolCall[postSettingsArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	if err := rejectNullArguments(arguments, "document_layout"); err != nil {
 		return executionError(err)
 	}
 	var input postSettingsArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if input.Slug == nil && input.CommentsEnabled == nil && input.MapPlaceID == nil && input.DocumentLayout == nil {
@@ -343,9 +314,9 @@ func (tools *ContentManagementTools) updatePost(ctx context.Context, arguments m
 	})
 }
 
-func (tools *ContentManagementTools) mutatePost(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentManagementTools) mutatePost(ctx context.Context, name string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if name == ToolPostDelete {
@@ -381,9 +352,9 @@ type postScheduleArguments struct {
 	ScheduledTimeZone string `json:"scheduled_time_zone"`
 }
 
-func (tools *ContentManagementTools) schedulePost(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentManagementTools) schedulePost(ctx context.Context, _ string, call toolCall[postScheduleArguments]) (mcpserver.ToolResult, error) {
 	var input postScheduleArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	scheduledAt, err := time.Parse(time.RFC3339, input.ScheduledAt)
@@ -423,9 +394,9 @@ type workCreateArguments struct {
 	IsPresent    *bool           `json:"is_present,omitempty"`
 }
 
-func (tools *ContentManagementTools) createWork(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentManagementTools) createWork(ctx context.Context, _ string, call toolCall[workCreateArguments]) (mcpserver.ToolResult, error) {
 	var input workCreateArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	metadata, err := optionalFields(input.Metadata)
@@ -473,9 +444,9 @@ type workSettingsArguments struct {
 	IsPresent         *bool           `json:"is_present,omitempty"`
 }
 
-func (tools *ContentManagementTools) getWorkSettings(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentManagementTools) getWorkSettings(ctx context.Context, _ string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	view, err := tools.works.GetWork(ctx, work.GetWorkQuery{ID: input.DocumentID})
@@ -507,9 +478,9 @@ func (tools *ContentManagementTools) getWorkSettings(ctx context.Context, argume
 	return contentResult(output)
 }
 
-func (tools *ContentManagementTools) updateWork(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentManagementTools) updateWork(ctx context.Context, _ string, call toolCall[workSettingsArguments]) (mcpserver.ToolResult, error) {
 	var input workSettingsArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if input.Slug == nil && input.Type == nil && input.Metadata == nil && input.Featured == nil && input.ClientIDs == nil && input.Year == nil && input.Month == nil && input.MapPlaceID == nil && input.UntilYear == nil && input.UntilMonth == nil && input.IsPresent == nil {
@@ -548,9 +519,9 @@ func (tools *ContentManagementTools) updateWork(ctx context.Context, arguments m
 	return contentResult(map[string]any{"document_type": "work", "document_id": updated.Work.ID, "changed": updated.Changed, "slug": optionalStringValue(updated.Work.Slug), "updated_at": timestampString(timestamppb.New(updated.Work.UpdatedAt))})
 }
 
-func (tools *ContentManagementTools) mutateWork(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentManagementTools) mutateWork(ctx context.Context, name string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if name == ToolWorkDelete {
@@ -580,9 +551,9 @@ type pageCreateArguments struct {
 	ShowTitle    *bool   `json:"show_title,omitempty"`
 }
 
-func (tools *ContentManagementTools) createPage(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentManagementTools) createPage(ctx context.Context, _ string, call toolCall[pageCreateArguments]) (mcpserver.ToolResult, error) {
 	var input pageCreateArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	detail, err := tools.pages.CreatePage(ctx, pagedomain.CreatePageCommand{
@@ -693,9 +664,9 @@ func pageAccessPolicyOutput(policy *commonv1.PageAccessPolicy) map[string]any {
 	return output
 }
 
-func (tools *ContentManagementTools) getPageSettings(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentManagementTools) getPageSettings(ctx context.Context, _ string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	detail, err := tools.pages.GetPage(ctx, pagedomain.GetPageQuery{ID: input.DocumentID})
@@ -724,9 +695,9 @@ func (tools *ContentManagementTools) getPageSettings(ctx context.Context, argume
 	return contentResult(output)
 }
 
-func (tools *ContentManagementTools) updatePage(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentManagementTools) updatePage(ctx context.Context, _ string, call toolCall[pageSettingsArguments]) (mcpserver.ToolResult, error) {
 	var input pageSettingsArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if input.Slug == nil && input.ShowTitle == nil && input.AccessPolicy == nil {
@@ -752,9 +723,9 @@ func (tools *ContentManagementTools) updatePage(ctx context.Context, arguments m
 	return contentResult(output)
 }
 
-func (tools *ContentManagementTools) mutatePage(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentManagementTools) mutatePage(ctx context.Context, name string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if name == ToolPageDelete {

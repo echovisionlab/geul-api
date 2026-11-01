@@ -13,12 +13,14 @@ import (
 
 const ToolDocumentCatalog = "document_catalog"
 
-var documentCatalogTools = []mcpserver.Tool{{
-	Name: ToolDocumentCatalog, Title: "Describe document catalog",
-	Description: "Read the authorized document's typed field shapes, block kinds, relations, nested stable-list identities, and File ownership for advanced document_apply operations. Use document_read for existing stable handles. The compiler enforces domain constraints. Generated enum values, numeric bounds, required fields, and Page block parent rules are included when available; defaults are not specified.",
-	InputSchema: openInputSchema(), OutputSchema: documentCatalogOutputSchema(),
-	SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(true, false, false), Meta: oauthSecurityMeta(),
-}}
+var documentCatalogTools = toolRegistry[DocumentCatalogTools]{
+	defineTool(mcpserver.Tool{
+		Name: ToolDocumentCatalog, Title: "Describe document catalog",
+		Description: "Read the authorized document's typed field shapes, block kinds, relations, nested stable-list identities, and File ownership for advanced document_apply operations. Use document_read for existing stable handles. The compiler enforces domain constraints. Generated enum values, numeric bounds, required fields, and Page block parent rules are included when available; defaults are not specified.",
+		InputSchema: openInputSchema(), OutputSchema: documentCatalogOutputSchema(),
+		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(true, false, false), Meta: oauthSecurityMeta(),
+	}, (*DocumentCatalogTools).describe),
+}
 
 type DocumentCatalogApplication interface {
 	Describe(context.Context, core.OpenRequest) (core.DescribeResult, error)
@@ -33,34 +35,14 @@ func NewDocumentCatalogTools(application DocumentCatalogApplication) (*DocumentC
 	return &DocumentCatalogTools{application: application}, nil
 }
 
-func (*DocumentCatalogTools) ToolNames() []string { return toolDefinitionNames(documentCatalogTools) }
+func (*DocumentCatalogTools) ToolNames() []string { return documentCatalogTools.names() }
 
 func (*DocumentCatalogTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(documentCatalogTools), nil
+	return documentCatalogTools.list(), nil
 }
 
 func (tools *DocumentCatalogTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	if name != ToolDocumentCatalog {
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
-	var input openArguments
-	if err := decodeArguments(arguments, &input); err != nil {
-		return executionError(err)
-	}
-	if err := validateMCPDocumentReference(input.Document); err != nil {
-		return executionError(err)
-	}
-	description, err := tools.application.Describe(ctx, core.OpenRequest{
-		Document: core.DocumentIdentity{Domain: input.Profile, Reference: input.Document}, Locale: input.Locale,
-	})
-	if err != nil {
-		return expectedToolError(err)
-	}
-	encoded, err := json.Marshal(projectDocumentCatalog(description))
-	if err != nil {
-		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document catalog: %w", err)
-	}
-	return structuredResult(encoded, false)
+	return documentCatalogTools.call(tools, ctx, name, arguments)
 }
 
 type documentCatalogOutput struct {
@@ -206,4 +188,25 @@ func projectCatalogShape(schema core.FieldSchema) catalogShape {
 		shape.Identity = &catalogListIdentity{Kind: schema.Identity.Kind, Field: schema.Identity.Field, Handles: append([]core.RelationItemID(nil), schema.Identity.Handles...)}
 	}
 	return shape
+}
+
+func (tools *DocumentCatalogTools) describe(ctx context.Context, name string, call toolCall[openArguments]) (mcpserver.ToolResult, error) {
+	var input openArguments
+	if err := call.Decode(&input); err != nil {
+		return executionError(err)
+	}
+	if err := validateMCPDocumentReference(input.Document); err != nil {
+		return executionError(err)
+	}
+	description, err := tools.application.Describe(ctx, core.OpenRequest{
+		Document: core.DocumentIdentity{Domain: input.Profile, Reference: input.Document}, Locale: input.Locale,
+	})
+	if err != nil {
+		return expectedToolError(err)
+	}
+	encoded, err := json.Marshal(projectDocumentCatalog(description))
+	if err != nil {
+		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP document catalog: %w", err)
+	}
+	return structuredResult(encoded, false)
 }
