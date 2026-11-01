@@ -1,20 +1,14 @@
 package sitesettings
 
 import (
-	"context"
 	"errors"
 	"reflect"
 	"slices"
 	"sort"
 	"strings"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -25,15 +19,10 @@ const siteSettingAuthorizationID = "1"
 // Deps are the collaborators of the Site Settings use cases. Every field
 // except SiteOrigin is required; NewService rejects a missing one.
 type Deps struct {
-	DB      *gorm.DB
-	SpiceDB *auth.SpiceDBClient
-	// Assets validate, bind and project the File-backed settings.
-	Assets Assets
-	// References validate the selected homepage Page and Menus.
-	References References
-	// OG plans the OG regeneration a settings change requires.
-	OG    OGInvalidator
-	Audit domainaudit.Appender
+	Units   mutation.UnitOfWork[Store] // sitesettingspostgres.NewUnits(db, ports)
+	SpiceDB mutation.Authorizer
+	Fence   identitystate.Fence // identitystate.PostgresFence{}
+	Audit   domainaudit.Appender
 	// SiteOrigin is the runtime origin the admin settings report; empty
 	// reports none.
 	SiteOrigin string
@@ -42,8 +31,7 @@ type Deps struct {
 func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
-		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Assets": d.Assets == nil,
-		"References": d.References == nil, "OG": d.OG == nil, "Audit": d.Audit == nil,
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -59,13 +47,10 @@ func (d Deps) validate() error {
 // Service holds the Site Settings use cases. Connect and MCP adapters
 // translate their requests into its commands and queries.
 type Service struct {
-	db         *gorm.DB
-	spiceDB    *auth.SpiceDBClient
+	units      mutation.UnitOfWork[Store]
+	spiceDB    mutation.Authorizer
 	siteOrigin string
-	assets     Assets
-	references References
-	og         OGInvalidator
-	mutations  *mutation.Runner
+	mutations  *mutation.StoreRunner[Store]
 }
 
 // NewService validates deps and returns the Site Settings use cases.
@@ -73,13 +58,13 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
 	return &Service{
-		db: deps.DB, spiceDB: deps.SpiceDB, siteOrigin: strings.TrimRight(strings.TrimSpace(deps.SiteOrigin), "/"),
-		assets: deps.Assets, references: deps.References, og: deps.OG, mutations: mutations,
+		units: deps.Units, spiceDB: deps.SpiceDB, siteOrigin: strings.TrimRight(strings.TrimSpace(deps.SiteOrigin), "/"),
+		mutations: mutations,
 	}, nil
 }
 
@@ -88,7 +73,7 @@ func freshEdit() mutation.Access {
 	return mutation.FreshAdminCan(policyv1.SiteSetting.Edit(siteSettingAuthorizationID))
 }
 
-func changedSiteSettingKeys(before *model.SiteSettings, after *model.SiteSettings, keys []string) []string {
+func changedSiteSettingKeys(before, after *Settings, keys []string) []string {
 	seen := make(map[string]struct{}, len(keys))
 	changed := make([]string, 0, len(keys))
 	for _, key := range keys {
@@ -112,16 +97,13 @@ func settingsAudit(changedKeys []string) mutation.Audit {
 	if len(changedKeys) == 0 {
 		return mutation.Unchanged()
 	}
-	return mutation.RequestAudit(sharedtelemetry.AuditSiteSettingsUpdated, settingsAuditRecord(changedKeys))
+	return mutation.RequestAudit(sharedtelemetry.AuditSiteSettingsUpdated, AuditRecord(changedKeys))
 }
 
-// AppendAudit records the inventory-defined Site Settings mutation from a
-// transaction owned by a collaborating domain such as Menu or Map Theme.
-func AppendAudit(ctx context.Context, tx *gorm.DB, writer domainaudit.Appender, changedKeys []string) error {
-	return domainaudit.AppendRequest(ctx, tx, writer, sharedtelemetry.AuditSiteSettingsUpdated, settingsAuditRecord(changedKeys))
-}
-
-func settingsAuditRecord(changedKeys []string) domainaudit.Builder {
+// AuditRecord builds the AuditSiteSettingsUpdated record of changedKeys,
+// for a collaborating domain such as Menu that changes the settings in its
+// own transaction.
+func AuditRecord(changedKeys []string) domainaudit.Builder {
 	auditFields := siteSettingAuditChangedFields(changedKeys)
 	return func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 		return sharedtelemetry.NewSiteSettingsUpdatedAuditRecord(metadata, auditFields)
@@ -147,20 +129,4 @@ func siteSettingAuditChangedFields(changedKeys []string) []string {
 	}
 	sort.Strings(fields)
 	return fields
-}
-
-func loadSettingsRow(tx *gorm.DB) (*model.SiteSettings, error) {
-	var settings model.SiteSettings
-	if err := tx.First(&settings, "id = 1").Error; err != nil {
-		return nil, err
-	}
-	return &settings, nil
-}
-
-func loadSettingsRowForUpdate(tx *gorm.DB) (*model.SiteSettings, error) {
-	var settings model.SiteSettings
-	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&settings, "id = 1").Error; err != nil {
-		return nil, err
-	}
-	return &settings, nil
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
+	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -32,8 +33,8 @@ var adminSettingsTools = []mcpserver.Tool{
 
 // These ports retain the same application services and request context as RPC.
 type SiteSettingsAdminApplication interface {
-	GetSettings(context.Context) (*managev1.AllSettings, error)
-	GetSetting(context.Context, sitesettings.GetSettingQuery) (*managev1.SiteSetting, error)
+	GetSettings(context.Context) (sitesettings.AdminSettings, error)
+	GetSetting(context.Context, sitesettings.GetSettingQuery) (sitesettings.Setting, error)
 	SetManySettings(context.Context, sitesettings.SetManySettingsCommand) (sitesettings.SettingsUpdate, error)
 }
 
@@ -85,7 +86,7 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 			if err != nil {
 				return mcpserver.ToolResult{}, err
 			}
-			settings[key] = binding.GetValue().AsInterface()
+			settings[key] = binding.Value
 		}
 		return adminSettingsResult(map[string]any{"settings": settings})
 	case ToolSiteSettingsUpdate:
@@ -208,25 +209,30 @@ func siteSettingsMutableKey(key string) bool {
 	}
 }
 
-func projectSiteSettings(settings *managev1.AllSettings) map[string]any {
-	public := settings.GetPublic()
-	if public == nil {
-		public = &managev1.PublicSettings{}
-	}
-	loaders := make([]string, 0, len(public.GetLoaderAssets()))
-	for _, loader := range public.GetLoaderAssets() {
-		loaders = append(loaders, loader.GetFileId())
+func projectSiteSettings(settings sitesettings.AdminSettings) map[string]any {
+	loaders := make([]string, 0, len(settings.LoaderAssets))
+	for _, loader := range settings.LoaderAssets {
+		loaders = append(loaders, loader.FileID)
 	}
 	return map[string]any{
-		"site_title": public.GetSiteTitle(), "company_name": public.GetCompanyName(), "company_address": public.GetCompanyAddress(), "tax_id": public.GetTaxId(),
-		"legal_email": public.GetLegalEmail(), "contact_email": public.GetContactEmail(),
-		"social_links": public.GetSocialLinks().AsMap(), "primary_color": public.GetPrimaryColor(), "default_comments_enabled": public.GetDefaultCommentsEnabled(),
-		"homepage_page_id": public.HomepagePageId, "menu_header_id": public.MenuHeaderId, "menu_secondary_id": public.MenuSecondaryId,
-		"menu_footer_id": public.MenuFooterId, "menu_avatar_dropdown_id": public.MenuAvatarDropdownId,
-		"meta_description": public.GetMetaDescription(), "google_analytics_id": public.GoogleAnalyticsId,
-		"loader_file_ids": loaders, "default_map_theme_id": public.GetDefaultMapThemeId(),
-		"og_image_config": settings.GetOgImageConfig().AsMap(), "site_origin": settings.GetRuntime().GetSiteOrigin(),
+		"site_title": settings.SiteTitle, "company_name": settings.CompanyName, "company_address": settings.CompanyAddress, "tax_id": settings.TaxID,
+		"legal_email": settings.LegalEmail, "contact_email": settings.ContactEmail,
+		"social_links": storedObject(settings.SocialLinks), "primary_color": settings.PrimaryColor, "default_comments_enabled": settings.DefaultCommentsEnabled,
+		"homepage_page_id": settings.HomepagePageID, "menu_header_id": settings.MenuHeaderID, "menu_secondary_id": settings.MenuSecondaryID,
+		"menu_footer_id": settings.MenuFooterID, "menu_avatar_dropdown_id": settings.MenuAvatarDropdownID,
+		"meta_description": settings.MetaDescription, "google_analytics_id": settings.GoogleAnalyticsID,
+		"loader_file_ids": loaders, "default_map_theme_id": settings.DefaultMapThemeID,
+		"og_image_config": storedObject(settings.OGImageConfig), "site_origin": settings.SiteOrigin,
 	}
+}
+
+// storedObject is a decoded JSON setting as the tool reports it: an object,
+// empty when none is stored.
+func storedObject(fields structured.Fields) map[string]any {
+	if fields == nil {
+		return map[string]any{}
+	}
+	return fields
 }
 
 // Explicit projection: even a service accidentally returning secrets cannot

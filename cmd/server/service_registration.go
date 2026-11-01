@@ -88,6 +88,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
+	sitesettingspostgres "github.com/echovisionlab/geul-api/internal/sitesettings/postgres"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/transcode"
 	"github.com/echovisionlab/geul-api/internal/work"
@@ -769,9 +770,15 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(audiencePath, audienceHandler)
 	slog.Info("Registered service", "path", audiencePath)
 
+	siteSettingUnits, err := sitesettingspostgres.NewUnits(db, sitesettingspostgres.Ports{
+		Assets: sitesettingsadapter.NewAssets(cfg.CDNURL), References: sitesettingsadapter.NewReferences(), OG: ogDeps.siteInvalidator(),
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize site settings store: %w", err)
+	}
 	siteSettingService, err := sitesettings.NewService(sitesettings.Deps{
-		DB: db, SpiceDB: spicedbClient, Assets: sitesettingsadapter.NewAssets(cfg.CDNURL), References: sitesettingsadapter.NewReferences(),
-		OG: ogDeps.siteInvalidator(), Audit: telemetryWriter, SiteOrigin: cfg.SiteOrigin,
+		Units: siteSettingUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
+		SiteOrigin: cfg.SiteOrigin,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize site settings service: %w", err)

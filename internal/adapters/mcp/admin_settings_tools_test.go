@@ -13,10 +13,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
+	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 const adminSettingsTestID = "11111111-1111-4111-8111-111111111111"
@@ -53,21 +53,17 @@ func TestAdminSettingsToolDescriptors(t *testing.T) {
 }
 
 func TestSiteSettingsGetReturnsAdminValuesAndSourceFileIDs(t *testing.T) {
-	social, err := structpb.NewStruct(map[string]any{"website": "https://example.test"})
-	require.NoError(t, err)
-	og, err := structpb.NewStruct(map[string]any{"home": map[string]any{"title": "Home"}})
-	require.NoError(t, err)
-	owner := &recordingAdminSettingsApplication{settings: &managev1.AllSettings{
-		Public: &managev1.PublicSettings{
-			SiteTitle: "Site", CompanyName: "Company", CompanyAddress: "Address", TaxId: "Tax",
-			LegalEmail: "legal@example.test", ContactEmail: "contact@example.test",
-			MetaDescription: "Description", PrimaryColor: "#abcdef", DefaultCommentsEnabled: true, SocialLinks: social,
-			HomepagePageId: adminSettingsPointer(adminSettingsTestID), MenuHeaderId: adminSettingsPointer(adminSettingsTestID),
-			GoogleAnalyticsId: adminSettingsPointer("G-ABC"), DefaultMapThemeId: adminSettingsTestID,
-			LogoFullLightAsset: &commonv1.AssetRef{AssetId: "rendered-asset-must-not-be-file-id", Url: "https://cdn.example.test/logo"},
-			LoaderAssets:       []*managev1.SiteLoaderAsset{{FileId: adminSettingsTestID}},
-		},
-		OgImageConfig: og, Runtime: &managev1.RuntimeSettings{SiteOrigin: "https://example.test"},
+	social := structured.Fields{"website": "https://example.test"}
+	og := structured.Fields{"home": map[string]any{"title": "Home"}}
+	owner := &recordingAdminSettingsApplication{settings: sitesettings.AdminSettings{
+		SiteTitle: "Site", CompanyName: "Company", CompanyAddress: "Address", TaxID: "Tax",
+		LegalEmail: "legal@example.test", ContactEmail: "contact@example.test",
+		MetaDescription: "Description", PrimaryColor: "#abcdef", DefaultCommentsEnabled: true, SocialLinks: social,
+		HomepagePageID: adminSettingsPointer(adminSettingsTestID), MenuHeaderID: adminSettingsPointer(adminSettingsTestID),
+		GoogleAnalyticsID: adminSettingsPointer("G-ABC"), DefaultMapThemeID: adminSettingsTestID,
+		LogoFullLight: &sitesettings.Asset{ID: "rendered-asset-must-not-be-file-id", URL: "https://cdn.example.test/logo"},
+		LoaderAssets:  []sitesettings.LoaderAsset{{FileID: adminSettingsTestID}},
+		OGImageConfig: og, SiteOrigin: "https://example.test",
 	}}
 	tools, err := NewAdminSettingsTools(owner, owner)
 	require.NoError(t, err)
@@ -92,8 +88,8 @@ func TestSiteSettingsGetReturnsAdminValuesAndSourceFileIDs(t *testing.T) {
 	require.Nil(t, settings["favicon_file_id"])
 	require.Nil(t, settings["menu_footer_id"])
 	require.Equal(t, []any{adminSettingsTestID}, settings["loader_file_ids"])
-	require.Equal(t, social.AsMap(), settings["social_links"])
-	require.Equal(t, og.AsMap(), settings["og_image_config"])
+	require.Equal(t, map[string]any(social), settings["social_links"])
+	require.Equal(t, map[string]any(og), settings["og_image_config"])
 	encoded, err := json.Marshal(result)
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "rendered-asset-must-not-be-file-id")
@@ -378,7 +374,7 @@ func assertAdminSettingsNoSecrets(t *testing.T, result mcpserver.ToolResult) {
 }
 
 type recordingAdminSettingsApplication struct {
-	settings   *managev1.AllSettings
+	settings   sitesettings.AdminSettings
 	adapters   []*managev1.MailAdapter
 	adapter    *managev1.MailAdapter
 	total      int32
@@ -392,21 +388,21 @@ type recordingAdminSettingsApplication struct {
 	sender     emaildelivery.MailAdapterSenderUpdate
 }
 
-func (owner *recordingAdminSettingsApplication) GetSettings(ctx context.Context) (*managev1.AllSettings, error) {
+func (owner *recordingAdminSettingsApplication) GetSettings(ctx context.Context) (sitesettings.AdminSettings, error) {
 	owner.ctx = ctx
 	owner.calls++
 	return owner.settings, owner.err
 }
 
-func (owner *recordingAdminSettingsApplication) GetSetting(ctx context.Context, query sitesettings.GetSettingQuery) (*managev1.SiteSetting, error) {
+func (owner *recordingAdminSettingsApplication) GetSetting(ctx context.Context, query sitesettings.GetSettingQuery) (sitesettings.Setting, error) {
 	owner.ctx = ctx
 	owner.calls++
 	owner.getKeys = append(owner.getKeys, query.Key)
-	value := structpb.NewNullValue()
+	var value structured.Value
 	if query.Key == "logo_full_light_file_id" {
-		value = structpb.NewStringValue(adminSettingsTestID)
+		value = adminSettingsTestID
 	}
-	return &managev1.SiteSetting{Key: query.Key, Value: value}, owner.bindingErr
+	return sitesettings.Setting{Key: query.Key, Value: value}, owner.bindingErr
 }
 
 func (owner *recordingAdminSettingsApplication) SetManySettings(ctx context.Context, command sitesettings.SetManySettingsCommand) (sitesettings.SettingsUpdate, error) {
