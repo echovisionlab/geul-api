@@ -11,6 +11,11 @@
 //  6. outbox work: PGMQ commands and content signals in the same transaction;
 //  7. SpiceDB relationship writes (authzmutation), compensated on rollback.
 //
+// The transaction comes from the domain's UnitOfWork, which binds the
+// domain's store to it: Postgres in production, mutationtest.UnitOfWork in a
+// use-case unit test. A domain that still works on *gorm.DB uses Runner and
+// Spec, the StoreRunner and StoreSpec of the gorm transaction itself.
+//
 // It wraps those primitives and does not reimplement them. A domain that has
 // moved to Run no longer opens transactions or calls authzmutation.Execute
 // itself; internal/architecture enforces that per migrated package.
@@ -44,12 +49,17 @@ type Authorizer interface {
 	authzmutation.RelationshipWriter
 }
 
-// Runner holds the collaborators every mutation needs.
-type Runner struct {
-	db        *gorm.DB
+// StoreRunner holds the collaborators every mutation of a domain whose
+// use cases work on the store S needs.
+type StoreRunner[S any] struct {
+	units     UnitOfWork[S]
 	authority authority
 	audit     domainaudit.Appender
 }
+
+// Runner is the StoreRunner of a domain whose use cases still work on the
+// gorm transaction itself.
+type Runner = StoreRunner[*gorm.DB]
 
 // authority is what Access consults inside the transaction.
 type authority struct {
@@ -57,11 +67,21 @@ type authority struct {
 	fence   identitystate.Fence
 }
 
-// NewRunner returns a Runner. Every collaborator is required: a mutation
-// cannot skip authorization, the identity fence or audit.
+// NewRunner returns the Runner of a domain that works on db's transactions.
+// Every collaborator is required: a mutation cannot skip authorization, the
+// identity fence or audit.
 func NewRunner(db *gorm.DB, spiceDB Authorizer, fence identitystate.Fence, audit domainaudit.Appender) (*Runner, error) {
 	if db == nil {
 		return nil, errors.New("mutation database is required")
+	}
+	return NewStoreRunner(Postgres(db, func(tx *gorm.DB) *gorm.DB { return tx }), spiceDB, fence, audit)
+}
+
+// NewStoreRunner returns the runner of a domain whose units bind its store.
+// Every collaborator is required.
+func NewStoreRunner[S any](units UnitOfWork[S], spiceDB Authorizer, fence identitystate.Fence, audit domainaudit.Appender) (*StoreRunner[S], error) {
+	if units == nil {
+		return nil, errors.New("mutation unit of work is required")
 	}
 	if spiceDB == nil {
 		return nil, errors.New("mutation SpiceDB client is required")
@@ -72,11 +92,13 @@ func NewRunner(db *gorm.DB, spiceDB Authorizer, fence identitystate.Fence, audit
 	if audit == nil {
 		return nil, errors.New("mutation audit appender is required")
 	}
-	return &Runner{db: db, authority: authority{checker: spiceDB, fence: fence}, audit: audit}, nil
+	return &StoreRunner[S]{units: units, authority: authority{checker: spiceDB, fence: fence}, audit: audit}, nil
 }
 
-// Spec describes one mutation. Access, Change and Audit are required.
-type Spec[R any] struct {
+// StoreSpec describes one mutation of a domain whose steps work on the store
+// S its unit of work binds to the transaction. Access, Change and Audit are
+// required.
+type StoreSpec[R, S any] struct {
 	// Access authorizes the caller inside the transaction.
 	Access Access
 	// Subjects are the Identities whose Member state the mutation changes on
@@ -88,21 +110,25 @@ type Spec[R any] struct {
 	// that waited on a concurrent writer of the same root authorizes the
 	// caller as of when it proceeds. It also answers a missing root before
 	// authorization, as the domain's lock-first mutations always did.
-	Lock func(ctx context.Context, tx *gorm.DB) error
-	// Change performs the domain work in tx and returns its result.
-	Change func(ctx context.Context, tx *gorm.DB) (R, error)
+	Lock func(ctx context.Context, store S) error
+	// Change performs the domain work and returns its result.
+	Change func(ctx context.Context, store S) (R, error)
 	// Audit names the record of the result, or Unchanged.
 	Audit func(R) Audit
 	// Outbox enqueues the PGMQ commands and content signals of the result
-	// in tx (contentsignal.TransactionExecutor, PublishInTransaction).
-	Outbox func(ctx context.Context, tx *gorm.DB, result R) error
+	// in the transaction (contentsignal.TransactionExecutor,
+	// PublishInTransaction).
+	Outbox func(ctx context.Context, store S, result R) error
 	// Relationships returns the exact SpiceDB relationship batch of the
 	// result and its exact inverse. When set, the batch must not be empty.
 	Relationships func(R) (apply, compensate []policyv1.RelationshipMutation, err error)
 }
 
+// Spec is the StoreSpec of a domain that works on the gorm transaction.
+type Spec[R any] = StoreSpec[R, *gorm.DB]
+
 // Run executes spec and returns the committed result.
-func Run[R any](ctx context.Context, runner *Runner, spec Spec[R]) (R, error) {
+func Run[R, S any](ctx context.Context, runner *StoreRunner[S], spec StoreSpec[R, S]) (R, error) {
 	var result R
 	if spec.Access.check == nil && spec.Access.err == nil {
 		return result, errors.New("mutation access is required")
@@ -122,34 +148,42 @@ func Run[R any](ctx context.Context, runner *Runner, spec Spec[R]) (R, error) {
 		ctx, cancel = context.WithTimeout(ctx, identitystate.MutationTimeout)
 		defer cancel()
 	}
-	work := func(tx *gorm.DB) error {
+	work := func(tx Tx[S]) error {
+		if len(subjects) != 0 {
+			tx.observe(StepSubjects)
+		}
 		for _, subject := range subjects {
-			if err := runner.authority.fence.Lock(tx, subject); err != nil {
+			if err := runner.authority.fence.Lock(tx.db, subject); err != nil {
 				return fmt.Errorf("lock identity state: %w", err)
 			}
 		}
 		if spec.Lock != nil {
-			if err := spec.Lock(ctx, tx); err != nil {
+			tx.observe(StepLock)
+			if err := spec.Lock(ctx, tx.store); err != nil {
 				return err
 			}
 		}
-		if err := spec.Access.authorize(ctx, tx, runner.authority); err != nil {
+		tx.observe(StepAccess)
+		if err := spec.Access.authorize(ctx, tx.db, tx.store, runner.authority); err != nil {
 			return err
 		}
+		tx.observe(StepChange)
 		var err error
-		if result, err = spec.Change(ctx, tx); err != nil {
+		if result, err = spec.Change(ctx, tx.store); err != nil {
 			return err
 		}
-		if err := runner.appendAudit(ctx, tx, spec.Audit(result)); err != nil {
+		tx.observe(StepAudit)
+		if err := runner.appendAudit(ctx, tx.db, spec.Audit(result)); err != nil {
 			return err
 		}
 		if spec.Outbox != nil {
-			return spec.Outbox(ctx, tx, result)
+			tx.observe(StepOutbox)
+			return spec.Outbox(ctx, tx.store, result)
 		}
 		return nil
 	}
 	if spec.Relationships != nil {
-		_, err = authzmutation.Execute(ctx, runner.db, runner.authority.checker, func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
+		err = runner.units.RelationshipTransaction(ctx, runner.authority.checker, func(tx Tx[S], write authzmutation.WriteRelationships) error {
 			if err := work(tx); err != nil {
 				return err
 			}
@@ -157,17 +191,11 @@ func Run[R any](ctx context.Context, runner *Runner, spec Spec[R]) (R, error) {
 			if err != nil {
 				return err
 			}
+			tx.observe(StepRelationships)
 			return write(apply, compensate)
 		})
 	} else {
-		err = runner.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if len(subjects) != 0 {
-				if err := authzmutation.LockTransaction(tx); err != nil {
-					return err
-				}
-			}
-			return work(tx)
-		})
+		err = runner.units.Transaction(ctx, len(subjects) != 0, work)
 	}
 	if err != nil {
 		var zero R
@@ -193,15 +221,15 @@ func lockOrder(subjects []string) ([]string, error) {
 
 // Access decides inside the transaction whether the caller may mutate.
 type Access struct {
-	check func(context.Context, *gorm.DB, authority) error
+	check func(ctx context.Context, tx *gorm.DB, store any, with authority) error
 	err   error
 }
 
-func (a Access) authorize(ctx context.Context, tx *gorm.DB, with authority) error {
+func (a Access) authorize(ctx context.Context, tx *gorm.DB, store any, with authority) error {
 	if a.err != nil {
 		return a.err
 	}
-	return a.check(ctx, tx, with)
+	return a.check(ctx, tx, store, with)
 }
 
 // FreshCan requires an active, onboarded principal that holds can, read with
@@ -211,7 +239,7 @@ func FreshCan(can policyv1.Can, err error) Access {
 	if err != nil {
 		return Access{err: fmt.Errorf("build authorization check: %w", err)}
 	}
-	return Access{check: func(ctx context.Context, tx *gorm.DB, with authority) error {
+	return Access{check: func(ctx context.Context, tx *gorm.DB, _ any, with authority) error {
 		return identitystate.RequireFreshCan(ctx, tx, with.fence, with.checker, can)
 	}}
 }
@@ -222,7 +250,7 @@ func FreshAdminCan(can policyv1.Can, err error) Access {
 	if err != nil {
 		return Access{err: fmt.Errorf("build authorization check: %w", err)}
 	}
-	return Access{check: func(ctx context.Context, tx *gorm.DB, with authority) error {
+	return Access{check: func(ctx context.Context, tx *gorm.DB, _ any, with authority) error {
 		return identitystate.RequireFreshAdminCan(ctx, tx, with.fence, with.checker, can)
 	}}
 }
@@ -231,18 +259,33 @@ func FreshAdminCan(can policyv1.Can, err error) Access {
 type Require func(can policyv1.Can) error
 
 // Locked authorizes against the target state Change will see: check locks
-// the target row in tx, picks the action its locked state requires (Edit or
-// EditArchived), and calls require with it. Change runs after check returns,
-// in the same transaction, so the state cannot move between the two.
-func Locked(check func(ctx context.Context, tx *gorm.DB, require Require) error) Access {
+// the target row through the mutation's store, picks the action its locked
+// state requires (Edit or EditArchived), and calls require with it. Change
+// runs after check returns, in the same transaction, so the state cannot
+// move between the two.
+func Locked[S any](check func(ctx context.Context, store S, require Require) error) Access {
 	if check == nil {
 		return Access{err: errors.New("mutation locked access check is required")}
 	}
-	return Access{check: func(ctx context.Context, tx *gorm.DB, with authority) error {
-		return check(ctx, tx, func(can policyv1.Can) error {
+	return Access{check: func(ctx context.Context, tx *gorm.DB, store any, with authority) error {
+		typed, err := storeOf[S](store)
+		if err != nil {
+			return err
+		}
+		return check(ctx, typed, func(can policyv1.Can) error {
 			return identitystate.RequireFreshCan(ctx, tx, with.fence, with.checker, can)
 		})
 	}}
+}
+
+// storeOf is the mutation's store as the store type an Access was built for.
+func storeOf[S any](store any) (S, error) {
+	typed, ok := store.(S)
+	if !ok {
+		var zero S
+		return zero, fmt.Errorf("mutation access expects store %T, not %T", zero, store)
+	}
+	return typed, nil
 }
 
 // IsDenied reports whether err is the permission denial of a fresh check,
@@ -284,7 +327,7 @@ func PrincipalFence(principal *auth.UserInfo) Access {
 		return Access{err: errors.New("mutation principal is required")}
 	}
 	identityID := principal.IdentityID.String()
-	return Access{check: func(_ context.Context, tx *gorm.DB, with authority) error {
+	return Access{check: func(_ context.Context, tx *gorm.DB, _ any, with authority) error {
 		if err := with.fence.Lock(tx, identityID); err != nil {
 			return fmt.Errorf("lock identity state: %w", err)
 		}
@@ -295,12 +338,16 @@ func PrincipalFence(principal *auth.UserInfo) Access {
 // Checked authorizes with check inside the transaction, for a mutation whose
 // authority is not the request principal: an internal collaboration save
 // re-resolves the contributors it is attributed to.
-func Checked(check func(ctx context.Context, tx *gorm.DB) error) Access {
+func Checked[S any](check func(ctx context.Context, store S) error) Access {
 	if check == nil {
 		return Access{err: errors.New("mutation access check is required")}
 	}
-	return Access{check: func(ctx context.Context, tx *gorm.DB, _ authority) error {
-		return check(ctx, tx)
+	return Access{check: func(ctx context.Context, _ *gorm.DB, store any, _ authority) error {
+		typed, err := storeOf[S](store)
+		if err != nil {
+			return err
+		}
+		return check(ctx, typed)
 	}}
 }
 
@@ -361,7 +408,7 @@ func Unchanged() Audit {
 	return Audit{unchanged: true}
 }
 
-func (r *Runner) appendAudit(ctx context.Context, tx *gorm.DB, audit Audit) error {
+func (r *StoreRunner[S]) appendAudit(ctx context.Context, tx *gorm.DB, audit Audit) error {
 	switch {
 	case len(audit.all) != 0:
 		for _, each := range audit.all {

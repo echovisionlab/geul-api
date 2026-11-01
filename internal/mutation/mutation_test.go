@@ -54,7 +54,7 @@ func memberRequestContext(t *testing.T) context.Context {
 }
 
 func recordingAccess(steps *[]string, err error) Access {
-	return Access{check: func(context.Context, *gorm.DB, authority) error {
+	return Access{check: func(context.Context, *gorm.DB, any, authority) error {
 		*steps = append(*steps, "access")
 		return err
 	}}
@@ -249,7 +249,7 @@ func TestRunRejectsAnIncompleteSpecBeforeTheTransaction(t *testing.T) {
 		"audit":      func(spec *Spec[note]) { spec.Audit = nil },
 		"subject":    func(spec *Spec[note]) { spec.Subjects = []string{" "} },
 		"descriptor": func(spec *Spec[note]) { spec.Access = FreshAdminCan(policyv1.Can{}, descriptorErr) },
-		"locked":     func(spec *Spec[note]) { spec.Access = Locked(nil) },
+		"locked":     func(spec *Spec[note]) { spec.Access = Locked[*gorm.DB](nil) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			spec := complete
@@ -342,7 +342,7 @@ func TestCheckedRunsTheCheckInsideTheTransaction(t *testing.T) {
 	require.ErrorIs(t, err, denied)
 	require.Equal(t, []string{"check"}, steps)
 	require.Zero(t, noteCount(t, db))
-	_, err = Run(memberRequestContext(t), runner, Spec[note]{Access: Checked(nil), Change: spec.Change, Audit: spec.Audit})
+	_, err = Run(memberRequestContext(t), runner, Spec[note]{Access: Checked[*gorm.DB](nil), Change: spec.Change, Audit: spec.Audit})
 	require.ErrorContains(t, err, "access check is required")
 }
 
