@@ -14,11 +14,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The admission decision against the real SpiceDB schema, where an
+// administrator inherits Platform.IsAuthor.
 func TestMCPGatewayAuthorAdmissionUsesAuthorHierarchyIntegration(t *testing.T) {
 	t.Parallel()
-	stack, err := testutil.StartBackendIntegrationStack(t.Context())
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, stack.Close()) })
+	stack := testutil.SetupOryStack(t)
 	handler, err := NewMCPGatewayAuthorAdmissionHandler(
 		testMCPAdmissionSecret,
 		testMCPAuthHeaderName,

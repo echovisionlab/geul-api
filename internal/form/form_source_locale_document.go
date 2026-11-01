@@ -2,53 +2,35 @@ package form
 
 import (
 	"context"
-	"database/sql"
-	"fmt"
+	"errors"
 	"strings"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	"gorm.io/gorm"
 )
 
-type formDocumentSnapshot struct {
-	state     *TranslationDocumentState
-	updatedAt time.Time
+// TranslationDocumentSaveInput is a source locale document write; a nil
+// Title or ContentJSON keeps the stored one.
+type TranslationDocumentSaveInput struct {
+	Title       *string
+	ContentJSON []byte
+	Now         time.Time
 }
 
+// FormSourceDocument is a Form's source locale document as public reads
+// serve it.
 type FormSourceDocument struct {
 	Title       string
 	Schema      []byte
 	ContentText *string
 }
 
+// DefaultTitle is the title of a Form whose source locale has none.
+const DefaultTitle = "Untitled Form"
+
 func defaultFormTitle() string {
-	return "Untitled Form"
-}
-
-func formSourceLocaleColumnSQL(tableAlias string, column string) string {
-	alias := strings.TrimSpace(tableAlias)
-	if alias == "" {
-		alias = "form"
-	}
-	return fmt.Sprintf(
-		"(SELECT ft.%s FROM form_translation AS ft "+
-			"WHERE ft.entity_id = %s.id AND ft.locale = %s.source_locale LIMIT 1)",
-		column,
-		alias,
-		alias,
-	)
-}
-
-func FormSourceTitleSQL(tableAlias string) string {
-	return fmt.Sprintf(
-		"COALESCE(NULLIF(BTRIM(%s), ''), '%s')",
-		formSourceLocaleColumnSQL(tableAlias, "title"),
-		defaultFormTitle(),
-	)
+	return DefaultTitle
 }
 
 func resolveFormTitle(title *string) string {
@@ -58,105 +40,62 @@ func resolveFormTitle(title *string) string {
 	return defaultFormTitle()
 }
 
-func loadFormTranslationStoredSnapshot(
-	ctx context.Context,
-	db *gorm.DB,
-	formID string,
-	locale string,
-) (*formDocumentSnapshot, error) {
-	var row struct {
-		Title       sql.NullString `gorm:"column:title"`
-		ContentJSON []byte         `gorm:"column:content_json"`
-		ContentText sql.NullString `gorm:"column:content_text"`
-		OgAssetID   sql.NullString `gorm:"column:og_asset_id"`
-		UpdatedAt   time.Time      `gorm:"column:updated_at"`
+// loadFormLocaleState reads one stored locale document; a missing one is
+// not found.
+func loadFormLocaleState(ctx context.Context, store SourceReader, formID, locale string) (TranslationDocumentState, error) {
+	state, err := store.LocaleState(ctx, formID, locale)
+	if errors.Is(err, ErrLocaleNotFound) {
+		return TranslationDocumentState{}, domainerr.ResourceNotFound("form translation", formID+":"+locale).WithCause(err)
 	}
-	result := db.WithContext(ctx).Raw(
-		`SELECT title, content_json, content_text, og_asset_id, updated_at
-		 FROM form_translation
-		 WHERE entity_id = ? AND locale = ?
-		 LIMIT 1`,
-		formID,
-		locale,
-	).Scan(&row)
-	if result.Error != nil {
-		return nil, result.Error
-	}
-	if result.RowsAffected == 0 {
-		return nil, domainerr.ResourceNotFound("form translation", formID+":"+locale)
-	}
-
-	state := &TranslationDocumentState{
-		ContentJSON: row.ContentJSON,
-	}
-	if row.Title.Valid {
-		state.Title = &row.Title.String
-	}
-	if row.ContentText.Valid {
-		state.ContentText = &row.ContentText.String
-	}
-	if row.OgAssetID.Valid {
-		state.OgAssetID = &row.OgAssetID.String
-	}
-
-	return &formDocumentSnapshot{
-		state:     state,
-		updatedAt: row.UpdatedAt,
-	}, nil
+	return state, err
 }
 
-func loadFormResolvedSourceLocale(
-	ctx context.Context,
-	db *gorm.DB,
-	formID string,
-) (string, error) {
-	var sourceRow struct {
-		Locale string `gorm:"column:locale"`
+// loadFormResolvedSourceLocale reads the Form's source locale; a missing
+// Form or locale is not found.
+func loadFormResolvedSourceLocale(ctx context.Context, store SourceReader, formID string) (string, error) {
+	locale, err := store.SourceLocale(ctx, formID)
+	if errors.Is(err, ErrFormNotFound) {
+		return "", domainerr.ResourceNotFound("form source translation", formID).WithCause(err)
 	}
-	result := db.WithContext(ctx).Raw(
-		`SELECT source_locale AS locale
-		 FROM form
-		 WHERE id = ?
-		 LIMIT 1`,
-		formID,
-	).Scan(&sourceRow)
-	if result.Error != nil {
-		return "", result.Error
+	if err != nil {
+		return "", err
 	}
-	if result.RowsAffected == 0 || strings.TrimSpace(sourceRow.Locale) == "" {
+	if strings.TrimSpace(locale) == "" {
 		return "", domainerr.ResourceNotFound("form source translation", formID)
 	}
-	return sourceRow.Locale, nil
+	return locale, nil
 }
 
+// LoadFormCanonicalSourceDocumentState reads the Form's source locale
+// document.
 func LoadFormCanonicalSourceDocumentState(
 	ctx context.Context,
-	db *gorm.DB,
+	store SourceReader,
 	formID string,
 	sourceLocale string,
-) (*TranslationDocumentState, error) {
+) (TranslationDocumentState, error) {
 	sourceLocale = strings.TrimSpace(sourceLocale)
 	if sourceLocale == "" {
-		return nil, domainerr.ResourceNotFound("form source translation", formID)
+		return TranslationDocumentState{}, domainerr.ResourceNotFound("form source translation", formID)
 	}
-
-	snapshot, err := loadFormTranslationStoredSnapshot(ctx, db, formID, sourceLocale)
-	if err != nil {
-		return nil, err
-	}
-	return snapshot.state, nil
+	return loadFormLocaleState(ctx, store, formID, sourceLocale)
 }
 
-func LoadCurrentFormSourceLocaleDocumentState(
-	ctx context.Context,
-	db *gorm.DB,
-	formID string,
-) (*TranslationDocumentState, error) {
-	sourceLocale, err := loadFormResolvedSourceLocale(ctx, db, formID)
+// SourceReader reads a Form's source locale document: the management Store
+// and the public read Store both are one.
+type SourceReader interface {
+	SourceLocale(ctx context.Context, formID string) (string, error)
+	LocaleState(ctx context.Context, formID, locale string) (TranslationDocumentState, error)
+}
+
+// LoadCurrentFormSourceLocaleDocumentState reads the Form's current source
+// locale document.
+func LoadCurrentFormSourceLocaleDocumentState(ctx context.Context, store SourceReader, formID string) (TranslationDocumentState, error) {
+	sourceLocale, err := loadFormResolvedSourceLocale(ctx, store, formID)
 	if err != nil {
-		return nil, err
+		return TranslationDocumentState{}, err
 	}
-	return LoadFormCanonicalSourceDocumentState(ctx, db, formID, sourceLocale)
+	return LoadFormCanonicalSourceDocumentState(ctx, store, formID, sourceLocale)
 }
 
 // PrepareSourceLocaleSwitch ensures that a requested Form source locale has a
@@ -166,13 +105,13 @@ func LoadCurrentFormSourceLocaleDocumentState(
 // that topology.
 func PrepareSourceLocaleSwitch(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	formID string,
 	currentSourceLocale string,
 	requestedLocale string,
 	now time.Time,
 ) error {
-	if db == nil || !IsValidUUID(formID) {
+	if store == nil || !IsValidUUID(formID) {
 		return domainerr.InvalidField("form_id", "must be a canonical UUID")
 	}
 	currentSourceLocale = strings.TrimSpace(currentSourceLocale)
@@ -187,16 +126,14 @@ func PrepareSourceLocaleSwitch(
 	if now.IsZero() {
 		return domainerr.InvalidField("now", "Form source-locale switch time is required")
 	}
-	root, err := loadFormAIDocumentRoot(ctx, db, formID, "")
+	root, err := loadFormAIDocumentRoot(ctx, store, formID, Unlocked)
 	if err != nil {
 		return err
 	}
 	if root.SourceLocale != currentSourceLocale {
 		return domainerr.Precondition("Form source locale changed")
 	}
-	source, sourceExists, err := loadFormAIDocumentLocale(
-		ctx, db, formID, currentSourceLocale, true,
-	)
+	source, sourceExists, err := store.Locale(ctx, formID, currentSourceLocale, true)
 	if err != nil {
 		return err
 	}
@@ -206,9 +143,7 @@ func PrepareSourceLocaleSwitch(
 	if err := validateCanonicalFormSchema(source.Schema); err != nil {
 		return domainerr.Precondition("Form source locale document is invalid").WithCause(failurecause.ServerFault(err))
 	}
-	requested, requestedExists, err := loadFormAIDocumentLocale(
-		ctx, db, formID, requestedLocale, true,
-	)
+	requested, requestedExists, err := store.Locale(ctx, formID, requestedLocale, true)
 	if err != nil {
 		return err
 	}
@@ -222,22 +157,11 @@ func PrepareSourceLocaleSwitch(
 	if err != nil {
 		return domainerr.Precondition("Form source locale document is invalid").WithCause(failurecause.ServerFault(err))
 	}
-	writeTime := now.UTC()
-	result := db.WithContext(ctx).Exec(
-		`INSERT INTO form_translation (
-			entity_id, locale, title, content_json, content_text, created_at, updated_at
-		) VALUES (?::uuid, ?, NULL, CAST(? AS jsonb), NULL, ?, ?)
-		ON CONFLICT (entity_id, locale) DO NOTHING`,
-		formID,
-		requestedLocale,
-		string(emptySchema),
-		writeTime,
-		writeTime,
-	)
-	if result.Error != nil {
-		return result.Error
+	created, err := store.CreateEmptyLocale(ctx, formID, requestedLocale, emptySchema, now.UTC())
+	if err != nil {
+		return err
 	}
-	if result.RowsAffected != 1 {
+	if !created {
 		return domainerr.Precondition("Form requested source locale changed")
 	}
 	return nil
@@ -245,7 +169,7 @@ func PrepareSourceLocaleSwitch(
 
 func saveFormSourceLocaleDocumentState(
 	ctx context.Context,
-	db *gorm.DB,
+	store FormLocales,
 	formID string,
 	locale string,
 	input TranslationDocumentSaveInput,
@@ -256,108 +180,29 @@ func saveFormSourceLocaleDocumentState(
 	}
 
 	if len(input.ContentJSON) == 0 {
-		existingSnapshot, err := loadFormTranslationStoredSnapshot(ctx, db, formID, locale)
-		if err != nil && !mutation.IsNotFound(err) {
+		existing, err := store.LocaleState(ctx, formID, locale)
+		if err != nil && !errors.Is(err, ErrLocaleNotFound) {
 			return err
 		}
-		if existingSnapshot != nil && len(input.ContentJSON) == 0 {
-			input.ContentJSON = existingSnapshot.state.ContentJSON
+		if err == nil {
+			input.ContentJSON = existing.ContentJSON
 		}
 	}
-
-	var titleValue structured.Value
-	if input.Title != nil {
-		titleValue = *input.Title
-	}
-	schemaJSONValue := structured.Value(nil)
-	if input.ContentJSON != nil {
-		schemaJSONValue = input.ContentJSON
-	}
-	contentText := formCanonicalContentText(input.ContentJSON)
-	if err := db.WithContext(ctx).Exec(
-		`INSERT INTO form_translation (
-			entity_id, locale, title, content_json, content_text,
-			created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (entity_id, locale) DO UPDATE SET
-			title = COALESCE(EXCLUDED.title, form_translation.title),
-			content_json = COALESCE(EXCLUDED.content_json, form_translation.content_json),
-			content_text = EXCLUDED.content_text,
-			updated_at = EXCLUDED.updated_at`,
-		formID,
-		locale,
-		titleValue,
-		schemaJSONValue,
-		contentText,
-		now,
-		now,
-	).Error; err != nil {
-		return err
-	}
-
-	return nil
+	return store.SaveSourceLocale(ctx, formID, locale, input.Title, input.ContentJSON, formCanonicalContentText(input.ContentJSON), now)
 }
 
-func loadFormSourceSchema(
-	ctx context.Context,
-	db *gorm.DB,
-	formID string,
-) ([]byte, *string, error) {
-	state, err := LoadCurrentFormSourceLocaleDocumentState(ctx, db, formID)
+func loadFormSourceSchema(ctx context.Context, store SourceReader, formID string) ([]byte, *string, error) {
+	state, err := LoadCurrentFormSourceLocaleDocumentState(ctx, store, formID)
 	if err != nil {
 		return nil, nil, err
 	}
 	return state.ContentJSON, state.Title, nil
 }
 
-func loadFormSourceTitles(
-	ctx context.Context,
-	db *gorm.DB,
-	formIDs []string,
-) (map[string]string, error) {
-	if len(formIDs) == 0 {
-		return map[string]string{}, nil
-	}
-
-	var rows []struct {
-		EntityID string         `gorm:"column:entity_id"`
-		Title    sql.NullString `gorm:"column:title"`
-	}
-
-	result := db.WithContext(ctx).Raw(
-		`SELECT ft.entity_id, ft.title
-		 FROM form_translation AS ft
-		 JOIN form AS root ON root.id = ft.entity_id AND root.source_locale = ft.locale
-		 WHERE ft.entity_id IN ?`,
-		formIDs,
-	).Scan(&rows)
-	if result.Error != nil {
-		return nil, result.Error
-	}
-
-	titles := make(map[string]string, len(rows))
-	for _, formID := range formIDs {
-		titles[formID] = defaultFormTitle()
-	}
-	for _, row := range rows {
-		if row.Title.Valid {
-			title := strings.TrimSpace(row.Title.String)
-			if title != "" {
-				titles[row.EntityID] = title
-				continue
-			}
-		}
-		titles[row.EntityID] = defaultFormTitle()
-	}
-	return titles, nil
-}
-
-func LoadCurrentFormSourceDocument(
-	ctx context.Context,
-	db *gorm.DB,
-	formID string,
-) (*FormSourceDocument, error) {
-	state, err := LoadCurrentFormSourceLocaleDocumentState(ctx, db, formID)
+// LoadCurrentFormSourceDocument reads the Form's current source locale
+// document with its title resolved.
+func LoadCurrentFormSourceDocument(ctx context.Context, store SourceReader, formID string) (*FormSourceDocument, error) {
+	state, err := LoadCurrentFormSourceLocaleDocumentState(ctx, store, formID)
 	if err != nil {
 		return nil, err
 	}

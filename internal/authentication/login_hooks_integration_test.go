@@ -16,6 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// The registration hook end to end: the Identity read from real Kratos,
+// Member provisioning, and the login role sync on PostgreSQL and SpiceDB.
 func TestRegistrationLoginHookDoesNotPublishWelcomeIntegration(t *testing.T) {
 	t.Parallel()
 	stack := testutil.SetupOryStack(t)
@@ -28,10 +30,7 @@ func TestRegistrationLoginHookDoesNotPublishWelcomeIntegration(t *testing.T) {
 		memberadapter.AccountEmailProjection{},
 		roles,
 	)
-	loginRoles, err := authentication.NewService(authentication.Deps{
-		DB: stack.DB, SpiceDB: stack.SpiceDBClient, Audit: apitelemetry.NewDurableWriter(stack.DB), Roles: roles,
-	})
-	require.NoError(t, err)
+	loginRoles := newIntegrationLoginRoles(t, stack, apitelemetry.NewDurableWriter(stack.DB))
 	lifecycle := authentication.NewLoginHookService(
 		stack.KratosClient,
 		authenticationadapter.NewLoginMemberProvisioner(members),

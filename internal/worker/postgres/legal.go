@@ -20,15 +20,9 @@ type legalPolicies struct {
 	notices legaladapter.EmailDeliveryDispatcher
 }
 
-func legalReferenceType(kind worker.LegalKind) (string, error) {
-	switch kind {
-	case worker.LegalTerms:
-		return legaldomain.EmailDeliveryReferenceTypeTerms, nil
-	case worker.LegalPrivacy:
-		return legaldomain.EmailDeliveryReferenceTypePrivacy, nil
-	default:
-		return "", fmt.Errorf("unknown legal policy kind %q", kind)
-	}
+// legalPolicyKind is Legal's name of kind; the two share their values.
+func legalPolicyKind(kind worker.LegalKind) legaldomain.PolicyKind {
+	return legaldomain.PolicyKind(kind)
 }
 
 func (p legalPolicies) ScheduledVersions(ctx context.Context, kind worker.LegalKind) ([]string, error) {
@@ -63,16 +57,11 @@ func (p legalPolicies) ScheduledVersions(ctx context.Context, kind worker.LegalK
 }
 
 func (p legalPolicies) DispatchEffectiveNotice(ctx context.Context, kind worker.LegalKind, documentID string, now time.Time, notice worker.EffectiveNotice) {
-	referenceType, err := legalReferenceType(kind)
-	if err != nil {
-		return
-	}
-	run, _ := notice.(*model.CampaignDeliveryRun)
-	legaldomain.DispatchCommittedLegalEffectiveNoticeAfterActivation(
+	run, _ := notice.(*legaldomain.NoticeRun)
+	legaldomain.DispatchCommittedEffectiveNotice(
 		ctx,
-		p.db,
-		legaladapter.NewNoticeRuntime(p.notices),
-		referenceType,
+		legaladapter.NewNoticeDispatch(p.db, p.notices),
+		legalPolicyKind(kind),
 		documentID,
 		now,
 		run,

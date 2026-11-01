@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/email"
 )
@@ -24,8 +23,9 @@ func defaultAuthCodeIssuanceLimits() AuthCodeIssuanceLimits {
 }
 
 // Proxy unit tests exercise request classification and reservation release;
-// PostgreSQL budget semantics are covered by the integration-tagged limiter
-// tests against the real migration.
+// the limiter's budgets are tested on the in-memory ledger in
+// auth_code_issuance_limiter_test.go, and the ledger's SQL by the Store
+// contract.
 func newTestAuthCodeIssuanceLimiter(
 	_ *testing.T,
 	limits AuthCodeIssuanceLimits,
@@ -83,38 +83,6 @@ func (l *fakeAuthCodeIssuanceLimiter) Release(
 		delete(l.bySubject, subject)
 	}
 	return nil
-}
-
-func TestAuthCodeIssuanceLimiterValidatesConfigurationAndRequests(t *testing.T) {
-	limits := defaultAuthCodeIssuanceLimits()
-	db := &gorm.DB{}
-	require.Panics(t, func() { NewAuthCodeIssuanceLimiter(nil, []byte("secret"), limits) })
-	require.Panics(t, func() { NewAuthCodeIssuanceLimiter(db, nil, limits) })
-
-	invalid := limits
-	invalid.GlobalPerMinute = 0
-	require.Panics(t, func() { NewAuthCodeIssuanceLimiter(db, []byte("secret"), invalid) })
-
-	limiter := NewAuthCodeIssuanceLimiter(db, []byte("secret"), limits)
-	_, _, _, err := limiter.Reserve(t.Context(), AuthCodeIssuanceRequest{
-		EventKey:  email.EventWelcome,
-		Recipient: "person@example.com",
-		ClientIP:  "203.0.113.10",
-	})
-	require.ErrorContains(t, err, "unsupported auth code event")
-
-	_, _, _, err = limiter.Reserve(t.Context(), AuthCodeIssuanceRequest{
-		EventKey: email.EventLoginCode,
-		ClientIP: "203.0.113.10",
-	})
-	require.ErrorContains(t, err, "recipient or flow")
-
-	_, _, _, err = limiter.Reserve(t.Context(), AuthCodeIssuanceRequest{
-		EventKey:  email.EventLoginCode,
-		Recipient: "person@example.com",
-		ClientIP:  "not-an-ip",
-	})
-	require.ErrorContains(t, err, "client IP")
 }
 
 func TestNormalizeAuthCodeClientIP(t *testing.T) {

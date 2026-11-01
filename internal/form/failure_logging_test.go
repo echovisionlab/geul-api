@@ -17,7 +17,7 @@ func TestCorruptSubmissionStatsLogsCauseAndStillSkipsRow(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	now := time.Now()
-	stats := buildFormSubmissionStats(t.Context(), nil, []formSubmissionStatsRow{{CreatedAt: now, Data: []byte(`{"private":"private-name",`)}}, now)
+	stats := buildFormSubmissionStats(t.Context(), nil, []SubmissionData{{CreatedAt: now, Data: []byte(`{"private":"private-name",`)}}, now)
 	require.Empty(t, stats.FieldStats)
 	var entry map[string]any
 	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))

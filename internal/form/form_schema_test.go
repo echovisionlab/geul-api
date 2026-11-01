@@ -5,7 +5,6 @@ import (
 
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -178,7 +177,7 @@ func TestFormSourceCreateAndUpdateRejectInvalidStableIdentityBeforePersistence(t
 	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(createErr).Code())
 	assert.Contains(t, createErr.Error(), "options[0].id is required")
 
-	_, updateErr := service.prepareFormUpdate(t.Context(), nil, &model.Form{}, UpdateFormCommand{Schema: invalid})
+	_, updateErr := service.prepareFormUpdate(t.Context(), nil, &Form{}, UpdateFormCommand{Schema: invalid})
 	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(updateErr).Code())
 	assert.Contains(t, updateErr.Error(), "options[0].id is required")
 }

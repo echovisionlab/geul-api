@@ -3,30 +3,22 @@ package form
 import (
 	"context"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	formdomain "github.com/echovisionlab/geul-api/internal/form"
-	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"gorm.io/gorm"
+
+	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
+	"github.com/echovisionlab/geul-api/internal/routeregistry"
 )
 
 type Routes struct{}
 
 func NewRoutes() *Routes { return &Routes{} }
-func (*Routes) SlugAvailable(ctx context.Context, db *gorm.DB, slug, _ string) (bool, error) {
+
+func (*Routes) SlugAvailable(ctx context.Context, db *gorm.DB, slug string) (bool, error) {
 	return routeregistry.IsResourceRouteAvailable(ctx, db, "forms", slug)
 }
-func (*Routes) EnsureAvailable(ctx context.Context, db *gorm.DB, slug, _ string) error {
-	available, err := routeregistry.IsResourceRouteAvailable(ctx, db, "forms", slug)
-	if err != nil {
-		return err
-	}
-	if !available {
-		return errs.SlugAlreadyExists("form", slug)
-	}
-	return nil
-}
-func (*Routes) EnsureAvailableLocked(ctx context.Context, db *gorm.DB, slug, _ string) error {
+
+func (*Routes) EnsureAvailableLocked(ctx context.Context, db *gorm.DB, slug string) error {
 	return routeregistry.EnsureResourceRouteAvailableInTx(ctx, db, "form", "forms", slug)
 }
 
-var _ formdomain.Routes = (*Routes)(nil)
+var _ formpostgres.Routes = (*Routes)(nil)

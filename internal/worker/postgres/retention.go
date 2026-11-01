@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
-	"github.com/echovisionlab/geul-api/internal/authentication"
+	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
 	"github.com/echovisionlab/geul-api/internal/worker"
 )
 
@@ -20,7 +20,7 @@ func (s shareLinks) DeleteExpiredLinks(ctx context.Context, now time.Time) (int6
 type authCodeIssuances struct{ db *gorm.DB }
 
 func (a authCodeIssuances) CleanupExpired(ctx context.Context, now time.Time, limit int) (int64, error) {
-	return authentication.CleanupExpiredAuthCodeIssuances(ctx, a.db, now, limit)
+	return authenticationpostgres.CleanupExpiredAuthCodeIssuances(ctx, a.db, now, limit)
 }
 
 // queueArchives purges through public.purge_pgmq_archives(), which knows

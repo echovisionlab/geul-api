@@ -11,13 +11,13 @@ func TestOverlayFormLocalizationRowFallsBackOnlyForMissingUnits(t *testing.T) {
 	sourceText := "Source text"
 	empty := ""
 
-	row, fallback, err := overlayFormLocalizationRow(
-		formLocalizationRow{
+	row, fallback, err := OverlayLocalizationRow(
+		LocalizationRow{
 			Title:       &sourceTitle,
 			ContentJSON: []byte(`{"source":true}`),
 			ContentText: &sourceText,
 		},
-		formLocalizationRow{
+		LocalizationRow{
 			Title:       &empty,
 			ContentJSON: []byte{},
 		},
@@ -34,13 +34,13 @@ func TestOverlayFormLocalizationRowFallsBackOnlyForMissingUnits(t *testing.T) {
 
 func TestOverlayFormLocalizationRowMaterializesSparseSchema(t *testing.T) {
 	sourceText := "Contact\nEmail\nHelp"
-	row, fallback, err := overlayFormLocalizationRow(
-		formLocalizationRow{
+	row, fallback, err := OverlayLocalizationRow(
+		LocalizationRow{
 			Title:       stringPointerForLocalization("Contact"),
 			ContentJSON: []byte(`{"id":"schema","steps":[{"id":"step-a","title":"Contact","fields":[{"id":"field-a","label":"Email","description":"Help"}]}]}`),
 			ContentText: &sourceText,
 		},
-		formLocalizationRow{
+		LocalizationRow{
 			ContentJSON: []byte(`{"id":"schema","steps":[{"id":"step-a","title":"연락처","fields":[{"id":"field-a","label":"이메일"}]}]}`),
 		},
 	)

@@ -5,12 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
@@ -28,29 +23,18 @@ type AuditAppender interface {
 // Deps are the collaborators of the Form use cases. Every field is required;
 // NewService rejects a missing one.
 type Deps struct {
-	DB       *gorm.DB
-	SpiceDB  *auth.SpiceDBClient
+	Units    mutation.UnitOfWork[Store] // formpostgres.NewUnits
+	SpiceDB  mutation.Authorizer
+	Fence    identitystate.Fence
+	Audit    AuditAppender
 	Password *crypto.PasswordHasher
-	// ContentBlocks advances the Form Content Document revision.
-	ContentBlocks *contentblock.Store
-	Assets        Assets
-	OG            OG
-	Routes        Routes
-	// Collaboration fences a collaboration save to its origin Member.
-	Collaboration Collaboration
-	Members       Members
-	ShareLinks    ShareLinks
-	Signals       contentsignal.Publisher
-	Audit         AuditAppender
 }
 
 func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
-		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Password": d.Password == nil,
-		"ContentBlocks": d.ContentBlocks == nil, "Assets": d.Assets == nil, "OG": d.OG == nil,
-		"Routes": d.Routes == nil, "Collaboration": d.Collaboration == nil, "Members": d.Members == nil,
-		"ShareLinks": d.ShareLinks == nil, "Signals": d.Signals == nil, "Audit": d.Audit == nil,
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil,
+		"Audit": d.Audit == nil, "Password": d.Password == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -67,22 +51,13 @@ func (d Deps) validate() error {
 // editor-collab document boundary and the AI document boundary. Adapters
 // translate their requests into its commands and queries.
 type Service struct {
-	db      *gorm.DB
-	spiceDB *auth.SpiceDBClient
+	units   mutation.UnitOfWork[Store]
+	spiceDB mutation.Authorizer
 	// authorization decides Form object actions; it is spiceDB.
 	authorization      formPermissionChecker
 	password           *crypto.PasswordHasher
-	contentBlocks      *contentblock.Store
-	assets             Assets
-	og                 OG
-	routes             Routes
-	collaboration      Collaboration
-	members            Members
-	shareLinks         ShareLinks
-	signals            contentsignal.Publisher
-	audit              domainaudit.Appender
 	personalDataAccess *securityaccess.Recorder
-	mutations          *mutation.Runner
+	mutations          *mutation.StoreRunner[Store]
 }
 
 // NewService validates deps and returns the Form use cases.
@@ -90,14 +65,12 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
 	return &Service{
-		db: deps.DB, spiceDB: deps.SpiceDB, authorization: authz.NewSpiceDBResourceChecker(deps.SpiceDB, deps.DB, "form"),
-		password: deps.Password, contentBlocks: deps.ContentBlocks, assets: deps.Assets, og: deps.OG, routes: deps.Routes,
-		collaboration: deps.Collaboration, members: deps.Members, shareLinks: deps.ShareLinks, signals: deps.Signals,
-		audit: deps.Audit, personalDataAccess: securityaccess.New(deps.Audit), mutations: mutations,
+		units: deps.Units, spiceDB: deps.SpiceDB, authorization: authz.NewSpiceDBResourceChecker(deps.SpiceDB, nil, "form"),
+		password: deps.Password, personalDataAccess: securityaccess.New(deps.Audit), mutations: mutations,
 	}, nil
 }

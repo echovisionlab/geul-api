@@ -4,26 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // AIDocument is the Legal-owned, transport-neutral policy document projection.
@@ -125,38 +120,23 @@ var errRollbackLegalAIDocumentValidation = errors.New("rollback Legal AI documen
 // AIDocumentDeps are the collaborators of the Legal AI document use cases.
 // Every field is required; NewAIDocumentService rejects a missing one.
 type AIDocumentDeps struct {
-	DB            *gorm.DB
-	ContentBlocks *contentblock.Store
-	SpiceDB       *auth.SpiceDBClient
-	OG            OG
-	Audit         domainaudit.Appender
+	Units   mutation.UnitOfWork[Store] // legalpostgres.NewUnits
+	SpiceDB mutation.Authorizer
+	Fence   identitystate.Fence
+	Audit   domainaudit.Appender
 }
 
 func (d AIDocumentDeps) validate() error {
-	var missing []string
-	for name, absent := range map[string]bool{
-		"DB": d.DB == nil, "ContentBlocks": d.ContentBlocks == nil, "SpiceDB": d.SpiceDB == nil,
-		"OG": d.OG == nil, "Audit": d.Audit == nil,
-	} {
-		if absent {
-			missing = append(missing, name)
-		}
-	}
-	if len(missing) != 0 {
-		slices.Sort(missing)
-		return errors.New("legal AI document dependencies are required: " + strings.Join(missing, ", "))
-	}
-	return nil
+	return requireDeps("legal AI document dependencies are required: ", map[string]bool{
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
+	})
 }
 
 // AIDocumentService holds the Legal AI document and translation
 // interchange use cases.
 type AIDocumentService struct {
-	contentBlocks *contentblock.Store
-	spiceDB       *auth.SpiceDBClient
-	legalOG       OG
-	auditWriter   domainaudit.Appender
-	mutations     *mutation.Runner
+	spiceDB   mutation.Authorizer
+	mutations *mutation.StoreRunner[Store]
 }
 
 // NewAIDocumentService validates deps and returns the Legal AI document use
@@ -165,14 +145,11 @@ func NewAIDocumentService(deps AIDocumentDeps) (*AIDocumentService, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
-	return &AIDocumentService{
-		contentBlocks: deps.ContentBlocks, spiceDB: deps.SpiceDB, legalOG: deps.OG,
-		auditWriter: deps.Audit, mutations: mutations,
-	}, nil
+	return &AIDocumentService{spiceDB: deps.SpiceDB, mutations: mutations}, nil
 }
 
 func (s *AIDocumentService) LoadAIDocument(
@@ -184,24 +161,24 @@ func (s *AIDocumentService) LoadAIDocument(
 	if err := validateAIDocumentIdentity(entityType, entityID, locale); err != nil {
 		return AIDocument{}, err
 	}
+	kind, err := legalKind(entityType)
+	if err != nil {
+		return AIDocument{}, err
+	}
 	var result AIDocument
-	err := readLocked(ctx, s.mutations, mutation.Locked(func(ctx context.Context, tx *gorm.DB, _ mutation.Require) error {
-		root, err := loadLegalContentDocumentRoot(ctx, tx, entityType, entityID, false)
+	err = readLocked(ctx, s.mutations, mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+		root, err := loadLegalContentDocumentRoot(ctx, store, kind, entityID, false)
 		if err != nil {
 			return err
 		}
-		kind, err := legalKind(entityType)
-		if err != nil {
-			return err
-		}
-		return authorizeLegal(ctx, tx, s.spiceDB, entityType, entityID, "view", true, legalViewAction(kind, root.Status))
-	}), func(ctx context.Context, tx *gorm.DB) error {
+		return authorizeLegal(ctx, s.spiceDB, lockActive, kind, entityID, "view", true, legalViewAction(kind, root.Status))
+	}), func(ctx context.Context, store Store) error {
 		principal := auth.GetUser(ctx)
 		if principal == nil || principal.MemberID == "" {
 			return domainerr.AuthenticationRequired()
 		}
 		var err error
-		result, _, err = s.loadAIDocumentAfterAuthorization(ctx, tx, entityType, entityID, locale, principal.MemberID.String())
+		result, _, err = loadAIDocumentAfterAuthorization(ctx, store, kind, entityID, locale, principal.MemberID.String())
 		return err
 	})
 	if err != nil {
@@ -210,17 +187,16 @@ func (s *AIDocumentService) LoadAIDocument(
 	return result, nil
 }
 
-func (s *AIDocumentService) loadAIDocumentAfterAuthorization(
+func loadAIDocumentAfterAuthorization(
 	ctx context.Context,
-	tx *gorm.DB,
-	entityType string,
+	store Store,
+	kind *policyKind,
 	entityID string,
 	locale string,
 	viewerMemberID string,
 ) (AIDocument, string, error) {
-	targetState, err := loadLegalTargetLocaleState(
-		ctx, tx, s.contentBlocks, entityType, entityID, locale, false,
-	)
+	entityType := kind.entity()
+	targetState, err := loadLegalTargetLocaleState(ctx, store, kind, entityID, locale, false)
 	if err != nil {
 		return AIDocument{}, "", err
 	}
@@ -300,19 +276,23 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 		return AIDocumentMutationResult{}, err
 	}
 
-	var root legalContentDocumentRoot
+	kind, err := legalKind(entityType)
+	if err != nil {
+		return AIDocumentMutationResult{}, err
+	}
+	var root Root
 	var memberID string
 	var applied legalAIDocumentApplyResult
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[legalAIDocumentApplyResult]{
-		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, _ mutation.Require) error {
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[legalAIDocumentApplyResult, Store]{
+		Access: mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
 			var err error
-			root, memberID, err = s.authorizeAIDocumentEdit(ctx, tx, entityType, entityID)
+			root, memberID, err = s.authorizeAIDocumentEdit(ctx, store, lockActive, kind, entityID)
 			return err
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (legalAIDocumentApplyResult, error) {
+		Change: func(ctx context.Context, store Store) (legalAIDocumentApplyResult, error) {
 			var err error
-			applied, err = s.compileAndApplyAIDocumentMutationWithDB(
-				ctx, tx, root, entityType, entityID, locale, memberID, compiler, true, false,
+			applied, err = compileAndApplyAIDocumentMutation(
+				ctx, store, root, kind, entityID, locale, memberID, compiler, true, false,
 			)
 			if err == nil && mode == AIDocumentExecutionValidate {
 				err = errRollbackLegalAIDocumentValidation
@@ -320,8 +300,8 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 			return applied, err
 		},
 		Audit: func(result legalAIDocumentApplyResult) mutation.Audit { return result.audit() },
-		Outbox: func(ctx context.Context, tx *gorm.DB, result legalAIDocumentApplyResult) error {
-			return result.publish(ctx, tx)
+		Outbox: func(ctx context.Context, store Store, result legalAIDocumentApplyResult) error {
+			return result.publish(ctx, store)
 		},
 	})
 	if errors.Is(err, errRollbackLegalAIDocumentValidation) {
@@ -335,11 +315,13 @@ func (s *AIDocumentService) ExecuteAIDocumentMutation(
 // about the version: every rejection answers NotFound.
 func (s *AIDocumentService) authorizeAIDocumentEdit(
 	ctx context.Context,
-	tx *gorm.DB,
-	entityType string,
+	store Store,
+	lockActive LockActive,
+	kind *policyKind,
 	entityID string,
-) (legalContentDocumentRoot, string, error) {
-	root, err := loadLegalContentDocumentRoot(ctx, tx, entityType, entityID, true)
+) (Root, string, error) {
+	entityType := kind.entity()
+	root, err := loadLegalContentDocumentRoot(ctx, store, kind, entityID, true)
 	if err != nil {
 		return root, "", err
 	}
@@ -347,18 +329,14 @@ func (s *AIDocumentService) authorizeAIDocumentEdit(
 	if err != nil {
 		return root, "", legalAIDocumentMutationAccessError(entityType, entityID, err)
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	active, err := lockActive(principal)
 	if err != nil {
 		return root, "", err
 	}
 	if !active {
 		return root, "", domainerr.ResourceNotFound(entityType, entityID)
 	}
-	kind, err := legalKind(entityType)
-	if err != nil {
-		return root, "", err
-	}
-	if err := requireLegalPermission(ctx, s.spiceDB, entityType, entityID, legalMutationAction(kind, root.Status, legalActionEdit)); err != nil {
+	if err := requireLegalPermission(ctx, s.spiceDB, kind, entityID, legalMutationAction(kind, root.Status, legalActionEdit)); err != nil {
 		return root, "", legalAIDocumentMutationAccessError(entityType, entityID, err)
 	}
 	return root, principal.MemberID.String(), nil
@@ -429,10 +407,11 @@ func targetRevisionValue(value *string) string {
 	return *value
 }
 
-func (s *AIDocumentService) applyAIDocumentAfterAuthorizationInTransaction(
+func applyAIDocumentAfterAuthorization(
 	ctx context.Context,
-	tx *gorm.DB,
-	root legalContentDocumentRoot,
+	store Store,
+	root Root,
+	kind *policyKind,
 	lockedState AIDocument,
 	sourceLocale string,
 	mutation AIDocumentMutation,
@@ -447,28 +426,28 @@ func (s *AIDocumentService) applyAIDocumentAfterAuthorizationInTransaction(
 		)
 	}
 	write := legalAIDocumentWrite{
-		root: root, locked: lockedState, sourceLocale: sourceLocale, mutation: mutation,
+		root: root, kind: kind, locked: lockedState, sourceLocale: sourceLocale, mutation: mutation,
 		fence: legalAuthorizedAIDocumentFence(root, lockedState, sourceLocale), now: dbtime.Now(),
 	}
 	var output legalAIDocumentApplyResult
 	var err error
 	if mutation.Locale != sourceLocale {
-		output, err = s.applyAITargetLocale(ctx, tx, write)
+		output, err = applyAITargetLocale(ctx, store, write)
 	} else {
-		output, err = s.applyAISourceLocale(ctx, tx, write)
+		output, err = applyAISourceLocale(ctx, store, write)
 	}
 	if err != nil || !output.Content.Changed {
 		return output, err
 	}
-	snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, *root.ContentDocumentID, sourceLocale)
+	snapshot, err := store.LockedContentSnapshot(ctx, *root.ContentDocumentID, sourceLocale)
 	if err != nil {
 		return legalAIDocumentApplyResult{}, err
 	}
-	if err := refreshDerivedContent(ctx, tx, mutation.EntityType, mutation.EntityID, snapshot, sourceLocale, write.now); err != nil {
+	if err := refreshDerivedContent(ctx, store, kind, mutation.EntityID, snapshot, sourceLocale, write.now); err != nil {
 		return legalAIDocumentApplyResult{}, err
 	}
 	if requestSavedOG {
-		if err := s.legalOG.RequestSaved(ctx, tx, mutation.EntityType, mutation.EntityID, mutation.Locale, false, mutation.EntityType+"_ai_document_saved"); err != nil {
+		if err := store.RequestOG(ctx, kind.kind, mutation.EntityID, mutation.Locale, false, mutation.EntityType+"_ai_document_saved"); err != nil {
 			return legalAIDocumentApplyResult{}, err
 		}
 	}
@@ -477,11 +456,12 @@ func (s *AIDocumentService) applyAIDocumentAfterAuthorizationInTransaction(
 
 // legalAIDocumentWrite is one authorized AI document write.
 type legalAIDocumentWrite struct {
-	root         legalContentDocumentRoot
+	root         Root
+	kind         *policyKind
 	locked       AIDocument
 	sourceLocale string
 	mutation     AIDocumentMutation
-	fence        contentblock.DomainFence
+	fence        ContentFence
 	now          time.Time
 }
 
@@ -497,13 +477,13 @@ func (w legalAIDocumentWrite) batch() contentblock.Batch {
 
 // applyAITargetLocale creates, edits or deletes the target locale and
 // records the locale content change.
-func (s *AIDocumentService) applyAITargetLocale(ctx context.Context, tx *gorm.DB, w legalAIDocumentWrite) (legalAIDocumentApplyResult, error) {
+func applyAITargetLocale(ctx context.Context, store Store, w legalAIDocumentWrite) (legalAIDocumentApplyResult, error) {
 	m := w.mutation
 	expected := uuid.MustParse(m.ExpectedRevision)
 	output := legalAIDocumentApplyResult{CurrentDocumentRevision: w.locked.Revision, applied: m}
 	if m.Translation == AITranslationDelete {
-		result, err := deleteLegalTargetLocale(ctx, tx, s.contentBlocks, legalTargetLocaleDeleteInput{
-			EntityType: m.EntityType, EntityID: m.EntityID, Locale: m.Locale,
+		result, err := deleteLegalTargetLocale(ctx, store, legalTargetLocaleDeleteInput{
+			Kind: w.kind, EntityID: m.EntityID, Locale: m.Locale,
 			ExpectedDocumentRevision: expected, ExpectedTargetRevision: m.ExpectedTargetRevision,
 			ContributorMemberIDs: []uuid.UUID{uuid.MustParse(m.ContributorMemberID)}, Fence: w.fence,
 		})
@@ -512,8 +492,8 @@ func (s *AIDocumentService) applyAITargetLocale(ctx context.Context, tx *gorm.DB
 		}
 		output.Content = result
 	} else {
-		target, err := applyLegalTargetLocaleMutation(ctx, tx, s.contentBlocks, legalTargetLocaleMutationInput{
-			EntityType: m.EntityType, EntityID: m.EntityID, Locale: m.Locale,
+		target, err := applyLegalTargetLocaleMutation(ctx, store, legalTargetLocaleMutationInput{
+			Kind: w.kind, EntityID: m.EntityID, Locale: m.Locale,
 			ExpectedDocumentRevision: expected, ExpectedTargetRevision: m.ExpectedTargetRevision,
 			Batch: w.batch(),
 			Policy: targetlocale.Policy{
@@ -545,9 +525,9 @@ func (s *AIDocumentService) applyAITargetLocale(ctx context.Context, tx *gorm.DB
 
 // applyAISourceLocale writes the source Blocks and title as one source
 // revision.
-func (s *AIDocumentService) applyAISourceLocale(ctx context.Context, tx *gorm.DB, w legalAIDocumentWrite) (legalAIDocumentApplyResult, error) {
-	result, err := s.contentBlocks.ApplyBatchWithMetadata(
-		ctx, tx, w.batch(), w.fence, s.aiMetadataMutation(w.mutation, w.sourceLocale, w.now),
+func applyAISourceLocale(ctx context.Context, store Store, w legalAIDocumentWrite) (legalAIDocumentApplyResult, error) {
+	result, err := store.ApplyContentBatchWithMetadata(
+		ctx, w.batch(), w.fence, aiMetadataMutation(w.kind, w.mutation, w.sourceLocale, w.now),
 	)
 	if err != nil {
 		return legalAIDocumentApplyResult{}, err
@@ -573,24 +553,29 @@ func (r legalAIDocumentApplyResult) audit() mutation.Audit {
 }
 
 // publish signals the changed document to interactive collaborators.
-func (r legalAIDocumentApplyResult) publish(ctx context.Context, tx *gorm.DB) error {
+func (r legalAIDocumentApplyResult) publish(ctx context.Context, store Store) error {
 	if !r.Content.Changed {
 		return nil
 	}
 	m := r.applied
-	entity := managev1.ContentEntityType_CONTENT_ENTITY_TYPE_TERMS
+	kind := Terms
 	if m.EntityType == "privacy" {
-		entity = managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PRIVACY
+		kind = Privacy
 	}
-	return contentsignal.PublishInteractive(ctx, tx, entity, m.EntityID, m.Locale, r.Content.DocumentRevision.String(), r.TargetRevision, true, m.Translation == AITranslationDelete, m.ContributorMemberID)
+	return store.PublishContentUpdate(ctx, ContentUpdate{
+		Kind: kind, PolicyID: m.EntityID, Locale: m.Locale,
+		DocumentRevision: r.Content.DocumentRevision.String(), TargetRevision: r.TargetRevision,
+		Deleted: m.Translation == AITranslationDelete, ContributorMemberID: m.ContributorMemberID,
+	})
 }
 
-func (s *AIDocumentService) aiMetadataMutation(
+func aiMetadataMutation(
+	kind *policyKind,
 	mutation AIDocumentMutation,
 	sourceLocale string,
 	now time.Time,
-) contentblock.MetadataMutation {
-	return func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+) MetadataEffect {
+	return func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
 		effect := contentblock.MetadataEffect{}
 		if mutation.SetTitle {
 			if mutation.Title == nil {
@@ -600,13 +585,11 @@ func (s *AIDocumentService) aiMetadataMutation(
 			if normalized == "" {
 				return effect, domainerr.InvalidField("title", "must not be empty")
 			}
-			result := tx.WithContext(ctx).Table(mutation.EntityType+"_history").
-				Where("id = ? AND title IS DISTINCT FROM ?", mutation.EntityID, normalized).
-				Updates(structured.Fields{"title": normalized, "updated_at": now})
-			if result.Error != nil {
-				return effect, result.Error
+			changed, err := store.ReplaceTitle(ctx, kind.kind, mutation.EntityID, normalized, now)
+			if err != nil {
+				return effect, err
 			}
-			effect.Changed = result.RowsAffected != 0
+			effect.Changed = changed
 			effect.AffectsTranslationSource = effect.Changed
 			effect.SourceLocale = sourceLocale
 		}
@@ -615,11 +598,11 @@ func (s *AIDocumentService) aiMetadataMutation(
 }
 
 func legalAuthorizedAIDocumentFence(
-	root legalContentDocumentRoot,
+	root Root,
 	lockedState AIDocument,
 	sourceLocale string,
-) contentblock.DomainFence {
-	return func(_ context.Context, _ *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
+) ContentFence {
+	return func(_ context.Context, _ Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		if root.ID == "" || root.ContentDocumentID == nil ||
 			*root.ContentDocumentID != lockedState.DocumentID || documentID != lockedState.DocumentID {
 			return contentblock.DomainContext{}, domainerr.Precondition(lockedState.EntityType + " content document changed; reload before saving")

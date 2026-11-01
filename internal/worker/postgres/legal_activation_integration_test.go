@@ -4,6 +4,9 @@ package workerpostgres
 
 import (
 	"encoding/json"
+	"testing"
+	"time"
+
 	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
@@ -13,8 +16,6 @@ import (
 	seriesadapter "github.com/echovisionlab/geul-api/internal/adapters/series"
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
-	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -464,7 +465,7 @@ func createCommittedWorkerLegalDeliveryRun(
 	var run *model.CampaignDeliveryRun
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		var err error
-		run, err = legaladapter.NewNoticeRuntime(nil).CreateRun(
+		run, err = legaladapter.NewNoticeRuntime().CreateRun(
 			t.Context(), tx, referenceType, referenceID, templateEvent, templateData, scheduledAt,
 		)
 		return err

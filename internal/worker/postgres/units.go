@@ -15,6 +15,7 @@ import (
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
+	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/post"
@@ -98,17 +99,13 @@ func (l legalActivation) ActivateDue(
 	templateData map[string]string,
 	now time.Time,
 ) (worker.EffectiveNotice, bool, error) {
-	referenceType, err := legalReferenceType(kind)
-	if err != nil {
-		return nil, false, err
-	}
-	activated, run, err := legaldomain.ActivateDuePolicyWithEffectiveRun(
+	joined := legalpostgres.Bind(l.tx, legalpostgres.Ports{
+		Routes: legaladapter.NewRuntime(), Notices: legaladapter.NewNoticeRuntime(),
+	}, l.ports.Audit)
+	activated, run, err := legaldomain.ActivateDuePolicy(
 		ctx,
-		l.tx,
-		l.ports.Audit,
-		legaladapter.NewRuntime(),
-		legaladapter.NewNoticeRuntime(nil),
-		referenceType,
+		joined,
+		legalPolicyKind(kind),
 		documentID,
 		eventKey,
 		templateData,
