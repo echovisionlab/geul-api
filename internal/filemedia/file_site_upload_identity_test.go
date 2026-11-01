@@ -100,7 +100,7 @@ func TestResolveSiteUploadEntityIDRequiresLegalRouteIdentityForLegalSlots(t *tes
 func TestBuildManagedFileKeyUsesCanonicalMediaKeyForPageFeaturedImage(t *testing.T) {
 	t.Parallel()
 
-	service := &FileService{}
+	service := &Service{}
 
 	fileID := "11111111-1111-4111-8111-111111111111"
 	got, err := service.buildManagedFileKey(fileID, "image/webp")
@@ -112,7 +112,7 @@ func TestBuildManagedFileKeyUsesCanonicalMediaKeyForPageFeaturedImage(t *testing
 func TestBuildManagedFileKeyUsesCanonicalSiteEmailLogoKey(t *testing.T) {
 	t.Parallel()
 
-	service := &FileService{}
+	service := &Service{}
 
 	fileID := "11111111-1111-4111-8111-111111111111"
 	got, err := service.buildManagedFileKey(fileID, siteEmailLogoStableMime)

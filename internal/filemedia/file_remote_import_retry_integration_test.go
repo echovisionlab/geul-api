@@ -73,17 +73,17 @@ func TestRemoteImportCommitAcknowledgementLossRestoresExactCommittedResultDirect
 		})
 	})
 
-	service := NewFileService(
-		stack.DB,
-		s3Client,
-		&flakyAttachedConfirmPublisher{},
-		stack.S3MediaBucket,
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-	)
+	service := newTestService(Deps{
+		DB:             stack.DB,
+		S3:             s3Client,
+		AsyncPublisher: &flakyAttachedConfirmPublisher{},
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+		Transcoder:     &recordingFileTranscoderPublisher{},
+		SpiceDB:        stack.SpiceDBClient,
+	})
 	service.testVerifiedIngestCommitError = errors.New("injected lost commit acknowledgement")
 
 	err = service.createOrRestoreVerifiedRemoteImportRecord(
@@ -152,17 +152,17 @@ func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownl
 	}).Error)
 	store := newSourceAssetPromotionS3Fixture(t, file, body)
 	store.setFailTransfer(true)
-	service := NewFileService(
-		stack.DB,
-		store.client,
-		&hardCutAsyncPublisher{},
-		"media-bucket",
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-	)
+	service := newTestService(Deps{
+		DB:             stack.DB,
+		S3:             store.client,
+		AsyncPublisher: &hardCutAsyncPublisher{},
+		S3Bucket:       "media-bucket",
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+		Transcoder:     &recordingFileTranscoderPublisher{},
+		SpiceDB:        stack.SpiceDBClient,
+	})
 
 	_, err = service.importRemoteFile(context.Background(), opts)
 	require.ErrorContains(t, err, "stream source to public asset")
@@ -213,17 +213,17 @@ func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIn
 	}).Error)
 	store := newSourceAssetPromotionS3Fixture(t, file, body)
 	store.setFailTransfer(true)
-	service := NewFileService(
-		stack.DB,
-		store.client,
-		&hardCutAsyncPublisher{},
-		"media-bucket",
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-	)
+	service := newTestService(Deps{
+		DB:             stack.DB,
+		S3:             store.client,
+		AsyncPublisher: &hardCutAsyncPublisher{},
+		S3Bucket:       "media-bucket",
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+		Transcoder:     &recordingFileTranscoderPublisher{},
+		SpiceDB:        stack.SpiceDBClient,
+	})
 	// The provider URL is deliberately unreachable. The successful second call
 	// proves that the same caller correlation restores the verified source and
 	// resumes promotion without downloading the provider image again.
@@ -327,17 +327,17 @@ func TestRemoteImportRetryReconfirmsCommittedTrackWinnerWithoutRedownloadDirectI
 	}))
 
 	asyncPublisher := &flakyAttachedConfirmPublisher{failuresRemaining: 1}
-	service := NewFileService(
-		stack.DB,
-		s3Client,
-		asyncPublisher,
-		stack.S3MediaBucket,
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-	)
+	service := newTestService(Deps{
+		DB:             stack.DB,
+		S3:             s3Client,
+		AsyncPublisher: asyncPublisher,
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+		Transcoder:     &recordingFileTranscoderPublisher{},
+		SpiceDB:        stack.SpiceDBClient,
+	})
 
 	_, err = service.importRemoteFile(context.Background(), opts)
 	require.Error(t, err)

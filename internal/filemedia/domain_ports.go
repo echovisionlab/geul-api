@@ -7,7 +7,6 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -96,66 +95,3 @@ type ReleasePolicyAccess interface {
 // ErrTrackUploadSessionsChanged is returned when the File-owned upload-session
 // fence changes before a Track deletion transaction completes.
 var ErrTrackUploadSessionsChanged = errors.New("track upload sessions changed during deletion")
-
-func requirePostAccess(access PostAccess) (PostAccess, error) {
-	if access == nil {
-		return nil, errs.DependencyUnavailable("Post access")
-	}
-	return access, nil
-}
-
-func requirePagePolicyAccess(access PagePolicyAccess) (PagePolicyAccess, error) {
-	if access == nil {
-		return nil, errs.DependencyUnavailable("Page policy access")
-	}
-	return access, nil
-}
-
-func requireWorkAttachment(attachment WorkAttachment) (WorkAttachment, error) {
-	if attachment == nil {
-		return nil, errs.DependencyUnavailable("Work attachment")
-	}
-	return attachment, nil
-}
-
-func requireWorkPolicyAccess(access WorkPolicyAccess) (WorkPolicyAccess, error) {
-	if access == nil {
-		return nil, errs.DependencyUnavailable("Work policy access")
-	}
-	return access, nil
-}
-
-func requireProgramEventAttachment(attachment ProgramEventAttachment) (ProgramEventAttachment, error) {
-	if attachment == nil {
-		return nil, errs.DependencyUnavailable("Program Event attachment")
-	}
-	return attachment, nil
-}
-
-func requireTrackAttachment(attachment TrackAttachment) (TrackAttachment, error) {
-	if attachment == nil {
-		return nil, errs.DependencyUnavailable("Track attachment")
-	}
-	return attachment, nil
-}
-
-func requireReleasePolicyAccess(access ReleasePolicyAccess) (ReleasePolicyAccess, error) {
-	if access == nil {
-		return nil, errs.DependencyUnavailable("Release policy access")
-	}
-	return access, nil
-}
-
-func requireAudienceAccess(access AudienceAccess) (AudienceAccess, error) {
-	if access == nil {
-		return nil, errs.DependencyUnavailable("Audience access")
-	}
-	return access, nil
-}
-
-func requireMemberSummaries(summaries MemberSummaries) (MemberSummaries, error) {
-	if summaries == nil {
-		return nil, errs.DependencyUnavailable("Member summaries")
-	}
-	return summaries, nil
-}

@@ -22,7 +22,7 @@ import (
 
 // The caller holds the completion advisory lock throughout allocation, copy,
 // verification and registration. Both database phases recheck fresh authority.
-func (s *FileService) registerVerifiedClientMediaBundle(ctx context.Context, completion *multipartCompletion, authorize func(context.Context, *gorm.DB) error) error {
+func (s *Service) registerVerifiedClientMediaBundle(ctx context.Context, completion *multipartCompletion, authorize func(context.Context, *gorm.DB) error) error {
 	session := completion.session
 	if session.ClientMediaBundleID == nil {
 		return nil
@@ -55,7 +55,7 @@ func (s *FileService) registerVerifiedClientMediaBundle(ctx context.Context, com
 	})
 }
 
-func (s *FileService) withClientMediaFileLock(ctx context.Context, fileID string, authorize func(context.Context, *gorm.DB) error, apply func(*gorm.DB) error) error {
+func (s *Service) withClientMediaFileLock(ctx context.Context, fileID string, authorize func(context.Context, *gorm.DB) error, apply func(*gorm.DB) error) error {
 	if authorize == nil {
 		return fmt.Errorf("client media authority fence required")
 	}
@@ -102,7 +102,7 @@ func (artifact clientMediaArtifact) canonicalKey(fileID, generationID string) st
 
 // Browser artifacts can write staging only. Copy to server-owned canonical
 // destinations, then independently verify every copied object's bytes again.
-func (s *FileService) copyClientMedia(ctx context.Context, fileID, bundleID string, artifacts []clientMediaArtifact) (*commonv1.MediaGenerationWriteResult, error) {
+func (s *Service) copyClientMedia(ctx context.Context, fileID, bundleID string, artifacts []clientMediaArtifact) (*commonv1.MediaGenerationWriteResult, error) {
 	result := &commonv1.MediaGenerationWriteResult{GenerationId: stableFileIngestFinalizerID(fileID, "hls")}
 	for _, artifact := range artifacts {
 		if artifact.isHLS() {
@@ -123,7 +123,7 @@ func (s *FileService) copyClientMedia(ctx context.Context, fileID, bundleID stri
 	return result, nil
 }
 
-func (s *FileService) copyClientArtifact(ctx context.Context, fileID, bundleID, generationID string, artifact clientMediaArtifact) error {
+func (s *Service) copyClientArtifact(ctx context.Context, fileID, bundleID, generationID string, artifact clientMediaArtifact) error {
 	key := artifact.canonicalKey(fileID, generationID)
 	source := s.s3Bucket + "/" + clientMediaStagingKey(bundleID, artifact.Path)
 	_, err := s.s3Client.CopyObject(ctx, &s3.CopyObjectInput{
@@ -141,7 +141,7 @@ func (s *FileService) copyClientArtifact(ctx context.Context, fileID, bundleID, 
 	return nil
 }
 
-func (s *FileService) completeClientMedia(ctx context.Context, tx *gorm.DB, session model.UploadSession, plan clientMediaPlan, result *commonv1.MediaGenerationWriteResult) error {
+func (s *Service) completeClientMedia(ctx context.Context, tx *gorm.DB, session model.UploadSession, plan clientMediaPlan, result *commonv1.MediaGenerationWriteResult) error {
 	lifecycle := mediaasset.NewLifecycle(tx, s.cdnDomain)
 	if _, _, err := ensureStableFileIngestMediaGeneration(ctx, tx, session.FileID); err != nil {
 		return err

@@ -25,7 +25,7 @@ type fileIngestTranscodeJobRegistrar interface {
 	RegisterTranscodeVideo(context.Context, *gorm.DB, *managev1.TranscodeVideoEvent) error
 }
 
-func (s *FileService) fileIngestTranscodeJobRegistrar() (fileIngestTranscodeJobRegistrar, error) {
+func (s *Service) fileIngestTranscodeJobRegistrar() (fileIngestTranscodeJobRegistrar, error) {
 	registrar, ok := s.publisher.(fileIngestTranscodeJobRegistrar)
 	if !ok {
 		return nil, fmt.Errorf("transcode publisher does not register File ingest jobs")
@@ -64,7 +64,7 @@ func (transcodeQueuePublisherAdapter) NotifyProtobuf(context.Context, string, pr
 	return fmt.Errorf("transcode publisher does not support realtime signals")
 }
 
-func (s *FileService) transcodeCommandPublisher() AsyncPublisher {
+func (s *Service) transcodeCommandPublisher() AsyncPublisher {
 	if _, ok := s.asyncPublisher.(TransactionalAsyncPublisher); ok {
 		return s.asyncPublisher
 	}

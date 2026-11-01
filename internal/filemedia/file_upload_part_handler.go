@@ -85,7 +85,7 @@ func uploadSessionUsesDirectS3(session model.UploadSession) bool {
 	return ok && isDirectS3UploadType(managev1.UploadType(value))
 }
 
-func (s *FileService) rejectMultipartUploadPart(
+func (s *Service) rejectMultipartUploadPart(
 	w http.ResponseWriter,
 	r *http.Request,
 	session model.UploadSession,
@@ -103,7 +103,7 @@ func (s *FileService) rejectMultipartUploadPart(
 	return true
 }
 
-func (s *FileService) recordUploadedPart(
+func (s *Service) recordUploadedPart(
 	ctx context.Context,
 	session model.UploadSession,
 	part model.UploadPart,
@@ -135,7 +135,7 @@ func (s *FileService) recordUploadedPart(
 	return recorded, err
 }
 
-func (s *FileService) recordMultipartDetectedMIME(
+func (s *Service) recordMultipartDetectedMIME(
 	ctx context.Context,
 	session model.UploadSession,
 	detected string,
@@ -176,7 +176,7 @@ func (s *FileService) recordMultipartDetectedMIME(
 	return nil
 }
 
-func (s *FileService) claimMultipartUploadPartActivity(
+func (s *Service) claimMultipartUploadPartActivity(
 	ctx context.Context,
 	uploadID string,
 	fileID string,
@@ -198,7 +198,7 @@ func (s *FileService) claimMultipartUploadPartActivity(
 	return claimed, err
 }
 
-func (s *FileService) uploadAndRecordMultipartPart(
+func (s *Service) uploadAndRecordMultipartPart(
 	ctx context.Context,
 	session model.UploadSession,
 	fileKey string,
@@ -280,7 +280,7 @@ func (s *FileService) uploadAndRecordMultipartPart(
 
 // HandleUploadPart relays bounded managed-public-asset parts through the
 // authenticated API. Editor and large-media upload types must use direct S3.
-func (s *FileService) HandleUploadPart(w http.ResponseWriter, r *http.Request) {
+func (s *Service) HandleUploadPart(w http.ResponseWriter, r *http.Request) {
 	request, ok := s.loadMultipartUploadPartRequest(w, r, http.MethodPut, true)
 	if !ok || !s.validateMultipartUploadPartPermission(w, r, request) {
 		return
@@ -320,7 +320,7 @@ func (s *FileService) HandleUploadPart(w http.ResponseWriter, r *http.Request) {
 	writeMultipartJSON(w, multipartConfirmResponse{ETag: etag})
 }
 
-func (s *FileService) validateRelayedMultipartUploadPart(
+func (s *Service) validateRelayedMultipartUploadPart(
 	w http.ResponseWriter,
 	r *http.Request,
 	request multipartUploadPartRequest,
@@ -369,7 +369,7 @@ func writeMultipartPartFailure(
 	http.Error(w, message, status)
 }
 
-func (s *FileService) readMultipartPartBody(
+func (s *Service) readMultipartPartBody(
 	w http.ResponseWriter,
 	r *http.Request,
 	request multipartUploadPartRequest,
@@ -386,7 +386,7 @@ func (s *FileService) readMultipartPartBody(
 	return bodyBytes, true
 }
 
-func (s *FileService) uploadRelayedMultipartPart(
+func (s *Service) uploadRelayedMultipartPart(
 	w http.ResponseWriter,
 	r *http.Request,
 	request multipartUploadPartRequest,
@@ -409,7 +409,7 @@ func (s *FileService) uploadRelayedMultipartPart(
 	return etag, true
 }
 
-func (s *FileService) prepareMultipartFirstPart(
+func (s *Service) prepareMultipartFirstPart(
 	w http.ResponseWriter,
 	r *http.Request,
 	request multipartUploadPartRequest,
@@ -450,7 +450,7 @@ func (s *FileService) prepareMultipartFirstPart(
 
 // HandleVerifyUploadPrefix validates only the bounded file prefix needed for
 // MIME and container-shape verification. Multipart bytes never cross the API.
-func (s *FileService) HandleVerifyUploadPrefix(w http.ResponseWriter, r *http.Request) {
+func (s *Service) HandleVerifyUploadPrefix(w http.ResponseWriter, r *http.Request) {
 	request, ok := s.loadMultipartUploadPartRequest(w, r, http.MethodPost, false)
 	if !ok || !s.validateMultipartUploadPartPermission(w, r, request) {
 		return
@@ -524,7 +524,7 @@ func (s *FileService) HandleVerifyUploadPrefix(w http.ResponseWriter, r *http.Re
 }
 
 // HandlePresignUploadPart returns one exact, short-lived S3 UploadPart URL.
-func (s *FileService) HandlePresignUploadPart(w http.ResponseWriter, r *http.Request) {
+func (s *Service) HandlePresignUploadPart(w http.ResponseWriter, r *http.Request) {
 	request, ok := s.loadMultipartUploadPartRequest(w, r, http.MethodPost, true)
 	if !ok || !s.validateMultipartUploadPartPermission(w, r, request) {
 		return
@@ -598,7 +598,7 @@ func (s *FileService) HandlePresignUploadPart(w http.ResponseWriter, r *http.Req
 
 // HandleConfirmUploadPart reconciles the browser result with MinIO actual and
 // only then records the part as eligible for completion.
-func (s *FileService) HandleConfirmUploadPart(w http.ResponseWriter, r *http.Request) {
+func (s *Service) HandleConfirmUploadPart(w http.ResponseWriter, r *http.Request) {
 	request, ok := s.loadMultipartUploadPartRequest(w, r, http.MethodPost, true)
 	if !ok || !s.validateMultipartUploadPartPermission(w, r, request) {
 		return
@@ -664,7 +664,7 @@ func (s *FileService) HandleConfirmUploadPart(w http.ResponseWriter, r *http.Req
 	writeMultipartJSON(w, multipartConfirmResponse{ETag: confirmed.ETag})
 }
 
-func (s *FileService) loadExactMultipartPart(
+func (s *Service) loadExactMultipartPart(
 	ctx context.Context,
 	request multipartUploadPartRequest,
 ) (model.UploadPart, error) {
@@ -695,7 +695,7 @@ func (s *FileService) loadExactMultipartPart(
 	}, nil
 }
 
-func (s *FileService) loadMultipartUploadPartRequest(
+func (s *Service) loadMultipartUploadPartRequest(
 	w http.ResponseWriter,
 	r *http.Request,
 	expectedMethod string,
@@ -761,7 +761,7 @@ func (s *FileService) loadMultipartUploadPartRequest(
 	return request, true
 }
 
-func (s *FileService) validateMultipartUploadPartPermission(
+func (s *Service) validateMultipartUploadPartPermission(
 	w http.ResponseWriter,
 	r *http.Request,
 	request multipartUploadPartRequest,
@@ -778,7 +778,7 @@ func (s *FileService) validateMultipartUploadPartPermission(
 	return true
 }
 
-func (s *FileService) multipartPartProgressEmitter(
+func (s *Service) multipartPartProgressEmitter(
 	ctx context.Context,
 	request multipartUploadPartRequest,
 ) *fileIngestEventEmitter {
@@ -801,7 +801,7 @@ func (s *FileService) multipartPartProgressEmitter(
 	return emitter
 }
 
-func (s *FileService) publishMultipartPartProgress(
+func (s *Service) publishMultipartPartProgress(
 	ctx context.Context,
 	request multipartUploadPartRequest,
 	progressEmitter *fileIngestEventEmitter,
@@ -830,7 +830,7 @@ func validateMultipartFirstPartGLB(prefix []byte, session model.UploadSession, d
 	return validateGLBUploadSize(prefix, session.FileSize)
 }
 
-func (s *FileService) rejectMultipartFirstPart(
+func (s *Service) rejectMultipartFirstPart(
 	w http.ResponseWriter,
 	r *http.Request,
 	session model.UploadSession,

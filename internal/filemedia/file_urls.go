@@ -52,7 +52,7 @@ type storedDerivativeDeliveryRow struct {
 // resolveContentFileDeliveries preloads private inline refs for File Manager
 // generated-output projection. The caller must apply the final File and exact
 // generated-output relation fence before returning any ref.
-func (s *FileService) resolveContentFileDeliveries(
+func (s *Service) resolveContentFileDeliveries(
 	ctx context.Context,
 	fileIDs []string,
 ) (map[string]*commonv1.MediaDelivery, error) {
@@ -119,14 +119,14 @@ func (s *FileService) resolveContentFileDeliveries(
 const MaxMediaDeliveryBatchSize = 100
 
 // GetMediaDelivery returns delivery refs for a single file and its derivatives.
-func (s *FileService) GetMediaDelivery(
+func (s *Service) GetMediaDelivery(
 	ctx context.Context,
 	req *connect.Request[managev1.GetMediaDeliveryRequest],
 ) (*connect.Response[managev1.GetMediaDeliveryResponse], error) {
 	return s.getMediaDelivery(ctx, req, true)
 }
 
-func (s *FileService) getMediaDelivery(
+func (s *Service) getMediaDelivery(
 	ctx context.Context,
 	req *connect.Request[managev1.GetMediaDeliveryRequest],
 	allowChangedRetry bool,
@@ -167,7 +167,7 @@ func (s *FileService) getMediaDelivery(
 }
 
 // GetBulkMediaDeliveries returns delivery refs for multiple files and their derivatives.
-func (s *FileService) GetBulkMediaDeliveries(
+func (s *Service) GetBulkMediaDeliveries(
 	ctx context.Context,
 	req *connect.Request[managev1.GetBulkMediaDeliveriesRequest],
 ) (*connect.Response[managev1.GetBulkMediaDeliveriesResponse], error) {
@@ -201,7 +201,7 @@ func (s *FileService) GetBulkMediaDeliveries(
 
 // loadFileURLResponses resolves immutable File IDs that an owning service has
 // already authorized. It does not infer or re-read document attachment state.
-func (s *FileService) loadFileURLResponses(
+func (s *Service) loadFileURLResponses(
 	ctx context.Context,
 	fileIDs []string,
 ) (map[string]*managev1.GetMediaDeliveryResponse, error) {
@@ -308,7 +308,7 @@ func (s *FileService) loadFileURLResponses(
 }
 
 // getFileUrlsForID is a helper that returns delivery refs for a single file ID.
-func (s *FileService) getFileUrlsForID(ctx context.Context, fileID string) (*managev1.GetMediaDeliveryResponse, error) {
+func (s *Service) getFileUrlsForID(ctx context.Context, fileID string) (*managev1.GetMediaDeliveryResponse, error) {
 	responses, err := s.loadFileURLResponses(ctx, []string{fileID})
 	if err != nil {
 		return nil, err
@@ -320,7 +320,7 @@ func (s *FileService) getFileUrlsForID(ctx context.Context, fileID string) (*man
 	return response, nil
 }
 
-func (s *FileService) loadStoredDerivativeDeliveries(
+func (s *Service) loadStoredDerivativeDeliveries(
 	ctx context.Context,
 	fileIDs []string,
 ) ([]storedDerivativeDeliveryRow, error) {
@@ -353,7 +353,7 @@ func (s *FileService) loadStoredDerivativeDeliveries(
 	return rows, err
 }
 
-func (s *FileService) fileURLsResponseFromStoredFile(
+func (s *Service) fileURLsResponseFromStoredFile(
 	fileID string,
 	extension string,
 	mimeType string,
@@ -438,7 +438,7 @@ func buildExpiringMediaFileRef(
 	return ref, nil
 }
 
-func (s *FileService) attachFileDerivativeURLs(
+func (s *Service) attachFileDerivativeURLs(
 	response *managev1.GetMediaDeliveryResponse,
 	fileID string,
 	derivs map[string]storedDerivativeDeliveryRow,
@@ -474,7 +474,7 @@ func (s *FileService) attachFileDerivativeURLs(
 	return nil
 }
 
-func (s *FileService) assetRefForDerivative(row storedDerivativeDeliveryRow) (*commonv1.AssetRef, error) {
+func (s *Service) assetRefForDerivative(row storedDerivativeDeliveryRow) (*commonv1.AssetRef, error) {
 	if row.AssetID == nil || row.AssetStatus == nil || *row.AssetStatus != model.PublicAssetStatusReady {
 		return nil, nil
 	}
@@ -507,7 +507,7 @@ func (s *FileService) assetRefForDerivative(row storedDerivativeDeliveryRow) (*c
 	}, nil
 }
 
-func (s *FileService) hlsPlaybackRef(fileID string, row storedDerivativeDeliveryRow) (*commonv1.HlsMediaRef, error) {
+func (s *Service) hlsPlaybackRef(fileID string, row storedDerivativeDeliveryRow) (*commonv1.HlsMediaRef, error) {
 	if row.MediaGenerationID == nil || row.MediaGenerationStatus == nil || *row.MediaGenerationStatus != model.MediaGenerationStatusReady {
 		return nil, nil
 	}
@@ -529,7 +529,7 @@ func (s *FileService) hlsPlaybackRef(fileID string, row storedDerivativeDelivery
 	}, nil
 }
 
-func (s *FileService) effectiveDownloadTTL() time.Duration {
+func (s *Service) effectiveDownloadTTL() time.Duration {
 	if s != nil && s.downloadTTL > 0 {
 		return min(s.downloadTTL, mediaauth.DownloadTTL)
 	}

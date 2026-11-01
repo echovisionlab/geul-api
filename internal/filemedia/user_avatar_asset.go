@@ -10,6 +10,6 @@ type UserAvatarAssetPromoter interface {
 	PromoteUserAvatarAsset(ctx context.Context, sourceFileID string) (*commonv1.AssetRef, error)
 }
 
-func (s *FileService) PromoteUserAvatarAsset(ctx context.Context, sourceFileID string) (*commonv1.AssetRef, error) {
+func (s *Service) PromoteUserAvatarAsset(ctx context.Context, sourceFileID string) (*commonv1.AssetRef, error) {
 	return s.promoteSourceFileToPublicAsset(ctx, sourceFileID, "avatar")
 }

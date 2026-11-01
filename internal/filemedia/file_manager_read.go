@@ -13,7 +13,7 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *FileService) GetFile(
+func (s *Service) GetFile(
 	ctx context.Context,
 	req *connect.Request[managev1.GetFileRequest],
 ) (*connect.Response[managev1.GetFileResponse], error) {
@@ -33,10 +33,7 @@ func (s *FileService) GetFile(
 	}
 	members := map[string]*commonv1.MemberSummary{}
 	if row.MemberID != nil {
-		memberSummaries, dependencyErr := requireMemberSummaries(s.memberSummaries)
-		if dependencyErr != nil {
-			return nil, dependencyErr
-		}
+		memberSummaries := s.memberSummaries
 		members, err = memberSummaries.Load(ctx, []string{*row.MemberID})
 		if err != nil {
 			return nil, errs.Internal(err)
@@ -78,7 +75,7 @@ type fileManagerMeshOutputRow struct {
 	OutputFileID *string `gorm:"column:output_file_id"`
 }
 
-func (s *FileService) loadFileGeneratedOutputs(ctx context.Context, fileID string) ([]*managev1.FileGeneratedOutput, error) {
+func (s *Service) loadFileGeneratedOutputs(ctx context.Context, fileID string) ([]*managev1.FileGeneratedOutput, error) {
 	derivatives, err := s.loadStoredDerivativeDeliveries(ctx, []string{fileID})
 	if err != nil {
 		return nil, err

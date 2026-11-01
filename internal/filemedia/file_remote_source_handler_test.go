@@ -21,12 +21,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func uploadSourceTestService(t *testing.T, handler http.Handler, maxSize int64) (*FileService, *recordingPostAccess) {
+func uploadSourceTestService(t *testing.T, handler http.Handler, maxSize int64) (*Service, *recordingPostAccess) {
 	t.Helper()
 	upstream := httptest.NewTLSServer(handler)
 	t.Cleanup(upstream.Close)
 	access := &recordingPostAccess{}
-	service := &FileService{
+	service := &Service{
 		postAccess: access,
 		uploadConfigs: map[managev1.UploadType]*model.UploadConfig{
 			managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE: {PermittedMimeTypes: []string{"image/png"}, MaxSize: maxSize},
@@ -107,43 +107,43 @@ func TestUploadSourceOriginalBytesAndMetadata(t *testing.T) {
 func TestUploadSourceRejectsBeforeOutput(t *testing.T) {
 	tests := []struct {
 		name  string
-		alter func(*http.Request, *FileService, *recordingPostAccess)
+		alter func(*http.Request, *Service, *recordingPostAccess)
 		want  int
 	}{
-		{"method", func(r *http.Request, _ *FileService, _ *recordingPostAccess) { r.Method = http.MethodPost }, 405},
-		{"unauthenticated", func(r *http.Request, _ *FileService, _ *recordingPostAccess) {
+		{"method", func(r *http.Request, _ *Service, _ *recordingPostAccess) { r.Method = http.MethodPost }, 405},
+		{"unauthenticated", func(r *http.Request, _ *Service, _ *recordingPostAccess) {
 			*r = *r.WithContext(context.Background())
 		}, 401},
-		{"forbidden", func(_ *http.Request, _ *FileService, a *recordingPostAccess) { a.err = errs.PermissionDenied("denied") }, 403},
-		{"invalid upload", func(r *http.Request, _ *FileService, _ *recordingPostAccess) {
+		{"forbidden", func(_ *http.Request, _ *Service, a *recordingPostAccess) { a.err = errs.PermissionDenied("denied") }, 403},
+		{"invalid upload", func(r *http.Request, _ *Service, _ *recordingPostAccess) {
 			q := r.URL.Query()
 			q.Set("uploadType", "99999")
 			r.URL.RawQuery = q.Encode()
 		}, 400},
-		{"invalid entity", func(r *http.Request, _ *FileService, _ *recordingPostAccess) {
+		{"invalid entity", func(r *http.Request, _ *Service, _ *recordingPostAccess) {
 			q := r.URL.Query()
 			q.Set("entityId", "bad")
 			r.URL.RawQuery = q.Encode()
 		}, 400},
-		{"invalid entity enum", func(r *http.Request, _ *FileService, _ *recordingPostAccess) {
+		{"invalid entity enum", func(r *http.Request, _ *Service, _ *recordingPostAccess) {
 			q := r.URL.Query()
 			q.Set("entityType", "99999")
 			r.URL.RawQuery = q.Encode()
 		}, 400},
-		{"duplicate url", func(r *http.Request, _ *FileService, _ *recordingPostAccess) {
+		{"duplicate url", func(r *http.Request, _ *Service, _ *recordingPostAccess) {
 			r.URL.RawQuery += "&url=https%3A%2F%2Felsewhere.example.com"
 		}, 400},
-		{"HTTP url", func(r *http.Request, _ *FileService, _ *recordingPostAccess) {
+		{"HTTP url", func(r *http.Request, _ *Service, _ *recordingPostAccess) {
 			q := r.URL.Query()
 			q.Set("url", "http://media.example.com/file.png")
 			r.URL.RawQuery = q.Encode()
 		}, 400},
-		{"credentials", func(r *http.Request, _ *FileService, _ *recordingPostAccess) {
+		{"credentials", func(r *http.Request, _ *Service, _ *recordingPostAccess) {
 			q := r.URL.Query()
 			q.Set("url", "https://user:secret@media.example.com/file.png")
 			r.URL.RawQuery = q.Encode()
 		}, 400},
-		{"SSRF", func(_ *http.Request, s *FileService, _ *recordingPostAccess) {
+		{"SSRF", func(_ *http.Request, s *Service, _ *recordingPostAccess) {
 			s.remoteImportResolver = &remoteImportTestResolver{ips: []net.IP{net.ParseIP("127.0.0.1")}}
 		}, 400},
 	}

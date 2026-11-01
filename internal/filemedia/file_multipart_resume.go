@@ -26,7 +26,7 @@ type multipartResumeReconciliation struct {
 	parts   []*managev1.UploadPartInfo
 }
 
-func (s *FileService) prepareMultipartResumeResponse(
+func (s *Service) prepareMultipartResumeResponse(
 	ctx context.Context,
 	session model.UploadSession,
 	response *managev1.InitiateMultipartUploadResponse,
@@ -47,7 +47,7 @@ func (s *FileService) prepareMultipartResumeResponse(
 	return response, nil
 }
 
-func (s *FileService) reconcileMultipartResumeResponse(
+func (s *Service) reconcileMultipartResumeResponse(
 	ctx context.Context,
 	session model.UploadSession,
 	response *managev1.InitiateMultipartUploadResponse,
@@ -64,7 +64,7 @@ func (s *FileService) reconcileMultipartResumeResponse(
 	return reconciliation.session, nil
 }
 
-func (s *FileService) publishMultipartResumeProgress(
+func (s *Service) publishMultipartResumeProgress(
 	ctx context.Context,
 	session model.UploadSession,
 	response *managev1.InitiateMultipartUploadResponse,
@@ -98,7 +98,7 @@ func (s *FileService) publishMultipartResumeProgress(
 // and completion. The database session remains the authorization/lifecycle
 // authority; upload_part rows are reconciled as a completion cache only after
 // the S3 inventory has been validated against that session's immutable shape.
-func (s *FileService) reconcileWritableMultipartResumeParts(
+func (s *Service) reconcileWritableMultipartResumeParts(
 	ctx context.Context,
 	session model.UploadSession,
 ) (multipartResumeReconciliation, error) {
@@ -144,7 +144,7 @@ func (s *FileService) reconcileWritableMultipartResumeParts(
 	return result, nil
 }
 
-func (s *FileService) loadMultipartResumeSessionState(
+func (s *Service) loadMultipartResumeSessionState(
 	ctx context.Context,
 	expected model.UploadSession,
 ) (model.UploadSession, []model.UploadPart, error) {
@@ -176,7 +176,7 @@ func (s *FileService) loadMultipartResumeSessionState(
 	return current, cachedParts, err
 }
 
-func (s *FileService) listAndValidateMultipartResumeParts(
+func (s *Service) listAndValidateMultipartResumeParts(
 	ctx context.Context,
 	session model.UploadSession,
 	objectKey string,
@@ -252,7 +252,7 @@ func nextMultipartListPartsMarker(page *s3.ListPartsOutput, previous string) (st
 	return next, nil
 }
 
-func (s *FileService) reconcileMultipartResumePartCache(
+func (s *Service) reconcileMultipartResumePartCache(
 	ctx context.Context,
 	expected model.UploadSession,
 	parts []model.UploadPart,

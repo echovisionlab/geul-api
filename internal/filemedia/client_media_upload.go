@@ -26,7 +26,7 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *FileService) PrepareClientMediaUpload(ctx context.Context, req *connect.Request[managev1.PrepareClientMediaUploadRequest]) (*connect.Response[managev1.PrepareClientMediaUploadResponse], error) {
+func (s *Service) PrepareClientMediaUpload(ctx context.Context, req *connect.Request[managev1.PrepareClientMediaUploadRequest]) (*connect.Response[managev1.PrepareClientMediaUploadResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.Required("request")
 	}
@@ -66,7 +66,7 @@ func clientMediaPlanFromRequest(request *managev1.PrepareClientMediaUploadReques
 	return plan, nil
 }
 
-func (s *FileService) prepareMediaBundle(ctx context.Context, session model.UploadSession, request *managev1.PrepareClientMediaUploadRequest) (string, error) {
+func (s *Service) prepareMediaBundle(ctx context.Context, session model.UploadSession, request *managev1.PrepareClientMediaUploadRequest) (string, error) {
 	plan, err := clientMediaPlanFromRequest(request, auth.GetUser(ctx).MemberID.String())
 	if err != nil {
 		return "", err
@@ -108,7 +108,7 @@ func (s *FileService) prepareMediaBundle(ctx context.Context, session model.Uplo
 func clientMediaSessionWritable(session model.UploadSession) bool {
 	return session.Status == model.UploadSessionStatusInitiated || session.Status == model.UploadSessionStatusUploading
 }
-func (s *FileService) authorizedClientMediaSession(ctx context.Context, uploadID, fileID string) (model.UploadSession, error) {
+func (s *Service) authorizedClientMediaSession(ctx context.Context, uploadID, fileID string) (model.UploadSession, error) {
 	var session model.UploadSession
 	if !IsValidUUID(fileID) || uploadID == "" || len(uploadID) > 256 {
 		return session, errs.InvalidArgument("upload_id", "invalid upload identity")
@@ -127,7 +127,7 @@ func (s *FileService) authorizedClientMediaSession(ctx context.Context, uploadID
 }
 
 // HandleClientMediaArtifact relays only a hash-verified artifact from the sealed plan.
-func (s *FileService) HandleClientMediaArtifact(w http.ResponseWriter, r *http.Request) {
+func (s *Service) HandleClientMediaArtifact(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -167,7 +167,7 @@ func (s *FileService) HandleClientMediaArtifact(w http.ResponseWriter, r *http.R
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *FileService) authorizeMediaArtifact(ctx context.Context, memberID, fileID, uploadID, bundleID, path string) (model.UploadSession, *clientMediaArtifact, error) {
+func (s *Service) authorizeMediaArtifact(ctx context.Context, memberID, fileID, uploadID, bundleID, path string) (model.UploadSession, *clientMediaArtifact, error) {
 	var session model.UploadSession
 	if err := s.db.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Where("upload_id = ? AND file_id = ?", uploadID, fileID).Take(&session).Error; err != nil {
@@ -197,7 +197,7 @@ func (s *FileService) authorizeMediaArtifact(ctx context.Context, memberID, file
 	return session, artifact, nil
 }
 
-func (s *FileService) stageMediaArtifact(request *http.Request, bundleID string, artifact clientMediaArtifact) error {
+func (s *Service) stageMediaArtifact(request *http.Request, bundleID string, artifact clientMediaArtifact) error {
 	if request.ContentLength != artifact.Size || normalizeMimeType(request.Header.Get("Content-Type")) != artifact.MimeType {
 		return errs.InvalidArgument("body", "artifact size or MIME differs from plan")
 	}
@@ -269,7 +269,7 @@ func clientMediaBundleMatches(session model.UploadSession, bundleID string) erro
 }
 
 // Finalizing repair changes staging only, and remains serialized with completion.
-func (s *FileService) clientMediaArtifactWritable(ctx context.Context, session model.UploadSession) (bool, error) {
+func (s *Service) clientMediaArtifactWritable(ctx context.Context, session model.UploadSession) (bool, error) {
 	if clientMediaSessionWritable(session) {
 		return true, nil
 	}

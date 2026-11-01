@@ -73,7 +73,7 @@ type FileDeletionMutation struct {
 
 // DeleteFile durably requests file deletion. The worker removes the database
 // record only after its object deletion succeeds. Direct requests are admin-only.
-func (s *FileService) DeleteFile(
+func (s *Service) DeleteFile(
 	ctx context.Context,
 	req *connect.Request[managev1.DeleteFileRequest],
 ) (*connect.Response[managev1.DeleteFileResponse], error) {
@@ -277,15 +277,15 @@ func requestUnboundSourceFileAssetsDeletion(
 // DeleteFileByID durably records the deletion request and its file.delete
 // command in one database transaction. The worker removes the file row only
 // after every S3 target has been deleted.
-func (s *FileService) DeleteFileByID(ctx context.Context, fileID string) error {
+func (s *Service) DeleteFileByID(ctx context.Context, fileID string) error {
 	return s.deleteFileRecordByID(ctx, fileID)
 }
 
-func (s *FileService) deleteFileRecordByID(ctx context.Context, fileID string) error {
+func (s *Service) deleteFileRecordByID(ctx context.Context, fileID string) error {
 	return s.deleteFileRecordByIDWithCan(ctx, fileID, nil)
 }
 
-func (s *FileService) deleteFileRecordByIDWithCan(ctx context.Context, fileID string, can *policyv1.Can) error {
+func (s *Service) deleteFileRecordByIDWithCan(ctx context.Context, fileID string, can *policyv1.Can) error {
 	fileID = strings.TrimSpace(fileID)
 	if fileID == "" {
 		return nil
@@ -547,7 +547,7 @@ func buildFileDeleteEventWithDB(
 	}, nil
 }
 
-func (s *FileService) DeleteEditorFileByID(
+func (s *Service) DeleteEditorFileByID(
 	ctx context.Context,
 	fileID string,
 	entityType managev1.TranscodeEntityType,

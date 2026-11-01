@@ -229,31 +229,24 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		OG:     legalRuntime,
 		Notice: legaladapter.NewNoticeRuntime(campaignDeliveryDispatcher),
 	}
-	fileService := filemedia.NewFileService(
-		db,
-		s3Client,
-		servicePublisher,
-		cfg.S3Bucket,
-		cfg.CDNURL,
-		cfg.MediaURL,
-		cfg.MediaSigningSecret,
-		transcodeTracker,
-		spicedbClient,
-		filemedia.WithEditorImageMaxSizeBytes(cfg.EditorImageMaxSize),
-		filemedia.WithMediaDownloadTTL(downloadTTL),
-		filemedia.WithFileDomainAuditWriter(telemetryWriter),
-		filemedia.WithMultipartUploadPresigner(s3PresignClient),
-		filemedia.WithLegalRouteIdentity(legalRuntime),
-		filemedia.WithPostAccess(filemediaadapter.NewPostAccess(db, spicedbClient)),
-		filemedia.WithPagePolicyAccess(pageadapter.NewPolicyAccess(page.NewPolicyAuthority(spicedbClient))),
-		filemedia.WithWorkAttachment(filemediaadapter.NewWorkAttachment(db)),
-		filemedia.WithWorkPolicyAccess(workadapter.NewPolicyAccess(spicedbClient)),
-		filemedia.WithProgramEventAttachment(filemediaadapter.NewProgramEventAttachment(db)),
-		filemedia.WithTrackAttachment(filemediaadapter.NewTrackAttachment(telemetryWriter)),
-		filemedia.WithReleasePolicyAccess(releaseadapter.NewPolicyAccess(spicedbClient)),
-		filemedia.WithAudienceAccess(filemediaadapter.NewAudienceAccess()),
-		filemedia.WithMemberSummaries(filemediaadapter.NewMemberSummaries(db, cfg.CDNURL)),
-	)
+	fileService, err := filemedia.NewService(filemedia.Deps{
+		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, S3: s3Client, Presigner: s3PresignClient,
+		AsyncPublisher: servicePublisher, Transcoder: transcodeTracker, S3Bucket: cfg.S3Bucket,
+		CDNDomain: cfg.CDNURL, MediaDomain: cfg.MediaURL, MediaSecret: cfg.MediaSigningSecret,
+		DownloadTTL: downloadTTL, EditorImageMaxSize: cfg.EditorImageMaxSize, LegalRoutes: legalRuntime,
+		PostAccess:             filemediaadapter.NewPostAccess(db, spicedbClient),
+		PagePolicyAccess:       pageadapter.NewPolicyAccess(page.NewPolicyAuthority(spicedbClient)),
+		WorkAttachment:         filemediaadapter.NewWorkAttachment(db),
+		WorkPolicyAccess:       workadapter.NewPolicyAccess(spicedbClient),
+		ProgramEventAttachment: filemediaadapter.NewProgramEventAttachment(db),
+		TrackAttachment:        filemediaadapter.NewTrackAttachment(telemetryWriter),
+		ReleasePolicyAccess:    releaseadapter.NewPolicyAccess(spicedbClient),
+		AudienceAccess:         filemediaadapter.NewAudienceAccess(),
+		MemberSummaries:        filemediaadapter.NewMemberSummaries(db, cfg.CDNURL),
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize file service: %w", err)
+	}
 	formAssets := formadapter.NewAssets(cfg.CDNURL)
 	formTranslation := formadapter.NewTranslation()
 	formDependencies := formdomain.Dependencies{

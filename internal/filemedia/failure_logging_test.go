@@ -34,7 +34,7 @@ func TestPrepareClientMediaUploadRejectsNilRequestWithoutLogging(t *testing.T) {
 	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 
-	service := &FileService{}
+	service := &Service{}
 	_, err := service.PrepareClientMediaUpload(t.Context(), nil)
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 	// The request log records the rejected request once.
@@ -69,7 +69,7 @@ func TestRemoteImportKeepsTransportCauseOutOfTheClientError(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(previous) })
 
 	cause := errors.New("upstream connection refused private@example.test")
-	service := &FileService{remoteImportResolver: &remoteImportTestResolver{ips: []net.IP{net.ParseIP("8.8.8.8")}}}
+	service := &Service{remoteImportResolver: &remoteImportTestResolver{ips: []net.IP{net.ParseIP("8.8.8.8")}}}
 	client := &remoteImportHTTPClient{Client: &http.Client{Transport: failedRemoteImportTransport{err: cause}}}
 	request := preparedRemoteImport{opts: remoteFileImportOptions{sourceURL: "https://example.com/source?signature=hidden"}}
 	source, err := service.openRemoteImportSourceWithClient(t.Context(), request, nil, remoteImportFailureReporter(nil), client)

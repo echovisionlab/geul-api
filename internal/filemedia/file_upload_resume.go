@@ -15,7 +15,7 @@ type multipartResumeSelection struct {
 	response       *managev1.InitiateMultipartUploadResponse
 }
 
-func (s *FileService) selectMultipartResumeCandidate(
+func (s *Service) selectMultipartResumeCandidate(
 	ctx context.Context,
 	_ managev1.TranscodeEntityType,
 	uploadType managev1.UploadType,
@@ -33,7 +33,7 @@ func (s *FileService) selectMultipartResumeCandidate(
 	)
 }
 
-func (s *FileService) selectUnserializedMultipartResumeCandidate(
+func (s *Service) selectUnserializedMultipartResumeCandidate(
 	ctx context.Context,
 	uploadType managev1.UploadType,
 	entityID string,
@@ -69,7 +69,7 @@ func (s *FileService) selectUnserializedMultipartResumeCandidate(
 	return selection, nil
 }
 
-func (s *FileService) buildMultipartResumeResponse(
+func (s *Service) buildMultipartResumeResponse(
 	ctx context.Context,
 	session model.UploadSession,
 ) (*managev1.InitiateMultipartUploadResponse, error) {

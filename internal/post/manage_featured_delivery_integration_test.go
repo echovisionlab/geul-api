@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
@@ -110,18 +111,29 @@ func newManagePostFeaturedDeliveryFixture(t *testing.T) managePostFeaturedDelive
 	editorCtx := testutil.PostIntegrationContext(editorID)
 	store := testutil.NewPostContentBlockStore(t)
 
-	fileService := filemedia.NewFileService(
-		db,
-		s3.New(s3.Options{Region: "integration"}),
-		postFeaturedAsyncPublisher{},
-		"integration",
-		"https://cdn.example.test",
-		"https://media.example.test",
-		"post-featured-integration-secret",
-		postFeaturedTranscoderPublisher{},
-		spiceDB,
-		filemedia.WithPostAccess(filemediaadapter.NewPostAccess(db, spiceDB)),
-	)
+	fileService, err := filemedia.NewService(filemedia.Deps{
+		DB:                     db,
+		S3:                     s3.New(s3.Options{Region: "integration"}),
+		AsyncPublisher:         postFeaturedAsyncPublisher{},
+		S3Bucket:               "integration",
+		CDNDomain:              "https://cdn.example.test",
+		MediaDomain:            "https://media.example.test",
+		MediaSecret:            "post-featured-integration-secret",
+		Transcoder:             postFeaturedTranscoderPublisher{},
+		SpiceDB:                spiceDB,
+		Audit:                  &audittest.Recorder{},
+		PostAccess:             filemediaadapter.NewPostAccess(db, spiceDB),
+		LegalRoutes:            postFeaturedUnusedLegalRoutes{},
+		PagePolicyAccess:       postFeaturedUnusedPagePolicyAccess{},
+		WorkAttachment:         postFeaturedUnusedWorkAttachment{},
+		WorkPolicyAccess:       postFeaturedUnusedWorkPolicyAccess{},
+		ProgramEventAttachment: postFeaturedUnusedProgramEventAttachment{},
+		TrackAttachment:        postFeaturedUnusedTrackAttachment{},
+		ReleasePolicyAccess:    postFeaturedUnusedReleasePolicyAccess{},
+		AudienceAccess:         postFeaturedUnusedAudienceAccess{},
+		MemberSummaries:        postFeaturedUnusedMemberSummaries{},
+	})
+	require.NoError(t, err)
 	manageFiles := &postFeaturedManageFiles{delegate: fileService}
 	postFiles := postadapter.NewFiles(manageFiles, postFeaturedPublicDisplayFiles{})
 	posts := postintegration.NewPostDomainServiceWithFileService(
@@ -164,7 +176,7 @@ func seedManagePostFeaturedFile(t *testing.T, db *gorm.DB, fileID string) {
 }
 
 type postFeaturedManageFiles struct {
-	delegate       *filemedia.FileService
+	delegate       *filemedia.Service
 	beforeExact    func()
 	expectedFileID string
 }
@@ -225,3 +237,16 @@ func (publisher postFeaturedAsyncPublisher) NotifyProtobufWithExecutor(
 ) error {
 	return publisher.NotifyProtobuf(ctx, signal, message)
 }
+
+// The ports this test does not reach panic if called.
+type postFeaturedUnusedLegalRoutes struct{ filemedia.LegalRouteIdentity }
+type postFeaturedUnusedPagePolicyAccess struct{ filemedia.PagePolicyAccess }
+type postFeaturedUnusedWorkAttachment struct{ filemedia.WorkAttachment }
+type postFeaturedUnusedWorkPolicyAccess struct{ filemedia.WorkPolicyAccess }
+type postFeaturedUnusedProgramEventAttachment struct {
+	filemedia.ProgramEventAttachment
+}
+type postFeaturedUnusedTrackAttachment struct{ filemedia.TrackAttachment }
+type postFeaturedUnusedReleasePolicyAccess struct{ filemedia.ReleasePolicyAccess }
+type postFeaturedUnusedAudienceAccess struct{ filemedia.AudienceAccess }
+type postFeaturedUnusedMemberSummaries struct{ filemedia.MemberSummaries }

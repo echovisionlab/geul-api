@@ -97,7 +97,7 @@ func TestPostUploadAuthorizationUsesOneStatusAwareDomainAction(t *testing.T) {
 
 	t.Run("initiation", func(t *testing.T) {
 		access := &recordingPostAccess{}
-		service := &FileService{postAccess: access}
+		service := &Service{postAccess: access}
 		err := service.checkEntityPermission(
 			ctx,
 			managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE,
@@ -113,7 +113,7 @@ func TestPostUploadAuthorizationUsesOneStatusAwareDomainAction(t *testing.T) {
 
 	t.Run("part", func(t *testing.T) {
 		access := &recordingPostAccess{}
-		service := &FileService{postAccess: access}
+		service := &Service{postAccess: access}
 		err := service.checkPartUploadPermission(ctx, principal.MemberID.String(), postUploadSession(postID))
 		require.NoError(t, err)
 		require.Equal(t, 1, access.requireEditCount)
@@ -127,7 +127,7 @@ func TestVerifiedPostFileMutationPassesOuterTransactionToOneEditAction(t *testin
 
 	db := newPostAccessUnitDB(t)
 	access := &recordingPostAccess{}
-	service := &FileService{db: db, postAccess: access}
+	service := &Service{db: db, postAccess: access}
 	ctx := auth.WithUser(context.Background(), postAccessPrincipal())
 	postID := uuid.NewString()
 
@@ -150,7 +150,7 @@ func TestPostManageDeliveryUsesOneViewAction(t *testing.T) {
 	t.Parallel()
 
 	access := &recordingPostAccess{}
-	service := &FileService{postAccess: access}
+	service := &Service{postAccess: access}
 	principal := postAccessPrincipal()
 	err := service.authorizeManageFilePermissionTarget(
 		auth.WithUser(context.Background(), principal),
@@ -172,7 +172,7 @@ func TestPostFilePolicyActionsUseOneLockedActionInOuterTransaction(t *testing.T)
 	ctx := auth.WithUser(context.Background(), postAccessPrincipal())
 
 	viewAccess := &recordingPostAccess{}
-	viewService := &FileService{postAccess: viewAccess}
+	viewService := &Service{postAccess: viewAccess}
 	require.NoError(t, viewService.authorizeFileDownloadPolicyOwner(
 		ctx,
 		db,
@@ -186,7 +186,7 @@ func TestPostFilePolicyActionsUseOneLockedActionInOuterTransaction(t *testing.T)
 	require.Zero(t, viewAccess.requireLockedEditCount)
 
 	editAccess := &recordingPostAccess{}
-	editService := &FileService{postAccess: editAccess}
+	editService := &Service{postAccess: editAccess}
 	require.NoError(t, editService.authorizeFileDownloadPolicyOwner(
 		ctx,
 		db,
@@ -208,7 +208,7 @@ func TestProgramEventFileOperationsUseOneExactDomainAction(t *testing.T) {
 	ctx := auth.WithUser(context.Background(), postAccessPrincipal())
 
 	deliveryAccess := &recordingProgramEventAccess{}
-	deliveryService := &FileService{programEventAttachment: deliveryAccess}
+	deliveryService := &Service{programEventAttachment: deliveryAccess}
 	require.NoError(t, deliveryService.authorizeManageFilePermissionTarget(
 		ctx,
 		auth.GetUser(ctx),
@@ -220,7 +220,7 @@ func TestProgramEventFileOperationsUseOneExactDomainAction(t *testing.T) {
 	require.Zero(t, deliveryAccess.requireLockedEditCount)
 
 	viewAccess := &recordingProgramEventAccess{}
-	viewService := &FileService{programEventAttachment: viewAccess}
+	viewService := &Service{programEventAttachment: viewAccess}
 	require.NoError(t, viewService.authorizeFileDownloadPolicyOwner(
 		ctx,
 		db,
@@ -234,7 +234,7 @@ func TestProgramEventFileOperationsUseOneExactDomainAction(t *testing.T) {
 	require.Zero(t, viewAccess.requireLockedEditCount)
 
 	editAccess := &recordingProgramEventAccess{}
-	editService := &FileService{programEventAttachment: editAccess}
+	editService := &Service{programEventAttachment: editAccess}
 	require.NoError(t, editService.authorizeFileDownloadPolicyOwner(
 		ctx,
 		db,

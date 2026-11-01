@@ -159,7 +159,7 @@ func TestFileDeletionEnqueueFailureRollsBackDomainIntent(t *testing.T) {
 	fileID := seedUnitMeshOptimizationFile(t, db, "media/source.glb", "model/gltf-binary")
 	publishErr := errors.New("publisher unavailable")
 	publisher := &capturingAsyncPublisher{confirmedErr: publishErr}
-	service := &FileService{db: db, asyncPublisher: publisher}
+	service := &Service{db: db, asyncPublisher: publisher}
 
 	err := service.deleteFileRecordByID(t.Context(), fileID)
 	require.ErrorIs(t, err, publishErr)
@@ -176,7 +176,7 @@ func TestFileDeletionEnqueueFailureRollsBackDomainIntent(t *testing.T) {
 func TestFileDeletionRetiresLateMeshCompletionWithoutAttachingOutput(t *testing.T) {
 	db := newMeshOptimizationUnitDB(t)
 	publisher := &capturingAsyncPublisher{}
-	fileService := &FileService{db: db, s3Bucket: "media-bucket", asyncPublisher: publisher}
+	fileService := &Service{db: db, s3Bucket: "media-bucket", asyncPublisher: publisher}
 	pageID := uuid.NewString()
 	sourceFileID := seedUnitMeshOptimizationFile(t, db, "page/"+pageID+"/files/source.glb", "model/gltf-binary")
 	outputFileID := uuid.NewString()

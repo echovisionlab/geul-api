@@ -127,7 +127,7 @@ func requireCanonicalInlineRef(
 
 func handleMultipartPartDirect(
 	t *testing.T,
-	svc *FileService,
+	svc *Service,
 	user *testutil.OryUser,
 	fileID string,
 	uploadID string,

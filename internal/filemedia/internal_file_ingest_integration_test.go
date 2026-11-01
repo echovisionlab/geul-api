@@ -89,18 +89,18 @@ func TestAttachTrackOriginalAudioAppliesCASThenUsesStableTranscodeCommand(t *tes
 
 	asyncPublisher := &hardCutAsyncPublisher{}
 	transcoder := &fileIngestFinalizerRecordingTranscoder{}
-	files := NewFileService(
-		stack.DB,
-		runtimeS3Client(t, stack),
-		asyncPublisher,
-		stack.S3MediaBucket,
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		transcoder,
-		stack.SpiceDBClient,
-		directTrackAttachmentOption(stack.DB),
-	)
+	files := newTestService(Deps{
+		DB:              stack.DB,
+		S3:              runtimeS3Client(t, stack),
+		AsyncPublisher:  asyncPublisher,
+		S3Bucket:        stack.S3MediaBucket,
+		CDNDomain:       stack.CDNURL,
+		MediaDomain:     stack.MediaURL,
+		MediaSecret:     stack.MediaSigningSecret,
+		Transcoder:      transcoder,
+		SpiceDB:         stack.SpiceDBClient,
+		TrackAttachment: newDirectTrackAttachment(stack.DB),
+	})
 	request := &intrav1.AttachTrackOriginalAudioRequest{
 		TrackId:               trackID,
 		VerifiedFileId:        newFile.ID,
@@ -161,12 +161,18 @@ func TestAttachTrackOriginalAudioRejectsStaleCASWithoutSideEffects(t *testing.T)
 		EntityType: &entityType, EntityID: trackID,
 	}).Error)
 	transcoder := &fileIngestFinalizerRecordingTranscoder{}
-	files := NewFileService(
-		stack.DB, runtimeS3Client(t, stack), &hardCutAsyncPublisher{},
-		stack.S3MediaBucket, stack.CDNURL, stack.MediaURL, stack.MediaSigningSecret,
-		transcoder, stack.SpiceDBClient,
-		directTrackAttachmentOption(stack.DB),
-	)
+	files := newTestService(Deps{
+		DB:              stack.DB,
+		S3:              runtimeS3Client(t, stack),
+		AsyncPublisher:  &hardCutAsyncPublisher{},
+		S3Bucket:        stack.S3MediaBucket,
+		CDNDomain:       stack.CDNURL,
+		MediaDomain:     stack.MediaURL,
+		MediaSecret:     stack.MediaSigningSecret,
+		Transcoder:      transcoder,
+		SpiceDB:         stack.SpiceDBClient,
+		TrackAttachment: newDirectTrackAttachment(stack.DB),
+	})
 
 	response, err := NewInternalFileIngestService(files).AttachTrackOriginalAudio(
 		t.Context(),

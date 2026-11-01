@@ -107,7 +107,7 @@ func normalizeRemoteImportStoredFileName(fileName, mimeType string) string {
 	return strings.TrimSuffix(trimmed, currentExt) + "." + ext
 }
 
-func (s *FileService) uploadRemoteImportObject(ctx context.Context, fileKey string, body io.Reader, mimeType string) error {
+func (s *Service) uploadRemoteImportObject(ctx context.Context, fileKey string, body io.Reader, mimeType string) error {
 	uploader := transfermanager.New(s.s3Client, func(options *transfermanager.Options) {
 		options.PartSizeBytes = chunkSize
 	})
@@ -125,7 +125,7 @@ func (s *FileService) uploadRemoteImportObject(ctx context.Context, fileKey stri
 	return nil
 }
 
-func (s *FileService) deleteS3ObjectBestEffort(ctx context.Context, fileKey string) {
+func (s *Service) deleteS3ObjectBestEffort(ctx context.Context, fileKey string) {
 	if fileKey == "" {
 		return
 	}
@@ -140,7 +140,7 @@ func (s *FileService) deleteS3ObjectBestEffort(ctx context.Context, fileKey stri
 	}
 }
 
-func (s *FileService) fetchManagedImageVariant(ctx context.Context, client *http.Client, variantURL string) ([]byte, string, error) {
+func (s *Service) fetchManagedImageVariant(ctx context.Context, client *http.Client, variantURL string) ([]byte, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, variantURL, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to build managed image request: %w", err)
@@ -189,7 +189,7 @@ func nextManagedImageDimension(current int) int {
 	return next
 }
 
-func (s *FileService) normalizeManagedRemoteImport(ctx context.Context, fileID string, sourceMime string) ([]byte, string, error) {
+func (s *Service) normalizeManagedRemoteImport(ctx context.Context, fileID string, sourceMime string) ([]byte, string, error) {
 	sourceURL, _, err := mediaauth.SignFileURL(
 		s.mediaDomain,
 		fileID,

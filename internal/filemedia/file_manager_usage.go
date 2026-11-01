@@ -39,7 +39,7 @@ func countFileUsageRows(rows []fileUsageRow) map[string]int32 {
 	return result
 }
 
-func (s *FileService) loadVisibleFileUsageCounts(ctx context.Context, fileIDs []string) (map[string]int32, error) {
+func (s *Service) loadVisibleFileUsageCounts(ctx context.Context, fileIDs []string) (map[string]int32, error) {
 	user := auth.GetUser(ctx)
 	can, err := policyv1.File.ManageLibrary()
 	if err != nil {
@@ -63,7 +63,7 @@ func (s *FileService) loadVisibleFileUsageCounts(ctx context.Context, fileIDs []
 	return countFileUsageRows(rows), nil
 }
 
-func (s *FileService) fileManagerFileFromCatalogRow(
+func (s *Service) fileManagerFileFromCatalogRow(
 	row fileManagerCatalogRow,
 	members map[string]*commonv1.MemberSummary,
 	usageCount int32,
@@ -205,7 +205,7 @@ func fileUsageResourceTarget(row fileUsageRow, releaseIDByTrackID map[string]str
 	}
 }
 
-func (s *FileService) filterVisibleFileUsages(ctx context.Context, rows []fileUsageRow) ([]fileUsageRow, error) {
+func (s *Service) filterVisibleFileUsages(ctx context.Context, rows []fileUsageRow) ([]fileUsageRow, error) {
 	user := auth.GetUser(ctx)
 	can, err := policyv1.File.ManageLibrary()
 	if err != nil {
@@ -221,7 +221,7 @@ func (s *FileService) filterVisibleFileUsages(ctx context.Context, rows []fileUs
 	if user == nil || strings.TrimSpace(user.MemberID.String()) == "" {
 		return nil, fmt.Errorf("file usage viewer is missing")
 	}
-	if s.spiceDB == nil || user.IdentityID.String() == "" {
+	if user.IdentityID.String() == "" {
 		return nil, errs.DependencyUnavailable("SpiceDB")
 	}
 
@@ -339,7 +339,7 @@ func fileUsageProto(row fileUsageRow) *managev1.FileUsage {
 	}
 }
 
-func (s *FileService) ListFileUsages(
+func (s *Service) ListFileUsages(
 	ctx context.Context,
 	req *connect.Request[managev1.ListFileUsagesRequest],
 ) (*connect.Response[managev1.ListFileUsagesResponse], error) {
@@ -381,7 +381,7 @@ func (s *FileService) ListFileUsages(
 	return connect.NewResponse(&managev1.ListFileUsagesResponse{Usages: usages, NextPageToken: next, Total: int64(total)}), nil
 }
 
-func (s *FileService) requireFileManagerFile(ctx context.Context, fileID string) error {
+func (s *Service) requireFileManagerFile(ctx context.Context, fileID string) error {
 	var count int64
 	if err := s.db.WithContext(ctx).Table("file").Where("id = ? AND delete_requested_at IS NULL", fileID).Count(&count).Error; err != nil {
 		return errs.Internal(err)

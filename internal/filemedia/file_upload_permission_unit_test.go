@@ -122,7 +122,7 @@ func TestResolveUploadPermissionTarget(t *testing.T) {
 func TestCheckEntityPermissionAllowsIndependentEditorMesh(t *testing.T) {
 	t.Parallel()
 
-	svc := &FileService{}
+	svc := &Service{}
 	target, entityID, err := svc.resolvePartUploadPermissionTarget(context.Background(), managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH, model.UploadSession{})
 	require.NoError(t, err)
 	require.True(t, target.authorOnly)
@@ -133,7 +133,7 @@ func TestCheckPartUploadPermissionRejectsDocumentTargetForEditorMesh(t *testing.
 	t.Parallel()
 
 	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE.String()
-	svc := &FileService{}
+	svc := &Service{}
 
 	_, _, err := svc.resolvePartUploadPermissionTarget(context.Background(), managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH, model.UploadSession{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH.String(),

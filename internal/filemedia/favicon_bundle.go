@@ -35,7 +35,7 @@ const (
 
 var errFaviconBundleCommitUncertain = stderrors.New("favicon bundle commit outcome is uncertain")
 
-func (s *FileService) generateFaviconBundle(
+func (s *Service) generateFaviconBundle(
 	ctx context.Context,
 	sourceFileID string,
 ) (*commonv1.AssetRef, error) {
@@ -66,14 +66,14 @@ func (s *FileService) generateFaviconBundle(
 	return s.commitFaviconBundle(ctx, bundleCtx, source, staged)
 }
 
-func (s *FileService) faviconGenerationTimeout() time.Duration {
+func (s *Service) faviconGenerationTimeout() time.Duration {
 	if s.testFaviconBundleTimeout > 0 {
 		return s.testFaviconBundleTimeout
 	}
 	return faviconBundleTimeout
 }
 
-func (s *FileService) loadValidatedFaviconSource(
+func (s *Service) loadValidatedFaviconSource(
 	ctx context.Context,
 	sourceFileID string,
 ) (model.File, []byte, error) {
@@ -112,7 +112,7 @@ func (s *FileService) loadValidatedFaviconSource(
 	return source, sourceBytes, nil
 }
 
-func (s *FileService) generateFaviconOutputs(
+func (s *Service) generateFaviconOutputs(
 	ctx context.Context,
 	sourceBytes []byte,
 	sourceMime string,
@@ -134,7 +134,7 @@ func (s *FileService) generateFaviconOutputs(
 	return outputs, nil
 }
 
-func (s *FileService) stageFaviconBundle(
+func (s *Service) stageFaviconBundle(
 	cleanupCtx context.Context,
 	ctx context.Context,
 	sourceBytes []byte,
@@ -179,7 +179,7 @@ func (s *FileService) stageFaviconBundle(
 	return staged, nil
 }
 
-func (s *FileService) commitFaviconBundle(
+func (s *Service) commitFaviconBundle(
 	cleanupCtx context.Context,
 	ctx context.Context,
 	source model.File,
@@ -230,7 +230,7 @@ type stagedFaviconAsset struct {
 	SourceSVG      bool
 }
 
-func (s *FileService) stageFaviconAsset(
+func (s *Service) stageFaviconAsset(
 	ctx context.Context,
 	data []byte,
 	allocation mediaasset.Allocation,
@@ -267,7 +267,7 @@ func (s *FileService) stageFaviconAsset(
 	return staged, nil
 }
 
-func (s *FileService) finalizeStagedFaviconBundle(
+func (s *Service) finalizeStagedFaviconBundle(
 	ctx context.Context,
 	tx *gorm.DB,
 	source model.File,
@@ -337,7 +337,7 @@ func (s *FileService) finalizeStagedFaviconBundle(
 	return set, true, nil
 }
 
-func (s *FileService) reconcileFaviconBundle(
+func (s *Service) reconcileFaviconBundle(
 	ctx context.Context,
 	sourceFileID string,
 ) (*commonv1.FaviconAssetSet, error) {
@@ -349,7 +349,7 @@ func (s *FileService) reconcileFaviconBundle(
 	return favicon.LoadSet(reconcileCtx, s.db, s.cdnDomain, sourceFileID)
 }
 
-func (s *FileService) scheduleStagedFaviconDeletion(
+func (s *Service) scheduleStagedFaviconDeletion(
 	ctx context.Context,
 	staged []stagedFaviconAsset,
 	preserve map[string]struct{},

@@ -111,7 +111,7 @@ func TestClientMediaWaveformPreservesSignedPeaks(t *testing.T) {
 	require.Error(t, validateClientWaveform([]byte("[["+strings.Repeat("null,", 2047)+"null]]")))
 }
 
-func newClientMediaStorageService(t *testing.T, session model.UploadSession, objects map[string][]byte) *FileService {
+func newClientMediaStorageService(t *testing.T, session model.UploadSession, objects map[string][]byte) *Service {
 	t.Helper()
 	stored := map[string][]byte{}
 	mimes := map[string]string{}
@@ -263,9 +263,9 @@ func TestClientMediaStoredBundleRejectsTamperingMissingAndBadPlaylist(t *testing
 func TestClientMediaPreparedMemberCannotBeReplacedByAnotherAuthorizedMember(t *testing.T) {
 	session, _ := clientMediaTestBundle(t, "audio")
 	// Membership denial occurs before any role/domain lookup, so equal global roles cannot bypass the pin.
-	err := (&FileService{}).checkPartUploadPermission(t.Context(), uuid.NewString(), session)
+	err := (&Service{}).checkPartUploadPermission(t.Context(), uuid.NewString(), session)
 	require.ErrorContains(t, err, "belongs to another member")
-	_, err = (&FileService{}).PrepareClientMediaUpload(t.Context(), nil)
+	_, err = (&Service{}).PrepareClientMediaUpload(t.Context(), nil)
 	require.Error(t, err)
 }
 
@@ -336,7 +336,7 @@ func TestClientMediaAuthorityRevocationCannotMakeCopiedArtifactsReady(t *testing
 func TestClientMediaReadySignalHasCompleteOutputsAndNoCommands(t *testing.T) {
 	session, _ := clientMediaTestBundle(t, "audio")
 	publisher := &capturingAsyncPublisher{}
-	svc := &FileService{asyncPublisher: publisher}
+	svc := &Service{asyncPublisher: publisher}
 	require.NoError(t, svc.publishClientMediaReady(t.Context(), &multipartCompletion{session: session}))
 	require.Equal(t, 1, publisher.rawPublishCalls)
 	require.Zero(t, publisher.confirmCalls)
@@ -351,7 +351,7 @@ func TestClientMediaReadySignalHasCompleteOutputsAndNoCommands(t *testing.T) {
 
 func TestClientMediaFinalizingRepairNeverReopensRegisteredBundle(t *testing.T) {
 	session, _ := clientMediaTestBundle(t, "audio")
-	svc := &FileService{db: newServiceUnitDB(t)}
+	svc := &Service{db: newServiceUnitDB(t)}
 	session.Status = model.UploadSessionStatusUploading
 	allowed, err := svc.clientMediaArtifactWritable(t.Context(), session)
 	require.NoError(t, err)
@@ -403,7 +403,7 @@ func TestDirectMediaCompletionRequiresBrowserBundle(t *testing.T) {
 	require.NoError(t, requireDirectClientMediaBundle(managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, "application/pdf", model.UploadSession{}, ""))
 	require.NoError(t, requireDirectClientMediaBundle(managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT, "application/pdf", model.UploadSession{}, ""))
 	require.NoError(t, requireDirectClientMediaBundle(managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE, "image/png", model.UploadSession{}, ""))
-	service := &FileService{}
+	service := &Service{}
 	_, err := service.CompleteMultipartUpload(context.Background(), nil)
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 }
@@ -460,7 +460,7 @@ func TestClientMediaPreparedPlanIsImmutable(t *testing.T) {
 			Sha256: artifact.SHA256, DerivativeType: managev1.FileDerivativeType(artifact.DerivativeType),
 		})
 	}
-	service := &FileService{}
+	service := &Service{}
 	bundleID, err := service.prepareMediaBundle(ctx, session, request)
 	require.NoError(t, err)
 	require.Equal(t, *session.ClientMediaBundleID, bundleID)

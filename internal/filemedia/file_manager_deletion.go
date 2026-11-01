@@ -16,7 +16,7 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *FileService) GetFileDeletionImpact(ctx context.Context, req *connect.Request[managev1.GetFileDeletionImpactRequest]) (*connect.Response[managev1.GetFileDeletionImpactResponse], error) {
+func (s *Service) GetFileDeletionImpact(ctx context.Context, req *connect.Request[managev1.GetFileDeletionImpactRequest]) (*connect.Response[managev1.GetFileDeletionImpactResponse], error) {
 	if _, err := requireFileManagerAdmin(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
@@ -40,7 +40,7 @@ func (s *FileService) GetFileDeletionImpact(ctx context.Context, req *connect.Re
 	return connect.NewResponse(&managev1.GetFileDeletionImpactResponse{Impacts: impactsForFiles(fileIDs, rows)}), nil
 }
 
-func (s *FileService) DeleteFiles(ctx context.Context, req *connect.Request[managev1.DeleteFilesRequest]) (*connect.Response[managev1.DeleteFilesResponse], error) {
+func (s *Service) DeleteFiles(ctx context.Context, req *connect.Request[managev1.DeleteFilesRequest]) (*connect.Response[managev1.DeleteFilesResponse], error) {
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
@@ -144,7 +144,7 @@ func lockFileManagerDeletionRows(ctx context.Context, tx *gorm.DB, fileIDs []str
 	return result, nil
 }
 
-func (s *FileService) DeleteFileFolder(ctx context.Context, req *connect.Request[managev1.DeleteFileFolderRequest]) (*connect.Response[managev1.DeleteFileFolderResponse], error) {
+func (s *Service) DeleteFileFolder(ctx context.Context, req *connect.Request[managev1.DeleteFileFolderRequest]) (*connect.Response[managev1.DeleteFileFolderResponse], error) {
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err

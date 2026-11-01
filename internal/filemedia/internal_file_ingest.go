@@ -22,10 +22,10 @@ import (
 
 type InternalFileIngestService struct {
 	intrav1connect.UnimplementedInternalFileIngestServiceHandler
-	files *FileService
+	files *Service
 }
 
-func NewInternalFileIngestService(files *FileService) *InternalFileIngestService {
+func NewInternalFileIngestService(files *Service) *InternalFileIngestService {
 	if files == nil {
 		panic("internal file ingest service: file service is required")
 	}
@@ -54,7 +54,7 @@ type trackOriginalAudioAttachment struct {
 	releaseID     string
 }
 
-func (s *FileService) attachTrackOriginalAudio(
+func (s *Service) attachTrackOriginalAudio(
 	ctx context.Context,
 	req *intrav1.AttachTrackOriginalAudioRequest,
 ) (trackOriginalAudioAttachment, error) {
@@ -84,10 +84,7 @@ func (s *FileService) attachTrackOriginalAudio(
 
 	var attachment TrackOriginalAudioAttachment
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		trackAttachment, dependencyErr := requireTrackAttachment(s.trackAttachment)
-		if dependencyErr != nil {
-			return dependencyErr
-		}
+		trackAttachment := s.trackAttachment
 		if err := trackAttachment.LockExistsWithDB(ctx, tx, trackID); err != nil {
 			return err
 		}

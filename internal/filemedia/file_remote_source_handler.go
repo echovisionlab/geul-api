@@ -23,7 +23,7 @@ import (
 
 // HandleUploadSource downloads verified original bytes without creating a file
 // or starting ingest processing. The browser owns processing and upload.
-func (s *FileService) HandleUploadSource(w http.ResponseWriter, r *http.Request) {
+func (s *Service) HandleUploadSource(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if r.Method != http.MethodGet {

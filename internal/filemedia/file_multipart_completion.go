@@ -87,7 +87,7 @@ func (completion *multipartCompletion) publishFailure(err error) error {
 }
 
 // CompleteMultipartUpload coordinates the ordered multipart completion boundary.
-func (s *FileService) CompleteMultipartUpload(
+func (s *Service) CompleteMultipartUpload(
 	ctx context.Context,
 	req *connect.Request[managev1.CompleteMultipartUploadRequest],
 ) (*connect.Response[managev1.CompleteMultipartUploadResponse], error) {
@@ -136,7 +136,7 @@ func (s *FileService) CompleteMultipartUpload(
 	return response, err
 }
 
-func (s *FileService) loadAuthorizedMultipartCompletion(
+func (s *Service) loadAuthorizedMultipartCompletion(
 	ctx context.Context,
 	request *managev1.CompleteMultipartUploadRequest,
 ) (*multipartCompletion, bool, error) {
@@ -240,7 +240,7 @@ func (s *FileService) loadAuthorizedMultipartCompletion(
 	return completion, true, nil
 }
 
-func (s *FileService) recoverFinishedMultipartCompletion(
+func (s *Service) recoverFinishedMultipartCompletion(
 	ctx context.Context,
 	request *managev1.CompleteMultipartUploadRequest,
 ) (*connect.Response[managev1.CompleteMultipartUploadResponse], error) {
@@ -391,7 +391,7 @@ func (s *FileService) recoverFinishedMultipartCompletion(
 	}), nil
 }
 
-func (s *FileService) restoreFinishedMultipartPromotedAsset(
+func (s *Service) restoreFinishedMultipartPromotedAsset(
 	ctx context.Context,
 	uploadType managev1.UploadType,
 	slotID string,
@@ -419,7 +419,7 @@ func (s *FileService) restoreFinishedMultipartPromotedAsset(
 	return asset, nil
 }
 
-func (s *FileService) completeMultipartObject(
+func (s *Service) completeMultipartObject(
 	ctx context.Context,
 	completion *multipartCompletion,
 ) error {
@@ -529,7 +529,7 @@ func (s *FileService) completeMultipartObject(
 	return nil
 }
 
-func (s *FileService) handleMultipartCompletionStorageError(
+func (s *Service) handleMultipartCompletionStorageError(
 	ctx context.Context,
 	completion *multipartCompletion,
 	completionErr error,
@@ -560,7 +560,7 @@ func (s *FileService) handleMultipartCompletionStorageError(
 	)
 }
 
-func (s *FileService) verifyCompletedObjectContent(
+func (s *Service) verifyCompletedObjectContent(
 	ctx context.Context,
 	objectKey string,
 	expectedSize int64,
@@ -595,7 +595,7 @@ func (s *FileService) verifyCompletedObjectContent(
 	return nil
 }
 
-func (s *FileService) verifyMultipartCompletionObject(
+func (s *Service) verifyMultipartCompletionObject(
 	ctx context.Context,
 	completion *multipartCompletion,
 ) error {
@@ -626,7 +626,7 @@ func (s *FileService) verifyMultipartCompletionObject(
 	)
 }
 
-func (s *FileService) deleteMultipartCompletionObject(ctx context.Context, objectKey string) error {
+func (s *Service) deleteMultipartCompletionObject(ctx context.Context, objectKey string) error {
 	cleanupCtx, cancel := newStorageCompensationContext(ctx)
 	defer cancel()
 	_, err := s.s3Client.DeleteObject(cleanupCtx, &s3.DeleteObjectInput{
@@ -636,7 +636,7 @@ func (s *FileService) deleteMultipartCompletionObject(ctx context.Context, objec
 	return err
 }
 
-func (s *FileService) persistMultipartCompletion(
+func (s *Service) persistMultipartCompletion(
 	ctx context.Context,
 	completion *multipartCompletion,
 ) error {
@@ -675,7 +675,7 @@ func (s *FileService) persistMultipartCompletion(
 	return nil
 }
 
-func (s *FileService) attachOrProjectMultipartCompletion(
+func (s *Service) attachOrProjectMultipartCompletion(
 	ctx context.Context,
 	completion *multipartCompletion,
 ) error {
@@ -770,7 +770,7 @@ func (s *FileService) attachOrProjectMultipartCompletion(
 
 // Prepared media is already READY; attach through the existing Track CAS before
 // publishing the existing durable projection and ready lifecycle events.
-func (s *FileService) attachPreparedTrack(ctx context.Context, completion *multipartCompletion) error {
+func (s *Service) attachPreparedTrack(ctx context.Context, completion *multipartCompletion) error {
 	if completion.session.ClientMediaBundleID == nil {
 		return nil
 	}
@@ -788,7 +788,7 @@ func (s *FileService) attachPreparedTrack(ctx context.Context, completion *multi
 	})
 }
 
-func (s *FileService) publishMultipartDownstreamCommands(
+func (s *Service) publishMultipartDownstreamCommands(
 	ctx context.Context,
 	completion *multipartCompletion,
 ) error {
@@ -804,7 +804,7 @@ func (s *FileService) publishMultipartDownstreamCommands(
 	return nil
 }
 
-func (s *FileService) finishMultipartCompletion(
+func (s *Service) finishMultipartCompletion(
 	ctx context.Context,
 	completion *multipartCompletion,
 ) (*connect.Response[managev1.CompleteMultipartUploadResponse], error) {
@@ -820,7 +820,7 @@ func (s *FileService) finishMultipartCompletion(
 	}), nil
 }
 
-func (s *FileService) markMultipartCompletionFailed(ctx context.Context, uploadID string) {
+func (s *Service) markMultipartCompletionFailed(ctx context.Context, uploadID string) {
 	now := time.Now()
 	err := s.db.WithContext(ctx).
 		Model(&model.UploadSession{}).

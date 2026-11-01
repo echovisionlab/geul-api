@@ -40,7 +40,7 @@ func (r preparedRemoteImport) requiresAttachment() bool {
 	return requiresDurableFileIngestAttachment(r.projectionIdentity)
 }
 
-func (s *FileService) importRemoteFile(ctx context.Context, opts remoteFileImportOptions) (*remoteFileImportResult, error) {
+func (s *Service) importRemoteFile(ctx context.Context, opts remoteFileImportOptions) (*remoteFileImportResult, error) {
 	request, err := s.prepareRemoteImport(ctx, opts)
 	if err != nil {
 		return nil, err
@@ -70,7 +70,7 @@ func (s *FileService) importRemoteFile(ctx context.Context, opts remoteFileImpor
 	return s.finalizeRemoteImport(ctx, request, stored, emitter, fail)
 }
 
-func (s *FileService) prepareRemoteImport(ctx context.Context, opts remoteFileImportOptions) (preparedRemoteImport, error) {
+func (s *Service) prepareRemoteImport(ctx context.Context, opts remoteFileImportOptions) (preparedRemoteImport, error) {
 	request := preparedRemoteImport{
 		opts:       opts,
 		uploadType: opts.uploadType,
@@ -134,7 +134,7 @@ func (s *FileService) prepareRemoteImport(ctx context.Context, opts remoteFileIm
 	return request, nil
 }
 
-func (s *FileService) checkRemoteImportPermission(ctx context.Context, request preparedRemoteImport) error {
+func (s *Service) checkRemoteImportPermission(ctx context.Context, request preparedRemoteImport) error {
 	if !request.opts.checkPermission {
 		return nil
 	}
@@ -145,7 +145,7 @@ func (s *FileService) checkRemoteImportPermission(ctx context.Context, request p
 	return s.checkEntityPermission(ctx, request.uploadType, request.entityType, request.entityID, user.MemberID.String())
 }
 
-func (s *FileService) importRemoteFileWithLock(ctx context.Context, request preparedRemoteImport) (*remoteFileImportResult, error) {
+func (s *Service) importRemoteFileWithLock(ctx context.Context, request preparedRemoteImport) (*remoteFileImportResult, error) {
 	nextOpts := request.opts
 	nextOpts.correlationID = request.identity.attemptID
 	nextOpts.operationIdentity = &request.identity
@@ -161,7 +161,7 @@ func (s *FileService) importRemoteFileWithLock(ctx context.Context, request prep
 	return result, err
 }
 
-func (s *FileService) newRemoteImportEmitter(ctx context.Context, request preparedRemoteImport) (*fileIngestEventEmitter, error) {
+func (s *Service) newRemoteImportEmitter(ctx context.Context, request preparedRemoteImport) (*fileIngestEventEmitter, error) {
 	if !request.opts.emitLifecycle {
 		if request.identity.durable && request.requiresAttachment() {
 			return nil, errs.InternalMsg("durable remote file ingest emitter is required")
@@ -203,7 +203,7 @@ func remoteImportFailureReporter(emitter *fileIngestEventEmitter) func(error) er
 	}
 }
 
-func (s *FileService) restoreRemoteImport(
+func (s *Service) restoreRemoteImport(
 	ctx context.Context,
 	request preparedRemoteImport,
 	emitter *fileIngestEventEmitter,
@@ -278,7 +278,7 @@ func (s *remoteImportSource) close() {
 	s.client.CloseIdleConnections()
 }
 
-func (s *FileService) openRemoteImportSource(
+func (s *Service) openRemoteImportSource(
 	ctx context.Context,
 	request preparedRemoteImport,
 	emitter *fileIngestEventEmitter,
@@ -296,7 +296,7 @@ func (s *FileService) openRemoteImportSource(
 	return s.openRemoteImportSourceWithClient(ctx, request, emitter, fail, client)
 }
 
-func (s *FileService) openRemoteImportSourceWithClient(
+func (s *Service) openRemoteImportSourceWithClient(
 	ctx context.Context,
 	request preparedRemoteImport,
 	emitter *fileIngestEventEmitter,
@@ -432,7 +432,7 @@ type storedRemoteImport struct {
 	downloadedBytes int64
 }
 
-func (s *FileService) storeRemoteImportSource(
+func (s *Service) storeRemoteImportSource(
 	ctx context.Context,
 	request preparedRemoteImport,
 	source *remoteImportSource,
@@ -471,7 +471,7 @@ func (s *FileService) storeRemoteImportSource(
 	return stored, nil
 }
 
-func (s *FileService) storeNormalizedRemoteImport(
+func (s *Service) storeNormalizedRemoteImport(
 	ctx context.Context,
 	request preparedRemoteImport,
 	source *remoteImportSource,
@@ -521,7 +521,7 @@ func (s *FileService) storeNormalizedRemoteImport(
 	}, nil
 }
 
-func (s *FileService) storeRawRemoteImport(
+func (s *Service) storeRawRemoteImport(
 	ctx context.Context,
 	request preparedRemoteImport,
 	source *remoteImportSource,
@@ -568,7 +568,7 @@ func remoteImportMediaTarget(fileID, objectKey, mimeType string) *commonv1.Media
 	}
 }
 
-func (s *FileService) finalizeRemoteImport(
+func (s *Service) finalizeRemoteImport(
 	ctx context.Context,
 	request preparedRemoteImport,
 	stored *storedRemoteImport,

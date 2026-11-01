@@ -239,9 +239,9 @@ func releaseConnectError(err error) error {
 
 // TrackFileManager adapts FileMedia's deletion fence error to the Release-owned
 // retry sentinel while delegating the File-owned session lifecycle unchanged.
-type TrackFileManager struct{ files *filemediadomain.FileService }
+type TrackFileManager struct{ files *filemediadomain.Service }
 
-func NewTrackFileManager(files *filemediadomain.FileService) *TrackFileManager {
+func NewTrackFileManager(files *filemediadomain.Service) *TrackFileManager {
 	return &TrackFileManager{files: files}
 }
 

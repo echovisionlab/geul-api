@@ -431,7 +431,7 @@ func TestDocumentFileDownloadPolicyRejectsMissingOrInvalidObservedBaseline(t *te
 }
 
 func TestDocumentFileDownloadPolicySatisfiesRealServiceInputContract(t *testing.T) {
-	tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, &fileauthority.FileService{})
+	tools := mustFileBlockTools(t, &recordingAIDocumentApplication{}, &fileauthority.Service{})
 	_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolDocumentFileDownloadPolicyUpdate, toolArguments(t, `{
 		"document_type":"post","document_id":"`+fileBlockTestDocumentID+`","block_id":"`+fileBlockTestBlockID+`",
 		"expected_file_id":"`+fileBlockTestFileID+`","audience":"public",

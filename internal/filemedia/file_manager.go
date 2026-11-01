@@ -194,7 +194,7 @@ func encodeFileManagerPageToken(offset int) *string {
 	return &value
 }
 
-func (s *FileService) requireFileManagerFolder(ctx context.Context, folderID *string) error {
+func (s *Service) requireFileManagerFolder(ctx context.Context, folderID *string) error {
 	if folderID == nil {
 		return nil
 	}
@@ -240,14 +240,14 @@ func fileManagerFolderPath(raw []byte) ([]*managev1.FileManagerPathSegment, erro
 	return path, nil
 }
 
-func (s *FileService) ListFileManagerItems(
+func (s *Service) ListFileManagerItems(
 	ctx context.Context,
 	req *connect.Request[managev1.ListFileManagerItemsRequest],
 ) (*connect.Response[managev1.ListFileManagerItemsResponse], error) {
 	return s.listFileManagerItems(ctx, req, true)
 }
 
-func (s *FileService) listFileManagerItems(
+func (s *Service) listFileManagerItems(
 	ctx context.Context,
 	req *connect.Request[managev1.ListFileManagerItemsRequest],
 	allowChangedRetry bool,
@@ -391,10 +391,7 @@ func (s *FileService) listFileManagerItems(
 			fileIDs = append(fileIDs, row.ID)
 		}
 	}
-	memberSummaries, err := requireMemberSummaries(s.memberSummaries)
-	if err != nil {
-		return nil, err
-	}
+	memberSummaries := s.memberSummaries
 	members, err := memberSummaries.Load(ctx, sliceutil.SortedUniqueTrimmed(memberIDs))
 	if err != nil {
 		return nil, errs.Internal(err)

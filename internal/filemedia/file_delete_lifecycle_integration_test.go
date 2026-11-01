@@ -27,7 +27,7 @@ func TestFileServiceDeleteFilePersistsRequestAndPublishesDeleteEventIntegration(
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	publisher := &hardCutAsyncPublisher{}
-	service := &FileService{
+	service := &Service{
 		db:             db,
 		s3Bucket:       "media-bucket",
 		spiceDB:        stack.SpiceDBClient,
@@ -105,7 +105,7 @@ func TestFileServiceDeleteFileCleansUnselectedMeshOptimizationCandidatesIntegrat
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	publisher := &hardCutAsyncPublisher{}
-	service := &FileService{
+	service := &Service{
 		db:             db,
 		s3Bucket:       "media-bucket",
 		spiceDB:        stack.SpiceDBClient,

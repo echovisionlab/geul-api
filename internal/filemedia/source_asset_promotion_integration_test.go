@@ -62,7 +62,7 @@ func TestSourceAssetPromotionStreamsLargeObjectThroughMinIOMultipartIntegration(
 		_ = stack.DB.Where("id = ?", file.ID).Delete(&model.File{}).Error
 	})
 
-	service := &FileService{
+	service := &Service{
 		db: stack.DB, s3Client: client, s3Bucket: stack.S3MediaBucket,
 		cdnDomain: stack.CDNURL,
 	}
@@ -194,7 +194,7 @@ func TestSourceAssetPromotionCompletionSerializesAfterFileDeletionIntentIntegrat
 	digest := sha256.Sum256([]byte("verified public source"))
 	completionDone := make(chan error, 1)
 	go func() {
-		completionDone <- (&FileService{db: db}).completeSourceAssetPromotion(
+		completionDone <- (&Service{db: db}).completeSourceAssetPromotion(
 			context.Background(), fileID, assetID, 22, digest[:],
 		)
 	}()
@@ -220,7 +220,7 @@ func TestSourceAssetPromotionCompletionSerializesAfterFileDeletionIntentIntegrat
 func seedSourceAssetPromotionIntegrationFixture(
 	t *testing.T,
 	db *gorm.DB,
-) (model.File, *sourceAssetPromotionS3Fixture, *FileService) {
+) (model.File, *sourceAssetPromotionS3Fixture, *Service) {
 	t.Helper()
 	body := []byte("concurrent verified public source")
 	file := model.File{
@@ -233,7 +233,7 @@ func seedSourceAssetPromotionIntegrationFixture(
 		_ = db.Where("id = ?", file.ID).Delete(&model.File{}).Error
 	})
 	store := newSourceAssetPromotionS3Fixture(t, file, body)
-	service := &FileService{db: db, s3Client: store.client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com"}
+	service := &Service{db: db, s3Client: store.client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com"}
 	return file, store, service
 }
 

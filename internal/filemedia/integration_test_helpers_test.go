@@ -236,22 +236,26 @@ func seedAudiencePostFileAttachment(t *testing.T, db *gorm.DB, postID, fileID st
 	`, blockID, fileID).Error)
 }
 
-func newEditorUploadSerializationFileService(stack *testutil.RuntimeStack, s3Client *s3.Client) *FileService {
-	return NewFileService(
-		stack.DB, s3Client, &hardCutAsyncPublisher{}, stack.S3MediaBucket,
-		stack.CDNURL, stack.MediaURL, stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{}, stack.SpiceDBClient,
-	)
+func newEditorUploadSerializationFileService(stack *testutil.RuntimeStack, s3Client *s3.Client) *Service {
+	return newTestService(Deps{
+		DB:             stack.DB,
+		S3:             s3Client,
+		AsyncPublisher: &hardCutAsyncPublisher{},
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+		Transcoder:     &recordingFileTranscoderPublisher{},
+		SpiceDB:        stack.SpiceDBClient,
+	})
 }
 
 type directTrackAttachment struct {
 	authority *releasepkg.TrackAuthority
 }
 
-func directTrackAttachmentOption(db *gorm.DB) FileServiceOption {
-	return WithTrackAttachment(&directTrackAttachment{
-		authority: releasepkg.NewTrackAuthority(apitelemetry.NewDurableWriter(db)),
-	})
+func newDirectTrackAttachment(db *gorm.DB) TrackAttachment {
+	return &directTrackAttachment{authority: releasepkg.NewTrackAuthority(apitelemetry.NewDurableWriter(db))}
 }
 
 func (a *directTrackAttachment) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {

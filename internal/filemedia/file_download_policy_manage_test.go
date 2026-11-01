@@ -57,11 +57,11 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 		Update("archived_at", time.Now().UTC()).Error)
 
 	signals := &policySignalPublisher{}
-	svc := &FileService{
+	svc := &Service{
 		db: db, spiceDB: stack.SpiceDBClient, asyncPublisher: signals,
 	}
-	WithPostAccess(newIntegrationPostAccess(db, stack.SpiceDBClient))(svc)
-	WithAudienceAccess(newIntegrationAudienceAccess())(svc)
+	svc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
+	svc.audienceAccess = newIntegrationAudienceAccess()
 	seedFileDeliveryContentPolicy(t, stack.SpiceDBClient, "post", postID)
 	seedFileDeliveryPostAuthority(t, stack.SpiceDBClient, postID, manager.IdentityID)
 	ctx := fileDeliveryPrincipalContext(manager)
@@ -190,9 +190,9 @@ func TestFileDownloadPolicyScopeUsesCurrentBindingInsteadOfIngestProvenance(t *t
 	seedFileDeliveryContentPolicy(t, stack.SpiceDBClient, "post", currentPostID)
 	seedFileDeliveryPostAuthority(t, stack.SpiceDBClient, currentPostID, manager.IdentityID)
 
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient, asyncPublisher: &policySignalPublisher{}}
-	WithPostAccess(newIntegrationPostAccess(db, stack.SpiceDBClient))(svc)
-	WithAudienceAccess(newIntegrationAudienceAccess())(svc)
+	svc := &Service{db: db, spiceDB: stack.SpiceDBClient, asyncPublisher: &policySignalPublisher{}}
+	svc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
+	svc.audienceAccess = newIntegrationAudienceAccess()
 	response, err := svc.UpdateFileDownloadPolicy(
 		fileDeliveryPrincipalContext(manager),
 		connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{

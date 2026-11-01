@@ -33,7 +33,7 @@ import (
 // Handler options and trust wrappers are supplied by the main composition root.
 type musicServiceRegistration struct {
 	dependencies    serviceRegistrationDependencies
-	files           *filemedia.FileService
+	files           *filemedia.Service
 	checkpoints     persistencecheckpoint.ContributorFence
 	manageOptions   []connect.HandlerOption
 	internalOptions []connect.HandlerOption

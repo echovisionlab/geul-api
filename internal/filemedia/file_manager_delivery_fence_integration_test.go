@@ -326,7 +326,7 @@ func TestFileManagerAuthorCanDownloadUnattachedFileIntegration(t *testing.T) {
 	db := testutil.NewIntegrationDB(t)
 	adminCtx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	user := auth.GetUser(adminCtx)
-	service := &FileService{
+	service := &Service{
 		db: db, spiceDB: spiceDB,
 		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
 		mediaSecret: "file-manager-unattached-secret", downloadTTL: time.Hour,
@@ -1176,11 +1176,11 @@ func TestManageStrongSigningDoesNotDeadlockAvatarPromotionIntegration(t *testing
 
 func newFileManagerDeliveryFenceFixture(
 	t *testing.T,
-) (*gorm.DB, context.Context, *FileService, string, string) {
+) (*gorm.DB, context.Context, *Service, string, string) {
 	t.Helper()
 	db, spiceDB := newLocalKratosConcurrentServiceIntegrationDB(t)
 	ctx := integrationAdminCtxWithIdentity(t, db, spiceDB)
-	service := &FileService{
+	service := &Service{
 		db: db, spiceDB: spiceDB,
 		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
 		mediaSecret: "file-manager-fence-secret", downloadTTL: time.Hour,
@@ -1195,7 +1195,7 @@ func newFileManagerDeliveryFenceFixture(
 
 func newManagePostCollaboratorFenceFixture(
 	t *testing.T,
-) (*gorm.DB, context.Context, *FileService, string, string, string) {
+) (*gorm.DB, context.Context, *Service, string, string, string) {
 	t.Helper()
 	db, spiceDB := newLocalKratosConcurrentServiceIntegrationDB(t)
 	identityID := testutil.IntegrationUUID()
@@ -1205,7 +1205,7 @@ func newManagePostCollaboratorFenceFixture(
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
-	service := &FileService{
+	service := &Service{
 		db: db, spiceDB: spiceDB,
 		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
 		mediaSecret: "manage-usage-fence-secret", downloadTTL: time.Hour,

@@ -120,7 +120,7 @@ func TestSourceAssetPromotionStorageFailureRetainsSharedObjectKeyForRetry(t *tes
 	file := seedSourceAssetPromotionUnitFile(t, db, body)
 	store := newSourceAssetPromotionS3Fixture(t, file, body)
 	store.failTransfer = true
-	service := &FileService{db: db, s3Client: store.client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com"}
+	service := &Service{db: db, s3Client: store.client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com"}
 
 	_, err := service.promoteSourceFileToPublicAsset(t.Context(), file.ID, "image")
 	require.ErrorContains(t, err, "stream source to public asset")
@@ -205,7 +205,7 @@ func TestCompleteSourceAssetPromotionRejectsPendingSourceDeletion(t *testing.T) 
 	require.NoError(t, db.Create(&asset).Error)
 	require.NoError(t, db.Table("file").Where("id = ?", file.ID).Update("delete_requested_at", now).Error)
 
-	service := &FileService{db: db}
+	service := &Service{db: db}
 	err := service.completeSourceAssetPromotion(t.Context(), file.ID, assetID, file.FileSize, file.SHA256)
 	require.ErrorContains(t, err, "file is pending deletion")
 

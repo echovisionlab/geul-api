@@ -20,7 +20,7 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *FileService) RenameFile(ctx context.Context, req *connect.Request[managev1.RenameFileRequest]) (_ *connect.Response[managev1.RenameFileResponse], resultErr error) {
+func (s *Service) RenameFile(ctx context.Context, req *connect.Request[managev1.RenameFileRequest]) (_ *connect.Response[managev1.RenameFileResponse], resultErr error) {
 	defer failurecause.AnnotatePrivate(&resultErr, req.Msg.GetFileName())
 
 	_, can, err := fileManagerAuthority(ctx)
@@ -75,7 +75,7 @@ func (s *FileService) RenameFile(ctx context.Context, req *connect.Request[manag
 	return connect.NewResponse(&managev1.RenameFileResponse{File: response.Msg.File}), nil
 }
 
-func (s *FileService) MoveFiles(ctx context.Context, req *connect.Request[managev1.MoveFilesRequest]) (*connect.Response[managev1.MoveFilesResponse], error) {
+func (s *Service) MoveFiles(ctx context.Context, req *connect.Request[managev1.MoveFilesRequest]) (*connect.Response[managev1.MoveFilesResponse], error) {
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
@@ -141,7 +141,7 @@ func (s *FileService) MoveFiles(ctx context.Context, req *connect.Request[manage
 	return connect.NewResponse(&managev1.MoveFilesResponse{Files: files}), nil
 }
 
-func (s *FileService) loadFileManagerFilesByIDs(ctx context.Context, fileIDs []string) ([]*managev1.FileManagerFile, error) {
+func (s *Service) loadFileManagerFilesByIDs(ctx context.Context, fileIDs []string) ([]*managev1.FileManagerFile, error) {
 	if len(fileIDs) == 0 {
 		return nil, nil
 	}
@@ -158,10 +158,7 @@ func (s *FileService) loadFileManagerFilesByIDs(ctx context.Context, fileIDs []s
 			memberIDs = append(memberIDs, *row.MemberID)
 		}
 	}
-	memberSummaries, err := requireMemberSummaries(s.memberSummaries)
-	if err != nil {
-		return nil, err
-	}
+	memberSummaries := s.memberSummaries
 	members, err := memberSummaries.Load(ctx, sliceutil.SortedUniqueTrimmed(memberIDs))
 	if err != nil {
 		return nil, errs.Internal(err)
@@ -225,7 +222,7 @@ func impactsForFiles(fileIDs []string, rows []fileUsageRow) []*managev1.FileDele
 	return result
 }
 
-func (s *FileService) validateFileManagerFileIDs(ctx context.Context, fileIDs []string) error {
+func (s *Service) validateFileManagerFileIDs(ctx context.Context, fileIDs []string) error {
 	var count int64
 	if err := s.db.WithContext(ctx).Table("file").Where("id IN ?", fileIDs).Count(&count).Error; err != nil {
 		return errs.Internal(err)

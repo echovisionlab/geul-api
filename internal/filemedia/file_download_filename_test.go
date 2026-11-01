@@ -36,7 +36,7 @@ func TestInitiateMultipartUploadRejectsInvalidFilenameBeforeS3MutationUnit(t *te
 		options.BaseEndpoint = aws.String(server.URL)
 		options.UsePathStyle = true
 	})
-	svc := &FileService{
+	svc := &Service{
 		s3Client:      client,
 		s3Bucket:      "media-bucket",
 		uploadConfigs: cloneUploadConfigs(),

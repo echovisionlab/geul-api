@@ -41,12 +41,12 @@ func (w manageFileDeliveryUsageWitness) key() string {
 	return w.kind + "\x00" + w.resourceType + "\x00" + w.resourceID + "\x00" + w.relationID + "\x00" + w.referencePath + "\x00" + w.fileID
 }
 
-func (s *FileService) authorizeManageFileDeliveries(ctx context.Context, fileIDs []string) error {
+func (s *Service) authorizeManageFileDeliveries(ctx context.Context, fileIDs []string) error {
 	_, err := s.authorizeManageFileDeliveriesWithWitness(ctx, fileIDs)
 	return err
 }
 
-func (s *FileService) authorizeManageFileDeliveriesWithWitness(
+func (s *Service) authorizeManageFileDeliveriesWithWitness(
 	ctx context.Context,
 	fileIDs []string,
 ) (*manageFileDeliveryAuthorization, error) {
@@ -189,7 +189,7 @@ var currentContentFileDeliveryOwners = []currentContentFileDeliveryOwner{
 // currentManageFileDeliveryUsages resolves exact current product references.
 // Immutable ingest provenance is deliberately excluded: after detach it is no
 // longer a delivery authority.
-func (s *FileService) currentManageFileDeliveryUsages(
+func (s *Service) currentManageFileDeliveryUsages(
 	ctx context.Context,
 	fileIDs []string,
 ) (map[string][]manageFileDeliveryUsageWitness, error) {
@@ -313,7 +313,7 @@ func currentManageFileDeliveryResourceType(value string) (string, bool) {
 	}
 }
 
-func (s *FileService) loadOptionalManageFileIngestBindings(
+func (s *Service) loadOptionalManageFileIngestBindings(
 	ctx context.Context,
 	fileIDs []string,
 ) (map[string]model.FileIngestBinding, error) {
@@ -371,23 +371,17 @@ func (target manageFilePermissionTarget) key() string {
 	return target.resourceType + "\x00" + target.resourceID
 }
 
-func (s *FileService) authorizeManageFilePermissionTarget(
+func (s *Service) authorizeManageFilePermissionTarget(
 	ctx context.Context,
 	user *auth.UserInfo,
 	target manageFilePermissionTarget,
 ) error {
 	if target.resourceType == "post" {
-		access, err := requirePostAccess(s.postAccess)
-		if err != nil {
-			return err
-		}
+		access := s.postAccess
 		return access.RequireView(ctx, target.resourceID)
 	}
 	if target.resourceType == "program_event" {
-		access, err := requireProgramEventAttachment(s.programEventAttachment)
-		if err != nil {
-			return err
-		}
+		access := s.programEventAttachment
 		return access.RequireView(ctx, s.spiceDB, target.resourceID)
 	}
 	adminCan, err := policyv1.File.ManageLibrary()

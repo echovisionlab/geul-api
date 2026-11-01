@@ -37,7 +37,7 @@ func TestPageFilePolicyUsesOwningLockedAccess(t *testing.T) {
 	pageID := "11111111-1111-4111-8111-111111111111"
 
 	viewAccess := &recordingPagePolicyAccess{}
-	viewService := &FileService{pagePolicyAccess: viewAccess}
+	viewService := &Service{pagePolicyAccess: viewAccess}
 	require.NoError(t, viewService.authorizeFileDownloadPolicyOwner(
 		t.Context(), db,
 		fileDownloadPolicyRelation{ResourceType: "page", ResourceID: pageID},
@@ -49,7 +49,7 @@ func TestPageFilePolicyUsesOwningLockedAccess(t *testing.T) {
 	require.Equal(t, pageID, viewAccess.lockedViewID)
 
 	editAccess := &recordingPagePolicyAccess{}
-	editService := &FileService{pagePolicyAccess: editAccess}
+	editService := &Service{pagePolicyAccess: editAccess}
 	require.NoError(t, editService.authorizeFileDownloadPolicyOwner(
 		t.Context(), db,
 		fileDownloadPolicyRelation{ResourceType: "page", ResourceID: pageID},

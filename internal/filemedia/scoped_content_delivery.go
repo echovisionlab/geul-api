@@ -47,15 +47,12 @@ func (row scopedContentAttachmentRow) key() string {
 // boundary for one Post featured-image slot. The Post owner locks lifecycle
 // and the active principal in the same transaction used to re-read the slot,
 // lock the exact File, and sign the response.
-func (s *FileService) ResolveAuthorizedPostFeaturedImage(
+func (s *Service) ResolveAuthorizedPostFeaturedImage(
 	ctx context.Context,
 	postID string,
 	expectedFileID string,
 ) (*commonv1.MediaDelivery, error) {
-	access, err := requirePostAccess(s.postAccess)
-	if err != nil {
-		return nil, err
-	}
+	access := s.postAccess
 	return s.resolveAuthorizedFeaturedImage(
 		ctx,
 		scopedContentOwnerPost,
@@ -67,15 +64,12 @@ func (s *FileService) ResolveAuthorizedPostFeaturedImage(
 
 // ResolveAuthorizedPageFeaturedImage is the final private-inline issuance
 // boundary for one Page featured-image slot.
-func (s *FileService) ResolveAuthorizedPageFeaturedImage(
+func (s *Service) ResolveAuthorizedPageFeaturedImage(
 	ctx context.Context,
 	pageID string,
 	expectedFileID string,
 ) (*commonv1.MediaDelivery, error) {
-	access, err := requirePagePolicyAccess(s.pagePolicyAccess)
-	if err != nil {
-		return nil, err
-	}
+	access := s.pagePolicyAccess
 	return s.resolveAuthorizedFeaturedImage(
 		ctx,
 		scopedContentOwnerPage,
@@ -85,16 +79,13 @@ func (s *FileService) ResolveAuthorizedPageFeaturedImage(
 	)
 }
 
-func (s *FileService) resolveAuthorizedFeaturedImage(
+func (s *Service) resolveAuthorizedFeaturedImage(
 	ctx context.Context,
 	owner scopedContentOwner,
 	ownerID string,
 	expectedFileID string,
 	authorize func(*gorm.DB) error,
 ) (*commonv1.MediaDelivery, error) {
-	if s == nil || s.db == nil {
-		return nil, errs.DependencyUnavailable("File delivery database")
-	}
 	if _, err := uuidutil.ParseCanonical(strings.TrimSpace(ownerID), "owner_id"); err != nil {
 		return nil, errs.InvalidArgument("owner_id", "must be a canonical UUID")
 	}
@@ -154,7 +145,7 @@ func (s *FileService) resolveAuthorizedFeaturedImage(
 // HydrateAuthorizedPageBlockMediaWithDB adds private editor delivery while
 // the Page owner keeps its root, principal, document, File, and exact
 // attachment witnesses in one transaction.
-func (s *FileService) HydrateAuthorizedPageBlockMediaWithDB(
+func (s *Service) HydrateAuthorizedPageBlockMediaWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
 	pageID string,
@@ -169,7 +160,7 @@ func (s *FileService) HydrateAuthorizedPageBlockMediaWithDB(
 
 // HydrateAuthorizedPostBlockMediaWithDB adds private editor delivery while
 // Post holds its owner, principal, document, and exact attachment witnesses.
-func (s *FileService) HydrateAuthorizedPostBlockMediaWithDB(
+func (s *Service) HydrateAuthorizedPostBlockMediaWithDB(
 	ctx context.Context, tx *gorm.DB, postID string, documentID uuid.UUID,
 	principal *auth.UserInfo, items []*contentv1.ContentBlockMediaItem,
 ) ([]*contentv1.ContentBlockMediaItem, error) {
@@ -178,7 +169,7 @@ func (s *FileService) HydrateAuthorizedPostBlockMediaWithDB(
 
 // HydrateAuthorizedWorkBlockMediaWithDB adds private editor delivery while
 // the Work owner keeps its exact authorization and lifecycle fence.
-func (s *FileService) HydrateAuthorizedWorkBlockMediaWithDB(
+func (s *Service) HydrateAuthorizedWorkBlockMediaWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
 	workID string,
@@ -193,7 +184,7 @@ func (s *FileService) HydrateAuthorizedWorkBlockMediaWithDB(
 
 // HydrateAuthorizedProgramEventBlockMediaWithDB adds private editor delivery
 // while Program Event keeps its exact authorization and lifecycle fence.
-func (s *FileService) HydrateAuthorizedProgramEventBlockMediaWithDB(
+func (s *Service) HydrateAuthorizedProgramEventBlockMediaWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
 	eventID string,
@@ -206,7 +197,7 @@ func (s *FileService) HydrateAuthorizedProgramEventBlockMediaWithDB(
 	)
 }
 
-func (s *FileService) hydrateAuthorizedContentBlockMediaWithDB(
+func (s *Service) hydrateAuthorizedContentBlockMediaWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
 	owner scopedContentOwner,
@@ -385,7 +376,7 @@ func lockScopedContentAttachments(
 	return result, nil
 }
 
-func (s *FileService) buildLockedInlineDelivery(
+func (s *Service) buildLockedInlineDelivery(
 	ctx context.Context,
 	tx *gorm.DB,
 	file model.File,

@@ -73,7 +73,7 @@ func TestFileDownloadPolicySignalUsesOwningTransactionAndCurrentRevision(t *test
 		INSERT INTO file VALUES ('audio', NULL);
 		INSERT INTO track VALUES ('track', 'release', 'audio', 'disabled')`).Error)
 	publisher := &policySignalPublisher{}
-	service := &FileService{db: db, asyncPublisher: publisher}
+	service := &Service{db: db, asyncPublisher: publisher}
 	relation, err := service.resolveFileDownloadPolicyRelation(context.Background(), db, fileDownloadPolicySelector{
 		EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK, EntityID: "track",
 	}, false)

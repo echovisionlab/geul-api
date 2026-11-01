@@ -20,7 +20,7 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *FileService) CreateFileFolder(ctx context.Context, req *connect.Request[managev1.CreateFileFolderRequest]) (_ *connect.Response[managev1.CreateFileFolderResponse], resultErr error) {
+func (s *Service) CreateFileFolder(ctx context.Context, req *connect.Request[managev1.CreateFileFolderRequest]) (_ *connect.Response[managev1.CreateFileFolderResponse], resultErr error) {
 	defer failurecause.AnnotatePrivate(&resultErr, req.Msg.GetName())
 
 	user, can, err := fileManagerAuthority(ctx)
@@ -58,7 +58,7 @@ func (s *FileService) CreateFileFolder(ctx context.Context, req *connect.Request
 	return connect.NewResponse(&managev1.CreateFileFolderResponse{Folder: proto}), nil
 }
 
-func (s *FileService) RenameFileFolder(ctx context.Context, req *connect.Request[managev1.RenameFileFolderRequest]) (_ *connect.Response[managev1.RenameFileFolderResponse], resultErr error) {
+func (s *Service) RenameFileFolder(ctx context.Context, req *connect.Request[managev1.RenameFileFolderRequest]) (_ *connect.Response[managev1.RenameFileFolderResponse], resultErr error) {
 	defer failurecause.AnnotatePrivate(&resultErr, req.Msg.GetName())
 
 	_, can, err := fileManagerAuthority(ctx)
@@ -104,7 +104,7 @@ func (s *FileService) RenameFileFolder(ctx context.Context, req *connect.Request
 	return connect.NewResponse(&managev1.RenameFileFolderResponse{Folder: proto}), nil
 }
 
-func (s *FileService) MoveFileFolder(ctx context.Context, req *connect.Request[managev1.MoveFileFolderRequest]) (*connect.Response[managev1.MoveFileFolderResponse], error) {
+func (s *Service) MoveFileFolder(ctx context.Context, req *connect.Request[managev1.MoveFileFolderRequest]) (*connect.Response[managev1.MoveFileFolderResponse], error) {
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
@@ -202,13 +202,10 @@ func fileManagerMutationError(err error, message string, privateName string) err
 	return errs.Internal(cause)
 }
 
-func (s *FileService) fileFolderProto(ctx context.Context, folder model.FileFolder) (*managev1.FileFolder, error) {
+func (s *Service) fileFolderProto(ctx context.Context, folder model.FileFolder) (*managev1.FileFolder, error) {
 	result := &managev1.FileFolder{Id: folder.ID, ParentId: folder.ParentID, Name: folder.Name, CreatedAt: timestamppb.New(folder.CreatedAt), UpdatedAt: timestamppb.New(folder.UpdatedAt)}
 	if folder.CreatedByMemberID != nil {
-		memberSummaries, dependencyErr := requireMemberSummaries(s.memberSummaries)
-		if dependencyErr != nil {
-			return nil, dependencyErr
-		}
+		memberSummaries := s.memberSummaries
 		members, err := memberSummaries.Load(ctx, []string{*folder.CreatedByMemberID})
 		if err != nil {
 			return nil, errs.Internal(err)

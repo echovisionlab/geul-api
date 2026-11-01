@@ -25,7 +25,7 @@ type multipartCandidateSearch struct {
 	projectionIdentity fileIngestProjectionIdentity
 }
 
-func (s *FileService) prepareMultipartCandidateSearch(
+func (s *Service) prepareMultipartCandidateSearch(
 	ctx context.Context,
 	request *managev1.FindMultipartUploadCandidateRequest,
 	memberID string,
@@ -108,7 +108,7 @@ func normalizeOptionalCandidateFilename(fileName string) (string, error) {
 	return normalized, nil
 }
 
-func (s *FileService) findMultipartUploadCandidate(
+func (s *Service) findMultipartUploadCandidate(
 	ctx context.Context,
 	search multipartCandidateSearch,
 ) (model.UploadSession, bool, error) {
@@ -252,7 +252,7 @@ func multipartCandidateResponse(session model.UploadSession) *managev1.FindMulti
 	}
 }
 
-func (s *FileService) prepareMultipartCandidateResponse(
+func (s *Service) prepareMultipartCandidateResponse(
 	ctx context.Context,
 	session model.UploadSession,
 ) (*managev1.FindMultipartUploadCandidateResponse, error) {

@@ -52,7 +52,7 @@ func TestPromoteUserAvatarAssetStreamsWebPAndReusesReadyAsset(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	service := &FileService{
+	service := &Service{
 		db:        db,
 		s3Bucket:  "bucket",
 		cdnDomain: "https://cdn.example.com",
@@ -102,7 +102,7 @@ func TestPromoteUserAvatarAssetMarksAllocationFailedWithoutDeletingSharedObject(
 	}))
 	t.Cleanup(server.Close)
 
-	service := &FileService{
+	service := &Service{
 		db:        db,
 		s3Bucket:  "bucket",
 		cdnDomain: "https://cdn.example.com",
@@ -164,7 +164,7 @@ func TestPromoteUserAvatarAssetResumesAllocatedAsset(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	service := &FileService{
+	service := &Service{
 		db:        db,
 		s3Bucket:  "bucket",
 		cdnDomain: "https://cdn.example.com",

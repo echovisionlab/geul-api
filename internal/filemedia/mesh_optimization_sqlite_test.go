@@ -197,7 +197,7 @@ func TestFileServiceBatchClearMeshOptimizationCandidatesScopesByProfile(t *testi
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	attachInternalResourcePolicy(t, stack.SpiceDBClient, pageID)
-	service := &FileService{db: db, spiceDB: stack.SpiceDBClient}
+	service := &Service{db: db, spiceDB: stack.SpiceDBClient}
 
 	response, err := service.ClearMeshOptimizationCandidates(
 		auth.WithUser(context.Background(), admin.AuthUserInfo()),

@@ -44,11 +44,11 @@ type VerifiedFileBody struct {
 // CreateGeneratedGeneralFile stores one request-actor-owned immutable File and
 // returns its existing signed download delivery. The caller must validate its
 // format-specific body before this boundary.
-func (s *FileService) CreateGeneratedGeneralFile(
+func (s *Service) CreateGeneratedGeneralFile(
 	ctx context.Context,
 	input GeneratedGeneralFileInput,
 ) (*commonv1.ExpiringMediaRef, error) {
-	if s == nil || s.db == nil || s.s3Client == nil || strings.TrimSpace(s.s3Bucket) == "" {
+	if strings.TrimSpace(s.s3Bucket) == "" {
 		return nil, fmt.Errorf("generated File storage runtime is required")
 	}
 	extension := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(input.Extension), "."))
@@ -112,7 +112,7 @@ func (s *FileService) CreateGeneratedGeneralFile(
 	return nil, errs.Internal(errors.Join(createErr, cleanupErr))
 }
 
-func (s *FileService) deleteGeneratedFileObject(ctx context.Context, objectKey string) error {
+func (s *Service) deleteGeneratedFileObject(ctx context.Context, objectKey string) error {
 	_, err := s.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.s3Bucket), Key: aws.String(objectKey),
 	})
@@ -125,12 +125,12 @@ func (s *FileService) deleteGeneratedFileObject(ctx context.Context, objectKey s
 // ReadVerifiedFileBody authorizes one existing completed File through the
 // normal manage-delivery boundary, then reads and verifies its canonical media
 // object with a caller-supplied hard size bound.
-func (s *FileService) ReadVerifiedFileBody(
+func (s *Service) ReadVerifiedFileBody(
 	ctx context.Context,
 	fileID string,
 	maximumBytes int64,
 ) (_ VerifiedFileBody, retErr error) {
-	if s == nil || s.db == nil || s.s3Client == nil || strings.TrimSpace(s.s3Bucket) == "" {
+	if strings.TrimSpace(s.s3Bucket) == "" {
 		return VerifiedFileBody{}, fmt.Errorf("verified File storage runtime is required")
 	}
 	if maximumBytes <= 0 {

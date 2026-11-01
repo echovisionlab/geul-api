@@ -50,7 +50,7 @@ type fileDownloadPolicyRelation struct {
 	ResourceID   string                          `gorm:"column:resource_id"`
 }
 
-func (s *FileService) GetFileDownloadPolicy(
+func (s *Service) GetFileDownloadPolicy(
 	ctx context.Context,
 	req *connect.Request[managev1.GetFileDownloadPolicyRequest],
 ) (*connect.Response[managev1.GetFileDownloadPolicyResponse], error) {
@@ -81,7 +81,7 @@ func (s *FileService) GetFileDownloadPolicy(
 	return connect.NewResponse(&managev1.GetFileDownloadPolicyResponse{Policy: policy}), nil
 }
 
-func (s *FileService) UpdateFileDownloadPolicy(
+func (s *Service) UpdateFileDownloadPolicy(
 	ctx context.Context,
 	req *connect.Request[managev1.UpdateFileDownloadPolicyRequest],
 ) (*connect.Response[managev1.UpdateFileDownloadPolicyResponse], error) {
@@ -152,10 +152,7 @@ func (s *FileService) UpdateFileDownloadPolicy(
 	var relation fileDownloadPolicyRelation
 	var policy *managev1.FileDownloadPolicy
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		audienceAccess, dependencyErr := requireAudienceAccess(s.audienceAccess)
-		if dependencyErr != nil {
-			return dependencyErr
-		}
+		audienceAccess := s.audienceAccess
 		// Audience Segment rows are the first database lock in policy and archive
 		// flows. This stable order prevents archive-versus-policy deadlocks.
 		if validateErr := audienceAccess.ValidateAuthenticatedSegmentIDs(ctx, tx, segmentIDs); validateErr != nil {
@@ -218,7 +215,7 @@ func (s *FileService) UpdateFileDownloadPolicy(
 // Policy is attachment metadata. Track policies belong to their Release, not
 // to a Track room. PublishInTransaction retains the owner's current document
 // revision and stamps the browser origin; no document or locale state advances.
-func (s *FileService) publishFileDownloadPolicyChanged(ctx context.Context, tx *gorm.DB, relation fileDownloadPolicyRelation) error {
+func (s *Service) publishFileDownloadPolicyChanged(ctx context.Context, tx *gorm.DB, relation fileDownloadPolicyRelation) error {
 	event, err := fileDownloadPolicyChangedEvent(relation)
 	if err != nil {
 		return err
@@ -345,7 +342,7 @@ func validateFileDownloadPolicySelector(
 	return selector, nil
 }
 
-func (s *FileService) resolveFileDownloadPolicyRelation(
+func (s *Service) resolveFileDownloadPolicyRelation(
 	ctx context.Context,
 	db *gorm.DB,
 	selector fileDownloadPolicySelector,
@@ -393,57 +390,42 @@ func (s *FileService) resolveFileDownloadPolicyRelation(
 	return row, nil
 }
 
-func (s *FileService) authorizeFileDownloadPolicyOwner(
+func (s *Service) authorizeFileDownloadPolicyOwner(
 	ctx context.Context,
 	db *gorm.DB,
 	relation fileDownloadPolicyRelation,
 	action filePolicyOwnerAction,
 ) error {
 	if relation.ResourceType == "post" {
-		access, err := requirePostAccess(s.postAccess)
-		if err != nil {
-			return err
-		}
+		access := s.postAccess
 		if action == filePolicyOwnerView {
 			return access.RequireLockedView(ctx, db, relation.ResourceID)
 		}
 		return access.RequireLockedEdit(ctx, db, relation.ResourceID)
 	}
 	if relation.ResourceType == "page" {
-		access, err := requirePagePolicyAccess(s.pagePolicyAccess)
-		if err != nil {
-			return err
-		}
+		access := s.pagePolicyAccess
 		if action == filePolicyOwnerView {
 			return access.RequireLockedView(ctx, db, relation.ResourceID)
 		}
 		return access.RequireLockedEdit(ctx, db, relation.ResourceID)
 	}
 	if relation.ResourceType == "program_event" {
-		access, err := requireProgramEventAttachment(s.programEventAttachment)
-		if err != nil {
-			return err
-		}
+		access := s.programEventAttachment
 		if action == filePolicyOwnerView {
 			return access.RequireLockedView(ctx, db, s.spiceDB, relation.ResourceID)
 		}
 		return access.RequireLockedEdit(ctx, db, s.spiceDB, relation.ResourceID)
 	}
 	if relation.ResourceType == "work" {
-		access, err := requireWorkPolicyAccess(s.workPolicyAccess)
-		if err != nil {
-			return err
-		}
+		access := s.workPolicyAccess
 		if action == filePolicyOwnerView {
 			return access.RequireLockedView(ctx, db, relation.ResourceID)
 		}
 		return access.RequireLockedEdit(ctx, db, relation.ResourceID)
 	}
 	if relation.ResourceType == "release" {
-		access, err := requireReleasePolicyAccess(s.releasePolicyAccess)
-		if err != nil {
-			return err
-		}
+		access := s.releasePolicyAccess
 		if action == filePolicyOwnerView {
 			return access.RequireLockedView(ctx, db, relation.ResourceID)
 		}
@@ -550,7 +532,7 @@ func updateFileDownloadPolicyRelation(
 	return nil
 }
 
-func (s *FileService) loadManageFileDownloadPolicy(
+func (s *Service) loadManageFileDownloadPolicy(
 	ctx context.Context,
 	db *gorm.DB,
 	relation fileDownloadPolicyRelation,
@@ -571,10 +553,7 @@ func (s *FileService) loadManageFileDownloadPolicy(
 			return nil, errs.Internal(err)
 		}
 	}
-	audienceAccess, err := requireAudienceAccess(s.audienceAccess)
-	if err != nil {
-		return nil, err
-	}
+	audienceAccess := s.audienceAccess
 	summaries := make([]*managev1.AudienceSegmentSummary, 0, len(segments))
 	for i := range segments {
 		summary, valid := audienceAccess.AuthenticatedSegmentSummary(&segments[i])

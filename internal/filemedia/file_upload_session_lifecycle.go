@@ -14,7 +14,7 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *FileService) createUploadSession(ctx context.Context, session *model.UploadSession) error {
+func (s *Service) createUploadSession(ctx context.Context, session *model.UploadSession) error {
 	if session == nil {
 		return fmt.Errorf("upload session is required")
 	}
@@ -23,10 +23,7 @@ func (s *FileService) createUploadSession(ctx context.Context, session *model.Up
 	}
 	if session.UploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() {
 		return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			trackAttachment, dependencyErr := requireTrackAttachment(s.trackAttachment)
-			if dependencyErr != nil {
-				return dependencyErr
-			}
+			trackAttachment := s.trackAttachment
 			if err := trackAttachment.LockExistsWithDB(ctx, tx, session.EntityID); err != nil {
 				return err
 			}
@@ -46,7 +43,7 @@ func (s *FileService) createUploadSession(ctx context.Context, session *model.Up
 	return nil
 }
 
-func (s *FileService) refreshUploadSessionActivity(ctx context.Context, uploadID string) {
+func (s *Service) refreshUploadSessionActivity(ctx context.Context, uploadID string) {
 	now := time.Now()
 	if err := s.db.WithContext(ctx).
 		Model(&model.UploadSession{}).
@@ -59,7 +56,7 @@ func (s *FileService) refreshUploadSessionActivity(ctx context.Context, uploadID
 	}
 }
 
-func (s *FileService) deleteCompletedUploadSession(ctx context.Context, uploadID string) error {
+func (s *Service) deleteCompletedUploadSession(ctx context.Context, uploadID string) error {
 	result := s.db.WithContext(ctx).
 		Where("upload_id = ? AND status = ?", uploadID, model.UploadSessionStatusFinalizing).
 		Delete(&model.UploadSession{})
@@ -72,7 +69,7 @@ func (s *FileService) deleteCompletedUploadSession(ctx context.Context, uploadID
 	return nil
 }
 
-func (s *FileService) deleteAbortedUploadSession(ctx context.Context, uploadID string) error {
+func (s *Service) deleteAbortedUploadSession(ctx context.Context, uploadID string) error {
 	result := s.db.WithContext(ctx).
 		Where("upload_id = ? AND status = ?", uploadID, model.UploadSessionStatusAborted).
 		Delete(&model.UploadSession{})
@@ -85,7 +82,7 @@ func (s *FileService) deleteAbortedUploadSession(ctx context.Context, uploadID s
 	return nil
 }
 
-func (s *FileService) claimUploadSessionAbort(
+func (s *Service) claimUploadSessionAbort(
 	ctx context.Context,
 	uploadID string,
 	fileID string,

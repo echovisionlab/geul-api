@@ -117,7 +117,7 @@ type RemoteFileImportInput struct {
 	CorrelationID string
 }
 
-func (s *FileService) ImportRemoteFile(ctx context.Context, input RemoteFileImportInput) (_ *managev1.DownloadFromUrlResponse, resultErr error) {
+func (s *Service) ImportRemoteFile(ctx context.Context, input RemoteFileImportInput) (_ *managev1.DownloadFromUrlResponse, resultErr error) {
 	defer func() {
 		resultErr = failurecause.WithAttrs(failurecause.WithPrivate(resultErr, input.FileName), slog.String("correlation_id", input.CorrelationID), slog.String("upload_type", input.UploadType.String()))
 	}()
@@ -328,7 +328,7 @@ func newRemoteImportHTTPClient(
 }
 
 // DownloadFromUrl downloads a file from an external URL and stores it.
-func (s *FileService) DownloadFromUrl(
+func (s *Service) DownloadFromUrl(
 	ctx context.Context,
 	req *connect.Request[managev1.DownloadFromUrlRequest],
 ) (*connect.Response[managev1.DownloadFromUrlResponse], error) {

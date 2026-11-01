@@ -18,7 +18,7 @@ func TestCheckEntityPermissionAllowsAdminProgramEventPosterForSeriesID(t *testin
 
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	svc := &FileService{spiceDB: stack.SpiceDBClient}
+	svc := &Service{spiceDB: stack.SpiceDBClient}
 	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
 	target, err := resolveUploadPermissionTarget(managev1.UploadType_UPLOAD_TYPE_PROGRAM_EVENT_POSTER, "")
 	require.NoError(t, err)
@@ -31,7 +31,7 @@ func TestCheckEntityPermissionRejectsNonAdminProgramEventPoster(t *testing.T) {
 
 	stack := testutil.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
-	svc := &FileService{spiceDB: stack.SpiceDBClient}
+	svc := &Service{spiceDB: stack.SpiceDBClient}
 	ctx := auth.WithUser(context.Background(), user.AuthUserInfo())
 	target, err := resolveUploadPermissionTarget(managev1.UploadType_UPLOAD_TYPE_PROGRAM_EVENT_POSTER, "")
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ func TestCheckPartUploadPermissionAllowsAdminProgramEventPosterForSeriesID(t *te
 
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	svc := &FileService{spiceDB: stack.SpiceDBClient}
+	svc := &Service{spiceDB: stack.SpiceDBClient}
 	target, err := resolveUploadPermissionTarget(managev1.UploadType_UPLOAD_TYPE_PROGRAM_EVENT_POSTER, "")
 	require.NoError(t, err)
 	require.NoError(t, svc.checkRoleAndSpiceDBUploadPermission(auth.WithUser(context.Background(), admin.AuthUserInfo()), target, "program-event-series-id", admin.MemberID))

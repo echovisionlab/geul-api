@@ -33,7 +33,7 @@ func TestGetFileURLsForIDIncludesReadySourceAsset(t *testing.T) {
 				Extension: extension, MimeType: mimeType, FileSize: &size, SHA256: make([]byte, 32),
 				Disposition: "inline", Status: model.PublicAssetStatusReady, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 			}).Error)
-			svc := &FileService{db: db, cdnDomain: "cdn.example.com", mediaDomain: "media.example.com", mediaSecret: "test-secret"}
+			svc := &Service{db: db, cdnDomain: "cdn.example.com", mediaDomain: "media.example.com", mediaSecret: "test-secret"}
 			single, err := svc.getFileUrlsForID(t.Context(), fileID)
 			require.NoError(t, err)
 			bulk, err := svc.loadFileURLResponses(t.Context(), []string{fileID})
@@ -49,7 +49,7 @@ func TestGetFileURLsForIDIncludesReadySourceAsset(t *testing.T) {
 
 func TestGetFileURLsForIDPreservesNotFoundForMissingOrDeletingFile(t *testing.T) {
 	db := newServiceUnitDB(t)
-	svc := &FileService{db: db}
+	svc := &Service{db: db}
 	for _, deleting := range []bool{false, true} {
 		fileID := uuid.NewString()
 		if deleting {
@@ -67,7 +67,7 @@ func TestFileURLsResponseFromStoredFileSignsDownloadURL(t *testing.T) {
 	t.Parallel()
 
 	const secret = "test-media-secret"
-	svc := &FileService{
+	svc := &Service{
 		cdnDomain:   "cdn.example.com",
 		mediaDomain: "media.example.com",
 		mediaSecret: secret,
@@ -117,7 +117,7 @@ func TestFileURLsResponseFromStoredFileSignsDownloadURL(t *testing.T) {
 func TestFileURLsResponseFromStoredFileFailsClosedWithoutSecret(t *testing.T) {
 	t.Parallel()
 
-	svc := &FileService{mediaDomain: "media.example.com"}
+	svc := &Service{mediaDomain: "media.example.com"}
 
 	if _, err := svc.fileURLsResponseFromStoredFile(
 		"11111111-1111-4111-8111-111111111111",
@@ -134,7 +134,7 @@ func TestFileURLsResponseFromStoredFileUsesDeterministicHistoricalFilenameFallba
 	t.Parallel()
 
 	const secret = "test-media-secret"
-	svc := &FileService{mediaDomain: "media.example.com", mediaSecret: secret}
+	svc := &Service{mediaDomain: "media.example.com", mediaSecret: secret}
 	fileID := "11111111-1111-4111-8111-111111111111"
 	invalidName := "../source.wav"
 	response, err := svc.fileURLsResponseFromStoredFile(
@@ -157,7 +157,7 @@ func TestAttachFileDerivativeURLs(t *testing.T) {
 	t.Parallel()
 
 	const secret = "test-media-secret"
-	svc := &FileService{
+	svc := &Service{
 		cdnDomain:   "cdn.example.com",
 		mediaDomain: "media.example.com",
 		mediaSecret: secret,
@@ -252,7 +252,7 @@ func TestAssetRefForDerivativeRejectsLegacyAttachmentPublicAsset(t *testing.T) {
 	fileSize := int64(64)
 	disposition := "attachment"
 	status := model.PublicAssetStatusReady
-	_, err := (&FileService{cdnDomain: "cdn.example.com"}).assetRefForDerivative(
+	_, err := (&Service{cdnDomain: "cdn.example.com"}).assetRefForDerivative(
 		storedDerivativeDeliveryRow{
 			AssetID:          &assetID,
 			AssetKind:        &kind,

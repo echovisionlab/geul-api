@@ -83,7 +83,7 @@ func countCompletedAudioDerivatives(hasHLS, hasWaveform, hasSpectrogram bool) in
 	return completed
 }
 
-func (s *FileService) populateFileProcessingStatus(
+func (s *Service) populateFileProcessingStatus(
 	ctx context.Context,
 	responses map[string]*commonv1.MediaDelivery,
 ) error {

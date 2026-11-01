@@ -489,7 +489,7 @@ func TestMultipartInvalidCompletedObjectDeleteFailureRetainsCleanupAuthorityDire
 func initiateMultipartRecoveryUpload(
 	t *testing.T,
 	ctx context.Context,
-	service *FileService,
+	service *Service,
 	body []byte,
 ) *managev1.InitiateMultipartUploadResponse {
 	t.Helper()
@@ -505,7 +505,7 @@ func initiateMultipartRecoveryUpload(
 
 func verifyDirectMultipartPrefix(
 	t *testing.T,
-	service *FileService,
+	service *Service,
 	user *testutil.OryUser,
 	fileID string,
 	uploadID string,
@@ -524,7 +524,7 @@ func verifyDirectMultipartPrefix(
 
 func presignDirectMultipartPart(
 	t *testing.T,
-	service *FileService,
+	service *Service,
 	user *testutil.OryUser,
 	fileID string,
 	uploadID string,
@@ -560,7 +560,7 @@ func putDirectMultipartPart(t *testing.T, presignedURL string, body []byte) {
 
 func confirmDirectMultipartPart(
 	t *testing.T,
-	service *FileService,
+	service *Service,
 	user *testutil.OryUser,
 	fileID string,
 	uploadID string,

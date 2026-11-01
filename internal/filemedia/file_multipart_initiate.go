@@ -35,7 +35,7 @@ type multipartUploadInitiation struct {
 }
 
 // InitiateMultipartUpload starts or resumes a multipart upload.
-func (s *FileService) InitiateMultipartUpload(
+func (s *Service) InitiateMultipartUpload(
 	ctx context.Context,
 	req *connect.Request[managev1.InitiateMultipartUploadRequest],
 ) (_ *connect.Response[managev1.InitiateMultipartUploadResponse], resultErr error) {
@@ -59,7 +59,7 @@ func (s *FileService) InitiateMultipartUpload(
 	return connect.NewResponse(response), nil
 }
 
-func (s *FileService) prepareMultipartUploadInitiation(
+func (s *Service) prepareMultipartUploadInitiation(
 	ctx context.Context,
 	request *managev1.InitiateMultipartUploadRequest,
 ) (multipartUploadInitiation, error) {
@@ -204,7 +204,7 @@ func validateMultipartUploadTypeFile(
 	return validateSiteEmailLogoMime(request.UploadType, slotID, canonicalMime)
 }
 
-func (s *FileService) resumeOrReplaceMultipartUpload(
+func (s *Service) resumeOrReplaceMultipartUpload(
 	ctx context.Context,
 	request *managev1.InitiateMultipartUploadRequest,
 	initiation multipartUploadInitiation,
@@ -244,7 +244,7 @@ func (s *FileService) resumeOrReplaceMultipartUpload(
 	return nil, false, nil
 }
 
-func (s *FileService) createMultipartUploadSession(
+func (s *Service) createMultipartUploadSession(
 	ctx context.Context,
 	request *managev1.InitiateMultipartUploadRequest,
 	initiation multipartUploadInitiation,
@@ -314,19 +314,19 @@ func newMultipartUploadSession(
 	}
 }
 
-func (s *FileService) beforeMultipartSessionInsert(session model.UploadSession) {
+func (s *Service) beforeMultipartSessionInsert(session model.UploadSession) {
 	if session.UploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() && s.testBeforeTrackSessionInsert != nil {
 		s.testBeforeTrackSessionInsert(session)
 	}
 }
 
-func (s *FileService) afterMultipartSessionInsert(session model.UploadSession) {
+func (s *Service) afterMultipartSessionInsert(session model.UploadSession) {
 	if session.UploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() && s.testAfterTrackSessionInsert != nil {
 		s.testAfterTrackSessionInsert(session)
 	}
 }
 
-func (s *FileService) abortMultipartUploadAfterInsertFailure(
+func (s *Service) abortMultipartUploadAfterInsertFailure(
 	ctx context.Context,
 	fileKey string,
 	uploadID *string,
@@ -348,7 +348,7 @@ func multipartSessionInsertError(err error) error {
 	return errs.Internal(fmt.Errorf("failed to create upload session: %w", err))
 }
 
-func (s *FileService) publishMultipartUploadStarted(ctx context.Context, session model.UploadSession) error {
+func (s *Service) publishMultipartUploadStarted(ctx context.Context, session model.UploadSession) error {
 	emitter := newFileIngestEventEmitter(
 		ctx,
 		s.asyncPublisher,

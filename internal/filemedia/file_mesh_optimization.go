@@ -11,7 +11,7 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *FileService) meshOptimizationService() *MeshOptimizationService {
+func (s *Service) meshOptimizationService() *MeshOptimizationService {
 	var publisher MeshOptimizationJobPublisher
 	if meshPublisher, ok := s.publisher.(MeshOptimizationJobPublisher); ok {
 		publisher = meshPublisher
@@ -21,7 +21,7 @@ func (s *FileService) meshOptimizationService() *MeshOptimizationService {
 	return NewMeshOptimizationService(s.db, publisher, s, s.spiceDB)
 }
 
-func (s *FileService) ListMeshOptimizationCandidates(
+func (s *Service) ListMeshOptimizationCandidates(
 	ctx context.Context,
 	req *connect.Request[managev1.ListMeshOptimizationCandidatesRequest],
 ) (*connect.Response[managev1.ListMeshOptimizationCandidatesResponse], error) {
@@ -48,7 +48,7 @@ func (s *FileService) ListMeshOptimizationCandidates(
 	return connect.NewResponse(response), nil
 }
 
-func (s *FileService) GenerateMeshOptimizationCandidate(
+func (s *Service) GenerateMeshOptimizationCandidate(
 	ctx context.Context,
 	req *connect.Request[managev1.GenerateMeshOptimizationCandidateRequest],
 ) (*connect.Response[managev1.GenerateMeshOptimizationCandidateResponse], error) {
@@ -76,7 +76,7 @@ func (s *FileService) GenerateMeshOptimizationCandidate(
 	}), nil
 }
 
-func (s *FileService) UseMeshOptimizationCandidate(
+func (s *Service) UseMeshOptimizationCandidate(
 	ctx context.Context,
 	req *connect.Request[managev1.UseMeshOptimizationCandidateRequest],
 ) (*connect.Response[managev1.UseMeshOptimizationCandidateResponse], error) {
@@ -95,7 +95,7 @@ func (s *FileService) UseMeshOptimizationCandidate(
 	}), nil
 }
 
-func (s *FileService) ClearMeshOptimizationCandidates(
+func (s *Service) ClearMeshOptimizationCandidates(
 	ctx context.Context,
 	req *connect.Request[managev1.ClearMeshOptimizationCandidatesRequest],
 ) (*connect.Response[managev1.ClearMeshOptimizationCandidatesResponse], error) {
@@ -124,7 +124,7 @@ func (s *FileService) ClearMeshOptimizationCandidates(
 	return connect.NewResponse(&managev1.ClearMeshOptimizationCandidatesResponse{Success: true}), nil
 }
 
-func (s *FileService) meshOptimizationCandidateResponse(
+func (s *Service) meshOptimizationCandidateResponse(
 	candidate model.MeshOptimizationCandidate,
 ) (*managev1.MeshOptimizationCandidate, error) {
 	response := &managev1.MeshOptimizationCandidate{

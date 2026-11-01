@@ -67,7 +67,7 @@ func TestValidateMultipartCompletionVerifiedMimeAppliesSiteEmailLogoPNGPolicy(t 
 func TestBuildManagedFileKeyUsesCanonicalMediaKeyForEveryLogoSlot(t *testing.T) {
 	t.Parallel()
 
-	svc := &FileService{}
+	svc := &Service{}
 	fileID := "11111111-1111-4111-8111-111111111111"
 
 	emailKey, err := svc.buildManagedFileKey(fileID, siteEmailLogoStableMime)
