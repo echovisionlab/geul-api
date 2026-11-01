@@ -11,6 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
+	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"gorm.io/gorm"
@@ -68,19 +69,18 @@ func (h *Handlers) handleActivateLegal(ctx context.Context, spec legalActivation
 
 	now := time.Now().UTC()
 	documentID := pending[0].ID
-	legalRuntime := legaladapter.NewRuntime()
-	noticeRuntime := legaladapter.NewNoticeRuntime(nil)
+	kind := legaldomain.PolicyKind(spec.referenceType)
 	activated := false
-	var effectiveRun *model.CampaignDeliveryRun
+	var effectiveRun *legaldomain.NoticeRun
 	if err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		joined := legalpostgres.Bind(tx, legalpostgres.Ports{
+			Routes: legaladapter.NewRuntime(), Notices: legaladapter.NewNoticeRuntime(),
+		}, h.auditWriter)
 		var err error
-		activated, effectiveRun, err = legaldomain.ActivateDuePolicyWithEffectiveRun(
+		activated, effectiveRun, err = legaldomain.ActivateDuePolicy(
 			ctx,
-			tx,
-			h.auditWriter,
-			legalRuntime,
-			noticeRuntime,
-			spec.referenceType,
+			joined,
+			kind,
 			documentID,
 			spec.effectiveEvent,
 			map[string]string{spec.resource + "_url": fmt.Sprintf("%s/%s", h.config.SiteOrigin, spec.resource)},
@@ -107,18 +107,11 @@ func (h *Handlers) handleActivateLegal(ctx context.Context, spec legalActivation
 	activatedCount := 0
 	if activated {
 		activatedCount = 1
+		dispatch := legaladapter.NewNoticeDispatch(h.db, nil)
 		if h.publisher != nil && h.spicedbClient != nil {
-			noticeRuntime = legaladapter.NewNoticeRuntime(h.newCampaignDeliveryDispatcher())
+			dispatch = legaladapter.NewNoticeDispatch(h.db, h.newCampaignDeliveryDispatcher())
 		}
-		legaldomain.DispatchCommittedLegalEffectiveNoticeAfterActivation(
-			ctx,
-			h.db,
-			noticeRuntime,
-			spec.referenceType,
-			documentID,
-			now,
-			effectiveRun,
-		)
+		legaldomain.DispatchCommittedEffectiveNotice(ctx, dispatch, kind, documentID, now, effectiveRun)
 	}
 	slog.InfoContext(ctx, spec.logMessage, "count", activatedCount)
 	return nil

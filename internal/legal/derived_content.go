@@ -5,11 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
-	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
 // refreshDerivedContent rebuilds the version's HTML and text from snapshot,
@@ -17,14 +14,14 @@ import (
 // has.
 func refreshDerivedContent(
 	ctx context.Context,
-	tx *gorm.DB,
-	kind string,
+	store Store,
+	kind *policyKind,
 	entityID string,
 	snapshot contentblock.Snapshot,
 	sourceLocale string,
 	now time.Time,
 ) error {
-	locales, err := derivedContentLocales(ctx, tx, kind, entityID, snapshot, sourceLocale)
+	locales, err := derivedContentLocales(ctx, store, kind, entityID, snapshot, sourceLocale)
 	if err != nil {
 		return err
 	}
@@ -32,7 +29,7 @@ func refreshDerivedContent(
 	// Existing variable-free fixtures need no settings table. Settings failures
 	// still fail closed whenever the canonical document contains references.
 	if snapshotHasSiteVariables(snapshot) {
-		if variables, err = sitevariable.LoadRuntime(ctx, tx); err != nil {
+		if variables, err = store.SiteVariables(ctx); err != nil {
 			return err
 		}
 	}
@@ -45,19 +42,11 @@ func refreshDerivedContent(
 		if err != nil {
 			return err
 		}
+		derived := Projection{HTML: projection.HTML, Text: projection.Text, Digest: snapshot.SnapshotDigest}
 		if locale == sourceLocale {
-			err = tx.WithContext(ctx).Table(kind+"_history").Where("id = ?", entityID).
-				Updates(structured.Fields{
-					"content":      projection.HTML,
-					"content_text": projection.Text,
-					"content_hash": snapshot.SnapshotDigest,
-					"view_hash":    snapshot.SnapshotDigest,
-					"updated_at":   now,
-				}).Error
+			err = store.StoreSourceProjection(ctx, kind.kind, entityID, derived, now)
 		} else {
-			err = tx.WithContext(ctx).Table(kind+"_translation").
-				Where("entity_id = ? AND locale = ?", entityID, locale).
-				Updates(structured.Fields{"content_html": projection.HTML, "content_text": projection.Text}).Error
+			err = store.StoreTargetProjection(ctx, kind.kind, entityID, locale, derived)
 		}
 		if err != nil {
 			return err
@@ -70,16 +59,14 @@ func refreshDerivedContent(
 // snapshot and of the version's translation rows, once.
 func derivedContentLocales(
 	ctx context.Context,
-	tx *gorm.DB,
-	kind string,
+	store Store,
+	kind *policyKind,
 	entityID string,
 	snapshot contentblock.Snapshot,
 	sourceLocale string,
 ) ([]string, error) {
-	var persistedLocales []string
-	if err := tx.WithContext(ctx).Table(kind+"_translation").
-		Where("entity_id = ?", entityID).
-		Pluck("locale", &persistedLocales).Error; err != nil {
+	persistedLocales, err := store.TranslationLocales(ctx, kind.kind, entityID)
+	if err != nil {
 		return nil, err
 	}
 	candidates := append(append([]string{sourceLocale}, legalSnapshotLocales(snapshot)...), persistedLocales...)

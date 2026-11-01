@@ -10,8 +10,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"gorm.io/gorm"
 )
 
 const legalNoticeLeadTime = 7 * 24 * time.Hour
@@ -50,7 +48,7 @@ func automaticLegalNoticePreviewToken(previewURL string) (string, bool) {
 
 // noticePreviewPolicy returns the kind and version an update notice run
 // previews; any other run previews nothing.
-func noticePreviewPolicy(run model.CampaignDeliveryRun) (*policyKind, string, bool) {
+func noticePreviewPolicy(run NoticeRun) (*policyKind, string, bool) {
 	eventKey := strings.TrimSpace(ptrStringValue(run.TemplateEventKey))
 	for _, kind := range policyKinds {
 		if eventKey != kind.updateEvent.String() {
@@ -66,12 +64,12 @@ func noticePreviewPolicy(run model.CampaignDeliveryRun) (*policyKind, string, bo
 }
 
 // PrepareAutomaticNoticePreviewShareLink materializes the bounded share link
-// from a sealed legal-notice run immediately before Campaign dispatch.
+// from a sealed legal-notice run immediately before Campaign dispatch, in
+// the dispatch transaction store is bound to.
 func PrepareAutomaticNoticePreviewShareLink(
 	ctx context.Context,
-	tx *gorm.DB,
-	links PreviewLinks,
-	run model.CampaignDeliveryRun,
+	store Store,
+	run NoticeRun,
 	now time.Time,
 ) error {
 	kind, entityID, relevant := noticePreviewPolicy(run)
@@ -93,17 +91,9 @@ func PrepareAutomaticNoticePreviewShareLink(
 		return fmt.Errorf("legal update delivery run has an invalid automatic preview_url")
 	}
 
-	var policy struct {
-		Status        model.LegalPolicyStatus `gorm:"column:status"`
-		EffectiveFrom *time.Time              `gorm:"column:effective_from"`
-	}
-	result := tx.WithContext(ctx).
-		Table(kind.table).
-		Select("status", "effective_from").
-		Where("id = ?", entityID).
-		Take(&policy)
-	if result.Error != nil {
-		return result.Error
+	policy, err := store.ScheduleState(ctx, kind.kind, entityID)
+	if err != nil {
+		return err
 	}
 	if policy.EffectiveFrom == nil || !policy.EffectiveFrom.After(now) {
 		return fmt.Errorf("legal update preview is no longer available before its effective time")
@@ -112,7 +102,7 @@ func PrepareAutomaticNoticePreviewShareLink(
 		return fmt.Errorf("legal update preview policy is no longer scheduled")
 	}
 
-	return links.CreateAutomaticPreview(ctx, tx, AutomaticPreview{
+	return store.CreateAutomaticPreview(ctx, AutomaticPreview{
 		Token: token, EntityType: kind.shareLinkEntityType, EntityID: entityID,
 		CreatedAt: now.UTC(), ExpiresAt: policy.EffectiveFrom.UTC(),
 	})
@@ -120,8 +110,8 @@ func PrepareAutomaticNoticePreviewShareLink(
 
 // deleteAutomaticNoticePreviewLinks revokes the preview links the version's
 // update notices mailed out.
-func (s *Service) deleteAutomaticNoticePreviewLinks(ctx context.Context, tx *gorm.DB, kind *policyKind, policyID string) error {
-	runs, err := s.notice.UpdateNoticeRuns(ctx, tx, kind.entity(), policyID)
+func deleteAutomaticNoticePreviewLinks(ctx context.Context, store Store, kind *policyKind, policyID string) error {
+	runs, err := store.UpdateNoticeRuns(ctx, kind.kind, policyID)
 	if err != nil {
 		return err
 	}
@@ -137,7 +127,7 @@ func (s *Service) deleteAutomaticNoticePreviewLinks(ctx context.Context, tx *gor
 		if !ok {
 			continue
 		}
-		if err := s.previewLinks.DeleteAutomaticPreview(ctx, tx, token, kind.shareLinkEntityType, policyID); err != nil {
+		if err := store.DeleteAutomaticPreview(ctx, token, kind.shareLinkEntityType, policyID); err != nil {
 			return err
 		}
 	}

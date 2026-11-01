@@ -2,17 +2,14 @@ package public
 
 import (
 	"context"
-	"errors"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/crypto"
-	"github.com/echovisionlab/geul-api/internal/model"
+	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 )
 
 type legalShareLinkAccess struct {
-	status        model.LegalPolicyStatus
+	status        legaldomain.Status
 	publicHistory bool
 }
 
@@ -20,31 +17,34 @@ type legalShareLinkAccess struct {
 // entityID opens: a published version as public history, or a version
 // scheduled for later. An expired, unknown or wrongly protected link opens
 // nothing.
-func resolveLegalShareLinkAccess(
+func (s *Service) resolveLegalShareLinkAccess(
 	ctx context.Context,
-	db *gorm.DB,
 	kind publicKind,
 	token string,
 	password string,
 	entityID string,
 	now time.Time,
 ) (legalShareLinkAccess, bool, error) {
-	opened, err := shareLinkOpens(ctx, db, kind, token, password, entityID, now)
+	var link ShareLink
+	var linked bool
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		link, linked, err = store.ShareLink(ctx, token, kind.shareLinkEntityType, entityID, now)
+		return err
+	}); err != nil || !linked {
+		return legalShareLinkAccess{}, false, err
+	}
+	opened, err := shareLinkOpens(link, password)
 	if err != nil || !opened {
 		return legalShareLinkAccess{}, false, err
 	}
-	var target struct {
-		Status        model.LegalPolicyStatus `gorm:"column:status"`
-		EffectiveFrom *time.Time              `gorm:"column:effective_from"`
-	}
-	if err := db.WithContext(ctx).
-		Table(kind.table).
-		Select("status", "effective_from").
-		Where("id = ?", entityID).
-		Take(&target).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return legalShareLinkAccess{}, false, nil
-		}
+	var target legaldomain.Lifecycle
+	var found bool
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		target, found, err = store.Lifecycle(ctx, kind.kind, entityID)
+		return err
+	}); err != nil || !found {
 		return legalShareLinkAccess{}, false, err
 	}
 	if target.Status == kind.active || target.Status == kind.archived {
@@ -56,26 +56,9 @@ func resolveLegalShareLinkAccess(
 	return legalShareLinkAccess{status: target.Status}, true, nil
 }
 
-// shareLinkOpens reports whether token is an unexpired Share Link of the
-// version whose password, if it has one, password matches.
-func shareLinkOpens(
-	ctx context.Context,
-	db *gorm.DB,
-	kind publicKind,
-	token string,
-	password string,
-	entityID string,
-	now time.Time,
-) (bool, error) {
-	var link model.ShareLink
-	if err := db.WithContext(ctx).
-		Where("token = ? AND entity_type = ? AND entity_id = ? AND expires_at > ?", token, kind.shareLinkEntityType, entityID, now).
-		Take(&link).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, nil
-		}
-		return false, err
-	}
+// shareLinkOpens reports whether link, an unexpired Share Link of the
+// version, opens for password: a link without a password always does.
+func shareLinkOpens(link ShareLink, password string) (bool, error) {
 	if link.ExpiresAt == nil {
 		return false, nil
 	}

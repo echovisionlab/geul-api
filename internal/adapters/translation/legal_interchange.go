@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/legal"
@@ -25,16 +26,16 @@ import (
 )
 
 type legalTranslationInterchangeDomain interface {
-	LoadTranslationInterchangeAIDocumentWithDB(
+	LoadTranslationInterchangeAIDocument(
 		context.Context,
-		*gorm.DB,
+		legal.Joined,
 		string,
 		string,
 		string,
 	) (legal.AIDocument, error)
-	ExecuteTranslationInterchangeMutationWithDB(
+	ExecuteTranslationInterchangeMutation(
 		context.Context,
-		*gorm.DB,
+		legal.Joined,
 		string,
 		string,
 		string,
@@ -47,13 +48,19 @@ type legalTranslationInterchangeDomain interface {
 // used here so owning-domain code never depends on this adapter package.
 type LegalInterchange struct {
 	domain legalTranslationInterchangeDomain
+	audit  domainaudit.Appender
 }
 
-func NewLegalInterchange(domain legalTranslationInterchangeDomain) *LegalInterchange {
+// NewLegalInterchange returns the Legal interchange port; it appends
+// locale-content records through audit.
+func NewLegalInterchange(domain legalTranslationInterchangeDomain, audit domainaudit.Appender) *LegalInterchange {
 	if domain == nil {
 		panic("Legal translation interchange domain is required")
 	}
-	return &LegalInterchange{domain: domain}
+	if audit == nil {
+		panic("Legal translation interchange audit is required")
+	}
+	return &LegalInterchange{domain: domain, audit: audit}
 }
 
 type legalInterchangeTarget struct {
@@ -81,8 +88,8 @@ func (a *LegalInterchange) LoadTranslationInterchangeTarget(
 	if err := validateLegalInterchangeIdentity(entityType, entityID, locale, plan); err != nil {
 		return application.TranslationInterchangeTargetState{}, err
 	}
-	raw, err := a.domain.LoadTranslationInterchangeAIDocumentWithDB(
-		ctx, db, entityType, entityID, locale,
+	raw, err := a.domain.LoadTranslationInterchangeAIDocument(
+		ctx, legalJoined(db, store, a.audit), entityType, entityID, locale,
 	)
 	if err != nil {
 		return application.TranslationInterchangeTargetState{}, err
@@ -106,10 +113,11 @@ func (a *LegalInterchange) ApplyTranslationInterchange(
 		return application.TranslationInterchangeApplyResult{}, err
 	}
 
+	joined := legalJoined(db, store, a.audit)
 	var before application.TranslationInterchangeTargetState
-	domainResult, err := a.domain.ExecuteTranslationInterchangeMutationWithDB(
+	domainResult, err := a.domain.ExecuteTranslationInterchangeMutation(
 		ctx,
-		db,
+		joined,
 		command.EntityType,
 		command.EntityID,
 		command.TargetLocale,
@@ -151,8 +159,8 @@ func (a *LegalInterchange) ApplyTranslationInterchange(
 		return application.TranslationInterchangeApplyResult{}, err
 	}
 
-	accepted, err := a.domain.LoadTranslationInterchangeAIDocumentWithDB(
-		ctx, db, command.EntityType, command.EntityID, command.TargetLocale,
+	accepted, err := a.domain.LoadTranslationInterchangeAIDocument(
+		ctx, joined, command.EntityType, command.EntityID, command.TargetLocale,
 	)
 	if err != nil {
 		return application.TranslationInterchangeApplyResult{}, err

@@ -69,6 +69,7 @@ import (
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/legal"
+	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
 	llmproviders "github.com/echovisionlab/geul-api/internal/llm/providers"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
 	mapthemepostgres "github.com/echovisionlab/geul-api/internal/maptheme/postgres"
@@ -241,10 +242,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		telemetryWriter,
 		campaign.WithLegalNoticeDeliveryPort(legalRuntime),
 	))
-	legalDependencies := legal.Dependencies{
-		OG:     legalRuntime,
-		Notice: legaladapter.NewNoticeRuntime(campaignDeliveryDispatcher),
-	}
 	fileService, err := filemedia.NewService(filemedia.Deps{
 		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, S3: s3Client, Presigner: s3PresignClient,
 		AsyncPublisher: servicePublisher, Transcoder: transcodeTracker, S3Bucket: cfg.S3Bucket,
@@ -664,16 +661,25 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(clientPath, clientHandler)
 	slog.Info("Registered service", "path", clientPath)
 
-	legalPolicyService, err := legal.NewService(legal.Deps{
-		DB:            db,
-		SpiceDB:       spicedbClient,
+	legalUnits, err := legalpostgres.NewUnits(db, legalpostgres.Ports{
 		ContentBlocks: contentBlockStore,
-		OG:            legalDependencies.OG,
-		Notice:        legalDependencies.Notice,
+		Routes:        legalRuntime,
+		Notices:       legaladapter.NewNoticeRuntime(),
 		PreviewLinks:  sharelinkadapter.LegalPreviewLinks{},
 		Members:       memberadapter.PreferredLocales{},
-		Audit:         telemetryWriter,
-		BaseURL:       cfg.SiteOrigin,
+		Checkpoints:   collaborationRuntime.Checkpoints,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize legal store: %w", err)
+	}
+	legalPolicyService, err := legal.NewService(legal.Deps{
+		Units:    legalUnits,
+		SpiceDB:  spicedbClient,
+		Fence:    identitystate.PostgresFence{},
+		Audit:    telemetryWriter,
+		Dispatch: legaladapter.NewNoticeDispatch(db, campaignDeliveryDispatcher),
+		OGAssets: legaladapter.NewOGAssets(db, cfg.CDNURL),
+		BaseURL:  cfg.SiteOrigin,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize legal policy service: %w", err)
@@ -835,8 +841,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		collaborationRuntime:        collaborationRuntime,
 		programEvents:               programEventService,
 		emailAuthoringReferences:    emailAuthoringReferences,
-		legalRuntime:                legalRuntime,
-		legalDependencies:           legalDependencies,
+		legalUnits:                  legalUnits,
 		mapThemes:                   mapThemeService,
 	}).register()
 	if err != nil {

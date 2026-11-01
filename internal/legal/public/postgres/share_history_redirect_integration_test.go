@@ -1,6 +1,6 @@
 //go:build integration
 
-package public_test
+package legalpublicpostgres_test
 
 import (
 	"testing"
