@@ -183,7 +183,7 @@ func requestBulk(
 		snapshotJSON, err := json.Marshal(ogEntitySnapshot{
 			EntityType: item.entityType, EntityID: item.entityID, Title: resolvedTitle,
 			Locale:        item.locale,
-			FeaturedImage: featuredAssets[stringValue(item.request.FeaturedImageFileID)],
+			FeaturedImage: featuredAssets[stringValue(optionalString(item.request.FeaturedImageFileID))],
 			Output:        ogOutputSnapshot(output),
 		})
 		if err != nil {

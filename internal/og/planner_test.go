@@ -91,6 +91,21 @@ func TestRequestBulkSnapshotsTheNewestReadyFeaturedImage(t *testing.T) {
 	assert.Equal(t, "work-1", snapshot.EntityID)
 }
 
+func TestRequestBulkSnapshotsAFeaturedImageNamedWithSurroundingSpace(t *testing.T) {
+	store, units := ogtest.New()
+	fileID := uuid.NewString()
+	asset := ogtest.ReadyAsset("image", time.Now())
+	asset.SourceFileID = &fileID
+	store.SeedAsset(asset)
+	request := localeRequest("work", uuid.NewString(), "Work", "en")
+	request.FeaturedImageFileID = new(" " + fileID + " ")
+
+	plan := mustPlan(t, units, request)
+	snapshot := snapshotOf(t, generation(t, store, plan.GenerationIDs[0]))
+	require.NotNil(t, snapshot.FeaturedImage, "the image the run verified is the image it renders")
+	assert.Equal(t, asset.ID, snapshot.FeaturedImage.AssetID)
+}
+
 func TestRequestBulkRollsBackTheWholeRunWhenAFeaturedImageIsMissing(t *testing.T) {
 	store, units := ogtest.New()
 	request := entityRequest("label", uuid.NewString(), "Label")
