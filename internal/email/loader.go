@@ -9,18 +9,22 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"gorm.io/gorm"
 )
 
 // AdapterCacheTTL bounds cross-instance staleness when an ephemeral
 // mail_adapter.changed invalidation is missed.
 const AdapterCacheTTL = 30 * time.Second
 
+// AdapterStore lists the active mail adapters (Store).
+type AdapterStore interface {
+	ActiveMailAdapters(ctx context.Context) ([]model.MailAdapter, error)
+}
+
 // AdapterLoader loads and caches active mail adapters from the database.
 // Broadcast invalidation is the fast path; a bounded TTL guarantees recovery
 // after a missed anonymous-queue broadcast or subscriber reconnect.
 type AdapterLoader struct {
-	db       *gorm.DB
+	store    AdapterStore
 	factory  *AdapterFactory
 	mu       sync.RWMutex
 	adapters []Adapter
@@ -31,12 +35,12 @@ type AdapterLoader struct {
 }
 
 // NewAdapterLoader creates a new AdapterLoader.
-func NewAdapterLoader(db *gorm.DB, factory *AdapterFactory) *AdapterLoader {
+func NewAdapterLoader(store AdapterStore, factory *AdapterFactory) *AdapterLoader {
 	if factory == nil {
 		factory = NewAdapterFactory()
 	}
 	return &AdapterLoader{
-		db:       db,
+		store:    store,
 		factory:  factory,
 		now:      time.Now,
 		cacheTTL: AdapterCacheTTL,
@@ -91,11 +95,8 @@ func (l *AdapterLoader) reload(ctx context.Context) ([]Adapter, error) {
 	}
 
 	// Query active adapters ordered by priority (lower first)
-	var dbAdapters []model.MailAdapter
-	if err := l.db.WithContext(ctx).
-		Where("is_active = ?", true).
-		Order("priority ASC, created_at ASC").
-		Find(&dbAdapters).Error; err != nil {
+	dbAdapters, err := l.store.ActiveMailAdapters(ctx)
+	if err != nil {
 		l.mu.Unlock()
 		return nil, err
 	}

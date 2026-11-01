@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -185,12 +186,12 @@ func TestResolveEmailTemplateSendTestLocaleRejectsUnsupportedOverride(t *testing
 type emailTemplateRuntimeFixture struct{}
 
 func (emailTemplateRuntimeFixture) ResolveLocalizedTemplate(ctx context.Context, db *gorm.DB, template model.EmailTemplate, locale string) (model.EmailTemplate, error) {
-	resolved, _, err := email.ResolveLocalizedEmailTemplate(ctx, db, template, locale)
+	resolved, _, err := email.ResolveLocalizedEmailTemplate(ctx, emailpostgres.Bind(db), template, locale)
 	return resolved, err
 }
 
 func (emailTemplateRuntimeFixture) ResolveLayoutHTML(ctx context.Context, db *gorm.DB, layoutID, locale string) (string, error) {
-	layout, _, err := email.ResolveLocalizedEmailLayoutHTML(ctx, db, layoutID, locale)
+	layout, _, err := email.ResolveLocalizedEmailLayoutHTML(ctx, emailpostgres.Bind(db), layoutID, locale)
 	return layout, err
 }
 

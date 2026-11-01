@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
 
@@ -120,7 +121,7 @@ func saveEmailLayoutSource(
 			if document == nil {
 				return contentblock.MetadataEffect{}, nil
 			}
-			if err := emailutil.SaveLayoutSourceLocaleDocument(ctx, tx, layoutID, authority.SourceLocale, *document, now); err != nil {
+			if err := emailutil.SaveLayoutSourceLocaleDocument(ctx, emailpostgres.Bind(tx), layoutID, authority.SourceLocale, *document, now); err != nil {
 				return contentblock.MetadataEffect{}, err
 			}
 			return contentblock.MetadataEffect{
@@ -150,7 +151,7 @@ func saveEmailLayoutTarget(
 	}
 	updatedAt := translation.NextTargetUpdatedAt(now, previous)
 	return updatedAt, emailutil.UpsertLayoutTranslationEntry(
-		ctx, tx, layoutID, locale,
+		ctx, emailpostgres.Bind(tx), layoutID, locale,
 		translation.EntryWrite{ContentHTML: contentHTML, ContentText: contentText, Now: updatedAt},
 	)
 }

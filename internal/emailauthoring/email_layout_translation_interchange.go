@@ -13,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"gorm.io/gorm"
@@ -105,7 +106,7 @@ func ApplyEmailLayoutTranslationInterchange(
 	if authority.SourceLocale != sourceLocale {
 		return EmailLayoutTranslationInterchangeTarget{}, false, domainerr.Precondition("Email Layout source locale changed; reload before importing")
 	}
-	source, err := email.LoadCanonicalLayoutTranslationDocument(ctx, tx, layoutID, sourceLocale)
+	source, err := email.LoadCanonicalLayoutTranslationDocument(ctx, emailpostgres.Bind(tx), layoutID, sourceLocale)
 	if err != nil {
 		return EmailLayoutTranslationInterchangeTarget{}, false, err
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -134,14 +135,14 @@ func overlayEmailLayoutCanonicalSourceContent(
 		return nil
 	}
 
-	sourceLocale, found, err := email.ResolveLayoutTranslationSourceLocale(ctx, db, layout.ID)
+	sourceLocale, found, err := email.ResolveLayoutTranslationSourceLocale(ctx, emailpostgres.Bind(db), layout.ID)
 	if err != nil {
 		return err
 	}
 	if !found {
 		return domainerr.Precondition("Email Layout source locale is not initialized")
 	}
-	state, err := email.LoadCanonicalLayoutTranslationDocument(ctx, db, layout.ID, sourceLocale)
+	state, err := email.LoadCanonicalLayoutTranslationDocument(ctx, emailpostgres.Bind(db), layout.ID, sourceLocale)
 	if err != nil {
 		return err
 	}
@@ -167,7 +168,7 @@ func persistNewEmailLayoutCanonicalSource(
 	contentText := email.StripHTML(normalizedHTMLContent)
 	return email.SaveLayoutSourceLocaleDocument(
 		ctx,
-		tx,
+		emailpostgres.Bind(tx),
 		layoutID,
 		sourceLocale,
 		email.LayoutTranslationDocument{
@@ -281,7 +282,7 @@ func overlayCanonicalEmailLayoutSourcesForList(
 	for i := range layouts {
 		ids = append(ids, layouts[i].ID)
 	}
-	byID, err := email.LoadCanonicalLayoutProjections(ctx, db, ids)
+	byID, err := email.LoadCanonicalLayoutProjections(ctx, emailpostgres.Bind(db), ids)
 	if err != nil {
 		return err
 	}
@@ -645,7 +646,7 @@ func (s *Service) PreviewEmailLayout(ctx context.Context, query PreviewEmailLayo
 	sampleData := s.sampleLayoutPreviewData(ctx, sampleContent, query.Locale)
 	layoutHTML := layout.HTMLContent
 	if query.Locale != nil && strings.TrimSpace(*query.Locale) != "" {
-		localizedHTML, _, err := email.ResolveLocalizedEmailLayoutHTML(ctx, s.db, layout.ID, *query.Locale)
+		localizedHTML, _, err := email.ResolveLocalizedEmailLayoutHTML(ctx, emailpostgres.Bind(s.db), layout.ID, *query.Locale)
 		if err != nil {
 			return "", err
 		}

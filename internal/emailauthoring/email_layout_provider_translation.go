@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -100,7 +101,7 @@ func loadEmailLayoutProviderApply(
 	if err != nil {
 		return layoutProviderApply{}, err
 	}
-	source, err := emailutil.LoadCanonicalLayoutTranslationDocument(ctx, tx, job.EntityID, authority.SourceLocale)
+	source, err := emailutil.LoadCanonicalLayoutTranslationDocument(ctx, emailpostgres.Bind(tx), job.EntityID, authority.SourceLocale)
 	if err != nil {
 		return layoutProviderApply{}, err
 	}

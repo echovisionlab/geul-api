@@ -11,6 +11,7 @@ import (
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -188,7 +189,7 @@ func loadNoticeRenderSnapshot(
 	if template.LayoutID == nil || strings.TrimSpace(*template.LayoutID) == "" {
 		return snapshot, nil
 	}
-	layoutRows, err := email.LoadLayoutLocaleSnapshots(ctx, db, strings.TrimSpace(*template.LayoutID))
+	layoutRows, err := email.LoadLayoutLocaleSnapshots(ctx, emailpostgres.Bind(db), strings.TrimSpace(*template.LayoutID))
 	if err != nil {
 		return noticeRenderSnapshot{}, err
 	}

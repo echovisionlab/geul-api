@@ -23,6 +23,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
 
@@ -272,7 +273,7 @@ func (s *EmailLayoutAIDocumentService) apply(
 	var err error
 	switch {
 	case m.CreateTranslation:
-		changed, err = true, emailutil.SeedLayoutTranslationEntryFromSource(ctx, tx, m.LayoutID, m.Locale, current.SourceLocale, now)
+		changed, err = true, emailutil.SeedLayoutTranslationEntryFromSource(ctx, emailpostgres.Bind(tx), m.LayoutID, m.Locale, current.SourceLocale, now)
 	case m.DeleteTranslation:
 		changed, err = true, deleteEmailLayoutAIDocumentTranslation(ctx, tx, current, m)
 	case m.ReplaceValues:
@@ -373,7 +374,7 @@ func loadEmailLayoutAIDocumentState(
 		return EmailLayoutAIDocumentState{}, err
 	}
 	source, err := emailutil.LoadCanonicalLayoutTranslationDocument(
-		ctx, tx, layoutID, authority.SourceLocale,
+		ctx, emailpostgres.Bind(tx), layoutID, authority.SourceLocale,
 	)
 	if err != nil {
 		return EmailLayoutAIDocumentState{}, err
@@ -384,7 +385,7 @@ func loadEmailLayoutAIDocumentState(
 		return EmailLayoutAIDocumentState{}, domainerr.Precondition("Email Layout source unit markers require backfill before editing").WithCause(failurecause.ServerFault(err))
 	}
 
-	localeEntry, err := emailutil.LoadLayoutTranslationEntry(ctx, tx, layoutID, locale)
+	localeEntry, err := emailutil.LoadLayoutTranslationEntry(ctx, emailpostgres.Bind(tx), layoutID, locale)
 	if err != nil {
 		return EmailLayoutAIDocumentState{}, err
 	}

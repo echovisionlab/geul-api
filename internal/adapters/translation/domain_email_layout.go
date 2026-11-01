@@ -8,6 +8,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
@@ -28,14 +29,14 @@ func emailLayoutDomainRegistration(
 			_ *contentblock.Store,
 			entityID string,
 		) (*core.SourceDocument, error) {
-			locale, found, err := email.ResolveLayoutTranslationSourceLocale(ctx, db, entityID)
+			locale, found, err := email.ResolveLayoutTranslationSourceLocale(ctx, emailpostgres.Bind(db), entityID)
 			if err != nil {
 				return nil, err
 			}
 			if !found {
 				return nil, fmt.Errorf("email layout %q source locale is not initialized", entityID)
 			}
-			return email.LoadLayoutTranslationSourceDocument(ctx, db, entityID, locale)
+			return email.LoadLayoutTranslationSourceDocument(ctx, emailpostgres.Bind(db), entityID, locale)
 		},
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
 			return email.BuildLayoutTranslationExtractionPlan(
@@ -62,7 +63,7 @@ func emailLayoutDomainRegistration(
 		},
 		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditEmailLayoutUpdated, sharedtelemetry.NewEmailLayoutSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
-			return email.LayoutTranslationEntrySelectSQL()
+			return emailpostgres.LayoutTranslationEntrySelectSQL()
 		},
 		requireInterchangeView: genericInterchangeView(
 			core.KindEmailLayout,
@@ -84,7 +85,7 @@ func emailLayoutDomainRegistration(
 			now time.Time,
 		) error {
 			return email.PrepareLayoutSourceLocaleSwitch(
-				ctx, db, entityID, currentSourceLocale, requestedLocale, now,
+				ctx, emailpostgres.Bind(db), entityID, currentSourceLocale, requestedLocale, now,
 			)
 		},
 		requireSourceMutable: func(ctx context.Context, db *gorm.DB, entityID string) error {

@@ -13,7 +13,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"gorm.io/gorm"
 )
 
 const directTemplatePrefix = "template:"
@@ -46,7 +45,7 @@ type RenderedEmail struct {
 // and layout overrides when the requested locale rows exist.
 func RenderTemplateForLocale(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	eventKey string,
 	requestedLocale string,
 	data map[string]string,
@@ -58,16 +57,13 @@ func RenderTemplateForLocale(
 	// Handle a direct template reference (template:{id})
 	if after, ok := strings.CutPrefix(eventKey, directTemplatePrefix); ok {
 		templateID := after
-		return renderTemplateByID(ctx, db, templateID, requestedLocale, data)
+		return renderTemplateByID(ctx, store, templateID, requestedLocale, data)
 	}
 
 	// Look up template by event_key
-	var tmpl model.EmailTemplate
-	if err := db.WithContext(ctx).
-		Where("event_key = ?", eventKey).
-		Where("is_active = ?", true).
-		First(&tmpl).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	tmpl, err := store.ActiveTemplateByEventKey(ctx, eventKey)
+	if err != nil {
+		if errors.Is(err, ErrTemplateNotFound) {
 			slog.Info("Email template render skipped",
 				"domain", "mail",
 				"event", "mail.delivery.render_skipped",
@@ -80,19 +76,19 @@ func RenderTemplateForLocale(
 		return nil, fmt.Errorf("failed to fetch template: %w", err)
 	}
 
-	return renderStoredTemplate(ctx, db, tmpl, requestedLocale, data)
+	return renderStoredTemplate(ctx, store, tmpl, requestedLocale, data)
 }
 
 func renderTemplateByID(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	templateID string,
 	requestedLocale string,
 	data map[string]string,
 ) (*RenderedEmail, error) {
-	var tmpl model.EmailTemplate
-	if err := db.WithContext(ctx).First(&tmpl, "id = ?", templateID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	tmpl, err := store.TemplateByID(ctx, templateID)
+	if err != nil {
+		if errors.Is(err, ErrTemplateNotFound) {
 			slog.Info("Email template render skipped",
 				"domain", "mail",
 				"event", "mail.delivery.render_skipped",
@@ -105,12 +101,12 @@ func renderTemplateByID(
 		return nil, fmt.Errorf("failed to fetch template by id: %w", err)
 	}
 
-	return renderStoredTemplate(ctx, db, tmpl, requestedLocale, data)
+	return renderStoredTemplate(ctx, store, tmpl, requestedLocale, data)
 }
 
 func renderStoredTemplate(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	tmpl model.EmailTemplate,
 	requestedLocale string,
 	data map[string]string,
@@ -126,7 +122,7 @@ func renderStoredTemplate(
 		}
 	}()
 
-	localizedTemplate, templateLocale, err := ResolveLocalizedEmailTemplate(ctx, db, tmpl, requestedLocale)
+	localizedTemplate, templateLocale, err := ResolveLocalizedEmailTemplate(ctx, store, tmpl, requestedLocale)
 	if renderLocale == "" {
 		renderLocale = templateLocale
 	}
@@ -153,7 +149,7 @@ func renderStoredTemplate(
 	// Wrap with layout if configured
 	if localizedTemplate.LayoutID != nil {
 		var resolvedLayoutLocale string
-		html, resolvedLayoutLocale, err = WrapWithLayoutForLocaleStrict(ctx, db, *localizedTemplate.LayoutID, requestedLocale, html, data)
+		html, resolvedLayoutLocale, err = WrapWithLayoutForLocaleStrict(ctx, store, *localizedTemplate.LayoutID, requestedLocale, html, data)
 		if resolvedLayoutLocale != "" {
 			renderLocale = resolvedLayoutLocale
 		}
@@ -367,13 +363,13 @@ func stringFromStructuredValue(value structured.Value) string {
 
 func WrapWithLayoutForLocaleStrict(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	layoutID string,
 	requestedLocale string,
 	content string,
 	data map[string]string,
 ) (string, string, error) {
-	layoutHTML, displayedLocale, err := ResolveLocalizedEmailLayoutHTML(ctx, db, layoutID, requestedLocale)
+	layoutHTML, displayedLocale, err := ResolveLocalizedEmailLayoutHTML(ctx, store, layoutID, requestedLocale)
 	if err != nil {
 		return "", displayedLocale, err
 	}

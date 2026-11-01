@@ -12,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -109,7 +110,7 @@ func TestInternalEmailLayoutLocaleCollaborationIntegration(t *testing.T) {
 
 	seededAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
 	require.NoError(t, emailutil.SeedLayoutTranslationEntryFromSource(
-		ctx, db, layoutID, "ko", "en", seededAt,
+		ctx, emailpostgres.Bind(db), layoutID, "ko", "en", seededAt,
 	))
 	target, err := service.LoadDocument(ctx, connect.NewRequest(
 		&intrav1.LoadEmailLayoutDocumentRequest{EmailLayoutId: layoutID, Locale: "ko"},
@@ -162,7 +163,7 @@ func TestInternalEmailLayoutLocaleCollaborationIntegration(t *testing.T) {
 	require.Equal(t, savedTarget.Msg.TargetRevision, repeatedTarget.Msg.TargetRevision)
 	require.Len(t, auditAppender.records, 1, "semantic target no-op must not append Audit")
 
-	storedTarget, err := emailutil.LoadLayoutTranslationEntry(ctx, db, layoutID, "ko")
+	storedTarget, err := emailutil.LoadLayoutTranslationEntry(ctx, emailpostgres.Bind(db), layoutID, "ko")
 	require.NoError(t, err)
 	require.NotNil(t, storedTarget)
 	storedValues, err := emailutil.ExtractLayoutStoredLocaleValues(*storedTarget.ContentHTML)
@@ -201,7 +202,7 @@ func TestInternalEmailLayoutLocaleCollaborationIntegration(t *testing.T) {
 	require.NoError(t, err)
 	sparseUpdatedAt := time.Now().UTC().Truncate(time.Microsecond)
 	require.NoError(t, emailutil.UpsertLayoutTranslationEntry(
-		ctx, db, layoutID, "de",
+		ctx, emailpostgres.Bind(db), layoutID, "de",
 		translation.EntryWrite{ContentHTML: sparseHTML, ContentText: sparseText, Now: sparseUpdatedAt},
 	))
 	staleSparseTarget, err := service.LoadDocument(ctx, connect.NewRequest(
@@ -252,14 +253,14 @@ func TestInternalEmailLayoutLocaleCollaborationIntegration(t *testing.T) {
 	require.Equal(t, sparseValues, emailLayoutLocaleValueMap(reloadedSparseTarget.Msg.LocaleValues))
 	require.Equal(t, "Changed source body", reloadedSparseTarget.Msg.Units[1].SourceValue)
 	require.NotEqual(t, staleSparseTarget.Msg.TargetRevision, reloadedSparseTarget.Msg.TargetRevision)
-	storedSparseTarget, err := emailutil.LoadLayoutTranslationEntry(ctx, db, layoutID, "de")
+	storedSparseTarget, err := emailutil.LoadLayoutTranslationEntry(ctx, emailpostgres.Bind(db), layoutID, "de")
 	require.NoError(t, err)
 	require.True(t, sparseUpdatedAt.Equal(storedSparseTarget.UpdatedAt))
 	storedSparseValues, err := emailutil.ExtractLayoutStoredLocaleValues(*storedSparseTarget.ContentHTML)
 	require.NoError(t, err)
 	require.Equal(t, sparseValues, storedSparseValues)
 
-	storedTarget, err = emailutil.LoadLayoutTranslationEntry(ctx, db, layoutID, "ko")
+	storedTarget, err = emailutil.LoadLayoutTranslationEntry(ctx, emailpostgres.Bind(db), layoutID, "ko")
 	require.NoError(t, err)
 	require.True(t, targetUpdatedAt.Equal(storedTarget.UpdatedAt),
 		"source representation normalization must preserve target write facts")

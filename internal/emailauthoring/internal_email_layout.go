@@ -15,6 +15,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -108,7 +109,7 @@ func (s *InternalService) lockLayoutRoom(ctx context.Context, tx *gorm.DB, write
 		return err
 	}
 	write.authority = authority
-	write.canonicalSource, err = emailutil.LoadCanonicalLayoutTranslationDocument(ctx, tx, write.command.LayoutID, authority.SourceLocale)
+	write.canonicalSource, err = emailutil.LoadCanonicalLayoutTranslationDocument(ctx, emailpostgres.Bind(tx), write.command.LayoutID, authority.SourceLocale)
 	return err
 }
 
@@ -172,7 +173,7 @@ func (s *InternalService) saveLayoutTarget(ctx context.Context, tx *gorm.DB, wri
 	if err := s.requireLayoutContributors(ctx, tx, &write); err != nil {
 		return layoutCollaborationSave{}, err
 	}
-	entry, err := emailutil.LoadLayoutTranslationEntry(ctx, tx, write.command.LayoutID, write.locale)
+	entry, err := emailutil.LoadLayoutTranslationEntry(ctx, emailpostgres.Bind(tx), write.command.LayoutID, write.locale)
 	if err != nil {
 		return layoutCollaborationSave{}, err
 	}
@@ -200,7 +201,7 @@ func (s *InternalService) saveLayoutTarget(ctx context.Context, tx *gorm.DB, wri
 	if derefString(entry.ContentHTML) != derefString(contentHTML) || derefString(entry.ContentText) != derefString(contentText) {
 		updatedAt = translation.NextTargetUpdatedAt(write.now, entry.UpdatedAt)
 		if err := emailutil.UpsertLayoutTranslationEntry(
-			ctx, tx, write.command.LayoutID, write.locale,
+			ctx, emailpostgres.Bind(tx), write.command.LayoutID, write.locale,
 			translation.EntryWrite{ContentHTML: contentHTML, ContentText: contentText, Now: updatedAt},
 		); err != nil {
 			return layoutCollaborationSave{}, err
@@ -303,7 +304,7 @@ func (s *InternalService) LoadLayoutDocument(ctx context.Context, query LoadLayo
 		if err != nil {
 			return err
 		}
-		source, err := emailutil.LoadCanonicalLayoutTranslationDocument(ctx, tx, query.LayoutID, authority.SourceLocale)
+		source, err := emailutil.LoadCanonicalLayoutTranslationDocument(ctx, emailpostgres.Bind(tx), query.LayoutID, authority.SourceLocale)
 		if err != nil {
 			return err
 		}
@@ -322,7 +323,7 @@ func (s *InternalService) LoadLayoutDocument(ctx context.Context, query LoadLayo
 // loadLayoutTargetRoom reads the source units of a target room and the
 // values its locale row stores.
 func loadLayoutTargetRoom(ctx context.Context, tx *gorm.DB, layoutID, sourceHTML string, document *LayoutDocument) error {
-	entry, err := emailutil.LoadLayoutTranslationEntry(ctx, tx, layoutID, document.Locale)
+	entry, err := emailutil.LoadLayoutTranslationEntry(ctx, emailpostgres.Bind(tx), layoutID, document.Locale)
 	if err != nil {
 		return err
 	}

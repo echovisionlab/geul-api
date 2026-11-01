@@ -12,6 +12,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -55,7 +56,7 @@ func (s *Service) SendTestEmail(ctx context.Context, command SendTestEmailComman
 		}
 		return err
 	}
-	if err := email.CheckTestSendReadiness(ctx, s.db, command.Email); err != nil {
+	if err := email.CheckTestSendReadiness(ctx, emailpostgres.Bind(s.db), command.Email); err != nil {
 		if message := email.TestSendReadinessMessage(err); message != "" {
 			return domainerr.Precondition(message)
 		}

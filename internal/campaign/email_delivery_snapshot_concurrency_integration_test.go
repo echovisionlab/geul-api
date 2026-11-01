@@ -18,6 +18,7 @@ import (
 	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -408,7 +409,7 @@ func (campaignEmailAuthoringConcurrencyFixture) LoadLayoutSnapshot(
 	db *gorm.DB,
 	layoutID string,
 ) ([]CampaignLayoutLocaleSnapshot, error) {
-	rows, err := email.LoadLayoutLocaleSnapshots(ctx, db, layoutID)
+	rows, err := email.LoadLayoutLocaleSnapshots(ctx, emailpostgres.Bind(db), layoutID)
 	if err != nil {
 		return nil, err
 	}
