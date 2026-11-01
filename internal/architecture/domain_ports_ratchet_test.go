@@ -3,6 +3,7 @@ package architecture
 import (
 	"go/ast"
 	"go/token"
+	"path"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,13 +15,15 @@ const policyDescriptorsImport = contractsImport + "api/policy/v1"
 // (docs/architecture.md, "Domain packages"): no gorm or SQL driver, no
 // internal/model rows, no SpiceDB client, no Kratos table, and no generated
 // API type outside the connect_handler*.go translators. Generated policy
-// descriptors are the authorization port's vocabulary and stay allowed. The
-// baseline counts files per domain package and category, and SpiceDB client
-// and Kratos table references.
+// descriptors are the authorization port's vocabulary and stay allowed. A
+// domain's PostgreSQL Store package (<domain>/postgres) is the adapter that
+// owns these dependencies and is not counted. The baseline counts files per
+// domain package and category, and SpiceDB client and Kratos table
+// references.
 func TestDomainPackagesDependOnPortsRatchet(t *testing.T) {
 	observed := map[string]int{}
 	for _, file := range productionFiles(t, "internal") {
-		if !inPipelineDomain(file.pkg) {
+		if !inPipelineDomain(file.pkg) || isStoreAdapter(file.pkg) {
 			continue
 		}
 		categories := map[string]bool{}
@@ -56,4 +59,9 @@ func TestDomainPackagesDependOnPortsRatchet(t *testing.T) {
 		})
 	}
 	requireRatchet(t, "domain_port_dependencies", observed)
+}
+
+// isStoreAdapter reports whether pkg is a domain's PostgreSQL Store package.
+func isStoreAdapter(pkg string) bool {
+	return path.Base(pkg) == "postgres"
 }
