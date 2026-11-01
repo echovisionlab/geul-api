@@ -16,13 +16,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -109,24 +109,13 @@ func (s *Service) recordUploadedPart(
 	part model.UploadPart,
 ) (bool, error) {
 	recorded := false
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		result := tx.Model(&model.UploadSession{}).
-			Where("upload_id = ? AND file_id = ? AND status IN ?", session.UploadID, session.FileID, uploadPartWritableSessionStatuses()).
-			Updates(structured.Fields{
-				"status":           model.UploadSessionStatusUploading,
-				"last_activity_at": part.UpdatedAt,
-				"updated_at":       part.UpdatedAt,
-			})
-		if result.Error != nil {
-			return result.Error
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		store := unit.Store()
+		changed, err := store.MarkUploadPartUploading(ctx, session.UploadID, session.FileID, part.UpdatedAt)
+		if err != nil || !changed {
+			return err
 		}
-		if result.RowsAffected != 1 {
-			return nil
-		}
-		if err := tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "upload_id"}, {Name: "part_number"}},
-			DoUpdates: clause.AssignmentColumns([]string{"etag", "size", "updated_at"}),
-		}).Create(&part).Error; err != nil {
+		if err := store.UpsertUploadPart(ctx, domain.UploadPart(part)); err != nil {
 			return err
 		}
 		recorded = true
@@ -141,33 +130,26 @@ func (s *Service) recordMultipartDetectedMIME(
 	detected string,
 	now time.Time,
 ) error {
-	result := s.db.WithContext(ctx).Model(&model.UploadSession{}).
-		Where(
-			"upload_id = ? AND file_id = ? AND status IN ? AND (detected_mime IS NULL OR detected_mime = '')",
-			session.UploadID,
-			session.FileID,
-			uploadPartWritableSessionStatuses(),
-		).
-		Updates(structured.Fields{
-			"detected_mime": detected,
-			"verified_at":   now,
-			"updated_at":    now,
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 1 {
-		return nil
-	}
-
-	var current model.UploadSession
-	if err := s.db.WithContext(ctx).
-		Select("upload_id", "file_id", "status", "detected_mime").
-		Where("upload_id = ? AND file_id = ?", session.UploadID, session.FileID).
-		Take(&current).Error; err != nil {
+	changed := false
+	if err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		var err error
+		changed, err = unit.Store().DetectUploadMIME(ctx, session.UploadID, session.FileID, detected, now)
+		return err
+	}); err != nil {
 		return err
 	}
-	if current.Status != model.UploadSessionStatusInitiated && current.Status != model.UploadSessionStatusUploading {
+	if changed {
+		return nil
+	}
+	var current domain.UploadMIMEState
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		current, err = store.UploadMIMEState(ctx, session.UploadID, session.FileID)
+		return err
+	}); err != nil {
+		return err
+	}
+	if current.Status != domain.UploadSessionStatusInitiated && current.Status != domain.UploadSessionStatusUploading {
 		return errMultipartUploadPartNotWritable
 	}
 	if current.DetectedMime == nil || *current.DetectedMime != detected {
@@ -559,9 +541,9 @@ func (s *Service) HandlePresignUploadPart(w http.ResponseWriter, r *http.Request
 			if !claimed {
 				return errMultipartUploadPartNotWritable
 			}
-			return lockedService.db.WithContext(r.Context()).
-				Where("upload_id = ? AND part_number = ?", request.session.UploadID, request.partNumber).
-				Delete(&model.UploadPart{}).Error
+			return lockedService.units.Transaction(r.Context(), false, func(unit mutation.Tx[Store]) error {
+				return unit.Store().DeleteUploadPart(r.Context(), request.session.UploadID, request.partNumber)
+			})
 		},
 	)
 	if errors.Is(err, errMultipartUploadPartNotWritable) {
@@ -736,12 +718,15 @@ func (s *Service) loadMultipartUploadPartRequest(
 		}
 		request.partNumber = int32(parsedPartNumber)
 	}
-	if err := s.db.WithContext(r.Context()).
-		Where("upload_id = ? AND file_id = ?", request.uploadID, fileID).
-		First(&request.session).Error; err != nil {
+	var row domain.UploadSession
+	if err := s.units.Read(r.Context(), func(store Store) error {
+		var err error
+		row, err = store.UploadSession(r.Context(), request.uploadID, fileID, false)
+		return err
+	}); err != nil {
 		status := http.StatusInternalServerError
 		message := "Failed to load upload session"
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, domain.ErrUploadSessionNotFound) {
 			status = http.StatusNotFound
 			message = "Upload session not found"
 		}
@@ -751,6 +736,7 @@ func (s *Service) loadMultipartUploadPartRequest(
 		http.Error(w, message, status)
 		return request, false
 	}
+	request.session = uploadSessionFromStore(row)
 	fileKey, err := uploadSessionObjectKey(request.session)
 	if err != nil {
 		recordUploadFailure(r, fmt.Errorf("resolve upload session target: %w", err), request.failureAttrs()...)

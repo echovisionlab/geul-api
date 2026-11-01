@@ -84,3 +84,19 @@ func ExportClaimMultipartCompletion(s *Service, ctx context.Context, upload, fil
 func ExportRetryableMultipartFailure(s *Service, ctx context.Context, upload, file string, now time.Time) error {
 	return s.recordRetryableMultipartPartFailure(ctx, model.UploadSession{UploadID: upload, FileID: file}, now)
 }
+
+func ExportRecordUploadedPart(s *Service, ctx context.Context, row domain.UploadSession, part domain.UploadPart) (bool, error) {
+	return s.recordUploadedPart(ctx, uploadSessionFromStore(row), model.UploadPart(part))
+}
+
+func ExportRecordUploadMIME(s *Service, ctx context.Context, row domain.UploadSession, mime string, now time.Time) error {
+	return s.recordMultipartDetectedMIME(ctx, uploadSessionFromStore(row), mime, now)
+}
+
+func ExportReconcileUploadParts(s *Service, ctx context.Context, row domain.UploadSession, parts []domain.UploadPart) error {
+	rows := make([]model.UploadPart, len(parts))
+	for i, p := range parts {
+		rows[i] = model.UploadPart(p)
+	}
+	return s.reconcileMultipartResumePartCache(ctx, uploadSessionFromStore(row), rows)
+}

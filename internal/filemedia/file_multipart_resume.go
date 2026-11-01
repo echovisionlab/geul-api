@@ -11,11 +11,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -150,15 +150,16 @@ func (s *Service) loadMultipartResumeSessionState(
 ) (model.UploadSession, []model.UploadPart, error) {
 	var current model.UploadSession
 	var cachedParts []model.UploadPart
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			Where("upload_id = ? AND file_id = ?", expected.UploadID, expected.FileID).
-			Take(&current).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return domainerr.Precondition("upload session changed before multipart resume reconciliation")
-			}
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		store := unit.Store()
+		row, err := store.UploadSession(ctx, expected.UploadID, expected.FileID, true)
+		if errors.Is(err, domain.ErrUploadSessionNotFound) {
+			return domainerr.Precondition("upload session changed before multipart resume reconciliation")
+		}
+		if err != nil {
 			return err
 		}
+		current = uploadSessionFromStore(row)
 		if !sameMultipartResumeSessionShape(current, expected) {
 			return domainerr.Precondition("upload session shape changed before multipart resume reconciliation")
 		}
@@ -166,9 +167,15 @@ func (s *Service) loadMultipartResumeSessionState(
 		case model.UploadSessionStatusInitiated, model.UploadSessionStatusUploading:
 			return nil
 		case model.UploadSessionStatusFinalizing:
-			return tx.Where("upload_id = ?", expected.UploadID).
-				Order("part_number ASC").
-				Find(&cachedParts).Error
+			rows, err := store.UploadParts(ctx, expected.UploadID)
+			if err != nil {
+				return err
+			}
+			cachedParts = make([]model.UploadPart, len(rows))
+			for i, r := range rows {
+				cachedParts[i] = model.UploadPart(r)
+			}
+			return nil
 		default:
 			return domainerr.Precondition("upload session is no longer resumable")
 		}
@@ -255,49 +262,31 @@ func (s *Service) reconcileMultipartResumePartCache(
 	expected model.UploadSession,
 	parts []model.UploadPart,
 ) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var current model.UploadSession
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			Where(
-				"upload_id = ? AND file_id = ? AND status IN ?",
-				expected.UploadID,
-				expected.FileID,
-				uploadPartWritableSessionStatuses(),
-			).
-			Take(&current).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return domainerr.Precondition("upload session changed before multipart resume reconciliation")
-			}
+	return s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		store := unit.Store()
+		row, err := store.WritableUploadSession(ctx, expected.UploadID, expected.FileID)
+		if errors.Is(err, domain.ErrUploadSessionNotFound) {
+			return domainerr.Precondition("upload session changed before multipart resume reconciliation")
+		}
+		if err != nil {
 			return err
 		}
+		current := uploadSessionFromStore(row)
 		if !sameMultipartResumeSessionShape(current, expected) {
 			return domainerr.Precondition("upload session shape changed before multipart resume reconciliation")
 		}
-
-		if err := tx.Where("upload_id = ?", expected.UploadID).Delete(&model.UploadPart{}).Error; err != nil {
+		rows := make([]domain.UploadPart, len(parts))
+		for i, p := range parts {
+			rows[i] = domain.UploadPart(p)
+		}
+		if err := store.ReplaceUploadParts(ctx, expected.UploadID, rows); err != nil {
 			return err
 		}
-		if len(parts) > 0 {
-			if err := tx.Create(&parts).Error; err != nil {
-				return err
-			}
+		changed, err := store.RenewActiveUploadActivity(ctx, expected.UploadID, expected.FileID, true, time.Now())
+		if err != nil {
+			return err
 		}
-		now := time.Now()
-		updated := tx.Model(&model.UploadSession{}).
-			Where(
-				"upload_id = ? AND file_id = ? AND status IN ?",
-				expected.UploadID,
-				expected.FileID,
-				uploadPartWritableSessionStatuses(),
-			).
-			Updates(structured.Fields{
-				"last_activity_at": now,
-				"updated_at":       now,
-			})
-		if updated.Error != nil {
-			return updated.Error
-		}
-		if updated.RowsAffected != 1 {
+		if !changed {
 			return domainerr.Precondition("upload session changed before multipart resume reconciliation")
 		}
 		return nil
