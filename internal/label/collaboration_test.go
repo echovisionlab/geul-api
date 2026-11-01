@@ -79,6 +79,28 @@ func TestUpdateLabelDocumentMetadataSavesTheRowAndMovesTheParent(t *testing.T) {
 	require.Len(t, f.h.checker.Applied(), 1)
 }
 
+func TestUpdateLabelDocumentMetadataClearsOrKeepsTheParent(t *testing.T) {
+	f := newRoomFixture(t)
+	parent := f.h.seedLabel(t, "Parent")
+	stored, _ := f.h.store.Label(f.label.ID)
+	stored.ParentLabelID = &parent.ID
+	f.h.store.PutLabel(stored)
+
+	kept, err := f.metadata(t, &label.DocumentMetadataUpdate{ParentLabelID: set(parent.ID)}, f.h.revision(t, f.label.ID).String())
+	require.NoError(t, err)
+	require.False(t, kept.Changed, "the current parent is a no-op")
+	require.Empty(t, f.h.checker.Applied())
+
+	cleared, err := f.metadata(t, &label.DocumentMetadataUpdate{ParentLabelID: clear(true)}, kept.DocumentRevision.String())
+	require.NoError(t, err)
+	require.True(t, cleared.Changed)
+	stored, _ = f.h.store.Label(f.label.ID)
+	require.Nil(t, stored.ParentLabelID)
+	remove, err := policyv1.Label.DeleteParent(f.label.ID, parent.ID)
+	require.NoError(t, err)
+	require.Equal(t, [][]policyv1.RelationshipMutation{{remove}}, f.h.checker.Applied())
+}
+
 func TestUpdateLabelDocumentMetadataRejections(t *testing.T) {
 	for _, test := range []struct {
 		name     string

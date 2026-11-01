@@ -220,3 +220,43 @@ func TestListLabelParticipantsReportsEffectiveAuthority(t *testing.T) {
 	require.Equal(t, f.member.memberID, views[1].Member.GetId())
 	require.False(t, views[1].HasEffectiveAuthority)
 }
+
+func TestLabelParticipantChangesBetweenOwners(t *testing.T) {
+	t.Run("one of two Owners is demoted with RemoveOwner", func(t *testing.T) {
+		f := newParticipantFixture(t)
+		f.h.store.PutParticipant(f.label.ID, f.member.memberID, entityparticipant.RoleOwner, time.Now())
+
+		_, err := f.set(t, label.ParticipantRoleManager)
+
+		require.NoError(t, err)
+		require.Equal(t, entityparticipant.RoleManager, f.h.store.Participants(f.label.ID)[f.member.memberID])
+		remove, err := policyv1.Label.RemoveOwner(f.label.ID)
+		require.NoError(t, err)
+		require.Contains(t, f.h.checker.Checks(), authztest.Of(f.owner.identityID, remove, nil))
+	})
+	t.Run("the current Owner role is rejected", func(t *testing.T) {
+		f := newParticipantFixture(t)
+		f.h.store.PutParticipant(f.label.ID, f.member.memberID, entityparticipant.RoleOwner, time.Now())
+
+		_, err := f.set(t, label.ParticipantRoleOwner)
+
+		requireCode(t, err, connect.CodeFailedPrecondition, "Label participant already has this role")
+	})
+	t.Run("one of two Owners is removed", func(t *testing.T) {
+		f := newParticipantFixture(t)
+		f.h.store.PutParticipant(f.label.ID, f.member.memberID, entityparticipant.RoleOwner, time.Now())
+
+		require.NoError(t, f.h.service.RemoveLabelParticipant(f.owner.context(t), label.RemoveLabelParticipantCommand{LabelID: f.label.ID, MemberID: f.member.memberID}))
+
+		require.Equal(t, map[string]string{f.owner.memberID: entityparticipant.RoleOwner}, f.h.store.Participants(f.label.ID))
+		require.Equal(t, [][]policyv1.RelationshipMutation{{roleMutation(t, f.label.ID, f.member.identityID, entityparticipant.RoleOwner, false)}}, f.h.checker.Applied())
+	})
+	t.Run("an anonymous caller and a missing Label are not found", func(t *testing.T) {
+		f := newParticipantFixture(t)
+		_, err := f.h.service.SetLabelParticipant(t.Context(), label.SetLabelParticipantCommand{LabelID: f.label.ID, MemberID: f.member.memberID, Role: label.ParticipantRoleManager})
+		requireCode(t, err, connect.CodeNotFound, "label not found: "+f.label.ID)
+		err = f.h.service.RemoveLabelParticipant(f.owner.context(t), label.RemoveLabelParticipantCommand{LabelID: "00000000-0000-4000-8000-000000000007", MemberID: f.member.memberID})
+		requireCode(t, err, connect.CodeNotFound, "label not found: 00000000-0000-4000-8000-000000000007")
+		require.Empty(t, f.h.checker.Applied())
+	})
+}

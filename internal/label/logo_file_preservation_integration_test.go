@@ -23,7 +23,7 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 	db := testutil.NewIntegrationDB(t)
 	adminID := testutil.IntegrationUUID()
 	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Label Logo Admin")
-	ctx := artistIntegrationAdminCtx(adminID)
+	ctx := labelIntegrationAdminCtx(adminID)
 	labelService := newLabelIntegrationService(t, db, adminID)
 
 	tests := []struct {

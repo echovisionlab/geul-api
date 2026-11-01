@@ -305,7 +305,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 		},
 	})
 
-	syncArtistIntegrationGlobalRole(t, stack.SpiceDBClient, identityID, policyv1.Role.User())
+	syncLabelIntegrationGlobalRole(t, stack.SpiceDBClient, identityID, policyv1.Role.User())
 	_, err = internal.ApplyLabelBlockBatch(memberCtx, connect.NewRequest(&intrav1.ApplyLabelBlockBatchRequest{
 		LabelId: labelID, Locale: "ja", ExpectedTargetRevision: jaAfterReplacement.Msg.TargetRevision,
 		Batch: labelTargetParagraphBatch(

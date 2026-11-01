@@ -103,10 +103,10 @@ func newTestService(t *testing.T, deps integrationDeps) *label.Service {
 		deps.Audit = &audittest.Recorder{}
 	}
 	if deps.Publisher == nil {
-		deps.Publisher = noopArtistAsyncPublisher{}
+		deps.Publisher = noopLabelPublisher{}
 	}
 	if deps.ContentBlocks == nil {
-		deps.ContentBlocks = newPageIntegrationContentBlockStore(t, deps.SpiceDB)
+		deps.ContentBlocks = newCreativeContentIntegrationStore(t, deps.SpiceDB)
 	}
 	if deps.Checkpoints == nil {
 		deps.Checkpoints = testcollaboration.NewCheckpoints(deps.DB, deps.SpiceDB)
@@ -145,14 +145,14 @@ func newTestService(t *testing.T, deps integrationDeps) *label.Service {
 	return service
 }
 
-func artistIntegrationAdminCtx(identityID string) context.Context {
+func labelIntegrationAdminCtx(identityID string) context.Context {
 	return auth.WithUser(requestBackground(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(testutil.PostIntegrationMemberID(identityID)),
 		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
 }
 
-func syncArtistIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string, role policyv1.RoleID) {
+func syncLabelIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string, role policyv1.RoleID) {
 	t.Helper()
 	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
 	require.NoError(t, err)
@@ -160,16 +160,16 @@ func syncArtistIntegrationGlobalRole(t *testing.T, spiceDB *auth.SpiceDBClient, 
 	require.NoError(t, err)
 }
 
-type noopArtistAsyncPublisher struct{}
+type noopLabelPublisher struct{}
 
-func (noopArtistAsyncPublisher) EnqueueProtobuf(context.Context, string, string, proto.Message) error {
+func (noopLabelPublisher) EnqueueProtobuf(context.Context, string, string, proto.Message) error {
 	return nil
 }
-func (noopArtistAsyncPublisher) NotifyProtobuf(context.Context, string, proto.Message) error {
+func (noopLabelPublisher) NotifyProtobuf(context.Context, string, proto.Message) error {
 	return nil
 }
 
-type capturingAsyncPublisher struct{ noopArtistAsyncPublisher }
+type capturingAsyncPublisher struct{ noopLabelPublisher }
 
 type labelTestRenderConfig struct{}
 
@@ -188,13 +188,9 @@ func newLabelRuntimeForTest(db *gorm.DB, cdnDomain string) labelpostgres.Runtime
 	return labeladapter.NewRuntime(cdnDomain, newOGRefresherForTest(db, cdnDomain))
 }
 
-func newPageIntegrationContentBlockStore(t *testing.T, spiceDB *auth.SpiceDBClient) *contentblock.Store {
+func newCreativeContentIntegrationStore(t *testing.T, spiceDB *auth.SpiceDBClient) *contentblock.Store {
 	t.Helper()
 	return testutil.NewEmailContentBlockStore(t, spiceDB)
-}
-
-func newCreativeContentIntegrationStore(t *testing.T, spiceDB *auth.SpiceDBClient) *contentblock.Store {
-	return newPageIntegrationContentBlockStore(t, spiceDB)
 }
 
 func creativeContentIntegrationDocument(sourceLocale, text string) *contentv1.RichTextDocument {
@@ -257,7 +253,7 @@ func requireResourceManagerRow(t *testing.T, db *gorm.DB, tableName, resourceIDC
 }
 
 func requireInternalResourceAdmin(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string) {
-	syncArtistIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	syncLabelIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 }
 
 func attachInternalResourcePolicy(t *testing.T, spiceDB *auth.SpiceDBClient, resourceID string) {
@@ -296,7 +292,7 @@ func requirePublicAssetDeletePending(t *testing.T, db *gorm.DB, assetID string) 
 	require.Equal(t, model.PublicAssetStatusDeletePending, asset.Status)
 }
 
-func (publisher noopArtistAsyncPublisher) NotifyProtobufWithExecutor(
+func (publisher noopLabelPublisher) NotifyProtobufWithExecutor(
 	ctx context.Context,
 	_ eventpkg.DBTX,
 	signal string,
@@ -315,7 +311,7 @@ func seedLabelLocaleTitle(ctx context.Context, db *gorm.DB, labelID, locale, tit
 }
 func labelTargetMemberContext(t *testing.T, identityID string) context.Context {
 	t.Helper()
-	base := artistIntegrationAdminCtx(identityID)
+	base := labelIntegrationAdminCtx(identityID)
 	user := auth.GetUser(base)
 	require.NotNil(t, user)
 	requestContext, err := sharedtelemetry.NewPropagatedRequestContext(
@@ -328,4 +324,30 @@ func labelTargetMemberContext(t *testing.T, identityID string) context.Context {
 	)
 	require.NoError(t, err)
 	return auth.WithUser(sharedtelemetry.WithRequestContext(base, requestContext), user)
+}
+
+func seedInternalLabel(t *testing.T, db *gorm.DB, contentBlocks *contentblock.Store, ownerID string) string {
+	t.Helper()
+
+	labelID := uuid.NewString()
+	now := time.Now().UTC()
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		document, err := contentBlocks.CreateDocument(t.Context(), tx, contentblock.CreateInput{
+			Profile: "compact", SourceLocale: "en",
+		})
+		if err != nil {
+			return err
+		}
+		if err := tx.Exec(`
+			INSERT INTO label (id, status, content_document_id, created_at, updated_at)
+			VALUES (?, 'LABEL_STATUS_DRAFT', ?, ?, ?)
+		`, labelID, document.Document.ID, now, now).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO label_owner (label_id, member_id, created_at)
+			VALUES (?, ?, ?)
+		`, labelID, ownerID, now).Error
+	}))
+	return labelID
 }

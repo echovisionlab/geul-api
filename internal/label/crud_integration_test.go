@@ -17,6 +17,6 @@ import (
 func newLabelIntegrationService(t *testing.T, db *gorm.DB, adminID string) *label.ConnectHandler {
 	t.Helper()
 	stack := testutil.SetupOryStack(t)
-	syncArtistIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
+	syncLabelIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
 	return label.NewConnectHandler(newTestService(t, integrationDeps{DB: db, SpiceDB: stack.SpiceDBClient}))
 }
