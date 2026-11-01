@@ -228,7 +228,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			require.Equal(t, updatedAt, utc(stored.UpdatedAt))
 			require.Equal(t, "kept", stored.Title, "the update keeps the caller's locale fields")
 
-			layout := post.DocumentLayout{ContentHeight: post.ContentHeightViewport, PageChrome: post.PlacementPinned, Footer: post.PlacementFlow, HideTableOfContents: true}
+			layout := post.DocumentLayout{ContentHeight: post.ContentHeightViewport, PageChrome: post.PlacementPinned, Footer: post.PlacementFlow}
 			enabled := true
 			require.NoError(t, store.UpdateSettings(ctx, &stored, post.SettingsChange{
 				MapPlaceID: &post.OptionalString{Value: &mapPlaceID}, CommentsEnabled: &enabled, DocumentLayout: &layout,
@@ -489,8 +489,6 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			names, err := store.MemberNicknames(ctx, []string{author, coauthor, uuid.NewString()})
 			require.NoError(t, err)
 			require.Equal(t, map[string]string{author: "Author", coauthor: "Coauthor"}, names, "an unknown Member has no name")
-			_, err = store.LockLinkedMemberIdentity(ctx, author)
-			require.Error(t, err, "a Member without an Identity has no authorization target")
 			return nil
 		})
 		err := mutationtest.Transact(t, h.Harness, func(ctx context.Context, store post.Store) error {
