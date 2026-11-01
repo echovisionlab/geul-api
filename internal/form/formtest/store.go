@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"maps"
 	"slices"
 	"sort"
@@ -680,6 +681,9 @@ func (s *Store) SaveSourceLocale(_ context.Context, formID, locale string, title
 	if err := s.fail("SaveSourceLocale"); err != nil {
 		return err
 	}
+	if schema == nil {
+		return errors.New("form_translation.content_json is not null")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := LocaleKey{formID, locale}
@@ -691,9 +695,7 @@ func (s *Store) SaveSourceLocale(_ context.Context, formID, locale string, title
 	if title != nil {
 		stored.Title = new(*title)
 	}
-	if schema != nil {
-		stored.ContentJSON = slices.Clone(schema)
-	}
+	stored.ContentJSON = slices.Clone(schema)
 	stored.ContentText = contentText
 	stored.UpdatedAt = at
 	s.version++

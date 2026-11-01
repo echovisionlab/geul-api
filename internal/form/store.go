@@ -90,7 +90,7 @@ type FormLocales interface {
 	// when it is empty.
 	LocalizationRows(ctx context.Context, formID string, locales []string) ([]LocalizationRow, error)
 	// SaveSourceLocale stores the source locale document, creating it; a
-	// nil title or schema keeps the stored one.
+	// nil title keeps the stored one. The schema is required.
 	SaveSourceLocale(ctx context.Context, formID, locale string, title *string, schema []byte, contentText *string, now time.Time) error
 	// CreateEmptyLocale creates a locale without title and text over
 	// schema, and reports false when the locale exists.

@@ -223,19 +223,23 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			return nil
 		})
 	},
-	"a source locale save creates the locale and keeps what a nil value leaves": func(t *testing.T, h Harness) {
+	"a source locale save keeps the title a nil value leaves and requires a schema": func(t *testing.T, h Harness) {
 		inserted := insert(t, h, nil)
 		transact(t, h, func(ctx context.Context, store form.Store) error {
-			return store.SaveSourceLocale(ctx, inserted.ID, "en", nil, nil, nil, stamp())
+			return store.SaveSourceLocale(ctx, inserted.ID, "en", nil, []byte(contractSchema), nil, stamp())
 		})
 		transact(t, h, func(ctx context.Context, store form.Store) error {
 			state, err := store.LocaleState(ctx, inserted.ID, "en")
 			require.NoError(t, err)
 			require.Equal(t, "Contact", *state.Title, "a nil title keeps the stored one")
-			require.JSONEq(t, contractSchema, string(state.ContentJSON), "a nil schema keeps the stored one")
+			require.JSONEq(t, contractSchema, string(state.ContentJSON))
 			require.Nil(t, state.ContentText, "the text is always written")
-			return store.SaveSourceLocale(ctx, inserted.ID, "en", text("Renamed"), nil, text("Renamed"), stamp())
+			return store.SaveSourceLocale(ctx, inserted.ID, "en", text("Renamed"), []byte(contractSchema), text("Renamed"), stamp())
 		})
+		err := mutationtest.Transact(t, h.Harness, func(ctx context.Context, store form.Store) error {
+			return store.SaveSourceLocale(ctx, inserted.ID, "en", text("No schema"), nil, nil, stamp())
+		})
+		require.Error(t, err, "content_json is required even for a stored locale")
 		transact(t, h, func(ctx context.Context, store form.Store) error {
 			state, err := store.LocaleState(ctx, inserted.ID, "en")
 			require.NoError(t, err)
@@ -323,7 +327,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		titled := insert(t, h, nil)
 		blank := insert(t, h, nil)
 		transact(t, h, func(ctx context.Context, store form.Store) error {
-			return store.SaveSourceLocale(ctx, blank.ID, "en", text("  "), nil, nil, stamp())
+			return store.SaveSourceLocale(ctx, blank.ID, "en", text("  "), []byte(contractSchema), nil, stamp())
 		})
 		missing := uuid.NewString()
 		transact(t, h, func(ctx context.Context, store form.Store) error {
@@ -459,7 +463,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			advance, err := store.AdvanceContentRevision(ctx, contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: current}, fence,
 				func(ctx context.Context, store form.Store) (contentblock.MetadataEffect, error) {
 					return contentblock.MetadataEffect{Changed: true, AffectsTranslationSource: true, ChangedLocales: []string{"en"}},
-						store.SaveSourceLocale(ctx, inserted.ID, "en", text("Advanced"), nil, nil, stamp())
+						store.SaveSourceLocale(ctx, inserted.ID, "en", text("Advanced"), []byte(contractSchema), nil, stamp())
 				})
 			require.NoError(t, err)
 			require.True(t, advance.Changed)
