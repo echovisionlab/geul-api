@@ -2,13 +2,11 @@
 # -update.
 3 internal/account
 11 internal/adapters/translation
-1 internal/authentication
 4 internal/campaign
 8 internal/emailauthoring
 12 internal/form
 2 internal/form/public
 2 internal/menu
 2 internal/series
-1 internal/sitesettings
 5 internal/translation/application
 2 internal/worker

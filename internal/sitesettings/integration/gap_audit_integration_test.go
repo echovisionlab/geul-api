@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
@@ -33,10 +32,7 @@ func TestSiteSettingsLoaderAndDefaultThemeAuditCommitOnlyActualChangesIntegratio
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := siteSettingsGapAuditContext(t, identityID, memberID)
 	writer := apitelemetry.NewDurableWriter(db)
-	settings := sitesettings.NewAuditedSiteSettingService(
-		db, "https://www.example.test", sitesettingsadapter.NewAssets("https://cdn.example.test"), sitesettingsadapter.NewReferences(),
-		newSiteSettingsOGInvalidatorForTest(db, "https://cdn.example.test"), writer, spiceDB,
-	)
+	settings := newSiteSettingsHandler(t, sitesettings.Deps{DB: db, SpiceDB: spiceDB, Audit: writer})
 
 	loaderFileID, _ := seedSiteSettingReadyFile(t, db, "audited-loader", "loader", "webp", "image/webp", 1024)
 	_, err := settings.AddSiteLoaderAsset(ctx, connect.NewRequest(&managev1.AddSiteLoaderAssetRequest{FileId: loaderFileID}))
@@ -86,10 +82,7 @@ func TestSiteSettingsLoaderAndDefaultThemeAuditFailureRollsBackIntegration(t *te
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := siteSettingsGapAuditContext(t, identityID, memberID)
 	loaderFileID, _ := seedSiteSettingReadyFile(t, db, "rollback-loader", "loader", "webp", "image/webp", 1024)
-	settings := sitesettings.NewAuditedSiteSettingService(
-		db, "https://www.example.test", sitesettingsadapter.NewAssets("https://cdn.example.test"), sitesettingsadapter.NewReferences(),
-		newSiteSettingsOGInvalidatorForTest(db, "https://cdn.example.test"), failingDomainAuditAppender{}, spiceDB,
-	)
+	settings := newSiteSettingsHandler(t, sitesettings.Deps{DB: db, SpiceDB: spiceDB, Audit: failingDomainAuditAppender{}})
 
 	_, err := settings.AddSiteLoaderAsset(ctx, connect.NewRequest(&managev1.AddSiteLoaderAssetRequest{FileId: loaderFileID}))
 	require.Error(t, err)

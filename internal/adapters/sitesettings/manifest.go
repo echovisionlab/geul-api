@@ -15,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // ManifestMenus adapts Menu and Page read models to the public Site Settings
@@ -242,7 +241,7 @@ func filterPublishedPageTargets(items []model.MenuItem, byID, bySlug map[string]
 			} else if item.TargetSlug != nil {
 				target, ok = bySlug[strings.TrimSpace(*item.TargetSlug)]
 			}
-			if !ok || target.Status != managev1.PageStatus_PAGE_STATUS_PUBLISHED.String() {
+			if !ok || target.Status != string(model.PageStatusPublished) {
 				continue
 			}
 			route := target.ID

@@ -1,10 +1,11 @@
-// Package identityread is the one product reader of Kratos identities. The
-// table, its bilateral Member link (identities.external_id = member.id) and
-// the meaning of its lifecycle columns live here, so a Kratos schema change
-// touches this package only. Writes stay with the Kratos admin API.
+// Package identityread is the one product reader of Kratos identities and
+// sessions. The identities table, its bilateral Member link
+// (identities.external_id = member.id) and the meaning of its lifecycle
+// columns live here, so a Kratos schema change touches this package only.
+// Writes stay with the Kratos admin API.
 //
-// Domain queries compose the SQL fragments below instead of naming
-// kratos.identities; internal/architecture flags any other reference.
+// Domain queries compose the SQL fragments below instead of naming a Kratos
+// table; internal/architecture flags any other reference.
 package identityread
 
 import (
@@ -100,3 +101,21 @@ const LiveSessionsSQL = sessions + `
 	WHERE identity_id = ?
 	  AND active = TRUE
 	  AND expires_at > CURRENT_TIMESTAMP`
+
+// FirstSession reports whether the Kratos session sessionID is the first its
+// Identity was issued: no other session of that Identity was created before
+// or with it. An unknown session reports true.
+func FirstSession(ctx context.Context, db *gorm.DB, sessionID string) (bool, error) {
+	var first bool
+	err := db.WithContext(ctx).Raw(`
+		SELECT NOT EXISTS (
+			SELECT 1
+			FROM kratos.sessions AS other
+			JOIN kratos.sessions AS current ON current.id = ?::uuid
+			WHERE other.identity_id = current.identity_id
+			  AND other.id <> current.id
+			  AND other.created_at <= current.created_at
+		) AS first
+	`, sessionID).Scan(&first).Error
+	return first, err
+}

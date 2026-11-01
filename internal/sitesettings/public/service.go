@@ -3,6 +3,7 @@ package public
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 
@@ -10,10 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/sitelogo"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
-	"connectrpc.com/connect"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -34,49 +32,68 @@ type userContext struct {
 	rolePermissions map[string]bool
 }
 
-// ManifestService serves the public Site Settings singleton and its selected
+// Deps are the collaborators of the public Site Settings use cases. Every
+// field except SiteOrigin is required; NewService rejects a missing one.
+type Deps struct {
+	Projection ManifestProjection
+	SpiceDB    *auth.SpiceDBClient
+	// SiteOrigin resolves site variables and is reported to clients; empty
+	// reports none.
+	SiteOrigin string
+}
+
+// Service serves the public Site Settings singleton and its selected
 // navigation menus.
-type ManifestService struct {
+type Service struct {
 	siteOrigin string
 	projection ManifestProjection
 	spiceDB    *auth.SpiceDBClient
 }
 
-func NewManifestService(
-	siteOrigin string,
-	projection ManifestProjection,
-	spiceDB *auth.SpiceDBClient,
-) *ManifestService {
-	if projection == nil || spiceDB == nil {
-		panic("public site settings manifest dependencies are required")
+// NewService validates deps and returns the public Site Settings use cases.
+func NewService(deps Deps) (*Service, error) {
+	var missing []string
+	if deps.Projection == nil {
+		missing = append(missing, "Projection")
 	}
-	return &ManifestService{
-		siteOrigin: strings.TrimRight(strings.TrimSpace(siteOrigin), "/"),
-		projection: projection, spiceDB: spiceDB,
+	if deps.SpiceDB == nil {
+		missing = append(missing, "SpiceDB")
 	}
+	if len(missing) != 0 {
+		return nil, errors.New("public site settings dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return &Service{
+		siteOrigin: strings.TrimRight(strings.TrimSpace(deps.SiteOrigin), "/"),
+		projection: deps.Projection, spiceDB: deps.SpiceDB,
+	}, nil
 }
 
-func (s *ManifestService) Get(
-	ctx context.Context,
-	req *connect.Request[openv1.GetRequest],
-) (*connect.Response[openv1.GetResponse], error) {
+// GetManifestQuery reads the public manifest. AcceptLanguage localizes the
+// selected menus.
+type GetManifestQuery struct {
+	AcceptLanguage string
+}
+
+// GetManifest returns the public settings and the menus visible to the
+// caller.
+func (s *Service) GetManifest(ctx context.Context, query GetManifestQuery) (*openv1.GetResponse, error) {
 	user, err := s.getUserContext(ctx)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	settingsRow, err := s.projection.Settings(ctx)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	settings, err := s.buildSettings(ctx, settingsRow)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	menus, err := s.loadMenus(ctx, user, settingsRow, req.Header().Get("Accept-Language"))
+	menus, err := s.loadMenus(ctx, user, settingsRow, query.AcceptLanguage)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	return connect.NewResponse(&openv1.GetResponse{Settings: settings, Menus: menus}), nil
+	return &openv1.GetResponse{Settings: settings, Menus: menus}, nil
 }
 
 func hasAuthenticatedAccountIdentity(ctx context.Context) bool {
@@ -87,7 +104,7 @@ func hasAuthenticatedAccountIdentity(ctx context.Context) bool {
 	return true
 }
 
-func (s *ManifestService) getUserContext(ctx context.Context) (userContext, error) {
+func (s *Service) getUserContext(ctx context.Context) (userContext, error) {
 	if !hasAuthenticatedAccountIdentity(ctx) {
 		return userContext{}, nil
 	}
@@ -128,7 +145,7 @@ func (s *ManifestService) getUserContext(ctx context.Context) (userContext, erro
 	return userContext{isAuthenticated: true, rolePermissions: permissions}, nil
 }
 
-func (s *ManifestService) checkCurrentPlatformCan(ctx context.Context, can policyv1.Can) (bool, error) {
+func (s *Service) checkCurrentPlatformCan(ctx context.Context, can policyv1.Can) (bool, error) {
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
 		return false, err
@@ -136,7 +153,7 @@ func (s *ManifestService) checkCurrentPlatformCan(ctx context.Context, can polic
 	return s.spiceDB.Can(ctx, decision)
 }
 
-func (s *ManifestService) buildSettings(ctx context.Context, settings *model.SiteSettings) (*openv1.SiteSettings, error) {
+func (s *Service) buildSettings(ctx context.Context, settings *model.SiteSettings) (*openv1.SiteSettings, error) {
 	result := &openv1.SiteSettings{
 		SiteTitle: settings.SiteTitle, MetaDescription: sitevariable.FromSettings(*settings, s.siteOrigin).ResolveText(settings.MetaDescription),
 		PrimaryColor: settings.PrimaryColor, CompanyName: settings.CompanyName,
@@ -189,7 +206,7 @@ func manifestSocialLinks(ctx context.Context, raw []byte) map[string]string {
 	return result
 }
 
-func (s *ManifestService) loadMenus(
+func (s *Service) loadMenus(
 	ctx context.Context,
 	user userContext,
 	settings *model.SiteSettings,
@@ -207,7 +224,7 @@ func (s *ManifestService) loadMenus(
 	}, nil
 }
 
-func (s *ManifestService) filterAndConvertItems(ctx context.Context, items []model.MenuItem, user userContext) []*openv1.MenuItem {
+func (s *Service) filterAndConvertItems(ctx context.Context, items []model.MenuItem, user userContext) []*openv1.MenuItem {
 	result := make([]*openv1.MenuItem, 0, len(items))
 	for i := range items {
 		if s.isItemVisible(&items[i], user) {
@@ -217,7 +234,7 @@ func (s *ManifestService) filterAndConvertItems(ctx context.Context, items []mod
 	return result
 }
 
-func (s *ManifestService) isItemVisible(item *model.MenuItem, user userContext) bool {
+func (s *Service) isItemVisible(item *model.MenuItem, user userContext) bool {
 	if item.Visibility == nil {
 		return true
 	}
@@ -243,7 +260,7 @@ func (s *ManifestService) isItemVisible(item *model.MenuItem, user userContext) 
 	}
 }
 
-func (s *ManifestService) convertItem(ctx context.Context, item *model.MenuItem, user userContext) *openv1.MenuItem {
+func (s *Service) convertItem(ctx context.Context, item *model.MenuItem, user userContext) *openv1.MenuItem {
 	result := &openv1.MenuItem{Id: item.ID, Label: item.Label, LinkType: linkTypeMap[item.LinkType]}
 	result.Url, result.TargetId = item.URL, item.TargetID
 	if slug := s.projection.TargetSlug(ctx, item); slug != nil {
@@ -260,7 +277,7 @@ func (s *ManifestService) convertItem(ctx context.Context, item *model.MenuItem,
 
 // readyLogo returns the ready display asset for a configured logo slot, or nil
 // when the slot is unset or its asset is not ready, so resolution falls back.
-func (s *ManifestService) readyLogo(ctx context.Context, fileID *string) *commonv1.AssetRef {
+func (s *Service) readyLogo(ctx context.Context, fileID *string) *commonv1.AssetRef {
 	if fileID == nil || strings.TrimSpace(*fileID) == "" {
 		return nil
 	}

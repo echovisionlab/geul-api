@@ -40,7 +40,7 @@ func siteSettingAssetBinding(settings *model.SiteSettings, key string) (*string,
 	}
 }
 
-func (s *SiteSettingService) syncSiteSettingAssetBinding(
+func (s *Service) syncSiteSettingAssetBinding(
 	ctx context.Context,
 	tx *gorm.DB,
 	settings *model.SiteSettings,
@@ -64,14 +64,14 @@ func (s *SiteSettingService) syncSiteSettingAssetBinding(
 	return err
 }
 
-func (s *SiteSettingService) optionalFileAsset(ctx context.Context, fileID *string, expectedKind string) *commonv1.AssetRef {
+func (s *Service) optionalFileAsset(ctx context.Context, fileID *string, expectedKind string) *commonv1.AssetRef {
 	if fileID == nil {
 		return nil
 	}
 	return s.getFileAsset(ctx, *fileID, expectedKind)
 }
 
-func (s *SiteSettingService) getFileAsset(ctx context.Context, fileID string, expectedKind string) *commonv1.AssetRef {
+func (s *Service) getFileAsset(ctx context.Context, fileID string, expectedKind string) *commonv1.AssetRef {
 	if fileID == "" {
 		return nil
 	}
@@ -87,7 +87,7 @@ type siteLoaderAssetRow struct {
 	FileID string `gorm:"column:file_id"`
 }
 
-func (s *SiteSettingService) loadSiteLoaderAssets(ctx context.Context, db *gorm.DB) ([]*managev1.SiteLoaderAsset, error) {
+func (s *Service) loadSiteLoaderAssets(ctx context.Context, db *gorm.DB) ([]*managev1.SiteLoaderAsset, error) {
 	var rows []siteLoaderAssetRow
 	if err := db.WithContext(ctx).
 		Table("site_setting_loader_file AS slf").

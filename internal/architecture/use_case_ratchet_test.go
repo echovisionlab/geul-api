@@ -18,6 +18,7 @@ const (
 // connect_handler*.go files know the transport. Add a domain here when its
 // migration lands.
 var pipelineDomains = []string{
+	"internal/admin",
 	"internal/artist",
 	"internal/audience",
 	"internal/emaildelivery",
@@ -34,6 +35,7 @@ var pipelineDomains = []string{
 	"internal/release",
 	"internal/series",
 	"internal/sharelink",
+	"internal/sitesettings",
 	"internal/work",
 }
 

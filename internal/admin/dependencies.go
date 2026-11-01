@@ -3,18 +3,29 @@ package admin
 import (
 	"context"
 
-	"connectrpc.com/connect"
-
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"gorm.io/gorm"
 )
 
-// OG is the OG-owned portion of the manage Admin RPC surface. Embedding this
-// consumer-owned port lets the Admin endpoint aggregate independently owned
-// operations without importing OG implementation details.
-type OG interface {
-	RegenerateOgImage(context.Context, *connect.Request[managev1.RegenerateOgImageRequest]) (*connect.Response[managev1.RegenerateOgImageResponse], error)
-	RegenerateAllOgImages(context.Context, *connect.Request[managev1.RegenerateAllOgImagesRequest]) (*connect.Response[managev1.RegenerateAllOgImagesResponse], error)
-	GetOgGeneration(context.Context, *connect.Request[managev1.GetOgGenerationRequest]) (*connect.Response[managev1.GetOgGenerationResponse], error)
-	GetLatestOgGeneration(context.Context, *connect.Request[managev1.GetLatestOgGenerationRequest]) (*connect.Response[managev1.GetLatestOgGenerationResponse], error)
-	GetOgGenerationRun(context.Context, *connect.Request[managev1.GetOgGenerationRunRequest]) (*connect.Response[managev1.GetOgGenerationRunResponse], error)
+// Members counts the dashboard's Members; Member owns them.
+type Members interface {
+	// CountActive counts the live Members whose linked Identity is active
+	// and not banned.
+	CountActive(ctx context.Context, db *gorm.DB) (int64, error)
+}
+
+// Posts counts the dashboard's Posts and comments; Post owns both.
+type Posts interface {
+	CountPosts(ctx context.Context, db *gorm.DB) (int64, error)
+	// CountComments counts the comments that are not deleted.
+	CountComments(ctx context.Context, db *gorm.DB) (int64, error)
+}
+
+// Pages counts the dashboard's Pages; Page owns them.
+type Pages interface {
+	CountPages(ctx context.Context, db *gorm.DB) (int64, error)
+}
+
+// Campaigns counts the dashboard's Campaigns; Campaign owns them.
+type Campaigns interface {
+	CountCampaigns(ctx context.Context, db *gorm.DB) (int64, error)
 }

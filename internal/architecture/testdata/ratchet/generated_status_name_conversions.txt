@@ -6,7 +6,6 @@
 2 internal/adapters/series/public
 12 internal/adapters/sharelink
 9 internal/adapters/sitemap
-2 internal/adapters/sitesettings
 1 internal/adapters/translation
 9 internal/artist/public
 23 internal/campaign

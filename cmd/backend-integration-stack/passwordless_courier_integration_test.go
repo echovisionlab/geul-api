@@ -96,15 +96,14 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 		memberadapter.AccountEmailProjection{},
 		directRoles,
 	)
+	loginRoles, err := authentication.NewService(authentication.Deps{
+		DB: stack.Postgres.DB, SpiceDB: stack.SpiceDBClient, Audit: telemetryWriter, Roles: directRoles,
+	})
+	require.NoError(t, err)
 	loginHooks := authentication.NewLoginHookService(
 		stack.KratosClient,
 		authenticationadapter.NewLoginMemberProvisioner(registrationMembers),
-		authentication.NewAuthBootstrapService(
-			stack.Postgres.DB,
-			stack.SpiceDBClient,
-			telemetryWriter,
-			directRoles,
-		),
+		loginRoles,
 	)
 	registrationHooks := authentication.NewRegistrationHookPolicy(
 		authenticationadapter.NewRegistrationReuseHoldChecker(stack.Postgres.DB),

@@ -19,8 +19,10 @@ import (
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
+	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -55,11 +57,38 @@ func requireSiteSettingIntegrationPolicy(t *testing.T, spiceDB *auth.SpiceDBClie
 	})
 }
 
+// integrationAdminCtxWithIdentityAndSpiceDB is an audited administrator
+// request.
 func integrationAdminCtxWithIdentityAndSpiceDB(t *testing.T, db *gorm.DB) (context.Context, *auth.SpiceDBClient) {
 	t.Helper()
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
 	requireSiteSettingIntegrationPolicy(t, spiceDB)
-	return ctx, spiceDB
+	principal := auth.GetUser(ctx)
+	return testutil.NewAuditContext(t, principal.IdentityID.String(), principal.MemberID.String()), spiceDB
+}
+
+// newSiteSettingsHandler serves deps through the Connect translators, filling
+// the collaborators a test leaves unset.
+func newSiteSettingsHandler(t *testing.T, deps sitesettings.Deps) *sitesettings.ConnectHandler {
+	t.Helper()
+	if deps.SiteOrigin == "" {
+		deps.SiteOrigin = "https://www.example.test"
+	}
+	if deps.Assets == nil {
+		deps.Assets = sitesettingsadapter.NewAssets("https://cdn.example.test")
+	}
+	if deps.References == nil {
+		deps.References = sitesettingsadapter.NewReferences()
+	}
+	if deps.OG == nil {
+		deps.OG = newSiteSettingsOGInvalidatorForTest(deps.DB, "https://cdn.example.test")
+	}
+	if deps.Audit == nil {
+		deps.Audit = &audittest.Recorder{}
+	}
+	service, err := sitesettings.NewService(deps)
+	require.NoError(t, err)
+	return sitesettings.NewConnectHandler(service)
 }
 
 func newSiteSettingsOGInvalidatorForTest(db *gorm.DB, cdnDomain string) *sitesettingsadapter.Invalidator {

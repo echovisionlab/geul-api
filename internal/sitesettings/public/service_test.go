@@ -12,7 +12,7 @@ import (
 )
 
 func TestManifestVisibilityUsesOnlyAuthenticatedRequestContext(t *testing.T) {
-	service := &ManifestService{}
+	service := &Service{}
 
 	user, err := service.getUserContext(context.Background())
 	require.NoError(t, err)

@@ -10,6 +10,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
+	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
+	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -125,10 +129,14 @@ func TestAdminDashboardStatsIntegration(t *testing.T) {
 
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	svc := &Service{db: db, spiceDB: spiceDB}
+	svc, err := NewService(Deps{
+		DB: db, SpiceDB: spiceDB, Members: memberadapter.DashboardMembers{}, Posts: postadapter.DashboardPosts{},
+		Pages: pageadapter.DashboardPages{}, Campaigns: campaignadapter.DashboardCampaigns{},
+	})
+	require.NoError(t, err)
 	ctx := adminUserIntegrationAdminCtx(adminID)
 
-	statsResp, err := svc.GetDashboardStats(ctx, connect.NewRequest(&managev1.GetDashboardStatsRequest{}))
+	statsResp, err := NewConnectHandler(svc, nil).GetDashboardStats(ctx, connect.NewRequest(&managev1.GetDashboardStatsRequest{}))
 	require.NoError(t, err)
 	stats := statsResp.Msg.GetStats()
 	// The member total joins this test's own member rows to the shared Kratos
