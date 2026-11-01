@@ -294,8 +294,8 @@ func fileManagerNativeFile() *managev1.FileManagerFile {
 	at := timestamppb.New(time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC))
 	return &managev1.FileManagerFile{Id: fileManagerTestID, FileName: "Actual name", Extension: "wav", MimeType: "audio/wav", FileSize: 42, DurationSeconds: &duration, UsageCount: 3, CreatedAt: at, UpdatedAt: at}
 }
-func fileManagerNativeFolder() *managev1.FileFolder {
-	return &managev1.FileFolder{Id: fileManagerTestFolderID, Name: "Actual folder"}
+func fileManagerFolderView() *filemedia.FolderView {
+	return &filemedia.FolderView{ID: fileManagerTestFolderID, Name: "Actual folder"}
 }
 
 // The fake records each use-case call as the request a Connect client would
@@ -340,28 +340,28 @@ func (manager *recordingFileManager) MoveFiles(ctx context.Context, command file
 	return []*managev1.FileManagerFile{fileManagerNativeFile()}, nil
 }
 
-func (manager *recordingFileManager) CreateFileFolder(ctx context.Context, command filemedia.CreateFileFolderCommand) (*managev1.FileFolder, error) {
+func (manager *recordingFileManager) CreateFileFolder(ctx context.Context, command filemedia.CreateFileFolderCommand) (*filemedia.FolderView, error) {
 	manager.record(ctx, ToolFileFolderCreate, &managev1.CreateFileFolderRequest{ParentId: optionalFileManagerID(command.ParentID), Name: command.Name})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return fileManagerNativeFolder(), nil
+	return fileManagerFolderView(), nil
 }
 
-func (manager *recordingFileManager) RenameFileFolder(ctx context.Context, command filemedia.RenameFileFolderCommand) (*managev1.FileFolder, error) {
+func (manager *recordingFileManager) RenameFileFolder(ctx context.Context, command filemedia.RenameFileFolderCommand) (*filemedia.FolderView, error) {
 	manager.record(ctx, ToolFileFolderRename, &managev1.RenameFileFolderRequest{FolderId: command.FolderID, Name: command.Name})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return fileManagerNativeFolder(), nil
+	return fileManagerFolderView(), nil
 }
 
-func (manager *recordingFileManager) MoveFileFolder(ctx context.Context, command filemedia.MoveFileFolderCommand) (*managev1.FileFolder, error) {
+func (manager *recordingFileManager) MoveFileFolder(ctx context.Context, command filemedia.MoveFileFolderCommand) (*filemedia.FolderView, error) {
 	manager.record(ctx, ToolFileFolderMove, &managev1.MoveFileFolderRequest{FolderId: command.FolderID, ParentId: optionalFileManagerID(command.ParentID)})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return fileManagerNativeFolder(), nil
+	return fileManagerFolderView(), nil
 }
 
 func (manager *recordingFileManager) DeleteFileFolder(ctx context.Context, command filemedia.DeleteFileFolderCommand) ([]string, error) {
@@ -377,4 +377,12 @@ func optionalFileManagerID(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+func TestFileManagerFolderProjectionKeepsTimestampPrecisionAndPresence(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 11, 2, 12, 3, 4, 123456789, time.FixedZone("KST", 9*60*60))
+	actual := projectFileManagerFolder(&filemedia.FolderView{ID: "folder", Name: "Folder", ParentID: new(""), CreatedAt: &at, UpdatedAt: &at})
+	require.Equal(t, fileManagerFolder{ID: "folder", Name: "Folder", ParentID: new(""), CreatedAt: "2026-11-02T03:03:04Z", UpdatedAt: "2026-11-02T03:03:04Z"}, actual)
+	require.Equal(t, fileManagerFolder{ID: "root", Name: "Root"}, projectFileManagerFolder(&filemedia.FolderView{ID: "root", Name: "Root"}))
 }

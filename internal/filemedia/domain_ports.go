@@ -21,3 +21,11 @@ type TrackOriginalAudioAttachment = domain.TrackOriginalAudioAttachment
 // ErrTrackUploadSessionsChanged is returned when the File-owned upload-session
 // fence changes before a Track deletion transaction completes.
 var ErrTrackUploadSessionsChanged = errors.New("track upload sessions changed during deletion")
+
+func memberSummaryForID(summaries map[string]MemberSummary, id string) *MemberSummary {
+	summary, ok := summaries[id]
+	if !ok {
+		return nil
+	}
+	return &summary
+}

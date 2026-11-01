@@ -77,17 +77,17 @@ func (h *ConnectHandler) ListFileUsages(ctx context.Context, req *connect.Reques
 
 func (h *ConnectHandler) CreateFileFolder(ctx context.Context, req *connect.Request[managev1.CreateFileFolderRequest]) (*connect.Response[managev1.CreateFileFolderResponse], error) {
 	folder, err := h.files.CreateFileFolder(ctx, CreateFileFolderCommand{ParentID: req.Msg.GetParentId(), Name: req.Msg.Name})
-	return respond(&managev1.CreateFileFolderResponse{Folder: folder}, err)
+	return respond(&managev1.CreateFileFolderResponse{Folder: folderViewProto(folder)}, err)
 }
 
 func (h *ConnectHandler) RenameFileFolder(ctx context.Context, req *connect.Request[managev1.RenameFileFolderRequest]) (*connect.Response[managev1.RenameFileFolderResponse], error) {
 	folder, err := h.files.RenameFileFolder(ctx, RenameFileFolderCommand{FolderID: req.Msg.FolderId, Name: req.Msg.Name})
-	return respond(&managev1.RenameFileFolderResponse{Folder: folder}, err)
+	return respond(&managev1.RenameFileFolderResponse{Folder: folderViewProto(folder)}, err)
 }
 
 func (h *ConnectHandler) MoveFileFolder(ctx context.Context, req *connect.Request[managev1.MoveFileFolderRequest]) (*connect.Response[managev1.MoveFileFolderResponse], error) {
 	folder, err := h.files.MoveFileFolder(ctx, MoveFileFolderCommand{FolderID: req.Msg.FolderId, ParentID: req.Msg.GetParentId()})
-	return respond(&managev1.MoveFileFolderResponse{Folder: folder}, err)
+	return respond(&managev1.MoveFileFolderResponse{Folder: folderViewProto(folder)}, err)
 }
 
 func (h *ConnectHandler) DeleteFileFolder(ctx context.Context, req *connect.Request[managev1.DeleteFileFolderRequest]) (*connect.Response[managev1.DeleteFileFolderResponse], error) {

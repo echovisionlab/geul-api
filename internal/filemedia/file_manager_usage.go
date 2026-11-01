@@ -74,7 +74,7 @@ func (s *Service) fileManagerFileFromCatalogRow(
 		Delivery: deliveryResponse.Delivery, UsageCount: usageCount,
 	}
 	if row.MemberID != nil {
-		file.UploadedByMember = memberSummaryProto(members, *row.MemberID)
+		file.UploadedByMember = memberSummaryProto(memberSummaryForID(members, *row.MemberID))
 	}
 	return file, nil
 }

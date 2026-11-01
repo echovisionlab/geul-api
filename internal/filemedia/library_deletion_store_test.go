@@ -68,19 +68,19 @@ func TestLibraryFolderDeletionRejectsUsageThenDeletesSubtree(t *testing.T) {
 	f := newLibraryFixture(t)
 	root, err := f.files.CreateFileFolder(f.ctx, filemedia.CreateFileFolderCommand{Name: "root"})
 	require.NoError(t, err)
-	child, err := f.files.CreateFileFolder(f.ctx, filemedia.CreateFileFolderCommand{ParentID: root.Id, Name: "child"})
+	child, err := f.files.CreateFileFolder(f.ctx, filemedia.CreateFileFolderCommand{ParentID: root.ID, Name: "child"})
 	require.NoError(t, err)
-	row, pending := filemediatest.CatalogFile("file", &child.Id), filemediatest.CatalogFile("pending", &child.Id)
+	row, pending := filemediatest.CatalogFile("file", &child.ID), filemediatest.CatalogFile("pending", &child.ID)
 	f.store.Files[row.ID] = filemediatest.CatalogFileRecord{Row: row}
 	f.store.Files[pending.ID] = filemediatest.CatalogFileRecord{Row: pending, PendingDeletion: true}
 	f.store.Usages = []domain.FileUsageRow{{FileID: row.ID, Domain: "post", EntityID: uuid.NewString()}}
-	_, err = f.files.DeleteFileFolder(f.ctx, filemedia.DeleteFileFolderCommand{FolderID: root.Id})
+	_, err = f.files.DeleteFileFolder(f.ctx, filemedia.DeleteFileFolderCommand{FolderID: root.ID})
 	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	require.Len(t, f.store.Folders, 2)
 	require.False(t, f.store.Files[row.ID].PendingDeletion)
 	require.Empty(t, f.store.DeletionOutbox)
 	f.store.Usages = nil
-	ids, err := f.files.DeleteFileFolder(f.ctx, filemedia.DeleteFileFolderCommand{FolderID: root.Id})
+	ids, err := f.files.DeleteFileFolder(f.ctx, filemedia.DeleteFileFolderCommand{FolderID: root.ID})
 	require.NoError(t, err)
 	require.Equal(t, []string{row.ID}, ids)
 	require.Empty(t, f.store.Folders)

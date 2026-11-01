@@ -5,12 +5,10 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // CreateFileFolderCommand creates a File library folder under ParentID, or at
@@ -20,7 +18,7 @@ type CreateFileFolderCommand struct {
 	Name     string
 }
 
-func (s *Service) CreateFileFolder(ctx context.Context, command CreateFileFolderCommand) (_ *managev1.FileFolder, resultErr error) {
+func (s *Service) CreateFileFolder(ctx context.Context, command CreateFileFolderCommand) (_ *FolderView, resultErr error) {
 	defer failurecause.AnnotatePrivate(&resultErr, command.Name)
 
 	user, can, err := fileManagerAuthority(ctx)
@@ -50,7 +48,7 @@ func (s *Service) CreateFileFolder(ctx context.Context, command CreateFileFolder
 	if err != nil {
 		return nil, fileManagerMutationError(err, "folder name already exists at this location", name)
 	}
-	return s.fileFolderProto(ctx, folder)
+	return s.folderView(ctx, folder)
 }
 
 // fileFolderChange is a folder after a rename or move, and whether it moved
@@ -68,7 +66,7 @@ type RenameFileFolderCommand struct {
 	Name     string
 }
 
-func (s *Service) RenameFileFolder(ctx context.Context, command RenameFileFolderCommand) (_ *managev1.FileFolder, resultErr error) {
+func (s *Service) RenameFileFolder(ctx context.Context, command RenameFileFolderCommand) (_ *FolderView, resultErr error) {
 	defer failurecause.AnnotatePrivate(&resultErr, command.Name)
 
 	_, can, err := fileManagerAuthority(ctx)
@@ -113,7 +111,7 @@ func (s *Service) RenameFileFolder(ctx context.Context, command RenameFileFolder
 	if err != nil {
 		return nil, err
 	}
-	return s.fileFolderProto(ctx, change.folder)
+	return s.folderView(ctx, change.folder)
 }
 
 // lockFileFolderForUpdate locks a folder row into folder, answering a missing
@@ -137,7 +135,7 @@ type MoveFileFolderCommand struct {
 	ParentID string
 }
 
-func (s *Service) MoveFileFolder(ctx context.Context, command MoveFileFolderCommand) (*managev1.FileFolder, error) {
+func (s *Service) MoveFileFolder(ctx context.Context, command MoveFileFolderCommand) (*FolderView, error) {
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
@@ -185,7 +183,7 @@ func (s *Service) MoveFileFolder(ctx context.Context, command MoveFileFolderComm
 	if err != nil {
 		return nil, err
 	}
-	return s.fileFolderProto(ctx, change.folder)
+	return s.folderView(ctx, change.folder)
 }
 
 // lockFileFolderMove takes the folder hierarchy lock, then the moved folder
@@ -225,15 +223,15 @@ func fileManagerMutationError(err error, message string, privateName string) err
 	return cause
 }
 
-func (s *Service) fileFolderProto(ctx context.Context, folder FileFolder) (*managev1.FileFolder, error) {
-	result := &managev1.FileFolder{Id: folder.ID, ParentId: folder.ParentID, Name: folder.Name, CreatedAt: timestamppb.New(folder.CreatedAt), UpdatedAt: timestamppb.New(folder.UpdatedAt)}
+func (s *Service) folderView(ctx context.Context, folder FileFolder) (*FolderView, error) {
+	result := &FolderView{ID: folder.ID, ParentID: folder.ParentID, Name: folder.Name, CreatedAt: &folder.CreatedAt, UpdatedAt: &folder.UpdatedAt}
 	if folder.CreatedByMemberID != nil {
 		memberSummaries := s.memberSummaries
 		members, err := memberSummaries.Load(ctx, []string{*folder.CreatedByMemberID})
 		if err != nil {
 			return nil, err
 		}
-		result.CreatedByMember = memberSummaryProto(members, *folder.CreatedByMemberID)
+		result.CreatedByMember = memberSummaryForID(members, *folder.CreatedByMemberID)
 	}
 	return result, nil
 }
