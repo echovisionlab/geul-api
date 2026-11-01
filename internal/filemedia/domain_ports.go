@@ -5,12 +5,13 @@ import (
 	"errors"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
+
+type MemberSummary = domain.MemberSummary
 
 // MemberSummaries projects uploader identities for File Manager responses.
 type MemberSummaries interface {
-	Load(context.Context, []string) (map[string]*commonv1.MemberSummary, error)
+	Load(context.Context, []string) (map[string]MemberSummary, error)
 }
 
 type TrackOriginalAudioInput = domain.TrackOriginalAudioInput

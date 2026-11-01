@@ -25,7 +25,7 @@ import (
 func (s *Service) finalizeFileManagerDeliveries(
 	ctx context.Context,
 	rows []fileManagerCatalogRow,
-	members map[string]*commonv1.MemberSummary,
+	members map[string]MemberSummary,
 	usageCounts map[string]int32,
 	generatedOutputs []*managev1.FileGeneratedOutput,
 ) (map[string]*managev1.FileManagerFile, []*managev1.FileGeneratedOutput, bool, error) {
@@ -82,7 +82,7 @@ func (s *Service) finalizeFileManagerDeliveries(
 func (s *Service) fenceFileManagerCatalogFiles(
 	rows []fileManagerCatalogRow,
 	lockedByID map[string]File,
-	members map[string]*commonv1.MemberSummary,
+	members map[string]MemberSummary,
 	usageCounts map[string]int32,
 ) (map[string]*managev1.FileManagerFile, bool, error) {
 	files := make(map[string]*managev1.FileManagerFile, len(rows))

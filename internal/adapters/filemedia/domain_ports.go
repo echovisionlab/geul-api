@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 
-	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
-
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
@@ -21,7 +19,6 @@ import (
 	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 type PostAccess struct {
@@ -116,22 +113,6 @@ func programEventAccessAnswer(err error) error {
 		return errs.Wrap(err)
 	}
 	return err
-}
-
-type MemberSummaries struct {
-	db        *gorm.DB
-	cdnDomain string
-}
-
-func NewMemberSummaries(db *gorm.DB, cdnDomain string) *MemberSummaries {
-	return &MemberSummaries{db: db, cdnDomain: cdnDomain}
-}
-
-func (a *MemberSummaries) Load(
-	ctx context.Context,
-	memberIDs []string,
-) (map[string]*commonv1.MemberSummary, error) {
-	return memberpostgres.LoadSummaries(ctx, a.db, a.cdnDomain, memberIDs)
 }
 
 // TrackAttachment runs the Release-owned Track steps of a File ingest in

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediamembers"
+
 	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 
 	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
@@ -277,7 +279,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		DownloadTTL:        downloadTTL,
 		EditorImageMaxSize: cfg.EditorImageMaxSize,
 		LegalRoutes:        legalRuntime,
-		MemberSummaries:    filemediaadapter.NewMemberSummaries(db, cfg.CDNURL),
+		MemberSummaries:    filemediamembers.NewMemberSummaries(db, cfg.CDNURL),
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize file service: %w", err)

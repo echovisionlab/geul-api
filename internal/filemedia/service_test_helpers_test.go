@@ -12,7 +12,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 var errUnusedTestDependency = errors.New("test did not configure this File dependency")
@@ -98,7 +97,7 @@ func (unusedFilePorts) AttachOriginalWithDB(context.Context, *gorm.DB, TrackOrig
 	return TrackOriginalAudioAttachment{}, errUnusedTestDependency
 }
 
-func (unusedFilePorts) Load(context.Context, []string) (map[string]*commonv1.MemberSummary, error) {
+func (unusedFilePorts) Load(context.Context, []string) (map[string]MemberSummary, error) {
 	return nil, errUnusedTestDependency
 }
 

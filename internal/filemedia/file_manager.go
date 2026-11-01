@@ -298,7 +298,7 @@ func (s *Service) fileManagerCatalogFilter(ctx context.Context, req ListFileMana
 // as the delivery fence built it.
 func fileManagerItemsFromCatalog(
 	rows []fileManagerCatalogRow,
-	members map[string]*commonv1.MemberSummary,
+	members map[string]MemberSummary,
 	fencedFiles map[string]*managev1.FileManagerFile,
 ) ([]*managev1.FileManagerItem, error) {
 	items := make([]*managev1.FileManagerItem, 0, len(rows))
@@ -313,7 +313,7 @@ func fileManagerItemsFromCatalog(
 				CreatedAt: timestamppb.New(row.CreatedAt), UpdatedAt: timestamppb.New(row.UpdatedAt),
 			}
 			if row.MemberID != nil {
-				folder.CreatedByMember = members[*row.MemberID]
+				folder.CreatedByMember = memberSummaryProto(members, *row.MemberID)
 			}
 			items = append(items, &managev1.FileManagerItem{
 				Type: managev1.FileManagerItemType_FILE_MANAGER_ITEM_TYPE_FOLDER,

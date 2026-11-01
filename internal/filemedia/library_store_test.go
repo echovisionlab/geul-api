@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	telemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
@@ -23,8 +22,8 @@ import (
 
 type folderMembers struct{}
 
-func (folderMembers) Load(context.Context, []string) (map[string]*commonv1.MemberSummary, error) {
-	return map[string]*commonv1.MemberSummary{}, nil
+func (folderMembers) Load(context.Context, []string) (map[string]filemedia.MemberSummary, error) {
+	return map[string]filemedia.MemberSummary{}, nil
 }
 
 type libraryFixture struct {
