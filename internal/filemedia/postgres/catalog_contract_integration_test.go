@@ -36,7 +36,26 @@ func TestPostgresCatalogStoreContractIntegration(t *testing.T) {
 	filemediatest.RunCatalogContract(t, func(t *testing.T) filemediatest.CatalogHarness {
 		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		require.NoError(t, db.Exec(`CREATE TABLE filemedia_contract_output (sequence bigserial PRIMARY KEY, kind text NOT NULL, payload jsonb NOT NULL)`).Error)
-		return filemediatest.CatalogHarness{SeedSegment: func(t *testing.T, segment domain.PolicySegment) {
+		return filemediatest.CatalogHarness{SeedScoped: func(t *testing.T, kind, id string, owner filemediatest.ScopedOwner, attachment domain.ScopedAttachment) {
+			profile := kind
+			require.NoError(t, db.Exec(`INSERT INTO content_document(id,profile) VALUES (?::uuid,?)`, owner.DocumentID, profile).Error)
+			if kind == "program_event" {
+				typeID := uuid.NewString()
+				require.NoError(t, db.Exec(`INSERT INTO program_event_type (id,slug) VALUES (?::uuid,?)`, typeID, "type-"+typeID).Error)
+				require.NoError(t, db.Exec(`INSERT INTO program_event (id,content_document_id,type_id,slug,starts_at,location_mode) VALUES (?::uuid,?::uuid,?::uuid,?,CURRENT_TIMESTAMP,'PROGRAM_EVENT_LOCATION_MODE_TBA')`, id, owner.DocumentID, typeID, "event-"+id).Error)
+			} else {
+				row := map[string]any{"id": id, "content_document_id": owner.DocumentID, "featured_image_file_id": owner.FeaturedFileID}
+				if kind == "work" {
+					row["type"] = "WORK_TYPE_ARTICLE"
+					row["year"] = 2026
+					row["month"] = 11
+					row["is_present"] = true
+				}
+				require.NoError(t, db.Table(kind).Create(row).Error)
+			}
+			require.NoError(t, db.Exec(`INSERT INTO content_block(id,document_id,container_slot,position,kind) VALUES (?::uuid,?::uuid,'root',0,'file')`, attachment.BlockID, owner.DocumentID).Error)
+			require.NoError(t, db.Exec(`INSERT INTO content_block_attachment(block_id,reference_path,selector_kind,file_id) VALUES (?::uuid,?,'active',?::uuid)`, attachment.BlockID, attachment.ReferencePath, attachment.FileID).Error)
+		}, SeedSegment: func(t *testing.T, segment domain.PolicySegment) {
 			row := model.AudienceSegment{ID: segment.ID, Name: segment.Name, Description: segment.Description, SegmentType: model.AudienceSegmentType(segment.Kind), ArchivedAt: segment.ArchivedAt}
 			require.NoError(t, db.Create(&row).Error)
 		}, SeedPolicy: func(t *testing.T, r domain.PolicyRelation, ids []string) {

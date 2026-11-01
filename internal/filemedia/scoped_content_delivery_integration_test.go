@@ -5,9 +5,12 @@ package filemedia
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -88,7 +91,7 @@ func TestHydrateAuthorizedPostBlockMediaIntegration(t *testing.T) {
 					return err
 				}
 				var err error
-				items, err = fixture.service.HydrateAuthorizedPostBlockMediaWithDB(t.Context(), tx, postID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items())
+				items, err = fixture.service.HydrateAuthorizedPostBlockMedia(t.Context(), Joined{Store: testFileStore(fixture.service, tx)}, postID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items())
 				return err
 			}))
 			require.Len(t, items, 1)
@@ -148,8 +151,8 @@ func TestHydrateAuthorizedPageBlockMediaRejectsChangedOrPendingExactAttachmentIn
 					return err
 				}
 				var err error
-				hydrated, err = fixture.service.HydrateAuthorizedPageBlockMediaWithDB(
-					t.Context(), tx, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items(),
+				hydrated, err = fixture.service.HydrateAuthorizedPageBlockMedia(
+					t.Context(), Joined{Store: testFileStore(fixture.service, tx)}, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items(),
 				)
 				return err
 			}))
@@ -221,8 +224,8 @@ func TestHydrateAuthorizedPageBlockMediaSignsBeforeAttachmentOrFileMutationInteg
 						return err
 					}
 					var hydrateErr error
-					hydrated, hydrateErr = fixture.service.HydrateAuthorizedPageBlockMediaWithDB(
-						t.Context(), tx, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items(),
+					hydrated, hydrateErr = fixture.service.HydrateAuthorizedPageBlockMedia(
+						t.Context(), Joined{Store: testFileStore(fixture.service, tx)}, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items(),
 					)
 					return hydrateErr
 				})
@@ -290,8 +293,8 @@ func TestHydrateAuthorizedPageBlockMediaKeepsOriginalDownloadPerFileEntitlementI
 			return err
 		}
 		var err error
-		hydrated, err = fixture.service.HydrateAuthorizedPageBlockMediaWithDB(
-			t.Context(), tx, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, items,
+		hydrated, err = fixture.service.HydrateAuthorizedPageBlockMedia(
+			t.Context(), Joined{Store: testFileStore(fixture.service, tx)}, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, items,
 		)
 		return err
 	}))
@@ -580,4 +583,42 @@ func startScopedContentMutation(
 		done <- err
 	}()
 	return backendPID, attempted, done
+}
+
+func TestScopedMediaReadsUncommittedOwnerTransactionFactsIntegration(t *testing.T) {
+	t.Parallel()
+	db := newConcurrentServiceIntegrationDB(t)
+	fixture := seedScopedPageBlockFixture(t, db)
+	assetID := uuid.NewString()
+	aborted := errors.New("roll back owner transaction")
+	var hydrated []*contentv1.ContentBlockMediaItem
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := lockScopedPageRootForTest(t.Context(), tx, fixture.ownerID); err != nil {
+			return err
+		}
+		if err := tx.Table("file").Where("id = ?", fixture.fileID).Update("file_name", "uncommitted-original").Error; err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		size := int64(64)
+		if err := tx.Create(&model.PublicAsset{ID: assetID, SourceFileID: &fixture.fileID, Kind: "image", ObjectKey: "asset/" + assetID + ".webp", Extension: "webp", MimeType: "image/webp", FileSize: &size, SHA256: make([]byte, 32), Disposition: "inline", Status: model.PublicAssetStatusReady, ReadyAt: &now, CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+			return err
+		}
+		var err error
+		hydrated, err = fixture.service.HydrateAuthorizedPageBlockMedia(t.Context(), Joined{Store: testFileStore(fixture.service, tx)}, fixture.ownerID, uuid.MustParse(fixture.documentID), fixture.principal, fixture.items())
+		if err != nil {
+			return err
+		}
+		return aborted
+	})
+	require.ErrorIs(t, err, aborted)
+	require.Len(t, hydrated, 1)
+	assert.Equal(t, "uncommitted-original", hydrated[0].GetDelivery().GetFileName())
+	assert.Equal(t, assetID, hydrated[0].GetDelivery().GetAsset().GetAssetId())
+	var file model.File
+	require.NoError(t, db.First(&file, "id = ?", fixture.fileID).Error)
+	require.Equal(t, fixture.fileID, file.FileName)
+	var count int64
+	require.NoError(t, db.Model(&model.PublicAsset{}).Where("id = ?", assetID).Count(&count).Error)
+	require.Zero(t, count)
 }

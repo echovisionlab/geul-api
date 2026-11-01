@@ -169,11 +169,14 @@ func (s *Service) loadFileURLResponses(
 	ctx context.Context,
 	fileIDs []string,
 ) (map[string]*managev1.GetMediaDeliveryResponse, error) {
+	return s.loadFileURLResponsesWithReader(ctx, s.units, fileIDs)
+}
+func (s *Service) loadFileURLResponsesWithReader(ctx context.Context, reader fileDeliveryReader, fileIDs []string) (map[string]*managev1.GetMediaDeliveryResponse, error) {
 	if len(fileIDs) == 0 {
 		return map[string]*managev1.GetMediaDeliveryResponse{}, nil
 	}
 	var files []storedFileDeliveryRow
-	if err := s.units.Read(ctx, func(store Store) error {
+	if err := reader.Read(ctx, func(store Store) error {
 		var err error
 		files, err = store.StoredFileDeliveries(ctx, fileIDs, true)
 		return err
@@ -188,7 +191,7 @@ func (s *Service) loadFileURLResponses(
 		resolvedFileIDs = append(resolvedFileIDs, f.ID)
 	}
 
-	derivatives, err := s.loadStoredDerivativeDeliveries(ctx, resolvedFileIDs)
+	derivatives, err := s.loadStoredDerivativeDeliveries(ctx, reader, resolvedFileIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query file derivatives: %w", err)
 	}
@@ -210,11 +213,11 @@ func (s *Service) loadFileURLResponses(
 			meshFileIDs = append(meshFileIDs, file.ID)
 		}
 	}
-	imageAssets, err := mediaasset.ReferenceMapResultProto(s.sourceAssetReferences(ctx, "image", imageFileIDs))
+	imageAssets, err := mediaasset.ReferenceMapResultProto(s.sourceAssetReferencesWithReader(ctx, reader, "image", imageFileIDs))
 	if err != nil {
 		return nil, err
 	}
-	meshAssets, err := mediaasset.ReferenceMapResultProto(s.sourceAssetReferences(ctx, "mesh", meshFileIDs))
+	meshAssets, err := mediaasset.ReferenceMapResultProto(s.sourceAssetReferencesWithReader(ctx, reader, "mesh", meshFileIDs))
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +267,7 @@ func (s *Service) loadFileURLResponses(
 		deliveries[fileID] = response.GetDelivery()
 	}
 
-	if err := s.populateFileProcessingStatus(ctx, deliveries); err != nil {
+	if err := s.populateFileProcessingStatusWithReader(ctx, reader, deliveries); err != nil {
 		slog.ErrorContext(ctx, "Failed to populate bulk file processing status", failurecause.Attr(err), "fileCount", len(result))
 	}
 
@@ -286,13 +289,14 @@ func (s *Service) getFileUrlsForID(ctx context.Context, fileID string) (*managev
 
 func (s *Service) loadStoredDerivativeDeliveries(
 	ctx context.Context,
+	reader fileDeliveryReader,
 	fileIDs []string,
 ) ([]storedDerivativeDeliveryRow, error) {
 	if len(fileIDs) == 0 {
 		return nil, nil
 	}
 	var rows []storedDerivativeDeliveryRow
-	err := s.units.Read(ctx, func(store Store) error {
+	err := reader.Read(ctx, func(store Store) error {
 		var err error
 		rows, err = store.StoredDerivativeDeliveries(ctx, fileIDs)
 		return err
@@ -483,15 +487,24 @@ func (s *Service) effectiveDownloadTTL() time.Duration {
 	return mediaauth.DownloadTTL
 }
 
-func (s *Service) sourceAssetReferences(ctx context.Context, kind string, ids []string) (map[string]*mediaasset.Reference, error) {
+func (s *Service) sourceAssetReferencesWithReader(ctx context.Context, reader fileDeliveryReader, kind string, ids []string) (map[string]*mediaasset.Reference, error) {
 	if len(ids) == 0 {
 		return map[string]*mediaasset.Reference{}, nil
 	}
 	var refs map[string]*mediaasset.Reference
-	err := s.units.Read(ctx, func(store Store) error {
+	err := reader.Read(ctx, func(store Store) error {
 		var err error
 		refs, err = store.SourceAssetReferences(ctx, s.cdnDomain, kind, ids)
 		return err
 	})
 	return refs, err
+}
+
+type fileDeliveryReader interface {
+	Read(context.Context, func(Store) error) error
+}
+type boundDeliveryReader struct{ Store }
+
+func (r boundDeliveryReader) Read(_ context.Context, read func(Store) error) error {
+	return read(r.Store)
 }

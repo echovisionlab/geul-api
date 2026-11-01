@@ -14,7 +14,10 @@ import (
 func TestFakeCatalogStoreContract(t *testing.T) {
 	RunCatalogContract(t, func(t *testing.T) CatalogHarness {
 		s := NewLibraryStore()
-		return CatalogHarness{SeedPolicy: func(_ *testing.T, r domain.PolicyRelation, ids []string) {
+		return CatalogHarness{SeedScoped: func(_ *testing.T, kind, id string, owner ScopedOwner, attachment domain.ScopedAttachment) {
+			s.ScopedOwners[kind+":"+id] = owner
+			s.ScopedAttachments = append(s.ScopedAttachments, ScopedAttachmentRecord{OwnerKind: kind, OwnerID: id, DocumentID: owner.DocumentID, Attachment: attachment})
+		}, SeedPolicy: func(_ *testing.T, r domain.PolicyRelation, ids []string) {
 			s.Policies[PolicyKey(r.Selector)] = PolicyRecord{Relation: r, SegmentIDs: ids}
 		}, SeedSegment: func(_ *testing.T, segment domain.PolicySegment) { s.Segments[segment.ID] = segment }, Audit: s.AuditRecorder(), Harness: mutationtest.FakeHarness[domain.Store](s), SeedAssetBinding: func(t *testing.T, asset, id string) {
 			require.NoError(t, s.MediaAssets.InsertBinding(t.Context(), mediaasset.AssetBinding{AssetID: asset, SourceFileID: &id, OwnerType: "post", OwnerID: "owner", BindingKey: "featured_image"}))
