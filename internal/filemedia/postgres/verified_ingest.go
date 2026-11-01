@@ -88,3 +88,13 @@ func ingestOwnerTable(kind string) (string, bool) {
 		return "", false
 	}
 }
+
+func (s *store) UploadOwnerExists(ctx context.Context, kind, id string) (bool, error) {
+	table, ok := ingestOwnerTable(kind)
+	if !ok {
+		return false, nil
+	}
+	var count int64
+	err := s.tx.WithContext(ctx).Table(table).Where("id = ?", id).Count(&count).Error
+	return count != 0, err
+}

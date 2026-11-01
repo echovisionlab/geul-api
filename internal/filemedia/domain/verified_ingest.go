@@ -13,4 +13,5 @@ type VerifiedIngestStore interface {
 	InsertIngestFile(context.Context, File) error
 	InsertIngestBinding(context.Context, IngestBinding, bool) error
 	LockIngestOwner(context.Context, string, string) error
+	UploadOwnerExists(context.Context, string, string) (bool, error)
 }

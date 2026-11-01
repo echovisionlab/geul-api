@@ -167,3 +167,7 @@ func ExportCreateVerifiedFile(s *Service, ctx context.Context, file File, upload
 	}
 	return s.createVerifiedFileIngestRecord(ctx, fileIngestRecord{id: file.ID, fileName: file.FileName, mimeType: file.MimeType, fileSize: file.FileSize, extension: file.Extension, sha256: file.SHA256, ingestSlotID: derefString(file.IngestSlotID), ingestAttemptID: derefString(file.IngestAttemptID)}, managev1.UploadType(uploadType), managev1.TranscodeEntityType(entityType), entityID, authority)
 }
+
+func ExportArtifactWritable(s *Service, ctx context.Context, row domain.UploadSession) (bool, error) {
+	return s.clientMediaArtifactWritable(ctx, uploadSessionFromStore(row))
+}

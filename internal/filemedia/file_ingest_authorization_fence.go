@@ -161,8 +161,6 @@ func requireFreshFileIngestAuthority(
 	if principal == nil || !principal.Authenticated {
 		return domainerr.AuthenticationRequired()
 	}
-	txService := *service
-	txService.db = tx
 	storedEntityType := ""
 	if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
 		storedEntityType = entityType.String()
@@ -171,7 +169,13 @@ func requireFreshFileIngestAuthority(
 	if storedEntityType != "" {
 		session.EntityType = &storedEntityType
 	}
-	target, resolvedEntityID, err := txService.resolvePartUploadPermissionTarget(ctx, uploadType, session)
+	target, resolvedEntityID, err := resolvePartUploadPermissionTargetUsing(ctx, uploadType, session, func(ctx context.Context, id string) (string, error) {
+		var track struct {
+			ReleaseID string `gorm:"column:release_id"`
+		}
+		err := tx.WithContext(ctx).Table("track").Select("release_id").Where("id = ?", id).First(&track).Error
+		return track.ReleaseID, err
+	})
 	if err != nil {
 		return connectUploadPermissionValidationError(err)
 	}
@@ -193,7 +197,7 @@ func requireFreshFileIngestAuthority(
 	if !active {
 		return domainerr.Denied("File ingest authority was revoked")
 	}
-	if err := txService.checkRoleAndSpiceDBUploadPermission(
+	if err := service.checkRoleAndSpiceDBUploadPermission(
 		ctx,
 		target,
 		resolvedEntityID,

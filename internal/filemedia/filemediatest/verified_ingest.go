@@ -96,3 +96,16 @@ func (s *LibraryStore) LockIngestOwner(_ context.Context, kind, id string) error
 	}
 	return domainerr.ResourceNotFound(kind, id)
 }
+
+func (s *LibraryStore) UploadOwnerExists(_ context.Context, kind, id string) (bool, error) {
+	if s.Fail != nil {
+		return false, s.Fail
+	}
+	if _, ok := s.ScopedOwners[kind+":"+id]; ok {
+		return true, nil
+	}
+	if _, ok := s.DeliveryOwners[kind+"\x00"+id]; ok {
+		return true, nil
+	}
+	return false, nil
+}

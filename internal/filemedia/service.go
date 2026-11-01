@@ -81,6 +81,7 @@ func (d Deps) validate() error {
 // other domains call. Connect and MCP adapters translate their requests into
 // its commands and queries.
 type Service struct {
+	uploadReads               fileStoreReader
 	units                     mutation.UnitOfWork[Store]
 	storeMutations            *mutation.StoreRunner[Store]
 	db                        *gorm.DB

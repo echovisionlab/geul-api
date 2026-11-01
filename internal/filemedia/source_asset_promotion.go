@@ -282,7 +282,7 @@ func prepareSourceAssetPromotion(
 
 func loadSourceAssetPromotion(
 	ctx context.Context,
-	reader fileDeliveryReader,
+	reader fileStoreReader,
 	file File,
 	kind string,
 ) (*mediaasset.Asset, *mediaasset.WriteTarget, bool, error) {
@@ -310,7 +310,7 @@ func loadSourceAssetPromotion(
 
 func recoverSourceAssetPromotionAllocation(
 	ctx context.Context,
-	reader fileDeliveryReader,
+	reader fileStoreReader,
 	file File,
 	kind string,
 	commitErr error,
@@ -468,7 +468,7 @@ func (s *Service) completeSourceAssetPromotion(
 
 func recoverSourceAssetPromotionCompletion(
 	ctx context.Context,
-	reader fileDeliveryReader,
+	reader fileStoreReader,
 	sourceFileID string,
 	assetID string,
 	fileSize int64,
