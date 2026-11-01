@@ -148,3 +148,9 @@ func (u *UnitOfWork[S]) ReadLocked(_ context.Context, read func(S) error) error 
 	defer u.begin()()
 	return read(u.store)
 }
+
+// ReadCurrent implements mutation.UnitOfWork; the fake takes no lock.
+func (u *UnitOfWork[S]) ReadCurrent(_ context.Context, read func(S) error) error {
+	defer u.begin()()
+	return read(u.store)
+}
