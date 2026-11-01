@@ -17,6 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 const (
@@ -370,12 +371,18 @@ func (s commentReader) readCommentReplies(ctx context.Context, request LoadMoreR
 }
 
 // commentMutation runs change, which a comment's author or a Post manager
-// may make; the comment is read back for the response.
-func (s *CommentService) commentMutation(ctx context.Context, access mutation.Access, change func(context.Context, Store) (Comment, error)) (Comment, error) {
+// may make, and audits operation on the changed comment as a change of its
+// Post's comments by the request's member; the comment is read back for the
+// response.
+func (s *CommentService) commentMutation(ctx context.Context, access mutation.Access, operation sharedtelemetry.AuditItemOperation, change func(context.Context, Store) (Comment, error)) (Comment, error) {
 	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[Comment, Store]{
 		Access: access,
 		Change: change,
-		Audit:  func(Comment) mutation.Audit { return mutation.Unchanged() },
+		Audit: func(comment Comment) mutation.Audit {
+			return mutation.RequestAudit(sharedtelemetry.AuditPostUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+				return sharedtelemetry.NewPostCommentAuditRecord(metadata, comment.PostID, comment.ID, operation)
+			})
+		},
 	})
 }
 
@@ -394,7 +401,7 @@ func (s *CommentService) CreateComment(ctx context.Context, command CreateCommen
 		}
 		return requireActiveCommentPrincipal(lockActive, user)
 	})
-	created, err := s.commentMutation(ctx, access, func(ctx context.Context, store Store) (Comment, error) {
+	created, err := s.commentMutation(ctx, access, sharedtelemetry.AuditItemOperationCreated, func(ctx context.Context, store Store) (Comment, error) {
 		return createComment(ctx, store, user, command)
 	})
 	if err != nil {
@@ -538,7 +545,7 @@ func (s *CommentService) UpdateComment(ctx context.Context, command UpdateCommen
 	var result Comment
 	_, err := s.commentMutation(ctx, mutation.Fenced(func(_ context.Context, _ Store, lockActive func(*auth.UserInfo) (bool, error)) error {
 		return requireActiveCommentPrincipal(lockActive, user)
-	}), func(ctx context.Context, store Store) (Comment, error) {
+	}), sharedtelemetry.AuditItemOperationUpdated, func(ctx context.Context, store Store) (Comment, error) {
 		comment, err := lockComment(ctx, store, command.ID)
 		if err != nil {
 			return comment, err
@@ -619,7 +626,7 @@ func (s *CommentService) DeleteComment(ctx context.Context, command DeleteCommen
 		}, comment.PostID, postStatus, policyv1.Post.Manage)
 		return err
 	})
-	_, err := s.commentMutation(ctx, access, func(ctx context.Context, store Store) (Comment, error) {
+	_, err := s.commentMutation(ctx, access, sharedtelemetry.AuditItemOperationDeleted, func(ctx context.Context, store Store) (Comment, error) {
 		return comment, store.SoftDeleteComment(ctx, comment, deletedCommentContent)
 	})
 	return err

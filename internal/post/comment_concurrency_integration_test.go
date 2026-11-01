@@ -14,7 +14,6 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -312,13 +311,10 @@ func tombstoneMemberForAuthorityRace(tx *gorm.DB, memberID string) error {
 	`, memberID).Error
 }
 
+// commentIntegrationUserContext is the request of userID's onboarded
+// Member, which comment audits name as their actor.
 func commentIntegrationUserContext(userID string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
-		IdentityID:    auth.IdentityID(userID),
-		MemberID:      auth.MemberID(testutil.PostIntegrationMemberID(userID)),
-		SessionID:     auth.SessionID(testutil.PostIntegrationUUID()),
-		Authenticated: true,
-	})
+	return testutil.PostIntegrationContext(userID)
 }
 
 func requireCallStillWaiting(t *testing.T, result <-chan error) {
