@@ -153,3 +153,17 @@ func ExportClientBundleFixture(t *testing.T, kind string) (domain.UploadSession,
 	}
 	return uploadSessionToStore(row), command, plan.MemberID
 }
+
+func ExportIngestChecker(s *Service, checker *auth.SpiceDBClient) { s.spiceDB = checker }
+
+func ExportCreateVerifiedFile(s *Service, ctx context.Context, file File, uploadType, entityType int32, entityID string, session *domain.UploadSession) error {
+	var authority verifiedFileIngestAuthority = requestFileIngestAuthority{}
+	if session != nil {
+		var err error
+		authority, err = newMultipartFileIngestAuthority(uploadSessionFromStore(*session))
+		if err != nil {
+			return err
+		}
+	}
+	return s.createVerifiedFileIngestRecord(ctx, fileIngestRecord{id: file.ID, fileName: file.FileName, mimeType: file.MimeType, fileSize: file.FileSize, extension: file.Extension, sha256: file.SHA256, ingestSlotID: derefString(file.IngestSlotID), ingestAttemptID: derefString(file.IngestAttemptID)}, managev1.UploadType(uploadType), managev1.TranscodeEntityType(entityType), entityID, authority)
+}

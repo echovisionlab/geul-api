@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -155,6 +156,10 @@ func (s *Service) resolvePartUploadPermissionTarget(
 	uploadType managev1.UploadType,
 	session model.UploadSession,
 ) (uploadPermissionTarget, string, error) {
+	return resolvePartUploadPermissionTargetUsing(ctx, uploadType, session, s.resolveTrackReleaseID)
+}
+
+func resolvePartUploadPermissionTargetUsing(ctx context.Context, uploadType managev1.UploadType, session model.UploadSession, lookup func(context.Context, string) (string, error)) (uploadPermissionTarget, string, error) {
 	entityType := ""
 	if session.EntityType != nil {
 		entityType = *session.EntityType
@@ -170,8 +175,8 @@ func (s *Service) resolvePartUploadPermissionTarget(
 	if uploadType != managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO {
 		return target, entityID, nil
 	}
-	releaseID, err := s.resolveTrackReleaseID(ctx, session.EntityID)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	releaseID, err := lookup(ctx, session.EntityID)
+	if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, domain.ErrUploadTrackNotFound) {
 		return target, "", fmt.Errorf("track not found")
 	}
 	if err != nil {

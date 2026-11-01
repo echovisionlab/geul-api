@@ -1,16 +1,12 @@
 package filemedia
 
 import (
-	"context"
-
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
 )
 
-func appendFileCreatedAudit(ctx context.Context, tx *gorm.DB, writer domainaudit.Appender, id string) error {
-	return domainaudit.AppendOptionalRequest(ctx, tx, writer, sharedtelemetry.AuditFileCreated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+func fileCreatedAudit(id string) mutation.Audit {
+	return mutation.RequestAudit(sharedtelemetry.AuditFileCreated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 		return sharedtelemetry.NewFileCreatedAuditRecord(m, id)
 	})
 }

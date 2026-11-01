@@ -497,6 +497,9 @@ func RunCatalogContract(t *testing.T, open func(*testing.T) CatalogHarness) {
 	for name, run := range ingestReceiptCases() {
 		cases[name] = run
 	}
+	for name, run := range verifiedIngestCases() {
+		cases[name] = run
+	}
 	for name, run := range reuseContractCases() {
 		cases[name] = run
 	}

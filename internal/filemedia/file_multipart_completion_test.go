@@ -8,7 +8,6 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -93,13 +92,5 @@ func TestCompletedMultipartFileRecordProjectsMetadata(t *testing.T) {
 		SlotID:       &slotID,
 		AttemptID:    &attemptID,
 	}
-	require.Equal(t, structured.Fields{
-		"extension":         "png",
-		"id":                "file-1",
-		"file_name":         "email-logo",
-		"mime_type":         "image/png",
-		"file_size":         int64(512),
-		"ingest_slot_id":    siteLogoSlotEmailLight,
-		"ingest_attempt_id": "attempt-1",
-	}, completedMultipartFileRecord(session).columns())
+	require.Equal(t, File{ID: "file-1", FileName: "email-logo", MimeType: "image/png", FileSize: 512, Extension: "png", IngestSlotID: &slotID, IngestAttemptID: &attemptID}, completedMultipartFileRecord(session).file())
 }
