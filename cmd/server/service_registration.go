@@ -46,6 +46,7 @@ import (
 	translationadapter "github.com/echovisionlab/geul-api/internal/adapters/translation"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/admin"
+	adminpostgres "github.com/echovisionlab/geul-api/internal/admin/postgres"
 	"github.com/echovisionlab/geul-api/internal/ai"
 	"github.com/echovisionlab/geul-api/internal/aieditor"
 	"github.com/echovisionlab/geul-api/internal/audience"
@@ -796,10 +797,14 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		ogadapter.NewAuthorization(spicedbClient),
 		labeladapter.NewGlobalReconciler(),
 	)
-	adminService, err := admin.NewService(admin.Deps{
-		DB: db, SpiceDB: spicedbClient, Members: memberadapter.DashboardMembers{}, Posts: postadapter.DashboardPosts{},
+	adminUnits, err := adminpostgres.NewUnits(db, adminpostgres.Ports{
+		Members: memberadapter.DashboardMembers{}, Posts: postadapter.DashboardPosts{},
 		Pages: pageadapter.DashboardPages{}, Campaigns: campaignadapter.DashboardCampaigns{},
 	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize admin store: %w", err)
+	}
+	adminService, err := admin.NewService(admin.Deps{Units: adminUnits, SpiceDB: spicedbClient})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize admin service: %w", err)
 	}

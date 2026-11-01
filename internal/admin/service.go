@@ -3,49 +3,27 @@ package admin
 import (
 	"context"
 	"errors"
-	"math"
 	"slices"
 	"strings"
-
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-// safeInt32 safely converts int64 to int32 with overflow protection.
-// Returns math.MaxInt32 if the value exceeds int32 range.
-func safeInt32(n int64) int32 {
-	if n > math.MaxInt32 {
-		return math.MaxInt32
-	}
-	if n < math.MinInt32 {
-		return math.MinInt32
-	}
-	return int32(n)
-}
-
-// Deps are the collaborators of the Admin dashboard use case. Every field is
-// required; NewService rejects a missing one.
+// Deps are the collaborators of the Admin dashboard use case. Both are
+// required; NewService rejects a missing one. The dashboard only reads, so
+// it takes no identity fence or audit appender.
 type Deps struct {
-	DB        *gorm.DB
-	SpiceDB   *auth.SpiceDBClient
-	Members   Members
-	Posts     Posts
-	Pages     Pages
-	Campaigns Campaigns
+	Units   mutation.UnitOfWork[Store] // adminpostgres.NewUnits(db, ports)
+	SpiceDB authz.AuthorizationDecisionChecker
 }
 
 func (d Deps) validate() error {
 	var missing []string
-	for name, absent := range map[string]bool{
-		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Members": d.Members == nil,
-		"Posts": d.Posts == nil, "Pages": d.Pages == nil, "Campaigns": d.Campaigns == nil,
-	} {
+	for name, absent := range map[string]bool{"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil} {
 		if absent {
 			missing = append(missing, name)
 		}
@@ -59,12 +37,8 @@ func (d Deps) validate() error {
 
 // Service holds the Admin dashboard use case.
 type Service struct {
-	db        *gorm.DB
-	spiceDB   *auth.SpiceDBClient
-	members   Members
-	posts     Posts
-	pages     Pages
-	campaigns Campaigns
+	units   mutation.UnitOfWork[Store]
+	spiceDB authz.AuthorizationDecisionChecker
 }
 
 // NewService validates deps and returns the Admin use cases.
@@ -72,15 +46,12 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	return &Service{
-		db: deps.DB, spiceDB: deps.SpiceDB, members: deps.Members,
-		posts: deps.Posts, pages: deps.Pages, campaigns: deps.Campaigns,
-	}, nil
+	return &Service{units: deps.Units, spiceDB: deps.SpiceDB}, nil
 }
 
 // checkAdminAccess validates that the user has admin access.
 // Returns an error if the user is not an admin or is banned.
-func checkAdminAccess(ctx context.Context, spiceDB *auth.SpiceDBClient) error {
+func checkAdminAccess(ctx context.Context, spiceDB authz.AuthorizationDecisionChecker) error {
 	user := auth.GetUser(ctx)
 	if user == nil || user.Banned {
 		return domainerr.AdminRequired()
@@ -94,37 +65,31 @@ func checkAdminAccess(ctx context.Context, spiceDB *auth.SpiceDBClient) error {
 
 // DashboardStats returns aggregate statistics for the admin dashboard, read
 // from one snapshot.
-func (s *Service) DashboardStats(ctx context.Context) (*managev1.DashboardStats, error) {
+func (s *Service) DashboardStats(ctx context.Context) (DashboardStats, error) {
 	if err := checkAdminAccess(ctx, s.spiceDB); err != nil {
-		return nil, err
+		return DashboardStats{}, err
 	}
-	var members, posts, pages, comments, campaigns int64
-	err := mutation.Read(ctx, s.db, func(tx *gorm.DB) error {
+	var stats DashboardStats
+	err := s.units.Read(ctx, func(store Store) error {
 		for _, count := range []struct {
 			into  *int64
-			count func(context.Context, *gorm.DB) (int64, error)
+			count func(context.Context) (int64, error)
 		}{
-			{&members, s.members.CountActive},
-			{&posts, s.posts.CountPosts},
-			{&pages, s.pages.CountPages},
-			{&comments, s.posts.CountComments},
-			{&campaigns, s.campaigns.CountCampaigns},
+			{&stats.Members, store.CountActiveMembers},
+			{&stats.Posts, store.CountPosts},
+			{&stats.Pages, store.CountPages},
+			{&stats.Comments, store.CountComments},
+			{&stats.Campaigns, store.CountCampaigns},
 		} {
 			var err error
-			if *count.into, err = count.count(ctx, tx); err != nil {
+			if *count.into, err = count.count(ctx); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return DashboardStats{}, err
 	}
-	return &managev1.DashboardStats{
-		TotalMembers:   safeInt32(members),
-		TotalPosts:     safeInt32(posts),
-		TotalPages:     safeInt32(pages),
-		TotalComments:  safeInt32(comments),
-		TotalCampaigns: safeInt32(campaigns),
-	}, nil
+	return stats, nil
 }

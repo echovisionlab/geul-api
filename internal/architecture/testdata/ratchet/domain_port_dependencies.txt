@@ -1,9 +1,6 @@
 # <count> <domain package> <category>: files importing gorm, a SQL driver,
 # internal/model or generated contracts outside connect_handler*.go, and
 # references to auth.SpiceDBClient and kratos.* tables. Lower only.
-1 internal/admin generated contracts
-2 internal/admin gorm
-3 internal/admin spicedb client
 5 internal/ai generated contracts
 6 internal/ai gorm
 7 internal/ai spicedb client
