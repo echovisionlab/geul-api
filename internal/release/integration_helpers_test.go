@@ -9,42 +9,29 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
-	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
-	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
-
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 
-	referencecatalogmenuadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog/menu"
 	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
+	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
-
-const maxReleaseCascadeAuthorizationTracks = 999
-
-var errNilTransactionalExecutor = errors.New("transactional fixture executor is required")
 
 func TestMain(m *testing.M) {
 	flag.Parse()
@@ -147,134 +134,20 @@ func (releaseIntegrationTranscoderPublisher) PublishWaveformCancel(context.Conte
 	return nil
 }
 
-type noopAsyncPublisher struct{}
-
-func (noopAsyncPublisher) EnqueueProtobuf(context.Context, string, string, proto.Message) error {
-	return nil
-}
-
-func (noopAsyncPublisher) NotifyProtobuf(context.Context, string, proto.Message) error {
-	return nil
-}
-
-func (noopAsyncPublisher) EnqueueProtobufWithExecutor(
-	_ context.Context,
-	executor eventpkg.DBTX,
-	_ string,
-	_ string,
-	_ proto.Message,
-) error {
-	if executor == nil {
-		return errNilTransactionalExecutor
-	}
-	return nil
-}
-
-type recordingArtistFileDeleter struct{ deletedIDs []string }
-
-func (d *recordingArtistFileDeleter) DeleteFileByID(_ context.Context, fileID string) error {
-	d.deletedIDs = append(d.deletedIDs, fileID)
-	return nil
-}
-
-func (*recordingArtistFileDeleter) CleanupTrackUploadSessions(context.Context, string, string) error {
-	return nil
-}
-
-func (*recordingArtistFileDeleter) RequireNoTrackUploadSessionsWithDB(context.Context, *gorm.DB, string) error {
-	return nil
-}
-
-type recordingTrackFileDeleter struct{ deleted []string }
-
-func (d *recordingTrackFileDeleter) DeleteFileByID(_ context.Context, fileID string) error {
-	d.deleted = append(d.deleted, fileID)
-	return nil
-}
-
-func (*recordingTrackFileDeleter) CleanupTrackUploadSessions(context.Context, string, string) error {
-	return nil
-}
-
-func (*recordingTrackFileDeleter) RequireNoTrackUploadSessionsWithDB(context.Context, *gorm.DB, string) error {
-	return nil
-}
-
-// newReleaseIntegrationService returns the Release RPCs of a Service whose
-// audit records stay in memory, with adminID a global administrator.
-func newReleaseIntegrationService(
-	t *testing.T,
-	db *gorm.DB,
-	adminID string,
-	files releasepkg.TrackFileManager,
-) *releasepkg.ConnectHandler {
-	t.Helper()
-	spiceDB := integrationSpiceDB(t)
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	return releasepkg.NewConnectHandler(newReleaseIntegrationUseCases(t, db, spiceDB, files, &audittest.Recorder{}))
-}
-
 // newReleaseIntegrationUseCases returns the Release use cases with test Track
 // files and audit.
 func newReleaseIntegrationUseCases(
 	t *testing.T,
 	db *gorm.DB,
 	spiceDB *auth.SpiceDBClient,
-	files releasepkg.TrackFileManager,
 	audit domainaudit.Appender,
 ) *releasepkg.Service {
 	t.Helper()
-	return releasetest.NewService(t, releasepkg.Deps{
-		DB: db, SpiceDB: spiceDB, Audit: audit, ContentBlocks: newPageIntegrationContentBlockStore(t, spiceDB),
-		ContentSignals: noopAsyncPublisher{}, TrackFiles: releaseadapter.NewTrackFiles(files),
+	return releasetest.NewService(t, releasetest.Deps{
+		DB: db, SpiceDB: spiceDB, Audit: audit,
+		Ports:        releasepostgres.Ports{ContentBlocks: newPageIntegrationContentBlockStore(t, spiceDB)},
 		WaveformJobs: releaseadapter.NewWaveformJobs(db, releaseIntegrationTranscoderPublisher{}),
 	})
-}
-
-// newReferenceCatalog builds the Reference Catalog use cases that seed
-// Release references, with in-memory audit; call them with
-// withAuditedRequestContext.
-func newReferenceCatalog(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *referencecatalog.Service {
-	t.Helper()
-	catalog, err := referencecatalog.NewService(referencecatalog.Deps{
-		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{},
-		Assets:      referencecatalogadapter.NewAssets(""),
-		Members:     referencecatalogadapter.NewMemberSummaries(""),
-		MenuTargets: referencecatalogmenuadapter.NewTargets(nil),
-		ClientWorks: workadapter.ClientWorks{},
-	})
-	require.NoError(t, err)
-	return catalog
-}
-
-func newReferenceCategoryService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *referencecatalog.CategoryConnectHandler {
-	return referencecatalog.NewCategoryConnectHandler(newReferenceCatalog(t, db, spiceDB))
-}
-
-func newReferenceGenreService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *referencecatalog.GenreConnectHandler {
-	return referencecatalog.NewGenreConnectHandler(newReferenceCatalog(t, db, spiceDB))
-}
-
-func newReferenceStyleService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *referencecatalog.StyleConnectHandler {
-	return referencecatalog.NewStyleConnectHandler(newReferenceCatalog(t, db, spiceDB))
-}
-
-func referenceShortSuffix() string {
-	return strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
-}
-
-func requireRelationWhereCount(t *testing.T, db *gorm.DB, tableName, where string, want int64, args ...any) {
-	t.Helper()
-	var count int64
-	require.NoError(t, db.Raw(`SELECT COUNT(*) FROM `+tableName+` WHERE `+where, args...).Scan(&count).Error)
-	require.Equal(t, want, count)
-}
-
-func requireNoMapping(t *testing.T, db *gorm.DB, tableName, columnName, value string) {
-	t.Helper()
-	var count int64
-	require.NoError(t, db.Raw(`SELECT COUNT(*) FROM `+tableName+` WHERE `+columnName+` = ?`, value).Scan(&count).Error)
-	require.Zero(t, count)
 }
 
 func seedFileDeleteLifecycleFile(t *testing.T, db *gorm.DB, fileID, fileName, mimeType, extension string) {
@@ -335,31 +208,6 @@ func requireFileRowExists(t *testing.T, db *gorm.DB, fileID string) {
 	require.EqualValues(t, 1, count)
 }
 
-func requireNoRow(t *testing.T, db *gorm.DB, tableName, id string) {
-	t.Helper()
-	var count int64
-	require.NoError(t, db.Table(tableName).Where("id = ?", id).Count(&count).Error)
-	require.Zero(t, count)
-}
-
-func requireNoShareLinks(t *testing.T, db *gorm.DB, entityType, entityID string) {
-	t.Helper()
-	var count int64
-	require.NoError(t, db.Raw(
-		`SELECT COUNT(*) FROM share_link WHERE entity_type = ? AND entity_id = ?`,
-		entityType,
-		entityID,
-	).Scan(&count).Error)
-	require.Zero(t, count)
-}
-
-func requireNoReleaseTranslationRows(t *testing.T, db *gorm.DB, releaseID string) {
-	t.Helper()
-	var count int64
-	require.NoError(t, db.Raw(`SELECT COUNT(*) FROM release_translation WHERE entity_id = ?`, releaseID).Scan(&count).Error)
-	require.Zero(t, count)
-}
-
 type releaseFailingAuditAppender struct{}
 
 func (releaseFailingAuditAppender) AppendDomainAuditInTransaction(
@@ -371,12 +219,3 @@ func (releaseFailingAuditAppender) AppendDomainAuditInTransaction(
 }
 
 func stringPtr(value string) *string { return &value }
-
-func (publisher noopAsyncPublisher) NotifyProtobufWithExecutor(
-	ctx context.Context,
-	_ eventpkg.DBTX,
-	signal string,
-	message proto.Message,
-) error {
-	return publisher.NotifyProtobuf(ctx, signal, message)
-}

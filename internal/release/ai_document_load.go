@@ -5,14 +5,10 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 )
 
@@ -38,64 +34,50 @@ func (s *Service) LoadAIDocumentState(ctx context.Context, query AIDocumentState
 		return AIDocumentState{}, authenticationRequired()
 	}
 	var state AIDocumentState
-	err = mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
-		root, err := loadReleaseAIDocumentRoot(ctx, tx, id.String(), "KEY SHARE")
+	err = s.units.ReadLocked(ctx, func(store Store) error {
+		root, err := loadReleaseAIDocumentRoot(ctx, store, id.String(), KeyShareLock)
 		if err != nil {
 			return err
 		}
 		if err := requireReleaseAction(ctx, s.spiceDB, id.String(), releaseActionView); err != nil {
 			return err
 		}
-		state, err = s.loadAIDocumentStateAfterAuthorization(
-			ctx, tx, root, locale, principal.MemberID.String(),
+		state, err = loadAIDocumentStateAfterAuthorization(
+			ctx, store, root, locale, principal.MemberID.String(),
 		)
 		return err
 	})
 	return state, err
 }
 
-type releaseAIDocumentRoot struct {
-	ID           string              `gorm:"column:id"`
-	Status       model.ReleaseStatus `gorm:"column:status"`
-	SourceLocale string              `gorm:"column:source_locale"`
-	DocumentID   *uuid.UUID          `gorm:"column:content_document_id"`
-}
-
 func loadReleaseAIDocumentRoot(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	releaseID string,
-	lock string,
-) (releaseAIDocumentRoot, error) {
-	query := tx.WithContext(ctx).
-		Table("release").
-		Select("id::text AS id", "status", "source_locale", "content_document_id").
-		Where("id = ?::uuid", releaseID)
-	if lock != "" {
-		query = query.Clauses(clause.Locking{Strength: lock})
-	}
-	var root releaseAIDocumentRoot
-	if err := query.Take(&root).Error; err != nil {
-		return releaseAIDocumentRoot{}, missingAs(err, releaseNotFound(releaseID))
+	lock RowLock,
+) (DocumentRoot, error) {
+	root, err := store.DocumentRoot(ctx, releaseID, lock)
+	if err != nil {
+		return DocumentRoot{}, releaseMissingAs(err, releaseNotFound(releaseID))
 	}
 	if root.DocumentID == nil || *root.DocumentID == uuid.Nil {
-		return releaseAIDocumentRoot{}, domainerr.Precondition("Release content document is not initialized")
+		return DocumentRoot{}, domainerr.Precondition("Release content document is not initialized")
 	}
 	if !knownReleaseLifecycle(root.Status) {
-		return releaseAIDocumentRoot{}, errors.New("Release has an unsupported lifecycle status")
+		return DocumentRoot{}, errors.New("Release has an unsupported lifecycle status")
 	}
 	return root, nil
 }
 
-func (s *Service) loadAIDocumentStateAfterAuthorization(
+func loadAIDocumentStateAfterAuthorization(
 	ctx context.Context,
-	tx *gorm.DB,
-	root releaseAIDocumentRoot,
+	store Store,
+	root DocumentRoot,
 	locale string,
 	viewerMemberID string,
 ) (AIDocumentState, error) {
 	target, err := loadReleaseTargetLocaleState(
-		ctx, tx, s.contentBlocks, root.ID, *root.DocumentID, locale, false,
+		ctx, store, root.ID, *root.DocumentID, locale, false,
 	)
 	if err != nil {
 		return AIDocumentState{}, err
@@ -111,7 +93,7 @@ func (s *Service) loadAIDocumentStateAfterAuthorization(
 	if !exists && targetlocale.SnapshotHasLocale(target.Snapshot, locale) {
 		return AIDocumentState{}, errors.New("Release locale overlay exists without translation metadata")
 	}
-	creditIDs, err := loadReleaseCreditIDs(ctx, tx, root.ID)
+	creditIDs, err := store.CreditIDs(ctx, root.ID)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
@@ -139,6 +121,6 @@ func (s *Service) loadAIDocumentStateAfterAuthorization(
 
 // knownReleaseLifecycle reports whether status is a lifecycle state an AI
 // document may read and edit; any other stored value is corrupt.
-func knownReleaseLifecycle(status model.ReleaseStatus) bool {
-	return status == model.ReleaseStatusDraft || status == model.ReleaseStatusPublished
+func knownReleaseLifecycle(status Status) bool {
+	return status == StatusDraft || status == StatusPublished
 }

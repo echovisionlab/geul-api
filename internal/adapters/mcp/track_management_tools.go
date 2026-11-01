@@ -29,12 +29,12 @@ var trackManagementTools = []mcpserver.Tool{
 }
 
 type TrackManagementApplication interface {
-	ListTracksByRelease(context.Context, releasedomain.ListTracksQuery) ([]*managev1.TrackWithCredits, error)
-	CreateTrack(context.Context, releasedomain.CreateTrackCommand) (*managev1.Track, error)
-	UpdateTrack(context.Context, releasedomain.UpdateTrackCommand) (*managev1.Track, error)
+	ListTracksByRelease(context.Context, releasedomain.ListTracksQuery) ([]releasedomain.TrackWithCredits, error)
+	CreateTrack(context.Context, releasedomain.CreateTrackCommand) (releasedomain.Track, error)
+	UpdateTrack(context.Context, releasedomain.UpdateTrackCommand) (releasedomain.Track, error)
 	DeleteTrack(context.Context, releasedomain.DeleteTrackCommand) error
-	SetTrackCredits(context.Context, releasedomain.SetTrackCreditsCommand) (*managev1.TrackWithCredits, error)
-	ReorderTracks(context.Context, releasedomain.ReorderTracksCommand) ([]*managev1.TrackWithCredits, error)
+	SetTrackCredits(context.Context, releasedomain.SetTrackCreditsCommand) (releasedomain.TrackWithCredits, error)
+	ReorderTracks(context.Context, releasedomain.ReorderTracksCommand) ([]releasedomain.TrackWithCredits, error)
 }
 
 type TrackManagementTools struct{ application TrackManagementApplication }
@@ -68,7 +68,7 @@ func (tools *TrackManagementTools) CallTool(ctx context.Context, _ mcpserver.Pri
 		if err != nil {
 			return expectedToolError(err)
 		}
-		return contentResult(trackListOutput(tracks))
+		return contentResult(trackListOutput(releasedomain.TracksWithCreditsMessage(ctx, tracks)))
 	case ToolTrackCreate:
 		return tools.create(ctx, arguments)
 	case ToolTrackSettingsUpdate:
@@ -123,7 +123,7 @@ func (tools *TrackManagementTools) create(ctx context.Context, arguments mcpserv
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(trackSettingsOutput(track))
+	return contentResult(trackSettingsOutput(releasedomain.TrackMessage(ctx, track)))
 }
 
 type trackSettingsArguments struct {
@@ -160,7 +160,7 @@ func (tools *TrackManagementTools) update(ctx context.Context, arguments mcpserv
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(trackSettingsOutput(track))
+	return contentResult(trackSettingsOutput(releasedomain.TrackMessage(ctx, track)))
 }
 
 type trackCreditsSnapshotArguments struct {
@@ -203,7 +203,7 @@ func (tools *TrackManagementTools) setCredits(ctx context.Context, arguments mcp
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(trackWithCreditsOutput(track))
+	return contentResult(trackWithCreditsOutput(releasedomain.TrackWithCreditsMessage(ctx, track)))
 }
 
 func (tools *TrackManagementTools) reorder(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -230,7 +230,7 @@ func (tools *TrackManagementTools) reorder(ctx context.Context, arguments mcpser
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(trackListOutput(tracks))
+	return contentResult(trackListOutput(releasedomain.TracksWithCreditsMessage(ctx, tracks)))
 }
 
 func trackSettingsOutput(track *managev1.Track) map[string]any {

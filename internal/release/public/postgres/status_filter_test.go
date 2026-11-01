@@ -1,4 +1,4 @@
-package public
+package releasepublicpostgres
 
 import (
 	"testing"
@@ -10,6 +10,6 @@ import (
 func TestReleasePublicStatusFilterAllowsPublishedOnly(t *testing.T) {
 	require.Equal(t, []string{
 		managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String(),
-	}, ReleaseFilterConfig.Fields["status"].EnumValues)
-	require.Empty(t, ReleaseFilterConfig.DefaultFilters)
+	}, releaseFilterConfig.Fields["status"].EnumValues)
+	require.Empty(t, releaseFilterConfig.DefaultFilters)
 }

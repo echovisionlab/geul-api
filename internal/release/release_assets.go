@@ -2,13 +2,9 @@ package release
 
 import (
 	"context"
-	"errors"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -39,15 +35,19 @@ func (s *Service) SetReleaseArtwork(ctx context.Context, command SetReleaseArtwo
 	if err := s.requireArtworkRelease(ctx, command.ReleaseID); err != nil {
 		return nil, err
 	}
-	var file model.File
-	if err := s.db.WithContext(ctx).First(&file, "id = ?", command.FileID).Error; err != nil {
-		return nil, missingAs(err, domainerr.ResourceNotFound("file", command.FileID))
+	var storedFileID string
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		storedFileID, err = store.FileID(ctx, command.FileID)
+		return err
+	}); err != nil {
+		return nil, missingAs(err, ErrFileNotFound, domainerr.ResourceNotFound("file", command.FileID))
 	}
-	change, err := mutation.Run(ctx, s.mutations, mutation.Spec[artworkChange]{
+	change, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[artworkChange, Store]{
 		Lock:   lockReleaseRow(command.ReleaseID, nil),
 		Access: s.releaseAccess(command.ReleaseID, releaseActionEdit),
-		Change: func(ctx context.Context, tx *gorm.DB) (artworkChange, error) {
-			return s.replaceReleaseArtwork(ctx, tx, command.ReleaseID, command.FileID, file.ID)
+		Change: func(ctx context.Context, store Store) (artworkChange, error) {
+			return replaceReleaseArtwork(ctx, store, command.ReleaseID, command.FileID, storedFileID)
 		},
 		Audit: func(change artworkChange) mutation.Audit {
 			return releaseArtworkAudit(command.ReleaseID, change.FileID, sharedtelemetry.AuditCollectionOperationAdded)
@@ -63,11 +63,11 @@ func (s *Service) DeleteReleaseArtwork(ctx context.Context, command DeleteReleas
 	if err := s.requireArtworkRelease(ctx, command.ReleaseID); err != nil {
 		return err
 	}
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[artworkChange]{
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[artworkChange, Store]{
 		Lock:   lockReleaseRow(command.ReleaseID, nil),
 		Access: s.releaseAccess(command.ReleaseID, releaseActionEdit),
-		Change: func(ctx context.Context, tx *gorm.DB) (artworkChange, error) {
-			return s.removeReleaseArtwork(ctx, tx, command.ReleaseID)
+		Change: func(ctx context.Context, store Store) (artworkChange, error) {
+			return removeReleaseArtwork(ctx, store, command.ReleaseID)
 		},
 		Audit: func(change artworkChange) mutation.Audit {
 			return releaseArtworkAudit(command.ReleaseID, change.FileID, sharedtelemetry.AuditCollectionOperationRemoved)
@@ -81,72 +81,70 @@ func (s *Service) DeleteReleaseArtwork(ctx context.Context, command DeleteReleas
 // File is looked up, and fails like a read when its content document cannot
 // be projected.
 func (s *Service) requireArtworkRelease(ctx context.Context, releaseID string) error {
-	var release model.Release
-	if err := s.db.WithContext(ctx).Select("id").First(&release, "id = ?", releaseID).Error; err != nil {
-		return missingAs(err, releaseNotFound(releaseID))
+	if err := s.units.Read(ctx, func(store Store) error {
+		return store.ReleaseExists(ctx, releaseID)
+	}); err != nil {
+		return releaseMissingAs(err, releaseNotFound(releaseID))
 	}
-	_, err := s.overlayReleaseSourceLocaleDocument(ctx, &release)
+	_, err := s.overlayReleaseSourceLocaleDocument(ctx, Release{ID: releaseID})
 	return err
 }
 
 // replaceReleaseArtwork attaches the requested File; storedFileID is the same
 // File as the File row reads it.
-func (s *Service) replaceReleaseArtwork(ctx context.Context, tx *gorm.DB, releaseID, fileID, storedFileID string) (artworkChange, error) {
-	if err := s.assets.LockAttachableFiles(ctx, tx, []string{fileID}); err != nil {
+func replaceReleaseArtwork(ctx context.Context, store Store, releaseID, fileID, storedFileID string) (artworkChange, error) {
+	if err := store.LockAttachableFiles(ctx, []string{fileID}); err != nil {
 		return artworkChange{}, err
 	}
-	var existing model.ReleaseFile
-	err := tx.Where("release_id = ?", releaseID).First(&existing).Error
-	if err == nil && existing.FileID == fileID {
-		return artworkChange{}, nil
-	}
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return artworkChange{}, err
-	}
-	if err := tx.Where("release_id = ?", releaseID).Delete(&model.ReleaseFile{}).Error; err != nil {
-		return artworkChange{}, err
-	}
-	if err := tx.Create(&model.ReleaseFile{ReleaseID: releaseID, FileID: fileID, SortOrder: 0}).Error; err != nil {
-		return artworkChange{}, err
-	}
-	if err := touchRelease(tx, releaseID); err != nil {
-		return artworkChange{}, err
-	}
-	asset, err := s.assets.BindArtwork(ctx, tx, storedFileID, releaseID)
+	existingFileID, exists, err := store.ArtworkFile(ctx, releaseID)
 	if err != nil {
 		return artworkChange{}, err
 	}
-	if err := s.og.CancelAndRelease(ctx, tx, releaseID); err != nil {
+	if exists && existingFileID == fileID {
+		return artworkChange{}, nil
+	}
+	if err := store.SetArtworkFile(ctx, releaseID, fileID); err != nil {
+		return artworkChange{}, err
+	}
+	if err := touchRelease(ctx, store, releaseID); err != nil {
+		return artworkChange{}, err
+	}
+	asset, err := store.BindArtwork(ctx, storedFileID, releaseID)
+	if err != nil {
+		return artworkChange{}, err
+	}
+	if err := store.CancelOG(ctx, releaseID); err != nil {
 		return artworkChange{}, err
 	}
 	return artworkChange{FileID: fileID, Asset: asset}, nil
 }
 
-func (s *Service) removeReleaseArtwork(ctx context.Context, tx *gorm.DB, releaseID string) (artworkChange, error) {
-	var existing model.ReleaseFile
-	if err := tx.Where("release_id = ?", releaseID).First(&existing).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+func removeReleaseArtwork(ctx context.Context, store Store, releaseID string) (artworkChange, error) {
+	existingFileID, exists, err := store.ArtworkFile(ctx, releaseID)
+	if err != nil {
+		return artworkChange{}, err
+	}
+	if !exists {
 		return artworkChange{}, nil
-	} else if err != nil {
+	}
+	if err := store.ClearArtworkFiles(ctx, releaseID); err != nil {
 		return artworkChange{}, err
 	}
-	if err := tx.Where("release_id = ?", releaseID).Delete(&model.ReleaseFile{}).Error; err != nil {
+	if err := touchRelease(ctx, store, releaseID); err != nil {
 		return artworkChange{}, err
 	}
-	if err := touchRelease(tx, releaseID); err != nil {
+	if err := store.ReleaseArtworkBinding(ctx, releaseID); err != nil {
 		return artworkChange{}, err
 	}
-	if err := s.assets.ReleaseArtwork(ctx, tx, releaseID); err != nil {
+	if err := store.CancelOG(ctx, releaseID); err != nil {
 		return artworkChange{}, err
 	}
-	if err := s.og.CancelAndRelease(ctx, tx, releaseID); err != nil {
-		return artworkChange{}, err
-	}
-	return artworkChange{FileID: existing.FileID}, nil
+	return artworkChange{FileID: existingFileID}, nil
 }
 
-// touchRelease marks the Release row changed by a relation mutation.
-func touchRelease(tx *gorm.DB, releaseID string) error {
-	return tx.Model(&model.Release{}).Where("id = ?", releaseID).Update("updated_at", time.Now()).Error
+// touchRelease marks the locked Release row changed by a relation mutation.
+func touchRelease(ctx context.Context, store Store, releaseID string) error {
+	return store.TouchRelease(ctx, releaseID, time.Now())
 }
 
 func releaseArtworkAudit(releaseID, fileID string, op sharedtelemetry.AuditCollectionOperation) mutation.Audit {
@@ -158,11 +156,11 @@ func releaseArtworkAudit(releaseID, fileID string, op sharedtelemetry.AuditColle
 	})
 }
 
-func (s *Service) publishArtworkChange(releaseID string) func(context.Context, *gorm.DB, artworkChange) error {
-	return func(ctx context.Context, tx *gorm.DB, change artworkChange) error {
+func (s *Service) publishArtworkChange(releaseID string) func(context.Context, Store, artworkChange) error {
+	return func(ctx context.Context, store Store, change artworkChange) error {
 		if change.FileID == "" {
 			return nil
 		}
-		return s.publishContentUpdated(ctx, tx, buildReleaseMediaMutationContentUpdatedEvent(releaseID, "media.artwork"))
+		return publishContentUpdated(ctx, store, buildReleaseMediaMutationContentUpdatedEvent(releaseID, "media.artwork"))
 	}
 }

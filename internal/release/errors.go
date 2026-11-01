@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 )
 
@@ -47,11 +45,16 @@ func slugTaken(cause error) *domainerr.Error {
 	return domainerr.Duplicate("release", "slug", "slug").WithCause(cause)
 }
 
-// missingAs answers notFound for a row lookup that found nothing and keeps
-// any other failure.
-func missingAs(err error, notFound *domainerr.Error) error {
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+// missingAs answers notFound for a Store read whose row is missing (the
+// sentinel) and keeps any other failure.
+func missingAs(err, sentinel error, notFound *domainerr.Error) error {
+	if errors.Is(err, sentinel) {
 		return notFound
 	}
 	return err
+}
+
+// releaseMissingAs answers a missing Release as notFound.
+func releaseMissingAs(err error, notFound *domainerr.Error) error {
+	return missingAs(err, ErrReleaseNotFound, notFound)
 }

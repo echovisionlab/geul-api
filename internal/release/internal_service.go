@@ -3,13 +3,10 @@ package release
 import (
 	"context"
 	"maps"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -80,31 +77,59 @@ type DocumentSave struct {
 	TargetRevision   *string
 }
 
+// LocaleNotes is a stored Release locale with its credit notes.
+type LocaleNotes struct {
+	Metadata LocaleMetadata
+	Notes    map[string]string
+}
+
+// RoomArtist is one Artist of a Release a collaboration room shows.
+type RoomArtist struct {
+	ArtistID  string
+	Name      string
+	Slug      *string
+	SortOrder int32
+}
+
+// BlockDocument is the effective locale view a collaboration room edits.
+// LocaleMetadata is nil for a locale without metadata, and TargetRevision
+// is set for an existing target locale only.
+type BlockDocument struct {
+	Document            *contentv1.LocalizedRichTextDocument
+	DocumentRevision    string
+	SourceMetadata      LocaleNotes
+	Artists             []RoomArtist
+	Locale              string
+	LocaleExists        bool
+	PresentLocaleValues []*managev1.AIDocumentFieldTarget
+	LocaleMetadata      *LocaleNotes
+	TargetRevision      *string
+}
+
 // LoadReleaseBlockDocument reads the effective locale view a collaboration
 // room edits.
-func (s *Service) LoadReleaseBlockDocument(ctx context.Context, query LoadReleaseBlockDocumentQuery) (*intrav1.LoadReleaseBlockDocumentResponse, error) {
+func (s *Service) LoadReleaseBlockDocument(ctx context.Context, query LoadReleaseBlockDocumentQuery) (BlockDocument, error) {
 	locale, err := normalizeReleaseDocumentLocale(query.Locale)
 	if err != nil {
-		return nil, err
+		return BlockDocument{}, err
 	}
 	var metadata releaseRoomMetadata
-	bootstrap, err := loadReleaseContentBlockBootstrap(
-		ctx, s.db, s.contentBlocks, s.spiceDB, query.ReleaseID, query.Principal,
-		func(ctx context.Context, tx *gorm.DB) error {
+	bootstrap, err := s.loadReleaseContentBlockBootstrap(ctx, query.ReleaseID, query.Principal,
+		func(ctx context.Context, store Store) error {
 			var err error
-			metadata, err = s.loadReleaseRoomMetadata(ctx, tx, query.ReleaseID, locale)
+			metadata, err = loadReleaseRoomMetadata(ctx, store, query.ReleaseID, locale)
 			return err
 		},
 	)
 	if err != nil {
-		return nil, err
+		return BlockDocument{}, err
 	}
 	presentLocaleValues, err := contentblock.PresentRichTextLocaleValues(bootstrap.Snapshot, locale)
 	if err != nil {
-		return nil, err
+		return BlockDocument{}, err
 	}
 	if metadata.target == nil && targetlocale.SnapshotHasLocale(bootstrap.Snapshot, locale) {
-		return nil, domainerr.Precondition("Release target locale Blocks exist without owning metadata")
+		return BlockDocument{}, domainerr.Precondition("Release target locale Blocks exist without owning metadata")
 	}
 	// Collaboration renders the effective locale view: target values override
 	// source values and an absent target value falls back to the source value.
@@ -112,22 +137,22 @@ func (s *Service) LoadReleaseBlockDocument(ctx context.Context, query LoadReleas
 	// client can still distinguish fallback from an explicit empty value.
 	document, err := contentblock.MaterializeSnapshotRichTextLocale(bootstrap.Snapshot, locale)
 	if err != nil {
-		return nil, normalizeReleaseContentBlockError(err)
+		return BlockDocument{}, normalizeReleaseContentBlockError(err)
 	}
-	response := &intrav1.LoadReleaseBlockDocumentResponse{
+	response := BlockDocument{
 		Document: document, DocumentRevision: bootstrap.Snapshot.Document.Revision.String(),
-		SourceMetadata: releaseLocaleMetadataMessage(metadata.source, metadata.sourceNotes), Artists: metadata.artists,
+		SourceMetadata: LocaleNotes{Metadata: metadata.source, Notes: metadata.sourceNotes}, Artists: metadata.artists,
 		Locale: locale, LocaleExists: metadata.target != nil,
 		PresentLocaleValues: presentLocaleValues,
 	}
 	if metadata.target == nil {
 		return response, nil
 	}
-	response.LocaleMetadata = releaseLocaleMetadataMessage(*metadata.target, metadata.targetNotes)
-	if locale != bootstrap.Source.SourceLocale {
+	response.LocaleMetadata = &LocaleNotes{Metadata: *metadata.target, Notes: metadata.targetNotes}
+	if locale != bootstrap.SourceLocale {
 		targetRevision, err := deriveReleaseTargetRevision(response.DocumentRevision, *metadata.target)
 		if err != nil {
-			return nil, err
+			return BlockDocument{}, err
 		}
 		response.TargetRevision = &targetRevision
 	}
@@ -137,47 +162,47 @@ func (s *Service) LoadReleaseBlockDocument(ctx context.Context, query LoadReleas
 // releaseRoomMetadata is the locale metadata and Artists a collaboration room
 // shows next to the document. target is nil for a locale without metadata.
 type releaseRoomMetadata struct {
-	source      releaseLocaleMetadataRow
+	source      LocaleMetadata
 	sourceNotes map[string]string
-	target      *releaseLocaleMetadataRow
+	target      *LocaleMetadata
 	targetNotes map[string]string
-	artists     []*intrav1.ReleaseArtistState
+	artists     []RoomArtist
 }
 
-func (s *Service) loadReleaseRoomMetadata(ctx context.Context, tx *gorm.DB, releaseID, locale string) (releaseRoomMetadata, error) {
-	source, err := loadReleaseSourceLocale(ctx, tx, releaseID)
+func loadReleaseRoomMetadata(ctx context.Context, store Store, releaseID, locale string) (releaseRoomMetadata, error) {
+	sourceLocale, err := loadReleaseSourceLocale(ctx, store, releaseID, Unlocked)
 	if err != nil {
 		return releaseRoomMetadata{}, err
 	}
 	var metadata releaseRoomMetadata
 	var sourceExists bool
-	metadata.source, sourceExists, err = loadOptionalReleaseLocaleMetadataRow(ctx, tx, releaseID, source.SourceLocale, false)
+	metadata.source, sourceExists, err = store.LocaleMetadata(ctx, releaseID, sourceLocale, false)
 	if err != nil {
 		return releaseRoomMetadata{}, err
 	}
 	if !sourceExists {
 		return releaseRoomMetadata{}, domainerr.Precondition("Release source locale metadata is missing")
 	}
-	metadata.sourceNotes, err = loadReleaseCreditLocaleNotes(ctx, tx, releaseID, source.SourceLocale)
+	metadata.sourceNotes, err = store.CreditNotes(ctx, releaseID, sourceLocale)
 	if err != nil {
 		return releaseRoomMetadata{}, err
 	}
-	if locale == source.SourceLocale {
+	if locale == sourceLocale {
 		target := metadata.source
 		metadata.target, metadata.targetNotes = &target, maps.Clone(metadata.sourceNotes)
 	} else {
-		row, exists, err := loadOptionalReleaseLocaleMetadataRow(ctx, tx, releaseID, locale, false)
+		row, exists, err := store.LocaleMetadata(ctx, releaseID, locale, false)
 		if err != nil {
 			return releaseRoomMetadata{}, err
 		}
 		if exists {
 			metadata.target = &row
-			if metadata.targetNotes, err = loadReleaseCreditLocaleNotes(ctx, tx, releaseID, locale); err != nil {
+			if metadata.targetNotes, err = store.CreditNotes(ctx, releaseID, locale); err != nil {
 				return releaseRoomMetadata{}, err
 			}
 		}
 	}
-	metadata.artists, err = s.loadReleaseArtistStates(ctx, tx, releaseID)
+	metadata.artists, err = loadReleaseArtistStates(ctx, store, releaseID)
 	return metadata, err
 }
 
@@ -196,18 +221,18 @@ func (s *Service) saveCollaborationDocument(
 	ctx context.Context,
 	releaseID string,
 	contributors []string,
-	save func(context.Context, *gorm.DB, releaseSourceLocale) (collaborationSave, error),
+	save func(context.Context, Store, string) (collaborationSave, error),
 ) (DocumentSave, error) {
-	var source releaseSourceLocale
-	result, err := mutation.Run(ctx, s.mutations, mutation.Spec[collaborationSave]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	var sourceLocale string
+	result, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[collaborationSave, Store]{
+		Lock: func(ctx context.Context, store Store) error {
 			var err error
-			source, err = loadReleaseSourceLocaleWithStrength(ctx, tx, releaseID, clause.LockingStrengthUpdate)
+			sourceLocale, err = loadReleaseSourceLocale(ctx, store, releaseID, UpdateLock)
 			return err
 		},
 		Access: s.collaborationContributorsAccess(releaseID, contributors),
-		Change: func(ctx context.Context, tx *gorm.DB) (collaborationSave, error) {
-			return save(ctx, tx, source)
+		Change: func(ctx context.Context, store Store) (collaborationSave, error) {
+			return save(ctx, store, sourceLocale)
 		},
 		Audit: func(result collaborationSave) mutation.Audit {
 			if !result.save.Changed {
@@ -215,11 +240,11 @@ func (s *Service) saveCollaborationDocument(
 			}
 			return releaseRequestLocaleAudit(releaseID, result.auditLocale)
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, result collaborationSave) error {
+		Outbox: func(ctx context.Context, store Store, result collaborationSave) error {
 			if result.ogReason == "" {
 				return nil
 			}
-			return s.contentOG.RequestCurrent(ctx, tx, releaseID, result.ogReason)
+			return store.RequestOG(ctx, releaseID, result.ogReason)
 		},
 	})
 	if err != nil {
@@ -239,7 +264,7 @@ func (s *Service) ApplyReleaseBlockBatch(ctx context.Context, command ApplyRelea
 	if err != nil {
 		return DocumentSave{}, err
 	}
-	documentID, err := loadReleaseContentDocumentID(ctx, s.db, command.ReleaseID)
+	documentID, err := s.readReleaseContentDocumentID(ctx, command.ReleaseID)
 	if err != nil {
 		return DocumentSave{}, err
 	}
@@ -258,11 +283,11 @@ func (s *Service) ApplyReleaseBlockBatch(ctx context.Context, command ApplyRelea
 	}
 	batch := releaseBlockBatch{command: command, locale: locale, documentID: documentID, expected: expected, storage: storage}
 	return s.saveCollaborationDocument(ctx, command.ReleaseID, command.Batch.ContributorMemberIds,
-		func(ctx context.Context, tx *gorm.DB, source releaseSourceLocale) (collaborationSave, error) {
-			if locale != source.SourceLocale {
-				return s.applyTargetBlockBatch(ctx, tx, batch)
+		func(ctx context.Context, store Store, sourceLocale string) (collaborationSave, error) {
+			if locale != sourceLocale {
+				return applyTargetBlockBatch(ctx, store, batch)
 			}
-			return s.applySourceBlockBatch(ctx, tx, batch, source)
+			return applySourceBlockBatch(ctx, store, batch, sourceLocale)
 		})
 }
 
@@ -275,7 +300,7 @@ type releaseBlockBatch struct {
 	storage    contentv1.ContentStorageMutationBatch
 }
 
-func (s *Service) applyTargetBlockBatch(ctx context.Context, tx *gorm.DB, input releaseBlockBatch) (collaborationSave, error) {
+func applyTargetBlockBatch(ctx context.Context, store Store, input releaseBlockBatch) (collaborationSave, error) {
 	if len(input.storage.BaseUpserts) != 0 || len(input.storage.Deletes) != 0 || len(input.storage.Moves) != 0 {
 		return collaborationSave{}, domainerr.CollaborationRejection(intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_STRUCTURE_FORBIDDEN, "Release target locale cannot mutate the shared Block graph")
 	}
@@ -288,7 +313,7 @@ func (s *Service) applyTargetBlockBatch(ctx context.Context, tx *gorm.DB, input 
 	if err != nil {
 		return collaborationSave{}, err
 	}
-	target, err := applyReleaseTargetLocaleMutation(ctx, tx, s.contentBlocks, releaseTargetLocaleMutationInput{
+	target, err := applyReleaseTargetLocaleMutation(ctx, store, releaseTargetLocaleMutationInput{
 		ReleaseID: input.command.ReleaseID, DocumentID: input.documentID, Locale: input.locale,
 		ExpectedDocumentRevision: input.expected, ExpectedTargetRevision: input.command.ExpectedTargetRevision,
 		Batch: batch, Now: time.Now().UTC(), Fence: internalReleaseContentFence(input.command.ReleaseID),
@@ -299,12 +324,12 @@ func (s *Service) applyTargetBlockBatch(ctx context.Context, tx *gorm.DB, input 
 	return collaborationSave{save: targetDocumentSave(input.locale, target), auditLocale: input.locale}, nil
 }
 
-func (s *Service) applySourceBlockBatch(ctx context.Context, tx *gorm.DB, input releaseBlockBatch, source releaseSourceLocale) (collaborationSave, error) {
+func applySourceBlockBatch(ctx context.Context, store Store, input releaseBlockBatch, sourceLocale string) (collaborationSave, error) {
 	if input.command.ExpectedTargetRevision != nil {
 		return collaborationSave{}, domainerr.InvalidField("expected_target_revision", "source Release room cannot carry a target revision")
 	}
 	for _, group := range input.storage.LocaleGroups {
-		if group.Locale != source.SourceLocale {
+		if group.Locale != sourceLocale {
 			return collaborationSave{}, domainerr.CollaborationRejection(intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_ROOM_LOCALE_MISMATCH, "Release source mutation must match the current source locale")
 		}
 	}
@@ -312,7 +337,7 @@ func (s *Service) applySourceBlockBatch(ctx context.Context, tx *gorm.DB, input 
 	if err != nil {
 		return collaborationSave{}, err
 	}
-	result, err := s.contentBlocks.ApplyBatch(ctx, tx, batch, internalReleaseContentFence(input.command.ReleaseID))
+	result, err := store.ApplyContentBatch(ctx, batch, internalReleaseContentFence(input.command.ReleaseID))
 	if err != nil {
 		return collaborationSave{}, err
 	}
@@ -321,7 +346,7 @@ func (s *Service) applySourceBlockBatch(ctx context.Context, tx *gorm.DB, input 
 			Locale: input.locale, DocumentRevision: result.DocumentRevision.String(), Changed: result.Changed,
 			SourceChanged: result.TranslationSourceChanged, ChangedLocales: result.ChangedLocales,
 		},
-		auditLocale: source.SourceLocale,
+		auditLocale: sourceLocale,
 	}
 	if result.Changed && result.TranslationSourceChanged {
 		saved.ogReason = "release_source_document_saved"
@@ -351,7 +376,7 @@ func (s *Service) UpdateReleaseLocaleMetadata(ctx context.Context, command Updat
 	if err != nil || expectedRevision == uuid.Nil {
 		return DocumentSave{}, domainerr.InvalidField("expected_revision", "must be a UUID")
 	}
-	documentID, err := loadReleaseContentDocumentID(ctx, s.db, command.ReleaseID)
+	documentID, err := s.readReleaseContentDocumentID(ctx, command.ReleaseID)
 	if err != nil {
 		return DocumentSave{}, err
 	}
@@ -359,22 +384,22 @@ func (s *Service) UpdateReleaseLocaleMetadata(ctx context.Context, command Updat
 		command: command, locale: locale, documentID: documentID, expected: expectedRevision, now: time.Now().UTC(),
 	}
 	return s.saveCollaborationDocument(ctx, command.ReleaseID, command.ContributorMemberIDs,
-		func(ctx context.Context, tx *gorm.DB, source releaseSourceLocale) (collaborationSave, error) {
-			currentCreditIDs, err := loadReleaseCreditIDs(ctx, tx, command.ReleaseID)
+		func(ctx context.Context, store Store, sourceLocale string) (collaborationSave, error) {
+			currentCreditIDs, err := store.CreditIDs(ctx, command.ReleaseID)
 			if err != nil {
 				return collaborationSave{}, err
 			}
 			if command.CreditNotes != nil {
-				values, err := validateReleaseCreditNotes(command.CreditNotes.Values, currentCreditIDs, locale != source.SourceLocale)
+				values, err := validateReleaseCreditNotes(command.CreditNotes.Values, currentCreditIDs, locale != sourceLocale)
 				if err != nil {
 					return collaborationSave{}, err
 				}
 				update.notes = &values
 			}
-			if locale != source.SourceLocale {
-				return s.updateTargetLocaleMetadata(ctx, tx, update)
+			if locale != sourceLocale {
+				return updateTargetLocaleMetadata(ctx, store, update)
 			}
-			return s.updateSourceLocaleMetadata(ctx, tx, update, source)
+			return updateSourceLocaleMetadata(ctx, store, update, sourceLocale)
 		})
 }
 
@@ -389,9 +414,9 @@ type releaseMetadataUpdate struct {
 	notes      *map[string]string
 }
 
-func (s *Service) updateTargetLocaleMetadata(ctx context.Context, tx *gorm.DB, update releaseMetadataUpdate) (collaborationSave, error) {
+func updateTargetLocaleMetadata(ctx context.Context, store Store, update releaseMetadataUpdate) (collaborationSave, error) {
 	command := update.command
-	target, err := applyReleaseTargetLocaleMutation(ctx, tx, s.contentBlocks, releaseTargetLocaleMutationInput{
+	target, err := applyReleaseTargetLocaleMutation(ctx, store, releaseTargetLocaleMutationInput{
 		ReleaseID: command.ReleaseID, DocumentID: update.documentID, Locale: update.locale,
 		ExpectedDocumentRevision: update.expected, ExpectedTargetRevision: command.ExpectedTargetRevision,
 		Batch: contentblock.Batch{
@@ -407,19 +432,19 @@ func (s *Service) updateTargetLocaleMetadata(ctx context.Context, tx *gorm.DB, u
 	return collaborationSave{save: targetDocumentSave(update.locale, target), auditLocale: update.locale}, nil
 }
 
-func (s *Service) updateSourceLocaleMetadata(
+func updateSourceLocaleMetadata(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	update releaseMetadataUpdate,
-	source releaseSourceLocale,
+	sourceLocale string,
 ) (collaborationSave, error) {
 	command := update.command
 	if command.ExpectedTargetRevision != nil {
 		return collaborationSave{}, domainerr.InvalidField("expected_target_revision", "source Release room cannot carry a target revision")
 	}
-	write := sourceMetadataWrite{update: update, sourceLocale: source.SourceLocale}
-	result, err := s.contentBlocks.AdvanceRevision(
-		ctx, tx,
+	write := sourceMetadataWrite{update: update, sourceLocale: sourceLocale}
+	result, err := store.AdvanceContentRevision(
+		ctx,
 		contentblock.AdvanceInput{DocumentID: update.documentID, ExpectedRevision: update.expected},
 		internalReleaseContentFence(command.ReleaseID),
 		write.apply,
@@ -430,9 +455,9 @@ func (s *Service) updateSourceLocaleMetadata(
 	saved := collaborationSave{
 		save: DocumentSave{
 			Locale: update.locale, DocumentRevision: result.DocumentRevision.String(), Changed: result.Changed,
-			SourceChanged: result.TranslationSourceChanged, ChangedLocales: []string{source.SourceLocale},
+			SourceChanged: result.TranslationSourceChanged, ChangedLocales: []string{sourceLocale},
 		},
-		auditLocale: source.SourceLocale,
+		auditLocale: sourceLocale,
 	}
 	if result.Changed && result.TranslationSourceChanged && write.titleChanged {
 		saved.ogReason = "release_source_title_saved"
@@ -448,18 +473,18 @@ type sourceMetadataWrite struct {
 	titleChanged bool
 }
 
-func (w *sourceMetadataWrite) apply(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+func (w *sourceMetadataWrite) apply(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
 	releaseID := w.update.command.ReleaseID
-	current, err := loadReleaseLocaleMetadataState(ctx, tx, releaseID, w.sourceLocale)
+	current, exists, err := store.LocaleMetadata(ctx, releaseID, w.sourceLocale, false)
 	if err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
-	currentNotes, err := loadReleaseCreditLocaleNotes(ctx, tx, releaseID, w.sourceLocale)
+	currentNotes, err := store.CreditNotes(ctx, releaseID, w.sourceLocale)
 	if err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
 	var currentTitle *string
-	if current != nil {
+	if exists {
 		currentTitle = current.Title
 	}
 	nextTitle := currentTitle
@@ -479,34 +504,21 @@ func (w *sourceMetadataWrite) apply(ctx context.Context, tx *gorm.DB) (contentbl
 	if !titleChanged && !notesChanged {
 		return contentblock.MetadataEffect{}, nil
 	}
-	if err := saveReleaseSourceLocaleMetadata(ctx, tx, releaseID, w.sourceLocale, translationLocaleDocumentSaveInput{
+	if err := saveReleaseSourceLocaleMetadata(ctx, store, releaseID, w.sourceLocale, translationLocaleDocumentSaveInput{
 		Title: nextTitle, Now: w.update.now,
 	}); err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
 	w.titleChanged = titleChanged
 	if notesChanged {
-		if err := replaceReleaseCreditLocaleNotes(ctx, tx, releaseID, w.sourceLocale, resolvedNotes, w.update.now); err != nil {
+		if err := store.ReplaceCreditNotes(ctx, releaseID, w.sourceLocale, resolvedNotes, w.update.now); err != nil {
 			return contentblock.MetadataEffect{}, err
 		}
 	}
-	if err := touchReleaseSourceLocaleState(ctx, tx, releaseID, w.update.now); err != nil {
+	if err := touchReleaseSourceLocaleState(ctx, store, releaseID, w.update.now); err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
 	return contentblock.MetadataEffect{Changed: true, AffectsTranslationSource: true}, nil
-}
-
-func releaseLocaleMetadataMessage(row releaseLocaleMetadataRow, notes map[string]string) *intrav1.ReleaseLocaleMetadata {
-	creditIDs := make([]string, 0, len(notes))
-	for creditID := range notes {
-		creditIDs = append(creditIDs, creditID)
-	}
-	sort.Strings(creditIDs)
-	message := &intrav1.ReleaseLocaleMetadata{Locale: row.Locale, Title: row.Title}
-	for _, creditID := range creditIDs {
-		message.CreditNotes = append(message.CreditNotes, &intrav1.ReleaseCreditNote{CreditId: creditID, Note: notes[creditID]})
-	}
-	return message
 }
 
 func releaseContributorUUIDs(values []string) []uuid.UUID {
@@ -559,41 +571,28 @@ func releaseOptionalStringsEqual(left, right *string) bool {
 	return *left == *right
 }
 
-func (s *Service) loadReleaseArtistStates(
-	ctx context.Context,
-	db *gorm.DB,
-	releaseID string,
-) ([]*intrav1.ReleaseArtistState, error) {
-	var rows []struct {
-		ArtistID  string `gorm:"column:artist_id"`
-		SortOrder int32  `gorm:"column:sort_order"`
-	}
-	if err := db.WithContext(ctx).
-		Table("release_artist").
-		Select("release_artist.artist_id, release_artist.sort_order").
-		Where("release_artist.release_id = ?", releaseID).
-		Order("release_artist.sort_order ASC, release_artist.created_at ASC").
-		Scan(&rows).Error; err != nil {
+func loadReleaseArtistStates(ctx context.Context, store Store, releaseID string) ([]RoomArtist, error) {
+	rows, err := store.ReleaseArtistsByCreation(ctx, releaseID)
+	if err != nil {
 		return nil, err
 	}
 	ids := make([]string, 0, len(rows))
 	for _, row := range rows {
 		ids = append(ids, row.ArtistID)
 	}
-	summaries, err := s.artists.LoadArtistSummariesWithDB(ctx, db, ids)
+	summaries, err := store.ArtistSummaries(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
-	artists := make([]*intrav1.ReleaseArtistState, 0, len(rows))
+	artists := make([]RoomArtist, 0, len(rows))
 	for _, row := range rows {
 		summary := summaries[row.ArtistID]
 		var slug *string
 		if summary.Slug != "" {
 			slug = &summary.Slug
 		}
-		artists = append(artists, &intrav1.ReleaseArtistState{
-			ArtistId: row.ArtistID, ArtistName: summary.Title,
-			ArtistSlug: slug, SortOrder: row.SortOrder,
+		artists = append(artists, RoomArtist{
+			ArtistID: row.ArtistID, Name: summary.Title, Slug: slug, SortOrder: int32(row.SortOrder),
 		})
 	}
 	return artists, nil

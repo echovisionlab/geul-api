@@ -114,3 +114,20 @@ func TestUnitOfWorkLocksAuthorizationAndWritesRelationshipsLast(t *testing.T) {
 	require.ErrorIs(t, err, auditDown)
 	require.False(t, units.Store().names["audited"])
 }
+
+func TestUnitOfWorkReadsHandTheStoreAndKeepTheReadError(t *testing.T) {
+	store := &notes{names: map[string]bool{"stored": true}}
+	units := mutationtest.New(store)
+	readErr := errors.New("read failed")
+	for name, read := range map[string]func(context.Context, func(*notes) error) error{
+		"snapshot": units.Read, "locked snapshot": units.ReadLocked, "current": units.ReadCurrent,
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, read(t.Context(), func(read *notes) error {
+				require.Same(t, store, read)
+				return nil
+			}))
+			require.ErrorIs(t, read(t.Context(), func(*notes) error { return readErr }), readErr)
+		})
+	}
+}

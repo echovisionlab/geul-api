@@ -6,7 +6,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
-	releasedomain "github.com/echovisionlab/geul-api/internal/release"
+	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
@@ -27,10 +27,6 @@ func (o *OG) CancelAndRelease(ctx context.Context, tx *gorm.DB, releaseID string
 	}
 	return mediaasset.NewLifecycle(tx, o.cdnDomain).
 		ReleasePublicAssetBindings(ctx, "release", releaseID, "og")
-}
-
-func (*OG) LocaleAware() bool {
-	return og.SupportsLocaleAware("release")
 }
 
 type ContentOG struct {
@@ -56,5 +52,5 @@ func (o *ContentOG) RequestCurrent(
 	return err
 }
 
-var _ releasedomain.OG = (*OG)(nil)
-var _ releasedomain.ContentOG = (*ContentOG)(nil)
+var _ releasepostgres.OG = (*OG)(nil)
+var _ releasepostgres.ContentOG = (*ContentOG)(nil)

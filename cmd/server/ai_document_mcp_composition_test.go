@@ -45,7 +45,6 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -715,9 +714,9 @@ type compositionReleaseApplication struct {
 
 func (application *compositionReleaseApplication) ListReleasesAdmin(ctx context.Context, _ releasepkg.ListReleasesQuery) (releasepkg.ReleasePage, error) {
 	application.principal = auth.GetUser(ctx)
-	return releasepkg.ReleasePage{Releases: []*managev1.ReleaseWithStats{{Release: &managev1.Release{
-		Id: "44444444-4444-4444-8444-444444444444", Title: "Release A", Status: "draft", SourceLocale: "ko", UpdatedAt: timestamppb.New(time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)),
-	}}}, Total: 1, Limit: 20}, nil
+	return releasepkg.ReleasePage{Releases: []releasepkg.ReleaseWithStats{{View: releasepkg.View{Title: "Release A", Release: releasepkg.Release{
+		ID: "44444444-4444-4444-8444-444444444444", Status: "draft", SourceLocale: "ko", UpdatedAt: time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC),
+	}}}}, Total: 1, Limit: 20}, nil
 }
 
 type compositionArtistApplication struct {

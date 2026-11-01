@@ -13,25 +13,17 @@ import (
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // releaseEntityName names the owner in shared content document messages.
 const releaseEntityName = "Release"
 
-type releaseLocaleMetadataRow struct {
-	Locale    string    `gorm:"column:locale"`
-	Title     *string   `gorm:"column:title"`
-	UpdatedAt time.Time `gorm:"column:updated_at"`
-}
-
 type releaseTargetLocaleState struct {
 	Snapshot       contentblock.Snapshot
 	SourceLocale   string
-	SourceMetadata releaseLocaleMetadataRow
+	SourceMetadata LocaleMetadata
 	SourceNotes    map[string]string
-	TargetMetadata *releaseLocaleMetadataRow
+	TargetMetadata *LocaleMetadata
 	TargetNotes    map[string]string
 	TargetRevision string
 }
@@ -58,7 +50,7 @@ type releaseTargetLocaleMutationInput struct {
 	CreditNotePatch    map[string]string
 	ReplaceCreditNotes *map[string]string
 	Now                time.Time
-	Fence              contentblock.DomainFence
+	Fence              ContentFence
 }
 
 type releaseTargetLocaleMutationResult struct {
@@ -76,28 +68,7 @@ func normalizeReleaseDocumentLocale(locale string) (string, error) {
 	return *normalized, nil
 }
 
-func loadOptionalReleaseLocaleMetadataRow(
-	ctx context.Context,
-	tx *gorm.DB,
-	releaseID string,
-	locale string,
-	forUpdate bool,
-) (releaseLocaleMetadataRow, bool, error) {
-	query := tx.WithContext(ctx).Table("release_translation").
-		Select("locale", "title", "updated_at").
-		Where("entity_id = ?::uuid AND locale = ?", releaseID, locale)
-	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
-	}
-	var row releaseLocaleMetadataRow
-	err := query.Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return releaseLocaleMetadataRow{}, false, nil
-	}
-	return row, err == nil, err
-}
-
-func deriveReleaseTargetRevision(documentRevision string, metadata releaseLocaleMetadataRow) (string, error) {
+func deriveReleaseTargetRevision(documentRevision string, metadata LocaleMetadata) (string, error) {
 	updatedAt := metadata.UpdatedAt
 	return translation.DeriveTargetRevision(translation.TargetRevisionFacts{
 		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &updatedAt,
@@ -106,8 +77,7 @@ func deriveReleaseTargetRevision(documentRevision string, metadata releaseLocale
 
 func loadReleaseTargetLocaleState(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	releaseID string,
 	documentID uuid.UUID,
 	locale string,
@@ -117,44 +87,42 @@ func loadReleaseTargetLocaleState(
 	if err != nil {
 		return releaseTargetLocaleState{}, err
 	}
-	strength := clause.LockingStrengthShare
+	lock := ShareLock
 	if forUpdate {
-		strength = clause.LockingStrengthUpdate
+		lock = UpdateLock
 	}
-	source, err := loadReleaseSourceLocaleWithStrength(ctx, tx, releaseID, strength)
+	sourceLocale, err := loadReleaseSourceLocale(ctx, store, releaseID, lock)
 	if err != nil {
 		return releaseTargetLocaleState{}, err
 	}
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, source.SourceLocale)
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, sourceLocale)
 	if err != nil {
 		return releaseTargetLocaleState{}, normalizeReleaseContentBlockError(err)
 	}
-	if snapshot.SourceLocale != source.SourceLocale || snapshot.Document.Profile != releaseContentProfile {
+	if snapshot.SourceLocale != sourceLocale || snapshot.Document.Profile != releaseContentProfile {
 		return releaseTargetLocaleState{}, domainerr.Precondition("Release content document source or profile is inconsistent")
 	}
-	sourceMetadata, exists, err := loadOptionalReleaseLocaleMetadataRow(
-		ctx, tx, releaseID, source.SourceLocale, forUpdate,
-	)
+	sourceMetadata, exists, err := store.LocaleMetadata(ctx, releaseID, sourceLocale, forUpdate)
 	if err != nil {
 		return releaseTargetLocaleState{}, err
 	}
 	if !exists {
 		return releaseTargetLocaleState{}, domainerr.Precondition("Release source locale metadata is missing")
 	}
-	sourceNotes, err := loadReleaseCreditLocaleNotes(ctx, tx, releaseID, source.SourceLocale)
+	sourceNotes, err := store.CreditNotes(ctx, releaseID, sourceLocale)
 	if err != nil {
 		return releaseTargetLocaleState{}, err
 	}
 	state := releaseTargetLocaleState{
-		Snapshot: snapshot, SourceLocale: source.SourceLocale,
+		Snapshot: snapshot, SourceLocale: sourceLocale,
 		SourceMetadata: sourceMetadata, SourceNotes: sourceNotes,
 	}
-	if locale == source.SourceLocale {
+	if locale == sourceLocale {
 		state.TargetMetadata = &sourceMetadata
 		state.TargetNotes = maps.Clone(sourceNotes)
 		return state, nil
 	}
-	target, exists, err := loadOptionalReleaseLocaleMetadataRow(ctx, tx, releaseID, locale, forUpdate)
+	target, exists, err := store.LocaleMetadata(ctx, releaseID, locale, forUpdate)
 	if err != nil {
 		return releaseTargetLocaleState{}, err
 	}
@@ -164,7 +132,7 @@ func loadReleaseTargetLocaleState(
 		}
 		return state, nil
 	}
-	targetNotes, err := loadReleaseCreditLocaleNotes(ctx, tx, releaseID, locale)
+	targetNotes, err := store.CreditNotes(ctx, releaseID, locale)
 	if err != nil {
 		return releaseTargetLocaleState{}, err
 	}
@@ -179,20 +147,19 @@ func loadReleaseTargetLocaleState(
 
 func applyReleaseTargetLocaleMutation(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	input releaseTargetLocaleMutationInput,
 ) (releaseTargetLocaleMutationResult, error) {
 	if store == nil || input.DocumentID == uuid.Nil || input.ExpectedDocumentRevision == uuid.Nil ||
 		strings.TrimSpace(input.ReleaseID) == "" || strings.TrimSpace(input.Locale) == "" || input.Fence == nil {
 		return releaseTargetLocaleMutationResult{}, domainerr.InvalidField("target", "Release target identity, revision, and fence are required")
 	}
-	domain, err := input.Fence(ctx, tx, input.DocumentID)
+	domain, err := input.Fence(ctx, store, input.DocumentID)
 	if err != nil {
 		return releaseTargetLocaleMutationResult{}, err
 	}
 	state, err := loadReleaseTargetLocaleState(
-		ctx, tx, store, input.ReleaseID, input.DocumentID, input.Locale, true,
+		ctx, store, input.ReleaseID, input.DocumentID, input.Locale, true,
 	)
 	if err != nil {
 		return releaseTargetLocaleMutationResult{}, err
@@ -210,8 +177,8 @@ func applyReleaseTargetLocaleMutation(
 	now := targetlocale.WriteTime(input.Now)
 	result := releaseTargetLocaleMutationResult{LocaleCreated: state.TargetMetadata == nil}
 	write := &releaseTargetMetadataWrite{input: input, state: state, now: now}
-	storeResult, err := store.ApplyTargetLocaleBatchWithMetadata(
-		ctx, tx, batch, input.Locale, contentblock.LockedFence(releaseEntityName, input.DocumentID, domain), write.apply,
+	storeResult, err := store.ApplyTargetLocaleContentBatch(
+		ctx, batch, input.Locale, lockedContentFence(input.DocumentID, domain), write.apply,
 	)
 	if err != nil {
 		return releaseTargetLocaleMutationResult{}, normalizeReleaseContentBlockError(err)
@@ -230,11 +197,11 @@ type releaseTargetMetadataWrite struct {
 	input        releaseTargetLocaleMutationInput
 	state        releaseTargetLocaleState
 	now          time.Time
-	final        releaseLocaleMetadataRow
+	final        LocaleMetadata
 	titleChanged bool
 }
 
-func (w *releaseTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
+func (w *releaseTargetMetadataWrite) apply(ctx context.Context, store Store, contentChanged bool) (contentblock.MetadataEffect, error) {
 	currentMetadata := w.state.SourceMetadata
 	currentNotes := maps.Clone(w.state.SourceNotes)
 	if w.state.TargetMetadata != nil {
@@ -263,23 +230,16 @@ func (w *releaseTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, con
 	maps.DeleteFunc(nextNotes, func(_ string, note string) bool {
 		return strings.TrimSpace(note) == ""
 	})
-	if err := validateReleaseCreditNoteIdentityMap(ctx, tx, w.input.ReleaseID, nextNotes); err != nil {
+	if err := validateReleaseCreditNoteIdentityMap(ctx, store, w.input.ReleaseID, nextNotes); err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
 	metadataChanged := w.titleChanged || !maps.Equal(currentNotes, nextNotes)
 	if w.state.TargetMetadata == nil {
-		w.final = releaseLocaleMetadataRow{Locale: w.input.Locale, Title: nextTitle, UpdatedAt: w.now}
-		created := tx.WithContext(ctx).Exec(
-			"INSERT INTO release_translation (entity_id, locale, title, created_at, updated_at) VALUES (?::uuid, ?, ?, ?, ?)",
-			w.input.ReleaseID, w.input.Locale, nextTitle, w.now, w.now,
-		)
-		if created.Error != nil {
-			return contentblock.MetadataEffect{}, created.Error
+		w.final = LocaleMetadata{Locale: w.input.Locale, Title: nextTitle, UpdatedAt: w.now}
+		if err := store.InsertLocale(ctx, w.input.ReleaseID, w.input.Locale, nextTitle, w.now); err != nil {
+			return contentblock.MetadataEffect{}, err
 		}
-		if created.RowsAffected != 1 {
-			return contentblock.MetadataEffect{}, errors.New("Release target locale could not be created")
-		}
-		if err := replaceReleaseCreditLocaleNotes(ctx, tx, w.input.ReleaseID, w.input.Locale, nextNotes, w.now); err != nil {
+		if err := store.ReplaceCreditNotes(ctx, w.input.ReleaseID, w.input.Locale, nextNotes, w.now); err != nil {
 			return contentblock.MetadataEffect{}, err
 		}
 		return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{w.input.Locale}}, nil
@@ -289,31 +249,29 @@ func (w *releaseTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, con
 		return contentblock.MetadataEffect{}, nil
 	}
 	updatedAt := translation.NextTargetUpdatedAt(w.now, currentMetadata.UpdatedAt)
-	updated := tx.WithContext(ctx).Table("release_translation").
-		Where("entity_id = ?::uuid AND locale = ?", w.input.ReleaseID, w.input.Locale).
-		Updates(map[string]any{"title": nextTitle, "updated_at": updatedAt})
-	if updated.Error != nil {
-		return contentblock.MetadataEffect{}, updated.Error
+	updated, err := store.UpdateLocaleTitle(ctx, w.input.ReleaseID, w.input.Locale, nextTitle, updatedAt)
+	if err != nil {
+		return contentblock.MetadataEffect{}, err
 	}
-	if updated.RowsAffected != 1 {
+	if !updated {
 		return contentblock.MetadataEffect{}, errors.New("Release target locale disappeared while saving")
 	}
 	if !maps.Equal(currentNotes, nextNotes) {
-		if err := replaceReleaseCreditLocaleNotes(ctx, tx, w.input.ReleaseID, w.input.Locale, nextNotes, updatedAt); err != nil {
+		if err := store.ReplaceCreditNotes(ctx, w.input.ReleaseID, w.input.Locale, nextNotes, updatedAt); err != nil {
 			return contentblock.MetadataEffect{}, err
 		}
 	}
-	w.final = releaseLocaleMetadataRow{Locale: w.input.Locale, Title: nextTitle, UpdatedAt: updatedAt}
+	w.final = LocaleMetadata{Locale: w.input.Locale, Title: nextTitle, UpdatedAt: updatedAt}
 	return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{w.input.Locale}}, nil
 }
 
 func validateReleaseCreditNoteIdentityMap(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	releaseID string,
 	notes map[string]string,
 ) error {
-	creditIDs, err := loadReleaseCreditIDs(ctx, tx, releaseID)
+	creditIDs, err := store.CreditIDs(ctx, releaseID)
 	if err != nil {
 		return err
 	}
@@ -331,21 +289,20 @@ func validateReleaseCreditNoteIdentityMap(
 
 func deleteReleaseTargetLocale(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	releaseID string,
 	documentID uuid.UUID,
 	locale string,
 	expectedDocumentRevision uuid.UUID,
 	expectedTargetRevision *string,
 	contributors []uuid.UUID,
-	fence contentblock.DomainFence,
+	fence ContentFence,
 ) (contentblock.Result, error) {
-	domain, err := fence(ctx, tx, documentID)
+	domain, err := fence(ctx, store, documentID)
 	if err != nil {
 		return contentblock.Result{}, err
 	}
-	state, err := loadReleaseTargetLocaleState(ctx, tx, store, releaseID, documentID, locale, true)
+	state, err := loadReleaseTargetLocaleState(ctx, store, releaseID, documentID, locale, true)
 	if err != nil {
 		return contentblock.Result{}, err
 	}
@@ -366,8 +323,8 @@ func deleteReleaseTargetLocale(
 		ContributorMemberIDs: append([]uuid.UUID(nil), contributors...),
 		LocaleGroups:         targetlocale.DeleteGroups(state.Snapshot, locale),
 	}
-	result, err := store.ApplyTargetLocaleBatchWithMetadata(ctx, tx, batch, locale, contentblock.LockedFence(releaseEntityName, documentID, domain), func(ctx context.Context, tx *gorm.DB, _ bool) (contentblock.MetadataEffect, error) {
-		if _, err := deleteReleaseAIDocumentTranslation(ctx, tx, releaseID, locale); err != nil {
+	result, err := store.ApplyTargetLocaleContentBatch(ctx, batch, locale, lockedContentFence(documentID, domain), func(ctx context.Context, store Store, _ bool) (contentblock.MetadataEffect, error) {
+		if _, err := store.DeleteLocale(ctx, releaseID, locale); err != nil {
 			return contentblock.MetadataEffect{}, err
 		}
 		return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil

@@ -2,19 +2,17 @@ package release
 
 import (
 	"testing"
-
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 func TestReleaseAIDocumentLifecycleUsesExactStoredStatus(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		status model.ReleaseStatus
+		status Status
 		valid  bool
 	}{
-		{status: model.ReleaseStatusDraft, valid: true},
-		{status: model.ReleaseStatusPublished, valid: true},
+		{status: StatusDraft, valid: true},
+		{status: StatusPublished, valid: true},
 		{status: "PUBLISHED"},
 		{status: "RELEASE_STATUS_PUBLISHED "},
 		{status: "BOGUS_PUBLISHED"},

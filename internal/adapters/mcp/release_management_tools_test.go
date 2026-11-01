@@ -11,13 +11,10 @@ import (
 
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	"github.com/echovisionlab/geul-api/internal/model"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const releaseManagementID = "11111111-1111-4111-8111-111111111111"
@@ -64,8 +61,7 @@ func TestReleaseManagementDescriptorsAndRequiredFields(t *testing.T) {
 func TestReleaseManagementCreateExactFieldsAndCompactSettings(t *testing.T) {
 	owner := newRecordingReleaseManagement()
 	owner.release.Document = &contentv1.RichTextDocument{Profile: contentv1.RichTextProfile_RICH_TEXT_PROFILE_COMPACT}
-	owner.release.ArtworkAsset = &commonv1.AssetRef{AssetId: releaseManagementAssetID, Url: "https://private-delivery.test/secret"}
-	owner.release.OgAsset = &commonv1.AssetRef{AssetId: releaseManagementAssetID, DownloadFilename: proto.String("private filename")}
+	owner.release.Artwork = &commonv1.AssetRef{AssetId: releaseManagementAssetID, Url: "https://private-delivery.test/secret", DownloadFilename: proto.String("private filename")}
 	tools, _ := NewReleaseManagementTools(owner)
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReleaseCreate, toolArguments(t, `{
   "title":"Album","source_locale":"ko","type":"ep","slug":"album","catalog_number":"CAT-1","release_date":"2026-10-10T00:00:00+09:00",
@@ -76,7 +72,7 @@ func TestReleaseManagementCreateExactFieldsAndCompactSettings(t *testing.T) {
 	}
 	releaseDate := time.Date(2026, 10, 9, 15, 0, 0, 0, time.UTC)
 	want := releasedomain.CreateReleaseCommand{
-		Title: "Album", SourceLocale: "ko", AcceptLanguage: "ko", Type: model.ReleaseTypeEP, Slug: proto.String("album"), CatalogNumber: proto.String("CAT-1"),
+		Title: "Album", SourceLocale: "ko", AcceptLanguage: "ko", Type: releasedomain.TypeEP, Slug: proto.String("album"), CatalogNumber: proto.String("CAT-1"),
 		ReleaseDate: &releaseDate,
 		SpotifyURL:  proto.String("https://example.test/spotify"), AppleMusicURL: proto.String("https://example.test/apple"), BandcampURL: proto.String("https://example.test/bandcamp"), YoutubeMusicURL: proto.String("https://example.test/youtube"),
 	}
@@ -106,7 +102,7 @@ func TestReleaseManagementSettingsNativePointersAndDateOneof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	single := model.ReleaseTypeSingle
+	single := releasedomain.TypeSingle
 	releaseDate := time.Date(2026, 10, 9, 15, 0, 0, 0, time.UTC)
 	want := releasedomain.UpdateReleaseCommand{
 		ID: releaseManagementID, Slug: proto.String(""), Type: &single, CatalogNumber: proto.String(""),
@@ -265,7 +261,7 @@ func TestReleaseManagementPreservesAuthorityErrorsAndActorContext(t *testing.T) 
 type releaseManagementContextKey struct{}
 
 type recordingReleaseManagement struct {
-	release       *managev1.Release
+	release       releasedomain.View
 	err           error
 	ctx           context.Context
 	calls         []string
@@ -277,14 +273,16 @@ type recordingReleaseManagement struct {
 	removeArtwork releasedomain.DeleteReleaseArtworkCommand
 	slug          releasedomain.CheckReleaseSlugQuery
 	artworkAsset  *commonv1.AssetRef
-	status        model.ReleaseStatus
+	status        releasedomain.Status
 }
 
 func newRecordingReleaseManagement() *recordingReleaseManagement {
 	return &recordingReleaseManagement{
-		release: &managev1.Release{Id: releaseManagementID, Title: "Album", SourceLocale: "ko", Type: managev1.ReleaseType_RELEASE_TYPE_ALBUM,
-			Status: "RELEASE_STATUS_DRAFT", Revision: releaseManagementRevision, UpdatedAt: timestamppb.New(time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC))},
-		status: model.ReleaseStatusDraft,
+		release: releasedomain.View{Title: "Album", Revision: releaseManagementRevision, Release: releasedomain.Release{
+			ID: releaseManagementID, SourceLocale: "ko", Type: releasedomain.TypeAlbum,
+			Status: releasedomain.StatusDraft, UpdatedAt: time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC),
+		}},
+		status: releasedomain.StatusDraft,
 	}
 }
 
@@ -293,18 +291,18 @@ func (owner *recordingReleaseManagement) record(ctx context.Context, call string
 	return owner.err
 }
 
-func (owner *recordingReleaseManagement) CreateRelease(ctx context.Context, command releasedomain.CreateReleaseCommand) (*managev1.Release, error) {
+func (owner *recordingReleaseManagement) CreateRelease(ctx context.Context, command releasedomain.CreateReleaseCommand) (releasedomain.View, error) {
 	owner.create = command
 	if err := owner.record(ctx, "create"); err != nil {
-		return nil, err
+		return releasedomain.View{}, err
 	}
 	return owner.release, nil
 }
 
-func (owner *recordingReleaseManagement) GetRelease(ctx context.Context, query releasedomain.GetReleaseQuery) (*managev1.Release, error) {
+func (owner *recordingReleaseManagement) GetRelease(ctx context.Context, query releasedomain.GetReleaseQuery) (releasedomain.View, error) {
 	owner.get = query
 	if err := owner.record(ctx, "get"); err != nil {
-		return nil, err
+		return releasedomain.View{}, err
 	}
 	return owner.release, nil
 }
@@ -314,24 +312,24 @@ func (owner *recordingReleaseManagement) UpdateRelease(ctx context.Context, comm
 	if err := owner.record(ctx, "update"); err != nil {
 		return releasedomain.ReleaseUpdate{}, err
 	}
-	return releasedomain.ReleaseUpdate{ID: command.ID, Changed: true, UpdatedAt: owner.release.UpdatedAt.AsTime()}, nil
+	return releasedomain.ReleaseUpdate{ID: command.ID, Changed: true, UpdatedAt: owner.release.Release.UpdatedAt}, nil
 }
 
-func (owner *recordingReleaseManagement) transition(ctx context.Context, call string, id string, next model.ReleaseStatus) (releasedomain.LifecycleChange, error) {
+func (owner *recordingReleaseManagement) transition(ctx context.Context, call string, id string, next releasedomain.Status) (releasedomain.LifecycleChange, error) {
 	if err := owner.record(ctx, call); err != nil {
 		return releasedomain.LifecycleChange{}, err
 	}
 	changed := owner.status != next
 	owner.status = next
-	return releasedomain.LifecycleChange{ID: id, Changed: changed, Status: next, UpdatedAt: owner.release.UpdatedAt.AsTime()}, nil
+	return releasedomain.LifecycleChange{ID: id, Changed: changed, Status: next, UpdatedAt: owner.release.Release.UpdatedAt}, nil
 }
 
 func (owner *recordingReleaseManagement) PublishRelease(ctx context.Context, command releasedomain.PublishReleaseCommand) (releasedomain.LifecycleChange, error) {
-	return owner.transition(ctx, "publish", command.ID, model.ReleaseStatusPublished)
+	return owner.transition(ctx, "publish", command.ID, releasedomain.StatusPublished)
 }
 
 func (owner *recordingReleaseManagement) UnpublishRelease(ctx context.Context, command releasedomain.UnpublishReleaseCommand) (releasedomain.LifecycleChange, error) {
-	return owner.transition(ctx, "unpublish", command.ID, model.ReleaseStatusDraft)
+	return owner.transition(ctx, "unpublish", command.ID, releasedomain.StatusDraft)
 }
 
 func (owner *recordingReleaseManagement) DeleteRelease(ctx context.Context, command releasedomain.DeleteReleaseCommand) error {

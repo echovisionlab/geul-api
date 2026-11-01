@@ -6,10 +6,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/mutation"
 )
@@ -18,7 +15,7 @@ type CollaborationPermissionChecker interface {
 	Can(context.Context, policyv1.AuthorizationDecision) (bool, error)
 }
 
-func requireDocumentContributors(ctx context.Context, tx *gorm.DB, memberIDs []string) error {
+func requireDocumentContributors(ctx context.Context, store Store, memberIDs []string) error {
 	if len(memberIDs) == 0 {
 		return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires contributors")
 	}
@@ -33,10 +30,8 @@ func requireDocumentContributors(ctx context.Context, tx *gorm.DB, memberIDs []s
 	// These rows preserve durable attribution only. Authorization is the exact
 	// Release edit check performed when editor-collab admits each frame; Member
 	// existence here must never become a fallback grant.
-	// PostgreSQL rejects row locks on aggregates, so lock the rows and count them here.
-	var locked []string
-	if err := tx.WithContext(ctx).Table("member").Clauses(clause.Locking{Strength: "KEY SHARE"}).
-		Where("id IN ?", unique).Pluck("id::text", &locked).Error; err != nil {
+	locked, err := store.LockMembers(ctx, unique)
+	if err != nil {
 		return err
 	}
 	if len(locked) != len(unique) {
@@ -49,28 +44,24 @@ func requireDocumentContributors(ctx context.Context, tx *gorm.DB, memberIDs []s
 // save's authority is its contributors, not the request principal, and
 // each must still be a current contributor of the Release room.
 func (s *Service) collaborationContributorsAccess(releaseID string, contributors []string) mutation.Access {
-	return mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-		if err := requireDocumentContributors(ctx, tx, contributors); err != nil {
+	return mutation.Checked(func(ctx context.Context, store Store) error {
+		if err := requireDocumentContributors(ctx, store, contributors); err != nil {
 			return err
 		}
-		return s.checkpoints.RequireCurrentContributors(
-			ctx, tx, intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_RELEASE, releaseID, contributors,
-		)
+		return store.RequireCurrentContributors(ctx, releaseID, contributors)
 	})
 }
 
-func RequireCollaborationEdit(
+// requireCollaborationEdit requires the exact Release edit permission of a
+// collaboration room's principal.
+func requireCollaborationEdit(
 	ctx context.Context,
 	checker CollaborationPermissionChecker,
-	resourceKind intrav1.CollaborationResourceType,
 	resourceID string,
 	principal *auth.UserInfo,
 ) error {
 	if checker == nil {
 		return domainerr.DependencyUnavailable("SpiceDB")
-	}
-	if resourceKind != intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_RELEASE {
-		return domainerr.InvalidField("resource.type", "must be Release")
 	}
 	if principal == nil || !principal.Authenticated {
 		return authenticationRequired()

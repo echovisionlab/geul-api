@@ -2,10 +2,15 @@ package release
 
 import (
 	"context"
+	"log/slog"
+	"sort"
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -59,11 +64,13 @@ func respond[T any](message *T, err error) (*connect.Response[T], error) {
 }
 
 func (h *ConnectHandler) GetRelease(ctx context.Context, req *connect.Request[managev1.GetReleaseRequest]) (*connect.Response[managev1.Release], error) {
-	return respond(h.releases.GetRelease(ctx, GetReleaseQuery{ID: req.Msg.Id}))
+	view, err := h.releases.GetRelease(ctx, GetReleaseQuery{ID: req.Msg.Id})
+	return respond(ReleaseMessage(view), err)
 }
 
 func (h *ConnectHandler) GetReleaseRelations(ctx context.Context, req *connect.Request[managev1.GetReleaseRelationsRequest]) (*connect.Response[managev1.GetReleaseRelationsResponse], error) {
-	return respond(h.releases.GetReleaseRelations(ctx, GetReleaseRelationsQuery{ReleaseID: req.Msg.ReleaseId}))
+	relations, err := h.releases.GetReleaseRelations(ctx, GetReleaseRelationsQuery{ReleaseID: req.Msg.ReleaseId})
+	return respond(RelationsMessage(relations), err)
 }
 
 func (h *ConnectHandler) ListReleasesAdmin(ctx context.Context, req *connect.Request[managev1.ListReleasesAdminRequest]) (*connect.Response[managev1.ListReleasesAdminResponse], error) {
@@ -72,7 +79,7 @@ func (h *ConnectHandler) ListReleasesAdmin(ctx context.Context, req *connect.Req
 		Limit: req.Msg.Pagination.GetLimit(), Offset: req.Msg.Pagination.GetOffset(),
 	})
 	return respond(&managev1.ListReleasesAdminResponse{
-		Releases: page.Releases,
+		Releases: ReleasesWithStatsMessage(page.Releases),
 		Pagination: &commonv1.PaginationResponse{
 			Total: int32(page.Total), Limit: page.Limit, Offset: page.Offset,
 			HasMore: page.Offset+page.Limit < int32(page.Total),
@@ -81,12 +88,13 @@ func (h *ConnectHandler) ListReleasesAdmin(ctx context.Context, req *connect.Req
 }
 
 func (h *ConnectHandler) CreateRelease(ctx context.Context, req *connect.Request[managev1.CreateReleaseRequest]) (*connect.Response[managev1.Release], error) {
-	return respond(h.releases.CreateRelease(ctx, CreateReleaseCommand{
+	view, err := h.releases.CreateRelease(ctx, CreateReleaseCommand{
 		Title: req.Msg.Title, SourceLocale: req.Msg.SourceLocale, AcceptLanguage: req.Header().Get("Accept-Language"),
 		Type: releaseTypeFromProto(req.Msg.Type), Slug: req.Msg.Slug, ReleaseDate: optionalTime(req.Msg.ReleaseDate),
 		SpotifyURL: req.Msg.SpotifyUrl, AppleMusicURL: req.Msg.AppleMusicUrl, BandcampURL: req.Msg.BandcampUrl,
 		YoutubeMusicURL: req.Msg.YoutubeMusicUrl, CatalogNumber: req.Msg.CatalogNumber, Document: req.Msg.Document,
-	}))
+	})
+	return respond(ReleaseMessage(view), err)
 }
 
 func (h *ConnectHandler) UpdateRelease(ctx context.Context, req *connect.Request[managev1.UpdateReleaseRequest]) (*connect.Response[managev1.UpdateReleaseResponse], error) {
@@ -214,21 +222,23 @@ func respondSuccess(err error) (*connect.Response[managev1.SuccessResponse], err
 
 func (h *TrackConnectHandler) ListTracksByRelease(ctx context.Context, req *connect.Request[managev1.ListTracksByReleaseRequest]) (*connect.Response[managev1.ListTracksByReleaseResponse], error) {
 	tracks, err := h.releases.ListTracksByRelease(ctx, ListTracksQuery{ReleaseID: req.Msg.ReleaseId})
-	return respond(&managev1.ListTracksByReleaseResponse{Tracks: tracks}, err)
+	return respond(&managev1.ListTracksByReleaseResponse{Tracks: TracksWithCreditsMessage(ctx, tracks)}, err)
 }
 
 func (h *TrackConnectHandler) CreateTrack(ctx context.Context, req *connect.Request[managev1.CreateTrackRequest]) (*connect.Response[managev1.Track], error) {
-	return respond(h.releases.CreateTrack(ctx, CreateTrackCommand{
+	track, err := h.releases.CreateTrack(ctx, CreateTrackCommand{
 		ReleaseID: req.Msg.ReleaseId, Title: req.Msg.Title, DurationSeconds: req.Msg.DurationSeconds, Lyrics: req.Msg.Lyrics,
-	}))
+	})
+	return respond(TrackMessage(ctx, track), err)
 }
 
 func (h *TrackConnectHandler) UpdateTrack(ctx context.Context, req *connect.Request[managev1.UpdateTrackRequest]) (*connect.Response[managev1.Track], error) {
-	return respond(h.releases.UpdateTrack(ctx, UpdateTrackCommand{
+	track, err := h.releases.UpdateTrack(ctx, UpdateTrackCommand{
 		ID: req.Msg.Id, TrackNumber: req.Msg.TrackNumber, Title: req.Msg.Title,
 		DurationSeconds: req.Msg.DurationSeconds, ProcessingStatus: req.Msg.ProcessingStatus, Lyrics: req.Msg.Lyrics,
 		ClearDuration: req.Msg.ClearDuration, ClearAudioOriginal: req.Msg.ClearAudioOriginal, ClearLyrics: req.Msg.ClearLyrics,
-	}))
+	})
+	return respond(TrackMessage(ctx, track), err)
 }
 
 func (h *TrackConnectHandler) DeleteTrack(ctx context.Context, req *connect.Request[managev1.DeleteTrackRequest]) (*connect.Response[managev1.DeleteResponse], error) {
@@ -241,12 +251,13 @@ func (h *TrackConnectHandler) SetTrackCredits(ctx context.Context, req *connect.
 	if req.Msg.Observed != nil {
 		command.Observed = &Snapshot[*CreditInput]{Items: TrackCreditInputsFromProto(req.Msg.Observed.Credits)}
 	}
-	return respond(h.releases.SetTrackCredits(ctx, command))
+	track, err := h.releases.SetTrackCredits(ctx, command)
+	return respond(TrackWithCreditsMessage(ctx, track), err)
 }
 
 func (h *TrackConnectHandler) ReorderTracks(ctx context.Context, req *connect.Request[managev1.ReorderTracksRequest]) (*connect.Response[managev1.ListTracksByReleaseResponse], error) {
 	tracks, err := h.releases.ReorderTracks(ctx, ReorderTracksCommand{TrackIDs: req.Msg.TrackIds})
-	return respond(&managev1.ListTracksByReleaseResponse{Tracks: tracks}, err)
+	return respond(&managev1.ListTracksByReleaseResponse{Tracks: TracksWithCreditsMessage(ctx, tracks)}, err)
 }
 
 func (h *InternalConnectHandler) LoadReleaseBlockDocument(ctx context.Context, req *connect.Request[intrav1.LoadReleaseBlockDocumentRequest]) (*connect.Response[intrav1.LoadReleaseBlockDocumentResponse], error) {
@@ -254,7 +265,8 @@ func (h *InternalConnectHandler) LoadReleaseBlockDocument(ctx context.Context, r
 	if req.Msg.Principal != nil {
 		query.Principal = &CollaborationPrincipal{SessionID: req.Msg.Principal.SessionId}
 	}
-	return respond(h.releases.LoadReleaseBlockDocument(ctx, query))
+	document, err := h.releases.LoadReleaseBlockDocument(ctx, query)
+	return respond(blockDocumentMessage(document), err)
 }
 
 func (h *InternalConnectHandler) ApplyReleaseBlockBatch(ctx context.Context, req *connect.Request[intrav1.ApplyReleaseBlockBatchRequest]) (*connect.Response[intrav1.ApplyReleaseBlockBatchResponse], error) {
@@ -366,4 +378,242 @@ func optionalTime(value *timestamppb.Timestamp) *time.Time {
 	}
 	converted := value.AsTime()
 	return &converted
+}
+
+func timestampProtoPtr(value *time.Time) *timestamppb.Timestamp {
+	if value == nil {
+		return nil
+	}
+	return timestamppb.New(*value)
+}
+
+// ReleaseMessage renders a Release view; its artwork is its Open Graph image
+// as well.
+func ReleaseMessage(view View) *managev1.Release {
+	r := view.Release
+	return &managev1.Release{
+		Id:              r.ID,
+		Title:           view.Title,
+		Type:            releaseTypeToProto(r.Type),
+		Document:        view.Document,
+		SourceLocale:    r.SourceLocale,
+		Status:          string(r.Status),
+		CreatedAt:       timestamppb.New(r.CreatedAt),
+		UpdatedAt:       timestamppb.New(r.UpdatedAt),
+		OgAsset:         view.Artwork,
+		ArtworkAsset:    view.Artwork,
+		Revision:        view.Revision,
+		Slug:            r.Slug,
+		ReleaseDate:     timestampProtoPtr(r.ReleaseDate),
+		PublishedAt:     timestampProtoPtr(r.PublishedAt),
+		SpotifyUrl:      r.SpotifyURL,
+		AppleMusicUrl:   r.AppleMusicURL,
+		BandcampUrl:     r.BandcampURL,
+		YoutubeMusicUrl: r.YoutubeMusicURL,
+		CatalogNumber:   r.CatalogNumber,
+	}
+}
+
+// ReleasesWithStatsMessage renders a page of Releases with their counts.
+func ReleasesWithStatsMessage(releases []ReleaseWithStats) []*managev1.ReleaseWithStats {
+	result := make([]*managev1.ReleaseWithStats, len(releases))
+	for i, release := range releases {
+		result[i] = &managev1.ReleaseWithStats{
+			Release: ReleaseMessage(release.View), TrackCount: release.TrackCount, CreditCount: release.CreditCount,
+		}
+	}
+	return result
+}
+
+// RelationsMessage renders a Release's editable relation snapshot.
+func RelationsMessage(relations Relations) *managev1.GetReleaseRelationsResponse {
+	response := &managev1.GetReleaseRelationsResponse{
+		ReleaseId:  relations.ReleaseID,
+		Artists:    make([]*managev1.ReleaseArtistEditorItem, 0, len(relations.Artists)),
+		Labels:     make([]*managev1.ReleaseLabelEditorItem, 0, len(relations.Labels)),
+		Categories: referenceItems(relations.Categories),
+		Genres:     referenceItems(relations.Genres),
+		Styles:     referenceItems(relations.Styles),
+		Formats:    make([]*managev1.ReleaseFormatEditorItem, 0, len(relations.Formats)),
+		Credits:    make([]*managev1.ReleaseCreditEditorItem, 0, len(relations.Credits)),
+	}
+	for _, artist := range relations.Artists {
+		response.Artists = append(response.Artists, &managev1.ReleaseArtistEditorItem{
+			ArtistId: artist.ArtistID, ArtistName: artist.Name, ArtistSlug: artist.Slug, SortOrder: artist.SortOrder,
+		})
+	}
+	for _, label := range relations.Labels {
+		response.Labels = append(response.Labels, &managev1.ReleaseLabelEditorItem{
+			LabelId: label.LabelID, LabelName: label.Name, LabelSlug: label.Slug,
+			CatalogNumber: label.CatalogNumber, SortOrder: label.SortOrder,
+		})
+	}
+	for _, format := range relations.Formats {
+		response.Formats = append(response.Formats, &managev1.ReleaseFormatEditorItem{
+			Id: format.ID, Name: format.Name, Slug: format.Slug, FormatDescription: format.Description,
+		})
+	}
+	for _, credit := range relations.Credits {
+		response.Credits = append(response.Credits, &managev1.ReleaseCreditEditorItem{
+			Id: credit.ID, ArtistId: credit.ArtistID, ArtistName: credit.ArtistName, ArtistSlug: credit.ArtistSlug,
+			MemberId: credit.MemberID, MemberName: credit.MemberName,
+			CreditedName: credit.CreditedName, CreditRole: credit.CreditRole, SortOrder: credit.SortOrder,
+		})
+	}
+	return response
+}
+
+func referenceItems(references []Reference) []*managev1.ReleaseReferenceEditorItem {
+	items := make([]*managev1.ReleaseReferenceEditorItem, 0, len(references))
+	for _, reference := range references {
+		items = append(items, &managev1.ReleaseReferenceEditorItem{Id: reference.ID, Name: reference.Name, Slug: reference.Slug})
+	}
+	return items
+}
+
+// TrackMessage renders a Track. Metadata that cannot be rendered is omitted
+// and logged.
+func TrackMessage(ctx context.Context, t Track) *managev1.Track {
+	message := &managev1.Track{
+		Id:                  t.ID,
+		ReleaseId:           t.ReleaseID,
+		TrackNumber:         int32(t.TrackNumber),
+		Title:               t.Title,
+		CreatedAt:           timestamppb.New(t.CreatedAt),
+		AudioOriginalFileId: t.AudioOriginalFileID,
+		ProcessingStatus:    t.ProcessingStatus,
+		Lyrics:              t.Lyrics,
+	}
+	if t.DurationSeconds != nil {
+		duration := int32(*t.DurationSeconds)
+		message.DurationSeconds = &duration
+	}
+	if t.Metadata != nil {
+		if metadata, err := structpb.NewStruct(t.Metadata); err == nil {
+			message.Metadata = metadata
+		} else {
+			slog.ErrorContext(ctx, "Track metadata could not be converted; omitting it from the response", "domain", "release", "operation", "convert_track_metadata", failurecause.Attr(err), "track_id", t.ID)
+		}
+	}
+	return message
+}
+
+// TrackWithCreditsMessage renders a Track with its credits.
+func TrackWithCreditsMessage(ctx context.Context, track TrackWithCredits) *managev1.TrackWithCredits {
+	credits := make([]*managev1.TrackCredit, len(track.Credits))
+	for i, credit := range track.Credits {
+		credits[i] = &managev1.TrackCredit{
+			Id:           credit.ID,
+			CreditType:   credit.CreditType,
+			SortOrder:    int32(credit.SortOrder),
+			ArtistId:     credit.ArtistID,
+			ArtistName:   credit.ArtistName,
+			ArtistSlug:   credit.ArtistSlug,
+			MemberId:     credit.MemberID,
+			CreditedName: credit.CreditedName,
+			CreditRole:   credit.CreditRole,
+			Member:       credit.Member,
+		}
+	}
+	return &managev1.TrackWithCredits{Track: TrackMessage(ctx, track.Track), Credits: credits}
+}
+
+// TracksWithCreditsMessage renders Tracks with their credits in order.
+func TracksWithCreditsMessage(ctx context.Context, tracks []TrackWithCredits) []*managev1.TrackWithCredits {
+	if tracks == nil {
+		return nil
+	}
+	result := make([]*managev1.TrackWithCredits, len(tracks))
+	for i, track := range tracks {
+		result[i] = TrackWithCreditsMessage(ctx, track)
+	}
+	return result
+}
+
+func blockDocumentMessage(document BlockDocument) *intrav1.LoadReleaseBlockDocumentResponse {
+	artists := make([]*intrav1.ReleaseArtistState, 0, len(document.Artists))
+	for _, artist := range document.Artists {
+		artists = append(artists, &intrav1.ReleaseArtistState{
+			ArtistId: artist.ArtistID, ArtistName: artist.Name, ArtistSlug: artist.Slug, SortOrder: artist.SortOrder,
+		})
+	}
+	response := &intrav1.LoadReleaseBlockDocumentResponse{
+		Document: document.Document, DocumentRevision: document.DocumentRevision,
+		SourceMetadata: releaseLocaleMetadataMessage(document.SourceMetadata), Artists: artists,
+		Locale: document.Locale, LocaleExists: document.LocaleExists,
+		PresentLocaleValues: document.PresentLocaleValues, TargetRevision: document.TargetRevision,
+	}
+	if document.LocaleMetadata != nil {
+		response.LocaleMetadata = releaseLocaleMetadataMessage(*document.LocaleMetadata)
+	}
+	return response
+}
+
+func releaseLocaleMetadataMessage(locale LocaleNotes) *intrav1.ReleaseLocaleMetadata {
+	creditIDs := make([]string, 0, len(locale.Notes))
+	for creditID := range locale.Notes {
+		creditIDs = append(creditIDs, creditID)
+	}
+	sort.Strings(creditIDs)
+	message := &intrav1.ReleaseLocaleMetadata{Locale: locale.Metadata.Locale, Title: locale.Metadata.Title}
+	for _, creditID := range creditIDs {
+		message.CreditNotes = append(message.CreditNotes, &intrav1.ReleaseCreditNote{CreditId: creditID, Note: locale.Notes[creditID]})
+	}
+	return message
+}
+
+// releaseStatusToProto maps a stored Release status to the API enum. A value
+// the API does not know is UNSPECIFIED.
+func releaseStatusToProto(status Status) managev1.ReleaseStatus {
+	switch status {
+	case StatusDraft:
+		return managev1.ReleaseStatus_RELEASE_STATUS_DRAFT
+	case StatusPublished:
+		return managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED
+	default:
+		return managev1.ReleaseStatus_RELEASE_STATUS_UNSPECIFIED
+	}
+}
+
+// releaseStatusFromProto maps an API Release status to the stored value. It
+// reports false for UNSPECIFIED and unknown values.
+func releaseStatusFromProto(status managev1.ReleaseStatus) (Status, bool) {
+	switch status {
+	case managev1.ReleaseStatus_RELEASE_STATUS_DRAFT:
+		return StatusDraft, true
+	case managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED:
+		return StatusPublished, true
+	default:
+		return "", false
+	}
+}
+
+// releaseTypeToProto maps a stored Release type to the API enum. A value the
+// API does not know reads as an album, the column default.
+func releaseTypeToProto(releaseType Type) managev1.ReleaseType {
+	switch releaseType {
+	case TypeEP:
+		return managev1.ReleaseType_RELEASE_TYPE_EP
+	case TypeSingle:
+		return managev1.ReleaseType_RELEASE_TYPE_SINGLE
+	case TypeCompilation:
+		return managev1.ReleaseType_RELEASE_TYPE_COMPILATION
+	default:
+		return managev1.ReleaseType_RELEASE_TYPE_ALBUM
+	}
+}
+
+// releaseTypeFromProto maps an API Release type to the stored value.
+// UNSPECIFIED and unknown values store an album, the column default.
+func releaseTypeFromProto(releaseType managev1.ReleaseType) Type {
+	switch releaseType {
+	case managev1.ReleaseType_RELEASE_TYPE_EP:
+		return TypeEP
+	case managev1.ReleaseType_RELEASE_TYPE_SINGLE:
+		return TypeSingle
+	case managev1.ReleaseType_RELEASE_TYPE_COMPILATION:
+		return TypeCompilation
+	default:
+		return TypeAlbum
+	}
 }

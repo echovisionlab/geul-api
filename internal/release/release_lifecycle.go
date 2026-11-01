@@ -8,21 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
-	"github.com/echovisionlab/geul-api/internal/routeregistry"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -49,7 +41,7 @@ type CreateReleaseCommand struct {
 	// Member preference, AcceptLanguage and the translation default.
 	SourceLocale    string
 	AcceptLanguage  string
-	Type            model.ReleaseType
+	Type            Type
 	Slug            *string
 	ReleaseDate     *time.Time
 	SpotifyURL      *string
@@ -79,65 +71,65 @@ type UnpublishReleaseCommand struct {
 type LifecycleChange struct {
 	ID          string
 	Changed     bool
-	Status      model.ReleaseStatus
+	Status      Status
 	PublishedAt *time.Time
 	UpdatedAt   time.Time
 }
 
 // CreateRelease creates a draft Release (Site Admin only).
-func (s *Service) CreateRelease(ctx context.Context, command CreateReleaseCommand) (*managev1.Release, error) {
+func (s *Service) CreateRelease(ctx context.Context, command CreateReleaseCommand) (View, error) {
 	title := strings.TrimSpace(command.Title)
 	if title == "" {
-		return nil, domainerr.Required("title")
+		return View{}, domainerr.Required("title")
 	}
 	requestedSourceLocale := command.SourceLocale
 	if requestedSourceLocale != "" {
 		var err error
 		requestedSourceLocale, err = normalizeReleaseDocumentLocale(requestedSourceLocale)
 		if err != nil {
-			return nil, domainerr.InvalidField("source_locale", "must be a supported canonical locale")
+			return View{}, domainerr.InvalidField("source_locale", "must be a supported canonical locale")
 		}
 	}
-	release := model.Release{
-		Type: command.Type, Status: model.ReleaseStatusDraft,
+	release := Release{
+		Type: command.Type, Status: StatusDraft,
 		ReleaseDate: command.ReleaseDate, SpotifyURL: command.SpotifyURL, AppleMusicURL: command.AppleMusicURL,
 		BandcampURL: command.BandcampURL, YoutubeMusicURL: command.YoutubeMusicURL, CatalogNumber: command.CatalogNumber,
 	}
 	if command.Slug != nil {
 		if err := pathslug.Validate(*command.Slug); err != nil {
-			return nil, err
+			return View{}, err
 		}
-		if err := routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "release", "releases", *command.Slug); err != nil {
-			return nil, err
+		if err := s.checkResourceRoute(ctx, *command.Slug); err != nil {
+			return View{}, err
 		}
 		release.Slug = command.Slug
 	}
-	created, err := mutation.Run(ctx, s.mutations, mutation.Spec[model.Release]{
+	created, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[Release, Store]{
 		// A new Release has no row to lock yet; its route is the only state
 		// another creation can race for.
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+		Lock: func(ctx context.Context, store Store) error {
 			if release.Slug == nil || *release.Slug == "" {
 				return nil
 			}
-			return routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "release", "releases", *release.Slug)
+			return store.LockResourceRoute(ctx, *release.Slug)
 		},
 		Access: mutation.FreshAdminCan(policyv1.Release.Create()),
-		Change: func(ctx context.Context, tx *gorm.DB) (model.Release, error) {
+		Change: func(ctx context.Context, store Store) (Release, error) {
 			sourceLocale := requestedSourceLocale
 			if sourceLocale == "" {
-				sourceLocale = resolveInitialSourceLocale(ctx, tx, command.AcceptLanguage)
+				sourceLocale = resolveInitialSourceLocale(ctx, store, command.AcceptLanguage)
 			}
-			if err := s.createReleaseRows(ctx, tx, &release, sourceLocale, title, command.Document); err != nil {
-				return model.Release{}, err
+			if err := createReleaseRows(ctx, store, &release, sourceLocale, title, command.Document); err != nil {
+				return Release{}, err
 			}
 			return release, nil
 		},
-		Audit: func(release model.Release) mutation.Audit {
+		Audit: func(release Release) mutation.Audit {
 			return mutation.RequestAudit(sharedtelemetry.AuditReleaseCreated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 				return sharedtelemetry.NewReleaseCreatedAuditRecord(m, release.ID)
 			})
 		},
-		Relationships: func(release model.Release) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+		Relationships: func(release Release) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
 			touchPolicy, err := policyv1.Release.TouchPolicy(release.ID)
 			if err != nil {
 				return nil, nil, err
@@ -147,30 +139,34 @@ func (s *Service) CreateRelease(ctx context.Context, command CreateReleaseComman
 		},
 	})
 	if err != nil {
-		if dberrors.IsUniqueViolation(err) {
-			return nil, slugTaken(err)
+		if errors.Is(err, ErrSlugTaken) {
+			return View{}, slugTaken(err)
 		}
-		return nil, err
+		return View{}, err
 	}
-	document, err := s.overlayReleaseSourceLocaleDocument(ctx, &created)
-	if err != nil {
-		return nil, err
-	}
-	return toProtoRelease(&created, document, nil), nil
+	return s.overlayReleaseSourceLocaleDocument(ctx, created)
+}
+
+// checkResourceRoute requires, in its own read snapshot, that no route uses
+// the Release slug.
+func (s *Service) checkResourceRoute(ctx context.Context, slug string) error {
+	return s.units.Read(ctx, func(store Store) error {
+		return store.CheckResourceRoute(ctx, slug)
+	})
 }
 
 // createReleaseRows stores the Release root, its content document and its
 // source locale title.
-func (s *Service) createReleaseRows(
+func createReleaseRows(
 	ctx context.Context,
-	tx *gorm.DB,
-	release *model.Release,
+	store Store,
+	release *Release,
 	sourceLocale string,
 	title string,
 	initial *contentv1.RichTextDocument,
 ) error {
 	release.SourceLocale = sourceLocale
-	document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
+	document, err := store.CreateContentDocument(ctx, contentblock.CreateInput{
 		Profile:      releaseContentProfile,
 		SourceLocale: sourceLocale,
 	})
@@ -179,24 +175,21 @@ func (s *Service) createReleaseRows(
 	}
 	contentDocumentID := document.Document.ID.String()
 	release.ContentDocumentID = &contentDocumentID
-	if err := tx.
-		Clauses(clause.Returning{Columns: []clause.Column{{Name: "id"}, {Name: "created_at"}, {Name: "updated_at"}}}).
-		Create(release).Error; err != nil {
+	if err := store.InsertRelease(ctx, release); err != nil {
 		return err
 	}
 	if _, err := initializeReleaseContentDocument(
-		ctx, tx, s.contentBlocks, release.ID, sourceLocale, document, initial,
-		func(context.Context, *gorm.DB) error { return nil },
+		ctx, store, release.ID, sourceLocale, document, initial,
 	); err != nil {
 		return err
 	}
 	now := time.Now().UTC()
-	if err := saveReleaseSourceLocaleMetadata(ctx, tx, release.ID, sourceLocale, translationLocaleDocumentSaveInput{
+	if err := saveReleaseSourceLocaleMetadata(ctx, store, release.ID, sourceLocale, translationLocaleDocumentSaveInput{
 		Title: &title, Now: now,
 	}); err != nil {
 		return err
 	}
-	return touchReleaseSourceLocaleState(ctx, tx, release.ID, now)
+	return touchReleaseSourceLocaleState(ctx, store, release.ID, now)
 }
 
 // DeleteRelease deletes a Release and every cascade-owned Track (Site Admin only).
@@ -222,11 +215,7 @@ func (s *Service) DeleteRelease(ctx context.Context, command DeleteReleaseComman
 		if err != nil {
 			return classifyReleaseDeleteError(releaseID, err)
 		}
-		if err := s.waveformJobs.CancelTracks(
-			ctx,
-			trackIDs,
-			managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_DELETED,
-		); err != nil {
+		if err := s.waveformJobs.CancelDeletedTracks(ctx, trackIDs); err != nil {
 			slog.ErrorContext(ctx, "Failed to cancel waveform jobs for deleted release", "releaseId", releaseID, failurecause.Attr(err))
 		}
 		return nil
@@ -238,10 +227,10 @@ func (s *Service) DeleteRelease(ctx context.Context, command DeleteReleaseComman
 // Release row is locked, for a use case whose next step has effects outside
 // the database and so cannot wait for the mutation's own check.
 func (s *Service) authorizeLockedRelease(ctx context.Context, releaseID string, action releaseObjectAction) error {
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
 		Lock:   lockReleaseRow(releaseID, nil),
 		Access: s.releaseAccess(releaseID, action),
-		Change: func(context.Context, *gorm.DB) (struct{}, error) { return struct{}{}, nil },
+		Change: func(context.Context, Store) (struct{}, error) { return struct{}{}, nil },
 		Audit:  func(struct{}) mutation.Audit { return mutation.Unchanged() },
 	})
 	return err
@@ -251,13 +240,13 @@ func (s *Service) cleanupReleaseTrackUploadSessions(ctx context.Context, release
 	for range MaxTrackUploadCleanupPasses {
 		var trackIDs []string
 		var sessionsRemaining bool
-		if err := mutation.ReadCurrent(ctx, s.db, func(tx *gorm.DB) error {
+		if err := s.units.ReadCurrent(ctx, func(store Store) error {
 			var err error
-			trackIDs, err = lockReleaseTrackIDs(ctx, tx, releaseID)
+			trackIDs, err = lockReleaseTrackIDs(ctx, store, releaseID)
 			if err != nil {
 				return err
 			}
-			sessionsRemaining, err = hasTrackUploadSessions(ctx, tx, trackIDs)
+			sessionsRemaining, err = store.HasTrackUploadSessions(ctx, trackIDs)
 			return err
 		}); err != nil {
 			return err
@@ -276,15 +265,12 @@ func (s *Service) cleanupReleaseTrackUploadSessions(ctx context.Context, release
 
 // lockReleaseTrackIDs locks the Release and its Tracks and returns the Track
 // IDs, which must fit one authorization cascade batch.
-func lockReleaseTrackIDs(ctx context.Context, tx *gorm.DB, releaseID string) ([]string, error) {
-	if _, err := lockReleaseForUpdate(ctx, tx, releaseID); err != nil {
+func lockReleaseTrackIDs(ctx context.Context, store Store, releaseID string) ([]string, error) {
+	if _, err := store.LockRelease(ctx, releaseID, UpdateLock); err != nil {
 		return nil, err
 	}
-	var trackIDs []string
-	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Model(&model.Track{}).
-		Where("release_id = ?", releaseID).
-		Pluck("id", &trackIDs).Error; err != nil {
+	trackIDs, err := store.LockTrackIDs(ctx, releaseID)
+	if err != nil {
 		return nil, err
 	}
 	if err := validateReleaseCascadeAuthorizationBatchSize(len(trackIDs)); err != nil {
@@ -293,24 +279,11 @@ func lockReleaseTrackIDs(ctx context.Context, tx *gorm.DB, releaseID string) ([]
 	return trackIDs, nil
 }
 
-func hasTrackUploadSessions(ctx context.Context, tx *gorm.DB, trackIDs []string) (bool, error) {
-	if len(trackIDs) == 0 {
-		return false, nil
-	}
-	var count int64
-	if err := tx.WithContext(ctx).Model(&model.UploadSession{}).
-		Where("upload_type = ? AND entity_id IN ?", managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(), trackIDs).
-		Count(&count).Error; err != nil {
-		return false, err
-	}
-	return count != 0, nil
-}
-
 func classifyReleaseDeleteError(releaseID string, err error) error {
 	switch {
 	case errors.Is(err, ErrTrackUploadSessionNotAbortable):
 		return domainerr.Precondition("track audio upload is finalizing; retry its completion before deleting the release").WithCause(err)
-	case errors.Is(err, gorm.ErrRecordNotFound):
+	case errors.Is(err, ErrReleaseNotFound):
 		return releaseNotFound(releaseID)
 	default:
 		return err
@@ -323,22 +296,22 @@ func classifyReleaseDeleteError(releaseID string, err error) error {
 // started after the cleanup pass, so the caller cleans up again.
 func (s *Service) deleteReleaseOnce(ctx context.Context, releaseID string) ([]string, error) {
 	var trackIDs []string
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
+		Lock: func(ctx context.Context, store Store) error {
 			var err error
-			trackIDs, err = lockReleaseTrackIDs(ctx, tx, releaseID)
+			trackIDs, err = lockReleaseTrackIDs(ctx, store, releaseID)
 			return err
 		},
 		Access: s.releaseAccess(releaseID, releaseActionDelete),
-		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) {
-			sessionsRemaining, err := hasTrackUploadSessions(ctx, tx, trackIDs)
+		Change: func(ctx context.Context, store Store) (struct{}, error) {
+			sessionsRemaining, err := store.HasTrackUploadSessions(ctx, trackIDs)
 			if err != nil {
 				return struct{}{}, err
 			}
 			if sessionsRemaining {
 				return struct{}{}, ErrTrackUploadSessionsChanged
 			}
-			return struct{}{}, s.deleteReleaseCascade(ctx, tx, releaseID)
+			return struct{}{}, deleteReleaseCascade(ctx, store, releaseID)
 		},
 		Audit: func(struct{}) mutation.Audit {
 			return mutation.RequestAudit(sharedtelemetry.AuditReleaseDeleted, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
@@ -355,38 +328,24 @@ func (s *Service) deleteReleaseOnce(ctx context.Context, releaseID string) ([]st
 // deleteReleaseCascade removes the Release row and what it owns outside the
 // database cascade: share links, OG and artwork assets and its content
 // document.
-func (s *Service) deleteReleaseCascade(ctx context.Context, tx *gorm.DB, releaseID string) error {
-	if err := tx.
-		Where("entity_type = ? AND entity_id = ?", managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_RELEASE.String(), releaseID).
-		Delete(&model.ShareLink{}).Error; err != nil {
+func deleteReleaseCascade(ctx context.Context, store Store, releaseID string) error {
+	if err := store.DeleteShareLinks(ctx, releaseID); err != nil {
 		return err
 	}
-	if err := s.og.CancelAndRelease(ctx, tx, releaseID); err != nil {
+	if err := store.CancelOG(ctx, releaseID); err != nil {
 		return err
 	}
-	if err := s.assets.ReleaseArtwork(ctx, tx, releaseID); err != nil {
+	if err := store.ReleaseArtworkBinding(ctx, releaseID); err != nil {
 		return err
 	}
-	documentID, err := loadReleaseContentDocumentID(ctx, tx, releaseID)
+	documentID, err := loadReleaseContentDocumentID(ctx, store, releaseID, Unlocked)
 	if err != nil {
 		return err
 	}
-	if err := s.contentBlocks.DeleteDocument(
-		ctx,
-		tx,
-		documentID,
-		releaseContentDocumentFence(releaseID, func(context.Context, *gorm.DB) error { return nil }),
-	); err != nil {
+	if err := store.DeleteContentDocument(ctx, documentID, releaseContentDocumentFence(releaseID)); err != nil {
 		return normalizeReleaseContentBlockError(err)
 	}
-	result := tx.Delete(&model.Release{}, "id = ?", releaseID)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return releaseNotFound(releaseID)
-	}
-	return nil
+	return releaseMissingAs(store.DeleteRelease(ctx, releaseID), releaseNotFound(releaseID))
 }
 
 // releaseAuthzMutations deletes the Release and Track policies and, as
@@ -421,12 +380,12 @@ func releaseAuthzMutations(releaseID string, trackIDs []string) (apply, compensa
 
 // PublishRelease publishes a release (admin only).
 func (s *Service) PublishRelease(ctx context.Context, command PublishReleaseCommand) (LifecycleChange, error) {
-	return s.transitionRelease(ctx, command.ID, model.ReleaseStatusPublished, sharedtelemetry.AuditStatePublished)
+	return s.transitionRelease(ctx, command.ID, StatusPublished, sharedtelemetry.AuditStatePublished)
 }
 
 // UnpublishRelease returns a release to draft (admin only).
 func (s *Service) UnpublishRelease(ctx context.Context, command UnpublishReleaseCommand) (LifecycleChange, error) {
-	return s.transitionRelease(ctx, command.ID, model.ReleaseStatusDraft, sharedtelemetry.AuditStateDraft)
+	return s.transitionRelease(ctx, command.ID, StatusDraft, sharedtelemetry.AuditStateDraft)
 }
 
 // transitionRelease moves the Release to next. A Release already in next
@@ -434,28 +393,28 @@ func (s *Service) UnpublishRelease(ctx context.Context, command UnpublishRelease
 func (s *Service) transitionRelease(
 	ctx context.Context,
 	releaseID string,
-	next model.ReleaseStatus,
+	next Status,
 	nextAudit sharedtelemetry.AuditState,
 ) (LifecycleChange, error) {
-	var locked model.Release
+	var locked Release
 	now := dbtime.Now()
-	return mutation.Run(ctx, s.mutations, mutation.Spec[LifecycleChange]{
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[LifecycleChange, Store]{
 		Lock:   lockReleaseRow(releaseID, &locked),
 		Access: s.releaseAccess(releaseID, releaseActionPublish),
-		Change: func(_ context.Context, tx *gorm.DB) (LifecycleChange, error) {
+		Change: func(ctx context.Context, store Store) (LifecycleChange, error) {
 			change := LifecycleChange{
-				ID: locked.ID, Status: model.ReleaseStatus(locked.Status),
+				ID: locked.ID, Status: locked.Status,
 				PublishedAt: locked.PublishedAt, UpdatedAt: locked.UpdatedAt,
 			}
 			if change.Status == next {
 				return change, nil
 			}
-			columns := structured.Fields{"status": string(next), "updated_at": now}
-			if next == model.ReleaseStatusPublished {
-				columns["published_at"] = now
+			var publishedAt *time.Time
+			if next == StatusPublished {
+				publishedAt = &now
 				change.PublishedAt = &now
 			}
-			if err := tx.Model(&model.Release{}).Where("id = ?", locked.ID).Updates(columns).Error; err != nil {
+			if err := store.SetReleaseStatus(ctx, locked.ID, next, publishedAt, now); err != nil {
 				return LifecycleChange{}, err
 			}
 			change.Changed, change.Status, change.UpdatedAt = true, next, now
@@ -469,15 +428,15 @@ func (s *Service) transitionRelease(
 				return sharedtelemetry.NewReleaseLifecycleAuditRecord(m, change.ID, releaseAuditState(locked.Status), nextAudit)
 			})
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, change LifecycleChange) error {
+		Outbox: func(ctx context.Context, store Store, change LifecycleChange) error {
 			if !change.Changed {
 				return nil
 			}
 			paths := []string{"state.status"}
-			if next == model.ReleaseStatusPublished {
+			if next == StatusPublished {
 				paths = append(paths, "state.published_at")
 			}
-			return s.publishContentUpdated(ctx, tx, buildReleaseStateTransitionContentUpdatedEvent(change.ID, paths))
+			return publishContentUpdated(ctx, store, buildReleaseStateTransitionContentUpdatedEvent(change.ID, paths))
 		},
 	})
 }

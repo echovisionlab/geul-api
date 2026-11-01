@@ -39,6 +39,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
+	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
@@ -136,11 +137,13 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	})
 	require.NoError(t, err)
 	manageLabel := labeldomain.NewConnectHandler(labelService)
-	manageRelease := releasedomain.NewConnectHandler(releasetest.NewService(t, releasedomain.Deps{
-		DB: db, SpiceDB: spiceDB, ContentBlocks: contentBlocks, ContentSignals: publisher,
-		TrackFiles:   releaseadapter.NewTrackFiles(fileDeleter),
+	manageRelease := releasedomain.NewConnectHandler(releasetest.NewService(t, releasetest.Deps{
+		DB: db, SpiceDB: spiceDB, Files: fileDeleter,
 		WaveformJobs: releaseadapter.NewWaveformJobs(db, artistLabelTranscoderPublisher{}),
-		Assets:       releaseadapter.NewAssets(artistLabelPublicCDN), OG: releaseadapter.NewOG(artistLabelPublicCDN),
+		Ports: releasepostgres.Ports{
+			ContentBlocks: contentBlocks, Publisher: publisher,
+			Assets: releaseadapter.NewAssets(artistLabelPublicCDN), OG: releaseadapter.NewOG(artistLabelPublicCDN),
+		},
 	}))
 	workUnits, err := workpostgres.NewUnits(db, workpostgres.Ports{
 		ContentBlocks: contentBlocks, Signals: publisher, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
@@ -397,7 +400,6 @@ func (artistLabelAsyncPublisher) EnqueueProtobufWithExecutor(context.Context, ev
 
 type artistLabelFileDeleter struct{}
 
-func (artistLabelFileDeleter) DeleteFileByID(context.Context, string) error { return nil }
 func (artistLabelFileDeleter) CleanupTrackUploadSessions(context.Context, string, string) error {
 	return nil
 }

@@ -3,7 +3,7 @@ package public
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/release"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
@@ -17,7 +17,7 @@ func TestPublicReleaseStatusAndTypeMappingsCoverEveryAPIValue(t *testing.T) {
 		if status == openv1.ReleaseStatus_RELEASE_STATUS_UNSPECIFIED {
 			continue
 		}
-		if got := releaseStatusToOpen(model.ReleaseStatus(name)); got != status {
+		if got := releaseStatusToOpen(release.Status(name)); got != status {
 			t.Fatalf("stored %s projects as %s", name, got)
 		}
 	}
@@ -26,7 +26,7 @@ func TestPublicReleaseStatusAndTypeMappingsCoverEveryAPIValue(t *testing.T) {
 		if releaseType == openv1.ReleaseType_RELEASE_TYPE_UNSPECIFIED {
 			continue
 		}
-		if got := releaseTypeToOpen(model.ReleaseType(name)); got != releaseType {
+		if got := releaseTypeToOpen(release.Type(name)); got != releaseType {
 			t.Fatalf("stored %s projects as %s", name, got)
 		}
 	}

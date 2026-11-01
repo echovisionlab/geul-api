@@ -9,24 +9,27 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
+	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	"github.com/echovisionlab/geul-api/internal/transcode"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
 
-type TrackFiles struct {
-	files releasedomain.TrackFileManager
+// TrackFileManager is the File domain's Track upload lifecycle.
+type TrackFileManager interface {
+	CleanupTrackUploadSessions(ctx context.Context, trackID string, reason string) error
+	RequireNoTrackUploadSessionsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error
 }
 
-func NewTrackFiles(files releasedomain.TrackFileManager) *TrackFiles {
+type TrackFiles struct {
+	files TrackFileManager
+}
+
+func NewTrackFiles(files TrackFileManager) *TrackFiles {
 	if files == nil {
 		panic("Release Track files are required")
 	}
 	return &TrackFiles{files: files}
-}
-
-func (f *TrackFiles) DeleteFileByID(ctx context.Context, fileID string) error {
-	return f.files.DeleteFileByID(ctx, fileID)
 }
 
 func (f *TrackFiles) CleanupTrackUploadSessions(ctx context.Context, trackID, reason string) error {
@@ -69,12 +72,10 @@ func NewTrackTranscodes(runtime any) *TrackTranscodes {
 	return &TrackTranscodes{canceller: canceller, publisher: publisher}
 }
 
-func (r *TrackTranscodes) CancelFiles(
-	ctx context.Context,
-	trackID string,
-	reason managev1.TranscodeCancelReason,
-	fileIDs ...*string,
-) {
+// CancelDeletedTrackFiles cancels the transcode work of a deleted Track's
+// files, once per File.
+func (r *TrackTranscodes) CancelDeletedTrackFiles(ctx context.Context, trackID string, fileIDs ...*string) {
+	reason := managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_DELETED
 	seen := make(map[string]struct{}, len(fileIDs))
 	for _, fileID := range fileIDs {
 		if fileID == nil || *fileID == "" {
@@ -108,14 +109,12 @@ func NewWaveformJobs(db *gorm.DB, publisher transcode.WaveformCancelPublisher) *
 	return &WaveformJobs{db: db, publisher: publisher}
 }
 
-func (j *WaveformJobs) CancelTracks(
-	ctx context.Context,
-	trackIDs []string,
-	reason managev1.TranscodeCancelReason,
-) error {
-	return transcode.CancelTrackWaveformJobs(ctx, j.db, j.publisher, trackIDs, reason)
+// CancelDeletedTracks cancels the persisted waveform work of deleted Tracks.
+func (j *WaveformJobs) CancelDeletedTracks(ctx context.Context, trackIDs []string) error {
+	return transcode.CancelTrackWaveformJobs(ctx, j.db, j.publisher, trackIDs, managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_DELETED)
 }
 
-var _ releasedomain.TrackFileManager = (*TrackFiles)(nil)
+var _ releasedomain.TrackUploads = (*TrackFiles)(nil)
+var _ releasepostgres.TrackFiles = (*TrackFiles)(nil)
 var _ releasedomain.TrackTranscodes = (*TrackTranscodes)(nil)
 var _ releasedomain.WaveformJobs = (*WaveformJobs)(nil)

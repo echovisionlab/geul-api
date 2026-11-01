@@ -8,7 +8,6 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
-	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
@@ -47,9 +46,8 @@ func TestDeleteRechecksAuthorityRevokedDuringUploadCleanupIntegration(t *testing
 		t.Parallel()
 		fixture := newReleaseDeleteFixture(t, 1)
 		fixture.seedUploadSession(t, fixture.trackIDs[0])
-		tracks := releasepkg.NewTrackConnectHandler(releasetest.NewService(t, releasepkg.Deps{
-			DB: fixture.db, SpiceDB: fixture.spiceDB, Audit: &audittest.Recorder{},
-			TrackFiles: releaseadapter.NewTrackFiles(fixture.cleaner),
+		tracks := releasepkg.NewTrackConnectHandler(releasetest.NewService(t, releasetest.Deps{
+			DB: fixture.db, SpiceDB: fixture.spiceDB, Audit: &audittest.Recorder{}, Files: fixture.cleaner,
 		}))
 		fixture.cleaner.cleanup = func(trackID string) error {
 			testutil.GrantIntegrationGlobalRole(t, fixture.spiceDB, fixture.adminID, policyv1.Role.User())

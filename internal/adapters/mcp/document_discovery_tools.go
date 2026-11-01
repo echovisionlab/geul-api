@@ -252,7 +252,7 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 			return nil, 0, 0, err
 		}
 		documents := make([]map[string]any, 0, len(listed.Releases))
-		for _, item := range listed.Releases {
+		for _, item := range releasedomain.ReleasesWithStatsMessage(listed.Releases) {
 			if item == nil || item.Release == nil || item.Release.UpdatedAt == nil {
 				continue
 			}

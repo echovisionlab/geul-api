@@ -228,10 +228,10 @@ func TestDocumentDiscoveryReleaseAndArtistRequestsAndMetadata(t *testing.T) {
 		t.Run(profile, func(t *testing.T) {
 			slug := "same-name-is-not-an-id"
 			updatedAt := time.Date(2026, 10, 3, 12, 34, 56, 0, time.FixedZone("KST", 9*60*60))
-			releases := &recordingReleaseDocumentDiscovery{response: &managev1.ListReleasesAdminResponse{
-				Releases: []*managev1.ReleaseWithStats{nil, {}, {Release: &managev1.Release{}}, {Release: &managev1.Release{
-					Id: discoveryDocumentID, Title: "Same Name", Slug: &slug, SourceLocale: "ko", Status: "draft", UpdatedAt: timestamppb.New(updatedAt),
-				}}}, Pagination: &commonv1.PaginationResponse{Total: 25, Limit: 2, Offset: 4},
+			releases := &recordingReleaseDocumentDiscovery{page: releasedomain.ReleasePage{
+				Releases: []releasedomain.ReleaseWithStats{{View: releasedomain.View{Title: "Same Name", Release: releasedomain.Release{
+					ID: discoveryDocumentID, Slug: &slug, SourceLocale: "ko", Status: "draft", UpdatedAt: updatedAt,
+				}}}}, Total: 25, Limit: 2, Offset: 4,
 			}}
 			artists := &recordingArtistDocumentDiscovery{page: artist.AdminArtistPage{
 				Artists: []artist.AdminView{{}, {Artist: artist.View{Name: "Same Name", Artist: artist.Artist{
@@ -277,8 +277,8 @@ func TestDocumentDiscoveryReleaseAndArtistRequestsAndMetadata(t *testing.T) {
 			require.Equal(t, float64(6), result.StructuredContent["next_offset"])
 
 			// A final page uses the default page size and omits an absent slug.
-			releases.response.Pagination = &commonv1.PaginationResponse{Total: 1, Limit: 20}
-			releases.response.Releases[3].Release.Slug = nil
+			releases.page.Total, releases.page.Limit = 1, 20
+			releases.page.Releases[0].View.Release.Slug = nil
 			artists.page.Pagination = artist.Pagination{Total: 1, Limit: 20}
 			artists.page.Artists[1].Artist.Artist.Slug = nil
 			result, err = tools.CallTool(ctx, mcpserver.Principal{}, ToolDocumentList, toolArguments(t, `{"p":"`+profile+`","q":"   "}`))
@@ -352,10 +352,10 @@ func TestDocumentDiscoveryRejectsMissingReleaseAndArtistServices(t *testing.T) {
 }
 
 type recordingReleaseDocumentDiscovery struct {
-	ctx      context.Context
-	request  *connect.Request[managev1.ListReleasesAdminRequest]
-	response *managev1.ListReleasesAdminResponse
-	err      error
+	ctx     context.Context
+	request *connect.Request[managev1.ListReleasesAdminRequest]
+	page    releasedomain.ReleasePage
+	err     error
 }
 
 // ListReleasesAdmin records the query as the Connect request it stands for.
@@ -364,13 +364,7 @@ func (discovery *recordingReleaseDocumentDiscovery) ListReleasesAdmin(ctx contex
 		Pagination: &commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset},
 		Filters:    query.Filters, Sorts: query.Sorts,
 	})
-	if discovery.response == nil {
-		discovery.response = &managev1.ListReleasesAdminResponse{}
-	}
-	return releasedomain.ReleasePage{
-		Releases: discovery.response.Releases,
-		Total:    int64(discovery.response.Pagination.GetTotal()), Limit: discovery.response.Pagination.GetLimit(),
-	}, discovery.err
+	return discovery.page, discovery.err
 }
 
 type recordingArtistDocumentDiscovery struct {

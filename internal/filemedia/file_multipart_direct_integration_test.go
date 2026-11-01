@@ -934,11 +934,11 @@ func requireDirectMultipartPrefixRejected(
 // production.
 func newDirectTrackService(t *testing.T, stack *testutil.RuntimeStack, fileService *Service) *releasepkg.TrackConnectHandler {
 	t.Helper()
-	return releasepkg.NewTrackConnectHandler(releasetest.NewService(t, releasepkg.Deps{
+	return releasepkg.NewTrackConnectHandler(releasetest.NewService(t, releasetest.Deps{
 		DB: stack.DB, SpiceDB: stack.SpiceDBClient,
 		Transcodes:   releaseadapter.NewTrackTranscodes(&recordingFileTranscoderPublisher{}),
 		WaveformJobs: releaseadapter.NewWaveformJobs(stack.DB, &recordingFileTranscoderPublisher{}),
-		TrackFiles:   releaseadapter.NewTrackFiles(fileService),
+		Files:        fileService,
 		Members:      releaseadapter.NewMemberSummaries(stack.DB, stack.CDNURL),
 	}))
 }

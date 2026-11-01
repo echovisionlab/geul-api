@@ -9,7 +9,6 @@ import (
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 )
@@ -23,7 +22,7 @@ type recordingReleaseRelationApplication struct {
 	ctx      context.Context
 	calls    int
 	getCalls int
-	snapshot *managev1.GetReleaseRelationsResponse
+	snapshot releasedomain.Relations
 	err      error
 }
 
@@ -32,7 +31,7 @@ func (application *recordingReleaseRelationApplication) record(ctx context.Conte
 	application.calls++
 	return application.err
 }
-func (application *recordingReleaseRelationApplication) GetReleaseRelations(ctx context.Context, query releasedomain.GetReleaseRelationsQuery) (*managev1.GetReleaseRelationsResponse, error) {
+func (application *recordingReleaseRelationApplication) GetReleaseRelations(ctx context.Context, query releasedomain.GetReleaseRelationsQuery) (releasedomain.Relations, error) {
 	application.ctx, application.request = ctx, query
 	application.calls++
 	application.getCalls++
@@ -133,14 +132,17 @@ func TestReleaseRelationSettersForwardEmptyDesiredAndExactObserved(t *testing.T)
 
 func TestReleaseRelationReadSnapshotsRoundTripWithoutPresentationFields(t *testing.T) {
 	catalog, description, credited, role := "ABC-001", "Blue vinyl", "Credited artist", "Producer"
-	application := &recordingReleaseRelationApplication{snapshot: &managev1.GetReleaseRelationsResponse{
-		ReleaseId:  releaseRelationTestID,
-		Artists:    []*managev1.ReleaseArtistEditorItem{{ArtistId: releaseRelationItemID, ArtistName: "Display artist", SortOrder: 0}},
-		Labels:     []*managev1.ReleaseLabelEditorItem{{LabelId: releaseRelationItemID, LabelName: "Display label", CatalogNumber: &catalog, SortOrder: 3}},
-		Categories: []*managev1.ReleaseReferenceEditorItem{{Id: releaseRelationItemID, Name: "Display category"}},
-		Genres:     []*managev1.ReleaseReferenceEditorItem{{Id: releaseRelationItemID}}, Styles: []*managev1.ReleaseReferenceEditorItem{{Id: releaseRelationItemID}},
-		Formats: []*managev1.ReleaseFormatEditorItem{{Id: releaseRelationItemID, Name: "Display format", FormatDescription: &description}},
-		Credits: []*managev1.ReleaseCreditEditorItem{{Id: releaseRelationItemID, ArtistId: proto.String(releaseRelationPeerID), ArtistName: proto.String("Display credit artist"), CreditedName: &credited, CreditRole: &role, SortOrder: 4}},
+	application := &recordingReleaseRelationApplication{snapshot: releasedomain.Relations{
+		ReleaseID:  releaseRelationTestID,
+		Artists:    []releasedomain.EditorArtist{{ArtistID: releaseRelationItemID, Name: "Display artist", SortOrder: 0}},
+		Labels:     []releasedomain.EditorLabel{{LabelID: releaseRelationItemID, Name: "Display label", CatalogNumber: &catalog, SortOrder: 3}},
+		Categories: []releasedomain.Reference{{ID: releaseRelationItemID, Name: "Display category"}},
+		Genres:     []releasedomain.Reference{{ID: releaseRelationItemID}}, Styles: []releasedomain.Reference{{ID: releaseRelationItemID}},
+		Formats: []releasedomain.FormatReference{{Reference: releasedomain.Reference{ID: releaseRelationItemID, Name: "Display format"}, Description: &description}},
+		Credits: []releasedomain.EditorCreditView{{
+			EditorCredit: releasedomain.EditorCredit{ID: releaseRelationItemID, ArtistID: proto.String(releaseRelationPeerID), CreditedName: &credited, CreditRole: &role, SortOrder: 4},
+			ArtistName:   proto.String("Display credit artist"),
+		}},
 	}}
 	tools, err := NewReleaseRelationTools(application)
 	require.NoError(t, err)
@@ -181,7 +183,7 @@ func TestReleaseRelationReadSnapshotsRoundTripWithoutPresentationFields(t *testi
 			require.Equal(t, test.want, application.request)
 		})
 	}
-	application.snapshot = &managev1.GetReleaseRelationsResponse{ReleaseId: releaseRelationTestID}
+	application.snapshot = releasedomain.Relations{ReleaseID: releaseRelationTestID}
 	empty, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolReleaseRelationsGet, toolArguments(t, `{"release_id":"`+releaseRelationTestID+`"}`))
 	require.NoError(t, err)
 	for _, field := range []string{"artists", "labels", "category_ids", "genre_ids", "style_ids", "formats", "credits"} {
