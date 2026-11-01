@@ -122,6 +122,24 @@ func TestArtistTargetLocaleBatchUsesExactCASWithoutAdvancingSharedRevisionIntegr
 	require.False(t, targetlocale.SnapshotHasLocale(providerSnapshot, "ko"))
 	nextKOToken = providerRevision
 
+	result, err = service.ExecuteAIDocumentMutation(ctx, artistID, "ko", artist.AIDocumentExecutionApply,
+		func(artist.AIDocumentState) (artist.AIDocumentMutation, error) {
+			return artist.AIDocumentMutation{
+				ArtistID: artistID, Locale: "ko", ExpectedRevision: sharedRevision,
+				ExpectedTargetRevision: &nextKOToken, ExpectedSource: "en", ExpectedPresence: true,
+				ContributorMemberID: contributor, DeleteTranslation: true,
+			}, nil
+		})
+	require.NoError(t, err)
+	require.True(t, result.Changed)
+	require.Equal(t, sharedRevision, result.Revision)
+	var koCount int64
+	require.NoError(t, db.Table("artist_translation").Where("entity_id = ?::uuid AND locale = 'ko'", artistID).Count(&koCount).Error)
+	require.Zero(t, koCount)
+	loaded, err := store.LoadSnapshot(context.Background(), db, documentID, "en")
+	require.NoError(t, err)
+	require.False(t, targetlocale.SnapshotHasLocale(loaded, "ko"))
+
 	providerLocale := "fr"
 	providerTitle := "Titre fourni"
 	requester := uuid.NewString()

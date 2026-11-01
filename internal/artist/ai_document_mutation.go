@@ -150,7 +150,9 @@ func applyAIDocumentMutation(
 		return outcome, mapArtistAIDocumentMutationError(err)
 	}
 	outcome.result = AIDocumentMutationResult{Revision: result.DocumentRevision.String(), TargetRevision: targetRevision, Changed: result.Changed}
-	if result.Changed {
+	// A deleted target locale has no OG image to generate; requesting one
+	// would fail on the missing locale row.
+	if result.Changed && !input.DeleteTranslation {
 		if _, err := store.RequestOG(ctx, root.ID, input.Locale, result.TranslationSourceChanged, "artist_ai_document_saved"); err != nil {
 			return outcome, err
 		}
