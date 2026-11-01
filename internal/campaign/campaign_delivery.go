@@ -123,6 +123,8 @@ type CampaignDeliveryDispatcher struct {
 	publisher   CampaignBulkPublisher
 	auditWriter domainaudit.Appender
 	legalNotice LegalNoticeDeliveryPort
+	// now is the dispatcher's clock: which runs are due and when they start.
+	now func() time.Time
 }
 
 type CampaignDeliveryDispatcherOption func(*CampaignDeliveryDispatcher)
@@ -140,7 +142,7 @@ func NewAuditedCampaignDeliveryDispatcher(spiceDB *auth.SpiceDBClient, publisher
 		panic("CampaignDeliveryDispatcher: audit writer is required")
 	}
 	dependencycheck.MustNotNil(spiceDB, "spiceDB")
-	dispatcher := &CampaignDeliveryDispatcher{spiceDB: spiceDB, publisher: publisher, auditWriter: auditWriter}
+	dispatcher := &CampaignDeliveryDispatcher{spiceDB: spiceDB, publisher: publisher, auditWriter: auditWriter, now: time.Now}
 	for _, option := range options {
 		option(dispatcher)
 	}
@@ -179,13 +181,13 @@ func enqueueStartedCampaignDeliveryRun(
 
 // DueEmailDeliveryRuns lists up to limit scheduled runs whose time has come,
 // earliest first.
-func (*CampaignDeliveryDispatcher) DueEmailDeliveryRuns(ctx context.Context, db *gorm.DB, limit int) ([]model.CampaignDeliveryRun, error) {
+func (d *CampaignDeliveryDispatcher) DueEmailDeliveryRuns(ctx context.Context, db *gorm.DB, limit int) ([]model.CampaignDeliveryRun, error) {
 	if limit <= 0 {
 		limit = 25
 	}
 	var runs []model.CampaignDeliveryRun
 	err := db.WithContext(ctx).
-		Where("status = ? AND scheduled_at <= ?", CampaignDeliveryRunStatusScheduled, time.Now()).
+		Where("status = ? AND scheduled_at <= ?", CampaignDeliveryRunStatusScheduled, d.now()).
 		Order("scheduled_at ASC, id ASC").
 		Limit(limit).
 		Find(&runs).Error
@@ -265,7 +267,7 @@ func (d *CampaignDeliveryDispatcher) DispatchEmailDeliveryRun(ctx context.Contex
 	if run.Status != CampaignDeliveryRunStatusScheduled {
 		return false, nil
 	}
-	now := time.Now().UTC()
+	now := d.now().UTC()
 	if run.ScheduledAt.After(now) {
 		return false, nil
 	}

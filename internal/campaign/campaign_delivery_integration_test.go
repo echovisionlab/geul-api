@@ -700,8 +700,8 @@ func TestCampaignDeliveryDispatcherEnqueuesDueRunInPGMQIntegration(t *testing.T)
 		publisher,
 		&campaignLocaleAuditCapture{},
 	)
-	// The scheduled time arrives: the run is due without waiting for it.
-	require.NoError(t, db.Exec(`UPDATE email_delivery_run SET scheduled_at = now() - interval '1 second' WHERE id = ?`, run.ID).Error)
+	// The dispatcher's clock reaches the scheduled time without waiting for it.
+	dispatcher.now = func() time.Time { return scheduledAt.Add(time.Second) }
 	dispatched, err := dispatchDueRuns(ctx, db, dispatcher, 10)
 	require.NoError(t, err)
 	require.Equal(t, 1, dispatched)
