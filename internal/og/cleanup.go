@@ -19,15 +19,24 @@ const (
 	TerminalAssetRetention = 24 * time.Hour
 )
 
-type Cleanup struct {
-	db *gorm.DB
+// AssetReference reports whether one entity family still points at an OG
+// asset. The family's owner answers for its own rows.
+type AssetReference interface {
+	ReferencesAsset(ctx context.Context, tx *gorm.DB, assetID string) (bool, error)
 }
 
-func NewCleanup(db *gorm.DB) *Cleanup {
+type Cleanup struct {
+	db         *gorm.DB
+	references []AssetReference
+}
+
+// NewCleanup returns the OG asset cleanup; an asset any of references still
+// points at is never marked for deletion.
+func NewCleanup(db *gorm.DB, references ...AssetReference) *Cleanup {
 	if db == nil {
 		panic("OG cleanup: database is required")
 	}
-	return &Cleanup{db: db}
+	return &Cleanup{db: db, references: references}
 }
 
 func (s *Cleanup) MarkExpiredAssets(ctx context.Context, now time.Time) error {
@@ -181,29 +190,13 @@ func (s *Cleanup) IsPublicAssetProtected(ctx context.Context, tx *gorm.DB, asset
 	if asset.Kind != "og" {
 		return false, nil
 	}
-	const query = `
-		SELECT EXISTS (
-			SELECT 1 FROM post WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM page WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM form WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM label WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM release WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM series_translation WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM post_translation WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM page_translation WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM form_translation WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM work_translation WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM artist_translation WHERE og_asset_id = ?
-			UNION ALL SELECT 1 FROM site_settings WHERE site_og_asset_id = ?
-		) AS referenced`
-	var referenced bool
-	if err := tx.WithContext(ctx).Raw(query,
-		asset.ID, asset.ID, asset.ID, asset.ID, asset.ID, asset.ID,
-		asset.ID, asset.ID, asset.ID, asset.ID, asset.ID, asset.ID,
-	).Scan(&referenced).Error; err != nil {
-		return false, err
+	for _, reference := range s.references {
+		referenced, err := reference.ReferencesAsset(ctx, tx, asset.ID)
+		if err != nil || referenced {
+			return referenced, err
+		}
 	}
-	return referenced, nil
+	return false, nil
 }
 
 func markAssets(

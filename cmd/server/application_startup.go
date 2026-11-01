@@ -22,6 +22,7 @@ import (
 	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	filemediaruntime "github.com/echovisionlab/geul-api/internal/adapters/filemedia/runtime"
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/adapters/ogprojection"
 	translationadapter "github.com/echovisionlab/geul-api/internal/adapters/translation"
 	"github.com/echovisionlab/geul-api/internal/ai"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -166,7 +167,7 @@ func initializeApplicationDependencies(
 		filemediaruntime.NewAuthorizationDeletion(deps.spicedbClient, nil),
 	)
 	cleanupStorage := mediaassetadapter.NewCleanupStorage(deps.s3Client, cfg.S3Bucket)
-	ogCleanup := og.NewCleanup(deps.db)
+	ogCleanup := og.NewCleanup(deps.db, ogprojection.AssetReferences()...)
 	mediaCleanup := mediaasset.NewCleanup(deps.db, cleanupStorage)
 	publicAssetCache := mediaassetadapter.NewPublicAssetCache(
 		cfg.CDNURL,

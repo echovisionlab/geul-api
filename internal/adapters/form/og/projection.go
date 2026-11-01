@@ -64,6 +64,17 @@ func (p *Projection) Complete(
 	})
 }
 
+// ReferencesAsset reports whether the Form row or one of its locale rows
+// points at assetID.
+func (*Projection) ReferencesAsset(ctx context.Context, tx *gorm.DB, assetID string) (bool, error) {
+	var referenced bool
+	err := tx.WithContext(ctx).Raw(`SELECT EXISTS (
+		SELECT 1 FROM form WHERE og_asset_id = ?
+		UNION ALL SELECT 1 FROM form_translation WHERE og_asset_id = ?
+	)`, assetID, assetID).Scan(&referenced).Error
+	return referenced, err
+}
+
 func formOgLocale(locale *string) string {
 	if locale == nil {
 		return ""
@@ -78,4 +89,7 @@ func formOgBindingKey(locale string) string {
 	return "og_" + locale
 }
 
-var _ og.Projection = (*Projection)(nil)
+var (
+	_ og.Projection     = (*Projection)(nil)
+	_ og.AssetReference = (*Projection)(nil)
+)

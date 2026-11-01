@@ -1,8 +1,8 @@
 package og
 
 import (
+	"context"
 	"crypto/sha256"
-	"fmt"
 	"testing"
 	"time"
 
@@ -27,42 +27,22 @@ func TestMarkUnboundReadyOgAssetsRequiresThirtyDaysAndNoBindingOrPointer(t *test
 		CreatedAt: now, UpdatedAt: now,
 	}).Error)
 
-	pointerTables := []struct {
-		table  string
-		column string
-	}{
-		{table: "post", column: "og_asset_id"},
-		{table: "page", column: "og_asset_id"},
-		{table: "form", column: "og_asset_id"},
-		{table: "label", column: "og_asset_id"},
-		{table: "release", column: "og_asset_id"},
-		{table: "series_translation", column: "og_asset_id"},
-		{table: "post_translation", column: "og_asset_id"},
-		{table: "page_translation", column: "og_asset_id"},
-		{table: "form_translation", column: "og_asset_id"},
-		{table: "work_translation", column: "og_asset_id"},
-		{table: "artist_translation", column: "og_asset_id"},
-		{table: "site_settings", column: "site_og_asset_id"},
-	}
-	protected := make([]model.PublicAsset, 0, len(pointerTables))
-	for i, pointer := range pointerTables {
-		asset := seedReadyCleanupAsset(t, db, "og", now.Add(-31*24*time.Hour))
-		protected = append(protected, asset)
-		require.NoError(t, db.Exec(
-			fmt.Sprintf("INSERT INTO %s (id, %s) VALUES (?, ?)", pointer.table, pointer.column),
-			fmt.Sprintf("owner-%d", i),
-			asset.ID,
-		).Error)
-	}
+	referenced := seedReadyCleanupAsset(t, db, "og", now.Add(-31*24*time.Hour))
+	references := assetReferenceSet{referenced.ID: true}
 
-	require.NoError(t, NewCleanup(db).MarkUnboundReadyAssets(t.Context(), cutoff, now))
+	require.NoError(t, NewCleanup(db, references).MarkUnboundReadyAssets(t.Context(), cutoff, now))
 	assertCleanupAssetStatus(t, db, unbound.ID, model.PublicAssetStatusDeletePending)
 	assertCleanupAssetStatus(t, db, bound.ID, model.PublicAssetStatusReady)
 	assertCleanupAssetStatus(t, db, young.ID, model.PublicAssetStatusReady)
 	assertCleanupAssetStatus(t, db, nonOg.ID, model.PublicAssetStatusReady)
-	for _, asset := range protected {
-		assertCleanupAssetStatus(t, db, asset.ID, model.PublicAssetStatusReady)
-	}
+	assertCleanupAssetStatus(t, db, referenced.ID, model.PublicAssetStatusReady)
+}
+
+// assetReferenceSet stands in for the owners whose rows point at an asset.
+type assetReferenceSet map[string]bool
+
+func (references assetReferenceSet) ReferencesAsset(_ context.Context, _ *gorm.DB, assetID string) (bool, error) {
+	return references[assetID], nil
 }
 
 func newOgCleanupUnitDB(t *testing.T) *gorm.DB {
@@ -83,13 +63,6 @@ func newOgCleanupUnitDB(t *testing.T) *gorm.DB {
 			updated_at datetime NOT NULL, PRIMARY KEY (owner_type, owner_id, binding_key)
 		);
 	`).Error)
-	for _, table := range []string{"post", "page", "form", "label", "release"} {
-		require.NoError(t, db.Exec(fmt.Sprintf("CREATE TABLE %s (id text PRIMARY KEY, og_asset_id text)", table)).Error)
-	}
-	for _, table := range []string{"post_translation", "page_translation", "series_translation", "form_translation", "work_translation", "artist_translation"} {
-		require.NoError(t, db.Exec(fmt.Sprintf("CREATE TABLE %s (id text PRIMARY KEY, og_asset_id text)", table)).Error)
-	}
-	require.NoError(t, db.Exec("CREATE TABLE site_settings (id text PRIMARY KEY, site_og_asset_id text)").Error)
 	return db
 }
 
