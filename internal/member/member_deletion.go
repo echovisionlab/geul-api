@@ -2,6 +2,7 @@ package member
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -71,6 +72,19 @@ func validateDeletionPair(memberID, identityID string) error {
 	}
 	if memberID == identityID {
 		return fmt.Errorf("member_id and identity_id must be distinct")
+	}
+	return nil
+}
+
+// requireCallerTransaction refuses a pool, so a port that runs in its
+// caller's transaction cannot commit part of a terminal transition on its
+// own.
+func requireCallerTransaction(tx *gorm.DB) error {
+	if tx == nil || tx.Statement == nil {
+		return errors.New("member deletion requires the caller's transaction")
+	}
+	if _, ok := tx.Statement.ConnPool.(gorm.TxCommitter); !ok {
+		return errors.New("member deletion must run inside the caller's transaction")
 	}
 	return nil
 }

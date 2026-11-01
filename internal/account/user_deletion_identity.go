@@ -56,13 +56,12 @@ func processUnonboardedHardDelete(
 		if err := deleteAccountIdentityAuthorizationAndAnchor(mutationCtx, connection, spicedb, identityID); err != nil {
 			return err
 		}
-		return members.FinalizeUnonboardedHardDelete(
-			mutationCtx,
-			connection,
-			spicedb,
-			target,
-			accountDeletedAudit(auditWriter),
-		)
+		if err := members.RevokeUnonboardedAuthorization(mutationCtx, spicedb, target); err != nil {
+			return err
+		}
+		return connection.Transaction(func(tx *gorm.DB) error {
+			return members.FinalizeUnonboardedHardDelete(mutationCtx, tx, target, accountDeletedAudit(auditWriter))
+		})
 	})
 }
 

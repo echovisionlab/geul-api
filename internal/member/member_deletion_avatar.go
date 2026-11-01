@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	"gorm.io/gorm"
 )
@@ -38,7 +38,7 @@ func (DeletionLifecycle) CleanupAvatar(ctx context.Context, db *gorm.DB, memberI
 		return nil
 	}
 	if err := mediaasset.NewLifecycle(db, "").RequestPublicAssetDeletion(ctx, asset.ID); err != nil {
-		if connect.CodeOf(err) == connect.CodeNotFound {
+		if mutation.IsNotFound(err) {
 			return nil
 		}
 		return err
