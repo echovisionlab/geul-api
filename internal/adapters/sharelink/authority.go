@@ -10,9 +10,9 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -62,7 +62,7 @@ func targetFor(entityType sharelink.EntityType) (target, error) {
 			table:            "post",
 			name:             "post",
 			entityType:       entityType,
-			archivedStatus:   managev1.PostStatus_POST_STATUS_ARCHIVED.String(),
+			archivedStatus:   string(model.PostStatusArchived),
 			manageShareLinks: policyv1.Post.ManageShareLinks,
 			viewArchived:     policyv1.Post.ViewArchived,
 			editArchived:     policyv1.Post.EditArchived,
@@ -74,7 +74,7 @@ func targetFor(entityType sharelink.EntityType) (target, error) {
 			table:            "work",
 			name:             "work",
 			entityType:       entityType,
-			archivedStatus:   managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(),
+			archivedStatus:   string(model.WorkStatusArchived),
 			manageShareLinks: policyv1.Work.ManageShareLinks,
 			viewArchived:     policyv1.Work.ViewArchived,
 			editArchived:     policyv1.Work.EditArchived,
@@ -92,8 +92,8 @@ func targetFor(entityType sharelink.EntityType) (target, error) {
 			table:                "privacy_history",
 			name:                 "privacy",
 			entityType:           entityType,
-			archivedStatus:       managev1.PrivacyStatus_PRIVACY_STATUS_ARCHIVED.String(),
-			legalScheduledStatus: managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String(),
+			archivedStatus:       string(model.PrivacyStatusArchived),
+			legalScheduledStatus: string(model.PrivacyStatusScheduled),
 			manageShareLinks:     policyv1.PrivacyHistory.ManageShareLinks,
 			viewArchived:         policyv1.PrivacyHistory.ViewArchived,
 			editArchived:         policyv1.PrivacyHistory.EditArchived,
@@ -103,8 +103,8 @@ func targetFor(entityType sharelink.EntityType) (target, error) {
 			table:                "terms_history",
 			name:                 "terms",
 			entityType:           entityType,
-			archivedStatus:       managev1.TermsStatus_TERMS_STATUS_ARCHIVED.String(),
-			legalScheduledStatus: managev1.TermsStatus_TERMS_STATUS_SCHEDULED.String(),
+			archivedStatus:       string(model.TermsStatusArchived),
+			legalScheduledStatus: string(model.TermsStatusScheduled),
 			manageShareLinks:     policyv1.TermsHistory.ManageShareLinks,
 			viewArchived:         policyv1.TermsHistory.ViewArchived,
 			editArchived:         policyv1.TermsHistory.EditArchived,

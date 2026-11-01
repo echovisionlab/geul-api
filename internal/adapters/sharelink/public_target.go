@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm"
 
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
+	"github.com/echovisionlab/geul-api/internal/model"
 	sharelinkpublic "github.com/echovisionlab/geul-api/internal/sharelink/public"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -106,7 +107,7 @@ func publicTargetTable(entityType managev1.ShareLinkEntityType) (string, bool) {
 
 func legalStatuses(entityType managev1.ShareLinkEntityType) (string, string, string) {
 	if entityType == managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_TERMS {
-		return managev1.TermsStatus_TERMS_STATUS_SCHEDULED.String(), managev1.TermsStatus_TERMS_STATUS_ACTIVE.String(), managev1.TermsStatus_TERMS_STATUS_ARCHIVED.String()
+		return string(model.TermsStatusScheduled), string(model.TermsStatusActive), string(model.TermsStatusArchived)
 	}
-	return managev1.PrivacyStatus_PRIVACY_STATUS_SCHEDULED.String(), managev1.PrivacyStatus_PRIVACY_STATUS_ACTIVE.String(), managev1.PrivacyStatus_PRIVACY_STATUS_ARCHIVED.String()
+	return string(model.PrivacyStatusScheduled), string(model.PrivacyStatusActive), string(model.PrivacyStatusArchived)
 }

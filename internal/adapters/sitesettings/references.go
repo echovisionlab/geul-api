@@ -8,7 +8,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	domain "github.com/echovisionlab/geul-api/internal/sitesettings"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -36,7 +35,7 @@ func (References) Validate(ctx context.Context, db *gorm.DB, key string, value *
 			}
 			return errs.Internal(err)
 		}
-		if page.Status != model.PageStatus(managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()) {
+		if page.Status != model.PageStatusPublished {
 			return errs.InvalidArgument(key, "must reference a published page")
 		}
 		return nil

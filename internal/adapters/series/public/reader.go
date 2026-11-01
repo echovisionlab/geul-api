@@ -13,7 +13,6 @@ import (
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	seriespublic "github.com/echovisionlab/geul-api/internal/series/public"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/google/uuid"
 )
@@ -249,7 +248,7 @@ var seriesLocalizationSpec = publiccontent.Spec{
 
 func publicPostStatusValues() []string {
 	return []string{
-		managev1.PostStatus_POST_STATUS_PUBLISHED.String(),
-		managev1.PostStatus_POST_STATUS_ARCHIVED.String(),
+		string(model.PostStatusPublished),
+		string(model.PostStatusArchived),
 	}
 }

@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -190,8 +189,8 @@ type registrationSpec struct {
 }
 
 var registrationSpecs = []registrationSpec{
-	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_POST, collaborationCanSet{view: policyv1.Post.View, edit: policyv1.Post.Edit, viewArchived: policyv1.Post.ViewArchived, editArchived: policyv1.Post.EditArchived}, "post", managev1.PostStatus_POST_STATUS_ARCHIVED.String()},
-	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_WORK, collaborationCanSet{view: policyv1.Work.View, edit: policyv1.Work.Edit, viewArchived: policyv1.Work.ViewArchived, editArchived: policyv1.Work.EditArchived}, "work", managev1.WorkStatus_WORK_STATUS_ARCHIVED.String()},
+	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_POST, collaborationCanSet{view: policyv1.Post.View, edit: policyv1.Post.Edit, viewArchived: policyv1.Post.ViewArchived, editArchived: policyv1.Post.EditArchived}, "post", string(model.PostStatusArchived)},
+	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_WORK, collaborationCanSet{view: policyv1.Work.View, edit: policyv1.Work.Edit, viewArchived: policyv1.Work.ViewArchived, editArchived: policyv1.Work.EditArchived}, "work", string(model.WorkStatusArchived)},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_RELEASE, collaborationCanSet{view: policyv1.Release.View, edit: policyv1.Release.Edit}, "release", ""},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_LABEL, collaborationCanSet{view: policyv1.Label.View, edit: policyv1.Label.Edit}, "label", ""},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_ARTIST, collaborationCanSet{view: policyv1.Artist.View, edit: policyv1.Artist.Edit}, "artist", ""},
@@ -200,10 +199,10 @@ var registrationSpecs = []registrationSpec{
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_CAMPAIGN, collaborationCanSet{view: policyv1.Campaign.View, edit: policyv1.Campaign.Edit}, "campaign", ""},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_EMAIL_TEMPLATE, collaborationCanSet{view: policyv1.EmailTemplate.View, edit: policyv1.EmailTemplate.Edit}, "email_template", ""},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_EMAIL_LAYOUT, collaborationCanSet{view: policyv1.EmailLayout.View, edit: policyv1.EmailLayout.Edit}, "email_layout", ""},
-	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_TERMS_HISTORY, collaborationCanSet{view: policyv1.TermsHistory.View, edit: policyv1.TermsHistory.Edit, viewArchived: policyv1.TermsHistory.ViewArchived, editArchived: policyv1.TermsHistory.EditArchived}, "terms_history", managev1.TermsStatus_TERMS_STATUS_ARCHIVED.String()},
-	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_PRIVACY_HISTORY, collaborationCanSet{view: policyv1.PrivacyHistory.View, edit: policyv1.PrivacyHistory.Edit, viewArchived: policyv1.PrivacyHistory.ViewArchived, editArchived: policyv1.PrivacyHistory.EditArchived}, "privacy_history", managev1.PrivacyStatus_PRIVACY_STATUS_ARCHIVED.String()},
+	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_TERMS_HISTORY, collaborationCanSet{view: policyv1.TermsHistory.View, edit: policyv1.TermsHistory.Edit, viewArchived: policyv1.TermsHistory.ViewArchived, editArchived: policyv1.TermsHistory.EditArchived}, "terms_history", string(model.TermsStatusArchived)},
+	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_PRIVACY_HISTORY, collaborationCanSet{view: policyv1.PrivacyHistory.View, edit: policyv1.PrivacyHistory.Edit, viewArchived: policyv1.PrivacyHistory.ViewArchived, editArchived: policyv1.PrivacyHistory.EditArchived}, "privacy_history", string(model.PrivacyStatusArchived)},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_MAP_THEME, collaborationCanSet{view: policyv1.MapTheme.View, edit: policyv1.MapTheme.Edit}, "map_theme", ""},
-	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_PROGRAM_EVENT, collaborationCanSet{view: policyv1.ProgramEvent.View, edit: policyv1.ProgramEvent.Edit, viewArchived: policyv1.ProgramEvent.ViewArchived, editArchived: policyv1.ProgramEvent.EditArchived}, "program_event", managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String()},
+	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_PROGRAM_EVENT, collaborationCanSet{view: policyv1.ProgramEvent.View, edit: policyv1.ProgramEvent.Edit, viewArchived: policyv1.ProgramEvent.ViewArchived, editArchived: policyv1.ProgramEvent.EditArchived}, "program_event", string(model.ProgramEventStatusArchived)},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_MENU, collaborationCanSet{view: policyv1.Menu.View, edit: policyv1.Menu.Edit, manage: policyv1.Menu.Manage}, "menu", ""},
 	{intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_POST_SERIES, collaborationCanSet{view: policyv1.PostSeries.View, edit: policyv1.PostSeries.Edit}, "series", ""},
 }
