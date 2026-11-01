@@ -8,6 +8,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/page"
+	pagepostgres "github.com/echovisionlab/geul-api/internal/page/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -16,13 +17,21 @@ import (
 
 func pageDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	return newConfiguredDomainPort(core.KindPage, domainPortFunctions{
-		loadSourceDocument: page.LoadTranslationSourceDocument,
+		loadSourceDocument: func(ctx context.Context, db *gorm.DB, store *contentblock.Store, pageID string) (*core.SourceDocument, error) {
+			return page.LoadTranslationSourceDocument(ctx, pageStore(db, store), pageID)
+		},
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
-			return page.BuildTranslationExtractionPlan(job, source)
+			if job == nil {
+				return nil, fmt.Errorf("typed Page translation source is required")
+			}
+			return page.BuildTranslationExtractionPlan(pageTranslationJob(job), source)
 		},
 		buildCandidate: page.BuildTranslationCandidate,
 		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			return page.ApplyTranslationCandidateWithDB(ctx, tx, store, job, candidate, input, audit)
+			if tx == nil || store == nil || job == nil {
+				return fmt.Errorf("typed Page translation candidate and Content Block store are required")
+			}
+			return page.ApplyTranslationCandidate(ctx, pagepostgres.Bind(tx, pagepostgres.Ports{ContentBlocks: store}, audit), pageTranslationJob(job), candidate, input)
 		},
 		requestLocaleOG:   localeAwareOG(core.KindPage),
 		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditPageUpdated, sharedtelemetry.NewPageSourceLocaleAuditRecord),
@@ -41,4 +50,17 @@ func pageDomainRegistration(audit domainaudit.Appender) domainRegistration {
 		),
 		requireJobRead: requireJobEdit(policyv1.Page.Edit),
 	})
+}
+
+// pageStore binds the Page Store to the translation domain's database
+// handle, with the content store it hands the delivery.
+func pageStore(db *gorm.DB, contents *contentblock.Store) page.Store {
+	return pagepostgres.NewStore(db, pagepostgres.Ports{ContentBlocks: contents})
+}
+
+func pageTranslationJob(job *model.TranslationJob) page.TranslationJob {
+	return page.TranslationJob{
+		EntityType: job.EntityType, EntityID: job.EntityID, SourceLocale: job.SourceLocale,
+		TargetLocale: job.TargetLocale, RequestedByMemberID: job.RequestedByMemberID,
+	}
 }

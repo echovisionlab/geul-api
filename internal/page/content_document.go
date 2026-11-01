@@ -8,64 +8,25 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
 
 const pageContentDocumentProfile = "page"
 
-func MaterializePageContentDocument(
-	snapshot contentblock.Snapshot,
-) (*contentv1.PageDocument, error) {
-	return contentblock.SnapshotToPageDocument(snapshot)
-}
-
-func MaterializeLocalizedPageContentDocument(
-	snapshot contentblock.Snapshot,
-	locale string,
-) (*contentv1.LocalizedPageDocument, error) {
-	return contentblock.MaterializeSnapshotPageLocale(snapshot, locale)
-}
-
-type pageContentDocumentRoot struct {
-	ID                string     `gorm:"column:id"`
-	ContentDocumentID *uuid.UUID `gorm:"column:content_document_id;type:uuid"`
-}
-
-func loadPageContentDocumentID(
-	ctx context.Context,
-	db *gorm.DB,
-	pageID string,
-) (uuid.UUID, error) {
-	return loadPageContentDocumentIDWithLock(ctx, db, pageID, "")
-}
-
-func loadPageContentDocumentIDForRead(
-	ctx context.Context,
-	tx *gorm.DB,
-	pageID string,
-) (uuid.UUID, error) {
-	return loadPageContentDocumentIDWithLock(ctx, tx, pageID, clause.LockingStrengthShare)
-}
-
-func loadPageContentDocumentIDWithLock(ctx context.Context, db *gorm.DB, pageID, lock string) (uuid.UUID, error) {
-	query := db.WithContext(ctx).Table("page")
-	if lock != "" {
-		query = query.Clauses(clause.Locking{Strength: lock})
-	}
-	var root pageContentDocumentRoot
-	if err := query.Select("id", "content_document_id").Where("id = ?", pageID).Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+// loadPageContentDocumentID reads the Page's content document with lock; a
+// missing Page answers not found.
+func loadPageContentDocumentID(ctx context.Context, store Store, pageID string, lock RowLock) (uuid.UUID, error) {
+	root, err := store.DocumentRoot(ctx, pageID, lock)
+	if err != nil {
+		if errors.Is(err, ErrPageNotFound) {
 			return uuid.Nil, domainerr.ResourceNotFound("page", pageID)
 		}
 		return uuid.Nil, err
@@ -76,12 +37,16 @@ func loadPageContentDocumentIDWithLock(ctx context.Context, db *gorm.DB, pageID,
 	return *root.ContentDocumentID, nil
 }
 
-func LoadPageContentDocumentIDForPublicRead(
-	ctx context.Context,
-	tx *gorm.DB,
-	pageID string,
-) (uuid.UUID, error) {
-	return loadPageContentDocumentIDForRead(ctx, tx, pageID)
+// readPageContentDocumentID is loadPageContentDocumentID in its own read
+// snapshot, for a use case that names the document before its mutation.
+func (s *Service) readPageContentDocumentID(ctx context.Context, pageID string) (uuid.UUID, error) {
+	var documentID uuid.UUID
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		documentID, err = loadPageContentDocumentID(ctx, store, pageID, Unlocked)
+		return err
+	})
+	return documentID, err
 }
 
 // authorizePageBlockBootstrap resolves the browser session sessionID to its
@@ -89,15 +54,15 @@ func LoadPageContentDocumentIDForPublicRead(
 // read.
 func authorizePageBlockBootstrap(
 	ctx context.Context,
-	db *gorm.DB,
-	checker CollaborationPermissionChecker,
+	store Store,
+	checker authz.AuthorizationDecisionChecker,
 	pageID string,
 	sessionID string,
 ) (*auth.UserInfo, error) {
 	if strings.TrimSpace(sessionID) == "" {
 		return nil, domainerr.AuthenticationRequired()
 	}
-	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, db, sessionID)
+	principal, err := store.ResolveSessionPrincipal(ctx, sessionID)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
 		return nil, domainerr.AuthenticationRequired().WithCause(failurecause.WithAttrs(
 			failurecause.WithPrivate(err, sessionID), slog.String("page_id", pageID),
@@ -106,13 +71,13 @@ func authorizePageBlockBootstrap(
 	if err != nil {
 		return nil, fmt.Errorf("resolve Page collaboration principal: %w", err)
 	}
-	if err := requireActiveBootstrapPrincipal(ctx, db, principal); err != nil {
+	if err := requireActiveBootstrapPrincipal(ctx, store, principal); err != nil {
 		return nil, err
 	}
 	if err := requireCollaborationEditForPrincipal(ctx, checker, pageID, principal); err != nil {
 		return nil, err
 	}
-	if err := auth.LockAuthenticatedSessionForPrincipal(ctx, db, sessionID, principal); err != nil {
+	if err := store.LockSession(ctx, sessionID, principal); err != nil {
 		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
 			return nil, domainerr.AuthenticationRequired().WithCause(failurecause.WithPrivate(err, sessionID))
 		}
@@ -123,7 +88,7 @@ func authorizePageBlockBootstrap(
 
 // requireActiveBootstrapPrincipal admits an authenticated, onboarded and
 // active principal that is not banned.
-func requireActiveBootstrapPrincipal(ctx context.Context, db *gorm.DB, principal *auth.UserInfo) error {
+func requireActiveBootstrapPrincipal(ctx context.Context, store Store, principal *auth.UserInfo) error {
 	if principal == nil || !principal.Authenticated {
 		return domainerr.AuthenticationRequired()
 	}
@@ -133,7 +98,7 @@ func requireActiveBootstrapPrincipal(ctx context.Context, db *gorm.DB, principal
 	if !principal.Onboarded {
 		return domainerr.NoPermission("edit", "page")
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, db, principal)
+	active, err := store.LockActivePrincipal(ctx, principal)
 	if err != nil {
 		return err
 	}
@@ -143,20 +108,10 @@ func requireActiveBootstrapPrincipal(ctx context.Context, db *gorm.DB, principal
 	return nil
 }
 
-func lockPageContentDocumentRoot(
-	ctx context.Context,
-	tx *gorm.DB,
-	pageID string,
-	documentID uuid.UUID,
-) error {
-	var root pageContentDocumentRoot
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Table("page").
-		Select("id", "content_document_id").
-		Where("id = ?", pageID).
-		Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+func lockPageContentDocumentRoot(ctx context.Context, store Store, pageID string, documentID uuid.UUID) error {
+	root, err := store.DocumentRoot(ctx, pageID, UpdateLock)
+	if err != nil {
+		if errors.Is(err, ErrPageNotFound) {
 			return domainerr.ResourceNotFound("page", pageID)
 		}
 		return err
@@ -173,49 +128,51 @@ func (s *Service) pageCollaborationDocumentFence(
 	pageID string,
 	action pageAction,
 	contributorMemberIDs []string,
-) contentblock.DomainFence {
+) ContentFence {
 	contributors := append([]string(nil), contributorMemberIDs...)
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		if err := lockPageContentDocumentRoot(ctx, tx, pageID, documentID); err != nil {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		if err := lockPageContentDocumentRoot(ctx, store, pageID, documentID); err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		if err := s.requirePageContributorsPermission(ctx, tx, pageID, action, contributors); err != nil {
+		if err := s.requirePageContributorsPermission(ctx, store, pageID, action, contributors); err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		return loadPageContentDomainContext(ctx, tx, pageID)
+		return loadPageContentDomainContext(ctx, store, pageID)
 	}
 }
 
-func lockedPageContentFence(
-	pageID string,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		if err := lockPageContentDocumentRoot(ctx, tx, pageID, documentID); err != nil {
+// lockedPageContentFence locks the Page root of documentID and names its
+// source locale.
+func lockedPageContentFence(pageID string) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		if err := lockPageContentDocumentRoot(ctx, store, pageID, documentID); err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		return loadPageContentDomainContext(ctx, tx, pageID)
+		return loadPageContentDomainContext(ctx, store, pageID)
 	}
 }
 
-func loadPageContentDomainContext(
-	ctx context.Context,
-	db *gorm.DB,
-	pageID string,
-) (contentblock.DomainContext, error) {
-	var source struct {
-		SourceLocale string `gorm:"column:source_locale"`
+// lockedContentFence admits only documentID and answers with the domain
+// context the caller already authorized under its lock
+// (contentblock.LockedFence).
+func lockedContentFence(documentID uuid.UUID, domain contentblock.DomainContext) ContentFence {
+	return func(_ context.Context, _ Store, requested uuid.UUID) (contentblock.DomainContext, error) {
+		if requested != documentID {
+			return contentblock.DomainContext{}, domainerr.Precondition(pageEntityName + " content document changed; reload before saving")
+		}
+		return domain, nil
 	}
-	if err := db.WithContext(ctx).
-		Table("page").
-		Select("source_locale").
-		Where("id = ?", pageID).
-		Take(&source).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+}
+
+func loadPageContentDomainContext(ctx context.Context, store Store, pageID string) (contentblock.DomainContext, error) {
+	root, err := store.DocumentRoot(ctx, pageID, Unlocked)
+	if err != nil {
+		if errors.Is(err, ErrPageNotFound) {
 			return contentblock.DomainContext{}, domainerr.ResourceNotFound("page", pageID)
 		}
 		return contentblock.DomainContext{}, err
 	}
-	locale := strings.TrimSpace(source.SourceLocale)
+	locale := strings.TrimSpace(root.SourceLocale)
 	if locale == "" {
 		return contentblock.DomainContext{}, domainerr.Precondition("page translation source locale is missing")
 	}

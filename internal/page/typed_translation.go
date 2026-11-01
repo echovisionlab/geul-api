@@ -11,24 +11,21 @@ import (
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"gorm.io/gorm"
 )
 
 // BuildTranslationExtractionPlan extracts Page-owned locale units from the
 // canonical typed document.
 func BuildTranslationExtractionPlan(
-	job *model.TranslationJob,
+	job TranslationJob,
 	source *translation.SourceDocument,
 ) (*translation.ExtractionPlan, error) {
-	if job == nil || job.EntityType != "page" || source == nil || source.PageDocument == nil {
+	if job.EntityType != "page" || source == nil || source.PageDocument == nil {
 		return nil, fmt.Errorf("typed Page translation source is required")
 	}
 	if strings.TrimSpace(job.SourceLocale) == "" || source.PageDocument.GetLocale() != job.SourceLocale {
@@ -78,7 +75,7 @@ func BuildTranslationExtractionPlan(
 }
 
 func appendPageTypedTranslationUnits(
-	job *model.TranslationJob,
+	job TranslationJob,
 	section *contentv1.PageSectionLocale,
 	units *[]translation.Unit,
 ) error {
@@ -130,7 +127,7 @@ func appendPageTypedTranslationUnits(
 }
 
 func appendPageTypedRichTextTranslationUnits(
-	job *model.TranslationJob,
+	job TranslationJob,
 	sectionID string,
 	block *contentv1.RichTextBlockLocale,
 	units *[]translation.Unit,
@@ -149,7 +146,7 @@ func appendPageTypedRichTextTranslationUnits(
 }
 
 func appendPageTypedImmersiveTranslationUnits(
-	job *model.TranslationJob,
+	job TranslationJob,
 	sectionID string,
 	unit *contentv1.PageImmersiveUnitLocale,
 	units *[]translation.Unit,
@@ -388,18 +385,18 @@ func walkMutablePageTypedTranslationStrings(
 	}
 }
 
-// ApplyTranslationCandidateWithDB atomically replaces one Page target locale
-// document after the shared runtime validates the current source authority.
-func ApplyTranslationCandidateWithDB(
+// ApplyTranslationCandidate atomically replaces one Page target locale
+// document, in the translation domain's transaction joined, after the shared
+// runtime validates the current source authority.
+func ApplyTranslationCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	joined Joined,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	entry translation.EntryWrite,
-	auditWriter domainaudit.Appender,
 ) error {
-	if tx == nil || store == nil || job == nil || job.EntityType != "page" ||
+	store := joined.Store
+	if store == nil || job.EntityType != "page" ||
 		candidate == nil || candidate.PageDocument == nil || candidate.PageDocument.GetLocaleOverlay() == nil {
 		return errors.New("typed Page translation candidate and Content Block store are required")
 	}
@@ -410,7 +407,7 @@ func ApplyTranslationCandidateWithDB(
 	entry.Title = candidate.Title
 	entry.Summary = candidate.Summary
 
-	documentID, err := loadPageContentDocumentID(ctx, tx, job.EntityID)
+	documentID, err := loadPageContentDocumentID(ctx, store, job.EntityID, Unlocked)
 	if err != nil {
 		return err
 	}
@@ -422,18 +419,17 @@ func ApplyTranslationCandidateWithDB(
 		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
 	if providerPatch, ok := candidate.ProviderPatch(); ok {
-		return applyPageProviderCandidate(ctx, tx, store, job, candidate, entry, auditWriter, documentID, providerPatch)
+		return applyPageProviderCandidate(ctx, joined, job, candidate, entry, documentID, providerPatch)
 	}
-	return applyPageTypedCandidate(ctx, tx, store, job, candidate.PageDocument, entry, documentID, expectedRevision)
+	return applyPageTypedCandidate(ctx, store, job, candidate.PageDocument, entry, documentID, expectedRevision)
 }
 
 // applyPageTypedCandidate replaces the target locale document with the
 // typed candidate translated against expectedRevision.
 func applyPageTypedCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	store Store,
+	job TranslationJob,
 	document *contentv1.LocalizedPageDocument,
 	entry translation.EntryWrite,
 	documentID, expectedRevision uuid.UUID,
@@ -446,7 +442,7 @@ func applyPageTypedCandidate(
 	if err != nil {
 		return normalizePageContentBlockError(err)
 	}
-	result, err := store.ApplyBatch(ctx, tx, batch, pageSystemTranslationDocumentFence(job.EntityID))
+	result, err := store.ApplyContentBatch(ctx, batch, pageSystemTranslationDocumentFence(job.EntityID))
 	if errors.Is(err, contentblock.ErrStaleRevision) {
 		return fmt.Errorf("%w: %w", translation.ErrSourceNoLongerCurrent, err)
 	}
@@ -456,7 +452,7 @@ func applyPageTypedCandidate(
 	if result.TranslationSourceChanged {
 		return errors.New("target Page translation changed the source-owned Block view")
 	}
-	return UpsertTranslationMetadataEntry(ctx, tx, job.EntityID, job.TargetLocale, entry)
+	return upsertTranslationMetadataEntry(ctx, store, job.EntityID, job.TargetLocale, entry)
 }
 
 // applyPageProviderCandidate patches the surviving request-time units of a
@@ -464,16 +460,15 @@ func applyPageTypedCandidate(
 // locale when the requested target became the source.
 func applyPageProviderCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	joined Joined,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	entry translation.EntryWrite,
-	auditWriter domainaudit.Appender,
 	documentID uuid.UUID,
 	providerPatch *translation.ProviderUnitPatch,
 ) error {
-	domain, err := pageSystemTranslationDocumentFence(job.EntityID)(ctx, tx, documentID)
+	store := joined.Store
+	domain, err := pageSystemTranslationDocumentFence(job.EntityID)(ctx, store, documentID)
 	if err != nil {
 		return err
 	}
@@ -482,10 +477,10 @@ func applyPageProviderCandidate(
 			return err
 		}
 		return applyPageProviderSourceCandidate(
-			ctx, tx, store, job, candidate, entry, auditWriter, documentID, domain, providerPatch,
+			ctx, joined, job, candidate, entry, documentID, domain, providerPatch,
 		)
 	}
-	state, err := loadPageTargetLocaleState(ctx, tx, store, job.EntityID, documentID, job.TargetLocale, true)
+	state, err := loadPageTargetLocaleState(ctx, store, job.EntityID, documentID, job.TargetLocale, true)
 	if err != nil {
 		return normalizePageContentBlockError(err)
 	}
@@ -511,7 +506,7 @@ func applyPageProviderCandidate(
 			return normalizePageContentBlockError(err)
 		}
 	}
-	result, _, err := applyPageTargetLocaleMutation(ctx, tx, store, pageTargetLocaleMutationInput{
+	result, _, err := applyPageTargetLocaleMutation(ctx, store, pageTargetLocaleMutationInput{
 		PageID: job.EntityID, DocumentID: documentID, Locale: job.TargetLocale, Batch: batch,
 		Patch: pageTargetMetadataPatch{
 			EnsureLocale:  true,
@@ -526,7 +521,7 @@ func applyPageProviderCandidate(
 	if err != nil || !result.Changed {
 		return err
 	}
-	if err := touchPage(ctx, tx, job.EntityID, entry.Now); err != nil {
+	if err := store.TouchPage(ctx, job.EntityID, entry.Now); err != nil {
 		return err
 	}
 	if strings.TrimSpace(job.RequestedByMemberID) == "" {
@@ -537,7 +532,7 @@ func applyPageProviderCandidate(
 		operation = sharedtelemetry.AuditItemOperationCreated
 	}
 	return appendPageMemberLocaleContentAudit(
-		ctx, tx, auditWriter, strings.TrimSpace(job.RequestedByMemberID),
+		ctx, joined.Audit, strings.TrimSpace(job.RequestedByMemberID),
 		job.EntityID, job.TargetLocale, operation,
 	)
 }
@@ -567,12 +562,10 @@ func validatePageProviderSourceTarget(jobSourceLocale, jobTargetLocale, currentS
 
 func applyPageProviderSourceCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	joined Joined,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	entry translation.EntryWrite,
-	auditWriter domainaudit.Appender,
 	documentID uuid.UUID,
 	domain contentblock.DomainContext,
 	providerPatch *translation.ProviderUnitPatch,
@@ -581,7 +574,8 @@ func applyPageProviderSourceCandidate(
 	if err != nil || requesterID == uuid.Nil || requesterID.String() != strings.TrimSpace(job.RequestedByMemberID) {
 		return errors.New("page translation provider delivery requires its requesting Member")
 	}
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
+	store := joined.Store
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, domain.SourceLocale)
 	if err != nil {
 		return normalizePageContentBlockError(err)
 	}
@@ -608,11 +602,11 @@ func applyPageProviderSourceCandidate(
 		SetTitle: candidate.ProviderUnitRequested("entity:title"), Title: candidate.Title,
 		SetSummary: candidate.ProviderUnitRequested("entity:summary"), Summary: candidate.Summary,
 	}
-	result, err := store.ApplyBatchWithMetadata(
-		ctx, tx, batch, pageSystemTranslationDocumentFence(job.EntityID),
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+	result, err := store.ApplyContentBatchWithMetadata(
+		ctx, batch, pageSystemTranslationDocumentFence(job.EntityID),
+		func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
 			return applyPageAIDocumentMetadata(
-				ctx, tx, job.EntityID, domain.SourceLocale, true, metadataPatch, entry.Now,
+				ctx, store, job.EntityID, domain.SourceLocale, true, metadataPatch, entry.Now,
 			)
 		},
 	)
@@ -628,11 +622,11 @@ func applyPageProviderSourceCandidate(
 	if !result.TranslationSourceChanged {
 		return errors.New("provider source Page translation did not advance source state")
 	}
-	if err := touchPage(ctx, tx, job.EntityID, entry.Now); err != nil {
+	if err := store.TouchPage(ctx, job.EntityID, entry.Now); err != nil {
 		return err
 	}
 	return appendPageMemberLocaleContentAudit(
-		ctx, tx, auditWriter, job.RequestedByMemberID, job.EntityID, domain.SourceLocale,
+		ctx, joined.Audit, job.RequestedByMemberID, job.EntityID, domain.SourceLocale,
 		sharedtelemetry.AuditItemOperationUpdated,
 	)
 }
@@ -862,11 +856,6 @@ func pageTypedTranslationLocaleMutations(
 	return mutations, nil
 }
 
-func pageSystemTranslationDocumentFence(pageID string) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		if err := lockPageContentDocumentRoot(ctx, tx, pageID, documentID); err != nil {
-			return contentblock.DomainContext{}, err
-		}
-		return loadPageContentDomainContext(ctx, tx, pageID)
-	}
+func pageSystemTranslationDocumentFence(pageID string) ContentFence {
+	return lockedPageContentFence(pageID)
 }

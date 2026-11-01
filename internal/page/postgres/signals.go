@@ -1,13 +1,68 @@
-package page
+package pagepostgres
 
 import (
+	"context"
 	"strings"
 	"time"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/page"
 )
+
+func (s *store) PublishContentUpdate(ctx context.Context, update page.ContentUpdate) error {
+	return contentsignal.PublishInTransaction(ctx, s.tx, s.ports.Signals, contentUpdatedEvent(update))
+}
+
+// contentUpdatedEvent renders a Page's content.updated signal; nil when the
+// update describes no observable change.
+func contentUpdatedEvent(update page.ContentUpdate) *managev1.ContentUpdatedEvent {
+	switch update.Kind {
+	case page.SettingsUpdate:
+		return buildManagePageContentUpdatedEvent(update.PageID, update.Fields)
+	case page.StateUpdate:
+		return buildManageStateTransitionContentUpdatedEvent(update.PageID, update.Fields)
+	case page.FeaturedImageUpdate:
+		return buildManageMediaMutationContentUpdatedEvent(
+			managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE, update.PageID, "media.featured_image",
+		)
+	case page.LocaleUpdate:
+		change := update.Locale
+		return buildPageLocaleContentUpdatedEvent(contentsignal.LocaleChange{
+			EntityID: update.PageID, Fields: change.Fields, DocumentRevision: change.DocumentRevision,
+			Contributors: change.Contributors, Source: updateSource(change.Source), Locale: change.Locale,
+			LocaleDeleted: change.LocaleDeleted, TargetRevision: change.TargetRevision,
+			DocumentStateChanged: change.DocumentStateChanged,
+		})
+	case page.LayoutUpdate:
+		return buildContentUpdatedEvent(
+			managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
+			update.PageID,
+			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+			buildContentUpdatedFields([]string{"documentLayout"}, pageContentUpdatedFieldSpecs),
+			false,
+			update.Locale.DocumentRevision,
+			update.Locale.Contributors,
+			nil,
+		)
+	default:
+		return nil
+	}
+}
+
+func updateSource(source page.UpdateSource) managev1.ContentUpdateSource {
+	switch source {
+	case page.SourceManage:
+		return managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE
+	case page.SourceCollaboration:
+		return managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB
+	case page.SourceAI:
+		return managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI
+	default:
+		return managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_UNSPECIFIED
+	}
+}
 
 type contentUpdatedFieldSpec struct {
 	path string
@@ -49,20 +104,10 @@ func buildPageLocaleContentUpdatedEvent(change contentsignal.LocaleChange) *mana
 	)
 }
 
-func buildManagePageContentUpdatedEvent(command UpdatePageCommand) *managev1.ContentUpdatedEvent {
-	fields := make([]string, 0, 3)
-	if command.Slug != nil {
-		fields = append(fields, "slug")
-	}
-	if command.ShowTitle != nil {
-		fields = append(fields, "showTitle")
-	}
-	if command.AccessPolicy != nil {
-		fields = append(fields, "accessPolicy")
-	}
+func buildManagePageContentUpdatedEvent(pageID string, fields []string) *managev1.ContentUpdatedEvent {
 	return buildContentUpdatedEvent(
 		managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
-		command.ID,
+		pageID,
 		managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
 		buildContentUpdatedFields(fields, pageContentUpdatedFieldSpecs),
 		false, "", nil, nil,
@@ -126,7 +171,7 @@ func buildContentUpdatedEvent(
 	}
 	event := &managev1.ContentUpdatedEvent{
 		EntityType: entityType, EntityId: entityID, Source: source,
-		ChangedFields: fields, ContributorMemberIds: normalizeContributorMemberIDs(contributors),
+		ChangedFields: fields, ContributorMemberIds: page.NormalizeContributorMemberIDs(contributors),
 		DocumentStateChanged: documentChanged, TimestampMs: time.Now().UnixMilli(),
 	}
 	if documentRevision != "" {

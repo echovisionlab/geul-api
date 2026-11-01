@@ -219,8 +219,8 @@ func (discovery *recordingProgramEventDocumentDiscovery) ListProgramEventsAdmin(
 func (*recordingPageDocumentDiscovery) ListPagesAdmin(
 	context.Context,
 	pagedomain.ListPagesAdminQuery,
-) (*managev1.ListPagesAdminResponse, error) {
-	return &managev1.ListPagesAdminResponse{}, nil
+) (pagedomain.PageList, error) {
+	return pagedomain.PageList{}, nil
 }
 
 func TestDocumentDiscoveryReleaseAndArtistRequestsAndMetadata(t *testing.T) {
@@ -374,7 +374,7 @@ func (discovery *recordingReleaseDocumentDiscovery) ListReleasesAdmin(ctx contex
 }
 
 type recordingArtistDocumentDiscovery struct {
-	ctx      context.Context
+	ctx     context.Context
 	request *connect.Request[managev1.ListArtistsAdminRequest]
 	page    artist.AdminArtistPage
 	err     error

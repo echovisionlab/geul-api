@@ -15,6 +15,7 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
+	pageaccesspostgres "github.com/echovisionlab/geul-api/internal/pageaccess/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -386,8 +387,8 @@ func (s *Service) validateContentDownloadOwnerAuthorization(
 			return false, nil
 		}
 		if authorization.ResourceType == "page" {
-			reason, err := pageaccess.EvaluateStored(ctx, db, s.spiceDB, authorization.ResourceID)
-			return reason == commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, err
+			reason, err := pageaccesspostgres.EvaluateStored(ctx, db, s.spiceDB, authorization.ResourceID)
+			return reason == pageaccess.ReasonAllowed, err
 		}
 		return true, nil
 	case mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft:

@@ -6,16 +6,12 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -99,10 +95,10 @@ func (s *Service) ExecuteAIDocumentMutation(ctx context.Context, command Execute
 
 	var root lockedAIDocumentRoot
 	var execution pageAIDocumentExecution
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[pageAIDocumentExecution]{
-		Access: s.lockedAIDocumentEdit(command.PageID, &root),
-		Change: func(ctx context.Context, tx *gorm.DB) (pageAIDocumentExecution, error) {
-			if err := s.executeAIDocumentMutation(ctx, tx, command, root, &execution); err != nil {
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[pageAIDocumentExecution, Store]{
+		Access: lockedAIDocumentEdit(command.PageID, &root),
+		Change: func(ctx context.Context, store Store) (pageAIDocumentExecution, error) {
+			if err := executeAIDocumentMutation(ctx, store, command, root, &execution); err != nil {
 				return pageAIDocumentExecution{}, err
 			}
 			return execution, nil
@@ -110,11 +106,11 @@ func (s *Service) ExecuteAIDocumentMutation(ctx context.Context, command Execute
 		Audit: func(execution pageAIDocumentExecution) mutation.Audit {
 			return pageAIDocumentAudit(execution.mutation, execution.applied)
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, execution pageAIDocumentExecution) error {
+		Outbox: func(ctx context.Context, store Store, execution pageAIDocumentExecution) error {
 			if !execution.applied.result.Changed {
 				return nil
 			}
-			return s.publish(ctx, tx, pageAIDocumentContentUpdatedEvent(execution.mutation, execution.applied))
+			return store.PublishContentUpdate(ctx, pageAIDocumentContentUpdate(execution.mutation, execution.applied))
 		},
 	})
 	result := AIDocumentMutationResult{
@@ -129,9 +125,9 @@ func (s *Service) ExecuteAIDocumentMutation(ctx context.Context, command Execute
 
 // lockedAIDocumentEdit is the access of an AI document mutation. A caller
 // who may not edit the Page finds none.
-func (s *Service) lockedAIDocumentEdit(pageID string, root *lockedAIDocumentRoot) mutation.Access {
-	return mutation.Locked(func(ctx context.Context, tx *gorm.DB, _ mutation.Require) error {
-		err := s.lockAIDocumentRoot(ctx, tx, pageID, clause.LockingStrengthUpdate, policyv1.Page.Edit, root)
+func lockedAIDocumentEdit(pageID string, root *lockedAIDocumentRoot) mutation.Access {
+	return mutation.Locked(func(ctx context.Context, store Store, require mutation.Require) error {
+		err := lockAIDocumentRoot(ctx, store, require, pageID, UpdateLock, policyv1.Page.Edit, root)
 		if mutation.IsUnauthenticated(err) || mutation.IsDenied(err) {
 			return domainerr.ResourceNotFound("page", pageID).WithCause(err)
 		}
@@ -141,15 +137,15 @@ func (s *Service) lockedAIDocumentEdit(pageID string, root *lockedAIDocumentRoot
 
 // executeAIDocumentMutation compiles the mutation against the locked state
 // and applies it into execution. Validation rolls the transaction back.
-func (s *Service) executeAIDocumentMutation(
+func executeAIDocumentMutation(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	command ExecuteAIDocumentMutationCommand,
 	root lockedAIDocumentRoot,
 	execution *pageAIDocumentExecution,
 ) error {
 	var err error
-	if execution.state, err = s.loadAIDocumentStateAfterAuthorization(ctx, tx, root, command.Locale); err != nil {
+	if execution.state, err = loadAIDocumentStateAfterAuthorization(ctx, store, root, command.Locale); err != nil {
 		return err
 	}
 	if execution.mutation, err = command.Compile(execution.state); err != nil {
@@ -158,9 +154,9 @@ func (s *Service) executeAIDocumentMutation(
 	if err := validateCompiledPageAIDocumentMutation(execution.state, execution.mutation); err != nil {
 		return err
 	}
-	fence := s.pageAuthorizedAIDocumentFence(root.page.ID, root.documentID,
+	fence := pageAuthorizedAIDocumentFence(root.page.ID, root.documentID,
 		contentblock.DomainContext{SourceLocale: execution.state.SourceLocale}, execution.mutation.ContributorMemberID)
-	if execution.applied, err = s.applyAIDocumentMutationInTransaction(ctx, tx, execution.mutation, fence); err != nil {
+	if execution.applied, err = applyAIDocumentMutationInTransaction(ctx, store, execution.mutation, fence); err != nil {
 		return err
 	}
 	if command.Mode == AIDocumentExecutionValidate {
@@ -171,10 +167,7 @@ func (s *Service) executeAIDocumentMutation(
 	if !execution.applied.result.Changed || !pageAIDocumentTitleChanged(execution.state, execution.mutation) {
 		return nil
 	}
-	_, err = s.runtime.RequestCurrentWithDB(
-		ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_PAGE,
-		execution.mutation.PageID, execution.mutation.Locale, false, "page_ai_document_saved",
-	)
+	_, err = store.RequestOG(ctx, execution.mutation.PageID, execution.mutation.Locale, false, "page_ai_document_saved")
 	return err
 }
 
@@ -199,18 +192,17 @@ func pageAIDocumentAudit(compiled AIDocumentMutation, applied pageAIDocumentAppl
 	return mutation.Audits(records...)
 }
 
-func pageAIDocumentContentUpdatedEvent(compiled AIDocumentMutation, applied pageAIDocumentApply) *managev1.ContentUpdatedEvent {
-	return buildPageLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-		EntityID:             compiled.PageID,
+func pageAIDocumentContentUpdate(compiled AIDocumentMutation, applied pageAIDocumentApply) ContentUpdate {
+	return ContentUpdate{PageID: compiled.PageID, Kind: LocaleUpdate, Locale: LocaleUpdateChange{
 		Fields:               pageAIDocumentContentUpdatedFields(compiled),
 		DocumentRevision:     applied.result.DocumentRevision.String(),
 		Contributors:         []string{compiled.ContributorMemberID},
-		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+		Source:               SourceAI,
 		Locale:               compiled.Locale,
 		LocaleDeleted:        compiled.DeleteTranslation,
 		TargetRevision:       applied.targetRevision,
 		DocumentStateChanged: compiled.Locale == compiled.ObservedSourceLocale,
-	})
+	}}
 }
 
 // pageAIDocumentExecutionError answers a failed AI document mutation: the
@@ -295,17 +287,17 @@ func pageTargetConflictRevision(conflict *translation.TargetRevisionConflict) *s
 	return &current
 }
 
-func (s *Service) pageAuthorizedAIDocumentFence(
+func pageAuthorizedAIDocumentFence(
 	pageID string,
 	documentID uuid.UUID,
 	domain contentblock.DomainContext,
 	contributorMemberID string,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {
+) ContentFence {
+	return func(ctx context.Context, store Store, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {
 		if strings.TrimSpace(pageID) == "" || documentID == uuid.Nil || requestedDocumentID != documentID {
 			return contentblock.DomainContext{}, domainerr.Precondition("Page content document changed; reload before saving")
 		}
-		if err := s.requireDocumentContributors(ctx, tx, []string{contributorMemberID}); err != nil {
+		if err := requireDocumentContributors(ctx, store, []string{contributorMemberID}); err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		return domain, nil

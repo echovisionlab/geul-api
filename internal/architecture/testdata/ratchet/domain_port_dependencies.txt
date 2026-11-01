@@ -54,14 +54,8 @@
 3 internal/member/public model
 2 internal/member/public spicedb client
 1 internal/menu generated contracts
-20 internal/page generated contracts
-23 internal/page gorm
-14 internal/page model
-2 internal/page spicedb client
-1 internal/page sql driver
+11 internal/page generated contracts
 2 internal/page/public generated contracts
-2 internal/page/public gorm
-2 internal/page/public model
 26 internal/post generated contracts
 28 internal/post gorm
 27 internal/post model

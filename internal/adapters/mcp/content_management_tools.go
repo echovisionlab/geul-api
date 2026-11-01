@@ -99,12 +99,20 @@ type WorkManagementApplication interface {
 }
 
 type PageManagementApplication interface {
-	GetPage(context.Context, pagedomain.GetPageQuery) (*managev1.Page, error)
-	CreatePage(context.Context, pagedomain.CreatePageCommand) (*managev1.Page, error)
-	UpdatePage(context.Context, pagedomain.UpdatePageCommand) (*managev1.UpdatePageResponse, error)
-	PublishPage(context.Context, pagedomain.PublishPageCommand) (*managev1.PageLifecycleMutationResponse, error)
-	UnpublishPage(context.Context, pagedomain.UnpublishPageCommand) (*managev1.PageLifecycleMutationResponse, error)
+	GetPage(context.Context, pagedomain.GetPageQuery) (pagedomain.Detail, error)
+	CreatePage(context.Context, pagedomain.CreatePageCommand) (pagedomain.Detail, error)
+	UpdatePage(context.Context, pagedomain.UpdatePageCommand) (pagedomain.UpdateResult, error)
+	PublishPage(context.Context, pagedomain.PublishPageCommand) (pagedomain.LifecycleResult, error)
+	UnpublishPage(context.Context, pagedomain.UnpublishPageCommand) (pagedomain.LifecycleResult, error)
 	DeletePage(context.Context, pagedomain.DeletePageCommand) error
+}
+
+// renderPage renders a Page use case's result as the manage API does.
+func renderPage[R, T any](result R, err error, message func(R) (*T, error)) (*T, error) {
+	if err != nil {
+		return nil, err
+	}
+	return message(result)
 }
 
 type ContentManagementTools struct {
@@ -574,10 +582,11 @@ func (tools *ContentManagementTools) createPage(ctx context.Context, arguments m
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
-	created, err := tools.pages.CreatePage(ctx, pagedomain.CreatePageCommand{
+	detail, err := tools.pages.CreatePage(ctx, pagedomain.CreatePageCommand{
 		Title: input.Title, Slug: input.Slug, Summary: input.Summary, ShowTitle: input.ShowTitle,
 		SourceLocale: input.SourceLocale, AcceptLanguage: input.SourceLocale,
 	})
+	created, err := renderPage(detail, err, pagedomain.PageMessage)
 	if err != nil {
 		return expectedToolError(err)
 	}
@@ -686,7 +695,8 @@ func (tools *ContentManagementTools) getPageSettings(ctx context.Context, argume
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
-	page, err := tools.pages.GetPage(ctx, pagedomain.GetPageQuery{ID: input.DocumentID})
+	detail, err := tools.pages.GetPage(ctx, pagedomain.GetPageQuery{ID: input.DocumentID})
+	page, err := renderPage(detail, err, pagedomain.PageMessage)
 	if err != nil {
 		return expectedToolError(err)
 	}
@@ -725,9 +735,10 @@ func (tools *ContentManagementTools) updatePage(ctx context.Context, arguments m
 		if err != nil {
 			return executionError(err)
 		}
-		command.AccessPolicy = policy
+		command.AccessPolicy = pagedomain.AccessPolicyInput(policy)
 	}
-	updated, err := tools.pages.UpdatePage(ctx, command)
+	result, err := tools.pages.UpdatePage(ctx, command)
+	updated, err := renderPage(result, err, pagedomain.UpdateResponseMessage)
 	if err != nil {
 		return expectedToolError(err)
 	}
@@ -749,13 +760,14 @@ func (tools *ContentManagementTools) mutatePage(ctx context.Context, name string
 		}
 		return contentResult(map[string]any{"document_type": "page", "document_id": input.DocumentID, "changed": true, "deleted": true})
 	}
-	var result *managev1.PageLifecycleMutationResponse
+	var lifecycle pagedomain.LifecycleResult
 	var err error
 	if name == ToolPagePublish {
-		result, err = tools.pages.PublishPage(ctx, pagedomain.PublishPageCommand{ID: input.DocumentID})
+		lifecycle, err = tools.pages.PublishPage(ctx, pagedomain.PublishPageCommand{ID: input.DocumentID})
 	} else {
-		result, err = tools.pages.UnpublishPage(ctx, pagedomain.UnpublishPageCommand{ID: input.DocumentID})
+		lifecycle, err = tools.pages.UnpublishPage(ctx, pagedomain.UnpublishPageCommand{ID: input.DocumentID})
 	}
+	result, err := renderPage(lifecycle, err, pagedomain.LifecycleMessage)
 	if err != nil {
 		return expectedToolError(err)
 	}

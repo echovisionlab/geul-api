@@ -11,16 +11,23 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+)
+
+// InterchangeMode is how an XLIFF import treats the target values it leaves
+// out.
+type InterchangeMode uint8
+
+const (
+	// InterchangePatch keeps the current target values the import leaves
+	// out.
+	InterchangePatch InterchangeMode = iota + 1
+	// InterchangeReplace deletes them.
+	InterchangeReplace
 )
 
 type ProjectRichTextInterchangeTargets func(
@@ -54,7 +61,7 @@ type TranslationInterchangeMutation struct {
 	PageID           string
 	SourceLocale     string
 	TargetLocale     string
-	Mode             managev1.TranslationInterchangeMode
+	Mode             InterchangeMode
 	ExpectedRevision *string
 	Source           *translation.SourceDocument
 	Plan             *translation.ExtractionPlan
@@ -78,7 +85,7 @@ type TranslationInterchangeResult struct {
 
 type pageInterchangeState struct {
 	snapshot       contentblock.Snapshot
-	metadata       pageAIDocumentLocale
+	metadata       Locale
 	document       *contentv1.LocalizedPageDocument
 	exists         bool
 	targets        map[string]translation.UnitResult
@@ -87,8 +94,7 @@ type pageInterchangeState struct {
 
 func LoadTranslationInterchangeTarget(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	pageID string,
 	locale string,
 	plan *translation.ExtractionPlan,
@@ -98,7 +104,7 @@ func LoadTranslationInterchangeTarget(
 	emptyInline EmptyInterchangeTargetInline,
 ) (TranslationInterchangeTarget, error) {
 	state, err := loadPageInterchangeState(
-		ctx, tx, store, pageID, locale, plan, clause.LockingStrengthShare, project, pathPresent, cloneResult, emptyInline,
+		ctx, store, pageID, locale, plan, ShareLock, project, pathPresent, cloneResult, emptyInline,
 	)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
@@ -110,15 +116,14 @@ func LoadTranslationInterchangeTarget(
 
 func ApplyTranslationInterchange(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	mutation TranslationInterchangeMutation,
 ) (TranslationInterchangeResult, error) {
 	if err := validatePageInterchangeMutation(mutation); err != nil {
 		return TranslationInterchangeResult{}, err
 	}
 	state, err := loadPageInterchangeState(
-		ctx, tx, store, mutation.PageID, mutation.TargetLocale, mutation.Plan, clause.LockingStrengthUpdate,
+		ctx, store, mutation.PageID, mutation.TargetLocale, mutation.Plan, UpdateLock,
 		mutation.ProjectTargets, mutation.PathPresent, mutation.CloneResult, mutation.EmptyInline,
 	)
 	if err != nil {
@@ -157,7 +162,7 @@ func ApplyTranslationInterchange(
 	}
 
 	metadataPatch := pageInterchangeMetadataPatch(mutation.Plan, desired)
-	result, targetRevision, err := applyPageTargetLocaleMutation(ctx, tx, store, pageTargetLocaleMutationInput{
+	result, targetRevision, err := applyPageTargetLocaleMutation(ctx, store, pageTargetLocaleMutationInput{
 		PageID: mutation.PageID, DocumentID: state.snapshot.Document.ID, Locale: mutation.TargetLocale,
 		Batch: batch, ExpectedTargetRevision: mutation.ExpectedRevision,
 		Patch: pageTargetMetadataPatch{
@@ -167,7 +172,7 @@ func ApplyTranslationInterchange(
 		},
 		Policy: targetlocale.Policy{
 			AllowCreate:        true,
-			AllowLocaleDeletes: mutation.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+			AllowLocaleDeletes: mutation.Mode == InterchangeReplace,
 		},
 		Now: mutation.Now.UTC(), Fence: pageSystemTranslationDocumentFence(mutation.PageID),
 	})
@@ -178,7 +183,7 @@ func ApplyTranslationInterchange(
 		return TranslationInterchangeResult{}, errors.New("target Page interchange changed the source-owned Block view")
 	}
 	if result.Changed {
-		if err := touchPage(ctx, tx, mutation.PageID, mutation.Now.UTC()); err != nil {
+		if err := store.TouchPage(ctx, mutation.PageID, mutation.Now.UTC()); err != nil {
 			return TranslationInterchangeResult{}, err
 		}
 	}
@@ -202,7 +207,7 @@ func mergePageInterchangeTargets(
 	current map[string]translation.UnitResult,
 ) map[string]translation.UnitResult {
 	desired := make(map[string]translation.UnitResult, len(current)+len(mutation.Targets))
-	if mutation.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH {
+	if mutation.Mode == InterchangePatch {
 		for handle, target := range current {
 			desired[handle] = mutation.CloneResult(target)
 		}
@@ -231,7 +236,7 @@ func pageInterchangeBatch(
 	document.LocaleOverlay.Sections = filtered
 	snapshot := state.snapshot.Document
 	batch := contentblock.Batch{DocumentID: snapshot.ID, ExpectedRevision: snapshot.Revision}
-	replace := mutation.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE
+	replace := mutation.Mode == InterchangeReplace
 	if len(filtered) == 0 && !replace {
 		return batch, nil
 	}
@@ -264,8 +269,7 @@ func validatePageInterchangeMutation(mutation TranslationInterchangeMutation) er
 	if mutation.SourceLocale == mutation.TargetLocale {
 		return domainerr.InvalidField("target_locale", "Page source translation cannot be imported as a target")
 	}
-	if mutation.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH &&
-		mutation.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
+	if mutation.Mode != InterchangePatch && mutation.Mode != InterchangeReplace {
 		return domainerr.InvalidField("mode", "PATCH or REPLACE is required")
 	}
 	known := make(map[string]struct{}, len(mutation.Plan.Units))
@@ -298,38 +302,37 @@ func validatePageInterchangeMutation(mutation TranslationInterchangeMutation) er
 
 func loadPageInterchangeState(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	pageID string,
 	locale string,
 	plan *translation.ExtractionPlan,
-	lock string,
+	lock RowLock,
 	project ProjectRichTextInterchangeTargets,
 	pathPresent InterchangeProtoPathPresent,
 	cloneResult CloneInterchangeUnitResult,
 	emptyInline EmptyInterchangeTargetInline,
 ) (pageInterchangeState, error) {
-	if tx == nil || store == nil || plan == nil || plan.EntityType != "page" ||
+	if store == nil || plan == nil || plan.EntityType != "page" ||
 		plan.EntityID != pageID || plan.TargetLocale != locale || project == nil ||
 		pathPresent == nil || cloneResult == nil || emptyInline == nil {
 		return pageInterchangeState{}, errors.New("Page translation interchange load identity is invalid")
 	}
-	_, documentID, err := loadPageAIDocumentRoot(ctx, tx, pageID, lock)
+	_, documentID, err := loadPageAIDocumentRoot(ctx, store, pageID, lock)
 	if err != nil {
 		return pageInterchangeState{}, err
 	}
-	domain, err := loadPageContentDomainContext(ctx, tx, pageID)
+	domain, err := loadPageContentDomainContext(ctx, store, pageID)
 	if err != nil {
 		return pageInterchangeState{}, err
 	}
 	if domain.SourceLocale != plan.SourceLocale || locale == domain.SourceLocale {
 		return pageInterchangeState{}, domainerr.InvalidField("target_locale", "Page XLIFF locale role no longer matches the owning document")
 	}
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, domain.SourceLocale)
 	if err != nil {
 		return pageInterchangeState{}, normalizePageContentBlockError(err)
 	}
-	metadata, exists, err := loadPageAIDocumentLocale(ctx, tx, pageID, locale, true)
+	metadata, exists, err := store.Locale(ctx, pageID, locale, UpdateLock)
 	if err != nil {
 		return pageInterchangeState{}, err
 	}
@@ -352,7 +355,7 @@ func loadPageInterchangeState(
 		return pageInterchangeState{}, err
 	}
 	state.targetRevision, err = pageInterchangeTargetRevision(
-		ctx, tx, pageID, locale, snapshot.Document.Revision.String(), true,
+		ctx, store, pageID, locale, snapshot.Document.Revision.String(), true,
 	)
 	if err != nil {
 		return pageInterchangeState{}, err
@@ -362,7 +365,7 @@ func loadPageInterchangeState(
 
 func projectPageInterchangeTargets(
 	plan *translation.ExtractionPlan,
-	metadata pageAIDocumentLocale,
+	metadata Locale,
 	document *contentv1.LocalizedPageDocument,
 	project ProjectRichTextInterchangeTargets,
 	pathPresent InterchangeProtoPathPresent,
@@ -381,7 +384,7 @@ func projectPageInterchangeTargets(
 		targetSource.Title = *metadata.Title
 	}
 	targetSource.Summary = metadata.Summary
-	targetPlan, err := BuildTranslationExtractionPlan(&model.TranslationJob{
+	targetPlan, err := BuildTranslationExtractionPlan(TranslationJob{
 		EntityType: "page", EntityID: plan.EntityID, SourceLocale: plan.TargetLocale, TargetLocale: plan.SourceLocale,
 	}, targetSource)
 	if err != nil && !errors.Is(err, translation.ErrNoTranslatableUnits) {
@@ -513,7 +516,7 @@ func patchPageRichTextInterchange(
 	current *contentv1.LocalizedPageDocument,
 	plan *translation.ExtractionPlan,
 	imported map[string]translation.UnitResult,
-	mode managev1.TranslationInterchangeMode,
+	mode InterchangeMode,
 	build BuildRichTextInterchangePatch,
 ) error {
 	bySection := make(map[string]map[string]translation.UnitResult)
@@ -563,7 +566,7 @@ func patchPageRichTextInterchange(
 			SourceLocale: plan.SourceLocale, TargetLocale: plan.TargetLocale, Units: units,
 		}
 		currentOverlay := &contentv1.RichTextLocaleOverlay{Locale: plan.TargetLocale}
-		if mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
+		if mode != InterchangeReplace {
 			if section := currentSections[sectionID]; section != nil && section.GetRichText() != nil && section.GetRichText().GetBlocks() != nil {
 				currentOverlay = section.GetRichText().GetBlocks()
 			}
@@ -592,7 +595,7 @@ func patchPageContainerInterchange(
 	candidate *contentv1.LocalizedPageDocument,
 	current *contentv1.LocalizedPageDocument,
 	handles []string,
-	mode managev1.TranslationInterchangeMode,
+	mode InterchangeMode,
 	copyPath CopyInterchangeProtoPath,
 ) error {
 	paths := make(map[string][][]string)
@@ -617,7 +620,7 @@ func patchPageContainerInterchange(
 			continue
 		}
 		destination := &contentv1.PageSectionLocale{SectionId: sourceSection.GetSectionId()}
-		if mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
+		if mode != InterchangeReplace {
 			if existing := currentSections[sourceSection.GetSectionId()]; existing != nil {
 				destination = proto.Clone(existing).(*contentv1.PageSectionLocale)
 			}
@@ -826,7 +829,7 @@ func pageInterchangeMetadataPatch(plan *translation.ExtractionPlan, desired map[
 
 func pageInterchangeTargetRevision(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	pageID string,
 	locale string,
 	documentRevision string,
@@ -835,18 +838,14 @@ func pageInterchangeTargetRevision(
 	if !exists {
 		return translation.DeriveTargetRevision(translation.TargetRevisionFacts{})
 	}
-	var row struct {
-		UpdatedAt     time.Time `gorm:"column:updated_at"`
-		IncarnationID uuid.UUID `gorm:"column:incarnation_id"`
+	row, found, err := store.Locale(ctx, pageID, locale, Unlocked)
+	if err != nil {
+		return "", err
 	}
-	result := tx.WithContext(ctx).Table("page_translation").Select("updated_at", "incarnation_id").
-		Where("entity_id = ? AND locale = ?", pageID, locale).Take(&row)
-	if result.Error != nil {
-		return "", result.Error
+	if !found {
+		return "", errors.New("Page translation locale disappeared while reading its revision")
 	}
-	revision, err := derivePageTargetRevision(documentRevision, pageLocaleMetadataRow{
-		IncarnationID: row.IncarnationID, UpdatedAt: row.UpdatedAt,
-	})
+	revision, err := derivePageTargetRevision(documentRevision, row)
 	if err != nil {
 		return "", err
 	}

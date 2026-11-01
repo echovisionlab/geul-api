@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
-	"github.com/echovisionlab/geul-api/internal/model"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -134,10 +133,10 @@ func TestPageExactDocumentLayoutProjectionAndAtomicCompilation(t *testing.T) {
 	require.Len(t, api.mutations, 1)
 	mutation := api.mutations[0]
 	require.True(t, mutation.Metadata.SetDocumentLayout)
-	require.Equal(t, model.DocumentLayout{ContentHeight: model.DocumentContentHeightViewport, PageChrome: model.DocumentRegionPlacementPinned, Footer: model.DocumentRegionPlacementPinned, HideTableOfContents: true}, mutation.Metadata.DocumentLayout)
+	require.Equal(t, pagedomain.DocumentLayout{ContentHeight: pagedomain.ContentHeightViewport, PageChrome: pagedomain.PlacementPinned, Footer: pagedomain.PlacementPinned, HideTableOfContents: true}, mutation.Metadata.DocumentLayout)
 	require.Len(t, mutation.Batch.Upserts, 1)
 	require.Contains(t, string(mutation.Batch.Upserts[0].SharedData), "https://example.com/changed")
-	require.Equal(t, model.DefaultDocumentLayout(), api.state.Page.DocumentLayout)
+	require.Equal(t, pagedomain.DefaultDocumentLayout(), api.state.Page.DocumentLayout)
 }
 
 func TestPageExactDocumentLayoutRejectsTargetInvalidAndUnset(t *testing.T) {
@@ -177,7 +176,7 @@ func TestPageExactMutationAuthorizesBeforeExposingValidationResult(t *testing.T)
 	pageID := uuid.New()
 	denied := errors.New("page not found")
 	api := &exactPageDocumentAPI{
-		state:        pagedomain.AIDocumentState{Page: model.Page{ID: pageID.String()}, Locale: "en"},
+		state:        pagedomain.AIDocumentState{Page: pagedomain.Page{ID: pageID.String()}, Locale: "en"},
 		authorizeErr: denied,
 	}
 	port := &pagePort{application: api, codec: codec, catalog: codec.Catalog()}

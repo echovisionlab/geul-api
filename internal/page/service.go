@@ -2,7 +2,6 @@ package page
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"slices"
@@ -10,70 +9,40 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
-	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// pageSortConfig defines allowed sort fields for pages
-var pageSortConfig = queryutil.SortConfig{
-	AllowedFields: map[string]string{
-		"title":        PageSourceTitleSQL("page"),
-		"slug":         "slug",
-		"status":       "status",
-		"created_at":   "created_at",
-		"updated_at":   "updated_at",
-		"published_at": "published_at",
-		"show_title":   "show_title",
-	},
-	DefaultSort: "created_at DESC",
+// FileDeliveryResolver projects exact File IDs after Page authorization.
+type FileDeliveryResolver interface {
+	ResolveAuthorizedPageFeaturedImage(context.Context, string, string) (*commonv1.MediaDelivery, error)
 }
 
-// Deps are the collaborators of the Page use cases. Every field is
-// required; NewService rejects a missing one.
+// Deps are the collaborators of the Page use cases; all are required.
 type Deps struct {
-	DB      *gorm.DB
-	SpiceDB *auth.SpiceDBClient
-	// Runtime requests OG images and releases Page media bindings.
-	Runtime Runtime
+	Units   mutation.UnitOfWork[Store] // pagepostgres.NewUnits
+	SpiceDB Authorizer
+	Fence   identitystate.Fence
+	Audit   domainaudit.Appender
 	// Files deliver the authorized featured image of a Page.
-	Files         FileDeliveryResolver
-	Signals       contentsignal.Publisher
-	ContentBlocks *contentblock.Store
-	MediaHydrator ContentBlockMediaHydrator
-	// MenuTargets keeps Menu links to a Page in step with its slug.
-	MenuTargets MenuTargets
-	Members     Members
-	ShareLinks  ShareLinks
-	Audit       domainaudit.Appender
+	Files FileDeliveryResolver
 }
 
 func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
-		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Runtime": d.Runtime == nil, "Files": d.Files == nil,
-		"Signals": d.Signals == nil, "ContentBlocks": d.ContentBlocks == nil, "MediaHydrator": d.MediaHydrator == nil,
-		"MenuTargets": d.MenuTargets == nil, "Members": d.Members == nil, "ShareLinks": d.ShareLinks == nil,
-		"Audit": d.Audit == nil,
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
+		"Files": d.Files == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -90,19 +59,10 @@ func (d Deps) validate() error {
 // boundary and the AI document boundary. Adapters translate their requests
 // into its commands and queries.
 type Service struct {
-	db      *gorm.DB
-	spiceDB *auth.SpiceDBClient
-	// permissions decides Page actions; it is spiceDB.
-	permissions   CollaborationPermissionChecker
-	runtime       Runtime
-	files         FileDeliveryResolver
-	signals       contentsignal.Publisher
-	contentBlocks *contentblock.Store
-	mediaHydrator ContentBlockMediaHydrator
-	menuTargets   MenuTargets
-	members       Members
-	shareLinks    ShareLinks
-	mutations     *mutation.Runner
+	units     mutation.UnitOfWork[Store]
+	spiceDB   Authorizer
+	files     FileDeliveryResolver
+	mutations *mutation.StoreRunner[Store]
 }
 
 // NewService validates deps and returns the Page use cases.
@@ -110,51 +70,49 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
-	return &Service{
-		db: deps.DB, spiceDB: deps.SpiceDB, permissions: deps.SpiceDB, runtime: deps.Runtime, files: deps.Files, signals: deps.Signals,
-		contentBlocks: deps.ContentBlocks, mediaHydrator: deps.MediaHydrator, menuTargets: deps.MenuTargets,
-		members: deps.Members, shareLinks: deps.ShareLinks, mutations: mutations,
-	}, nil
+	return &Service{units: deps.Units, spiceDB: deps.SpiceDB, files: deps.Files, mutations: mutations}, nil
 }
 
 // readLocked runs read in one transaction after access, so the rows it
 // locks agree with each other.
-func (s *Service) readLocked(ctx context.Context, access mutation.Access, read func(context.Context, *gorm.DB) error) error {
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
+func (s *Service) readLocked(ctx context.Context, access mutation.Access, read func(context.Context, Store) error) error {
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
 		Access: access,
-		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) { return struct{}{}, read(ctx, tx) },
+		Change: func(ctx context.Context, store Store) (struct{}, error) { return struct{}{}, read(ctx, store) },
 		Audit:  func(struct{}) mutation.Audit { return mutation.Unchanged() },
 	})
 	return err
 }
 
-// publish schedules content.updated in the mutation transaction so the
-// signal commits or rolls back with the data.
-func (s *Service) publish(ctx context.Context, tx *gorm.DB, event *managev1.ContentUpdatedEvent) error {
-	return contentsignal.PublishInTransaction(ctx, tx, s.signals, event)
-}
-
-// Page selects a page of a list. A zero Limit reads the list's default.
-type Page struct {
+// Paging selects a page of a list. A zero Limit reads the list's default.
+type Paging struct {
 	Limit  int32
 	Offset int32
 }
 
-func (p Page) limitOr(fallback int32) int32 {
+func (p Paging) limitOr(fallback int32) int32 {
 	if p.Limit > 0 {
 		return p.Limit
 	}
 	return fallback
 }
 
+// Pagination is where a page sits among every matching row.
+type Pagination struct {
+	Total   int32
+	Limit   int32
+	Offset  int32
+	HasMore bool
+}
+
 type GetPageQuery struct{ ID string }
 type GetPageBySlugQuery struct{ Slug string }
 type ListPagesAdminQuery struct {
-	Page    Page
+	Page    Paging
 	Filters []*commonv1.FilterSpec
 	Sorts   []*commonv1.SortSpec
 }
@@ -167,7 +125,7 @@ type CreatePageCommand struct {
 	Summary        *string
 	ShowTitle      *bool
 	SourceLocale   string
-	AccessPolicy   *commonv1.PageAccessPolicy
+	AccessPolicy   *pageaccess.Policy
 	AcceptLanguage string
 }
 type DeletePageCommand struct{ ID string }
@@ -175,86 +133,88 @@ type PublishPageCommand struct{ ID string }
 type UnpublishPageCommand struct{ ID string }
 
 // GetPage reads a Page the caller may view.
-func (s *Service) GetPage(ctx context.Context, query GetPageQuery) (_ *managev1.Page, returnErr error) {
+func (s *Service) GetPage(ctx context.Context, query GetPageQuery) (_ Detail, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("page_id", query.ID))
 
-	return s.pageBy(ctx, "id", query.ID)
+	return s.pageBy(ctx, ByID, query.ID)
 }
 
 // GetPageBySlug reads a Page the caller may view by its slug.
-func (s *Service) GetPageBySlug(ctx context.Context, query GetPageBySlugQuery) (*managev1.Page, error) {
-	return s.pageBy(ctx, "slug", query.Slug)
+func (s *Service) GetPageBySlug(ctx context.Context, query GetPageBySlugQuery) (Detail, error) {
+	return s.pageBy(ctx, BySlug, query.Slug)
+}
+
+// PageList is one page of Pages.
+type PageList struct {
+	Pages      []View
+	Pagination Pagination
 }
 
 // ListPagesAdmin returns a page of Pages to a caller who may list them.
-func (s *Service) ListPagesAdmin(ctx context.Context, query ListPagesAdminQuery) (*managev1.ListPagesAdminResponse, error) {
-	if err := requirePageList(ctx, s.permissions); err != nil {
-		return nil, err
-	}
-
-	var pages []model.Page
-	var total int64
-	stored, err := PageFilterConfig.ApplyFilters(s.db.WithContext(ctx).Model(&model.Page{}), query.Filters)
-	if err != nil {
-		return nil, err
-	}
-	if err := stored.Count(&total).Error; err != nil {
-		return nil, err
+func (s *Service) ListPagesAdmin(ctx context.Context, query ListPagesAdminQuery) (PageList, error) {
+	if err := requirePageList(ctx, s.spiceDB); err != nil {
+		return PageList{}, err
 	}
 	limit, offset := query.Page.limitOr(20), query.Page.Offset
-	stored, err = pageSortConfig.ApplySort(stored, query.Sorts)
-	if err != nil {
-		return nil, err
-	}
-	if err := stored.Order("page.id ASC").Limit(int(limit)).Offset(int(offset)).Find(&pages).Error; err != nil {
-		return nil, err
-	}
-	if err := s.overlayPageSourceLocaleMetadataForPages(ctx, pages); err != nil {
-		return nil, err
-	}
-
-	summaries := make([]*managev1.PageSummary, len(pages))
-	for i := range pages {
-		if summaries[i], err = toProtoPageSummary(&pages[i]); err != nil {
-			return nil, err
+	var pages []Page
+	var total int64
+	var sources map[string]SourceMetadata
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		if pages, total, err = store.ListPages(ctx, ListPage{Filters: query.Filters, Sorts: query.Sorts, Limit: limit, Offset: offset}); err != nil {
+			return err
 		}
+		sources, err = store.SourceMetadata(ctx, pageIDs(pages))
+		return err
+	}); err != nil {
+		return PageList{}, err
 	}
-	return &managev1.ListPagesAdminResponse{
-		Pages: summaries,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   limit,
-			Offset:  offset,
-			HasMore: offset+limit < int32(total),
-		},
-	}, nil
+	views := make([]View, len(pages))
+	for i, page := range pages {
+		source, ok := sources[page.ID]
+		if !ok {
+			return PageList{}, domainerr.ResourceNotFound("page_translation", page.ID)
+		}
+		views[i] = newView(page, &source)
+	}
+	return PageList{Pages: views, Pagination: Pagination{
+		Total: int32(total), Limit: limit, Offset: offset, HasMore: int64(offset)+int64(limit) < total,
+	}}, nil
+}
+
+func pageIDs(pages []Page) []string {
+	ids := make([]string, 0, len(pages))
+	for _, page := range pages {
+		ids = append(ids, page.ID)
+	}
+	return ids
 }
 
 // pageCreation is a validated Page creation.
 type pageCreation struct {
 	command      CreatePageCommand
 	title        string
-	accessPolicy *commonv1.PageAccessPolicy
-	page         *model.Page
+	accessPolicy pageaccess.Policy
+	page         *Page
 }
 
 // CreatePage creates a draft Page and its empty content document.
-func (s *Service) CreatePage(ctx context.Context, command CreatePageCommand) (*managev1.Page, error) {
+func (s *Service) CreatePage(ctx context.Context, command CreatePageCommand) (Detail, error) {
 	creation, err := s.preparePageCreation(ctx, command)
 	if err != nil {
-		return nil, err
+		return Detail{}, err
 	}
-	page, err := mutation.Run(ctx, s.mutations, mutation.Spec[*model.Page]{
-		Access: s.freshPageCreate(),
-		Change: func(ctx context.Context, tx *gorm.DB) (*model.Page, error) {
-			return s.createPage(ctx, tx, creation)
+	page, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[*Page, Store]{
+		Access: freshPageCreate(),
+		Change: func(ctx context.Context, store Store) (*Page, error) {
+			return s.createPage(ctx, store, creation)
 		},
-		Audit: func(page *model.Page) mutation.Audit {
+		Audit: func(page *Page) mutation.Audit {
 			return mutation.RequestAudit(sharedtelemetry.AuditPageCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 				return sharedtelemetry.NewPageCreatedAuditRecord(metadata, page.ID)
 			})
 		},
-		Relationships: func(page *model.Page) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+		Relationships: func(page *Page) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
 			touch, err := policyv1.Page.TouchPolicy(page.ID)
 			if err != nil {
 				return nil, nil, err
@@ -267,12 +227,12 @@ func (s *Service) CreatePage(ctx context.Context, command CreatePageCommand) (*m
 		},
 	})
 	if err != nil {
-		if !mutation.IsClassified(err) && dberrors.IsUniqueViolation(err) {
-			return nil, domainerr.Duplicate("page", "slug", "slug").WithCause(err)
+		if errors.Is(err, ErrSlugTaken) {
+			return Detail{}, domainerr.Duplicate("page", "slug", "slug").WithCause(err)
 		}
-		return nil, err
+		return Detail{}, err
 	}
-	return s.pageBy(ctx, "id", page.ID)
+	return s.pageBy(ctx, ByID, page.ID)
 }
 
 // preparePageCreation validates command before the mutation and checks the
@@ -297,10 +257,10 @@ func (s *Service) preparePageCreation(ctx context.Context, command CreatePageCom
 		}
 	}
 	createdAt := dbtime.Now()
-	page := &model.Page{
-		DocumentLayout: model.DefaultDocumentLayout(),
+	page := &Page{
+		DocumentLayout: DefaultDocumentLayout(),
 		AccessPolicy:   encodedPolicy,
-		Status:         model.PageStatusDraft,
+		Status:         StatusDraft,
 		ShowTitle:      true,
 		CreatedAt:      createdAt,
 		UpdatedAt:      createdAt,
@@ -314,21 +274,21 @@ func (s *Service) preparePageCreation(ctx context.Context, command CreatePageCom
 	return pageCreation{command: command, title: title, accessPolicy: accessPolicy, page: page}, nil
 }
 
-func (s *Service) createPage(ctx context.Context, tx *gorm.DB, creation pageCreation) (*model.Page, error) {
-	page := creation.page
-	if err := s.validatePageAccessPolicyTags(ctx, tx, creation.accessPolicy); err != nil {
+func (s *Service) createPage(ctx context.Context, store Store, creation pageCreation) (*Page, error) {
+	page := *creation.page
+	if err := validatePageAccessPolicyTags(ctx, store, &creation.accessPolicy); err != nil {
 		return nil, err
 	}
 	if page.Slug != nil {
-		if err := lockAvailablePageSlug(ctx, tx, *page.Slug, ""); err != nil {
+		if err := lockAvailablePageSlug(ctx, store, *page.Slug, ""); err != nil {
 			return nil, err
 		}
 	}
-	sourceLocale, err := s.resolveCreateSourceLocale(ctx, tx, creation.command.SourceLocale, creation.command.AcceptLanguage)
+	sourceLocale, err := resolveCreateSourceLocale(ctx, store, creation.command.SourceLocale, creation.command.AcceptLanguage)
 	if err != nil {
 		return nil, err
 	}
-	document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
+	document, err := store.CreateContentDocument(ctx, contentblock.CreateInput{
 		Profile:      pageContentDocumentProfile,
 		SourceLocale: sourceLocale,
 	})
@@ -338,20 +298,18 @@ func (s *Service) createPage(ctx context.Context, tx *gorm.DB, creation pageCrea
 	contentDocumentID := document.Document.ID.String()
 	page.ContentDocumentID = &contentDocumentID
 	page.SourceLocale = sourceLocale
-	if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(page).Error; err != nil {
+	if err := store.InsertPage(ctx, &page); err != nil {
 		return nil, err
 	}
 	if err := createInitialPageSourceLocaleMetadata(
-		ctx, tx, page.ID, sourceLocale, creation.title, creation.command.Summary, time.Now().UTC(),
+		ctx, store, page.ID, sourceLocale, creation.title, creation.command.Summary, time.Now().UTC(),
 	); err != nil {
 		return nil, err
 	}
-	if _, err := s.runtime.RequestCurrentWithDB(
-		ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_PAGE, page.ID, sourceLocale, false, "page_created",
-	); err != nil {
+	if _, err := store.RequestOG(ctx, page.ID, sourceLocale, false, "page_created"); err != nil {
 		return nil, err
 	}
-	return page, nil
+	return &page, nil
 }
 
 // pageDeletion is a locked Page about to be deleted and the policy
@@ -366,10 +324,10 @@ type pageDeletion struct {
 func (s *Service) DeletePage(ctx context.Context, command DeletePageCommand) (returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("page_id", command.ID))
 
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[pageDeletion]{
-		Access: s.lockedPage(command.ID, policyv1.Page.Delete),
-		Change: func(ctx context.Context, tx *gorm.DB) (pageDeletion, error) {
-			return s.deletePage(ctx, tx, command.ID)
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[pageDeletion, Store]{
+		Access: lockedPage(command.ID, policyv1.Page.Delete),
+		Change: func(ctx context.Context, store Store) (pageDeletion, error) {
+			return s.deletePage(ctx, store, command.ID)
 		},
 		Audit: func(pageDeletion) mutation.Audit {
 			return mutation.RequestAudit(sharedtelemetry.AuditPageDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
@@ -383,8 +341,8 @@ func (s *Service) DeletePage(ctx context.Context, command DeletePageCommand) (re
 	return err
 }
 
-func (s *Service) deletePage(ctx context.Context, tx *gorm.DB, pageID string) (pageDeletion, error) {
-	locked, err := lockPageMenuTargetStateForUpdate(ctx, tx, pageID)
+func (s *Service) deletePage(ctx context.Context, store Store, pageID string) (pageDeletion, error) {
+	locked, err := lockPageSettings(ctx, store, pageID)
 	if err != nil {
 		return pageDeletion{}, err
 	}
@@ -392,27 +350,27 @@ func (s *Service) deletePage(ctx context.Context, tx *gorm.DB, pageID string) (p
 	if err != nil {
 		return pageDeletion{}, err
 	}
-	if err := s.shareLinks.DeletePageShareLinks(ctx, tx, pageID); err != nil {
+	if err := store.DeleteShareLinks(ctx, pageID); err != nil {
 		return pageDeletion{}, err
 	}
-	if err := s.runtime.CancelAndReleaseEntityWithDB(ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_PAGE, "page", pageID); err != nil {
+	if err := store.CancelOG(ctx, pageID); err != nil {
 		return pageDeletion{}, err
 	}
-	if err := s.runtime.ReleaseExactPublicAssetBindings(ctx, tx, "page", pageID, []string{"featured_image"}); err != nil {
+	if err := store.ReleaseExactFeaturedImageBinding(ctx, pageID); err != nil {
 		return pageDeletion{}, err
 	}
-	if err := s.menuTargets.Remove(ctx, tx, "page", pageID, derefString(locked.Slug)); err != nil {
+	if err := store.RemoveMenuTargets(ctx, pageID, derefString(locked.Slug)); err != nil {
 		return pageDeletion{}, err
 	}
 	if locked.ContentDocumentID == nil || *locked.ContentDocumentID == uuid.Nil {
 		return pageDeletion{}, domainerr.Precondition("page content document has not been populated")
 	}
-	if err := s.contentBlocks.DeleteDocument(ctx, tx, *locked.ContentDocumentID, lockedPageContentFence(pageID)); err != nil {
+	if err := store.DeleteContentDocument(ctx, *locked.ContentDocumentID, lockedPageContentFence(pageID)); err != nil {
 		return pageDeletion{}, normalizePageContentBlockError(err)
 	}
 	// Deleting the Content Document cascades only Block-owned locale and File
 	// reference rows. File and in-flight upload lifecycles remain File-owned.
-	if err := tx.Delete(&model.Page{ID: pageID}).Error; err != nil {
+	if err := store.DeletePage(ctx, pageID); err != nil {
 		return pageDeletion{}, err
 	}
 	return deletion, nil
@@ -443,117 +401,103 @@ func (s *Service) pageDeletionRelationships(ctx context.Context, pageID string) 
 // pageLifecycle is one Page publication transition.
 type pageLifecycle struct {
 	action   pageAction
-	status   model.PageStatus
+	status   Status
 	previous sharedtelemetry.AuditState
 	next     sharedtelemetry.AuditState
 	fields   []string
 	// admit rejects a transition the Page content does not allow.
-	admit func(ctx context.Context, tx *gorm.DB, page *model.Page) error
+	admit func(ctx context.Context, store Store, page *Page) error
 }
 
-// pageTransition is the outcome of a lifecycle transition.
-type pageTransition struct {
-	page    model.Page
-	changed bool
+// LifecycleResult is the Page a lifecycle transition leaves and whether it
+// changed it.
+type LifecycleResult struct {
+	Page    Page
+	Changed bool
 }
 
 // PublishPage publishes a Page whose content media is ready.
-func (s *Service) PublishPage(ctx context.Context, command PublishPageCommand) (_ *managev1.PageLifecycleMutationResponse, returnErr error) {
+func (s *Service) PublishPage(ctx context.Context, command PublishPageCommand) (_ LifecycleResult, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("page_id", command.ID))
 
 	return s.transitionPage(ctx, command.ID, pageLifecycle{
-		action: policyv1.Page.Publish, status: model.PageStatusPublished,
+		action: policyv1.Page.Publish, status: StatusPublished,
 		previous: sharedtelemetry.AuditStateDraft, next: sharedtelemetry.AuditStatePublished,
 		fields: []string{"state.status", "state.published_at"},
-		admit:  s.requirePublicationReady,
+		admit:  requirePublicationReady,
 	})
 }
 
 // UnpublishPage moves a Page back to draft.
-func (s *Service) UnpublishPage(ctx context.Context, command UnpublishPageCommand) (_ *managev1.PageLifecycleMutationResponse, returnErr error) {
+func (s *Service) UnpublishPage(ctx context.Context, command UnpublishPageCommand) (_ LifecycleResult, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("page_id", command.ID))
 
 	return s.transitionPage(ctx, command.ID, pageLifecycle{
-		action: policyv1.Page.Publish, status: model.PageStatusDraft,
+		action: policyv1.Page.Publish, status: StatusDraft,
 		previous: sharedtelemetry.AuditStatePublished, next: sharedtelemetry.AuditStateDraft,
 		fields: []string{"state.status"},
 	})
 }
 
-func (s *Service) transitionPage(ctx context.Context, pageID string, lifecycle pageLifecycle) (*managev1.PageLifecycleMutationResponse, error) {
-	transition, err := mutation.Run(ctx, s.mutations, mutation.Spec[pageTransition]{
-		Access: s.lockedPage(pageID, lifecycle.action),
-		Change: func(ctx context.Context, tx *gorm.DB) (pageTransition, error) {
-			return applyPageLifecycle(ctx, tx, pageID, lifecycle)
+func (s *Service) transitionPage(ctx context.Context, pageID string, lifecycle pageLifecycle) (LifecycleResult, error) {
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[LifecycleResult, Store]{
+		Access: lockedPage(pageID, lifecycle.action),
+		Change: func(ctx context.Context, store Store) (LifecycleResult, error) {
+			return applyPageLifecycle(ctx, store, pageID, lifecycle)
 		},
-		Audit: func(transition pageTransition) mutation.Audit {
-			if !transition.changed {
+		Audit: func(transition LifecycleResult) mutation.Audit {
+			if !transition.Changed {
 				return mutation.Unchanged()
 			}
 			return mutation.RequestAudit(sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 				return sharedtelemetry.NewPageLifecycleAuditRecord(metadata, pageID, lifecycle.previous, lifecycle.next)
 			})
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, transition pageTransition) error {
-			if !transition.changed {
+		Outbox: func(ctx context.Context, store Store, transition LifecycleResult) error {
+			if !transition.Changed {
 				return nil
 			}
-			return s.publish(ctx, tx, buildManageStateTransitionContentUpdatedEvent(pageID, lifecycle.fields))
+			return store.PublishContentUpdate(ctx, ContentUpdate{PageID: pageID, Kind: StateUpdate, Fields: lifecycle.fields})
 		},
 	})
-	if err != nil {
-		return nil, err
-	}
-	page := transition.page
-	response := &managev1.PageLifecycleMutationResponse{
-		Id:        page.ID,
-		Changed:   transition.changed,
-		Status:    pageStatusToProto(page.Status),
-		UpdatedAt: timestamppb.New(page.UpdatedAt),
-	}
-	if page.PublishedAt != nil {
-		response.PublishedAt = timestamppb.New(*page.PublishedAt)
-	}
-	return response, nil
 }
 
-func applyPageLifecycle(ctx context.Context, tx *gorm.DB, pageID string, lifecycle pageLifecycle) (pageTransition, error) {
-	var page model.Page
-	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		First(&page, "id = ?", pageID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return pageTransition{}, domainerr.ResourceNotFound("page", pageID)
+func applyPageLifecycle(ctx context.Context, store Store, pageID string, lifecycle pageLifecycle) (LifecycleResult, error) {
+	page, err := store.FindPage(ctx, ByID, pageID, UpdateLock)
+	if err != nil {
+		if errors.Is(err, ErrPageNotFound) {
+			return LifecycleResult{}, domainerr.ResourceNotFound("page", pageID)
 		}
-		return pageTransition{}, err
+		return LifecycleResult{}, err
 	}
 	if page.Status == lifecycle.status {
-		return pageTransition{page: page}, nil
+		return LifecycleResult{Page: page}, nil
 	}
 	if lifecycle.admit != nil {
-		if err := lifecycle.admit(ctx, tx, &page); err != nil {
-			return pageTransition{}, err
+		if err := lifecycle.admit(ctx, store, &page); err != nil {
+			return LifecycleResult{}, err
 		}
 	}
 	now := dbtime.Now()
-	updates := structured.Fields{"status": string(lifecycle.status), "updated_at": now}
-	publishes := lifecycle.status == model.PageStatusPublished
+	publishes := lifecycle.status == StatusPublished
+	var publishedAt *time.Time
 	if publishes && page.PublishedAt == nil {
-		updates["published_at"] = now
+		publishedAt = &now
 	}
-	if err := tx.Model(&page).Updates(updates).Error; err != nil {
-		return pageTransition{}, err
+	if err := store.SetStatus(ctx, pageID, lifecycle.status, publishedAt, now); err != nil {
+		return LifecycleResult{}, err
 	}
 	page.Status = lifecycle.status
 	page.UpdatedAt = now
-	if publishes && page.PublishedAt == nil {
-		page.PublishedAt = &now
+	if publishedAt != nil {
+		page.PublishedAt = publishedAt
 	}
-	return pageTransition{page: page, changed: true}, nil
+	return LifecycleResult{Page: page, Changed: true}, nil
 }
 
 // requirePublicationReady rejects publishing a Page whose content document
 // or attached media is not ready.
-func (s *Service) requirePublicationReady(ctx context.Context, tx *gorm.DB, page *model.Page) error {
+func requirePublicationReady(ctx context.Context, store Store, page *Page) error {
 	if page.ContentDocumentID == nil {
 		return domainerr.Precondition("page content document has not been populated")
 	}
@@ -564,37 +508,19 @@ func (s *Service) requirePublicationReady(ctx context.Context, tx *gorm.DB, page
 	if documentID == uuid.Nil {
 		return domainerr.Precondition("page content document has not been populated")
 	}
-	attachments, err := s.contentBlocks.LoadPublicationAttachments(ctx, tx, documentID)
+	attachments, err := store.PublicationAttachments(ctx, documentID)
 	if err != nil {
 		return normalizePageContentBlockError(err)
 	}
-	return RequireIndexedContentBlockAttachmentsReadyForPublication(ctx, tx, attachments)
+	return requireAttachmentsReadyForPublication(ctx, store, attachments)
 }
 
-type lockedPageMenuTargetState struct {
-	Slug              *string         `gorm:"column:slug"`
-	ShowTitle         bool            `gorm:"column:show_title"`
-	ContentDocumentID *uuid.UUID      `gorm:"column:content_document_id;type:uuid"`
-	UpdatedAt         time.Time       `gorm:"column:updated_at"`
-	AccessPolicy      json.RawMessage `gorm:"column:access_policy"`
-}
-
-func lockPageMenuTargetStateForUpdate(
-	ctx context.Context,
-	db *gorm.DB,
-	pageID string,
-) (*lockedPageMenuTargetState, error) {
-	var state lockedPageMenuTargetState
-	if err := db.WithContext(ctx).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Table("page").
-		Select("slug", "show_title", "content_document_id", "updated_at", "access_policy").
-		Where("id = ?", pageID).
-		Take(&state).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, domainerr.ResourceNotFound("page", pageID)
-		}
-		return nil, err
+// lockPageSettings locks the Page row and reads its configuration; a
+// missing Page answers not found.
+func lockPageSettings(ctx context.Context, store Store, pageID string) (Settings, error) {
+	settings, err := store.LockSettings(ctx, pageID)
+	if errors.Is(err, ErrPageNotFound) {
+		return Settings{}, domainerr.ResourceNotFound("page", pageID)
 	}
-	return &state, nil
+	return settings, err
 }

@@ -5,12 +5,12 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
 )
 
+// appendPageMemberLocaleContentAudit attributes a changed locale to memberID
+// in the joined transaction.
 func appendPageMemberLocaleContentAudit(
 	ctx context.Context,
-	tx *gorm.DB,
 	writer domainaudit.Appender,
 	memberID string,
 	pageID string,
@@ -18,7 +18,7 @@ func appendPageMemberLocaleContentAudit(
 	operation sharedtelemetry.AuditItemOperation,
 ) error {
 	return domainaudit.AppendMember(
-		ctx, tx, writer, memberID, sharedtelemetry.AuditPageUpdated,
+		ctx, nil, writer, memberID, sharedtelemetry.AuditPageUpdated,
 		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewPageLocaleContentAuditRecord(metadata, pageID, locale, operation)
 		},

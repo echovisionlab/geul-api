@@ -9,17 +9,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	"gorm.io/gorm"
 )
 
-func (s *Service) resolveInitialSourceLocale(
-	ctx context.Context,
-	db *gorm.DB,
-	acceptLanguage string,
-) string {
+func resolveInitialSourceLocale(ctx context.Context, store Store, acceptLanguage string) string {
 	user := auth.GetUser(ctx)
-	if user != nil && user.Authenticated && db != nil {
-		if preferredLocale, err := s.members.PreferredLocale(ctx, db, user.MemberID.String()); err == nil && preferredLocale != nil {
+	if user != nil && user.Authenticated {
+		if preferredLocale, err := store.PreferredLocale(ctx, user.MemberID.String()); err == nil && preferredLocale != nil {
 			if locale := localization.NormalizeSupportedLocale(*preferredLocale); locale != nil {
 				return *locale
 			}
@@ -30,7 +25,7 @@ func (s *Service) resolveInitialSourceLocale(
 	if locale := localization.InferPreferredLocaleFromAcceptLanguage(acceptLanguage); locale != nil {
 		return *locale
 	}
-	if settings, err := translation.LoadRuntimeSettings(ctx, db); err == nil {
+	if settings, err := store.RuntimeSettings(ctx); err == nil {
 		return settings.DefaultLocale
 	} else {
 		slog.ErrorContext(ctx, "Localization settings lookup failed; using the default Page source locale", "domain", "page", "operation", "load_source_locale_settings", "outcome", "failed", failurecause.Attr(err))
@@ -38,14 +33,14 @@ func (s *Service) resolveInitialSourceLocale(
 	return translation.DefaultLocale
 }
 
-func (s *Service) resolveCreateSourceLocale(ctx context.Context, db *gorm.DB, requestedLocale, acceptLanguage string) (string, error) {
+func resolveCreateSourceLocale(ctx context.Context, store Store, requestedLocale, acceptLanguage string) (string, error) {
 	if requestedLocale != "" {
 		if locale := localization.NormalizeExactSupportedLocale(requestedLocale); locale != nil {
 			return *locale, nil
 		}
 		return "", domainerr.InvalidField("source_locale", "must be a supported canonical locale")
 	}
-	return s.resolveInitialSourceLocale(ctx, db, acceptLanguage), nil
+	return resolveInitialSourceLocale(ctx, store, acceptLanguage), nil
 }
 
 func nullableStringEqual(left *string, right *string) bool {

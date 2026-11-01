@@ -9,10 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"gorm.io/gorm"
 )
 
 // PermissionChecker reads the current account's authoritative role permissions.
@@ -20,66 +17,91 @@ type PermissionChecker interface {
 	Can(context.Context, policyv1.AuthorizationDecision) (bool, error)
 }
 
+// Audience is what a Page audience decision reads about the reader, bound to
+// the transaction of the read it gates. pageaccesspostgres implements it.
+type Audience interface {
+	// LockActivePrincipal locks the principal's Identity through the
+	// identity fence and reports whether it is still active, onboarded and
+	// unbanned.
+	LockActivePrincipal(ctx context.Context, principal *auth.UserInfo) (bool, error)
+	// HasUserTag reports whether the Member carries one of tagIDs.
+	HasUserTag(ctx context.Context, memberID string, tagIDs []string) (bool, error)
+	// SubscribesToNewsletter reports whether the Identity subscribes to the
+	// newsletter.
+	SubscribesToNewsletter(ctx context.Context, identityID string) (bool, error)
+}
+
+// Reason is why a Page audience decision admits or refuses the reader. The
+// values are those of commonv1.PageAccessReason.
+type Reason int32
+
+const (
+	ReasonUnspecified            Reason = 0
+	ReasonAllowed                Reason = 1
+	ReasonAuthenticationRequired Reason = 2
+	ReasonConditionsNotMet       Reason = 3
+)
+
 // PublicSQL is the anonymous audience filter for Page discovery projections.
 const PublicSQL = "COALESCE(access_policy->>'mode', '') IN ('', 'PAGE_ACCESS_MODE_UNSPECIFIED', 'PAGE_ACCESS_MODE_PUBLIC')"
 
 // Evaluate checks the Page audience before any document or media is projected.
 // Managers retain access to the content they administer. Within role and tag
 // groups any selected item qualifies; Match combines the enabled groups.
-func Evaluate(ctx context.Context, db *gorm.DB, checker PermissionChecker, pageID string, raw json.RawMessage) (commonv1.PageAccessReason, error) {
+func Evaluate(ctx context.Context, audience Audience, checker PermissionChecker, pageID string, raw json.RawMessage) (Reason, error) {
 	policy, err := Decode(raw)
 	if err != nil {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, err
+		return ReasonUnspecified, err
 	}
-	if policy.Mode == commonv1.PageAccessMode_PAGE_ACCESS_MODE_PUBLIC {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, nil
+	if policy.Mode == ModePublic {
+		return ReasonAllowed, nil
 	}
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated || principal.Banned || principal.IdentityID == "" {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_AUTHENTICATION_REQUIRED, nil
+		return ReasonAuthenticationRequired, nil
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, db, principal)
+	active, err := audience.LockActivePrincipal(ctx, principal)
 	if err != nil {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, err
+		return ReasonUnspecified, err
 	}
 	if !active {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_AUTHENTICATION_REQUIRED, nil
+		return ReasonAuthenticationRequired, nil
 	}
-	if policy.Mode == commonv1.PageAccessMode_PAGE_ACCESS_MODE_AUTHENTICATED {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, nil
+	if policy.Mode == ModeAuthenticated {
+		return ReasonAllowed, nil
 	}
 	if checker == nil {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, fmt.Errorf("Page access permission checker is required")
+		return ReasonUnspecified, fmt.Errorf("Page access permission checker is required")
 	}
 	manage, err := policyv1.Page.Manage(pageID)
 	if err != nil {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, err
+		return ReasonUnspecified, err
 	}
 	allowed, err := check(ctx, checker, manage)
 	if err != nil {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, err
+		return ReasonUnspecified, err
 	}
 	if allowed {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, nil
+		return ReasonAllowed, nil
 	}
-	groups, err := conditionGroups(ctx, db, checker, principal, policy)
+	groups, err := conditionGroups(ctx, audience, checker, principal, policy)
 	if err != nil {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, err
+		return ReasonUnspecified, err
 	}
 	if matchesGroups(groups, policy.Match) {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, nil
+		return ReasonAllowed, nil
 	}
-	return commonv1.PageAccessReason_PAGE_ACCESS_REASON_CONDITIONS_NOT_MET, nil
+	return ReasonConditionsNotMet, nil
 }
 
 // conditionGroups reports, for each condition group the policy enables,
 // whether principal meets it.
 func conditionGroups(
 	ctx context.Context,
-	db *gorm.DB,
+	audience Audience,
 	checker PermissionChecker,
 	principal *auth.UserInfo,
-	policy *commonv1.PageAccessPolicy,
+	policy Policy,
 ) ([]bool, error) {
 	groups := make([]bool, 0, 3)
 	if len(policy.AllowedRoles) > 0 {
@@ -89,18 +111,19 @@ func conditionGroups(
 		}
 		groups = append(groups, matches)
 	}
-	if len(policy.UserTagIds) > 0 {
+	if len(policy.UserTagIDs) > 0 {
 		var matches bool
 		if principal.MemberID != "" {
-			if err := db.WithContext(ctx).Raw("SELECT EXISTS(SELECT 1 FROM user_tag_mapping WHERE member_id = ? AND tag_id IN ?)", principal.MemberID.String(), policy.UserTagIds).Scan(&matches).Error; err != nil {
+			var err error
+			if matches, err = audience.HasUserTag(ctx, principal.MemberID.String(), policy.UserTagIDs); err != nil {
 				return nil, err
 			}
 		}
 		groups = append(groups, matches)
 	}
 	if policy.NewsletterSubscriber {
-		var matches bool
-		if err := db.WithContext(ctx).Raw("SELECT EXISTS(SELECT 1 FROM newsletter_subscription WHERE identity_id = ?)", principal.IdentityID.String()).Scan(&matches).Error; err != nil {
+		matches, err := audience.SubscribesToNewsletter(ctx, principal.IdentityID.String())
+		if err != nil {
 			return nil, err
 		}
 		groups = append(groups, matches)
@@ -130,27 +153,16 @@ func holdsAnyRole(ctx context.Context, checker PermissionChecker, roles []policy
 	return false, nil
 }
 
-// EvaluateStored reads the policy from the Page root held by its caller.
-func EvaluateStored(ctx context.Context, db *gorm.DB, checker PermissionChecker, pageID string) (commonv1.PageAccessReason, error) {
-	var row struct {
-		AccessPolicy json.RawMessage `gorm:"column:access_policy"`
-	}
-	if err := db.WithContext(ctx).Table("page").Select("access_policy").Where("id = ?", pageID).Take(&row).Error; err != nil {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, err
-	}
-	return Evaluate(ctx, db, checker, pageID, row.AccessPolicy)
-}
-
-func matchesGroups(groups []bool, match commonv1.PageAccessMatch) bool {
+func matchesGroups(groups []bool, match Match) bool {
 	for _, value := range groups {
-		if match == commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ALL && !value {
+		if match == MatchAll && !value {
 			return false
 		}
-		if match != commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ALL && value {
+		if match != MatchAll && value {
 			return true
 		}
 	}
-	return len(groups) > 0 && match == commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ALL
+	return len(groups) > 0 && match == MatchAll
 }
 
 func check(ctx context.Context, checker PermissionChecker, can policyv1.Can) (bool, error) {
@@ -162,15 +174,15 @@ func check(ctx context.Context, checker PermissionChecker, can policyv1.Can) (bo
 }
 
 // Require is used by authenticated Page and File reads sharing the same root.
-func Require(ctx context.Context, db *gorm.DB, checker PermissionChecker, pageID string, raw json.RawMessage) error {
-	reason, err := Evaluate(ctx, db, checker, pageID, raw)
+func Require(ctx context.Context, audience Audience, checker PermissionChecker, pageID string, raw json.RawMessage) error {
+	reason, err := Evaluate(ctx, audience, checker, pageID, raw)
 	if err != nil {
 		return failurecause.WithAttrs(err, slog.String("page_id", pageID))
 	}
 	switch reason {
-	case commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED:
+	case ReasonAllowed:
 		return nil
-	case commonv1.PageAccessReason_PAGE_ACCESS_REASON_AUTHENTICATION_REQUIRED:
+	case ReasonAuthenticationRequired:
 		return domainerr.AuthenticationRequired()
 	default:
 		return domainerr.Denied("you do not have permission to access this page")

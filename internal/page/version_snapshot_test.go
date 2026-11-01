@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,13 +20,16 @@ func TestPageVersionProtoFormatting(t *testing.T) {
 	contentSnapshot := requireVersionContentSnapshot(t, "en", &title, &summary)
 	digest := sha256.Sum256(contentSnapshot)
 
-	version, err := toProtoPageVersion(&model.PageVersion{
+	view, err := versionView(Version{
 		ID: "page-version-1", Version: 3, Title: &title, Summary: &summary,
 		ContentSnapshot:      contentSnapshot,
 		ContributorMemberIDs: []string{"member-2", "member-1", "member-2"},
 		CreatedAt:            createdAt,
 	}, map[string]string{"member-1": "Mina", "member-2": "Jules"})
 	require.NoError(t, err)
+	list, err := VersionListMessage(VersionList{Versions: []VersionView{view}})
+	require.NoError(t, err)
+	version := list.Versions[0]
 	require.Equal(t, "page-version-1", version.Id)
 	require.Equal(t, int32(3), version.Version)
 	require.Equal(t, "en", version.SourceLocale)

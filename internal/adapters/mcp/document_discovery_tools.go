@@ -46,7 +46,7 @@ type WorkDocumentDiscovery interface {
 }
 
 type PageDocumentDiscovery interface {
-	ListPagesAdmin(context.Context, pagedomain.ListPagesAdminQuery) (*managev1.ListPagesAdminResponse, error)
+	ListPagesAdmin(context.Context, pagedomain.ListPagesAdminQuery) (pagedomain.PageList, error)
 }
 
 type ProgramEventDocumentDiscovery interface {
@@ -205,11 +205,12 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 		}
 		return documents, int64(listed.Pagination.Total), int(listed.Pagination.Limit), nil
 	case "page":
-		listed, err := tools.pages.ListPagesAdmin(ctx, pagedomain.ListPagesAdminQuery{
-			Page:    pagedomain.Page{Limit: int32(limit), Offset: int32(offset)},
+		list, err := tools.pages.ListPagesAdmin(ctx, pagedomain.ListPagesAdminQuery{
+			Page:    pagedomain.Paging{Limit: int32(limit), Offset: int32(offset)},
 			Filters: discoverySearchFilters(query),
 			Sorts:   []*commonv1.SortSpec{{Field: "updated_at", Order: commonv1.SortOrder_SORT_ORDER_DESC}},
 		})
+		listed, err := renderPage(list, err, pagedomain.PageListMessage)
 		if err != nil {
 			return nil, 0, 0, err
 		}

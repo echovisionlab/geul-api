@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/page"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
 )
@@ -46,7 +47,7 @@ func (*PageInterchangePort) LoadTranslationInterchangeTarget(
 		)
 	}
 	state, err := page.LoadTranslationInterchangeTarget(
-		ctx, db, store, entityID, locale, plan,
+		ctx, pageStore(db, store), entityID, locale, plan,
 		ProjectRichTextInterchangeTargets, InterchangeProtoPathPresent,
 		CloneInterchangeUnitResult, EmptyInterchangeTargetInline,
 	)
@@ -75,9 +76,9 @@ func (p *PageInterchangePort) ApplyTranslationInterchange(
 	if err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
-	result, err := page.ApplyTranslationInterchange(ctx, db, store, page.TranslationInterchangeMutation{
+	result, err := page.ApplyTranslationInterchange(ctx, pageStore(db, store), page.TranslationInterchangeMutation{
 		PageID: command.EntityID, SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
-		Mode: command.Mode, ExpectedRevision: command.ExpectedRevision,
+		Mode: pageInterchangeMode(command.Mode), ExpectedRevision: command.ExpectedRevision,
 		Source: command.Source, Plan: command.Plan, Targets: command.Targets,
 		UnitHandles: command.UnitHandles, Now: command.Now,
 		ProjectTargets: ProjectRichTextInterchangeTargets,
@@ -102,6 +103,19 @@ func (p *PageInterchangePort) ApplyTranslationInterchange(
 		Revision: result.Revision, Changed: result.Changed,
 		AffectedUnitHandles: result.AffectedUnitHandles,
 	}, nil
+}
+
+// pageInterchangeMode names the Page import mode of mode; an unknown mode
+// stays unknown for the Page to reject.
+func pageInterchangeMode(mode managev1.TranslationInterchangeMode) page.InterchangeMode {
+	switch mode {
+	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH:
+		return page.InterchangePatch
+	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE:
+		return page.InterchangeReplace
+	default:
+		return 0
+	}
 }
 
 var _ application.TranslationInterchangeDomains = (*PageInterchangePort)(nil)

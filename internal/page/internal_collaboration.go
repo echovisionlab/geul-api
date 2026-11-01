@@ -3,28 +3,20 @@ package page
 import (
 	"bytes"
 	"context"
-	"errors"
 	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/documentlayout"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -67,10 +59,12 @@ type UpdatePageLocaleMetadataCommand struct {
 // UpdatePageDocumentMetadataCommand saves the shared document layout from
 // the source locale room.
 type UpdatePageDocumentMetadataCommand struct {
-	PageID               string
-	Locale               string
-	ExpectedRevision     string
-	DocumentLayout       *commonv1.DocumentLayout
+	PageID           string
+	Locale           string
+	ExpectedRevision string
+	// DocumentLayout is the requested layout as the API named it, nil when
+	// the request names none.
+	DocumentLayout       *DocumentLayout
 	ContributorMemberIDs []string
 }
 
@@ -87,17 +81,12 @@ type CreatePageVersionCheckpointCommand struct {
 // calls as itself: fence locks the Page root, then the contributors' current
 // permission authorizes the save; the locked domain context is kept for the
 // change.
-func lockedCollaboration(fence contentblock.DomainFence, documentID uuid.UUID, domain *contentblock.DomainContext) mutation.Access {
-	return mutation.Locked(func(ctx context.Context, tx *gorm.DB, _ mutation.Require) error {
+func lockedCollaboration(fence ContentFence, documentID uuid.UUID, domain *contentblock.DomainContext) mutation.Access {
+	return mutation.Locked(func(ctx context.Context, store Store, _ mutation.Require) error {
 		var err error
-		*domain, err = fence(ctx, tx, documentID)
+		*domain, err = fence(ctx, store, documentID)
 		return err
 	})
-}
-
-// touchPage records a content change on the Page root.
-func touchPage(ctx context.Context, tx *gorm.DB, pageID string, now time.Time) error {
-	return tx.WithContext(ctx).Model(&model.Page{}).Where("id = ?", pageID).UpdateColumn("updated_at", now).Error
 }
 
 // localeContentAudit attributes a changed room locale to its origin Member.
@@ -107,85 +96,103 @@ func localeContentAudit(memberID, pageID, locale string, operation sharedtelemet
 	})
 }
 
+// LocaleMetadata is the title and summary of one Page locale a room shows.
+type LocaleMetadata struct {
+	Locale  string
+	Title   *string
+	Summary *string
+}
+
+// RoomDocument is a collaboration room's Page document: the current source
+// graph with the room locale's values overlaid, its locale metadata, the
+// document layout and the Block media the session may receive.
+type RoomDocument struct {
+	Document            *contentv1.LocalizedPageDocument
+	DocumentRevision    string
+	SourceMetadata      LocaleMetadata
+	Locale              string
+	LocaleExists        bool
+	DocumentLayout      DocumentLayout
+	BlockMedia          []*contentv1.ContentBlockMediaItem
+	LocaleMetadata      *LocaleMetadata
+	TargetRevision      *string
+	PresentLocaleValues []*managev1.AIDocumentFieldTarget
+}
+
 // pageBlockDocument is the room state LoadPageBlockDocument reads in one
 // snapshot.
 type pageBlockDocument struct {
 	state          pageTargetLocaleState
-	documentLayout model.DocumentLayout
+	documentLayout DocumentLayout
 	blockMedia     []*contentv1.ContentBlockMediaItem
 }
 
-func (s *Service) LoadPageBlockDocument(ctx context.Context, query LoadPageBlockDocumentQuery) (_ *intrav1.LoadPageBlockDocumentResponse, returnErr error) {
+func (s *Service) LoadPageBlockDocument(ctx context.Context, query LoadPageBlockDocumentQuery) (_ RoomDocument, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("page_id", query.PageID))
 
 	if _, err := parsePageContentUUID("page_id", query.PageID); err != nil {
-		return nil, err
+		return RoomDocument{}, err
 	}
 	locale, err := normalizePageDocumentLocale(query.Locale)
 	if err != nil {
-		return nil, err
+		return RoomDocument{}, err
 	}
 	var loaded pageBlockDocument
-	if err := mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
-		var err error
-		loaded, err = s.loadPageBlockDocument(ctx, tx, query, locale)
-		return err
+	// A session or Identity change that commits while the snapshot waits at
+	// the identity fence aborts it (SQLSTATE 40001); the read is retried and
+	// then answers from the committed state.
+	if err := dberrors.RetrySerializationFailure(ctx, func() error {
+		return s.units.ReadLocked(ctx, func(store Store) error {
+			var err error
+			loaded, err = s.loadPageBlockDocument(ctx, store, query, locale)
+			return err
+		})
 	}); err != nil {
-		return nil, normalizePageContentBlockError(err)
+		return RoomDocument{}, normalizePageContentBlockError(err)
 	}
 
 	state := loaded.state
 	document, err := contentblock.MaterializeSnapshotPageLocale(state.Snapshot, locale)
 	if err != nil {
-		return nil, normalizePageContentBlockError(err)
+		return RoomDocument{}, normalizePageContentBlockError(err)
 	}
 	presentLocaleValues, err := contentblock.PresentPageLocaleValues(state.Snapshot, locale)
 	if err != nil {
-		return nil, normalizePageContentBlockError(err)
+		return RoomDocument{}, normalizePageContentBlockError(err)
 	}
-	documentLayout, err := documentlayout.ToProto(loaded.documentLayout)
-	if err != nil {
-		return nil, err
-	}
-	return &intrav1.LoadPageBlockDocumentResponse{
+	return RoomDocument{
 		Document: document, DocumentRevision: state.Snapshot.Document.Revision.String(),
-		SourceMetadata: &intrav1.PageLocaleMetadata{Locale: state.SourceLocale, Title: state.SourceMetadata.Title, Summary: state.SourceMetadata.Summary},
+		SourceMetadata: LocaleMetadata{Locale: state.SourceLocale, Title: state.SourceMetadata.Title, Summary: state.SourceMetadata.Summary},
 		Locale:         locale, LocaleExists: state.TargetMetadata != nil,
-		DocumentLayout:      documentLayout,
+		DocumentLayout:      loaded.documentLayout,
 		BlockMedia:          loaded.blockMedia,
-		LocaleMetadata:      pageLocaleMetadataProto(state.TargetMetadata),
+		LocaleMetadata:      roomLocaleMetadata(state.TargetMetadata),
 		TargetRevision:      clonePageTargetRevision(state.TargetRevision),
 		PresentLocaleValues: presentLocaleValues,
 	}, nil
 }
 
-func (s *Service) loadPageBlockDocument(ctx context.Context, tx *gorm.DB, query LoadPageBlockDocumentQuery, locale string) (pageBlockDocument, error) {
-	documentID, err := loadPageContentDocumentIDForRead(ctx, tx, query.PageID)
+func (s *Service) loadPageBlockDocument(ctx context.Context, store Store, query LoadPageBlockDocumentQuery, locale string) (pageBlockDocument, error) {
+	documentID, err := loadPageContentDocumentID(ctx, store, query.PageID, ShareLock)
 	if err != nil {
 		return pageBlockDocument{}, err
 	}
-	principal, err := authorizePageBlockBootstrap(ctx, tx, s.permissions, query.PageID, query.SessionID)
+	principal, err := authorizePageBlockBootstrap(ctx, store, s.spiceDB, query.PageID, query.SessionID)
 	if err != nil {
 		return pageBlockDocument{}, err
 	}
 	var loaded pageBlockDocument
-	if loaded.state, err = loadPageTargetLocaleState(ctx, tx, s.contentBlocks, query.PageID, documentID, locale, false); err != nil {
+	if loaded.state, err = loadPageTargetLocaleState(ctx, store, query.PageID, documentID, locale, false); err != nil {
 		return pageBlockDocument{}, err
 	}
-	var row struct {
-		DocumentLayout model.DocumentLayout `gorm:"column:document_layout"`
-	}
-	if err := tx.WithContext(ctx).Table("page").Select("document_layout").Where("id = ?", query.PageID).Take(&row).Error; err != nil {
+	if loaded.documentLayout, err = store.DocumentLayout(ctx, query.PageID); err != nil {
 		return pageBlockDocument{}, err
 	}
-	loaded.documentLayout = row.DocumentLayout
-	blockMedia, err := contentblock.LoadMediaReferences(ctx, tx, documentID)
+	blockMedia, err := store.MediaReferences(ctx, documentID)
 	if err != nil {
 		return pageBlockDocument{}, err
 	}
-	loaded.blockMedia, err = s.mediaHydrator.HydrateAuthorizedPageBlockMediaWithDB(
-		auth.WithUser(ctx, principal), tx, query.PageID, documentID, principal, blockMedia,
-	)
+	loaded.blockMedia, err = store.HydrateBlockMedia(auth.WithUser(ctx, principal), query.PageID, documentID, principal, blockMedia)
 	if err != nil {
 		return pageBlockDocument{}, err
 	}
@@ -201,43 +208,53 @@ type pageRoomSave struct {
 	source         bool
 }
 
-func (s *Service) ApplyPageBlockBatch(ctx context.Context, command ApplyPageBlockBatchCommand) (_ *intrav1.ApplyPageBlockBatchResponse, returnErr error) {
+// RoomSave is the outcome of a room content save.
+type RoomSave struct {
+	DocumentRevision string
+	Changed          bool
+	SourceChanged    bool
+	ChangedLocales   []string
+	Locale           string
+	TargetRevision   *string
+}
+
+func (s *Service) ApplyPageBlockBatch(ctx context.Context, command ApplyPageBlockBatchCommand) (_ RoomSave, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("page_id", command.PageID))
 
 	if command.Batch == nil {
-		return nil, domainerr.Required("batch")
+		return RoomSave{}, domainerr.Required("batch")
 	}
 	if _, err := parsePageContentUUID("page_id", command.PageID); err != nil {
-		return nil, err
+		return RoomSave{}, err
 	}
 	locale, err := normalizePageDocumentLocale(command.Locale)
 	if err != nil {
-		return nil, err
+		return RoomSave{}, err
 	}
 	contributors := command.Batch.ContributorMemberIds
 	contributor, err := contentblock.MutationContributor(contributors)
 	if err != nil {
-		return nil, err
+		return RoomSave{}, err
 	}
-	documentID, err := loadPageContentDocumentID(ctx, s.db, command.PageID)
+	documentID, err := s.readPageContentDocumentID(ctx, command.PageID)
 	if err != nil {
-		return nil, err
+		return RoomSave{}, err
 	}
 	batch, err := contentblock.BatchFromPageProtoWithAffectedLocaleValues(documentID, command.Batch, locale, command.AffectedLocaleValues)
 	if err != nil {
-		return nil, normalizePageContentBlockError(err)
+		return RoomSave{}, normalizePageContentBlockError(err)
 	}
 
 	now := dbtime.Now()
 	var domain contentblock.DomainContext
-	saved, err := mutation.Run(ctx, s.mutations, mutation.Spec[pageRoomSave]{
+	saved, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[pageRoomSave, Store]{
 		Access: lockedCollaboration(s.pageCollaborationDocumentFence(command.PageID, policyv1.Page.Edit, contributors), documentID, &domain),
-		Change: func(ctx context.Context, tx *gorm.DB) (pageRoomSave, error) {
-			saved, err := s.savePageRoomBatch(ctx, tx, command, documentID, locale, batch, domain, now)
+		Change: func(ctx context.Context, store Store) (pageRoomSave, error) {
+			saved, err := savePageRoomBatch(ctx, store, command, documentID, locale, batch, domain, now)
 			if err != nil || !saved.result.Changed {
 				return saved, err
 			}
-			return saved, touchPage(ctx, tx, command.PageID, now)
+			return saved, store.TouchPage(ctx, command.PageID, now)
 		},
 		Audit: func(saved pageRoomSave) mutation.Audit {
 			if !saved.result.Changed {
@@ -245,26 +262,25 @@ func (s *Service) ApplyPageBlockBatch(ctx context.Context, command ApplyPageBloc
 			}
 			return localeContentAudit(contributor, command.PageID, locale, sharedtelemetry.AuditItemOperationUpdated)
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, saved pageRoomSave) error {
+		Outbox: func(ctx context.Context, store Store, saved pageRoomSave) error {
 			if !saved.result.Changed {
 				return nil
 			}
-			return s.publish(ctx, tx, buildPageLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-				EntityID:             command.PageID,
+			return store.PublishContentUpdate(ctx, ContentUpdate{PageID: command.PageID, Kind: LocaleUpdate, Locale: LocaleUpdateChange{
 				Fields:               []string{"content"},
 				DocumentRevision:     saved.result.DocumentRevision.String(),
 				Contributors:         contributors,
-				Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				Source:               SourceCollaboration,
 				Locale:               locale,
 				TargetRevision:       saved.targetRevision,
 				DocumentStateChanged: saved.source,
-			}))
+			}})
 		},
 	})
 	if err != nil {
-		return nil, normalizePageContentBlockError(err)
+		return RoomSave{}, normalizePageContentBlockError(err)
 	}
-	return &intrav1.ApplyPageBlockBatchResponse{
+	return RoomSave{
 		DocumentRevision: saved.result.DocumentRevision.String(), Changed: saved.result.Changed,
 		SourceChanged:  saved.result.TranslationSourceChanged,
 		ChangedLocales: saved.result.ChangedLocales, Locale: locale,
@@ -274,9 +290,9 @@ func (s *Service) ApplyPageBlockBatch(ctx context.Context, command ApplyPageBloc
 
 // savePageRoomBatch applies the batch of a source room to the shared
 // document, or of a target room to its locale.
-func (s *Service) savePageRoomBatch(
+func savePageRoomBatch(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	command ApplyPageBlockBatchCommand,
 	documentID uuid.UUID,
 	locale string,
@@ -284,9 +300,9 @@ func (s *Service) savePageRoomBatch(
 	domain contentblock.DomainContext,
 	now time.Time,
 ) (pageRoomSave, error) {
-	fence := contentblock.LockedFence(pageEntityName, documentID, domain)
+	fence := lockedContentFence(documentID, domain)
 	if locale != domain.SourceLocale {
-		result, targetRevision, err := applyPageTargetLocaleMutation(ctx, tx, s.contentBlocks, pageTargetLocaleMutationInput{
+		result, targetRevision, err := applyPageTargetLocaleMutation(ctx, store, pageTargetLocaleMutationInput{
 			PageID: command.PageID, DocumentID: documentID, Locale: locale, Batch: batch,
 			ExpectedTargetRevision: command.ExpectedTargetRevision, Now: now, Fence: fence,
 		})
@@ -298,15 +314,15 @@ func (s *Service) savePageRoomBatch(
 	if err := validatePageSourceLocaleMutations(command.PageID, domain.SourceLocale, batch.LocaleGroups); err != nil {
 		return pageRoomSave{}, err
 	}
-	result, err := s.contentBlocks.ApplyBatch(ctx, tx, batch, pageSourceRoomFence(locale, fence))
+	result, err := store.ApplyContentBatch(ctx, batch, pageSourceRoomFence(locale, fence))
 	return pageRoomSave{result: result, source: true}, err
 }
 
-func pageLocaleMetadataProto(row *pageLocaleMetadataRow) *intrav1.PageLocaleMetadata {
+func roomLocaleMetadata(row *Locale) *LocaleMetadata {
 	if row == nil {
 		return nil
 	}
-	return &intrav1.PageLocaleMetadata{Locale: row.Locale, Title: cloneOptionalString(row.Title), Summary: cloneOptionalString(row.Summary)}
+	return &LocaleMetadata{Locale: row.Locale, Title: cloneOptionalString(row.Title), Summary: cloneOptionalString(row.Summary)}
 }
 
 func clonePageTargetRevision(value string) *string {
@@ -372,43 +388,43 @@ type pageMetadataSave struct {
 	source           bool
 }
 
-func (s *Service) UpdatePageLocaleMetadata(ctx context.Context, command UpdatePageLocaleMetadataCommand) (_ *intrav1.UpdatePageLocaleMetadataResponse, returnErr error) {
+func (s *Service) UpdatePageLocaleMetadata(ctx context.Context, command UpdatePageLocaleMetadataCommand) (_ RoomSave, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("page_id", command.PageID))
 
 	if _, err := parsePageContentUUID("page_id", command.PageID); err != nil {
-		return nil, err
+		return RoomSave{}, err
 	}
 	locale, err := normalizePageDocumentLocale(command.Locale)
 	if err != nil {
-		return nil, err
+		return RoomSave{}, err
 	}
 	contributor, err := contentblock.MutationContributor(command.ContributorMemberIDs)
 	if err != nil {
-		return nil, err
+		return RoomSave{}, err
 	}
-	documentID, err := loadPageContentDocumentID(ctx, s.db, command.PageID)
+	documentID, err := s.readPageContentDocumentID(ctx, command.PageID)
 	if err != nil {
-		return nil, err
+		return RoomSave{}, err
 	}
 	expectedRevision, err := parsePageContentUUID("expected_revision", command.ExpectedRevision)
 	if err != nil {
-		return nil, err
+		return RoomSave{}, err
 	}
 
 	now := dbtime.Now()
 	var domain contentblock.DomainContext
-	saved, err := mutation.Run(ctx, s.mutations, mutation.Spec[pageMetadataSave]{
+	saved, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[pageMetadataSave, Store]{
 		Access: lockedCollaboration(s.pageCollaborationDocumentFence(command.PageID, policyv1.Page.Edit, command.ContributorMemberIDs), documentID, &domain),
-		Change: func(ctx context.Context, tx *gorm.DB) (pageMetadataSave, error) {
+		Change: func(ctx context.Context, store Store) (pageMetadataSave, error) {
 			plan, err := planPageLocaleMetadataMutation(command, locale, locale == domain.SourceLocale)
 			if err != nil {
 				return pageMetadataSave{}, err
 			}
-			fence := contentblock.LockedFence(pageEntityName, documentID, domain)
+			fence := lockedContentFence(documentID, domain)
 			if locale != domain.SourceLocale {
-				return s.saveTargetLocaleMetadata(ctx, tx, command, documentID, expectedRevision, plan, fence, now)
+				return saveTargetLocaleMetadata(ctx, store, command, documentID, expectedRevision, plan, fence, now)
 			}
-			return s.saveSourceLocaleMetadata(ctx, tx, command, documentID, expectedRevision, plan, fence, now)
+			return saveSourceLocaleMetadata(ctx, store, command, documentID, expectedRevision, plan, fence, now)
 		},
 		Audit: func(saved pageMetadataSave) mutation.Audit {
 			if !saved.changed {
@@ -416,7 +432,7 @@ func (s *Service) UpdatePageLocaleMetadata(ctx context.Context, command UpdatePa
 			}
 			return localeContentAudit(contributor, command.PageID, locale, sharedtelemetry.AuditItemOperationUpdated)
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, saved pageMetadataSave) error {
+		Outbox: func(ctx context.Context, store Store, saved pageMetadataSave) error {
 			if !saved.changed {
 				return nil
 			}
@@ -427,26 +443,25 @@ func (s *Service) UpdatePageLocaleMetadata(ctx context.Context, command UpdatePa
 			if command.SetSummary != nil || command.ClearSummary {
 				fields = append(fields, "summary")
 			}
-			return s.publish(ctx, tx, buildPageLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-				EntityID:             command.PageID,
+			return store.PublishContentUpdate(ctx, ContentUpdate{PageID: command.PageID, Kind: LocaleUpdate, Locale: LocaleUpdateChange{
 				Fields:               fields,
 				DocumentRevision:     saved.documentRevision,
 				Contributors:         command.ContributorMemberIDs,
-				Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				Source:               SourceCollaboration,
 				Locale:               locale,
 				TargetRevision:       saved.targetRevision,
 				DocumentStateChanged: saved.source,
-			}))
+			}})
 		},
 	})
 	if err != nil {
-		return nil, normalizePageContentBlockError(err)
+		return RoomSave{}, normalizePageContentBlockError(err)
 	}
 	var changedLocales []string
 	if saved.changed {
 		changedLocales = []string{locale}
 	}
-	return &intrav1.UpdatePageLocaleMetadataResponse{
+	return RoomSave{
 		DocumentRevision: saved.documentRevision, Changed: saved.changed, SourceChanged: saved.sourceChanged,
 		ChangedLocales: changedLocales, Locale: locale,
 		TargetRevision: saved.targetRevision,
@@ -455,20 +470,20 @@ func (s *Service) UpdatePageLocaleMetadata(ctx context.Context, command UpdatePa
 
 // saveTargetLocaleMetadata writes the title and summary of a target room
 // and derives its next target revision.
-func (s *Service) saveTargetLocaleMetadata(
+func saveTargetLocaleMetadata(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	command UpdatePageLocaleMetadataCommand,
 	documentID, expectedRevision uuid.UUID,
 	plan pageLocaleMetadataMutationPlan,
-	fence contentblock.DomainFence,
+	fence ContentFence,
 	now time.Time,
 ) (pageMetadataSave, error) {
 	contributors, err := pageContributorUUIDs(command.ContributorMemberIDs)
 	if err != nil {
 		return pageMetadataSave{}, err
 	}
-	result, targetRevision, err := applyPageTargetLocaleMutation(ctx, tx, s.contentBlocks, pageTargetLocaleMutationInput{
+	result, targetRevision, err := applyPageTargetLocaleMutation(ctx, store, pageTargetLocaleMutationInput{
 		PageID: command.PageID, DocumentID: documentID, Locale: plan.Locale,
 		Batch:                  contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedRevision, ContributorMemberIDs: contributors},
 		ExpectedTargetRevision: command.ExpectedTargetRevision,
@@ -482,11 +497,11 @@ func (s *Service) saveTargetLocaleMetadata(
 	if !result.Changed {
 		return saved, nil
 	}
-	if err := touchPage(ctx, tx, command.PageID, now); err != nil {
+	if err := store.TouchPage(ctx, command.PageID, now); err != nil {
 		return pageMetadataSave{}, err
 	}
 	if plan.UpdateTitle {
-		if err := s.requestLocaleMetadataOG(ctx, tx, command.PageID, plan.Locale); err != nil {
+		if err := requestLocaleMetadataOG(ctx, store, command.PageID, plan.Locale); err != nil {
 			return pageMetadataSave{}, err
 		}
 	}
@@ -495,26 +510,25 @@ func (s *Service) saveTargetLocaleMetadata(
 
 // saveSourceLocaleMetadata writes the title and summary of the source room
 // and advances the shared document revision.
-func (s *Service) saveSourceLocaleMetadata(
+func saveSourceLocaleMetadata(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	command UpdatePageLocaleMetadataCommand,
 	documentID, expectedRevision uuid.UUID,
 	plan pageLocaleMetadataMutationPlan,
-	fence contentblock.DomainFence,
+	fence ContentFence,
 	now time.Time,
 ) (pageMetadataSave, error) {
 	if command.ExpectedTargetRevision != nil {
 		return pageMetadataSave{}, domainerr.InvalidField("expected_target_revision", "must be omitted for the source locale")
 	}
 	var metadata pageLocaleMetadataMutationResult
-	advance, err := s.contentBlocks.AdvanceRevision(
-		ctx, tx,
+	advance, err := store.AdvanceContentRevision(ctx,
 		contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: expectedRevision},
 		pageSourceRoomFence(plan.Locale, fence),
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+		func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
 			var err error
-			metadata, err = applyPageLocaleMetadataMutation(ctx, tx, command.PageID, plan, now)
+			metadata, err = applyPageLocaleMetadataMutation(ctx, store, command.PageID, plan, now)
 			return metadata.Effect, err
 		},
 	)
@@ -528,11 +542,11 @@ func (s *Service) saveSourceLocaleMetadata(
 	if !advance.Changed {
 		return saved, nil
 	}
-	if err := touchPage(ctx, tx, command.PageID, now); err != nil {
+	if err := store.TouchPage(ctx, command.PageID, now); err != nil {
 		return pageMetadataSave{}, err
 	}
 	if metadata.TitleChanged {
-		if err := s.requestLocaleMetadataOG(ctx, tx, command.PageID, plan.Locale); err != nil {
+		if err := requestLocaleMetadataOG(ctx, store, command.PageID, plan.Locale); err != nil {
 			return pageMetadataSave{}, err
 		}
 	}
@@ -541,27 +555,19 @@ func (s *Service) saveSourceLocaleMetadata(
 
 // requestLocaleMetadataOG requests the OG image of a room locale whose
 // title was saved.
-func (s *Service) requestLocaleMetadataOG(ctx context.Context, tx *gorm.DB, pageID, locale string) error {
-	_, err := s.runtime.RequestCurrentWithDB(
-		ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_PAGE, pageID, locale, false, "page_locale_metadata_saved",
-	)
+func requestLocaleMetadataOG(ctx context.Context, store Store, pageID, locale string) error {
+	_, err := store.RequestOG(ctx, pageID, locale, false, "page_locale_metadata_saved")
 	return err
-}
-
-// pageLocaleMetadataTexts is the title and summary of a locale metadata row.
-type pageLocaleMetadataTexts struct {
-	Title   *string `gorm:"column:title"`
-	Summary *string `gorm:"column:summary"`
 }
 
 func applyPageLocaleMetadataMutation(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	pageID string,
 	plan pageLocaleMetadataMutationPlan,
 	now time.Time,
 ) (pageLocaleMetadataMutationResult, error) {
-	row, err := lockSourceLocaleMetadataTexts(ctx, tx, pageID, plan.Locale)
+	row, err := lockSourceLocaleMetadataTexts(ctx, store, pageID, plan.Locale)
 	if err != nil {
 		return pageLocaleMetadataMutationResult{}, err
 	}
@@ -586,21 +592,13 @@ func applyPageLocaleMetadataMutation(
 	if !changed {
 		return output, nil
 	}
-	updates := structured.Fields{"updated_at": now}
-	if titleChanged {
-		updates["title"] = nextTitle
+	exists, err := store.UpdateLocale(ctx, pageID, plan.Locale, LocaleChange{
+		SetTitle: titleChanged, Title: nextTitle, SetSummary: summaryChanged, Summary: nextSummary, UpdatedAt: now,
+	})
+	if err != nil {
+		return pageLocaleMetadataMutationResult{}, err
 	}
-	if summaryChanged {
-		updates["summary"] = nextSummary
-	}
-	update := tx.WithContext(ctx).
-		Table("page_translation").
-		Where("entity_id = ? AND locale = ?", pageID, plan.Locale).
-		Updates(updates)
-	if update.Error != nil {
-		return pageLocaleMetadataMutationResult{}, update.Error
-	}
-	if update.RowsAffected != 1 {
+	if !exists {
 		return pageLocaleMetadataMutationResult{}, domainerr.Precondition("Page locale metadata changed; reload before saving")
 	}
 	return output, nil
@@ -608,70 +606,67 @@ func applyPageLocaleMetadataMutation(
 
 // lockSourceLocaleMetadataTexts locks the Page root and the metadata row of
 // its source locale; locale must still be the source locale.
-func lockSourceLocaleMetadataTexts(ctx context.Context, tx *gorm.DB, pageID, locale string) (pageLocaleMetadataTexts, error) {
-	var root struct {
-		SourceLocale string `gorm:"column:source_locale"`
-	}
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Table("page").Select("source_locale").Where("id = ?", pageID).
-		Take(&root).Error; err != nil {
-		return pageLocaleMetadataTexts{}, err
+func lockSourceLocaleMetadataTexts(ctx context.Context, store Store, pageID, locale string) (Locale, error) {
+	root, err := store.DocumentRoot(ctx, pageID, UpdateLock)
+	if err != nil {
+		return Locale{}, err
 	}
 	if locale != root.SourceLocale {
-		return pageLocaleMetadataTexts{}, domainerr.Precondition("target Page locale metadata is read-only")
+		return Locale{}, domainerr.Precondition("target Page locale metadata is read-only")
 	}
-	var row pageLocaleMetadataTexts
-	result := tx.WithContext(ctx).Raw(`
-		SELECT title, summary
-		FROM page_translation
-		WHERE entity_id = ? AND locale = ?
-		FOR UPDATE
-	`, pageID, locale).Scan(&row)
-	if result.Error != nil {
-		return pageLocaleMetadataTexts{}, result.Error
+	row, exists, err := store.Locale(ctx, pageID, locale, UpdateLock)
+	if err != nil {
+		return Locale{}, err
 	}
-	if result.RowsAffected == 0 {
-		return pageLocaleMetadataTexts{}, domainerr.ResourceNotFound("page_translation", pageID+":"+locale)
+	if !exists {
+		return Locale{}, domainerr.ResourceNotFound("page_translation", pageID+":"+locale)
 	}
 	return row, nil
 }
 
-func (s *Service) UpdatePageDocumentMetadata(ctx context.Context, command UpdatePageDocumentMetadataCommand) (_ *intrav1.UpdatePageDocumentMetadataResponse, returnErr error) {
+// LayoutSave is the outcome of a room document layout save.
+type LayoutSave struct {
+	DocumentRevision string
+	Changed          bool
+	SourceChanged    bool
+	Locale           string
+}
+
+func (s *Service) UpdatePageDocumentMetadata(ctx context.Context, command UpdatePageDocumentMetadataCommand) (_ LayoutSave, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("page_id", command.PageID))
 
 	if _, err := parsePageContentUUID("page_id", command.PageID); err != nil {
-		return nil, err
+		return LayoutSave{}, err
 	}
 	locale, err := normalizePageDocumentLocale(command.Locale)
 	if err != nil {
-		return nil, err
+		return LayoutSave{}, err
 	}
-	nextLayout, err := documentlayout.FromProto(command.DocumentLayout)
+	nextLayout, err := RequireDocumentLayout(command.DocumentLayout)
 	if err != nil {
-		return nil, domainerr.InvalidField("document_layout", err.Error())
+		return LayoutSave{}, domainerr.InvalidField("document_layout", err.Error())
 	}
-	documentID, err := loadPageContentDocumentID(ctx, s.db, command.PageID)
+	documentID, err := s.readPageContentDocumentID(ctx, command.PageID)
 	if err != nil {
-		return nil, err
+		return LayoutSave{}, err
 	}
 	expectedRevision, err := parsePageContentUUID("expected_revision", command.ExpectedRevision)
 	if err != nil {
-		return nil, err
+		return LayoutSave{}, err
 	}
 
 	now := time.Now().UTC()
 	var domain contentblock.DomainContext
-	advance, err := mutation.Run(ctx, s.mutations, mutation.Spec[contentblock.AdvanceResult]{
+	advance, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[contentblock.AdvanceResult, Store]{
 		Access: lockedCollaboration(pageSourceRoomFence(locale, s.pageCollaborationDocumentFence(
 			command.PageID, policyv1.Page.Manage, command.ContributorMemberIDs,
 		)), documentID, &domain),
-		Change: func(ctx context.Context, tx *gorm.DB) (contentblock.AdvanceResult, error) {
-			return s.contentBlocks.AdvanceRevision(ctx, tx,
+		Change: func(ctx context.Context, store Store) (contentblock.AdvanceResult, error) {
+			return store.AdvanceContentRevision(ctx,
 				contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: expectedRevision},
-				contentblock.LockedFence(pageEntityName, documentID, domain),
-				func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-					return applyPageDocumentLayoutMetadata(ctx, tx, command.PageID, nextLayout, now)
+				lockedContentFence(documentID, domain),
+				func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
+					return applyPageDocumentLayoutMetadata(ctx, store, command.PageID, nextLayout, now)
 				},
 			)
 		},
@@ -681,26 +676,19 @@ func (s *Service) UpdatePageDocumentMetadata(ctx context.Context, command Update
 			}
 			return pageLayoutAudit(command.PageID)
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, advance contentblock.AdvanceResult) error {
+		Outbox: func(ctx context.Context, store Store, advance contentblock.AdvanceResult) error {
 			if !advance.Changed {
 				return nil
 			}
-			return s.publish(ctx, tx, buildContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
-				command.PageID,
-				managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-				buildContentUpdatedFields([]string{"documentLayout"}, pageContentUpdatedFieldSpecs),
-				false,
-				advance.DocumentRevision.String(),
-				command.ContributorMemberIDs,
-				nil,
-			))
+			return store.PublishContentUpdate(ctx, ContentUpdate{PageID: command.PageID, Kind: LayoutUpdate, Locale: LocaleUpdateChange{
+				DocumentRevision: advance.DocumentRevision.String(), Contributors: command.ContributorMemberIDs,
+			}})
 		},
 	})
 	if err != nil {
-		return nil, normalizePageContentBlockError(err)
+		return LayoutSave{}, normalizePageContentBlockError(err)
 	}
-	return &intrav1.UpdatePageDocumentMetadataResponse{
+	return LayoutSave{
 		DocumentRevision: advance.DocumentRevision.String(), Changed: advance.Changed,
 		SourceChanged: advance.TranslationSourceChanged, Locale: locale,
 	}, nil
@@ -716,36 +704,44 @@ func pageLayoutAudit(pageID string) mutation.Audit {
 // pageCheckpoint is the outcome of a version checkpoint; created is nil when
 // the source document equals the previous version.
 type pageCheckpoint struct {
-	created  *model.PageVersion
+	created  *Version
 	revision string
 }
 
-func (s *Service) CreatePageVersionCheckpoint(ctx context.Context, command CreatePageVersionCheckpointCommand) (_ *intrav1.CreatePageVersionCheckpointResponse, returnErr error) {
+// Checkpoint is the outcome of a version checkpoint: the version it created,
+// if any, at the document revision it saw.
+type Checkpoint struct {
+	VersionID *string
+	Revision  string
+	Locale    string
+}
+
+func (s *Service) CreatePageVersionCheckpoint(ctx context.Context, command CreatePageVersionCheckpointCommand) (_ Checkpoint, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("page_id", command.PageID))
 
 	if _, err := parsePageContentUUID("page_id", command.PageID); err != nil {
-		return nil, err
+		return Checkpoint{}, err
 	}
 	locale, err := normalizePageDocumentLocale(command.Locale)
 	if err != nil {
-		return nil, err
+		return Checkpoint{}, err
 	}
-	documentID, err := loadPageContentDocumentID(ctx, s.db, command.PageID)
+	documentID, err := s.readPageContentDocumentID(ctx, command.PageID)
 	if err != nil {
-		return nil, err
+		return Checkpoint{}, err
 	}
 	expectedRevision, err := parsePageContentUUID("expected_revision", command.ExpectedRevision)
 	if err != nil {
-		return nil, err
+		return Checkpoint{}, err
 	}
 
 	var domain contentblock.DomainContext
-	checkpoint, err := mutation.Run(ctx, s.mutations, mutation.Spec[pageCheckpoint]{
+	checkpoint, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[pageCheckpoint, Store]{
 		Access: lockedCollaboration(pageSourceRoomFence(locale, s.pageCollaborationDocumentFence(
 			command.PageID, policyv1.Page.Edit, command.ContributorMemberIDs,
 		)), documentID, &domain),
-		Change: func(ctx context.Context, tx *gorm.DB) (pageCheckpoint, error) {
-			return s.checkpointPageVersion(ctx, tx, command, documentID, expectedRevision, domain.SourceLocale)
+		Change: func(ctx context.Context, store Store) (pageCheckpoint, error) {
+			return checkpointPageVersion(ctx, store, command, documentID, expectedRevision, domain.SourceLocale)
 		},
 		Audit: func(checkpoint pageCheckpoint) mutation.Audit {
 			version := checkpoint.created
@@ -758,29 +754,25 @@ func (s *Service) CreatePageVersionCheckpoint(ctx context.Context, command Creat
 		},
 	})
 	if err != nil {
-		return nil, normalizePageContentBlockError(err)
+		return Checkpoint{}, normalizePageContentBlockError(err)
 	}
-	response := &intrav1.CreatePageVersionCheckpointResponse{
-		Created:  checkpoint.created != nil,
-		Revision: checkpoint.revision,
-		Locale:   locale,
-	}
+	result := Checkpoint{Revision: checkpoint.revision, Locale: locale}
 	if checkpoint.created != nil {
-		response.VersionId = &checkpoint.created.ID
+		result.VersionID = &checkpoint.created.ID
 	}
-	return response, nil
+	return result, nil
 }
 
 // checkpointPageVersion stores the source document at expectedRevision as
 // the next version unless it equals the latest one.
-func (s *Service) checkpointPageVersion(
+func checkpointPageVersion(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	command CreatePageVersionCheckpointCommand,
 	documentID, expectedRevision uuid.UUID,
 	sourceLocale string,
 ) (pageCheckpoint, error) {
-	snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, documentID, sourceLocale)
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, sourceLocale)
 	if err != nil {
 		return pageCheckpoint{}, err
 	}
@@ -788,11 +780,11 @@ func (s *Service) checkpointPageVersion(
 		return pageCheckpoint{}, &contentblock.StaleRevisionError{CurrentRevision: snapshot.Document.Revision}
 	}
 	checkpoint := pageCheckpoint{revision: snapshot.Document.Revision.String()}
-	metadata, err := loadRequiredPageSourceLocaleMetadata(ctx, tx, command.PageID)
+	metadata, err := loadRequiredPageSourceLocaleMetadata(ctx, store, command.PageID)
 	if err != nil {
 		return pageCheckpoint{}, err
 	}
-	document, err := MaterializeLocalizedPageContentDocument(snapshot, sourceLocale)
+	document, err := contentblock.MaterializeSnapshotPageLocale(snapshot, sourceLocale)
 	if err != nil {
 		return pageCheckpoint{}, err
 	}
@@ -800,20 +792,20 @@ func (s *Service) checkpointPageVersion(
 	if err != nil {
 		return pageCheckpoint{}, err
 	}
-	nextVersion, unchanged, err := nextPageVersion(ctx, tx, command.PageID, encoded)
+	nextVersion, unchanged, err := nextPageVersion(ctx, store, command.PageID, encoded)
 	if err != nil || unchanged {
 		return checkpoint, err
 	}
-	checkpoint.created = &model.PageVersion{
+	checkpoint.created = &Version{
 		PageID:               command.PageID,
 		Version:              nextVersion,
 		Title:                cloneOptionalString(metadata.Title),
 		Summary:              cloneOptionalString(metadata.Summary),
 		ContentSnapshot:      encoded,
-		ContributorMemberIDs: normalizeContributorMemberIDs(command.ContributorMemberIDs),
+		ContributorMemberIDs: NormalizeContributorMemberIDs(command.ContributorMemberIDs),
 		CreatedAt:            time.Now().UTC(),
 	}
-	if err := tx.WithContext(ctx).Create(checkpoint.created).Error; err != nil {
+	if err := store.InsertVersion(ctx, checkpoint.created); err != nil {
 		return pageCheckpoint{}, err
 	}
 	return checkpoint, nil
@@ -822,18 +814,13 @@ func (s *Service) checkpointPageVersion(
 // nextPageVersion locks the latest version of the Page and returns the
 // number after it, or unchanged when the latest version already stores
 // encoded.
-func nextPageVersion(ctx context.Context, tx *gorm.DB, pageID string, encoded []byte) (int32, bool, error) {
-	var previous model.PageVersion
-	previousResult := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Where("page_id = ?", pageID).
-		Order("version DESC").
-		First(&previous)
-	if errors.Is(previousResult.Error, gorm.ErrRecordNotFound) {
-		return 1, false, nil
+func nextPageVersion(ctx context.Context, store Store, pageID string, encoded []byte) (int32, bool, error) {
+	previous, exists, err := store.LockLatestVersion(ctx, pageID)
+	if err != nil {
+		return 0, false, err
 	}
-	if previousResult.Error != nil {
-		return 0, false, previousResult.Error
+	if !exists {
+		return 1, false, nil
 	}
 	if !staleCatalogSnapshot(previous.ContentSnapshot) {
 		previousSnapshot, err := DecodeVersionContentSnapshot(previous.ContentSnapshot)
@@ -855,26 +842,15 @@ func nextPageVersion(ctx context.Context, tx *gorm.DB, pageID string, encoded []
 
 // applyPageDocumentLayoutMetadata stores nextLayout on the Page root; the
 // caller audits a change.
-func applyPageDocumentLayoutMetadata(ctx context.Context, tx *gorm.DB, pageID string, nextLayout model.DocumentLayout, now time.Time) (contentblock.MetadataEffect, error) {
-	var row struct {
-		DocumentLayout model.DocumentLayout `gorm:"column:document_layout"`
-	}
-	if err := tx.WithContext(ctx).
-		Table("page").
-		Select("document_layout").
-		Where("id = ?", pageID).
-		Take(&row).Error; err != nil {
+func applyPageDocumentLayoutMetadata(ctx context.Context, store Store, pageID string, nextLayout DocumentLayout, now time.Time) (contentblock.MetadataEffect, error) {
+	current, err := store.DocumentLayout(ctx, pageID)
+	if err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
-	if row.DocumentLayout == nextLayout {
+	if current == nextLayout {
 		return contentblock.MetadataEffect{}, nil
 	}
-	if err := tx.WithContext(ctx).Model(&model.Page{}).
-		Where("id = ?", pageID).
-		Updates(structured.Fields{
-			"document_layout": nextLayout,
-			"updated_at":      now,
-		}).Error; err != nil {
+	if err := store.SetDocumentLayout(ctx, pageID, nextLayout, now); err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
 	return contentblock.MetadataEffect{Changed: true}, nil

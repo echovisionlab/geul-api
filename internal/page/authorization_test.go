@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -92,7 +93,7 @@ func TestPagePlatformActionsKeepCreateAndListDistinct(t *testing.T) {
 	})
 	tests := []struct {
 		name   string
-		invoke func(context.Context, CollaborationPermissionChecker) error
+		invoke func(context.Context, authz.AuthorizationDecisionChecker) error
 		action string
 	}{
 		{name: "create", invoke: requirePageCreate, action: "page.create"},

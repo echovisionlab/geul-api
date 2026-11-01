@@ -6,17 +6,17 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"gorm.io/gorm"
 )
 
 // requireCollaborationEditForPrincipal requires principal to edit the Page
 // whose room it opens.
 func requireCollaborationEditForPrincipal(
 	ctx context.Context,
-	checker CollaborationPermissionChecker,
+	checker authz.AuthorizationDecisionChecker,
 	pageID string,
 	principal *auth.UserInfo,
 ) error {
@@ -41,7 +41,7 @@ func requireCollaborationEditForPrincipal(
 	return nil
 }
 
-func (s *Service) requireDocumentContributors(ctx context.Context, tx *gorm.DB, memberIDs []string) error {
+func requireDocumentContributors(ctx context.Context, store Store, memberIDs []string) error {
 	if len(memberIDs) == 0 {
 		return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires contributors")
 	}
@@ -56,7 +56,7 @@ func (s *Service) requireDocumentContributors(ctx context.Context, tx *gorm.DB, 
 		}
 		unique = append(unique, memberID)
 	}
-	members, err := s.members.LockMembers(ctx, tx, unique)
+	members, err := store.LockMembers(ctx, unique)
 	if err != nil {
 		return fmt.Errorf("lock Page save contributor Members: %w", err)
 	}
@@ -73,15 +73,15 @@ func (s *Service) requireDocumentContributors(ctx context.Context, tx *gorm.DB, 
 // root has been locked.
 func (s *Service) requirePageContributorsPermission(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	pageID string,
 	action pageAction,
 	memberIDs []string,
 ) error {
-	if err := s.requireDocumentContributors(ctx, tx, memberIDs); err != nil {
+	if err := requireDocumentContributors(ctx, store, memberIDs); err != nil {
 		return err
 	}
-	identities, err := s.members.ActiveIdentities(ctx, tx, memberIDs)
+	identities, err := store.ActiveIdentities(ctx, memberIDs)
 	if err != nil {
 		return fmt.Errorf("load Page collaboration contributors: %w", err)
 	}
@@ -97,7 +97,7 @@ func (s *Service) requirePageContributorsPermission(
 		if err != nil {
 			return domainerr.NoPermission("edit", "page contributor").WithCause(err)
 		}
-		allowed, err := s.permissions.CheckActorCan(ctx, actor, can)
+		allowed, err := s.spiceDB.CheckActorCan(ctx, actor, can)
 		if err != nil {
 			return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 		}

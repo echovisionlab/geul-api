@@ -11,7 +11,6 @@ import (
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/model"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"google.golang.org/protobuf/proto"
@@ -322,7 +321,7 @@ func TestPagePortProjectionOmitsEmptyGeneratedObjectWrappers(t *testing.T) {
 			revision := uuid.New()
 			title := "Page"
 			state := pagedomain.AIDocumentState{
-				Page:     model.Page{DocumentLayout: model.DefaultDocumentLayout()},
+				Page:     pagedomain.Page{DocumentLayout: pagedomain.DefaultDocumentLayout()},
 				Revision: revision.String(), SourceLocale: "en", Locale: "en", LocaleExists: true, Title: &title,
 				Snapshot: contentblock.Snapshot{Document: contentblock.Document{ID: uuid.New(), Revision: revision}},
 				Document: &contentv1.LocalizedPageDocument{
@@ -348,7 +347,7 @@ func pageStateForCodecTest(sectionID string) pagedomain.AIDocumentState {
 	title := "Page"
 	revision := uuid.New()
 	return pagedomain.AIDocumentState{
-		Page:     model.Page{DocumentLayout: model.DefaultDocumentLayout()},
+		Page:     pagedomain.Page{DocumentLayout: pagedomain.DefaultDocumentLayout()},
 		Revision: revision.String(), SourceLocale: "en", Locale: "en", LocaleExists: true, Title: &title,
 		Snapshot: contentblock.Snapshot{Document: contentblock.Document{ID: uuid.New(), Revision: revision}},
 		Document: &contentv1.LocalizedPageDocument{
