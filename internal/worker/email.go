@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -13,24 +12,11 @@ import (
 
 const emailDeliveryRetryable = "retryable"
 
-func (h *Handlers) handleSendEmail(ctx context.Context, job *managev1.SendEmailEvent) error {
-	_, err := h.handleEmailDelivery(ctx, job)
-	return err
-}
-
 func (h *Handlers) handleEmailDelivery(
 	ctx context.Context,
 	job *managev1.SendEmailEvent,
 ) (emaildelivery.DeliveryOutcome, error) {
-	application := emaildelivery.NewDeliveryApplication(
-		emaildeliveryadapter.NewCampaignDeliveryStore(h.db, h.auditWriter, h.mailMetrics),
-		emaildeliveryadapter.NewRecipientPolicy(h.db, h.kratosClient),
-		h.emailDeliveryRenderer(),
-		emaildeliveryadapter.NewSuppressionStore(h.db),
-		emaildeliveryadapter.NewProviderLoader(h.adapterLoader),
-		h.mailMetrics,
-	)
-	result, err := application.Deliver(ctx, job)
+	result, err := h.emailDelivery.Deliver(ctx, job)
 	return emailDeliveryQueueResult(ctx, job, result, err)
 }
 

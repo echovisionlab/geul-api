@@ -54,3 +54,4 @@
 1 internal/translation/application sql driver
 15 internal/work generated contracts
 2 internal/work/public generated contracts
+8 internal/worker generated contracts

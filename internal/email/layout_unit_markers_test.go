@@ -1,31 +1,51 @@
 package email
 
 import (
+	"context"
 	"strings"
 	"testing"
 
-	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
-func layoutMigrationDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
-	conn, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close() })
-	db, err := gorm.Open(postgres.New(postgres.Config{Conn: conn}), &gorm.Config{DisableAutomaticPing: true, Logger: logger.Default.LogMode(logger.Silent)})
-	require.NoError(t, err)
-	return db, mock
+// renderRows holds template-1 and layout "legacy", both with source locale
+// "en": the rows a render reads. Any other Store call panics on the nil
+// Store.
+type renderRows struct {
+	Store
+	subject, contentHTML string
+	layoutSource         string
 }
 
-func expectLayoutRender(mock sqlmock.Sqlmock, source, target, locale string) {
-	mock.ExpectQuery(`SELECT source_locale AS locale FROM "email_layout"`).WithArgs("legacy", 1).WillReturnRows(sqlmock.NewRows([]string{"locale"}).AddRow("en"))
-	mock.ExpectQuery(`SELECT "html_content" FROM "email_layout_translation"`).WithArgs("legacy", "en", 1).WillReturnRows(sqlmock.NewRows([]string{"html_content"}).AddRow(source))
-	if target != "" {
-		mock.ExpectQuery(`SELECT locale, html_content FROM "email_layout_translation"`).WithArgs("legacy", locale).WillReturnRows(sqlmock.NewRows([]string{"locale", "html_content"}).AddRow(locale, target))
+// templateRows is template-1 in layout "legacy" with the source subject and
+// HTML.
+func templateRows(subject, contentHTML, layoutSource string) *renderRows {
+	return &renderRows{subject: subject, contentHTML: contentHTML, layoutSource: layoutSource}
+}
+
+func (r *renderRows) TemplateByID(_ context.Context, templateID string) (model.EmailTemplate, error) {
+	if templateID != "template-1" {
+		return model.EmailTemplate{}, ErrTemplateNotFound
 	}
+	layoutID := "legacy"
+	return model.EmailTemplate{ID: templateID, LayoutID: &layoutID}, nil
+}
+
+func (r *renderRows) TemplateSourceLocale(context.Context, string) (string, bool, error) {
+	return "en", true, nil
+}
+
+func (r *renderRows) TemplateContent(_ context.Context, _, locale string) (*TemplateContent, error) {
+	return &TemplateContent{Locale: locale, Subject: &r.subject, ContentHTML: &r.contentHTML}, nil
+}
+
+func (r *renderRows) LayoutSourceLocale(context.Context, string) (string, bool, error) {
+	return "en", true, nil
+}
+
+func (r *renderRows) LayoutContent(context.Context, string, string) (*string, error) {
+	return &r.layoutSource, nil
 }
 
 func TestDurableUnitsRetainPurePlaceholdersAfterLiteralMigration(t *testing.T) {

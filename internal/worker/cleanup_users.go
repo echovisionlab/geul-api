@@ -2,33 +2,28 @@ package worker
 
 import (
 	"context"
-	stderrors "errors"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/account"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/member"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
-func (h *Handlers) handleProcessUserDeletions(ctx context.Context) error {
-	now := time.Now().UTC()
-	scrubbed, err := member.ScrubExpiredMemberEmailProjections(ctx, h.db, now)
+// handleProcessUserDeletions scrubs expired email projections, queues the
+// expired unonboarded Members' deletions and dispatches each due scheduled
+// deletion. A failed unonboarded dispatch or a failed request does not stop
+// the scheduled deletions; the job reports the unonboarded failure.
+func (h *Handlers) handleProcessUserDeletions(ctx context.Context, now time.Time) error {
+	scrubbed, err := h.memberDeletions.ScrubExpiredEmailProjections(ctx, now)
 	if err != nil {
 		return fmt.Errorf("scrub expired Member email projections: %w", err)
 	}
 	if scrubbed > 0 {
 		slog.InfoContext(ctx, "Scrubbed expired Member email projections", "count", scrubbed)
 	}
-	identityPublisher, publisherOK := any(h.publisher).(account.UserDeletionIdentityDispatchPublisher)
-	if !publisherOK {
-		return fmt.Errorf("user deletion identity publisher is not configured")
-	}
-	unonboardedQueued, unonboardedErr := account.EnqueueExpiredUnonboardedMembers(
-		ctx, h.db, identityPublisher, h.memberDeletion, now, account.UnonboardedMemberCleanupBatchSize,
-	)
+	unonboardedQueued, unonboardedErr := h.memberDeletions.EnqueueExpiredUnonboarded(ctx, now)
 	if unonboardedErr != nil {
 		// Scheduled deletions still run; the scheduler logs this failure with the
 		// job's result.
@@ -37,20 +32,11 @@ func (h *Handlers) handleProcessUserDeletions(ctx context.Context) error {
 	if unonboardedQueued > 0 {
 		slog.InfoContext(ctx, "Queued expired unonboarded Member hard deletions", "count", unonboardedQueued)
 	}
-	deletionPublisher, ok := h.publisher.(account.UserDeletionDispatchPublisher)
-	if !ok {
-		return stderrors.Join(unonboardedErr, fmt.Errorf("user deletion command publisher is not configured"))
-	}
 
-	// Find deletion requests that have been scheduled and are past the grace period
-	var requests []model.UserDeletionRequest
-	if err := h.db.WithContext(ctx).
-		Where("lifecycle_state IN ?", []string{"scheduled", "recovery_confirmation_pending"}).
-		Where("scheduled_at < ?", now).
-		Find(&requests).Error; err != nil {
-		return stderrors.Join(unonboardedErr, err)
+	requests, err := h.memberDeletions.DueScheduledDeletions(ctx, now)
+	if err != nil {
+		return errors.Join(unonboardedErr, err)
 	}
-
 	if len(requests) == 0 {
 		return unonboardedErr
 	}
@@ -59,8 +45,8 @@ func (h *Handlers) handleProcessUserDeletions(ctx context.Context) error {
 
 	var processedCount int
 	for _, req := range requests {
-		if err := account.DispatchScheduledUserDeletion(ctx, h.db, deletionPublisher, h.spicedbClient, h.memberDeletion, req.ID, now); err != nil {
-			if stderrors.Is(err, account.ErrLastActiveAdminDeletion) {
+		if err := h.memberDeletions.DispatchScheduledDeletion(ctx, req.ID, now); err != nil {
+			if errors.Is(err, account.ErrLastActiveAdminDeletion) {
 				slog.WarnContext(ctx, "Scheduled member deletion blocked", append(failurecause.Args(err), "member_id", req.MemberID, "identity_id", req.IdentityID, "reason", "last_active_admin")...)
 				continue
 			}

@@ -5,19 +5,13 @@ import (
 	"log/slog"
 	"time"
 
-	geoipadapter "github.com/echovisionlab/geul-api/internal/adapters/geoip"
 	"github.com/echovisionlab/geul-api/internal/geoip"
 )
 
 // handleUpdateGeoIP is the scheduled-message dispatch boundary. Refresh policy
 // and execution live in the owning domain and infrastructure adapter.
-func (h *Handlers) handleUpdateGeoIP(ctx context.Context) error {
-	executor := geoipadapter.NewRefreshExecutor(
-		h.db,
-		h.config.MaxMindAccountID,
-		h.config.MaxMindLicenseKey,
-	)
-	outcome, err := geoip.NewRefreshService(executor).Refresh(ctx, time.Now().UTC())
+func (h *Handlers) handleUpdateGeoIP(ctx context.Context, now time.Time) error {
+	outcome, err := h.geoIP.Refresh(ctx, now)
 	if err != nil {
 		return err
 	}

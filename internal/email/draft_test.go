@@ -3,7 +3,6 @@ package email
 import (
 	"testing"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -62,17 +61,9 @@ func TestDraftTemplateAndDurableDeliveryShareEmailPresentation(t *testing.T) {
 	require.True(t, proto.Equal(before, document), "rendering must not modify the draft")
 	require.NotContains(t, variables, "subject", "draft rendering must not modify caller variables")
 
-	db, mock := layoutMigrationDB(t)
-	mock.ExpectQuery(`SELECT \* FROM "email_template"`).WithArgs("template-1", 1).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "layout_id"}).AddRow("template-1", "legacy"))
-	mock.ExpectQuery(`SELECT "source_locale" FROM "email_template"`).WithArgs("template-1", 1).
-		WillReturnRows(sqlmock.NewRows([]string{"source_locale"}).AddRow("en"))
-	mock.ExpectQuery(`SELECT subject, content_html FROM "email_template_translation"`).WithArgs("template-1", "en", 1).
-		WillReturnRows(sqlmock.NewRows([]string{"subject", "content_html"}).AddRow("Hello {{recipient_name}}", body.HTML))
-	expectLayoutRender(mock, layout, "", "en")
+	db := templateRows("Hello {{recipient_name}}", body.HTML, layout)
 	template, err := RenderTemplateForLocale(t.Context(), db, DirectTemplateType("template-1"), "en", map[string]string{"recipient_name": "A & B"})
 	require.NoError(t, err)
-	require.NoError(t, mock.ExpectationsWereMet())
 	campaign, err := RenderCampaignSnapshotForLocale(model.JSONFields{
 		"source_locale": "en", "subject": "Hello {{recipient_name}}", "content_html": body.HTML,
 		"layout_source_locale": "en", "layout_translations": []structured.Fields{{"locale": "en", "html_content": selectedLayout}},

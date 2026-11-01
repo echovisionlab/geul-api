@@ -32,6 +32,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -42,6 +43,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/transcode"
 	translationapplication "github.com/echovisionlab/geul-api/internal/translation/application"
 	"github.com/echovisionlab/geul-api/internal/worker"
+	workerpostgres "github.com/echovisionlab/geul-api/internal/worker/postgres"
 )
 
 type applicationDependencies struct {
@@ -129,7 +131,7 @@ func initializeApplicationDependencies(
 	deps.s3PresignClient = s3.NewPresignClient(publicS3Client)
 	deps.workerPublisher = deps.hooksPublisher
 	deps.transcodeTracker = transcode.NewTracker(deps.db, deps.workerPublisher)
-	deps.adapterLoader = email.NewAdapterLoader(deps.db, nil)
+	deps.adapterLoader = email.NewAdapterLoader(emailpostgres.Bind(deps.db), nil)
 	deps.metadataAIJobs, err = ai.NewMetadataJobManager(deps.db, cfg.GoogleAIAPIKey, deps.servicePublisher)
 	if err != nil {
 		return nil, fmt.Errorf("initialize metadata AI job manager: %w", err)
@@ -183,26 +185,33 @@ func initializeApplicationDependencies(
 		ogCleanup,
 	)
 	faviconCleanup := favicon.NewCleanup(deps.db)
-	deps.workerHandlers = worker.NewHandlers(worker.HandlerDeps{
-		DB:               deps.db,
-		Config:           cfg,
-		Publisher:        deps.workerPublisher,
-		AdapterLoader:    deps.adapterLoader,
-		S3Client:         deps.s3Client,
-		KratosClient:     deps.kratosClient,
-		FileMediaRuntime: fileMediaRuntime,
-		MediaCleanup:     mediaCleanup,
-		PublicAssets:     publicAssetCleanup,
-		OGCleanup:        ogCleanup,
-		FaviconCleanup:   faviconCleanup,
-		MetadataAI:       deps.metadataAIJobs,
-		TranslationJobs:  deps.translationJobs,
-		Audit:            deps.telemetryWriter,
-		SpiceDB:          deps.spicedbClient,
-		OGPlanner:        deps.og.planner,
-		MemberDeletion:   accountadapter.MemberDeletion{},
-		CampaignEmail:    campaignadapter.NewLiveEmailRenderer(deps.contentBlockStore),
+	workerDeps, err := workerpostgres.New(workerpostgres.Config{
+		DB:              deps.db,
+		Config:          cfg,
+		Publisher:       deps.workerPublisher,
+		AdapterLoader:   deps.adapterLoader,
+		S3Client:        deps.s3Client,
+		KratosClient:    deps.kratosClient,
+		SpiceDB:         deps.spicedbClient,
+		Audit:           deps.telemetryWriter,
+		OGPlanner:       deps.og.planner,
+		MemberDeletion:  accountadapter.MemberDeletion{},
+		FileMedia:       fileMediaRuntime,
+		MediaCleanup:    mediaCleanup,
+		PublicAssets:    publicAssetCleanup,
+		OGCleanup:       ogCleanup,
+		FaviconCleanup:  faviconCleanup,
+		MetadataAI:      deps.metadataAIJobs,
+		TranslationJobs: deps.translationJobs,
+		CampaignEmail:   campaignadapter.NewLiveEmailRenderer(deps.contentBlockStore),
 	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize worker: %w", err)
+	}
+	deps.workerHandlers, err = worker.NewHandlers(workerDeps)
+	if err != nil {
+		return nil, fmt.Errorf("initialize worker: %w", err)
+	}
 	logApplicationDependenciesReady(cfg)
 	return deps, nil
 }

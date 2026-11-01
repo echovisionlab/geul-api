@@ -43,6 +43,7 @@ var pipelineDomains = []string{
 	"internal/sitesettings",
 	"internal/translation",
 	"internal/work",
+	"internal/worker",
 }
 
 func inPipelineDomain(pkg string) bool {

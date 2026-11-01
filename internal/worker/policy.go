@@ -6,100 +6,63 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/account"
-	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
-	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	"gorm.io/gorm"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
-func (h *Handlers) handleActivateTerms(ctx context.Context) error {
-	return h.handleActivateLegal(ctx, legalActivationSpec{
-		model: &model.Terms{}, resource: "terms",
-		scheduledStatus: model.TermsStatusScheduled,
-		referenceType:   legaldomain.EmailDeliveryReferenceTypeTerms,
-		effectiveEvent:  email.EventTermsEffective.String(),
-		logMessage:      "Activated pending terms",
-	})
+// legalActivation is what one scheduled legal activation job activates.
+type legalActivation struct {
+	kind           LegalKind
+	effectiveEvent string
+	logMessage     string
 }
 
-func (h *Handlers) handleActivatePrivacy(ctx context.Context) error {
-	return h.handleActivateLegal(ctx, legalActivationSpec{
-		model: &model.Privacy{}, resource: "privacy",
-		scheduledStatus: model.PrivacyStatusScheduled,
-		referenceType:   legaldomain.EmailDeliveryReferenceTypePrivacy,
-		effectiveEvent:  email.EventPrivacyEffective.String(),
-		logMessage:      "Activated pending privacy policies",
-	})
-}
+var (
+	termsActivation = legalActivation{
+		kind:           LegalTerms,
+		effectiveEvent: email.EventTermsEffective.String(),
+		logMessage:     "Activated pending terms",
+	}
+	privacyActivation = legalActivation{
+		kind:           LegalPrivacy,
+		effectiveEvent: email.EventPrivacyEffective.String(),
+		logMessage:     "Activated pending privacy policies",
+	}
+)
 
-type legalActivationSpec struct {
-	model           structured.Value
-	resource        string
-	scheduledStatus model.LegalPolicyStatus
-	referenceType   string
-	effectiveEvent  string
-	logMessage      string
-}
-
-type scheduledLegalDocument struct {
-	ID string `gorm:"column:id"`
-}
-
-func (h *Handlers) handleActivateLegal(ctx context.Context, spec legalActivationSpec) error {
-	var pending []scheduledLegalDocument
-	if err := h.db.WithContext(ctx).
-		Model(spec.model).
-		Select("id").
-		Where("status = ?", spec.scheduledStatus).
-		Order("effective_from ASC, version ASC, id ASC").
-		Find(&pending).Error; err != nil {
+// handleActivateLegal activates the kind's one scheduled version when it is
+// due. Two scheduled versions break the activation invariant and fail the
+// job before anything changes. The activation, its audit, the sealed
+// effective notice run and the OG target switch commit together; the notice
+// is dispatched after commit, so mail-provider availability is not part of
+// the activation.
+func (h *Handlers) handleActivateLegal(ctx context.Context, activation legalActivation) error {
+	pending, err := h.legal.ScheduledVersions(ctx, activation.kind)
+	if err != nil {
 		return err
 	}
 	if len(pending) == 0 {
 		return nil
 	}
 	if len(pending) > 1 {
-		return fmt.Errorf("multiple scheduled %s versions violate the activation invariant", spec.resource)
+		return fmt.Errorf("multiple scheduled %s versions violate the activation invariant", activation.kind)
 	}
 
 	now := time.Now().UTC()
-	documentID := pending[0].ID
-	kind := legaldomain.PolicyKind(spec.referenceType)
+	documentID := pending[0]
+	resource := string(activation.kind)
+	templateData := map[string]string{resource + "_url": fmt.Sprintf("%s/%s", h.siteOrigin, resource)}
 	activated := false
-	var effectiveRun *legaldomain.NoticeRun
-	if err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		joined := legalpostgres.Bind(tx, legalpostgres.Ports{
-			Routes: legaladapter.NewRuntime(), Notices: legaladapter.NewNoticeRuntime(),
-		}, h.auditWriter)
+	var notice EffectiveNotice
+	if err := h.units.Transaction(ctx, false, func(tx mutation.Tx[Jobs]) error {
+		legal := tx.Store().LegalActivation()
 		var err error
-		activated, effectiveRun, err = legaldomain.ActivateDuePolicy(
-			ctx,
-			joined,
-			kind,
-			documentID,
-			spec.effectiveEvent,
-			map[string]string{spec.resource + "_url": fmt.Sprintf("%s/%s", h.config.SiteOrigin, spec.resource)},
-			now,
-		)
+		notice, activated, err = legal.ActivateDue(ctx, activation.kind, documentID, activation.effectiveEvent, templateData, now)
 		if err != nil || !activated {
 			return err
 		}
-		_, err = legaladapter.RequestSaved(
-			ctx,
-			tx,
-			h.ogPlanner,
-			spec.resource,
-			documentID,
-			"",
-			true,
-			spec.resource+"_scheduled_activated",
-		)
-		return err
+		return legal.RequestOG(ctx, activation.kind, documentID, resource+"_scheduled_activated")
 	}); err != nil {
 		return err
 	}
@@ -107,39 +70,23 @@ func (h *Handlers) handleActivateLegal(ctx context.Context, spec legalActivation
 	activatedCount := 0
 	if activated {
 		activatedCount = 1
-		dispatch := legaladapter.NewNoticeDispatch(h.db, nil)
-		if h.publisher != nil && h.spicedbClient != nil {
-			dispatch = legaladapter.NewNoticeDispatch(h.db, h.newCampaignDeliveryDispatcher())
-		}
-		legaldomain.DispatchCommittedEffectiveNotice(ctx, dispatch, kind, documentID, now, effectiveRun)
+		h.legal.DispatchEffectiveNotice(ctx, activation.kind, documentID, now, notice)
 	}
-	slog.InfoContext(ctx, spec.logMessage, "count", activatedCount)
+	slog.InfoContext(ctx, activation.logMessage, "count", activatedCount)
 	return nil
 }
 
-func (h *Handlers) handleUnbanExpired(ctx context.Context) error {
-	return h.handleUnbanExpiredWith(ctx, func(
-		mutationCtx context.Context,
-		userID string,
-		now time.Time,
-	) (bool, error) {
-		return account.ClearExpiredTimedBan(mutationCtx, h.db, h.kratosClient, userID, now, h.auditWriter)
-	})
-}
-
-func (h *Handlers) handleUnbanExpiredWith(
-	ctx context.Context,
-	clearExpiredTimedBan func(context.Context, string, time.Time) (bool, error),
-) error {
-	// Iterate through all Kratos identities to find expired bans.
-	// User data (including ban status) is stored in Kratos, not in a local DB table.
-	now := time.Now().UTC()
+// handleUnbanExpired pages through every identity and clears each timed ban
+// whose expiry passed. Ban state lives in the Kratos identity, not in a
+// table. A failed clear is logged and the scan goes on; the next run retries
+// it.
+func (h *Handlers) handleUnbanExpired(ctx context.Context, now time.Time) error {
 	var unbannedCount int
 
 	page := 0
 	perPage := 100
 	for {
-		identities, _, err := h.kratosClient.ListIdentities(ctx, page, perPage)
+		identities, _, err := h.identities.ListIdentities(ctx, page, perPage)
 		if err != nil {
 			return fmt.Errorf("failed to list identities: %w", err)
 		}
@@ -165,7 +112,7 @@ func (h *Handlers) handleUnbanExpiredWith(
 				continue // not yet expired
 			}
 
-			cleared, err := clearExpiredTimedBan(ctx, identity.ID, now)
+			cleared, err := h.timedBans.ClearExpiredTimedBan(ctx, identity.ID, now)
 			if err != nil {
 				slog.ErrorContext(ctx, "Expired timed ban clear failed", append(failurecause.Args(err), "user_id", identity.ID)...)
 				continue
