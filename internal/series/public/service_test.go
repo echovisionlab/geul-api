@@ -11,7 +11,7 @@ import (
 
 type recordingReader struct {
 	listPage       Page
-	getItem        *openv1.Series
+	getItem        Series
 	acceptLanguage string
 	getIDOrSlug    string
 }
@@ -21,7 +21,7 @@ func (r *recordingReader) List(_ context.Context, query ListSeriesQuery) (Page, 
 	return r.listPage, nil
 }
 
-func (r *recordingReader) Get(_ context.Context, idOrSlug, acceptLanguage string) (*openv1.Series, error) {
+func (r *recordingReader) Get(_ context.Context, idOrSlug, acceptLanguage string) (Series, error) {
 	r.getIDOrSlug = idOrSlug
 	r.acceptLanguage = acceptLanguage
 	return r.getItem, nil
@@ -29,7 +29,7 @@ func (r *recordingReader) Get(_ context.Context, idOrSlug, acceptLanguage string
 
 func TestSeriesServiceListProjectsAdapterPagination(t *testing.T) {
 	reader := &recordingReader{listPage: Page{
-		Items:  []*openv1.Series{{Id: "series-id"}},
+		Items:  []Series{{ID: "series-id", Localization: Localization{AvailableLocales: []string{"en", "ko"}}}},
 		Total:  3,
 		Limit:  1,
 		Offset: 1,
@@ -42,12 +42,14 @@ func TestSeriesServiceListProjectsAdapterPagination(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "ko", reader.acceptLanguage)
 	require.Len(t, response.Msg.Series, 1)
+	require.Equal(t, []string{"en", "ko"}, response.Msg.Series[0].GetLocalizationInfo().GetAvailableLocales())
+	require.Nil(t, response.Msg.Series[0].OgAsset)
 	require.EqualValues(t, 3, response.Msg.Pagination.Total)
 	require.True(t, response.Msg.Pagination.HasMore)
 }
 
 func TestSeriesServiceGetValidatesAndDelegatesSlug(t *testing.T) {
-	reader := &recordingReader{getItem: &openv1.Series{Id: "series-id"}}
+	reader := &recordingReader{getItem: Series{ID: "series-id"}}
 	service := newTestHandler(t, reader)
 
 	_, err := service.Get(t.Context(), connect.NewRequest(&openv1.GetSeriesRequest{}))

@@ -6,8 +6,6 @@ import (
 	"sort"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -25,78 +23,88 @@ type ReorderSeriesPostsCommand struct {
 }
 
 func (s *Service) AssignPostToSeries(ctx context.Context, command AssignPostToSeriesCommand) error {
-	observed, err := s.postMembership.ReadSeriesRelation(ctx, s.db, command.PostID)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	var observed *string
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		observed, err = store.Posts().SeriesOf(ctx, command.PostID)
+		return err
+	}); err != nil {
+		if errors.Is(err, ErrPostNotFound) {
 			return domainerr.ResourceNotFound("post", command.PostID)
 		}
 		return err
 	}
 	var audits seriesAudits
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
 		// Both Series roots are locked in ID order before the target's
 		// manage check.
-		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
-			if err := lockSeriesAssignmentRoots(ctx, tx, command.SeriesID, observed); err != nil {
+		Access: mutation.Locked(func(ctx context.Context, store Store, require mutation.Require) error {
+			if err := lockSeriesAssignmentRoots(ctx, store, command.SeriesID, observed); err != nil {
 				return err
 			}
-			return requireSeriesPermissionAndLock(ctx, tx, require, command.SeriesID, policyv1.PostSeries.Manage)
+			return requireSeriesPermissionAndLock(ctx, store, require, command.SeriesID, policyv1.PostSeries.Manage)
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) {
-			return struct{}{}, s.assignLockedPost(ctx, tx, &audits, command.PostID, command.SeriesID, observed)
+		Change: func(ctx context.Context, store Store) (struct{}, error) {
+			return struct{}{}, assignLockedPost(ctx, store, &audits, command.PostID, command.SeriesID, observed, true)
 		},
 		Audit: func(struct{}) mutation.Audit { return audits.audit() },
 	})
 	return err
 }
 
-// assignPostToSeriesAfterSeriesPermissionWithDB assigns a Post inside a
-// mutation that already holds the Series manage decision.
-func (s *Service) assignPostToSeriesAfterSeriesPermissionWithDB(
+// assignPostToSeriesAfterSeriesPermission assigns a Post inside an AI
+// document mutation that already holds the Series manage decision. That
+// mutation advances the target document once for the whole batch, against
+// the revision it locked, so the assignment leaves the target document to
+// it.
+func assignPostToSeriesAfterSeriesPermission(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	audits *seriesAudits,
 	postID string,
 	seriesID string,
 	observedSeriesID *string,
 ) error {
-	if err := lockSeriesAssignmentRoots(ctx, tx, seriesID, observedSeriesID); err != nil {
+	if err := lockSeriesAssignmentRoots(ctx, store, seriesID, observedSeriesID); err != nil {
 		return err
 	}
-	return s.assignLockedPost(ctx, tx, audits, postID, seriesID, observedSeriesID)
+	return assignLockedPost(ctx, store, audits, postID, seriesID, observedSeriesID, false)
 }
 
 // assignLockedPost moves a Post into seriesID once both Series roots are
 // locked: the Post must still be where it was observed and its owner must
-// allow the edit.
-func (s *Service) assignLockedPost(
+// allow the edit. The document of the Series it left always advances; the
+// target document only when advanceTarget is set.
+func assignLockedPost(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	audits *seriesAudits,
 	postID string,
 	seriesID string,
 	observedSeriesID *string,
+	advanceTarget bool,
 ) error {
-	currentSeriesID, err := lockPostSeriesRelation(ctx, tx, s.postMembership, postID)
+	posts := store.Posts()
+	currentSeriesID, err := lockPostSeriesRelation(ctx, posts, postID)
 	if err != nil {
 		return err
 	}
-	if !sameOptionalString(currentSeriesID, observedSeriesID) {
+	if !equalOptionalString(currentSeriesID, observedSeriesID) {
 		return domainerr.Precondition("post series relation changed; retry")
 	}
-	if err := s.postAccess.RequireLockedEdit(ctx, tx, s.spiceDB, postID); err != nil {
+	if err := posts.RequireLockedEdit(ctx, postID); err != nil {
 		return err
 	}
-	if sameOptionalString(currentSeriesID, &seriesID) {
+	if equalOptionalString(currentSeriesID, &seriesID) {
 		return nil
 	}
-	nextOrder, err := s.postMembership.NextSeriesOrder(ctx, tx, seriesID)
+	nextOrder, err := posts.NextOrder(ctx, seriesID)
 	if err != nil {
 		return err
 	}
 	now := dbtime.Now()
-	if err := s.postMembership.AssignSeries(ctx, tx, postID, seriesID, nextOrder, now); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := posts.Assign(ctx, postID, seriesID, nextOrder, now); err != nil {
+		if errors.Is(err, ErrPostNotFound) {
 			return domainerr.ResourceNotFound("post", postID)
 		}
 		return err
@@ -106,26 +114,30 @@ func (s *Service) assignLockedPost(
 		previousSeriesID = *currentSeriesID
 	}
 	audits.membership(seriesID, postID, previousSeriesID, seriesID)
+	if currentSeriesID != nil {
+		if err := compactSeriesPostOrders(ctx, posts, *currentSeriesID, now); err != nil {
+			return err
+		}
+	}
+	if advanceTarget {
+		if err := advanceSeriesContentDocumentForMutation(ctx, store, seriesID, time.Now().UTC()); err != nil {
+			return err
+		}
+	}
 	if currentSeriesID == nil {
-		return advanceSeriesContentDocumentForMutation(ctx, tx, seriesID, time.Now().UTC())
+		return nil
 	}
-	if err := compactSeriesPostOrders(ctx, tx, s.postMembership, *currentSeriesID, now); err != nil {
-		return err
-	}
-	if err := advanceSeriesContentDocumentForMutation(ctx, tx, seriesID, time.Now().UTC()); err != nil {
-		return err
-	}
-	return advanceSeriesContentDocumentForMutation(ctx, tx, *currentSeriesID, time.Now().UTC())
+	return advanceSeriesContentDocumentForMutation(ctx, store, *currentSeriesID, time.Now().UTC())
 }
 
-func lockSeriesAssignmentRoots(ctx context.Context, tx *gorm.DB, targetSeriesID string, currentSeriesID *string) error {
+func lockSeriesAssignmentRoots(ctx context.Context, store Store, targetSeriesID string, currentSeriesID *string) error {
 	seriesIDs := []string{targetSeriesID}
 	if currentSeriesID != nil && *currentSeriesID != targetSeriesID {
 		seriesIDs = append(seriesIDs, *currentSeriesID)
 	}
 	sort.Strings(seriesIDs)
 	for _, seriesID := range seriesIDs {
-		if err := lockSeriesRoot(ctx, tx, seriesID); err != nil {
+		if err := lockSeriesRoot(ctx, store, seriesID); err != nil {
 			return err
 		}
 	}
@@ -134,10 +146,11 @@ func lockSeriesAssignmentRoots(ctx context.Context, tx *gorm.DB, targetSeriesID 
 
 func (s *Service) UnassignPostFromSeries(ctx context.Context, command UnassignPostFromSeriesCommand) error {
 	var audits seriesAudits
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
 		Access: lockedSeries(command.SeriesID, policyv1.PostSeries.Manage),
-		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) {
-			postSeriesID, err := lockPostSeriesRelation(ctx, tx, s.postMembership, command.PostID)
+		Change: func(ctx context.Context, store Store) (struct{}, error) {
+			posts := store.Posts()
+			postSeriesID, err := lockPostSeriesRelation(ctx, posts, command.PostID)
 			if err != nil {
 				return struct{}{}, err
 			}
@@ -145,14 +158,14 @@ func (s *Service) UnassignPostFromSeries(ctx context.Context, command UnassignPo
 				return struct{}{}, domainerr.InvalidField("post_id", "must belong to the requested series")
 			}
 			now := dbtime.Now()
-			if err := seriesRelationError(s.postMembership.ClearSeries(ctx, tx, command.PostID, command.SeriesID, now)); err != nil {
+			if err := seriesRelationError(posts.Clear(ctx, command.PostID, command.SeriesID, now)); err != nil {
 				return struct{}{}, err
 			}
-			if err := compactSeriesPostOrders(ctx, tx, s.postMembership, command.SeriesID, now); err != nil {
+			if err := compactSeriesPostOrders(ctx, posts, command.SeriesID, now); err != nil {
 				return struct{}{}, err
 			}
 			audits.membership(command.SeriesID, command.PostID, command.SeriesID, "")
-			return struct{}{}, advanceSeriesContentDocumentForMutation(ctx, tx, command.SeriesID, time.Now().UTC())
+			return struct{}{}, advanceSeriesContentDocumentForMutation(ctx, store, command.SeriesID, time.Now().UTC())
 		},
 		Audit: func(struct{}) mutation.Audit { return audits.audit() },
 	})
@@ -165,13 +178,14 @@ func (s *Service) ReorderSeriesPosts(ctx context.Context, command ReorderSeriesP
 		return err
 	}
 	var audits seriesAudits
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
 		Access: lockedSeries(command.SeriesID, policyv1.PostSeries.Manage),
-		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) {
-			if err := lockSeriesOrderPosts(ctx, tx, s.postMembership, postIDs); err != nil {
+		Change: func(ctx context.Context, store Store) (struct{}, error) {
+			posts := store.Posts()
+			if err := lockSeriesOrderPosts(ctx, posts, postIDs); err != nil {
 				return struct{}{}, err
 			}
-			currentPostIDs, err := s.postMembership.SeriesPostIDs(ctx, tx, command.SeriesID)
+			currentPostIDs, err := posts.SeriesPostIDs(ctx, command.SeriesID)
 			if err != nil {
 				return struct{}{}, err
 			}
@@ -181,11 +195,11 @@ func (s *Service) ReorderSeriesPosts(ctx context.Context, command ReorderSeriesP
 			if sameSeriesPostOrder(currentPostIDs, postIDs) {
 				return struct{}{}, nil
 			}
-			if err := orderSeriesPosts(ctx, tx, s.postMembership, command.SeriesID, postIDs, dbtime.Now()); err != nil {
+			if err := orderSeriesPosts(ctx, posts, command.SeriesID, postIDs, dbtime.Now()); err != nil {
 				return struct{}{}, err
 			}
 			audits.order(command.SeriesID, postIDs)
-			return struct{}{}, advanceSeriesContentDocumentForMutation(ctx, tx, command.SeriesID, time.Now().UTC())
+			return struct{}{}, advanceSeriesContentDocumentForMutation(ctx, store, command.SeriesID, time.Now().UTC())
 		},
 		Audit: func(struct{}) mutation.Audit { return audits.audit() },
 	})
@@ -203,5 +217,3 @@ func sameSeriesPostOrder(left, right []string) bool {
 	}
 	return true
 }
-
-// Helper methods

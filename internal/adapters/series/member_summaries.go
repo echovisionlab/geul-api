@@ -6,7 +6,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/member"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	seriesdomain "github.com/echovisionlab/geul-api/internal/series"
 )
 
 // MemberSummaries adapts Member-owned summaries to Series manager projections.
@@ -25,20 +25,20 @@ func NewMemberSummaries(db *gorm.DB, cdnDomain string) *MemberSummaries {
 func (a *MemberSummaries) LoadSeriesManagers(
 	ctx context.Context,
 	memberIDs []string,
-) (map[string]*managev1.SeriesManager, error) {
+) (map[string]seriesdomain.ManagerSummary, error) {
 	summaries, err := member.LoadSummaries(ctx, a.db, a.cdnDomain, memberIDs)
 	if err != nil {
 		return nil, err
 	}
-	result := make(map[string]*managev1.SeriesManager, len(summaries))
+	result := make(map[string]seriesdomain.ManagerSummary, len(summaries))
 	for memberID, summary := range summaries {
 		if summary == nil {
 			continue
 		}
-		result[memberID] = &managev1.SeriesManager{
-			MemberId:    memberID,
-			Nickname:    summary.GetNickname(),
-			AvatarAsset: summary.AvatarAsset,
+		result[memberID] = seriesdomain.ManagerSummary{
+			MemberID: memberID,
+			Nickname: summary.GetNickname(),
+			Avatar:   AssetFromRef(summary.AvatarAsset),
 		}
 	}
 	return result, nil

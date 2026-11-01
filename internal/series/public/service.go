@@ -6,27 +6,45 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
+	"github.com/echovisionlab/geul-api/internal/series"
 )
+
+// Localization is how a public Series' copy was localized for the request.
+type Localization struct {
+	RequestedLocale string
+	DisplayedLocale string
+	SourceLocale    string
+	IsFallback      bool
+	IsOriginal      bool
+	// FallbackReason is numbered as the API's LocalizationFallbackReason.
+	FallbackReason   int32
+	AvailableLocales []string
+}
+
+// Series is a published Series as public readers see it.
+type Series struct {
+	ID                 string
+	Title              string
+	Slug               string
+	Description        *string
+	PostCount          int32
+	OgAsset            *series.Asset
+	FeaturedImageAsset *series.Asset
+	Localization       Localization
+}
 
 // Page is the public Series query result after storage filtering and
 // projection have been completed by the concrete adapter.
 type Page struct {
-	Items  []*openv1.Series
+	Items  []Series
 	Total  int32
 	Limit  int32
 	Offset int32
 }
 
-// ListSeriesQuery lists published Series. A zero Limit reads the default
-// page; AcceptLanguage picks their localization.
-type ListSeriesQuery struct {
-	Limit          int32
-	Offset         int32
-	Filters        []*commonv1.FilterSpec
-	Sorts          []*commonv1.SortSpec
-	AcceptLanguage string
+// HasMore reports whether Series follow the page.
+func (p Page) HasMore() bool {
+	return p.Offset+int32(len(p.Items)) < p.Total
 }
 
 // GetSeriesQuery reads one published Series by ID or slug.
@@ -38,7 +56,7 @@ type GetSeriesQuery struct {
 // Reader owns the concrete public Series query and localization projection.
 type Reader interface {
 	List(context.Context, ListSeriesQuery) (Page, error)
-	Get(context.Context, string, string) (*openv1.Series, error)
+	Get(context.Context, string, string) (Series, error)
 }
 
 // Service holds the public Series use cases.
@@ -54,30 +72,14 @@ func NewService(reader Reader) (*Service, error) {
 	return &Service{reader: reader}, nil
 }
 
-func (s *Service) ListSeries(ctx context.Context, query ListSeriesQuery) (*openv1.ListSeriesResponse, error) {
-	page, err := s.reader.List(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	return &openv1.ListSeriesResponse{
-		Series: page.Items,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   page.Total,
-			Limit:   page.Limit,
-			Offset:  page.Offset,
-			HasMore: page.Offset+int32(len(page.Items)) < page.Total,
-		},
-	}, nil
+func (s *Service) ListSeries(ctx context.Context, query ListSeriesQuery) (Page, error) {
+	return s.reader.List(ctx, query)
 }
 
-func (s *Service) GetSeries(ctx context.Context, query GetSeriesQuery) (*openv1.GetSeriesResponse, error) {
+func (s *Service) GetSeries(ctx context.Context, query GetSeriesQuery) (Series, error) {
 	idOrSlug := strings.TrimSpace(query.IDOrSlug)
 	if idOrSlug == "" {
-		return nil, domainerr.Required("slug")
+		return Series{}, domainerr.Required("slug")
 	}
-	item, err := s.reader.Get(ctx, idOrSlug, query.AcceptLanguage)
-	if err != nil {
-		return nil, err
-	}
-	return &openv1.GetSeriesResponse{Series: item}, nil
+	return s.reader.Get(ctx, idOrSlug, query.AcceptLanguage)
 }

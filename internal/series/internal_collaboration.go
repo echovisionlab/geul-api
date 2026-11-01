@@ -2,34 +2,25 @@ package series
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
-
-	"gorm.io/gorm"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
 
-// PostSeriesCollaborationCheckpointFence authorizes the contributors of a
-// collaboration save inside its transaction.
-type PostSeriesCollaborationCheckpointFence interface {
-	RequireCurrentContributors(
-		context.Context,
-		*gorm.DB,
-		intrav1.CollaborationResourceType,
-		string,
-		[]string,
-	) error
+// LocaleFields are the locale copy fields of a collaboration room.
+type LocaleFields struct {
+	Title   *string
+	Summary *string
 }
 
 // LoadPostSeriesDocumentQuery reads one resident Post Series source or
@@ -37,6 +28,17 @@ type PostSeriesCollaborationCheckpointFence interface {
 type LoadPostSeriesDocumentQuery struct {
 	SeriesID string
 	Locale   string
+}
+
+// RoomDocument is the state of a collaboration room.
+type RoomDocument struct {
+	SourceLocale     string
+	Locale           string
+	LocaleExists     bool
+	Source           LocaleFields
+	Requested        LocaleFields
+	DocumentRevision string
+	TargetRevision   *string
 }
 
 // SavePostSeriesDocumentCommand saves one room's locale fields.
@@ -47,29 +49,36 @@ type SavePostSeriesDocumentCommand struct {
 	Locale                   string
 	ExpectedDocumentRevision string
 	ExpectedTargetRevision   *string
-	Requested                *intrav1.PostSeriesLocaleFields
+	Requested                *LocaleFields
 	ContributorMemberIDs     []string
 }
 
-func (s *Service) LoadPostSeriesDocument(ctx context.Context, query LoadPostSeriesDocumentQuery) (*intrav1.LoadPostSeriesDocumentResponse, error) {
+// RoomSave is the outcome of a collaboration save.
+type RoomSave struct {
+	Locale           string
+	DocumentRevision string
+	TargetRevision   *string
+}
+
+func (s *Service) LoadPostSeriesDocument(ctx context.Context, query LoadPostSeriesDocumentQuery) (RoomDocument, error) {
 	locale, err := canonicalPostSeriesRoomLocale(query.Locale)
 	if err != nil {
-		return nil, err
+		return RoomDocument{}, err
 	}
 	if _, err := parseCanonicalPostSeriesUUID(query.SeriesID, "series_id"); err != nil {
-		return nil, err
+		return RoomDocument{}, err
 	}
 	var state postSeriesAIDocumentState
 	// editor-collab reads as itself; the room's rows are read under their
 	// locks so the revisions agree with the fields.
-	if err := s.readLocked(ctx, mutation.Locked(func(context.Context, *gorm.DB, mutation.Require) error { return nil }), func(ctx context.Context, tx *gorm.DB) error {
+	if err := s.readLocked(ctx, mutation.Locked(func(context.Context, Store, mutation.Require) error { return nil }), func(ctx context.Context, store Store) error {
 		var err error
-		state, err = s.loadAIDocumentState(ctx, tx, query.SeriesID, locale)
+		state, err = loadAIDocumentState(ctx, store, query.SeriesID, locale)
 		return err
 	}); err != nil {
-		return nil, err
+		return RoomDocument{}, err
 	}
-	return &intrav1.LoadPostSeriesDocumentResponse{
+	return RoomDocument{
 		SourceLocale:     state.root.SourceLocale,
 		Locale:           locale,
 		LocaleExists:     state.localeExists,
@@ -88,33 +97,33 @@ type postSeriesRoomSave struct {
 	titleChanged     bool
 }
 
-func (s *Service) SavePostSeriesDocument(ctx context.Context, command SavePostSeriesDocumentCommand) (*intrav1.SavePostSeriesDocumentResponse, error) {
+func (s *Service) SavePostSeriesDocument(ctx context.Context, command SavePostSeriesDocumentCommand) (RoomSave, error) {
 	locale, err := canonicalPostSeriesRoomLocale(command.Locale)
 	if err != nil {
-		return nil, err
+		return RoomSave{}, err
 	}
 	if _, err := parseCanonicalPostSeriesUUID(command.SeriesID, "series_id"); err != nil {
-		return nil, err
+		return RoomSave{}, err
 	}
 	expectedRevision, err := parseCanonicalPostSeriesUUID(command.ExpectedDocumentRevision, "expected_document_revision")
 	if err != nil {
-		return nil, err
+		return RoomSave{}, err
 	}
 	if command.Requested == nil {
-		return nil, domainerr.Required("requested")
+		return RoomSave{}, domainerr.Required("requested")
 	}
 	contributor, err := requirePostSeriesCollaborationContributor(command.ContributorMemberIDs)
 	if err != nil {
-		return nil, err
+		return RoomSave{}, err
 	}
 
 	var state postSeriesAIDocumentState
-	saved, err := mutation.Run(ctx, s.mutations, mutation.Spec[postSeriesRoomSave]{
+	saved, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[postSeriesRoomSave, Store]{
 		// editor-collab calls as itself: the room is locked, then its
 		// contributors' current permission authorizes the save.
-		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, _ mutation.Require) error {
+		Access: mutation.Locked(func(ctx context.Context, store Store, _ mutation.Require) error {
 			var err error
-			if state, err = s.loadAIDocumentState(ctx, tx, command.SeriesID, locale); err != nil {
+			if state, err = loadAIDocumentState(ctx, store, command.SeriesID, locale); err != nil {
 				return err
 			}
 			if state.contentRevision != expectedRevision {
@@ -123,13 +132,10 @@ func (s *Service) SavePostSeriesDocument(ctx context.Context, command SavePostSe
 					"Post Series document changed; reload before saving", domainerr.CollaborationRevisions{Document: state.contentRevision.String()},
 				)
 			}
-			return s.checkpoints.RequireCurrentContributors(
-				ctx, tx, intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_POST_SERIES,
-				command.SeriesID, command.ContributorMemberIDs,
-			)
+			return store.RequireCurrentContributors(ctx, command.SeriesID, command.ContributorMemberIDs)
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (postSeriesRoomSave, error) {
-			return s.savePostSeriesRoom(ctx, tx, state, command, locale, dbtime.Now())
+		Change: func(ctx context.Context, store Store) (postSeriesRoomSave, error) {
+			return savePostSeriesRoom(ctx, store, state, command, locale, dbtime.Now())
 		},
 		Audit: func(saved postSeriesRoomSave) mutation.Audit {
 			if !saved.changed {
@@ -141,19 +147,17 @@ func (s *Service) SavePostSeriesDocument(ctx context.Context, command SavePostSe
 		},
 	})
 	if err != nil {
-		return nil, err
+		return RoomSave{}, err
 	}
-	return &intrav1.SavePostSeriesDocumentResponse{
-		Locale: locale, DocumentRevision: saved.documentRevision, TargetRevision: saved.targetRevision,
-	}, nil
+	return RoomSave{Locale: locale, DocumentRevision: saved.documentRevision, TargetRevision: saved.targetRevision}, nil
 }
 
 // savePostSeriesRoom writes the room's requested locale fields: the source
 // row and its content document revision, or the target row and its derived
 // revision.
-func (s *Service) savePostSeriesRoom(
+func savePostSeriesRoom(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	state postSeriesAIDocumentState,
 	command SavePostSeriesDocumentCommand,
 	locale string,
@@ -170,54 +174,81 @@ func (s *Service) savePostSeriesRoom(
 	current := state.locale
 	saved := postSeriesRoomSave{
 		documentRevision: string(state.documentRevision),
-		changed:          current == nil || !nullableStringEqual(current.Title, title) || !nullableStringEqual(current.Summary, summary),
-		titleChanged:     current == nil || !nullableStringEqual(current.Title, title),
+		changed:          current == nil || !equalOptionalString(current.Title, title) || !equalOptionalString(current.Summary, summary),
+		titleChanged:     current == nil || !equalOptionalString(current.Title, title),
 	}
+	room := postSeriesRoom{store: store, state: state, seriesID: command.SeriesID, locale: locale, title: title, summary: summary}
 	if isSource {
-		if command.ExpectedTargetRevision != nil {
-			return postSeriesRoomSave{}, domainerr.InvalidField("expected_target_revision", "source locale has no target revision")
-		}
-		if saved.changed {
-			if err := updatePostSeriesLocaleRow(ctx, tx, command.SeriesID, locale, title, summary, now); err != nil {
-				return postSeriesRoomSave{}, err
-			}
-			next, err := advanceSeriesContentDocument(ctx, tx, command.SeriesID, state.contentDocumentID, state.contentRevision, now)
-			if err != nil {
-				return postSeriesRoomSave{}, err
-			}
-			saved.documentRevision = next.String()
-		}
+		err = room.saveSource(ctx, command.ExpectedTargetRevision, now, &saved)
 	} else {
-		if err := translation.ValidateExpectedTargetRevision(
-			command.ExpectedTargetRevision, stringPostSeriesRevision(state.targetRevision), true,
-		); err != nil {
-			conflict := translation.WithDocumentRevision(err, state.contentRevision.String())
-			return postSeriesRoomSave{}, domainerr.CollaborationConflict(
-				intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-				"Post Series target changed; reload before saving", domainerr.CollaborationRevisionsOf(conflict),
-			)
-		}
-		updatedAt := current.UpdatedAt
-		if saved.changed {
-			updatedAt = translation.NextTargetUpdatedAt(now, current.UpdatedAt)
-			if err := updatePostSeriesLocaleRow(ctx, tx, command.SeriesID, locale, title, summary, updatedAt); err != nil {
-				return postSeriesRoomSave{}, err
-			}
-		}
-		derived, err := translation.DeriveTargetRevision(translation.TargetRevisionFacts{
-			LocaleExists: true, DocumentRevision: saved.documentRevision, LocaleUpdatedAt: &updatedAt,
-		})
-		if err != nil {
-			return postSeriesRoomSave{}, err
-		}
-		saved.targetRevision = &derived
+		err = room.saveTarget(ctx, command.ExpectedTargetRevision, now, &saved)
+	}
+	if err != nil {
+		return postSeriesRoomSave{}, err
 	}
 	if saved.changed && saved.titleChanged {
-		if _, err := s.ogRefresh.RequestCurrent(ctx, tx, command.SeriesID, locale, false, "series_collaboration_title_updated"); err != nil {
+		if _, err := store.RequestOG(ctx, command.SeriesID, locale, false, "series_collaboration_title_updated"); err != nil {
 			return postSeriesRoomSave{}, err
 		}
 	}
 	return saved, nil
+}
+
+// postSeriesRoom is the locked room a save writes and the copy it writes.
+type postSeriesRoom struct {
+	store          Store
+	state          postSeriesAIDocumentState
+	seriesID       string
+	locale         string
+	title, summary *string
+}
+
+// saveSource writes the source row and advances the content document.
+func (r postSeriesRoom) saveSource(ctx context.Context, expectedTarget *string, now time.Time, saved *postSeriesRoomSave) error {
+	if expectedTarget != nil {
+		return domainerr.InvalidField("expected_target_revision", "source locale has no target revision")
+	}
+	if !saved.changed {
+		return nil
+	}
+	if err := updatePostSeriesLocaleRow(ctx, r.store, r.seriesID, r.locale, r.title, r.summary, now); err != nil {
+		return err
+	}
+	next, err := advanceSeriesContentDocument(ctx, r.store, r.seriesID, r.state.contentDocumentID, r.state.contentRevision, now)
+	if err != nil {
+		return err
+	}
+	saved.documentRevision = next.String()
+	return nil
+}
+
+// saveTarget checks the target revision, writes the target row and derives
+// its next revision.
+func (r postSeriesRoom) saveTarget(ctx context.Context, expectedTarget *string, now time.Time, saved *postSeriesRoomSave) error {
+	if err := translation.ValidateExpectedTargetRevision(
+		expectedTarget, stringPostSeriesRevision(r.state.targetRevision), true,
+	); err != nil {
+		conflict := translation.WithDocumentRevision(err, r.state.contentRevision.String())
+		return domainerr.CollaborationConflict(
+			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
+			"Post Series target changed; reload before saving", domainerr.CollaborationRevisionsOf(conflict),
+		)
+	}
+	updatedAt := r.state.locale.UpdatedAt
+	if saved.changed {
+		updatedAt = translation.NextTargetUpdatedAt(now, r.state.locale.UpdatedAt)
+		if err := updatePostSeriesLocaleRow(ctx, r.store, r.seriesID, r.locale, r.title, r.summary, updatedAt); err != nil {
+			return err
+		}
+	}
+	derived, err := translation.DeriveTargetRevision(translation.TargetRevisionFacts{
+		LocaleExists: true, DocumentRevision: saved.documentRevision, LocaleUpdatedAt: &updatedAt,
+	})
+	if err != nil {
+		return err
+	}
+	saved.targetRevision = &derived
+	return nil
 }
 
 func canonicalPostSeriesRoomLocale(value string) (string, error) {
@@ -248,19 +279,19 @@ func requirePostSeriesCollaborationContributor(values []string) (string, error) 
 	return values[0], nil
 }
 
-func postSeriesLocaleFields(title, summary *string) *intrav1.PostSeriesLocaleFields {
-	return &intrav1.PostSeriesLocaleFields{Title: cloneString(title), Summary: cloneString(summary)}
+func postSeriesLocaleFields(title, summary *string) LocaleFields {
+	return LocaleFields{Title: cloneString(title), Summary: cloneString(summary)}
 }
 
-func postSeriesRequestedLocaleFields(value *model.SeriesTranslation) *intrav1.PostSeriesLocaleFields {
+func postSeriesRequestedLocaleFields(value *Translation) LocaleFields {
 	if value == nil {
-		return &intrav1.PostSeriesLocaleFields{}
+		return LocaleFields{}
 	}
 	return postSeriesLocaleFields(value.Title, value.Summary)
 }
 
 func canonicalPostSeriesLocaleMutation(
-	requested *intrav1.PostSeriesLocaleFields,
+	requested *LocaleFields,
 	source bool,
 ) (*string, *string, error) {
 	title := cloneString(requested.Title)
@@ -277,23 +308,16 @@ func canonicalPostSeriesLocaleMutation(
 
 func updatePostSeriesLocaleRow(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	seriesID, locale string,
 	title, summary *string,
 	now time.Time,
 ) error {
-	result := tx.WithContext(ctx).Table("series_translation").
-		Where("entity_id = ? AND locale = ?", seriesID, locale).
-		Updates(structured.Fields{
-			"title": title, "summary": summary, "content_text": summary, "updated_at": now,
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
+	err := store.UpdateTranslation(ctx, seriesID, locale, title, summary, summary, now)
+	if errors.Is(err, ErrTranslationNotFound) {
 		return domainerr.Precondition("Post Series locale changed; reload before saving")
 	}
-	return nil
+	return err
 }
 
 func stringPostSeriesRevision(value *core.Revision) string {

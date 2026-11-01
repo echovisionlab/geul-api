@@ -9,9 +9,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/email"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/form"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/series"
+	seriespostgres "github.com/echovisionlab/geul-api/internal/series/postgres"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -102,7 +104,9 @@ func (testTranslationDomains) RequireJobRead(
 ) error {
 	if entityType == "series" {
 		return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			return series.RequireViewAndLockWithDB(ctx, tx, spiceDB, entityID)
+			return series.RequireViewAndLock(ctx, seriespostgres.NewTranslationStore(tx), func(can policyv1.Can) error {
+				return identitystate.RequireFreshCan(ctx, tx, identitystate.PostgresFence{}, spiceDB, can)
+			}, entityID)
 		})
 	}
 	factories := map[string]func(string) (policyv1.Can, error){

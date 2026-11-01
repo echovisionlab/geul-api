@@ -9,16 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -29,11 +22,23 @@ type TranslationInterchangeTarget struct {
 	Targets  map[string]translation.UnitResult
 }
 
+// InterchangeMode is how an imported target copy meets the stored one.
+type InterchangeMode int
+
+const (
+	// InterchangeModeUnknown is a mode the import did not name.
+	InterchangeModeUnknown InterchangeMode = iota
+	// InterchangeModePatch keeps stored units the import leaves out.
+	InterchangeModePatch
+	// InterchangeModeReplace drops stored units the import leaves out.
+	InterchangeModeReplace
+)
+
 type TranslationInterchangeMutation struct {
 	SeriesID         string
 	SourceLocale     string
 	TargetLocale     string
-	Mode             managev1.TranslationInterchangeMode
+	Mode             InterchangeMode
 	ExpectedRevision *string
 	Plan             *translation.ExtractionPlan
 	Targets          map[string]translation.UnitResult
@@ -50,14 +55,14 @@ type TranslationInterchangeResult struct {
 type seriesInterchangeState struct {
 	sourceLocale     string
 	documentRevision string
-	target           model.SeriesTranslation
+	target           Translation
 	exists           bool
 	revision         string
 }
 
 func (s *Service) LoadTranslationInterchangeTarget(
 	ctx context.Context,
-	tx *gorm.DB,
+	store TranslationStore,
 	seriesID string,
 	locale string,
 	plan *translation.ExtractionPlan,
@@ -65,7 +70,7 @@ func (s *Service) LoadTranslationInterchangeTarget(
 	if err := validateSeriesInterchangeIdentity(seriesID, locale, plan); err != nil {
 		return TranslationInterchangeTarget{}, err
 	}
-	state, err := loadSeriesInterchangeState(ctx, tx, seriesID, locale, false)
+	state, err := loadSeriesInterchangeState(ctx, store, seriesID, locale, false)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}
@@ -85,17 +90,17 @@ func (s *Service) LoadTranslationInterchangeTarget(
 // unavailable to this target-only XLIFF seam.
 func (s *Service) ApplyTranslationInterchange(
 	ctx context.Context,
-	tx *gorm.DB,
+	store TranslationStore,
 	mutation TranslationInterchangeMutation,
 ) (TranslationInterchangeResult, error) {
-	if s == nil || tx == nil || s.auditWriter == nil {
+	if store == nil {
 		return TranslationInterchangeResult{}, domainerr.DependencyUnavailable("Post Series translation interchange")
 	}
 	if err := validateSeriesInterchangeMutation(mutation); err != nil {
 		return TranslationInterchangeResult{}, err
 	}
 	current, err := loadSeriesInterchangeState(
-		ctx, tx, mutation.SeriesID, mutation.TargetLocale, true,
+		ctx, store, mutation.SeriesID, mutation.TargetLocale, true,
 	)
 	if err != nil {
 		return TranslationInterchangeResult{}, err
@@ -112,12 +117,12 @@ func (s *Service) ApplyTranslationInterchange(
 	}
 	currentTargets := projectSeriesInterchangeTargets(mutation.Plan, current.target, current.exists)
 	desired := mergeSeriesInterchangeTargets(mutation.Mode, currentTargets, mutation.Targets)
-	title := seriesInterchangeTarget(desired, mutation.Plan, "title")
-	summary := seriesInterchangeTarget(desired, mutation.Plan, "summary")
-	contentText := seriesInterchangeTarget(desired, mutation.Plan, "content_text")
-	if current.exists && nullableStringEqual(current.target.Title, title) &&
-		nullableStringEqual(current.target.Summary, summary) &&
-		nullableStringEqual(current.target.ContentText, contentText) {
+	next := Translation{
+		Title:       seriesInterchangeTarget(desired, mutation.Plan, "title"),
+		Summary:     seriesInterchangeTarget(desired, mutation.Plan, "summary"),
+		ContentText: seriesInterchangeTarget(desired, mutation.Plan, "content_text"),
+	}
+	if current.exists && current.target.sameCopy(next) {
 		return TranslationInterchangeResult{Revision: current.revision}, nil
 	}
 
@@ -126,30 +131,12 @@ func (s *Service) ApplyTranslationInterchange(
 		return TranslationInterchangeResult{}, domainerr.InvalidField("now", "Post Series XLIFF mutation time is required")
 	}
 	affected := changedSeriesInterchangeHandles(currentTargets, mutation.Targets, mutation.UnitHandles)
-	operation := sharedtelemetry.AuditItemOperationCreated
-	if current.exists {
-		operation = sharedtelemetry.AuditItemOperationUpdated
-		now = translation.NextTargetUpdatedAt(now, current.target.UpdatedAt)
-		result := tx.WithContext(ctx).Table("series_translation").
-			Where("entity_id = ? AND locale = ?", mutation.SeriesID, mutation.TargetLocale).
-			Updates(structured.Fields{
-				"title": title, "summary": summary, "content_text": contentText, "updated_at": now,
-			})
-		if result.Error != nil {
-			return TranslationInterchangeResult{}, result.Error
-		}
-		if result.RowsAffected != 1 {
-			return TranslationInterchangeResult{}, domainerr.Precondition("Post Series translation changed; retry")
-		}
-	} else if err := tx.WithContext(ctx).Table("series_translation").Create(&model.SeriesTranslation{
-		EntityID: mutation.SeriesID, Locale: mutation.TargetLocale,
-		Title: title, Summary: summary, ContentText: contentText,
-		CreatedAt: now, UpdatedAt: now,
-	}).Error; err != nil {
+	operation, err := writeInterchangeTarget(ctx, store, mutation, current, next, now)
+	if err != nil {
 		return TranslationInterchangeResult{}, err
 	}
-	if err := domainaudit.AppendRequest(
-		ctx, tx, s.auditWriter, sharedtelemetry.AuditPostSeriesUpdated,
+	if err := store.AppendRequestAudit(
+		ctx, s.audit, sharedtelemetry.AuditPostSeriesUpdated,
 		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewPostSeriesLocaleContentAuditRecord(
 				metadata, mutation.SeriesID, mutation.TargetLocale, operation,
@@ -159,7 +146,7 @@ func (s *Service) ApplyTranslationInterchange(
 		return TranslationInterchangeResult{}, err
 	}
 	reloaded, err := loadSeriesInterchangeState(
-		ctx, tx, mutation.SeriesID, mutation.TargetLocale, true,
+		ctx, store, mutation.SeriesID, mutation.TargetLocale, true,
 	)
 	if err != nil {
 		return TranslationInterchangeResult{}, err
@@ -173,35 +160,51 @@ func (s *Service) ApplyTranslationInterchange(
 	}, nil
 }
 
+// writeInterchangeTarget updates or creates the target locale row and
+// returns the audited item operation.
+func writeInterchangeTarget(
+	ctx context.Context,
+	store TranslationStore,
+	mutation TranslationInterchangeMutation,
+	current seriesInterchangeState,
+	next Translation,
+	now time.Time,
+) (sharedtelemetry.AuditItemOperation, error) {
+	if !current.exists {
+		return sharedtelemetry.AuditItemOperationCreated, store.InsertTranslation(ctx, Translation{
+			SeriesID: mutation.SeriesID, Locale: mutation.TargetLocale,
+			Title: next.Title, Summary: next.Summary, ContentText: next.ContentText,
+			CreatedAt: now, UpdatedAt: now,
+		})
+	}
+	now = translation.NextTargetUpdatedAt(now, current.target.UpdatedAt)
+	err := store.UpdateTranslation(ctx, mutation.SeriesID, mutation.TargetLocale, next.Title, next.Summary, next.ContentText, now)
+	if errors.Is(err, ErrTranslationNotFound) {
+		return "", domainerr.Precondition("Post Series translation changed; retry")
+	}
+	return sharedtelemetry.AuditItemOperationUpdated, err
+}
+
 func loadSeriesInterchangeState(
 	ctx context.Context,
-	tx *gorm.DB,
+	store TranslationStore,
 	seriesID string,
 	locale string,
 	update bool,
 ) (seriesInterchangeState, error) {
-	if tx == nil {
-		return seriesInterchangeState{}, domainerr.DependencyUnavailable("Post Series translation interchange database")
-	}
-	contentDocument, err := loadSeriesContentDocumentState(ctx, tx, seriesID, update)
+	contentDocument, err := loadSeriesContentDocumentState(ctx, store, seriesID, update)
 	if err != nil {
 		return seriesInterchangeState{}, err
 	}
-	query := tx.WithContext(ctx).Table("series_translation").
-		Where("entity_id = ? AND locale = ?", seriesID, locale)
-	if update {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
-	}
-	var target model.SeriesTranslation
-	result := query.Take(&target)
-	if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return seriesInterchangeState{}, result.Error
+	target, err := store.Translation(ctx, seriesID, locale, update)
+	if err != nil && !errors.Is(err, ErrTranslationNotFound) {
+		return seriesInterchangeState{}, err
 	}
 	state := seriesInterchangeState{
 		sourceLocale:     contentDocument.SourceLocale,
 		documentRevision: contentDocument.Revision.String(),
 		target:           target,
-		exists:           result.Error == nil,
+		exists:           err == nil,
 	}
 	if state.exists {
 		revision, err := translation.DeriveTargetRevision(translation.TargetRevisionFacts{
@@ -236,8 +239,7 @@ func validateSeriesInterchangeMutation(mutation TranslationInterchangeMutation) 
 	if mutation.SourceLocale != mutation.Plan.SourceLocale || mutation.Targets == nil {
 		return domainerr.InvalidField("target", "Post Series XLIFF identity does not match the current plan")
 	}
-	if mutation.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH &&
-		mutation.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
+	if mutation.Mode != InterchangeModePatch && mutation.Mode != InterchangeModeReplace {
 		return domainerr.InvalidField("mode", "PATCH or REPLACE is required")
 	}
 	known := make(map[string]struct{}, len(mutation.Plan.Units))
@@ -278,7 +280,7 @@ func validateSeriesInterchangeMutation(mutation TranslationInterchangeMutation) 
 
 func projectSeriesInterchangeTargets(
 	plan *translation.ExtractionPlan,
-	row model.SeriesTranslation,
+	row Translation,
 	exists bool,
 ) map[string]translation.UnitResult {
 	targets := make(map[string]translation.UnitResult)
@@ -303,12 +305,12 @@ func projectSeriesInterchangeTargets(
 }
 
 func mergeSeriesInterchangeTargets(
-	mode managev1.TranslationInterchangeMode,
+	mode InterchangeMode,
 	current map[string]translation.UnitResult,
 	imported map[string]translation.UnitResult,
 ) map[string]translation.UnitResult {
 	result := make(map[string]translation.UnitResult, len(current)+len(imported))
-	if mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH {
+	if mode == InterchangeModePatch {
 		maps.Copy(result, current)
 	}
 	for handle, target := range imported {

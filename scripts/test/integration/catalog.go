@@ -63,6 +63,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/mq",
 			"./internal/postgreslock",
 			"./internal/scheduler",
+			"./internal/series/postgres",
 			"./internal/sharelink/postgres",
 			"./internal/telemetry",
 			"./internal/transcode",

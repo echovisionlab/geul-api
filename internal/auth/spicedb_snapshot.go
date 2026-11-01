@@ -32,6 +32,20 @@ func (snapshot RelationshipSnapshot) SubjectType() string     { return snapshot.
 func (snapshot RelationshipSnapshot) SubjectID() string       { return snapshot.subjectID }
 func (snapshot RelationshipSnapshot) SubjectRelation() string { return snapshot.subjectRelation }
 
+// SnapshotOf is the snapshot SpiceDB returns for the relationship a
+// generated mutation names, for a test double that stands in for
+// SnapshotResourceRelationshipDescriptors.
+func SnapshotOf(mutation policyv1.RelationshipMutation) RelationshipSnapshot {
+	return RelationshipSnapshot{
+		resourceType:    mutation.Resource().Type(),
+		resourceID:      mutation.Resource().ID(),
+		relation:        mutation.Relation(),
+		subjectType:     mutation.SubjectType(),
+		subjectID:       mutation.SubjectID(),
+		subjectRelation: mutation.SubjectRelation(),
+	}
+}
+
 // Matches reports whether the observed tuple has the exact key fixed by one
 // generated typed mutation. The mutation operation is intentionally ignored:
 // touch and delete describe the same relationship key.

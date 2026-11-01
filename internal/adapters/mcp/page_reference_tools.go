@@ -27,7 +27,7 @@ type FormReferenceDiscovery interface {
 }
 
 type PostSeriesReferenceDiscovery interface {
-	ListSeriesAdmin(context.Context, series.ListSeriesAdminQuery) (*managev1.ListSeriesAdminResponse, error)
+	ListSeriesAdmin(context.Context, series.ListSeriesAdminQuery) (series.SeriesPage, error)
 }
 
 type PageReferenceTools struct {
@@ -118,12 +118,10 @@ func (tools *PageReferenceTools) CallTool(ctx context.Context, _ mcpserver.Princ
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Pagination
-		for _, item := range response.Series {
-			if item != nil && item.Series != nil {
-				listed := item.Series
-				items = append(items, map[string]any{"id": listed.Id, "title": listed.Title, "slug": listed.Slug, "status": listed.Status, "source_locale": listed.SourceLocale, "post_count": item.PostCount})
-			}
+		responsePagination = &commonv1.PaginationResponse{Total: response.Total, HasMore: response.HasMore}
+		for _, item := range response.Items {
+			listed := item.Series
+			items = append(items, map[string]any{"id": listed.ID, "title": listed.Title, "slug": listed.Slug, "status": string(listed.Status), "source_locale": listed.SourceLocale, "post_count": item.PostCount})
 		}
 	}
 	output := map[string]any{"items": items, "total": responsePagination.GetTotal(), "limit": pagination.Limit, "offset": pagination.Offset, "has_more": responsePagination.GetHasMore()}

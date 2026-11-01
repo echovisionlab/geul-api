@@ -3,10 +3,6 @@
 package public_test
 
 import (
-	"context"
-	"flag"
-	"fmt"
-	"os"
 	"testing"
 
 	"gorm.io/gorm"
@@ -14,21 +10,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testutil"
 )
 
-func TestMain(m *testing.M) {
-	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "start public Series integration suite:", err)
-		os.Exit(1)
-	}
-	testutil.ActivateOryIntegrationSuite(suite)
-	code := m.Run()
-	testutil.DeactivateOryIntegrationSuite(suite)
-	if closeErr := suite.Close(); closeErr != nil && code == 0 {
-		fmt.Fprintln(os.Stderr, "close public Series integration suite:", closeErr)
-		code = 1
-	}
-	os.Exit(code)
+// newPublicIntegrationDB is a PostgreSQL database with the app schema and
+// the Kratos stub the Post author seed needs: the public reader is SQL over
+// Series, Post and asset rows only.
+func newPublicIntegrationDB(t *testing.T) *gorm.DB {
+	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 }
-
-func newPublicIntegrationDB(t *testing.T) *gorm.DB { return testutil.NewIntegrationDB(t) }

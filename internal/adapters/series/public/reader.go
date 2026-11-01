@@ -6,6 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
+	seriesadapter "github.com/echovisionlab/geul-api/internal/adapters/series"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -13,7 +14,6 @@ import (
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	seriespublic "github.com/echovisionlab/geul-api/internal/series/public"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/google/uuid"
 )
 
@@ -47,14 +47,14 @@ func (r *PublicReader) List(ctx context.Context, request seriespublic.ListSeries
 		Where("s.status = ?", model.SeriesStatusPublished)
 
 	var err error
-	query, err = seriespublic.SeriesFilterConfig.ApplyFilters(query, request.Filters)
+	query, err = seriesFilterConfig.ApplyFilters(query, request.Filters)
 	if err != nil {
 		return seriespublic.Page{}, err
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return seriespublic.Page{}, errs.Internal(err)
 	}
-	query, err = seriespublic.SeriesSortConfig.ApplySort(query, request.Sorts)
+	query, err = seriesSortConfig.ApplySort(query, request.Sorts)
 	if err != nil {
 		return seriespublic.Page{}, err
 	}
@@ -71,7 +71,7 @@ func (r *PublicReader) List(ctx context.Context, request seriespublic.ListSeries
 	return seriespublic.Page{Items: items, Total: int32(total), Limit: pagination.Limit, Offset: pagination.Offset}, nil
 }
 
-func (r *PublicReader) Get(ctx context.Context, idOrSlug, acceptLanguage string) (*openv1.Series, error) {
+func (r *PublicReader) Get(ctx context.Context, idOrSlug, acceptLanguage string) (seriespublic.Series, error) {
 	var row publicSeriesRow
 	query := r.db.WithContext(ctx).Table("series AS s").
 		Select(`s.id, s.slug, s.featured_image_file_id,
@@ -84,16 +84,16 @@ func (r *PublicReader) Get(ctx context.Context, idOrSlug, acceptLanguage string)
 	}
 	if err := query.Take(&row).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("series", idOrSlug)
+			return seriespublic.Series{}, errs.NotFound("series", idOrSlug)
 		}
-		return nil, errs.Internal(err)
+		return seriespublic.Series{}, errs.Internal(err)
 	}
 	items, err := r.projectSeriesRows(ctx, []publicSeriesRow{row}, acceptLanguage)
 	if err != nil {
-		return nil, err
+		return seriespublic.Series{}, err
 	}
 	if len(items) != 1 {
-		return nil, errs.NotFound("series", idOrSlug)
+		return seriespublic.Series{}, errs.NotFound("series", idOrSlug)
 	}
 	return items[0], nil
 }
@@ -102,7 +102,7 @@ func (r *PublicReader) projectSeriesRows(
 	ctx context.Context,
 	rows []publicSeriesRow,
 	acceptLanguage string,
-) ([]*openv1.Series, error) {
+) ([]seriespublic.Series, error) {
 	ids := make([]string, 0, len(rows))
 	fileIDs := make([]string, 0, len(rows))
 	for _, row := range rows {
@@ -145,25 +145,29 @@ func (r *PublicReader) projectSeriesRows(
 		return nil, errs.Internal(err)
 	}
 
-	items := make([]*openv1.Series, 0, len(rows))
+	items := make([]seriespublic.Series, 0, len(rows))
 	for _, row := range rows {
 		selection := selections[row.ID]
 		if selection.Title == nil {
 			return nil, errs.InternalMsg("published series is missing localized title")
 		}
-		item := &openv1.Series{
-			Id:               row.ID,
-			Title:            *selection.Title,
-			Slug:             row.Slug,
-			Description:      selection.Summary,
-			PostCount:        row.PostCount,
-			LocalizationInfo: publiccontent.ToProtoLocalizationInfo(selection),
+		item := seriespublic.Series{
+			ID:          row.ID,
+			Title:       *selection.Title,
+			Slug:        row.Slug,
+			Description: selection.Summary,
+			PostCount:   row.PostCount,
+			Localization: seriespublic.Localization{
+				RequestedLocale: selection.RequestedLocale, DisplayedLocale: selection.DisplayedLocale,
+				SourceLocale: selection.SourceLocale, IsFallback: selection.IsFallback, IsOriginal: selection.IsOriginal,
+				FallbackReason: int32(selection.FallbackReason), AvailableLocales: selection.AvailableLocales,
+			},
 		}
 		if row.FeaturedImageFileID != nil {
-			item.FeaturedImageAsset = featuredAssets[*row.FeaturedImageFileID]
+			item.FeaturedImageAsset = seriesadapter.AssetFromRef(featuredAssets[*row.FeaturedImageFileID])
 		}
 		if selection.OgAssetID != nil {
-			item.OgAsset = ogAssets[*selection.OgAssetID]
+			item.OgAsset = seriesadapter.AssetFromRef(ogAssets[*selection.OgAssetID])
 		}
 		items = append(items, item)
 	}

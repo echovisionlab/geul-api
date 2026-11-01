@@ -1,7 +1,6 @@
 package series
 
 import (
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -71,8 +70,8 @@ func (a *seriesAudits) featuredImage(seriesID string, operation sharedtelemetry.
 	})
 }
 
-func postSeriesAuditState(status model.SeriesStatus) sharedtelemetry.AuditState {
-	if status == model.SeriesStatusPublished {
+func postSeriesAuditState(status Status) sharedtelemetry.AuditState {
+	if status == StatusPublished {
 		return sharedtelemetry.AuditStatePublished
 	}
 	return sharedtelemetry.AuditStateDraft
