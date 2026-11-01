@@ -16,20 +16,25 @@ import (
 	"github.com/echovisionlab/geul-api/internal/page"
 	pagepublic "github.com/echovisionlab/geul-api/internal/page/public"
 	pagepublicpostgres "github.com/echovisionlab/geul-api/internal/page/public/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
 
 // The ports this test does not reach panic if called.
-type unusedShareLinks struct{ pagepublicpostgres.ShareLinkAccessChecker }
-type unusedFileReuse struct{ contentblock.FileReuseAuthorizer }
+type unusedShareLinks struct {
+	pagepublicpostgres.ShareLinkAccessChecker
+}
+type unusedFileReuse struct {
+	contentblock.FileReuseAuthorizer
+}
 
 // The public read's own SQL: the homepage setting, the share-locked Page
 // by ID and slug, its source metadata, and the locale selection over the
 // stored locale rows and the document's locales.
 func TestPublicStoreReadsThePublishedProjectionIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	contents, err := contentblock.NewGeneratedStore(unusedFileReuse{})
 	require.NoError(t, err)
 	units, err := pagepublicpostgres.NewUnits(db, contents, unusedShareLinks{})

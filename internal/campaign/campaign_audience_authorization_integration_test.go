@@ -9,7 +9,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/campaign"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
@@ -26,8 +27,8 @@ func (w *captureFailingCampaignAuditAppender) AppendDomainAuditInTransaction(_ c
 // This checks real policy grants and revocation across a rolled-back deletion.
 func TestCampaignAuthorizationIsSynchronousIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	db := orytest.NewIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := integrationPrincipal(t, admin.AuthUserInfo())
 	service := integrationService(t, db, stack.SpiceDBClient, nil)

@@ -15,7 +15,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -28,13 +29,13 @@ import (
 
 func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	db := orytest.NewIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
 	identityID := uuid.NewString()
-	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Label target admin")
+	orytest.SeedPostIntegrationIdentity(t, db, identityID, "Label target admin")
 	requireInternalResourceAdmin(t, stack.SpiceDBClient, identityID)
 	store := newCreativeContentIntegrationStore(t, stack.SpiceDBClient)
-	labelID := seedInternalLabel(t, db, store, testutil.PostIntegrationMemberID(identityID))
+	labelID := seedInternalLabel(t, db, store, orytest.PostIntegrationMemberID(identityID))
 	attachInternalResourcePolicy(t, stack.SpiceDBClient, labelID)
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	title := "Label target locale"
@@ -44,7 +45,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	)
 	documentID := labelDocumentIDForIntegration(t, db, labelID)
 	memberID := labelOwnerIDForIntegration(t, db, labelID)
-	sessionID := testutil.InsertPostIntegrationSession(t, db, identityID)
+	sessionID := orytest.InsertPostIntegrationSession(t, db, identityID)
 	auditWriter := apitelemetry.NewDurableWriter(db)
 	memberCtx := labelTargetMemberContext(t, identityID)
 	aiService := newTestService(t, integrationDeps{
@@ -247,7 +248,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	}
 	providerJob := label.TranslationJob{
 		EntityType: "label", EntityID: labelID, TargetLocale: "ja",
-		RequestedByMemberID: testutil.PostIntegrationMemberID(identityID),
+		RequestedByMemberID: orytest.PostIntegrationMemberID(identityID),
 	}
 	providerJobWithoutRequester := providerJob
 	providerJobWithoutRequester.RequestedByMemberID = ""
@@ -293,7 +294,7 @@ func TestLabelTargetLocaleCASSeedDeleteAndProviderDeliveryIntegration(t *testing
 	}))
 	jaAfterNoopReplacement := loadLabelTargetRoomIntegration(t, internal, sessionID, labelID, "ja")
 	require.Equal(t, jaAfterReplacement.Msg.TargetRevision, jaAfterNoopReplacement.Msg.TargetRevision)
-	requireLabelTargetLocaleAuditsIntegration(t, db, labelID, testutil.PostIntegrationMemberID(identityID), map[string][]string{
+	requireLabelTargetLocaleAuditsIntegration(t, db, labelID, orytest.PostIntegrationMemberID(identityID), map[string][]string{
 		"de": {string(sharedtelemetry.AuditItemOperationCreated)},
 		"fr": {string(sharedtelemetry.AuditItemOperationCreated), string(sharedtelemetry.AuditItemOperationUpdated)},
 		"ja": {string(sharedtelemetry.AuditItemOperationCreated), string(sharedtelemetry.AuditItemOperationUpdated)},

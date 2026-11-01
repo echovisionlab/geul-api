@@ -19,12 +19,15 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
+	// multipartCompletionObservingTransport counts object-store completion calls
+	// and can inject one ambiguous response for recovery tests.
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 )
 
-// multipartCompletionObservingTransport counts object-store completion calls
-// and can inject one ambiguous response for recovery tests.
 type multipartCompletionObservingTransport struct {
 	base                        http.RoundTripper
 	mu                          sync.Mutex
@@ -69,7 +72,7 @@ func (t *multipartCompletionObservingTransport) count() int {
 
 func observingRuntimeS3Client(
 	t *testing.T,
-	stack *testutil.RuntimeStack,
+	stack *runtimetest.RuntimeStack,
 	observer *multipartCompletionObservingTransport,
 ) *s3.Client {
 	t.Helper()
@@ -123,7 +126,7 @@ func requireCanonicalInlineRef(
 func handleMultipartPartDirect(
 	t *testing.T,
 	svc *Service,
-	user *testutil.OryUser,
+	user *orytest.OryUser,
 	fileID string,
 	uploadID string,
 	partNumber int,
@@ -141,7 +144,7 @@ func handleMultipartPartDirect(
 		prefixQuery.Set("uploadId", uploadID)
 		prefixSize := min(len(body), multipartSniffBytes)
 		prefixReq := httptest.NewRequest(http.MethodPost, "/upload/prefix?"+prefixQuery.Encode(), bytes.NewReader(body[:prefixSize]))
-		testutil.ApplyAuthHeaders(prefixReq.Header, user)
+		orytest.ApplyAuthHeaders(prefixReq.Header, user)
 		prefixReq.ContentLength = int64(prefixSize)
 		prefixRec := httptest.NewRecorder()
 		auth.RequireGatewaySession(
@@ -152,7 +155,7 @@ func handleMultipartPartDirect(
 	}
 
 	presignReq := httptest.NewRequest(http.MethodPost, "/upload/part/presign?"+query.Encode(), nil)
-	testutil.ApplyAuthHeaders(presignReq.Header, user)
+	orytest.ApplyAuthHeaders(presignReq.Header, user)
 	presignRec := httptest.NewRecorder()
 	auth.RequireGatewaySession(
 		testFileDB(svc),
@@ -172,7 +175,7 @@ func handleMultipartPartDirect(
 	require.Equal(t, http.StatusOK, putResp.StatusCode)
 
 	confirmReq := httptest.NewRequest(http.MethodPost, "/upload/part/confirm?"+query.Encode(), nil)
-	testutil.ApplyAuthHeaders(confirmReq.Header, user)
+	orytest.ApplyAuthHeaders(confirmReq.Header, user)
 	confirmRec := httptest.NewRecorder()
 	auth.RequireGatewaySession(
 		testFileDB(svc),

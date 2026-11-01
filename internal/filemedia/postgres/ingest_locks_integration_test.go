@@ -12,7 +12,8 @@ import (
 	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -41,7 +42,7 @@ func ingestScopes(locks domain.IngestLocks) map[string]ingestScope {
 
 func TestIngestAdvisoryLocksSerializeAndReleaseAfterCancellationIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	units := filemediapostgres.NewUnits(db, filemediapostgres.Ports{})
 	for name, scope := range ingestScopes(filemediapostgres.NewIngestLocks(db, filemediapostgres.Ports{})) {
 		t.Run(name, func(t *testing.T) {
@@ -63,7 +64,7 @@ func TestIngestAdvisoryLocksSerializeAndReleaseAfterCancellationIntegration(t *t
 
 func TestIngestAdvisoryScopeUsesOneConnectionAcrossDatabasePhasesIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	pool, err := db.DB()
 	require.NoError(t, err)
 	pool.SetMaxOpenConns(1)

@@ -2,12 +2,12 @@
 
 package main
 
-import "github.com/echovisionlab/geul-api/internal/testutil"
+import "github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 
 func registerSuiteProcessCleanup(name string, cleanup func() error) {
-	testutil.RegisterIntegrationProcessCleanup(name, cleanup)
+	pgtest.RegisterIntegrationProcessCleanup(name, cleanup)
 }
 
 func takeSuiteSignalCleanupOwnership() {
-	testutil.TakeIntegrationSignalCleanupOwnership()
+	pgtest.TakeIntegrationSignalCleanupOwnership()
 }

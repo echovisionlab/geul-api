@@ -35,7 +35,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/page"
 	pagepostgres "github.com/echovisionlab/geul-api/internal/page/postgres"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -43,24 +44,25 @@ import (
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"google.golang.org/protobuf/proto"
-)
 
-// These tests keep what only the whole stack shows: SpiceDB relationship
-// semantics and the cascades of a real deletion, the identity fence over
-// real Kratos rows, and the lock order of a collaboration bootstrap against
-// an account's session deletion. Every other Page scenario runs on the fake
-// Store, and the page tables on the Store contract.
+	// These tests keep what only the whole stack shows: SpiceDB relationship
+	// semantics and the cascades of a real deletion, the identity fence over
+	// real Kratos rows, and the lock order of a collaboration bootstrap against
+	// an account's session deletion. Every other Page scenario runs on the fake
+	// Store, and the page tables on the Store contract.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+)
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "start Page integration suite: %v\n", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		fmt.Fprintf(os.Stderr, "close Page integration suite: %v\n", err)
 		code = 1
@@ -100,14 +102,14 @@ func newStackService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, por
 
 func TestPageManagementEndToEndIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.PrepareOryIntegrationTest(t)
+	stack := orytest.PrepareOryIntegrationTest(t)
 	db, spiceDB := stack.DB, stack.SpiceDBClient
-	identityID := testutil.IntegrationUUID()
-	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Page integration admin")
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	ctx := testutil.NewAuditContext(t, identityID, memberID)
+	identityID := orytest.IntegrationUUID()
+	memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "Page integration admin")
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	ctx := orytest.NewAuditContext(t, identityID, memberID)
 	pages := page.NewConnectHandler(newStackService(t, db, spiceDB, stackPorts(t, db, spiceDB, nil)))
-	suffix := strings.ReplaceAll(testutil.IntegrationUUID(), "-", "")
+	suffix := strings.ReplaceAll(orytest.IntegrationUUID(), "-", "")
 	slug := "page-manager-" + suffix
 	summary := "Page manager workflow summary"
 
@@ -165,7 +167,7 @@ func TestPageManagementEndToEndIntegration(t *testing.T) {
 		AssetID: asset.ID, OwnerType: "page", OwnerID: created.Msg.Id, BindingKey: "featured_image", SourceFileID: &fileID,
 	}))
 	require.NoError(t, db.Model(&model.SiteSettings{}).Where("id = ?", 1).Update("homepage_page_id", created.Msg.Id).Error)
-	shareLinkID := testutil.IntegrationUUID()
+	shareLinkID := orytest.IntegrationUUID()
 	expiry := time.Now().UTC().Add(time.Hour)
 	require.NoError(t, db.Create(&model.ShareLink{
 		ID: shareLinkID, Token: "page-delete-" + shareLinkID, EntityType: managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_PAGE.String(),
@@ -196,7 +198,7 @@ func TestPageManagementEndToEndIntegration(t *testing.T) {
 
 func TestPolicyAuthorityLocksPageRootAndFencesCurrentPrincipalIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.PrepareOryIntegrationTest(t)
+	stack := orytest.PrepareOryIntegrationTest(t)
 	db, spiceDB := stack.DB, stack.SpiceDBClient
 	user := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auth.WithUser(t.Context(), user.AuthUserInfo())
@@ -221,7 +223,7 @@ func TestPolicyAuthorityLocksPageRootAndFencesCurrentPrincipalIntegration(t *tes
 
 func TestPageCollaborationSignFirstDoesNotInvertAccountSessionDeletionIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.PrepareOryIntegrationTest(t)
+	stack := orytest.PrepareOryIntegrationTest(t)
 	user := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	pageID := seedPageRoot(t, stack.DB, stack.SpiceDBClient)
 	signer := newBlockingHydrator()
@@ -244,7 +246,7 @@ func TestPageCollaborationSignFirstDoesNotInvertAccountSessionDeletionIntegratio
 			return stack.KratosClient.DeleteIdentitySessions(ctx, user.IdentityID)
 		})
 	}()
-	testutil.RequireLockWaiters(t, stack.DB, 1)
+	pgtest.RequireLockWaiters(t, stack.DB, 1)
 	signer.release()
 	require.NoError(t, <-signed)
 	require.NoError(t, <-deleted)
@@ -253,7 +255,7 @@ func TestPageCollaborationSignFirstDoesNotInvertAccountSessionDeletionIntegratio
 func TestPageCollaborationAccountSessionDeletionFirstDoesNotWaitOnSignerIntegration(t *testing.T) {
 	t.Parallel()
 	// Local kratos tables keep production READ COMMITTED fences on sessions.
-	stack := testutil.SetupOryStackWithLocalKratos(t)
+	stack := orytest.SetupOryStackWithLocalKratos(t)
 	user := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	pageID := seedPageRoot(t, stack.DB, stack.SpiceDBClient)
 	service := newStackService(t, stack.DB, stack.SpiceDBClient, stackPorts(t, stack.DB, stack.SpiceDBClient, nil))
@@ -278,7 +280,7 @@ func TestPageCollaborationAccountSessionDeletionFirstDoesNotWaitOnSignerIntegrat
 	}()
 	// The signer resolves the session without a lock and waits only at the
 	// Identity fence the deletion holds.
-	testutil.RequireLockWaiters(t, stack.DB, 1)
+	pgtest.RequireLockWaiters(t, stack.DB, 1)
 	close(releaseDeletion)
 	require.NoError(t, <-deleted)
 	err := <-signed

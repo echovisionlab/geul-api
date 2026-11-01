@@ -17,7 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestFaviconCleanupAndBindingSerializeOnPostgresAssetRow(t *testing.T) {
@@ -87,7 +87,7 @@ func TestFaviconCleanupAndBindingSerializeOnPostgresAssetRow(t *testing.T) {
 			t.Fatalf("cleanup did not wait for binding transaction: changed=%v err=%v", result.changed, result.err)
 		case <-time.After(100 * time.Millisecond):
 		}
-		testutil.RequireLockWaiters(t, pg.DB, 1)
+		pgtest.RequireLockWaiters(t, pg.DB, 1)
 		require.NoError(t, tx.Commit().Error)
 		cleanup := <-cleanupDone
 		require.NoError(t, cleanup.err)

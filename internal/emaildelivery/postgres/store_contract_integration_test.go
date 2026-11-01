@@ -11,13 +11,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/emaildelivery/emaildeliverytest"
 	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	emaildeliverytest.RunStoreContract(t, func(t *testing.T) emaildeliverytest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		return emaildeliverytest.Harness{
 			Harness: mutationtest.PostgresHarness(db, emaildeliverypostgres.NewUnits(db)),
 			SeedSiteSettings: func(t *testing.T, defaults emaildelivery.RenderDefaults) {

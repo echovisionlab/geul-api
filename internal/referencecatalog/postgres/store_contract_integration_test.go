@@ -23,7 +23,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog/referencecatalogtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestPostgresStoreKeepsTheReferenceCatalogStoreContractIntegration(t *testing.T) {
@@ -37,7 +38,7 @@ func TestPostgresStoreKeepsTheReferenceCatalogStoreContractIntegration(t *testin
 			SeedClientWork:   fixtures.clientWork,
 			SeedMapPlaceUse:  fixtures.mapPlaceUse,
 			SeedMember: func(t *testing.T, nickname string) string {
-				return testutil.SeedPostIntegrationIdentity(t, db, uuid.NewString(), nickname)
+				return orytest.SeedPostIntegrationIdentity(t, db, uuid.NewString(), nickname)
 			},
 			SeedReadyFile: fixtures.readyFile,
 		}
@@ -48,7 +49,7 @@ func TestPostgresStoreKeepsTheReferenceCatalogStoreContractIntegration(t *testin
 // the Store resolves are linked to Kratos stub identities.
 func newDatabase(t *testing.T) *gorm.DB {
 	t.Helper()
-	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+	return pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 }
 
 // newUnits is the production unit of work with the production adapters; the

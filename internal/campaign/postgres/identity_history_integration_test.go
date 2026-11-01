@@ -8,7 +8,9 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -17,17 +19,17 @@ import (
 
 func TestDeletedIdentityPreservesMemberExclusionAndFrozenDeliveryDefinitionIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true, BootstrapKratosStub: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true, BootstrapKratosStub: true}).DB
 	now := time.Now().UTC()
 	includedIdentityID := uuid.NewString()
 	excludedIdentityID := uuid.NewString()
 	includedEmail := "included-" + uuid.NewString() + "@example.test"
 	excludedEmail := "excluded-" + uuid.NewString() + "@example.test"
-	for _, fixture := range []testutil.KratosIdentityFixture{
+	for _, fixture := range []orytest.KratosIdentityFixture{
 		{ID: includedIdentityID, Email: includedEmail, CreatedAt: now},
 		{ID: excludedIdentityID, Email: excludedEmail, CreatedAt: now},
 	} {
-		testutil.SeedKratosIdentityFixture(t, db, fixture)
+		orytest.SeedKratosIdentityFixture(t, db, fixture)
 	}
 	includedMemberID := seedCampaignActiveMemberEmailPair(t, db, includedIdentityID, includedEmail)
 	excludedMemberID := seedCampaignActiveMemberEmailPair(t, db, excludedIdentityID, excludedEmail)

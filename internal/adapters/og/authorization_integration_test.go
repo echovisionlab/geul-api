@@ -11,13 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 func TestEntityAuthorizationIsScopedToManagedResourceIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.User().ID())
 	managedID, otherID := uuid.NewString(), uuid.NewString()
 	actor, err := policyv1.NewAccountIdentityActor(manager.IdentityID)

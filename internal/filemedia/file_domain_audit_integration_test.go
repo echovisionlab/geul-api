@@ -14,7 +14,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -22,11 +23,11 @@ import (
 
 func TestFileManagerDomainAuditIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
-	identityID := testutil.IntegrationUUID()
-	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "File audit admin")
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	identityID := orytest.IntegrationUUID()
+	memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "File audit admin")
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := releaseAuditContext(t, identityID, memberID)
 	writer := apitelemetry.NewDurableWriter(db)
 	service := withTestMutations(withNativeFileUnits(&Service{
@@ -82,19 +83,19 @@ func TestFileManagerDomainAuditIntegration(t *testing.T) {
 
 func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
-	identityID := testutil.IntegrationUUID()
-	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "File ingest audit admin")
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	identityID := orytest.IntegrationUUID()
+	memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "File ingest audit admin")
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := releaseAuditContext(t, identityID, memberID)
 	writer := apitelemetry.NewDurableWriter(db)
 	publisher := &capturingAsyncPublisher{}
 	service := withTestMutations(withNativeFileUnits(&Service{spiceDB: spiceDB, asyncPublisher: publisher, auditWriter: writer, memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test")}, db, nativeFilePorts{}))
 
-	createdID := testutil.IntegrationUUID()
+	createdID := orytest.IntegrationUUID()
 	err := service.createVerifiedFileIngestRecord(ctx, fileIngestRecord{
-		id: createdID, fileName: "verified", mimeType: "image/jpeg", fileSize: 1024, extension: "jpg", sha256: make([]byte, 32), ingestAttemptID: testutil.IntegrationUUID(),
+		id: createdID, fileName: "verified", mimeType: "image/jpeg", fileSize: 1024, extension: "jpg", sha256: make([]byte, 32), ingestAttemptID: orytest.IntegrationUUID(),
 	}, UploadGeneralFile, EntityUnspecified,
 
 		"", trustedSystemFileIngestAuthority{})
@@ -108,10 +109,10 @@ func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *t
 	require.Equal(t, sharedtelemetry.RequestIDFromContext(ctx), createdRows[0].RequestID)
 	require.JSONEq(t, `{}`, string(createdRows[0].Attributes))
 
-	failingIngestID := testutil.IntegrationUUID()
+	failingIngestID := orytest.IntegrationUUID()
 	failingIngest := withTestMutations(withNativeFileUnits(&Service{spiceDB: spiceDB, auditWriter: fileFailingAuditAppender{}}, db, nativeFilePorts{}))
 	err = failingIngest.createVerifiedFileIngestRecord(ctx, fileIngestRecord{
-		id: failingIngestID, fileName: "must-rollback", mimeType: "image/jpeg", fileSize: 1024, extension: "jpg", sha256: make([]byte, 32), ingestAttemptID: testutil.IntegrationUUID(),
+		id: failingIngestID, fileName: "must-rollback", mimeType: "image/jpeg", fileSize: 1024, extension: "jpg", sha256: make([]byte, 32), ingestAttemptID: orytest.IntegrationUUID(),
 	}, UploadGeneralFile, EntityUnspecified,
 
 		"", trustedSystemFileIngestAuthority{})

@@ -29,7 +29,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -40,18 +42,18 @@ import (
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "start Release integration suite: %v\n", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	if err := testutil.RunIntegrationSuiteCleanups(); err != nil && code == 0 {
+	if err := pgtest.RunIntegrationSuiteCleanups(); err != nil && code == 0 {
 		fmt.Fprintf(os.Stderr, "cleanup Release integration runtime: %v\n", err)
 		code = 1
 	}
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		fmt.Fprintf(os.Stderr, "close Release integration suite: %v\n", err)
 		code = 1
@@ -60,19 +62,19 @@ func TestMain(m *testing.M) {
 }
 
 func newConcurrentServiceIntegrationDB(t *testing.T) *gorm.DB {
-	return testutil.NewConcurrentPostIntegrationDB(t)
+	return orytest.NewConcurrentPostIntegrationDB(t)
 }
 
 func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient {
-	return testutil.IntegrationSpiceDB(t)
+	return orytest.IntegrationSpiceDB(t)
 }
 
 // releaseIntegrationAdminCtx is a request of identityID's onboarded Member,
 // with the request actor every audited Release mutation records.
 func releaseIntegrationAdminCtx(identityID string) context.Context {
-	memberID := testutil.PostIntegrationMemberID(identityID)
-	sessionID := testutil.IntegrationUUID()
-	request, err := sharedtelemetry.NewPropagatedRequestContext(testutil.IntegrationUUID(), sharedtelemetry.MemberActor{
+	memberID := orytest.PostIntegrationMemberID(identityID)
+	sessionID := orytest.IntegrationUUID()
+	request, err := sharedtelemetry.NewPropagatedRequestContext(orytest.IntegrationUUID(), sharedtelemetry.MemberActor{
 		IdentityID: identityID, MemberID: memberID, SessionID: sessionID,
 	})
 	if err != nil {
@@ -91,7 +93,7 @@ func withAuditedRequestContext(t *testing.T, ctx context.Context) context.Contex
 	t.Helper()
 	user := auth.GetUser(ctx)
 	require.NotNil(t, user)
-	return testutil.NewAuditContext(t, user.IdentityID.String(), user.MemberID.String())
+	return orytest.NewAuditContext(t, user.IdentityID.String(), user.MemberID.String())
 }
 
 func newPageIntegrationContentBlockStore(t *testing.T, spiceDB *auth.SpiceDBClient) *contentblock.Store {

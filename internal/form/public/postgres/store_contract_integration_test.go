@@ -19,13 +19,13 @@ import (
 	formpublicpostgres "github.com/echovisionlab/geul-api/internal/form/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestPostgresStoreKeepsThePublicFormStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	formtest.RunPublicStoreContract(t, func(t *testing.T) formtest.PublicHarness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		// The share link adapter is Share Link's own reader; media and
 		// Member reads stay with their own tests.
 		units := mutation.Postgres(db, func(tx *gorm.DB) public.Store {

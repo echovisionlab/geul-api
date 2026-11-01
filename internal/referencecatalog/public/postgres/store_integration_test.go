@@ -21,7 +21,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	publicreferencecatalog "github.com/echovisionlab/geul-api/internal/referencecatalog/public"
 	referencecatalogpublicpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/public/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -31,7 +32,7 @@ import (
 
 func newHarness(t *testing.T) (*gorm.DB, mutationtest.Harness[publicreferencecatalog.Store]) {
 	t.Helper()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	units, err := referencecatalogpublicpostgres.NewUnits(db, referencecatalogadapter.NewPublicAssets("https://cdn.example.com"))
 	require.NoError(t, err)
 	return db, mutationtest.PostgresHarness(db, units)

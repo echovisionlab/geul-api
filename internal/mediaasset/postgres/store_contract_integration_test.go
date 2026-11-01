@@ -12,7 +12,8 @@ import (
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -20,7 +21,7 @@ import (
 func TestPostgresStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	mediaassettest.RunStoreContract(t, func(t *testing.T) mediaassettest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		return mediaassettest.Harness{Harness: mutationtest.PostgresHarness(db, mediaassetpostgres.NewUnits(db)),
 			Cleanup: mutationtest.PostgresHarness(db, mediaassetpostgres.NewCleanupUnits(db)), SeedFile: func(t *testing.T, pending *time.Time) string {
 				id := uuid.NewString()

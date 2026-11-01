@@ -4,8 +4,11 @@ package artist_test
 
 import (
 	"context"
-	artist "github.com/echovisionlab/geul-api/internal/artist"
 	"testing"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
+	artist "github.com/echovisionlab/geul-api/internal/artist"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
@@ -14,7 +17,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -31,9 +35,9 @@ type artistIntegrationHandler struct {
 // an Artist service whose administrator is adminID.
 func newArtistIntegrationSpiceDBService(t *testing.T, db *gorm.DB, adminID string) artistIntegrationHandler {
 	t.Helper()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	syncArtistIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
-	contentBlocks := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)
+	contentBlocks := contenttest.NewEmailContentBlockStore(t)
 	return artistIntegrationHandler{
 		ConnectHandler: artist.NewConnectHandler(newTestService(t, integrationDeps{
 			DB: db, SpiceDB: stack.SpiceDBClient, ContentBlocks: contentBlocks,
@@ -59,7 +63,7 @@ func artistIntegrationAdminCtx(id string) context.Context {
 	return auth.WithUser(requestBackground(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(id),
 		MemberID:      auth.MemberID(artistMemberID(id)),
-		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
+		SessionID:     auth.SessionID(orytest.IntegrationUUID()),
 		Authenticated: true,
 		Onboarded:     true,
 	})
@@ -67,8 +71,8 @@ func artistIntegrationAdminCtx(id string) context.Context {
 
 func TestArtistImageGalleryCASAndFilePreservationIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	adminID := testutil.IntegrationUUID()
+	db := orytest.NewIntegrationDB(t)
+	adminID := orytest.IntegrationUUID()
 	seedArtistIdentity(t, db, adminID, "Artist Gallery Admin")
 	service := newArtistIntegrationSpiceDBService(t, db, adminID)
 	ctx := artistIntegrationAdminCtx(adminID)
@@ -78,8 +82,8 @@ func TestArtistImageGalleryCASAndFilePreservationIntegration(t *testing.T) {
 		Document: artistContentDocument("en", "Artist Gallery"),
 	}))
 	require.NoError(t, err)
-	firstFileID := testutil.IntegrationUUID()
-	secondFileID := testutil.IntegrationUUID()
+	firstFileID := orytest.IntegrationUUID()
+	secondFileID := orytest.IntegrationUUID()
 	seedArtistImageFile(t, db, firstFileID, "first")
 	seedArtistImageFile(t, db, secondFileID, "second")
 
@@ -135,7 +139,7 @@ func TestArtistImageGalleryCASAndFilePreservationIntegration(t *testing.T) {
 	require.NoError(t, db.Table("file").Where("id IN ?", []string{firstFileID, secondFileID}).Count(&fileCount).Error)
 	require.Equal(t, int64(2), fileCount)
 
-	thirdFileID := testutil.IntegrationUUID()
+	thirdFileID := orytest.IntegrationUUID()
 	seedArtistImageFile(t, db, thirdFileID, "third")
 	setForDelete, err := service.SetArtistImages(ctx, connect.NewRequest(&managev1.SetArtistImagesRequest{
 		ArtistId:         created.Msg.Id,
@@ -170,9 +174,9 @@ func TestArtistImageGalleryCASAndFilePreservationIntegration(t *testing.T) {
 
 func TestArtistOwnerManagerTransitionsIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	adminID := testutil.IntegrationUUID()
-	participantID := testutil.IntegrationUUID()
+	db := orytest.NewIntegrationDB(t)
+	adminID := orytest.IntegrationUUID()
+	participantID := orytest.IntegrationUUID()
 	seedArtistIdentity(t, db, adminID, "Artist Owner Admin")
 	seedArtistIdentity(t, db, participantID, "Artist Participant")
 	service := newArtistIntegrationSpiceDBService(t, db, adminID)
@@ -180,7 +184,7 @@ func TestArtistOwnerManagerTransitionsIntegration(t *testing.T) {
 	participantCtx := auth.WithUser(requestBackground(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(participantID),
 		MemberID:      auth.MemberID(artistMemberID(participantID)),
-		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
+		SessionID:     auth.SessionID(orytest.IntegrationUUID()),
 		Authenticated: true,
 		Onboarded:     true,
 	})

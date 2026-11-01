@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/filetest"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -19,7 +21,8 @@ import (
 
 	seriespublicadapter "github.com/echovisionlab/geul-api/internal/adapters/series/public"
 	seriespublic "github.com/echovisionlab/geul-api/internal/series/public"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -40,8 +43,8 @@ func TestPublicSeriesListQueryBudgetDoesNotGrowPerRowIntegration(t *testing.T) {
 	db := newPublicIntegrationDB(t)
 	suffix := uuid.NewString()
 	for index := 0; index < 12; index++ {
-		imageFileID, _ := testutil.SeedCanonicalPublicFileFixture(t, db, fmt.Sprintf("series-%02d.webp", index), "image/webp", "image")
-		_, ogAssetID := testutil.SeedCanonicalPublicFileFixture(t, db, fmt.Sprintf("series-%02d-og.webp", index), "image/webp", "og")
+		imageFileID, _ := filetest.SeedCanonicalPublicFileFixture(t, db, fmt.Sprintf("series-%02d.webp", index), "image/webp", "image")
+		_, ogAssetID := filetest.SeedCanonicalPublicFileFixture(t, db, fmt.Sprintf("series-%02d-og.webp", index), "image/webp", "og")
 		seedLocalizedPublicSeries(
 			t, db, uuid.NewString(), fmt.Sprintf("Public Series %02d %s", index, suffix),
 			fmt.Sprintf("public-series-%02d-%s", index, suffix),
@@ -78,7 +81,7 @@ func TestPublicSeriesPostCountIncludesPublishedAndArchivedIntegration(t *testing
 	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	identityID := uuid.NewString()
-	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Series count author")
+	memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "Series count author")
 	seriesID := uuid.NewString()
 	suffix := uuid.NewString()
 	seedLocalizedPublicSeries(

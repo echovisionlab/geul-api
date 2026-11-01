@@ -13,7 +13,8 @@ import (
 	audiencedomain "github.com/echovisionlab/geul-api/internal/audience"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -23,7 +24,7 @@ import (
 // transaction rolls back compensates it.
 func TestAudienceAuthorizationIsSynchronousIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.123")
 	require.NoError(t, err)

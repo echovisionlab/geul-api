@@ -16,7 +16,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -132,9 +133,9 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 			integration := newLegalIntegration(t, db, spiceDB, &audittest.Recorder{})
 			ops := testCase.ops
 
-			authorID := testutil.IntegrationUUID()
-			authorMemberID := testutil.SeedPostIntegrationIdentity(t, db, authorID, "Archived legal Author")
-			testutil.GrantIntegrationGlobalRole(t, spiceDB, authorID, policyv1.Role.Author())
+			authorID := orytest.IntegrationUUID()
+			authorMemberID := orytest.SeedPostIntegrationIdentity(t, db, authorID, "Archived legal Author")
+			orytest.GrantIntegrationGlobalRole(t, spiceDB, authorID, policyv1.Role.Author())
 			authorSessionID := insertArchivedLegalIntegrationSession(t, db, authorID)
 			authorCtx := auth.WithUser(context.Background(), &auth.UserInfo{
 				IdentityID: auth.IdentityID(authorID), MemberID: auth.MemberID(authorMemberID),
@@ -176,7 +177,7 @@ func TestArchivedLegalPoliciesAllowOnlyAdminSourceEditingIntegration(t *testing.
 
 func insertArchivedLegalIntegrationSession(t *testing.T, db *gorm.DB, identityID string) string {
 	t.Helper()
-	sessionID := testutil.IntegrationUUID()
+	sessionID := orytest.IntegrationUUID()
 	require.NoError(t, db.Exec(`
 		INSERT INTO kratos.sessions (
 			id, identity_id, active, authenticated_at, expires_at,
@@ -190,7 +191,7 @@ func insertArchivedLegalIntegrationSession(t *testing.T, db *gorm.DB, identityID
 }
 
 func legalArchivedParagraphMutationBatch(expectedRevision, contributorMemberID string) *contentv1.RichTextBlockMutationBatch {
-	blockID := testutil.IntegrationUUID()
+	blockID := orytest.IntegrationUUID()
 	return &contentv1.RichTextBlockMutationBatch{
 		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
 		Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_POLICY,

@@ -17,7 +17,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/programevent/public"
 	programeventpublicpostgres "github.com/echovisionlab/geul-api/internal/programevent/public/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -120,7 +121,7 @@ func readCurrent(t *testing.T, units mutation.UnitOfWork[public.Store], work fun
 
 func newUnits(t *testing.T) (*gorm.DB, mutation.UnitOfWork[public.Store]) {
 	t.Helper()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	// The projections read no content document.
 	units, err := programeventpublicpostgres.NewUnits(db, &contentblock.Store{})
 	require.NoError(t, err)

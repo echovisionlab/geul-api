@@ -11,14 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 // The server's GORM/pgx connection is what classifies these driver errors in
 // production, so the PostgreSQL error context is exercised for real here.
 func TestDatabaseUUIDErrorsSeparateClientInputFromStoredDataIntegration(t *testing.T) {
 	t.Parallel()
-	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
+	postgres := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{
 		BootstrapKratosStub: true,
 		ApplyAppSchemaSQL:   true,
 	})

@@ -16,7 +16,9 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/member"
 	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -37,7 +39,7 @@ func seedListed(t *testing.T, db *gorm.DB, name string, subscribed, banned bool,
 	memberID, identityID := uuid.NewString(), uuid.NewString()
 	// Stored emails are normalized (chk_member_available_emails).
 	email := strings.ToLower(name + "-" + memberID + "@example.test")
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Email: email, Name: name, Banned: banned, CreatedAt: createdAt})
+	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{ID: identityID, Email: email, Name: name, Banned: banned, CreatedAt: createdAt})
 	require.NoError(t, db.Exec("UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid", memberID, identityID).Error)
 	require.NoError(t, db.Exec("INSERT INTO account_identity (id) VALUES (?::uuid)", identityID).Error)
 	require.NoError(t, db.Exec(`
@@ -64,7 +66,7 @@ func pageIDs(t *testing.T, db *gorm.DB, filters []*commonv1.FilterSpec, sorts []
 
 func TestAdminMemberPageFiltersSortsAndKeepsAConstantQueryCountIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 	now := time.Now().UTC().Truncate(time.Second)
 	alice, _ := seedListed(t, db, "Alice", true, false, now.Add(-4*time.Hour))
 	bob, _ := seedListed(t, db, "Bob", false, false, now.Add(-3*time.Hour))
@@ -115,7 +117,7 @@ func TestAdminMemberPageFiltersSortsAndKeepsAConstantQueryCountIntegration(t *te
 
 func TestTagPageAppliesFiltersAndSortsIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 	now := time.Now().UTC().Truncate(time.Second)
 	first, _ := seedLinked(t, db, "first-"+uuid.NewString()[:8], true)
 	second, _ := seedLinked(t, db, "second-"+uuid.NewString()[:8], true)

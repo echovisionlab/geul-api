@@ -18,13 +18,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
 	"github.com/echovisionlab/geul-api/internal/programevent/programeventtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestPostgresStoreKeepsTheProgramEventStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	programeventtest.RunStoreContract(t, func(t *testing.T) programeventtest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		contentBlocks, err := contentblock.NewGeneratedStore(noFileReuse{})
 		require.NoError(t, err)
 		// The contract reaches the program_event rows, their content

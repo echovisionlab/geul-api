@@ -9,18 +9,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	"github.com/echovisionlab/geul-api/internal/translation/translationtest"
+
+	// The schema, not the Store, refuses half a provider document handle, so a
+	// recovery never resumes a document it cannot address.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 )
 
-// The schema, not the Store, refuses half a provider document handle, so a
-// recovery never resumes a document it cannot address.
 func TestSchemaRefusesHalfAProviderDocumentHandleIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	job := translationtest.NewJob(testutil.SeedPostIntegrationIdentity(t, db, uuid.NewString(), "Translation requester"), now)
+	job := translationtest.NewJob(orytest.SeedPostIntegrationIdentity(t, db, uuid.NewString(), "Translation requester"), now)
 	store := &store{tx: db}
 	inserted, err := store.InsertJob(t.Context(), job)
 	require.NoError(t, err)

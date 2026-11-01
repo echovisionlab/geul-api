@@ -14,13 +14,13 @@ import (
 	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestPostgresStoreKeepsTheLegalStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	legaltest.RunStoreContract(t, func(t *testing.T) legaltest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		// The contract reaches the history and translation tables; the
 		// content, OG, notice, Share Link and session runtimes stay with their
 		// own tests.

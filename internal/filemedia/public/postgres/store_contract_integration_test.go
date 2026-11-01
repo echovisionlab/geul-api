@@ -13,7 +13,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -21,7 +22,7 @@ import (
 func TestPostgresPublicStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	publictest.RunStoreContract(t, func(t *testing.T) publictest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		return publictest.Harness{Harness: mutationtest.PostgresHarness(db, NewUnits(db, Ports{})), SeedFile: func(t *testing.T, f publictest.FileRecord) {
 			now := time.Now().UTC()
 			var pending *time.Time

@@ -6,12 +6,12 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestRuntimeCatalogMatchesCanonicalLocalesIntegration(t *testing.T) {
 	t.Parallel()
-	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
+	postgres := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{
 		ApplyAppSchemaSQL: true,
 	})
 	locales, err := NewCatalog(postgres.DB).All(t.Context())

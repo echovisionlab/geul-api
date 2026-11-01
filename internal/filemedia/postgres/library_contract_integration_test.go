@@ -9,13 +9,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/filemediatest"
 	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestPostgresLibraryStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	filemediatest.RunLibraryContract(t, func(t *testing.T) mutationtest.Harness[domain.Store] {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		return mutationtest.PostgresHarness(db, filemediapostgres.NewUnits(db, filemediapostgres.Ports{}))
 	})
 }

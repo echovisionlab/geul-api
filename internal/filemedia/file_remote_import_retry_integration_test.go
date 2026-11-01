@@ -20,16 +20,17 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
 func TestRemoteImportCommitAcknowledgementLossRestoresExactCommittedResultDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
-	releaseID := testutil.CreateReleaseFixture(t, stack.DB)
-	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Remote commit acknowledgement loss")
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
+	releaseID := runtimetest.CreateReleaseFixture(t, stack.DB)
+	trackID := runtimetest.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Remote commit acknowledgement loss")
 
 	opts := remoteFileImportOptions{
 		uploadType: UploadTrackAudio,
@@ -126,7 +127,7 @@ func TestRemoteImportCommitAcknowledgementLossRestoresExactCommittedResultDirect
 
 func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownloadDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	correlationID := uuid.NewString()
 	entityID := uuid.NewString()
 	opts := remoteFileImportOptions{
@@ -189,7 +190,7 @@ func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownl
 
 func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	userID := uuid.NewString()
 	correlationID := uuid.NewString()
 	opts := remoteFileImportOptions{
@@ -258,9 +259,9 @@ func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIn
 
 func TestRemoteImportRetryReconfirmsCommittedTrackWinnerWithoutRedownloadDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
-	releaseID := testutil.CreateReleaseFixture(t, stack.DB)
-	trackID := testutil.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Remote retry track")
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
+	releaseID := runtimetest.CreateReleaseFixture(t, stack.DB)
+	trackID := runtimetest.CreateManagedReleaseTrack(t, stack.DB, releaseID, "Remote retry track")
 
 	correlationID := uuid.NewString()
 	opts := remoteFileImportOptions{

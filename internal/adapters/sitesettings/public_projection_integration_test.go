@@ -13,17 +13,20 @@ import (
 
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
+	// seedFile stores a File with a ready public asset of kind and returns both
+	// IDs.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 )
 
 const cdnDomain = "https://cdn.example.com"
 
-// seedFile stores a File with a ready public asset of kind and returns both
-// IDs.
 func seedFile(t *testing.T, db *gorm.DB, name, extension, mimeType, kind string) (string, string) {
 	t.Helper()
-	fileID := testutil.IntegrationUUID()
+	fileID := orytest.IntegrationUUID()
 	digest := sha256.Sum256([]byte(name + fileID))
 	require.NoError(t, db.Exec(`INSERT INTO file (id, file_name, mime_type, file_size, extension, sha256)
 		VALUES (?, ?, ?, 1024, ?, ?)`, fileID, name, mimeType, extension, digest[:]).Error)
@@ -40,12 +43,12 @@ func seedFile(t *testing.T, db *gorm.DB, name, extension, mimeType, kind string)
 
 func TestPublicProjectionReadsTheSettingsAndTheirAssetsOnCanonicalRoutesIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	projection := sitesettingsadapter.NewPublicProjection(db, sitesettingsadapter.NewAssets(cdnDomain), sitesettingsadapter.ManifestMenus{})
 	logoFileID, logoAssetID := seedFile(t, db, "logo", "png", "image/png", "logo")
 	secondLoader, secondLoaderAsset := seedFile(t, db, "second", "webp", "image/webp", "loader")
 	firstLoader, firstLoaderAsset := seedFile(t, db, "first", "webp", "image/webp", "loader")
-	unreadyLoader := testutil.IntegrationUUID()
+	unreadyLoader := orytest.IntegrationUUID()
 	require.NoError(t, db.Exec(`INSERT INTO file (id, file_name, mime_type, file_size, extension)
 		VALUES (?, 'unready', 'image/webp', 1024, 'webp')`, unreadyLoader).Error)
 	_, ogAssetID := seedFile(t, db, "og", "webp", "image/webp", "og")

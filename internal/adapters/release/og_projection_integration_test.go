@@ -9,7 +9,8 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -17,7 +18,7 @@ import (
 
 func TestProjectionPreservesLegacyReleaseBindingIntegration(t *testing.T) {
 	t.Parallel()
-	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
+	pg := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true})
 	db := pg.DB
 	now := time.Now().UTC()
 	releaseID, documentID, assetID := uuid.NewString(), uuid.NewString(), uuid.NewString()

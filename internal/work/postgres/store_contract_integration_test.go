@@ -11,7 +11,9 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/work"
 	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
 	"github.com/echovisionlab/geul-api/internal/work/worktest"
@@ -20,7 +22,7 @@ import (
 func TestPostgresStoreKeepsTheWorkStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	worktest.RunStoreContract(t, func(t *testing.T) worktest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 		// The contract reaches the work tables and the rows they reference,
 		// with the Kratos stub so a credited Member resolves to its Identity;
 		// the content, media, OG, collaboration and share link runtimes stay
@@ -51,7 +53,7 @@ func TestPostgresStoreKeepsTheWorkStoreContractIntegration(t *testing.T) {
 			},
 			SeedCreditMember: func(t *testing.T, linked bool) string {
 				identityID := uuid.NewString()
-				memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Credited "+identityID[:8])
+				memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "Credited "+identityID[:8])
 				if !linked {
 					require.NoError(t, db.Exec(`UPDATE kratos.identities SET external_id = NULL WHERE id = ?::uuid`, identityID).Error)
 				}

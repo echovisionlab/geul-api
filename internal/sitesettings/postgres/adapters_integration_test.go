@@ -33,7 +33,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	sitesettingspostgres "github.com/echovisionlab/geul-api/internal/sitesettings/postgres"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -119,7 +120,7 @@ func storedTitle(t *testing.T, db *gorm.DB) string {
 
 func TestSettingsMutationRechecksAuthorityAfterWaitingOnTheSettingsLockIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	checker := authztest.AllowAll()
 	service := newService(t, db, checker)
 	before := storedTitle(t, db)
@@ -133,7 +134,7 @@ func TestSettingsMutationRechecksAuthorityAfterWaitingOnTheSettingsLockIntegrati
 		_, err := service.SetSetting(adminContext(t), sitesettings.SetSettingCommand{Key: "site_title", Value: "Must not persist"})
 		result <- err
 	}()
-	testutil.RequireLockWaiters(t, db, 1)
+	pgtest.RequireLockWaiters(t, db, 1)
 	checker.Deny(policyv1.SiteSetting.Edit("1"))
 	require.NoError(t, holder.Commit().Error)
 
@@ -144,7 +145,7 @@ func TestSettingsMutationRechecksAuthorityAfterWaitingOnTheSettingsLockIntegrati
 
 func TestSettingsChangesPlanOneOGRunForOverlappingChangesIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	service := newService(t, db, authztest.AllowAll())
 	ctx := adminContext(t)
 
@@ -167,7 +168,7 @@ func TestSettingsChangesPlanOneOGRunForOverlappingChangesIntegration(t *testing.
 
 func TestLegalOGBackgroundsPersistWithoutPublishedLegalContentIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	service := newService(t, db, authztest.AllowAll())
 	ctx := adminContext(t)
 	require.Zero(t, count(t, db, "privacy_history", "true"))
@@ -186,7 +187,7 @@ func TestLegalOGBackgroundsPersistWithoutPublishedLegalContentIntegration(t *tes
 
 func TestAnOGPlanFailureRollsBackTheSettingAndItsRunIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	service := newService(t, db, authztest.AllowAll())
 	// A published Work whose featured image has no ready asset fails the plan.
 	fileID, documentID := uuid.NewString(), uuid.NewString()

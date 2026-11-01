@@ -15,7 +15,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -26,16 +27,16 @@ import (
 
 func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	db := orytest.NewIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
 	authorIdentityID := uuid.NewString()
 	authorMemberID := uuid.NewString()
 	memberIdentityID := uuid.NewString()
 	memberID := uuid.NewString()
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
+	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{
 		ID: authorIdentityID,
 	})
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{
+	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{
 		ID: memberIdentityID,
 	})
 	seedFileDownloadMember(t, db, authorIdentityID, authorMemberID, policyv1.Role.Author().ID())
@@ -169,11 +170,11 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 
 func TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
+	db := orytest.NewIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
 	identityID := uuid.NewString()
 	memberID := uuid.NewString()
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID})
+	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{ID: identityID})
 	seedFileDownloadMember(t, db, identityID, memberID, policyv1.Role.Admin().ID())
 	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
 	require.NoError(t, err)

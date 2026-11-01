@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/campaign/campaigntest"
 	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
@@ -15,24 +17,27 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
+
+	// Real concurrent workers must produce one lease owner, and a stale worker must not finalize it.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 )
 
-// Real concurrent workers must produce one lease owner, and a stale worker must not finalize it.
 func TestCampaignDeliveryRecipientClaimFencesConcurrentAndExpiredWorkersIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true, BootstrapKratosStub: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true, BootstrapKratosStub: true}).DB
 	units := mutation.Postgres(db, func(tx *gorm.DB) campaign.Store {
-		return campaignpostgres.NewStore(tx, campaignpostgres.Ports{ContentBlocks: testutil.NewEmailContentBlockStore(t, nil)})
+		return campaignpostgres.NewStore(tx, campaignpostgres.Ports{ContentBlocks: contenttest.NewEmailContentBlockStore(t)})
 	})
 	h := campaigntest.Harness{Harness: mutationtest.PostgresHarness(db, units)}
 	c := campaigntest.SeedCampaign(t, h)
 	run := campaigntest.SeedRun(t, h, c, "sending")
 	identityID := uuid.NewString()
-	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Claim worker "+identityID)
+	memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "Claim worker "+identityID)
 	r := model.CampaignDeliveryRecipient{RunID: run.ID, RecipientEmail: "claim@example.test", MemberID: &memberID, IdentityID: &identityID, RecipientContextType: campaign.BulkEmailContextAccountCurrent, Status: "pending"}
 	require.NoError(t, db.Create(&r).Error)
 	joined := func(tx *gorm.DB) campaign.Joined {

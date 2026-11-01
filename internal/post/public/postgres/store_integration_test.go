@@ -16,7 +16,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/post/public"
 	postpublicpostgres "github.com/echovisionlab/geul-api/internal/post/public/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -52,7 +53,7 @@ type fixture struct {
 
 func newFixture(t *testing.T) fixture {
 	t.Helper()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	place := uuid.NewString()
 	require.NoError(t, db.Exec(`INSERT INTO map_place (id, name, address, lat, lng) VALUES (?, 'Place', 'Road', 37.55, 126.99)`, place).Error)
 	return fixture{db: db, place: place}

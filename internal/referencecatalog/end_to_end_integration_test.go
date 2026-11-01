@@ -23,27 +23,29 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-)
 
-// These tests run the use cases on PostgreSQL, SpiceDB and the identity
-// fence's Kratos rows together, for what neither the fakes nor the Store
-// contract can show: the policy relationships SpiceDB derives permissions
-// from and the roles behind them, the fence over real Identity rows, and
-// authority rechecked after waiting on a real lock.
+	// These tests run the use cases on PostgreSQL, SpiceDB and the identity
+	// fence's Kratos rows together, for what neither the fakes nor the Store
+	// contract can show: the policy relationships SpiceDB derives permissions
+	// from and the roles behind them, the fence over real Identity rows, and
+	// authority rechecked after waiting on a real lock.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+)
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "start reference catalog integration suite: %v\n", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		fmt.Fprintf(os.Stderr, "close reference catalog integration suite: %v\n", err)
 		code = 1
@@ -54,13 +56,13 @@ func TestMain(m *testing.M) {
 // endToEnd is the Reference Catalog use cases on one test's database and
 // SpiceDB, over the production Store and adapters.
 type endToEnd struct {
-	stack *testutil.OryStack
+	stack *orytest.OryStack
 	db    *gorm.DB
 }
 
 func newEndToEnd(t *testing.T) endToEnd {
 	t.Helper()
-	stack := testutil.PrepareOryIntegrationTest(t)
+	stack := orytest.PrepareOryIntegrationTest(t)
 	require.NotNil(t, stack)
 	return endToEnd{stack: stack, db: stack.DB}
 }
@@ -82,7 +84,7 @@ func (e endToEnd) service(t *testing.T, audit domainaudit.Appender) *referenceca
 }
 
 // user is a Kratos Identity and Member holding role, with a request context.
-func (e endToEnd) user(t *testing.T, role policyv1.RoleID) (context.Context, *testutil.OryUser) {
+func (e endToEnd) user(t *testing.T, role policyv1.RoleID) (context.Context, *orytest.OryUser) {
 	t.Helper()
 	user := e.stack.CreateUser(t, role.ID())
 	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.77")
@@ -192,8 +194,8 @@ func TestReferenceMutationRechecksTheAdministratorAfterWaitingOnTheIdentityLockI
 		_, err := service.UpdateCategory(ctx, referencecatalog.UpdateReferenceCommand{ID: created.ID, Name: &name})
 		result <- err
 	}()
-	testutil.RequireKratosLockWaiters(t, e.db, 1)
-	testutil.GrantIntegrationGlobalRole(t, e.stack.SpiceDBClient, admin.IdentityID, policyv1.Role.User())
+	pgtest.RequireKratosLockWaiters(t, e.db, 1)
+	orytest.GrantIntegrationGlobalRole(t, e.stack.SpiceDBClient, admin.IdentityID, policyv1.Role.User())
 	require.NoError(t, roleChange.Commit().Error)
 
 	require.Equal(t, "admin access required", messageOf(<-result))
@@ -210,7 +212,7 @@ func TestMapPlaceMutationsAuthorizeTheCurrentRoleAndIdentityIntegration(t *testi
 	ctx, user := e.user(t, policyv1.Role.Admin())
 	service := e.service(t, &audittest.Recorder{})
 	setRole := func(role policyv1.RoleID) {
-		testutil.GrantIntegrationGlobalRole(t, e.stack.SpiceDBClient, user.IdentityID, role)
+		orytest.GrantIntegrationGlobalRole(t, e.stack.SpiceDBClient, user.IdentityID, role)
 	}
 
 	setRole(policyv1.Role.User())

@@ -19,7 +19,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/email"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -112,11 +113,11 @@ func TestLegalPolicyTermsPrivacyParityIntegration(t *testing.T) {
 		t.Run(kind.name, func(t *testing.T) {
 			// The schema seeds the active notice template of every legal event.
 			db := newLegalLocalKratosIntegrationDB(t)
-			identityID := testutil.IntegrationUUID()
-			memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Legal parity admin")
-			spiceDB := testutil.IntegrationSpiceDB(t)
-			testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
-			ctx := testutil.NewAuditContext(t, identityID, memberID)
+			identityID := orytest.IntegrationUUID()
+			memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "Legal parity admin")
+			spiceDB := orytest.IntegrationSpiceDB(t)
+			orytest.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+			ctx := orytest.NewAuditContext(t, identityID, memberID)
 			ops := kind.ops(newLegalIntegration(t, db, spiceDB, apitelemetry.NewDurableWriter(db)))
 			manage := policyv1.TermsHistory.Manage
 			if kind.name == "privacy" {
@@ -128,7 +129,7 @@ func TestLegalPolicyTermsPrivacyParityIntegration(t *testing.T) {
 			require.Equal(t, kind.defaultTitle, created.Title)
 			require.Equal(t, kind.status("DRAFT"), created.Status)
 			require.Positive(t, created.Version)
-			testutil.RequireSynchronousResourceAuthorization(t, spiceDB, manage, created.ID, identityID, true)
+			orytest.RequireSynchronousResourceAuthorization(t, spiceDB, manage, created.ID, identityID, true)
 			titled, err := ops.create(ctx, ptrString("Explicit "+kind.name+" title"))
 			require.NoError(t, err)
 			require.Equal(t, "Explicit "+kind.name+" title", titled.Title)
@@ -191,7 +192,7 @@ func TestLegalPolicyTermsPrivacyParityIntegration(t *testing.T) {
 				kind.name + "_scheduled/cancelled/20", kind.name + "_activated/cancelled/20",
 			}, legalParityOGReasons(t, db, kind.name), "deleting the only active version cancels its route render")
 			requireRelationWhereCount(t, db, kind.name+"_history", "id = ?", 0, created.ID)
-			testutil.RequireSynchronousResourceAuthorization(t, spiceDB, manage, created.ID, identityID, false)
+			orytest.RequireSynchronousResourceAuthorization(t, spiceDB, manage, created.ID, identityID, false)
 			runs = legalParityDeliveryRuns(t, db, kind.name, created.ID)
 			require.Len(t, runs, 2, "delivery history outlives the deleted policy")
 			require.Equal(t, legaldomain.CampaignDeliveryRunStatusCancelled, runs[1].Status)

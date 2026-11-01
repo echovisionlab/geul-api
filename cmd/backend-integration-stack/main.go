@@ -33,7 +33,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 )
 
@@ -52,7 +53,7 @@ func main() {
 		}
 	}()
 
-	stack, err := testutil.StartBackendIntegrationStackWithOptions(ctx, testutil.BackendIntegrationStackOptions{
+	stack, err := runtimetest.StartBackendIntegrationStackWithOptions(ctx, runtimetest.BackendIntegrationStackOptions{
 		HookBaseURL: hookBaseURL,
 		Logf: func(format string, args ...structured.Value) {
 			fmt.Fprintf(os.Stderr, format+"\n", args...)
@@ -172,7 +173,7 @@ func startHookServer(ctx context.Context) (*hookServer, string, error) {
 	mux := http.NewServeMux()
 	protectHook := func(h http.Handler) http.Handler {
 		return auth.RequireInternalServiceSecret(
-			testutil.IntegrationTokenSigningSecret,
+			runtimetest.IntegrationTokenSigningSecret,
 			integrationInternalServiceHeaderName,
 			h,
 		)

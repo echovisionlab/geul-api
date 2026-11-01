@@ -316,7 +316,12 @@ policy in `band.go`, protected lease file I/O in `lease.go`, and child-process
 ownership in `process.go`. A band consumes only the backend reset interface.
 After cancellation, it finishes bounded cleanup and starts no further packages.
 Test-only fixtures and `TestMain` belong in `_test.go` files unless they are
-shared deliberately through `internal/testutil`.
+shared deliberately through `internal/testutil` subpackages. PostgreSQL leases,
+clones and cleanup live in `pgtest`; Kratos and SpiceDB fixtures live in
+`orytest`; Docker, S3 and application-process fixtures live in `runtimetest`.
+The dependency direction is `runtimetest` → `orytest` → `pgtest`, so PostgreSQL
+contracts do not link Docker or AWS clients. Content document helpers and
+public-file rows live in `contenttest` and `filetest`, respectively.
 
 ## Tests
 
@@ -390,7 +395,8 @@ Every top-level test in an integration-tagged file starts with `t.Parallel()`;
 process-global state may opt out with a `// integration:serial <reason>` doc
 comment. `--jobs` (default 4) bounds both package and test concurrency. The
 runtime band (`cmd/backend-integration-stack`, `cmd/server/runtimetest`,
-`internal/filemedia/runtimetest`, `internal/testutil`) still runs one test at a time
+`internal/filemedia/runtimetest` and the three testutil helper packages)
+still runs one test at a time
 because its fixtures start shared application processes and register the single
 Kratos hook upstream.
 

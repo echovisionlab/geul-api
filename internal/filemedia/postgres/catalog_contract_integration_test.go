@@ -26,7 +26,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -34,7 +35,7 @@ import (
 func TestPostgresCatalogStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	filemediatest.RunCatalogContract(t, func(t *testing.T) filemediatest.CatalogHarness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		require.NoError(t, db.Exec(`CREATE TABLE filemedia_contract_output (sequence bigserial PRIMARY KEY, kind text NOT NULL, payload jsonb NOT NULL)`).Error)
 		return filemediatest.CatalogHarness{MeshJobs: func(t *testing.T) []domain.MeshJob {
 			var rows []struct{ Payload []byte }

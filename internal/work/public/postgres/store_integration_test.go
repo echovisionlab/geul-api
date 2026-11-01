@@ -27,7 +27,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/work"
 	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
 	workpublic "github.com/echovisionlab/geul-api/internal/work/public"
@@ -46,14 +47,14 @@ import (
 const cdn = "https://cdn.example.com"
 
 type fixture struct {
-	postgres *testutil.AppPostgres
+	postgres *pgtest.AppPostgres
 	db       *gorm.DB
 	contents *contentblock.Store
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	database := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})
+	database := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true})
 	contents, err := contentblock.NewGeneratedStore(unusedFileReuse{})
 	require.NoError(t, err)
 	return &fixture{postgres: database, db: database.DB, contents: contents}
@@ -395,7 +396,7 @@ func TestPublicReadKeepsItsSnapshotAcrossAnUnpublishIntegration(t *testing.T) {
 	<-rootRead
 	written := make(chan error, 1)
 	go func() { written <- f.unpublishWithDraftEdits(ctx, value, draftImage, draftClient) }()
-	testutil.RequireLockWaiters(t, f.db, 1)
+	pgtest.RequireLockWaiters(t, f.db, 1)
 	close(releaseRoot)
 	<-gate.entered
 	// The draft edit commits before the projection outside the snapshot

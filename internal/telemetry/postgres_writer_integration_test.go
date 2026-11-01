@@ -13,7 +13,8 @@ import (
 
 	"connectrpc.com/connect"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -24,9 +25,9 @@ import (
 
 // Each writer test owns its database, including committed audit records. No
 // package-wide TRUNCATE can erase another test's assertions.
-func telemetryIntegrationStack(t *testing.T) *testutil.AppPostgres {
+func telemetryIntegrationStack(t *testing.T) *pgtest.AppPostgres {
 	t.Helper()
-	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
+	return pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{
 		BootstrapKratosStub: true,
 		ApplyAppSchemaSQL:   true,
 	})

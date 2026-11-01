@@ -21,7 +21,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/maptheme"
 	mapthemepostgres "github.com/echovisionlab/geul-api/internal/maptheme/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -34,14 +35,14 @@ import (
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "start map theme integration suite: %v\n", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		fmt.Fprintf(os.Stderr, "close map theme integration suite: %v\n", err)
 		code = 1
@@ -61,16 +62,16 @@ type endToEnd struct {
 
 func newEndToEnd(t *testing.T) endToEnd {
 	t.Helper()
-	stack := testutil.PrepareOryIntegrationTest(t)
+	stack := orytest.PrepareOryIntegrationTest(t)
 	require.NotNil(t, stack)
-	identityID := testutil.IntegrationUUID()
-	memberID := testutil.SeedPostIntegrationIdentity(t, stack.DB, identityID, "Map Theme administrator")
-	testutil.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, identityID, policyv1.Role.Admin())
+	identityID := orytest.IntegrationUUID()
+	memberID := orytest.SeedPostIntegrationIdentity(t, stack.DB, identityID, "Map Theme administrator")
+	orytest.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, identityID, policyv1.Role.Admin())
 	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.121")
 	require.NoError(t, err)
 	ctx := auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), requestContext), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
-		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
+		SessionID: auth.SessionID(orytest.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
 	e := endToEnd{db: stack.DB, spiceDB: stack.SpiceDBClient, admin: principal{identityID: identityID, memberID: memberID, ctx: ctx}}
 	e.themes, e.internal = e.handlers(t, &audittest.Recorder{})
@@ -215,7 +216,7 @@ func TestMapThemeMutationsRecheckAuthorityAfterWaitingOnALockIntegration(t *test
 			result := make(chan error, 1)
 			go func() { result <- test.invoke(e, theme.Msg.Id) }()
 			waitForLockWaiter(t, e.db, result)
-			testutil.GrantIntegrationGlobalRole(t, e.spiceDB, e.admin.identityID, policyv1.Role.User())
+			orytest.GrantIntegrationGlobalRole(t, e.spiceDB, e.admin.identityID, policyv1.Role.User())
 			require.NoError(t, lockTx.Commit().Error)
 
 			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(<-result))

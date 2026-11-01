@@ -23,28 +23,30 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+
+	// These tests run the Account use cases over the production Store, a real
+	// Kratos and a real SpiceDB, for what the fakes cannot answer: the identity
+	// fence over Kratos rows, SpiceDB's direct-role relationships and their
+	// read-after-write consistency, the last-admin fence under concurrency, and
+	// the deletion worker across Kratos, SpiceDB and PostgreSQL.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 )
 
-// These tests run the Account use cases over the production Store, a real
-// Kratos and a real SpiceDB, for what the fakes cannot answer: the identity
-// fence over Kratos rows, SpiceDB's direct-role relationships and their
-// read-after-write consistency, the last-admin fence under concurrency, and
-// the deletion worker across Kratos, SpiceDB and PostgreSQL.
-
 func TestMain(m *testing.M) {
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "start account Ory integration suite:", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if closeErr := suite.Close(); closeErr != nil && code == 0 {
 		fmt.Fprintln(os.Stderr, "cleanup account Ory integration suite:", closeErr)
 		code = 1
@@ -54,7 +56,7 @@ func TestMain(m *testing.M) {
 
 // integrationService is the production composition of the Account use cases
 // over stack.
-func integrationService(t *testing.T, stack *testutil.OryStack) (*account.Service, account.Units, *mq.Publisher) {
+func integrationService(t *testing.T, stack *orytest.OryStack) (*account.Service, account.Units, *mq.Publisher) {
 	t.Helper()
 	sqlDB, err := stack.DB.DB()
 	require.NoError(t, err)
@@ -74,7 +76,7 @@ func integrationService(t *testing.T, stack *testutil.OryStack) (*account.Servic
 	return service, units, publisher
 }
 
-func auditedOryMemberContext(t *testing.T, user *testutil.OryUser) context.Context {
+func auditedOryMemberContext(t *testing.T, user *orytest.OryUser) context.Context {
 	t.Helper()
 	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.88")
 	require.NoError(t, err)
@@ -105,17 +107,17 @@ func requireAdminRequired(t *testing.T, err error) {
 // fence over the real Kratos rows.
 func TestAccountAdminMutationsRejectStaleAdministratorIdentityIntegration(t *testing.T) {
 	t.Parallel()
-	for name, stale := range map[string]func(*testing.T, *testutil.OryStack, *testutil.OryUser){
-		"deactivated identity": func(t *testing.T, stack *testutil.OryStack, admin *testutil.OryUser) {
+	for name, stale := range map[string]func(*testing.T, *orytest.OryStack, *orytest.OryUser){
+		"deactivated identity": func(t *testing.T, stack *orytest.OryStack, admin *orytest.OryUser) {
 			require.NoError(t, stack.KratosClient.SetIdentityState(t.Context(), admin.IdentityID, auth.KratosStateInactive))
 		},
-		"banned identity": func(t *testing.T, stack *testutil.OryStack, admin *testutil.OryUser) {
+		"banned identity": func(t *testing.T, stack *orytest.OryStack, admin *orytest.OryUser) {
 			require.NoError(t, stack.KratosClient.UpdateIdentityMetadataAdmin(t.Context(), admin.IdentityID, structured.Fields{"banned": true}))
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			stack := testutil.SetupOryStack(t)
+			stack := orytest.SetupOryStack(t)
 			admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 			// A second administrator keeps the last-admin fence out of the way.
 			stack.CreateUser(t, policyv1.Role.Admin().ID())
@@ -160,7 +162,7 @@ func TestAccountAdminMutationsRejectStaleAdministratorIdentityIntegration(t *tes
 // request records nothing.
 func TestAccountAuditRecordsOnlyExactAuthorityTransitionsIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())
 	service, _, _ := integrationService(t, stack)
@@ -261,7 +263,7 @@ func TestAccountAuditRecordsOnlyExactAuthorityTransitionsIntegration(t *testing.
 // Each direct-role transition replaces the relationship SpiceDB reads back.
 func TestSetAccountRoleSynchronizesEveryDirectRoleTransitionIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	service, _, _ := integrationService(t, stack)
 	handler := account.NewConnectHandler(service)
@@ -298,7 +300,7 @@ func TestSetAccountRoleSynchronizesEveryDirectRoleTransitionIntegration(t *testi
 // The ban check reads the role SpiceDB has just written.
 func TestBanAccountRejectsTargetAfterRolePromotionIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())
 	service, _, _ := integrationService(t, stack)
@@ -321,14 +323,14 @@ func TestBanAccountRejectsTargetAfterRolePromotionIntegration(t *testing.T) {
 // last-admin fence let exactly one through.
 func TestSetAccountRoleConcurrentPeerDemotionKeepsOneActiveAdminIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	first := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	second := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	service, _, _ := integrationService(t, stack)
 	handler := account.NewConnectHandler(service)
 	start := make(chan struct{})
 	results := make(chan error, 2)
-	for _, pair := range [][2]*testutil.OryUser{{first, second}, {second, first}} {
+	for _, pair := range [][2]*orytest.OryUser{{first, second}, {second, first}} {
 		go func() {
 			<-start
 			_, err := handler.SetAccountRole(auditedOryMemberContext(t, pair[0]), connect.NewRequest(&managev1.SetAccountRoleRequest{
@@ -361,7 +363,7 @@ func TestSetAccountRoleConcurrentPeerDemotionKeepsOneActiveAdminIntegration(t *t
 	activeAdmins := 0
 	can, err := policyv1.Platform.IsAdmin()
 	require.NoError(t, err)
-	for _, user := range []*testutil.OryUser{first, second} {
+	for _, user := range []*orytest.OryUser{first, second} {
 		actor, err := policyv1.NewAccountIdentityActor(user.IdentityID)
 		require.NoError(t, err)
 		admin, err := stack.SpiceDBClient.CheckActorCan(t.Context(), actor, can)
@@ -378,7 +380,7 @@ func TestSetAccountRoleConcurrentPeerDemotionKeepsOneActiveAdminIntegration(t *t
 // nothing.
 func TestUnonboardedDeletionWorkerHardDeletesOnceAndCleansSpiceDBIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	target := stack.CreateUser(t, policyv1.Role.User().ID())
 	now := time.Now().UTC()
@@ -395,7 +397,7 @@ func TestUnonboardedDeletionWorkerHardDeletesOnceAndCleansSpiceDBIntegration(t *
 	sqlDB, err := stack.DB.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		require.NoError(t, testutil.PurgePGMQQueue(context.Background(), sqlDB, eventpkg.QueueUserDeleteIdentity))
+		require.NoError(t, pgtest.PurgePGMQQueue(context.Background(), sqlDB, eventpkg.QueueUserDeleteIdentity))
 	})
 
 	queued, err := account.EnqueueExpiredUnonboardedMembers(t.Context(), units, now, 1)

@@ -24,21 +24,22 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
 func TestMain(m *testing.M) {
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "start member Ory integration suite:", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if closeErr := suite.Close(); closeErr != nil && code == 0 {
 		fmt.Fprintln(os.Stderr, "cleanup member Ory integration suite:", closeErr)
 		code = 1
@@ -69,7 +70,7 @@ func seedIntegrationMember(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClien
 	t.Helper()
 	memberID, identityID := uuid.NewString(), uuid.NewString()
 	email := memberID + "@example.test"
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Email: email, Name: nickname})
+	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{ID: identityID, Email: email, Name: nickname})
 	require.NoError(t, db.Exec(`UPDATE kratos.identities SET external_id = ?::text WHERE id = ?::uuid`, memberID, identityID).Error)
 	require.NoError(t, db.Exec(`INSERT INTO account_identity (id) VALUES (?::uuid)`, identityID).Error)
 	require.NoError(t, db.Exec(`
@@ -96,8 +97,8 @@ func TestMemberAdminMutationsRejectStaleAdministratorIdentityIntegration(t *test
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			db := testutil.NewIntegrationDB(t)
-			spiceDB := testutil.SetupOryStack(t).SpiceDBClient
+			db := orytest.NewIntegrationDB(t)
+			spiceDB := orytest.SetupOryStack(t).SpiceDBClient
 			adminID, adminIdentityID := seedIntegrationMember(t, db, spiceDB, "admin-"+uuid.NewString(), policyv1.Role.Admin())
 			targetID, _ := seedIntegrationMember(t, db, spiceDB, "stale-admin-target", policyv1.Role.User())
 			tag := model.UserTag{ID: uuid.NewString(), Name: "existing"}
@@ -191,9 +192,9 @@ func (m *concurrentProvisioningIdentity) UpdateIdentityExternalID(ctx context.Co
 // account anchor and its SpiceDB relationships.
 func TestProvisionRegistrationConcurrentHooksConvergeOnOneMemberIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.PrepareOryIntegrationConcurrentTest(t)
+	stack := orytest.PrepareOryIntegrationConcurrentTest(t)
 	db := stack.DB
-	oryStack := testutil.SetupOryStack(t)
+	oryStack := orytest.SetupOryStack(t)
 	spiceDB := oryStack.SpiceDBClient
 	admin := oryStack.CreateUser(t, policyv1.Role.Admin().ID())
 	identityID := uuid.NewString()

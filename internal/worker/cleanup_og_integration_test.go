@@ -23,7 +23,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -196,7 +197,7 @@ func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testin
 			t.Fatalf("completion did not wait for cleanup lock: %v", completeErr)
 		case <-time.After(100 * time.Millisecond):
 		}
-		testutil.RequireLockWaiters(t, pg.DB, 1)
+		pgtest.RequireLockWaiters(t, pg.DB, 1)
 		close(release)
 		require.NoError(t, <-cleanupDone)
 		require.Error(t, <-completeDone)
@@ -224,7 +225,7 @@ func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testin
 			t.Fatalf("cleanup did not wait for completion transaction: %v", cleanupErr)
 		case <-time.After(100 * time.Millisecond):
 		}
-		testutil.RequireLockWaiters(t, pg.DB, 1)
+		pgtest.RequireLockWaiters(t, pg.DB, 1)
 		require.NoError(t, tx.Commit().Error)
 		require.NoError(t, <-cleanupDone)
 		assertCleanupAssetStatus(t, pg.DB, asset.ID, model.PublicAssetStatusReady)

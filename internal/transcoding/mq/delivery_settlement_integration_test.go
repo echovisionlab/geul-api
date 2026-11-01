@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/transcoding/jobresult"
 	"github.com/echovisionlab/geul-api/internal/transcoding/jobs"
 	apiv1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -20,7 +20,7 @@ import (
 
 func TestTranscodeResultAndInputCommitTogetherIntegration(t *testing.T) {
 	t.Parallel()
-	pg := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true})
+	pg := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true})
 	conn, err := NewConnection(pg.DSN)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, conn.Close()) })

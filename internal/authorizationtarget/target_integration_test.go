@@ -6,7 +6,8 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -14,7 +15,7 @@ import (
 
 func TestForMemberRequiresAnActiveOnboardedLinkedTargetIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
 
 	target, err := ForMember(stack.DB.WithContext(t.Context()), user.MemberID)
@@ -37,7 +38,7 @@ func TestForMemberRequiresAnActiveOnboardedLinkedTargetIntegration(t *testing.T)
 
 func TestEligibleMemberIDsAndLockReferencesIgnoreTemporaryIdentityStateIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
 
 	require.NoError(t, stack.DB.Exec(
@@ -81,7 +82,7 @@ func TestEligibleMemberIDsAndLockReferencesIgnoreTemporaryIdentityStateIntegrati
 
 func TestValidateActivePairRejectsIdentityAsMemberIDIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
 
 	err := ValidateActivePair(t.Context(), stack.DB, user.IdentityID, user.IdentityID)

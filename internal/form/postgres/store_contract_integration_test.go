@@ -17,13 +17,13 @@ import (
 	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestPostgresStoreKeepsTheFormStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	formtest.RunStoreContract(t, func(t *testing.T) formtest.Harness {
-		return postgresHarness(t, testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB)
+		return postgresHarness(t, pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB)
 	})
 }
 

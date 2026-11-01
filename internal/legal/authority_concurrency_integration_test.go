@@ -11,7 +11,9 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -27,7 +29,7 @@ func TestLegalVersionCreateRejectsAdminRevokedWhileVersionLockWaitsIntegration(t
 		{name: "privacy", lockName: "privacy_history_version", table: "privacy_history"},
 	} {
 		t.Run(policy.name, func(t *testing.T) {
-			stack := testutil.SetupOryStack(t)
+			stack := orytest.SetupOryStack(t)
 			integration := newLegalIntegration(t, stack.DB, stack.SpiceDBClient, &audittest.Recorder{})
 			actor := stack.CreateUser(t, policyv1.Role.Admin().ID())
 			ctx := auth.WithUser(t.Context(), actor.AuthUserInfo())
@@ -73,8 +75,8 @@ func TestLegalVersionCreateRejectsAdminRevokedWhileVersionLockWaitsIntegration(t
 
 func runLegalVersionCreateRevocationAttempt(
 	t *testing.T,
-	stack *testutil.OryStack,
-	actor *testutil.OryUser,
+	stack *orytest.OryStack,
+	actor *orytest.OryUser,
 	ctx context.Context,
 	lockName string,
 	create func() error,
@@ -98,7 +100,7 @@ func runLegalVersionCreateRevocationAttempt(
 
 	result := make(chan error, 1)
 	go func() { result <- create() }()
-	testutil.RequireLockWaiters(t, stack.DB, 1)
+	pgtest.RequireLockWaiters(t, stack.DB, 1)
 	demoteLegalIntegrationIdentity(t, stack, actor.IdentityID)
 	_, err = lockConn.ExecContext(ctx, "SELECT pg_advisory_unlock(hashtext($1))", lockName)
 	require.NoError(t, err)
@@ -108,7 +110,7 @@ func runLegalVersionCreateRevocationAttempt(
 
 func demoteLegalIntegrationIdentity(
 	t *testing.T,
-	stack *testutil.OryStack,
+	stack *orytest.OryStack,
 	identityID string,
 ) {
 	t.Helper()

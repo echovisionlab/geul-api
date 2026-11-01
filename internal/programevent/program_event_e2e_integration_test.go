@@ -27,7 +27,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -42,14 +43,14 @@ import (
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "start Program Event integration suite: %v\n", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		fmt.Fprintf(os.Stderr, "close Program Event integration suite: %v\n", err)
 		code = 1
@@ -62,7 +63,7 @@ func TestMain(m *testing.M) {
 // SpiceDB before the request returns, and that deleting it revokes that.
 func TestProgramEventAndSeriesMutationsSynchronouslyApplyAuthorizationIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	ctx, spiceDB := adminContext(t, db)
 	service := newService(t, db, spiceDB)
 	actor, err := policyv1.NewAccountIdentityActor(auth.GetUser(ctx).IdentityID.String())
@@ -103,7 +104,7 @@ func TestProgramEventAndSeriesMutationsSynchronouslyApplyAuthorizationIntegratio
 // is no authority for the write: the locked transaction must deny it.
 func TestProgramEventMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	ctx, spiceDB := adminContext(t, db)
 	service := newService(t, db, spiceDB)
 	event := createEvent(ctx, t, service)
@@ -124,7 +125,7 @@ func TestProgramEventMutationsRecheckAuthorityAfterRootLockIntegration(t *testin
 		result <- err
 	}()
 	requireLockWaiter(t, db, result)
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, auth.GetUser(ctx).IdentityID.String(), policyv1.Role.User())
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, auth.GetUser(ctx).IdentityID.String(), policyv1.Role.User())
 	require.NoError(t, lock.Commit().Error)
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(<-result))
 
@@ -158,10 +159,10 @@ func requireLockWaiter(t *testing.T, db *gorm.DB, result <-chan error) {
 // adminContext is a request of a new Admin, and the SpiceDB holding its role.
 func adminContext(t *testing.T, db *gorm.DB) (context.Context, *auth.SpiceDBClient) {
 	t.Helper()
-	identityID := testutil.IntegrationUUID()
-	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Program Event integration Admin")
-	spiceDB := testutil.SetupOryStack(t).SpiceDBClient
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	identityID := orytest.IntegrationUUID()
+	memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "Program Event integration Admin")
+	spiceDB := orytest.SetupOryStack(t).SpiceDBClient
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	requestContext, err := sharedtelemetry.NewPublicRequestContext("192.0.2.98")
 	require.NoError(t, err)
 	return auth.WithUser(sharedtelemetry.WithRequestContext(t.Context(), requestContext), &auth.UserInfo{

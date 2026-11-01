@@ -12,7 +12,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/series"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -25,7 +27,7 @@ func requireManager(t *testing.T, spiceDB *auth.SpiceDBClient, identityID, serie
 
 func memberContext(t *testing.T, identityID string) context.Context {
 	t.Helper()
-	return principalContext(t, identityID, testutil.PostIntegrationMemberID(identityID))
+	return principalContext(t, identityID, orytest.PostIntegrationMemberID(identityID))
 }
 
 // The SpiceDB schema gives the policy edge and the manager edge their
@@ -34,12 +36,12 @@ func memberContext(t *testing.T, identityID string) context.Context {
 // Members linked to Kratos Identities.
 func TestSeriesRelationshipsFollowItsMutationsIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
-	adminID, managerID := testutil.IntegrationUUID(), testutil.IntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Series authorization admin")
-	testutil.SeedPostIntegrationIdentity(t, db, managerID, "Series authorization manager")
-	testutil.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
+	db := orytest.NewIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
+	adminID, managerID := orytest.IntegrationUUID(), orytest.IntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Series authorization admin")
+	orytest.SeedPostIntegrationIdentity(t, db, managerID, "Series authorization manager")
+	orytest.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
 	service := newIntegrationService(t, db, integrationDeps{spiceDB: stack.SpiceDBClient, client: stack.SpiceDBClient})
 	ctx := memberContext(t, adminID)
 
@@ -48,7 +50,7 @@ func TestSeriesRelationshipsFollowItsMutationsIntegration(t *testing.T) {
 	seriesID := created.Series.ID
 	requireManager(t, stack.SpiceDBClient, adminID, seriesID, true)
 
-	managerMemberID := testutil.PostIntegrationMemberID(managerID)
+	managerMemberID := orytest.PostIntegrationMemberID(managerID)
 	require.NoError(t, service.AddSeriesManager(ctx, series.AddSeriesManagerCommand{SeriesID: seriesID, MemberID: managerMemberID}))
 	requireManager(t, stack.SpiceDBClient, managerID, seriesID, true)
 	require.NoError(t, service.AddSeriesManager(ctx, series.AddSeriesManagerCommand{SeriesID: seriesID, MemberID: managerMemberID}))
@@ -68,13 +70,13 @@ func TestSeriesRelationshipsFollowItsMutationsIntegration(t *testing.T) {
 // retired attribution is cleared without a relationship write.
 func TestSeriesManagerProjectionSurvivesIdentityDisappearanceIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
-	adminID, identityID := testutil.IntegrationUUID(), testutil.IntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Series relation reader")
-	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Former Series manager")
-	testutil.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
-	memberID := testutil.PostIntegrationMemberID(identityID)
+	db := orytest.NewIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
+	adminID, identityID := orytest.IntegrationUUID(), orytest.IntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Series relation reader")
+	orytest.SeedPostIntegrationIdentity(t, db, identityID, "Former Series manager")
+	orytest.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
+	memberID := orytest.PostIntegrationMemberID(identityID)
 	seriesID := seedSeriesRow(t, db, "Durable Series manager", "durable-series-manager-"+identityID, model.SeriesStatusDraft)
 	formerActor := must(policyv1.NewAccountIdentityActor(identityID))
 	_, err := stack.SpiceDBClient.ApplyRelationships(t.Context(),
@@ -110,12 +112,12 @@ func TestSeriesManagerProjectionSurvivesIdentityDisappearanceIntegration(t *test
 // change never commits.
 func TestSeriesMutationRechecksAuthorityAfterOwningRowLockIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewConcurrentPostIntegrationDB(t)
-	stack := testutil.SetupOryStack(t)
-	adminID, managerID := testutil.IntegrationUUID(), testutil.IntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Series authority admin")
-	testutil.SeedPostIntegrationIdentity(t, db, managerID, "Series authority manager")
-	testutil.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
+	db := orytest.NewConcurrentPostIntegrationDB(t)
+	stack := orytest.SetupOryStack(t)
+	adminID, managerID := orytest.IntegrationUUID(), orytest.IntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Series authority admin")
+	orytest.SeedPostIntegrationIdentity(t, db, managerID, "Series authority manager")
+	orytest.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
 	service := newIntegrationService(t, db, integrationDeps{spiceDB: stack.SpiceDBClient, client: stack.SpiceDBClient})
 	seriesID := seedSeriesRow(t, db, "Authority Series", "authority-series-"+managerID, model.SeriesStatusDraft)
 	managerActor := must(policyv1.NewAccountIdentityActor(managerID))
@@ -131,7 +133,7 @@ func TestSeriesMutationRechecksAuthorityAfterOwningRowLockIntegration(t *testing
 		require.NoError(t, blocker.Exec(`SELECT id FROM series WHERE id = ? FOR UPDATE`, seriesID).Error)
 		done := make(chan error, 1)
 		go func() { done <- run() }()
-		testutil.RequireLockWaiters(t, db, 1)
+		pgtest.RequireLockWaiters(t, db, 1)
 		revoke()
 		require.NoError(t, blocker.Commit().Error)
 		return <-done
@@ -150,7 +152,7 @@ func TestSeriesMutationRechecksAuthorityAfterOwningRowLockIntegration(t *testing
 	require.Equal(t, "Authority Series", title)
 
 	err = waitBehindRootLock(func() {
-		testutil.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.User())
+		orytest.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.User())
 	}, func() error {
 		return service.DeleteSeries(memberContext(t, adminID), series.DeleteSeriesCommand{ID: seriesID})
 	})

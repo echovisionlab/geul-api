@@ -19,13 +19,14 @@ import (
 	adminpostgres "github.com/echovisionlab/geul-api/internal/admin/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
-func seedMember(t *testing.T, db *gorm.DB, identity testutil.KratosIdentityFixture) {
+func seedMember(t *testing.T, db *gorm.DB, identity orytest.KratosIdentityFixture) {
 	t.Helper()
-	testutil.SeedKratosIdentityFixture(t, db, identity)
-	memberID := testutil.PostIntegrationMemberID(identity.ID)
+	orytest.SeedKratosIdentityFixture(t, db, identity)
+	memberID := orytest.PostIntegrationMemberID(identity.ID)
 	email := identity.ID + "@example.test"
 	now := time.Now().UTC()
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
@@ -60,11 +61,11 @@ func slug(prefix string) *string {
 // read snapshot.
 func TestDashboardCountsTheOwnersRowsIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
-	seedMember(t, db, testutil.KratosIdentityFixture{ID: uuid.NewString()})
-	seedMember(t, db, testutil.KratosIdentityFixture{ID: uuid.NewString()})
-	seedMember(t, db, testutil.KratosIdentityFixture{ID: uuid.NewString(), Banned: true})
-	seedMember(t, db, testutil.KratosIdentityFixture{ID: uuid.NewString(), State: auth.KratosStateInactive})
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+	seedMember(t, db, orytest.KratosIdentityFixture{ID: uuid.NewString()})
+	seedMember(t, db, orytest.KratosIdentityFixture{ID: uuid.NewString()})
+	seedMember(t, db, orytest.KratosIdentityFixture{ID: uuid.NewString(), Banned: true})
+	seedMember(t, db, orytest.KratosIdentityFixture{ID: uuid.NewString(), State: auth.KratosStateInactive})
 	now := time.Now().UTC()
 	postID := uuid.NewString()
 	for _, post := range []model.Post{

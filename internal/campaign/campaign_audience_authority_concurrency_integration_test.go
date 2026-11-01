@@ -9,16 +9,19 @@ import (
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm/clause"
+
+	// A fake cannot prove that authorization happens after PostgreSQL releases a root lock.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 )
 
-// A fake cannot prove that authorization happens after PostgreSQL releases a root lock.
 func TestCampaignMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStackWithLocalKratos(t)
+	stack := orytest.SetupOryStackWithLocalKratos(t)
 	db := stack.DB
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := integrationPrincipal(t, admin.AuthUserInfo())
@@ -35,8 +38,8 @@ func TestCampaignMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 		_, err := service.UpdateCampaignName(ctx, campaign.UpdateCampaignNameCommand{ID: created.ID, Name: "denied rename"})
 		done <- err
 	}()
-	testutil.RequireLockWaiters(t, db, 1)
-	testutil.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, admin.IdentityID, policyv1.Role.User())
+	pgtest.RequireLockWaiters(t, db, 1)
+	orytest.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, admin.IdentityID, policyv1.Role.User())
 	require.NoError(t, holder.Commit().Error)
 	require.Equal(t, connect.CodePermissionDenied, errs.Wrap(<-done).Code())
 	var stored model.Campaign

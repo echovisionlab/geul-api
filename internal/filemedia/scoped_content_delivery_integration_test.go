@@ -14,7 +14,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -409,9 +410,9 @@ type scopedFeaturedFixture struct {
 func seedScopedPostFeaturedFixture(t *testing.T, db *gorm.DB) scopedFeaturedFixture {
 	t.Helper()
 	identityID := uuid.NewString()
-	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Scoped featured Post author")
+	memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "Scoped featured Post author")
 	spiceDB := integrationSpiceDB(t)
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	ctx := auditedUserContext(t.Context(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,

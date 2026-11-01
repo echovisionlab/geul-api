@@ -12,18 +12,19 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 func TestReleaseTrackSynchronousAuthorizationLifecycleIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	spiceDB := integrationSpiceDB(t)
-	adminID := testutil.IntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Release authorization admin")
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	adminID := orytest.IntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Release authorization admin")
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	ctx := withAuditedRequestContext(t, releaseIntegrationAdminCtx(adminID))
 	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(adminID))
 	require.NoError(t, err)

@@ -14,21 +14,24 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/member/public"
 	memberpublicpostgres "github.com/echovisionlab/geul-api/internal/member/public/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
+	// The extended profile and the author bio follow the Identity's current
+	// role through SpiceDB's role hierarchy: an administrator is an author too.
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 )
 
-// The extended profile and the author bio follow the Identity's current
-// role through SpiceDB's role hierarchy: an administrator is an author too.
 func TestExtendedMemberProfileVisibilityFollowsCurrentIdentityRoleIntegration(t *testing.T) {
 	t.Parallel()
-	stack, err := testutil.StartBackendIntegrationStack(t.Context())
+	stack, err := runtimetest.StartBackendIntegrationStack(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, stack.Close()) })
 	db, spiceDB := stack.Postgres.DB, stack.SpiceDBClient
 	now := time.Now().UTC()
 	identityID, memberID := uuid.NewString(), uuid.NewString()
-	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Name: "Role Profile", CreatedAt: now})
+	orytest.SeedKratosIdentityFixture(t, db, orytest.KratosIdentityFixture{ID: identityID, Name: "Role Profile", CreatedAt: now})
 	require.NoError(t, db.Exec(`INSERT INTO account_identity (id) VALUES (?::uuid)`, identityID).Error)
 	require.NoError(t, db.Exec(`UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid`, memberID, identityID).Error)
 	bio, website := "stored biography", "https://profile.example.test"

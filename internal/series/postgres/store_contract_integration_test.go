@@ -15,11 +15,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/series"
 	"github.com/echovisionlab/geul-api/internal/series/seriestest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
+
+	// contractUnits binds the Series rows only; the contract never reaches
+	// another domain.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 )
 
-// contractUnits binds the Series rows only; the contract never reaches
-// another domain.
 func contractUnits(db *gorm.DB) mutation.UnitOfWork[series.Store] {
 	return mutation.Postgres(db, func(tx *gorm.DB) series.Store {
 		return store{translationStore: translationStore{tx: tx}}
@@ -29,12 +31,12 @@ func contractUnits(db *gorm.DB) mutation.UnitOfWork[series.Store] {
 func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	seriestest.RunStoreContract(t, func(t *testing.T) seriestest.Fixture {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		return seriestest.Fixture{
 			Harness: mutationtest.PostgresHarness(db, contractUnits(db)),
 			Member: func(t *testing.T) string {
 				memberID := uuid.NewString()
-				testutil.InsertDocumentContributor(t, db, memberID)
+				orytest.InsertDocumentContributor(t, db, memberID)
 				return memberID
 			},
 			File: func(t *testing.T) string {

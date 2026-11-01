@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	"github.com/echovisionlab/geul-api/internal/adapters/filemediareuse"
 
 	"connectrpc.com/connect"
@@ -20,7 +22,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mq"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -138,23 +141,23 @@ func TestPostVersionRestoreCharacterizationIntegration(t *testing.T) {
 			entity := f.create(t)
 			f.applyBody(t, entity, postVersionRestoreBody)
 			versionID := f.checkpoint(t, entity)
-			checkpointRows := testutil.LoadContentDocumentRows(t, f.db, entity.documentID)
+			checkpointRows := contenttest.LoadContentDocumentRows(t, f.db, entity.documentID)
 			checkpointSettings := f.settingsFingerprint(t, entity)
 			tc.drift(t, f, entity)
 
-			beforeRows := testutil.LoadContentDocumentRows(t, f.db, entity.documentID)
-			beforeMetadata := testutil.LoadLocaleMetadataRows(t, f.db, "post_translation", entity.id)
+			beforeRows := contenttest.LoadContentDocumentRows(t, f.db, entity.documentID)
+			beforeMetadata := contenttest.LoadLocaleMetadataRows(t, f.db, "post_translation", entity.id)
 			beforeUpdatedAt := f.updatedAt(t, entity)
-			beforeEvents := len(testutil.ContentUpdatedEvents(t, f.db, entity.id))
-			beforeAudit := len(testutil.LoadDomainAuditRows(t, f.db, "post", entity.id))
+			beforeEvents := len(contenttest.ContentUpdatedEvents(t, f.db, entity.id))
+			beforeAudit := len(contenttest.LoadDomainAuditRows(t, f.db, "post", entity.id))
 
 			restored, err := f.restore(f.ctx, entity.id, versionID)
 			require.NoError(t, err)
 
-			afterRows := testutil.LoadContentDocumentRows(t, f.db, entity.documentID)
-			afterMetadata := testutil.LoadLocaleMetadataRows(t, f.db, "post_translation", entity.id)
-			events := testutil.ContentUpdatedEvents(t, f.db, entity.id)[beforeEvents:]
-			audit := testutil.LoadDomainAuditRows(t, f.db, "post", entity.id)[beforeAudit:]
+			afterRows := contenttest.LoadContentDocumentRows(t, f.db, entity.documentID)
+			afterMetadata := contenttest.LoadLocaleMetadataRows(t, f.db, "post_translation", entity.id)
+			events := contenttest.ContentUpdatedEvents(t, f.db, entity.id)[beforeEvents:]
+			audit := contenttest.LoadDomainAuditRows(t, f.db, "post", entity.id)[beforeAudit:]
 
 			require.Equal(t, postVersionRestoreTitle, restored.title)
 			require.Nil(t, restored.summary)
@@ -166,7 +169,7 @@ func TestPostVersionRestoreCharacterizationIntegration(t *testing.T) {
 			require.Equal(t, postVersionRestoreLocales(beforeRows, "en", false), postVersionRestoreLocales(afterRows, "en", false),
 				"target locale overlays stay unchanged")
 			require.Equal(t, checkpointSettings, f.settingsFingerprint(t, entity), "versions never restore settings")
-			require.Equal(t, tc.want.ogGenerations, testutil.CountOgGenerationsForReason(t, f.db, entity.id, postVersionRestoreOGEvent))
+			require.Equal(t, tc.want.ogGenerations, contenttest.CountOgGenerationsForReason(t, f.db, entity.id, postVersionRestoreOGEvent))
 
 			if tc.want.unchanged {
 				require.Equal(t, beforeRows, afterRows)
@@ -186,7 +189,7 @@ func TestPostVersionRestoreCharacterizationIntegration(t *testing.T) {
 					require.Equal(t, row, requirePostVersionRestoreLocaleRow(t, afterMetadata, row.Locale), "target locale rows stay unchanged")
 				}
 			}
-			require.Equal(t, []testutil.DomainAuditRow{{
+			require.Equal(t, []contenttest.DomainAuditRow{{
 				Action:        string(sharedtelemetry.AuditPostUpdated),
 				ActorKind:     string(sharedtelemetry.ActorKindMember),
 				ActorMemberID: &f.memberID,
@@ -205,9 +208,9 @@ func TestPostVersionRestoreCharacterizationIntegration(t *testing.T) {
 func TestPostVersionRestoreRejectionsIntegration(t *testing.T) {
 	t.Parallel()
 	f := newPostVersionRestoreFixture(t)
-	outsiderID := testutil.IntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, f.db, outsiderID, "Post version restore outsider")
-	outsiderCtx := withPostAuditedRequestContext(t, testutil.PostIntegrationContext(outsiderID))
+	outsiderID := orytest.IntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, f.db, outsiderID, "Post version restore outsider")
+	outsiderCtx := withPostAuditedRequestContext(t, orytest.PostIntegrationContext(outsiderID))
 	missingVersionID := uuid.NewString()
 	cases := []struct {
 		name        string
@@ -264,9 +267,9 @@ func TestPostVersionRestoreRejectionsIntegration(t *testing.T) {
 			versionID := f.checkpoint(t, entity)
 			f.applyBody(t, entity, "Drifted body")
 			other := f.create(t)
-			beforeRows := testutil.LoadContentDocumentRows(t, f.db, entity.documentID)
-			beforeEvents := len(testutil.ContentUpdatedEvents(t, f.db, entity.id))
-			beforeAudit := len(testutil.LoadDomainAuditRows(t, f.db, "post", entity.id))
+			beforeRows := contenttest.LoadContentDocumentRows(t, f.db, entity.documentID)
+			beforeEvents := len(contenttest.ContentUpdatedEvents(t, f.db, entity.id))
+			beforeAudit := len(contenttest.LoadDomainAuditRows(t, f.db, "post", entity.id))
 
 			entityID, requestVersionID := tc.request(t, entity, other, versionID)
 			_, err := f.restore(tc.ctx, entityID, requestVersionID)
@@ -275,9 +278,9 @@ func TestPostVersionRestoreRejectionsIntegration(t *testing.T) {
 			require.ErrorAs(t, err, &connectErr)
 			require.Equal(t, tc.wantMessage(entity, versionID), connectErr.Message())
 
-			require.Equal(t, beforeRows, testutil.LoadContentDocumentRows(t, f.db, entity.documentID))
-			require.Len(t, testutil.ContentUpdatedEvents(t, f.db, entity.id), beforeEvents)
-			require.Len(t, testutil.LoadDomainAuditRows(t, f.db, "post", entity.id), beforeAudit)
+			require.Equal(t, beforeRows, contenttest.LoadContentDocumentRows(t, f.db, entity.documentID))
+			require.Len(t, contenttest.ContentUpdatedEvents(t, f.db, entity.id), beforeEvents)
+			require.Len(t, contenttest.LoadDomainAuditRows(t, f.db, "post", entity.id), beforeAudit)
 		})
 	}
 }
@@ -314,8 +317,8 @@ func requirePostVersionRestoreEvent(
 
 // postVersionRestoreLocales keeps the block-locale rows of locale, or every
 // other locale when matching is false.
-func postVersionRestoreLocales(rows testutil.ContentDocumentRows, locale string, matching bool) []testutil.ContentBlockLocaleRow {
-	var selected []testutil.ContentBlockLocaleRow
+func postVersionRestoreLocales(rows contenttest.ContentDocumentRows, locale string, matching bool) []contenttest.ContentBlockLocaleRow {
+	var selected []contenttest.ContentBlockLocaleRow
 	for _, row := range rows.Locales {
 		if (row.Locale == locale) == matching {
 			selected = append(selected, row)
@@ -324,7 +327,7 @@ func postVersionRestoreLocales(rows testutil.ContentDocumentRows, locale string,
 	return selected
 }
 
-func requirePostVersionRestoreLocaleRow(t *testing.T, rows []testutil.LocaleMetadataRow, locale string) testutil.LocaleMetadataRow {
+func requirePostVersionRestoreLocaleRow(t *testing.T, rows []contenttest.LocaleMetadataRow, locale string) contenttest.LocaleMetadataRow {
 	t.Helper()
 	for _, row := range rows {
 		if row.Locale == locale {
@@ -332,7 +335,7 @@ func requirePostVersionRestoreLocaleRow(t *testing.T, rows []testutil.LocaleMeta
 		}
 	}
 	t.Fatalf("locale %s row is missing", locale)
-	return testutil.LocaleMetadataRow{}
+	return contenttest.LocaleMetadataRow{}
 }
 
 type postVersionRestoreFixture struct {
@@ -346,11 +349,11 @@ type postVersionRestoreFixture struct {
 
 func newPostVersionRestoreFixture(t *testing.T) *postVersionRestoreFixture {
 	t.Helper()
-	db := testutil.NewIntegrationDB(t)
-	adminID := testutil.IntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Post version restore admin")
-	spiceDB := testutil.PostIntegrationSpiceDB(t)
-	testutil.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	db := orytest.NewIntegrationDB(t)
+	adminID := orytest.IntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Post version restore admin")
+	spiceDB := orytest.PostIntegrationSpiceDB(t)
+	orytest.GrantIntegrationGlobalRole(t, spiceDB, adminID, policyv1.Role.Admin())
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	publisher, err := mq.NewPublisher(sqlDB)
@@ -365,9 +368,9 @@ func newPostVersionRestoreFixture(t *testing.T) *postVersionRestoreFixture {
 	})
 	return &postVersionRestoreFixture{
 		db:        db,
-		ctx:       withPostAuditedRequestContext(t, testutil.PostIntegrationContext(adminID)),
+		ctx:       withPostAuditedRequestContext(t, orytest.PostIntegrationContext(adminID)),
 		systemCtx: postAuditedSystemRequestContext(t),
-		memberID:  testutil.PostIntegrationMemberID(adminID),
+		memberID:  orytest.PostIntegrationMemberID(adminID),
 		manage:    postdomain.NewConnectHandler(service),
 		internal:  postdomain.NewInternalConnectHandler(service),
 	}
@@ -376,7 +379,7 @@ func newPostVersionRestoreFixture(t *testing.T) *postVersionRestoreFixture {
 func (f *postVersionRestoreFixture) create(t *testing.T) *postVersionRestoreEntity {
 	t.Helper()
 	created, err := f.manage.CreatePost(f.ctx, connect.NewRequest(&managev1.CreatePostRequest{
-		Title: postVersionRestoreTitle, Document: testutil.EmptyPostDocument("en"),
+		Title: postVersionRestoreTitle, Document: contenttest.EmptyPostDocument("en"),
 	}))
 	require.NoError(t, err)
 	var documentID string
@@ -396,8 +399,8 @@ func (f *postVersionRestoreFixture) applyBodyAt(t *testing.T, entity *postVersio
 	t.Helper()
 	applied, err := f.internal.ApplyPostBlockBatch(f.ctx, connect.NewRequest(&intrav1.ApplyPostBlockBatchRequest{
 		PostId: entity.id, Locale: "en",
-		Batch: testutil.NewParagraphBlockBatch(
-			testutil.EmptyPostDocument("en"), revision, "en", entity.blockID, text, []string{f.memberID},
+		Batch: contenttest.NewParagraphBlockBatch(
+			contenttest.EmptyPostDocument("en"), revision, "en", entity.blockID, text, []string{f.memberID},
 		),
 	}))
 	if err != nil {

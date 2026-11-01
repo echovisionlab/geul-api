@@ -30,7 +30,8 @@ import (
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/work"
 	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -39,25 +40,26 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
-)
 
-// These tests keep what only the whole stack shows: the SpiceDB schema's
-// answers for the author role and the policy edges a creation and deletion
-// write, the File, binding and attachment rows a Work's images and Blocks
-// hold and release, and the Work root and Member rows the policy authority
-// locks over real Kratos rows. Every other Work scenario runs on the fake
-// Store, and the work tables on the Store contract.
+	// These tests keep what only the whole stack shows: the SpiceDB schema's
+	// answers for the author role and the policy edges a creation and deletion
+	// write, the File, binding and attachment rows a Work's images and Blocks
+	// hold and release, and the Work root and Member rows the policy authority
+	// locks over real Kratos rows. Every other Work scenario runs on the fake
+	// Store, and the work tables on the Store contract.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+)
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "start Work integration suite: %v\n", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		fmt.Fprintf(os.Stderr, "close Work integration suite: %v\n", err)
 		code = 1
@@ -88,19 +90,19 @@ func newStackService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *wo
 }
 
 // newStackAdmin is a Member whose Identity holds the administrator role.
-func newStackAdmin(t *testing.T, stack *testutil.OryStack) (identityID string, ctx context.Context) {
+func newStackAdmin(t *testing.T, stack *orytest.OryStack) (identityID string, ctx context.Context) {
 	t.Helper()
-	identityID = testutil.IntegrationUUID()
-	memberID := testutil.SeedPostIntegrationIdentity(t, stack.DB, identityID, "Work integration admin")
-	testutil.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, identityID, policyv1.Role.Admin())
-	return identityID, testutil.NewAuditContext(t, identityID, memberID)
+	identityID = orytest.IntegrationUUID()
+	memberID := orytest.SeedPostIntegrationIdentity(t, stack.DB, identityID, "Work integration admin")
+	orytest.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, identityID, policyv1.Role.Admin())
+	return identityID, orytest.NewAuditContext(t, identityID, memberID)
 }
 
 func createStackWork(t *testing.T, ctx context.Context, works *work.ConnectHandler, title string) *managev1.Work {
 	t.Helper()
 	present := true
 	created, err := works.CreateWork(ctx, connect.NewRequest(&managev1.CreateWorkRequest{
-		Title: title + " " + testutil.IntegrationUUID(), Type: managev1.WorkType_WORK_TYPE_ARTICLE,
+		Title: title + " " + orytest.IntegrationUUID(), Type: managev1.WorkType_WORK_TYPE_ARTICLE,
 		Year: 2026, Month: 8, IsPresent: &present,
 		Document: &contentv1.RichTextDocument{
 			BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint, Profile: contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK,
@@ -116,13 +118,13 @@ func createStackWork(t *testing.T, ctx context.Context, works *work.ConnectHandl
 // refused.
 func TestWorkAuthorRoleReadsOnlyArchivedWorksIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.PrepareOryIntegrationTest(t)
+	stack := orytest.PrepareOryIntegrationTest(t)
 	db := stack.DB
 	_, adminCtx := newStackAdmin(t, stack)
-	authorID := testutil.IntegrationUUID()
-	authorMemberID := testutil.SeedPostIntegrationIdentity(t, db, authorID, "Work author")
-	testutil.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, authorID, policyv1.Role.Author())
-	authorCtx := testutil.NewAuditContext(t, authorID, authorMemberID)
+	authorID := orytest.IntegrationUUID()
+	authorMemberID := orytest.SeedPostIntegrationIdentity(t, db, authorID, "Work author")
+	orytest.GrantIntegrationGlobalRole(t, stack.SpiceDBClient, authorID, policyv1.Role.Author())
+	authorCtx := orytest.NewAuditContext(t, authorID, authorMemberID)
 	works := work.NewConnectHandler(newStackService(t, db, stack.SpiceDBClient))
 	created := createStackWork(t, adminCtx, works, "Work author access")
 
@@ -146,7 +148,7 @@ func TestWorkAuthorRoleReadsOnlyArchivedWorksIntegration(t *testing.T) {
 // edge and leaves the Files and their ready assets.
 func TestWorkMediaReleaseKeepsLibraryFilesAndDeletionRemovesThePolicyIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.PrepareOryIntegrationTest(t)
+	stack := orytest.PrepareOryIntegrationTest(t)
 	db, spiceDB := stack.DB, stack.SpiceDBClient
 	identityID, ctx := newStackAdmin(t, stack)
 	service := newStackService(t, db, spiceDB)
@@ -164,12 +166,12 @@ func TestWorkMediaReleaseKeepsLibraryFilesAndDeletionRemovesThePolicyIntegration
 	requireCount(t, db, 2, "file", "id IN ?", []string{first, second})
 
 	editorFile, featuredFile := seedReadyImage(t, db), seedReadyImage(t, db)
-	blockID := testutil.IntegrationUUID()
+	blockID := orytest.IntegrationUUID()
 	applied, err := work.NewInternalConnectHandler(service).ApplyWorkBlockBatch(ctx, connect.NewRequest(&intrav1.ApplyWorkBlockBatchRequest{
 		WorkId: created.Id, Locale: "en",
 		Batch: &contentv1.RichTextBlockMutationBatch{
 			BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint, Profile: contentv1.RichTextProfile_RICH_TEXT_PROFILE_WORK,
-			ExpectedRevision: created.Revision, ContributorMemberIds: []string{testutil.PostIntegrationMemberID(identityID)},
+			ExpectedRevision: created.Revision, ContributorMemberIds: []string{orytest.PostIntegrationMemberID(identityID)},
 			BaseMutations: []*contentv1.RichTextBlockMutation{{Operation: &contentv1.RichTextBlockMutation_Upsert{Upsert: &contentv1.UpsertRichTextBlock{
 				Node: &contentv1.RichTextBlockNode{
 					Block: &contentv1.RichTextBlock{Id: blockID, Value: &contentv1.RichTextBlock_File{File: &contentv1.FileBlock{Props: &contentv1.FileProps{
@@ -247,15 +249,15 @@ func TestWorkPolicyAuthorityLocksArchivedRootAndActivePrincipalIntegration(t *te
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			db := testutil.PrepareOryIntegrationConcurrentTest(t).DB
-			identityID := testutil.IntegrationUUID()
-			memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Work policy authority")
-			documentID, workID := testutil.IntegrationUUID(), testutil.IntegrationUUID()
-			require.NoError(t, db.Exec(`INSERT INTO content_document (id, profile, revision) VALUES (?::uuid, 'work', ?::uuid)`, documentID, testutil.IntegrationUUID()).Error)
+			db := orytest.PrepareOryIntegrationConcurrentTest(t).DB
+			identityID := orytest.IntegrationUUID()
+			memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "Work policy authority")
+			documentID, workID := orytest.IntegrationUUID(), orytest.IntegrationUUID()
+			require.NoError(t, db.Exec(`INSERT INTO content_document (id, profile, revision) VALUES (?::uuid, 'work', ?::uuid)`, documentID, orytest.IntegrationUUID()).Error)
 			require.NoError(t, db.Exec(`INSERT INTO work (id, type, status, year, month, is_present, content_document_id) VALUES (?::uuid, ?::work_type, ?, 2026, 8, TRUE, ?::uuid)`,
 				workID, managev1.WorkType_WORK_TYPE_ARTICLE.String(), managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(), documentID).Error)
 			checker := &blockingChecker{entered: make(chan policyv1.AuthorizationDecision, 1), release: make(chan struct{})}
-			ctx := testutil.NewAuditContext(t, identityID, memberID)
+			ctx := orytest.NewAuditContext(t, identityID, memberID)
 
 			authorized := make(chan error, 1)
 			go func() {
@@ -275,7 +277,7 @@ func TestWorkPolicyAuthorityLocksArchivedRootAndActivePrincipalIntegration(t *te
 
 			mutated := make(chan error, 1)
 			go func() { mutated <- test.mutate(db, workID, memberID) }()
-			testutil.RequireLockWaiters(t, db, 1)
+			pgtest.RequireLockWaiters(t, db, 1)
 			close(checker.release)
 			require.NoError(t, <-authorized)
 			require.NoError(t, <-mutated)

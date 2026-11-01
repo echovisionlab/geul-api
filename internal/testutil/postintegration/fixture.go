@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"github.com/stretchr/testify/require"
 
@@ -26,7 +28,8 @@ import (
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
@@ -135,7 +138,7 @@ func NewUnits(t *testing.T, deps Deps) mutation.UnitOfWork[postdomain.Store] {
 func withDefaults(t *testing.T, deps Deps) Deps {
 	t.Helper()
 	if deps.SpiceDB == nil {
-		deps.SpiceDB = testutil.PostIntegrationSpiceDB(t)
+		deps.SpiceDB = orytest.PostIntegrationSpiceDB(t)
 	}
 	if deps.Files == nil {
 		deps.Files = fileService{}
@@ -153,7 +156,7 @@ func withDefaults(t *testing.T, deps Deps) Deps {
 		deps.VersionRestore = versionRestore{}
 	}
 	if deps.ContentBlocks == nil {
-		deps.ContentBlocks = testutil.NewPostContentBlockStore(t)
+		deps.ContentBlocks = contenttest.NewPostContentBlockStore(t)
 	}
 	if deps.Audit == nil {
 		deps.Audit = apitelemetry.NewDurableWriter(deps.DB)
@@ -223,7 +226,7 @@ func NewPostCommentService(
 ) *postdomain.CommentConnectHandler {
 	t.Helper()
 	if spiceDB == nil {
-		spiceDB = testutil.PostIntegrationSpiceDB(t)
+		spiceDB = orytest.PostIntegrationSpiceDB(t)
 	}
 	comments, err := postdomain.NewCommentService(postdomain.CommentDeps{
 		Units: NewUnits(t, Deps{DB: db, CDNDomain: cdnDomain, SpiceDB: spiceDB}), SpiceDB: spiceDB,

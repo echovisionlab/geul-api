@@ -10,13 +10,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestDeleteExpiredAuthCodeIssuancesIsBoundedIntegration(t *testing.T) {
 	t.Parallel()
 	const batchSize = 1000
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	now := time.Date(2026, time.July, 31, 10, 0, 0, 0, time.UTC)
 	require.NoError(t, db.Exec(`
 		INSERT INTO public.auth_code_issuance (

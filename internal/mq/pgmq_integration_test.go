@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
@@ -51,7 +51,7 @@ func TestEnqueueProtobufParticipatesInCallerTransactionIntegration(t *testing.T)
 		&managev1.MetadataGenerationQueueEvent{JobId: "rollback-job"},
 	))
 	require.NoError(t, rolledBack.Rollback())
-	messages, err := testutil.ReadPGMQ(ctx, pg.SQLDB, queue, time.Minute, 1)
+	messages, err := pgtest.ReadPGMQ(ctx, pg.SQLDB, queue, time.Minute, 1)
 	require.NoError(t, err)
 	require.Empty(t, messages)
 
@@ -66,11 +66,11 @@ func TestEnqueueProtobufParticipatesInCallerTransactionIntegration(t *testing.T)
 	))
 	require.NoError(t, committed.Commit())
 
-	messages, err = testutil.ReadPGMQ(ctx, pg.SQLDB, queue, time.Minute, 1)
+	messages, err = pgtest.ReadPGMQ(ctx, pg.SQLDB, queue, time.Minute, 1)
 	require.NoError(t, err)
 	require.Len(t, messages, 1)
 	require.Equal(t, "commit-command", messages[0].Envelope.MessageID)
-	require.NoError(t, testutil.CompletePGMQ(ctx, pg.SQLDB, queue, messages[0].TransportID))
+	require.NoError(t, pgtest.CompletePGMQ(ctx, pg.SQLDB, queue, messages[0].TransportID))
 }
 
 func TestPGMQStableMessageIDCanBeDetectedInTransportTableIntegration(t *testing.T) {

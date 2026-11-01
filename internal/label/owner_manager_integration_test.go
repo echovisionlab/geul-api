@@ -10,31 +10,32 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 func TestLabelOwnerManagerAuthorityAndDeletionPreviewIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	spiceDB := testutil.SetupOryStack(t).SpiceDBClient
-	adminIdentityID := testutil.IntegrationUUID()
-	managerIdentityID := testutil.IntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, adminIdentityID, "Label Owner")
-	testutil.SeedPostIntegrationIdentity(t, db, managerIdentityID, "Label Manager")
+	db := orytest.NewIntegrationDB(t)
+	spiceDB := orytest.SetupOryStack(t).SpiceDBClient
+	adminIdentityID := orytest.IntegrationUUID()
+	managerIdentityID := orytest.IntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminIdentityID, "Label Owner")
+	orytest.SeedPostIntegrationIdentity(t, db, managerIdentityID, "Label Manager")
 
-	adminMemberID := testutil.PostIntegrationMemberID(adminIdentityID)
-	managerMemberID := testutil.PostIntegrationMemberID(managerIdentityID)
+	adminMemberID := orytest.PostIntegrationMemberID(adminIdentityID)
+	managerMemberID := orytest.PostIntegrationMemberID(managerIdentityID)
 	adminCtx := labelIntegrationAdminCtx(adminIdentityID)
 	managerCtx := auth.WithUser(requestBackground(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(managerIdentityID),
 		MemberID:      auth.MemberID(managerMemberID),
-		SessionID:     auth.SessionID(testutil.IntegrationUUID()),
+		SessionID:     auth.SessionID(orytest.IntegrationUUID()),
 		Authenticated: true,
 	})
 	service := newLabelIntegrationService(t, db, adminIdentityID)
-	slug := "label-owner-manager-" + testutil.IntegrationUUID()
+	slug := "label-owner-manager-" + orytest.IntegrationUUID()
 	created, err := service.CreateLabel(adminCtx, connect.NewRequest(&managev1.CreateLabelRequest{
 		Name: "Label Owner Manager",
 		Slug: &slug,

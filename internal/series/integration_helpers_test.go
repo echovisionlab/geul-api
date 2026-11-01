@@ -24,7 +24,8 @@ import (
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/series"
 	seriespostgres "github.com/echovisionlab/geul-api/internal/series/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
 
@@ -96,13 +97,13 @@ func newOGRefresher(db *gorm.DB) *ogpostgres.Refresher {
 // English source copy.
 func seedSeriesRow(t *testing.T, db *gorm.DB, title, slug string, status model.SeriesStatus) string {
 	t.Helper()
-	id := testutil.IntegrationUUID()
+	id := orytest.IntegrationUUID()
 	now := time.Now().UTC()
-	contentDocumentID := testutil.IntegrationUUID()
+	contentDocumentID := orytest.IntegrationUUID()
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec(`
 			INSERT INTO content_document (id, profile, revision, created_at, updated_at)
-			VALUES (?::uuid, 'compact', ?::uuid, ?, ?)`, contentDocumentID, testutil.IntegrationUUID(), now, now).Error; err != nil {
+			VALUES (?::uuid, 'compact', ?::uuid, ?, ?)`, contentDocumentID, orytest.IntegrationUUID(), now, now).Error; err != nil {
 			return err
 		}
 		if err := tx.Exec(`
@@ -120,8 +121,8 @@ func seedSeriesRow(t *testing.T, db *gorm.DB, title, slug string, status model.S
 // seedImageFile stores a File with a ready image asset.
 func seedImageFile(t *testing.T, db *gorm.DB, key string) string {
 	t.Helper()
-	fileID := testutil.IntegrationUUID()
-	assetID := testutil.IntegrationUUID()
+	fileID := orytest.IntegrationUUID()
+	assetID := orytest.IntegrationUUID()
 	digest := sha256.Sum256([]byte(key))
 	objectKey, err := mediaauth.AssetObjectKey(assetID, "webp")
 	require.NoError(t, err)

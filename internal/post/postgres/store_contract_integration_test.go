@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -15,7 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/post"
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/post/posttest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestPostgresStoreKeepsThePostStoreContractIntegration(t *testing.T) {
@@ -23,10 +25,10 @@ func TestPostgresStoreKeepsThePostStoreContractIntegration(t *testing.T) {
 	posttest.RunStoreContract(t, func(t *testing.T) posttest.Harness {
 		// Participant reads join the linked Identity; the Kratos stub keeps
 		// the contract on PostgreSQL alone.
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 		// The contract reaches the Post rows and the content revision; OG,
 		// media, signals and collaboration stay with their own tests.
-		deps := postpostgres.Deps{ContentBlocks: testutil.NewPostContentBlockStore(t)}
+		deps := postpostgres.Deps{ContentBlocks: contenttest.NewPostContentBlockStore(t)}
 		units := mutation.Postgres(db, func(tx *gorm.DB) post.Store { return postpostgres.Bind(tx, deps) })
 		insert := func(t *testing.T, query string, args ...any) {
 			t.Helper()

@@ -520,7 +520,7 @@ stay in the few integration tests that need them.
 A Store's behavior is one set of cases run against both implementations
 (`mutationtest.RunContract`): the fake in a unit test, the PostgreSQL store
 in an integration test that needs only PostgreSQL
-(`testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true})`,
+(`pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true})`,
 no SpiceDB or Kratos, `t.Parallel`). The contract owns what only the
 database can get wrong: SQL, constraints and their sentinel errors, revision
 compare-and-set, rollback of a failed transaction, and row locks, checked
@@ -542,7 +542,7 @@ func TestFakeNotesKeepTheNotesContract(t *testing.T) { // unit
 
 func TestPostgresNotesKeepTheNotesContractIntegration(t *testing.T) { // integration, PostgreSQL only
 	mutationtest.RunContract(t, func(t *testing.T) mutationtest.Harness[notes] {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		return mutationtest.PostgresHarness(db, mutation.Postgres(db, func(tx *gorm.DB) notes { return postgresNotes{tx} }))
 	}, notesContract)
 }
@@ -864,7 +864,7 @@ it.
 - **Kratos rows in a contract.** A Store method that joins `kratos.*`
   (credited or contributing Members) opens the contract database with
   `BootstrapKratosStub: true`; it stays a PostgreSQL-only test.
-- **Lock waits outside a contract.** Use `testutil.RequireLockWaiters` /
+- **Lock waits outside a contract.** Use `pgtest.RequireLockWaiters` /
   `RequireKratosLockWaiters`, which count waiters of the test's own
   database, including `PostgresFdwGetResult` waits; never a fixed sleep.
 - **Runtime-only tests.** A test that needs the running API process (route

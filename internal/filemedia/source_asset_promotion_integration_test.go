@@ -16,7 +16,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -25,7 +26,7 @@ import (
 
 func TestSourceAssetPromotionStreamsLargeObjectThroughMinIOMultipartIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	client := runtimeS3Client(t, stack)
 	body := bytes.Repeat([]byte{0x5a}, 16*1024*1024+1)
 	digest := sha256.Sum256(body)

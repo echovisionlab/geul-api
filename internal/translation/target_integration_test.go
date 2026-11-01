@@ -6,14 +6,13 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/testutil"
 )
 
 func TestTargetCatalogMatchesCurrentSchemaIntegration(t *testing.T) {
 	t.Parallel()
-	postgres := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{
+	postgres := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{
 		ApplyAppSchemaSQL: true,
 	})
 	for _, definition := range definitions {

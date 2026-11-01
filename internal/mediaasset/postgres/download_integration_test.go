@@ -12,7 +12,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -29,9 +31,9 @@ func TestDownloadStoreRequiresExactActiveIdentityLinkIntegration(t *testing.T) {
 	for _, condition := range []string{"active", "banned", "inactive", "not onboarded", "deleted", "wrong external member", "wrong identity"} {
 		t.Run(condition, func(t *testing.T) {
 			t.Parallel()
-			db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true, BootstrapKratosStub: true}).DB
+			db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true, BootstrapKratosStub: true}).DB
 			identity := uuid.NewString()
-			member := testutil.SeedPostIntegrationIdentity(t, db, identity, "download")
+			member := orytest.SeedPostIntegrationIdentity(t, db, identity, "download")
 			switch condition {
 			case "banned":
 				require.NoError(t, db.Exec(`UPDATE kratos.identities SET metadata_admin = '{"banned":true}'::jsonb WHERE id = ?::uuid`, identity).Error)
@@ -67,9 +69,9 @@ func TestDownloadPolicyQueryBudgetIsIndependentOfSegmentCountIntegration(t *test
 }
 func downloadPolicyQueryCount(t *testing.T, count int) int {
 	t.Helper()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true, BootstrapKratosStub: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true, BootstrapKratosStub: true}).DB
 	identity := uuid.NewString()
-	member := testutil.SeedPostIntegrationIdentity(t, db, identity, "download")
+	member := orytest.SeedPostIntegrationIdentity(t, db, identity, "download")
 	file, document, block, tag := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	require.NoError(t, db.Create(&model.File{ID: file, FileName: "download", MimeType: "text/plain", FileSize: 1, Extension: "txt", SHA256: make([]byte, 32), CreatedAt: time.Now().UTC()}).Error)
 	require.NoError(t, db.Exec(`INSERT INTO content_document (id, profile, revision) VALUES (?::uuid, 'post', ?::uuid)`, document, uuid.NewString()).Error)

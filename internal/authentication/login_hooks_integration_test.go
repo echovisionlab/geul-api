@@ -17,7 +17,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/member"
 	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -27,7 +28,7 @@ import (
 // Member provisioning, and the login role sync on PostgreSQL and SpiceDB.
 func TestRegistrationLoginHookDoesNotPublishWelcomeIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	registered := stack.CreateUser(t, policyv1.Role.User().ID())
 	roles := accountadapter.AccountDirectRoleTransition{}
 	accountUnits, err := accountpostgres.NewEmailProjectionUnits(stack.DB, accountadapter.MemberEmailProjection{})

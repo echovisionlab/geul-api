@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -17,8 +19,9 @@ import (
 	labelpublicpostgres "github.com/echovisionlab/geul-api/internal/label/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
 	artistlabelpublictest "github.com/echovisionlab/geul-api/internal/testutil/artistlabelpublic"
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -124,13 +127,13 @@ func TestLabelPublicReadsHideDraftsAndExposePublishedRelationsIntegration(t *tes
 	require.Error(t, err)
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
 
-	adminDraftLabel, err := publicLabelSvc.Get(testutil.PostIntegrationContext(adminID), connect.NewRequest(&openv1.GetLabelRequest{Slug: draftLabel.GetSlug()}))
+	adminDraftLabel, err := publicLabelSvc.Get(orytest.PostIntegrationContext(adminID), connect.NewRequest(&openv1.GetLabelRequest{Slug: draftLabel.GetSlug()}))
 	require.NoError(t, err)
 	require.Equal(t, draftLabel.Id, adminDraftLabel.Msg.Label.Id)
 
 	managerRuntime := labeladapter.NewPublicRuntime(
 		db, "https://cdn.example.com", fixture.SpiceDB,
-		testutil.NewCreativeContentStore(t, fixture.SpiceDB),
+		contenttest.NewCreativeContentStore(t),
 	)
 	managerUnits, err := labelpublicpostgres.NewUnits(db, managerRuntime, managerRuntime)
 	require.NoError(t, err)
@@ -138,7 +141,7 @@ func TestLabelPublicReadsHideDraftsAndExposePublishedRelationsIntegration(t *tes
 	require.NoError(t, err)
 	managerLabelSvc := labelpublic.NewConnectHandler(managerLabelService)
 	managerReq := connect.NewRequest(&openv1.GetLabelRequest{Slug: draftLabel.GetSlug()})
-	managerCtx := testutil.PostIntegrationContext(adminID)
+	managerCtx := orytest.PostIntegrationContext(adminID)
 	managerDraftLabel, err := managerLabelSvc.Get(managerCtx, managerReq)
 	require.NoError(t, err)
 	require.Equal(t, draftLabel.Id, managerDraftLabel.Msg.Label.Id)

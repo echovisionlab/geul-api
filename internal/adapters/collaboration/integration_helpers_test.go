@@ -10,7 +10,8 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -18,14 +19,14 @@ import (
 
 func TestMain(m *testing.M) {
 	flag.Parse()
-	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	suite, err := orytest.StartOryIntegrationSuite(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "start Collaboration integration suite: %v\n", err)
 		os.Exit(1)
 	}
-	testutil.ActivateOryIntegrationSuite(suite)
+	orytest.ActivateOryIntegrationSuite(suite)
 	code := m.Run()
-	testutil.DeactivateOryIntegrationSuite(suite)
+	orytest.DeactivateOryIntegrationSuite(suite)
 	if err := suite.Close(); err != nil && code == 0 {
 		fmt.Fprintf(os.Stderr, "close Collaboration integration suite: %v\n", err)
 		code = 1
@@ -35,7 +36,7 @@ func TestMain(m *testing.M) {
 
 func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient {
 	t.Helper()
-	return testutil.SetupOryStack(t).SpiceDBClient
+	return orytest.SetupOryStack(t).SpiceDBClient
 }
 
 func seedServiceIntegrationContentDocument(t *testing.T, db *gorm.DB, profile string) string {

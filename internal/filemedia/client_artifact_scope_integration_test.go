@@ -9,7 +9,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -17,7 +18,7 @@ import (
 
 func TestArtifactRepairReadsUncommittedFileReceiptIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	file := model.File{ID: uuid.NewString(), FileName: "source", Extension: "webp", MimeType: "image/webp", FileSize: 64}
 	require.NoError(t, db.Create(&file).Error)
 	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{})}

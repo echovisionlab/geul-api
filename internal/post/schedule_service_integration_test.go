@@ -9,18 +9,19 @@ import (
 	"gorm.io/gorm"
 
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
 
 func TestProcessDueScheduledPostsDoesNotPublishTranslationWakeups(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
+	db := orytest.NewIntegrationDB(t)
 	now := time.Now().UTC().Truncate(time.Minute)
-	dueIDs := []string{testutil.IntegrationUUID(), testutil.IntegrationUUID()}
-	futureID := testutil.IntegrationUUID()
-	documentIDs := []string{testutil.IntegrationUUID(), testutil.IntegrationUUID(), testutil.IntegrationUUID()}
+	dueIDs := []string{orytest.IntegrationUUID(), orytest.IntegrationUUID()}
+	futureID := orytest.IntegrationUUID()
+	documentIDs := []string{orytest.IntegrationUUID(), orytest.IntegrationUUID(), orytest.IntegrationUUID()}
 
 	for index, postID := range append(dueIDs, futureID) {
 		documentID := documentIDs[index]

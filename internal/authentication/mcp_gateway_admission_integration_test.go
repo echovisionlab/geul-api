@@ -8,7 +8,8 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -18,7 +19,7 @@ import (
 // administrator inherits Platform.IsAuthor.
 func TestMCPGatewayAuthorAdmissionUsesAuthorHierarchyIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	handler, err := NewMCPGatewayAuthorAdmissionHandler(
 		testMCPAdmissionSecret,
 		testMCPAuthHeaderName,

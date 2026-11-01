@@ -16,9 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	_ "github.com/lib/pq"
-
-	"github.com/echovisionlab/geul-api/internal/testutil"
 )
 
 type suitePostgres struct {
@@ -86,7 +85,7 @@ func startSuitePostgres(ctx context.Context, options suiteOptions) (*suitePostgr
 	if err := prepareSuitePostgresTemplate(ctx, templateURL.String(), options.SchemaRoot); err != nil {
 		return nil, fmt.Errorf("prepare suite PostgreSQL template: %w", err)
 	}
-	if err := testutil.LockAppIntegrationTemplate(ctx, suite.AdminDSN, templateName); err != nil {
+	if err := pgtest.LockAppIntegrationTemplate(ctx, suite.AdminDSN, templateName); err != nil {
 		return nil, err
 	}
 	failed = false

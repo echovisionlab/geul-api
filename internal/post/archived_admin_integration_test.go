@@ -6,13 +6,16 @@ import (
 	"context"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
@@ -22,28 +25,28 @@ import (
 
 func TestArchivedPostAllowsOnlyAdminMutationsAndAuthorReadOnlyEditorIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewPostIntegrationDB(t)
-	adminID := testutil.PostIntegrationUUID()
-	authorID := testutil.PostIntegrationUUID()
-	collaboratorID := testutil.PostIntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, adminID, "Archived Post Admin")
-	testutil.SeedPostIntegrationIdentity(t, db, authorID, "Archived Post Author")
-	testutil.SeedPostIntegrationIdentity(t, db, collaboratorID, "Archived Post Collaborator")
-	spiceDB := testutil.PostIntegrationSpiceDB(t)
-	testutil.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
-	testutil.GrantPostIntegrationRole(t, spiceDB, authorID, policyv1.Role.Author())
-	adminCtx := testutil.PostIntegrationContext(adminID)
+	db := orytest.NewPostIntegrationDB(t)
+	adminID := orytest.PostIntegrationUUID()
+	authorID := orytest.PostIntegrationUUID()
+	collaboratorID := orytest.PostIntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, adminID, "Archived Post Admin")
+	orytest.SeedPostIntegrationIdentity(t, db, authorID, "Archived Post Author")
+	orytest.SeedPostIntegrationIdentity(t, db, collaboratorID, "Archived Post Collaborator")
+	spiceDB := orytest.PostIntegrationSpiceDB(t)
+	orytest.GrantPostIntegrationRole(t, spiceDB, adminID, policyv1.Role.Admin())
+	orytest.GrantPostIntegrationRole(t, spiceDB, authorID, policyv1.Role.Author())
+	adminCtx := orytest.PostIntegrationContext(adminID)
 	authorCtx := auth.WithUser(context.Background(), &auth.UserInfo{
-		IdentityID: auth.IdentityID(authorID), MemberID: auth.MemberID(testutil.PostIntegrationMemberID(authorID)),
-		SessionID: auth.SessionID(testutil.PostIntegrationUUID()), Authenticated: true,
+		IdentityID: auth.IdentityID(authorID), MemberID: auth.MemberID(orytest.PostIntegrationMemberID(authorID)),
+		SessionID: auth.SessionID(orytest.PostIntegrationUUID()), Authenticated: true,
 	})
-	store := testutil.NewPostContentBlockStore(t)
+	store := contenttest.NewPostContentBlockStore(t)
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
 		store,
 	)
 
-	slug := "archived-post-admin-edit-" + testutil.PostIntegrationUUID()
+	slug := "archived-post-admin-edit-" + orytest.PostIntegrationUUID()
 	created, err := service.CreatePost(adminCtx, connect.NewRequest(&managev1.CreatePostRequest{
 		Title: "Archived Post Admin Edit", Slug: &slug,
 	}))
@@ -52,7 +55,7 @@ func TestArchivedPostAllowsOnlyAdminMutationsAndAuthorReadOnlyEditorIntegration(
 	require.NotEmpty(t, created.Msg.Revision)
 	require.NotEmpty(t, created.Msg.ConfigurationRevision)
 	_, err = service.AddPostAuthor(adminCtx, connect.NewRequest(&managev1.AddPostAuthorRequest{
-		PostId: created.Msg.Id, MemberId: testutil.PostIntegrationMemberID(authorID),
+		PostId: created.Msg.Id, MemberId: orytest.PostIntegrationMemberID(authorID),
 	}))
 	require.NoError(t, err)
 	_, err = service.PublishPost(adminCtx, connect.NewRequest(&managev1.PublishPostRequest{Id: created.Msg.Id}))
@@ -83,16 +86,16 @@ func TestArchivedPostAllowsOnlyAdminMutationsAndAuthorReadOnlyEditorIntegration(
 	require.NotEqual(t, authorPost.Msg.ConfigurationRevision, updated.Msg.ConfigurationRevision)
 
 	_, err = service.AddPostCollaborator(authorCtx, connect.NewRequest(&managev1.AddPostCollaboratorRequest{
-		PostId: created.Msg.Id, MemberId: testutil.PostIntegrationMemberID(collaboratorID),
+		PostId: created.Msg.Id, MemberId: orytest.PostIntegrationMemberID(collaboratorID),
 	}))
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 	_, err = service.AddPostCollaborator(adminCtx, connect.NewRequest(&managev1.AddPostCollaboratorRequest{
-		PostId: created.Msg.Id, MemberId: testutil.PostIntegrationMemberID(collaboratorID),
+		PostId: created.Msg.Id, MemberId: orytest.PostIntegrationMemberID(collaboratorID),
 	}))
 	require.NoError(t, err)
 	collaboratorCtx := auth.WithUser(context.Background(), &auth.UserInfo{
-		IdentityID: auth.IdentityID(collaboratorID), MemberID: auth.MemberID(testutil.PostIntegrationMemberID(collaboratorID)),
-		SessionID: auth.SessionID(testutil.PostIntegrationUUID()), Authenticated: true,
+		IdentityID: auth.IdentityID(collaboratorID), MemberID: auth.MemberID(orytest.PostIntegrationMemberID(collaboratorID)),
+		SessionID: auth.SessionID(orytest.PostIntegrationUUID()), Authenticated: true,
 	})
 	collaboratorEditorList, err := service.ListMyPosts(
 		collaboratorCtx,
@@ -102,14 +105,14 @@ func TestArchivedPostAllowsOnlyAdminMutationsAndAuthorReadOnlyEditorIntegration(
 	require.Empty(t, collaboratorEditorList.Msg.Posts, "an archived Post must not leak through ordinary collaborator view authority")
 
 	internal := postintegration.NewInternalPostDomainService(t, db, "", spiceDB, store)
-	authorSessionID := testutil.InsertPostIntegrationSession(t, db, authorID)
+	authorSessionID := orytest.InsertPostIntegrationSession(t, db, authorID)
 	authorBootstrap, err := internal.LoadPostBlockDocument(context.Background(), connect.NewRequest(&intrav1.LoadPostBlockDocumentRequest{
 		PostId: created.Msg.Id, Locale: "en",
 		Principal: &intrav1.CollaborationPrincipal{SessionId: authorSessionID},
 	}))
 	require.NoError(t, err, "archived Post Authors enter Collab as read-only viewers")
 	require.NotNil(t, authorBootstrap.Msg.Document)
-	adminSessionID := testutil.InsertPostIntegrationSession(t, db, adminID)
+	adminSessionID := orytest.InsertPostIntegrationSession(t, db, adminID)
 	adminBootstrap, err := internal.LoadPostBlockDocument(context.Background(), connect.NewRequest(&intrav1.LoadPostBlockDocumentRequest{
 		PostId: created.Msg.Id, Locale: "en",
 		Principal: &intrav1.CollaborationPrincipal{SessionId: adminSessionID},
@@ -130,18 +133,18 @@ func TestArchivedPostAllowsOnlyAdminMutationsAndAuthorReadOnlyEditorIntegration(
 		require.Equal(t, actor.editable, firstPaint.Msg.Editable)
 		require.Equal(t, authorBootstrap.Msg.DocumentRevision, firstPaint.Msg.DocumentRevision)
 	}
-	collaboratorSession := testutil.InsertPostIntegrationSession(t, db, collaboratorID)
+	collaboratorSession := orytest.InsertPostIntegrationSession(t, db, collaboratorID)
 	collaborator := *auth.GetUser(collaboratorCtx)
 	collaborator.SessionID = auth.SessionID(collaboratorSession)
 	_, deniedErr := service.GetPostEditorDocument(auth.WithUser(collaboratorCtx, &collaborator), connect.NewRequest(&managev1.GetPostEditorDocumentRequest{PostId: created.Msg.Id, Locale: "en"}))
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(deniedErr))
 
-	authorBatch := archivedPostParagraphMutationBatch(authorPost.Msg.Revision, testutil.PostIntegrationMemberID(authorID))
+	authorBatch := archivedPostParagraphMutationBatch(authorPost.Msg.Revision, orytest.PostIntegrationMemberID(authorID))
 	_, err = internal.ApplyPostBlockBatch(context.Background(), connect.NewRequest(&intrav1.ApplyPostBlockBatchRequest{
 		PostId: created.Msg.Id, Batch: authorBatch, Locale: "en",
 	}))
 	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
-	adminBatch := archivedPostParagraphMutationBatch(authorPost.Msg.Revision, testutil.PostIntegrationMemberID(adminID))
+	adminBatch := archivedPostParagraphMutationBatch(authorPost.Msg.Revision, orytest.PostIntegrationMemberID(adminID))
 	accepted, err := internal.ApplyPostBlockBatch(context.Background(), connect.NewRequest(&intrav1.ApplyPostBlockBatchRequest{
 		PostId: created.Msg.Id, Batch: adminBatch, Locale: "en",
 	}))
@@ -185,7 +188,7 @@ func archivedPostParagraphMutationBatch(
 	expectedRevision string,
 	contributorMemberID string,
 ) *contentv1.RichTextBlockMutationBatch {
-	blockID := testutil.PostIntegrationUUID()
+	blockID := orytest.PostIntegrationUUID()
 	return &contentv1.RichTextBlockMutationBatch{
 		BlockCatalogFingerprint: contentv1.ContentBlockCatalogFingerprint,
 		Profile:                 contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST,

@@ -13,7 +13,8 @@ import (
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -21,7 +22,7 @@ import (
 func TestPostgresStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	favicontest.RunContract(t, func(t *testing.T) favicontest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		return favicontest.Harness{
 			Harness: mutationtest.PostgresHarness(db, faviconpostgres.NewUnits(db, "https://cdn.example.com")),
 			SeedFile: func(t *testing.T, id, mime string) {

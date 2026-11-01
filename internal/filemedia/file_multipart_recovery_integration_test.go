@@ -29,7 +29,9 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -47,10 +49,10 @@ func (t *multipartListPartsFailureTransport) RoundTrip(req *http.Request) (*http
 
 func TestMultipartMissingPartsRemainRetryableAndAbortableDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
-	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
+	body, err := os.ReadFile(runtimetest.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	require.NotEmpty(t, body)
 	observer := &multipartCompletionObservingTransport{}
@@ -111,10 +113,10 @@ func TestMultipartMissingPartsRemainRetryableAndAbortableDirectIntegration(t *te
 
 func TestMultipartPartReplacementRequiresFreshConfirmationDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
-	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
+	body, err := os.ReadFile(runtimetest.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	baseS3 := runtimeS3Client(t, stack)
 	baseService := newEditorUploadSerializationFileService(stack, baseS3)
@@ -147,7 +149,7 @@ func TestMultipartPartReplacementRequiresFreshConfirmationDirectIntegration(t *t
 	query.Set("uploadId", session.UploadID)
 	query.Set("partNumber", "1")
 	presignReq := httptest.NewRequest(http.MethodPost, "/upload/part/presign?"+query.Encode(), nil)
-	testutil.ApplyAuthHeaders(presignReq.Header, manager)
+	orytest.ApplyAuthHeaders(presignReq.Header, manager)
 	presignRec := httptest.NewRecorder()
 	auth.RequireGatewaySession(testFileDB(baseService), http.HandlerFunc(baseService.HandlePresignUploadPart)).ServeHTTP(presignRec, presignReq)
 	require.Equal(t, http.StatusOK, presignRec.Code, presignRec.Body.String())
@@ -177,7 +179,7 @@ func TestMultipartPartReplacementRequiresFreshConfirmationDirectIntegration(t *t
 	require.Equal(t, http.StatusOK, putResp.StatusCode)
 
 	confirmReq := httptest.NewRequest(http.MethodPost, "/upload/part/confirm?"+query.Encode(), nil)
-	testutil.ApplyAuthHeaders(confirmReq.Header, manager)
+	orytest.ApplyAuthHeaders(confirmReq.Header, manager)
 	confirmRec := httptest.NewRecorder()
 	auth.RequireGatewaySession(testFileDB(baseService), http.HandlerFunc(baseService.HandleConfirmUploadPart)).ServeHTTP(confirmRec, confirmReq)
 	require.Equal(t, http.StatusOK, confirmRec.Code, confirmRec.Body.String())
@@ -199,10 +201,10 @@ func TestMultipartPartReplacementRequiresFreshConfirmationDirectIntegration(t *t
 
 func TestMultipartCompletionUsesActualPartAfterConfirmedPresignIsReusedDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
-	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
+	body, err := os.ReadFile(runtimetest.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	s3Client := runtimeS3Client(t, stack)
 	service := newEditorUploadSerializationFileService(stack, s3Client)
@@ -233,10 +235,10 @@ func TestMultipartCompletionUsesActualPartAfterConfirmedPresignIsReusedDirectInt
 
 func TestMultipartCompletionRejectsBytesDifferentFromVerifiedPrefixDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
-	verifiedBody, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
+	verifiedBody, err := os.ReadFile(runtimetest.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	s3Client := runtimeS3Client(t, stack)
 	service := newEditorUploadSerializationFileService(stack, s3Client)
@@ -265,10 +267,10 @@ func TestMultipartCompletionRejectsBytesDifferentFromVerifiedPrefixDirectIntegra
 
 func TestInterruptedMultipartResumeReusesConfirmedPartsAndCompletesDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
-	fixtureBytes, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
+	fixtureBytes, err := os.ReadFile(runtimetest.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	firstPart := make([]byte, chunkSize)
 	copy(firstPart, fixtureBytes)
@@ -385,10 +387,10 @@ func TestInterruptedMultipartResumeReusesConfirmedPartsAndCompletesDirectIntegra
 
 func TestMultipartResumeListPartsFailureDoesNotUseStaleDBCacheDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
-	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
+	body, err := os.ReadFile(runtimetest.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	baseS3 := runtimeS3Client(t, stack)
 	baseService := newEditorUploadSerializationFileService(stack, baseS3)
@@ -434,10 +436,10 @@ func TestMultipartResumeListPartsFailureDoesNotUseStaleDBCacheDirectIntegration(
 
 func TestMultipartInvalidCompletedObjectDeleteFailureRetainsCleanupAuthorityDirectIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupDirectMediaRuntimeStack(t)
+	stack := runtimetest.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
-	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
+	body, err := os.ReadFile(runtimetest.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	baseS3 := runtimeS3Client(t, stack)
 	fault := &multipartDeleteFailureTransport{base: http.DefaultTransport.(*http.Transport).Clone(), failDeletes: true}
@@ -509,7 +511,7 @@ func initiateMultipartRecoveryUpload(
 func verifyDirectMultipartPrefix(
 	t *testing.T,
 	service *Service,
-	user *testutil.OryUser,
+	user *orytest.OryUser,
 	fileID string,
 	uploadID string,
 	body []byte,
@@ -518,7 +520,7 @@ func verifyDirectMultipartPrefix(
 	query := url.Values{"fileId": {fileID}, "uploadId": {uploadID}}
 	prefixSize := min(len(body), multipartSniffBytes)
 	req := httptest.NewRequest(http.MethodPost, "/upload/prefix?"+query.Encode(), bytes.NewReader(body[:prefixSize]))
-	testutil.ApplyAuthHeaders(req.Header, user)
+	orytest.ApplyAuthHeaders(req.Header, user)
 	req.ContentLength = int64(prefixSize)
 	rec := httptest.NewRecorder()
 	auth.RequireGatewaySession(testFileDB(service), http.HandlerFunc(service.HandleVerifyUploadPrefix)).ServeHTTP(rec, req)
@@ -528,7 +530,7 @@ func verifyDirectMultipartPrefix(
 func presignDirectMultipartPart(
 	t *testing.T,
 	service *Service,
-	user *testutil.OryUser,
+	user *orytest.OryUser,
 	fileID string,
 	uploadID string,
 	partNumber int,
@@ -540,7 +542,7 @@ func presignDirectMultipartPart(
 		"partNumber": {fmt.Sprintf("%d", partNumber)},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/upload/part/presign?"+query.Encode(), nil)
-	testutil.ApplyAuthHeaders(req.Header, user)
+	orytest.ApplyAuthHeaders(req.Header, user)
 	rec := httptest.NewRecorder()
 	auth.RequireGatewaySession(testFileDB(service), http.HandlerFunc(service.HandlePresignUploadPart)).ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -564,7 +566,7 @@ func putDirectMultipartPart(t *testing.T, presignedURL string, body []byte) {
 func confirmDirectMultipartPart(
 	t *testing.T,
 	service *Service,
-	user *testutil.OryUser,
+	user *orytest.OryUser,
 	fileID string,
 	uploadID string,
 	partNumber int,
@@ -576,13 +578,13 @@ func confirmDirectMultipartPart(
 		"partNumber": {fmt.Sprintf("%d", partNumber)},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/upload/part/confirm?"+query.Encode(), nil)
-	testutil.ApplyAuthHeaders(req.Header, user)
+	orytest.ApplyAuthHeaders(req.Header, user)
 	rec := httptest.NewRecorder()
 	auth.RequireGatewaySession(testFileDB(service), http.HandlerFunc(service.HandleConfirmUploadPart)).ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
-func setMultipartDetectedMime(t *testing.T, stack *testutil.RuntimeStack, uploadID string, mimeType string) {
+func setMultipartDetectedMime(t *testing.T, stack *runtimetest.RuntimeStack, uploadID string, mimeType string) {
 	t.Helper()
 	require.NoError(t, stack.DB.Model(&model.UploadSession{}).
 		Where("upload_id = ?", uploadID).

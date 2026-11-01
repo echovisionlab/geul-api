@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 func TestRunSerialIntegrationBandCollectsPackageFailures(t *testing.T) {
@@ -185,10 +185,10 @@ func TestEnvironmentWithMinIOImageReplacesAmbientOverride(t *testing.T) {
 	t.Parallel()
 
 	got := environmentWithMinIOImage(
-		[]string{"PATH=/bin", testutil.AppIntegrationMinIOImageEnv + "=stale-minio:tag", "HOME=/home/test"},
+		[]string{"PATH=/bin", pgtest.AppIntegrationMinIOImageEnv + "=stale-minio:tag", "HOME=/home/test"},
 		"geul-test-minio:local",
 	)
-	want := []string{"PATH=/bin", "HOME=/home/test", testutil.AppIntegrationMinIOImageEnv + "=geul-test-minio:local"}
+	want := []string{"PATH=/bin", "HOME=/home/test", pgtest.AppIntegrationMinIOImageEnv + "=geul-test-minio:local"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("environment = %q, want %q", got, want)
 	}

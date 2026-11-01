@@ -10,7 +10,8 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -58,7 +59,7 @@ func acquireAuthorizationMutationTransactionWithTimeout(db *gorm.DB) error {
 
 func TestUserIdentityStateMutationRetainsLeaseTransactionIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
 	require.NoError(t, WithMutation(t.Context(), stack.DB, user.IdentityID, func(_ context.Context, tx *gorm.DB) error {
 		var count int64
@@ -74,7 +75,7 @@ func TestUserIdentityStateMutationRetainsLeaseTransactionIntegration(t *testing.
 
 func TestUserIdentityStateMutationAcquiresGlobalBeforeIdentitySessionFenceIntegration(t *testing.T) {
 	t.Parallel()
-	stack := testutil.SetupOryStack(t)
+	stack := orytest.SetupOryStack(t)
 	user := stack.CreateUser(t, policyv1.Role.User().ID())
 
 	identityHeld := make(chan struct{})

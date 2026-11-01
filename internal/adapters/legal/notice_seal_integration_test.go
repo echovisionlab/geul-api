@@ -13,7 +13,7 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 )
 
 // TestNoticeRuntimeSealsTheActiveTemplateOfTheVersionIntegration pins what
@@ -34,7 +34,7 @@ func TestNoticeRuntimeSealsTheActiveTemplateOfTheVersionIntegration(t *testing.T
 	} {
 		t.Run(testCase.kind, func(t *testing.T) {
 			t.Parallel()
-			db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+			db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 			policyID := uuid.NewString()
 			documentID := uuid.NewString()
 			require.NoError(t, db.Exec(`INSERT INTO content_document (id, profile) VALUES (?, 'policy')`, documentID).Error)

@@ -12,7 +12,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/transcode"
 	transcodepostgres "github.com/echovisionlab/geul-api/internal/transcode/postgres"
 	"github.com/echovisionlab/geul-api/internal/transcode/transcodetest"
@@ -21,7 +22,7 @@ import (
 
 func newDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	return pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 }
 
 func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {

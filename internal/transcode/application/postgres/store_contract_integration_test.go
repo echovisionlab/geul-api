@@ -19,7 +19,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-api/internal/transcode"
 	"github.com/echovisionlab/geul-api/internal/transcode/application"
 	"github.com/echovisionlab/geul-api/internal/transcode/application/applicationtest"
@@ -29,7 +30,7 @@ import (
 
 func newDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	return testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
+	return pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 }
 
 func seedFile(t *testing.T, db *gorm.DB, extension, mimeType string) string {

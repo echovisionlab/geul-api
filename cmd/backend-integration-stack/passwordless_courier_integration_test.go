@@ -40,15 +40,19 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+
+	// MAIL-01: pinned Kratos login, registration, and verification triggers each
+	// reach one provider-neutral queue event through the authenticated ingress.
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
 )
 
-// MAIL-01: pinned Kratos login, registration, and verification triggers each
-// reach one provider-neutral queue event through the authenticated ingress.
 func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
@@ -58,9 +62,9 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, hookServer.Close()) })
 
-	stack, err := testutil.StartBackendIntegrationStackWithOptions(
+	stack, err := runtimetest.StartBackendIntegrationStackWithOptions(
 		ctx,
-		testutil.BackendIntegrationStackOptions{HookBaseURL: hookBaseURL},
+		runtimetest.BackendIntegrationStackOptions{HookBaseURL: hookBaseURL},
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, stack.Close()) })
@@ -86,7 +90,7 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 			publisher,
 			stack.KratosClient,
 			emaildeliveryadapter.NewAuthIssuanceAuthority(
-				[]byte(testutil.IntegrationTokenSigningSecret),
+				[]byte(runtimetest.IntegrationTokenSigningSecret),
 				issuanceLimiter,
 				accountEmailChangeLifecycle,
 			),
@@ -366,7 +370,7 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	testutil.SeedKratosVerifiableEmailFixture(t, stack.Postgres.DB, loginIdentity.ID, loginEmail, true, time.Now().UTC())
+	orytest.SeedKratosVerifiableEmailFixture(t, stack.Postgres.DB, loginIdentity.ID, loginEmail, true, time.Now().UTC())
 	submitNativeCodeRequest(t, stack.KratosPublicURL, "login", structured.Fields{
 		"csrf_token": "",
 		"identifier": loginEmail,
@@ -426,12 +430,12 @@ func (backendIntegrationAvatarFiles) PromoteUserAvatarAsset(context.Context, str
 
 func serveBackendIntegrationKratosProxy(
 	t *testing.T,
-	stack *testutil.BackendIntegrationStack,
+	stack *runtimetest.BackendIntegrationStack,
 ) (string, *authentication.AuthCodeIssuanceLimiter) {
 	t.Helper()
 	limiter := authentication.NewAuthCodeIssuanceLimiter(
 		authenticationpostgres.NewUnits(stack.Postgres.DB),
-		[]byte(testutil.IntegrationTokenSigningSecret),
+		[]byte(runtimetest.IntegrationTokenSigningSecret),
 		authentication.AuthCodeIssuanceLimits{
 			Cooldown:        time.Millisecond,
 			AddressHourly:   100,
@@ -442,7 +446,7 @@ func serveBackendIntegrationKratosProxy(
 	proxy, err := authentication.NewKratosPublicProxy(
 		stack.KratosPublicURL,
 		limiter,
-		[]byte(testutil.IntegrationTokenSigningSecret),
+		[]byte(runtimetest.IntegrationTokenSigningSecret),
 	)
 	require.NoError(t, err)
 	server := httptest.NewServer(proxy)
@@ -623,7 +627,7 @@ func assertPinnedKratosRegistrationCodeFlowSurface(t *testing.T, body, messageTy
 
 func assertPinnedKratosEmailChangeFlow(
 	t *testing.T,
-	stack *testutil.BackendIntegrationStack,
+	stack *runtimetest.BackendIntegrationStack,
 	sessionToken string,
 	identityID string,
 	currentEmail string,
@@ -944,7 +948,7 @@ func requireBackendIntegrationEmailEvent(
 	var event *managev1.SendEmailEvent
 	queueName := backendIntegrationEmailQueue(expectedTemplateType)
 	require.Eventually(t, func() bool {
-		messages, err := testutil.ReadPGMQ(t.Context(), db, queueName, time.Minute, 1)
+		messages, err := pgtest.ReadPGMQ(t.Context(), db, queueName, time.Minute, 1)
 		if err != nil || len(messages) == 0 {
 			return false
 		}
@@ -957,7 +961,7 @@ func requireBackendIntegrationEmailEvent(
 		if err := proto.Unmarshal(body, &candidate); err != nil {
 			return false
 		}
-		require.NoError(t, testutil.CompletePGMQ(t.Context(), db, queueName, message.TransportID))
+		require.NoError(t, pgtest.CompletePGMQ(t.Context(), db, queueName, message.TransportID))
 		if candidate.GetTemplateType() != expectedTemplateType {
 			return false
 		}
@@ -973,7 +977,7 @@ func purgeBackendIntegrationEmailQueue(t *testing.T, db *sql.DB) {
 	defer cancel()
 
 	for _, queueName := range []string{eventpkg.QueueEmailAuth, eventpkg.QueueEmailSend} {
-		require.NoError(t, testutil.PurgePGMQQueue(ctx, db, queueName))
+		require.NoError(t, pgtest.PurgePGMQQueue(ctx, db, queueName))
 	}
 }
 
@@ -998,14 +1002,14 @@ func requireNoBackendIntegrationEmailEventForRecipient(
 
 	require.Never(t, func() bool {
 		for _, queueName := range []string{eventpkg.QueueEmailAuth, eventpkg.QueueEmailSend} {
-			messages, err := testutil.ReadPGMQ(t.Context(), db, queueName, time.Minute, 1)
+			messages, err := pgtest.ReadPGMQ(t.Context(), db, queueName, time.Minute, 1)
 			if err != nil || len(messages) == 0 {
 				continue
 			}
 			message := messages[0]
 			body, err := message.Envelope.Payload()
 			require.NoError(t, err)
-			require.NoError(t, testutil.CompletePGMQ(t.Context(), db, queueName, message.TransportID))
+			require.NoError(t, pgtest.CompletePGMQ(t.Context(), db, queueName, message.TransportID))
 			var event managev1.SendEmailEvent
 			require.NoError(t, proto.Unmarshal(body, &event))
 			if strings.EqualFold(

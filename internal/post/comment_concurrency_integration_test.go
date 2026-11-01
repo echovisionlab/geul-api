@@ -16,18 +16,19 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestListCommentsQueryBudgetStaysConstant(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewPostIntegrationDB(t)
-	identityID := testutil.PostIntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, identityID, "Comment query member")
-	memberID := testutil.PostIntegrationMemberID(identityID)
-	postID := testutil.SeedPostBaseRow(t, db, managev1.PostStatus_POST_STATUS_DRAFT.String())
+	db := orytest.NewPostIntegrationDB(t)
+	identityID := orytest.PostIntegrationUUID()
+	orytest.SeedPostIntegrationIdentity(t, db, identityID, "Comment query member")
+	memberID := orytest.PostIntegrationMemberID(identityID)
+	postID := orytest.SeedPostBaseRow(t, db, managev1.PostStatus_POST_STATUS_DRAFT.String())
 	require.NoError(t, db.Table("post").Where("id = ?", postID).
 		Update("status", managev1.PostStatus_POST_STATUS_PUBLISHED.String()).Error)
 
@@ -40,7 +41,7 @@ func TestListCommentsQueryBudgetStaysConstant(t *testing.T) {
 	}
 
 	var queryCount atomic.Int64
-	countedDB := db.Session(&gorm.Session{Logger: testutil.QueryCounter{
+	countedDB := db.Session(&gorm.Session{Logger: orytest.QueryCounter{
 		Interface: db.Config.Logger,
 		Count:     &queryCount,
 	}})
@@ -91,7 +92,7 @@ func TestCreateCommentRechecksPostPolicyAfterWaitingForRowLock(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			db := testutil.NewConcurrentPostIntegrationDB(t)
+			db := orytest.NewConcurrentPostIntegrationDB(t)
 			userID, postID := seedConcurrentCommentFixture(t, db)
 			ctx := commentIntegrationUserContext(userID)
 
@@ -122,16 +123,16 @@ func TestCreateCommentRechecksPostPolicyAfterWaitingForRowLock(t *testing.T) {
 
 			err := requireCallResult(t, result)
 			require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
-			require.Equal(t, int64(0), testutil.CountPostIntegrationRows(t, db, "comment", "post_id = ?", postID))
+			require.Equal(t, int64(0), orytest.CountPostIntegrationRows(t, db, "comment", "post_id = ?", postID))
 		})
 	}
 }
 
 func TestUpdateCommentRechecksDeletionAfterWaitingForRowLock(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewConcurrentPostIntegrationDB(t)
+	db := orytest.NewConcurrentPostIntegrationDB(t)
 	userID, postID := seedConcurrentCommentFixture(t, db)
-	memberID := testutil.PostIntegrationMemberID(userID)
+	memberID := orytest.PostIntegrationMemberID(userID)
 	comment := model.Comment{PostID: postID, MemberID: &memberID, Content: "original"}
 	require.NoError(t, db.Create(&comment).Error)
 
@@ -174,9 +175,9 @@ func TestUpdateCommentRechecksDeletionAfterWaitingForRowLock(t *testing.T) {
 
 func TestCreateCommentRejectsMemberTombstonedBeforePrincipalLock(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewConcurrentPostIntegrationDB(t)
+	db := orytest.NewConcurrentPostIntegrationDB(t)
 	userID, postID := seedConcurrentCommentFixture(t, db)
-	memberID := testutil.PostIntegrationMemberID(userID)
+	memberID := orytest.PostIntegrationMemberID(userID)
 
 	revokeTx := db.Begin()
 	require.NoError(t, revokeTx.Error)
@@ -194,14 +195,14 @@ func TestCreateCommentRejectsMemberTombstonedBeforePrincipalLock(t *testing.T) {
 	require.NoError(t, revokeTx.Commit().Error)
 
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(requireCallResult(t, result)))
-	require.Equal(t, int64(0), testutil.CountPostIntegrationRows(t, db, "comment", "post_id = ?", postID))
+	require.Equal(t, int64(0), orytest.CountPostIntegrationRows(t, db, "comment", "post_id = ?", postID))
 }
 
 func TestDeleteOwnCommentRejectsMemberTombstonedBeforePrincipalLock(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewConcurrentPostIntegrationDB(t)
+	db := orytest.NewConcurrentPostIntegrationDB(t)
 	userID, postID := seedConcurrentCommentFixture(t, db)
-	memberID := testutil.PostIntegrationMemberID(userID)
+	memberID := orytest.PostIntegrationMemberID(userID)
 	comment := model.Comment{PostID: postID, MemberID: &memberID, Content: "preserve me"}
 	require.NoError(t, db.Create(&comment).Error)
 
@@ -228,10 +229,10 @@ func TestDeleteOwnCommentRejectsMemberTombstonedBeforePrincipalLock(t *testing.T
 
 func seedConcurrentCommentFixture(t *testing.T, db *gorm.DB) (string, string) {
 	t.Helper()
-	userID := testutil.PostIntegrationUUID()
-	postID := testutil.PostIntegrationUUID()
-	documentID := testutil.SeedPostContentDocument(t, db)
-	testutil.SeedPostIntegrationIdentity(t, db, userID, "Concurrent comment "+userID[:8])
+	userID := orytest.PostIntegrationUUID()
+	postID := orytest.PostIntegrationUUID()
+	documentID := orytest.SeedPostContentDocument(t, db)
+	orytest.SeedPostIntegrationIdentity(t, db, userID, "Concurrent comment "+userID[:8])
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec(`
 			INSERT INTO post (id, content_document_id, status, comments_enabled, created_at, updated_at)
@@ -242,7 +243,7 @@ func seedConcurrentCommentFixture(t *testing.T, db *gorm.DB) (string, string) {
 		return tx.Exec(`
 			INSERT INTO post_author (post_id, member_id, created_at)
 			VALUES (?::uuid, ?::uuid, NOW())
-		`, postID, testutil.PostIntegrationMemberID(userID)).Error
+		`, postID, orytest.PostIntegrationMemberID(userID)).Error
 	}))
 	return userID, postID
 }
@@ -264,9 +265,8 @@ func tombstoneMemberForAuthorityRace(tx *gorm.DB, memberID string) error {
 // commentIntegrationUserContext is the request of userID's onboarded
 // Member, which comment audits name as their actor.
 func commentIntegrationUserContext(userID string) context.Context {
-	return testutil.PostIntegrationContext(userID)
+	return orytest.PostIntegrationContext(userID)
 }
-
 
 func requireCallResult(t *testing.T, result <-chan error) error {
 	t.Helper()

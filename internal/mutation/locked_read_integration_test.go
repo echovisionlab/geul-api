@@ -5,7 +5,7 @@ package mutation
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -15,7 +15,7 @@ import (
 // transaction; the locked reads accept the lock and still write nothing.
 func TestLockedReadsAcceptRowLocksIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupOryStack(t).DB
+	db := orytest.SetupOryStack(t).DB
 	lockSettings := func(strength string) func(*gorm.DB) error {
 		return func(tx *gorm.DB) error {
 			var id int

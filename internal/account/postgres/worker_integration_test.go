@@ -23,7 +23,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -42,7 +43,7 @@ type workerDB struct {
 
 func openWorkerDB(t *testing.T) workerDB {
 	t.Helper()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	publisher, err := mq.NewPublisher(sqlDB)
@@ -57,7 +58,7 @@ func openWorkerDB(t *testing.T) workerDB {
 
 func (w workerDB) commands(t *testing.T) []*managev1.UserDeleteIdentityCommand {
 	t.Helper()
-	messages, err := testutil.ReadPGMQ(t.Context(), w.sqlDB, eventpkg.QueueUserDeleteIdentity, time.Minute, 10)
+	messages, err := pgtest.ReadPGMQ(t.Context(), w.sqlDB, eventpkg.QueueUserDeleteIdentity, time.Minute, 10)
 	require.NoError(t, err)
 	commands := make([]*managev1.UserDeleteIdentityCommand, len(messages))
 	for i, message := range messages {
@@ -71,7 +72,7 @@ func (w workerDB) commands(t *testing.T) []*managev1.UserDeleteIdentityCommand {
 
 func TestAccountEmailChangeRequestMatchesCurrentMigrationSchemaIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
+	db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 	var columns []string
 	require.NoError(t, db.Raw(`
 		SELECT column_name FROM information_schema.columns

@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	"github.com/echovisionlab/geul-api/internal/mq"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -16,7 +18,9 @@ import (
 	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+
+	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
+	"github.com/echovisionlab/geul-api/internal/testutil/pgtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -25,16 +29,16 @@ import (
 func TestPostgresStoreKeepsTheCampaignStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	campaigntest.RunStoreContract(t, func(t *testing.T) campaigntest.Harness {
-		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true, BootstrapKratosStub: true}).DB
+		db := pgtest.SetupAppPostgres(t, pgtest.AppPostgresOptions{ApplyAppSchemaSQL: true, BootstrapKratosStub: true}).DB
 		sqlDB, err := db.DB()
 		require.NoError(t, err)
 		publisher, err := mq.NewPublisher(sqlDB)
 		require.NoError(t, err)
-		ports := campaignpostgres.Ports{Publisher: publisher, ContentBlocks: testutil.NewEmailContentBlockStore(t, nil)}
+		ports := campaignpostgres.Ports{Publisher: publisher, ContentBlocks: contenttest.NewEmailContentBlockStore(t)}
 		units := mutation.Postgres(db, func(tx *gorm.DB) campaign.Store { return campaignpostgres.NewStore(tx, ports) })
 		return campaigntest.Harness{Harness: mutationtest.PostgresHarness(db, units), QueueMessages: func(t *testing.T) []proto.Message {
 			t.Helper()
-			rows, err := testutil.ReadPGMQ(t.Context(), sqlDB, eventpkg.QueueEmailSend, time.Minute, 10)
+			rows, err := pgtest.ReadPGMQ(t.Context(), sqlDB, eventpkg.QueueEmailSend, time.Minute, 10)
 			require.NoError(t, err)
 			result := make([]proto.Message, len(rows))
 			for i, row := range rows {
@@ -48,7 +52,7 @@ func TestPostgresStoreKeepsTheCampaignStoreContractIntegration(t *testing.T) {
 		}, SeedRecipient: func(t *testing.T, v campaign.DeliveryRecipient) campaign.DeliveryRecipient {
 			t.Helper()
 			identityID := uuid.NewString()
-			memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Campaign contract "+identityID)
+			memberID := orytest.SeedPostIntegrationIdentity(t, db, identityID, "Campaign contract "+identityID)
 			v.MemberID, v.IdentityID = &memberID, &identityID
 			row := campaignpostgres.DeliveryRecipientToRow(v)
 			require.NoError(t, db.Create(&row).Error)
