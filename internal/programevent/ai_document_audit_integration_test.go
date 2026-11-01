@@ -1,10 +1,12 @@
 //go:build integration
 
-package programevent
+package programevent_test
 
 import (
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/programevent"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -29,10 +31,10 @@ func TestProgramEventAIDocumentSourceEditIsAuditedIntegration(t *testing.T) {
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 	writer := apitelemetry.NewDurableWriter(db)
 	suffix := testutil.IntegrationUUID()
-	service := newIntegrationService(t, db, spiceDB, Deps{Audit: writer, Signals: &programEventAIDocumentTestPublisher{}})
-	eventType, err := NewTypeConnectHandler(service).CreateProgramEventType(ctx, connect.NewRequest(&managev1.CreateProgramEventTypeRequest{Slug: "ai-audit-type-" + suffix, Locale: "en", Name: "AI audit"}))
+	service := newIntegrationService(t, db, spiceDB, integrationDeps{Audit: writer, Signals: &programEventAIDocumentTestPublisher{}})
+	eventType, err := programevent.NewTypeConnectHandler(service).CreateProgramEventType(ctx, connect.NewRequest(&managev1.CreateProgramEventTypeRequest{Slug: "ai-audit-type-" + suffix, Locale: "en", Name: "AI audit"}))
 	require.NoError(t, err)
-	created, err := NewConnectHandler(service).CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
+	created, err := programevent.NewConnectHandler(service).CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title: "AI audited event", Slug: "ai-audit-event-" + suffix, SourceLocale: "en", TypeId: eventType.Msg.Id,
 		StartsAt: timestamppb.New(time.Now().UTC().Add(time.Hour)), Timezone: "UTC", LocationMode: managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_ONLINE,
 	}))
@@ -40,10 +42,10 @@ func TestProgramEventAIDocumentSourceEditIsAuditedIntegration(t *testing.T) {
 	eventID := created.Msg.Id
 	before := programEventAuditCount(t, db, eventID)
 
-	applied, err := service.ExecuteAIDocument(ctx, ExecuteAIDocumentCommand{EventID: eventID, Locale: "en", Mode: AIDocumentExecutionApply, Compiler: func(state AIDocumentState) (AIDocumentCommand, error) {
+	applied, err := service.ExecuteAIDocument(ctx, programevent.ExecuteAIDocumentCommand{EventID: eventID, Locale: "en", Mode: programevent.AIDocumentExecutionApply, Compiler: func(state programevent.AIDocumentState) (programevent.AIDocumentCommand, error) {
 		batch, err := contentblock.BatchFromRichTextProto(state.ContentDocumentID, programEventParagraphMutationBatch(state.LocalizedDocument, state.DocumentRevision, testutil.IntegrationUUID(), "en", "AI source body", []string{memberID}, true))
 		if err != nil {
-			return AIDocumentCommand{}, err
+			return programevent.AIDocumentCommand{}, err
 		}
 		command := programEventMetadataCommandForState(state)
 		command.Batch = &batch

@@ -29,6 +29,7 @@ import (
 	pagepublic "github.com/echovisionlab/geul-api/internal/page/public"
 	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
 	programeventpublic "github.com/echovisionlab/geul-api/internal/programevent/public"
+	programeventpublicpostgres "github.com/echovisionlab/geul-api/internal/programevent/public/postgres"
 	publicreferencecatalog "github.com/echovisionlab/geul-api/internal/referencecatalog/public"
 	seriespublic "github.com/echovisionlab/geul-api/internal/series/public"
 	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
@@ -203,8 +204,12 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicMapThemePath, publicMapThemeHandler)
 	slog.Info("Registered public service", "path", publicMapThemePath)
 
+	publicProgramEventUnits, err := programeventpublicpostgres.NewUnits(db, contentBlockStore)
+	if err != nil {
+		return fmt.Errorf("initialize public program event store: %w", err)
+	}
 	publicProgramEvents, err := programeventpublic.NewService(programeventpublic.Deps{
-		DB: db, Assets: programeventadapter.NewPublicAssets(db, cfg.CDNURL), ContentBlocks: contentBlockStore,
+		Units: publicProgramEventUnits, Assets: programeventadapter.NewPublicAssets(db, cfg.CDNURL),
 		Files:         programeventadapter.NewPublicFiles(publicFileService),
 		CreditMembers: programeventadapter.NewPublicCreditMemberSummaries(db, cfg.CDNURL),
 	})

@@ -1,9 +1,11 @@
 //go:build integration
 
-package public
+package public_test
 
 import (
 	"context"
+
+	"github.com/echovisionlab/geul-api/internal/programevent/public"
 
 	referencecatalogmenuadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog/menu"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
@@ -62,7 +64,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	publicFileSvc := publicProgramEventFileGateway{db: db}
 	manageFileGateway := publicFileSvc
 
-	manageEvents := manageProgramEvents(t, db, eventdomain.Deps{
+	manageEvents := manageProgramEvents(t, db, manageDeps{
 		Audit: apitelemetry.NewDurableWriter(db), ContentBlocks: contentBlocks, MediaHydrator: manageFileGateway,
 	})
 	typeSvc := eventdomain.NewTypeConnectHandler(manageEvents)
@@ -196,12 +198,12 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	_, err = eventSvc.PublishProgramEvent(adminCtx, connect.NewRequest(&managev1.PublishProgramEventRequest{Id: eventResp.Msg.Id}))
 	require.NoError(t, err)
 
-	publicEvents := publicServiceForTest(t, Deps{
+	publicEvents := publicServiceForTest(t, publicDeps{
 		DB: db, Assets: newPublicProgramEventAssets(db, "https://cdn.example.com"),
 		CreditMembers: programeventadapter.NewPublicCreditMemberSummaries(db, "https://cdn.example.com"),
 		ContentBlocks: contentBlocks, Files: publicFileSvc,
 	})
-	publicEventSvc := NewConnectHandler(publicEvents)
+	publicEventSvc := public.NewConnectHandler(publicEvents)
 	getReq := connect.NewRequest(&openv1.GetProgramEventRequest{Slug: "public-program-event-" + suffix})
 	getReq.Header().Set("Accept-Language", "ko")
 	fetched, err := publicEventSvc.Get(context.Background(), getReq)
@@ -314,7 +316,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	}))
 	require.NoError(t, err)
 
-	publicSeriesSvc := NewSeriesConnectHandler(publicEvents)
+	publicSeriesSvc := public.NewSeriesConnectHandler(publicEvents)
 	seriesGet, err := publicSeriesSvc.Get(context.Background(), connect.NewRequest(&openv1.GetProgramEventSeriesRequest{
 		Slug: "public-program-event-series-" + suffix,
 	}))
@@ -350,7 +352,7 @@ func TestPublicProgramEventServiceIntegration(t *testing.T) {
 	require.Len(t, seriesList.Msg.Series, 1)
 	require.Equal(t, seriesResp.Msg.Id, seriesList.Msg.Series[0].Id)
 
-	publicTypeSvc := NewTypeConnectHandler(publicEvents)
+	publicTypeSvc := public.NewTypeConnectHandler(publicEvents)
 	typeList, err := publicTypeSvc.List(context.Background(), connect.NewRequest(&openv1.ListProgramEventTypesRequest{
 		Filters: []*commonv1.FilterSpec{
 			nil,

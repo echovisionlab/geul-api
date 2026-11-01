@@ -3,14 +3,9 @@ package public
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"strings"
 
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/domainerr"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
@@ -28,9 +23,8 @@ type CreditMemberSummaries interface {
 // Deps are the collaborators of the public Program Event reads; all are
 // required.
 type Deps struct {
-	DB            *gorm.DB
+	Units         Units // programeventpublicpostgres.NewUnits
 	Assets        Assets
-	ContentBlocks *contentblock.Store
 	Files         MediaHydrator
 	CreditMembers CreditMemberSummaries
 }
@@ -38,7 +32,7 @@ type Deps struct {
 func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
-		"DB": d.DB == nil, "Assets": d.Assets == nil, "ContentBlocks": d.ContentBlocks == nil,
+		"Units": d.Units == nil, "Assets": d.Assets == nil,
 		"Files": d.Files == nil, "CreditMembers": d.CreditMembers == nil,
 	} {
 		if absent {
@@ -54,9 +48,8 @@ func (d Deps) validate() error {
 
 // Service holds the public Program Event, series and type reads.
 type Service struct {
-	db            *gorm.DB
+	units         Units
 	assets        Assets
-	contentBlocks *contentblock.Store
 	files         MediaHydrator
 	creditMembers CreditMemberSummaries
 }
@@ -67,15 +60,6 @@ func NewService(deps Deps) (*Service, error) {
 		return nil, err
 	}
 	return &Service{
-		db: deps.DB, assets: deps.Assets, contentBlocks: deps.ContentBlocks,
-		files: deps.Files, creditMembers: deps.CreditMembers,
+		units: deps.Units, assets: deps.Assets, files: deps.Files, creditMembers: deps.CreditMembers,
 	}, nil
-}
-
-func invalidSortField(field string) *domainerr.Error {
-	return domainerr.New(domainerr.Invalid, "", "invalid sort field: "+field)
-}
-
-func invalidFilterOp(field, op string) *domainerr.Error {
-	return domainerr.New(domainerr.Invalid, "", fmt.Sprintf("invalid filter operation '%s' for field '%s'", op, field))
 }

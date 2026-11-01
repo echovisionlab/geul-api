@@ -1,6 +1,6 @@
 //go:build integration
 
-package programevent
+package programevent_test
 
 import (
 	"context"
@@ -11,6 +11,17 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/programevent"
+	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
+	"github.com/echovisionlab/geul-api/internal/translation"
 
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
@@ -24,6 +35,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
@@ -53,22 +66,33 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func newProgramEventCreditMemberSummaries(db *gorm.DB, cdnDomain string) CreditMemberSummaries {
+func newProgramEventCreditMemberSummaries(db *gorm.DB, cdnDomain string) programevent.CreditMemberSummaries {
 	return programeventadapter.NewCreditMemberSummaries(db, cdnDomain)
 }
 
-func newProgramEventRuntime(cdnDomain string) MediaAssets {
+func newProgramEventRuntime(cdnDomain string) programeventpostgres.Media {
 	return programeventadapter.NewRuntime(cdnDomain)
 }
 
-// newIntegrationService builds the Program Event use cases through
-// NewService. Collaborators left unset in deps get the integration defaults:
-// a recording audit appender, a content Block store, a signal publisher, the
-// public-asset runtime, the File media hydrator, credit Member summaries and
-// collaboration checkpoints.
-func newIntegrationService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, deps Deps) *Service {
+// integrationDeps are the collaborators an integration test overrides;
+// unset ones get the integration defaults.
+type integrationDeps struct {
+	Audit         domainaudit.Appender
+	ContentBlocks *contentblock.Store
+	Signals       contentsignal.Publisher
+	Media         programeventpostgres.Media
+	MediaHydrator programeventpostgres.Files
+	CreditMembers programevent.CreditMemberSummaries
+	Checkpoints   persistencecheckpoint.ContributorFence
+}
+
+// newIntegrationService builds the Program Event use cases on the
+// PostgreSQL Store. Collaborators left unset in deps get the integration
+// defaults: a recording audit appender, a content Block store, a signal
+// publisher, the public-asset runtime, the File media hydrator, credit
+// Member summaries and collaboration checkpoints.
+func newIntegrationService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, deps integrationDeps) *programevent.Service {
 	t.Helper()
-	deps.DB, deps.SpiceDB = db, spiceDB
 	if deps.Audit == nil {
 		deps.Audit = &audittest.Recorder{}
 	}
@@ -90,20 +114,21 @@ func newIntegrationService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClien
 	if deps.Checkpoints == nil {
 		deps.Checkpoints = programEventIntegrationCheckpoints(db, spiceDB)
 	}
-	if deps.CreditArtists == nil {
-		deps.CreditArtists = artistadapter.CreditArtists{}
-	}
-	if deps.Members == nil {
-		deps.Members = memberadapter.ContentMembers{}
-	}
-	service, err := NewService(deps)
+	units, err := programeventpostgres.NewUnits(db, programeventpostgres.Ports{
+		ContentBlocks: deps.ContentBlocks, Signals: deps.Signals, Media: deps.Media, Files: deps.MediaHydrator,
+		Members: memberadapter.ContentMembers{}, CreditArtists: artistadapter.CreditArtists{}, Checkpoints: deps.Checkpoints,
+	})
+	require.NoError(t, err)
+	service, err := programevent.NewService(programevent.Deps{
+		Units: units, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: deps.Audit, CreditMembers: deps.CreditMembers,
+	})
 	require.NoError(t, err)
 	return service
 }
 
-func typeHandlerForTest(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *TypeConnectHandler {
+func typeHandlerForTest(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *programevent.TypeConnectHandler {
 	t.Helper()
-	return NewTypeConnectHandler(newIntegrationService(t, db, spiceDB, Deps{}))
+	return programevent.NewTypeConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{}))
 }
 
 // requestBackground carries the request context a request-attributed audit
@@ -252,5 +277,68 @@ func (publisher *capturingAsyncPublisher) NotifyProtobufWithExecutor(
 	signal string,
 	message proto.Message,
 ) error {
+	return publisher.NotifyProtobuf(ctx, signal, message)
+}
+
+// loadEventMessage reads the administrator view of an event the caller may
+// view.
+func loadEventMessage(ctx context.Context, handler *programevent.ConnectHandler, eventID string) (*managev1.ProgramEvent, error) {
+	response, err := handler.GetProgramEvent(ctx, connect.NewRequest(&managev1.GetProgramEventRequest{Id: eventID}))
+	if err != nil {
+		return nil, err
+	}
+	return response.Msg, nil
+}
+
+// loadTranslationSource reads the event's translation source in the
+// read-committed transaction translation delivery opens.
+func loadTranslationSource(ctx context.Context, db *gorm.DB, store *contentblock.Store, eventID string) (*translation.SourceDocument, error) {
+	var output *translation.SourceDocument
+	err := mutation.ReadCurrent(ctx, db, func(tx *gorm.DB) error {
+		var err error
+		output, err = programevent.LoadTranslationSourceDocument(ctx, programeventpostgres.Bind(tx, programeventpostgres.Ports{ContentBlocks: store}, nil).Store, eventID)
+		return err
+	})
+	return output, err
+}
+
+func translationJob(job *model.TranslationJob) programevent.TranslationJob {
+	return programevent.TranslationJob{
+		EntityType: job.EntityType, EntityID: job.EntityID, TargetLocale: job.TargetLocale,
+		RequestedByMemberID: job.RequestedByMemberID,
+	}
+}
+
+func programEventParagraphOverlay(blockID string, locale string, text string) *contentv1.RichTextLocaleOverlay {
+	return &contentv1.RichTextLocaleOverlay{Locale: locale, Blocks: []*contentv1.RichTextBlockLocale{{
+		BlockId: blockID,
+		Value: &contentv1.RichTextBlockLocale_Paragraph{Paragraph: &contentv1.ParagraphBlockLocale{
+			Props: &contentv1.ParagraphLocaleProps{},
+			Content: []*contentv1.RichTextInline{{Value: &contentv1.RichTextInline_Text{
+				Text: &contentv1.RichTextStyledText{Text: text},
+			}}},
+		}},
+	}}}
+}
+
+type programEventAIDocumentTestPublisher struct {
+	calls   int
+	signal  string
+	message proto.Message
+	err     error
+}
+
+func (publisher *programEventAIDocumentTestPublisher) NotifyProtobuf(_ context.Context, signal string, message proto.Message) error {
+	publisher.calls++
+	publisher.signal = signal
+	publisher.message = message
+	return publisher.err
+}
+
+func (*programEventAIDocumentTestPublisher) EnqueueProtobuf(context.Context, string, string, proto.Message) error {
+	return nil
+}
+
+func (publisher *programEventAIDocumentTestPublisher) NotifyProtobufWithExecutor(ctx context.Context, _ eventpkg.DBTX, signal string, message proto.Message) error {
 	return publisher.NotifyProtobuf(ctx, signal, message)
 }

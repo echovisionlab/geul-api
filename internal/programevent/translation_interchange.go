@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -25,24 +24,19 @@ type InterchangeLocale struct {
 	Summary          *string
 }
 
-// LoadInterchangeLocale reads locale of the event in db, the caller's
-// transaction, against the source locale the extraction plan names.
-func (s *Service) LoadInterchangeLocale(ctx context.Context, db *gorm.DB, eventID, sourceLocale, locale string) (InterchangeLocale, error) {
-	var root struct {
-		ContentDocumentID *string `gorm:"column:content_document_id"`
+// LoadInterchangeLocale reads locale of the event through store, bound to
+// the interchange's transaction, against the source locale the extraction
+// plan names.
+func LoadInterchangeLocale(ctx context.Context, store Store, eventID, sourceLocale, locale string) (InterchangeLocale, error) {
+	reference, err := store.ContentDocumentID(ctx, eventID, NoLock)
+	if err != nil {
+		return InterchangeLocale{}, notFoundAs(err, domainerr.ResourceNotFound("program event", eventID))
 	}
-	if err := db.WithContext(ctx).Table("program_event").Select("content_document_id").
-		Where("id = ?", eventID).Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return InterchangeLocale{}, domainerr.ResourceNotFound("program event", eventID)
-		}
-		return InterchangeLocale{}, err
-	}
-	documentID, err := canonicalContentDocumentID(root.ContentDocumentID)
+	documentID, err := canonicalContentDocumentID(reference)
 	if err != nil {
 		return InterchangeLocale{}, domainerr.Precondition("Program Event content document identity is invalid").WithCause(failurecause.ServerFault(err))
 	}
-	snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, db, documentID, sourceLocale)
+	snapshot, err := store.ContentSnapshot(ctx, documentID, sourceLocale)
 	if err != nil {
 		return InterchangeLocale{}, err
 	}
@@ -53,21 +47,16 @@ func (s *Service) LoadInterchangeLocale(ctx context.Context, db *gorm.DB, eventI
 	if localized.GetProfile() != contentv1.RichTextProfile_RICH_TEXT_PROFILE_PROGRAM_EVENT {
 		return InterchangeLocale{}, domainerr.Precondition("Program Event translation interchange requires the Program Event content profile")
 	}
-	var row struct {
-		Summary *string `gorm:"column:summary"`
+	summary, exists, err := store.LocaleSummary(ctx, eventID, locale)
+	if err != nil {
+		return InterchangeLocale{}, err
 	}
-	query := db.WithContext(ctx).Table("program_event_translation").Select("summary").
-		Where("entity_id = ? AND locale = ?", eventID, locale).Take(&row)
-	if query.Error != nil && !errors.Is(query.Error, gorm.ErrRecordNotFound) {
-		return InterchangeLocale{}, query.Error
-	}
-	exists := query.Error == nil
 	if !exists && len(localized.GetLocaleOverlay().GetBlocks()) != 0 {
 		return InterchangeLocale{}, errors.New("program Event target Blocks exist without owning locale metadata")
 	}
 	return InterchangeLocale{
 		Localized: localized, DocumentRevision: snapshot.Document.Revision.String(),
-		Exists: exists, Summary: row.Summary,
+		Exists: exists, Summary: summary,
 	}, nil
 }
 

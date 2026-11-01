@@ -1,10 +1,12 @@
 //go:build integration
 
-package programevent
+package programevent_test
 
 import (
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/programevent"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -33,7 +35,7 @@ func TestProgramEventAndSeriesMutationsSynchronouslyApplyAuthorizationIntegratio
 	)
 	require.NoError(t, err)
 
-	seriesService := NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Media: newProgramEventRuntime("")}))
+	seriesService := programevent.NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Media: newProgramEventRuntime("")}))
 	seriesResponse, err := seriesService.CreateProgramEventSeries(ctx, connect.NewRequest(&managev1.CreateProgramEventSeriesRequest{
 		Title: "Program Event sync series", Slug: "program-event-sync-series-" + testutil.IntegrationUUID(),
 	}))
@@ -46,7 +48,7 @@ func TestProgramEventAndSeriesMutationsSynchronouslyApplyAuthorizationIntegratio
 	require.NoError(t, err)
 	require.True(t, allowed)
 
-	eventService := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: contentBlocks, Media: newProgramEventRuntime(""), CreditMembers: newProgramEventCreditMemberSummaries(db, "")}))
+	eventService := programevent.NewConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{ContentBlocks: contentBlocks, Media: newProgramEventRuntime(""), CreditMembers: newProgramEventCreditMemberSummaries(db, "")}))
 	eventResponse, err := eventService.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title:        "Program Event sync event",
 		Slug:         "program-event-sync-event-" + testutil.IntegrationUUID(),

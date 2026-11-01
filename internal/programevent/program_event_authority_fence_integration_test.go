@@ -1,10 +1,12 @@
 //go:build integration
 
-package programevent
+package programevent_test
 
 import (
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/programevent"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -40,8 +42,8 @@ func TestProgramEventMutationsRecheckAuthorityAfterRootLockIntegration(t *testin
 	)
 	require.NoError(t, err)
 
-	eventService := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: store, Media: newProgramEventRuntime(""), CreditMembers: newProgramEventCreditMemberSummaries(db, "")}))
-	seriesService := NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Media: newProgramEventRuntime("")}))
+	eventService := programevent.NewConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{ContentBlocks: store, Media: newProgramEventRuntime(""), CreditMembers: newProgramEventCreditMemberSummaries(db, "")}))
+	seriesService := programevent.NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Media: newProgramEventRuntime("")}))
 	series, err := seriesService.CreateProgramEventSeries(ctx, connect.NewRequest(&managev1.CreateProgramEventSeriesRequest{
 		Title: "Program Event Series authority fence",
 		Slug:  "program-event-series-fence-" + suffix,
@@ -107,7 +109,7 @@ func TestProgramEventMutationsRecheckAuthorityAfterRootLockIntegration(t *testin
 	t.Run("collaboration bootstrap", func(t *testing.T) {
 		sessionID := insertProgramEventIntegrationSession(t, db, auth.GetUser(ctx).IdentityID.String())
 		lockTx := lockAdminMutationRoot(t, db, "program_event", "id = '"+event.Msg.Id+"'::uuid")
-		internalService := NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Audit: apitelemetry.NewDurableWriter(db), Signals: &capturingAsyncPublisher{}, ContentBlocks: store, MediaHydrator: files}))
+		internalService := programevent.NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Audit: apitelemetry.NewDurableWriter(db), Signals: &capturingAsyncPublisher{}, ContentBlocks: store, MediaHydrator: files}))
 		result := make(chan error, 1)
 		go func() {
 			_, err := internalService.LoadProgramEventBlockDocument(ctx, connect.NewRequest(&intrav1.LoadProgramEventBlockDocumentRequest{

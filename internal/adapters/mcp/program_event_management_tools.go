@@ -9,7 +9,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -36,8 +35,8 @@ var programEventManagementTools = []mcpserver.Tool{
 // ProgramEventManagementApplication is the Program Event use cases the
 // management tools call; authorization and audit stay in programevent.Service.
 type ProgramEventManagementApplication interface {
-	GetProgramEvent(context.Context, programevent.GetProgramEventQuery) (*managev1.ProgramEvent, error)
-	CreateProgramEvent(context.Context, programevent.CreateProgramEventCommand) (*managev1.ProgramEvent, error)
+	GetProgramEvent(context.Context, programevent.GetProgramEventQuery) (programevent.EventView, error)
+	CreateProgramEvent(context.Context, programevent.CreateProgramEventCommand) (programevent.EventView, error)
 	UpdateProgramEvent(context.Context, programevent.UpdateProgramEventCommand) (programevent.EventUpdate, error)
 	PublishProgramEvent(context.Context, programevent.PublishProgramEventCommand) (programevent.LifecycleChange, error)
 	ArchiveProgramEvent(context.Context, programevent.ArchiveProgramEventCommand) (programevent.LifecycleChange, error)
@@ -148,7 +147,7 @@ func (tools *ProgramEventManagementTools) create(ctx context.Context, arguments 
 	if err != nil {
 		return expectedToolError(err)
 	}
-	output := programEventSettingsOutput(created)
+	output := programEventSettingsOutput(programevent.EventMessage(created))
 	output["changed"] = true
 	return contentResult(output)
 }
@@ -165,7 +164,7 @@ func (tools *ProgramEventManagementTools) getSettings(ctx context.Context, argum
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return contentResult(programEventSettingsOutput(event))
+	return contentResult(programEventSettingsOutput(programevent.EventMessage(event)))
 }
 
 type programEventSettingsArguments struct {
@@ -363,16 +362,16 @@ func validateProgramEventTimezone(value string) error {
 	return nil
 }
 
-func parseProgramEventLocationMode(value string) (model.ProgramEventLocationMode, error) {
+func parseProgramEventLocationMode(value string) (programevent.LocationMode, error) {
 	switch value {
 	case "map_place":
-		return model.ProgramEventLocationModeMapPlace, nil
+		return programevent.LocationModeMapPlace, nil
 	case "online":
-		return model.ProgramEventLocationModeOnline, nil
+		return programevent.LocationModeOnline, nil
 	case "hybrid":
-		return model.ProgramEventLocationModeHybrid, nil
+		return programevent.LocationModeHybrid, nil
 	case "tba":
-		return model.ProgramEventLocationModeTBA, nil
+		return programevent.LocationModeTBA, nil
 	default:
 		return "", errors.New("location_mode must be map_place, online, hybrid, or tba")
 	}

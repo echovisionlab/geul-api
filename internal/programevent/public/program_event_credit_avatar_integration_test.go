@@ -1,11 +1,13 @@
 //go:build integration
 
-package public
+package public_test
 
 import (
 	"context"
 	"sync/atomic"
 	"testing"
+
+	"github.com/echovisionlab/geul-api/internal/programevent/public"
 
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -80,8 +82,8 @@ func TestPublicProgramEventCreditAvatarsIntegration(t *testing.T) {
 	members := &publicEventCreditAvatarMembers{summaries: map[string]*commonv1.MemberSummary{
 		memberID: {Id: memberID, Nickname: "Credit member", AvatarAsset: &commonv1.AssetRef{AssetId: "member-avatar"}},
 	}}
-	service := publicServiceForTest(t, Deps{DB: db, Assets: newPublicProgramEventAssets(db, "https://cdn.example.com"), CreditMembers: members})
-	credits, err := service.loadPublicProgramEventCredits(t.Context(), eventID)
+	service := publicServiceForTest(t, publicDeps{DB: db, Assets: newPublicProgramEventAssets(db, "https://cdn.example.com"), CreditMembers: members})
+	credits, err := public.LoadCredits(t.Context(), service, eventID)
 	require.NoError(t, err)
 	require.Len(t, credits, 9)
 	for index, credit := range credits[:7] {
@@ -116,9 +118,9 @@ func TestPublicProgramEventCreditAvatarQueryBudgetIntegration(t *testing.T) {
 	require.NoError(t, db.Create(&model.ArtistFile{ArtistID: artistID, FileID: fileID}).Error)
 	var queries atomic.Int64
 	countedDB := db.Session(&gorm.Session{Logger: publicProgramEventQueryCounter{Interface: db.Config.Logger, count: &queries}})
-	service := publicServiceForTest(t, Deps{DB: countedDB, Assets: newPublicProgramEventAssets(countedDB, "https://cdn.example.com"), CreditMembers: &publicEventCreditAvatarMembers{}})
+	service := publicServiceForTest(t, publicDeps{DB: countedDB, Assets: newPublicProgramEventAssets(countedDB, "https://cdn.example.com"), CreditMembers: &publicEventCreditAvatarMembers{}})
 	counts := make(map[int]int64)
-	credits, err := service.loadPublicProgramEventCredits(t.Context(), eventID)
+	credits, err := public.LoadCredits(t.Context(), service, eventID)
 	require.NoError(t, err)
 	require.Empty(t, credits)
 	require.Equal(t, int64(1), queries.Load(), "no credits must not issue an asset query")
@@ -128,7 +130,7 @@ func TestPublicProgramEventCreditAvatarQueryBudgetIntegration(t *testing.T) {
 			continue
 		}
 		queries.Store(0)
-		credits, err := service.loadPublicProgramEventCredits(t.Context(), eventID)
+		credits, err := public.LoadCredits(t.Context(), service, eventID)
 		require.NoError(t, err)
 		require.Len(t, credits, index+1)
 		counts[index+1] = queries.Load()

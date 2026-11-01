@@ -1,11 +1,13 @@
 //go:build integration
 
-package programevent
+package programevent_test
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/programevent"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -43,7 +45,7 @@ func TestArchivedProgramEventAllowsAdminEditingAndAuthorReadOnlyIntegration(t *t
 	)
 	require.NoError(t, err)
 
-	eventService := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: store, Media: newProgramEventRuntime("https://cdn.example.com"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), MediaHydrator: files}))
+	eventService := programevent.NewConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{ContentBlocks: store, Media: newProgramEventRuntime("https://cdn.example.com"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), MediaHydrator: files}))
 	created, err := eventService.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title:        "Archived Program Event " + suffix,
 		Slug:         "archived-program-event-" + suffix,
@@ -55,7 +57,7 @@ func TestArchivedProgramEventAllowsAdminEditingAndAuthorReadOnlyIntegration(t *t
 	}))
 	require.NoError(t, err)
 	sessionID := insertProgramEventIntegrationSession(t, db, adminID)
-	internalService := NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Audit: apitelemetry.NewDurableWriter(db), Signals: &capturingAsyncPublisher{}, ContentBlocks: store, MediaHydrator: files}))
+	internalService := programevent.NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Audit: apitelemetry.NewDurableWriter(db), Signals: &capturingAsyncPublisher{}, ContentBlocks: store, MediaHydrator: files}))
 	initial, err := internalService.LoadProgramEventBlockDocument(ctx, connect.NewRequest(&intrav1.LoadProgramEventBlockDocumentRequest{
 		EventId:   created.Msg.Id,
 		Locale:    "en",

@@ -1,6 +1,6 @@
 //go:build integration
 
-package public
+package public_test
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/programevent/public"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -42,7 +44,7 @@ func TestPublicProgramEventListQueryBudgetDoesNotGrowPerRowIntegration(t *testin
 		Interface: db.Config.Logger,
 		count:     &queryCount,
 	}})
-	service := NewConnectHandler(publicServiceForTest(t, Deps{
+	service := public.NewConnectHandler(publicServiceForTest(t, publicDeps{
 		DB: countedDB, Assets: newPublicProgramEventAssets(countedDB, "https://cdn.example.com"),
 		CreditMembers: &publicProgramEventQueryBudgetCredits{},
 	}))
@@ -90,7 +92,7 @@ func TestPublicProgramEventTypeListQueryBudgetDoesNotGrowPerRowIntegration(t *te
 		Interface: db.Config.Logger,
 		count:     &queryCount,
 	}})
-	service := NewTypeConnectHandler(publicServiceForTest(t, Deps{DB: countedDB}))
+	service := public.NewTypeConnectHandler(publicServiceForTest(t, publicDeps{DB: countedDB}))
 	typeCounts := make(map[int]int64, 3)
 	for _, limit := range []int32{1, 6, 20} {
 		queryCount.Store(0)

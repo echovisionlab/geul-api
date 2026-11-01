@@ -1,11 +1,13 @@
 //go:build integration
 
-package public
+package public_test
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/programevent/public"
 
 	"connectrpc.com/connect"
 	programeventadapter "github.com/echovisionlab/geul-api/internal/adapters/programevent"
@@ -39,7 +41,7 @@ func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
 	require.NoError(t, err)
 	files := publicProgramEventFileGateway{db: db}
 	runtime := newManageProgramEventRuntime("https://cdn.example.com")
-	manageEvents := manageProgramEvents(t, db, eventdomain.Deps{
+	manageEvents := manageProgramEvents(t, db, manageDeps{
 		Audit: apitelemetry.NewDurableWriter(db), ContentBlocks: store, Media: runtime, MediaHydrator: files,
 	})
 	service := eventdomain.NewConnectHandler(manageEvents)
@@ -54,7 +56,7 @@ func TestProgramEventPosterImageBindingIntegration(t *testing.T) {
 	require.NoError(t, err)
 	_, err = service.PublishProgramEvent(ctx, connect.NewRequest(&managev1.PublishProgramEventRequest{Id: event.Msg.Id}))
 	require.NoError(t, err)
-	publicService := NewConnectHandler(publicServiceForTest(t, Deps{
+	publicService := public.NewConnectHandler(publicServiceForTest(t, publicDeps{
 		DB: db, Assets: newPublicProgramEventAssets(db, "https://cdn.example.com"),
 		CreditMembers: programeventadapter.NewPublicCreditMemberSummaries(db, "https://cdn.example.com"),
 		ContentBlocks: store, Files: files,

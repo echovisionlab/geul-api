@@ -12,7 +12,6 @@ import (
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestProgramEventReferenceDescriptors(t *testing.T) {
@@ -61,8 +60,8 @@ func TestProgramEventReferenceNativeRequestsAndProjection(t *testing.T) {
 	description := "A live performance"
 	slug := "sound"
 	fixture := &recordingProgramEventReferences{
-		types:      []*managev1.ProgramEventType{{Id: managementWorkID, Slug: "concert", Status: managev1.ProgramEventTypeStatus_PROGRAM_EVENT_TYPE_STATUS_ACTIVE, RequiresPlace: true, RequiresStreamUrl: true, Locales: []*managev1.ProgramEventTypeLocale{{Locale: "en", Name: "Concert", Description: &description}, {Locale: "ko", Name: "공연"}}}},
-		series:     []*managev1.ProgramEventSeries{{Id: managementWorkID, Slug: "first-play", Title: "FIRST PLAY", Status: managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_PUBLISHED}},
+		types:      []programevent.TypeView{{Type: programevent.Type{ID: managementWorkID, Slug: "concert", Status: programevent.TypeStatusActive, RequiresPlace: true, RequiresStreamURL: true}, Locales: []programevent.TypeLocale{{Locale: "en", Name: "Concert", Description: &description}, {Locale: "ko", Name: "공연"}}}},
+		series:     []programevent.Series{{ID: managementWorkID, Slug: "first-play", Title: "FIRST PLAY", Status: programevent.StatusPublished}},
 		labels:     []label.AdminView{{Label: label.View{Label: label.Label{ID: managementWorkID, Slug: &slug, Status: label.StatusDraft, SourceLocale: "en"}, Name: "Sound"}}},
 		pagination: &commonv1.PaginationResponse{Total: 31, HasMore: true},
 	}
@@ -221,8 +220,8 @@ func newProgramEventReferenceFixture(t *testing.T, fixture *recordingProgramEven
 }
 
 type recordingProgramEventReferences struct {
-	types             []*managev1.ProgramEventType
-	series            []*managev1.ProgramEventSeries
+	types             []programevent.TypeView
+	series            []programevent.Series
 	labels            []label.AdminView
 	pagination        *commonv1.PaginationResponse
 	requestPagination *commonv1.PaginationRequest
@@ -239,12 +238,18 @@ func (r *recordingProgramEventReferences) record(pagination *commonv1.Pagination
 
 func (r *recordingProgramEventReferences) ListProgramEventTypesAdmin(_ context.Context, query programevent.ListProgramEventTypesQuery) (programevent.TypeList, error) {
 	r.record(&commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset}, query.Filters)
-	return programevent.TypeList{Types: r.types, Pagination: r.pagination}, r.err
+	return programevent.TypeList{Types: r.types, Pagination: r.programEventPagination()}, r.err
 }
 
 func (r *recordingProgramEventReferences) ListProgramEventSeriesAdmin(_ context.Context, query programevent.ListProgramEventSeriesQuery) (programevent.SeriesList, error) {
 	r.record(&commonv1.PaginationRequest{Limit: query.Limit, Offset: query.Offset}, query.Filters)
-	return programevent.SeriesList{Series: r.series, Pagination: r.pagination}, r.err
+	return programevent.SeriesList{Series: r.series, Pagination: r.programEventPagination()}, r.err
+}
+
+func (r *recordingProgramEventReferences) programEventPagination() programevent.Pagination {
+	return programevent.Pagination{
+		Total: r.pagination.GetTotal(), Limit: r.pagination.GetLimit(), Offset: r.pagination.GetOffset(), HasMore: r.pagination.GetHasMore(),
+	}
 }
 
 func (r *recordingProgramEventReferences) ListLabelsAdmin(_ context.Context, query label.ListLabelsQuery) (label.AdminLabelPage, error) {

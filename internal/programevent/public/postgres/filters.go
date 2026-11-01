@@ -1,6 +1,7 @@
-package public
+package programeventpublicpostgres
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -206,6 +207,26 @@ func applySimpleProgramEventSeriesFilters(query *gorm.DB, filters []*commonv1.Fi
 		}
 	}
 	return query, nil
+}
+
+// publicProgramEventStatuses are the stored statuses a public reader sees.
+var publicProgramEventStatuses = []model.ProgramEventStatus{
+	model.ProgramEventStatusPublished,
+	model.ProgramEventStatusArchived,
+}
+
+// isPublicProgramEventStatus reports whether a status filter value names a
+// status a public reader sees; the filter value is the stored status name.
+func isPublicProgramEventStatus(value string) bool {
+	return value == string(model.ProgramEventStatusPublished) || value == string(model.ProgramEventStatusArchived)
+}
+
+func invalidSortField(field string) *domainerr.Error {
+	return domainerr.New(domainerr.Invalid, "", "invalid sort field: "+field)
+}
+
+func invalidFilterOp(field, op string) *domainerr.Error {
+	return domainerr.New(domainerr.Invalid, "", fmt.Sprintf("invalid filter operation '%s' for field '%s'", op, field))
 }
 
 func applySimpleProgramEventTypeFilters(query *gorm.DB, filters []*commonv1.FilterSpec) (*gorm.DB, error) {

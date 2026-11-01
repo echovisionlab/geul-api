@@ -236,16 +236,15 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 			return nil, 0, 0, err
 		}
 		documents := make([]map[string]any, 0, len(listed.Events))
-		for _, event := range listed.Events {
-			if event == nil || event.UpdatedAt == nil {
-				continue
-			}
+		for _, summary := range listed.Events {
+			event := programevent.EventSummaryMessage(summary)
 			documents = append(documents, discoveryDocument(
 				"program_event", event.Id, event.Title, event.Slug, event.SourceLocale,
 				strings.TrimPrefix(event.Status.String(), "PROGRAM_EVENT_STATUS_"), event.UpdatedAt.AsTime(),
 			))
 		}
-		return documents, int64(listed.Pagination.GetTotal()), int(listed.Pagination.GetLimit()), nil
+		pagination := programevent.PaginationMessage(listed.Pagination)
+		return documents, int64(pagination.GetTotal()), int(pagination.GetLimit()), nil
 	case "release":
 		listed, err := tools.releases.ListReleasesAdmin(ctx, releasedomain.ListReleasesQuery{
 			Limit: int32(limit), Offset: int32(offset), Filters: discoverySearchFilters(query),

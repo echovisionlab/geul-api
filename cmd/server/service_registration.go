@@ -78,6 +78,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/programevent"
+	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/series"
 	seriespostgres "github.com/echovisionlab/geul-api/internal/series/postgres"
@@ -512,13 +513,17 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(categoryPath, categoryHandler)
 	slog.Info("Registered service", "path", categoryPath)
 
+	programEventUnits, err := programeventpostgres.NewUnits(db, programeventpostgres.Ports{
+		ContentBlocks: contentBlockStore, Signals: servicePublisher, Media: programeventadapter.NewRuntime(cfg.CDNURL),
+		Files: programeventadapter.NewFiles(fileService), Members: memberadapter.ContentMembers{},
+		CreditArtists: artistadapter.CreditArtists{}, Checkpoints: collaborationRuntime.Checkpoints,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize program event store: %w", err)
+	}
 	programEventService, err := programevent.NewService(programevent.Deps{
-		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, ContentBlocks: contentBlockStore,
-		Signals: servicePublisher, Media: programeventadapter.NewRuntime(cfg.CDNURL),
-		MediaHydrator: programeventadapter.NewFiles(fileService),
+		Units: programEventUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
 		CreditMembers: programeventadapter.NewCreditMemberSummaries(db, cfg.CDNURL),
-		CreditArtists: artistadapter.CreditArtists{}, Members: memberadapter.ContentMembers{},
-		Checkpoints: collaborationRuntime.Checkpoints,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize program event service: %w", err)
@@ -804,7 +809,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		emailAuthoringReferences: emailAuthoringReferences,
 		legalDocuments:           legalAIDocumentService,
 		internalFormService:      formService,
-		programEventService:      programEventService,
 		seriesService:            seriesService,
 		fileService:              fileService,
 	}).register()

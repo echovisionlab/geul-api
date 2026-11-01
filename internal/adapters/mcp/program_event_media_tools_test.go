@@ -11,10 +11,8 @@ import (
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const eventMediaDocumentID = "11111111-1111-4111-8111-111111111111"
@@ -79,11 +77,11 @@ func TestProgramEventMediaListProjectsNativeOrderAndFeedsCompleteReorder(t *test
 	owner := newRecordingEventMedia()
 	owner.event.Document = &contentv1.RichTextDocument{}
 	owner.event.Title = "body and title excluded"
-	owner.event.Locales = []*managev1.ProgramEventLocale{{Locale: "ko", ContentHtml: proto.String("private body")}}
-	owner.event.Artists = []*managev1.ProgramEventArtist{{ArtistId: eventMediaPeerID}}
-	owner.event.Media = []*managev1.ProgramEventMedia{
-		{Id: eventMediaPeerID, FileId: eventMediaFileID, Role: "gallery", SortOrder: 7, IsPrimary: true, Caption: proto.String(""), UpdatedAt: owner.event.UpdatedAt},
-		{Id: eventMediaID, FileId: eventMediaPeerID, Role: "gallery", SortOrder: 2, Alt: proto.String("alt")},
+	owner.event.Locales = []programevent.LocaleView{{Locale: "ko", ContentHTML: "private body"}}
+	owner.event.Artists = []programevent.Relation{{ID: eventMediaPeerID}}
+	owner.event.Media = []programevent.Media{
+		{ID: eventMediaPeerID, FileID: eventMediaFileID, Role: "gallery", SortOrder: 7, IsPrimary: true, Caption: proto.String(""), CreatedAt: owner.event.UpdatedAt, UpdatedAt: owner.event.UpdatedAt},
+		{ID: eventMediaID, FileID: eventMediaPeerID, Role: "gallery", SortOrder: 2, Alt: proto.String("alt")},
 	}
 	tools, _ := NewProgramEventMediaTools(owner)
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolProgramEventMediaList, eventMediaArguments(t, ToolProgramEventMediaList))
@@ -102,7 +100,7 @@ func TestProgramEventMediaListProjectsNativeOrderAndFeedsCompleteReorder(t *test
 	require.Equal(t, true, first["is_primary"])
 	require.Equal(t, "", first["caption"])
 	require.NotContains(t, first, "alt", "absent native optional text must remain absent")
-	require.NotContains(t, first, "created_at")
+	require.Equal(t, "2026-10-05T00:00:00Z", first["created_at"])
 	second := media[1].(map[string]any)
 	require.Equal(t, "alt", second["alt"])
 	require.NotContains(t, second, "caption")
@@ -135,7 +133,7 @@ func TestProgramEventMediaAddPreservesNullableTextInputAndNativeResultWithoutRea
 			require.Equal(t, programevent.AddProgramEventMediaCommand{EventID: eventMediaDocumentID, FileID: eventMediaFileID, Role: "poster", Alt: test.alt, Caption: test.caption, MakePrimary: test.primary}, owner.request)
 			require.Equal(t, []string{"add"}, owner.calls)
 			require.Equal(t, true, result.StructuredContent["changed"])
-			require.Equal(t, owner.add.Media.Id, result.StructuredContent["media"].(map[string]any)["id"])
+			require.Equal(t, owner.add.Media.ID, result.StructuredContent["media"].(map[string]any)["id"])
 			assertEventMediaReadRecipe(t, result)
 		})
 	}
@@ -258,7 +256,7 @@ func assertEventMediaReadRecipe(t *testing.T, result mcpserver.ToolResult) {
 
 type eventMediaContextKey struct{}
 type recordingEventMedia struct {
-	event       *managev1.ProgramEvent
+	event       *programevent.EventView
 	add         programevent.MediaChange
 	remove      programevent.MediaChange
 	reorder     programevent.MediaOrder
@@ -271,8 +269,8 @@ type recordingEventMedia struct {
 func newRecordingEventMedia() *recordingEventMedia {
 	at := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
 	return &recordingEventMedia{
-		event:   &managev1.ProgramEvent{Id: eventMediaDocumentID, SourceLocale: "ko", UpdatedAt: timestamppb.New(at)},
-		add:     programevent.MediaChange{EventID: eventMediaDocumentID, Changed: true, UpdatedAt: at, Media: &managev1.ProgramEventMedia{Id: eventMediaID, FileId: eventMediaFileID, Role: "poster", IsPrimary: true}},
+		event:   &programevent.EventView{Event: programevent.Event{ID: eventMediaDocumentID, SourceLocale: "ko", UpdatedAt: at}},
+		add:     programevent.MediaChange{EventID: eventMediaDocumentID, Changed: true, UpdatedAt: at, Media: &programevent.Media{ID: eventMediaID, FileID: eventMediaFileID, Role: "poster", IsPrimary: true}},
 		remove:  programevent.MediaChange{EventID: eventMediaDocumentID, Changed: true, UpdatedAt: at},
 		reorder: programevent.MediaOrder{Role: "poster", UpdatedAt: at},
 	}
@@ -281,15 +279,15 @@ func (owner *recordingEventMedia) record(ctx context.Context, name string, reque
 	owner.ctx, owner.request = ctx, request
 	owner.calls = append(owner.calls, name)
 }
-func (owner *recordingEventMedia) GetProgramEvent(ctx context.Context, query programevent.GetProgramEventQuery) (*managev1.ProgramEvent, error) {
+func (owner *recordingEventMedia) GetProgramEvent(ctx context.Context, query programevent.GetProgramEventQuery) (programevent.EventView, error) {
 	owner.record(ctx, "get", query)
 	if owner.getErr != nil {
-		return nil, owner.getErr
+		return programevent.EventView{}, owner.getErr
 	}
 	if owner.err != nil {
-		return nil, owner.err
+		return programevent.EventView{}, owner.err
 	}
-	return owner.event, nil
+	return *owner.event, nil
 }
 func (owner *recordingEventMedia) AddProgramEventMedia(ctx context.Context, command programevent.AddProgramEventMediaCommand) (programevent.MediaChange, error) {
 	owner.record(ctx, "add", command)

@@ -14,10 +14,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/programevent"
+	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -129,7 +131,7 @@ func (a *ProgramEventAttachment) RequireLockedView(
 		return errs.DependencyUnavailable("Program Event access")
 	}
 	return maskPrivateDomainAccess(
-		programEventAccessAnswer(programevent.RequireLockedView(ctx, tx, spiceDB, eventID)),
+		programEventAccessAnswer(programevent.RequireLockedView(ctx, programEventStore(tx), spiceDB, programEventLockActive(ctx, tx), eventID)),
 		"program event",
 		eventID,
 	)
@@ -145,10 +147,24 @@ func (a *ProgramEventAttachment) RequireLockedEdit(
 		return errs.DependencyUnavailable("Program Event access")
 	}
 	return maskPrivateDomainAccess(
-		programEventAccessAnswer(programevent.RequireLockedSourceLocaleEdit(ctx, tx, spiceDB, eventID)),
+		programEventAccessAnswer(programevent.RequireLockedSourceLocaleEdit(ctx, programEventStore(tx), spiceDB, programEventLockActive(ctx, tx), eventID)),
 		"program event",
 		eventID,
 	)
+}
+
+// programEventStore binds the Program Event rows to the attachment
+// transaction.
+func programEventStore(tx *gorm.DB) programevent.Store {
+	return programeventpostgres.Bind(tx, programeventpostgres.Ports{}, nil).Store
+}
+
+// programEventLockActive is the identity fence of the attachment
+// transaction.
+func programEventLockActive(ctx context.Context, tx *gorm.DB) programevent.LockActive {
+	return func(principal *auth.UserInfo) (bool, error) {
+		return identitystate.LockActivePrincipal(ctx, tx, principal)
+	}
 }
 
 // programEventAccessAnswer gives a Program Event access rejection the

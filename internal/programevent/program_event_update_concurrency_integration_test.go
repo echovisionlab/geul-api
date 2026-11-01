@@ -1,10 +1,12 @@
 //go:build integration
 
-package programevent
+package programevent_test
 
 import (
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/programevent"
 
 	referencecatalogmenuadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog/menu"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
@@ -57,7 +59,7 @@ func TestProgramEventUpdateRevalidatesTimeAndLocationAfterRootLockIntegration(t 
 	placeBefore := createPlace("Program Event update race before")
 	placeRequested := createPlace("Program Event update race requested")
 
-	eventService := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: contentBlocks, Media: newProgramEventRuntime(""), CreditMembers: newProgramEventCreditMemberSummaries(db, "")}))
+	eventService := programevent.NewConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{ContentBlocks: contentBlocks, Media: newProgramEventRuntime(""), CreditMembers: newProgramEventCreditMemberSummaries(db, "")}))
 	startsAt := time.Now().UTC().Add(3 * time.Hour).Truncate(time.Microsecond)
 	endsAt := startsAt.Add(10 * time.Hour)
 	event, err := eventService.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{

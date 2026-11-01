@@ -7,16 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -132,12 +127,12 @@ func (s *Service) LoadAIDocumentState(ctx context.Context, query AIDocumentState
 		return AIDocumentState{}, err
 	}
 	var state AIDocumentState
-	err = mutation.ReadCurrent(ctx, s.db, func(tx *gorm.DB) error {
-		root, err := loadProgramEventAIDocumentRoot(ctx, tx, query.EventID, clause.LockingStrengthShare)
+	err = s.units.ReadCurrent(ctx, func(store Store) error {
+		root, err := loadProgramEventAIDocumentRoot(ctx, store, query.EventID, ShareLock)
 		if err != nil {
 			return err
 		}
-		if err := requireActiveProgramEventPrincipal(ctx, tx, "view", true); err != nil {
+		if err := requireActiveProgramEventPrincipal(ctx, readLockActive(ctx, store), "view", true); err != nil {
 			return err
 		}
 		if err := requireProgramEventPermission(
@@ -149,8 +144,8 @@ func (s *Service) LoadAIDocumentState(ctx context.Context, query AIDocumentState
 		if principal == nil || principal.MemberID == "" {
 			return authenticationRequired()
 		}
-		state, err = s.loadAIDocumentStateAfterAuthorization(
-			ctx, tx, root, locale, principal.MemberID.String(),
+		state, err = loadAIDocumentStateAfterAuthorization(
+			ctx, store, root, locale, principal.MemberID.String(),
 		)
 		return err
 	})
@@ -170,33 +165,24 @@ func validateProgramEventAIDocumentIdentity(eventID, requestedLocale string) (st
 
 func loadProgramEventAIDocumentRoot(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	eventID string,
-	lock string,
-) (model.ProgramEvent, error) {
-	query := tx.WithContext(ctx).
-		Select("id", "title", "content_document_id", "status", "source_locale").
-		Where("id = ?", eventID)
-	if lock != "" {
-		query = query.Clauses(clause.Locking{Strength: lock})
-	}
-	var root model.ProgramEvent
-	if err := query.Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return model.ProgramEvent{}, domainerr.ResourceNotFound("program event", eventID)
-		}
-		return model.ProgramEvent{}, err
+	lock RowLock,
+) (DocumentRoot, error) {
+	root, err := store.DocumentRoot(ctx, eventID, lock)
+	if err != nil {
+		return DocumentRoot{}, notFoundAs(err, domainerr.ResourceNotFound("program event", eventID))
 	}
 	if root.ContentDocumentID == nil || strings.TrimSpace(*root.ContentDocumentID) == "" {
-		return model.ProgramEvent{}, domainerr.Precondition("Program Event content document has not been populated")
+		return DocumentRoot{}, domainerr.Precondition("Program Event content document has not been populated")
 	}
 	return root, nil
 }
 
-func (s *Service) loadAIDocumentStateAfterAuthorization(
+func loadAIDocumentStateAfterAuthorization(
 	ctx context.Context,
-	tx *gorm.DB,
-	root model.ProgramEvent,
+	store Store,
+	root DocumentRoot,
 	locale string,
 	viewerMemberID string,
 ) (AIDocumentState, error) {
@@ -204,7 +190,7 @@ func (s *Service) loadAIDocumentStateAfterAuthorization(
 	if err != nil {
 		return AIDocumentState{}, domainerr.Precondition("Program Event content document identity is invalid").WithCause(failurecause.ServerFault(err))
 	}
-	sourceState, err := loadProgramEventSourceLocale(ctx, tx, root.ID, false)
+	sourceState, err := loadProgramEventSourceLocale(ctx, store, root.ID, false)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
@@ -212,7 +198,7 @@ func (s *Service) loadAIDocumentStateAfterAuthorization(
 		return AIDocumentState{}, domainerr.Precondition("Program Event source locale changed; reload before editing")
 	}
 	localeState, err := loadProgramEventExactLocaleState(
-		ctx, tx, s.contentBlocks, root.ID, documentID, locale, false,
+		ctx, store, root.ID, documentID, locale, false,
 	)
 	if err != nil {
 		return AIDocumentState{}, err
@@ -283,17 +269,17 @@ func (s *Service) ExecuteAIDocument(ctx context.Context, command ExecuteAIDocume
 	if err != nil {
 		return AIDocumentResult{}, err
 	}
-	var root model.ProgramEvent
+	var root DocumentRoot
 	var validated AIDocumentResult
 	var compiled AIDocumentCommand
-	change, err := mutation.Run(ctx, s.mutations, mutation.Spec[aiDocumentChange]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	change, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[aiDocumentChange, Store]{
+		Lock: func(ctx context.Context, store Store) error {
 			var err error
-			root, err = loadProgramEventAIDocumentRoot(ctx, tx, command.EventID, clause.LockingStrengthUpdate)
+			root, err = loadProgramEventAIDocumentRoot(ctx, store, command.EventID, UpdateLock)
 			return err
 		},
-		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-			if err := authorizeLockedProgramEvent(ctx, tx, s.spiceDB, root.ID, root.Status, "edit", policyv1.ProgramEvent.Edit); err != nil {
+		Access: mutation.Fenced(func(ctx context.Context, _ Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+			if err := authorizeLockedProgramEvent(ctx, lockActive, s.spiceDB, root.ID, root.Status, "edit", policyv1.ProgramEvent.Edit); err != nil {
 				return programEventAIDocumentMutationAccessError(command.EventID, err)
 			}
 			if principal := auth.GetUser(ctx); principal == nil || principal.MemberID == "" {
@@ -301,8 +287,8 @@ func (s *Service) ExecuteAIDocument(ctx context.Context, command ExecuteAIDocume
 			}
 			return nil
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (aiDocumentChange, error) {
-			change, err := s.compileAndApplyAIDocument(ctx, tx, root, locale, command.Compiler)
+		Change: func(ctx context.Context, store Store) (aiDocumentChange, error) {
+			change, err := compileAndApplyAIDocument(ctx, store, root, locale, command.Compiler)
 			compiled = change.command
 			if err == nil && command.Mode == AIDocumentExecutionValidate {
 				validated = change.result
@@ -316,11 +302,11 @@ func (s *Service) ExecuteAIDocument(ctx context.Context, command ExecuteAIDocume
 			}
 			return localeContentAudit(change.command.ContributorMemberID.String(), change.command.EventID, change.command.RequestedLocale, change.operation)
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, change aiDocumentChange) error {
+		Outbox: func(ctx context.Context, store Store, change aiDocumentChange) error {
 			if !change.result.Changed {
 				return nil
 			}
-			return contentsignal.PublishInTransaction(ctx, tx, s.signals, buildProgramEventAIDocumentContentUpdatedEvent(change.command, change.result))
+			return store.PublishContentUpdate(ctx, aiDocumentContentUpdate(change.command, change.result))
 		},
 	})
 	if errors.Is(err, errRollbackAIDocumentValidation) {
@@ -334,15 +320,15 @@ func (s *Service) ExecuteAIDocument(ctx context.Context, command ExecuteAIDocume
 
 // compileAndApplyAIDocument hands the compiler the state loaded after the
 // root lock and authorization, then checks and persists its command.
-func (s *Service) compileAndApplyAIDocument(
+func compileAndApplyAIDocument(
 	ctx context.Context,
-	tx *gorm.DB,
-	root model.ProgramEvent,
+	store Store,
+	root DocumentRoot,
 	locale string,
 	compiler AIDocumentCommandCompiler,
 ) (aiDocumentChange, error) {
 	principal := auth.GetUser(ctx)
-	state, err := s.loadAIDocumentStateAfterAuthorization(ctx, tx, root, locale, principal.MemberID.String())
+	state, err := loadAIDocumentStateAfterAuthorization(ctx, store, root, locale, principal.MemberID.String())
 	if err != nil {
 		return aiDocumentChange{}, err
 	}
@@ -353,7 +339,7 @@ func (s *Service) compileAndApplyAIDocument(
 	if err := validateCompiledProgramEventAIDocumentCommand(state, command); err != nil {
 		return aiDocumentChange{command: command}, err
 	}
-	change, err := s.applyAIDocumentCommandAfterAuthorizationInTransaction(ctx, tx, root, state, command)
+	change, err := applyAIDocumentCommandAfterAuthorizationInTransaction(ctx, store, root, state, command)
 	change.command = command
 	return change, err
 }
@@ -431,14 +417,14 @@ func programEventOptionalStringEqual(left, right *string) bool {
 	return *left == *right
 }
 
-func (s *Service) applyAIDocumentCommandAfterAuthorizationInTransaction(
+func applyAIDocumentCommandAfterAuthorizationInTransaction(
 	ctx context.Context,
-	tx *gorm.DB,
-	root model.ProgramEvent,
+	store Store,
+	root DocumentRoot,
 	lockedState AIDocumentState,
 	command AIDocumentCommand,
 ) (aiDocumentChange, error) {
-	sourceState, err := s.checkAIDocumentCommand(ctx, tx, root, lockedState, command)
+	sourceState, err := checkAIDocumentCommand(ctx, store, root, lockedState, command)
 	if err != nil {
 		return aiDocumentChange{}, err
 	}
@@ -451,15 +437,15 @@ func (s *Service) applyAIDocumentCommandAfterAuthorizationInTransaction(
 	var output programEventTargetLocaleMutationResult
 	switch {
 	case command.CreateTranslation:
-		output, err = s.createAIDocumentTranslation(ctx, tx, input)
+		output, err = createAIDocumentTranslation(ctx, store, input)
 	case command.DeleteTranslation:
 		output.Result, err = deleteProgramEventTargetLocale(
-			ctx, tx, s.contentBlocks, command.EventID, input.documentID, locale,
+			ctx, store, command.EventID, input.documentID, locale,
 			command.ExpectedRevision, command.ExpectedTargetRevision,
 			[]uuid.UUID{command.ContributorMemberID}, now, input.fence,
 		)
 	default:
-		output, err = s.applyAIDocumentBatch(ctx, tx, input, sourceState.SourceLocale)
+		output, err = applyAIDocumentBatch(ctx, store, input, sourceState.SourceLocale)
 	}
 	if err != nil {
 		return aiDocumentChange{}, err
@@ -476,9 +462,7 @@ func (s *Service) applyAIDocumentCommandAfterAuthorizationInTransaction(
 	// A source edit is audited like a collaboration source save.
 	operation := sharedtelemetry.AuditItemOperationUpdated
 	if locale == sourceState.SourceLocale {
-		if err := tx.WithContext(ctx).Model(&model.ProgramEvent{}).
-			Where("id = ?", command.EventID).
-			Update("updated_at", now).Error; err != nil {
+		if err := store.TouchEvent(ctx, command.EventID, now); err != nil {
 			return aiDocumentChange{}, err
 		}
 	} else {
@@ -492,10 +476,10 @@ func (s *Service) applyAIDocumentCommandAfterAuthorizationInTransaction(
 // checkAIDocumentCommand repeats the source observation, revision and locale
 // presence checks of command against the locked state and locks its
 // contributor. It returns the locked source locale.
-func (s *Service) checkAIDocumentCommand(
+func checkAIDocumentCommand(
 	ctx context.Context,
-	tx *gorm.DB,
-	root model.ProgramEvent,
+	store Store,
+	root DocumentRoot,
 	lockedState AIDocumentState,
 	command AIDocumentCommand,
 ) (programEventSourceState, error) {
@@ -508,7 +492,7 @@ func (s *Service) checkAIDocumentCommand(
 		(!lifecycle && command.Batch == nil) {
 		return programEventSourceState{}, domainerr.InvalidField("operations", "translation lifecycle must be exclusive and content mutations require one compiled batch")
 	}
-	sourceState, err := loadProgramEventSourceLocale(ctx, tx, command.EventID, true)
+	sourceState, err := loadProgramEventSourceLocale(ctx, store, command.EventID, true)
 	if err != nil {
 		return programEventSourceState{}, err
 	}
@@ -535,7 +519,7 @@ func (s *Service) checkAIDocumentCommand(
 	case command.DeleteTranslation && !localeExists:
 		return programEventSourceState{}, domainerr.InvalidField("locale", "Program Event translation does not exist")
 	}
-	if err := s.requireDocumentContributors(ctx, tx, []string{command.ContributorMemberID.String()}); err != nil {
+	if err := requireDocumentContributors(ctx, store, []string{command.ContributorMemberID.String()}); err != nil {
 		return programEventSourceState{}, err
 	}
 	return sourceState, nil
@@ -547,12 +531,12 @@ type aiDocumentWrite struct {
 	command    AIDocumentCommand
 	documentID uuid.UUID
 	now        time.Time
-	fence      contentblock.DomainFence
+	fence      ContentFence
 }
 
-func (s *Service) createAIDocumentTranslation(ctx context.Context, tx *gorm.DB, input aiDocumentWrite) (programEventTargetLocaleMutationResult, error) {
+func createAIDocumentTranslation(ctx context.Context, store Store, input aiDocumentWrite) (programEventTargetLocaleMutationResult, error) {
 	command := input.command
-	return applyProgramEventTargetLocaleMutation(ctx, tx, s.contentBlocks, programEventTargetLocaleMutationInput{
+	return applyProgramEventTargetLocaleMutation(ctx, store, programEventTargetLocaleMutationInput{
 		EventID: command.EventID, DocumentID: input.documentID, Locale: command.RequestedLocale,
 		Batch: contentblock.Batch{
 			DocumentID: input.documentID, ExpectedRevision: command.ExpectedRevision,
@@ -566,9 +550,9 @@ func (s *Service) createAIDocumentTranslation(ctx context.Context, tx *gorm.DB, 
 
 // applyAIDocumentBatch persists the compiled content batch and metadata of
 // a source or target locale.
-func (s *Service) applyAIDocumentBatch(
+func applyAIDocumentBatch(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	input aiDocumentWrite,
 	sourceLocale string,
 ) (programEventTargetLocaleMutationResult, error) {
@@ -590,7 +574,7 @@ func (s *Service) applyAIDocumentBatch(
 		}
 	}
 	if locale != sourceLocale {
-		return applyProgramEventTargetLocaleMutation(ctx, tx, s.contentBlocks, programEventTargetLocaleMutationInput{
+		return applyProgramEventTargetLocaleMutation(ctx, store, programEventTargetLocaleMutationInput{
 			EventID: command.EventID, DocumentID: input.documentID, Locale: locale,
 			Batch: batch, ExpectedDocumentRevision: command.ExpectedRevision,
 			ExpectedTargetRevision: command.ExpectedTargetRevision,
@@ -604,26 +588,26 @@ func (s *Service) applyAIDocumentBatch(
 	var result contentblock.Result
 	var err error
 	if command.Metadata.SetTitle || command.Metadata.SetSummary {
-		result, err = s.contentBlocks.ApplyBatchWithMetadata(ctx, tx, batch, input.fence,
-			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+		result, err = store.ApplyContentBatchWithMetadata(ctx, batch, input.fence,
+			func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
 				changed, sourceChanged, err := applyProgramEventLocaleMetadataMutation(
-					ctx, tx, command.EventID, locale, command.Metadata.Title, command.Metadata.SetTitle,
+					ctx, store, command.EventID, locale, command.Metadata.Title, command.Metadata.SetTitle,
 					command.Metadata.Summary, command.Metadata.SetSummary, input.now,
 				)
 				return contentblock.MetadataEffect{Changed: changed, AffectsTranslationSource: sourceChanged, ChangedLocales: []string{locale}}, err
 			})
 	} else {
-		result, err = s.contentBlocks.ApplyBatch(ctx, tx, batch, input.fence)
+		result, err = store.ApplyContentBatch(ctx, batch, input.fence)
 	}
 	return programEventTargetLocaleMutationResult{Result: result}, err
 }
 
 func programEventAuthorizedAIDocumentFence(
-	root model.ProgramEvent,
+	root DocumentRoot,
 	lockedState AIDocumentState,
 	sourceState programEventSourceState,
-) contentblock.DomainFence {
-	return func(_ context.Context, _ *gorm.DB, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {
+) ContentFence {
+	return func(_ context.Context, _ Store, requestedDocumentID uuid.UUID) (contentblock.DomainContext, error) {
 		if root.ID == "" || root.ContentDocumentID == nil ||
 			strings.TrimSpace(*root.ContentDocumentID) != lockedState.ContentDocumentID.String() ||
 			requestedDocumentID != lockedState.ContentDocumentID {

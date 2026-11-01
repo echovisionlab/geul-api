@@ -6,16 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/authz"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -35,44 +29,44 @@ type CreateProgramEventTypeCommand struct {
 }
 
 // CreateProgramEventType creates the event type and returns it.
-func (s *Service) CreateProgramEventType(ctx context.Context, command CreateProgramEventTypeCommand) (*managev1.ProgramEventType, error) {
+func (s *Service) CreateProgramEventType(ctx context.Context, command CreateProgramEventTypeCommand) (TypeView, error) {
 	can, err := policyv1.ProgramEvent.CreateType()
 	if err != nil {
-		return nil, err
+		return TypeView{}, err
 	}
 	slug, err := validateProgramEventSlug(command.Slug)
 	if err != nil {
-		return nil, err
+		return TypeView{}, err
 	}
 	var locale string
 	if strings.TrimSpace(command.Locale) == "" {
 		locale = s.resolveInitialSourceLocale(ctx, command.AcceptLanguage)
 	} else if locale, err = normalizeRequiredProgramEventLocale("locale", command.Locale); err != nil {
-		return nil, err
+		return TypeView{}, err
 	}
 	name := strings.TrimSpace(command.Name)
 	if name == "" {
-		return nil, domainerr.Required("name")
+		return TypeView{}, domainerr.Required("name")
 	}
 	now := time.Now().UTC()
-	eventType := &model.ProgramEventType{
-		Slug: slug, Status: model.ProgramEventTypeStatusActive, SortOrder: command.SortOrder,
+	eventType := &Type{
+		Slug: slug, Status: TypeStatusActive, SortOrder: command.SortOrder,
 		RequiresPlace: command.RequiresPlace, RequiresStreamURL: command.RequiresStreamURL,
 		CreatedAt: now, UpdatedAt: now,
 	}
-	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[string]{
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[string, Store]{
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(_ context.Context, tx *gorm.DB) (string, error) {
-			if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(eventType).Error; err != nil {
-				if dberrors.IsUniqueViolation(err) {
+		Change: func(ctx context.Context, store Store) (string, error) {
+			if err := store.InsertType(ctx, eventType); err != nil {
+				if errors.Is(err, ErrSlugTaken) {
 					return "", domainerr.Duplicate("program event type", "slug", slug).WithCause(err)
 				}
 				return "", err
 			}
-			return eventType.ID, tx.Create(&model.ProgramEventTypeLocale{
+			return eventType.ID, store.InsertTypeLocale(ctx, TypeLocale{
 				TypeID: eventType.ID, Locale: locale, Name: name, Description: command.Description,
 				CreatedAt: now, UpdatedAt: now,
-			}).Error
+			})
 		},
 		Audit: func(typeID string) mutation.Audit {
 			return mutation.RequestAudit(sharedtelemetry.AuditProgramEventTypeCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
@@ -80,7 +74,7 @@ func (s *Service) CreateProgramEventType(ctx context.Context, command CreateProg
 			})
 		},
 	}); err != nil {
-		return nil, err
+		return TypeView{}, err
 	}
 	return s.loadProgramEventType(ctx, eventType.ID)
 }
@@ -96,8 +90,8 @@ type ListProgramEventTypesQuery struct {
 
 // TypeList is one page of event types.
 type TypeList struct {
-	Types      []*managev1.ProgramEventType
-	Pagination *commonv1.PaginationResponse
+	Types      []TypeView
+	Pagination Pagination
 }
 
 // ListProgramEventTypesAdmin returns one page of event types to an
@@ -110,36 +104,25 @@ func (s *Service) ListProgramEventTypesAdmin(ctx context.Context, query ListProg
 	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
 		return TypeList{}, err
 	}
-	rows := s.db.WithContext(ctx).Model(&model.ProgramEventType{})
-	rows, err = ProgramEventTypeFilterConfig.ApplyFilters(rows, query.Filters)
-	if err != nil {
-		return TypeList{}, err
-	}
-	var total int64
-	if err := rows.Count(&total).Error; err != nil {
-		return TypeList{}, err
-	}
-	rows, err = programEventTypeSortConfig.ApplySort(rows, query.Sorts)
-	if err != nil {
-		return TypeList{}, err
-	}
 	limit, offset := pageLimitOffset(query.Limit, query.Offset)
-	var types []model.ProgramEventType
-	if err := rows.Limit(int(limit)).Offset(int(offset)).Find(&types).Error; err != nil {
+	var types []Type
+	var total int64
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		types, total, err = store.ListTypes(ctx, ListPage{Filters: query.Filters, Sorts: query.Sorts, Limit: limit, Offset: offset})
+		return err
+	}); err != nil {
 		return TypeList{}, err
 	}
-	result := make([]*managev1.ProgramEventType, 0, len(types))
+	result := make([]TypeView, 0, len(types))
 	for i := range types {
-		item, err := s.toProtoProgramEventType(ctx, &types[i])
+		item, err := s.typeView(ctx, types[i])
 		if err != nil {
 			return TypeList{}, err
 		}
 		result = append(result, item)
 	}
-	return TypeList{Types: result, Pagination: &commonv1.PaginationResponse{
-		Total: int32(total), Limit: limit, Offset: offset,
-		HasMore: int64(offset)+int64(len(types)) < total,
-	}}, nil
+	return TypeList{Types: result, Pagination: pagination(limit, offset, len(types), total)}, nil
 }
 
 // UpdateProgramEventTypeCommand changes an event type's configuration and
@@ -148,7 +131,7 @@ func (s *Service) ListProgramEventTypesAdmin(ctx context.Context, query ListProg
 type UpdateProgramEventTypeCommand struct {
 	ID                string
 	Slug              *string
-	Status            *model.ProgramEventTypeStatus
+	Status            *TypeStatus
 	SortOrder         *int32
 	RequiresPlace     *bool
 	RequiresStreamURL *bool
@@ -159,23 +142,23 @@ type UpdateProgramEventTypeCommand struct {
 
 // UpdateProgramEventType changes the locked event type and returns it.
 // Only configuration changes are audited.
-func (s *Service) UpdateProgramEventType(ctx context.Context, command UpdateProgramEventTypeCommand) (*managev1.ProgramEventType, error) {
+func (s *Service) UpdateProgramEventType(ctx context.Context, command UpdateProgramEventTypeCommand) (TypeView, error) {
 	can, err := policyv1.ProgramEvent.UpdateType()
 	if err != nil {
-		return nil, err
+		return TypeView{}, err
 	}
 	if strings.TrimSpace(command.ID) == "" {
-		return nil, domainerr.Required("id")
+		return TypeView{}, domainerr.Required("id")
 	}
-	var eventType model.ProgramEventType
-	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[[]string]{
-		Lock: func(_ context.Context, tx *gorm.DB) error {
-			eventType, err = lockProgramEventTypeForUpdate(tx, command.ID)
+	var eventType Type
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[[]string, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			eventType, err = lockProgramEventTypeForUpdate(ctx, store, command.ID)
 			return err
 		},
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(_ context.Context, tx *gorm.DB) ([]string, error) {
-			return updateProgramEventType(tx, eventType, command, time.Now().UTC())
+		Change: func(ctx context.Context, store Store) ([]string, error) {
+			return updateProgramEventType(ctx, store, eventType, command, time.Now().UTC())
 		},
 		Audit: func(changedFields []string) mutation.Audit {
 			if len(changedFields) == 0 {
@@ -186,7 +169,7 @@ func (s *Service) UpdateProgramEventType(ctx context.Context, command UpdateProg
 			})
 		},
 	}); err != nil {
-		return nil, err
+		return TypeView{}, err
 	}
 	return s.loadProgramEventType(ctx, command.ID)
 }
@@ -205,28 +188,23 @@ func (s *Service) DeleteProgramEventType(ctx context.Context, command DeleteProg
 	if strings.TrimSpace(command.ID) == "" {
 		return domainerr.Required("id")
 	}
-	var eventType model.ProgramEventType
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[string]{
-		Lock: func(_ context.Context, tx *gorm.DB) error {
-			if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&eventType, "id = ?", command.ID).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return domainerr.ResourceNotFound("program event type", command.ID)
-				}
-				return err
-			}
-			return nil
+	var eventType Type
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[string, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			eventType, err = lockProgramEventTypeForUpdate(ctx, store, command.ID)
+			return err
 		},
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(_ context.Context, tx *gorm.DB) (string, error) {
-			var usageCount int64
-			if err := tx.Model(&model.ProgramEvent{}).Where("type_id = ?", command.ID).Count(&usageCount).Error; err != nil {
+		Change: func(ctx context.Context, store Store) (string, error) {
+			usageCount, err := store.CountTypeEvents(ctx, command.ID)
+			if err != nil {
 				return "", err
 			}
 			if usageCount > 0 {
 				return "", domainerr.Precondition("program event type is in use")
 			}
-			if err := tx.Delete(&eventType).Error; err != nil {
-				if dberrors.IsForeignKeyViolation(err) {
+			if err := store.DeleteType(ctx, eventType.ID); err != nil {
+				if errors.Is(err, ErrTypeInUse) {
 					return "", domainerr.Precondition("program event type is in use").WithCause(err)
 				}
 				return "", err
@@ -240,4 +218,30 @@ func (s *Service) DeleteProgramEventType(ctx context.Context, command DeleteProg
 		},
 	})
 	return err
+}
+
+// loadProgramEventType reads a type and its locales after a mutation.
+func (s *Service) loadProgramEventType(ctx context.Context, id string) (TypeView, error) {
+	var eventType Type
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		eventType, err = store.Type(ctx, id, NoLock)
+		return err
+	}); err != nil {
+		if errors.Is(err, ErrTypeNotFound) {
+			return TypeView{}, domainerr.ResourceNotFound("program event type", id)
+		}
+		return TypeView{}, err
+	}
+	return s.typeView(ctx, eventType)
+}
+
+func (s *Service) typeView(ctx context.Context, eventType Type) (TypeView, error) {
+	view := TypeView{Type: eventType}
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		view.Locales, err = store.TypeLocales(ctx, eventType.ID)
+		return err
+	})
+	return view, err
 }

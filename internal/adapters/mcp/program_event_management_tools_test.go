@@ -11,12 +11,9 @@ import (
 
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const programEventManagementID = "11111111-1111-4111-8111-111111111111"
@@ -96,7 +93,7 @@ func TestProgramEventManagementCreateForwardsCompleteNativeRequest(t *testing.T)
 	want := programevent.CreateProgramEventCommand{
 		Title: "Concert", Slug: "concert", SourceLocale: "ko", AcceptLanguage: "ko", TypeID: programEventManagementTypeID,
 		StartsAt: &startsAt, EndsAt: &endsAt, Timezone: "Asia/Seoul", AllDay: true,
-		LocationMode: model.ProgramEventLocationModeHybrid,
+		LocationMode: programevent.LocationModeHybrid,
 		MapPlaceID:   proto.String(programEventManagementRelationID), Summary: proto.String("Summary"),
 		SeriesID: proto.String(programEventManagementRelationID), SeriesOrder: proto.Int32(0), PosterFileID: proto.String(programEventManagementRelationID),
 		TicketURL: proto.String("https://example.test/ticket"), StreamURL: proto.String("https://example.test/live"), ExternalURL: proto.String("https://example.test/event"),
@@ -115,11 +112,11 @@ func TestProgramEventManagementCreateForwardsCompleteNativeRequest(t *testing.T)
 
 func TestProgramEventManagementSettingsReadAndObservedRelationRoundTrip(t *testing.T) {
 	owner := newRecordingProgramEventManagement()
-	owner.event.Artists = []*managev1.ProgramEventArtist{{ArtistId: programEventManagementRelationID, Role: proto.String(""), SortOrder: 2}}
-	owner.event.Labels = []*managev1.ProgramEventLabel{{LabelId: programEventManagementRelationID, SortOrder: 3}}
-	owner.event.Clients = []*managev1.ProgramEventClient{{ClientId: programEventManagementRelationID, Role: proto.String("host"), SortOrder: 4}}
-	owner.event.Credits = []*managev1.ProgramEventCredit{{Id: programEventManagementRelationID, MemberId: proto.String(programEventManagementTypeID), DisplayName: proto.String("Producer"), SortOrder: 5, Artist: &managev1.ProgramEventCreditArtist{Name: "hydrated private data"}}}
-	owner.event.Locales = []*managev1.ProgramEventLocale{{Locale: "ko", Summary: proto.String(""), ContentHtml: proto.String("body must be excluded"), ContentText: proto.String("body must be excluded")}}
+	owner.event.Artists = []programevent.Relation{{ID: programEventManagementRelationID, Role: proto.String(""), SortOrder: 2}}
+	owner.event.Labels = []programevent.Relation{{ID: programEventManagementRelationID, SortOrder: 3}}
+	owner.event.Clients = []programevent.Relation{{ID: programEventManagementRelationID, Role: proto.String("host"), SortOrder: 4}}
+	owner.event.Credits = []programevent.CreditView{{CreditRecord: programevent.CreditRecord{ID: programEventManagementRelationID, MemberID: proto.String(programEventManagementTypeID), DisplayName: proto.String("Producer"), SortOrder: 5}, Artist: &programevent.CreditArtist{Name: "hydrated private data"}}}
+	owner.event.Locales = []programevent.LocaleView{{Locale: "ko", Summary: proto.String(""), ContentHTML: "body must be excluded", ContentText: "body must be excluded"}}
 	owner.event.Document = &contentv1.RichTextDocument{}
 	tools, _ := NewProgramEventManagementTools(owner)
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolProgramEventSettingsGet, toolArguments(t, `{"document_id":"`+programEventManagementID+`"}`))
@@ -142,7 +139,7 @@ func TestProgramEventManagementSettingsReadAndObservedRelationRoundTrip(t *testi
 		t.Fatalf("empty replacement flags lost: %+v", r)
 	}
 	observed := func(rows []programevent.Relation) *[]programevent.Relation { return &rows }
-	if !reflect.DeepEqual(r.Artists.Observed, observed(programevent.ArtistRelations(owner.event.Artists))) || !reflect.DeepEqual(r.Labels.Observed, observed(programevent.LabelRelations(owner.event.Labels))) || !reflect.DeepEqual(r.Clients.Observed, observed(programevent.ClientRelations(owner.event.Clients))) {
+	if !reflect.DeepEqual(r.Artists.Observed, observed(owner.event.Artists)) || !reflect.DeepEqual(r.Labels.Observed, observed(owner.event.Labels)) || !reflect.DeepEqual(r.Clients.Observed, observed(owner.event.Clients)) {
 		t.Fatalf("observed snapshots changed: %+v", r)
 	}
 }
@@ -164,7 +161,7 @@ func TestProgramEventManagementSettingsForwardsNativeOptionalFields(t *testing.T
 		t.Fatal(err)
 	}
 	startsAt, endsAt := time.Date(2026, 10, 10, 11, 0, 0, 0, time.UTC), time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
-	tba := model.ProgramEventLocationModeTBA
+	tba := programevent.LocationModeTBA
 	none := []programevent.Relation{}
 	want := programevent.UpdateProgramEventCommand{
 		ID: programEventManagementID, Slug: proto.String("renamed"), TypeID: proto.String(programEventManagementTypeID),
@@ -293,7 +290,7 @@ func TestProgramEventManagementPreservesOwningAuthorityAndSafeErrors(t *testing.
 type programEventManagementContextKey struct{}
 
 type recordingProgramEventManagement struct {
-	event     *managev1.ProgramEvent
+	event     *programevent.EventView
 	err       error
 	ctx       context.Context
 	calls     []string
@@ -305,13 +302,13 @@ type recordingProgramEventManagement struct {
 }
 
 func newRecordingProgramEventManagement() *recordingProgramEventManagement {
-	return &recordingProgramEventManagement{event: &managev1.ProgramEvent{
-		Id: programEventManagementID, Title: "Concert", Slug: "concert", Status: managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_DRAFT,
-		SourceLocale: "ko", TypeId: programEventManagementTypeID, Timezone: "Asia/Seoul",
-		LocationMode: managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_ONLINE,
-		StartsAt:     timestamppb.New(time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC)),
-		UpdatedAt:    timestamppb.New(time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)), DocumentRevision: programEventManagementRevision,
-	}}
+	return &recordingProgramEventManagement{event: &programevent.EventView{Event: programevent.Event{
+		ID: programEventManagementID, Title: "Concert", Slug: "concert", Status: programevent.StatusDraft,
+		SourceLocale: "ko", TypeID: programEventManagementTypeID, Timezone: "Asia/Seoul",
+		LocationMode: programevent.LocationModeOnline,
+		StartsAt:     time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC),
+		UpdatedAt:    time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC),
+	}, DocumentRevision: programEventManagementRevision}}
 }
 
 func (owner *recordingProgramEventManagement) record(ctx context.Context, call string) error {
@@ -320,22 +317,22 @@ func (owner *recordingProgramEventManagement) record(ctx context.Context, call s
 	return owner.err
 }
 
-func (owner *recordingProgramEventManagement) CreateProgramEvent(ctx context.Context, command programevent.CreateProgramEventCommand) (*managev1.ProgramEvent, error) {
+func (owner *recordingProgramEventManagement) CreateProgramEvent(ctx context.Context, command programevent.CreateProgramEventCommand) (programevent.EventView, error) {
 	owner.create = command
 	if err := owner.record(ctx, "create"); err != nil {
-		return nil, err
+		return programevent.EventView{}, err
 	}
-	return owner.event, nil
+	return *owner.event, nil
 }
 
-func (owner *recordingProgramEventManagement) GetProgramEvent(ctx context.Context, query programevent.GetProgramEventQuery) (*managev1.ProgramEvent, error) {
+func (owner *recordingProgramEventManagement) GetProgramEvent(ctx context.Context, query programevent.GetProgramEventQuery) (programevent.EventView, error) {
 	if err := owner.record(ctx, "get"); err != nil {
-		return nil, err
+		return programevent.EventView{}, err
 	}
-	if query.ID != owner.event.Id {
-		return nil, connect.NewError(connect.CodeNotFound, errors.New("program event not found"))
+	if query.ID != owner.event.ID {
+		return programevent.EventView{}, connect.NewError(connect.CodeNotFound, errors.New("program event not found"))
 	}
-	return owner.event, nil
+	return *owner.event, nil
 }
 
 func (owner *recordingProgramEventManagement) UpdateProgramEvent(ctx context.Context, command programevent.UpdateProgramEventCommand) (programevent.EventUpdate, error) {
@@ -343,13 +340,13 @@ func (owner *recordingProgramEventManagement) UpdateProgramEvent(ctx context.Con
 	if err := owner.record(ctx, "update"); err != nil {
 		return programevent.EventUpdate{}, err
 	}
-	return programevent.EventUpdate{ID: command.ID, Changed: true, UpdatedAt: owner.event.UpdatedAt.AsTime()}, nil
+	return programevent.EventUpdate{ID: command.ID, Changed: true, UpdatedAt: owner.event.UpdatedAt}, nil
 }
 
-func (owner *recordingProgramEventManagement) lifecycle(id string, status model.ProgramEventStatus) programevent.LifecycleChange {
-	change := programevent.LifecycleChange{ID: id, Changed: true, Status: status, UpdatedAt: owner.event.UpdatedAt.AsTime()}
+func (owner *recordingProgramEventManagement) lifecycle(id string, status programevent.Status) programevent.LifecycleChange {
+	change := programevent.LifecycleChange{ID: id, Changed: true, Status: status, UpdatedAt: owner.event.UpdatedAt}
 	if owner.event.PublishedAt != nil {
-		publishedAt := owner.event.PublishedAt.AsTime()
+		publishedAt := *owner.event.PublishedAt
 		change.PublishedAt = &publishedAt
 	}
 	return change
@@ -360,11 +357,12 @@ func (owner *recordingProgramEventManagement) PublishProgramEvent(ctx context.Co
 	if err := owner.record(ctx, "publish"); err != nil {
 		return programevent.LifecycleChange{}, err
 	}
-	owner.event.Status = managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED
+	owner.event.Status = programevent.StatusPublished
 	if owner.event.PublishedAt == nil {
-		owner.event.PublishedAt = owner.event.UpdatedAt
+		publishedAt := owner.event.UpdatedAt
+		owner.event.PublishedAt = &publishedAt
 	}
-	return owner.lifecycle(command.ID, model.ProgramEventStatusPublished), nil
+	return owner.lifecycle(command.ID, programevent.StatusPublished), nil
 }
 
 func (owner *recordingProgramEventManagement) ArchiveProgramEvent(ctx context.Context, command programevent.ArchiveProgramEventCommand) (programevent.LifecycleChange, error) {
@@ -372,8 +370,8 @@ func (owner *recordingProgramEventManagement) ArchiveProgramEvent(ctx context.Co
 	if err := owner.record(ctx, "archive"); err != nil {
 		return programevent.LifecycleChange{}, err
 	}
-	owner.event.Status = managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED
-	return owner.lifecycle(command.ID, model.ProgramEventStatusArchived), nil
+	owner.event.Status = programevent.StatusArchived
+	return owner.lifecycle(command.ID, programevent.StatusArchived), nil
 }
 
 func (owner *recordingProgramEventManagement) DeleteProgramEvent(ctx context.Context, command programevent.DeleteProgramEventCommand) error {

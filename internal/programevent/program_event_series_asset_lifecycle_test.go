@@ -1,9 +1,11 @@
 //go:build integration
 
-package programevent
+package programevent_test
 
 import (
 	"testing"
+
+	"github.com/echovisionlab/geul-api/internal/programevent"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
@@ -28,7 +30,7 @@ func TestProgramEventSeriesPosterBindingLifecyclePreservesFiles(t *testing.T) {
 	second := readyPoster()
 	third := readyPoster()
 	initialSummary := "Opening weekend"
-	service := NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Media: newProgramEventRuntime("https://cdn.example.com")}))
+	service := programevent.NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Media: newProgramEventRuntime("https://cdn.example.com")}))
 
 	created, err := service.CreateProgramEventSeries(ctx, connect.NewRequest(&managev1.CreateProgramEventSeriesRequest{
 		Title:        "Festival",

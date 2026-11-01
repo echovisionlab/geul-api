@@ -7,8 +7,8 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
@@ -18,27 +18,16 @@ import (
 // ProgramEventInterchange adapts XLIFF target projection and replacement to
 // Program Event's typed locale-document, projection and Audit seam.
 type ProgramEventInterchange struct {
-	domain programEventTranslationInterchangeDomain
+	audit domainaudit.Appender
 }
 
-type programEventTranslationInterchangeDomain interface {
-	LoadInterchangeLocale(context.Context, *gorm.DB, string, string, string) (programevent.InterchangeLocale, error)
-	ApplyTranslationInterchangeCandidateWithDB(
-		context.Context,
-		*gorm.DB,
-		*contentblock.Store,
-		*model.TranslationJob,
-		*core.Candidate,
-		core.EntryWrite,
-		*string,
-	) error
-}
-
-func NewProgramEventInterchange(domain programEventTranslationInterchangeDomain) *ProgramEventInterchange {
-	if domain == nil {
-		panic("Program Event translation interchange domain is required")
+// NewProgramEventInterchange returns the Program Event interchange port; it
+// appends locale-content records through audit.
+func NewProgramEventInterchange(audit domainaudit.Appender) *ProgramEventInterchange {
+	if audit == nil {
+		panic("Program Event translation interchange audit is required")
 	}
-	return &ProgramEventInterchange{domain: domain}
+	return &ProgramEventInterchange{audit: audit}
 }
 
 type programEventInterchangeTarget struct {
@@ -87,15 +76,13 @@ func (a *ProgramEventInterchange) ApplyTranslationInterchange(
 	if err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
-	job := &model.TranslationJob{
+	job := programevent.TranslationJob{
 		EntityType: command.EntityType, EntityID: command.EntityID,
-		SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
-		RequestedByMemberID: memberID,
+		TargetLocale: command.TargetLocale, RequestedByMemberID: memberID,
 	}
-	if err := a.domain.ApplyTranslationInterchangeCandidateWithDB(
+	if err := programevent.ApplyTranslationInterchangeCandidate(
 		ctx,
-		db,
-		store,
+		programEventJoined(db, store, a.audit),
 		job,
 		candidate,
 		core.EntryWrite{Now: command.Now.UTC()},
@@ -132,7 +119,7 @@ func (a *ProgramEventInterchange) loadProgramEventInterchangeTarget(
 		plan.EntityID != entityID || plan.TargetLocale != locale {
 		return programEventInterchangeTarget{}, errs.InvalidArgument("target", "Program Event translation interchange identity does not match the extraction plan")
 	}
-	loaded, err := a.domain.LoadInterchangeLocale(ctx, db, entityID, plan.SourceLocale, locale)
+	loaded, err := programevent.LoadInterchangeLocale(ctx, programEventStore(db, store), entityID, plan.SourceLocale, locale)
 	if err != nil {
 		return programEventInterchangeTarget{}, programEventAnswer(err)
 	}

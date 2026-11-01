@@ -6,163 +6,19 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	"github.com/echovisionlab/geul-api/internal/routeregistry"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
 
 const EntityType = "program_event"
-
-var programEventSortConfig = queryutil.SortConfig{
-	AllowedFields: map[string]string{
-		"starts_at":    "starts_at",
-		"published_at": "published_at",
-		"updated_at":   "updated_at",
-		"created_at":   "created_at",
-	},
-	DefaultSort: "starts_at DESC",
-}
-
-var programEventSeriesSortConfig = queryutil.SortConfig{
-	AllowedFields: map[string]string{
-		"updated_at": "updated_at",
-		"created_at": "created_at",
-		"title":      programEventSeriesSourceTitleSQL,
-	},
-	DefaultSort: "updated_at DESC",
-}
-
-var programEventTypeSortConfig = queryutil.SortConfig{
-	AllowedFields: map[string]string{
-		"sort_order": "sort_order",
-		"slug":       "slug",
-		"updated_at": "updated_at",
-		"created_at": "created_at",
-	},
-	DefaultSort: "sort_order ASC, slug ASC",
-}
-
-var ProgramEventFilterConfig = &queryutil.FilterConfig{
-	Fields: map[string]queryutil.FieldDef{
-		"search": {
-			Type:       queryutil.TypeText,
-			AllowedOps: queryutil.SearchOps,
-			SearchColumns: []string{
-				programEventSourceTitleSQL,
-			},
-		},
-		"slug": {
-			Column:     "slug",
-			Type:       queryutil.TypeText,
-			AllowedOps: queryutil.TextOps,
-		},
-		"status": {
-			Column:     "status",
-			Type:       queryutil.TypeEnum,
-			AllowedOps: queryutil.EnumOps,
-			EnumValues: []string{
-				string(model.ProgramEventStatusDraft),
-				string(model.ProgramEventStatusPublished),
-				string(model.ProgramEventStatusArchived),
-			},
-		},
-		"type_id": {
-			Column:     "type_id",
-			Type:       queryutil.TypeID,
-			AllowedOps: queryutil.IDOps,
-			IsFK:       true,
-		},
-		"series_id": {
-			Column:     "series_id",
-			Type:       queryutil.TypeID,
-			AllowedOps: queryutil.IDOps,
-			IsFK:       true,
-		},
-		"map_place_id": {
-			Column: "map_place_id",
-			Type:   queryutil.TypeID,
-			AllowedOps: []commonv1.FilterOp{
-				commonv1.FilterOp_FILTER_OP_EQ,
-				commonv1.FilterOp_FILTER_OP_NEQ,
-				commonv1.FilterOp_FILTER_OP_IN,
-				commonv1.FilterOp_FILTER_OP_NOT_IN,
-				commonv1.FilterOp_FILTER_OP_IS_NULL,
-				commonv1.FilterOp_FILTER_OP_IS_NOT_NULL,
-			},
-			IsFK: true,
-		},
-		"starts_at": {
-			Column:     "starts_at",
-			Type:       queryutil.TypeDate,
-			AllowedOps: queryutil.DateOps,
-		},
-		"published_at": {
-			Column:     "published_at",
-			Type:       queryutil.TypeDate,
-			AllowedOps: queryutil.DateOps,
-		},
-	},
-}
-
-var ProgramEventSeriesFilterConfig = &queryutil.FilterConfig{
-	Fields: map[string]queryutil.FieldDef{
-		"search": {
-			Type:       queryutil.TypeText,
-			AllowedOps: queryutil.SearchOps,
-			SearchColumns: []string{
-				programEventSeriesSourceTitleSQL,
-			},
-		},
-		"status": {
-			Column:     "status",
-			Type:       queryutil.TypeEnum,
-			AllowedOps: queryutil.EnumOps,
-			EnumValues: []string{
-				string(model.ProgramEventStatusDraft),
-				string(model.ProgramEventStatusPublished),
-			},
-		},
-	},
-}
-
-var ProgramEventTypeFilterConfig = &queryutil.FilterConfig{
-	Fields: map[string]queryutil.FieldDef{
-		"id": {
-			Column:     "id",
-			Type:       queryutil.TypeID,
-			AllowedOps: queryutil.IDOps,
-		},
-		"status": {
-			Column:     "status",
-			Type:       queryutil.TypeEnum,
-			AllowedOps: queryutil.EnumOps,
-			EnumValues: []string{
-				string(model.ProgramEventTypeStatusActive),
-				string(model.ProgramEventTypeStatusInactive),
-			},
-		},
-	},
-}
-
-const (
-	programEventSourceTitleSQL       = "program_event.title"
-	programEventSeriesSourceTitleSQL = "program_event_series.title"
-)
 
 // Relation is an artist, label or client of a Program Event: the related
 // row's ID, its optional role, and its position.
@@ -198,7 +54,7 @@ type CreateProgramEventCommand struct {
 	EndsAt         *time.Time
 	Timezone       string
 	AllDay         bool
-	LocationMode   model.ProgramEventLocationMode
+	LocationMode   LocationMode
 	MapPlaceID     *string
 	Summary        *string
 	SeriesID       *string
@@ -215,19 +71,19 @@ type CreateProgramEventCommand struct {
 
 // CreateProgramEvent creates the event and its authorization policy and
 // returns the administrator view of it.
-func (s *Service) CreateProgramEvent(ctx context.Context, command CreateProgramEventCommand) (*managev1.ProgramEvent, error) {
+func (s *Service) CreateProgramEvent(ctx context.Context, command CreateProgramEventCommand) (EventView, error) {
 	can, err := policyv1.ProgramEvent.Create()
 	if err != nil {
-		return nil, err
+		return EventView{}, err
 	}
 	event, err := s.newProgramEvent(ctx, command)
 	if err != nil {
-		return nil, err
+		return EventView{}, err
 	}
-	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[string]{
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[string, Store]{
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(ctx context.Context, tx *gorm.DB) (string, error) {
-			return event.ID, s.createProgramEventWithDB(ctx, tx, event, command)
+		Change: func(ctx context.Context, store Store) (string, error) {
+			return event.ID, s.createProgramEvent(ctx, store, event, command)
 		},
 		Audit: func(eventID string) mutation.Audit {
 			return mutation.RequestAudit(sharedtelemetry.AuditProgramEventCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
@@ -238,7 +94,7 @@ func (s *Service) CreateProgramEvent(ctx context.Context, command CreateProgramE
 			return policyRelationships(policyv1.ProgramEvent.TouchPolicy, policyv1.ProgramEvent.DeletePolicy, eventID)
 		},
 	}); err != nil {
-		return nil, err
+		return EventView{}, err
 	}
 	return s.loadProgramEvent(ctx, event.ID)
 }
@@ -260,7 +116,15 @@ func policyRelationships(
 	return []policyv1.RelationshipMutation{applied}, []policyv1.RelationshipMutation{compensated}, nil
 }
 
-func (s *Service) newProgramEvent(ctx context.Context, command CreateProgramEventCommand) (*model.ProgramEvent, error) {
+// checkRoute requires, in a snapshot of its own, that no Page uses the
+// slug's route.
+func (s *Service) checkRoute(ctx context.Context, kind RouteKind, slug string) error {
+	return s.units.Read(ctx, func(store Store) error {
+		return store.CheckRoute(ctx, kind, slug)
+	})
+}
+
+func (s *Service) newProgramEvent(ctx context.Context, command CreateProgramEventCommand) (*Event, error) {
 	title := strings.TrimSpace(command.Title)
 	if title == "" {
 		return nil, domainerr.Required("title")
@@ -269,7 +133,7 @@ func (s *Service) newProgramEvent(ctx context.Context, command CreateProgramEven
 	if err != nil {
 		return nil, err
 	}
-	if err := routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "program event", "events", slug); err != nil {
+	if err := s.checkRoute(ctx, EventRoute, slug); err != nil {
 		return nil, err
 	}
 	if command.StartsAt == nil {
@@ -295,8 +159,8 @@ func (s *Service) newProgramEvent(ctx context.Context, command CreateProgramEven
 		return nil, err
 	}
 	now := time.Now().UTC()
-	return &model.ProgramEvent{
-		Title: title, Slug: slug, Status: model.ProgramEventStatusDraft, SourceLocale: sourceLocale,
+	return &Event{
+		Title: title, Slug: slug, Status: StatusDraft, SourceLocale: sourceLocale,
 		TypeID: command.TypeID, SeriesID: command.SeriesID, SeriesOrder: command.SeriesOrder,
 		StartsAt: startsAt, EndsAt: command.EndsAt, Timezone: timezone, AllDay: command.AllDay,
 		LocationMode: command.LocationMode, MapPlaceID: mapPlaceID,
@@ -312,19 +176,19 @@ func (s *Service) initialSourceLocale(ctx context.Context, command CreateProgram
 	return normalizeRequiredProgramEventLocale("source_locale", command.SourceLocale)
 }
 
-func (s *Service) createProgramEventWithDB(
+func (s *Service) createProgramEvent(
 	ctx context.Context,
-	tx *gorm.DB,
-	event *model.ProgramEvent,
+	store Store,
+	event *Event,
 	command CreateProgramEventCommand,
 ) error {
-	if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "program event", "events", event.Slug); err != nil {
+	if err := store.LockRoute(ctx, EventRoute, event.Slug); err != nil {
 		return err
 	}
-	if err := validateProgramEventSeriesRelation(tx, event.ID, event.SeriesID, event.SeriesOrder); err != nil {
+	if err := validateProgramEventSeriesRelation(ctx, store, event.ID, event.SeriesID, event.SeriesOrder); err != nil {
 		return err
 	}
-	document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
+	document, err := store.CreateContentDocument(ctx, contentblock.CreateInput{
 		Profile:      programEventContentProfile,
 		SourceLocale: event.SourceLocale,
 	})
@@ -333,32 +197,36 @@ func (s *Service) createProgramEventWithDB(
 	}
 	contentDocumentID := document.Document.ID.String()
 	event.ContentDocumentID = &contentDocumentID
-	if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(event).Error; err != nil {
-		if dberrors.IsUniqueViolation(err) {
+	if err := store.InsertEvent(ctx, event); err != nil {
+		if errors.Is(err, ErrSlugTaken) {
 			return domainerr.Duplicate("program event", "slug", event.Slug).WithCause(err)
 		}
 		return err
 	}
 	if err := initializeProgramEventBlockTranslationSource(
-		ctx, tx, event.ID, event.SourceLocale, command.Summary, event.CreatedAt,
+		ctx, store, event.ID, event.SourceLocale, command.Summary, event.CreatedAt,
 	); err != nil {
 		return err
 	}
 	if command.PosterFileID != nil && strings.TrimSpace(*command.PosterFileID) != "" {
-		if err := addProgramEventMedia(ctx, tx, s.media, event.ID, *command.PosterFileID, "poster", nil, nil, true); err != nil {
+		if err := addProgramEventMedia(ctx, store, event.ID, *command.PosterFileID, "poster", nil, nil, true); err != nil {
 			return err
 		}
 	}
-	if err := replaceProgramEventArtists(ctx, tx, event.ID, command.Artists); err != nil {
-		return err
+	for _, relation := range []struct {
+		kind  RelationKind
+		field string
+		rows  []Relation
+	}{
+		{ArtistRelation, "artist_id", command.Artists},
+		{LabelRelation, "label_id", command.Labels},
+		{ClientRelation, "client_id", command.Clients},
+	} {
+		if err := replaceProgramEventRelations(ctx, store, relation.kind, relation.field, event.ID, relation.rows); err != nil {
+			return err
+		}
 	}
-	if err := replaceProgramEventLabels(ctx, tx, event.ID, command.Labels); err != nil {
-		return err
-	}
-	if err := replaceProgramEventClients(ctx, tx, event.ID, command.Clients); err != nil {
-		return err
-	}
-	_, err = replaceProgramEventCredits(ctx, tx, event.ID, command.Credits)
+	_, err = replaceProgramEventCredits(ctx, store, event.ID, command.Credits)
 	return err
 }
 
@@ -369,10 +237,10 @@ type GetProgramEventQuery struct {
 
 // GetProgramEvent returns the administrator view of an event the caller may
 // view; an event the caller may not view answers not found.
-func (s *Service) GetProgramEvent(ctx context.Context, query GetProgramEventQuery) (*managev1.ProgramEvent, error) {
+func (s *Service) GetProgramEvent(ctx context.Context, query GetProgramEventQuery) (EventView, error) {
 	event, err := s.loadAuthorizedProgramEvent(ctx, query.ID)
 	if rejected(err, domainerr.PermissionDenied) {
-		return nil, domainerr.ResourceNotFound("program event", query.ID).WithCause(err)
+		return EventView{}, domainerr.ResourceNotFound("program event", query.ID).WithCause(err)
 	}
 	return event, err
 }
@@ -388,8 +256,8 @@ type ListProgramEventsQuery struct {
 
 // EventList is one page of event summaries.
 type EventList struct {
-	Events     []*managev1.ProgramEventSummary
-	Pagination *commonv1.PaginationResponse
+	Events     []EventSummary
+	Pagination Pagination
 }
 
 // ListProgramEventsAdmin returns one page of event summaries to an
@@ -402,36 +270,30 @@ func (s *Service) ListProgramEventsAdmin(ctx context.Context, query ListProgramE
 	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
 		return EventList{}, err
 	}
-	rows := s.db.WithContext(ctx).Model(&model.ProgramEvent{})
-	rows, err = ProgramEventFilterConfig.ApplyFilters(rows, query.Filters)
-	if err != nil {
-		return EventList{}, err
-	}
-	var total int64
-	if err := rows.Count(&total).Error; err != nil {
-		return EventList{}, err
-	}
-	rows, err = programEventSortConfig.ApplySort(rows, query.Sorts)
-	if err != nil {
-		return EventList{}, err
-	}
 	limit, offset := pageLimitOffset(query.Limit, query.Offset)
-	var events []model.ProgramEvent
-	if err := rows.Order("program_event.id ASC").Limit(int(limit)).Offset(int(offset)).Find(&events).Error; err != nil {
+	var events []Event
+	var total int64
+	var posterFileIDs map[string]string
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		events, total, err = store.ListEvents(ctx, ListPage{Filters: query.Filters, Sorts: query.Sorts, Limit: limit, Offset: offset})
+		if err != nil {
+			return err
+		}
+		posterFileIDs, err = store.PosterFileIDs(ctx, collectProgramEventIDs(events))
+		return err
+	}); err != nil {
 		return EventList{}, err
 	}
-	posterFileIDs, err := loadProgramEventDefaultPosterFileIDs(ctx, s.db, collectProgramEventIDs(events))
-	if err != nil {
-		return EventList{}, err
-	}
-	summaries := make([]*managev1.ProgramEventSummary, 0, len(events))
+	summaries := make([]EventSummary, 0, len(events))
 	for i := range events {
-		summaries = append(summaries, toProtoProgramEventSummary(&events[i], posterFileIDs[events[i].ID]))
+		summary := EventSummary{Event: events[i]}
+		if fileID, ok := posterFileIDs[events[i].ID]; ok {
+			summary.PosterFileID = &fileID
+		}
+		summaries = append(summaries, summary)
 	}
-	return EventList{Events: summaries, Pagination: &commonv1.PaginationResponse{
-		Total: int32(total), Limit: limit, Offset: offset,
-		HasMore: offset+int32(len(events)) < int32(total),
-	}}, nil
+	return EventList{Events: summaries, Pagination: pagination(limit, offset, len(events), total)}, nil
 }
 
 // DeleteProgramEventCommand names the event to delete.
@@ -443,27 +305,27 @@ type DeleteProgramEventCommand struct {
 // authorization policy.
 func (s *Service) DeleteProgramEvent(ctx context.Context, command DeleteProgramEventCommand) error {
 	var documentID uuid.UUID
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[string]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[string, Store]{
+		Lock: func(ctx context.Context, store Store) error {
 			var err error
-			documentID, err = loadProgramEventContentDocumentID(ctx, tx, command.ID, true)
+			documentID, err = loadProgramEventContentDocumentID(ctx, store, command.ID, UpdateLock)
 			return err
 		},
-		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-			return requireLockedProgramEventAction(ctx, tx, s.spiceDB, command.ID, policyv1.ProgramEvent.Delete)
+		Access: mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+			return requireLockedProgramEventAction(ctx, store, lockActive, s.spiceDB, command.ID, policyv1.ProgramEvent.Delete)
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (string, error) {
-			if err := s.contentBlocks.DeleteDocument(ctx, tx, documentID, lockedContentFence(command.ID, documentID)); err != nil {
+		Change: func(ctx context.Context, store Store) (string, error) {
+			if err := store.DeleteContentDocument(ctx, documentID, lockedContentFence(command.ID, documentID)); err != nil {
 				return "", normalizeProgramEventContentBlockError(err)
 			}
-			result := tx.Delete(&model.ProgramEvent{}, "id = ?", command.ID)
-			if result.Error != nil {
-				return "", result.Error
+			deleted, err := store.DeleteEvent(ctx, command.ID)
+			if err != nil {
+				return "", err
 			}
-			if result.RowsAffected == 0 {
+			if !deleted {
 				return "", domainerr.ResourceNotFound("program event", command.ID)
 			}
-			return command.ID, s.media.ReleasePublicAssetBindings(ctx, tx, "program_event", command.ID, "media")
+			return command.ID, store.ReleaseEventMedia(ctx, command.ID)
 		},
 		Audit: func(eventID string) mutation.Audit {
 			return mutation.RequestAudit(sharedtelemetry.AuditProgramEventDeleted, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
@@ -481,7 +343,7 @@ func (s *Service) DeleteProgramEvent(ctx context.Context, command DeleteProgramE
 type LifecycleChange struct {
 	ID          string
 	Changed     bool
-	Status      model.ProgramEventStatus
+	Status      Status
 	PublishedAt *time.Time
 	UpdatedAt   time.Time
 }
@@ -494,7 +356,7 @@ type PublishProgramEventCommand struct {
 // PublishProgramEvent publishes a draft event, or restores an archived event
 // with its original publication date.
 func (s *Service) PublishProgramEvent(ctx context.Context, command PublishProgramEventCommand) (LifecycleChange, error) {
-	return s.setProgramEventStatus(ctx, command.ID, model.ProgramEventStatusPublished, true)
+	return s.setProgramEventStatus(ctx, command.ID, StatusPublished, true)
 }
 
 // ArchiveProgramEventCommand names the event to archive.
@@ -504,48 +366,48 @@ type ArchiveProgramEventCommand struct {
 
 // ArchiveProgramEvent moves a published event to archived.
 func (s *Service) ArchiveProgramEvent(ctx context.Context, command ArchiveProgramEventCommand) (LifecycleChange, error) {
-	return s.setProgramEventStatus(ctx, command.ID, model.ProgramEventStatusArchived, false)
+	return s.setProgramEventStatus(ctx, command.ID, StatusArchived, false)
 }
 
 func (s *Service) setProgramEventStatus(
 	ctx context.Context,
 	id string,
-	status model.ProgramEventStatus,
+	status Status,
 	publish bool,
 ) (LifecycleChange, error) {
-	var current model.ProgramEvent
-	var previous model.ProgramEventStatus
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[string]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
-			if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-				Select("id", "status", "published_at", "updated_at").
-				First(&current, "id = ?", id).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return domainerr.ResourceNotFound("program event", id)
-				}
-				return err
+	var current Lifecycle
+	var previous Status
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[string, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			var err error
+			current, err = store.LockLifecycle(ctx, id)
+			if err != nil {
+				return notFoundAs(err, domainerr.ResourceNotFound("program event", id))
 			}
 			previous = current.Status
 			return nil
 		},
-		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-			return authorizeLockedProgramEvent(ctx, tx, s.spiceDB, current.ID, current.Status, "publish", policyv1.ProgramEvent.Publish)
+		Access: mutation.Fenced(func(ctx context.Context, _ Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+			return authorizeLockedProgramEvent(ctx, lockActive, s.spiceDB, current.ID, current.Status, "publish", policyv1.ProgramEvent.Publish)
 		}),
-		Change: func(_ context.Context, tx *gorm.DB) (string, error) {
-			if publish && current.Status == model.ProgramEventStatusPublished {
+		Change: func(ctx context.Context, store Store) (string, error) {
+			if publish && current.Status == StatusPublished {
 				return "", domainerr.Precondition("program event is already published")
 			}
-			if !publish && current.Status != model.ProgramEventStatusPublished {
+			if !publish && current.Status != StatusPublished {
 				return "", domainerr.Precondition("only published program events can be archived")
 			}
 			now := dbtime.Now()
-			updates := structured.Fields{"status": status, "updated_at": now}
-			if publish && current.Status != model.ProgramEventStatusArchived {
-				updates["published_at"] = now
+			var publishedAt *time.Time
+			if publish && current.Status != StatusArchived {
+				publishedAt = &now
 			}
-			return current.ID, tx.Model(&current).Clauses(clause.Returning{Columns: []clause.Column{
-				{Name: "status"}, {Name: "published_at"}, {Name: "updated_at"},
-			}}).Updates(updates).Error
+			stored, err := store.SetLifecycle(ctx, current.ID, status, publishedAt, now)
+			if err != nil {
+				return "", err
+			}
+			current = stored
+			return current.ID, nil
 		},
 		Audit: func(eventID string) mutation.Audit {
 			return mutation.RequestAudit(sharedtelemetry.AuditProgramEventUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {

@@ -1,12 +1,14 @@
 //go:build integration
 
-package programevent
+package programevent_test
 
 import (
 	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/programevent"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -43,9 +45,9 @@ func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
 	store := newProgramEventIntegrationContentBlockStore(t, spiceDB)
 	files := newProgramEventIntegrationFileService(db, spiceDB)
 	writer := apitelemetry.NewDurableWriter(db)
-	typeService := NewTypeConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Audit: writer}))
-	seriesService := NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Audit: writer, Media: newProgramEventRuntime("https://cdn.example.test")}))
-	eventService := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Audit: writer, Media: newProgramEventRuntime("https://cdn.example.test"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.test"), MediaHydrator: files, ContentBlocks: store}))
+	typeService := programevent.NewTypeConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Audit: writer}))
+	seriesService := programevent.NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Audit: writer, Media: newProgramEventRuntime("https://cdn.example.test")}))
+	eventService := programevent.NewConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Audit: writer, Media: newProgramEventRuntime("https://cdn.example.test"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.test"), MediaHydrator: files, ContentBlocks: store}))
 
 	typeCreated, err := typeService.CreateProgramEventType(ctx, connect.NewRequest(&managev1.CreateProgramEventTypeRequest{Slug: "audit-type-" + testutil.IntegrationUUID(), Locale: "en", Name: "Audit type"}))
 	require.NoError(t, err)
@@ -79,7 +81,7 @@ func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	eventID := eventCreated.Msg.Id
-	internalEventService := NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Audit: apitelemetry.NewDurableWriter(db), Signals: &capturingAsyncPublisher{}, ContentBlocks: store, MediaHydrator: files}))
+	internalEventService := programevent.NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Audit: apitelemetry.NewDurableWriter(db), Signals: &capturingAsyncPublisher{}, ContentBlocks: store, MediaHydrator: files}))
 	artistID, labelID, clientID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	artistSlug, labelSlug := "event-audit-artist-"+testutil.IntegrationUUID(), "event-audit-label-"+testutil.IntegrationUUID()
 	artistDocumentID := seedServiceIntegrationContentDocument(t, db, creativeContentProfile)
@@ -169,7 +171,7 @@ func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
 	newSlug := "audit-event-updated-" + testutil.IntegrationUUID()
 	_, err = eventService.UpdateProgramEvent(ctx, connect.NewRequest(&managev1.UpdateProgramEventRequest{Id: eventID, Slug: &newSlug}))
 	require.NoError(t, err)
-	failingMetadataService := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Audit: failingDomainAuditAppender{}, Media: newProgramEventRuntime(""), CreditMembers: newProgramEventCreditMemberSummaries(db, "")}))
+	failingMetadataService := programevent.NewConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Audit: failingDomainAuditAppender{}, Media: newProgramEventRuntime(""), CreditMembers: newProgramEventCreditMemberSummaries(db, "")}))
 	failingSlug := "must-roll-back-event-" + testutil.IntegrationUUID()
 	_, err = failingMetadataService.UpdateProgramEvent(ctx, connect.NewRequest(&managev1.UpdateProgramEventRequest{Id: eventID, Slug: &failingSlug}))
 	require.Error(t, err)
@@ -191,7 +193,7 @@ func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
 	require.NoError(t, err)
 	_, err = eventService.AddProgramEventMedia(ctx, connect.NewRequest(&managev1.AddProgramEventMediaRequest{EventId: eventID, FileId: galleryTwo, Role: "gallery"}))
 	require.NoError(t, err)
-	media, err := eventService.events.loadProgramEvent(ctx, eventID)
+	media, err := loadEventMessage(ctx, eventService, eventID)
 	require.NoError(t, err)
 	var galleryOneID, galleryTwoID string
 	for _, item := range media.Media {
@@ -229,7 +231,7 @@ func TestProgramEventDomainAuditMutationVariantsIntegration(t *testing.T) {
 	bulkUpdate, err := eventService.UpdateProgramEvent(ctx, connect.NewRequest(&managev1.UpdateProgramEventRequest{Id: eventID, ReplaceCredits: true, Credits: []*managev1.ProgramEventCredit{{DisplayName: &bulkNameOne, SortOrder: 1}, {DisplayName: &bulkNameTwo, SortOrder: 0}}}))
 	require.NoError(t, err)
 	require.True(t, bulkUpdate.Msg.Changed)
-	bulkEvent, err := eventService.events.loadProgramEvent(ctx, eventID)
+	bulkEvent, err := loadEventMessage(ctx, eventService, eventID)
 	require.NoError(t, err)
 	require.Len(t, bulkEvent.Credits, 2)
 	bulkFirst, bulkSecond := bulkEvent.Credits[0], bulkEvent.Credits[1]

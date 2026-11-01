@@ -3,7 +3,6 @@ package programevent
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -35,7 +34,7 @@ func TestProgramEventSeriesStatusMappingCoversEveryAPIStatus(t *testing.T) {
 	for value, name := range managev1.ProgramEventSeriesStatus_name {
 		status := managev1.ProgramEventSeriesStatus(value)
 		stored, known := programEventSeriesStatusFromProto(status)
-		filtered, filterKnown := programEventSeriesStatusFilterValues[name]
+		filtered, filterKnown := seriesStatusFilterValues[name]
 		if status == managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_UNSPECIFIED {
 			if known || filterKnown {
 				t.Fatalf("UNSPECIFIED mapped to %q", stored)
@@ -46,7 +45,7 @@ func TestProgramEventSeriesStatusMappingCoversEveryAPIStatus(t *testing.T) {
 			t.Fatalf("%s maps to %q (known %t, filter %q) and back to %s", name, stored, known, filtered, programEventSeriesStatusToProto(stored))
 		}
 	}
-	if got := programEventSeriesStatusToProto(model.ProgramEventStatusArchived); got != managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_UNSPECIFIED {
+	if got := programEventSeriesStatusToProto(StatusArchived); got != managev1.ProgramEventSeriesStatus_PROGRAM_EVENT_SERIES_STATUS_UNSPECIFIED {
 		t.Fatalf("archived series status mapped to %s", got)
 	}
 }
@@ -75,7 +74,7 @@ func TestProgramEventLocationModeMappingCoversEveryAPIMode(t *testing.T) {
 		mode := managev1.ProgramEventLocationMode(value)
 		stored := locationModeFromProto(mode)
 		if mode == managev1.ProgramEventLocationMode_PROGRAM_EVENT_LOCATION_MODE_UNSPECIFIED {
-			if stored != model.ProgramEventLocationModeMapPlace {
+			if stored != LocationModeMapPlace {
 				t.Fatalf("UNSPECIFIED mapped to %q", stored)
 			}
 			continue

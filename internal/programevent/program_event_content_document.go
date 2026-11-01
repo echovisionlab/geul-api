@@ -2,90 +2,61 @@ package programevent
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 const programEventContentProfile = "program_event"
 
-type programEventContentDocumentRoot struct {
-	ContentDocumentID sql.NullString `gorm:"column:content_document_id"`
-}
-
 func loadProgramEventContentDocumentID(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	eventID string,
-	lock bool,
+	lock RowLock,
 ) (uuid.UUID, error) {
-	if db == nil {
-		return uuid.Nil, errors.New("program Event content document database is required")
+	reference, err := store.ContentDocumentID(ctx, eventID, lock)
+	if err != nil {
+		return uuid.Nil, notFoundAs(err, domainerr.ResourceNotFound("program event", eventID))
 	}
-	query := db.WithContext(ctx).
-		Table("program_event").
-		Select("content_document_id").
-		Where("id = ?", eventID)
-	if lock {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
-	}
-	var root programEventContentDocumentRoot
-	if err := query.Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return uuid.Nil, domainerr.ResourceNotFound("program event", eventID)
-		}
-		return uuid.Nil, err
-	}
-	if !root.ContentDocumentID.Valid || root.ContentDocumentID.String == "" {
+	if reference == nil || *reference == "" {
 		return uuid.Nil, domainerr.Precondition("Program Event content document is not initialized")
 	}
-	documentID, err := uuid.Parse(root.ContentDocumentID.String)
+	documentID, err := uuid.Parse(*reference)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("invalid Program Event content_document_id: %w", err)
 	}
 	return documentID, nil
 }
 
+// programEventContentDocumentFence locks the event root, requires it to
+// still own the document and runs authorize before the content rows lock.
 func programEventContentDocumentFence(
 	eventID string,
-	authorize func(context.Context, *gorm.DB) error,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		query := tx.WithContext(ctx).
-			Table("program_event").
-			Select("content_document_id").
-			Where("id = ?", eventID).
-			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
-		var root programEventContentDocumentRoot
-		if err := query.Take(&root).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return contentblock.DomainContext{}, domainerr.ResourceNotFound("program event", eventID)
-			}
-			return contentblock.DomainContext{}, err
+	authorize func(context.Context, Store) error,
+) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		reference, err := store.ContentDocumentID(ctx, eventID, UpdateLock)
+		if err != nil {
+			return contentblock.DomainContext{}, notFoundAs(err, domainerr.ResourceNotFound("program event", eventID))
 		}
-		if !root.ContentDocumentID.Valid || root.ContentDocumentID.String != documentID.String() {
+		if reference == nil || *reference != documentID.String() {
 			return contentblock.DomainContext{}, domainerr.Precondition("Program Event content document ownership changed; reload before saving")
 		}
 		if authorize == nil {
 			return contentblock.DomainContext{}, errors.New("program Event content document authorization is required")
 		}
-		if err := authorize(ctx, tx); err != nil {
+		if err := authorize(ctx, store); err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		sourceState, err := loadProgramEventSourceLocale(ctx, tx, eventID, true)
+		sourceState, err := loadProgramEventSourceLocale(ctx, store, eventID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
@@ -95,26 +66,22 @@ func programEventContentDocumentFence(
 
 func requireProgramEventBlockBootstrap(
 	ctx context.Context,
-	tx *gorm.DB,
-	spiceDB CollaborationPermissionChecker,
+	store Store,
+	spiceDB ActorChecker,
 	eventID string,
 	sessionID *string,
 ) (uuid.UUID, *auth.UserInfo, error) {
 	if sessionID == nil {
 		return uuid.Nil, nil, authenticationRequired()
 	}
-	documentID, err := loadProgramEventContentDocumentID(ctx, tx, eventID, true)
+	documentID, err := loadProgramEventContentDocumentID(ctx, store, eventID, UpdateLock)
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
-	if err := RequireExists(ctx, tx, eventID); err != nil {
+	if err := RequireExists(ctx, store, eventID); err != nil {
 		return uuid.Nil, nil, err
 	}
-	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(
-		ctx,
-		tx,
-		*sessionID,
-	)
+	principal, err := store.ResolveSessionPrincipal(ctx, *sessionID)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
 		return uuid.Nil, nil, authenticationRequired().WithCause(err)
 	}
@@ -130,7 +97,7 @@ func requireProgramEventBlockBootstrap(
 	if !principal.Onboarded {
 		return uuid.Nil, nil, noPermission("edit")
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	active, err := store.LockActivePrincipal(ctx, principal)
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
@@ -141,40 +108,22 @@ func requireProgramEventBlockBootstrap(
 	if err != nil {
 		return uuid.Nil, nil, authenticationRequired().WithCause(err)
 	}
-	var root struct {
-		Status model.ProgramEventStatus `gorm:"column:status"`
-	}
-	if err := tx.WithContext(ctx).Table("program_event").Select("status").Where("id = ?", eventID).Take(&root).Error; err != nil {
+	status, err := store.EventStatus(ctx, eventID, NoLock)
+	if err != nil {
 		return uuid.Nil, nil, fmt.Errorf("load Program Event collaboration status: %w", err)
 	}
 	if err := requireProgramEventPermissionForSubject(
-		ctx, spiceDB, eventID, programEventViewAction(root.Status), subject,
+		ctx, spiceDB, eventID, programEventViewAction(status), subject,
 	); err != nil {
 		return uuid.Nil, nil, err
 	}
-	if err := auth.LockAuthenticatedSessionForPrincipal(ctx, tx, *sessionID, principal); err != nil {
+	if err := store.LockSession(ctx, *sessionID, principal); err != nil {
 		if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
 			return uuid.Nil, nil, authenticationRequired().WithCause(err)
 		}
 		return uuid.Nil, nil, fmt.Errorf("lock Program Event collaboration session: %w", err)
 	}
 	return documentID, principal, nil
-}
-
-func requireProgramEventContentContributors(
-	ctx context.Context,
-	tx *gorm.DB,
-	checkpoints persistencecheckpoint.ContributorFence,
-	eventID string,
-	contributors []string,
-) error {
-	return checkpoints.RequireCurrentContributors(
-		ctx,
-		tx,
-		intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_PROGRAM_EVENT,
-		eventID,
-		contributors,
-	)
 }
 
 func normalizeProgramEventContentBlockError(err error) error {

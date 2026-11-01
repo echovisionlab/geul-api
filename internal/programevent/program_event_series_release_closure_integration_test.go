@@ -1,9 +1,11 @@
 //go:build integration
 
-package programevent
+package programevent_test
 
 import (
 	"testing"
+
+	"github.com/echovisionlab/geul-api/internal/programevent"
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
@@ -29,7 +31,7 @@ func TestProgramEventSeriesAdminListCapsRequestedPageSizeIntegration(t *testing.
 			managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_DRAFT.String(), "Series").Error)
 	}
 
-	response, err := NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Media: newProgramEventRuntime("")})).ListProgramEventSeriesAdmin(
+	response, err := programevent.NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Media: newProgramEventRuntime("")})).ListProgramEventSeriesAdmin(
 		ctx,
 		connect.NewRequest(&managev1.ListProgramEventSeriesAdminRequest{
 			Pagination: &commonv1.PaginationRequest{Limit: 1000},
@@ -57,7 +59,7 @@ func TestProgramEventSeriesAdminGetAcceptsCanonicalSlugIntegration(t *testing.T)
 	_, err = spiceDB.ApplyRelationships(t.Context(), policy)
 	require.NoError(t, err)
 
-	response, err := NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Media: newProgramEventRuntime("")})).GetProgramEventSeries(
+	response, err := programevent.NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Media: newProgramEventRuntime("")})).GetProgramEventSeries(
 		ctx,
 		connect.NewRequest(&managev1.GetProgramEventSeriesRequest{Id: slug}),
 	)
@@ -98,7 +100,7 @@ func TestDeleteProgramEventSeriesDetachesEventsWithoutDeletingThemIntegration(t 
 	_, err = spiceDB.ApplyRelationships(t.Context(), policy)
 	require.NoError(t, err)
 
-	_, err = NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Media: newProgramEventRuntime("")})).DeleteProgramEventSeries(
+	_, err = programevent.NewSeriesConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Media: newProgramEventRuntime("")})).DeleteProgramEventSeries(
 		ctx,
 		connect.NewRequest(&managev1.DeleteProgramEventSeriesRequest{Id: seriesID}),
 	)

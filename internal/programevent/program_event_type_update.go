@@ -1,132 +1,93 @@
 package programevent
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
 // updateProgramEventType writes command to the locked event type and
 // returns the changed configuration fields.
 func updateProgramEventType(
-	tx *gorm.DB,
-	eventType model.ProgramEventType,
+	ctx context.Context,
+	store Store,
+	eventType Type,
 	command UpdateProgramEventTypeCommand,
 	now time.Time,
 ) ([]string, error) {
-	update, err := prepareProgramEventTypeUpdate(command)
+	change, err := prepareProgramEventTypeUpdate(command)
 	if err != nil {
 		return nil, err
 	}
-	changedFields := update.changedFields(eventType)
+	changedFields := typeChangedFields(change, eventType)
 	if len(changedFields) > 0 {
-		if err := tx.Model(&eventType).Updates(update.columns(now)).Error; err != nil {
-			if dberrors.IsUniqueViolation(err) {
+		if err := store.UpdateType(ctx, eventType.ID, change, now); err != nil {
+			if errors.Is(err, ErrSlugTaken) {
 				return nil, domainerr.Duplicate("program event type", "slug", derefString(command.Slug)).WithCause(err)
 			}
 			return nil, err
 		}
 	}
-	if _, err := updateProgramEventTypeLocale(tx, command, now); err != nil {
+	if _, err := updateProgramEventTypeLocale(ctx, store, command, now); err != nil {
 		return nil, err
 	}
 	return changedFields, nil
 }
 
-func lockProgramEventTypeForUpdate(tx *gorm.DB, id string) (model.ProgramEventType, error) {
-	var eventType model.ProgramEventType
-	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&eventType, "id = ?", id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return eventType, domainerr.ResourceNotFound("program event type", id)
-		}
-		return eventType, err
+func lockProgramEventTypeForUpdate(ctx context.Context, store Store, id string) (Type, error) {
+	eventType, err := store.Type(ctx, id, UpdateLock)
+	if errors.Is(err, ErrTypeNotFound) {
+		return eventType, domainerr.ResourceNotFound("program event type", id)
 	}
-	return eventType, nil
+	return eventType, err
 }
 
-// programEventTypeUpdate is a validated event type configuration update; nil
-// fields are left alone.
-type programEventTypeUpdate struct {
-	slug              *string
-	status            *model.ProgramEventTypeStatus
-	sortOrder         *int32
-	requiresPlace     *bool
-	requiresStreamURL *bool
-}
-
-func prepareProgramEventTypeUpdate(command UpdateProgramEventTypeCommand) (programEventTypeUpdate, error) {
-	update := programEventTypeUpdate{
-		sortOrder:         command.SortOrder,
-		requiresPlace:     command.RequiresPlace,
-		requiresStreamURL: command.RequiresStreamURL,
+func prepareProgramEventTypeUpdate(command UpdateProgramEventTypeCommand) (TypeChange, error) {
+	change := TypeChange{
+		SortOrder:         command.SortOrder,
+		RequiresPlace:     command.RequiresPlace,
+		RequiresStreamURL: command.RequiresStreamURL,
 	}
 	if command.Slug != nil {
 		slug, err := validateProgramEventSlug(*command.Slug)
 		if err != nil {
-			return programEventTypeUpdate{}, err
+			return TypeChange{}, err
 		}
-		update.slug = &slug
+		change.Slug = &slug
 	}
 	if command.Status != nil {
-		if *command.Status != model.ProgramEventTypeStatusActive && *command.Status != model.ProgramEventTypeStatusInactive {
-			return programEventTypeUpdate{}, domainerr.InvalidField("status", "must be active or inactive")
+		if *command.Status != TypeStatusActive && *command.Status != TypeStatusInactive {
+			return TypeChange{}, domainerr.InvalidField("status", "must be active or inactive")
 		}
-		update.status = command.Status
+		change.Status = command.Status
 	}
-	return update, nil
+	return change, nil
 }
 
-func (u programEventTypeUpdate) changedFields(eventType model.ProgramEventType) []string {
+func typeChangedFields(change TypeChange, eventType Type) []string {
 	changed := make([]string, 0, 5)
-	if u.slug != nil && *u.slug != eventType.Slug {
+	if change.Slug != nil && *change.Slug != eventType.Slug {
 		changed = append(changed, "slug")
 	}
-	if u.status != nil && *u.status != eventType.Status {
+	if change.Status != nil && *change.Status != eventType.Status {
 		changed = append(changed, "status")
 	}
-	if u.sortOrder != nil && *u.sortOrder != eventType.SortOrder {
+	if change.SortOrder != nil && *change.SortOrder != eventType.SortOrder {
 		changed = append(changed, "sort_order")
 	}
-	if u.requiresPlace != nil && *u.requiresPlace != eventType.RequiresPlace {
+	if change.RequiresPlace != nil && *change.RequiresPlace != eventType.RequiresPlace {
 		changed = append(changed, "requires_place")
 	}
-	if u.requiresStreamURL != nil && *u.requiresStreamURL != eventType.RequiresStreamURL {
+	if change.RequiresStreamURL != nil && *change.RequiresStreamURL != eventType.RequiresStreamURL {
 		changed = append(changed, "requires_stream_url")
 	}
 	return changed
 }
 
-// columns is the program_event_type row update for the fields the request
-// sets.
-func (u programEventTypeUpdate) columns(updatedAt time.Time) structured.Fields {
-	columns := structured.Fields{"updated_at": updatedAt}
-	if u.slug != nil {
-		columns["slug"] = *u.slug
-	}
-	if u.status != nil {
-		columns["status"] = *u.status
-	}
-	if u.sortOrder != nil {
-		columns["sort_order"] = *u.sortOrder
-	}
-	if u.requiresPlace != nil {
-		columns["requires_place"] = *u.requiresPlace
-	}
-	if u.requiresStreamURL != nil {
-		columns["requires_stream_url"] = *u.requiresStreamURL
-	}
-	return columns
-}
-
-func updateProgramEventTypeLocale(tx *gorm.DB, request UpdateProgramEventTypeCommand, now time.Time) (bool, error) {
+func updateProgramEventTypeLocale(ctx context.Context, store Store, request UpdateProgramEventTypeCommand, now time.Time) (bool, error) {
 	if request.Name == nil && request.Description == nil {
 		return false, nil
 	}
@@ -137,20 +98,19 @@ func updateProgramEventTypeLocale(tx *gorm.DB, request UpdateProgramEventTypeCom
 	if err != nil {
 		return false, err
 	}
-	var localeRow model.ProgramEventTypeLocale
-	err = tx.First(&localeRow, "type_id = ? AND locale = ?", request.ID, locale).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+	current, exists, err := store.TypeLocale(ctx, request.ID, locale)
+	if err != nil {
 		return false, err
 	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return true, createProgramEventTypeLocale(tx, request, locale, now)
+	if !exists {
+		return true, createProgramEventTypeLocale(ctx, store, request, locale, now)
 	}
-	changed, err := applyProgramEventTypeLocaleUpdate(tx, &localeRow, request, now)
-	return changed, err
+	return applyProgramEventTypeLocaleUpdate(ctx, store, current, request, now)
 }
 
 func createProgramEventTypeLocale(
-	tx *gorm.DB,
+	ctx context.Context,
+	store Store,
 	request UpdateProgramEventTypeCommand,
 	locale string,
 	now time.Time,
@@ -158,43 +118,43 @@ func createProgramEventTypeLocale(
 	if request.Name == nil || strings.TrimSpace(*request.Name) == "" {
 		return domainerr.Required("name")
 	}
-	return tx.Create(&model.ProgramEventTypeLocale{
+	return store.InsertTypeLocale(ctx, TypeLocale{
 		TypeID:      request.ID,
 		Locale:      locale,
 		Name:        strings.TrimSpace(*request.Name),
 		Description: normalizedStringPtr(request.Description),
 		CreatedAt:   now,
 		UpdatedAt:   now,
-	}).Error
+	})
 }
 
 func applyProgramEventTypeLocaleUpdate(
-	tx *gorm.DB,
-	localeRow *model.ProgramEventTypeLocale,
+	ctx context.Context,
+	store Store,
+	current TypeLocale,
 	request UpdateProgramEventTypeCommand,
 	now time.Time,
 ) (bool, error) {
-	updates := structured.Fields{}
+	var change TypeLocaleChange
 	if request.Name != nil {
 		name := strings.TrimSpace(*request.Name)
 		if name == "" {
 			return false, domainerr.Required("name")
 		}
-		if name != localeRow.Name {
-			updates["name"] = name
+		if name != current.Name {
+			change.Name = &name
 		}
 	}
 	if request.Description != nil {
 		description := normalizedStringPtr(request.Description)
-		if !sameNullableString(localeRow.Description, description) {
-			updates["description"] = description
+		if !sameNullableString(current.Description, description) {
+			change.Description = setNullable(description)
 		}
 	}
-	if len(updates) == 0 {
+	if change.Name == nil && !change.Description.Set {
 		return false, nil
 	}
-	updates["updated_at"] = now
-	if err := tx.Model(localeRow).Updates(updates).Error; err != nil {
+	if err := store.UpdateTypeLocale(ctx, current.TypeID, current.Locale, change, now); err != nil {
 		return false, err
 	}
 	return true, nil

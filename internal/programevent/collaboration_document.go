@@ -2,21 +2,16 @@ package programevent
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -34,64 +29,86 @@ type LoadBlockDocumentQuery struct {
 	SessionID *string
 }
 
+// BlockLocaleMetadata is the title and summary of one locale a room shows.
+type BlockLocaleMetadata struct {
+	Locale  string
+	Title   *string
+	Summary *string
+}
+
+// RoomDocument is a collaboration room's document: the locale projection of
+// the event's document, its source and room locale metadata, and the
+// session's delivery of its Block media.
+type RoomDocument struct {
+	Document            *contentv1.LocalizedRichTextDocument
+	DocumentRevision    string
+	SourceMetadata      *BlockLocaleMetadata
+	BlockMedia          []*contentv1.ContentBlockMediaItem
+	Locale              string
+	LocaleExists        bool
+	LocaleMetadata      *BlockLocaleMetadata
+	TargetRevision      *string
+	PresentLocaleValues []*managev1.AIDocumentFieldTarget
+}
+
 // LoadBlockDocument authorizes the session's principal to view the event and
 // returns the locale projection of its document.
-func (s *Service) LoadBlockDocument(ctx context.Context, query LoadBlockDocumentQuery) (*intrav1.LoadProgramEventBlockDocumentResponse, error) {
+func (s *Service) LoadBlockDocument(ctx context.Context, query LoadBlockDocumentQuery) (RoomDocument, error) {
 	locale, err := normalizeProgramEventDocumentLocale(query.Locale)
 	if err != nil {
-		return nil, err
+		return RoomDocument{}, err
 	}
 	var localeState programEventExactLocaleState
-	var sourceMetadata *intrav1.ProgramEventLocaleMetadata
+	var sourceMetadata *BlockLocaleMetadata
 	var blockMedia []*contentv1.ContentBlockMediaItem
-	if err := mutation.ReadCurrent(ctx, s.db, func(tx *gorm.DB) error {
-		documentID, principal, err := requireProgramEventBlockBootstrap(ctx, tx, s.spiceDB, query.EventID, query.SessionID)
+	if err := s.units.ReadCurrent(ctx, func(store Store) error {
+		documentID, principal, err := requireProgramEventBlockBootstrap(ctx, store, s.spiceDB, query.EventID, query.SessionID)
 		if err != nil {
 			return err
 		}
-		sourceState, err := loadProgramEventSourceLocale(ctx, tx, query.EventID, false)
+		sourceState, err := loadProgramEventSourceLocale(ctx, store, query.EventID, false)
 		if err != nil {
 			return err
 		}
 		localeState, err = loadProgramEventExactLocaleState(
-			ctx, tx, s.contentBlocks, query.EventID, documentID, locale, false,
+			ctx, store, query.EventID, documentID, locale, false,
 		)
 		if err != nil {
 			return err
 		}
-		sourceMetadata, err = loadProgramEventBlockLocaleMetadata(ctx, tx, query.EventID, sourceState.SourceLocale)
+		sourceMetadata, err = loadProgramEventBlockLocaleMetadata(ctx, store, query.EventID, sourceState.SourceLocale)
 		if err != nil {
 			return err
 		}
-		blockMedia, err = contentblock.LoadMediaReferences(ctx, tx, documentID)
+		blockMedia, err = store.MediaReferences(ctx, documentID)
 		if err != nil {
 			return err
 		}
-		blockMedia, err = s.mediaHydrator.HydrateAuthorizedProgramEventBlockMediaWithDB(
-			auth.WithUser(ctx, principal), tx, query.EventID, documentID, principal, blockMedia,
+		blockMedia, err = store.HydrateBlockMedia(
+			auth.WithUser(ctx, principal), query.EventID, documentID, principal, blockMedia,
 		)
 		return err
 	}); err != nil {
-		return nil, normalizeProgramEventContentBlockError(err)
+		return RoomDocument{}, normalizeProgramEventContentBlockError(err)
 	}
-	return blockDocumentResponse(localeState, sourceMetadata, blockMedia, locale)
+	return blockDocument(localeState, sourceMetadata, blockMedia, locale)
 }
 
-func blockDocumentResponse(
+func blockDocument(
 	localeState programEventExactLocaleState,
-	sourceMetadata *intrav1.ProgramEventLocaleMetadata,
+	sourceMetadata *BlockLocaleMetadata,
 	blockMedia []*contentv1.ContentBlockMediaItem,
 	locale string,
-) (*intrav1.LoadProgramEventBlockDocumentResponse, error) {
+) (RoomDocument, error) {
 	document, err := materializeProgramEventExactLocaleDocument(localeState, locale)
 	if err != nil {
-		return nil, err
+		return RoomDocument{}, err
 	}
 	presentLocaleValues, err := contentblock.PresentRichTextLocaleValues(localeState.Snapshot, locale)
 	if err != nil {
-		return nil, err
+		return RoomDocument{}, err
 	}
-	var localeMetadata *intrav1.ProgramEventLocaleMetadata
+	var localeMetadata *BlockLocaleMetadata
 	if localeState.TargetMetadata != nil {
 		localeMetadata = programEventLocaleMetadataProjection(sourceMetadata, localeState.TargetMetadata, locale)
 	}
@@ -99,7 +116,7 @@ func blockDocumentResponse(
 	if locale != localeState.SourceLocale && localeState.TargetMetadata != nil {
 		targetRevision = &localeState.TargetRevision
 	}
-	return &intrav1.LoadProgramEventBlockDocumentResponse{
+	return RoomDocument{
 		Document: document, DocumentRevision: localeState.Snapshot.Document.Revision.String(),
 		SourceMetadata: sourceMetadata, BlockMedia: blockMedia, Locale: locale,
 		LocaleExists: localeState.TargetMetadata != nil, LocaleMetadata: localeMetadata,
@@ -140,7 +157,7 @@ func (s *Service) ApplyBlockBatch(ctx context.Context, command ApplyBlockBatchCo
 	if err != nil {
 		return BlockWrite{}, err
 	}
-	documentID, err := loadProgramEventContentDocumentID(ctx, s.db, command.EventID, false)
+	documentID, err := s.contentDocumentID(ctx, command.EventID)
 	if err != nil {
 		return BlockWrite{}, err
 	}
@@ -154,7 +171,7 @@ func (s *Service) ApplyBlockBatch(ctx context.Context, command ApplyBlockBatchCo
 			"contributor_member_ids", "collaboration mutation requires exactly one origin Member",
 		)
 	}
-	sourceState, err := loadProgramEventSourceLocale(ctx, s.db, command.EventID, false)
+	sourceState, err := s.sourceLocale(ctx, command.EventID)
 	if err != nil {
 		return BlockWrite{}, err
 	}
@@ -171,16 +188,39 @@ func (s *Service) ApplyBlockBatch(ctx context.Context, command ApplyBlockBatchCo
 	if command.ExpectedTargetRevision != nil {
 		return BlockWrite{}, domainerr.InvalidField("expected_target_revision", "must be omitted for the source locale")
 	}
-	return s.writeSourceLocale(ctx, write, func(ctx context.Context, tx *gorm.DB, fence contentblock.DomainFence) (contentblock.Result, error) {
-		result, err := s.contentBlocks.ApplyBatch(ctx, tx, batch, fence)
+	return s.writeSourceLocale(ctx, write, func(ctx context.Context, store Store, fence ContentFence) (contentblock.Result, error) {
+		result, err := store.ApplyContentBatch(ctx, batch, fence)
 		if err != nil || !result.Changed {
 			return result, err
 		}
 		// A translation source change needs no extra write: the owning
 		// Program Event root and content document revision are the complete
 		// source authority. No separate translation epoch is stored.
-		return result, tx.Model(&model.ProgramEvent{}).Where("id = ?", write.eventID).Update("updated_at", write.now).Error
+		return result, store.TouchEvent(ctx, write.eventID, write.now)
 	})
+}
+
+// contentDocumentID reads the event's content document in a snapshot of its
+// own, before the write that locks it.
+func (s *Service) contentDocumentID(ctx context.Context, eventID string) (uuid.UUID, error) {
+	var documentID uuid.UUID
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		documentID, err = loadProgramEventContentDocumentID(ctx, store, eventID, NoLock)
+		return err
+	})
+	return documentID, err
+}
+
+// sourceLocale reads the event's source locale in a snapshot of its own.
+func (s *Service) sourceLocale(ctx context.Context, eventID string) (programEventSourceState, error) {
+	var state programEventSourceState
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		state, err = loadProgramEventSourceLocale(ctx, store, eventID, false)
+		return err
+	})
+	return state, err
 }
 
 // collaborationBlockBatch restores the typed batch of command for the room
@@ -221,7 +261,7 @@ type UpdateLocaleMetadataCommand struct {
 	EventID                string
 	Locale                 string
 	Title                  *string
-	Summary                *intrav1.NullableStringMutation
+	Summary                *entityparticipant.StringMutation
 	ExpectedRevision       string
 	ContributorMemberIDs   []string
 	ExpectedTargetRevision *string
@@ -251,11 +291,11 @@ func (s *Service) UpdateLocaleMetadata(ctx context.Context, command UpdateLocale
 	if err != nil {
 		return BlockWrite{}, err
 	}
-	documentID, err := loadProgramEventContentDocumentID(ctx, s.db, command.EventID, false)
+	documentID, err := s.contentDocumentID(ctx, command.EventID)
 	if err != nil {
 		return BlockWrite{}, err
 	}
-	sourceState, err := loadProgramEventSourceLocale(ctx, s.db, command.EventID, false)
+	sourceState, err := s.sourceLocale(ctx, command.EventID)
 	if err != nil {
 		return BlockWrite{}, err
 	}
@@ -286,6 +326,25 @@ func (s *Service) UpdateLocaleMetadata(ctx context.Context, command UpdateLocale
 	return s.writeSourceMetadata(ctx, write, command, expectedRevision, summary)
 }
 
+// programEventSummaryMutationValue is the summary a mutation sets, nil when
+// it clears it.
+func programEventSummaryMutationValue(input *entityparticipant.StringMutation) (*string, error) {
+	switch {
+	case input == nil:
+		return nil, nil
+	case input.Set != nil:
+		value := *input.Set
+		return &value, nil
+	case input.Clear != nil:
+		if !*input.Clear {
+			return nil, domainerr.InvalidField("summary", "clear must be true")
+		}
+		return nil, nil
+	default:
+		return nil, domainerr.InvalidField("summary", "set or clear is required")
+	}
+}
+
 // writeSourceMetadata stores a source locale title or summary edit as a
 // revision of the event's document.
 func (s *Service) writeSourceMetadata(
@@ -303,17 +362,17 @@ func (s *Service) writeSourceMetadata(
 		write.fields = append(write.fields, "summary")
 	}
 	var sourceLocale string
-	written, err := s.writeSourceLocale(ctx, write, func(ctx context.Context, tx *gorm.DB, fence contentblock.DomainFence) (contentblock.Result, error) {
-		advanced, err := s.contentBlocks.AdvanceRevision(
-			ctx, tx, contentblock.AdvanceInput{DocumentID: write.documentID, ExpectedRevision: expectedRevision}, fence,
-			func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-				current, err := loadProgramEventSourceLocale(ctx, tx, command.EventID, true)
+	written, err := s.writeSourceLocale(ctx, write, func(ctx context.Context, store Store, fence ContentFence) (contentblock.Result, error) {
+		advanced, err := store.AdvanceContentRevision(
+			ctx, contentblock.AdvanceInput{DocumentID: write.documentID, ExpectedRevision: expectedRevision}, fence,
+			func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
+				current, err := loadProgramEventSourceLocale(ctx, store, command.EventID, true)
 				if err != nil {
 					return contentblock.MetadataEffect{}, err
 				}
 				sourceLocale = current.SourceLocale
 				changed, affectsSource, err := applyProgramEventLocaleMetadataMutation(
-					ctx, tx, command.EventID, sourceLocale, command.Title, patchTitle, summary, patchSummary, write.now,
+					ctx, store, command.EventID, sourceLocale, command.Title, patchTitle, summary, patchSummary, write.now,
 				)
 				return contentblock.MetadataEffect{Changed: changed, AffectsTranslationSource: affectsSource}, err
 			},
@@ -350,15 +409,16 @@ type collaborationWrite struct {
 	now          time.Time
 }
 
-// spec is the pipeline of w: the event root is locked and must still own
-// the document before the contributors' current authority is re-resolved.
-func (s *Service) collaborationSpec(w collaborationWrite, change func(context.Context, *gorm.DB) (BlockWrite, error), signal func(BlockWrite) contentsignal.LocaleChange, operation sharedtelemetry.AuditItemOperation) mutation.Spec[BlockWrite] {
-	return mutation.Spec[BlockWrite]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
-			return lockOwningProgramEventRoot(ctx, tx, w.eventID, w.documentID)
+// collaborationSpec is the pipeline of w: the event root is locked and must
+// still own the document before the contributors' current authority is
+// re-resolved.
+func (s *Service) collaborationSpec(w collaborationWrite, change func(context.Context, Store) (BlockWrite, error), signal func(BlockWrite) ContentUpdate, operation sharedtelemetry.AuditItemOperation) mutation.StoreSpec[BlockWrite, Store] {
+	return mutation.StoreSpec[BlockWrite, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			return lockOwningProgramEventRoot(ctx, store, w.eventID, w.documentID)
 		},
-		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-			return requireProgramEventContentContributors(ctx, tx, s.checkpoints, w.eventID, w.contributors)
+		Access: mutation.Checked(func(ctx context.Context, store Store) error {
+			return store.RequireCurrentContributors(ctx, w.eventID, w.contributors)
 		}),
 		Change: change,
 		Audit: func(written BlockWrite) mutation.Audit {
@@ -367,11 +427,11 @@ func (s *Service) collaborationSpec(w collaborationWrite, change func(context.Co
 			}
 			return localeContentAudit(w.contributors[0], w.eventID, w.locale, operation)
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, written BlockWrite) error {
+		Outbox: func(ctx context.Context, store Store, written BlockWrite) error {
 			if !written.Changed {
 				return nil
 			}
-			return contentsignal.PublishInTransaction(ctx, tx, s.signals, buildProgramEventLocaleContentUpdatedEvent(signal(written)))
+			return store.PublishContentUpdate(ctx, signal(written))
 		},
 	}
 }
@@ -380,8 +440,8 @@ func (s *Service) writeTargetLocale(ctx context.Context, w collaborationWrite, i
 	input.EventID, input.DocumentID, input.Locale, input.Now = w.eventID, w.documentID, w.locale, w.now
 	input.Fence = lockedContentFence(w.eventID, w.documentID)
 	written, err := mutation.Run(ctx, s.mutations, s.collaborationSpec(w,
-		func(ctx context.Context, tx *gorm.DB) (BlockWrite, error) {
-			output, err := applyProgramEventTargetLocaleMutation(ctx, tx, s.contentBlocks, input)
+		func(ctx context.Context, store Store) (BlockWrite, error) {
+			output, err := applyProgramEventTargetLocaleMutation(ctx, store, input)
 			if err != nil {
 				return BlockWrite{}, err
 			}
@@ -390,10 +450,10 @@ func (s *Service) writeTargetLocale(ctx context.Context, w collaborationWrite, i
 				ChangedLocales: output.Result.ChangedLocales, Locale: w.locale, TargetRevision: &output.TargetRevision,
 			}, nil
 		},
-		func(written BlockWrite) contentsignal.LocaleChange {
-			return contentsignal.LocaleChange{
-				EntityID: w.eventID, Fields: w.fields, DocumentRevision: written.DocumentRevision,
-				Contributors: w.contributors, Source: managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		func(written BlockWrite) ContentUpdate {
+			return ContentUpdate{
+				EventID: w.eventID, Fields: w.fields, DocumentRevision: written.DocumentRevision,
+				Contributors: w.contributors, Source: SourceCollaboration,
 				Locale: w.locale, TargetRevision: written.TargetRevision,
 			}
 		},
@@ -408,11 +468,11 @@ func (s *Service) writeTargetLocale(ctx context.Context, w collaborationWrite, i
 func (s *Service) writeSourceLocale(
 	ctx context.Context,
 	w collaborationWrite,
-	store func(context.Context, *gorm.DB, contentblock.DomainFence) (contentblock.Result, error),
+	write func(context.Context, Store, ContentFence) (contentblock.Result, error),
 ) (BlockWrite, error) {
 	written, err := mutation.Run(ctx, s.mutations, s.collaborationSpec(w,
-		func(ctx context.Context, tx *gorm.DB) (BlockWrite, error) {
-			result, err := store(ctx, tx, lockedContentFence(w.eventID, w.documentID))
+		func(ctx context.Context, store Store) (BlockWrite, error) {
+			result, err := write(ctx, store, lockedContentFence(w.eventID, w.documentID))
 			if err != nil {
 				return BlockWrite{}, normalizeProgramEventContentBlockError(err)
 			}
@@ -421,10 +481,10 @@ func (s *Service) writeSourceLocale(
 				SourceChanged: result.TranslationSourceChanged, ChangedLocales: result.ChangedLocales, Locale: w.locale,
 			}, nil
 		},
-		func(written BlockWrite) contentsignal.LocaleChange {
-			return contentsignal.LocaleChange{
-				EntityID: w.eventID, Fields: w.fields, DocumentRevision: written.DocumentRevision,
-				Contributors: w.contributors, Source: managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		func(written BlockWrite) ContentUpdate {
+			return ContentUpdate{
+				EventID: w.eventID, Fields: w.fields, DocumentRevision: written.DocumentRevision,
+				Contributors: w.contributors, Source: SourceCollaboration,
 				Locale: w.locale, DocumentStateChanged: true,
 			}
 		},
@@ -439,20 +499,12 @@ func (s *Service) writeSourceLocale(
 // lockOwningProgramEventRoot locks the event row and requires it to still
 // own documentID: the event can be deleted or its document replaced while a
 // collaboration document is open.
-func lockOwningProgramEventRoot(ctx context.Context, tx *gorm.DB, eventID string, documentID uuid.UUID) error {
-	var root programEventContentDocumentRoot
-	if err := tx.WithContext(ctx).
-		Table("program_event").
-		Select("content_document_id").
-		Where("id = ?", eventID).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return domainerr.ResourceNotFound("program event", eventID)
-		}
-		return err
+func lockOwningProgramEventRoot(ctx context.Context, store Store, eventID string, documentID uuid.UUID) error {
+	reference, err := store.ContentDocumentID(ctx, eventID, UpdateLock)
+	if err != nil {
+		return notFoundAs(err, domainerr.ResourceNotFound("program event", eventID))
 	}
-	if !root.ContentDocumentID.Valid || root.ContentDocumentID.String != documentID.String() {
+	if reference == nil || *reference != documentID.String() {
 		return domainerr.Precondition("Program Event content document ownership changed; reload before saving")
 	}
 	return nil
@@ -460,12 +512,12 @@ func lockOwningProgramEventRoot(ctx context.Context, tx *gorm.DB, eventID string
 
 // lockedContentFence is the content document fence of a mutation that
 // already locked the owning root of documentID and authorized the caller.
-func lockedContentFence(eventID string, documentID uuid.UUID) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, requested uuid.UUID) (contentblock.DomainContext, error) {
+func lockedContentFence(eventID string, documentID uuid.UUID) ContentFence {
+	return func(ctx context.Context, store Store, requested uuid.UUID) (contentblock.DomainContext, error) {
 		if requested != documentID {
 			return contentblock.DomainContext{}, domainerr.Precondition("Program Event content document ownership changed; reload before saving")
 		}
-		sourceState, err := loadProgramEventSourceLocale(ctx, tx, eventID, true)
+		sourceState, err := loadProgramEventSourceLocale(ctx, store, eventID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}

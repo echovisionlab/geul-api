@@ -1,6 +1,6 @@
 //go:build integration
 
-package programevent
+package programevent_test
 
 import (
 	"context"

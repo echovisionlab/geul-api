@@ -1,46 +1,19 @@
 package programevent
 
 import (
-	"context"
 	"strings"
 	"time"
 	"unicode"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func toProtoProgramEventSummary(event *model.ProgramEvent, posterFileID *string) *managev1.ProgramEventSummary {
-	slug := event.Slug
-	return &managev1.ProgramEventSummary{
-		Id:           event.ID,
-		Status:       programEventStatusToProto(event.Status),
-		SourceLocale: event.SourceLocale,
-		Title:        event.Title,
-		Slug:         &slug,
-		TypeId:       event.TypeID,
-		SeriesId:     event.SeriesID,
-		StartsAt:     timestamppb.New(event.StartsAt),
-		EndsAt:       timestampProtoPtr(event.EndsAt),
-		Timezone:     event.Timezone,
-		LocationMode: locationModeToProto(event.LocationMode),
-		MapPlaceId:   event.MapPlaceID,
-		PosterFileId: posterFileID,
-		PublishedAt:  timestampProtoPtr(event.PublishedAt),
-		UpdatedAt:    timestamppb.New(event.UpdatedAt),
-	}
-}
-
-func collectProgramEventIDs(events []model.ProgramEvent) []string {
+func collectProgramEventIDs(events []Event) []string {
 	ids := make([]string, 0, len(events))
 	for i := range events {
 		ids = append(ids, events[i].ID)
@@ -75,13 +48,13 @@ func normalizeRequiredProgramEventLocale(field, locale string) (string, error) {
 	return *normalized, nil
 }
 
-func validateProgramEventLocation(mode model.ProgramEventLocationMode, mapPlaceID *string) error {
+func validateProgramEventLocation(mode LocationMode, mapPlaceID *string) error {
 	switch mode {
-	case model.ProgramEventLocationModeMapPlace, model.ProgramEventLocationModeHybrid:
+	case LocationModeMapPlace, LocationModeHybrid:
 		if mapPlaceID == nil || strings.TrimSpace(*mapPlaceID) == "" {
 			return domainerr.Required("map_place_id")
 		}
-	case model.ProgramEventLocationModeOnline, model.ProgramEventLocationModeTBA:
+	case LocationModeOnline, LocationModeTBA:
 	default:
 		return domainerr.InvalidField("location_mode", "unsupported location mode")
 	}
@@ -95,14 +68,8 @@ func validateProgramEventTimeRange(startsAt time.Time, endsAt *time.Time) error 
 	return nil
 }
 
-func programEventSeriesStatusStorageValue(status managev1.ProgramEventSeriesStatus) (model.ProgramEventStatus, error) {
-	stored, ok := programEventSeriesStatusFromProto(status)
-	if !ok {
-		return "", domainerr.InvalidField("status", "must be draft or published")
-	}
-	return stored, nil
-}
-
+// mapProgramEventSeriesFilters rewrites a status filter's series API names
+// to the stored values.
 func mapProgramEventSeriesFilters(filters []*commonv1.FilterSpec) ([]*commonv1.FilterSpec, error) {
 	mapped := make([]*commonv1.FilterSpec, 0, len(filters))
 	for _, filter := range filters {
@@ -132,8 +99,8 @@ func mapProgramEventSeriesFilters(filters []*commonv1.FilterSpec) ([]*commonv1.F
 	return mapped, nil
 }
 
-func programEventSeriesFilterStorageValue(value string) (model.ProgramEventStatus, error) {
-	stored, ok := programEventSeriesStatusFilterValues[value]
+func programEventSeriesFilterStorageValue(value string) (Status, error) {
+	stored, ok := seriesStatusFilterValues[value]
 	if !ok {
 		return "", domainerr.InvalidField("status", "must be draft or published")
 	}
@@ -146,21 +113,6 @@ func pageLimitOffset(limit, offset int32) (int32, int32) {
 		limit = 50
 	}
 	return limit, offset
-}
-
-func timestampPtr(ts *timestamppb.Timestamp) *time.Time {
-	if ts == nil {
-		return nil
-	}
-	value := ts.AsTime()
-	return &value
-}
-
-func timestampProtoPtr(ts *time.Time) *timestamppb.Timestamp {
-	if ts == nil {
-		return nil
-	}
-	return timestamppb.New(*ts)
 }
 
 func nullableString(value *string) *string {
@@ -195,28 +147,6 @@ func normalizedStringPtr(value *string) *string {
 	return &trimmed
 }
 
-func nextProgramEventCreditSortOrder(ctx context.Context, db *gorm.DB, eventID string) (int32, error) {
-	var row struct {
-		SortOrder int32 `gorm:"column:sort_order"`
-	}
-	if err := db.WithContext(ctx).
-		Raw("SELECT COALESCE(MAX(sort_order), -1) + 1 AS sort_order FROM program_event_credit WHERE event_id = ?", eventID).
-		Scan(&row).Error; err != nil {
-		return 0, err
-	}
-	return row.SortOrder, nil
-}
-
-func touchProgramEvent(ctx context.Context, db *gorm.DB, eventID string) error {
-	if err := db.WithContext(ctx).
-		Model(&model.ProgramEvent{}).
-		Where("id = ?", eventID).
-		Update("updated_at", time.Now().UTC()).Error; err != nil {
-		return err
-	}
-	return nil
-}
-
 // uuidParseCanonical parses value as the canonical UUID field names.
 func uuidParseCanonical(value, field string) (uuid.UUID, error) {
 	parsed, err := uuidutil.ParseCanonical(value, field)
@@ -224,4 +154,53 @@ func uuidParseCanonical(value, field string) (uuid.UUID, error) {
 		return uuid.Nil, domainerr.InvalidField(field, err.Error())
 	}
 	return parsed, nil
+}
+
+func sameNullableString(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func sameNullableTime(left, right *time.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(*right)
+}
+
+func sameNullableInt32(left, right *int32) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func sameStringSlice(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+// pagination is where a page of limit and offset sits among total matches,
+// counting the rows it holds.
+func pagination(limit, offset int32, rows int, total int64) Pagination {
+	return Pagination{
+		Total: int32(total), Limit: limit, Offset: offset,
+		HasMore: int64(offset)+int64(rows) < total,
+	}
 }

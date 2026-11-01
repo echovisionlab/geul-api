@@ -154,12 +154,12 @@ func TestDocumentDiscoveryListsProgramEvents(t *testing.T) {
 	updatedAt := time.Date(2026, time.August, 28, 1, 2, 3, 0, time.UTC)
 	slug := "live-set"
 	programEvents := &recordingProgramEventDocumentDiscovery{list: programevent.EventList{
-		Events: []*managev1.ProgramEventSummary{{
-			Id: discoveryDocumentID, Title: "Live Set", Slug: &slug, SourceLocale: "ko",
-			Status:    managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED,
-			UpdatedAt: timestamppb.New(updatedAt),
-		}},
-		Pagination: &commonv1.PaginationResponse{Total: 1, Limit: 10},
+		Events: []programevent.EventSummary{{Event: programevent.Event{
+			ID: discoveryDocumentID, Title: "Live Set", Slug: slug, SourceLocale: "ko",
+			Status:    programevent.StatusPublished,
+			UpdatedAt: updatedAt,
+		}}},
+		Pagination: programevent.Pagination{Total: 1, Limit: 10},
 	}}
 	tools, err := NewDocumentDiscoveryTools(&recordingPostDocumentDiscovery{}, &recordingWorkDocumentDiscovery{}, &recordingPageDocumentDiscovery{}, programEvents, &recordingReleaseDocumentDiscovery{}, &recordingArtistDocumentDiscovery{})
 	if err != nil {
@@ -374,7 +374,7 @@ func (discovery *recordingReleaseDocumentDiscovery) ListReleasesAdmin(ctx contex
 }
 
 type recordingArtistDocumentDiscovery struct {
-	ctx      context.Context
+	ctx     context.Context
 	request *connect.Request[managev1.ListArtistsAdminRequest]
 	page    artist.AdminArtistPage
 	err     error

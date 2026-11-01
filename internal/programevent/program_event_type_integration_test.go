@@ -1,10 +1,12 @@
 //go:build integration
 
-package programevent
+package programevent_test
 
 import (
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/programevent"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
@@ -55,7 +57,7 @@ func TestProgramEventTypeAdminEditAndDeleteBoundaryIntegration(t *testing.T) {
 	}))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 
-	eventService := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: contentBlocks, Media: newProgramEventRuntime("https://cdn.example.com"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.com")}))
+	eventService := programevent.NewConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{ContentBlocks: contentBlocks, Media: newProgramEventRuntime("https://cdn.example.com"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.com")}))
 	_, err = eventService.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title:        "Uses Event Type " + suffix,
 		Slug:         "uses-event-type-" + suffix,

@@ -1,6 +1,6 @@
 //go:build integration
 
-package programevent
+package programevent_test
 
 import (
 	"context"
@@ -8,11 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/programevent"
+	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -52,7 +54,7 @@ func TestInternalProgramEventServiceBlockDocumentLifecycleIntegration(t *testing
 	}))
 	require.NoError(t, err)
 
-	eventSvc := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: store, Media: newProgramEventRuntime("https://cdn.example.com"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), MediaHydrator: files}))
+	eventSvc := programevent.NewConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{ContentBlocks: store, Media: newProgramEventRuntime("https://cdn.example.com"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), MediaHydrator: files}))
 	startsAt := time.Now().UTC().Add(3 * time.Hour)
 	created, err := eventSvc.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title:        "Internal Program Event " + suffix,
@@ -69,7 +71,7 @@ func TestInternalProgramEventServiceBlockDocumentLifecycleIntegration(t *testing
 
 	sessionID := insertProgramEventIntegrationSession(t, db, adminID)
 	publisher := &capturingAsyncPublisher{}
-	internalSvc := NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Audit: apitelemetry.NewDurableWriter(db), Signals: publisher, ContentBlocks: store, MediaHydrator: files}))
+	internalSvc := programevent.NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Audit: apitelemetry.NewDurableWriter(db), Signals: publisher, ContentBlocks: store, MediaHydrator: files}))
 	loaded, err := internalSvc.LoadProgramEventBlockDocument(ctx, connect.NewRequest(&intrav1.LoadProgramEventBlockDocumentRequest{
 		EventId:   created.Msg.Id,
 		Locale:    "en",
@@ -168,14 +170,14 @@ func TestInternalProgramEventServiceBlockDocumentLifecycleIntegration(t *testing
 		ContentBlockLocaleOverlay: programEventParagraphOverlay(blockID, "ko", "must not win"),
 	}
 	staleInterchangeJob := &model.TranslationJob{
-		EntityType: EntityType, EntityID: created.Msg.Id,
+		EntityType: programevent.EntityType, EntityID: created.Msg.Id,
 		SourceLocale: "en", TargetLocale: "ko", RequestedByMemberID: memberID,
 	}
 	err = db.Transaction(func(tx *gorm.DB) error {
-		return applyProgramEventTypedTranslationCandidateWithDB(
-			ctx, tx, store, staleInterchangeJob, staleInterchangeCandidate,
-			translation.EntryWrite{Now: time.Now().UTC()}, &targetRevision, targetlocale.RevisionObserved,
-			apitelemetry.NewDurableWriter(db),
+		return programevent.ApplyTranslationInterchangeCandidate(
+			ctx, programeventpostgres.Bind(tx, programeventpostgres.Ports{ContentBlocks: store}, apitelemetry.NewDurableWriter(db)),
+			translationJob(staleInterchangeJob), staleInterchangeCandidate,
+			translation.EntryWrite{Now: time.Now().UTC()}, &targetRevision,
 		)
 	})
 	var targetConflict *translation.TargetRevisionConflict
@@ -263,16 +265,17 @@ func TestInternalProgramEventServiceBlockDocumentLifecycleIntegration(t *testing
 		ContentBlockLocaleDeletes: []string{blockID},
 	}
 	providerJob := &model.TranslationJob{
-		EntityType: EntityType, EntityID: created.Msg.Id,
+		EntityType: programevent.EntityType, EntityID: created.Msg.Id,
 		SourceLocale: "en", TargetLocale: "ko", RequestedByMemberID: providerRequesterID,
 	}
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return ApplyTypedTranslationCandidateWithDB(
-			ctx, tx, store, providerJob, providerCandidate,
-			translation.EntryWrite{Now: time.Now().UTC()}, apitelemetry.NewDurableWriter(db),
+		return programevent.ApplyTypedTranslationCandidate(
+			ctx, programeventpostgres.Bind(tx, programeventpostgres.Ports{ContentBlocks: store}, apitelemetry.NewDurableWriter(db)),
+			translationJob(providerJob), providerCandidate,
+			translation.EntryWrite{Now: time.Now().UTC()},
 		)
 	}))
-	afterProvider, err := LoadTranslationSourceDocument(ctx, db, store, created.Msg.Id)
+	afterProvider, err := loadTranslationSource(ctx, db, store, created.Msg.Id)
 	require.NoError(t, err)
 	require.Equal(t, current.Msg.DocumentRevision, afterProvider.ContentDocumentRevision)
 	require.NoError(t, db.Table("content_block_locale").Where("block_id = ? AND locale = 'ko'", blockID).Count(&localeCount).Error)
@@ -311,7 +314,7 @@ func TestProgramEventSourceEditAndSwitchPreserveTargetAndRequestedJobIntegration
 	}))
 	require.NoError(t, err)
 
-	eventService := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: store, Media: newProgramEventRuntime("https://cdn.example.com"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), MediaHydrator: files}))
+	eventService := programevent.NewConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{ContentBlocks: store, Media: newProgramEventRuntime("https://cdn.example.com"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), MediaHydrator: files}))
 	created, err := eventService.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title:        "Program Event translation invariant " + suffix,
 		Slug:         "program-event-translation-invariant-" + suffix,
@@ -332,7 +335,7 @@ func TestProgramEventSourceEditAndSwitchPreserveTargetAndRequestedJobIntegration
 	jobID := testutil.IntegrationUUID()
 	require.NoError(t, db.Create(&model.TranslationJob{
 		ID:                    jobID,
-		EntityType:            EntityType,
+		EntityType:            programevent.EntityType,
 		EntityID:              created.Msg.Id,
 		TargetLocale:          "ko",
 		SourceLocale:          "en",
@@ -360,7 +363,7 @@ func TestProgramEventSourceEditAndSwitchPreserveTargetAndRequestedJobIntegration
 	targetBefore := loadTarget()
 	jobBefore := loadJob()
 
-	internalService := NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Signals: &capturingAsyncPublisher{}, ContentBlocks: store, MediaHydrator: files}))
+	internalService := programevent.NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Signals: &capturingAsyncPublisher{}, ContentBlocks: store, MediaHydrator: files}))
 	memberID := testutil.PostIntegrationMemberID(adminID)
 	updatedSummary := "Source summary after edit"
 	metadataUpdated, err := internalService.UpdateProgramEventLocaleMetadata(ctx, connect.NewRequest(&intrav1.UpdateProgramEventLocaleMetadataRequest{
@@ -404,7 +407,7 @@ func TestProgramEventFileBlockKeepsBaseIdentityAndLocalizedCaptionIntegration(t 
 	}))
 	require.NoError(t, err)
 
-	eventSvc := NewConnectHandler(newIntegrationService(t, db, spiceDB, Deps{ContentBlocks: store, Media: newProgramEventRuntime("https://cdn.example.com"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), MediaHydrator: files}))
+	eventSvc := programevent.NewConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{ContentBlocks: store, Media: newProgramEventRuntime("https://cdn.example.com"), CreditMembers: newProgramEventCreditMemberSummaries(db, "https://cdn.example.com"), MediaHydrator: files}))
 	created, err := eventSvc.CreateProgramEvent(ctx, connect.NewRequest(&managev1.CreateProgramEventRequest{
 		Title:        "Program event media name " + suffix,
 		Slug:         "program-event-media-name-" + suffix,
@@ -417,7 +420,7 @@ func TestProgramEventFileBlockKeepsBaseIdentityAndLocalizedCaptionIntegration(t 
 	require.NoError(t, err)
 
 	sessionID := insertProgramEventIntegrationSession(t, db, adminID)
-	internalSvc := NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, Deps{Audit: apitelemetry.NewDurableWriter(db), Signals: &capturingAsyncPublisher{}, ContentBlocks: store, MediaHydrator: files}))
+	internalSvc := programevent.NewInternalConnectHandler(newIntegrationService(t, db, spiceDB, integrationDeps{Audit: apitelemetry.NewDurableWriter(db), Signals: &capturingAsyncPublisher{}, ContentBlocks: store, MediaHydrator: files}))
 	loaded, err := internalSvc.LoadProgramEventBlockDocument(ctx, connect.NewRequest(&intrav1.LoadProgramEventBlockDocumentRequest{
 		EventId:   created.Msg.Id,
 		Locale:    "en",
@@ -634,35 +637,21 @@ func seedProgramEventTargetLocaleForIntegration(
 	contributorID string,
 ) string {
 	t.Helper()
-	documentID, err := loadProgramEventContentDocumentID(t.Context(), db, eventID, false)
-	require.NoError(t, err)
 	expectedRevision := uuid.MustParse(documentRevision)
 	contributor := uuid.MustParse(contributorID)
-	var output programEventTargetLocaleMutationResult
+	var created bool
+	var targetRevision string
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		var applyErr error
-		output, applyErr = applyProgramEventTargetLocaleMutation(
-			t.Context(), tx, store,
-			programEventTargetLocaleMutationInput{
-				EventID: eventID, DocumentID: documentID, Locale: locale,
-				Batch: contentblock.Batch{
-					DocumentID: documentID, ExpectedRevision: expectedRevision,
-					ContributorMemberIDs: []uuid.UUID{contributor},
-				},
-				ExpectedDocumentRevision: expectedRevision,
-				Policy:                   targetlocale.Policy{AllowCreate: true, SeedSource: true},
-				Now:                      time.Now().UTC(),
-				Fence: programEventContentDocumentFence(
-					eventID,
-					func(context.Context, *gorm.DB) error { return nil },
-				),
-			},
+		created, targetRevision, applyErr = programevent.SeedTargetLocale(
+			t.Context(), programeventpostgres.Bind(tx, programeventpostgres.Ports{ContentBlocks: store}, nil).Store,
+			eventID, locale, expectedRevision, contributor,
 		)
 		return applyErr
 	}))
-	require.True(t, output.LocaleCreated)
-	require.NotEmpty(t, output.TargetRevision)
-	return output.TargetRevision
+	require.True(t, created)
+	require.NotEmpty(t, targetRevision)
+	return targetRevision
 }
 
 type programEventIntegrationFileReuseAuthorizer struct{}

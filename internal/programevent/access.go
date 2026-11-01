@@ -5,18 +5,18 @@ import (
 	"errors"
 	"fmt"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 type programEventAction = auth.ResourceAction
+
+// LockActive locks the principal's Member and Identity in the caller's
+// transaction and reports whether they are active.
+type LockActive func(*auth.UserInfo) (bool, error)
 
 func authenticationRequired() *domainerr.Error {
 	return domainerr.New(domainerr.Unauthenticated, "", "authentication required")
@@ -24,6 +24,19 @@ func authenticationRequired() *domainerr.Error {
 
 func noPermission(action string) *domainerr.Error {
 	return domainerr.Denied(fmt.Sprintf("no permission to %s this program event", action))
+}
+
+func eventNotFound(eventID string) *domainerr.Error {
+	return domainerr.ResourceNotFound("program event", eventID)
+}
+
+// notFoundAs answers a missing event as answer and passes every other error
+// through.
+func notFoundAs(err error, answer error) error {
+	if errors.Is(err, ErrEventNotFound) {
+		return answer
+	}
+	return err
 }
 
 // rejected reports whether err is a use-case rejection of kind, so a caller
@@ -43,7 +56,7 @@ func rejected(err error, kinds ...domainerr.Kind) bool {
 
 func requireProgramEventPermissionForSubject(
 	ctx context.Context,
-	checker CollaborationPermissionChecker,
+	checker ActorChecker,
 	eventID string,
 	action programEventAction,
 	subject auth.AccountIdentitySubject,
@@ -68,7 +81,7 @@ func requireProgramEventPermissionForSubject(
 
 func requireProgramEventPermission(
 	ctx context.Context,
-	checker CollaborationPermissionChecker,
+	checker authz.AuthorizationDecisionChecker,
 	eventID string,
 	action programEventAction,
 ) error {
@@ -94,15 +107,15 @@ func requireProgramEventPermission(
 	return nil
 }
 
-func programEventViewAction(status model.ProgramEventStatus) programEventAction {
-	if status == model.ProgramEventStatusArchived {
+func programEventViewAction(status Status) programEventAction {
+	if status == StatusArchived {
 		return policyv1.ProgramEvent.ViewArchived
 	}
 	return policyv1.ProgramEvent.View
 }
 
-func programEventMutationAction(status model.ProgramEventStatus, normal programEventAction) programEventAction {
-	if status == model.ProgramEventStatusArchived {
+func programEventMutationAction(status Status, normal programEventAction) programEventAction {
+	if status == StatusArchived {
 		return policyv1.ProgramEvent.EditArchived
 	}
 	return normal
@@ -113,7 +126,7 @@ func programEventMutationAction(status model.ProgramEventStatus, normal programE
 // inactive principal as a missing event, for reads.
 func requireActiveProgramEventPrincipal(
 	ctx context.Context,
-	tx *gorm.DB,
+	lockActive LockActive,
 	actionName string,
 	maskNotFound bool,
 ) error {
@@ -121,7 +134,7 @@ func requireActiveProgramEventPrincipal(
 	if principal == nil || !principal.Authenticated {
 		return authenticationRequired()
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	active, err := lockActive(principal)
 	if err != nil {
 		return err
 	}
@@ -134,18 +147,26 @@ func requireActiveProgramEventPrincipal(
 	return noPermission(actionName)
 }
 
+// readLockActive is the identity fence of a read, through the Store of its
+// snapshot.
+func readLockActive(ctx context.Context, store Store) LockActive {
+	return func(principal *auth.UserInfo) (bool, error) {
+		return store.LockActivePrincipal(ctx, principal)
+	}
+}
+
 // authorizeLockedProgramEvent requires the active principal to hold normal,
 // or EditArchived while the locked event is archived.
 func authorizeLockedProgramEvent(
 	ctx context.Context,
-	tx *gorm.DB,
-	checker CollaborationPermissionChecker,
+	lockActive LockActive,
+	checker authz.AuthorizationDecisionChecker,
 	eventID string,
-	status model.ProgramEventStatus,
+	status Status,
 	actionName string,
 	normal programEventAction,
 ) error {
-	if err := requireActiveProgramEventPrincipal(ctx, tx, actionName, false); err != nil {
+	if err := requireActiveProgramEventPrincipal(ctx, lockActive, actionName, false); err != nil {
 		return err
 	}
 	return requireProgramEventPermission(ctx, checker, eventID, programEventMutationAction(status, normal))
@@ -154,102 +175,76 @@ func authorizeLockedProgramEvent(
 // lockProgramEventForMutation serializes a Program Event mutation with
 // lifecycle transitions. Archived is a visibility state; its general
 // mutations remain permitted with EditArchived.
-func lockProgramEventForMutation(ctx context.Context, db *gorm.DB, eventID string) error {
-	var event struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := db.WithContext(ctx).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Table("program_event").
-		Select("id").
-		Where("id = ?", eventID).
-		Take(&event).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return domainerr.ResourceNotFound("program event", eventID)
-		}
-		return err
-	}
-	return nil
+func lockProgramEventForMutation(ctx context.Context, store Store, eventID string) error {
+	return notFoundAs(store.LockEventID(ctx, eventID), eventNotFound(eventID))
 }
 
 // requireLockedProgramEventAction reads the locked event's lifecycle and
 // requires the active principal to hold normal on it.
 func requireLockedProgramEventAction(
 	ctx context.Context,
-	db *gorm.DB,
-	checker CollaborationPermissionChecker,
+	store Store,
+	lockActive LockActive,
+	checker authz.AuthorizationDecisionChecker,
 	eventID string,
 	normal programEventAction,
 ) error {
-	var event struct {
-		Status model.ProgramEventStatus `gorm:"column:status"`
-	}
-	if err := db.WithContext(ctx).Table("program_event").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Select("status").Where("id = ?", eventID).Take(&event).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return domainerr.ResourceNotFound("program event", eventID)
-		}
-		return err
+	status, err := store.EventStatus(ctx, eventID, UpdateLock)
+	if err != nil {
+		return notFoundAs(err, eventNotFound(eventID))
 	}
 	can, err := normal(eventID)
 	if err != nil {
 		return domainerr.InvalidField("resource.id", "must be a canonical resource UUID").WithCause(err)
 	}
-	return authorizeLockedProgramEvent(ctx, db, checker, eventID, event.Status, can.Action().Name(), normal)
+	return authorizeLockedProgramEvent(ctx, lockActive, checker, eventID, status, can.Action().Name(), normal)
 }
 
 // lockedEventEdit is the Lock and Access of a mutation of one Program Event
 // and its children: the event row is locked before the fresh check of
 // normal, so a role revoked while the mutation waited on the row is
 // observed and a missing event answers not found first.
-func (s *Service) lockedEventEdit(eventID string, normal programEventAction) (func(context.Context, *gorm.DB) error, mutation.Access) {
-	lock := func(ctx context.Context, tx *gorm.DB) error {
-		return lockProgramEventForMutation(ctx, tx, eventID)
+func (s *Service) lockedEventEdit(eventID string, normal programEventAction) (func(context.Context, Store) error, mutation.Access) {
+	lock := func(ctx context.Context, store Store) error {
+		return lockProgramEventForMutation(ctx, store, eventID)
 	}
-	return lock, mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-		return requireLockedProgramEventAction(ctx, tx, s.spiceDB, eventID, normal)
+	return lock, mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+		return requireLockedProgramEventAction(ctx, store, lockActive, s.spiceDB, eventID, normal)
 	})
 }
 
 // RequireLockedSourceLocaleEdit authorizes a source locale edit of the event
-// inside another domain's transaction.
+// inside another domain's transaction; lockActive is that transaction's
+// identity fence.
 func RequireLockedSourceLocaleEdit(
 	ctx context.Context,
-	tx *gorm.DB,
-	checker CollaborationPermissionChecker,
+	store Store,
+	checker authz.AuthorizationDecisionChecker,
+	lockActive LockActive,
 	eventID string,
 ) error {
-	return requireLockedProgramEventAction(ctx, tx, checker, eventID, policyv1.ProgramEvent.Edit)
+	return requireLockedProgramEventAction(ctx, store, lockActive, checker, eventID, policyv1.ProgramEvent.Edit)
 }
 
 // RequireLockedView authorizes a read of the event inside another domain's
 // transaction; an unreadable event answers not found.
 func RequireLockedView(
 	ctx context.Context,
-	tx *gorm.DB,
-	checker CollaborationPermissionChecker,
+	store Store,
+	checker authz.AuthorizationDecisionChecker,
+	lockActive LockActive,
 	eventID string,
 ) error {
-	var event struct {
-		Status model.ProgramEventStatus `gorm:"column:status"`
+	status, err := store.EventStatus(ctx, eventID, ShareLock)
+	if err != nil {
+		return notFoundAs(err, eventNotFound(eventID))
 	}
-	if err := tx.WithContext(ctx).Table("program_event").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-		Select("status").Where("id = ?", eventID).Take(&event).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return domainerr.ResourceNotFound("program event", eventID)
-		}
+	if err := requireActiveProgramEventPrincipal(ctx, lockActive, "view", true); err != nil {
 		return err
 	}
-	if err := requireActiveProgramEventPrincipal(ctx, tx, "view", true); err != nil {
-		return err
-	}
-	if err := requireProgramEventPermission(
-		ctx, checker, eventID, programEventViewAction(event.Status),
-	); err != nil {
+	if err := requireProgramEventPermission(ctx, checker, eventID, programEventViewAction(status)); err != nil {
 		if rejected(err, domainerr.PermissionDenied) {
-			return domainerr.ResourceNotFound("program event", eventID).WithCause(err)
+			return eventNotFound(eventID).WithCause(err)
 		}
 		return err
 	}

@@ -12,7 +12,6 @@ import (
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/post"
-	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/series"
 	translationcore "github.com/echovisionlab/geul-api/internal/translation"
 	translationapplication "github.com/echovisionlab/geul-api/internal/translation/application"
@@ -29,7 +28,6 @@ type translationServiceRegistration struct {
 	emailAuthoringReferences emailauthoring.CampaignDeliveryReferences
 	legalDocuments           *legal.AIDocumentService
 	internalFormService      *formdomain.Service
-	programEventService      *programevent.Service
 	seriesService            *series.Service
 	fileService              *filemedia.Service
 }
@@ -49,7 +47,6 @@ func (r translationServiceRegistration) register() (*translationapplication.Serv
 	emailAuthoringReferences := r.emailAuthoringReferences
 	legalAIDocumentService := r.legalDocuments
 	internalFormService := r.internalFormService
-	programEventService := r.programEventService
 	seriesService := r.seriesService
 	fileService := r.fileService
 	postInterchange, err := post.NewTranslationInterchange(telemetryWriter)
@@ -125,7 +122,7 @@ func (r translationServiceRegistration) register() (*translationapplication.Serv
 		},
 		{
 			Domain: translationcore.KindProgramEvent,
-			Port:   translationadapter.NewProgramEventInterchange(programEventService),
+			Port:   translationadapter.NewProgramEventInterchange(telemetryWriter),
 		},
 		{
 			Domain: translationcore.KindPostSeries,
