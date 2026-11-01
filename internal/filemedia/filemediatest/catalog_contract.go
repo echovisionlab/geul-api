@@ -491,6 +491,9 @@ func RunCatalogContract(t *testing.T, open func(*testing.T) CatalogHarness) {
 			require.Empty(t, readCatalog(t, h, domain.CatalogQuery{Uploader: uuid.NewString(), PageSize: 50}))
 		},
 	}
+	for name, run := range promotionContractCases() {
+		cases[name] = run
+	}
 	for name, run := range reuseContractCases() {
 		cases[name] = run
 	}

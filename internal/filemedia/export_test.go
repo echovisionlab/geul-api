@@ -2,6 +2,10 @@ package filemedia
 
 import (
 	"context"
+	"testing"
+
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/echovisionlab/geul-api/internal/model"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -43,3 +47,17 @@ func ExportDeliveryService(units mutation.UnitOfWork[Store]) *Service {
 
 var ExportGetFileURLs = (*Service).getFileUrlsForID
 var ExportLoadFileURLs = (*Service).loadFileURLResponses
+
+var ExportPrepareSourcePromotion = prepareSourceAssetPromotion
+var ExportRecoverSourcePromotionAllocation = recoverSourceAssetPromotionAllocation
+var ExportRecoverSourcePromotionCompletion = recoverSourceAssetPromotionCompletion
+var ExportCompleteSourcePromotion = (*Service).completeSourceAssetPromotion
+var ExportPromoteSourceFile = (*Service).promoteSourceFileToPublicAsset
+
+func ExportPromotionService(units mutation.UnitOfWork[Store], client *s3.Client) *Service {
+	return &Service{units: units, s3Client: client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com"}
+}
+func ExportPromotionStorage(t *testing.T, file File, body []byte) (*s3.Client, func(bool), func() []string) {
+	f := newSourceAssetPromotionS3Fixture(t, model.File(file), body)
+	return f.client, f.setFailTransfer, f.deletedKeys
+}
