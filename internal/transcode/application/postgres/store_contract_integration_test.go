@@ -121,9 +121,10 @@ func TestCompletingAGenerationSwitchesTheHLSDerivativeAndRetiresThePreviousInteg
 
 	require.NoError(t, complete(previous, 0x88))
 	require.NoError(t, complete(current, 0x99))
-	var derivative model.FileDerivative
-	require.NoError(t, db.Where("file_id = ? AND type = ?", fileID, hls).Take(&derivative).Error)
-	require.Equal(t, current.GetGenerationId(), *derivative.MediaGenerationID)
+	var switched string
+	require.NoError(t, db.Raw(`SELECT media_generation_id::text FROM file_derivative WHERE file_id = ? AND type = ?`, fileID, hls).
+		Scan(&switched).Error)
+	require.Equal(t, current.GetGenerationId(), switched)
 	retired := generationOf(previous.GetGenerationId())
 	require.Equal(t, model.MediaGenerationStatusRetired, retired.Status)
 	require.False(t, retired.DeleteAfter.Before(retired.RetiredAt.Add(7*time.Hour)))
