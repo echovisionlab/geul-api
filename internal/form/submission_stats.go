@@ -11,43 +11,42 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/securityaccess"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
 
-func (s *FormService) GetFormSubmissionStats(
-	ctx context.Context,
-	req *connect.Request[managev1.GetFormSubmissionStatsRequest],
-) (*connect.Response[managev1.GetFormSubmissionStatsResponse], error) {
-	formID := strings.TrimSpace(req.Msg.FormId)
-	if formID == "" {
-		return nil, errs.Required("form_id")
-	}
+// GetFormSubmissionStatsQuery reads the submission statistics of a Form.
+type GetFormSubmissionStatsQuery struct {
+	FormID string
+}
 
+// GetFormSubmissionStats aggregates the submissions of a Form the caller
+// manages and records the personal data access.
+func (s *Service) GetFormSubmissionStats(ctx context.Context, query GetFormSubmissionStatsQuery) (*managev1.GetFormSubmissionStatsResponse, error) {
+	formID := strings.TrimSpace(query.FormID)
+	if formID == "" {
+		return nil, domainerr.Required("form_id")
+	}
 	var form model.Form
+	notFound := domainerr.ResourceNotFound("form", formID)
 	if err := s.db.WithContext(ctx).Select("id").First(&form, "id = ?", formID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("form", formID)
-		}
-		return nil, errs.Internal(err)
-	}
-	if err := s.requireFormAction(ctx, formID, formActionManage); err != nil {
-		if connect.CodeOf(err) == connect.CodePermissionDenied {
-			return nil, errs.NotFound("form", formID)
+			return nil, notFound
 		}
 		return nil, err
 	}
-
+	if err := s.requireVisibleFormAction(ctx, formID, formActionManage, notFound); err != nil {
+		return nil, err
+	}
 	formSchema, _, err := loadFormSourceSchema(ctx, s.db, formID)
 	if err != nil {
 		return nil, err
 	}
-
 	var submissions []formSubmissionStatsRow
 	if err := s.db.WithContext(ctx).
 		Table("form_submission").
@@ -55,16 +54,13 @@ func (s *FormService) GetFormSubmissionStats(
 		Where("form_id = ?", formID).
 		Order("created_at DESC").
 		Find(&submissions).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-
 	stats := buildFormSubmissionStats(ctx, formSchema, submissions, time.Now())
-	if s.securityAccess != nil {
-		if err := s.securityAccess.AppendFormSubmissions(ctx, formID); err != nil {
-			return nil, errs.WithCause(securityAccessUnavailable(), err)
-		}
+	if err := s.personalDataAccess.AppendFormSubmissions(ctx, formID); err != nil {
+		return nil, securityaccess.Unavailable().WithCause(err)
 	}
-	return connect.NewResponse(&managev1.GetFormSubmissionStatsResponse{Stats: stats}), nil
+	return &managev1.GetFormSubmissionStatsResponse{Stats: stats}, nil
 }
 
 type formSubmissionStatsRow struct {

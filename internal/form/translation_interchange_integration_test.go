@@ -26,9 +26,7 @@ func TestFormTranslationInterchangePersistsSparseTargetCASAuditAndRollbackIntegr
 	identityID := testutil.IntegrationUUID()
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Form XLIFF admin")
 	ctx := testutil.NewAuditContext(t, identityID, memberID)
-	service := newAuditedInternalFormServiceForIntegration(
-		db, nil, apitelemetry.NewDurableWriter(db), integrationSpiceDB(t),
-	)
+	service := newFormUseCasesForIntegration(db, nil, apitelemetry.NewDurableWriter(db), integrationSpiceDB(t), nil)
 	source, err := formdomain.LoadTranslationSourceDocument(ctx, db, formID)
 	require.NoError(t, err)
 	plan, err := formdomain.BuildTranslationExtractionPlan(formID, "en", "ko", source)
@@ -88,9 +86,7 @@ func TestFormTranslationInterchangePersistsSparseTargetCASAuditAndRollbackIntegr
 
 	rollbackPlan, err := formdomain.BuildTranslationExtractionPlan(formID, "en", "fr", source)
 	require.NoError(t, err)
-	failing := newAuditedInternalFormServiceForIntegration(
-		db, nil, failingFormAuditAppender{}, integrationSpiceDB(t),
-	)
+	failing := newFormUseCasesForIntegration(db, nil, failingFormAuditAppender{}, integrationSpiceDB(t), nil)
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		_, applyErr := failing.ApplyTranslationInterchange(ctx, tx, formdomain.TranslationInterchangeMutation{
 			FormID: formID, SourceLocale: "en", TargetLocale: "fr",

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/form"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/series"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -23,7 +23,7 @@ var pageReferenceTools = []mcpserver.Tool{
 }
 
 type FormReferenceDiscovery interface {
-	ListFormsAdmin(context.Context, *connect.Request[managev1.ListFormsAdminRequest]) (*connect.Response[managev1.ListFormsAdminResponse], error)
+	ListFormsAdmin(context.Context, form.ListFormsAdminQuery) (*managev1.ListFormsAdminResponse, error)
 }
 
 type PostSeriesReferenceDiscovery interface {
@@ -95,12 +95,14 @@ func (tools *PageReferenceTools) CallTool(ctx context.Context, _ mcpserver.Princ
 	var responsePagination *commonv1.PaginationResponse
 	switch name {
 	case ToolFormList:
-		response, err := tools.forms.ListFormsAdmin(ctx, connect.NewRequest(&managev1.ListFormsAdminRequest{Pagination: pagination, Filters: filters}))
+		response, err := tools.forms.ListFormsAdmin(ctx, form.ListFormsAdminQuery{
+			Page: form.Page{Limit: pagination.Limit, Offset: pagination.Offset}, Filters: filters,
+		})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Msg.Pagination
-		for _, item := range response.Msg.Forms {
+		responsePagination = response.Pagination
+		for _, item := range response.Forms {
 			if item != nil {
 				projected := map[string]any{"id": item.Id, "title": item.Title, "status": item.Status.String(), "source_locale": item.SourceLocale}
 				if item.Slug != nil {

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/form"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/series"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -218,10 +219,11 @@ type recordingPageReferences struct {
 	err               error
 }
 
-func (r *recordingPageReferences) ListFormsAdmin(_ context.Context, request *connect.Request[managev1.ListFormsAdminRequest]) (*connect.Response[managev1.ListFormsAdminResponse], error) {
+func (r *recordingPageReferences) ListFormsAdmin(_ context.Context, query form.ListFormsAdminQuery) (*managev1.ListFormsAdminResponse, error) {
 	r.calls++
-	r.requestPagination, r.filters, r.sorts = request.Msg.Pagination, request.Msg.Filters, request.Msg.Sorts
-	return connect.NewResponse(&managev1.ListFormsAdminResponse{Forms: r.forms, Pagination: r.pagination}), r.err
+	r.requestPagination = &commonv1.PaginationRequest{Limit: query.Page.Limit, Offset: query.Page.Offset}
+	r.filters, r.sorts = query.Filters, query.Sorts
+	return &managev1.ListFormsAdminResponse{Forms: r.forms, Pagination: r.pagination}, r.err
 }
 
 func (r *recordingPageReferences) ListSeriesAdmin(_ context.Context, query series.ListSeriesAdminQuery) (*managev1.ListSeriesAdminResponse, error) {

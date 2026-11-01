@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -29,7 +29,7 @@ func isSlugAvailable(ctx context.Context, db *gorm.DB, slug, excludeID string) (
 	}
 	var count int64
 	if err := query.Count(&count).Error; err != nil {
-		return false, errs.Internal(err)
+		return false, err
 	}
 	return count == 0, nil
 }
@@ -40,7 +40,7 @@ func ensureSlugAvailable(ctx context.Context, db *gorm.DB, slug, excludeID strin
 		return err
 	}
 	if !available {
-		return errs.SlugAlreadyExists("form", slug)
+		return domainerr.Duplicate("form", "slug", slug)
 	}
 	return nil
 }
@@ -53,7 +53,7 @@ func normalizeUserRoleList(field string, roles []string) ([]string, error) {
 		switch canonical {
 		case policyv1.Role.Admin().ID(), policyv1.Role.Author().ID(), policyv1.Role.User().ID():
 		default:
-			return nil, errs.InvalidArgument(field, fmt.Sprintf("invalid role: %s", strings.TrimSpace(role)))
+			return nil, domainerr.InvalidField(field, fmt.Sprintf("invalid role: %s", strings.TrimSpace(role)))
 		}
 		if _, exists := seen[canonical]; exists {
 			continue

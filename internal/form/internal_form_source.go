@@ -2,65 +2,101 @@ package form
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"log/slog"
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/google/uuid"
-	"gorm.io/gorm"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-// SaveDocument persists only the Form room's canonical locale product state.
-// The Y.Doc passed between Collab replicas is transient and is never a storage
-// or semantic-change authority.
-func (s *InternalFormService) SaveDocument(
-	ctx context.Context,
-	req *connect.Request[intrav1.SaveFormDocumentRequest],
-) (_ *connect.Response[intrav1.SaveFormDocumentResponse], rpcErr error) {
-	if req == nil || req.Msg == nil {
-		return nil, errs.InvalidArgument("request", "request is required")
-	}
-	defer failurecause.Annotate(&rpcErr, slog.String("form_id", req.Msg.GetFormId()))
-	save, err := parseFormDocumentSave(req.Msg)
+// SaveFormDocumentCommand saves one Form room's canonical locale state: the
+// locale's title and schema, the revisions the room loaded, the locale values
+// it holds and its one origin Member.
+type SaveFormDocumentCommand struct {
+	FormID                   string
+	Locale                   string
+	ExpectedDocumentRevision string
+	ExpectedTargetRevision   *string
+	ContributorMemberIDs     []string
+	Meta                     *intrav1.FormMeta
+	PresentLocaleValues      []*managev1.AIDocumentFieldTarget
+}
+
+// SaveFormDocument persists only the Form room's canonical locale product
+// state. The Y.Doc passed between Collab replicas is transient and is never a
+// storage or semantic-change authority. editor-collab calls as itself: the
+// origin Member's current permission authorizes the save under the Form root
+// lock.
+func (s *Service) SaveFormDocument(ctx context.Context, command SaveFormDocumentCommand) (_ *intrav1.SaveFormDocumentResponse, returnErr error) {
+	defer failurecause.Annotate(&returnErr, slog.String("form_id", command.FormID))
+	save, err := parseFormDocumentSave(command)
 	if err != nil {
 		return nil, err
 	}
-
 	now := dbtime.Now()
-	var result formCollaborativeSaveResult
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var err error
-		result, err = s.saveFormDocument(ctx, tx, save, now)
-		return err
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	var root formAIDocumentRoot
+	var contributorMemberID string
+	result, err := mutation.Run(ctx, s.mutations, mutation.Spec[formCollaborativeSaveResult]{
+		Lock: func(ctx context.Context, tx *gorm.DB) error {
+			var err error
+			root, err = lockFormDocumentRoot(ctx, tx, save)
+			return err
+		},
+		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+			var err error
+			if contributorMemberID, err = canonicalFormCollaborationContributor(save.contributorMemberIDs); err != nil {
+				return err
+			}
+			return s.collaboration.RequireCurrentContributor(ctx, tx, save.formID, contributorMemberID)
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (formCollaborativeSaveResult, error) {
+			return s.saveFormDocument(ctx, tx, root, save, now)
+		},
+		Audit: func(saved formCollaborativeSaveResult) mutation.Audit {
+			if !saved.changed {
+				return mutation.Unchanged()
+			}
+			return mutation.MemberAudit(contributorMemberID, sharedtelemetry.AuditFormUpdated,
+				formLocaleContentRecord(save.formID, save.locale, sharedtelemetry.AuditItemOperationUpdated))
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, saved formCollaborativeSaveResult) error {
+			if !saved.changed || !saved.titleChanged {
+				return nil
+			}
+			_, err := s.og.RequestAfterMutation(ctx, tx, save.formID, save.locale, save.locale == root.SourceLocale, "form_document_saved")
+			return err
+		},
+	})
 	if err != nil {
 		err = normalizeFormDocumentSaveError(err)
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("form", save.formID)
+			return nil, domainerr.ResourceNotFound("form", save.formID).WithCause(err)
 		}
-		return nil, errs.Wrap(err)
+		return nil, err
 	}
-	return connect.NewResponse(&intrav1.SaveFormDocumentResponse{
+	return &intrav1.SaveFormDocumentResponse{
 		Success:          true,
 		Locale:           result.locale,
 		DocumentRevision: result.documentRevision,
 		TargetRevision:   result.targetRevision,
-	}), nil
+	}, nil
 }
 
-// formDocumentSave is a validated SaveDocument request.
+// formDocumentSave is a validated SaveFormDocumentCommand.
 type formDocumentSave struct {
 	formID                   string
 	locale                   string
@@ -71,74 +107,64 @@ type formDocumentSave struct {
 	schema                   []byte
 }
 
-func parseFormDocumentSave(r *intrav1.SaveFormDocumentRequest) (formDocumentSave, error) {
+func parseFormDocumentSave(command SaveFormDocumentCommand) (formDocumentSave, error) {
 	save := formDocumentSave{
-		formID:                 r.FormId,
-		locale:                 strings.TrimSpace(r.Locale),
-		expectedTargetRevision: r.ExpectedTargetRevision,
-		contributorMemberIDs:   r.ContributorMemberIds,
+		formID:                 command.FormID,
+		locale:                 strings.TrimSpace(command.Locale),
+		expectedTargetRevision: command.ExpectedTargetRevision,
+		contributorMemberIDs:   command.ContributorMemberIDs,
 	}
 	if save.locale == "" {
-		return save, errs.Required("locale")
+		return save, domainerr.Required("locale")
 	}
 	var err error
-	save.expectedDocumentRevision, err = uuid.Parse(strings.TrimSpace(r.ExpectedDocumentRevision))
-	if err != nil || save.expectedDocumentRevision == uuid.Nil || save.expectedDocumentRevision.String() != r.ExpectedDocumentRevision {
-		return save, errs.InvalidArgument("expected_document_revision", "must be a canonical UUID")
+	save.expectedDocumentRevision, err = uuid.Parse(strings.TrimSpace(command.ExpectedDocumentRevision))
+	if err != nil || save.expectedDocumentRevision == uuid.Nil || save.expectedDocumentRevision.String() != command.ExpectedDocumentRevision {
+		return save, domainerr.InvalidField("expected_document_revision", "must be a canonical UUID")
 	}
-	save.title, save.schema, err = formCanonicalDocumentFromMeta(r.Meta)
+	save.title, save.schema, err = formCanonicalDocumentFromMeta(command.Meta)
 	if err != nil {
-		return save, errs.InvalidArgument("meta", err.Error())
+		return save, domainerr.InvalidField("meta", err.Error())
 	}
-	if err := validateFormCanonicalLocalePresence(save.title, save.schema, r.PresentLocaleValues); err != nil {
-		return save, errs.InvalidArgument("present_locale_values", err.Error())
+	if err := validateFormCanonicalLocalePresence(save.title, save.schema, command.PresentLocaleValues); err != nil {
+		return save, domainerr.InvalidField("present_locale_values", err.Error())
 	}
 	return save, nil
 }
 
-func (s *InternalFormService) saveFormDocument(
+// lockFormDocumentRoot locks the Form root of a collaboration save and
+// rejects a save of another Content Document revision before the contributor
+// is authorized.
+func lockFormDocumentRoot(ctx context.Context, tx *gorm.DB, save formDocumentSave) (formAIDocumentRoot, error) {
+	root, err := loadFormAIDocumentRoot(ctx, tx, save.formID, clause.LockingStrengthUpdate)
+	if err != nil {
+		return formAIDocumentRoot{}, err
+	}
+	if root.DocumentRevision != save.expectedDocumentRevision.String() {
+		return formAIDocumentRoot{}, formDocumentRevisionChangedConflict(root.DocumentRevision)
+	}
+	return root, nil
+}
+
+func (s *Service) saveFormDocument(
 	ctx context.Context,
 	tx *gorm.DB,
+	root formAIDocumentRoot,
 	save formDocumentSave,
 	now time.Time,
 ) (formCollaborativeSaveResult, error) {
-	if err := s.translation.LockRoot(ctx, tx, save.formID); err != nil {
-		return formCollaborativeSaveResult{}, err
-	}
-	root, err := loadFormAIDocumentRoot(ctx, tx, save.formID, "")
-	if err != nil {
-		return formCollaborativeSaveResult{}, err
-	}
-	if root.DocumentRevision != save.expectedDocumentRevision.String() {
-		return formCollaborativeSaveResult{}, formDocumentRevisionChangedConflict(root.DocumentRevision)
-	}
-	contributorMemberID, err := canonicalFormCollaborationContributor(save.contributorMemberIDs)
-	if err != nil {
-		return formCollaborativeSaveResult{}, err
-	}
-	if err := s.translation.RequireMutationContributor(
-		ctx,
-		tx,
-		s.spiceDB,
-		intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_FORM,
-		save.formID,
-		contributorMemberID,
-	); err != nil {
-		return formCollaborativeSaveResult{}, err
-	}
-
 	current, exists, err := loadFormAIDocumentLocale(ctx, tx, save.formID, save.locale, true)
 	if err != nil {
 		return formCollaborativeSaveResult{}, err
 	}
 	if !exists {
-		return formCollaborativeSaveResult{}, errs.FailedPrecondition("Form locale document does not exist")
+		return formCollaborativeSaveResult{}, domainerr.Precondition("Form locale document does not exist")
 	}
 	isSource := save.locale == root.SourceLocale
 	writeNow := now
 	if isSource {
 		if save.expectedTargetRevision != nil {
-			return formCollaborativeSaveResult{}, errs.InvalidArgument("expected_target_revision", "source locale has no target revision")
+			return formCollaborativeSaveResult{}, domainerr.InvalidField("expected_target_revision", "source locale has no target revision")
 		}
 	} else {
 		if err := validateFormTargetSave(ctx, tx, root, current, save); err != nil {
@@ -152,21 +178,9 @@ func (s *InternalFormService) saveFormDocument(
 	if err != nil {
 		return formCollaborativeSaveResult{}, err
 	}
-	if changed && titleChanged {
-		if _, err := s.og.RequestAfterMutation(
-			ctx, tx, save.formID, save.locale, isSource, "form_document_saved",
-		); err != nil {
-			return formCollaborativeSaveResult{}, err
-		}
+	result := formCollaborativeSaveResult{
+		locale: save.locale, documentRevision: documentRevision, changed: changed, titleChanged: titleChanged,
 	}
-	if changed {
-		if err := s.appendFormCollaborativeLocaleContentAudit(
-			ctx, tx, contributorMemberID, save.formID, save.locale,
-		); err != nil {
-			return formCollaborativeSaveResult{}, err
-		}
-	}
-	result := formCollaborativeSaveResult{locale: save.locale, documentRevision: documentRevision}
 	if !isSource {
 		result.targetRevision, err = savedFormTargetRevision(ctx, tx, save, documentRevision)
 		if err != nil {
@@ -187,7 +201,7 @@ func validateFormTargetSave(
 ) error {
 	currentTargetRevision, err := deriveFormTargetRevision(root.DocumentRevision, current)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if err := translation.ValidateExpectedTargetRevision(
 		save.expectedTargetRevision, currentTargetRevision, true,
@@ -199,17 +213,17 @@ func validateFormTargetSave(
 		return err
 	}
 	if !sourceExists {
-		return errs.FailedPrecondition("Form source locale document is missing")
+		return domainerr.Precondition("Form source locale document is missing")
 	}
 	if err := validateFormAIDocumentTargetSchema(source.Schema, save.schema); err != nil {
-		return errs.InvalidArgument("meta.schema", err.Error())
+		return domainerr.InvalidField("meta.schema", err.Error())
 	}
 	return nil
 }
 
 // writeFormLocale applies update to the saved locale. A source locale write
 // advances the Content Document revision; a target write leaves it as is.
-func (s *InternalFormService) writeFormLocale(
+func (s *Service) writeFormLocale(
 	ctx context.Context,
 	tx *gorm.DB,
 	root formAIDocumentRoot,
@@ -224,35 +238,55 @@ func (s *InternalFormService) writeFormLocale(
 		changed, err = apply(ctx, tx)
 		return changed, root.DocumentRevision, err
 	}
-	documentID, parseErr := uuid.Parse(root.DocumentID)
-	if parseErr != nil || documentID == uuid.Nil {
-		return false, "", errs.WithCause(errs.FailedPrecondition("Form Content Document is not initialized"), failurecause.ServerFault(parseErr))
-	}
-	advance, err := s.contentBlocks.AdvanceRevision(
-		ctx,
-		tx,
-		contentblock.AdvanceInput{
-			DocumentID: documentID, ExpectedRevision: save.expectedDocumentRevision,
-		},
-		func(context.Context, *gorm.DB, uuid.UUID) (contentblock.DomainContext, error) {
-			return contentblock.DomainContext{SourceLocale: root.SourceLocale}, nil
-		},
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-			applied, applyErr := apply(ctx, tx)
-			if applyErr != nil {
-				return contentblock.MetadataEffect{}, applyErr
-			}
-			return contentblock.MetadataEffect{
-				Changed:                  applied,
-				AffectsTranslationSource: applied,
-				ChangedLocales:           []string{save.locale},
-			}, nil
-		},
-	)
+	advance, err := advanceFormSourceLocale(ctx, tx, s.contentBlocks, root.DocumentID, save.expectedDocumentRevision, root.SourceLocale, apply)
 	if err != nil {
 		return false, "", err
 	}
 	return advance.Changed, advance.DocumentRevision.String(), nil
+}
+
+// advanceFormSourceLocale runs apply, a write of the Form source locale, as
+// the next revision of the Form Content Document. The Form root lock is the
+// domain fence, so the fence only names the source locale.
+func advanceFormSourceLocale(
+	ctx context.Context,
+	tx *gorm.DB,
+	store *contentblock.Store,
+	documentID string,
+	expectedRevision uuid.UUID,
+	sourceLocale string,
+	apply func(context.Context, *gorm.DB) (bool, error),
+) (contentblock.AdvanceResult, error) {
+	document, err := formContentDocumentID(documentID)
+	if err != nil {
+		return contentblock.AdvanceResult{}, err
+	}
+	return store.AdvanceRevision(
+		ctx,
+		tx,
+		contentblock.AdvanceInput{DocumentID: document, ExpectedRevision: expectedRevision},
+		func(context.Context, *gorm.DB, uuid.UUID) (contentblock.DomainContext, error) {
+			return contentblock.DomainContext{SourceLocale: sourceLocale}, nil
+		},
+		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+			applied, err := apply(ctx, tx)
+			if err != nil {
+				return contentblock.MetadataEffect{}, err
+			}
+			return contentblock.MetadataEffect{
+				Changed: applied, AffectsTranslationSource: applied, ChangedLocales: []string{sourceLocale},
+			}, nil
+		},
+	)
+}
+
+// formContentDocumentID parses a Form's Content Document reference.
+func formContentDocumentID(value string) (uuid.UUID, error) {
+	documentID, err := uuid.Parse(value)
+	if err != nil || documentID == uuid.Nil {
+		return uuid.Nil, domainerr.Precondition("Form Content Document is not initialized").WithCause(failurecause.ServerFault(err))
+	}
+	return documentID, nil
 }
 
 func savedFormTargetRevision(
@@ -266,54 +300,41 @@ func savedFormTargetRevision(
 		return nil, err
 	}
 	if !updatedExists {
-		return nil, errs.FailedPrecondition("Form locale document disappeared")
+		return nil, domainerr.Precondition("Form locale document disappeared")
 	}
 	targetRevision, err := deriveFormTargetRevision(documentRevision, updated)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return &targetRevision, nil
 }
 
-func formDocumentRevisionChangedConflict(revisions ...string) error {
-	current := ""
-	if len(revisions) > 0 {
-		current = revisions[0]
-	}
-	return errs.CollaborationConflict(
+func formDocumentRevisionChangedConflict(current string) error {
+	return domainerr.CollaborationConflict(
 		intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
-		"Form Content Document revision changed", errs.CollaborationState{Document: current},
+		"Form Content Document revision changed", domainerr.CollaborationRevisions{Document: current},
 	)
 }
 
 func normalizeFormDocumentSaveError(err error) error {
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
-		return errs.CollaborationConflict(
+		return domainerr.CollaborationConflict(
 			intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_TARGET_REVISION_CHANGED,
-			targetConflict.Error(), err,
-		)
-	}
-	if dberrors.IsSerializationFailure(err) {
-		return connect.NewError(connect.CodeAborted, err)
+			targetConflict.Error(), domainerr.CollaborationRevisionsOf(err),
+		).WithCause(err)
 	}
 	return err
 }
 
 func canonicalFormCollaborationContributor(values []string) (string, error) {
 	if len(values) != 1 {
-		return "", errs.InvalidArgument(
-			"contributor_member_ids",
-			"Form collaboration mutation requires exactly one origin Member",
-		)
+		return "", domainerr.InvalidField("contributor_member_ids", "Form collaboration mutation requires exactly one origin Member")
 	}
 	value := strings.TrimSpace(values[0])
 	parsed, err := uuid.Parse(value)
 	if err != nil || parsed == uuid.Nil || parsed.String() != value {
-		return "", errs.InvalidArgument(
-			"contributor_member_ids",
-			"Form collaboration mutation requires one canonical Member UUID",
-		)
+		return "", domainerr.InvalidField("contributor_member_ids", "Form collaboration mutation requires one canonical Member UUID")
 	}
 	return value, nil
 }
@@ -322,6 +343,8 @@ type formCollaborativeSaveResult struct {
 	locale           string
 	documentRevision string
 	targetRevision   *string
+	changed          bool
+	titleChanged     bool
 }
 
 // formCollaborativeLocaleUpdate is what a collaborative save changes in one
@@ -382,102 +405,105 @@ func applyFormCollaborativeLocaleUpdates(
 		Where("entity_id = ?::uuid AND locale = ?", formID, locale).
 		Updates(columns)
 	if result.Error != nil {
-		return false, errs.Internal(result.Error)
+		return false, result.Error
 	}
 	if result.RowsAffected != 1 {
-		return false, errs.FailedPrecondition("Form locale document disappeared")
+		return false, domainerr.Precondition("Form locale document disappeared")
 	}
 	if err := tx.WithContext(ctx).Table("form").Where("id = ?::uuid", formID).
 		Update("updated_at", now).Error; err != nil {
-		return false, errs.Internal(err)
+		return false, err
 	}
 	return true, nil
 }
 
-// LoadDocument returns only canonical persisted Form values. Collab turns this
-// response into a transient Y.Doc and cannot revive historical Yjs bytes.
-func (s *InternalFormService) LoadDocument(
-	ctx context.Context,
-	req *connect.Request[intrav1.LoadFormDocumentRequest],
-) (*connect.Response[intrav1.LoadFormDocumentResponse], error) {
-	if req == nil || req.Msg == nil {
-		return nil, errs.InvalidArgument("request", "request is required")
-	}
-	locale := strings.TrimSpace(req.Msg.Locale)
+// LoadFormDocumentQuery reads one Form room's canonical locale state.
+type LoadFormDocumentQuery struct {
+	FormID string
+	Locale string
+}
+
+// LoadFormDocument returns only canonical persisted Form values. Collab turns
+// this response into a transient Y.Doc and cannot revive historical Yjs bytes.
+func (s *Service) LoadFormDocument(ctx context.Context, query LoadFormDocumentQuery) (*intrav1.LoadFormDocumentResponse, error) {
+	locale := strings.TrimSpace(query.Locale)
 	if locale == "" {
-		return nil, errs.Required("locale")
+		return nil, domainerr.Required("locale")
 	}
 	var response *intrav1.LoadFormDocumentResponse
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		root, err := loadFormAIDocumentRoot(ctx, tx, req.Msg.FormId, "")
+	err := mutation.Read(ctx, s.db, func(tx *gorm.DB) error {
+		root, err := loadFormAIDocumentRoot(ctx, tx, query.FormID, "")
 		if err != nil {
 			return err
 		}
-		source, sourceExists, err := loadFormAIDocumentLocale(
-			ctx, tx, req.Msg.FormId, root.SourceLocale, false,
-		)
+		source, sourceMeta, err := loadFormDocumentSource(ctx, tx, query.FormID, root.SourceLocale)
 		if err != nil {
 			return err
 		}
-		if !sourceExists {
-			return errs.FailedPrecondition("Form source locale document is missing")
+		response = &intrav1.LoadFormDocumentResponse{
+			SourceMetadata: sourceMeta, SourceLocale: root.SourceLocale, Locale: locale, DocumentRevision: root.DocumentRevision,
 		}
-		sourceMeta, err := formMetaFromCanonicalRow(source)
-		if err != nil {
-			return errs.WithCause(errs.FailedPrecondition("Form source locale document is invalid"), failurecause.ServerFault(err))
-		}
-
-		requested := source
-		requestedExists := true
+		requested, requestedExists := source, true
 		if locale != root.SourceLocale {
-			requested, requestedExists, err = loadFormAIDocumentLocale(
-				ctx, tx, req.Msg.FormId, locale, false,
-			)
-			if err != nil {
+			if requested, requestedExists, err = loadFormAIDocumentLocale(ctx, tx, query.FormID, locale, false); err != nil {
 				return err
 			}
 		}
-		var requestedMeta *intrav1.FormMeta
-		var presentLocaleValues []*managev1.AIDocumentFieldTarget
-		var targetRevision *string
-		if requestedExists {
-			requestedMeta, err = formMetaFromCanonicalRow(requested)
-			if err != nil {
-				return errs.WithCause(errs.FailedPrecondition("Form requested locale document is invalid"), failurecause.ServerFault(err))
-			}
-			if locale != root.SourceLocale {
-				if err := validateFormAIDocumentTargetSchema(source.Schema, requested.Schema); err != nil {
-					return errs.WithCause(errs.FailedPrecondition("Form requested locale document is invalid"), failurecause.ServerFault(err))
-				}
-			}
-			presentLocaleValues, err = formCanonicalLocaleTargets(
-				requested.Title, requested.Schema,
-			)
-			if err != nil {
-				return errs.WithCause(errs.FailedPrecondition("Form requested locale document is invalid"), failurecause.ServerFault(err))
-			}
-			if locale != root.SourceLocale {
-				revision, err := deriveFormTargetRevision(root.DocumentRevision, requested)
-				if err != nil {
-					return errs.Internal(err)
-				}
-				targetRevision = &revision
-			}
+		response.LocaleExists = requestedExists
+		if !requestedExists {
+			return nil
 		}
-		response = &intrav1.LoadFormDocumentResponse{
-			SourceMetadata:      sourceMeta,
-			LocaleMetadata:      requestedMeta,
-			SourceLocale:        root.SourceLocale,
-			Locale:              locale,
-			LocaleExists:        requestedExists,
-			PresentLocaleValues: presentLocaleValues,
-			DocumentRevision:    root.DocumentRevision,
-			TargetRevision:      targetRevision,
-		}
-		return nil
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+		return projectFormDocumentLocale(response, root, source, requested)
+	})
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(response), nil
+	return response, nil
+}
+
+// loadFormDocumentSource reads the Form source locale document a room
+// projects every locale over.
+func loadFormDocumentSource(ctx context.Context, tx *gorm.DB, formID, sourceLocale string) (formAIDocumentLocaleRow, *intrav1.FormMeta, error) {
+	source, exists, err := loadFormAIDocumentLocale(ctx, tx, formID, sourceLocale, false)
+	if err != nil {
+		return formAIDocumentLocaleRow{}, nil, err
+	}
+	if !exists {
+		return formAIDocumentLocaleRow{}, nil, domainerr.Precondition("Form source locale document is missing")
+	}
+	meta, err := formMetaFromCanonicalRow(source)
+	if err != nil {
+		return formAIDocumentLocaleRow{}, nil, domainerr.Precondition("Form source locale document is invalid").WithCause(failurecause.ServerFault(err))
+	}
+	return source, meta, nil
+}
+
+// projectFormDocumentLocale sets the requested locale's metadata, present
+// values and, for a target locale, its revision on response.
+func projectFormDocumentLocale(response *intrav1.LoadFormDocumentResponse, root formAIDocumentRoot, source, requested formAIDocumentLocaleRow) error {
+	invalid := func(err error) error {
+		return domainerr.Precondition("Form requested locale document is invalid").WithCause(failurecause.ServerFault(err))
+	}
+	var err error
+	if response.LocaleMetadata, err = formMetaFromCanonicalRow(requested); err != nil {
+		return invalid(err)
+	}
+	isTarget := response.Locale != root.SourceLocale
+	if isTarget {
+		if err := validateFormAIDocumentTargetSchema(source.Schema, requested.Schema); err != nil {
+			return invalid(err)
+		}
+	}
+	if response.PresentLocaleValues, err = formCanonicalLocaleTargets(requested.Title, requested.Schema); err != nil {
+		return invalid(err)
+	}
+	if !isTarget {
+		return nil
+	}
+	revision, err := deriveFormTargetRevision(root.DocumentRevision, requested)
+	if err != nil {
+		return err
+	}
+	response.TargetRevision = &revision
+	return nil
 }

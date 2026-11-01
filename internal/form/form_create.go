@@ -5,81 +5,92 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/authzmutation"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/dbtime"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/pathslug"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/pathslug"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 const formContentDocumentProfile = "compact"
 
-func (s *FormService) CreateForm(
-	ctx context.Context,
-	req *connect.Request[managev1.CreateFormRequest],
-) (*connect.Response[managev1.Form], error) {
-	// Validate required fields
-	title := strings.TrimSpace(req.Msg.Title)
-	if title == "" {
-		return nil, errs.Required("title")
-	}
-	normalizedSlug, err := s.normalizeNewFormSlug(ctx, req.Msg.Slug)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateCanonicalFormSchema(req.Msg.Schema); err != nil {
-		return nil, errs.InvalidArgumentMsg(err.Error())
-	}
-	now := dbtime.Now()
-	form, err := s.newFormFromRequest(req.Msg, normalizedSlug, now)
-	if err != nil {
-		return nil, err
-	}
-	_, err = authzmutation.Execute(
-		ctx,
-		s.db,
-		s.spiceDB,
-		func(tx *gorm.DB, write authzmutation.WriteRelationships) error {
-			if err := s.requireFreshFormCreation(ctx, tx); err != nil {
-				return err
-			}
-			if err := s.createFormWithDB(
-				ctx, tx, form, title, req.Msg.Schema, req.Header().Get("Accept-Language"), now,
-			); err != nil {
-				return err
-			}
-			if err := s.appendFormCreatedAudit(ctx, tx, form.ID); err != nil {
-				return err
-			}
-			policyTouch, err := policyv1.Form.TouchPolicy(form.ID)
-			if err != nil {
-				return err
-			}
-			policyDelete, err := policyv1.Form.DeletePolicy(form.ID)
-			if err != nil {
-				return err
-			}
-			return write([]policyv1.RelationshipMutation{policyTouch}, []policyv1.RelationshipMutation{policyDelete})
-		},
-	)
-	if err != nil {
-		return nil, errs.Wrap(err)
-	}
-	protoForm, err := s.toProtoForm(ctx, form)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(protoForm), nil
+// CreateFormCommand creates a draft Form. AcceptLanguage picks its source
+// locale when the creator has no preferred locale.
+type CreateFormCommand struct {
+	Title                    string
+	Slug                     *string
+	Schema                   []byte
+	IsPublic                 *bool
+	RequireAuth              *bool
+	AllowDuplicateSubmission *bool
+	Password                 *string
+	MaxSubmissions           *int32
+	OpensAt                  *time.Time
+	ClosesAt                 *time.Time
+	AllowedRoles             []string
+	AcceptLanguage           string
 }
 
-func (s *FormService) normalizeNewFormSlug(ctx context.Context, requested *string) (*string, error) {
+// CreateForm creates a draft Form, its source locale document and its
+// authorization policy.
+func (s *Service) CreateForm(ctx context.Context, command CreateFormCommand) (*managev1.Form, error) {
+	title := strings.TrimSpace(command.Title)
+	if title == "" {
+		return nil, domainerr.Required("title")
+	}
+	normalizedSlug, err := s.normalizeNewFormSlug(ctx, command.Slug)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCanonicalFormSchema(command.Schema); err != nil {
+		return nil, domainerr.New(domainerr.Invalid, "", err.Error())
+	}
+	now := dbtime.Now()
+	form, err := s.newForm(command, normalizedSlug, now)
+	if err != nil {
+		return nil, err
+	}
+	created, err := mutation.Run(ctx, s.mutations, mutation.Spec[*model.Form]{
+		Access: s.freshFormCreation(),
+		Change: func(ctx context.Context, tx *gorm.DB) (*model.Form, error) {
+			return form, s.createForm(ctx, tx, form, title, command.Schema, command.AcceptLanguage, now)
+		},
+		Audit: func(form *model.Form) mutation.Audit { return formCreatedAudit(form.ID) },
+		Relationships: func(form *model.Form) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+			return formPolicyRelationships(form.ID, true)
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.toProtoForm(ctx, created)
+}
+
+// formPolicyRelationships is the Form policy write of a creation (touch) or
+// deletion, and its exact inverse.
+func formPolicyRelationships(formID string, create bool) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+	touch, err := policyv1.Form.TouchPolicy(formID)
+	if err != nil {
+		return nil, nil, err
+	}
+	remove, err := policyv1.Form.DeletePolicy(formID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if create {
+		return []policyv1.RelationshipMutation{touch}, []policyv1.RelationshipMutation{remove}, nil
+	}
+	return []policyv1.RelationshipMutation{remove}, []policyv1.RelationshipMutation{touch}, nil
+}
+
+func (s *Service) normalizeNewFormSlug(ctx context.Context, requested *string) (*string, error) {
 	if requested == nil || strings.TrimSpace(*requested) == "" {
 		return nil, nil
 	}
@@ -96,37 +107,27 @@ func (s *FormService) normalizeNewFormSlug(ctx context.Context, requested *strin
 	return &slug, nil
 }
 
-func (s *FormService) newFormFromRequest(
-	request *managev1.CreateFormRequest,
-	slug *string,
-	now time.Time,
-) (*model.Form, error) {
+func (s *Service) newForm(command CreateFormCommand, slug *string, now time.Time) (*model.Form, error) {
 	form := &model.Form{
 		Slug: slug, Status: model.FormStatusDraft,
-		CreatedAt: now, RequireAuth: request.RequireAuth,
-		AllowDuplicateSubmission: request.AllowDuplicateSubmission,
-		MaxSubmissions:           request.MaxSubmissions,
+		CreatedAt: now, RequireAuth: command.RequireAuth,
+		AllowDuplicateSubmission: command.AllowDuplicateSubmission,
+		MaxSubmissions:           command.MaxSubmissions,
+		OpensAt:                  command.OpensAt,
+		ClosesAt:                 command.ClosesAt,
 	}
-	if request.IsPublic != nil {
-		form.IsPublic = *request.IsPublic
+	if command.IsPublic != nil {
+		form.IsPublic = *command.IsPublic
 	}
-	if request.Password != nil && *request.Password != "" {
-		hash, err := s.password.Hash(*request.Password)
+	if command.Password != nil && *command.Password != "" {
+		hash, err := s.password.Hash(*command.Password)
 		if err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 		form.AccessPassword = &hash
 	}
-	if request.OpensAt != nil {
-		value := request.OpensAt.AsTime()
-		form.OpensAt = &value
-	}
-	if request.ClosesAt != nil {
-		value := request.ClosesAt.AsTime()
-		form.ClosesAt = &value
-	}
-	if len(request.AllowedRoles) > 0 {
-		roles, err := normalizeUserRoleList("allowed_roles", request.AllowedRoles)
+	if len(command.AllowedRoles) > 0 {
+		roles, err := normalizeUserRoleList("allowed_roles", command.AllowedRoles)
 		if err != nil {
 			return nil, err
 		}
@@ -138,7 +139,7 @@ func (s *FormService) newFormFromRequest(
 	return form, nil
 }
 
-func (s *FormService) createFormWithDB(
+func (s *Service) createForm(
 	ctx context.Context,
 	tx *gorm.DB,
 	form *model.Form,
@@ -152,7 +153,7 @@ func (s *FormService) createFormWithDB(
 			return err
 		}
 	}
-	sourceLocale := s.translation.ResolveInitialSourceLocale(ctx, tx, s.kratosClient, acceptLanguage)
+	sourceLocale := s.resolveInitialSourceLocale(ctx, tx, acceptLanguage)
 	document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
 		Profile: formContentDocumentProfile, SourceLocale: sourceLocale,
 	})
@@ -164,13 +165,11 @@ func (s *FormService) createFormWithDB(
 	if err := tx.WithContext(ctx).Omit("ID").Clauses(clause.Returning{}).Create(form).Error; err != nil {
 		return err
 	}
-	if err := createInitialFormSourceLocaleRow(
-		ctx, tx, s.translation, form.ID, sourceLocale, title, schema, now,
-	); err != nil {
+	if err := saveFormSourceLocaleDocumentState(ctx, tx, form.ID, normalizeInitialSourceLocale(ctx, tx, sourceLocale), TranslationDocumentSaveInput{
+		Title: &title, ContentJSON: schema, Now: now,
+	}); err != nil {
 		return err
 	}
 	_, err = s.og.Request(ctx, tx, form.ID, title, sourceLocale, false, "form_created")
 	return err
 }
-
-// UpdateForm updates an existing form

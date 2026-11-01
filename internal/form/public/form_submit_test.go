@@ -7,10 +7,10 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/crypto"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/geoip"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,8 +23,8 @@ func TestValidateFormSubmissionDataPayloadRejectsReservedSystemMetadata(t *testi
 	err := validateFormSubmissionDataPayload([]byte(`{"email":"hello@example.com","__meta.locale":"spoofed"}`))
 
 	require.Error(t, err)
-	assert.Equal(t, connect.CodeInvalidArgument, err.Code())
-	assert.Contains(t, err.Message(), "__meta.locale")
+	assert.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
+	assert.Contains(t, errs.Wrap(err).Message(), "__meta.locale")
 }
 
 func TestValidateFormSubmissionDataPayloadRejectsMalformedJSON(t *testing.T) {
@@ -33,14 +33,14 @@ func TestValidateFormSubmissionDataPayloadRejectsMalformedJSON(t *testing.T) {
 	err := validateFormSubmissionDataPayload([]byte(`{"email":`))
 
 	require.Error(t, err)
-	assert.Equal(t, connect.CodeInvalidArgument, err.Code())
-	assert.Contains(t, err.Message(), "must be a JSON object")
+	assert.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
+	assert.Contains(t, errs.Wrap(err).Message(), "must be a JSON object")
 
 	err = validateFormSubmissionDataPayload([]byte(`null`))
 
 	require.Error(t, err)
-	assert.Equal(t, connect.CodeInvalidArgument, err.Code())
-	assert.Contains(t, err.Message(), "must be a JSON object")
+	assert.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
+	assert.Contains(t, errs.Wrap(err).Message(), "must be a JSON object")
 }
 
 func TestBuildFormSubmissionSystemMetadataUsesRequestAndRuntimeContext(t *testing.T) {
@@ -62,7 +62,7 @@ func TestBuildFormSubmissionSystemMetadataUsesRequestAndRuntimeContext(t *testin
 	req.Header().Set("X-Forwarded-For", "198.51.100.10, 10.0.0.2")
 	req.Header().Set("User-Agent", "metadata-unit-agent")
 
-	metadata := buildFormSubmissionSystemMetadata(ctx, req)
+	metadata := buildFormSubmissionSystemMetadata(ctx, submitFormCommand(req))
 
 	require.NotNil(t, metadata.ipAddress)
 	assert.Equal(t, "198.51.100.10", *metadata.ipAddress)
@@ -86,7 +86,7 @@ func TestBuildFormSubmissionSystemMetadataDoesNotReadProfileFromAuthContext(t *t
 		Authenticated: true,
 	})
 
-	metadata := buildFormSubmissionSystemMetadata(ctx, connect.NewRequest(&openv1.SubmitFormRequest{}))
+	metadata := buildFormSubmissionSystemMetadata(ctx, submitFormCommand(connect.NewRequest(&openv1.SubmitFormRequest{})))
 
 	assert.Nil(t, metadata.locale)
 	assert.Nil(t, metadata.countryCode)
@@ -192,7 +192,7 @@ func TestMapFormAccessReasonToErrorCodes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			err := mapFormAccessReasonToError(tc.reason, tc.draftAsNotFound)
 			require.Error(t, err)
-			assert.Equal(t, tc.code, connect.CodeOf(err))
+			assert.Equal(t, tc.code, errs.Wrap(err).Code())
 		})
 	}
 }
@@ -208,10 +208,9 @@ func TestFormAccessNormalizationAndStatusMapping(t *testing.T) {
 	assert.Equal(t, openv1.FormAccessTarget_FORM_ACCESS_TARGET_FORM, normalizeFormAccessTarget(openv1.FormAccessTarget_FORM_ACCESS_TARGET_FORM))
 	assert.Equal(t, openv1.FormAccessTarget_FORM_ACCESS_TARGET_DASHBOARD, normalizeFormAccessTarget(openv1.FormAccessTarget_FORM_ACCESS_TARGET_DASHBOARD))
 
-	svc := &FormService{}
-	assert.Equal(t, openv1.FormStatus_FORM_STATUS_DRAFT, svc.toProtoStatus(model.FormStatus(managev1.FormStatus_FORM_STATUS_DRAFT.String())))
-	assert.Equal(t, openv1.FormStatus_FORM_STATUS_PUBLISHED, svc.toProtoStatus(model.FormStatus(managev1.FormStatus_FORM_STATUS_PUBLISHED.String())))
-	assert.Equal(t, openv1.FormStatus_FORM_STATUS_UNSPECIFIED, svc.toProtoStatus(model.FormStatus("FORM_STATUS_CORRUPT")))
+	assert.Equal(t, openv1.FormStatus_FORM_STATUS_DRAFT, formStatusToOpen(model.FormStatusDraft))
+	assert.Equal(t, openv1.FormStatus_FORM_STATUS_PUBLISHED, formStatusToOpen(model.FormStatusPublished))
+	assert.Equal(t, openv1.FormStatus_FORM_STATUS_UNSPECIFIED, formStatusToOpen(model.FormStatus("FORM_STATUS_CORRUPT")))
 }
 
 func TestApplyLocalizedFormDocumentHandlesNilCanonicalAndFallbackContent(t *testing.T) {
@@ -270,7 +269,7 @@ func TestVerifyFormPasswordSupportsArgon2idAndLegacyBcrypt(t *testing.T) {
 		SaltLength:  8,
 		KeyLength:   16,
 	})
-	svc := &FormService{password: hasher}
+	svc := &Service{password: hasher}
 
 	argonHash, err := hasher.Hash("correct")
 	require.NoError(t, err)

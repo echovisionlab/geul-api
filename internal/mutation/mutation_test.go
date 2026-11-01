@@ -212,6 +212,24 @@ func TestVersionAuditAttributesTheRequestMemberOrSystem(t *testing.T) {
 	require.Len(t, recorder.Records(), 1)
 }
 
+func TestAnonymousAuditAttributesAVisitorWithoutASession(t *testing.T) {
+	recorder := &audittest.Recorder{}
+	runner, _ := newTestRunner(t, recorder)
+	var steps []string
+	spec := noteSpec(&steps, "submission")
+	spec.Audit = func(note) Audit {
+		return AnonymousAudit(sharedtelemetry.AuditFormSubmissionCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewFormSubmissionCreatedAuditRecord(metadata, uuid.NewString(), uuid.NewString())
+		})
+	}
+	_, err := Run(context.Background(), runner, spec)
+	require.NoError(t, err)
+	records := recorder.Records()
+	require.Len(t, records, 1)
+	require.Equal(t, sharedtelemetry.ActorKindAnonymous, records[0].Kind)
+	require.Empty(t, records[0].MemberID)
+}
+
 func TestRunRejectsAnIncompleteSpecBeforeTheTransaction(t *testing.T) {
 	runner, _ := newTestRunner(t, &audittest.Recorder{})
 	var steps []string

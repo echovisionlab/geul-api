@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"sort"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -48,7 +48,7 @@ func ResolvePublicLocalization(
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return formSourceFallbackSelection(requestedLocale, sourceLocale), err
 		}
-		return formSourceFallbackSelection(requestedLocale, sourceLocale), errs.NotFound("form", formID)
+		return formSourceFallbackSelection(requestedLocale, sourceLocale), domainerr.ResourceNotFound("form", formID)
 	}
 	if normalized := localization.NormalizeSupportedLocale(rootLocaleRow.Locale); normalized != nil {
 		sourceLocale = *normalized

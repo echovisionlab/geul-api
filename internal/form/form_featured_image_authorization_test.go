@@ -10,6 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -43,10 +46,12 @@ func TestFormFeaturedImageMutationsRequireSiteAdmin(t *testing.T) {
 		require.NoError(t, cleanupErr)
 	})
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, principal.IdentityID.String(), policyv1.Role.User())
-	service := &FormService{
-		db: db, spiceDB: spiceDB,
-		authorization: newFormPermissionChecker(spiceDB, db),
-	}
+	mutations, err := mutation.NewRunner(db, spiceDB, &audittest.Recorder{})
+	require.NoError(t, err)
+	service := NewConnectHandler(&Service{
+		db: db, spiceDB: spiceDB, mutations: mutations,
+		authorization: authz.NewSpiceDBResourceChecker(spiceDB, db, "form"),
+	})
 
 	_, err = service.SetFormFeaturedImage(ctx, connect.NewRequest(&managev1.SetFormFeaturedImageRequest{FormId: formID, FileId: uuid.NewString()}))
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))

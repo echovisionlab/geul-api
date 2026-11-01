@@ -23,7 +23,7 @@ func (formProjectionAssets) FeaturedImage(context.Context, *gorm.DB, string) *co
 
 func TestSubmissionResponsePreservesCountryAndOptionalMetadataOnWire(t *testing.T) {
 	for _, country := range []*string{nil, new("KR")} {
-		response := new(FormService).toProtoSubmission(&model.FormSubmission{
+		response := toProtoSubmission(&model.FormSubmission{
 			ID: "submission-1", FormID: "form-1", CountryCode: country,
 			Data: []byte(`{"answer":"value"}`),
 		})
@@ -57,7 +57,7 @@ func TestFormResponseKeepsSourceLocaleOfSelectedSchema(t *testing.T) {
 		WithArgs("form-1", "pt-BR").
 		WillReturnRows(sqlmock.NewRows([]string{"title", "content_json", "content_text", "og_asset_id", "updated_at"}).
 			AddRow("Formulário", schema, nil, nil, time.Now()))
-	service := &FormService{db: db, assets: formProjectionAssets{}, og: formProjectionOG{}}
+	service := &Service{db: db, assets: formProjectionAssets{}, og: formProjectionOG{}}
 	response, err := service.toProtoForm(t.Context(), &model.Form{ID: "form-1", SourceLocale: "pt-BR"})
 	require.NoError(t, err)
 	require.Equal(t, "pt-BR", response.SourceLocale)

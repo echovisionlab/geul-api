@@ -8,6 +8,7 @@ import (
 	accountpublic "github.com/echovisionlab/geul-api/internal/account/public"
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	pageruntime "github.com/echovisionlab/geul-api/internal/adapters/page/runtime"
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
@@ -39,14 +40,14 @@ import (
 // publicServiceRegistration keeps public Connect routes together and receives
 // the exact handler options configured by the composition root.
 type publicServiceRegistration struct {
-	dependencies     serviceRegistrationDependencies
-	handlerOptions   []connect.HandlerOption
-	fileService      *filepublic.FileService
-	postShareLinks   postruntime.ShareLinks
-	postMembers      *postadapter.MemberSummaries
-	workRuntime      *workadapter.Runtime
-	legalRuntime     *legaladapter.Runtime
-	formDependencies formdomain.Dependencies
+	dependencies   serviceRegistrationDependencies
+	handlerOptions []connect.HandlerOption
+	fileService    *filepublic.FileService
+	postShareLinks postruntime.ShareLinks
+	postMembers    *postadapter.MemberSummaries
+	workRuntime    *workadapter.Runtime
+	legalRuntime   *legaladapter.Runtime
+	formAssets     formdomain.PublicAssets
 }
 
 func (r publicServiceRegistration) register() error {
@@ -66,7 +67,6 @@ func (r publicServiceRegistration) register() error {
 	postMembers := r.postMembers
 	workRuntime := r.workRuntime
 	legalRuntime := r.legalRuntime
-	formDependencies := r.formDependencies
 	// Public API services (no auth required - exposed via Oathkeeper public rules)
 	manifestService, err := publicsitesettings.NewService(publicsitesettings.Deps{
 		Projection: sitesettingsadapter.NewPublicProjection(
@@ -134,8 +134,14 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicClientPath, publicClientHandler)
 	slog.Info("Registered public service", "path", publicClientPath)
 
-	publicFormService := publicform.NewAuditedFormService(db, passwordHasher, spicedbClient, telemetryWriter, formDependencies)
-	publicFormPath, publicFormHandler := openv1connect.NewFormServiceHandler(publicFormService, publicHandlerOpts...)
+	publicFormService, err := publicform.NewService(publicform.Deps{
+		DB: db, SpiceDB: spicedbClient, Password: passwordHasher, Assets: r.formAssets,
+		Members: memberadapter.PreferredLocales{}, ShareLinks: sharelinkadapter.FormLinks{}, Audit: telemetryWriter,
+	})
+	if err != nil {
+		return fmt.Errorf("initialize public Form service: %w", err)
+	}
+	publicFormPath, publicFormHandler := openv1connect.NewFormServiceHandler(publicform.NewConnectHandler(publicFormService), publicHandlerOpts...)
 	mux.Handle(publicFormPath, publicFormHandler)
 	slog.Info("Registered public service", "path", publicFormPath)
 

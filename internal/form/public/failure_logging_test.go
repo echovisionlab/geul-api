@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/crypto"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,7 +17,7 @@ func TestInvalidPasswordHashLogsCauseAndStillReturnsFalse(t *testing.T) {
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
-	service := &FormService{password: &crypto.PasswordHasher{}}
+	service := &Service{password: &crypto.PasswordHasher{}}
 	require.False(t, service.verifyFormPassword(t.Context(), "private-password", "broken-private-hash"))
 	var entry map[string]any
 	require.NoError(t, json.Unmarshal(output.Bytes(), &entry))
@@ -34,6 +35,6 @@ func TestMalformedSubmissionJSONIsRejectedWithoutLogging(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	err := validateFormSubmissionDataPayload([]byte(`{"private":"private-name",`))
-	require.Equal(t, connect.CodeInvalidArgument, err.Code())
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 	require.Empty(t, output.String())
 }

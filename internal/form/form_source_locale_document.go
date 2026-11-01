@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"gorm.io/gorm"
 )
@@ -80,10 +80,10 @@ func loadFormTranslationStoredSnapshot(
 		locale,
 	).Scan(&row)
 	if result.Error != nil {
-		return nil, errs.Internal(result.Error)
+		return nil, result.Error
 	}
 	if result.RowsAffected == 0 {
-		return nil, errs.NotFound("form translation", formID+":"+locale)
+		return nil, domainerr.ResourceNotFound("form translation", formID+":"+locale)
 	}
 
 	state := &TranslationDocumentState{
@@ -121,10 +121,10 @@ func loadFormResolvedSourceLocale(
 		formID,
 	).Scan(&sourceRow)
 	if result.Error != nil {
-		return "", errs.Internal(result.Error)
+		return "", result.Error
 	}
 	if result.RowsAffected == 0 || strings.TrimSpace(sourceRow.Locale) == "" {
-		return "", errs.NotFound("form source translation", formID)
+		return "", domainerr.ResourceNotFound("form source translation", formID)
 	}
 	return sourceRow.Locale, nil
 }
@@ -137,7 +137,7 @@ func LoadFormCanonicalSourceDocumentState(
 ) (*TranslationDocumentState, error) {
 	sourceLocale = strings.TrimSpace(sourceLocale)
 	if sourceLocale == "" {
-		return nil, errs.NotFound("form source translation", formID)
+		return nil, domainerr.ResourceNotFound("form source translation", formID)
 	}
 
 	snapshot, err := loadFormTranslationStoredSnapshot(ctx, db, formID, sourceLocale)
@@ -173,26 +173,26 @@ func PrepareSourceLocaleSwitch(
 	now time.Time,
 ) error {
 	if db == nil || !IsValidUUID(formID) {
-		return errs.InvalidArgument("form_id", "must be a canonical UUID")
+		return domainerr.InvalidField("form_id", "must be a canonical UUID")
 	}
 	currentSourceLocale = strings.TrimSpace(currentSourceLocale)
 	requestedLocale = strings.TrimSpace(requestedLocale)
 	if currentSourceLocale == "" || requestedLocale == "" ||
 		currentSourceLocale == requestedLocale {
-		return errs.InvalidArgument(
+		return domainerr.InvalidField(
 			"source_locale",
 			"current and requested Form source locales are required and must differ",
 		)
 	}
 	if now.IsZero() {
-		return errs.InvalidArgument("now", "Form source-locale switch time is required")
+		return domainerr.InvalidField("now", "Form source-locale switch time is required")
 	}
 	root, err := loadFormAIDocumentRoot(ctx, db, formID, "")
 	if err != nil {
 		return err
 	}
 	if root.SourceLocale != currentSourceLocale {
-		return errs.FailedPrecondition("Form source locale changed")
+		return domainerr.Precondition("Form source locale changed")
 	}
 	source, sourceExists, err := loadFormAIDocumentLocale(
 		ctx, db, formID, currentSourceLocale, true,
@@ -201,10 +201,10 @@ func PrepareSourceLocaleSwitch(
 		return err
 	}
 	if !sourceExists {
-		return errs.FailedPrecondition("Form source locale document is missing")
+		return domainerr.Precondition("Form source locale document is missing")
 	}
 	if err := validateCanonicalFormSchema(source.Schema); err != nil {
-		return errs.WithCause(errs.FailedPrecondition("Form source locale document is invalid"), failurecause.ServerFault(err))
+		return domainerr.Precondition("Form source locale document is invalid").WithCause(failurecause.ServerFault(err))
 	}
 	requested, requestedExists, err := loadFormAIDocumentLocale(
 		ctx, db, formID, requestedLocale, true,
@@ -214,13 +214,13 @@ func PrepareSourceLocaleSwitch(
 	}
 	if requestedExists {
 		if err := validateFormAIDocumentTargetSchema(source.Schema, requested.Schema); err != nil {
-			return errs.WithCause(errs.FailedPrecondition("Form requested source locale document is invalid"), failurecause.ServerFault(err))
+			return domainerr.Precondition("Form requested source locale document is invalid").WithCause(failurecause.ServerFault(err))
 		}
 		return nil
 	}
 	emptySchema, err := formAIDocumentEmptyTargetSchema(source.Schema)
 	if err != nil {
-		return errs.WithCause(errs.FailedPrecondition("Form source locale document is invalid"), failurecause.ServerFault(err))
+		return domainerr.Precondition("Form source locale document is invalid").WithCause(failurecause.ServerFault(err))
 	}
 	writeTime := now.UTC()
 	result := db.WithContext(ctx).Exec(
@@ -235,10 +235,10 @@ func PrepareSourceLocaleSwitch(
 		writeTime,
 	)
 	if result.Error != nil {
-		return errs.Internal(result.Error)
+		return result.Error
 	}
 	if result.RowsAffected != 1 {
-		return errs.FailedPrecondition("Form requested source locale changed")
+		return domainerr.Precondition("Form requested source locale changed")
 	}
 	return nil
 }
@@ -257,7 +257,7 @@ func saveFormSourceLocaleDocumentState(
 
 	if len(input.ContentJSON) == 0 {
 		existingSnapshot, err := loadFormTranslationStoredSnapshot(ctx, db, formID, locale)
-		if err != nil && connect.CodeOf(err) != connect.CodeNotFound {
+		if err != nil && !mutation.IsNotFound(err) {
 			return err
 		}
 		if existingSnapshot != nil && len(input.ContentJSON) == 0 {
@@ -292,29 +292,10 @@ func saveFormSourceLocaleDocumentState(
 		now,
 		now,
 	).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 
 	return nil
-}
-
-func createInitialFormSourceLocaleRow(
-	ctx context.Context,
-	db *gorm.DB,
-	translation Translation,
-	formID string,
-	sourceLocale string,
-	title string,
-	schemaJSON []byte,
-	now time.Time,
-) error {
-	sourceLocale = translation.NormalizeInitialSourceLocale(ctx, db, sourceLocale)
-
-	return saveFormSourceLocaleDocumentState(ctx, db, formID, sourceLocale, TranslationDocumentSaveInput{
-		Title:       &title,
-		ContentJSON: schemaJSON,
-		Now:         now,
-	})
 }
 
 func loadFormSourceSchema(
@@ -351,7 +332,7 @@ func loadFormSourceTitles(
 		formIDs,
 	).Scan(&rows)
 	if result.Error != nil {
-		return nil, errs.Internal(result.Error)
+		return nil, result.Error
 	}
 
 	titles := make(map[string]string, len(rows))

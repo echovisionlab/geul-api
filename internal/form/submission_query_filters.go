@@ -4,10 +4,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
 
@@ -18,47 +17,31 @@ var formSubmissionSortFields = map[string]string{
 	"created_at": "created_at",
 }
 
-func applyFormSubmissionFilters(
-	query *gorm.DB,
-	req *managev1.ListFormSubmissionsRequest,
-) (*gorm.DB, error) {
-	search := req.GetSearch()
-	if utf8.RuneCountInString(search) > formSubmissionSearchMaxRunes {
-		return nil, errs.InvalidArgument("search", "must be at most 200 characters")
+func applyFormSubmissionFilters(query *gorm.DB, filters ListFormSubmissionsQuery) (*gorm.DB, error) {
+	if utf8.RuneCountInString(filters.Search) > formSubmissionSearchMaxRunes {
+		return nil, domainerr.InvalidField("search", "must be at most 200 characters")
 	}
-	if search != "" {
-		pattern := "%" + queryutil.EscapeILIKEPattern(search) + "%"
+	if filters.Search != "" {
+		pattern := "%" + queryutil.EscapeILIKEPattern(filters.Search) + "%"
 		query = query.Where("data::text ILIKE ? ESCAPE E'\\\\'", pattern)
 	}
 
-	if countryCode := strings.TrimSpace(req.GetCountryCode()); countryCode != "" {
+	if countryCode := strings.TrimSpace(filters.CountryCode); countryCode != "" {
 		if len(countryCode) != 2 || !isASCIILetter(countryCode[0]) || !isASCIILetter(countryCode[1]) {
-			return nil, errs.InvalidArgument("country_code", "must be a two-letter country code")
+			return nil, domainerr.InvalidField("country_code", "must be a two-letter country code")
 		}
 		countryCode = strings.ToUpper(countryCode)
 		query = query.Where("country_code = ?", countryCode)
 	}
 
-	createdAtFrom := req.GetCreatedAtFrom()
-	createdAtBefore := req.GetCreatedAtBefore()
-	if createdAtFrom != nil {
-		if err := createdAtFrom.CheckValid(); err != nil {
-			return nil, errs.InvalidArgument("created_at_from", "must be a valid timestamp")
-		}
+	if filters.CreatedAtFrom != nil && filters.CreatedAtBefore != nil && !filters.CreatedAtFrom.Before(*filters.CreatedAtBefore) {
+		return nil, domainerr.InvalidField("created_at_from", "must be earlier than created_at_before")
 	}
-	if createdAtBefore != nil {
-		if err := createdAtBefore.CheckValid(); err != nil {
-			return nil, errs.InvalidArgument("created_at_before", "must be a valid timestamp")
-		}
+	if filters.CreatedAtFrom != nil {
+		query = query.Where("created_at >= ?", *filters.CreatedAtFrom)
 	}
-	if createdAtFrom != nil && createdAtBefore != nil && !createdAtFrom.AsTime().Before(createdAtBefore.AsTime()) {
-		return nil, errs.InvalidArgument("created_at_from", "must be earlier than created_at_before")
-	}
-	if createdAtFrom != nil {
-		query = query.Where("created_at >= ?", createdAtFrom.AsTime())
-	}
-	if createdAtBefore != nil {
-		query = query.Where("created_at < ?", createdAtBefore.AsTime())
+	if filters.CreatedAtBefore != nil {
+		query = query.Where("created_at < ?", *filters.CreatedAtBefore)
 	}
 
 	return query, nil
@@ -77,7 +60,7 @@ func applyFormSubmissionSort(query *gorm.DB, sorts []*commonv1.SortSpec) (*gorm.
 		field := sort.GetField()
 		column, ok := formSubmissionSortFields[field]
 		if !ok {
-			return nil, errs.InvalidSortField(field)
+			return nil, domainerr.New(domainerr.Invalid, "", "invalid sort field: "+field)
 		}
 
 		var order string
@@ -87,7 +70,7 @@ func applyFormSubmissionSort(query *gorm.DB, sorts []*commonv1.SortSpec) (*gorm.
 		case commonv1.SortOrder_SORT_ORDER_DESC:
 			order = "DESC"
 		default:
-			return nil, errs.InvalidArgument("sorts.order", "must be ASC or DESC")
+			return nil, domainerr.InvalidField("sorts.order", "must be ASC or DESC")
 		}
 		query = query.Order(column + " " + order)
 	}

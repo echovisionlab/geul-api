@@ -31,8 +31,7 @@ func TestSaveDocumentRejectsNilRequestWithoutPanicking(t *testing.T) {
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(previous) })
-	service := &InternalFormService{}
-	response, err := service.SaveDocument(t.Context(), nil)
+	response, err := NewInternalConnectHandler(&Service{}).SaveDocument(t.Context(), nil)
 	require.Nil(t, response)
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 	require.Contains(t, err.Error(), "request is required")

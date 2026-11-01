@@ -9,6 +9,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -117,7 +118,7 @@ func TestFormTranslationPublicSelectionUsesConfiguredPolicyIntegration(t *testin
 		"DELETE FROM form_translation WHERE entity_id = ? AND locale = ?", formID, "en",
 	).Error)
 	_, err = LoadFormCanonicalSourceDocumentState(ctx, pg.DB, formID, "en")
-	assert.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	assert.Equal(t, connect.CodeNotFound, errs.Wrap(err).Code())
 	var missingSourceRows int64
 	require.NoError(t, pg.DB.Table("form_translation").
 		Where("entity_id = ? AND locale = ?", formID, "en").Count(&missingSourceRows).Error)

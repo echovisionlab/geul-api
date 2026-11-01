@@ -3,80 +3,69 @@ package form
 import (
 	"context"
 	"errors"
+	"time"
 
-	"connectrpc.com/connect"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"gorm.io/gorm"
+
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
+	"github.com/echovisionlab/geul-api/internal/securityaccess"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
 )
 
-func (s *FormService) ListFormSubmissions(
-	ctx context.Context,
-	req *connect.Request[managev1.ListFormSubmissionsRequest],
-) (*connect.Response[managev1.ListFormSubmissionsResponse], error) {
-	// Keep behavior consistent with other submission endpoints:
-	// unknown form IDs should return not_found (including admins).
-	var formCount int64
-	if err := s.db.WithContext(ctx).
-		Model(&model.Form{}).
-		Where("id = ?", req.Msg.FormId).
-		Count(&formCount).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-	if formCount == 0 {
-		return nil, errs.NotFound("form", req.Msg.FormId)
-	}
-	if err := s.requireFormAction(ctx, req.Msg.FormId, formActionManage); err != nil {
-		if connect.CodeOf(err) == connect.CodePermissionDenied {
-			return nil, errs.NotFound("form", req.Msg.FormId)
-		}
+// ListFormSubmissionsQuery lists a Form's submissions. Search matches the
+// submitted data; the creation bounds are inclusive from and exclusive
+// before.
+type ListFormSubmissionsQuery struct {
+	FormID          string
+	Search          string
+	CountryCode     string
+	CreatedAtFrom   *time.Time
+	CreatedAtBefore *time.Time
+	Page            Page
+	Sorts           []*commonv1.SortSpec
+}
+
+// GetFormSubmissionQuery reads one submission with its Form's schema.
+type GetFormSubmissionQuery struct {
+	ID string
+}
+
+// ListFormSubmissions returns a page of submissions of a Form the caller
+// manages and records the personal data access.
+func (s *Service) ListFormSubmissions(ctx context.Context, query ListFormSubmissionsQuery) (*managev1.ListFormSubmissionsResponse, error) {
+	// An unknown Form is not found for administrators too, as for every
+	// submission read.
+	if err := s.requireManagedForm(ctx, query.FormID); err != nil {
 		return nil, err
 	}
-
-	query := s.db.WithContext(ctx).Model(&model.FormSubmission{}).Where("form_id = ?", req.Msg.FormId)
-	query, err := applyFormSubmissionFilters(query, req.Msg)
+	filtered, err := applyFormSubmissionFilters(s.db.WithContext(ctx).Model(&model.FormSubmission{}).Where("form_id = ?", query.FormID), query)
 	if err != nil {
 		return nil, err
 	}
-	pageQuery, err := applyFormSubmissionSort(query, req.Msg.Sorts)
+	sorted, err := applyFormSubmissionSort(filtered, query.Sorts)
 	if err != nil {
 		return nil, err
 	}
-
-	var submissions []model.FormSubmission
 	var total int64
-
-	// Count and page from the same filtered query.
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
+	if err := filtered.Count(&total).Error; err != nil {
+		return nil, err
 	}
-
-	pagination := queryutil.ExtractPagination(req.Msg.Pagination, queryutil.PaginationConfig{
-		DefaultLimit: 50,
-		MaxLimit:     100,
-	})
-
-	if err := pageQuery.
-		Limit(int(pagination.Limit)).
-		Offset(int(pagination.Offset)).
-		Find(&submissions).Error; err != nil {
-		return nil, errs.Internal(err)
+	pagination := queryutil.ExtractPaginationRaw(query.Page.Limit, query.Page.Offset, queryutil.PaginationConfig{DefaultLimit: 50, MaxLimit: 100})
+	var submissions []model.FormSubmission
+	if err := sorted.Limit(int(pagination.Limit)).Offset(int(pagination.Offset)).Find(&submissions).Error; err != nil {
+		return nil, err
 	}
-
 	protoSubmissions := make([]*managev1.FormSubmission, len(submissions))
 	for i := range submissions {
-		protoSubmissions[i] = s.toProtoSubmission(&submissions[i])
+		protoSubmissions[i] = toProtoSubmission(&submissions[i])
 	}
-	if s.securityAccess != nil {
-		if err := s.securityAccess.AppendFormSubmissions(ctx, req.Msg.FormId); err != nil {
-			return nil, errs.WithCause(securityAccessUnavailable(), err)
-		}
+	if err := s.personalDataAccess.AppendFormSubmissions(ctx, query.FormID); err != nil {
+		return nil, securityaccess.Unavailable().WithCause(err)
 	}
-
-	return connect.NewResponse(&managev1.ListFormSubmissionsResponse{
+	return &managev1.ListFormSubmissionsResponse{
 		Submissions: protoSubmissions,
 		Pagination: &commonv1.PaginationResponse{
 			Total:   int32(total),
@@ -84,52 +73,54 @@ func (s *FormService) ListFormSubmissions(
 			Offset:  pagination.Offset,
 			HasMore: int64(pagination.Offset)+int64(pagination.Limit) < total,
 		},
-	}), nil
+	}, nil
 }
 
-// GetFormSubmissionStats returns aggregate submission stats for a form (admin only).
-func (s *FormService) GetFormSubmissionWithSchema(
-	ctx context.Context,
-	req *connect.Request[managev1.GetFormSubmissionRequest],
-) (*connect.Response[managev1.FormSubmissionWithSchema], error) {
-	var submission model.FormSubmission
-	if err := s.db.WithContext(ctx).First(&submission, "id = ?", req.Msg.Id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFoundMsg("submission not found")
-		}
-		return nil, errs.Internal(err)
+// requireManagedForm answers not found for a missing Form and for a Form the
+// caller may not manage.
+func (s *Service) requireManagedForm(ctx context.Context, formID string) error {
+	var count int64
+	if err := s.db.WithContext(ctx).Model(&model.Form{}).Where("id = ?", formID).Count(&count).Error; err != nil {
+		return err
 	}
+	notFound := domainerr.ResourceNotFound("form", formID)
+	if count == 0 {
+		return notFound
+	}
+	return s.requireVisibleFormAction(ctx, formID, formActionManage, notFound)
+}
 
-	// Get the form to include schema
-	var form model.Form
-	if err := s.db.WithContext(ctx).First(&form, "id = ?", submission.FormID).Error; err != nil {
+// GetFormSubmissionWithSchema returns one submission of a Form the caller manages with
+// the Form's source schema and records the personal data access.
+func (s *Service) GetFormSubmissionWithSchema(ctx context.Context, query GetFormSubmissionQuery) (*managev1.FormSubmissionWithSchema, error) {
+	notFound := domainerr.New(domainerr.NotFound, "", "submission not found")
+	var submission model.FormSubmission
+	if err := s.db.WithContext(ctx).First(&submission, "id = ?", query.ID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFoundMsg("form not found")
-		}
-		return nil, errs.Internal(err)
-	}
-	if err := s.requireFormAction(ctx, form.ID, formActionManage); err != nil {
-		if connect.CodeOf(err) == connect.CodePermissionDenied {
-			return nil, errs.NotFoundMsg("submission not found")
+			return nil, notFound
 		}
 		return nil, err
 	}
-
+	var form model.Form
+	if err := s.db.WithContext(ctx).First(&form, "id = ?", submission.FormID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domainerr.New(domainerr.NotFound, "", "form not found")
+		}
+		return nil, err
+	}
+	if err := s.requireVisibleFormAction(ctx, form.ID, formActionManage, notFound); err != nil {
+		return nil, err
+	}
 	formSchema, sourceTitle, err := loadFormSourceSchema(ctx, s.db, form.ID)
 	if err != nil {
 		return nil, err
 	}
-	if s.securityAccess != nil {
-		if err := s.securityAccess.AppendFormSubmission(ctx, submission.ID); err != nil {
-			return nil, errs.WithCause(securityAccessUnavailable(), err)
-		}
+	if err := s.personalDataAccess.AppendFormSubmission(ctx, submission.ID); err != nil {
+		return nil, securityaccess.Unavailable().WithCause(err)
 	}
-
-	return connect.NewResponse(&managev1.FormSubmissionWithSchema{
-		Submission: s.toProtoSubmission(&submission),
+	return &managev1.FormSubmissionWithSchema{
+		Submission: toProtoSubmission(&submission),
 		FormSchema: formSchema,
 		FormTitle:  resolveFormTitle(sourceTitle),
-	}), nil
+	}, nil
 }
-
-// DeleteFormSubmission deletes a submission (admin only)

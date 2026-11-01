@@ -4,49 +4,45 @@ import (
 	"context"
 	"errors"
 
-	"connectrpc.com/connect"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
-func (s *FormService) DeleteFormSubmission(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteFormSubmissionRequest],
-) (*connect.Response[managev1.DeleteResponse], error) {
-	var submission model.FormSubmission
-	if err := s.db.WithContext(ctx).First(&submission, "id = ?", req.Msg.Id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFoundMsg("submission not found")
-		}
-		return nil, errs.Internal(err)
-	}
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var form model.Form
-		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			Select("id").
-			First(&form, "id = ?", submission.FormID).Error; err != nil {
-			return err
-		}
-		if err := s.requireFreshFormAction(ctx, tx, submission.FormID, formActionManage); err != nil {
-			return err
-		}
-		result := tx.Delete(&model.FormSubmission{}, "id = ?", submission.ID)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			return errs.NotFoundMsg("submission not found")
-		}
-		return s.appendFormSubmissionDeletedAudit(ctx, tx, submission.ID)
-	}); err != nil {
-		return nil, errs.Wrap(err)
-	}
-
-	return connect.NewResponse(&managev1.DeleteResponse{Success: true}), nil
+// DeleteFormSubmissionCommand deletes one submission.
+type DeleteFormSubmissionCommand struct {
+	ID string
 }
 
-// Helper methods
+// DeleteFormSubmission deletes a submission of a Form the caller manages.
+func (s *Service) DeleteFormSubmission(ctx context.Context, command DeleteFormSubmissionCommand) error {
+	notFound := domainerr.New(domainerr.NotFound, "", "submission not found")
+	var submission model.FormSubmission
+	if err := s.db.WithContext(ctx).First(&submission, "id = ?", command.ID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return notFound
+		}
+		return err
+	}
+	var form model.Form
+	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[string]{
+		Lock: func(ctx context.Context, tx *gorm.DB) error {
+			return lockFormRoot(ctx, tx, submission.FormID, &form, notFound, "id")
+		},
+		Access: s.freshFormAction(submission.FormID, formActionManage),
+		Change: func(ctx context.Context, tx *gorm.DB) (string, error) {
+			result := tx.WithContext(ctx).Delete(&model.FormSubmission{}, "id = ?", submission.ID)
+			if result.Error != nil {
+				return "", result.Error
+			}
+			if result.RowsAffected == 0 {
+				return "", notFound
+			}
+			return submission.ID, nil
+		},
+		Audit: formSubmissionDeletedAudit,
+	})
+	return err
+}

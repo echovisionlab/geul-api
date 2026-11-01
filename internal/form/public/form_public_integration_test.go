@@ -14,9 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 
-	formadapter "github.com/echovisionlab/geul-api/internal/adapters/form"
 	"github.com/echovisionlab/geul-api/internal/crypto"
-	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/sharelinktest"
@@ -253,16 +251,15 @@ func createManagedFormForIntegration(
 
 // newPublicFormServiceForIntegration composes the migrated Form public
 // boundary for this shared cross-domain integration suite.
-func newPublicFormServiceForIntegration(t *testing.T, db *gorm.DB) *FormService {
+func newPublicFormServiceForIntegration(t *testing.T, db *gorm.DB) *ConnectHandler {
 	t.Helper()
-	assets := formadapter.NewAssets("https://cdn.example.com")
-	return NewFormService(db, crypto.NewPasswordHasher(&crypto.Argon2idParams{
+	return newPublicFormHandlerForIntegration(t, db, crypto.NewPasswordHasher(&crypto.Argon2idParams{
 		Memory:      64,
 		Iterations:  1,
 		Parallelism: 1,
 		SaltLength:  8,
 		KeyLength:   16,
-	}), testutil.IntegrationSpiceDB(t), formdomain.Dependencies{PublicAssets: assets})
+	}), nil)
 }
 
 func publicFormSchemaForIntegration() []byte {

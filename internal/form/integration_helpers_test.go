@@ -12,12 +12,16 @@ import (
 
 	formadapter "github.com/echovisionlab/geul-api/internal/adapters/form"
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/securityaccess"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -76,22 +80,56 @@ func newFormIntegrationOGRefresher(db *gorm.DB, cdnDomain string) *og.Refresher 
 	return og.NewRefresher(planner, og.NewResolver(formogadapter.NewRequests()))
 }
 
-func formIntegrationDependencies(db *gorm.DB, cdnDomain string, security securityaccess.Appender) formdomain.Dependencies {
+// formIntegrationAudit records personal data access through security and
+// the Form domain audit through audit.
+type formIntegrationAudit struct {
+	security securityaccess.Appender
+	audit    domainaudit.Appender
+}
+
+func (a formIntegrationAudit) AppendSecurityAccess(ctx context.Context, record sharedtelemetry.SecurityAccessRecord) error {
+	return a.security.AppendSecurityAccess(ctx, record)
+}
+
+func (a formIntegrationAudit) AppendDomainAuditInTransaction(ctx context.Context, tx *gorm.DB, record sharedtelemetry.AuditRecord) error {
+	return a.audit.AppendDomainAuditInTransaction(ctx, tx, record)
+}
+
+// newFormUseCasesForIntegration composes the Form use cases the server
+// composes. A nil security or audit appender is the durable telemetry
+// writer; a nil publisher schedules signals in the mutation transaction.
+func newFormUseCasesForIntegration(
+	db *gorm.DB,
+	security securityaccess.Appender,
+	audit domainaudit.Appender,
+	spiceDB *auth.SpiceDBClient,
+	publisher contentsignal.Publisher,
+) *formdomain.Service {
+	if publisher == nil {
+		publisher = &mq.Publisher{}
+	}
 	if security == nil {
 		security = apitelemetry.NewDurableWriter(db)
 	}
-	assets := formadapter.NewAssets(cdnDomain)
+	if audit == nil {
+		audit = apitelemetry.NewDurableWriter(db)
+	}
+	cdnDomain := "https://cdn.example.test"
 	contentBlocks, err := contentblock.NewGeneratedStore(formIntegrationFileReuseAuthorizer{})
 	if err != nil {
 		panic(err)
 	}
-	return formdomain.Dependencies{
-		ContentBlocks: contentBlocks,
-		Assets:        assets, PublicAssets: assets,
-		OG:     formogadapter.NewOG(cdnDomain, newFormIntegrationOGRefresher(db, cdnDomain)),
-		Routes: formadapter.NewRoutes(), Translation: formadapter.NewTranslation(),
-		SecurityAccess: formadapter.NewSecurityAccess(security),
+	service, err := formdomain.NewService(formdomain.Deps{
+		DB: db, SpiceDB: spiceDB, Password: integrationFormAuditHasher(), ContentBlocks: contentBlocks,
+		Assets: formadapter.NewAssets(cdnDomain), OG: formogadapter.NewOG(cdnDomain, newFormIntegrationOGRefresher(db, cdnDomain)),
+		Routes: formadapter.NewRoutes(), Collaboration: formadapter.NewCollaboration(spiceDB),
+		Members: memberadapter.PreferredLocales{}, ShareLinks: sharelinkadapter.FormLinks{},
+		Signals: publisher, Audit: formIntegrationAudit{security: security, audit: audit},
+	})
+	if err != nil {
+		panic(err)
 	}
+	return service
 }
 
 type formIntegrationFileReuseAuthorizer struct{}
@@ -110,33 +148,21 @@ func (formIntegrationFileReuseAuthorizer) AuthorizeFileReuse(
 func newAuditedFormServiceForIntegration(
 	t *testing.T,
 	db *gorm.DB,
-	identityID string,
+	_ string,
 	security securityaccess.Appender,
 	audit domainaudit.Appender,
 	spiceDB *auth.SpiceDBClient,
-) *formdomain.FormService {
+) *formdomain.ConnectHandler {
 	t.Helper()
-	return formdomain.NewAuditedFormService(
-		db, integrationFormAuditHasher(),
-		formIntegrationIdentityManager{identity: &auth.Identity{ID: identityID, State: auth.KratosStateActive, Traits: structured.Fields{"preferred_locale": "en"}}},
-		audit, spiceDB, formIntegrationDependencies(db, "https://cdn.example.test", security),
-	)
+	return formdomain.NewConnectHandler(newFormUseCasesForIntegration(db, security, audit, spiceDB, nil))
 }
 
-func newFormServiceForIntegration(
-	db *gorm.DB,
-	identityID string,
-	spiceDB *auth.SpiceDBClient,
-) *formdomain.FormService {
-	return formdomain.NewFormService(
-		db, integrationFormAuditHasher(),
-		formIntegrationIdentityManager{identity: &auth.Identity{ID: identityID, State: auth.KratosStateActive, Traits: structured.Fields{"preferred_locale": "en"}}},
-		spiceDB, formIntegrationDependencies(db, "https://cdn.example.test", nil),
-	)
+func newFormServiceForIntegration(db *gorm.DB, _ string, spiceDB *auth.SpiceDBClient) *formdomain.ConnectHandler {
+	return formdomain.NewConnectHandler(newFormUseCasesForIntegration(db, nil, nil, spiceDB, nil))
 }
 
-func newAuditedInternalFormServiceForIntegration(db *gorm.DB, publisher formdomain.AsyncPublisher, audit domainaudit.Appender, spiceDB *auth.SpiceDBClient) *formdomain.InternalFormService {
-	return formdomain.NewAuditedInternalFormService(db, publisher, audit, spiceDB, formIntegrationDependencies(db, "", nil))
+func newAuditedInternalFormServiceForIntegration(db *gorm.DB, publisher contentsignal.Publisher, audit domainaudit.Appender, spiceDB *auth.SpiceDBClient) *formdomain.InternalConnectHandler {
+	return formdomain.NewInternalConnectHandler(newFormUseCasesForIntegration(db, nil, audit, spiceDB, publisher))
 }
 
 type failingFormAuditAppender struct{}
@@ -177,6 +203,19 @@ func seedFormImageBindingFile(t *testing.T, db *gorm.DB, key string) string {
 }
 
 func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient { return testutil.IntegrationSpiceDB(t) }
+
+// formRequestAuditContext makes ctx a request of its principal, which every
+// audited Form mutation attributes its record to.
+func formRequestAuditContext(t *testing.T, ctx context.Context) context.Context {
+	t.Helper()
+	principal := auth.GetUser(ctx)
+	require.NotNil(t, principal)
+	request, err := sharedtelemetry.NewPropagatedRequestContext(uuid.NewString(), sharedtelemetry.MemberActor{
+		IdentityID: principal.IdentityID.String(), MemberID: principal.MemberID.String(), SessionID: principal.SessionID.String(),
+	})
+	require.NoError(t, err)
+	return sharedtelemetry.WithRequestContext(ctx, request)
+}
 
 func ptrString(value string) *string { return &value }
 

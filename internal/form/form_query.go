@@ -4,162 +4,140 @@ import (
 	"context"
 	"errors"
 
-	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/authz"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"gorm.io/gorm"
+
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"gorm.io/gorm"
 )
 
-// GetForm retrieves a form by ID or slug.
-func (s *FormService) GetForm(
-	ctx context.Context,
-	req *connect.Request[managev1.GetFormRequest],
-) (*connect.Response[managev1.Form], error) {
-	var form model.Form
-	query := s.db.WithContext(ctx)
-	if IsValidUUID(req.Msg.Id) {
-		query = query.Where("id = ?", req.Msg.Id)
-	} else {
-		query = query.Where("slug = ?", req.Msg.Id)
-	}
-	if err := query.First(&form).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("form", req.Msg.Id)
-		}
-		return nil, errs.Internal(err)
-	}
-
-	if err := s.requireFormAction(ctx, form.ID, formActionView); err != nil {
-		if connect.CodeOf(err) == connect.CodePermissionDenied {
-			return nil, errs.NotFound("form", req.Msg.Id)
-		}
-		return nil, err
-	}
-
-	protoForm, err := s.toProtoForm(ctx, &form)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(protoForm), nil
+// GetFormQuery reads a Form by its ID or slug.
+type GetFormQuery struct {
+	IDOrSlug string
 }
 
-// GetFormBySlug retrieves a form by slug
-// CheckFormSlugAvailable checks if a slug is available.
-// If exclude_id is set, caller must have access to that form.
-func (s *FormService) CheckFormSlugAvailable(
-	ctx context.Context,
-	req *connect.Request[managev1.CheckFormSlugAvailableRequest],
-) (*connect.Response[managev1.CheckFormSlugAvailableResponse], error) {
-	if err := pathslug.Validate(req.Msg.Slug); err != nil {
-		return nil, err
-	}
-	excludeID := ""
-	if req.Msg.ExcludeId != nil {
-		excludeID = *req.Msg.ExcludeId
-	}
-	if err := s.authorizeFormSlugCheck(ctx, excludeID); err != nil {
-		return nil, err
-	}
+// CheckFormSlugAvailableQuery asks whether Slug is free for a new Form or,
+// with ExcludeID, for that Form.
+type CheckFormSlugAvailableQuery struct {
+	Slug      string
+	ExcludeID string
+}
 
-	available, err := isSlugAvailable(ctx, s.db, req.Msg.Slug, excludeID)
+// Page is one page of a listing; a zero Limit takes the default.
+type Page struct {
+	Limit  int32
+	Offset int32
+}
+
+// ListFormsAdminQuery lists every Form, drafts included.
+type ListFormsAdminQuery struct {
+	Page    Page
+	Filters []*commonv1.FilterSpec
+	Sorts   []*commonv1.SortSpec
+}
+
+// GetForm returns a Form the caller may view; another Form is not found.
+func (s *Service) GetForm(ctx context.Context, query GetFormQuery) (*managev1.Form, error) {
+	var form model.Form
+	lookup := s.db.WithContext(ctx)
+	if IsValidUUID(query.IDOrSlug) {
+		lookup = lookup.Where("id = ?", query.IDOrSlug)
+	} else {
+		lookup = lookup.Where("slug = ?", query.IDOrSlug)
+	}
+	notFound := domainerr.ResourceNotFound("form", query.IDOrSlug)
+	if err := lookup.First(&form).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, notFound
+		}
+		return nil, err
+	}
+	if err := s.requireVisibleFormAction(ctx, form.ID, formActionView, notFound); err != nil {
+		return nil, err
+	}
+	return s.toProtoForm(ctx, &form)
+}
+
+// CheckFormSlugAvailable reports whether the slug is free among Forms and
+// Page routes. Checking for an existing Form requires editing it.
+func (s *Service) CheckFormSlugAvailable(ctx context.Context, query CheckFormSlugAvailableQuery) (*managev1.CheckFormSlugAvailableResponse, error) {
+	if err := pathslug.Validate(query.Slug); err != nil {
+		return nil, err
+	}
+	if err := s.authorizeFormSlugCheck(ctx, query.ExcludeID); err != nil {
+		return nil, err
+	}
+	available, err := isSlugAvailable(ctx, s.db, query.Slug, query.ExcludeID)
 	if err != nil {
 		return nil, err
 	}
 	if available {
-		available, err = s.routes.SlugAvailable(ctx, s.db, req.Msg.Slug, excludeID)
-		if err != nil {
+		if available, err = s.routes.SlugAvailable(ctx, s.db, query.Slug, query.ExcludeID); err != nil {
 			return nil, err
 		}
 	}
-
-	return connect.NewResponse(&managev1.CheckFormSlugAvailableResponse{
-		Available: available,
-	}), nil
+	return &managev1.CheckFormSlugAvailableResponse{Available: available}, nil
 }
 
-func (s *FormService) authorizeFormSlugCheck(ctx context.Context, excludeID string) error {
+func (s *Service) authorizeFormSlugCheck(ctx context.Context, excludeID string) error {
 	if excludeID == "" {
-		can, err := policyv1.Form.Create()
-		if err != nil {
-			return errs.Internal(err)
-		}
-		return authz.RequirePlatformPermission(ctx, s.spiceDB, can)
+		return s.requirePlatformFormAction(ctx, policyv1.Form.Create)
 	}
 	var count int64
-	if err := s.db.WithContext(ctx).
-		Model(&model.Form{}).
-		Where("id = ?", excludeID).
-		Count(&count).Error; err != nil {
-		return errs.Internal(err)
-	}
-	if count == 0 {
-		return errs.NotFound("form", excludeID)
-	}
-	if err := s.requireFormAction(ctx, excludeID, formActionEdit); err != nil {
-		if connect.CodeOf(err) == connect.CodePermissionDenied {
-			return errs.NotFound("form", excludeID)
-		}
+	if err := s.db.WithContext(ctx).Model(&model.Form{}).Where("id = ?", excludeID).Count(&count).Error; err != nil {
 		return err
 	}
-	return nil
+	notFound := domainerr.ResourceNotFound("form", excludeID)
+	if count == 0 {
+		return notFound
+	}
+	return s.requireVisibleFormAction(ctx, excludeID, formActionEdit, notFound)
 }
 
-// ListFormsAdmin returns a paginated list of forms
-func (s *FormService) ListFormsAdmin(
-	ctx context.Context,
-	req *connect.Request[managev1.ListFormsAdminRequest],
-) (*connect.Response[managev1.ListFormsAdminResponse], error) {
-	// Admin only - this endpoint returns all forms including drafts
-	can, err := policyv1.Form.List()
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	if err := authz.RequirePlatformPermission(ctx, s.spiceDB, can); err != nil {
+// ListFormsAdmin returns a page of Forms with their submission counts.
+func (s *Service) ListFormsAdmin(ctx context.Context, query ListFormsAdminQuery) (*managev1.ListFormsAdminResponse, error) {
+	if err := s.requirePlatformFormAction(ctx, policyv1.Form.List); err != nil {
 		return nil, err
 	}
-
-	var forms []model.Form
+	listing, err := FormFilterConfig.ApplyFilters(s.db.WithContext(ctx).Model(&model.Form{}), query.Filters)
+	if err != nil {
+		return nil, err
+	}
 	var total int64
-
-	query := s.db.WithContext(ctx).Model(&model.Form{})
-
-	// Apply filters using FilterConfig
-	query, err = FormFilterConfig.ApplyFilters(query, req.Msg.Filters)
-	if err != nil {
+	if err := listing.Count(&total).Error; err != nil {
 		return nil, err
 	}
-
-	// Count total
-	if err := query.Count(&total).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
-	// Apply pagination
 	limit := int32(20)
-	offset := int32(0)
-	if req.Msg.Pagination != nil {
-		if req.Msg.Pagination.Limit > 0 {
-			limit = req.Msg.Pagination.Limit
-		}
-		offset = req.Msg.Pagination.Offset
+	if query.Page.Limit > 0 {
+		limit = query.Page.Limit
 	}
-
-	// Apply sorting
-	query, err = formSortConfig.ApplySort(query, req.Msg.Sorts)
+	offset := query.Page.Offset
+	if listing, err = formSortConfig.ApplySort(listing, query.Sorts); err != nil {
+		return nil, err
+	}
+	var forms []model.Form
+	if err := listing.Limit(int(limit)).Offset(int(offset)).Find(&forms).Error; err != nil {
+		return nil, err
+	}
+	summaries, err := s.formSummaries(ctx, forms)
 	if err != nil {
 		return nil, err
 	}
+	return &managev1.ListFormsAdminResponse{
+		Forms: summaries,
+		Pagination: &commonv1.PaginationResponse{
+			Total: int32(total), Limit: limit, Offset: offset, HasMore: offset+limit < int32(total),
+		},
+	}, nil
+}
 
-	if err := query.Limit(int(limit)).Offset(int(offset)).Find(&forms).Error; err != nil {
-		return nil, errs.Internal(err)
-	}
-
+// formSummaries projects forms with their source titles and submission
+// counts.
+func (s *Service) formSummaries(ctx context.Context, forms []model.Form) ([]*managev1.FormSummary, error) {
 	formIDs := make([]string, 0, len(forms))
 	for _, form := range forms {
 		formIDs = append(formIDs, form.ID)
@@ -172,29 +150,12 @@ func (s *FormService) ListFormsAdmin(
 	if err != nil {
 		return nil, err
 	}
-
-	// Convert to proto with submission counts
-	protoForms := make([]*managev1.FormSummary, len(forms))
+	summaries := make([]*managev1.FormSummary, len(forms))
 	for i := range forms {
-		protoForms[i] = toProtoFormSummaryWithSubmissionCount(
-			&forms[i],
-			sourceTitles[forms[i].ID],
-			submissionCounts[forms[i].ID],
-		)
+		summaries[i] = toProtoFormSummaryWithSubmissionCount(&forms[i], sourceTitles[forms[i].ID], submissionCounts[forms[i].ID])
 	}
-
-	return connect.NewResponse(&managev1.ListFormsAdminResponse{
-		Forms: protoForms,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   limit,
-			Offset:  offset,
-			HasMore: offset+limit < int32(total),
-		},
-	}), nil
+	return summaries, nil
 }
-
-// CreateForm creates a new form
 
 // formSortConfig defines allowed sort fields for forms
 var formSortConfig = queryutil.SortConfig{

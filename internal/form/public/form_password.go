@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 
-	"connectrpc.com/connect"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/echovisionlab/geul-api/internal/crypto"
@@ -14,21 +13,27 @@ import (
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
-// VerifyPassword validates one Form access password without exposing its hash.
-func (s *FormService) VerifyPassword(
-	ctx context.Context,
-	req *connect.Request[openv1.VerifyFormPasswordRequest],
-) (*connect.Response[openv1.VerifyFormPasswordResponse], error) {
-	form, err := s.findFormBySlugOrID(ctx, req.Msg.Slug)
+// VerifyFormPasswordQuery checks one Form access password, with the share
+// link that opens the Form when the visitor holds one.
+type VerifyFormPasswordQuery struct {
+	Slug          string
+	Password      string
+	ShareToken    *string
+	SharePassword *string
+}
+
+// VerifyFormPassword validates one Form access password without exposing its
+// hash. A Form without a password accepts none.
+func (s *Service) VerifyFormPassword(ctx context.Context, query VerifyFormPasswordQuery) (*openv1.VerifyFormPasswordResponse, error) {
+	form, err := s.findFormBySlugOrID(ctx, query.Slug)
 	if err != nil {
 		return nil, err
 	}
-
 	shareTokenState := s.validateShareToken(
 		ctx,
 		form,
-		req.Msg.ShareToken,
-		req.Msg.SharePassword,
+		query.ShareToken,
+		query.SharePassword,
 		managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM,
 		managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD,
 	)
@@ -44,25 +49,15 @@ func (s *FormService) VerifyPassword(
 	}); err != nil {
 		return nil, err
 	}
-
-	// If form has no password, return false
 	if form.AccessPassword == nil || *form.AccessPassword == "" {
-		return connect.NewResponse(&openv1.VerifyFormPasswordResponse{
-			Valid: false,
-		}), nil
+		return &openv1.VerifyFormPasswordResponse{Valid: false}, nil
 	}
-
-	// Verify password
-	valid := s.verifyFormPassword(ctx, req.Msg.Password, *form.AccessPassword)
-
-	return connect.NewResponse(&openv1.VerifyFormPasswordResponse{
-		Valid: valid,
-	}), nil
+	return &openv1.VerifyFormPasswordResponse{Valid: s.verifyFormPassword(ctx, query.Password, *form.AccessPassword)}, nil
 }
 
 // verifyFormPassword checks if the password matches the hash.
 // Supports both legacy bcrypt hashes and new argon2id hashes for backward compatibility.
-func (s *FormService) verifyFormPassword(ctx context.Context, password, hash string) bool {
+func (s *Service) verifyFormPassword(ctx context.Context, password, hash string) bool {
 	// Check if it's a legacy bcrypt hash
 	if crypto.IsBcryptHash(hash) {
 		err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))

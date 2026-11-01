@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 )
 
 func TestValidateCompiledFormAIDocumentMutationKeepsLockedStateAuthoritative(t *testing.T) {
@@ -36,7 +38,7 @@ func TestValidateCompiledFormAIDocumentMutationKeepsLockedStateAuthoritative(t *
 		t.Run(test.name, func(t *testing.T) {
 			mutation := valid
 			test.mutate(&mutation)
-			if code := connect.CodeOf(validateCompiledFormAIDocumentMutation(state, mutation)); code != connect.CodeInvalidArgument {
+			if code := errs.Wrap(validateCompiledFormAIDocumentMutation(state, mutation)).Code(); code != connect.CodeInvalidArgument {
 				t.Fatalf("mismatch code = %s, want invalid_argument", code)
 			}
 		})

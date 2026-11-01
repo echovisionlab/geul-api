@@ -260,13 +260,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		filemedia.WithMemberSummaries(filemediaadapter.NewMemberSummaries(db, cfg.CDNURL)),
 	)
 	formAssets := formadapter.NewAssets(cfg.CDNURL)
-	formTranslation := formadapter.NewTranslation()
-	formDependencies := formdomain.Dependencies{
-		ContentBlocks: contentBlockStore,
-		Assets:        formAssets, OG: formogadapter.NewOG(cfg.CDNURL, ogDeps.refresher), Routes: formadapter.NewRoutes(),
-		SecurityAccess: formadapter.NewSecurityAccess(telemetryWriter), Translation: formTranslation,
-		PublicAssets: formAssets,
-	}
 	pageRuntime := pageadapter.NewRuntime(cfg.CDNURL, ogDeps.refresher)
 	workRuntime := workadapter.NewRuntime(db, cfg.CDNURL, ogDeps.refresher)
 	filePath, fileHandler := managev1connect.NewFileServiceHandler(fileService, handlerOpts...)
@@ -589,10 +582,23 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(internalMenuPath, internalRPCTrust.collab(internalMenuHandler))
 	slog.Info("Registered internal service", "path", internalMenuPath)
 
-	formService := formdomain.NewAuditedFormService(db, passwordHasher, kratosClient, telemetryWriter, spicedbClient, formDependencies)
-	formPath, formHandler := managev1connect.NewFormServiceHandler(formService, handlerOpts...)
+	formService, err := formdomain.NewService(formdomain.Deps{
+		DB: db, SpiceDB: spicedbClient, Password: passwordHasher, ContentBlocks: contentBlockStore,
+		Assets: formAssets, OG: formogadapter.NewOG(cfg.CDNURL, ogDeps.refresher), Routes: formadapter.NewRoutes(),
+		Collaboration: formadapter.NewCollaboration(spicedbClient), Members: memberadapter.PreferredLocales{},
+		ShareLinks: sharelinkadapter.FormLinks{}, Signals: servicePublisher, Audit: telemetryWriter,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Form service: %w", err)
+	}
+	formPath, formHandler := managev1connect.NewFormServiceHandler(formdomain.NewConnectHandler(formService), handlerOpts...)
 	mux.Handle(formPath, formHandler)
 	slog.Info("Registered service", "path", formPath)
+	internalFormPath, internalFormHandler := intrav1connect.NewInternalFormServiceHandler(
+		formdomain.NewInternalConnectHandler(formService), internalHandlerOpts...,
+	)
+	mux.Handle(internalFormPath, internalRPCTrust.collab(internalFormHandler))
+	slog.Info("Registered internal service", "path", internalFormPath)
 
 	// Phase 3: Reference Data Services
 	seriesRuntime := seriesadapter.NewRuntime(db, cfg.CDNURL, ogDeps.refresher)
@@ -785,7 +791,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		emailAuthoringReferences:    emailAuthoringReferences,
 		legalRuntime:                legalRuntime,
 		legalDependencies:           legalDependencies,
-		formDependencies:            formDependencies,
 		mapThemes:                   mapThemeService,
 	}).register()
 	if err != nil {
@@ -793,7 +798,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	}
 	internalEmailTemplateService := internalServices.emailTemplate
 	internalCampaignService := internalServices.campaign
-	internalFormService := internalServices.form
 	legalAIDocumentService := internalServices.legalDocuments
 	translationService, err := (translationServiceRegistration{
 		dependencies:             deps,
@@ -802,7 +806,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		emailAuthoringReferences: emailAuthoringReferences,
 		menuService:              menuService,
 		legalDocuments:           legalAIDocumentService,
-		internalFormService:      internalFormService,
+		internalFormService:      formService,
 		programEventService:      programEventService,
 		seriesService:            seriesService,
 		fileService:              fileService,
@@ -844,7 +848,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if aiDocumentRegistrations.campaign, err = aidocumentadapter.NewCampaignRegistration(internalCampaignService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Campaign AI document domain: %w", err)
 	}
-	if aiDocumentRegistrations.form, err = aidocumentadapter.NewFormRegistration(internalFormService); err != nil {
+	if aiDocumentRegistrations.form, err = aidocumentadapter.NewFormRegistration(formService); err != nil {
 		return registeredServices{}, fmt.Errorf("register Form AI document domain: %w", err)
 	}
 	if aiDocumentRegistrations.privacy, err = aidocumentadapter.NewPrivacyRegistration(legalAIDocumentService); err != nil {
@@ -936,14 +940,14 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(internalOgPath, internalRPCTrust.og(internalOgHandler))
 	slog.Info("Registered internal service", "path", internalOgPath)
 	if err := (publicServiceRegistration{
-		dependencies:     deps,
-		handlerOptions:   publicHandlerOpts,
-		fileService:      publicFileService,
-		postShareLinks:   postShareLinks,
-		postMembers:      postMembers,
-		workRuntime:      workRuntime,
-		legalRuntime:     legalRuntime,
-		formDependencies: formDependencies,
+		dependencies:   deps,
+		handlerOptions: publicHandlerOpts,
+		fileService:    publicFileService,
+		postShareLinks: postShareLinks,
+		postMembers:    postMembers,
+		workRuntime:    workRuntime,
+		legalRuntime:   legalRuntime,
+		formAssets:     formAssets,
 	}).register(); err != nil {
 		return registeredServices{}, err
 	}

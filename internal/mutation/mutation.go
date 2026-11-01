@@ -292,6 +292,7 @@ type Audit struct {
 	build     domainaudit.Builder
 	memberID  string
 	version   bool
+	anonymous bool
 	unchanged bool
 	all       []Audit
 }
@@ -305,6 +306,12 @@ func RequestAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder)
 // request has no member actor yet (onboarding).
 func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit {
 	return Audit{action: action, build: build, memberID: memberID}
+}
+
+// AnonymousAudit attributes the record to an anonymous visitor, for a public
+// mutation made without a session (a Form submission).
+func AnonymousAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit {
+	return Audit{action: action, build: build, anonymous: true}
 }
 
 // VersionAudit attributes the record of a version checkpoint to the
@@ -353,6 +360,8 @@ func (r *Runner) appendAudit(ctx context.Context, tx *gorm.DB, audit Audit) erro
 		return domainaudit.AppendMember(ctx, tx, r.audit, audit.memberID, audit.action, audit.build)
 	case audit.version:
 		return domainaudit.AppendVersion(ctx, tx, r.audit, audit.action, audit.build)
+	case audit.anonymous:
+		return domainaudit.AppendAnonymous(ctx, tx, r.audit, audit.action, audit.build)
 	default:
 		return domainaudit.AppendRequest(ctx, tx, r.audit, audit.action, audit.build)
 	}

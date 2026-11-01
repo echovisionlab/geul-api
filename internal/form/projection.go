@@ -3,7 +3,6 @@ package form
 import (
 	"context"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -11,7 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func (s *FormService) toProtoForm(ctx context.Context, f *model.Form) (*managev1.Form, error) {
+func (s *Service) toProtoForm(ctx context.Context, f *model.Form) (*managev1.Form, error) {
 	sourceState, err := LoadFormCanonicalSourceDocumentState(ctx, s.db, f.ID, f.SourceLocale)
 	if err != nil {
 		return nil, err
@@ -78,7 +77,7 @@ func loadFormSubmissionCounts(ctx context.Context, db *gorm.DB, formIDs []string
 		Where("form_id IN ?", formIDs).
 		Group("form_id").
 		Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	for _, row := range rows {
 		counts[row.FormID] = row.Count
@@ -110,7 +109,7 @@ func toProtoFormSummaryWithSubmissionCount(
 	return summary
 }
 
-func (s *FormService) toProtoSubmission(sub *model.FormSubmission) *managev1.FormSubmission {
+func toProtoSubmission(sub *model.FormSubmission) *managev1.FormSubmission {
 	submission := &managev1.FormSubmission{
 		Id:          sub.ID,
 		FormId:      sub.FormID,
@@ -132,6 +131,6 @@ func (s *FormService) toProtoSubmission(sub *model.FormSubmission) *managev1.For
 	return submission
 }
 
-func (s *FormService) getFormFeaturedImageAsset(ctx context.Context, formID string) *commonv1.AssetRef {
+func (s *Service) getFormFeaturedImageAsset(ctx context.Context, formID string) *commonv1.AssetRef {
 	return s.assets.FeaturedImage(ctx, s.db, formID)
 }

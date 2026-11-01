@@ -15,8 +15,7 @@ import (
 
 type localizedContentSelection = formdomain.LocalizationSelection
 
-// FormService implements the public FormService
-func (s *FormService) buildProtoForm(
+func (s *Service) buildProtoForm(
 	ctx context.Context,
 	form *model.Form,
 	acceptLanguage string,
@@ -35,7 +34,7 @@ func (s *FormService) buildProtoForm(
 		form,
 		sourceDocument,
 		localization,
-		s.toProtoStatus(form.Status),
+		formStatusToOpen(form.Status),
 		ogAsset,
 		s.getFormFeaturedImageAsset(ctx, form.ID),
 	), nil
@@ -86,7 +85,7 @@ func buildProtoFormFromResolvedDocument(
 	return protoForm
 }
 
-func (s *FormService) loadResolvedFormDocument(
+func (s *Service) loadResolvedFormDocument(
 	ctx context.Context,
 	form *model.Form,
 	acceptLanguage string,
@@ -105,7 +104,7 @@ func (s *FormService) loadResolvedFormDocument(
 	return sourceDocument, nil
 }
 
-func (s *FormService) resolveFormOgLocalization(
+func (s *Service) resolveFormOgLocalization(
 	ctx context.Context,
 	formID string,
 	selection localizedContentSelection,
@@ -145,7 +144,7 @@ func sourceFormOgFallback(selection localizedContentSelection) localizedContentS
 	return selection
 }
 
-func (s *FormService) resolveCoherentFormOgAsset(
+func (s *Service) resolveCoherentFormOgAsset(
 	ctx context.Context,
 	form *model.Form,
 	selection *localizedContentSelection,
@@ -168,7 +167,7 @@ func (s *FormService) resolveCoherentFormOgAsset(
 	return asset, nil
 }
 
-func (s *FormService) loadResolvedFormDocumentWithLocalization(
+func (s *Service) loadResolvedFormDocumentWithLocalization(
 	ctx context.Context,
 	form *model.Form,
 	acceptLanguage string,
@@ -187,7 +186,7 @@ func (s *FormService) loadResolvedFormDocumentWithLocalization(
 	return sourceDocument, &localization, nil
 }
 
-func (s *FormService) loadResolvedFormLocalization(
+func (s *Service) loadResolvedFormLocalization(
 	ctx context.Context,
 	form *model.Form,
 	acceptLanguage string,
@@ -252,7 +251,7 @@ func applyLocalizedFormSchema(
 	return true
 }
 
-func (s *FormService) buildProtoFormMetadata(
+func (s *Service) buildProtoFormMetadata(
 	ctx context.Context,
 	form *model.Form,
 	acceptLanguage string,
@@ -271,7 +270,7 @@ func (s *FormService) buildProtoFormMetadata(
 		form,
 		sourceDocument,
 		localization,
-		s.toProtoStatus(form.Status),
+		formStatusToOpen(form.Status),
 		ogAsset,
 		s.getFormFeaturedImageAsset(ctx, form.ID),
 	), nil
@@ -309,19 +308,7 @@ func buildProtoFormMetadataFromResolvedDocument(
 	return protoForm
 }
 
-// toProtoStatus converts model form status to proto status
-func (s *FormService) toProtoStatus(status model.FormStatus) openv1.FormStatus {
-	switch status {
-	case model.FormStatusDraft:
-		return openv1.FormStatus_FORM_STATUS_DRAFT
-	case model.FormStatusPublished:
-		return openv1.FormStatus_FORM_STATUS_PUBLISHED
-	default:
-		return openv1.FormStatus_FORM_STATUS_UNSPECIFIED
-	}
-}
-
-func (s *FormService) getFormFeaturedImageAsset(ctx context.Context, formID string) *commonv1.AssetRef {
+func (s *Service) getFormFeaturedImageAsset(ctx context.Context, formID string) *commonv1.AssetRef {
 	return s.assets.FeaturedImage(ctx, s.db, formID)
 }
 
