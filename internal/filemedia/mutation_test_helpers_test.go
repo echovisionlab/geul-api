@@ -71,6 +71,7 @@ func auditedUserContext(ctx context.Context, user *auth.UserInfo) context.Contex
 
 func withTestStorage(service *Service) *Service {
 	if service.db != nil {
+		service.faviconCommits = filemediapostgres.NewFaviconCommits(service.db, filemediapostgres.Ports{})
 		service.units = mutation.Postgres(service.db, func(tx *gorm.DB) Store {
 			return testFileStore(service, tx)
 		})

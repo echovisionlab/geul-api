@@ -2,6 +2,7 @@ package filemedia
 
 import (
 	"context"
+	"image/color"
 	"net/http"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/favicon"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -202,4 +204,34 @@ func ExportConfigureClientMediaStorage(s *Service, client *s3.Client) {
 
 func ExportRegisterClientMedia(s *Service, ctx context.Context, row domain.UploadSession, authorize func(context.Context, Store, func(*auth.UserInfo) (bool, error)) error) error {
 	return s.registerVerifiedClientMediaBundle(ctx, &multipartCompletion{session: uploadSessionFromStore(row)}, authorize)
+}
+
+func ExportFaviconService(units mutation.UnitOfWork[Store], commits domain.FaviconCommits, client *s3.Client, processor favicon.Processor) *Service {
+	return &Service{units: units, faviconCommits: commits, s3Client: client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com", faviconProcessor: processor}
+}
+
+func ExportFaviconFixture(t *testing.T, id, kind string, failPutAt int) (domain.CatalogRow, *s3.Client, favicon.Processor, func() []string, func() []string) {
+	source := faviconTestPNG(t, 151, 152, color.NRGBA{R: 200, A: 255})
+	mime, extension := "image/png", "png"
+	if kind == "svg" {
+		source = []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="151" height="152"><rect width="151" height="152" fill="red"/></svg>`)
+		mime, extension = "image/svg+xml", "svg"
+	}
+	if kind == "unsafe svg" {
+		source = []byte(`<svg xmlns="http://www.w3.org/2000/svg"><style>.x{fill:red}</style><rect class="x"/></svg>`)
+		mime, extension = "image/svg+xml", "svg"
+	}
+	storage := newFaviconS3Fixture(t, id, extension, source, failPutAt)
+	return domain.CatalogRow{ID: id, Name: "favicon", Extension: &extension, MimeType: &mime, FileSize: new(int64(len(source)))}, storage.client, staticFaviconProcessor{outputs: faviconTestGeneratedOutputs(t)}, storage.writtenKeys, storage.deletedKeys
+}
+
+var ExportGenerateFavicon = (*Service).generateFaviconBundle
+var ExportFaviconCommitUncertain = errFaviconBundleCommitUncertain
+
+func ExportFaviconReconcileError(service *Service, err error) {
+	service.testFaviconReconcileError = err
+}
+
+func ExportFaviconTimeout(service *Service, timeout time.Duration) {
+	service.testFaviconBundleTimeout = timeout
 }

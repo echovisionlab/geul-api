@@ -29,6 +29,10 @@ func TestPostgresStoreContractIntegration(t *testing.T) {
 			},
 			SeedAsset: func(t *testing.T, file, typ string, a favicon.DerivativeAsset) {
 				row := mediaassetpostgres.AssetRow(mediaasset.Asset{ID: a.ID, SourceFileID: a.SourceFileID, Kind: a.Kind, ObjectKey: a.ObjectKey, Extension: a.Extension, MimeType: a.MimeType, FileSize: a.FileSize, SHA256: a.SHA256, Disposition: a.Disposition, DownloadFilename: a.DownloadFilename, Status: mediaasset.AssetStatus(a.Status), CreatedAt: a.CreatedAt, UpdatedAt: a.CreatedAt})
+				if a.Status == favicon.AssetFailed {
+					failed := a.CreatedAt
+					row.FailedAt = &failed
+				}
 				if a.Status == favicon.AssetDeleted {
 					deleted := a.CreatedAt
 					row.DeletedAt = &deleted
