@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -32,7 +31,6 @@ type Deps struct {
 	// Presigner signs multipart part uploads; nil signs with S3.
 	Presigner      *s3.PresignClient
 	AsyncPublisher AsyncPublisher
-	Transcoder     mq.TranscoderPublisher
 	S3Bucket       string
 	CDNDomain      string
 	MediaDomain    string
@@ -52,8 +50,8 @@ func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
 		"IngestLocks": d.IngestLocks == nil, "FaviconCommits": d.FaviconCommits == nil, "Units": d.Units == nil, "Fence": d.Fence == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil, "S3": d.S3 == nil,
-		"AsyncPublisher": d.AsyncPublisher == nil, "Transcoder": d.Transcoder == nil,
-		"LegalRoutes": d.LegalRoutes == nil, "MemberSummaries": d.MemberSummaries == nil,
+		"AsyncPublisher": d.AsyncPublisher == nil,
+		"LegalRoutes":    d.LegalRoutes == nil, "MemberSummaries": d.MemberSummaries == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -86,7 +84,6 @@ type Service struct {
 	s3Client        *s3.Client
 	s3PresignClient *s3.PresignClient
 	asyncPublisher  AsyncPublisher
-	publisher       mq.TranscoderPublisher
 	spiceDB         mutation.Authorizer
 	auditWriter     domainaudit.Appender
 
@@ -146,7 +143,6 @@ func NewService(deps Deps) (*Service, error) {
 		s3Client:           deps.S3,
 		s3PresignClient:    presigner,
 		asyncPublisher:     deps.AsyncPublisher,
-		publisher:          deps.Transcoder,
 		s3Bucket:           deps.S3Bucket,
 		cdnDomain:          deps.CDNDomain,
 		mediaDomain:        deps.MediaDomain,

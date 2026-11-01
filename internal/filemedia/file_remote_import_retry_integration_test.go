@@ -80,9 +80,9 @@ func TestRemoteImportCommitAcknowledgementLossRestoresExactCommittedResultDirect
 		CDNDomain:      stack.CDNURL,
 		MediaDomain:    stack.MediaURL,
 		MediaSecret:    stack.MediaSigningSecret,
-		Transcoder:     &recordingFileTranscoderPublisher{},
-		SpiceDB:        stack.SpiceDBClient,
-	}, stack.DB, nativeFilePorts{})
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
 	service.testVerifiedIngestCommitError = errors.New("injected lost commit acknowledgement")
 
 	err = service.createOrRestoreVerifiedRemoteImportRecord(
@@ -158,9 +158,9 @@ func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownl
 		CDNDomain:      stack.CDNURL,
 		MediaDomain:    stack.MediaURL,
 		MediaSecret:    stack.MediaSigningSecret,
-		Transcoder:     &recordingFileTranscoderPublisher{},
-		SpiceDB:        stack.SpiceDBClient,
-	}, stack.DB, nativeFilePorts{})
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
 
 	_, err = service.importRemoteFile(memberRequestContext(), opts)
 	require.ErrorContains(t, err, "stream source to public asset")
@@ -218,9 +218,9 @@ func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIn
 		CDNDomain:      stack.CDNURL,
 		MediaDomain:    stack.MediaURL,
 		MediaSecret:    stack.MediaSigningSecret,
-		Transcoder:     &recordingFileTranscoderPublisher{},
-		SpiceDB:        stack.SpiceDBClient,
-	}, stack.DB, nativeFilePorts{})
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
 	// The provider URL is deliberately unreachable. The successful second call
 	// proves that the same caller correlation restores the verified source and
 	// resumes promotion without downloading the provider image again.
@@ -331,9 +331,9 @@ func TestRemoteImportRetryReconfirmsCommittedTrackWinnerWithoutRedownloadDirectI
 		CDNDomain:      stack.CDNURL,
 		MediaDomain:    stack.MediaURL,
 		MediaSecret:    stack.MediaSigningSecret,
-		Transcoder:     &recordingFileTranscoderPublisher{},
-		SpiceDB:        stack.SpiceDBClient,
-	}, stack.DB, nativeFilePorts{})
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
 
 	_, err = service.importRemoteFile(memberRequestContext(), opts)
 	require.Error(t, err)

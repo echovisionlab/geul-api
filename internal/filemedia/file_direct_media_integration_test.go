@@ -65,9 +65,9 @@ func TestEditorFileRemoteImportIsIndependentDirectIntegration(t *testing.T) {
 		CDNDomain:      stack.CDNURL,
 		MediaDomain:    stack.MediaURL,
 		MediaSecret:    stack.MediaSigningSecret,
-		Transcoder:     &recordingFileTranscoderPublisher{},
-		SpiceDB:        stack.SpiceDBClient,
-	}, stack.DB, nativeFilePorts{})
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
 	fileService.remoteImportResolver = runtimeRemoteImportResolver{ip: net.ParseIP("8.8.8.8")}
 	fileService.remoteImportDialer = func(ctx context.Context, network, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, network, remoteServerURL.Host)

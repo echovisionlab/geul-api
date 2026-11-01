@@ -6,10 +6,10 @@ import (
 	"context"
 	"testing"
 
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+
 	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -114,7 +114,6 @@ func newManagePostFeaturedDeliveryFixture(t *testing.T) managePostFeaturedDelive
 		CDNDomain:       "https://cdn.example.test",
 		MediaDomain:     "https://media.example.test",
 		MediaSecret:     "post-featured-integration-secret",
-		Transcoder:      postFeaturedTranscoderPublisher{},
 		SpiceDB:         spiceDB,
 		Audit:           &audittest.Recorder{},
 		LegalRoutes:     postFeaturedUnusedLegalRoutes{},
@@ -201,18 +200,6 @@ func (postFeaturedAsyncPublisher) EnqueueProtobuf(context.Context, string, strin
 	return nil
 }
 func (postFeaturedAsyncPublisher) NotifyProtobuf(context.Context, string, proto.Message) error {
-	return nil
-}
-
-type postFeaturedTranscoderPublisher struct{}
-
-func (postFeaturedTranscoderPublisher) PublishTranscodeAudio(context.Context, *managev1.TranscodeAudioEvent) error {
-	return nil
-}
-func (postFeaturedTranscoderPublisher) PublishTranscodeVideo(context.Context, *managev1.TranscodeVideoEvent) error {
-	return nil
-}
-func (postFeaturedTranscoderPublisher) PublishWaveformCancel(context.Context, *managev1.WaveformCancelEvent) error {
 	return nil
 }
 

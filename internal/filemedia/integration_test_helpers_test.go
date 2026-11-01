@@ -187,9 +187,9 @@ func newEditorUploadSerializationFileService(stack *testutil.RuntimeStack, s3Cli
 		CDNDomain:      stack.CDNURL,
 		MediaDomain:    stack.MediaURL,
 		MediaSecret:    stack.MediaSigningSecret,
-		Transcoder:     &recordingFileTranscoderPublisher{},
-		SpiceDB:        stack.SpiceDBClient,
-	}, stack.DB, nativeFilePorts{})
+
+		SpiceDB: stack.SpiceDBClient,
+	}, stack.DB, nativeFilePorts{Transcoder: &recordingFileTranscoderPublisher{}})
 }
 
 type directTrackAttachment struct {

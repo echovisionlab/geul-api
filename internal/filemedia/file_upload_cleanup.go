@@ -168,35 +168,3 @@ func (s *Service) RequireNoTrackUploadSessions(ctx context.Context, joined Joine
 	}
 	return nil
 }
-
-func (s *Service) publishTranscodeCancelIfSupported(
-	ctx context.Context,
-	fileID string,
-	entityType managev1.TranscodeEntityType,
-	entityID string,
-	reason managev1.TranscodeCancelReason,
-) {
-	event := &managev1.TranscodeCancelEvent{
-		FileId:      fileID,
-		EntityType:  entityType,
-		EntityId:    entityID,
-		Reason:      reason,
-		TimestampMs: time.Now().UnixMilli(),
-	}
-	type transcodeCancelPublisher interface {
-		PublishTranscodeCancel(context.Context, *managev1.TranscodeCancelEvent) error
-	}
-	if publisher, ok := s.publisher.(transcodeCancelPublisher); ok {
-		if err := publisher.PublishTranscodeCancel(ctx, event); err != nil {
-			slog.ErrorContext(ctx, "Failed to publish editor file transcode cancel event", failurecause.Attr(err), "fileId", fileID, "entityType", entityType.String(), "entityId", entityID, "reason", reason.String())
-		}
-	}
-	type transcodeJobCanceller interface {
-		MarkCancelled(context.Context, string, managev1.TranscodeCancelReason) error
-	}
-	if canceller, ok := s.publisher.(transcodeJobCanceller); ok {
-		if err := canceller.MarkCancelled(ctx, fileID, reason); err != nil {
-			slog.ErrorContext(ctx, "Failed to mark editor file transcode job cancelled", failurecause.Attr(err), "fileId", fileID, "entityType", entityType.String(), "entityId", entityID, "reason", reason.String())
-		}
-	}
-}
