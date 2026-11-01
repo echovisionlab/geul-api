@@ -25,7 +25,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -69,10 +69,10 @@ func newStackService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *wo
 	t.Helper()
 	contents, err := contentblock.NewGeneratedStore(adminFileReuse{})
 	require.NoError(t, err)
-	planner := og.NewPlanner(db, "https://cdn.example.com", renderConfig{}, workadapter.NewProjection())
+	planner := ogpostgres.NewPlanner("https://cdn.example.com", renderConfig{}, workadapter.NewProjection())
 	units, err := workpostgres.NewUnits(db, workpostgres.Ports{
 		ContentBlocks: contents, Signals: noopPublisher{}, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
-		Runtime:    workadapter.NewRuntime(db, "https://cdn.example.com", og.NewRefresher(planner, og.NewResolver(workadapter.NewRequests()))),
+		Runtime:    workadapter.NewRuntime(db, "https://cdn.example.com", ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(workadapter.NewRequests()))),
 		Media:      passthroughHydrator{},
 		ShareLinks: sharelinkadapter.EntityLinks{Type: sharelink.EntityWork},
 	})

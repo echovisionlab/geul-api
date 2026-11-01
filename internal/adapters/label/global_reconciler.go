@@ -6,7 +6,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -31,7 +31,7 @@ func (*GlobalReconciler) ReconcileBeforeGlobalGeneration(
 		if err := tx.WithContext(ctx).Table("label").Where("id = ?", labelID).Update("og_asset_id", nil).Error; err != nil {
 			return err
 		}
-		if err := og.NewLifecycle(tx, cdnDomain).CancelEntityWithDB(
+		if err := ogpostgres.CancelEntity(
 			ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_LABEL, labelID,
 		); err != nil {
 			return err
@@ -44,4 +44,4 @@ func (*GlobalReconciler) ReconcileBeforeGlobalGeneration(
 	return nil
 }
 
-var _ og.GlobalReconciler = (*GlobalReconciler)(nil)
+var _ ogpostgres.GlobalReconciler = (*GlobalReconciler)(nil)

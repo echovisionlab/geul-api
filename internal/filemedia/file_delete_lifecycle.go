@@ -7,13 +7,14 @@ import (
 	"strings"
 	"time"
 
+	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
+
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/favicon"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -397,7 +398,7 @@ func markLockedFileDeletionRequestedWithDB(
 	now time.Time,
 ) (*FileDeletionMutation, error) {
 	fileID := file.ID
-	if err := favicon.RequestDeletion(ctx, tx, fileID); err != nil {
+	if err := faviconpostgres.RequestDeletion(ctx, tx, fileID); err != nil {
 		return nil, err
 	}
 	if err := requestUnboundFileDerivativeAssetsDeletion(ctx, tx, fileID); err != nil {

@@ -11,6 +11,7 @@ import (
 	formpublicpostgres "github.com/echovisionlab/geul-api/internal/form/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 
@@ -77,7 +78,7 @@ func (*Assets) LocalizedOGDisposition(
 	db *gorm.DB,
 	formID, locale string,
 ) (formdomain.LocalizedOGDisposition, error) {
-	disposition, err := og.ResolveExactLocalizedGeneration(ctx, db, "form", formID, locale)
+	disposition, err := ogpostgres.ResolveExactLocalizedGeneration(ctx, db, "form", formID, locale)
 	if err != nil {
 		return formdomain.LocalizedOGUnavailable, err
 	}

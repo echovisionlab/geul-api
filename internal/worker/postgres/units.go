@@ -17,7 +17,7 @@ import (
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/post"
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/worker"
@@ -32,7 +32,7 @@ type MetadataAIRecoverer interface {
 // Ports are the runtimes a job transaction calls.
 type Ports struct {
 	Audit      domainaudit.Appender // the legal activation's audit records
-	OGPlanner  *og.Planner
+	OGPlanner  *ogpostgres.Planner
 	MetadataAI MetadataAIRecoverer // optional: the recovery is then never bound
 }
 

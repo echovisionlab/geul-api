@@ -11,6 +11,7 @@ import (
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	"github.com/echovisionlab/geul-api/internal/transcode"
+	transcodepostgres "github.com/echovisionlab/geul-api/internal/transcode/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
@@ -111,7 +112,7 @@ func NewWaveformJobs(db *gorm.DB, publisher transcode.WaveformCancelPublisher) *
 
 // CancelDeletedTracks cancels the persisted waveform work of deleted Tracks.
 func (j *WaveformJobs) CancelDeletedTracks(ctx context.Context, trackIDs []string) error {
-	return transcode.CancelTrackWaveformJobs(ctx, j.db, j.publisher, trackIDs, managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_DELETED)
+	return transcodepostgres.CancelTrackWaveformJobs(ctx, j.db, j.publisher, trackIDs, managev1.TranscodeCancelReason_TRANSCODE_CANCEL_REASON_USER_DELETED)
 }
 
 var _ releasedomain.TrackUploads = (*TrackFiles)(nil)

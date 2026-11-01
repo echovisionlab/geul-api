@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/ogprojection"
+
 	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
@@ -27,12 +29,12 @@ import (
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/scheduler"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/worker"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -139,11 +141,11 @@ func TestScheduledLegalActivationAtomicallySwitchesCanonicalOgTargetIntegration(
 			require.Equal(t, og.Claimed, claim.Result)
 			digest := make([]byte, 32)
 			digest[0] = 0x42
-			status, _, err := lifecycle.Complete(t.Context(), activeEnglishGenerationID, claim.LeaseToken, &commonv1.AssetWriteResult{
-				AssetId: activeEnglishGenerationID, FileSize: 1024, Sha256: digest,
+			status, _, err := lifecycle.Complete(t.Context(), activeEnglishGenerationID, claim.LeaseToken, &og.WrittenAsset{
+				AssetID: activeEnglishGenerationID, FileSize: 1024, SHA256: digest,
 			})
 			require.NoError(t, err)
-			require.Equal(t, model.OgGenerationStatusReady, status)
+			require.Equal(t, og.StatusReady, status)
 
 			handlers := newLegalActivationHandlers(t, db, "https://www.example.com")
 			require.NoError(t, testCase.activate(handlers))
@@ -593,16 +595,25 @@ func newLegalActivationHandlers(t *testing.T, db *gorm.DB, siteOrigin string) *w
 	return handlers
 }
 
-func newWorkerOGPlanner(db *gorm.DB, cdnDomain string) *og.Planner {
-	return og.NewPlanner(db, cdnDomain, sitesettingsadapter.NewRenderConfig(), workerOGProjections()...)
+func newWorkerOGPlanner(db *gorm.DB, cdnDomain string) *ogpostgres.Planner {
+	return ogpostgres.NewPlanner(cdnDomain, sitesettingsadapter.NewRenderConfig(), workerOGProjections()...)
 }
 
 func newWorkerOGLifecycle(db *gorm.DB, cdnDomain string) *og.Lifecycle {
-	return og.NewLifecycle(db, cdnDomain, workerOGProjections()...)
+	requests := postadapter.NewRequests()
+	units, err := ogpostgres.NewUnits(db, ogpostgres.Ports{
+		CDNDomain: cdnDomain, RenderConfig: sitesettingsadapter.NewRenderConfig(), Projections: workerOGProjections(),
+		Requests: ogpostgres.NewResolver(requests), AllRequests: ogpostgres.NewCollector(requests),
+		Reconciler: ogpostgres.NoopGlobalReconciler{}, References: ogprojection.AssetReferences(),
+	})
+	if err != nil {
+		panic(err)
+	}
+	return og.NewLifecycle(units)
 }
 
-func workerOGProjections() []og.Projection {
-	return []og.Projection{
+func workerOGProjections() []ogpostgres.Projection {
+	return []ogpostgres.Projection{
 		postadapter.NewProjection(), pageadapter.NewProjection(), seriesadapter.NewProjection(),
 		workadapter.NewProjection(), labeladapter.NewProjection(), artistadapter.NewProjection(),
 		releaseadapter.NewProjection(), formogadapter.NewProjection(), legaladapter.NewProjection(),

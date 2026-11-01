@@ -10,7 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/model"
-	transcodestate "github.com/echovisionlab/geul-api/internal/transcode"
+	transcodepostgres "github.com/echovisionlab/geul-api/internal/transcode/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"gorm.io/gorm"
@@ -94,7 +94,7 @@ func validatePendingFileDeletionWithDB(
 	if len(event.GetAssets()) != 0 {
 		return fmt.Errorf("%w: full file deletion must not own public asset deletion", ErrInvalidFileDeleteTarget)
 	}
-	pendingTranscodeResults, pendingWaveformResults, err := transcodestate.PendingResultCounts(ctx, db, event.GetFileId())
+	pendingTranscodeResults, pendingWaveformResults, err := transcodepostgres.PendingResultCounts(ctx, db, event.GetFileId())
 	if err != nil {
 		return fmt.Errorf("check pending transcode results before file deletion: %w", err)
 	}

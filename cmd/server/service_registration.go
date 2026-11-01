@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	transcodepostgres "github.com/echovisionlab/geul-api/internal/transcode/postgres"
+
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/echovisionlab/geul-api/internal/account"
@@ -24,7 +26,6 @@ import (
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	formadapter "github.com/echovisionlab/geul-api/internal/adapters/form"
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
-	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
@@ -97,7 +98,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	sitesettingspostgres "github.com/echovisionlab/geul-api/internal/sitesettings/postgres"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/transcode"
 	"github.com/echovisionlab/geul-api/internal/work"
 	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
@@ -117,7 +117,7 @@ type serviceRegistrationDependencies struct {
 	workerPublisher         *mq.Publisher
 	hooksPublisher          *mq.Publisher
 	ogPublisher             *mq.Publisher
-	transcodeTracker        *transcode.Tracker
+	transcodeTracker        *transcodepostgres.Tracker
 	spicedbClient           *auth.SpiceDBClient
 	kratosClient            *auth.KratosClient
 	passwordHasher          *crypto.PasswordHasher
@@ -820,15 +820,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(siteSettingPath, siteSettingHandler)
 	slog.Info("Registered service", "path", siteSettingPath)
 
-	ogAdmin := og.NewAdminService(
-		db,
-		cfg.CDNURL,
-		ogDeps.planner,
-		ogDeps.resolver,
-		ogDeps.collector,
-		ogadapter.NewAuthorization(spicedbClient),
-		labeladapter.NewGlobalReconciler(),
-	)
+	ogAdmin := og.NewAdminConnectHandler(og.NewAdmin(ogDeps.units, ogadapter.NewAuthorization(spicedbClient)))
 	adminUnits, err := adminpostgres.NewUnits(db, adminpostgres.Ports{
 		Members: memberadapter.DashboardMembers{}, Posts: postadapter.DashboardPosts{},
 		Pages: pageadapter.DashboardPages{}, Campaigns: campaignadapter.DashboardCampaigns{},
@@ -1004,7 +996,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	}
 	slog.Info("Registered MCP handler", "path", "/mcp", "methods", []string{http.MethodGet, http.MethodPost})
 
-	internalOgService := og.NewInternalService(db, cfg.CDNURL, ogDeps.projections...)
+	internalOgService := og.NewInternalConnectHandler(og.NewLifecycle(ogDeps.units))
 	internalOgPath, internalOgHandler := intrav1connect.NewInternalOgServiceHandler(internalOgService, internalHandlerOpts...)
 	mux.Handle(internalOgPath, internalRPCTrust.og(internalOgHandler))
 	slog.Info("Registered internal service", "path", internalOgPath)

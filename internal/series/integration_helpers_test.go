@@ -21,7 +21,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/series"
 	seriespostgres "github.com/echovisionlab/geul-api/internal/series/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -87,9 +87,9 @@ func (renderConfig) Snapshot(context.Context, *gorm.DB, string) ([]byte, string,
 	return payload, fmt.Sprintf("%x", sha256.Sum256(payload)), nil
 }
 
-func newOGRefresher(db *gorm.DB) *og.Refresher {
-	planner := og.NewPlanner(db, "https://cdn.example.com", renderConfig{}, seriesadapter.NewProjection())
-	return og.NewRefresher(planner, og.NewResolver(seriesadapter.NewRequests()))
+func newOGRefresher(db *gorm.DB) *ogpostgres.Refresher {
+	planner := ogpostgres.NewPlanner("https://cdn.example.com", renderConfig{}, seriesadapter.NewProjection())
+	return ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(seriesadapter.NewRequests()))
 }
 
 // seedSeriesRow stores a Series, its compact content document and its

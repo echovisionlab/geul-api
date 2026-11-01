@@ -21,7 +21,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
@@ -89,10 +89,10 @@ func (renderConfig) Snapshot(context.Context, *gorm.DB, string) ([]byte, string,
 }
 
 // NewPostOGRefresher composes the Post OG adapters for integration tests.
-func NewPostOGRefresher(db *gorm.DB, cdnDomain string) *og.Refresher {
-	planner := og.NewPlanner(db, cdnDomain, renderConfig{}, postadapter.NewProjection())
-	resolver := og.NewResolver(postadapter.NewRequests())
-	return og.NewRefresher(planner, resolver)
+func NewPostOGRefresher(db *gorm.DB, cdnDomain string) *ogpostgres.Refresher {
+	planner := ogpostgres.NewPlanner(cdnDomain, renderConfig{}, postadapter.NewProjection())
+	resolver := ogpostgres.NewResolver(postadapter.NewRequests())
+	return ogpostgres.NewRefresher(planner, resolver)
 }
 
 // Posts is a Post service with its Connect adapters, so a test reaches the

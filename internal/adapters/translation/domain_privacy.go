@@ -12,7 +12,7 @@ import (
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -68,7 +68,7 @@ func legalDomainRegistration(
 			}
 			return legaldomain.ApplyTypedTranslationCandidate(ctx, legalJoined(tx, store, audit), legalTranslationJob(job), candidate)
 		},
-		requestLocaleOG: func(ctx context.Context, tx *gorm.DB, planner *og.Planner, _ *og.Refresher, entityID string, locale string, reason string) (bool, error) {
+		requestLocaleOG: func(ctx context.Context, tx *gorm.DB, planner *ogpostgres.Planner, _ *ogpostgres.Refresher, entityID string, locale string, reason string) (bool, error) {
 			_, err := legaladapter.RequestSaved(ctx, tx, planner, entityType, entityID, locale, false, reason)
 			return true, err
 		},

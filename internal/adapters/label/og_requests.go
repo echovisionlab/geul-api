@@ -1,6 +1,6 @@
 package label
 
-import "github.com/echovisionlab/geul-api/internal/og"
+import ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 
 const (
 	titleSQL = `COALESCE(NULLIF((SELECT lt.title FROM label_translation AS lt
@@ -11,8 +11,8 @@ const (
 )
 
 // NewRequests reads canonical Label snapshots for OG generation.
-func NewRequests() *og.EntitySource {
-	return og.NewEntitySource(og.EntityRequestSpec{
+func NewRequests() *ogpostgres.EntitySource {
+	return ogpostgres.NewEntitySource(ogpostgres.EntityRequestSpec{
 		EntityType: "label", Table: "label",
 		TitleExpression: titleSQL, FeaturedImageExpression: featuredImageSQL,
 		MissingImage: "label OG generation requires a light or dark logo",

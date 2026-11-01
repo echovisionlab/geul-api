@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/transcode"
+	transcodepostgres "github.com/echovisionlab/geul-api/internal/transcode/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -225,7 +225,7 @@ func (s *Cleanup) CleanupOrphanHLSPrefixes(ctx context.Context, cutoff time.Time
 	if err != nil {
 		return fmt.Errorf("load referenced HLS generations: %w", err)
 	}
-	active, err := transcode.ActiveJobFileIDs(ctx, s.db, fileIDs)
+	active, err := transcodepostgres.ActiveJobFileIDs(ctx, s.db, fileIDs)
 	if err != nil {
 		return fmt.Errorf("load active transcode jobs for HLS cleanup: %w", err)
 	}

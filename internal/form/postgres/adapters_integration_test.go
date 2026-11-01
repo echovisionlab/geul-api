@@ -20,6 +20,7 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -31,10 +32,10 @@ const cdnDomain = "https://cdn.example.test"
 
 func adapterStore(t *testing.T, db *gorm.DB) func(tx *gorm.DB) form.Store {
 	t.Helper()
-	planner := og.NewPlanner(db, cdnDomain, renderConfig{}, formogadapter.NewProjection())
+	planner := ogpostgres.NewPlanner(cdnDomain, renderConfig{}, formogadapter.NewProjection())
 	ports := formpostgres.Ports{
 		Assets: formadapter.NewAssets(cdnDomain),
-		OG:     formogadapter.NewOG(cdnDomain, og.NewRefresher(planner, og.NewResolver(formogadapter.NewRequests()))),
+		OG:     formogadapter.NewOG(cdnDomain, ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(formogadapter.NewRequests()))),
 	}
 	return func(tx *gorm.DB) form.Store { return formpostgres.NewStore(tx, ports) }
 }
@@ -106,10 +107,14 @@ func TestOGCancellationFailureFailsTheTransactionIntegration(t *testing.T) {
 	bind := adapterStore(t, db)
 	formID := seedForm(t, db)
 	locale := "en"
-	planner := og.NewPlanner(db, cdnDomain, renderConfig{}, formogadapter.NewProjection())
+	planner := ogpostgres.NewPlanner(cdnDomain, renderConfig{}, formogadapter.NewProjection())
 	request := og.Request{Target: og.Target{EntityType: "form", EntityID: formID, Locale: &locale, Kind: "locale"}, Title: "Delete rollback fixture"}
-	plan, err := planner.RequestBulk(t.Context(), "automatic", "delete rollback fixture", []og.Request{request}, func(context.Context, *gorm.DB) ([]og.Request, error) {
-		return []og.Request{request}, nil
+	var plan *og.Plan
+	err := db.Transaction(func(tx *gorm.DB) (err error) {
+		plan, err = planner.RequestBulkReloadedWithDB(t.Context(), tx, "automatic", "delete rollback fixture", []og.Request{request}, func(context.Context, *gorm.DB) ([]og.Request, error) {
+			return []og.Request{request}, nil
+		})
+		return err
 	})
 	require.NoError(t, err)
 	require.Len(t, plan.GenerationIDs, 1)
@@ -156,9 +161,8 @@ func TestOGRequestsTitleEachLocaleExactlyIntegration(t *testing.T) {
 	require.NoError(t, db.Table("form").Where("id = ?", formID).Update("source_locale", "ko").Error)
 	resolve := func(t *testing.T, selection *managev1.OgTargetSelection) []og.Request {
 		t.Helper()
-		requests, err := og.NewResolver(formogadapter.NewRequests()).Resolve(t.Context(), db, &managev1.RegenerateOgImageRequest{
-			EntityType: managev1.OgEntityType_OG_ENTITY_TYPE_FORM, EntityId: &formID, Selection: selection,
-		})
+		requests, err := og.ResolveRequests(t.Context(), ogpostgres.Bind(db, ogpostgres.Ports{Requests: ogpostgres.NewResolver(formogadapter.NewRequests())}),
+			"form", formID, og.SelectionFromProto(selection))
 		require.NoError(t, err)
 		return requests
 	}

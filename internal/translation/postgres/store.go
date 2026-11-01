@@ -17,7 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -28,7 +28,7 @@ import (
 type Registry interface {
 	LoadSourceDocument(ctx context.Context, tx *gorm.DB, contents *contentblock.Store, entityType, entityID string) (*translation.SourceDocument, error)
 	ApplyCandidate(ctx context.Context, tx *gorm.DB, contents *contentblock.Store, job application.Job, candidate *translation.Candidate, input translation.EntryWrite) (application.AppliedTranslationTarget, error)
-	RequestLocaleOG(ctx context.Context, tx *gorm.DB, planner *og.Planner, refresher *og.Refresher, entityType, entityID, locale, reason string) (bool, error)
+	RequestLocaleOG(ctx context.Context, tx *gorm.DB, planner *ogpostgres.Planner, refresher *ogpostgres.Refresher, entityType, entityID, locale, reason string) (bool, error)
 	// TranslationEntrySelectSQL is the domain's projection of its entry
 	// table into the columns Entries scans.
 	TranslationEntrySelectSQL(entityType, table string) (string, error)
@@ -68,8 +68,8 @@ type Ports struct {
 	// ContentBlocks, OGPlanner and OGRefresher are handed to the domain
 	// adapters.
 	ContentBlocks *contentblock.Store
-	OGPlanner     *og.Planner
-	OGRefresher   *og.Refresher
+	OGPlanner     *ogpostgres.Planner
+	OGRefresher   *ogpostgres.Refresher
 	// SpiceDB answers the domain adapters' authorization checks.
 	SpiceDB *auth.SpiceDBClient
 	// Signals schedules content.updated in the mutation's transaction.

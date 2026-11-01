@@ -10,7 +10,7 @@ import (
 	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/routeregistry"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -21,10 +21,10 @@ import (
 // narrow surface owned by Artist.
 type Runtime struct {
 	cdnDomain string
-	refresher *og.Refresher
+	refresher *ogpostgres.Refresher
 }
 
-func NewRuntime(cdnDomain string, refresher *og.Refresher) *Runtime {
+func NewRuntime(cdnDomain string, refresher *ogpostgres.Refresher) *Runtime {
 	if refresher == nil {
 		panic("Artist runtime OG refresher is required")
 	}
@@ -210,7 +210,7 @@ func (r *Runtime) CancelAndReleaseEntityWithDB(
 	ownerType string,
 	ownerID string,
 ) error {
-	if err := og.NewLifecycle(tx, r.cdnDomain).CancelEntityWithDB(ctx, tx, entityType, ownerID); err != nil {
+	if err := ogpostgres.CancelEntity(ctx, tx, entityType, ownerID); err != nil {
 		return err
 	}
 	return r.ReleasePublicAssetBindings(ctx, tx, ownerType, ownerID, "og")

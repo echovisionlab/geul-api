@@ -8,6 +8,10 @@ import (
 	"testing"
 	"time"
 
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
+
+	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
+
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"gorm.io/gorm"
 
@@ -56,14 +60,14 @@ func mediaAssetCleanupForIntegration(h *cleanupFixture) *mediaassetdomain.Cleanu
 
 func ogCleanupForIntegration(h *cleanupFixture) *og.Cleanup {
 	if h.ogCleanup == nil {
-		h.ogCleanup = og.NewCleanup(h.db, ogprojection.AssetReferences()...)
+		h.ogCleanup = og.NewCleanup(newWorkerOGUnits(h.db, ""))
 	}
 	return h.ogCleanup
 }
 
 func faviconCleanupForIntegration(h *cleanupFixture) *favicon.Cleanup {
 	if h.faviconCleanup == nil {
-		h.faviconCleanup = favicon.NewCleanup(h.db)
+		h.faviconCleanup = favicon.NewCleanup(faviconpostgres.NewUnits(h.db, ""))
 	}
 	return h.faviconCleanup
 }
@@ -83,7 +87,7 @@ func publicAssetCleanupForIntegration(h *cleanupFixture) *mediaassetdomain.Publi
 			h.db,
 			storage,
 			cache,
-			ogCleanupForIntegration(h),
+			ogpostgres.NewAssetProtector(ogprojection.AssetReferences()...),
 		)
 	}
 	return h.publicAssets

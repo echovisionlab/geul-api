@@ -17,7 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/post"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
@@ -55,7 +55,7 @@ type Deps struct {
 	ContentBlocks *contentblock.Store
 	// Signals schedules content.updated in the mutation's transaction.
 	Signals          contentsignal.Publisher
-	OG               *og.Refresher
+	OG               *ogpostgres.Refresher
 	ShareLinkCleanup ShareLinkCleanup
 	MediaLoader      ContentBlockMediaLoader
 	Media            ContentBlockMediaHydrator

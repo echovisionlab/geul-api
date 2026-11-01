@@ -20,6 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/favicon"
+	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -43,7 +44,7 @@ func (s *Service) generateFaviconBundle(
 	defer cancel()
 	sourceFileID = strings.TrimSpace(sourceFileID)
 
-	existing, err := favicon.LoadSet(bundleCtx, s.db, s.cdnDomain, sourceFileID)
+	existing, err := faviconpostgres.LoadSet(bundleCtx, s.db, s.cdnDomain, sourceFileID)
 	if err != nil {
 		return nil, domainerr.Precondition(fmt.Sprintf("existing favicon bundle is invalid: %v", err))
 	}
@@ -281,7 +282,7 @@ func (s *Service) finalizeStagedFaviconBundle(
 		Take(&lockedSource).Error; err != nil {
 		return nil, false, err
 	}
-	existing, err := favicon.LoadSet(ctx, tx, s.cdnDomain, source.ID)
+	existing, err := faviconpostgres.LoadSet(ctx, tx, s.cdnDomain, source.ID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -327,7 +328,7 @@ func (s *Service) finalizeStagedFaviconBundle(
 			return nil, false, err
 		}
 	}
-	set, err := favicon.LoadSet(ctx, tx, s.cdnDomain, source.ID)
+	set, err := faviconpostgres.LoadSet(ctx, tx, s.cdnDomain, source.ID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -346,7 +347,7 @@ func (s *Service) reconcileFaviconBundle(
 	}
 	reconcileCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), faviconCleanupItemTimeout)
 	defer cancel()
-	return favicon.LoadSet(reconcileCtx, s.db, s.cdnDomain, sourceFileID)
+	return faviconpostgres.LoadSet(reconcileCtx, s.db, s.cdnDomain, sourceFileID)
 }
 
 func (s *Service) scheduleStagedFaviconDeletion(

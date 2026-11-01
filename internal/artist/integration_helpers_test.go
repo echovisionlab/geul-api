@@ -20,6 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -202,10 +203,10 @@ func (artistOGProjection) Complete(context.Context, *gorm.DB, og.Target, string,
 	return nil
 }
 
-type artistOGRequests struct{ localized *og.LocalizedRequests }
+type artistOGRequests struct{ localized *ogpostgres.LocalizedRequests }
 
 func newArtistOGRequests() *artistOGRequests {
-	return &artistOGRequests{localized: og.NewLocalizedRequests(og.LocalizedRequestSpec{
+	return &artistOGRequests{localized: ogpostgres.NewLocalizedRequests(ogpostgres.LocalizedRequestSpec{
 		EntityType: "artist", Table: "artist", TranslationTable: "artist_translation",
 		SourceTitleExpression: `COALESCE((SELECT translation.title FROM artist_translation AS translation
 			JOIN artist AS source ON source.id = translation.entity_id
@@ -220,9 +221,9 @@ func (r *artistOGRequests) Resolve(ctx context.Context, db *gorm.DB, _ string, e
 	return r.localized.Resolve(ctx, db, entityID, selection)
 }
 
-func newArtistOGRefresher(db *gorm.DB, cdnDomain string) *og.Refresher {
-	planner := og.NewPlanner(db, cdnDomain, artistOGRenderConfig{}, artistOGProjection{})
-	return og.NewRefresher(planner, og.NewResolver(newArtistOGRequests()))
+func newArtistOGRefresher(db *gorm.DB, cdnDomain string) *ogpostgres.Refresher {
+	planner := ogpostgres.NewPlanner(cdnDomain, artistOGRenderConfig{}, artistOGProjection{})
+	return ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(newArtistOGRequests()))
 }
 
 func artistContentDocument(sourceLocale, text string) *contentv1.RichTextDocument {

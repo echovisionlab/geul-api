@@ -18,7 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/geoip"
 	"github.com/echovisionlab/geul-api/internal/mq"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/worker"
 )
@@ -41,7 +41,7 @@ type Config struct {
 	KratosClient    auth.IdentityManager
 	SpiceDB         *auth.SpiceDBClient
 	Audit           *telemetry.DurableWriter
-	OGPlanner       *og.Planner
+	OGPlanner       *ogpostgres.Planner
 	MemberDeletion  account.MemberDeletionLifecycle
 	FileMedia       worker.FileMedia
 	MediaCleanup    worker.DanglingFileCleanup
