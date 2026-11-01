@@ -52,7 +52,7 @@ type storedDerivativeDeliveryRow struct {
 // resolveContentFileDeliveries preloads private inline refs for File Manager
 // generated-output projection. The caller must apply the final File and exact
 // generated-output relation fence before returning any ref.
-func (s *FileService) resolveContentFileDeliveries(
+func (s *Service) resolveContentFileDeliveries(
 	ctx context.Context,
 	fileIDs []string,
 ) (map[string]*commonv1.MediaDelivery, error) {
@@ -118,90 +118,83 @@ func (s *FileService) resolveContentFileDeliveries(
 
 const MaxMediaDeliveryBatchSize = 100
 
-// GetMediaDelivery returns delivery refs for a single file and its derivatives.
-func (s *FileService) GetMediaDelivery(
-	ctx context.Context,
-	req *connect.Request[managev1.GetMediaDeliveryRequest],
-) (*connect.Response[managev1.GetMediaDeliveryResponse], error) {
-	return s.getMediaDelivery(ctx, req, true)
+// GetMediaDeliveryQuery reads the deliveries of one File.
+type GetMediaDeliveryQuery struct {
+	FileID string
 }
 
-func (s *FileService) getMediaDelivery(
-	ctx context.Context,
-	req *connect.Request[managev1.GetMediaDeliveryRequest],
-	allowChangedRetry bool,
-) (*connect.Response[managev1.GetMediaDeliveryResponse], error) {
-	if req.Msg.FileId == "" {
+// GetMediaDelivery returns delivery refs for a single file and its derivatives.
+func (s *Service) GetMediaDelivery(ctx context.Context, query GetMediaDeliveryQuery) (*managev1.GetMediaDeliveryResponse, error) {
+	return s.getMediaDelivery(ctx, query.FileID, true)
+}
+
+func (s *Service) getMediaDelivery(ctx context.Context, fileID string, allowChangedRetry bool) (*managev1.GetMediaDeliveryResponse, error) {
+	if fileID == "" {
 		return nil, errs.Required("file_id")
 	}
-	authorization, err := s.authorizeManageFileDeliveriesWithWitness(ctx, []string{req.Msg.FileId})
+	authorization, err := s.authorizeManageFileDeliveriesWithWitness(ctx, []string{fileID})
 	if err != nil {
 		return nil, err
 	}
 
-	response, err := s.getFileUrlsForID(ctx, req.Msg.FileId)
+	response, err := s.getFileUrlsForID(ctx, fileID)
 	if err != nil {
 		return nil, err
 	}
 	fenced, changed, err := s.finalizeManageFileURLResponses(ctx, map[string]*managev1.GetMediaDeliveryResponse{
-		req.Msg.FileId: response,
+		fileID: response,
 	}, authorization)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	response = fenced[req.Msg.FileId]
+	response = fenced[fileID]
 	if response == nil {
 		if changed && allowChangedRetry {
-			retried, retryErr := s.getMediaDelivery(ctx, req, false)
+			retried, retryErr := s.getMediaDelivery(ctx, fileID, false)
 			if retryErr == nil {
 				return retried, nil
 			}
-			if connect.CodeOf(retryErr) != connect.CodePermissionDenied && connect.CodeOf(retryErr) != connect.CodeNotFound {
+			if errs.CodeOf(retryErr) != connect.CodePermissionDenied && errs.CodeOf(retryErr) != connect.CodeNotFound {
 				return nil, retryErr
 			}
 		}
-		return nil, errs.NotFound("file", req.Msg.FileId)
+		return nil, errs.NotFound("file", fileID)
 	}
-
-	return connect.NewResponse(response), nil
+	return response, nil
 }
 
-// GetBulkMediaDeliveries returns delivery refs for multiple files and their derivatives.
-func (s *FileService) GetBulkMediaDeliveries(
-	ctx context.Context,
-	req *connect.Request[managev1.GetBulkMediaDeliveriesRequest],
-) (*connect.Response[managev1.GetBulkMediaDeliveriesResponse], error) {
-	if len(req.Msg.FileIds) > MaxMediaDeliveryBatchSize {
+// GetBulkMediaDeliveriesQuery reads the deliveries of several Files.
+type GetBulkMediaDeliveriesQuery struct {
+	FileIDs []string
+}
+
+// GetBulkMediaDeliveries returns delivery refs for multiple files and their
+// derivatives, keyed by File ID.
+func (s *Service) GetBulkMediaDeliveries(ctx context.Context, query GetBulkMediaDeliveriesQuery) (map[string]*managev1.GetMediaDeliveryResponse, error) {
+	if len(query.FileIDs) > MaxMediaDeliveryBatchSize {
 		return nil, errs.InvalidArgument(
 			"file_ids",
 			fmt.Sprintf("must contain at most %d items", MaxMediaDeliveryBatchSize),
 		)
 	}
-	if len(req.Msg.FileIds) == 0 {
-		return connect.NewResponse(&managev1.GetBulkMediaDeliveriesResponse{
-			Files: make(map[string]*managev1.GetMediaDeliveryResponse),
-		}), nil
+	if len(query.FileIDs) == 0 {
+		return make(map[string]*managev1.GetMediaDeliveryResponse), nil
 	}
-	authorization, err := s.authorizeManageFileDeliveriesWithWitness(ctx, req.Msg.FileIds)
+	authorization, err := s.authorizeManageFileDeliveriesWithWitness(ctx, query.FileIDs)
 	if err != nil {
 		return nil, err
 	}
-	result, err := s.loadFileURLResponses(ctx, req.Msg.FileIds)
+	result, err := s.loadFileURLResponses(ctx, query.FileIDs)
 	if err != nil {
 		return nil, err
 	}
 	result, _, err = s.finalizeManageFileURLResponses(ctx, result, authorization)
-	if err != nil {
-		return nil, errs.Internal(err)
-	}
-	return connect.NewResponse(&managev1.GetBulkMediaDeliveriesResponse{
-		Files: result,
-	}), nil
+	return result, err
 }
 
 // loadFileURLResponses resolves immutable File IDs that an owning service has
 // already authorized. It does not infer or re-read document attachment state.
-func (s *FileService) loadFileURLResponses(
+func (s *Service) loadFileURLResponses(
 	ctx context.Context,
 	fileIDs []string,
 ) (map[string]*managev1.GetMediaDeliveryResponse, error) {
@@ -308,7 +301,7 @@ func (s *FileService) loadFileURLResponses(
 }
 
 // getFileUrlsForID is a helper that returns delivery refs for a single file ID.
-func (s *FileService) getFileUrlsForID(ctx context.Context, fileID string) (*managev1.GetMediaDeliveryResponse, error) {
+func (s *Service) getFileUrlsForID(ctx context.Context, fileID string) (*managev1.GetMediaDeliveryResponse, error) {
 	responses, err := s.loadFileURLResponses(ctx, []string{fileID})
 	if err != nil {
 		return nil, err
@@ -320,7 +313,7 @@ func (s *FileService) getFileUrlsForID(ctx context.Context, fileID string) (*man
 	return response, nil
 }
 
-func (s *FileService) loadStoredDerivativeDeliveries(
+func (s *Service) loadStoredDerivativeDeliveries(
 	ctx context.Context,
 	fileIDs []string,
 ) ([]storedDerivativeDeliveryRow, error) {
@@ -353,7 +346,7 @@ func (s *FileService) loadStoredDerivativeDeliveries(
 	return rows, err
 }
 
-func (s *FileService) fileURLsResponseFromStoredFile(
+func (s *Service) fileURLsResponseFromStoredFile(
 	fileID string,
 	extension string,
 	mimeType string,
@@ -438,7 +431,7 @@ func buildExpiringMediaFileRef(
 	return ref, nil
 }
 
-func (s *FileService) attachFileDerivativeURLs(
+func (s *Service) attachFileDerivativeURLs(
 	response *managev1.GetMediaDeliveryResponse,
 	fileID string,
 	derivs map[string]storedDerivativeDeliveryRow,
@@ -474,7 +467,7 @@ func (s *FileService) attachFileDerivativeURLs(
 	return nil
 }
 
-func (s *FileService) assetRefForDerivative(row storedDerivativeDeliveryRow) (*commonv1.AssetRef, error) {
+func (s *Service) assetRefForDerivative(row storedDerivativeDeliveryRow) (*commonv1.AssetRef, error) {
 	if row.AssetID == nil || row.AssetStatus == nil || *row.AssetStatus != model.PublicAssetStatusReady {
 		return nil, nil
 	}
@@ -507,7 +500,7 @@ func (s *FileService) assetRefForDerivative(row storedDerivativeDeliveryRow) (*c
 	}, nil
 }
 
-func (s *FileService) hlsPlaybackRef(fileID string, row storedDerivativeDeliveryRow) (*commonv1.HlsMediaRef, error) {
+func (s *Service) hlsPlaybackRef(fileID string, row storedDerivativeDeliveryRow) (*commonv1.HlsMediaRef, error) {
 	if row.MediaGenerationID == nil || row.MediaGenerationStatus == nil || *row.MediaGenerationStatus != model.MediaGenerationStatusReady {
 		return nil, nil
 	}
@@ -529,7 +522,7 @@ func (s *FileService) hlsPlaybackRef(fileID string, row storedDerivativeDelivery
 	}, nil
 }
 
-func (s *FileService) effectiveDownloadTTL() time.Duration {
+func (s *Service) effectiveDownloadTTL() time.Duration {
 	if s != nil && s.downloadTTL > 0 {
 		return min(s.downloadTTL, mediaauth.DownloadTTL)
 	}

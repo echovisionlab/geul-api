@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -15,10 +14,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/favicon"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -71,34 +70,49 @@ type FileDeletionMutation struct {
 	AlreadyPending       bool
 }
 
+// DeleteFileCommand requests the deletion of one File.
+type DeleteFileCommand struct {
+	FileID string
+}
+
 // DeleteFile durably requests file deletion. The worker removes the database
 // record only after its object deletion succeeds. Direct requests are admin-only.
-func (s *FileService) DeleteFile(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteFileRequest],
-) (*connect.Response[managev1.DeleteFileResponse], error) {
-	fileID := strings.TrimSpace(req.Msg.FileId)
+func (s *Service) DeleteFile(ctx context.Context, command DeleteFileCommand) error {
+	fileID := strings.TrimSpace(command.FileID)
 	can, err := policyv1.File.Delete(fileID)
 	if err != nil {
-		return nil, errs.InvalidArgument("file_id", "must be a canonical resource UUID")
+		return errs.InvalidArgument("file_id", "must be a canonical resource UUID")
 	}
 	var file struct {
 		ID string `gorm:"column:id"`
 	}
 	if err := s.db.WithContext(ctx).Table("file").Where("id = ?", fileID).First(&file).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("file", fileID)
+			return errs.NotFound("file", fileID)
 		}
-		return nil, errs.Internal(err)
+		return err
 	}
 
-	if err := s.deleteFileRecordByIDWithCan(ctx, fileID, &can); err != nil {
-		return nil, errs.Wrap(err)
-	}
-
-	return connect.NewResponse(&managev1.DeleteFileResponse{
-		Success: true,
-	}), nil
+	now := time.Now().UTC()
+	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[*FileDeletionMutation]{
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, tx *gorm.DB) (*FileDeletionMutation, error) {
+			return markFileDeletionRequestedWithDB(ctx, tx, fileID, now)
+		},
+		Audit: func(deletion *FileDeletionMutation) mutation.Audit {
+			if deletion == nil || deletion.AlreadyPending {
+				return mutation.Unchanged()
+			}
+			return fileDeletedAudit(fileID)
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, deletion *FileDeletionMutation) error {
+			if deletion == nil {
+				return nil
+			}
+			return publishFileDeletionMutationWithDB(ctx, tx, fileDeleteAsyncPublisher{s.asyncPublisher}, deletion, now)
+		},
+	})
+	return err
 }
 
 type fileMediaGenerationDeleteRef struct {
@@ -277,36 +291,27 @@ func requestUnboundSourceFileAssetsDeletion(
 // DeleteFileByID durably records the deletion request and its file.delete
 // command in one database transaction. The worker removes the file row only
 // after every S3 target has been deleted.
-func (s *FileService) DeleteFileByID(ctx context.Context, fileID string) error {
+func (s *Service) DeleteFileByID(ctx context.Context, fileID string) error {
 	return s.deleteFileRecordByID(ctx, fileID)
 }
 
-func (s *FileService) deleteFileRecordByID(ctx context.Context, fileID string) error {
-	return s.deleteFileRecordByIDWithCan(ctx, fileID, nil)
-}
-
-func (s *FileService) deleteFileRecordByIDWithCan(ctx context.Context, fileID string, can *policyv1.Can) error {
+func (s *Service) deleteFileRecordByID(ctx context.Context, fileID string) error {
 	fileID = strings.TrimSpace(fileID)
 	if fileID == "" {
 		return nil
 	}
 	now := time.Now().UTC()
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if can != nil {
-			if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, *can); err != nil {
-				return err
-			}
-		}
-		mutation, err := markFileDeletionRequestedWithDB(ctx, tx, fileID, now)
-		if err != nil || mutation == nil {
+		deletion, err := markFileDeletionRequestedWithDB(ctx, tx, fileID, now)
+		if err != nil || deletion == nil {
 			return err
 		}
-		if !mutation.AlreadyPending {
+		if !deletion.AlreadyPending {
 			if err := appendFileDeletedAudit(ctx, tx, s.auditWriter, fileID); err != nil {
 				return err
 			}
 		}
-		return publishFileDeletionMutationWithDB(ctx, tx, fileDeleteAsyncPublisher{s.asyncPublisher}, mutation, now)
+		return publishFileDeletionMutationWithDB(ctx, tx, fileDeleteAsyncPublisher{s.asyncPublisher}, deletion, now)
 	})
 }
 
@@ -547,7 +552,7 @@ func buildFileDeleteEventWithDB(
 	}, nil
 }
 
-func (s *FileService) DeleteEditorFileByID(
+func (s *Service) DeleteEditorFileByID(
 	ctx context.Context,
 	fileID string,
 	entityType managev1.TranscodeEntityType,

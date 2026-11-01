@@ -33,8 +33,10 @@ func LeftJoinLinked(member, alias string) string {
 	return "LEFT JOIN " + linked(member, alias)
 }
 
+// linked casts with CAST rather than :: so the fragment also parses in the
+// SQLite unit-test databases that attach a kratos schema.
 func linked(member, alias string) string {
-	return fmt.Sprintf("%s AS %s ON %s.id = %s.account_identity_id AND %s.external_id = %s.id::text",
+	return fmt.Sprintf("%s AS %s ON %s.id = %s.account_identity_id AND %s.external_id = CAST(%s.id AS text)",
 		table, alias, alias, member, alias, member)
 }
 

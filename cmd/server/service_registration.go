@@ -211,15 +211,13 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	// Register Connect services
 	// FileService first (needed by other services for file deletion)
 	downloadTTL := time.Duration(cfg.MediaDownloadTTLSec) * time.Second
-	publicFileService := filepublic.NewFileService(
-		db,
-		spicedbClient,
-		cfg.CDNURL,
-		cfg.MediaURL,
-		cfg.MediaSigningSecret,
-		downloadTTL,
-		filepublic.WithDownloadSegmentConfigs(mediaassetadapter.NewSegmentConfigs()),
-	)
+	publicFileService, err := filepublic.NewService(filepublic.Deps{
+		DB: db, SpiceDB: spicedbClient, Segments: mediaassetadapter.NewSegmentConfigs(),
+		CDNDomain: cfg.CDNURL, MediaDomain: cfg.MediaURL, MediaSecret: cfg.MediaSigningSecret, DownloadTTL: downloadTTL,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize public file service: %w", err)
+	}
 	legalRuntime := legaladapter.NewOGRuntime(cfg.CDNURL, ogDeps.planner)
 	campaignDeliveryDispatcher := campaignadapter.NewDeliveryDispatcher(db, campaign.NewAuditedCampaignDeliveryDispatcher(
 		spicedbClient,
@@ -231,44 +229,37 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		OG:     legalRuntime,
 		Notice: legaladapter.NewNoticeRuntime(campaignDeliveryDispatcher),
 	}
-	fileService := filemedia.NewFileService(
-		db,
-		s3Client,
-		servicePublisher,
-		cfg.S3Bucket,
-		cfg.CDNURL,
-		cfg.MediaURL,
-		cfg.MediaSigningSecret,
-		transcodeTracker,
-		spicedbClient,
-		filemedia.WithEditorImageMaxSizeBytes(cfg.EditorImageMaxSize),
-		filemedia.WithMediaDownloadTTL(downloadTTL),
-		filemedia.WithFileDomainAuditWriter(telemetryWriter),
-		filemedia.WithMultipartUploadPresigner(s3PresignClient),
-		filemedia.WithLegalRouteIdentity(legalRuntime),
-		filemedia.WithPostAccess(filemediaadapter.NewPostAccess(db, spicedbClient)),
-		filemedia.WithPagePolicyAccess(pageadapter.NewPolicyAccess(page.NewPolicyAuthority(spicedbClient))),
-		filemedia.WithWorkAttachment(filemediaadapter.NewWorkAttachment(db)),
-		filemedia.WithWorkPolicyAccess(workadapter.NewPolicyAccess(spicedbClient)),
-		filemedia.WithProgramEventAttachment(filemediaadapter.NewProgramEventAttachment(db)),
-		filemedia.WithTrackAttachment(filemediaadapter.NewTrackAttachment(telemetryWriter)),
-		filemedia.WithReleasePolicyAccess(releaseadapter.NewPolicyAccess(spicedbClient)),
-		filemedia.WithAudienceAccess(filemediaadapter.NewAudienceAccess()),
-		filemedia.WithMemberSummaries(filemediaadapter.NewMemberSummaries(db, cfg.CDNURL)),
-	)
+	fileService, err := filemedia.NewService(filemedia.Deps{
+		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, S3: s3Client, Presigner: s3PresignClient,
+		AsyncPublisher: servicePublisher, Transcoder: transcodeTracker, S3Bucket: cfg.S3Bucket,
+		CDNDomain: cfg.CDNURL, MediaDomain: cfg.MediaURL, MediaSecret: cfg.MediaSigningSecret,
+		DownloadTTL: downloadTTL, EditorImageMaxSize: cfg.EditorImageMaxSize, LegalRoutes: legalRuntime,
+		PostAccess:             filemediaadapter.NewPostAccess(db, spicedbClient),
+		PagePolicyAccess:       pageadapter.NewPolicyAccess(page.NewPolicyAuthority(spicedbClient)),
+		WorkAttachment:         filemediaadapter.NewWorkAttachment(db),
+		WorkPolicyAccess:       workadapter.NewPolicyAccess(spicedbClient),
+		ProgramEventAttachment: filemediaadapter.NewProgramEventAttachment(db),
+		TrackAttachment:        filemediaadapter.NewTrackAttachment(telemetryWriter),
+		ReleasePolicyAccess:    releaseadapter.NewPolicyAccess(spicedbClient),
+		AudienceAccess:         filemediaadapter.NewAudienceAccess(),
+		MemberSummaries:        filemediaadapter.NewMemberSummaries(db, cfg.CDNURL),
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize file service: %w", err)
+	}
 	formAssets := formadapter.NewAssets(cfg.CDNURL)
 	pageRuntime := pageadapter.NewRuntime(cfg.CDNURL, ogDeps.refresher)
 	workRuntime := workadapter.NewRuntime(db, cfg.CDNURL, ogDeps.refresher)
-	filePath, fileHandler := managev1connect.NewFileServiceHandler(fileService, handlerOpts...)
+	filePath, fileHandler := managev1connect.NewFileServiceHandler(filemedia.NewConnectHandler(fileService), handlerOpts...)
 	mux.Handle(filePath, fileHandler)
 	slog.Info("Registered service", "path", filePath)
 	linkPreviewPath, linkPreviewHandler := managev1connect.NewLinkPreviewServiceHandler(
-		filemedia.NewLinkPreviewService(spicedbClient),
+		filemedia.NewLinkPreviewConnectHandler(filemedia.NewLinkPreviewService(spicedbClient)),
 		handlerOpts...,
 	)
 	mux.Handle(linkPreviewPath, linkPreviewHandler)
 	slog.Info("Registered service", "path", linkPreviewPath)
-	internalFileIngestService := filemedia.NewInternalFileIngestService(fileService)
+	internalFileIngestService := filemedia.NewInternalConnectHandler(fileService)
 	internalFileIngestPath, internalFileIngestHandler := intrav1connect.NewInternalFileIngestServiceHandler(
 		internalFileIngestService,
 		internalHandlerOpts...,

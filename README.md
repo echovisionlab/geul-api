@@ -580,9 +580,7 @@ variable; legal contact remains separate. Removed support/privacy settings and
 content keys are rejected.
 
 Contracts 0.14.0 renames the shared block field `previewWidth` to `displaySize`
-with no read alias. The release image includes `/app/display-size-migrate`,
-which converts live Blocks and version history with row backups; see
-[`docs/display-size-migration.md`](docs/display-size-migration.md).
+with no read alias.
 
 Post configuration writes use `configuration_revision` as an optimistic
 concurrency token. Manage clients read it from `manage.v1.Post` and send it as

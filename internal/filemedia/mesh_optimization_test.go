@@ -213,7 +213,7 @@ func TestFileServiceMeshOptimizationServiceUsesAsyncPublisherFallback(t *testing
 	t.Parallel()
 
 	asyncPublisher := &recordingFileMeshAsyncPublisher{}
-	service := &FileService{
+	service := &Service{
 		db:             newMeshOptimizationUnitDB(t),
 		asyncPublisher: asyncPublisher,
 		publisher:      fileMeshTranscoderOnlyPublisher{},
@@ -230,7 +230,7 @@ func TestFileServiceMeshOptimizationCandidateResponseHidesFailedOutputTarget(t *
 
 	now := time.Now().UTC()
 	errorMessage := "mesh optimization publisher is not configured"
-	service := &FileService{cdnDomain: "cdn.example.com"}
+	service := &Service{cdnDomain: "cdn.example.com"}
 
 	response, err := service.meshOptimizationCandidateResponse(model.MeshOptimizationCandidate{
 		ID:                 "candidate-id",
@@ -267,7 +267,7 @@ func TestFileServiceMeshOptimizationCandidateResponseIncludesReadyOutputFile(t *
 	now := time.Now().UTC()
 	outputFileID := "22222222-2222-4222-8222-222222222222"
 	outputFileSize := int64(512)
-	service := &FileService{cdnDomain: "cdn.example.com", mediaSecret: "secret"}
+	service := &Service{cdnDomain: "cdn.example.com", mediaSecret: "secret"}
 
 	response, err := service.meshOptimizationCandidateResponse(model.MeshOptimizationCandidate{
 		ID:                 "candidate-id",

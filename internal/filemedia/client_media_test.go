@@ -18,7 +18,6 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -111,7 +110,7 @@ func TestClientMediaWaveformPreservesSignedPeaks(t *testing.T) {
 	require.Error(t, validateClientWaveform([]byte("[["+strings.Repeat("null,", 2047)+"null]]")))
 }
 
-func newClientMediaStorageService(t *testing.T, session model.UploadSession, objects map[string][]byte) *FileService {
+func newClientMediaStorageService(t *testing.T, session model.UploadSession, objects map[string][]byte) *Service {
 	t.Helper()
 	stored := map[string][]byte{}
 	mimes := map[string]string{}
@@ -263,10 +262,8 @@ func TestClientMediaStoredBundleRejectsTamperingMissingAndBadPlaylist(t *testing
 func TestClientMediaPreparedMemberCannotBeReplacedByAnotherAuthorizedMember(t *testing.T) {
 	session, _ := clientMediaTestBundle(t, "audio")
 	// Membership denial occurs before any role/domain lookup, so equal global roles cannot bypass the pin.
-	err := (&FileService{}).checkPartUploadPermission(t.Context(), uuid.NewString(), session)
+	err := (&Service{}).checkPartUploadPermission(t.Context(), uuid.NewString(), session)
 	require.ErrorContains(t, err, "belongs to another member")
-	_, err = (&FileService{}).PrepareClientMediaUpload(t.Context(), nil)
-	require.Error(t, err)
 }
 
 type clientMediaTrackAttachment struct{ input TrackOriginalAudioInput }
@@ -299,7 +296,7 @@ func TestClientMediaTrackFinalizerUsesCompletedBundleWithoutJobs(t *testing.T) {
 	svc.publisher = publisher
 	attachment := &clientMediaTrackAttachment{}
 	svc.trackAttachment = attachment
-	_, err := svc.attachTrackOriginalAudio(t.Context(), &intrav1.AttachTrackOriginalAudioRequest{TrackId: trackID, VerifiedFileId: session.FileID, IngestAttemptId: attemptID})
+	_, err := svc.AttachTrackOriginalAudio(t.Context(), AttachTrackOriginalAudioCommand{TrackID: trackID, VerifiedFileID: session.FileID, IngestAttemptID: attemptID})
 	require.NoError(t, err)
 	require.True(t, attachment.input.ClientMediaReady)
 	require.Equal(t, 6, *attachment.input.DurationSeconds)
@@ -336,7 +333,7 @@ func TestClientMediaAuthorityRevocationCannotMakeCopiedArtifactsReady(t *testing
 func TestClientMediaReadySignalHasCompleteOutputsAndNoCommands(t *testing.T) {
 	session, _ := clientMediaTestBundle(t, "audio")
 	publisher := &capturingAsyncPublisher{}
-	svc := &FileService{asyncPublisher: publisher}
+	svc := &Service{asyncPublisher: publisher}
 	require.NoError(t, svc.publishClientMediaReady(t.Context(), &multipartCompletion{session: session}))
 	require.Equal(t, 1, publisher.rawPublishCalls)
 	require.Zero(t, publisher.confirmCalls)
@@ -351,7 +348,7 @@ func TestClientMediaReadySignalHasCompleteOutputsAndNoCommands(t *testing.T) {
 
 func TestClientMediaFinalizingRepairNeverReopensRegisteredBundle(t *testing.T) {
 	session, _ := clientMediaTestBundle(t, "audio")
-	svc := &FileService{db: newServiceUnitDB(t)}
+	svc := &Service{db: newServiceUnitDB(t)}
 	session.Status = model.UploadSessionStatusUploading
 	allowed, err := svc.clientMediaArtifactWritable(t.Context(), session)
 	require.NoError(t, err)
@@ -403,9 +400,6 @@ func TestDirectMediaCompletionRequiresBrowserBundle(t *testing.T) {
 	require.NoError(t, requireDirectClientMediaBundle(managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, "application/pdf", model.UploadSession{}, ""))
 	require.NoError(t, requireDirectClientMediaBundle(managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT, "application/pdf", model.UploadSession{}, ""))
 	require.NoError(t, requireDirectClientMediaBundle(managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE, "image/png", model.UploadSession{}, ""))
-	service := &FileService{}
-	_, err := service.CompleteMultipartUpload(context.Background(), nil)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 }
 
 func TestClientMediaPlanBoundsAggregatePlaylistMemory(t *testing.T) {
@@ -449,7 +443,7 @@ func TestClientMediaPreparedPlanIsImmutable(t *testing.T) {
 	session, _ := clientMediaTestBundle(t, "audio")
 	plan, err := decodeClientMediaPlan(session)
 	require.NoError(t, err)
-	ctx := auth.WithUser(t.Context(), &auth.UserInfo{MemberID: auth.MemberID(plan.MemberID), Authenticated: true})
+	ctx := auditedUserContext(t.Context(), &auth.UserInfo{MemberID: auth.MemberID(plan.MemberID), Authenticated: true})
 	request := &managev1.PrepareClientMediaUploadRequest{
 		FileId: session.FileID, UploadId: session.UploadID,
 		Kind: managev1.ClientMediaKind_CLIENT_MEDIA_KIND_AUDIO, DurationSeconds: plan.DurationSeconds,
@@ -460,8 +454,8 @@ func TestClientMediaPreparedPlanIsImmutable(t *testing.T) {
 			Sha256: artifact.SHA256, DerivativeType: managev1.FileDerivativeType(artifact.DerivativeType),
 		})
 	}
-	service := &FileService{}
-	bundleID, err := service.prepareMediaBundle(ctx, session, request)
+	service := &Service{}
+	bundleID, err := service.prepareMediaBundle(ctx, session, prepareClientMediaUploadCommand(request))
 	require.NoError(t, err)
 	require.Equal(t, *session.ClientMediaBundleID, bundleID)
 	// Ordering and MIME casing are equivalent metadata, not a new plan.
@@ -469,7 +463,7 @@ func TestClientMediaPreparedPlanIsImmutable(t *testing.T) {
 		request.Artifacts[left], request.Artifacts[right] = request.Artifacts[right], request.Artifacts[left]
 	}
 	request.Artifacts[0].MimeType = strings.ToUpper(request.Artifacts[0].MimeType)
-	bundleID, err = service.prepareMediaBundle(ctx, session, request)
+	bundleID, err = service.prepareMediaBundle(ctx, session, prepareClientMediaUploadCommand(request))
 	require.NoError(t, err)
 	require.Equal(t, *session.ClientMediaBundleID, bundleID)
 	for _, test := range []struct {
@@ -483,7 +477,7 @@ func TestClientMediaPreparedPlanIsImmutable(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			changed := proto.Clone(request).(*managev1.PrepareClientMediaUploadRequest)
 			test.mutate(changed)
-			_, err := service.prepareMediaBundle(ctx, session, changed)
+			_, err := service.prepareMediaBundle(ctx, session, prepareClientMediaUploadCommand(changed))
 			require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
 			require.ErrorContains(t, err, "conflicts with existing bundle")
 		})

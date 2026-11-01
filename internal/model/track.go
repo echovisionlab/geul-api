@@ -14,6 +14,7 @@ type TrackProcessingStatus string
 const (
 	TrackProcessingStatusProcessing TrackProcessingStatus = "TRACK_PROCESSING_STATUS_PROCESSING"
 	TrackProcessingStatusCompleted  TrackProcessingStatus = "TRACK_PROCESSING_STATUS_COMPLETED"
+	TrackProcessingStatusFailed     TrackProcessingStatus = "TRACK_PROCESSING_STATUS_FAILED"
 )
 
 // Track represents a track in a release

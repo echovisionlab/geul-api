@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -34,6 +36,6 @@ func TestResolveRestrictedFileDownloadPermissionsRejectsCorruptStoredRolesAsInte
 	_, err := resolveRestrictedFileDownloadPermissions(context.Background(), nil, nil, segments)
 
 	// The roles come from a stored segment, so the requester did nothing wrong.
-	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInternal, errs.Wrap(err).Code())
 	require.ErrorContains(t, err, `invalid account permission "superuser"`)
 }

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/glebarez/sqlite"
@@ -111,7 +113,7 @@ func TestMediaAssetLifecyclePublicAsset(t *testing.T) {
 	require.Equal(t, asset.ID, bound.GetAssetId())
 	err = service.RequestPublicAssetDeletion(t.Context(), asset.ID)
 	require.Error(t, err)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.Wrap(err).Code())
 
 	require.NoError(t, service.ReleasePublicAssetBindings(t.Context(), "post", ownerID, "featured_image"))
 	var deleting model.PublicAsset
@@ -322,7 +324,7 @@ func TestPublicAssetAllocatorRejectsPendingSourceFile(t *testing.T) {
 		},
 	)
 	require.Error(t, err)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.Wrap(err).Code())
 
 	var assetCount int64
 	require.NoError(t, db.Model(&model.PublicAsset{}).Count(&assetCount).Error)

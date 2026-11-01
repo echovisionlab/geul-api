@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
@@ -38,7 +38,7 @@ func (r *Runtime) BindReadyAssetForSourceFile(
 	asset, err := lifecycle.BindReadyAssetForSourceFile(
 		ctx, sourceFileID, ownerType, ownerID, bindingKey, expectedKind,
 	)
-	if expectedKind != "poster" || connect.CodeOf(err) != connect.CodeNotFound {
+	if expectedKind != "poster" || !mutation.IsNotFound(err) {
 		return asset, err
 	}
 	return lifecycle.BindReadyAssetForSourceFile(

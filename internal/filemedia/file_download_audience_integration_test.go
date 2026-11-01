@@ -91,15 +91,15 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	_, err = stack.SpiceDBClient.ApplyRelationships(t.Context(), postPolicy)
 	require.NoError(t, err)
 
-	fileSvc := &FileService{
+	fileSvc := withTestMutations(&Service{
 		db:             db,
 		spiceDB:        stack.SpiceDBClient,
 		auditWriter:    apitelemetry.NewDurableWriter(db),
 		asyncPublisher: &policySignalPublisher{},
-	}
-	WithPostAccess(newIntegrationPostAccess(db, stack.SpiceDBClient))(fileSvc)
-	WithAudienceAccess(newIntegrationAudienceAccess())(fileSvc)
-	updated, err := fileSvc.UpdateFileDownloadPolicy(
+	})
+	fileSvc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
+	fileSvc.audienceAccess = newIntegrationAudienceAccess()
+	updated, err := NewConnectHandler(fileSvc).UpdateFileDownloadPolicy(
 		authorCtx,
 		connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
 			EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
@@ -150,7 +150,7 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, allowed)
 
-	zeroSegmentPolicy, err := fileSvc.UpdateFileDownloadPolicy(
+	zeroSegmentPolicy, err := NewConnectHandler(fileSvc).UpdateFileDownloadPolicy(
 		authorCtx,
 		connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
 			EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
@@ -204,7 +204,7 @@ func TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegratio
 	require.NoError(t, err)
 	_, err = stack.SpiceDBClient.SyncAccountIdentityGlobalRole(t.Context(), subject, policyv1.Role.Admin())
 	require.NoError(t, err)
-	ctx := auth.WithUser(t.Context(), &auth.UserInfo{
+	ctx := auditedUserContext(t.Context(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	})
@@ -232,15 +232,15 @@ func TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegratio
 	_, err = stack.SpiceDBClient.ApplyRelationships(t.Context(), eventPolicy)
 	require.NoError(t, err)
 
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient}
-	WithPostAccess(newIntegrationPostAccess(db, stack.SpiceDBClient))(svc)
-	WithProgramEventAttachment(newIntegrationProgramEventAccess(db))(svc)
-	WithAudienceAccess(newIntegrationAudienceAccess())(svc)
+	svc := withTestMutations(&Service{db: db, spiceDB: stack.SpiceDBClient})
+	svc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
+	svc.programEventAttachment = newIntegrationProgramEventAccess(db)
+	svc.audienceAccess = newIntegrationAudienceAccess()
 	for _, request := range []*managev1.GetFileDownloadPolicyRequest{
 		{EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST, EntityId: postID, BlockId: managePolicyString(postBlockID), ReferencePath: managePolicyString("file")},
 		{EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PROGRAM_EVENT, EntityId: eventID, BlockId: managePolicyString(eventBlockID), ReferencePath: managePolicyString("file")},
 	} {
-		response, getErr := svc.GetFileDownloadPolicy(ctx, connect.NewRequest(request))
+		response, getErr := NewConnectHandler(svc).GetFileDownloadPolicy(ctx, connect.NewRequest(request))
 		require.NoError(t, getErr)
 		require.Equal(t, managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_DISABLED, response.Msg.GetPolicy().GetAudience())
 	}

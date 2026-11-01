@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/filemedia"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -25,14 +25,14 @@ const (
 // FileManager consumes the native administrator File Manager boundary. The
 // owning service retains fresh authorization, no-op handling and durable audit.
 type FileManager interface {
-	GetFileDeletionImpact(context.Context, *connect.Request[managev1.GetFileDeletionImpactRequest]) (*connect.Response[managev1.GetFileDeletionImpactResponse], error)
-	DeleteFiles(context.Context, *connect.Request[managev1.DeleteFilesRequest]) (*connect.Response[managev1.DeleteFilesResponse], error)
-	RenameFile(context.Context, *connect.Request[managev1.RenameFileRequest]) (*connect.Response[managev1.RenameFileResponse], error)
-	MoveFiles(context.Context, *connect.Request[managev1.MoveFilesRequest]) (*connect.Response[managev1.MoveFilesResponse], error)
-	CreateFileFolder(context.Context, *connect.Request[managev1.CreateFileFolderRequest]) (*connect.Response[managev1.CreateFileFolderResponse], error)
-	RenameFileFolder(context.Context, *connect.Request[managev1.RenameFileFolderRequest]) (*connect.Response[managev1.RenameFileFolderResponse], error)
-	MoveFileFolder(context.Context, *connect.Request[managev1.MoveFileFolderRequest]) (*connect.Response[managev1.MoveFileFolderResponse], error)
-	DeleteFileFolder(context.Context, *connect.Request[managev1.DeleteFileFolderRequest]) (*connect.Response[managev1.DeleteFileFolderResponse], error)
+	GetFileDeletionImpact(context.Context, filemedia.GetFileDeletionImpactQuery) ([]*managev1.FileDeletionImpact, error)
+	DeleteFiles(context.Context, filemedia.DeleteFilesCommand) (filemedia.FileDeletionOutcome, error)
+	RenameFile(context.Context, filemedia.RenameFileCommand) (*managev1.FileManagerFile, error)
+	MoveFiles(context.Context, filemedia.MoveFilesCommand) ([]*managev1.FileManagerFile, error)
+	CreateFileFolder(context.Context, filemedia.CreateFileFolderCommand) (*managev1.FileFolder, error)
+	RenameFileFolder(context.Context, filemedia.RenameFileFolderCommand) (*managev1.FileFolder, error)
+	MoveFileFolder(context.Context, filemedia.MoveFileFolderCommand) (*managev1.FileFolder, error)
+	DeleteFileFolder(context.Context, filemedia.DeleteFileFolderCommand) ([]string, error)
 }
 
 var fileManagerTools = []mcpserver.Tool{
@@ -94,11 +94,11 @@ func (tools *FileManagerTools) getDeletionImpact(ctx context.Context, args mcpse
 	if err := validateFileManagerIDs(input.FileIDs); err != nil {
 		return executionError(err)
 	}
-	response, err := tools.files.GetFileDeletionImpact(ctx, connect.NewRequest(&managev1.GetFileDeletionImpactRequest{FileIds: input.FileIDs}))
+	response, err := tools.files.GetFileDeletionImpact(ctx, filemedia.GetFileDeletionImpactQuery{FileIDs: input.FileIDs})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	impacts, err := projectFileManagerImpacts(response.Msg.Impacts)
+	impacts, err := projectFileManagerImpacts(response)
 	if err != nil {
 		return mcpserver.ToolResult{}, err
 	}
@@ -115,18 +115,18 @@ func (tools *FileManagerTools) deleteFiles(ctx context.Context, args mcpserver.T
 	if err := validateFileManagerIDs(input.FileIDs); err != nil {
 		return executionError(err)
 	}
-	response, err := tools.files.DeleteFiles(ctx, connect.NewRequest(&managev1.DeleteFilesRequest{FileIds: input.FileIDs}))
+	response, err := tools.files.DeleteFiles(ctx, filemedia.DeleteFilesCommand{FileIDs: input.FileIDs})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	rejected, err := projectFileManagerImpacts(response.Msg.RejectedFiles)
+	rejected, err := projectFileManagerImpacts(response.RejectedFiles)
 	if err != nil {
 		return mcpserver.ToolResult{}, err
 	}
 	return fileManagerResult(struct {
 		Accepted []string            `json:"accepted_file_ids"`
 		Rejected []fileManagerImpact `json:"rejected_files"`
-	}{append([]string{}, response.Msg.AcceptedFileIds...), rejected})
+	}{append([]string{}, response.AcceptedFileIDs...), rejected})
 }
 
 func (tools *FileManagerTools) moveFiles(ctx context.Context, args mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -145,12 +145,12 @@ func (tools *FileManagerTools) moveFiles(ctx context.Context, args mcpserver.Too
 			return executionError(err)
 		}
 	}
-	response, err := tools.files.MoveFiles(ctx, connect.NewRequest(&managev1.MoveFilesRequest{FileIds: input.FileIDs, FolderId: input.FolderID}))
+	response, err := tools.files.MoveFiles(ctx, filemedia.MoveFilesCommand{FileIDs: input.FileIDs, FolderID: optionalString(input.FolderID)})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	files := make([]fileManagerFile, 0, len(response.Msg.Files))
-	for _, file := range response.Msg.Files {
+	files := make([]fileManagerFile, 0, len(response))
+	for _, file := range response {
 		files = append(files, projectFileManagerFile(file))
 	}
 	return fileManagerResult(struct {
@@ -172,13 +172,13 @@ func (tools *FileManagerTools) renameFile(ctx context.Context, args mcpserver.To
 	if err := validateUUID("file_id", input.FileID); err != nil {
 		return executionError(err)
 	}
-	response, err := tools.files.RenameFile(ctx, connect.NewRequest(&managev1.RenameFileRequest{FileId: input.FileID, FileName: input.Name}))
+	response, err := tools.files.RenameFile(ctx, filemedia.RenameFileCommand{FileID: input.FileID, FileName: input.Name})
 	if err != nil {
 		return expectedToolError(err)
 	}
 	return fileManagerResult(struct {
 		File fileManagerFile `json:"file"`
-	}{projectFileManagerFile(response.Msg.File)})
+	}{projectFileManagerFile(response)})
 }
 
 func (tools *FileManagerTools) createFolder(ctx context.Context, args mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -197,13 +197,13 @@ func (tools *FileManagerTools) createFolder(ctx context.Context, args mcpserver.
 			return executionError(err)
 		}
 	}
-	response, err := tools.files.CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{ParentId: input.ParentID, Name: input.Name}))
+	response, err := tools.files.CreateFileFolder(ctx, filemedia.CreateFileFolderCommand{ParentID: optionalString(input.ParentID), Name: input.Name})
 	if err != nil {
 		return expectedToolError(err)
 	}
 	return fileManagerResult(struct {
 		Folder fileManagerFolder `json:"folder"`
-	}{projectFileManagerFolder(response.Msg.Folder)})
+	}{projectFileManagerFolder(response)})
 }
 
 func (tools *FileManagerTools) renameFolder(ctx context.Context, args mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -220,13 +220,13 @@ func (tools *FileManagerTools) renameFolder(ctx context.Context, args mcpserver.
 	if err := validateUUID("folder_id", input.FolderID); err != nil {
 		return executionError(err)
 	}
-	response, err := tools.files.RenameFileFolder(ctx, connect.NewRequest(&managev1.RenameFileFolderRequest{FolderId: input.FolderID, Name: input.Name}))
+	response, err := tools.files.RenameFileFolder(ctx, filemedia.RenameFileFolderCommand{FolderID: input.FolderID, Name: input.Name})
 	if err != nil {
 		return expectedToolError(err)
 	}
 	return fileManagerResult(struct {
 		Folder fileManagerFolder `json:"folder"`
-	}{projectFileManagerFolder(response.Msg.Folder)})
+	}{projectFileManagerFolder(response)})
 }
 
 func (tools *FileManagerTools) moveFolder(ctx context.Context, args mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -245,13 +245,13 @@ func (tools *FileManagerTools) moveFolder(ctx context.Context, args mcpserver.To
 			return executionError(err)
 		}
 	}
-	response, err := tools.files.MoveFileFolder(ctx, connect.NewRequest(&managev1.MoveFileFolderRequest{FolderId: input.FolderID, ParentId: input.ParentID}))
+	response, err := tools.files.MoveFileFolder(ctx, filemedia.MoveFileFolderCommand{FolderID: input.FolderID, ParentID: optionalString(input.ParentID)})
 	if err != nil {
 		return expectedToolError(err)
 	}
 	return fileManagerResult(struct {
 		Folder fileManagerFolder `json:"folder"`
-	}{projectFileManagerFolder(response.Msg.Folder)})
+	}{projectFileManagerFolder(response)})
 }
 
 func (tools *FileManagerTools) deleteFolder(ctx context.Context, args mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
@@ -264,14 +264,14 @@ func (tools *FileManagerTools) deleteFolder(ctx context.Context, args mcpserver.
 	if err := validateUUID("folder_id", input.FolderID); err != nil {
 		return executionError(err)
 	}
-	response, err := tools.files.DeleteFileFolder(ctx, connect.NewRequest(&managev1.DeleteFileFolderRequest{FolderId: input.FolderID}))
+	response, err := tools.files.DeleteFileFolder(ctx, filemedia.DeleteFileFolderCommand{FolderID: input.FolderID})
 	if err != nil {
 		return expectedToolError(err)
 	}
 	return fileManagerResult(struct {
 		FolderID string   `json:"folder_id"`
 		Accepted []string `json:"accepted_file_ids"`
-	}{input.FolderID, append([]string{}, response.Msg.AcceptedFileIds...)})
+	}{input.FolderID, append([]string{}, response...)})
 }
 
 func validateFileManagerIDs(ids []string) error {

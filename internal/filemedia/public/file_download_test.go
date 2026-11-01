@@ -32,15 +32,7 @@ func TestFileServiceAuthorizeDownloadPostAudienceAndScopeUnit(t *testing.T) {
 	seedPublicDownloadPost(t, db, postID, managev1.PostStatus_POST_STATUS_PUBLISHED, fileID)
 	seedPublicDownloadFile(t, db, fileID, fileName, "wav", "audio/wav", mediaasset.FileDownloadAudienceAuthenticated)
 
-	svc := NewFileService(
-		db,
-		&auth.SpiceDBClient{},
-		"https://cdn.example.com",
-		"https://media.example.com",
-		publicDownloadUnitSecret,
-		24*time.Hour,
-		WithDownloadSegmentConfigs(mediaassetadapter.NewSegmentConfigs()),
-	)
+	svc := newTestService(Deps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "https://cdn.example.com", MediaDomain: "https://media.example.com", MediaSecret: publicDownloadUnitSecret, DownloadTTL: 24 * time.Hour, Segments: mediaassetadapter.NewSegmentConfigs()})
 	anonymous := context.Background()
 	memberID := uuid.NewString()
 	memberIdentityID := uuid.NewString()
@@ -261,7 +253,7 @@ func TestAuthorizedPostDownloadRejectsDetachedFilesUnit(t *testing.T) {
 	seedPublicDownloadFile(t, db, fileID, "public.wav", "wav", "audio/wav", mediaasset.FileDownloadAudiencePublic)
 	seedPublicDownloadFile(t, db, detachedFileID, "detached.wav", "wav", "audio/wav", mediaasset.FileDownloadAudiencePublic)
 
-	svc := NewFileService(db, &auth.SpiceDBClient{}, "cdn.example.com", "media.example.com", publicDownloadUnitSecret, time.Minute)
+	svc := newTestService(Deps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "cdn.example.com", MediaDomain: "media.example.com", MediaSecret: publicDownloadUnitSecret, DownloadTTL: time.Minute})
 	for name, scope := range map[string][2]string{
 		"wrong entity":  {otherPostID, fileID},
 		"detached file": {publishedPostID, detachedFileID},
@@ -297,8 +289,8 @@ func TestFileServiceAuthorizeDownloadUsesExactReleaseTrackRelationUnit(t *testin
 	seedPublicDownloadFile(t, db, fileID, "original.wav", "wav", "audio/wav", mediaasset.FileDownloadAudienceDisabled)
 	require.NoError(t, db.Exec(`INSERT INTO release (id, status) VALUES (?, ?)`, releaseID, managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String()).Error)
 	require.NoError(t, db.Exec(`INSERT INTO track (id, release_id, audio_original_file_id, download_audience) VALUES (?, ?, ?, 'public')`, trackID, releaseID, fileID).Error)
-	svc := NewFileService(db, &auth.SpiceDBClient{}, "cdn.example.com", "media.example.com", publicDownloadUnitSecret, time.Minute)
-	response, err := svc.AuthorizeDownload(context.Background(), connect.NewRequest(&openv1.AuthorizeDownloadRequest{
+	svc := newTestService(Deps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "cdn.example.com", MediaDomain: "media.example.com", MediaSecret: publicDownloadUnitSecret, DownloadTTL: time.Minute})
+	response, err := NewConnectHandler(svc).AuthorizeDownload(context.Background(), connect.NewRequest(&openv1.AuthorizeDownloadRequest{
 		EntityType:     openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_RELEASE,
 		EntityId:       releaseID,
 		RelationTarget: &openv1.AuthorizeDownloadRequest_TrackId{TrackId: trackID},
@@ -306,7 +298,7 @@ func TestFileServiceAuthorizeDownloadUsesExactReleaseTrackRelationUnit(t *testin
 	require.NoError(t, err)
 	assertFileDownloadAccess(t, response.Msg, openv1.FileDownloadAvailability_FILE_DOWNLOAD_AVAILABILITY_AVAILABLE, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_DOWNLOAD, true)
 
-	wrongOwner, err := svc.AuthorizeDownload(context.Background(), connect.NewRequest(&openv1.AuthorizeDownloadRequest{
+	wrongOwner, err := NewConnectHandler(svc).AuthorizeDownload(context.Background(), connect.NewRequest(&openv1.AuthorizeDownloadRequest{
 		EntityType:     openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_RELEASE,
 		EntityId:       uuid.NewString(),
 		RelationTarget: &openv1.AuthorizeDownloadRequest_TrackId{TrackId: trackID},
@@ -321,14 +313,7 @@ func TestAuthorizedPostDownloadRejectsDraftWithoutAuthenticatedViewUnit(t *testi
 	fileID := uuid.NewString()
 	seedPublicDownloadPost(t, db, postID, managev1.PostStatus_POST_STATUS_DRAFT, fileID)
 	seedPublicDownloadFile(t, db, fileID, "draft.wav", "wav", "audio/wav", mediaasset.FileDownloadAudiencePublic)
-	svc := NewFileService(
-		db,
-		&auth.SpiceDBClient{},
-		"cdn.example.com",
-		"media.example.com",
-		publicDownloadUnitSecret,
-		time.Hour,
-	)
+	svc := newTestService(Deps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "cdn.example.com", MediaDomain: "media.example.com", MediaSecret: publicDownloadUnitSecret, DownloadTTL: time.Hour})
 
 	response := authorizePostDownload(
 		t,
@@ -348,7 +333,7 @@ func TestAuthorizedPostDownloadRejectsDraftWithoutAuthenticatedViewUnit(t *testi
 }
 
 func TestFileServiceAuthorizeDownloadValidatesEntityAndFileIDsUnit(t *testing.T) {
-	svc := NewFileService(newPublicFileDownloadUnitDB(t), &auth.SpiceDBClient{}, "", "", publicDownloadUnitSecret, time.Minute)
+	svc := newTestService(Deps{DB: newPublicFileDownloadUnitDB(t), SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "", MediaDomain: "", MediaSecret: publicDownloadUnitSecret, DownloadTTL: time.Minute})
 	for name, testCase := range map[string]struct {
 		request *openv1.AuthorizeDownloadRequest
 		code    connect.Code
@@ -375,7 +360,7 @@ func TestFileServiceAuthorizeDownloadValidatesEntityAndFileIDsUnit(t *testing.T)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := svc.AuthorizeDownload(context.Background(), connect.NewRequest(testCase.request))
+			_, err := NewConnectHandler(svc).AuthorizeDownload(context.Background(), connect.NewRequest(testCase.request))
 			require.Error(t, err)
 			assert.Equal(t, testCase.code, connect.CodeOf(err))
 		})
@@ -396,7 +381,7 @@ func TestFileServiceAuthorizeDownloadUsesFallbackForHistoricalInvalidFilenameUni
 		"audio/wav",
 		mediaasset.FileDownloadAudiencePublic,
 	)
-	svc := NewFileService(db, &auth.SpiceDBClient{}, "cdn.example.com", "media.example.com", publicDownloadUnitSecret, time.Minute)
+	svc := newTestService(Deps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "cdn.example.com", MediaDomain: "media.example.com", MediaSecret: publicDownloadUnitSecret, DownloadTTL: time.Minute})
 
 	response := authorizePostDownload(t, svc, context.Background(), postID, fileID, nil)
 	assertFileDownloadAccess(
@@ -606,7 +591,7 @@ func setPublicDownloadAudience(
 
 func authorizePostDownload(
 	t *testing.T,
-	svc *FileService,
+	svc *Service,
 	ctx context.Context,
 	postID string,
 	fileID string,
@@ -629,7 +614,7 @@ func authorizePostDownload(
 		selector.BlockId = row.BlockID
 		selector.ReferencePath = row.ReferencePath
 	}
-	response, err := svc.AuthorizeDownload(ctx, connect.NewRequest(&openv1.AuthorizeDownloadRequest{
+	response, err := NewConnectHandler(svc).AuthorizeDownload(ctx, connect.NewRequest(&openv1.AuthorizeDownloadRequest{
 		EntityType:     openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_POST,
 		EntityId:       postID,
 		RelationTarget: &openv1.AuthorizeDownloadRequest_ContentBlock{ContentBlock: selector},

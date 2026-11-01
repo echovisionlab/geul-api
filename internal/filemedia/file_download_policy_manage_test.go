@@ -57,16 +57,16 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 		Update("archived_at", time.Now().UTC()).Error)
 
 	signals := &policySignalPublisher{}
-	svc := &FileService{
+	svc := withTestMutations(&Service{
 		db: db, spiceDB: stack.SpiceDBClient, asyncPublisher: signals,
-	}
-	WithPostAccess(newIntegrationPostAccess(db, stack.SpiceDBClient))(svc)
-	WithAudienceAccess(newIntegrationAudienceAccess())(svc)
+	})
+	svc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
+	svc.audienceAccess = newIntegrationAudienceAccess()
 	seedFileDeliveryContentPolicy(t, stack.SpiceDBClient, "post", postID)
 	seedFileDeliveryPostAuthority(t, stack.SpiceDBClient, postID, manager.IdentityID)
 	ctx := fileDeliveryPrincipalContext(manager)
 
-	restrictedWithoutSegments, err := svc.UpdateFileDownloadPolicy(ctx, connect.NewRequest(
+	restrictedWithoutSegments, err := NewConnectHandler(svc).UpdateFileDownloadPolicy(ctx, connect.NewRequest(
 		&managev1.UpdateFileDownloadPolicyRequest{
 			EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
 			EntityId:   postID,
@@ -84,7 +84,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 	require.False(t, signals.events[0].GetDocumentStateChanged())
 	require.NotEmpty(t, signals.events[0].GetDocumentRevision())
 	// A retry that changes nothing must not publish another invalidation.
-	_, err = svc.UpdateFileDownloadPolicy(ctx, connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
+	_, err = NewConnectHandler(svc).UpdateFileDownloadPolicy(ctx, connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
 		EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST, EntityId: postID,
 		BlockId: managePolicyString(blockID), ReferencePath: managePolicyString("file"), ExpectedFileId: fileID,
 		Audience:       managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED,
@@ -93,7 +93,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 	require.NoError(t, err)
 	require.Len(t, signals.events, 1)
 	signals.err = errors.New("content signal unavailable")
-	_, err = svc.UpdateFileDownloadPolicy(ctx, connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
+	_, err = NewConnectHandler(svc).UpdateFileDownloadPolicy(ctx, connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
 		EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST, EntityId: postID,
 		BlockId: managePolicyString(blockID), ReferencePath: managePolicyString("file"), ExpectedFileId: fileID,
 		Audience:       managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC,
@@ -105,7 +105,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 	require.Equal(t, "restricted", persistedAudience)
 	signals.err = nil
 
-	restricted, err := svc.UpdateFileDownloadPolicy(ctx, connect.NewRequest(
+	restricted, err := NewConnectHandler(svc).UpdateFileDownloadPolicy(ctx, connect.NewRequest(
 		&managev1.UpdateFileDownloadPolicyRequest{
 			EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
 			EntityId:   postID,
@@ -119,7 +119,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 	require.Len(t, restricted.Msg.GetPolicy().GetAudienceSegments(), 1)
 	require.Equal(t, segmentID, restricted.Msg.GetPolicy().GetAudienceSegments()[0].GetId())
 
-	_, err = svc.UpdateFileDownloadPolicy(ctx, connect.NewRequest(
+	_, err = NewConnectHandler(svc).UpdateFileDownloadPolicy(ctx, connect.NewRequest(
 		&managev1.UpdateFileDownloadPolicyRequest{
 			EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
 			EntityId:   postID,
@@ -131,7 +131,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 	))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 
-	_, err = svc.UpdateFileDownloadPolicy(ctx, connect.NewRequest(
+	_, err = NewConnectHandler(svc).UpdateFileDownloadPolicy(ctx, connect.NewRequest(
 		&managev1.UpdateFileDownloadPolicyRequest{
 			EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
 			EntityId:   postID,
@@ -147,7 +147,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 	for i := range tooManySegmentIDs {
 		tooManySegmentIDs[i] = uuid.NewString()
 	}
-	_, err = svc.UpdateFileDownloadPolicy(ctx, connect.NewRequest(
+	_, err = NewConnectHandler(svc).UpdateFileDownloadPolicy(ctx, connect.NewRequest(
 		&managev1.UpdateFileDownloadPolicyRequest{
 			EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
 			EntityId:   postID,
@@ -190,10 +190,10 @@ func TestFileDownloadPolicyScopeUsesCurrentBindingInsteadOfIngestProvenance(t *t
 	seedFileDeliveryContentPolicy(t, stack.SpiceDBClient, "post", currentPostID)
 	seedFileDeliveryPostAuthority(t, stack.SpiceDBClient, currentPostID, manager.IdentityID)
 
-	svc := &FileService{db: db, spiceDB: stack.SpiceDBClient, asyncPublisher: &policySignalPublisher{}}
-	WithPostAccess(newIntegrationPostAccess(db, stack.SpiceDBClient))(svc)
-	WithAudienceAccess(newIntegrationAudienceAccess())(svc)
-	response, err := svc.UpdateFileDownloadPolicy(
+	svc := withTestMutations(&Service{db: db, spiceDB: stack.SpiceDBClient, asyncPublisher: &policySignalPublisher{}})
+	svc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
+	svc.audienceAccess = newIntegrationAudienceAccess()
+	response, err := NewConnectHandler(svc).UpdateFileDownloadPolicy(
 		fileDeliveryPrincipalContext(manager),
 		connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
 			EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,

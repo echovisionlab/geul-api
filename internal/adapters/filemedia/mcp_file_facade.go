@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/google/uuid"
 
@@ -27,26 +26,11 @@ var (
 // creating MCP-specific upload state, storage, verification, or authorization.
 type MCPFileRuntime interface {
 	ImportRemoteFile(context.Context, filemediadomain.RemoteFileImportInput) (*managev1.DownloadFromUrlResponse, error)
-	InitiateMultipartUpload(
-		context.Context,
-		*connect.Request[managev1.InitiateMultipartUploadRequest],
-	) (*connect.Response[managev1.InitiateMultipartUploadResponse], error)
-	FindMultipartUploadCandidate(
-		context.Context,
-		*connect.Request[managev1.FindMultipartUploadCandidateRequest],
-	) (*connect.Response[managev1.FindMultipartUploadCandidateResponse], error)
-	CompleteMultipartUpload(
-		context.Context,
-		*connect.Request[managev1.CompleteMultipartUploadRequest],
-	) (*connect.Response[managev1.CompleteMultipartUploadResponse], error)
-	DownloadFromUrl(
-		context.Context,
-		*connect.Request[managev1.DownloadFromUrlRequest],
-	) (*connect.Response[managev1.DownloadFromUrlResponse], error)
-	GetMediaDelivery(
-		context.Context,
-		*connect.Request[managev1.GetMediaDeliveryRequest],
-	) (*connect.Response[managev1.GetMediaDeliveryResponse], error)
+	InitiateMultipartUpload(context.Context, filemediadomain.InitiateMultipartUploadCommand) (*managev1.InitiateMultipartUploadResponse, error)
+	FindMultipartUploadCandidate(context.Context, filemediadomain.FindMultipartUploadCandidateQuery) (*managev1.FindMultipartUploadCandidateResponse, error)
+	CompleteMultipartUpload(context.Context, filemediadomain.CompleteMultipartUploadCommand) (*managev1.CompleteMultipartUploadResponse, error)
+	DownloadFromURL(context.Context, filemediadomain.DownloadFromURLCommand) (*managev1.DownloadFromUrlResponse, error)
+	GetMediaDelivery(context.Context, filemediadomain.GetMediaDeliveryQuery) (*managev1.GetMediaDeliveryResponse, error)
 }
 
 // MCPFileFacade is the compact typed file_transfer/file_read application
@@ -251,30 +235,28 @@ func (facade *MCPFileFacade) Status(
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
-	response, err := facade.files.FindMultipartUploadCandidate(ctx, connect.NewRequest(
-		&managev1.FindMultipartUploadCandidateRequest{
-			UploadType:            uploadType,
-			FileId:                pointer(handle.FileID),
-			UploadId:              pointer(handle.UploadID),
-			EntityId:              handle.TrackID,
-			EntityType:            mcpFileEntityType(handle.Kind),
-			ExpectedCurrentFileId: handle.ExpectedCurrentFileID,
-		},
-	))
+	response, err := facade.files.FindMultipartUploadCandidate(ctx, filemediadomain.FindMultipartUploadCandidateQuery{
+		UploadType:            uploadType,
+		FileID:                pointer(handle.FileID),
+		UploadID:              pointer(handle.UploadID),
+		EntityID:              handle.TrackID,
+		EntityType:            mcpFileEntityType(handle.Kind),
+		ExpectedCurrentFileID: handle.ExpectedCurrentFileID,
+	})
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
-	if response == nil || response.Msg == nil {
+	if response == nil {
 		return MCPFileTransferResult{}, invalidMCPFileRuntime("status response is missing")
 	}
-	if response.Msg.GetFileId() == "" && response.Msg.GetUploadId() == "" {
+	if response.GetFileId() == "" && response.GetUploadId() == "" {
 		file, err := facade.Read(ctx, handle.FileID)
 		if err != nil {
 			return MCPFileTransferResult{}, err
 		}
 		return MCPFileTransferResult{State: MCPFileTransferReady, File: &file}, nil
 	}
-	session, err := mcpFileSessionFromCandidate(handle, response.Msg)
+	session, err := mcpFileSessionFromCandidate(handle, response)
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
@@ -288,26 +270,19 @@ func (facade *MCPFileFacade) Complete(
 	if _, err := validateMCPFileSessionHandle(handle); err != nil {
 		return MCPFileTransferResult{}, err
 	}
-	var bundleID *string
-	if handle.ClientMediaBundleID != "" {
-		bundleID = pointer(handle.ClientMediaBundleID)
-	}
-	response, err := facade.files.CompleteMultipartUpload(ctx, connect.NewRequest(
-		&managev1.CompleteMultipartUploadRequest{
-			FileId: handle.FileID, UploadId: handle.UploadID,
-			ClientMediaBundleId: bundleID,
-		},
-	))
+	response, err := facade.files.CompleteMultipartUpload(ctx, filemediadomain.CompleteMultipartUploadCommand{
+		FileID: handle.FileID, UploadID: handle.UploadID, ClientMediaBundleID: handle.ClientMediaBundleID,
+	})
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
-	if response == nil || response.Msg == nil || response.Msg.GetDelivery() == nil {
+	if response.GetDelivery() == nil {
 		return MCPFileTransferResult{}, invalidMCPFileRuntime("completion did not return verified File delivery")
 	}
-	if response.Msg.GetFileId() != handle.FileID {
+	if response.GetFileId() != handle.FileID {
 		return MCPFileTransferResult{}, invalidMCPFileRuntime("completion File ID does not match the session handle")
 	}
-	file, err := mcpVerifiedFileFromDelivery(response.Msg.GetDelivery())
+	file, err := mcpVerifiedFileFromDelivery(response.GetDelivery())
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
@@ -319,19 +294,17 @@ func (facade *MCPFileFacade) Read(ctx context.Context, fileID string) (MCPVerifi
 	if err != nil {
 		return MCPVerifiedFileHandle{}, err
 	}
-	response, err := facade.files.GetMediaDelivery(ctx, connect.NewRequest(
-		&managev1.GetMediaDeliveryRequest{FileId: fileID},
-	))
+	response, err := facade.files.GetMediaDelivery(ctx, filemediadomain.GetMediaDeliveryQuery{FileID: fileID})
 	if err != nil {
 		return MCPVerifiedFileHandle{}, err
 	}
-	if response == nil || response.Msg == nil || response.Msg.GetDelivery() == nil {
+	if response.GetDelivery() == nil {
 		return MCPVerifiedFileHandle{}, invalidMCPFileRuntime("File delivery response is missing")
 	}
-	if response.Msg.GetDelivery().GetFileId() != fileID {
+	if response.GetDelivery().GetFileId() != fileID {
 		return MCPVerifiedFileHandle{}, invalidMCPFileRuntime("File delivery ID does not match the requested handle")
 	}
-	return mcpVerifiedFileFromDelivery(response.Msg.GetDelivery())
+	return mcpVerifiedFileFromDelivery(response.GetDelivery())
 }
 
 func (facade *MCPFileFacade) beginMultipart(
@@ -350,25 +323,23 @@ func (facade *MCPFileFacade) beginMultipart(
 	if fileName == "" || mimeType == "" || input.FileSize <= 0 {
 		return MCPFileTransferResult{}, invalidMCPFileInput("multipart transfer requires file_name, mime_type, and positive file_size")
 	}
-	response, err := facade.files.InitiateMultipartUpload(ctx, connect.NewRequest(
-		&managev1.InitiateMultipartUploadRequest{
-			UploadType:            uploadType,
-			FileSize:              input.FileSize,
-			MimeType:              mimeType,
-			FileName:              fileName,
-			FileLastModified:      input.FileLastModified,
-			EntityId:              input.TrackID,
-			EntityType:            mcpFileEntityType(input.Kind),
-			ExpectedCurrentFileId: input.ExpectedCurrentFileID,
-		},
-	))
+	response, err := facade.files.InitiateMultipartUpload(ctx, filemediadomain.InitiateMultipartUploadCommand{
+		UploadType:            uploadType,
+		FileSize:              input.FileSize,
+		MimeType:              mimeType,
+		FileName:              fileName,
+		FileLastModified:      input.FileLastModified,
+		EntityID:              input.TrackID,
+		EntityType:            mcpFileEntityType(input.Kind),
+		ExpectedCurrentFileID: input.ExpectedCurrentFileID,
+	})
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
-	if response == nil || response.Msg == nil {
+	if response == nil {
 		return MCPFileTransferResult{}, invalidMCPFileRuntime("multipart initiation response is missing")
 	}
-	session, err := mcpFileSessionFromInitiation(input.Transport, input.Kind, response.Msg)
+	session, err := mcpFileSessionFromInitiation(input.Transport, input.Kind, response)
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
@@ -386,13 +357,13 @@ func (facade *MCPFileFacade) beginRemoteHTTPS(
 		input.FileSize != 0 || input.FileLastModified != nil {
 		return MCPFileTransferResult{}, invalidMCPFileInput("remote HTTPS transfer must omit multipart File metadata")
 	}
-	var correlationID *string
+	var correlationID string
 	if input.CorrelationID != "" {
 		value, err := normalizeMCPFileUUID(input.CorrelationID, "correlation_id")
 		if err != nil {
 			return MCPFileTransferResult{}, err
 		}
-		correlationID = pointer(value)
+		correlationID = value
 	} else if input.Kind != MCPFileKindGeneral {
 		return MCPFileTransferResult{}, invalidMCPFileInput("correlation_id is required for durable remote File import; reuse it on retry")
 	}
@@ -400,23 +371,21 @@ func (facade *MCPFileFacade) beginRemoteHTTPS(
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
-	response, err := facade.files.DownloadFromUrl(ctx, connect.NewRequest(
-		&managev1.DownloadFromUrlRequest{
-			UploadType: uploadType, Url: remoteURL, EntityId: input.TrackID,
-			EntityType: mcpFileEntityType(input.Kind), ExpectedCurrentFileId: input.ExpectedCurrentFileID,
-			CorrelationId: correlationID,
-		},
-	))
+	response, err := facade.files.DownloadFromURL(ctx, filemediadomain.DownloadFromURLCommand{
+		UploadType: uploadType, URL: remoteURL, EntityID: input.TrackID,
+		EntityType: mcpFileEntityType(input.Kind), ExpectedCurrentFileID: input.ExpectedCurrentFileID,
+		CorrelationID: correlationID,
+	})
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}
-	if response == nil || response.Msg == nil || response.Msg.GetDelivery() == nil {
+	if response.GetDelivery() == nil {
 		return MCPFileTransferResult{}, invalidMCPFileRuntime("remote import did not return verified File delivery")
 	}
-	if response.Msg.GetFileId() == "" || response.Msg.GetDelivery().GetFileId() != response.Msg.GetFileId() {
+	if response.GetFileId() == "" || response.GetDelivery().GetFileId() != response.GetFileId() {
 		return MCPFileTransferResult{}, invalidMCPFileRuntime("remote import returned mismatched File IDs")
 	}
-	file, err := mcpVerifiedFileFromDelivery(response.Msg.GetDelivery())
+	file, err := mcpVerifiedFileFromDelivery(response.GetDelivery())
 	if err != nil {
 		return MCPFileTransferResult{}, err
 	}

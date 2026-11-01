@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -44,7 +43,7 @@ func TestDeleteCompletedUploadSessionFailurePreservesRetry(t *testing.T) {
 			SELECT RAISE(ABORT, 'injected upload session delete failure');
 		END`).Error)
 
-	service := &FileService{db: db}
+	service := &Service{db: db}
 	err = service.deleteCompletedUploadSession(context.Background(), uploadID)
 	require.Error(t, err)
 
@@ -79,7 +78,7 @@ func TestDeleteAbortedUploadSessionFailureDoesNotReportCleanupSuccess(t *testing
 			SELECT RAISE(ABORT, 'injected aborted upload session delete failure');
 		END`).Error)
 
-	service := &FileService{db: db}
+	service := &Service{db: db}
 	err = service.deleteAbortedUploadSession(context.Background(), uploadID)
 	require.Error(t, err)
 
@@ -107,7 +106,7 @@ func TestAbortMultipartUploadReturnsErrorWhenSessionDeleteFails(t *testing.T) {
 			SELECT RAISE(ABORT, 'injected abort RPC session delete failure');
 		END`).Error)
 
-	response, err := service.AbortMultipartUpload(ctx, request)
+	response, err := NewConnectHandler(service).AbortMultipartUpload(ctx, request)
 	require.Error(t, err)
 	require.Nil(t, response)
 	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
@@ -125,7 +124,7 @@ func TestAbortMultipartUploadRejectsFinalizingSessionBeforeStorageMutation(t *te
 		model.UploadSessionStatusFinalizing,
 	)
 
-	response, err := service.AbortMultipartUpload(ctx, request)
+	response, err := NewConnectHandler(service).AbortMultipartUpload(ctx, request)
 	require.Error(t, err)
 	require.Nil(t, response)
 	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
@@ -165,7 +164,7 @@ func TestRejectedMultipartPartCannotAbortFinalizingSession(t *testing.T) {
 func newAbortMultipartUploadRPCFixture(
 	t *testing.T,
 	status model.UploadSessionStatus,
-) (*FileService, *gorm.DB, context.Context, *connect.Request[managev1.AbortMultipartUploadRequest], model.UploadSession, <-chan string) {
+) (*Service, *gorm.DB, context.Context, *connect.Request[managev1.AbortMultipartUploadRequest], model.UploadSession, <-chan string) {
 	t.Helper()
 
 	db, err := gorm.Open(sqlite.Open("file:abort-rpc-"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
@@ -216,18 +215,18 @@ func newAbortMultipartUploadRPCFixture(
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(server.Close)
-	service := NewFileService(
-		db,
-		newAvatarAssetTestS3Client(server),
-		&hardCutAsyncPublisher{},
-		"media",
-		"",
-		"",
-		"",
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-	)
-	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
+	service := newTestService(Deps{
+		DB:             db,
+		S3:             newAvatarAssetTestS3Client(server),
+		AsyncPublisher: &hardCutAsyncPublisher{},
+		S3Bucket:       "media",
+		CDNDomain:      "",
+		MediaDomain:    "",
+		MediaSecret:    "",
+		Transcoder:     &recordingFileTranscoderPublisher{},
+		SpiceDB:        stack.SpiceDBClient,
+	})
+	ctx := auditedUserContext(context.Background(), admin.AuthUserInfo())
 	request := connect.NewRequest(&managev1.AbortMultipartUploadRequest{UploadId: session.UploadID, FileId: session.FileID})
 	return service, db, ctx, request, session, abortRequests
 }
@@ -263,7 +262,7 @@ func TestClaimUploadPartActivityOnlyRefreshesWritableSessions(t *testing.T) {
 		).Error)
 	}
 
-	service := &FileService{db: db}
+	service := &Service{db: db}
 	now := time.Now().UTC()
 	claimed, err := service.claimUploadPartActivity(context.Background(), "uploading", "file-1", now)
 	require.NoError(t, err)
@@ -311,7 +310,7 @@ func TestRecordUploadedPartCannotOverwriteFinalizingOrAbortedState(t *testing.T)
 		session.UploadID, session.FileID, session.Status, now, now,
 	).Error)
 	part := model.UploadPart{UploadID: session.UploadID, PartNumber: 1, ETag: "etag", Size: 10, CreatedAt: now, UpdatedAt: now}
-	service := &FileService{db: db}
+	service := &Service{db: db}
 
 	recorded, err := service.recordUploadedPart(context.Background(), session, part)
 	require.NoError(t, err)
@@ -395,7 +394,7 @@ func TestRecordRetryableMultipartPartFailurePreservesResumableStatus(t *testing.
 	).Error)
 
 	now := time.Now().UTC()
-	service := &FileService{db: db}
+	service := &Service{db: db}
 	require.NoError(t, service.recordRetryableMultipartPartFailure(context.Background(), session, now))
 
 	var stored struct {
@@ -463,7 +462,7 @@ func TestClaimMultipartCompletionDoesNotResurrectTerminalSession(t *testing.T) {
 		).Error)
 	}
 
-	service := &FileService{db: db}
+	service := &Service{db: db}
 	now := time.Now().UTC()
 	for _, uploadID := range []string{"uploading", "finalizing"} {
 		claimed, _, err := service.claimMultipartCompletion(context.Background(), model.UploadSession{
@@ -529,7 +528,7 @@ func TestClaimUploadSessionAbortRejectsFinalizingSession(t *testing.T) {
 		).Error)
 	}
 
-	service := &FileService{db: db}
+	service := &Service{db: db}
 	now := time.Now().UTC()
 	for _, uploadID := range []string{"uploading", "failed"} {
 		claimed, err := service.claimUploadSessionAbort(context.Background(), uploadID, "file-1", now)

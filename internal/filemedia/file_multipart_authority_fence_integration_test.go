@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -21,7 +20,7 @@ func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorit
 	t.Parallel()
 	stack := testutil.SetupOryStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 
 	t.Run("stored target drift is rejected before File state", func(t *testing.T) {
 		session := seedFinalizingMultipartAuthoritySession(t, stack.DB)
@@ -31,7 +30,7 @@ func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorit
 			Where("upload_id = ?", session.UploadID).
 			Update("upload_type", managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO.String()).Error)
 
-		err = (&FileService{db: stack.DB, spiceDB: stack.SpiceDBClient}).createVerifiedFileIngestRecord(
+		err = (&Service{db: stack.DB, spiceDB: stack.SpiceDBClient}).createVerifiedFileIngestRecord(
 			ctx,
 			verifiedMultipartAuthorityFile(session.FileID),
 			managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
@@ -51,7 +50,7 @@ func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorit
 			Where("id = ?", manager.MemberID).
 			Update("account_identity_id", nil).Error)
 
-		err = (&FileService{db: stack.DB, spiceDB: stack.SpiceDBClient}).createVerifiedFileIngestRecord(
+		err = (&Service{db: stack.DB, spiceDB: stack.SpiceDBClient}).createVerifiedFileIngestRecord(
 			ctx,
 			verifiedMultipartAuthorityFile(session.FileID),
 			managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,

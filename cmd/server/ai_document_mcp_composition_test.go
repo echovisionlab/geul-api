@@ -43,7 +43,6 @@ import (
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -444,8 +443,10 @@ type compositionDomainPort struct {
 	principal *auth.UserInfo
 }
 
+// compositionFileRuntime leaves the File library use cases it does not
+// record unimplemented; no composition test reaches one.
 type compositionFileRuntime struct {
-	managev1connect.UnimplementedFileServiceHandler
+	mcpadapter.FileManager
 	mu             sync.Mutex
 	principal      *auth.UserInfo
 	deliveryFileID string
@@ -485,7 +486,7 @@ type compositionPageApplication struct {
 }
 
 type compositionFileReferences struct {
-	managev1connect.UnimplementedFileServiceHandler
+	mcpadapter.FileReferenceDiscovery
 }
 
 func compositionContentApplications() contentMCPApplications {
@@ -534,32 +535,20 @@ func (receiver *compositionRelayReceiver) RelayInteractiveAIDocumentMutation(
 	return connect.NewResponse(&intrav1.RelayInteractiveAIDocumentMutationResponse{}), nil
 }
 
-func (*compositionFileRuntime) InitiateMultipartUpload(
-	context.Context,
-	*connect.Request[managev1.InitiateMultipartUploadRequest],
-) (*connect.Response[managev1.InitiateMultipartUploadResponse], error) {
-	return connect.NewResponse(&managev1.InitiateMultipartUploadResponse{}), nil
+func (*compositionFileRuntime) InitiateMultipartUpload(context.Context, filemedia.InitiateMultipartUploadCommand) (*managev1.InitiateMultipartUploadResponse, error) {
+	return &managev1.InitiateMultipartUploadResponse{}, nil
 }
 
-func (*compositionFileRuntime) FindMultipartUploadCandidate(
-	context.Context,
-	*connect.Request[managev1.FindMultipartUploadCandidateRequest],
-) (*connect.Response[managev1.FindMultipartUploadCandidateResponse], error) {
-	return connect.NewResponse(&managev1.FindMultipartUploadCandidateResponse{}), nil
+func (*compositionFileRuntime) FindMultipartUploadCandidate(context.Context, filemedia.FindMultipartUploadCandidateQuery) (*managev1.FindMultipartUploadCandidateResponse, error) {
+	return &managev1.FindMultipartUploadCandidateResponse{}, nil
 }
 
-func (*compositionFileRuntime) CompleteMultipartUpload(
-	context.Context,
-	*connect.Request[managev1.CompleteMultipartUploadRequest],
-) (*connect.Response[managev1.CompleteMultipartUploadResponse], error) {
-	return connect.NewResponse(&managev1.CompleteMultipartUploadResponse{}), nil
+func (*compositionFileRuntime) CompleteMultipartUpload(context.Context, filemedia.CompleteMultipartUploadCommand) (*managev1.CompleteMultipartUploadResponse, error) {
+	return &managev1.CompleteMultipartUploadResponse{}, nil
 }
 
-func (*compositionFileRuntime) DownloadFromUrl(
-	context.Context,
-	*connect.Request[managev1.DownloadFromUrlRequest],
-) (*connect.Response[managev1.DownloadFromUrlResponse], error) {
-	return connect.NewResponse(&managev1.DownloadFromUrlResponse{}), nil
+func (*compositionFileRuntime) DownloadFromURL(context.Context, filemedia.DownloadFromURLCommand) (*managev1.DownloadFromUrlResponse, error) {
+	return &managev1.DownloadFromUrlResponse{}, nil
 }
 
 func (runtime *compositionFileRuntime) ImportRemoteFile(
@@ -582,56 +571,41 @@ func (runtime *compositionFileRuntime) ImportRemoteFile(
 	}, nil
 }
 
-func (runtime *compositionFileRuntime) DeleteFiles(
-	ctx context.Context,
-	request *connect.Request[managev1.DeleteFilesRequest],
-) (*connect.Response[managev1.DeleteFilesResponse], error) {
+func (runtime *compositionFileRuntime) DeleteFiles(ctx context.Context, command filemedia.DeleteFilesCommand) (filemedia.FileDeletionOutcome, error) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
-	runtime.deleteRequest = proto.Clone(request.Msg).(*managev1.DeleteFilesRequest)
+	runtime.deleteRequest = &managev1.DeleteFilesRequest{FileIds: append([]string(nil), command.FileIDs...)}
 	if principal := auth.GetUser(ctx); principal != nil {
 		copy := *principal
 		runtime.principal = &copy
 	}
-	return connect.NewResponse(&managev1.DeleteFilesResponse{AcceptedFileIds: request.Msg.FileIds}), nil
+	return filemedia.FileDeletionOutcome{AcceptedFileIDs: command.FileIDs}, nil
 }
 
-func (runtime *compositionFileRuntime) GetMediaDelivery(
-	ctx context.Context,
-	request *connect.Request[managev1.GetMediaDeliveryRequest],
-) (*connect.Response[managev1.GetMediaDeliveryResponse], error) {
+func (runtime *compositionFileRuntime) GetMediaDelivery(ctx context.Context, query filemedia.GetMediaDeliveryQuery) (*managev1.GetMediaDeliveryResponse, error) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	runtime.deliveryCalls++
-	runtime.deliveryFileID = request.Msg.GetFileId()
+	runtime.deliveryFileID = query.FileID
 	if principal := auth.GetUser(ctx); principal != nil {
 		copy := *principal
 		runtime.principal = &copy
 	}
-	return connect.NewResponse(&managev1.GetMediaDeliveryResponse{Delivery: &commonv1.MediaDelivery{
-		FileId: request.Msg.GetFileId(), Extension: "bin", MimeType: "application/octet-stream", FileSize: 1,
-	}}), nil
+	return &managev1.GetMediaDeliveryResponse{Delivery: &commonv1.MediaDelivery{
+		FileId: query.FileID, Extension: "bin", MimeType: "application/octet-stream", FileSize: 1,
+	}}, nil
 }
 
-func (*compositionFileRuntime) GetFileDownloadPolicy(
-	context.Context,
-	*connect.Request[managev1.GetFileDownloadPolicyRequest],
-) (*connect.Response[managev1.GetFileDownloadPolicyResponse], error) {
-	return connect.NewResponse(&managev1.GetFileDownloadPolicyResponse{}), nil
+func (*compositionFileRuntime) GetFileDownloadPolicy(context.Context, filemedia.GetFileDownloadPolicyQuery) (*managev1.FileDownloadPolicy, error) {
+	return nil, nil
 }
 
-func (*compositionFileRuntime) UpdateFileDownloadPolicy(
-	context.Context,
-	*connect.Request[managev1.UpdateFileDownloadPolicyRequest],
-) (*connect.Response[managev1.UpdateFileDownloadPolicyResponse], error) {
-	return connect.NewResponse(&managev1.UpdateFileDownloadPolicyResponse{}), nil
+func (*compositionFileRuntime) UpdateFileDownloadPolicy(context.Context, filemedia.UpdateFileDownloadPolicyCommand) (*managev1.FileDownloadPolicy, error) {
+	return nil, nil
 }
 
-func (*compositionFileRuntime) ListFileUsages(
-	context.Context,
-	*connect.Request[managev1.ListFileUsagesRequest],
-) (*connect.Response[managev1.ListFileUsagesResponse], error) {
-	return connect.NewResponse(&managev1.ListFileUsagesResponse{}), nil
+func (*compositionFileRuntime) ListFileUsages(context.Context, filemedia.ListFileUsagesQuery) (filemedia.FileUsagePage, error) {
+	return filemedia.FileUsagePage{}, nil
 }
 
 func (runtime *compositionFileRuntime) snapshot() (*auth.UserInfo, string, int) {

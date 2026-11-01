@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -117,7 +116,7 @@ type RemoteFileImportInput struct {
 	CorrelationID string
 }
 
-func (s *FileService) ImportRemoteFile(ctx context.Context, input RemoteFileImportInput) (_ *managev1.DownloadFromUrlResponse, resultErr error) {
+func (s *Service) ImportRemoteFile(ctx context.Context, input RemoteFileImportInput) (_ *managev1.DownloadFromUrlResponse, resultErr error) {
 	defer func() {
 		resultErr = failurecause.WithAttrs(failurecause.WithPrivate(resultErr, input.FileName), slog.String("correlation_id", input.CorrelationID), slog.String("upload_type", input.UploadType.String()))
 	}()
@@ -327,26 +326,35 @@ func newRemoteImportHTTPClient(
 	}, transport: transport}
 }
 
-// DownloadFromUrl downloads a file from an external URL and stores it.
-func (s *FileService) DownloadFromUrl(
-	ctx context.Context,
-	req *connect.Request[managev1.DownloadFromUrlRequest],
-) (*connect.Response[managev1.DownloadFromUrlResponse], error) {
+// DownloadFromURLCommand imports a remote HTTPS file as a File for an
+// upload type and its target entity.
+type DownloadFromURLCommand struct {
+	UploadType            managev1.UploadType
+	EntityID              string
+	EntityType            *managev1.TranscodeEntityType
+	URL                   string
+	CorrelationID         string
+	SlotID                string
+	ExpectedCurrentFileID *string
+}
+
+// DownloadFromURL downloads a file from an external URL and stores it.
+func (s *Service) DownloadFromURL(ctx context.Context, command DownloadFromURLCommand) (*managev1.DownloadFromUrlResponse, error) {
 	var entityType string
 	transcodeEntityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED
-	if req.Msg.EntityType != nil {
-		entityType = req.Msg.EntityType.String()
-		transcodeEntityType = req.Msg.GetEntityType()
+	if command.EntityType != nil {
+		entityType = command.EntityType.String()
+		transcodeEntityType = *command.EntityType
 	}
 	result, err := s.importRemoteFile(ctx, remoteFileImportOptions{
-		uploadType:            req.Msg.UploadType,
-		entityID:              req.Msg.EntityId,
+		uploadType:            command.UploadType,
+		entityID:              command.EntityID,
 		entityType:            entityType,
 		transcodeEntityType:   transcodeEntityType,
-		sourceURL:             req.Msg.Url,
-		correlationID:         req.Msg.GetCorrelationId(),
-		slotID:                req.Msg.GetSlotId(),
-		expectedCurrentFileID: req.Msg.ExpectedCurrentFileId,
+		sourceURL:             command.URL,
+		correlationID:         command.CorrelationID,
+		slotID:                command.SlotID,
+		expectedCurrentFileID: command.ExpectedCurrentFileID,
 		emitLifecycle:         true,
 		triggerTranscoding:    true,
 		checkPermission:       true,
@@ -354,7 +362,7 @@ func (s *FileService) DownloadFromUrl(
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(remoteFileImportResponse(result)), nil
+	return remoteFileImportResponse(result), nil
 }
 
 func remoteFileImportResponse(result *remoteFileImportResult) *managev1.DownloadFromUrlResponse {

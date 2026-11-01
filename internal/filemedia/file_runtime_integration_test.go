@@ -28,7 +28,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
-	"github.com/echovisionlab/geul-api/internal/auth"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mq"
@@ -124,17 +123,17 @@ func TestRuntimeEditorFileRemoteImportIsIndependent(t *testing.T) {
 	require.NoError(t, err)
 	confirmedPublisher, err := mq.NewPublisher(sqlDB)
 	require.NoError(t, err)
-	fileService := NewFileService(
-		stack.DB,
-		runtimeS3Client(t, stack),
-		confirmedPublisher,
-		stack.S3MediaBucket,
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{},
-		stack.SpiceDBClient,
-	)
+	fileService := newTestService(Deps{
+		DB:             stack.DB,
+		S3:             runtimeS3Client(t, stack),
+		AsyncPublisher: confirmedPublisher,
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+		Transcoder:     &recordingFileTranscoderPublisher{},
+		SpiceDB:        stack.SpiceDBClient,
+	})
 	fileService.remoteImportResolver = runtimeRemoteImportResolver{ip: net.ParseIP("8.8.8.8")}
 	fileService.remoteImportDialer = func(ctx context.Context, network, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, network, remoteServerURL.Host)
@@ -149,8 +148,8 @@ func TestRuntimeEditorFileRemoteImportIsIndependent(t *testing.T) {
 		Url:           "https://media.example.com/runtime-attachment.txt",
 		CorrelationId: &correlationID,
 	})
-	response, err := fileService.DownloadFromUrl(
-		auth.WithUser(context.Background(), manager.AuthUserInfo()),
+	response, err := NewConnectHandler(fileService).DownloadFromUrl(
+		auditedUserContext(context.Background(), manager.AuthUserInfo()),
 		request,
 	)
 	require.NoError(t, err)

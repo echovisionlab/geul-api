@@ -61,7 +61,7 @@ func TestContentBlockFileReuseAuthority(t *testing.T) {
 }
 
 func contentBlockReuseTestContext(memberID string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	return auditedUserContext(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(uuid.NewString()),
 		MemberID:      auth.MemberID(memberID),
 		Authenticated: true,

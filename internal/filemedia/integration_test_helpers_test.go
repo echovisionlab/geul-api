@@ -138,7 +138,7 @@ func integrationAdminCtxWithIdentity(t *testing.T, db *gorm.DB, spiceDB *auth.Sp
 	identityID := testutil.IntegrationUUID()
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "File/Media integration Admin")
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	return auditedUserContext(context.Background(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
@@ -236,22 +236,26 @@ func seedAudiencePostFileAttachment(t *testing.T, db *gorm.DB, postID, fileID st
 	`, blockID, fileID).Error)
 }
 
-func newEditorUploadSerializationFileService(stack *testutil.RuntimeStack, s3Client *s3.Client) *FileService {
-	return NewFileService(
-		stack.DB, s3Client, &hardCutAsyncPublisher{}, stack.S3MediaBucket,
-		stack.CDNURL, stack.MediaURL, stack.MediaSigningSecret,
-		&recordingFileTranscoderPublisher{}, stack.SpiceDBClient,
-	)
+func newEditorUploadSerializationFileService(stack *testutil.RuntimeStack, s3Client *s3.Client) *Service {
+	return newTestService(Deps{
+		DB:             stack.DB,
+		S3:             s3Client,
+		AsyncPublisher: &hardCutAsyncPublisher{},
+		S3Bucket:       stack.S3MediaBucket,
+		CDNDomain:      stack.CDNURL,
+		MediaDomain:    stack.MediaURL,
+		MediaSecret:    stack.MediaSigningSecret,
+		Transcoder:     &recordingFileTranscoderPublisher{},
+		SpiceDB:        stack.SpiceDBClient,
+	})
 }
 
 type directTrackAttachment struct {
 	authority *releasepkg.TrackAuthority
 }
 
-func directTrackAttachmentOption(db *gorm.DB) FileServiceOption {
-	return WithTrackAttachment(&directTrackAttachment{
-		authority: releasepkg.NewTrackAuthority(apitelemetry.NewDurableWriter(db)),
-	})
+func newDirectTrackAttachment(db *gorm.DB) TrackAttachment {
+	return &directTrackAttachment{authority: releasepkg.NewTrackAuthority(apitelemetry.NewDurableWriter(db))}
 }
 
 func (a *directTrackAttachment) LockExistsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
@@ -319,4 +323,17 @@ func requireEditorUploadSessionAbsent(t *testing.T, db *gorm.DB, uploadID string
 	var count int64
 	require.NoError(t, db.Model(&model.UploadSession{}).Where("upload_id = ?", uploadID).Count(&count).Error)
 	require.Zero(t, count)
+}
+
+// memberRequestContext carries the request context the domain audit
+// attributes its records to, without a principal, for a File boundary that
+// audits but neither authorizes nor attributes the upload to its caller.
+func memberRequestContext() context.Context {
+	request, err := sharedtelemetry.NewPropagatedRequestContext(uuid.NewString(), sharedtelemetry.MemberActor{
+		IdentityID: uuid.NewString(), MemberID: uuid.NewString(), SessionID: uuid.NewString(),
+	})
+	if err != nil {
+		panic(err)
+	}
+	return sharedtelemetry.WithRequestContext(context.Background(), request)
 }

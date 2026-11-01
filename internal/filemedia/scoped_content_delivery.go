@@ -19,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
@@ -47,15 +48,12 @@ func (row scopedContentAttachmentRow) key() string {
 // boundary for one Post featured-image slot. The Post owner locks lifecycle
 // and the active principal in the same transaction used to re-read the slot,
 // lock the exact File, and sign the response.
-func (s *FileService) ResolveAuthorizedPostFeaturedImage(
+func (s *Service) ResolveAuthorizedPostFeaturedImage(
 	ctx context.Context,
 	postID string,
 	expectedFileID string,
 ) (*commonv1.MediaDelivery, error) {
-	access, err := requirePostAccess(s.postAccess)
-	if err != nil {
-		return nil, err
-	}
+	access := s.postAccess
 	return s.resolveAuthorizedFeaturedImage(
 		ctx,
 		scopedContentOwnerPost,
@@ -67,15 +65,12 @@ func (s *FileService) ResolveAuthorizedPostFeaturedImage(
 
 // ResolveAuthorizedPageFeaturedImage is the final private-inline issuance
 // boundary for one Page featured-image slot.
-func (s *FileService) ResolveAuthorizedPageFeaturedImage(
+func (s *Service) ResolveAuthorizedPageFeaturedImage(
 	ctx context.Context,
 	pageID string,
 	expectedFileID string,
 ) (*commonv1.MediaDelivery, error) {
-	access, err := requirePagePolicyAccess(s.pagePolicyAccess)
-	if err != nil {
-		return nil, err
-	}
+	access := s.pagePolicyAccess
 	return s.resolveAuthorizedFeaturedImage(
 		ctx,
 		scopedContentOwnerPage,
@@ -85,16 +80,13 @@ func (s *FileService) ResolveAuthorizedPageFeaturedImage(
 	)
 }
 
-func (s *FileService) resolveAuthorizedFeaturedImage(
+func (s *Service) resolveAuthorizedFeaturedImage(
 	ctx context.Context,
 	owner scopedContentOwner,
 	ownerID string,
 	expectedFileID string,
 	authorize func(*gorm.DB) error,
 ) (*commonv1.MediaDelivery, error) {
-	if s == nil || s.db == nil {
-		return nil, errs.DependencyUnavailable("File delivery database")
-	}
 	if _, err := uuidutil.ParseCanonical(strings.TrimSpace(ownerID), "owner_id"); err != nil {
 		return nil, errs.InvalidArgument("owner_id", "must be a canonical UUID")
 	}
@@ -154,7 +146,7 @@ func (s *FileService) resolveAuthorizedFeaturedImage(
 // HydrateAuthorizedPageBlockMediaWithDB adds private editor delivery while
 // the Page owner keeps its root, principal, document, File, and exact
 // attachment witnesses in one transaction.
-func (s *FileService) HydrateAuthorizedPageBlockMediaWithDB(
+func (s *Service) HydrateAuthorizedPageBlockMediaWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
 	pageID string,
@@ -169,7 +161,7 @@ func (s *FileService) HydrateAuthorizedPageBlockMediaWithDB(
 
 // HydrateAuthorizedPostBlockMediaWithDB adds private editor delivery while
 // Post holds its owner, principal, document, and exact attachment witnesses.
-func (s *FileService) HydrateAuthorizedPostBlockMediaWithDB(
+func (s *Service) HydrateAuthorizedPostBlockMediaWithDB(
 	ctx context.Context, tx *gorm.DB, postID string, documentID uuid.UUID,
 	principal *auth.UserInfo, items []*contentv1.ContentBlockMediaItem,
 ) ([]*contentv1.ContentBlockMediaItem, error) {
@@ -178,7 +170,7 @@ func (s *FileService) HydrateAuthorizedPostBlockMediaWithDB(
 
 // HydrateAuthorizedWorkBlockMediaWithDB adds private editor delivery while
 // the Work owner keeps its exact authorization and lifecycle fence.
-func (s *FileService) HydrateAuthorizedWorkBlockMediaWithDB(
+func (s *Service) HydrateAuthorizedWorkBlockMediaWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
 	workID string,
@@ -193,7 +185,7 @@ func (s *FileService) HydrateAuthorizedWorkBlockMediaWithDB(
 
 // HydrateAuthorizedProgramEventBlockMediaWithDB adds private editor delivery
 // while Program Event keeps its exact authorization and lifecycle fence.
-func (s *FileService) HydrateAuthorizedProgramEventBlockMediaWithDB(
+func (s *Service) HydrateAuthorizedProgramEventBlockMediaWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
 	eventID string,
@@ -206,7 +198,7 @@ func (s *FileService) HydrateAuthorizedProgramEventBlockMediaWithDB(
 	)
 }
 
-func (s *FileService) hydrateAuthorizedContentBlockMediaWithDB(
+func (s *Service) hydrateAuthorizedContentBlockMediaWithDB(
 	ctx context.Context,
 	tx *gorm.DB,
 	owner scopedContentOwner,
@@ -224,7 +216,42 @@ func (s *FileService) hydrateAuthorizedContentBlockMediaWithDB(
 	if documentID == uuid.Nil || principal == nil || !principal.Authenticated {
 		return nil, errs.AuthenticationRequired()
 	}
+	cloned, requestedFileIDs, requestedBlockIDs := undeliveredContentBlockMediaItems(items)
+	scopedCtx := auth.WithUser(ctx, principal)
+	hasLibraryDownload := s.hasScopedLibraryDownload(scopedCtx, principal)
 
+	files, err := lockScopedDeliveryFiles(scopedCtx, tx, sortedStringSet(requestedFileIDs))
+	if err != nil {
+		return nil, err
+	}
+	relations, err := lockScopedContentAttachments(scopedCtx, tx, owner, ownerID, documentID, sortedStringSet(requestedBlockIDs))
+	if err != nil {
+		return nil, err
+	}
+	currentFileIDs := make(map[string]struct{}, len(relations))
+	for _, relation := range relations {
+		if file, ok := files[relation.FileID]; ok && file.DeleteRequestedAt == nil {
+			currentFileIDs[relation.FileID] = struct{}{}
+		}
+	}
+	scopedService := *s
+	scopedService.db = tx
+	responses, err := scopedService.loadFileURLResponses(scopedCtx, sortedStringSet(currentFileIDs))
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range cloned {
+		deliverScopedContentBlockMediaItem(item, relations, files, responses, principal, hasLibraryDownload)
+	}
+	if s.testAfterScopedBlockMediaSigned != nil {
+		s.testAfterScopedBlockMediaSigned(string(owner), ownerID, sortedStringSet(currentFileIDs))
+	}
+	return cloned, nil
+}
+
+// undeliveredContentBlockMediaItems clones the items without delivery or
+// download action and collects the File and Block IDs they reference.
+func undeliveredContentBlockMediaItems(items []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, map[string]struct{}, map[string]struct{}) {
 	cloned := make([]*contentv1.ContentBlockMediaItem, 0, len(items))
 	requestedFileIDs := make(map[string]struct{}, len(items))
 	requestedBlockIDs := make(map[string]struct{}, len(items))
@@ -245,79 +272,60 @@ func (s *FileService) hydrateAuthorizedContentBlockMediaWithDB(
 		requestedFileIDs[fileID] = struct{}{}
 		requestedBlockIDs[blockID] = struct{}{}
 	}
+	return cloned, requestedFileIDs, requestedBlockIDs
+}
 
-	scopedCtx := auth.WithUser(ctx, principal)
-	hasLibraryDownload := false
-	if can, err := policyv1.File.List(); err == nil {
-		if allowed, checkErr := checkSpiceDBCan(scopedCtx, principal, can, s.spiceDB); checkErr == nil {
-			hasLibraryDownload = allowed
-		} else {
-			slog.ErrorContext(scopedCtx, "Failed to check scoped file library access", failurecause.Attr(checkErr))
-		}
+// hasScopedLibraryDownload reports whether the principal may download any
+// File of the library. A failed check grants nothing and is logged.
+func (s *Service) hasScopedLibraryDownload(ctx context.Context, principal *auth.UserInfo) bool {
+	can, err := policyv1.File.List()
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to build scoped file library policy", failurecause.Attr(err))
+		return false
+	}
+	allowed, err := checkSpiceDBCan(ctx, principal, can, s.spiceDB)
+	if err != nil {
+		slog.ErrorContext(ctx, "Failed to check scoped file library access", failurecause.Attr(err))
+		return false
+	}
+	return allowed
+}
+
+// deliverScopedContentBlockMediaItem gives an item whose locked attachment
+// still references a live File that File's delivery, with the download when
+// the principal may download it.
+func deliverScopedContentBlockMediaItem(
+	item *contentv1.ContentBlockMediaItem,
+	relations map[string]scopedContentAttachmentRow,
+	files map[string]model.File,
+	responses map[string]*managev1.GetMediaDeliveryResponse,
+	principal *auth.UserInfo,
+	hasLibraryDownload bool,
+) {
+	fileID := strings.TrimSpace(item.GetAttachment().GetActiveFileId())
+	key := strings.TrimSpace(item.GetSelector().GetBlockId()) + "\x00" +
+		strings.TrimSpace(item.GetSelector().GetReferencePath()) + "\x00" + fileID
+	if _, ok := relations[key]; !ok {
+		return
+	}
+	file, ok := files[fileID]
+	if !ok || file.DeleteRequestedAt != nil {
+		return
+	}
+	response := responses[fileID]
+	if response == nil || response.GetDelivery() == nil {
+		return
+	}
+	delivery := proto.Clone(response.GetDelivery()).(*commonv1.MediaDelivery)
+	allowDownload := hasLibraryDownload ||
+		(file.UploadedByMemberID != nil && strings.TrimSpace(*file.UploadedByMemberID) == principal.MemberID.String())
+	if !allowDownload {
+		delivery.Download = nil
 	} else {
-		slog.ErrorContext(scopedCtx, "Failed to build scoped file library policy", failurecause.Attr(err))
+		item.DownloadAvailability = contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_AVAILABLE
+		item.DownloadAction = contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_DOWNLOAD
 	}
-
-	fileIDs := sortedStringSet(requestedFileIDs)
-	files, err := lockScopedDeliveryFiles(scopedCtx, tx, fileIDs)
-	if err != nil {
-		return nil, err
-	}
-	relations, err := lockScopedContentAttachments(
-		scopedCtx,
-		tx,
-		owner,
-		ownerID,
-		documentID,
-		sortedStringSet(requestedBlockIDs),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	currentFileIDs := make(map[string]struct{}, len(relations))
-	for _, relation := range relations {
-		if file, ok := files[relation.FileID]; ok && file.DeleteRequestedAt == nil {
-			currentFileIDs[relation.FileID] = struct{}{}
-		}
-	}
-	scopedService := *s
-	scopedService.db = tx
-	responses, err := scopedService.loadFileURLResponses(scopedCtx, sortedStringSet(currentFileIDs))
-	if err != nil {
-		return nil, err
-	}
-
-	for _, item := range cloned {
-		fileID := strings.TrimSpace(item.GetAttachment().GetActiveFileId())
-		key := strings.TrimSpace(item.GetSelector().GetBlockId()) + "\x00" +
-			strings.TrimSpace(item.GetSelector().GetReferencePath()) + "\x00" + fileID
-		if _, ok := relations[key]; !ok {
-			continue
-		}
-		file, ok := files[fileID]
-		if !ok || file.DeleteRequestedAt != nil {
-			continue
-		}
-		response := responses[fileID]
-		if response == nil || response.GetDelivery() == nil {
-			continue
-		}
-		delivery := proto.Clone(response.GetDelivery()).(*commonv1.MediaDelivery)
-		allowDownload := hasLibraryDownload ||
-			(file.UploadedByMemberID != nil && strings.TrimSpace(*file.UploadedByMemberID) == principal.MemberID.String())
-		if !allowDownload {
-			delivery.Download = nil
-		} else {
-			item.DownloadAvailability = contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_AVAILABLE
-			item.DownloadAction = contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_DOWNLOAD
-		}
-		item.Delivery = delivery
-	}
-	if s.testAfterScopedBlockMediaSigned != nil {
-		s.testAfterScopedBlockMediaSigned(string(owner), ownerID, sortedStringSet(currentFileIDs))
-	}
-	return cloned, nil
+	item.Delivery = delivery
 }
 
 func lockScopedDeliveryFiles(
@@ -385,7 +393,7 @@ func lockScopedContentAttachments(
 	return result, nil
 }
 
-func (s *FileService) buildLockedInlineDelivery(
+func (s *Service) buildLockedInlineDelivery(
 	ctx context.Context,
 	tx *gorm.DB,
 	file model.File,

@@ -62,7 +62,7 @@ func TestReadyPublicAssetProjectionAndLookupUnit(t *testing.T) {
 func TestResolvePublicDisplayMediaNeverFallsBackToPrivateOriginalUnit(t *testing.T) {
 	db := newMediaDeliveryTestDB(t)
 	fileID, assetID := seedMediaDeliveryTestAsset(t, db, "image")
-	svc := &FileService{
+	svc := &Service{
 		db: db, cdnDomain: "https://cdn.example.com",
 		mediaDomain: "https://media.example.com", mediaSecret: "must-not-be-used",
 	}

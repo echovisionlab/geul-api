@@ -62,7 +62,7 @@ func dedicatedPublicAssetKind(uploadType managev1.UploadType, slotID string) (st
 	}
 }
 
-func (s *FileService) promoteDedicatedPublicUploadAsset(
+func (s *Service) promoteDedicatedPublicUploadAsset(
 	ctx context.Context,
 	uploadType managev1.UploadType,
 	slotID string,
@@ -78,7 +78,7 @@ func (s *FileService) promoteDedicatedPublicUploadAsset(
 	return s.promoteSourceFileToPublicAsset(ctx, fileID, kind)
 }
 
-func (s *FileService) promoteSourceFileToPublicAsset(
+func (s *Service) promoteSourceFileToPublicAsset(
 	ctx context.Context,
 	sourceFileID string,
 	kind string,
@@ -117,7 +117,7 @@ func (s *FileService) promoteSourceFileToPublicAsset(
 	return lifecycle.ReadyAssetRef(ctx, asset.ID)
 }
 
-func (s *FileService) prepareSourceAssetPromotion(
+func (s *Service) prepareSourceAssetPromotion(
 	ctx context.Context,
 	sourceFileID string,
 	kind string,
@@ -176,7 +176,7 @@ func (s *FileService) prepareSourceAssetPromotion(
 	return model.File{}, nil, nil, false, lastErr
 }
 
-func (s *FileService) streamSourceAssetPromotion(
+func (s *Service) streamSourceAssetPromotion(
 	ctx context.Context,
 	file model.File,
 	targetObjectKey string,
@@ -372,7 +372,7 @@ func sourceAssetPromotionTarget(
 	}, nil
 }
 
-func (s *FileService) failSourceAssetPromotion(ctx context.Context, assetID string, cause error) (bool, error) {
+func (s *Service) failSourceAssetPromotion(ctx context.Context, assetID string, cause error) (bool, error) {
 	var lastErr error
 	for range 2 {
 		now := time.Now().UTC()
@@ -413,7 +413,7 @@ func (s *FileService) failSourceAssetPromotion(ctx context.Context, assetID stri
 	return false, errs.FailedPrecondition("public asset promotion allocation changed unexpectedly")
 }
 
-func (s *FileService) completeSourceAssetPromotion(
+func (s *Service) completeSourceAssetPromotion(
 	ctx context.Context,
 	sourceFileID string,
 	assetID string,

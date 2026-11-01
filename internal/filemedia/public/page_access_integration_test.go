@@ -34,15 +34,15 @@ func TestPageAudienceOverridesPublicFileAudienceIntegration(t *testing.T) {
 	t.Parallel()
 	db := newPublicIntegrationDB(t)
 	pageID, documentID, _, request := seedPublicPageDownload(t, db)
-	svc := NewFileService(db, publicIntegrationSpiceDBClient(t), "https://cdn.example.test", "https://media.example.test", publicDownloadUnitSecret, mediaauth.DownloadTTL)
-	initial, err := svc.AuthorizeDownload(t.Context(), request)
+	svc := newTestService(Deps{DB: db, SpiceDB: publicIntegrationSpiceDBClient(t), CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
+	initial, err := NewConnectHandler(svc).AuthorizeDownload(t.Context(), request)
 	require.NoError(t, err)
 	require.NotEmpty(t, initial.Msg.GetDownload().GetUrl())
 	ownerContext := mediaasset.WithContentDownloadOwnerAuthorization(t.Context(), mediaasset.ContentDownloadOwnerAuthorization{ResourceType: "page", ResourceID: pageID, DocumentID: documentID, Status: "PAGE_STATUS_PUBLISHED", Mode: mediaasset.ContentDownloadOwnerAccessPublic})
 	items, err := contentblock.LoadMediaReferences(t.Context(), db, uuid.MustParse(documentID))
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`UPDATE page SET access_policy='{"mode":"PAGE_ACCESS_MODE_AUTHENTICATED"}'::jsonb WHERE id=?::uuid`, pageID).Error)
-	denied, err := svc.AuthorizeDownload(t.Context(), request)
+	denied, err := NewConnectHandler(svc).AuthorizeDownload(t.Context(), request)
 	require.NoError(t, err)
 	require.Nil(t, denied.Msg.GetDownload())
 	require.Equal(t, openv1.FileDownloadAction_FILE_DOWNLOAD_ACTION_NONE, denied.Msg.GetAccess().GetAction())
@@ -52,7 +52,7 @@ func TestPageAudienceOverridesPublicFileAudienceIntegration(t *testing.T) {
 		require.Nil(t, item.GetDelivery(), "old public owner witness must not issue inline or download media after audience changes")
 	}
 	require.NoError(t, db.Exec(`UPDATE page SET access_policy='{}'::jsonb WHERE id=?::uuid`, pageID).Error)
-	reopened, err := svc.AuthorizeDownload(t.Context(), request)
+	reopened, err := NewConnectHandler(svc).AuthorizeDownload(t.Context(), request)
 	require.NoError(t, err)
 	require.NotEmpty(t, reopened.Msg.GetDownload().GetUrl())
 }
@@ -70,14 +70,14 @@ func TestPageAudienceChangeBetweenSigningPhasesIntegration(t *testing.T) {
 		}
 	}()
 	serviceDB := db.Session(&gorm.Session{Logger: &relationSourceBlockingLogger{Interface: db.Logger, loaded: loaded, release: release, trigger: 1}})
-	svc := NewFileService(serviceDB, publicIntegrationSpiceDBClient(t), "https://cdn.example.test", "https://media.example.test", publicDownloadUnitSecret, mediaauth.DownloadTTL)
+	svc := newTestService(Deps{DB: serviceDB, SpiceDB: publicIntegrationSpiceDBClient(t), CDNDomain: "https://cdn.example.test", MediaDomain: "https://media.example.test", MediaSecret: publicDownloadUnitSecret, DownloadTTL: mediaauth.DownloadTTL})
 	type result struct {
 		response *connect.Response[openv1.AuthorizeDownloadResponse]
 		err      error
 	}
 	finished := make(chan result, 1)
 	go func() {
-		response, err := svc.AuthorizeDownload(context.Background(), request)
+		response, err := NewConnectHandler(svc).AuthorizeDownload(context.Background(), request)
 		finished <- result{response, err}
 	}()
 	select {

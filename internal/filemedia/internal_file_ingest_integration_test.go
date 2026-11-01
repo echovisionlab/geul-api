@@ -89,18 +89,18 @@ func TestAttachTrackOriginalAudioAppliesCASThenUsesStableTranscodeCommand(t *tes
 
 	asyncPublisher := &hardCutAsyncPublisher{}
 	transcoder := &fileIngestFinalizerRecordingTranscoder{}
-	files := NewFileService(
-		stack.DB,
-		runtimeS3Client(t, stack),
-		asyncPublisher,
-		stack.S3MediaBucket,
-		stack.CDNURL,
-		stack.MediaURL,
-		stack.MediaSigningSecret,
-		transcoder,
-		stack.SpiceDBClient,
-		directTrackAttachmentOption(stack.DB),
-	)
+	files := newTestService(Deps{
+		DB:              stack.DB,
+		S3:              runtimeS3Client(t, stack),
+		AsyncPublisher:  asyncPublisher,
+		S3Bucket:        stack.S3MediaBucket,
+		CDNDomain:       stack.CDNURL,
+		MediaDomain:     stack.MediaURL,
+		MediaSecret:     stack.MediaSigningSecret,
+		Transcoder:      transcoder,
+		SpiceDB:         stack.SpiceDBClient,
+		TrackAttachment: newDirectTrackAttachment(stack.DB),
+	})
 	request := &intrav1.AttachTrackOriginalAudioRequest{
 		TrackId:               trackID,
 		VerifiedFileId:        newFile.ID,
@@ -108,7 +108,7 @@ func TestAttachTrackOriginalAudioAppliesCASThenUsesStableTranscodeCommand(t *tes
 		ExpectedCurrentFileId: &oldFile.ID,
 	}
 
-	internalService := NewInternalFileIngestService(files)
+	internalService := NewInternalConnectHandler(files)
 	succeededResponse, err := internalService.AttachTrackOriginalAudio(t.Context(), connect.NewRequest(request))
 	require.NoError(t, err)
 	require.Equal(t, intrav1.AttachTrackOriginalAudioResult_ATTACH_TRACK_ORIGINAL_AUDIO_RESULT_APPLIED, succeededResponse.Msg.GetResult())
@@ -161,14 +161,20 @@ func TestAttachTrackOriginalAudioRejectsStaleCASWithoutSideEffects(t *testing.T)
 		EntityType: &entityType, EntityID: trackID,
 	}).Error)
 	transcoder := &fileIngestFinalizerRecordingTranscoder{}
-	files := NewFileService(
-		stack.DB, runtimeS3Client(t, stack), &hardCutAsyncPublisher{},
-		stack.S3MediaBucket, stack.CDNURL, stack.MediaURL, stack.MediaSigningSecret,
-		transcoder, stack.SpiceDBClient,
-		directTrackAttachmentOption(stack.DB),
-	)
+	files := newTestService(Deps{
+		DB:              stack.DB,
+		S3:              runtimeS3Client(t, stack),
+		AsyncPublisher:  &hardCutAsyncPublisher{},
+		S3Bucket:        stack.S3MediaBucket,
+		CDNDomain:       stack.CDNURL,
+		MediaDomain:     stack.MediaURL,
+		MediaSecret:     stack.MediaSigningSecret,
+		Transcoder:      transcoder,
+		SpiceDB:         stack.SpiceDBClient,
+		TrackAttachment: newDirectTrackAttachment(stack.DB),
+	})
 
-	response, err := NewInternalFileIngestService(files).AttachTrackOriginalAudio(
+	response, err := NewInternalConnectHandler(files).AttachTrackOriginalAudio(
 		t.Context(),
 		connect.NewRequest(&intrav1.AttachTrackOriginalAudioRequest{
 			TrackId: trackID, VerifiedFileId: projected.ID, IngestAttemptId: attemptID,

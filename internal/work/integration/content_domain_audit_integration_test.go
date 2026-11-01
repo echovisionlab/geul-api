@@ -34,7 +34,7 @@ func TestWorkDomainAuditClosesCreateVersionDeleteBoundariesIntegration(t *testin
 	contributorID := seedWorkAuditContributor(t, db, spiceDB)
 	memberCtx := withWorkAuditedRequestContext(t, workIntegrationAdminCtx(adminIdentityID))
 	writer := apitelemetry.NewDurableWriter(db)
-	files := &filemedia.FileService{}
+	files := &filemedia.Service{}
 	contentBlocks, err := contentblock.NewGeneratedStore(filemedia.NewContentBlockFileReuseAuthorizer(spiceDB))
 	require.NoError(t, err)
 	works := newWorkServiceForTest(t, workdomain.Deps{DB: db, SpiceDB: spiceDB, ContentBlocks: contentBlocks, Media: files, Audit: writer})

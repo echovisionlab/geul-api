@@ -20,7 +20,7 @@ type verifiedFileIngestAuthority interface {
 	revalidate(
 		context.Context,
 		*gorm.DB,
-		*FileService,
+		*Service,
 		string,
 		managev1.UploadType,
 		managev1.TranscodeEntityType,
@@ -36,7 +36,7 @@ type trustedSystemFileIngestAuthority struct{}
 func (trustedSystemFileIngestAuthority) revalidate(
 	context.Context,
 	*gorm.DB,
-	*FileService,
+	*Service,
 	string,
 	managev1.UploadType,
 	managev1.TranscodeEntityType,
@@ -50,7 +50,7 @@ type requestFileIngestAuthority struct{}
 func (requestFileIngestAuthority) revalidate(
 	ctx context.Context,
 	tx *gorm.DB,
-	service *FileService,
+	service *Service,
 	_ string,
 	uploadType managev1.UploadType,
 	entityType managev1.TranscodeEntityType,
@@ -76,7 +76,7 @@ func newMultipartFileIngestAuthority(session model.UploadSession) (multipartFile
 func (authority multipartFileIngestAuthority) revalidate(
 	ctx context.Context,
 	tx *gorm.DB,
-	service *FileService,
+	service *Service,
 	fileID string,
 	uploadType managev1.UploadType,
 	entityType managev1.TranscodeEntityType,
@@ -108,7 +108,7 @@ func (authority multipartFileIngestAuthority) revalidate(
 func requireFreshFileIngestAuthority(
 	ctx context.Context,
 	tx *gorm.DB,
-	service *FileService,
+	service *Service,
 	uploadType managev1.UploadType,
 	entityType managev1.TranscodeEntityType,
 	entityID string,
@@ -132,17 +132,11 @@ func requireFreshFileIngestAuthority(
 		return connectUploadPermissionValidationError(err)
 	}
 	if target.resourceType == "post" {
-		access, dependencyErr := requirePostAccess(service.postAccess)
-		if dependencyErr != nil {
-			return dependencyErr
-		}
+		access := service.postAccess
 		return access.RequireLockedEdit(ctx, tx, resolvedEntityID)
 	}
 	if target.resourceType == "program_event" {
-		access, dependencyErr := requireProgramEventAttachment(service.programEventAttachment)
-		if dependencyErr != nil {
-			return dependencyErr
-		}
+		access := service.programEventAttachment
 		return access.RequireLockedEdit(ctx, tx, service.spiceDB, resolvedEntityID)
 	}
 	if err := lockFileIngestAuthorizationTarget(ctx, tx, target, resolvedEntityID); err != nil {

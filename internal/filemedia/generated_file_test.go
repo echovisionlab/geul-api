@@ -9,7 +9,7 @@ import (
 )
 
 func TestCreateGeneratedGeneralFileRejectsInvalidArtifactBeforeStorage(t *testing.T) {
-	service := &FileService{db: &gorm.DB{}, s3Client: &s3.Client{}, s3Bucket: "files"}
+	service := &Service{db: &gorm.DB{}, s3Client: &s3.Client{}, s3Bucket: "files"}
 	for name, input := range map[string]GeneratedGeneralFileInput{
 		"missing name":      {Extension: "xlf", MimeType: "application/xliff+xml", Body: []byte("body")},
 		"missing extension": {FileName: "export.xlf", MimeType: "application/xliff+xml", Body: []byte("body")},
@@ -25,7 +25,7 @@ func TestCreateGeneratedGeneralFileRejectsInvalidArtifactBeforeStorage(t *testin
 }
 
 func TestReadVerifiedFileBodyRequiresPositiveBoundBeforeDelivery(t *testing.T) {
-	service := &FileService{db: &gorm.DB{}, s3Client: &s3.Client{}, s3Bucket: "files"}
+	service := &Service{db: &gorm.DB{}, s3Client: &s3.Client{}, s3Bucket: "files"}
 	if _, err := service.ReadVerifiedFileBody(context.Background(), "file-id", 0); err == nil {
 		t.Fatal("unbounded verified File read was accepted")
 	}

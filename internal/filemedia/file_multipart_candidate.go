@@ -17,7 +17,7 @@ import (
 )
 
 type multipartCandidateSearch struct {
-	request            *managev1.FindMultipartUploadCandidateRequest
+	request            FindMultipartUploadCandidateQuery
 	uploadType         managev1.UploadType
 	entityType         string
 	entityID           string
@@ -25,9 +25,9 @@ type multipartCandidateSearch struct {
 	projectionIdentity fileIngestProjectionIdentity
 }
 
-func (s *FileService) prepareMultipartCandidateSearch(
+func (s *Service) prepareMultipartCandidateSearch(
 	ctx context.Context,
-	request *managev1.FindMultipartUploadCandidateRequest,
+	request FindMultipartUploadCandidateQuery,
 	memberID string,
 ) (multipartCandidateSearch, error) {
 	search := multipartCandidateSearch{request: request, uploadType: request.UploadType}
@@ -40,11 +40,11 @@ func (s *FileService) prepareMultipartCandidateSearch(
 	if request.EntityType != nil {
 		search.entityType = request.EntityType.String()
 	}
-	search.entityID = strings.TrimSpace(request.EntityId)
+	search.entityID = strings.TrimSpace(request.EntityID)
 	if err := validateIndependentFileCandidateIdentity(request, search.entityID); err != nil {
 		return search, err
 	}
-	slotID := strings.TrimSpace(request.GetSlotId())
+	slotID := strings.TrimSpace(derefString(request.SlotID))
 	resolvedSiteEntityID, err := resolveSiteUploadEntityID(
 		s.legalRouteIdentity,
 		search.uploadType,
@@ -58,9 +58,9 @@ func (s *FileService) prepareMultipartCandidateSearch(
 	}
 	search.projectionIdentity, err = normalizeFileIngestProjectionIdentity(
 		search.uploadType,
-		request.GetEntityType(),
+		request.entityType(),
 		slotID,
-		request.ExpectedCurrentFileId,
+		request.ExpectedCurrentFileID,
 	)
 	if err != nil {
 		return search, err
@@ -70,12 +70,12 @@ func (s *FileService) prepareMultipartCandidateSearch(
 	); err != nil {
 		return search, err
 	}
-	search.fileName, err = normalizeOptionalCandidateFilename(request.GetFileName())
+	search.fileName, err = normalizeOptionalCandidateFilename(derefString(request.FileName))
 	return search, err
 }
 
 func validateIndependentFileCandidateIdentity(
-	request *managev1.FindMultipartUploadCandidateRequest,
+	request FindMultipartUploadCandidateQuery,
 	entityID string,
 ) error {
 	if request.UploadType != managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE &&
@@ -88,10 +88,10 @@ func validateIndependentFileCandidateIdentity(
 			"independent File upload must omit entity ID",
 		)
 	}
-	if strings.TrimSpace(request.GetFileId()) == "" {
+	if strings.TrimSpace(derefString(request.FileID)) == "" {
 		return errs.Required("file_id")
 	}
-	if strings.TrimSpace(request.GetUploadId()) == "" {
+	if strings.TrimSpace(derefString(request.UploadID)) == "" {
 		return errs.Required("upload_id")
 	}
 	return nil
@@ -108,7 +108,7 @@ func normalizeOptionalCandidateFilename(fileName string) (string, error) {
 	return normalized, nil
 }
 
-func (s *FileService) findMultipartUploadCandidate(
+func (s *Service) findMultipartUploadCandidate(
 	ctx context.Context,
 	search multipartCandidateSearch,
 ) (model.UploadSession, bool, error) {
@@ -210,23 +210,24 @@ func applyMultipartCandidateRequestFilters(
 	search multipartCandidateSearch,
 ) *gorm.DB {
 	request := search.request
-	if fileID := request.GetFileId(); fileID != "" {
+	if fileID := derefString(request.FileID); fileID != "" {
 		query = query.Where("file_id = ?", fileID)
 	}
-	if uploadID := request.GetUploadId(); uploadID != "" {
+	if uploadID := derefString(request.UploadID); uploadID != "" {
 		query = query.Where("upload_id = ?", uploadID)
 	}
 	if search.fileName != "" {
 		query = query.Where("file_name = ?", search.fileName)
 	}
-	if fileSize := request.GetFileSize(); fileSize > 0 {
+	if request.FileSize != nil && *request.FileSize > 0 {
+		fileSize := *request.FileSize
 		query = query.Where("file_size = ?", fileSize)
 	}
-	if mimeType := request.GetMimeType(); mimeType != "" {
+	if mimeType := derefString(request.MimeType); mimeType != "" {
 		query = query.Where("requested_mime = ?", mimeType)
 	}
 	if request.FileLastModified != nil {
-		query = query.Where("file_last_modified = ?", request.GetFileLastModified())
+		query = query.Where("file_last_modified = ?", *request.FileLastModified)
 	}
 	return query
 }
@@ -252,7 +253,7 @@ func multipartCandidateResponse(session model.UploadSession) *managev1.FindMulti
 	}
 }
 
-func (s *FileService) prepareMultipartCandidateResponse(
+func (s *Service) prepareMultipartCandidateResponse(
 	ctx context.Context,
 	session model.UploadSession,
 ) (*managev1.FindMultipartUploadCandidateResponse, error) {

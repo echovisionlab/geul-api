@@ -33,7 +33,7 @@ type translationServiceRegistration struct {
 	internalFormService      *formdomain.Service
 	programEventService      *programevent.Service
 	seriesService            *series.Service
-	fileService              *filemedia.FileService
+	fileService              *filemedia.Service
 }
 
 func (r translationServiceRegistration) register() (*translationapplication.Service, error) {

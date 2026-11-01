@@ -24,7 +24,7 @@ import (
 // output relations, rechecks both witnesses, and signs locally while mutation
 // and deletion are excluded. Mesh completion and File deletion use the same
 // File -> candidate order.
-func (s *FileService) finalizeFileManagerDeliveries(
+func (s *Service) finalizeFileManagerDeliveries(
 	ctx context.Context,
 	rows []fileManagerCatalogRow,
 	members map[string]*commonv1.MemberSummary,
@@ -243,7 +243,7 @@ func equalOptionalString(left, right *string) bool {
 	return *left == *right
 }
 
-func (s *FileService) rebuildLockedPrivateDelivery(
+func (s *Service) rebuildLockedPrivateDelivery(
 	previous *commonv1.MediaDelivery,
 	file model.File,
 ) (*commonv1.MediaDelivery, error) {
@@ -286,7 +286,7 @@ func (s *FileService) rebuildLockedPrivateDelivery(
 // finalizeManageFileURLResponses is the post-authorization issuance fence for
 // the external manage delivery RPCs. Internal content composition keeps its
 // owning authorization boundary and does not pass through this method.
-func (s *FileService) finalizeManageFileURLResponses(
+func (s *Service) finalizeManageFileURLResponses(
 	ctx context.Context,
 	responses map[string]*managev1.GetMediaDeliveryResponse,
 	authorization *manageFileDeliveryAuthorization,
@@ -345,7 +345,7 @@ func (s *FileService) finalizeManageFileURLResponses(
 	return result, changed, nil
 }
 
-func (s *FileService) finalizeStrongManageFileURLResponses(
+func (s *Service) finalizeStrongManageFileURLResponses(
 	ctx context.Context,
 	fileIDs []string,
 	responses map[string]*managev1.GetMediaDeliveryResponse,
@@ -425,7 +425,7 @@ func (s *FileService) finalizeStrongManageFileURLResponses(
 	return result, changed, err
 }
 
-func (s *FileService) finalizeUsageManageFileURLResponses(
+func (s *Service) finalizeUsageManageFileURLResponses(
 	ctx context.Context,
 	fileIDs []string,
 	responses map[string]*managev1.GetMediaDeliveryResponse,
@@ -447,7 +447,7 @@ func (s *FileService) finalizeUsageManageFileURLResponses(
 	return result, changed, nil
 }
 
-func (s *FileService) finalizeUsageManageFileURLResponse(
+func (s *Service) finalizeUsageManageFileURLResponse(
 	ctx context.Context,
 	fileID string,
 	response *managev1.GetMediaDeliveryResponse,

@@ -68,7 +68,7 @@ func TestReadStoredObjectPrefixRejectsTruncatedBody(t *testing.T) {
 	require.ErrorContains(t, err, "read completed object prefix")
 }
 
-func newObjectVerificationService(t *testing.T, handler http.HandlerFunc) *FileService {
+func newObjectVerificationService(t *testing.T, handler http.HandlerFunc) *Service {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
@@ -82,7 +82,7 @@ func newObjectVerificationService(t *testing.T, handler http.HandlerFunc) *FileS
 		options.BaseEndpoint = aws.String(server.URL)
 		options.UsePathStyle = true
 	})
-	return &FileService{s3Client: client, s3Bucket: "media-bucket"}
+	return &Service{s3Client: client, s3Bucket: "media-bucket"}
 }
 
 func TestReadStoredObjectPrefixFetchFailureIsNotMIMEMismatch(t *testing.T) {

@@ -14,7 +14,7 @@ import (
 // triggerFileScopedProcessingIfNeeded publishes stable derivative work from
 // verified File authority. Document attachment is a separate revision-CAS
 // mutation and never changes the processing identity.
-func (s *FileService) triggerFileScopedProcessingIfNeeded(ctx context.Context, fileID string) error {
+func (s *Service) triggerFileScopedProcessingIfNeeded(ctx context.Context, fileID string) error {
 	fileID = strings.TrimSpace(fileID)
 	var file model.File
 	if err := s.db.WithContext(ctx).Where("id = ?", fileID).Take(&file).Error; err != nil {
@@ -71,7 +71,7 @@ func (s *FileService) triggerFileScopedProcessingIfNeeded(ctx context.Context, f
 	return nil
 }
 
-func (s *FileService) promoteFileScopedImageIfNeeded(
+func (s *Service) promoteFileScopedImageIfNeeded(
 	ctx context.Context,
 	uploadType managev1.UploadType,
 	slotID string,

@@ -10,7 +10,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
@@ -170,11 +169,11 @@ func fileManagerPageSize(value int32, maximum int) int {
 	return int(value)
 }
 
-func decodeFileManagerPageToken(token *string) (int, error) {
-	if token == nil || strings.TrimSpace(*token) == "" {
+func decodeFileManagerPageToken(token string) (int, error) {
+	if strings.TrimSpace(token) == "" {
 		return 0, nil
 	}
-	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(*token))
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(token))
 	if err != nil {
 		return 0, errs.InvalidArgument("page_token", "is invalid")
 	}
@@ -194,7 +193,7 @@ func encodeFileManagerPageToken(offset int) *string {
 	return &value
 }
 
-func (s *FileService) requireFileManagerFolder(ctx context.Context, folderID *string) error {
+func (s *Service) requireFileManagerFolder(ctx context.Context, folderID *string) error {
 	if folderID == nil {
 		return nil
 	}
@@ -240,46 +239,63 @@ func fileManagerFolderPath(raw []byte) ([]*managev1.FileManagerPathSegment, erro
 	return path, nil
 }
 
-func (s *FileService) ListFileManagerItems(
-	ctx context.Context,
-	req *connect.Request[managev1.ListFileManagerItemsRequest],
-) (*connect.Response[managev1.ListFileManagerItemsResponse], error) {
-	return s.listFileManagerItems(ctx, req, true)
+// ListFileManagerItemsQuery lists one File library folder, or searches the
+// library when Query is set.
+type ListFileManagerItemsQuery struct {
+	FolderID           string
+	UploadedByMemberID string
+	Query              string
+	MimeTypePrefix     string
+	PageToken          string
+	PageSize           int32
+	SortField          managev1.FileManagerSortField
+	SortOrder          commonv1.SortOrder
 }
 
-func (s *FileService) listFileManagerItems(
+// FileManagerItemPage is one page of File library items.
+type FileManagerItemPage struct {
+	Items         []*managev1.FileManagerItem
+	NextPageToken *string
+	Total         int64
+}
+
+func (s *Service) ListFileManagerItems(ctx context.Context, query ListFileManagerItemsQuery) (FileManagerItemPage, error) {
+	return s.listFileManagerItems(ctx, query, true)
+}
+
+func (s *Service) listFileManagerItems(
 	ctx context.Context,
-	req *connect.Request[managev1.ListFileManagerItemsRequest],
+	req ListFileManagerItemsQuery,
 	allowChangedRetry bool,
-) (*connect.Response[managev1.ListFileManagerItemsResponse], error) {
+) (FileManagerItemPage, error) {
 	if err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
-		return nil, err
+		return FileManagerItemPage{}, err
 	}
-	folderID, err := normalizeFileManagerUUID(req.Msg.GetFolderId(), "folder_id", true)
+	folderID, err := normalizeFileManagerUUID(req.FolderID, "folder_id", true)
 	if err != nil {
-		return nil, err
+		return FileManagerItemPage{}, err
 	}
-	uploaderID, err := normalizeFileManagerUUID(req.Msg.GetUploadedByMemberId(), "uploaded_by_member_id", true)
+	uploaderID, err := normalizeFileManagerUUID(req.UploadedByMemberID, "uploaded_by_member_id", true)
 	if err != nil {
-		return nil, err
+		return FileManagerItemPage{}, err
 	}
-	offset, err := decodeFileManagerPageToken(req.Msg.PageToken)
+	offset, err := decodeFileManagerPageToken(req.PageToken)
 	if err != nil {
-		return nil, err
+		return FileManagerItemPage{}, err
 	}
-	query := strings.TrimSpace(req.Msg.GetQuery())
-	mimePrefix := strings.TrimSpace(strings.ToLower(req.Msg.GetMimeTypePrefix()))
+	query := strings.TrimSpace(req.Query)
+	mimePrefix := strings.TrimSpace(strings.ToLower(req.MimeTypePrefix))
 	includeFolders := mimePrefix == "" && uploaderID == nil
 	if query == "" || folderID != nil {
 		if err := s.requireFileManagerFolder(ctx, folderID); err != nil {
-			return nil, err
+			return FileManagerItemPage{}, err
 		}
 	}
 	pageSizeMaximum := fileManagerMaxDirectoryPageSize
 	if query != "" {
 		pageSizeMaximum = fileManagerMaxSearchPageSize
 	}
-	pageSize := fileManagerPageSize(req.Msg.PageSize, pageSizeMaximum)
+	pageSize := fileManagerPageSize(req.PageSize, pageSizeMaximum)
 	parent := ""
 	if folderID != nil {
 		parent = *folderID
@@ -357,7 +373,7 @@ func (s *FileService) listFileManagerItems(
 	  LEFT JOIN paths ON paths.item_type = paged.item_type AND paths.item_id = paged.id
 	 ORDER BY %s`
 
-	sortClause := fileManagerSortClause(req.Msg.SortField, req.Msg.SortOrder, "")
+	sortClause := fileManagerSortClause(req.SortField, req.SortOrder, "")
 	var rows []fileManagerCatalogRow
 	var queryResult *gorm.DB
 	if query == "" {
@@ -368,7 +384,7 @@ func (s *FileService) listFileManagerItems(
 			pageSize, offset,
 		).Scan(&rows)
 	} else {
-		sql := fmt.Sprintf(searchCatalogSQL, sortClause, fileManagerSortClause(req.Msg.SortField, req.Msg.SortOrder, "paged."))
+		sql := fmt.Sprintf(searchCatalogSQL, sortClause, fileManagerSortClause(req.SortField, req.SortOrder, "paged."))
 		queryResult = s.db.WithContext(ctx).Raw(sql,
 			parent,
 			includeFolders, query, parent, parent,
@@ -378,7 +394,7 @@ func (s *FileService) listFileManagerItems(
 		).Scan(&rows)
 	}
 	if err := queryResult.Error; err != nil {
-		return nil, errs.Internal(err)
+		return FileManagerItemPage{}, err
 	}
 
 	memberIDs := make([]string, 0, len(rows))
@@ -391,34 +407,31 @@ func (s *FileService) listFileManagerItems(
 			fileIDs = append(fileIDs, row.ID)
 		}
 	}
-	memberSummaries, err := requireMemberSummaries(s.memberSummaries)
-	if err != nil {
-		return nil, err
-	}
+	memberSummaries := s.memberSummaries
 	members, err := memberSummaries.Load(ctx, sliceutil.SortedUniqueTrimmed(memberIDs))
 	if err != nil {
-		return nil, errs.Internal(err)
+		return FileManagerItemPage{}, err
 	}
 	usageCounts, err := s.loadVisibleFileUsageCounts(ctx, fileIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return FileManagerItemPage{}, err
 	}
 	fencedFiles, _, changed, err := s.finalizeFileManagerDeliveries(ctx, rows, members, usageCounts, nil)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return FileManagerItemPage{}, err
 	}
 	if changed {
 		if allowChangedRetry {
 			return s.listFileManagerItems(ctx, req, false)
 		}
-		return nil, errs.DependencyUnavailable("file catalog")
+		return FileManagerItemPage{}, errs.DependencyUnavailable("file catalog")
 	}
 
 	items := make([]*managev1.FileManagerItem, 0, len(rows))
 	for _, row := range rows {
 		folderPath, pathErr := fileManagerFolderPath(row.FolderPath)
 		if pathErr != nil {
-			return nil, errs.Internal(pathErr)
+			return FileManagerItemPage{}, pathErr
 		}
 		if row.ItemType == "folder" {
 			folder := &managev1.FileFolder{
@@ -436,7 +449,7 @@ func (s *FileService) listFileManagerItems(
 		}
 		file := fencedFiles[row.ID]
 		if file == nil {
-			return nil, errs.DependencyUnavailable("file catalog")
+			return FileManagerItemPage{}, errs.DependencyUnavailable("file catalog")
 		}
 		items = append(items, &managev1.FileManagerItem{
 			Type: managev1.FileManagerItemType_FILE_MANAGER_ITEM_TYPE_FILE,
@@ -451,5 +464,5 @@ func (s *FileService) listFileManagerItems(
 	if int64(offset+len(rows)) < total {
 		next = encodeFileManagerPageToken(offset + len(rows))
 	}
-	return connect.NewResponse(&managev1.ListFileManagerItemsResponse{Items: items, NextPageToken: next, Total: total}), nil
+	return FileManagerItemPage{Items: items, NextPageToken: next, Total: total}, nil
 }

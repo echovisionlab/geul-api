@@ -14,8 +14,9 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
@@ -334,7 +335,7 @@ func LoadFileDownloadPolicyFingerprints(
 			return nil, err
 		}
 		if loader == nil {
-			return nil, errs.DependencyUnavailable("Audience segment configuration")
+			return nil, domainerr.DependencyUnavailable("Audience segment configuration")
 		}
 		pointers := make([]*model.AudienceSegment, 0, len(segments))
 		for i := range segments {
@@ -608,8 +609,6 @@ func evaluateFileDownloadAccessBatchAt(
 	_ time.Time,
 	loaders ...SegmentConfigLoader,
 ) (map[string]bool, error) {
-	result := make(map[string]bool, len(sources))
-	restrictedPolicyKeys := make([]string, 0, len(sources))
 	hasAuthenticatedUser := user != nil &&
 		user.Authenticated &&
 		!user.Banned &&
@@ -626,29 +625,13 @@ func evaluateFileDownloadAccessBatchAt(
 			return nil, err
 		}
 	}
-	for policyKey, source := range sources {
-		if !source.Audience.Valid() {
-			return nil, errors.New("file has invalid download audience")
-		}
-		switch source.Audience {
-		case FileDownloadAudienceDisabled:
-			result[policyKey] = false
-		case FileDownloadAudiencePublic:
-			result[policyKey] = true
-		case FileDownloadAudienceAuthenticated:
-			result[policyKey] = hasAuthenticatedUser && activeMemberFound
-		case FileDownloadAudienceRestricted:
-			if !hasAuthenticatedUser || !activeMemberFound {
-				result[policyKey] = false
-			} else {
-				restrictedPolicyKeys = append(restrictedPolicyKeys, policyKey)
-			}
-		}
+	result, restrictedPolicyKeys, err := fileDownloadAudienceDecisions(sources, hasAuthenticatedUser && activeMemberFound)
+	if err != nil {
+		return nil, err
 	}
 	if len(restrictedPolicyKeys) == 0 {
 		return result, nil
 	}
-	sort.Strings(restrictedPolicyKeys)
 	restrictedSources := make(map[string]FileDownloadSource, len(restrictedPolicyKeys))
 	for _, key := range restrictedPolicyKeys {
 		restrictedSources[key] = sources[key]
@@ -665,20 +648,8 @@ func evaluateFileDownloadAccessBatchAt(
 	if len(segmentIDs) == 0 {
 		return result, nil
 	}
-	var segments []model.AudienceSegment
-	if err := db.WithContext(ctx).
-		Where("id IN ? AND archived_at IS NULL", segmentIDs).
-		Find(&segments).Error; err != nil {
-		return nil, err
-	}
-	segmentPointers := make([]*model.AudienceSegment, 0, len(segments))
-	for i := range segments {
-		segmentPointers = append(segmentPointers, &segments[i])
-	}
-	if len(loaders) != 1 || loaders[0] == nil {
-		return nil, errs.DependencyUnavailable("Audience segment configuration")
-	}
-	if err := loaders[0].LoadSegmentConfigs(ctx, db, segmentPointers); err != nil {
+	segments, err := loadRestrictedFileDownloadSegments(ctx, db, segmentIDs, loaders)
+	if err != nil {
 		return nil, err
 	}
 	segmentsByID := make(map[string]model.AudienceSegment, len(segments))
@@ -721,6 +692,62 @@ func evaluateFileDownloadAccessBatchAt(
 	return result, nil
 }
 
+// fileDownloadAudienceDecisions decides each source whose audience needs no
+// segment lookup and returns the restricted policy keys left to match, in
+// order. eligible is whether the viewer is an active authenticated Member.
+func fileDownloadAudienceDecisions(sources map[string]FileDownloadSource, eligible bool) (map[string]bool, []string, error) {
+	result := make(map[string]bool, len(sources))
+	restrictedPolicyKeys := make([]string, 0, len(sources))
+	for policyKey, source := range sources {
+		if !source.Audience.Valid() {
+			return nil, nil, errors.New("file has invalid download audience")
+		}
+		switch source.Audience {
+		case FileDownloadAudienceDisabled:
+			result[policyKey] = false
+		case FileDownloadAudiencePublic:
+			result[policyKey] = true
+		case FileDownloadAudienceAuthenticated:
+			result[policyKey] = eligible
+		case FileDownloadAudienceRestricted:
+			if !eligible {
+				result[policyKey] = false
+			} else {
+				restrictedPolicyKeys = append(restrictedPolicyKeys, policyKey)
+			}
+		}
+	}
+	sort.Strings(restrictedPolicyKeys)
+	return result, restrictedPolicyKeys, nil
+}
+
+// loadRestrictedFileDownloadSegments loads the live segments a restricted
+// policy names, with their configuration.
+func loadRestrictedFileDownloadSegments(
+	ctx context.Context,
+	db *gorm.DB,
+	segmentIDs []string,
+	loaders []SegmentConfigLoader,
+) ([]model.AudienceSegment, error) {
+	var segments []model.AudienceSegment
+	if err := db.WithContext(ctx).
+		Where("id IN ? AND archived_at IS NULL", segmentIDs).
+		Find(&segments).Error; err != nil {
+		return nil, err
+	}
+	segmentPointers := make([]*model.AudienceSegment, 0, len(segments))
+	for i := range segments {
+		segmentPointers = append(segmentPointers, &segments[i])
+	}
+	if len(loaders) != 1 || loaders[0] == nil {
+		return nil, domainerr.DependencyUnavailable("Audience segment configuration")
+	}
+	if err := loaders[0].LoadSegmentConfigs(ctx, db, segmentPointers); err != nil {
+		return nil, err
+	}
+	return segments, nil
+}
+
 func loadRestrictedFileDownloadMemberFacts(
 	ctx context.Context,
 	db *gorm.DB,
@@ -736,8 +763,7 @@ func loadRestrictedFileDownloadMemberFacts(
 
 	query := db.WithContext(ctx).
 		Table("member AS member").
-		Joins(`JOIN kratos.identities AS identity
-			ON identity.id = member.account_identity_id`).
+		Joins(identityread.JoinLinked("member", "identity")).
 		Where("member.id = ?", memberID).
 		Where("member.account_identity_id = ?", identityID).
 		Where("identity.id = ?", identityID).
@@ -750,7 +776,6 @@ func loadRestrictedFileDownloadMemberFacts(
 			identity.id AS identity_id,
 			member.onboarded AS onboarded,
 			member.created_at AS member_created_at`)
-		query = query.Where("identity.external_id = ?", memberID)
 		query = query.Where(
 			"(json_extract(identity.metadata_admin, '$.banned') IS NULL OR json_extract(identity.metadata_admin, '$.banned') = 0)",
 		)
@@ -760,7 +785,6 @@ func loadRestrictedFileDownloadMemberFacts(
 			identity.id::text AS identity_id,
 			member.onboarded AS onboarded,
 			member.created_at AS member_created_at`)
-		query = query.Where("identity.external_id = ?", memberID)
 		query = query.Where(
 			"(identity.metadata_admin->>'banned' IS NULL OR identity.metadata_admin->>'banned' = 'false')",
 		)
@@ -919,10 +943,10 @@ func resolveRestrictedFileDownloadPermissions(
 		permissions, err := normalizeFileDownloadAccountPermissions(segment.Config.AccountRoles)
 		if err != nil {
 			// The permissions come from a stored segment, not from this request.
-			return nil, errs.Internal(failurecause.WithAttrs(
+			return nil, failurecause.WithAttrs(
 				fmt.Errorf("read stored File download segment: %w", err),
 				slog.String("segment_id", segment.ID),
-			))
+			)
 		}
 		for _, permission := range permissions {
 			requested[permission] = struct{}{}
@@ -933,20 +957,20 @@ func resolveRestrictedFileDownloadPermissions(
 		return resolved, nil
 	}
 	if spiceDB == nil || user == nil {
-		return nil, errs.DependencyUnavailable("SpiceDB")
+		return nil, domainerr.DependencyUnavailable("SpiceDB")
 	}
 	for permission := range requested {
 		can, err := restrictedDownloadPlatformCan(permission)
 		if err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 		decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, user), can)
 		if err != nil {
-			return nil, errs.WithCause(errs.AuthenticationRequired(), err)
+			return nil, domainerr.AuthenticationRequired().WithCause(err)
 		}
 		allowed, checkErr := spiceDB.Can(ctx, decision)
 		if checkErr != nil {
-			return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), checkErr)
+			return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(checkErr)
 		}
 		resolved[permission] = allowed
 	}

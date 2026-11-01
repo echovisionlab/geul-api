@@ -245,7 +245,7 @@ func TestDeleteFaviconSourceMarksAssetsAndFilePendingBeforeWorkerFinalization(t 
 	createFileAttachmentReferenceTablesForServiceTests(t, db)
 	fileID := seedFaviconSource(t, db, "image/png")
 	seedCompleteFaviconDerivatives(t, db, fileID)
-	svc := &FileService{db: db, asyncPublisher: noopAsyncPublisher{}}
+	svc := &Service{db: db, asyncPublisher: noopAsyncPublisher{}}
 	require.NoError(t, svc.deleteFileRecordByID(t.Context(), fileID))
 	var file model.File
 	require.NoError(t, db.First(&file, "id = ?", fileID).Error)
@@ -262,7 +262,7 @@ func TestGenerateFaviconBundlePersistsCleanupRecordsOnWriteFailure(t *testing.T)
 	source := faviconTestPNG(t, 151, 152, color.NRGBA{R: 200, A: 255})
 	fileID := seedFaviconSourceBytes(t, db, "image/png", source)
 	store := newFaviconS3Fixture(t, fileID, "png", source, 3)
-	svc := &FileService{
+	svc := &Service{
 		db:               db,
 		s3Client:         store.client,
 		s3Bucket:         "media-bucket",
@@ -291,7 +291,7 @@ func TestGenerateFaviconBundleProcessorFailureWritesNothing(t *testing.T) {
 	source := faviconTestPNG(t, 151, 152, color.NRGBA{R: 200, A: 255})
 	fileID := seedFaviconSourceBytes(t, db, "image/png", source)
 	store := newFaviconS3Fixture(t, fileID, "png", source, 0)
-	svc := &FileService{
+	svc := &Service{
 		db:               db,
 		s3Client:         store.client,
 		s3Bucket:         "media-bucket",
@@ -313,7 +313,7 @@ func TestGenerateFaviconBundleStoresCompleteSetBeforeSuccess(t *testing.T) {
 	source := faviconTestPNG(t, 151, 152, color.NRGBA{R: 200, A: 255})
 	fileID := seedFaviconSourceBytes(t, db, "image/png", source)
 	store := newFaviconS3Fixture(t, fileID, "png", source, 0)
-	svc := &FileService{
+	svc := &Service{
 		db:               db,
 		s3Client:         store.client,
 		s3Bucket:         "media-bucket",
@@ -345,7 +345,7 @@ func TestGenerateFaviconBundleConcurrentCallsConvergeOnOneSet(t *testing.T) {
 	store := newFaviconS3Fixture(t, fileID, "png", source, 0)
 	entered := make(chan struct{}, 2)
 	release := make(chan struct{})
-	svc := &FileService{
+	svc := &Service{
 		db:        db,
 		s3Client:  store.client,
 		s3Bucket:  "media-bucket",
@@ -391,7 +391,7 @@ func TestGenerateFaviconBundleCommitAckAmbiguityPreservesTrackedAssetsAndSource(
 	source := faviconTestPNG(t, 151, 152, color.NRGBA{R: 200, A: 255})
 	fileID := seedFaviconSourceBytes(t, db, "image/png", source)
 	store := newFaviconS3Fixture(t, fileID, "png", source, 0)
-	svc := &FileService{
+	svc := &Service{
 		db:                        db,
 		s3Client:                  store.client,
 		s3Bucket:                  "media-bucket",
@@ -425,7 +425,7 @@ func TestGenerateFaviconBundleCommitAckAmbiguityReturnsPersistedWinner(t *testin
 	source := faviconTestPNG(t, 151, 152, color.NRGBA{R: 200, A: 255})
 	fileID := seedFaviconSourceBytes(t, db, "image/png", source)
 	store := newFaviconS3Fixture(t, fileID, "png", source, 0)
-	svc := &FileService{
+	svc := &Service{
 		db:                     db,
 		s3Client:               store.client,
 		s3Bucket:               "media-bucket",
@@ -444,7 +444,7 @@ func TestGenerateFaviconBundleWholeDeadline(t *testing.T) {
 	source := faviconTestPNG(t, 16, 16, color.NRGBA{R: 200, A: 255})
 	fileID := seedFaviconSourceBytes(t, db, "image/png", source)
 	store := newFaviconS3Fixture(t, fileID, "png", source, 0)
-	svc := &FileService{
+	svc := &Service{
 		db:                       db,
 		s3Client:                 store.client,
 		s3Bucket:                 "media-bucket",
@@ -464,7 +464,7 @@ func TestGenerateFaviconBundlePublishesVerifiedSVGSourceRef(t *testing.T) {
 	source := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="151" height="152"><rect width="151" height="152" fill="red"/></svg>`)
 	fileID := seedFaviconSourceBytes(t, db, "image/svg+xml", source)
 	store := newFaviconS3Fixture(t, fileID, "svg", source, 0)
-	svc := &FileService{
+	svc := &Service{
 		db:               db,
 		s3Client:         store.client,
 		s3Bucket:         "media-bucket",
@@ -485,7 +485,7 @@ func TestGenerateFaviconBundleRejectsUnsafeSVGBeforePublicStorage(t *testing.T) 
 	source := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><style>.x{fill:red}</style><rect class="x"/></svg>`)
 	fileID := seedFaviconSourceBytes(t, db, "image/svg+xml", source)
 	store := newFaviconS3Fixture(t, fileID, "svg", source, 0)
-	svc := &FileService{
+	svc := &Service{
 		db: db, s3Client: store.client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com",
 		faviconProcessor: staticFaviconProcessor{outputs: faviconTestGeneratedOutputs(t)},
 	}

@@ -13,6 +13,7 @@ import (
 
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
@@ -227,19 +228,33 @@ func (noopPageTranscoderPublisher) PublishWaveformCancel(context.Context, *manag
 	return nil
 }
 
-func newPageIntegrationFiles(db *gorm.DB, spiceDB *auth.SpiceDBClient) *filemedia.FileService {
-	return filemedia.NewFileService(
-		db,
-		s3.New(s3.Options{Region: "us-east-1"}),
-		noopAsyncPublisher{},
-		"integration",
-		"https://cdn.example.com",
-		"https://media.example.com",
-		"integration-secret",
-		noopPageTranscoderPublisher{},
-		spiceDB,
-		filemedia.WithPagePolicyAccess(pageadapter.NewPolicyAccess(NewPolicyAuthority(spiceDB))),
-	)
+func newPageIntegrationFiles(db *gorm.DB, spiceDB *auth.SpiceDBClient) *filemedia.Service {
+	files, err := filemedia.NewService(filemedia.Deps{
+		DB:                     db,
+		S3:                     s3.New(s3.Options{Region: "us-east-1"}),
+		AsyncPublisher:         noopAsyncPublisher{},
+		S3Bucket:               "integration",
+		CDNDomain:              "https://cdn.example.com",
+		MediaDomain:            "https://media.example.com",
+		MediaSecret:            "integration-secret",
+		Transcoder:             noopPageTranscoderPublisher{},
+		SpiceDB:                spiceDB,
+		Audit:                  &audittest.Recorder{},
+		PagePolicyAccess:       pageadapter.NewPolicyAccess(NewPolicyAuthority(spiceDB)),
+		LegalRoutes:            pageUnusedLegalRoutes{},
+		PostAccess:             pageUnusedPostAccess{},
+		WorkAttachment:         pageUnusedWorkAttachment{},
+		WorkPolicyAccess:       pageUnusedWorkPolicyAccess{},
+		ProgramEventAttachment: pageUnusedProgramEventAttachment{},
+		TrackAttachment:        pageUnusedTrackAttachment{},
+		ReleasePolicyAccess:    pageUnusedReleasePolicyAccess{},
+		AudienceAccess:         pageUnusedAudienceAccess{},
+		MemberSummaries:        pageUnusedMemberSummaries{},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return files
 }
 
 type recordingArtistFileDeleter struct{ deletedIDs []string }
@@ -373,3 +388,16 @@ func (publisher noopAsyncPublisher) NotifyProtobufWithExecutor(
 ) error {
 	return publisher.NotifyProtobuf(ctx, signal, message)
 }
+
+// The ports this test does not reach panic if called.
+type pageUnusedLegalRoutes struct{ filemedia.LegalRouteIdentity }
+type pageUnusedPostAccess struct{ filemedia.PostAccess }
+type pageUnusedWorkAttachment struct{ filemedia.WorkAttachment }
+type pageUnusedWorkPolicyAccess struct{ filemedia.WorkPolicyAccess }
+type pageUnusedProgramEventAttachment struct {
+	filemedia.ProgramEventAttachment
+}
+type pageUnusedTrackAttachment struct{ filemedia.TrackAttachment }
+type pageUnusedReleasePolicyAccess struct{ filemedia.ReleasePolicyAccess }
+type pageUnusedAudienceAccess struct{ filemedia.AudienceAccess }
+type pageUnusedMemberSummaries struct{ filemedia.MemberSummaries }

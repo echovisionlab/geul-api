@@ -41,7 +41,7 @@ type scopedMediaDerivative struct {
 	MediaGenerationID *string `gorm:"column:media_generation_id"`
 }
 
-func (s *FileService) buildScopedMediaURLsWithDB(
+func (s *Service) buildScopedMediaURLsWithDB(
 	ctx context.Context,
 	db *gorm.DB,
 	accessByFileID map[string]resolvedMediaAccess,
@@ -144,7 +144,7 @@ func (s *FileService) buildScopedMediaURLsWithDB(
 // after the owning public domain has authorized the exact featured-image
 // binding. Missing or failed projections remain unavailable; this path never
 // signs the private original File.
-func (s *FileService) ResolvePublicDisplayMedia(
+func (s *Service) ResolvePublicDisplayMedia(
 	ctx context.Context,
 	fileIDs []string,
 ) (map[string]*commonv1.MediaDelivery, error) {

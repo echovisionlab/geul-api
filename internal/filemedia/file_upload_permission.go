@@ -150,7 +150,7 @@ func uploadPermissionPartError(err error) error {
 	return err
 }
 
-func (s *FileService) resolvePartUploadPermissionTarget(
+func (s *Service) resolvePartUploadPermissionTarget(
 	ctx context.Context,
 	uploadType managev1.UploadType,
 	session model.UploadSession,
@@ -180,7 +180,7 @@ func (s *FileService) resolvePartUploadPermissionTarget(
 	return target, releaseID, nil
 }
 
-func (s *FileService) validatePartUploadTarget(
+func (s *Service) validatePartUploadTarget(
 	ctx context.Context,
 	uploadType managev1.UploadType,
 	target uploadPermissionTarget,
@@ -195,16 +195,13 @@ func (s *FileService) validatePartUploadTarget(
 		}
 	}
 	if target.resourceType == "work" {
-		attachment, err := requireWorkAttachment(s.workAttachment)
-		if err != nil {
-			return err
-		}
+		attachment := s.workAttachment
 		return attachment.RequireExists(ctx, entityID)
 	}
 	return nil
 }
 
-func (s *FileService) checkMemberAuthorityUploadTarget(
+func (s *Service) checkMemberAuthorityUploadTarget(
 	ctx context.Context,
 	target uploadPermissionTarget,
 	entityID string,
@@ -216,24 +213,18 @@ func (s *FileService) checkMemberAuthorityUploadTarget(
 	return false, nil
 }
 
-func (s *FileService) checkRoleAndSpiceDBUploadPermission(
+func (s *Service) checkRoleAndSpiceDBUploadPermission(
 	ctx context.Context,
 	target uploadPermissionTarget,
 	entityID string,
 	userID string,
 ) error {
 	if target.resourceType == "post" {
-		access, err := requirePostAccess(s.postAccess)
-		if err != nil {
-			return err
-		}
+		access := s.postAccess
 		return access.RequireEdit(ctx, entityID)
 	}
 	if target.resourceType == "program_event" {
-		access, err := requireProgramEventAttachment(s.programEventAttachment)
-		if err != nil {
-			return err
-		}
+		access := s.programEventAttachment
 		return access.RequireEdit(ctx, s.spiceDB, entityID)
 	}
 	can, err := policyv1.File.ManageLibrary()
@@ -262,7 +253,7 @@ func (s *FileService) checkRoleAndSpiceDBUploadPermission(
 	return s.checkSpiceDBEntityUploadPermission(ctx, target, entityID)
 }
 
-func (s *FileService) requireUploadRole(
+func (s *Service) requireUploadRole(
 	ctx context.Context,
 	target uploadPermissionTarget,
 ) error {
@@ -283,7 +274,7 @@ func (s *FileService) requireUploadRole(
 	return nil
 }
 
-func (s *FileService) checkSpiceDBEntityUploadPermission(
+func (s *Service) checkSpiceDBEntityUploadPermission(
 	ctx context.Context,
 	target uploadPermissionTarget,
 	entityID string,

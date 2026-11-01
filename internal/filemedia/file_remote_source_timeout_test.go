@@ -14,7 +14,7 @@ import (
 )
 
 func TestBrowserUploadSourceClientTimeouts(t *testing.T) {
-	service := &FileService{}
+	service := &Service{}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	client := service.newBrowserUploadSourceClient(ctx, cancel, browserUploadSourceIdleTimeout)

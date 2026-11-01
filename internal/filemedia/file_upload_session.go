@@ -23,7 +23,7 @@ func newStorageCompensationContext(ctx context.Context) (context.Context, contex
 	return context.WithTimeout(context.WithoutCancel(ctx), storageCompensationTimeout)
 }
 
-func (s *FileService) recordInterruptedMultipartUpload(
+func (s *Service) recordInterruptedMultipartUpload(
 	ctx context.Context,
 	session model.UploadSession,
 	uploadID string,
@@ -89,7 +89,7 @@ func uploadSessionEntityTypeToEnum(entityType *string) managev1.TranscodeEntityT
 	return managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED
 }
 
-func (s *FileService) nextUploadSessionIngestSequence(ctx context.Context, uploadID string) (int64, error) {
+func (s *Service) nextUploadSessionIngestSequence(ctx context.Context, uploadID string) (int64, error) {
 	var sequence int64
 	if err := s.db.WithContext(ctx).
 		Raw(
@@ -106,7 +106,7 @@ func (s *FileService) nextUploadSessionIngestSequence(ctx context.Context, uploa
 	return sequence, nil
 }
 
-func (s *FileService) bindUploadSessionIngestEmitter(emitter *fileIngestEventEmitter, session model.UploadSession) error {
+func (s *Service) bindUploadSessionIngestEmitter(emitter *fileIngestEventEmitter, session model.UploadSession) error {
 	if emitter == nil {
 		return nil
 	}
@@ -159,7 +159,7 @@ func uploadPartWritableSessionStatuses() []model.UploadSessionStatus {
 	}
 }
 
-func (s *FileService) claimUploadPartActivity(
+func (s *Service) claimUploadPartActivity(
 	ctx context.Context,
 	uploadID string,
 	fileID string,
@@ -183,7 +183,7 @@ func (s *FileService) claimUploadPartActivity(
 	return result.RowsAffected == 1, nil
 }
 
-func (s *FileService) recordRetryableMultipartPartFailure(
+func (s *Service) recordRetryableMultipartPartFailure(
 	ctx context.Context,
 	session model.UploadSession,
 	now time.Time,
@@ -202,7 +202,7 @@ func (s *FileService) recordRetryableMultipartPartFailure(
 		}).Error
 }
 
-func (s *FileService) claimMultipartCompletion(
+func (s *Service) claimMultipartCompletion(
 	ctx context.Context,
 	session model.UploadSession,
 	now time.Time,
@@ -312,7 +312,7 @@ func multipartInitiateResponseFromSession(
 	}
 }
 
-func (s *FileService) loadUploadPartInfos(ctx context.Context, uploadID string) ([]*managev1.UploadPartInfo, error) {
+func (s *Service) loadUploadPartInfos(ctx context.Context, uploadID string) ([]*managev1.UploadPartInfo, error) {
 	return loadUploadPartInfosWithDB(ctx, s.db, uploadID)
 }
 

@@ -12,7 +12,7 @@ import (
 )
 
 func TestUpdateFileDownloadPolicyRequiresObservedPolicy(t *testing.T) {
-	_, err := (&FileService{}).UpdateFileDownloadPolicy(context.Background(), connect.NewRequest(
+	_, err := NewConnectHandler((withTestMutations(&Service{}))).UpdateFileDownloadPolicy(context.Background(), connect.NewRequest(
 		&managev1.UpdateFileDownloadPolicyRequest{
 			EntityType:     managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
 			EntityId:       uuid.NewString(),

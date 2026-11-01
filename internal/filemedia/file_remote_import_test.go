@@ -81,7 +81,7 @@ func TestRemoteImportGeneralCorrelationIsDurableAndMemberScoped(t *testing.T) {
 }
 
 func TestRemoteFileImportRejectsEntityKindsAndUnauthenticatedCaller(t *testing.T) {
-	service := &FileService{}
+	service := &Service{}
 	for _, kind := range []managev1.UploadType{managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO, managev1.UploadType_UPLOAD_TYPE_RELEASE_ARTWORK, managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE} {
 		response, err := service.ImportRemoteFile(t.Context(), RemoteFileImportInput{UploadType: kind, SourceURL: "https://example.com/attachment", CorrelationID: uuid.NewString()})
 		if response != nil || connect.CodeOf(err) != connect.CodeInvalidArgument {
@@ -125,7 +125,7 @@ func TestRemoteImportMalformedRedirectDoesNotExposeSignedLocation(t *testing.T) 
 		t.Fatal(err)
 	}
 	transport := server.Client().Transport.(*http.Transport)
-	service := &FileService{
+	service := &Service{
 		remoteImportResolver: &remoteImportTestResolver{ips: []net.IP{net.ParseIP("8.8.8.8")}},
 		remoteImportDialer: func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, network, parsedServer.Host)

@@ -396,7 +396,7 @@ func TestResolveAuthorizedPostFeaturedImageSignsBeforeSlotOrFileMutationIntegrat
 
 type scopedFeaturedFixture struct {
 	db                *gorm.DB
-	service           *FileService
+	service           *Service
 	ctx               context.Context
 	ownerID           string
 	fileID            string
@@ -409,7 +409,7 @@ func seedScopedPostFeaturedFixture(t *testing.T, db *gorm.DB) scopedFeaturedFixt
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Scoped featured Post author")
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	ctx := auth.WithUser(t.Context(), &auth.UserInfo{
+	ctx := auditedUserContext(t.Context(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	})
@@ -428,17 +428,17 @@ func seedScopedPostFeaturedFixture(t *testing.T, db *gorm.DB) scopedFeaturedFixt
 	).Error)
 	seedFileDeliveryContentPolicy(t, spiceDB, "post", postID)
 	seedFileDeliveryPostAuthority(t, spiceDB, postID, identityID)
-	service := &FileService{
+	service := &Service{
 		db: db, spiceDB: spiceDB, mediaDomain: "https://media.example.test", mediaSecret: "scoped-featured-secret",
 	}
-	WithPostAccess(newIntegrationPostAccess(db, spiceDB))(service)
+	service.postAccess = newIntegrationPostAccess(db, spiceDB)
 	return scopedFeaturedFixture{
 		db: db, service: service, ctx: ctx, ownerID: postID, fileID: fileID, replacementFileID: replacementFileID,
 	}
 }
 
 type scopedBlockFixture struct {
-	service           *FileService
+	service           *Service
 	principal         *auth.UserInfo
 	ownerID           string
 	documentID        string
@@ -495,7 +495,7 @@ func seedScopedContentBlockFixture(t *testing.T, db *gorm.DB, owner scopedConten
 		blockID, fileID,
 	).Error)
 	return scopedBlockFixture{
-		service: &FileService{
+		service: &Service{
 			db: db, mediaDomain: "https://media.example.test", mediaSecret: "scoped-block-secret",
 		},
 		principal: &auth.UserInfo{

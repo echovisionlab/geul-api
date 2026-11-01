@@ -113,7 +113,7 @@ func withRemoteImportAdvisoryLock(
 	)
 }
 
-func (s *FileService) restoreCompletedRemoteImport(
+func (s *Service) restoreCompletedRemoteImport(
 	ctx context.Context,
 	opts remoteFileImportOptions,
 	entityID string,
@@ -138,7 +138,7 @@ func (s *FileService) restoreCompletedRemoteImport(
 	return result, true, err
 }
 
-func (s *FileService) loadCompletedRemoteImportFile(
+func (s *Service) loadCompletedRemoteImportFile(
 	ctx context.Context,
 	fileID string,
 ) (model.File, bool, error) {
@@ -176,7 +176,7 @@ func validateCompletedRemoteImportFile(
 	return nil
 }
 
-func (s *FileService) validateCompletedRemoteImportBinding(
+func (s *Service) validateCompletedRemoteImportBinding(
 	ctx context.Context,
 	fileID string,
 	entityID string,
@@ -199,7 +199,7 @@ func (s *FileService) validateCompletedRemoteImportBinding(
 	return nil
 }
 
-func (s *FileService) verifyCompletedRemoteImportObject(
+func (s *Service) verifyCompletedRemoteImportObject(
 	ctx context.Context,
 	file model.File,
 	uploadType managev1.UploadType,
@@ -220,7 +220,7 @@ func (s *FileService) verifyCompletedRemoteImportObject(
 	return nil
 }
 
-func (s *FileService) buildCompletedRemoteImportResult(
+func (s *Service) buildCompletedRemoteImportResult(
 	file model.File,
 	slotID string,
 	identity remoteImportOperationIdentity,
@@ -266,7 +266,7 @@ func (s *FileService) buildCompletedRemoteImportResult(
 	}, nil
 }
 
-func (s *FileService) createOrRestoreVerifiedRemoteImportRecord(
+func (s *Service) createOrRestoreVerifiedRemoteImportRecord(
 	ctx context.Context,
 	file fileIngestRecord,
 	entityID string,
@@ -315,7 +315,7 @@ func (s *FileService) createOrRestoreVerifiedRemoteImportRecord(
 	return createErr
 }
 
-func (s *FileService) finishConfirmedRemoteImport(
+func (s *Service) finishConfirmedRemoteImport(
 	ctx context.Context,
 	opts remoteFileImportOptions,
 	result *remoteFileImportResult,

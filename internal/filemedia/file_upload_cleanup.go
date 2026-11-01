@@ -23,7 +23,7 @@ import (
 // multipart upload session before the FileMedia cleanup consumer may abort it.
 const IncompleteUploadRetention = 7 * 24 * time.Hour
 
-func (s *FileService) cleanupSupersededUploadSessions(
+func (s *Service) cleanupSupersededUploadSessions(
 	ctx context.Context,
 	sessions []model.UploadSession,
 	reason string,
@@ -45,7 +45,7 @@ func (s *FileService) cleanupSupersededUploadSessions(
 	return nil
 }
 
-func (s *FileService) abortUploadSession(
+func (s *Service) abortUploadSession(
 	ctx context.Context,
 	session model.UploadSession,
 	reason string,
@@ -108,7 +108,7 @@ func (s *FileService) abortUploadSession(
 
 // CleanupTrackUploadSessions removes only abortable Track audio sessions. A
 // finalizing session is completion authority and blocks Track deletion.
-func (s *FileService) CleanupTrackUploadSessions(
+func (s *Service) CleanupTrackUploadSessions(
 	ctx context.Context,
 	trackID string,
 	reason string,
@@ -125,13 +125,10 @@ func (s *FileService) CleanupTrackUploadSessions(
 	return s.cleanupSupersededUploadSessions(ctx, sessions, reason)
 }
 
-func (s *FileService) claimTrackUploadSessionsForCleanup(ctx context.Context, trackID string) ([]model.UploadSession, error) {
+func (s *Service) claimTrackUploadSessionsForCleanup(ctx context.Context, trackID string) ([]model.UploadSession, error) {
 	var sessions []model.UploadSession
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		trackAttachment, dependencyErr := requireTrackAttachment(s.trackAttachment)
-		if dependencyErr != nil {
-			return dependencyErr
-		}
+		trackAttachment := s.trackAttachment
 		if err := trackAttachment.LockExistsWithDB(ctx, tx, trackID); err != nil {
 			return err
 		}
@@ -174,7 +171,7 @@ func (s *FileService) claimTrackUploadSessionsForCleanup(ctx context.Context, tr
 
 // RequireNoTrackUploadSessionsWithDB enforces the File-owned upload-session
 // invariant inside the Release caller's Track-deletion transaction.
-func (s *FileService) RequireNoTrackUploadSessionsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
+func (s *Service) RequireNoTrackUploadSessionsWithDB(ctx context.Context, tx *gorm.DB, trackID string) error {
 	var count int64
 	if err := tx.WithContext(ctx).Model(&model.UploadSession{}).
 		Where("upload_type = ? AND entity_id = ?", managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String(), trackID).
@@ -187,7 +184,7 @@ func (s *FileService) RequireNoTrackUploadSessionsWithDB(ctx context.Context, tx
 	return nil
 }
 
-func (s *FileService) publishTranscodeCancelIfSupported(
+func (s *Service) publishTranscodeCancelIfSupported(
 	ctx context.Context,
 	fileID string,
 	entityType managev1.TranscodeEntityType,

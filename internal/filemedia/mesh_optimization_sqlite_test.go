@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -39,7 +38,7 @@ func TestMeshOptimizationServiceRequiresSourceFileLinkedToEntity(t *testing.T) {
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	attachInternalResourcePolicy(t, stack.SpiceDBClient, pageID)
 	service := NewMeshOptimizationService(db, publisher, nil, stack.SpiceDBClient)
-	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), admin.AuthUserInfo())
 
 	result, err := service.GenerateCandidate(ctx, MeshOptimizationGenerateInput{
 		SourceFileID:       linkedSourceID,
@@ -116,7 +115,7 @@ func TestMeshOptimizationProfilesUseIndependentPipelinesAndCaches(t *testing.T) 
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	attachInternalResourcePolicy(t, stack.SpiceDBClient, pageID)
 	service := NewMeshOptimizationService(db, publisher, nil, stack.SpiceDBClient)
-	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), admin.AuthUserInfo())
 
 	baseInput := MeshOptimizationGenerateInput{
 		SourceFileID:       sourceID,
@@ -197,10 +196,10 @@ func TestFileServiceBatchClearMeshOptimizationCandidatesScopesByProfile(t *testi
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	attachInternalResourcePolicy(t, stack.SpiceDBClient, pageID)
-	service := &FileService{db: db, spiceDB: stack.SpiceDBClient}
+	service := &Service{db: db, spiceDB: stack.SpiceDBClient}
 
-	response, err := service.ClearMeshOptimizationCandidates(
-		auth.WithUser(context.Background(), admin.AuthUserInfo()),
+	response, err := NewConnectHandler(service).ClearMeshOptimizationCandidates(
+		auditedUserContext(context.Background(), admin.AuthUserInfo()),
 		connect.NewRequest(&managev1.ClearMeshOptimizationCandidatesRequest{
 			SourceFileId: sourceID,
 			EntityType:   managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE,
@@ -238,7 +237,7 @@ func TestMeshOptimizationUseCandidateSelectsDerivativeWithoutChangingDocumentAtt
 	attachInternalResourcePolicy(t, stack.SpiceDBClient, pageID)
 	service := NewMeshOptimizationService(db, nil, nil, stack.SpiceDBClient)
 
-	selected, err := service.UseCandidate(auth.WithUser(context.Background(), admin.AuthUserInfo()), candidate.ID)
+	selected, err := service.UseCandidate(auditedUserContext(context.Background(), admin.AuthUserInfo()), candidate.ID)
 	require.NoError(t, err)
 	require.NotNil(t, selected.SelectedAt)
 

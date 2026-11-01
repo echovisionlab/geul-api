@@ -45,59 +45,68 @@ func (runtime *fakeMCPFileRuntime) ImportRemoteFile(_ context.Context, input fil
 	return runtime.downloadResult, runtime.downloadError
 }
 
-func (runtime *fakeMCPFileRuntime) InitiateMultipartUpload(
-	_ context.Context,
-	request *connect.Request[managev1.InitiateMultipartUploadRequest],
-) (*connect.Response[managev1.InitiateMultipartUploadResponse], error) {
-	runtime.initiateRequest = request.Msg
+// The fake records each command as the request a Connect client would have
+// sent, so the assertions read the native field names.
+func (runtime *fakeMCPFileRuntime) InitiateMultipartUpload(_ context.Context, command filemediadomain.InitiateMultipartUploadCommand) (*managev1.InitiateMultipartUploadResponse, error) {
+	runtime.initiateRequest = &managev1.InitiateMultipartUploadRequest{
+		UploadType: command.UploadType, EntityId: command.EntityID, FileSize: command.FileSize,
+		MimeType: command.MimeType, EntityType: command.EntityType, FileName: command.FileName,
+		FileLastModified: command.FileLastModified, SlotId: command.SlotID, ExpectedCurrentFileId: command.ExpectedCurrentFileID,
+	}
 	if runtime.initiateError != nil {
 		return nil, runtime.initiateError
 	}
-	return connect.NewResponse(runtime.initiateResult), nil
+	return runtime.initiateResult, nil
 }
 
-func (runtime *fakeMCPFileRuntime) FindMultipartUploadCandidate(
-	_ context.Context,
-	request *connect.Request[managev1.FindMultipartUploadCandidateRequest],
-) (*connect.Response[managev1.FindMultipartUploadCandidateResponse], error) {
-	runtime.findRequest = request.Msg
+func (runtime *fakeMCPFileRuntime) FindMultipartUploadCandidate(_ context.Context, query filemediadomain.FindMultipartUploadCandidateQuery) (*managev1.FindMultipartUploadCandidateResponse, error) {
+	runtime.findRequest = &managev1.FindMultipartUploadCandidateRequest{
+		UploadType: query.UploadType, EntityId: query.EntityID, FileId: query.FileID, FileName: query.FileName,
+		FileSize: query.FileSize, MimeType: query.MimeType, FileLastModified: query.FileLastModified,
+		EntityType: query.EntityType, SlotId: query.SlotID, UploadId: query.UploadID, ExpectedCurrentFileId: query.ExpectedCurrentFileID,
+	}
 	if runtime.findError != nil {
 		return nil, runtime.findError
 	}
-	return connect.NewResponse(runtime.findResult), nil
+	return runtime.findResult, nil
 }
 
-func (runtime *fakeMCPFileRuntime) CompleteMultipartUpload(
-	_ context.Context,
-	request *connect.Request[managev1.CompleteMultipartUploadRequest],
-) (*connect.Response[managev1.CompleteMultipartUploadResponse], error) {
-	runtime.completeRequest = request.Msg
+func (runtime *fakeMCPFileRuntime) CompleteMultipartUpload(_ context.Context, command filemediadomain.CompleteMultipartUploadCommand) (*managev1.CompleteMultipartUploadResponse, error) {
+	runtime.completeRequest = &managev1.CompleteMultipartUploadRequest{
+		FileId: command.FileID, UploadId: command.UploadID,
+		CorrelationId: optionalFakeString(command.CorrelationID), ClientMediaBundleId: optionalFakeString(command.ClientMediaBundleID),
+	}
 	if runtime.completeError != nil {
 		return nil, runtime.completeError
 	}
-	return connect.NewResponse(runtime.completeResult), nil
+	return runtime.completeResult, nil
 }
 
-func (runtime *fakeMCPFileRuntime) DownloadFromUrl(
-	_ context.Context,
-	request *connect.Request[managev1.DownloadFromUrlRequest],
-) (*connect.Response[managev1.DownloadFromUrlResponse], error) {
-	runtime.downloadRequest = request.Msg
+func (runtime *fakeMCPFileRuntime) DownloadFromURL(_ context.Context, command filemediadomain.DownloadFromURLCommand) (*managev1.DownloadFromUrlResponse, error) {
+	runtime.downloadRequest = &managev1.DownloadFromUrlRequest{
+		UploadType: command.UploadType, EntityId: command.EntityID, Url: command.URL, EntityType: command.EntityType,
+		CorrelationId: optionalFakeString(command.CorrelationID), SlotId: optionalFakeString(command.SlotID),
+		ExpectedCurrentFileId: command.ExpectedCurrentFileID,
+	}
 	if runtime.downloadError != nil {
 		return nil, runtime.downloadError
 	}
-	return connect.NewResponse(runtime.downloadResult), nil
+	return runtime.downloadResult, nil
 }
 
-func (runtime *fakeMCPFileRuntime) GetMediaDelivery(
-	_ context.Context,
-	request *connect.Request[managev1.GetMediaDeliveryRequest],
-) (*connect.Response[managev1.GetMediaDeliveryResponse], error) {
-	runtime.deliveryRequest = request.Msg
+func (runtime *fakeMCPFileRuntime) GetMediaDelivery(_ context.Context, query filemediadomain.GetMediaDeliveryQuery) (*managev1.GetMediaDeliveryResponse, error) {
+	runtime.deliveryRequest = &managev1.GetMediaDeliveryRequest{FileId: query.FileID}
 	if runtime.deliveryError != nil {
 		return nil, runtime.deliveryError
 	}
-	return connect.NewResponse(runtime.deliveryResult), nil
+	return runtime.deliveryResult, nil
+}
+
+func optionalFakeString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func TestNewMCPFileFacadeRejectsMissingRuntime(t *testing.T) {

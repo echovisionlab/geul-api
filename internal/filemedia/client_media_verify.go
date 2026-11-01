@@ -41,7 +41,7 @@ func (v *clientTSValidator) Write(p []byte) (int, error) {
 }
 
 // verifyClientMediaObject bounds every read and derives integrity from stored bytes.
-func (s *FileService) verifyClientMediaObject(ctx context.Context, key string, artifact clientMediaArtifact) ([]byte, error) {
+func (s *Service) verifyClientMediaObject(ctx context.Context, key string, artifact clientMediaArtifact) ([]byte, error) {
 	object, err := s.s3Client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.s3Bucket), Key: aws.String(key)})
 	if err != nil {
 		if isMissingStoredObjectError(err) {
@@ -121,7 +121,7 @@ func validateClientWaveform(data []byte) error {
 	}
 	return nil
 }
-func (s *FileService) verifyClientMediaBundle(ctx context.Context, session model.UploadSession) (clientMediaPlan, error) {
+func (s *Service) verifyClientMediaBundle(ctx context.Context, session model.UploadSession) (clientMediaPlan, error) {
 	plan, err := decodeClientMediaPlan(session)
 	if err != nil {
 		return plan, err
@@ -144,7 +144,7 @@ func (s *FileService) verifyClientMediaBundle(ctx context.Context, session model
 
 // A durable READY receipt skips staging reads on completion recovery. Otherwise
 // verify the sealed plan under the caller's advisory lock before claiming completion.
-func (s *FileService) loadClientMediaPlan(ctx context.Context, session model.UploadSession, memberID string) (*clientMediaPlan, error) {
+func (s *Service) loadClientMediaPlan(ctx context.Context, session model.UploadSession, memberID string) (*clientMediaPlan, error) {
 	if session.ClientMediaBundleID == nil {
 		return nil, nil
 	}
@@ -172,7 +172,7 @@ func (s *FileService) loadClientMediaPlan(ctx context.Context, session model.Upl
 	return &verified, nil
 }
 
-func (s *FileService) registerClientMediaBundle(ctx context.Context, completion *multipartCompletion) error {
+func (s *Service) registerClientMediaBundle(ctx context.Context, completion *multipartCompletion) error {
 	return s.registerVerifiedClientMediaBundle(ctx, completion, func(ctx context.Context, tx *gorm.DB) error {
 		return requireFreshFileIngestAuthority(ctx, tx, s, completion.uploadType, uploadSessionEntityTypeToEnum(completion.session.EntityType), completion.session.EntityID)
 	})
@@ -197,7 +197,7 @@ func clientMediaFileReady(ctx context.Context, db *gorm.DB, file model.File) (bo
 		Count(&count).Error
 	return count == int64(len(required)), err
 }
-func (s *FileService) publishClientMediaReady(ctx context.Context, completion *multipartCompletion) error {
+func (s *Service) publishClientMediaReady(ctx context.Context, completion *multipartCompletion) error {
 	if completion.session.ClientMediaBundleID == nil {
 		return nil
 	}
@@ -237,7 +237,7 @@ func (s *FileService) publishClientMediaReady(ctx context.Context, completion *m
 	event := &managev1.MediaProcessingLifecycleEvent{CorrelationId: completion.correlationID, EntityType: entityType, EntityId: entityID, FileId: fileID, Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY, Outputs: outputs, TimestampMs: time.Now().UnixMilli(), SlotId: completion.session.SlotID, AttemptId: completion.session.AttemptID, TrackId: trackID, ReleaseId: releaseID}
 	return publishSignalProto(ctx, s.asyncPublisher, eventpkg.SignalMediaProcessingLifecycle, event)
 }
-func (s *FileService) cleanupClientMediaStaging(ctx context.Context, session model.UploadSession) error {
+func (s *Service) cleanupClientMediaStaging(ctx context.Context, session model.UploadSession) error {
 	if session.ClientMediaBundleID == nil {
 		return nil
 	}
@@ -270,7 +270,7 @@ func CleanupClientMediaStaging(ctx context.Context, client *s3.Client, bucket, b
 	return nil
 }
 
-func (s *FileService) clientMediaRegistrationReady(ctx context.Context, session model.UploadSession) (bool, error) {
+func (s *Service) clientMediaRegistrationReady(ctx context.Context, session model.UploadSession) (bool, error) {
 	var file model.File
 	err := s.db.WithContext(ctx).Where("id = ?", session.FileID).Take(&file).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -289,10 +289,10 @@ func (s *FileService) clientMediaRegistrationReady(ctx context.Context, session 
 }
 
 func clientMediaCompletionError(err error) error {
-	if connect.CodeOf(err) == connect.CodeUnavailable && strings.Contains(err.Error(), missingClientArtifactReason) {
+	if errs.CodeOf(err) == connect.CodeUnavailable && strings.Contains(err.Error(), missingClientArtifactReason) {
 		return err
 	}
-	if connect.CodeOf(err) == connect.CodePermissionDenied || connect.CodeOf(err) == connect.CodeUnauthenticated {
+	if errs.CodeOf(err) == connect.CodePermissionDenied || errs.CodeOf(err) == connect.CodeUnauthenticated {
 		return err
 	}
 	return errs.FailedPrecondition(err.Error())

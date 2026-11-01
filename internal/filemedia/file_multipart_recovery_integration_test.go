@@ -46,7 +46,7 @@ func TestMultipartMissingPartsRemainRetryableAndAbortableDirectIntegration(t *te
 	t.Parallel()
 	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	require.NotEmpty(t, body)
@@ -62,7 +62,7 @@ func TestMultipartMissingPartsRemainRetryableAndAbortableDirectIntegration(t *te
 	completionResults := make(chan completionResult, 2)
 	for attempt := 0; attempt < 2; attempt++ {
 		go func() {
-			response, completeErr := service.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+			response, completeErr := NewConnectHandler(service).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 				UploadId: retrySession.GetUploadId(),
 				FileId:   retrySession.GetFileId(),
 			}))
@@ -80,7 +80,7 @@ func TestMultipartMissingPartsRemainRetryableAndAbortableDirectIntegration(t *te
 	require.Zero(t, observer.count(), "invalid completion attempts must not reach object-store completion")
 
 	handleMultipartPartDirect(t, service, manager, retrySession.GetFileId(), retrySession.GetUploadId(), 1, body)
-	completed, err := service.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	completed, err := NewConnectHandler(service).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		UploadId: retrySession.GetUploadId(),
 		FileId:   retrySession.GetFileId(),
 	}))
@@ -91,13 +91,13 @@ func TestMultipartMissingPartsRemainRetryableAndAbortableDirectIntegration(t *te
 
 	abortSession := initiateMultipartRecoveryUpload(t, ctx, service, body)
 	setMultipartDetectedMime(t, stack, abortSession.GetUploadId(), "image/jpeg")
-	_, err = service.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	_, err = NewConnectHandler(service).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		UploadId: abortSession.GetUploadId(),
 		FileId:   abortSession.GetFileId(),
 	}))
 	require.Error(t, err)
 	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
-	aborted, err := service.AbortMultipartUpload(ctx, connect.NewRequest(&managev1.AbortMultipartUploadRequest{
+	aborted, err := NewConnectHandler(service).AbortMultipartUpload(ctx, connect.NewRequest(&managev1.AbortMultipartUploadRequest{
 		UploadId: abortSession.GetUploadId(),
 		FileId:   abortSession.GetFileId(),
 	}))
@@ -110,7 +110,7 @@ func TestMultipartPartReplacementRequiresFreshConfirmationDirectIntegration(t *t
 	t.Parallel()
 	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	baseS3 := runtimeS3Client(t, stack)
@@ -158,7 +158,7 @@ func TestMultipartPartReplacementRequiresFreshConfirmationDirectIntegration(t *t
 		Count(&confirmedDuringReplacement).Error)
 	require.Zero(t, confirmedDuringReplacement, "presign must fence the stale confirmed ETag before replacement")
 
-	_, err = baseService.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	_, err = NewConnectHandler(baseService).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		UploadId: session.UploadID,
 		FileId:   session.FileID,
 	}))
@@ -183,7 +183,7 @@ func TestMultipartPartReplacementRequiresFreshConfirmationDirectIntegration(t *t
 	require.NotEmpty(t, replacement.ETag)
 	require.NotEqual(t, originalPart.ETag, replacement.ETag)
 
-	completed, err := baseService.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	completed, err := NewConnectHandler(baseService).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		UploadId: session.UploadID,
 		FileId:   session.FileID,
 	}))
@@ -198,7 +198,7 @@ func TestMultipartCompletionUsesActualPartAfterConfirmedPresignIsReusedDirectInt
 	t.Parallel()
 	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	s3Client := runtimeS3Client(t, stack)
@@ -216,7 +216,7 @@ func TestMultipartCompletionUsesActualPartAfterConfirmedPresignIsReusedDirectInt
 	replacement[len(replacement)-1] ^= 0xff
 	putDirectMultipartPart(t, presignedURL, replacement)
 
-	completed, err := service.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	completed, err := NewConnectHandler(service).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		UploadId: initiated.GetUploadId(),
 		FileId:   initiated.GetFileId(),
 	}))
@@ -232,7 +232,7 @@ func TestMultipartCompletionRejectsBytesDifferentFromVerifiedPrefixDirectIntegra
 	t.Parallel()
 	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	verifiedBody, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	s3Client := runtimeS3Client(t, stack)
@@ -246,7 +246,7 @@ func TestMultipartCompletionRejectsBytesDifferentFromVerifiedPrefixDirectIntegra
 	putDirectMultipartPart(t, presignedURL, replacement)
 	confirmDirectMultipartPart(t, service, manager, initiated.GetFileId(), initiated.GetUploadId(), 1)
 
-	_, err = service.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	_, err = NewConnectHandler(service).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		UploadId: initiated.GetUploadId(),
 		FileId:   initiated.GetFileId(),
 	}))
@@ -264,7 +264,7 @@ func TestInterruptedMultipartResumeReusesConfirmedPartsAndCompletesDirectIntegra
 	t.Parallel()
 	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	fixtureBytes, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	firstPart := make([]byte, chunkSize)
@@ -275,7 +275,7 @@ func TestInterruptedMultipartResumeReusesConfirmedPartsAndCompletesDirectIntegra
 	baseS3 := runtimeS3Client(t, stack)
 	service := newEditorUploadSerializationFileService(stack, baseS3)
 	fileLastModified := time.Now().UnixMilli()
-	initiated, err := service.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+	initiated, err := NewConnectHandler(service).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType:       managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
 		FileName:         "multipart-resume.jpg",
 		FileSize:         fileSize,
@@ -305,7 +305,7 @@ func TestInterruptedMultipartResumeReusesConfirmedPartsAndCompletesDirectIntegra
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}).Error)
-	dbOnlyResumed, err := service.FindMultipartUploadCandidate(ctx, findCandidate())
+	dbOnlyResumed, err := NewConnectHandler(service).FindMultipartUploadCandidate(ctx, findCandidate())
 	require.NoError(t, err)
 	require.Equal(t, initiated.Msg.GetUploadId(), dbOnlyResumed.Msg.GetUploadId())
 	require.Equal(t, initiated.Msg.GetFileId(), dbOnlyResumed.Msg.GetFileId())
@@ -336,7 +336,7 @@ func TestInterruptedMultipartResumeReusesConfirmedPartsAndCompletesDirectIntegra
 	orphanedETag := strings.Trim(*orphaned.ETag, "\"")
 	require.NotEmpty(t, orphanedETag)
 
-	crashResumed, err := service.FindMultipartUploadCandidate(ctx, findCandidate())
+	crashResumed, err := NewConnectHandler(service).FindMultipartUploadCandidate(ctx, findCandidate())
 	require.NoError(t, err)
 	require.Equal(t, initiated.Msg.GetUploadId(), crashResumed.Msg.GetUploadId())
 	require.Equal(t, initiated.Msg.GetFileId(), crashResumed.Msg.GetFileId())
@@ -364,14 +364,14 @@ func TestInterruptedMultipartResumeReusesConfirmedPartsAndCompletesDirectIntegra
 		2,
 		secondPart,
 	)
-	reloaded, err := service.FindMultipartUploadCandidate(ctx, findCandidate())
+	reloaded, err := NewConnectHandler(service).FindMultipartUploadCandidate(ctx, findCandidate())
 	require.NoError(t, err)
 	require.Equal(t, []*managev1.UploadPartInfo{
 		{PartNumber: 1, Etag: orphanedETag},
 		{PartNumber: 2, Etag: second.ETag},
 	}, reloaded.Msg.GetUploadedParts())
 
-	completed, err := service.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	completed, err := NewConnectHandler(service).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		UploadId: initiated.Msg.GetUploadId(),
 		FileId:   initiated.Msg.GetFileId(),
 	}))
@@ -384,7 +384,7 @@ func TestMultipartResumeListPartsFailureDoesNotUseStaleDBCacheDirectIntegration(
 	t.Parallel()
 	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	baseS3 := runtimeS3Client(t, stack)
@@ -412,7 +412,7 @@ func TestMultipartResumeListPartsFailureDoesNotUseStaleDBCacheDirectIntegration(
 		base: http.DefaultTransport.(*http.Transport).Clone(),
 	}}
 	failingService := newEditorUploadSerializationFileService(stack, s3.New(options))
-	resumed, err := failingService.FindMultipartUploadCandidate(ctx, findCandidate())
+	resumed, err := NewConnectHandler(failingService).FindMultipartUploadCandidate(ctx, findCandidate())
 	require.Error(t, err)
 	require.Nil(t, resumed)
 	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
@@ -433,7 +433,7 @@ func TestMultipartInvalidCompletedObjectDeleteFailureRetainsCleanupAuthorityDire
 	t.Parallel()
 	stack := testutil.SetupDirectMediaRuntimeStack(t)
 	manager := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	baseS3 := runtimeS3Client(t, stack)
@@ -466,7 +466,7 @@ func TestMultipartInvalidCompletedObjectDeleteFailureRetainsCleanupAuthorityDire
 	})
 	require.NoError(t, err)
 
-	_, err = service.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	_, err = NewConnectHandler(service).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		UploadId: session.UploadID,
 		FileId:   session.FileID,
 	}))
@@ -477,7 +477,7 @@ func TestMultipartInvalidCompletedObjectDeleteFailureRetainsCleanupAuthorityDire
 	require.GreaterOrEqual(t, fault.failureCount(), 1)
 
 	fault.allowDeletes()
-	_, err = service.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	_, err = NewConnectHandler(service).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		UploadId: session.UploadID,
 		FileId:   session.FileID,
 	}))
@@ -489,11 +489,11 @@ func TestMultipartInvalidCompletedObjectDeleteFailureRetainsCleanupAuthorityDire
 func initiateMultipartRecoveryUpload(
 	t *testing.T,
 	ctx context.Context,
-	service *FileService,
+	service *Service,
 	body []byte,
 ) *managev1.InitiateMultipartUploadResponse {
 	t.Helper()
-	response, err := service.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+	response, err := NewConnectHandler(service).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
 		FileName:   "multipart-recovery.jpg",
 		FileSize:   int64(len(body)),
@@ -505,7 +505,7 @@ func initiateMultipartRecoveryUpload(
 
 func verifyDirectMultipartPrefix(
 	t *testing.T,
-	service *FileService,
+	service *Service,
 	user *testutil.OryUser,
 	fileID string,
 	uploadID string,
@@ -524,7 +524,7 @@ func verifyDirectMultipartPrefix(
 
 func presignDirectMultipartPart(
 	t *testing.T,
-	service *FileService,
+	service *Service,
 	user *testutil.OryUser,
 	fileID string,
 	uploadID string,
@@ -560,7 +560,7 @@ func putDirectMultipartPart(t *testing.T, presignedURL string, body []byte) {
 
 func confirmDirectMultipartPart(
 	t *testing.T,
-	service *FileService,
+	service *Service,
 	user *testutil.OryUser,
 	fileID string,
 	uploadID string,

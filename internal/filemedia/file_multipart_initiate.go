@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
@@ -34,34 +33,48 @@ type multipartUploadInitiation struct {
 	fileName           string
 }
 
-// InitiateMultipartUpload starts or resumes a multipart upload.
-func (s *FileService) InitiateMultipartUpload(
-	ctx context.Context,
-	req *connect.Request[managev1.InitiateMultipartUploadRequest],
-) (_ *connect.Response[managev1.InitiateMultipartUploadResponse], resultErr error) {
-	defer failurecause.AnnotatePrivate(&resultErr, req.Msg.GetFileName())
-
-	initiation, err := s.prepareMultipartUploadInitiation(ctx, req.Msg)
-	if err != nil {
-		return nil, err
-	}
-	response, handled, err := s.resumeOrReplaceMultipartUpload(ctx, req.Msg, initiation)
-	if err != nil {
-		return nil, err
-	}
-	if handled {
-		return connect.NewResponse(response), nil
-	}
-	response, err = s.createMultipartUploadSession(ctx, req.Msg, initiation)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(response), nil
+// InitiateMultipartUploadCommand starts the multipart upload of a File for
+// an upload type and its target entity.
+type InitiateMultipartUploadCommand struct {
+	UploadType            managev1.UploadType
+	EntityID              string
+	EntityType            *managev1.TranscodeEntityType
+	FileName              string
+	FileSize              int64
+	MimeType              string
+	FileLastModified      *int64
+	SlotID                *string
+	ExpectedCurrentFileID *string
 }
 
-func (s *FileService) prepareMultipartUploadInitiation(
+func (c InitiateMultipartUploadCommand) entityType() managev1.TranscodeEntityType {
+	if c.EntityType == nil {
+		return managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED
+	}
+	return *c.EntityType
+}
+
+// InitiateMultipartUpload starts or resumes a multipart upload.
+func (s *Service) InitiateMultipartUpload(
 	ctx context.Context,
-	request *managev1.InitiateMultipartUploadRequest,
+	command InitiateMultipartUploadCommand,
+) (_ *managev1.InitiateMultipartUploadResponse, resultErr error) {
+	defer failurecause.AnnotatePrivate(&resultErr, command.FileName)
+
+	initiation, err := s.prepareMultipartUploadInitiation(ctx, command)
+	if err != nil {
+		return nil, err
+	}
+	response, handled, err := s.resumeOrReplaceMultipartUpload(ctx, command, initiation)
+	if err != nil || handled {
+		return response, err
+	}
+	return s.createMultipartUploadSession(ctx, command, initiation)
+}
+
+func (s *Service) prepareMultipartUploadInitiation(
+	ctx context.Context,
+	request InitiateMultipartUploadCommand,
 ) (multipartUploadInitiation, error) {
 	config := s.getUploadConfig(request.UploadType)
 	if config == nil {
@@ -98,7 +111,7 @@ func (s *FileService) prepareMultipartUploadInitiation(
 
 func normalizeMultipartUploadTarget(
 	legalRoutes LegalRouteIdentity,
-	request *managev1.InitiateMultipartUploadRequest,
+	request InitiateMultipartUploadCommand,
 ) (multipartUploadInitiation, error) {
 	entityType := ""
 	var entityTypePtr *string
@@ -110,8 +123,8 @@ func normalizeMultipartUploadTarget(
 		uploadType:    request.UploadType,
 		entityType:    entityType,
 		entityTypePtr: entityTypePtr,
-		entityID:      strings.TrimSpace(request.EntityId),
-		slotID:        strings.TrimSpace(request.GetSlotId()),
+		entityID:      strings.TrimSpace(request.EntityID),
+		slotID:        strings.TrimSpace(derefString(request.SlotID)),
 	}
 	if initiation.uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE && initiation.entityID != "" {
 		return multipartUploadInitiation{}, errs.InvalidArgument(
@@ -138,16 +151,16 @@ func normalizeMultipartUploadTarget(
 	}
 	initiation.projectionIdentity, err = normalizeFileIngestProjectionIdentity(
 		initiation.uploadType,
-		request.GetEntityType(),
+		request.entityType(),
 		initiation.slotID,
-		request.ExpectedCurrentFileId,
+		request.ExpectedCurrentFileID,
 	)
 	return initiation, err
 }
 
 func validateMultipartUploadFile(
 	config *model.UploadConfig,
-	request *managev1.InitiateMultipartUploadRequest,
+	request InitiateMultipartUploadCommand,
 	slotID string,
 ) (string, string, error) {
 	if request.FileSize > config.MaxSize {
@@ -182,7 +195,7 @@ func validateMultipartUploadFile(
 }
 
 func validateMultipartUploadTypeFile(
-	request *managev1.InitiateMultipartUploadRequest,
+	request InitiateMultipartUploadCommand,
 	slotID string,
 	canonicalMime string,
 ) error {
@@ -204,14 +217,14 @@ func validateMultipartUploadTypeFile(
 	return validateSiteEmailLogoMime(request.UploadType, slotID, canonicalMime)
 }
 
-func (s *FileService) resumeOrReplaceMultipartUpload(
+func (s *Service) resumeOrReplaceMultipartUpload(
 	ctx context.Context,
-	request *managev1.InitiateMultipartUploadRequest,
+	request InitiateMultipartUploadCommand,
 	initiation multipartUploadInitiation,
 ) (*managev1.InitiateMultipartUploadResponse, bool, error) {
 	selection, err := s.selectMultipartResumeCandidate(
 		ctx,
-		request.GetEntityType(),
+		request.entityType(),
 		initiation.uploadType,
 		initiation.entityID,
 		initiation.entityTypePtr,
@@ -244,9 +257,9 @@ func (s *FileService) resumeOrReplaceMultipartUpload(
 	return nil, false, nil
 }
 
-func (s *FileService) createMultipartUploadSession(
+func (s *Service) createMultipartUploadSession(
 	ctx context.Context,
-	request *managev1.InitiateMultipartUploadRequest,
+	request InitiateMultipartUploadCommand,
 	initiation multipartUploadInitiation,
 ) (*managev1.InitiateMultipartUploadResponse, error) {
 	fileID := uuid.NewString()
@@ -284,7 +297,7 @@ func multipartFileKeyError(err error) error {
 }
 
 func newMultipartUploadSession(
-	request *managev1.InitiateMultipartUploadRequest,
+	request InitiateMultipartUploadCommand,
 	initiation multipartUploadInitiation,
 	fileID string,
 	uploadID string,
@@ -314,19 +327,19 @@ func newMultipartUploadSession(
 	}
 }
 
-func (s *FileService) beforeMultipartSessionInsert(session model.UploadSession) {
+func (s *Service) beforeMultipartSessionInsert(session model.UploadSession) {
 	if session.UploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() && s.testBeforeTrackSessionInsert != nil {
 		s.testBeforeTrackSessionInsert(session)
 	}
 }
 
-func (s *FileService) afterMultipartSessionInsert(session model.UploadSession) {
+func (s *Service) afterMultipartSessionInsert(session model.UploadSession) {
 	if session.UploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() && s.testAfterTrackSessionInsert != nil {
 		s.testAfterTrackSessionInsert(session)
 	}
 }
 
-func (s *FileService) abortMultipartUploadAfterInsertFailure(
+func (s *Service) abortMultipartUploadAfterInsertFailure(
 	ctx context.Context,
 	fileKey string,
 	uploadID *string,
@@ -348,7 +361,7 @@ func multipartSessionInsertError(err error) error {
 	return errs.Internal(fmt.Errorf("failed to create upload session: %w", err))
 }
 
-func (s *FileService) publishMultipartUploadStarted(ctx context.Context, session model.UploadSession) error {
+func (s *Service) publishMultipartUploadStarted(ctx context.Context, session model.UploadSession) error {
 	emitter := newFileIngestEventEmitter(
 		ctx,
 		s.asyncPublisher,

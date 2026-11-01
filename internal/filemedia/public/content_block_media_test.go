@@ -43,14 +43,7 @@ func TestHydrateAuthorizedContentBlockMediaKeepsPolicyPerExactBlockRelation(t *t
 		fileID, fileName,
 	).Error)
 
-	service := NewFileService(
-		db,
-		&auth.SpiceDBClient{},
-		"https://cdn.example.com",
-		"https://media.example.com",
-		"unit-secret",
-		time.Minute,
-	)
+	service := newTestService(Deps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "https://cdn.example.com", MediaDomain: "https://media.example.com", MediaSecret: "unit-secret", DownloadTTL: time.Minute})
 	items, err := contentblock.LoadMediaReferences(
 		context.Background(),
 		db,
@@ -117,7 +110,7 @@ func TestHydrateAuthorizedContentBlockMediaDeliversImmersiveSceneAttachmentsWith
 		).Error)
 	}
 
-	service := NewFileService(db, &auth.SpiceDBClient{}, "https://cdn.example.com", "https://media.example.com", "unit-secret", time.Minute)
+	service := newTestService(Deps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "https://cdn.example.com", MediaDomain: "https://media.example.com", MediaSecret: "unit-secret", DownloadTTL: time.Minute})
 	items, err := contentblock.LoadMediaReferences(context.Background(), db, uuid.MustParse(documentID))
 	require.NoError(t, err)
 	items, err = service.HydrateAuthorizedContentBlockMedia(
@@ -147,7 +140,7 @@ func TestHydrateAuthorizedContentBlockMediaDoesNotIssuePrivateRefsAfterOwnerOrSh
 	require.NoError(t, db.Exec(`INSERT INTO content_block_attachment (block_id, reference_path, selector_kind, file_id, download_audience) VALUES (?, 'file', 'active', ?, 'public')`, blockID, fileID).Error)
 	require.NoError(t, db.Exec(`INSERT INTO file (id, file_name, extension, mime_type, file_size) VALUES (?, 'private.png', 'png', 'image/png', 1024)`, fileID).Error)
 
-	service := NewFileService(db, &auth.SpiceDBClient{}, "https://cdn.example.com", "https://media.example.com", "unit-secret", time.Minute)
+	service := newTestService(Deps{DB: db, SpiceDB: &auth.SpiceDBClient{}, CDNDomain: "https://cdn.example.com", MediaDomain: "https://media.example.com", MediaSecret: "unit-secret", DownloadTTL: time.Minute})
 	loadItems := func() []*contentv1.ContentBlockMediaItem {
 		items, err := contentblock.LoadMediaReferences(context.Background(), db, uuid.MustParse(documentID))
 		require.NoError(t, err)
