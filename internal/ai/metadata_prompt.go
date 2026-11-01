@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
@@ -80,14 +80,14 @@ func metadataAIUserPrompt(contextText, prompt string) string {
 func validateMetadataAIUserPrompt(userPrompt string) error {
 	payload, err := parseMetadataContextPayload(userPrompt)
 	if err != nil {
-		return errs.InvalidArgument("context", "metadata-json requires a valid structured JSON payload")
+		return domainerr.InvalidField("context", "metadata-json requires a valid structured JSON payload")
 	}
 	if payload == nil || len(payload.Task.RequestedKeys) == 0 {
-		return errs.InvalidArgument("context", "metadata-json requires at least one requested key")
+		return domainerr.InvalidField("context", "metadata-json requires at least one requested key")
 	}
 	for _, key := range payload.Task.RequestedKeys {
 		if _, ok := metadataSuggestionRegistry[key]; !ok {
-			return errs.InvalidArgument("context", fmt.Sprintf("metadata-json does not support requested key %q", key))
+			return domainerr.InvalidField("context", fmt.Sprintf("metadata-json does not support requested key %q", key))
 		}
 	}
 	return nil

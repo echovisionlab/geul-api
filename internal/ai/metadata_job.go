@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/llm"
 	llmproviders "github.com/echovisionlab/geul-api/internal/llm/providers"
@@ -26,16 +25,16 @@ const (
 	metadataAIJobRecoveryBatch   = 25
 )
 
+// MetadataJobManager runs queued metadata jobs for the worker: it calls the
+// provider and recovers jobs whose delivery expired.
 type MetadataJobManager struct {
 	db             *gorm.DB
-	spiceDB        *auth.SpiceDBClient
 	provider       llm.Provider
 	asyncPublisher AsyncPublisher
 }
 
 func NewMetadataJobManager(
 	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
 	googleAIAPIKey string,
 	asyncPublisher AsyncPublisher,
 ) (*MetadataJobManager, error) {
@@ -43,7 +42,7 @@ func NewMetadataJobManager(
 	if err != nil {
 		return nil, err
 	}
-	return NewMetadataJobManagerWithProvider(db, spiceDB, provider, asyncPublisher), nil
+	return NewMetadataJobManagerWithProvider(db, provider, asyncPublisher), nil
 }
 
 func newAITextProvider(apiKey string) (llm.Provider, error) {
@@ -55,19 +54,16 @@ func newAITextProvider(apiKey string) (llm.Provider, error) {
 
 func NewMetadataJobManagerWithProvider(
 	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
 	provider llm.Provider,
 	asyncPublisher AsyncPublisher,
 ) *MetadataJobManager {
 	dependencycheck.New("ai.MetadataJobManager").
 		RequireNotNil(db, "db").
-		RequireNotNil(spiceDB, "spiceDB").
 		RequireNotNil(provider, "provider").
 		RequireNotNil(asyncPublisher, "asyncPublisher").
 		Validate()
 	return &MetadataJobManager{
 		db:             db,
-		spiceDB:        spiceDB,
 		provider:       provider,
 		asyncPublisher: asyncPublisher,
 	}

@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -30,11 +31,11 @@ func TestMetadataAIJobManagerLifecycleIntegration(t *testing.T) {
 	spiceDB := testutil.SetupOryStack(t).SpiceDBClient
 	provider := &stubAIProvider{text: `{"metadata":{"summary":"Generated summary"}}`}
 	publisher := &capturingAsyncPublisher{}
-	manager := NewMetadataJobManagerWithProvider(db, spiceDB, provider, publisher)
+	manager := NewMetadataJobManagerWithProvider(db, provider, publisher)
 	user := seedMetadataAIRequester(t, db, spiceDB)
 	ctx := auth.WithUser(context.Background(), user)
 
-	job, err := manager.StartJob(ctx, user, &managev1.StartMetadataGenerationRequest{
+	job, err := newMetadataAITestService(t, db, spiceDB, publisher).StartMetadataGeneration(ctx, StartMetadataGenerationCommand{
 		Context: `{"task":{"requestedKeys":["summary"]},"source":{"title":"AI job integration"}}`,
 		Prompt:  "Generate a concise summary",
 		Target: &managev1.AIResourceTarget{
@@ -57,7 +58,7 @@ func TestMetadataAIJobManagerLifecycleIntegration(t *testing.T) {
 	require.NoError(t, manager.ProcessJob(ctx, job.Id))
 	require.Equal(t, 1, provider.calls)
 
-	ready, err := manager.GetJobForRequester(ctx, user, job.Id)
+	ready, err := newMetadataAITestService(t, db, spiceDB, publisher).GetMetadataGenerationJob(ctx, GetMetadataGenerationJobQuery{JobID: job.Id})
 	require.NoError(t, err)
 	require.Equal(t, managev1.MetadataGenerationJobStatus_METADATA_GENERATION_JOB_STATUS_READY, ready.Status)
 	require.NotNil(t, ready.Suggestion)
@@ -69,12 +70,9 @@ func TestMetadataAIJobManagerLifecycleIntegration(t *testing.T) {
 	require.NoError(t, manager.ProcessJob(ctx, job.Id), "ready jobs should not be processed again")
 	require.Equal(t, 1, provider.calls)
 
-	applied, err := manager.ResolveJobForRequester(
-		ctx,
-		user,
-		job.Id,
-		managev1.MetadataGenerationJobResolution_METADATA_GENERATION_JOB_RESOLUTION_APPLIED,
-	)
+	applied, err := newMetadataAITestService(t, db, spiceDB, publisher).ResolveMetadataGenerationJob(ctx, ResolveMetadataGenerationJobCommand{
+		JobID: job.Id, Resolution: managev1.MetadataGenerationJobResolution_METADATA_GENERATION_JOB_RESOLUTION_APPLIED,
+	})
 	require.NoError(t, err)
 	require.Equal(t, managev1.MetadataGenerationJobStatus_METADATA_GENERATION_JOB_STATUS_APPLIED, applied.Status)
 	require.NotNil(t, applied.ResolvedAt)
@@ -88,11 +86,10 @@ func TestMetadataAIJobWithoutTargetIsRejectedForAdministratorIntegration(t *test
 	db := testutil.NewIntegrationDB(t)
 	spiceDB := testutil.SetupOryStack(t).SpiceDBClient
 	publisher := &capturingAsyncPublisher{}
-	manager := NewMetadataJobManagerWithProvider(db, spiceDB, &stubAIProvider{}, publisher)
 	user := seedMetadataAIRequester(t, db, spiceDB)
 	ctx := auth.WithUser(context.Background(), user)
 
-	job, err := manager.StartJob(ctx, user, &managev1.StartMetadataGenerationRequest{
+	job, err := newMetadataAITestService(t, db, spiceDB, publisher).StartMetadataGeneration(ctx, StartMetadataGenerationCommand{
 		Context: `{"task":{"requestedKeys":["summary"]},"source":{"title":"No target"}}`,
 		Prompt:  "Generate a concise summary",
 	})
@@ -107,11 +104,10 @@ func TestMetadataAIJobDispatchFailureRollsBackJobIntegration(t *testing.T) {
 	spiceDB := testutil.SetupOryStack(t).SpiceDBClient
 	provider := &stubAIProvider{text: `{"metadata":{"summary":"unused"}}`}
 	publisher := &capturingAsyncPublisher{confirmedErr: errors.New("confirm unavailable")}
-	manager := NewMetadataJobManagerWithProvider(db, spiceDB, provider, publisher)
 	user := seedMetadataAIRequester(t, db, spiceDB)
 	ctx := auth.WithUser(context.Background(), user)
 
-	job, err := manager.StartJob(ctx, user, &managev1.StartMetadataGenerationRequest{
+	job, err := newMetadataAITestService(t, db, spiceDB, publisher).StartMetadataGeneration(ctx, StartMetadataGenerationCommand{
 		Context: `{"task":{"requestedKeys":["summary"]},"source":{"title":"Dispatch failure"}}`,
 		Prompt:  "Generate a concise summary",
 		Target: &managev1.AIResourceTarget{
@@ -135,7 +131,7 @@ func TestMetadataAIJobConcurrentDeliveriesCallProviderOnceIntegration(t *testing
 	db := newConcurrentServiceIntegrationDB(t)
 	spiceDB := testutil.SetupOryStack(t).SpiceDBClient
 	provider := &stubAIProvider{text: `{"metadata":{"summary":"Generated once"}}`}
-	manager := NewMetadataJobManagerWithProvider(db, spiceDB, provider, &capturingAsyncPublisher{})
+	manager := NewMetadataJobManagerWithProvider(db, provider, &capturingAsyncPublisher{})
 	user := seedMetadataAIRequester(t, db, spiceDB)
 	now := time.Now().UTC()
 	job := metadataJobRecord{
@@ -233,7 +229,7 @@ func TestMetadataAIJobRecoveryReenqueuesOnlyMissingPGMQMessagesIntegration(t *te
 	))
 
 	manager := &MetadataJobManager{db: db, asyncPublisher: publisher}
-	recovered, err := manager.RecoverExpiredJobs(t.Context(), 25)
+	recovered, err := recoverExpiredMetadataJobs(t.Context(), manager, 25)
 	require.NoError(t, err)
 	require.Equal(t, 1, recovered)
 
@@ -254,6 +250,13 @@ func requireMetadataAIJobStatus(t *testing.T, db *gorm.DB, jobID string, status 
 	var job metadataJobRecord
 	require.NoError(t, db.First(&job, "id = ?", jobID).Error)
 	require.Equal(t, status, job.Status)
+}
+
+func newMetadataAITestService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, publisher AsyncPublisher) *Service {
+	t.Helper()
+	service, err := NewService(Deps{DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{}, Publisher: publisher})
+	require.NoError(t, err)
+	return service
 }
 
 func seedMetadataAIRequester(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *auth.UserInfo {

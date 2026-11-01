@@ -2,71 +2,66 @@ package ai
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"strings"
 
-	"connectrpc.com/connect"
+	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/dependencycheck"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-// Service exposes only the durable metadata-generation lifecycle. Interactive
+// Deps are the collaborators of the metadata-generation use cases; all are
+// required.
+type Deps struct {
+	DB      *gorm.DB
+	SpiceDB *auth.SpiceDBClient
+	// Audit is required by the mutation pipeline; metadata jobs are
+	// operational rows and append no record.
+	Audit     domainaudit.Appender
+	Publisher AsyncPublisher
+}
+
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil, "Publisher": d.Publisher == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("ai dependencies are required: " + strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// Service holds the durable metadata-generation use cases. Interactive
 // document editing is owned by the typed AI document protocol.
 type Service struct {
-	metadataAI *MetadataJobManager
+	db        *gorm.DB
+	spiceDB   *auth.SpiceDBClient
+	publisher AsyncPublisher
+	mutations *mutation.Runner
 }
 
-var _ managev1connect.AIServiceHandler = (*Service)(nil)
-
-func NewService(metadataAI *MetadataJobManager) *Service {
-	dependencycheck.New("ai.Service").
-		RequireNotNil(metadataAI, "metadataAI").
-		Validate()
-	return &Service{metadataAI: metadataAI}
-}
-
-func (s *Service) StartMetadataGeneration(
-	ctx context.Context,
-	req *connect.Request[managev1.StartMetadataGenerationRequest],
-) (_ *connect.Response[managev1.StartMetadataGenerationResponse], retErr error) {
-	// Failures can quote the requested context and prompt, which the boundary
-	// does not treat as private fields.
-	defer failurecause.AnnotatePrivate(&retErr, req.Msg.GetContext(), req.Msg.GetPrompt())
-	user := auth.GetUser(ctx)
-	job, err := s.metadataAI.StartJob(ctx, user, req.Msg)
+// NewService returns the metadata-generation use cases over deps.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
+	}
+	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.StartMetadataGenerationResponse{Job: job}), nil
-}
-
-func (s *Service) GetMetadataGenerationJob(
-	ctx context.Context,
-	req *connect.Request[managev1.GetMetadataGenerationJobRequest],
-) (*connect.Response[managev1.GetMetadataGenerationJobResponse], error) {
-	user := auth.GetUser(ctx)
-	job, err := s.metadataAI.GetJobForRequester(ctx, user, req.Msg.JobId)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.GetMetadataGenerationJobResponse{Job: job}), nil
-}
-
-func (s *Service) ResolveMetadataGenerationJob(
-	ctx context.Context,
-	req *connect.Request[managev1.ResolveMetadataGenerationJobRequest],
-) (*connect.Response[managev1.ResolveMetadataGenerationJobResponse], error) {
-	user := auth.GetUser(ctx)
-	job, err := s.metadataAI.ResolveJobForRequester(ctx, user, req.Msg.JobId, req.Msg.Resolution)
-	if err != nil {
-		return nil, err
-	}
-	return connect.NewResponse(&managev1.ResolveMetadataGenerationJobResponse{Job: job}), nil
+	return &Service{db: deps.DB, spiceDB: deps.SpiceDB, publisher: deps.Publisher, mutations: mutations}, nil
 }
 
 func canUseAI(
@@ -137,7 +132,7 @@ func canManageAIResource(
 func checkAIAdmin(ctx context.Context, spiceDB *auth.SpiceDBClient, user *auth.UserInfo) (bool, error) {
 	can, err := policyv1.Platform.IsAdmin()
 	if err != nil {
-		return false, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return false, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	return checkAICan(ctx, spiceDB, user, can)
 }
@@ -145,7 +140,7 @@ func checkAIAdmin(ctx context.Context, spiceDB *auth.SpiceDBClient, user *auth.U
 func checkAIAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient, user *auth.UserInfo) (bool, error) {
 	can, err := policyv1.Platform.IsAuthor()
 	if err != nil {
-		return false, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return false, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	return checkAICan(ctx, spiceDB, user, can)
 }
@@ -157,16 +152,16 @@ func checkAICan(
 	can policyv1.Can,
 ) (bool, error) {
 	if user == nil || user.IdentityID.String() == "" {
-		return false, errs.AuthenticationRequired()
+		return false, domainerr.AuthenticationRequired()
 	}
 	authorizationCtx := auth.WithUser(ctx, user)
 	decision, err := auth.AuthorizationDecision(authorizationCtx, can)
 	if err != nil {
-		return false, errs.WithCause(errs.AuthenticationRequired(), err)
+		return false, domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := spiceDB.Can(authorizationCtx, decision)
 	if err != nil {
-		return false, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return false, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	return allowed, nil
 }

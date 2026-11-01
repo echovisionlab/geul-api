@@ -129,9 +129,7 @@ func initializeApplicationDependencies(
 	deps.workerPublisher = deps.hooksPublisher
 	deps.transcodeTracker = transcode.NewTracker(deps.db, deps.workerPublisher)
 	deps.adapterLoader = email.NewAdapterLoader(deps.db, nil)
-	deps.metadataAIJobs, err = ai.NewMetadataJobManager(
-		deps.db, deps.spicedbClient, cfg.GoogleAIAPIKey, deps.servicePublisher,
-	)
+	deps.metadataAIJobs, err = ai.NewMetadataJobManager(deps.db, cfg.GoogleAIAPIKey, deps.servicePublisher)
 	if err != nil {
 		return nil, fmt.Errorf("initialize metadata AI job manager: %w", err)
 	}

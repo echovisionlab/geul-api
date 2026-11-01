@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -88,7 +89,7 @@ type httpDoer interface {
 
 type MetadataAIJobProcessor interface {
 	ProcessJob(ctx context.Context, jobID string) error
-	RecoverExpiredJobs(ctx context.Context, limit int) (int, error)
+	RecoverExpiredJobs(ctx context.Context, tx *gorm.DB, limit int) (int, error)
 }
 
 type TranslationJobProcessor interface {
@@ -243,8 +244,18 @@ func (h *Handlers) HandleScheduled(ctx context.Context, job scheduler.Job) error
 		if h.metadataAI == nil {
 			return nil
 		}
-		_, err := h.metadataAI.RecoverExpiredJobs(ctx, 0)
-		return err
+		republished := 0
+		if err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var err error
+			republished, err = h.metadataAI.RecoverExpiredJobs(ctx, tx, 0)
+			return err
+		}); err != nil {
+			return err
+		}
+		if republished > 0 {
+			slog.Info("Expired metadata AI jobs republished", "count", republished)
+		}
+		return nil
 
 	default:
 		return fmt.Errorf("unknown scheduler job: %q", job)
