@@ -27,7 +27,7 @@ var memberAdminTools = []mcpserver.Tool{
 // MemberAdminReader retains the owning service's authorization and access audit.
 type MemberAdminReader interface {
 	ListAdminMembers(context.Context, member.ListAdminMembersQuery) (member.AdminMemberPage, error)
-	GetAdminMember(context.Context, member.GetAdminMemberQuery) (*managev1.AdminMember, error)
+	GetAdminMember(context.Context, member.GetAdminMemberQuery) (member.AdminMember, error)
 }
 
 type MemberAdminTools struct{ reader MemberAdminReader }
@@ -84,7 +84,7 @@ func (tools *MemberAdminTools) CallTool(ctx context.Context, _ mcpserver.Princip
 		}
 		members := make([]memberAdminOutput, 0, len(page.Members))
 		for _, adminMember := range page.Members {
-			members = append(members, projectMemberAdmin(adminMember))
+			members = append(members, projectMemberAdmin(member.AdminMemberMessage(adminMember)))
 		}
 		return memberAdminResult(struct {
 			Members []memberAdminOutput `json:"members"`
@@ -92,7 +92,7 @@ func (tools *MemberAdminTools) CallTool(ctx context.Context, _ mcpserver.Princip
 			Limit   int32               `json:"limit"`
 			Offset  int32               `json:"offset"`
 			HasMore bool                `json:"has_more"`
-		}{members, page.Pagination.GetTotal(), page.Pagination.GetLimit(), page.Pagination.GetOffset(), page.Pagination.GetHasMore()})
+		}{members, page.Pagination.Total, page.Pagination.Limit, page.Pagination.Offset, page.Pagination.HasMore})
 	case ToolMemberAdminGet:
 		var input struct {
 			MemberID string `json:"member_id"`
@@ -109,7 +109,7 @@ func (tools *MemberAdminTools) CallTool(ctx context.Context, _ mcpserver.Princip
 		}
 		return memberAdminResult(struct {
 			Member memberAdminOutput `json:"member"`
-		}{projectMemberAdmin(adminMember)})
+		}{projectMemberAdmin(member.AdminMemberMessage(adminMember))})
 	default:
 		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
 	}

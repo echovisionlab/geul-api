@@ -2,95 +2,45 @@ package public
 
 import (
 	"context"
-	"fmt"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	"gorm.io/gorm"
 )
 
-// LoadPublicMemberSummaries resolves a bounded set of Member profiles and their
-// current avatar bindings in a fixed number of database queries. Public and
-// ordinary domain reads must not call Kratos or load an asset once per row.
-func LoadPublicMemberSummaries(
-	ctx context.Context,
-	db *gorm.DB,
-	cdnDomain string,
-	memberIDs []string,
-) (map[string]*commonv1.MemberSummary, error) {
+// LoadSummaries resolves a bounded set of onboarded Member profiles and their
+// current avatar bindings in a fixed number of reads. Public and ordinary
+// domain reads must not call Kratos or load an asset once per row.
+func LoadSummaries(ctx context.Context, store Store, memberIDs []string) (map[string]member.Summary, error) {
 	ids := sliceutil.UniqueNonZero(memberIDs)
-	result := make(map[string]*commonv1.MemberSummary, len(ids))
+	result := make(map[string]member.Summary, len(ids))
 	if len(ids) == 0 {
 		return result, nil
 	}
-
-	var members []model.Member
-	if err := db.WithContext(ctx).
-		Where("id IN ? AND onboarded = TRUE", ids).
-		Find(&members).Error; err != nil {
-		return nil, fmt.Errorf("load members: %w", err)
-	}
-
-	avatars, err := loadPublicMemberAvatars(ctx, db, cdnDomain, ids)
+	members, err := store.PublicMembers(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
-
-	for _, member := range members {
-		summary := projectPublicMemberSummary(member, avatars[member.ID])
-		result[member.ID] = summary
+	avatars, err := store.PublicAvatars(ctx, ids)
+	if err != nil {
+		return nil, err
 	}
-
-	return result, nil
-}
-
-func loadPublicMemberAvatars(
-	ctx context.Context,
-	db *gorm.DB,
-	cdnDomain string,
-	memberIDs []string,
-) (map[string]*commonv1.AssetRef, error) {
-	ids := sliceutil.UniqueNonZero(memberIDs)
-	result := make(map[string]*commonv1.AssetRef, len(ids))
-	if len(ids) == 0 {
-		return result, nil
-	}
-
-	type avatarRow struct {
-		MemberID string              `gorm:"column:member_id"`
-		Asset    readyPublicAssetRow `gorm:"embedded"`
-	}
-	var avatarRows []avatarRow
-	if err := db.WithContext(ctx).
-		Table("public_asset_binding AS binding").
-		Select("binding.owner_id AS member_id, "+readyPublicAssetSelect("asset")).
-		Joins("JOIN public_asset AS asset ON asset.id = binding.asset_id").
-		Where("binding.owner_type = ? AND binding.binding_key = ?", "member", "avatar").
-		Where("binding.owner_id IN ? AND asset.status = ?", ids, model.PublicAssetStatusReady).
-		Find(&avatarRows).Error; err != nil {
-		return nil, fmt.Errorf("load member avatars: %w", err)
-	}
-
-	for _, row := range avatarRows {
-		avatar, err := projectReadyPublicAsset(cdnDomain, row.Asset)
-		if err != nil {
-			return nil, fmt.Errorf("project member avatar %s: %w", row.MemberID, err)
-		}
-		result[row.MemberID] = avatar
+	for _, value := range members {
+		result[value.ID] = projectPublicMemberSummary(value, avatars[value.ID])
 	}
 	return result, nil
 }
 
-func projectPublicMemberSummary(member model.Member, avatar *commonv1.AssetRef) *commonv1.MemberSummary {
-	deleted := member.DeletedAt != nil || member.AccountIdentityID == nil
+func projectPublicMemberSummary(value member.Member, avatar *member.Asset) member.Summary {
+	deleted := value.DeletedAt != nil || value.AccountIdentityID == nil
 	if deleted {
 		avatar = nil
 	}
-	return &commonv1.MemberSummary{
-		Id:          member.ID,
-		Nickname:    member.Nickname,
-		AvatarAsset: avatar,
-		Deleted:     deleted,
+	return member.Summary{ID: value.ID, Nickname: value.Nickname, Avatar: avatar, Deleted: deleted}
+}
+
+func optionalStringValue(value *string) string {
+	if value == nil {
+		return ""
 	}
+	return *value
 }

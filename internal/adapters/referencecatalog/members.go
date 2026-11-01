@@ -5,9 +5,10 @@ package referencecatalogadapter
 import (
 	"context"
 
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
+
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
 	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -38,7 +39,7 @@ func (a MemberSummaries) Resolve(
 	for _, row := range rows {
 		ids = append(ids, row.ID)
 	}
-	summaries, err := member.LoadSummaries(ctx, db, a.cdnDomain, ids)
+	summaries, err := memberpostgres.LoadSummaries(ctx, db, a.cdnDomain, ids)
 	if err != nil {
 		return nil, err
 	}

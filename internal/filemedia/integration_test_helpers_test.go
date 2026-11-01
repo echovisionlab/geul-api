@@ -10,6 +10,8 @@ import (
 	"os"
 	"testing"
 
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
+
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/echovisionlab/geul-api/internal/audience"
 	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
@@ -19,7 +21,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
@@ -110,7 +111,7 @@ func (s *integrationMemberSummaries) Load(
 	ctx context.Context,
 	memberIDs []string,
 ) (map[string]*commonv1.MemberSummary, error) {
-	return memberdomain.LoadSummaries(ctx, s.db, s.cdnDomain, memberIDs)
+	return memberpostgres.LoadSummaries(ctx, s.db, s.cdnDomain, memberIDs)
 }
 
 func releaseAuditContext(t *testing.T, identityID, memberID string) context.Context {

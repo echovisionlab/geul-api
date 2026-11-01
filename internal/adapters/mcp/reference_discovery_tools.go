@@ -65,7 +65,7 @@ type MapPlaceReferenceDiscovery interface {
 	SearchMapPlaces(context.Context, referencecatalog.SearchMapPlacesQuery) ([]referencecatalog.MapPlace, error)
 }
 type MemberReferenceDiscovery interface {
-	SearchMembers(context.Context, member.SearchMembersQuery) ([]*commonv1.MemberSummary, error)
+	SearchMembers(context.Context, member.SearchMembersQuery) ([]member.Summary, error)
 }
 type ArtistReferenceDiscovery interface {
 	ListArtists(context.Context, artist.ListArtistsQuery) (artist.ArtistPage, error)
@@ -182,9 +182,7 @@ func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, argu
 		}
 		hasMore = quickSearchHasMore(len(members), input.Limit, maximum)
 		for _, item := range members[:min(len(members), int(input.Limit))] {
-			if item != nil {
-				items = append(items, referenceItem(item.Id, item.Nickname, nil, "", "", item.Deleted))
-			}
+			items = append(items, referenceItem(item.ID, item.Nickname, nil, "", "", item.Deleted))
 		}
 	case "artist":
 		page, err := tools.artists.ListArtists(ctx, artist.ListArtistsQuery{Limit: pagination.GetLimit(), Offset: pagination.GetOffset(), Filters: searchFilter})

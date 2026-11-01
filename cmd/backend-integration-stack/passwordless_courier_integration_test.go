@@ -18,7 +18,8 @@ import (
 	"testing"
 	"time"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
@@ -89,13 +90,10 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 		)),
 	)
 	go accountEmailChangeLifecycle.Start(ctx)
-	registrationMembers := member.NewMemberProvisioner(
-		stack.Postgres.DB,
-		stack.KratosClient,
-		stack.SpiceDBClient,
-		memberadapter.AccountEmailProjection{},
-		directRoles,
-	)
+	emails := memberadapter.AccountEmailProjection{DB: stack.Postgres.DB, Identity: stack.KratosClient}
+	memberUnits, err := memberpostgres.NewUnits(stack.Postgres.DB, memberpostgres.Ports{WelcomeEmails: publisher, WelcomeRecipients: emails})
+	require.NoError(t, err)
+	registrationMembers := member.NewMemberProvisioner(memberUnits, stack.KratosClient, stack.SpiceDBClient, emails, directRoles)
 	loginRoles, err := authentication.NewService(authentication.Deps{
 		DB: stack.Postgres.DB, SpiceDB: stack.SpiceDBClient, Audit: telemetryWriter, Roles: directRoles,
 	})
@@ -310,15 +308,14 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 	)
 	onboardingNickname := fmt.Sprintf("RegisteredMember%d", time.Now().UnixNano())
 	memberService, err := member.NewService(member.Deps{
-		DB:            stack.Postgres.DB,
-		SpiceDB:       stack.SpiceDBClient,
-		Identity:      stack.KratosClient,
-		AvatarFiles:   backendIntegrationAvatarFiles{},
-		WelcomeEmails: publisher,
-		Accounts:      memberadapter.AccountSummaryReader{},
-		AccountEmails: memberadapter.AccountEmailProjection{},
-		Audit:         apitelemetry.NewDurableWriter(stack.Postgres.DB),
-		SiteOrigin:    "https://www.example.test",
+		Units:       memberUnits,
+		SpiceDB:     stack.SpiceDBClient,
+		Fence:       identitystate.PostgresFence{},
+		Identity:    stack.KratosClient,
+		AvatarFiles: backendIntegrationAvatarFiles{},
+		Accounts:    memberadapter.Accounts{DB: stack.Postgres.DB, SpiceDB: stack.SpiceDBClient},
+		Audit:       apitelemetry.NewDurableWriter(stack.Postgres.DB),
+		SiteOrigin:  "https://www.example.test",
 	})
 	require.NoError(t, err)
 	onboardingRequestContext, err := sharedtelemetry.NewPublicRequestContext("127.0.0.1")
@@ -411,7 +408,7 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 
 type backendIntegrationAvatarFiles struct{}
 
-func (backendIntegrationAvatarFiles) PromoteUserAvatarAsset(context.Context, string) (*commonv1.AssetRef, error) {
+func (backendIntegrationAvatarFiles) PromoteUserAvatarAsset(context.Context, string) (*member.Asset, error) {
 	return nil, errors.New("the courier stack does not promote avatars")
 }
 

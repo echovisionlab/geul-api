@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -34,7 +36,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
@@ -287,7 +288,7 @@ func registerAuthenticationRoutes(
 		proxy,
 		deps.kratosClient,
 		authentication.RegistrationReuseCheckerFunc(func(ctx context.Context, email string) (bool, error) {
-			return member.PublicEmailCodeRegistrationBlocked(ctx, deps.db, email)
+			return memberpostgres.PublicEmailCodeRegistrationBlocked(ctx, deps.db, email)
 		}),
 	)
 	if err != nil {

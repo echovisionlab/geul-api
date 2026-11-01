@@ -11,7 +11,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -89,7 +88,7 @@ func fetchMemberNicknameSuggestion(ctx context.Context, provider, accessToken st
 	}
 }
 
-func (s *Service) nicknameSuggestion(ctx context.Context, member model.Member) *string {
+func (s *Service) nicknameSuggestion(ctx context.Context, member Member) *string {
 	principal := auth.GetUser(ctx)
 	if principal == nil || !principal.Authenticated || member.Onboarded || member.AccountIdentityID == nil ||
 		*member.AccountIdentityID != principal.IdentityID.String() || member.ID != principal.MemberID.String() {

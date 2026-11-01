@@ -3,7 +3,13 @@
 package authentication_test
 
 import (
+	"context"
+	"errors"
 	"testing"
+
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	authenticationadapter "github.com/echovisionlab/geul-api/internal/adapters/authentication"
@@ -21,13 +27,10 @@ func TestRegistrationLoginHookDoesNotPublishWelcomeIntegration(t *testing.T) {
 	stack := testutil.SetupOryStack(t)
 	registered := stack.CreateUser(t, policyv1.Role.User().ID())
 	roles := accountadapter.AccountDirectRoleTransition{}
-	members := member.NewMemberProvisioner(
-		stack.DB,
-		stack.KratosClient,
-		stack.SpiceDBClient,
-		memberadapter.AccountEmailProjection{},
-		roles,
-	)
+	emails := memberadapter.AccountEmailProjection{DB: stack.DB, Identity: stack.KratosClient}
+	memberUnits, err := memberpostgres.NewUnits(stack.DB, memberpostgres.Ports{WelcomeEmails: unusedWelcomeEmails{}, WelcomeRecipients: emails})
+	require.NoError(t, err)
+	members := member.NewMemberProvisioner(memberUnits, stack.KratosClient, stack.SpiceDBClient, emails, roles)
 	loginRoles, err := authentication.NewService(authentication.Deps{
 		DB: stack.DB, SpiceDB: stack.SpiceDBClient, Audit: apitelemetry.NewDurableWriter(stack.DB), Roles: roles,
 	})
@@ -48,4 +51,12 @@ func TestRegistrationLoginHookDoesNotPublishWelcomeIntegration(t *testing.T) {
 	require.Equal(t, registered.MemberID, result.MemberID)
 	// Registration has no mail publisher dependency. Welcome is owned only by
 	// the later Member onboarding transition.
+}
+
+// unusedWelcomeEmails fails a welcome enqueue, which registration never
+// reaches.
+type unusedWelcomeEmails struct{}
+
+func (unusedWelcomeEmails) PublishSendEmailWithExecutor(context.Context, eventpkg.DBTX, *managev1.SendEmailEvent) error {
+	return errors.New("registration does not enqueue a welcome email")
 }

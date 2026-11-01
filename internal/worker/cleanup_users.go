@@ -9,13 +9,13 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/account"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/member"
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 func (h *Handlers) handleProcessUserDeletions(ctx context.Context) error {
 	now := time.Now().UTC()
-	scrubbed, err := member.ScrubExpiredMemberEmailProjections(ctx, h.db, now)
+	scrubbed, err := memberpostgres.ScrubExpiredMemberEmailProjections(ctx, h.db, now)
 	if err != nil {
 		return fmt.Errorf("scrub expired Member email projections: %w", err)
 	}

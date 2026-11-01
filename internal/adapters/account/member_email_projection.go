@@ -2,6 +2,9 @@ package accountadapter
 
 import (
 	"context"
+	"errors"
+
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 
 	"github.com/echovisionlab/geul-api/internal/account"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
@@ -17,11 +20,19 @@ var _ account.MemberEmailProjection = MemberEmailProjection{}
 func (MemberEmailProjection) PrimaryEmail(
 	ctx context.Context, db *gorm.DB, memberID, identityID string,
 ) (string, error) {
-	return memberdomain.PrimaryEmail(ctx, db, memberID, identityID)
+	email, err := memberdomain.PrimaryEmail(ctx, memberpostgres.Bind(db), memberID, identityID)
+	if errors.Is(err, memberdomain.ErrMemberNotFound) {
+		return "", gorm.ErrRecordNotFound
+	}
+	return email, err
 }
 
 func (MemberEmailProjection) SyncEmailProjection(
 	ctx context.Context, db *gorm.DB, memberID, identityID, primaryEmail string, availableEmails []string,
 ) error {
-	return memberdomain.SyncEmailProjection(ctx, db, memberID, identityID, primaryEmail, availableEmails)
+	err := memberdomain.SyncEmailProjection(ctx, memberpostgres.Bind(db), memberID, identityID, primaryEmail, availableEmails)
+	if errors.Is(err, memberdomain.ErrMemberNotFound) {
+		return gorm.ErrRecordNotFound
+	}
+	return err
 }

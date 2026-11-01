@@ -3,8 +3,6 @@ package public
 import (
 	"context"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -23,16 +21,16 @@ func (s *Service) UnsubscribeNewsletter(ctx context.Context, command Unsubscribe
 		return domainerr.InvalidField("token", "must be a valid unsubscribe token")
 	}
 	var memberID string
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[bool, Store]{
 		// The signed token is the authority. It names an Identity whose live
 		// Member the opt-out is attributed to.
-		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+		Access: mutation.Checked(func(ctx context.Context, store Store) error {
 			var err error
-			memberID, err = newsletterMemberIDForIdentity(ctx, tx, identityID)
+			memberID, err = store.NewsletterMemberID(ctx, identityID)
 			return err
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (bool, error) {
-			return member.MutateNewsletterSubscription(ctx, tx, identityID, false)
+		Change: func(ctx context.Context, store Store) (bool, error) {
+			return member.MutateNewsletterSubscription(ctx, store, identityID, false)
 		},
 		Audit: func(changed bool) mutation.Audit {
 			if !changed {
@@ -44,16 +42,4 @@ func (s *Service) UnsubscribeNewsletter(ctx context.Context, command Unsubscribe
 		},
 	})
 	return err
-}
-
-func newsletterMemberIDForIdentity(ctx context.Context, tx *gorm.DB, identityID string) (string, error) {
-	var member struct {
-		ID string `gorm:"column:id"`
-	}
-	err := tx.WithContext(ctx).
-		Table("member AS m").
-		Select("m.id::text AS id").
-		Where("m.account_identity_id = ?::uuid AND m.deleted_at IS NULL", identityID).
-		Take(&member).Error
-	return member.ID, err
 }

@@ -3,9 +3,10 @@ package programevent
 import (
 	"context"
 
+	memberpublicpostgres "github.com/echovisionlab/geul-api/internal/member/public/postgres"
+
 	"gorm.io/gorm"
 
-	memberpublic "github.com/echovisionlab/geul-api/internal/member/public"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -26,5 +27,5 @@ func (a *PublicCreditMemberSummaries) LoadPublicCreditMemberSummaries(
 	ctx context.Context,
 	memberIDs []string,
 ) (map[string]*commonv1.MemberSummary, error) {
-	return memberpublic.LoadPublicMemberSummaries(ctx, a.db, a.cdnDomain, memberIDs)
+	return memberpublicpostgres.LoadPublicMemberSummaries(ctx, a.db, a.cdnDomain, memberIDs)
 }

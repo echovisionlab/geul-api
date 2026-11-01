@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/account"
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	authenticationadapter "github.com/echovisionlab/geul-api/internal/adapters/authentication"
@@ -77,11 +79,19 @@ func main() {
 		accountadapter.MemberEmailProjection{},
 	)
 	go accountEmailChangeLifecycle.Start(ctx)
+	accountEmailProjection := memberadapter.AccountEmailProjection{DB: stack.Postgres.DB, Identity: stack.KratosClient}
+	memberUnits, err := memberpostgres.NewUnits(stack.Postgres.DB, memberpostgres.Ports{
+		WelcomeEmails: publisher, WelcomeRecipients: accountEmailProjection,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "start backend integration member units: %v\n", failurecause.Message(err))
+		os.Exit(1)
+	}
 	registrationMembers := member.NewMemberProvisioner(
-		stack.Postgres.DB,
+		memberUnits,
 		stack.KratosClient,
 		stack.SpiceDBClient,
-		memberadapter.AccountEmailProjection{},
+		accountEmailProjection,
 		directRoles,
 	)
 	loginRoles, err := authentication.NewService(authentication.Deps{

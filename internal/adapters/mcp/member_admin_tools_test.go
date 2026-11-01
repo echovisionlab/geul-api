@@ -14,7 +14,6 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const memberAdminTestID = "11111111-1111-4111-8111-111111111111"
@@ -57,7 +56,7 @@ func TestMemberAdminListBuildsExactQueryAndPagination(t *testing.T) {
 			filters: []*commonv1.FilterSpec{{Field: "status", Op: commonv1.FilterOp_FILTER_OP_EQ, Value: "deleted"}}},
 	} {
 		t.Run(test.arguments, func(t *testing.T) {
-			reader := &recordingMemberAdminReader{list: memberdomain.AdminMemberPage{Pagination: &commonv1.PaginationResponse{Total: 7, Limit: test.limit, Offset: test.offset, HasMore: true}}}
+			reader := &recordingMemberAdminReader{list: memberdomain.AdminMemberPage{Pagination: memberdomain.Pagination{Total: 7, Limit: test.limit, Offset: test.offset, HasMore: true}}}
 			tools, err := NewMemberAdminTools(reader)
 			require.NoError(t, err)
 			result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMemberAdminList, toolArguments(t, test.arguments))
@@ -91,13 +90,14 @@ func TestMemberAdminGetProjectsBoundedDetailAndNativeStatuses(t *testing.T) {
 	} {
 		t.Run(test.want, func(t *testing.T) {
 			bio, reason := "Member biography", "Account moderation reason"
-			when := timestamppb.New(time.Date(2026, 10, 5, 1, 2, 3, 0, time.UTC))
-			reader := &recordingMemberAdminReader{member: &managev1.AdminMember{
-				Member: &managev1.MemberProfile{Summary: &commonv1.MemberSummary{Id: memberAdminTestID, Nickname: "Member", AvatarAsset: &commonv1.AssetRef{AssetId: memberAdminTestID, Url: "https://private.example.test/avatar", Sha256: []byte("private-native-bytes")}}, Bio: &bio, CreatedAt: when},
-				Account: &managev1.AccountSummary{Role: policyv1.AuthorizationRole_ADMIN, Status: test.status, CanonicalEmail: &managev1.CanonicalEmailSummary{Email: "member@example.test", Verified: true}, Banned: true,
-					BanDetails: &managev1.AccountBanDetails{MetadataBanned: true, IdentityState: "inactive", InactiveState: true, Reason: &reason, ExpiresAt: when}},
-				TagIds: []string{memberAdminTestID}, Onboarded: true, NewsletterSubscription: &managev1.NewsletterSubscriptionState{Subscribed: true, SubscribedAt: when},
-				AccountDetails: &managev1.AccountAdminDetails{Providers: []*managev1.AccountProvider{{Provider: "github", Identifier: "provider-private-subject"}}, EmailCandidates: []*managev1.AccountEmailCandidate{{Email: "alternate-private@example.test"}}},
+			when := time.Date(2026, 10, 5, 1, 2, 3, 0, time.UTC)
+			status, _ := memberdomain.AdminStatusFromProto(test.status)
+			reader := &recordingMemberAdminReader{member: memberdomain.AdminMember{
+				Profile: memberdomain.Profile{Summary: memberdomain.Summary{ID: memberAdminTestID, Nickname: "Member", Avatar: &memberdomain.Asset{ID: memberAdminTestID, URL: "https://private.example.test/avatar", SHA256: []byte("private-native-bytes")}}, Bio: &bio, CreatedAt: when},
+				Account: &memberdomain.AccountSummary{Role: policyv1.AuthorizationRole_ADMIN, Status: status, CanonicalEmail: &memberdomain.CanonicalEmail{Email: "member@example.test", Verified: true}, Banned: true,
+					BanDetails: &memberdomain.BanDetails{MetadataBanned: true, IdentityState: "inactive", InactiveState: true, Reason: &reason, ExpiresAt: &when}},
+				TagIDs: []string{memberAdminTestID}, Onboarded: true, Newsletter: memberdomain.NewsletterState{Subscribed: true, SubscribedAt: &when},
+				AccountDetails: &memberdomain.AccountDetails{Providers: []memberdomain.AccountProvider{{Provider: "github", Identifier: "provider-private-subject"}}, EmailCandidates: []memberdomain.EmailCandidate{{Email: "alternate-private@example.test"}}},
 			}}
 			tools, err := NewMemberAdminTools(reader)
 			require.NoError(t, err)
@@ -195,7 +195,7 @@ func TestMemberAdminUsesNativeAuthenticationBoundary(t *testing.T) {
 
 type recordingMemberAdminReader struct {
 	list        memberdomain.AdminMemberPage
-	member      *managev1.AdminMember
+	member      memberdomain.AdminMember
 	err         error
 	listRequest memberdomain.ListAdminMembersQuery
 	getRequest  memberdomain.GetAdminMemberQuery
@@ -209,7 +209,7 @@ func (reader *recordingMemberAdminReader) ListAdminMembers(ctx context.Context, 
 	return reader.list, reader.err
 }
 
-func (reader *recordingMemberAdminReader) GetAdminMember(ctx context.Context, query memberdomain.GetAdminMemberQuery) (*managev1.AdminMember, error) {
+func (reader *recordingMemberAdminReader) GetAdminMember(ctx context.Context, query memberdomain.GetAdminMemberQuery) (memberdomain.AdminMember, error) {
 	reader.ctx, reader.getRequest = ctx, query
 	reader.calls++
 	return reader.member, reader.err

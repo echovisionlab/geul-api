@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
+
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
@@ -15,7 +17,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/programevent"
@@ -218,7 +219,7 @@ func (a *MemberSummaries) Load(
 	ctx context.Context,
 	memberIDs []string,
 ) (map[string]*commonv1.MemberSummary, error) {
-	return memberdomain.LoadSummaries(ctx, a.db, a.cdnDomain, memberIDs)
+	return memberpostgres.LoadSummaries(ctx, a.db, a.cdnDomain, memberIDs)
 }
 
 // TrackAttachment runs the Release-owned Track steps of a File ingest in

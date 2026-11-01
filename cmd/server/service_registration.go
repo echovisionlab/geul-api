@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
+
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/echovisionlab/geul-api/internal/account"
@@ -290,17 +292,22 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(internalCollaborationAuthorizationPath, internalRPCTrust.collab(internalCollaborationAuthorizationHandler))
 	slog.Info("Registered internal service", "path", internalCollaborationAuthorizationPath)
 
+	accountEmailProjection := memberadapter.AccountEmailProjection{DB: db, Identity: kratosClient}
+	memberUnits, err := memberpostgres.NewUnits(db, memberpostgres.Ports{
+		WelcomeEmails: servicePublisher, WelcomeRecipients: accountEmailProjection, CDNDomain: cfg.CDNURL,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize member units: %w", err)
+	}
 	memberService, err := member.NewService(member.Deps{
-		DB:            db,
-		SpiceDB:       spicedbClient,
-		Identity:      kratosClient,
-		AvatarFiles:   fileService,
-		WelcomeEmails: servicePublisher,
-		Accounts:      memberadapter.AccountSummaryReader{},
-		AccountEmails: memberadapter.AccountEmailProjection{},
-		Audit:         telemetryWriter,
-		CDNDomain:     cfg.CDNURL,
-		SiteOrigin:    cfg.SiteOrigin,
+		Units:       memberUnits,
+		SpiceDB:     spicedbClient,
+		Fence:       identitystate.PostgresFence{},
+		Identity:    kratosClient,
+		AvatarFiles: memberadapter.AvatarFiles{Files: fileService},
+		Accounts:    memberadapter.Accounts{DB: db, SpiceDB: spicedbClient},
+		Audit:       telemetryWriter,
+		SiteOrigin:  cfg.SiteOrigin,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize member service: %w", err)
@@ -358,10 +365,10 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	)
 	directRoles := accountadapter.AccountDirectRoleTransition{}
 	registrationMembers := member.NewMemberProvisioner(
-		db,
+		memberUnits,
 		kratosClient,
 		spicedbClient,
-		memberadapter.AccountEmailProjection{},
+		accountEmailProjection,
 		directRoles,
 	)
 	loginHooks := authentication.NewLoginHookService(

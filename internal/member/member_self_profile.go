@@ -11,46 +11,47 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
 )
 
+// Settings are the authenticated Member's own settings.
+type Settings struct {
+	PreferredLocale *string
+	Newsletter      NewsletterState
+	CookieConsent   *CookieConsent
+	CanonicalEmail  *CanonicalEmail
+}
+
 // GetSettings returns the authenticated Member's settings.
-func (s *Service) GetSettings(ctx context.Context) (*managev1.GetMySettingsResponse, error) {
+func (s *Service) GetSettings(ctx context.Context) (Settings, error) {
 	principal, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
-		return nil, err
+		return Settings{}, err
 	}
 	memberID := principal.MemberID.String()
-	var member model.Member
-	if err := s.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL AND account_identity_id IS NOT NULL", memberID).First(&member).Error; err != nil {
-		return nil, err
+	var settings Settings
+	if err := s.read(ctx, func(store Store) error {
+		member, err := store.SettingsMember(ctx, memberID)
+		if err != nil {
+			return err
+		}
+		settings.PreferredLocale = member.PreferredLocale
+		if settings.Newsletter, err = newsletterSubscriptionState(ctx, store, principal.IdentityID.String()); err != nil {
+			return err
+		}
+		settings.CookieConsent, err = store.LatestCookieConsent(ctx, memberID)
+		return err
+	}); err != nil {
+		return Settings{}, err
 	}
-	subscription, err := newsletterSubscriptionState(ctx, s.db, principal.IdentityID.String())
+	account, err := s.accounts.Summary(ctx, memberID)
 	if err != nil {
-		return nil, err
+		return Settings{}, err
 	}
-	var consent model.UserCookieConsent
-	consentErr := s.db.WithContext(ctx).Where("member_id = ?", memberID).Order("recorded_at DESC").First(&consent).Error
-	if consentErr != nil && !errors.Is(consentErr, gorm.ErrRecordNotFound) {
-		return nil, consentErr
-	}
-	account, err := s.accounts.SummaryForMember(ctx, s.db, s.spicedb, memberID)
-	if err != nil {
-		return nil, err
-	}
-	settings := &managev1.GetMySettingsResponse{PreferredLocale: member.PreferredLocale, NewsletterSubscription: subscription, CookieConsent: cookieConsentProto(nil), CanonicalEmail: account.CanonicalEmail}
-	if consentErr == nil {
-		settings.CookieConsent = cookieConsentProto(&consent)
-	}
+	settings.CanonicalEmail = account.CanonicalEmail
 	return settings, nil
 }
 
@@ -70,52 +71,52 @@ type profileEdit struct {
 	SocialLinks map[string]string
 }
 
-func (edit profileEdit) updates() (structured.Fields, error) {
-	updates := structured.Fields{}
+func (edit profileEdit) update() (ProfileUpdate, error) {
+	update := ProfileUpdate{}
 	if edit.Nickname != nil {
 		value, err := normalizeMemberNickname(*edit.Nickname)
 		if err != nil {
-			return nil, err
+			return ProfileUpdate{}, err
 		}
-		updates["nickname"] = value
+		update.Nickname = &value
 	}
 	if edit.Bio != nil {
-		updates["bio"] = nullableTrimmed(*edit.Bio)
+		update.Bio = Optional{Set: true, Value: nullableTrimmed(*edit.Bio)}
 	}
 	if edit.Website != nil {
-		updates["website"] = nullableTrimmed(*edit.Website)
+		update.Website = Optional{Set: true, Value: nullableTrimmed(*edit.Website)}
 	}
 	if edit.SocialLinks != nil {
 		for key, value := range edit.SocialLinks {
 			if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
-				return nil, domainerr.InvalidField("social_links", "must not contain blank keys or values")
+				return ProfileUpdate{}, domainerr.InvalidField("social_links", "must not contain blank keys or values")
 			}
 		}
-		updates["social_links"] = edit.SocialLinks
+		update.SocialLinks = edit.SocialLinks
 	}
-	updates["updated_at"] = time.Now().UTC()
-	return updates, nil
+	update.UpdatedAt = time.Now().UTC()
+	return update, nil
 }
 
 // failure classifies a profile update failure: a taken nickname and a
 // missing Member are client outcomes, and the submitted values stay out of
 // the failure record.
 func (edit profileEdit) failure(err error, memberID string) error {
-	if edit.Nickname != nil && dberrors.IsUniqueViolation(err) {
+	if edit.Nickname != nil && errors.Is(err, ErrNicknameTaken) {
 		nickname := strings.TrimSpace(*edit.Nickname)
 		return domainerr.Duplicate("member", "nickname", nickname).WithCause(failurecause.WithPrivate(err, *edit.Nickname, nickname))
 	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	if errors.Is(err, ErrMemberNotFound) {
 		return domainerr.ResourceNotFound("member", memberID)
 	}
 	return err
 }
 
-func nullableTrimmed(value string) structured.Value {
+func nullableTrimmed(value string) *string {
 	if value = strings.TrimSpace(value); value == "" {
 		return nil
 	}
-	return value
+	return &value
 }
 
 // profileChange is what a profile update changed, for its audit record.
@@ -133,19 +134,19 @@ func (change profileChange) audit(memberID string) mutation.Audit {
 	})
 }
 
-// applyProfileUpdates writes updates to the Member row read by where, when
-// they change it.
-func applyProfileUpdates(tx *gorm.DB, memberID string, updates structured.Fields, where string, args ...any) (profileChange, error) {
-	private := profileUpdatePrivateValues(updates)
-	var current model.Member
-	if err := tx.Where(where, args...).Take(&current).Error; err != nil {
+// applyProfileUpdate writes update to the Member read by current, when it
+// changes it.
+func applyProfileUpdate(ctx context.Context, store Store, memberID string, update ProfileUpdate, current func() (Member, error)) (profileChange, error) {
+	private := update.privateValues()
+	member, err := current()
+	if err != nil {
 		return profileChange{}, failurecause.WithPrivate(err, private...)
 	}
-	fields, nickname := memberProfileChangedFields(current, updates)
+	fields, nickname := memberProfileChangedFields(member, update)
 	if len(fields) == 0 {
 		return profileChange{}, nil
 	}
-	if err := tx.Model(&model.Member{}).Where("id = ?::uuid", memberID).Updates(updates).Error; err != nil {
+	if err := store.UpdateProfile(ctx, memberID, update); err != nil {
 		return profileChange{}, failurecause.WithPrivate(err, private...)
 	}
 	return profileChange{fields: fields, nickname: nickname}, nil
@@ -162,68 +163,70 @@ type UpdateOwnProfileCommand struct {
 }
 
 // UpdateOwnProfile applies command and returns the Member summary.
-func (s *Service) UpdateOwnProfile(ctx context.Context, command UpdateOwnProfileCommand) (*commonv1.MemberSummary, error) {
+func (s *Service) UpdateOwnProfile(ctx context.Context, command UpdateOwnProfileCommand) (Summary, error) {
 	principal, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
-		return nil, err
+		return Summary{}, err
 	}
 	if err := s.validateSelfMemberProfileMutation(ctx, command.Bio, command.Website, command.SocialLinks); err != nil {
-		return nil, err
+		return Summary{}, err
 	}
 	return s.updateOwnProfile(ctx, principal, profileEdit(command))
 }
 
 // updateOwnProfile applies edit to the principal's own profile after the
 // role check of the extended fields.
-func (s *Service) updateOwnProfile(ctx context.Context, principal *auth.UserInfo, edit profileEdit) (*commonv1.MemberSummary, error) {
+func (s *Service) updateOwnProfile(ctx context.Context, principal *auth.UserInfo, edit profileEdit) (Summary, error) {
 	memberID := principal.MemberID.String()
-	updates, err := edit.updates()
+	update, err := edit.update()
 	if err != nil {
-		return nil, err
+		return Summary{}, err
 	}
-	target, err := authorizationtarget.Require(ctx, s.db, memberID)
+	target, err := s.requireTarget(ctx, memberID)
 	if err != nil {
-		return nil, err
+		return Summary{}, err
 	}
-	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[profileChange]{
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[profileChange, Store]{
 		Subjects: []string{target.IdentityID},
 		Access:   mutation.PrincipalFence(principal),
-		Change: func(_ context.Context, tx *gorm.DB) (profileChange, error) {
-			if err := recheckTarget(tx, memberID, target, authorizationtarget.ForMember); err != nil {
+		Change: func(ctx context.Context, store Store) (profileChange, error) {
+			if err := recheckTarget(ctx, store, memberID, target, currentTarget); err != nil {
 				return profileChange{}, err
 			}
-			return applyProfileUpdates(tx, memberID, updates, "id = ? AND deleted_at IS NULL AND account_identity_id IS NOT NULL AND onboarded = TRUE", memberID)
+			return applyProfileUpdate(ctx, store, memberID, update, func() (Member, error) { return store.OwnMember(ctx, memberID) })
 		},
 		Audit: func(change profileChange) mutation.Audit { return change.audit(memberID) },
 	}); err != nil {
-		return nil, edit.failure(err, memberID)
+		return Summary{}, edit.failure(err, memberID)
 	}
 	_, profile, err := s.memberProfileByID(ctx, memberID)
 	if err != nil {
-		return nil, err
+		return Summary{}, err
 	}
 	return profile.Summary, nil
 }
 
 func (s *Service) updateMemberProfileAsAdmin(ctx context.Context, command UpdateMemberProfileCommand) error {
 	edit := profileEdit{Nickname: command.Nickname, Bio: command.Bio, Website: command.Website, SocialLinks: command.SocialLinks}
-	updates, err := edit.updates()
+	update, err := edit.update()
 	if err != nil {
 		return err
 	}
 	memberID := command.MemberID
-	target, err := authorizationtarget.RequireLinkedMember(ctx, s.db, memberID, false)
+	target, err := s.requireLinkedTarget(ctx, memberID, false)
 	if err != nil {
 		return err
 	}
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[profileChange]{
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[profileChange, Store]{
 		Subjects: []string{target.IdentityID},
 		Access:   freshAdmin(),
-		Change: func(_ context.Context, tx *gorm.DB) (profileChange, error) {
-			if err := recheckTarget(tx, memberID, target, linkedMember(false)); err != nil {
+		Change: func(ctx context.Context, store Store) (profileChange, error) {
+			if err := recheckTarget(ctx, store, memberID, target, linkedMember(false)); err != nil {
 				return profileChange{}, err
 			}
-			return applyProfileUpdates(tx, memberID, updates, "id = ?::uuid AND account_identity_id = ?::uuid AND deleted_at IS NULL", memberID, target.IdentityID)
+			return applyProfileUpdate(ctx, store, memberID, update, func() (Member, error) {
+				return store.LinkedMember(ctx, memberID, target.IdentityID)
+			})
 		},
 		Audit: func(change profileChange) mutation.Audit { return change.audit(memberID) },
 	})
@@ -233,16 +236,39 @@ func (s *Service) updateMemberProfileAsAdmin(ctx context.Context, command Update
 	return nil
 }
 
+// requireTarget resolves an active, onboarded target before a mutation.
+func (s *Service) requireTarget(ctx context.Context, memberID string) (Target, error) {
+	var target Target
+	err := s.read(ctx, func(store Store) error {
+		var err error
+		target, err = store.RequireTarget(ctx, memberID)
+		return err
+	})
+	return target, err
+}
+
+// requireLinkedTarget resolves a linked target before a mutation.
+func (s *Service) requireLinkedTarget(ctx context.Context, memberID string, requireOnboarded bool) (Target, error) {
+	var target Target
+	err := s.read(ctx, func(store Store) error {
+		var err error
+		target, err = store.RequireLinkedTarget(ctx, memberID, requireOnboarded)
+		return err
+	})
+	return target, err
+}
+
 // recheckTarget re-reads the target Member under the mutation's Identity
 // lock and requires the Identity resolved before the transaction.
 func recheckTarget(
-	tx *gorm.DB,
+	ctx context.Context,
+	store Store,
 	memberID string,
-	target authorizationtarget.Target,
-	read func(*gorm.DB, string) (authorizationtarget.Target, error),
+	target Target,
+	read func(context.Context, Store, string) (Target, error),
 ) error {
-	current, err := read(tx, memberID)
-	if errors.Is(err, authorizationtarget.ErrIneligible) {
+	current, err := read(ctx, store, memberID)
+	if errors.Is(err, ErrIneligible) {
 		return domainerr.ResourceNotFound("member", memberID)
 	}
 	if err != nil {
@@ -254,56 +280,61 @@ func recheckTarget(
 	return nil
 }
 
+// currentTarget reads an active, onboarded target.
+func currentTarget(ctx context.Context, store Store, memberID string) (Target, error) {
+	return store.CurrentTarget(ctx, memberID)
+}
+
 // linkedMember reads a Member with a live Identity link, onboarded or not.
-func linkedMember(requireOnboarded bool) func(*gorm.DB, string) (authorizationtarget.Target, error) {
-	return func(tx *gorm.DB, memberID string) (authorizationtarget.Target, error) {
-		return authorizationtarget.LinkedMemberForMember(tx, memberID, requireOnboarded)
+func linkedMember(requireOnboarded bool) func(context.Context, Store, string) (Target, error) {
+	return func(ctx context.Context, store Store, memberID string) (Target, error) {
+		return store.CurrentLinkedTarget(ctx, memberID, requireOnboarded)
 	}
 }
 
-// profileUpdatePrivateValues lists the submitted profile values, which a
-// database error can echo, so the failure record redacts them.
-func profileUpdatePrivateValues(updates structured.Fields) []string {
+// privateValues lists the submitted profile values, which a database error
+// can echo, so the failure record redacts them.
+func (update ProfileUpdate) privateValues() []string {
 	var values []string
-	for _, value := range updates {
-		switch value := value.(type) {
-		case string:
-			values = append(values, value)
-		case map[string]string:
-			for _, entry := range value {
-				values = append(values, entry)
-			}
+	if update.Nickname != nil {
+		values = append(values, *update.Nickname)
+	}
+	for _, field := range []Optional{update.Bio, update.Website} {
+		if field.Set && field.Value != nil {
+			values = append(values, *field.Value)
 		}
+	}
+	for _, entry := range update.SocialLinks {
+		values = append(values, entry)
 	}
 	return values
 }
 
-func memberProfileChangedFields(current model.Member, updates structured.Fields) ([]string, string) {
+func memberProfileChangedFields(current Member, update ProfileUpdate) ([]string, string) {
 	changedFields := make([]string, 0, 4)
 	auditNickname := ""
-	if nickname, ok := updates["nickname"].(string); ok && current.Nickname != nickname {
+	if update.Nickname != nil && current.Nickname != *update.Nickname {
 		changedFields = append(changedFields, "nickname")
-		auditNickname = nickname
+		auditNickname = *update.Nickname
 	}
-	if desired, ok := updates["bio"]; ok && !sameNullableMemberProfileValue(current.Bio, desired) {
+	if update.Bio.Set && !sameNullableMemberProfileValue(current.Bio, update.Bio.Value) {
 		changedFields = append(changedFields, "bio")
 	}
-	if desired, ok := updates["website"]; ok && !sameNullableMemberProfileValue(current.Website, desired) {
+	if update.Website.Set && !sameNullableMemberProfileValue(current.Website, update.Website.Value) {
 		changedFields = append(changedFields, "website")
 	}
-	if socialLinks, ok := updates["social_links"].(map[string]string); ok && !maps.Equal(current.SocialLinks, socialLinks) {
+	if update.SocialLinks != nil && !maps.Equal(current.SocialLinks, update.SocialLinks) {
 		changedFields = append(changedFields, "social_links")
 	}
 	sort.Strings(changedFields)
 	return changedFields, auditNickname
 }
 
-func sameNullableMemberProfileValue(current *string, desired structured.Value) bool {
+func sameNullableMemberProfileValue(current, desired *string) bool {
 	if desired == nil {
 		return current == nil || *current == ""
 	}
-	value, ok := desired.(string)
-	return ok && current != nil && *current == value
+	return current != nil && *current == *desired
 }
 
 // CheckNicknameAvailabilityQuery asks whether another Member holds a nickname.
@@ -323,15 +354,11 @@ func (s *Service) CheckNicknameAvailability(ctx context.Context, query CheckNick
 		return false, err
 	}
 	var claimed bool
-	if err := s.db.WithContext(ctx).Raw(`
-		SELECT EXISTS (
-			SELECT 1
-			FROM member
-			WHERE nickname = ?
-			  AND id <> ?::uuid
-			  AND deleted_at IS NULL
-		)
-	`, nickname, principal.MemberID.String()).Scan(&claimed).Error; err != nil {
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		claimed, err = store.NicknameClaimed(ctx, nickname, principal.MemberID.String())
+		return err
+	}); err != nil {
 		return false, failurecause.WithPrivate(err, nickname)
 	}
 	return !claimed, nil
