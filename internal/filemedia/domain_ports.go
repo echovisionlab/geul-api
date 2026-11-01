@@ -7,9 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // PostAccess is the FileMedia-owned authorization boundary for Post targets.
@@ -50,13 +48,6 @@ type ProgramEventAttachment interface {
 	RequireEdit(context.Context, *auth.SpiceDBClient, string) error
 	RequireLockedView(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error
 	RequireLockedEdit(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error
-}
-
-// AudienceAccess validates and projects Audience-owned Segment references used
-// by File download policy.
-type AudienceAccess interface {
-	ValidateAuthenticatedSegmentIDs(context.Context, *gorm.DB, []string) error
-	AuthenticatedSegmentSummary(*model.AudienceSegment) (*managev1.AudienceSegmentSummary, bool)
 }
 
 // MemberSummaries projects uploader identities for File Manager responses.

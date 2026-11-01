@@ -14,7 +14,9 @@ import (
 func TestFakeCatalogStoreContract(t *testing.T) {
 	RunCatalogContract(t, func(t *testing.T) CatalogHarness {
 		s := NewLibraryStore()
-		return CatalogHarness{Audit: s.AuditRecorder(), Harness: mutationtest.FakeHarness[domain.Store](s), SeedAssetBinding: func(t *testing.T, asset, id string) {
+		return CatalogHarness{SeedPolicy: func(_ *testing.T, r domain.PolicyRelation, ids []string) {
+			s.Policies[PolicyKey(r.Selector)] = PolicyRecord{Relation: r, SegmentIDs: ids}
+		}, SeedSegment: func(_ *testing.T, segment domain.PolicySegment) { s.Segments[segment.ID] = segment }, Audit: s.AuditRecorder(), Harness: mutationtest.FakeHarness[domain.Store](s), SeedAssetBinding: func(t *testing.T, asset, id string) {
 			require.NoError(t, s.MediaAssets.InsertBinding(t.Context(), mediaasset.AssetBinding{AssetID: asset, SourceFileID: &id, OwnerType: "post", OwnerID: "owner", BindingKey: "featured_image"}))
 		}, Asset: func(t *testing.T, id string) mediaasset.Asset {
 			a, err := s.MediaAssets.Asset(t.Context(), id)

@@ -7,11 +7,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	audiencedomain "github.com/echovisionlab/geul-api/internal/audience"
-	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -29,40 +26,12 @@ type integrationProgramEventAccess struct {
 	db *gorm.DB
 }
 
-type integrationAudienceAccess struct{}
-
 func newIntegrationPostAccess(db *gorm.DB, spiceDB *auth.SpiceDBClient) *integrationPostAccess {
 	return &integrationPostAccess{db: db, spiceDB: spiceDB}
 }
 
 func newIntegrationProgramEventAccess(db *gorm.DB) *integrationProgramEventAccess {
 	return &integrationProgramEventAccess{db: db}
-}
-
-func newIntegrationAudienceAccess() *integrationAudienceAccess {
-	return &integrationAudienceAccess{}
-}
-
-func (*integrationAudienceAccess) ValidateAuthenticatedSegmentIDs(
-	ctx context.Context,
-	tx *gorm.DB,
-	segmentIDs []string,
-) error {
-	// Audience answers with use-case errors; File keeps answering with
-	// Connect errors until it migrates.
-	if err := audiencepostgres.ValidateAuthenticatedAccessSegmentIDs(ctx, tx, segmentIDs); err != nil {
-		return errs.Wrap(err)
-	}
-	return nil
-}
-
-func (*integrationAudienceAccess) AuthenticatedSegmentSummary(
-	segment *model.AudienceSegment,
-) (*managev1.AudienceSegmentSummary, bool) {
-	if segment == nil {
-		return nil, false
-	}
-	return audiencedomain.AuthenticatedAccessSegmentSummary(audiencepostgres.SegmentOf(*segment))
 }
 
 func (a *integrationPostAccess) RequireView(ctx context.Context, postID string) error {

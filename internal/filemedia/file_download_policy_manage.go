@@ -9,15 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -41,11 +39,11 @@ type fileDownloadPolicySelector struct {
 }
 
 type fileDownloadPolicyRelation struct {
-	Selector     fileDownloadPolicySelector      `gorm:"-"`
-	FileID       string                          `gorm:"column:file_id"`
-	Audience     mediaasset.FileDownloadAudience `gorm:"column:download_audience"`
-	ResourceType string                          `gorm:"column:resource_type"`
-	ResourceID   string                          `gorm:"column:resource_id"`
+	Selector     fileDownloadPolicySelector
+	FileID       string
+	Audience     mediaasset.FileDownloadAudience
+	ResourceType string
+	ResourceID   string
 }
 
 // FileDownloadPolicyTarget names one File attachment: a File Block of a
@@ -72,7 +70,7 @@ func (s *Service) GetFileDownloadPolicy(ctx context.Context, query GetFileDownlo
 		return nil, err
 	}
 	var policy *managev1.FileDownloadPolicy
-	err = mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
+	err = s.units.ReadLocked(ctx, func(tx Store) error {
 		relation, resolveErr := s.resolveFileDownloadPolicyRelation(ctx, tx, selector, false)
 		if resolveErr != nil {
 			return resolveErr
@@ -177,36 +175,40 @@ func (s *Service) UpdateFileDownloadPolicy(ctx context.Context, command UpdateFi
 	// Authorize the exact owner before validating Segment IDs so an unrelated
 	// caller cannot probe Audience state. The locked check is repeated inside
 	// the mutation transaction after Segment locks are acquired.
-	initial, err := s.resolveFileDownloadPolicyRelation(ctx, s.db, change.selector, false)
-	if err != nil {
+	var initial fileDownloadPolicyRelation
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		initial, err = s.resolveFileDownloadPolicyRelation(ctx, store, change.selector, false)
+		return err
+	}); err != nil {
 		return nil, err
 	}
-	if err := mutation.ReadCurrent(ctx, s.db, func(tx *gorm.DB) error {
+	if err := s.units.ReadCurrent(ctx, func(tx Store) error {
 		return s.authorizeFileDownloadPolicyOwner(ctx, tx, initial, filePolicyOwnerEdit)
 	}); err != nil {
 		return nil, err
 	}
 	var resolved fileDownloadPolicyRelation
-	update, err := mutation.Run(ctx, s.mutations, mutation.Spec[fileDownloadPolicyUpdate]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	update, err := mutation.Run(ctx, s.storeMutations, mutation.StoreSpec[fileDownloadPolicyUpdate, Store]{
+		Lock: func(ctx context.Context, tx Store) error {
 			// Audience Segment rows are the first database lock in policy and
 			// archive flows. This stable order prevents archive-versus-policy
 			// deadlocks.
-			if err := s.audienceAccess.ValidateAuthenticatedSegmentIDs(ctx, tx, change.segmentIDs); err != nil {
+			if err := tx.ValidatePolicySegments(ctx, change.segmentIDs); err != nil {
 				return err
 			}
 			var err error
 			resolved, err = s.resolveFileDownloadPolicyRelation(ctx, tx, change.selector, false)
 			return err
 		},
-		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+		Access: mutation.Checked(func(ctx context.Context, tx Store) error {
 			return s.authorizeFileDownloadPolicyOwner(ctx, tx, resolved, filePolicyOwnerEdit)
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (fileDownloadPolicyUpdate, error) {
+		Change: func(ctx context.Context, tx Store) (fileDownloadPolicyUpdate, error) {
 			return s.applyFileDownloadPolicyChange(ctx, tx, change)
 		},
 		Audit: func(update fileDownloadPolicyUpdate) mutation.Audit { return update.audit },
-		Outbox: func(ctx context.Context, tx *gorm.DB, update fileDownloadPolicyUpdate) error {
+		Outbox: func(ctx context.Context, tx Store, update fileDownloadPolicyUpdate) error {
 			if !update.changed {
 				return nil
 			}
@@ -228,7 +230,7 @@ type fileDownloadPolicyUpdate struct {
 	audit    mutation.Audit
 }
 
-func (s *Service) applyFileDownloadPolicyChange(ctx context.Context, tx *gorm.DB, change fileDownloadPolicyChange) (fileDownloadPolicyUpdate, error) {
+func (s *Service) applyFileDownloadPolicyChange(ctx context.Context, tx Store, change fileDownloadPolicyChange) (fileDownloadPolicyUpdate, error) {
 	locked, err := s.resolveFileDownloadPolicyRelation(ctx, tx, change.selector, true)
 	if err != nil {
 		return fileDownloadPolicyUpdate{}, err
@@ -266,38 +268,8 @@ func (s *Service) applyFileDownloadPolicyChange(ctx context.Context, tx *gorm.DB
 // Policy is attachment metadata. Track policies belong to their Release, not
 // to a Track room. PublishInTransaction retains the owner's current document
 // revision and stamps the browser origin; no document or locale state advances.
-func (s *Service) publishFileDownloadPolicyChanged(ctx context.Context, tx *gorm.DB, relation fileDownloadPolicyRelation) error {
-	event, err := fileDownloadPolicyChangedEvent(relation)
-	if err != nil {
-		return err
-	}
-	publisher, ok := s.asyncPublisher.(contentsignal.Publisher)
-	if !ok {
-		return contentsignal.ErrPublisherRequired
-	}
-	return contentsignal.PublishInTransaction(ctx, tx, publisher, event)
-}
-
-func fileDownloadPolicyChangedEvent(relation fileDownloadPolicyRelation) (*managev1.ContentUpdatedEvent, error) {
-	entityTypes := map[string]managev1.ContentEntityType{
-		"post":          managev1.ContentEntityType_CONTENT_ENTITY_TYPE_POST,
-		"page":          managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE,
-		"work":          managev1.ContentEntityType_CONTENT_ENTITY_TYPE_WORK,
-		"program_event": managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PROGRAM_EVENT,
-		"release":       managev1.ContentEntityType_CONTENT_ENTITY_TYPE_RELEASE,
-	}
-	entityType, ok := entityTypes[relation.ResourceType]
-	if !ok || relation.ResourceID == "" {
-		return nil, fmt.Errorf("unsupported File download policy signal owner %s", relation.ResourceType)
-	}
-	return &managev1.ContentUpdatedEvent{
-		EntityType: entityType, EntityId: relation.ResourceID,
-		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_MANAGE,
-		DocumentStateChanged: false, TimestampMs: time.Now().UnixMilli(),
-		ChangedFields: []*managev1.ContentUpdatedField{{
-			Path: "file_download_policy", Kind: managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION,
-		}},
-	}, nil
+func (s *Service) publishFileDownloadPolicyChanged(ctx context.Context, store Store, relation fileDownloadPolicyRelation) error {
+	return store.PublishPolicyChange(ctx, domain.PolicyChangeSignal{ResourceType: relation.ResourceType, ResourceID: relation.ResourceID, TimestampMS: time.Now().UnixMilli()})
 }
 
 func mergeObservedFileDownloadPolicy(
@@ -369,7 +341,7 @@ func validateFileDownloadPolicySelector(
 		}
 		return selector, nil
 	}
-	if _, _, ok := contentBlockFilePolicyOwner(entityType); !ok {
+	if _, ok := contentBlockFilePolicyOwner(entityType); !ok {
 		return fileDownloadPolicySelector{}, domainerr.InvalidField("entity_type", "unsupported file download policy owner")
 	}
 	if blockID == nil {
@@ -393,96 +365,26 @@ func validateFileDownloadPolicySelector(
 	return selector, nil
 }
 
-func (s *Service) resolveFileDownloadPolicyRelation(
-	ctx context.Context,
-	db *gorm.DB,
-	selector fileDownloadPolicySelector,
-	lock bool,
-) (fileDownloadPolicyRelation, error) {
-	if table, resourceType, ok := contentBlockFilePolicyOwner(selector.EntityType); ok {
-		var row fileDownloadPolicyRelation
-		query := db.WithContext(ctx).
-			Table("content_block_attachment AS attachment").
-			Select("attachment.file_id, attachment.download_audience, ? AS resource_type, owner.id AS resource_id", resourceType).
-			Joins("JOIN content_block AS block ON block.id = attachment.block_id").
-			Joins("JOIN "+table+" AS owner ON owner.content_document_id = block.document_id").
-			Joins("JOIN file ON file.id = attachment.file_id AND file.delete_requested_at IS NULL").
-			Where("owner.id = ?", selector.EntityID).
-			Where("block.id = ? AND block.kind = 'file'", *selector.BlockID).
-			Where("attachment.reference_path = ? AND attachment.selector_kind = 'active'", *selector.ReferencePath)
-		if lock {
-			query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "attachment"}})
-		}
-		if err := query.Take(&row).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fileDownloadPolicyRelation{}, domainerr.ResourceNotFound("File Block attachment", *selector.BlockID)
-			}
-			return fileDownloadPolicyRelation{}, err
-		}
-		row.Selector = selector
-		return row, nil
-	}
-	var row fileDownloadPolicyRelation
-	query := db.WithContext(ctx).
-		Table("track").
-		Select("track.audio_original_file_id AS file_id, track.download_audience, 'release' AS resource_type, track.release_id AS resource_id").
-		Joins("JOIN file ON file.id = track.audio_original_file_id AND file.delete_requested_at IS NULL").
-		Where("track.id = ?", selector.EntityID)
-	if lock {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "track"}})
-	}
-	if err := query.Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+func (s *Service) resolveFileDownloadPolicyRelation(ctx context.Context, store Store, selector fileDownloadPolicySelector, lock bool) (fileDownloadPolicyRelation, error) {
+	row, err := store.ResolveDownloadPolicyRelation(ctx, selector.storage(), lock)
+	if errors.Is(err, domain.ErrPolicyRelationNotFound) {
+		if selector.EntityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK {
 			return fileDownloadPolicyRelation{}, domainerr.ResourceNotFound("Track original audio", selector.EntityID)
 		}
-		return fileDownloadPolicyRelation{}, err
+		return fileDownloadPolicyRelation{}, domainerr.ResourceNotFound("File Block attachment", *selector.BlockID)
 	}
-	row.Selector = selector
-	return row, nil
+	return fileDownloadPolicyRelation{Selector: selector, FileID: row.FileID, Audience: row.Audience, ResourceType: row.ResourceType, ResourceID: row.ResourceID}, err
+}
+func (s fileDownloadPolicySelector) storage() domain.PolicySelector {
+	kind := "track"
+	if resource, ok := contentBlockFilePolicyOwner(s.EntityType); ok {
+		kind = resource
+	}
+	return domain.PolicySelector{OwnerKind: kind, EntityID: s.EntityID, BlockID: s.BlockID, ReferencePath: s.ReferencePath}
 }
 
-func (s *Service) authorizeFileDownloadPolicyOwner(
-	ctx context.Context,
-	db *gorm.DB,
-	relation fileDownloadPolicyRelation,
-	action filePolicyOwnerAction,
-) error {
-	if relation.ResourceType == "post" {
-		access := s.postAccess
-		if action == filePolicyOwnerView {
-			return access.RequireLockedView(ctx, db, relation.ResourceID)
-		}
-		return access.RequireLockedEdit(ctx, db, relation.ResourceID)
-	}
-	if relation.ResourceType == "page" {
-		access := s.pagePolicyAccess
-		if action == filePolicyOwnerView {
-			return access.RequireLockedView(ctx, db, relation.ResourceID)
-		}
-		return access.RequireLockedEdit(ctx, db, relation.ResourceID)
-	}
-	if relation.ResourceType == "program_event" {
-		access := s.programEventAttachment
-		if action == filePolicyOwnerView {
-			return access.RequireLockedView(ctx, db, s.spiceDB, relation.ResourceID)
-		}
-		return access.RequireLockedEdit(ctx, db, s.spiceDB, relation.ResourceID)
-	}
-	if relation.ResourceType == "work" {
-		access := s.workPolicyAccess
-		if action == filePolicyOwnerView {
-			return access.RequireLockedView(ctx, db, relation.ResourceID)
-		}
-		return access.RequireLockedEdit(ctx, db, relation.ResourceID)
-	}
-	if relation.ResourceType == "release" {
-		access := s.releasePolicyAccess
-		if action == filePolicyOwnerView {
-			return access.RequireLockedView(ctx, db, relation.ResourceID)
-		}
-		return access.RequireLockedEdit(ctx, db, relation.ResourceID)
-	}
-	return fmt.Errorf("unsupported File policy owner %s", relation.ResourceType)
+func (s *Service) authorizeFileDownloadPolicyOwner(ctx context.Context, store Store, relation fileDownloadPolicyRelation, action filePolicyOwnerAction) error {
+	return store.RequirePolicyOwner(ctx, relation.ResourceType, relation.ResourceID, action != filePolicyOwnerView)
 }
 
 func requireFileDownloadPolicyActor(ctx context.Context) error {
@@ -496,118 +398,52 @@ func requireFileDownloadPolicyActor(ctx context.Context) error {
 	return nil
 }
 
-func contentBlockFilePolicyOwner(entityType managev1.TranscodeEntityType) (string, string, bool) {
+func contentBlockFilePolicyOwner(entityType managev1.TranscodeEntityType) (string, bool) {
 	switch entityType {
 	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST:
-		return "post", "post", true
+		return "post", true
 	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE:
-		return "page", "page", true
+		return "page", true
 	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_WORK:
-		return "work", "work", true
+		return "work", true
 	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PROGRAM_EVENT:
-		return "program_event", "program_event", true
+		return "program_event", true
 	default:
-		return "", "", false
+		return "", false
 	}
 }
 
-func loadFileDownloadPolicySegmentIDs(ctx context.Context, db *gorm.DB, relation fileDownloadPolicyRelation) ([]string, error) {
-	var ids []string
-	query := db.WithContext(ctx)
-	if relation.Selector.EntityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK {
-		query = query.Table("track_download_audience_segment").Where("track_id = ?", relation.Selector.EntityID)
-	} else {
-		query = query.Table("content_block_attachment_download_audience_segment").
-			Where("block_id = ? AND reference_path = ?", *relation.Selector.BlockID, *relation.Selector.ReferencePath)
-	}
-	if err := query.Order("audience_segment_id ASC").Pluck("audience_segment_id", &ids).Error; err != nil {
-		return nil, err
-	}
-	return ids, nil
+func loadFileDownloadPolicySegmentIDs(ctx context.Context, store Store, relation fileDownloadPolicyRelation) ([]string, error) {
+	return store.DownloadPolicySegmentIDs(ctx, relation.Selector.storage())
 }
-
-func updateFileDownloadPolicyRelation(
-	ctx context.Context,
-	tx *gorm.DB,
-	relation fileDownloadPolicyRelation,
-	audience mediaasset.FileDownloadAudience,
-	segmentIDs []string,
-) error {
-	if relation.Selector.EntityType == managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK {
-		if err := tx.WithContext(ctx).Model(&model.Track{}).
-			Where("id = ?", relation.Selector.EntityID).
-			Update("download_audience", string(audience)).Error; err != nil {
-			return err
-		}
-		if err := tx.WithContext(ctx).Where("track_id = ?", relation.Selector.EntityID).
-			Delete(&model.TrackDownloadAudienceSegment{}).Error; err != nil {
-			return err
-		}
-		if len(segmentIDs) == 0 {
-			return nil
-		}
-		now := time.Now().UTC()
-		rows := make([]model.TrackDownloadAudienceSegment, 0, len(segmentIDs))
-		for _, segmentID := range segmentIDs {
-			rows = append(rows, model.TrackDownloadAudienceSegment{TrackID: relation.Selector.EntityID, AudienceSegmentID: segmentID, CreatedAt: now})
-		}
-		if err := tx.WithContext(ctx).Create(&rows).Error; err != nil {
-			return err
-		}
-		return nil
-	}
-	if err := tx.WithContext(ctx).Table("content_block_attachment").
-		Where("block_id = ? AND reference_path = ?", *relation.Selector.BlockID, *relation.Selector.ReferencePath).
-		Update("download_audience", string(audience)).Error; err != nil {
-		return err
-	}
-	if err := tx.WithContext(ctx).
-		Where("block_id = ? AND reference_path = ?", *relation.Selector.BlockID, *relation.Selector.ReferencePath).
-		Delete(&model.ContentBlockAttachmentDownloadAudienceSegment{}).Error; err != nil {
-		return err
-	}
-	if len(segmentIDs) == 0 {
-		return nil
-	}
-	now := time.Now().UTC()
-	rows := make([]model.ContentBlockAttachmentDownloadAudienceSegment, 0, len(segmentIDs))
-	for _, segmentID := range segmentIDs {
-		rows = append(rows, model.ContentBlockAttachmentDownloadAudienceSegment{
-			BlockID: *relation.Selector.BlockID, ReferencePath: *relation.Selector.ReferencePath,
-			AudienceSegmentID: segmentID, CreatedAt: now,
-		})
-	}
-	if err := tx.WithContext(ctx).Create(&rows).Error; err != nil {
-		return err
-	}
-	return nil
+func updateFileDownloadPolicyRelation(ctx context.Context, store Store, relation fileDownloadPolicyRelation, audience mediaasset.FileDownloadAudience, ids []string) error {
+	return store.SetDownloadPolicy(ctx, relation.Selector.storage(), audience, ids, time.Now().UTC())
 }
 
 func (s *Service) loadManageFileDownloadPolicy(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	relation fileDownloadPolicyRelation,
 ) (*managev1.FileDownloadPolicy, error) {
-	audience, ok := manageFileDownloadAudience(relation.Audience)
+	audienceValue, ok := manageFileDownloadAudience(relation.Audience)
 	if !ok {
 		return nil, errors.New("attachment has invalid download audience")
 	}
-	segmentIDs, err := loadFileDownloadPolicySegmentIDs(ctx, db, relation)
+	segmentIDs, err := loadFileDownloadPolicySegmentIDs(ctx, store, relation)
 	if err != nil {
 		return nil, err
 	}
-	var segments []model.AudienceSegment
+	var segments []domain.PolicySegment
 	if len(segmentIDs) > 0 {
-		if err := db.WithContext(ctx).
-			Where("id IN ? AND archived_at IS NULL", segmentIDs).
-			Order("LOWER(name) ASC, id ASC").Find(&segments).Error; err != nil {
+		segments, err = store.ActivePolicySegments(ctx, segmentIDs)
+		if err != nil {
 			return nil, err
 		}
 	}
-	audienceAccess := s.audienceAccess
+
 	summaries := make([]*managev1.AudienceSegmentSummary, 0, len(segments))
 	for i := range segments {
-		summary, valid := audienceAccess.AuthenticatedSegmentSummary(&segments[i])
+		summary, valid := policySegmentSummaryProto(segments[i])
 		if !valid {
 			return nil, errors.New("attachment references an ineligible audience segment")
 		}
@@ -619,7 +455,7 @@ func (s *Service) loadManageFileDownloadPolicy(
 		BlockId:          relation.Selector.BlockID,
 		ReferencePath:    relation.Selector.ReferencePath,
 		FileId:           relation.FileID,
-		Audience:         audience,
+		Audience:         audienceValue,
 		AudienceSegments: summaries,
 	}, nil
 }

@@ -4,18 +4,15 @@ import (
 	"context"
 	"errors"
 
-	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 
-	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
-	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 var errUnusedTestDependency = errors.New("test did not configure this File dependency")
@@ -30,9 +27,7 @@ func newTestService(deps Deps) *Service {
 	if deps.Audit == nil {
 		deps.Audit = &audittest.Recorder{}
 	}
-	if deps.Units == nil {
-		deps.Units = filemediapostgres.NewUnits(deps.DB, filemediapostgres.Ports{DeletionQueue: filemediaqueue.Async(deps.AsyncPublisher)})
-	}
+
 	if deps.LegalRoutes == nil {
 		deps.LegalRoutes = unusedFilePorts{}
 	}
@@ -57,12 +52,16 @@ func newTestService(deps Deps) *Service {
 	if deps.ReleasePolicyAccess == nil {
 		deps.ReleasePolicyAccess = unusedFilePorts{}
 	}
-	if deps.AudienceAccess == nil {
-		deps.AudienceAccess = unusedFilePorts{}
-	}
+
 	if deps.MemberSummaries == nil {
 		deps.MemberSummaries = unusedFilePorts{}
 	}
+	if deps.Units == nil {
+		deps.Units = mutation.Postgres(deps.DB, func(tx *gorm.DB) Store {
+			return testFileStore(&Service{asyncPublisher: deps.AsyncPublisher, postAccess: deps.PostAccess, pagePolicyAccess: deps.PagePolicyAccess, workPolicyAccess: deps.WorkPolicyAccess, programEventAttachment: deps.ProgramEventAttachment, releasePolicyAccess: deps.ReleasePolicyAccess, spiceDB: deps.SpiceDB}, tx)
+		})
+	}
+
 	service, err := NewService(deps)
 	if err != nil {
 		panic(err)
@@ -96,14 +95,6 @@ func (unusedFilePorts) LockExistsWithDB(context.Context, *gorm.DB, string) error
 
 func (unusedFilePorts) AttachOriginalWithDB(context.Context, *gorm.DB, TrackOriginalAudioInput) (TrackOriginalAudioAttachment, error) {
 	return TrackOriginalAudioAttachment{}, errUnusedTestDependency
-}
-
-func (unusedFilePorts) ValidateAuthenticatedSegmentIDs(context.Context, *gorm.DB, []string) error {
-	return errUnusedTestDependency
-}
-
-func (unusedFilePorts) AuthenticatedSegmentSummary(*model.AudienceSegment) (*managev1.AudienceSegmentSummary, bool) {
-	return nil, false
 }
 
 func (unusedFilePorts) Load(context.Context, []string) (map[string]*commonv1.MemberSummary, error) {

@@ -3,6 +3,7 @@ package filemedia
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediapolicy"
 	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
 	"gorm.io/gorm"
 
@@ -70,8 +71,12 @@ func auditedUserContext(ctx context.Context, user *auth.UserInfo) context.Contex
 func withTestStorage(service *Service) *Service {
 	if service.db != nil {
 		service.units = mutation.Postgres(service.db, func(tx *gorm.DB) Store {
-			return filemediapostgres.Bind(tx, filemediapostgres.Ports{DeletionQueue: filemediaqueue.Async(service.asyncPublisher)})
+			return testFileStore(service, tx)
 		})
 	}
 	return service
+}
+
+func testFileStore(s *Service, tx *gorm.DB) Store {
+	return filemediapostgres.Bind(tx, filemediapostgres.Ports{DeletionQueue: filemediaqueue.Async(s.asyncPublisher), PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: s.postAccess, Pages: s.pagePolicyAccess, Works: s.workPolicyAccess, Events: s.programEventAttachment, Releases: s.releasePolicyAccess, SpiceDB: s.spiceDB}), PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(s.asyncPublisher)})
 }

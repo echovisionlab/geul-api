@@ -32,6 +32,7 @@ import (
 	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediapolicy"
 	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
 	formadapter "github.com/echovisionlab/geul-api/internal/adapters/form"
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
@@ -248,21 +249,28 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	}
 	legalRuntime := legaladapter.NewOGRuntime(cfg.CDNURL, ogDeps.planner)
 	campaignDeliveryDispatcher := campaignadapter.NewDeliveryDispatcher(db, spicedbClient, workerPublisher, telemetryWriter, legalRuntime)
+	filePostAccess := filemediaadapter.NewPostAccess(db, spicedbClient)
+	filePageAccess := pageadapter.NewPolicyAccess(page.NewPolicyAuthority(spicedbClient))
+	fileWorkAccess := workadapter.NewPolicyAccess(spicedbClient)
+	fileEventAccess := filemediaadapter.NewProgramEventAttachment(db)
+	fileReleaseAccess := releaseadapter.NewPolicyAccess(spicedbClient)
+	filePolicyOwners := filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: filePostAccess, Pages: filePageAccess, Works: fileWorkAccess, Events: fileEventAccess, Releases: fileReleaseAccess, SpiceDB: spicedbClient})
+
 	fileService, err := filemedia.NewService(filemedia.Deps{
-		Units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{DeletionQueue: filemediaqueue.Async(servicePublisher)}), Fence: identitystate.PostgresFence{},
+		Units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{DeletionQueue: filemediaqueue.Async(servicePublisher), PolicyOwners: filePolicyOwners, PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(servicePublisher)}), Fence: identitystate.PostgresFence{},
 		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, S3: s3Client, Presigner: s3PresignClient,
 		AsyncPublisher: servicePublisher, Transcoder: transcodeTracker, S3Bucket: cfg.S3Bucket,
 		CDNDomain: cfg.CDNURL, MediaDomain: cfg.MediaURL, MediaSecret: cfg.MediaSigningSecret,
 		DownloadTTL: downloadTTL, EditorImageMaxSize: cfg.EditorImageMaxSize, LegalRoutes: legalRuntime,
-		PostAccess:             filemediaadapter.NewPostAccess(db, spicedbClient),
-		PagePolicyAccess:       pageadapter.NewPolicyAccess(page.NewPolicyAuthority(spicedbClient)),
+		PostAccess:             filePostAccess,
+		PagePolicyAccess:       filePageAccess,
 		WorkAttachment:         filemediaadapter.NewWorkAttachment(db),
-		WorkPolicyAccess:       workadapter.NewPolicyAccess(spicedbClient),
-		ProgramEventAttachment: filemediaadapter.NewProgramEventAttachment(db),
+		WorkPolicyAccess:       fileWorkAccess,
+		ProgramEventAttachment: fileEventAccess,
 		TrackAttachment:        filemediaadapter.NewTrackAttachment(telemetryWriter),
-		ReleasePolicyAccess:    releaseadapter.NewPolicyAccess(spicedbClient),
-		AudienceAccess:         filemediaadapter.NewAudienceAccess(),
-		MemberSummaries:        filemediaadapter.NewMemberSummaries(db, cfg.CDNURL),
+		ReleasePolicyAccess:    fileReleaseAccess,
+
+		MemberSummaries: filemediaadapter.NewMemberSummaries(db, cfg.CDNURL),
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize file service: %w", err)

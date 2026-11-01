@@ -1,9 +1,12 @@
-package filemedia
+package filemediaqueue
 
 import (
 	"context"
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -45,7 +48,7 @@ func TestFileDownloadPolicyChangedEventOwners(t *testing.T) {
 		"release":       managev1.ContentEntityType_CONTENT_ENTITY_TYPE_RELEASE,
 	} {
 		t.Run(owner, func(t *testing.T) {
-			event, err := fileDownloadPolicyChangedEvent(fileDownloadPolicyRelation{ResourceType: owner, ResourceID: "owner-id", Selector: fileDownloadPolicySelector{EntityID: "policy-target-id"}})
+			event, err := PolicyChangedEvent(domain.PolicyChangeSignal{ResourceType: owner, ResourceID: "owner-id", TimestampMS: time.Now().UnixMilli()})
 			require.NoError(t, err)
 			require.Equal(t, kind, event.EntityType)
 			require.Equal(t, "owner-id", event.EntityId)
@@ -57,7 +60,7 @@ func TestFileDownloadPolicyChangedEventOwners(t *testing.T) {
 			require.Equal(t, managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_CONFIGURATION, event.ChangedFields[0].Kind)
 		})
 	}
-	_, err := fileDownloadPolicyChangedEvent(fileDownloadPolicyRelation{ResourceType: "track", ResourceID: "track-id"})
+	_, err := PolicyChangedEvent(domain.PolicyChangeSignal{ResourceType: "track", ResourceID: "track-id"})
 	require.Error(t, err)
 }
 
@@ -68,24 +71,16 @@ func TestFileDownloadPolicySignalUsesOwningTransactionAndCurrentRevision(t *test
 	require.NoError(t, db.Exec(`CREATE TABLE content_document (id TEXT PRIMARY KEY, revision TEXT NOT NULL); CREATE TABLE release (id TEXT PRIMARY KEY, content_document_id TEXT); CREATE TABLE policy (audience TEXT)`).Error)
 	require.NoError(t, db.Exec(`INSERT INTO content_document VALUES ('doc', ?);`, revision).Error)
 	require.NoError(t, db.Exec(`INSERT INTO release VALUES ('release', 'doc'); INSERT INTO policy VALUES ('disabled')`).Error)
-	require.NoError(t, db.Exec(`CREATE TABLE file (id TEXT PRIMARY KEY, delete_requested_at DATETIME);
-		CREATE TABLE track (id TEXT PRIMARY KEY, release_id TEXT, audio_original_file_id TEXT, download_audience TEXT);
-		INSERT INTO file VALUES ('audio', NULL);
-		INSERT INTO track VALUES ('track', 'release', 'audio', 'disabled')`).Error)
 	publisher := &policySignalPublisher{}
-	service := withTestStorage(&Service{db: db, asyncPublisher: publisher})
-	relation, err := service.resolveFileDownloadPolicyRelation(context.Background(), db, fileDownloadPolicySelector{
-		EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK, EntityID: "track",
-	}, false)
-	require.NoError(t, err)
-	require.Equal(t, "release", relation.ResourceType)
-	require.Equal(t, "release", relation.ResourceID)
+	queue := Policy(publisher)
+	signal := domain.PolicyChangeSignal{ResourceType: "release", ResourceID: "release", TimestampMS: time.Now().UnixMilli()}
+
 	origin := uuid.NewString()
 	ctx, err := contentsignal.WithClientOrigin(context.Background(), origin)
 	require.NoError(t, err)
 	err = db.Transaction(func(tx *gorm.DB) error {
 		require.NoError(t, tx.Table("policy").Where("1 = 1").Update("audience", "public").Error)
-		return service.publishFileDownloadPolicyChanged(ctx, tx, relation)
+		return queue.PublishPolicyChange(ctx, tx, signal)
 	})
 	require.NoError(t, err)
 	require.Len(t, publisher.events, 1)
@@ -98,13 +93,13 @@ func TestFileDownloadPolicySignalUsesOwningTransactionAndCurrentRevision(t *test
 	publisher.err = errors.New("signal failed")
 	err = db.Transaction(func(tx *gorm.DB) error {
 		require.NoError(t, tx.Table("policy").Where("1 = 1").Update("audience", "restricted").Error)
-		return service.publishFileDownloadPolicyChanged(ctx, tx, relation)
+		return queue.PublishPolicyChange(ctx, tx, signal)
 	})
 	require.ErrorContains(t, err, "signal failed")
 	var audience string
 	require.NoError(t, db.Table("policy").Pluck("audience", &audience).Error)
 	require.Equal(t, "public", audience)
-	require.Error(t, service.publishFileDownloadPolicyChanged(ctx, db, relation))
-	service.asyncPublisher = nil
-	require.ErrorIs(t, service.publishFileDownloadPolicyChanged(ctx, db, relation), contentsignal.ErrPublisherRequired)
+	require.Error(t, queue.PublishPolicyChange(ctx, db, signal))
+	queue = Policy(nil)
+	require.ErrorIs(t, queue.PublishPolicyChange(ctx, db, signal), contentsignal.ErrPublisherRequired)
 }

@@ -14,7 +14,10 @@ type DeletionQueue interface {
 	EnqueueFileDeletion(context.Context, eventpkg.DBTX, domain.DeletionTarget) error
 }
 type Ports struct {
-	DeletionQueue DeletionQueue
+	DeletionQueue   DeletionQueue
+	PolicyOwners    PolicyOwners
+	PolicyAudiences PolicyAudiences
+	PolicySignals   PolicySignals
 }
 type store struct {
 	tx    *gorm.DB
