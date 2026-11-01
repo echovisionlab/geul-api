@@ -229,7 +229,10 @@ func expiry(requested *time.Time, now time.Time) (time.Time, error) {
 	if requested == nil {
 		return now.Add(defaultExpiration), nil
 	}
-	expiresAt := *requested
+	// The bounds hold for the value share_link stores: PostgreSQL would round
+	// sub-microsecond digits, and a requested time within a microsecond of
+	// now would then fail the table's expiry check instead of this one.
+	expiresAt := requested.Truncate(dbtime.Precision)
 	if !expiresAt.After(now) {
 		return time.Time{}, domainerr.InvalidField("expires_at", "must be in the future")
 	}

@@ -128,7 +128,7 @@ func TestCreateShareLinkStoresTheLinkItReturns(t *testing.T) {
 	expiresAt := time.Now().Add(48 * time.Hour)
 	bounded, err := f.links.CreateShareLink(callerContext(t), sharelink.CreateShareLinkCommand{EntityType: sharelink.EntityPost, EntityID: postID, ExpiresAt: &expiresAt})
 	require.NoError(t, err)
-	require.Equal(t, expiresAt, bounded.ExpiresAt)
+	require.Equal(t, expiresAt.Truncate(time.Microsecond), bounded.ExpiresAt)
 	require.Nil(t, bounded.PasswordHash)
 }
 
@@ -250,4 +250,17 @@ func TestCreateShareLinkRollsBackWhenItsAuditFails(t *testing.T) {
 	requireCode(t, connect.CodeInternal, err)
 	require.Equal(t, []mutation.Step{mutation.StepAccess, mutation.StepChange, mutation.StepAudit, mutation.StepRollback}, f.units.Steps())
 	require.Empty(t, f.store.Links())
+}
+
+func TestCreateShareLinkKeepsTheRequestedExpiryAtStoredPrecision(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	pageID := f.target(sharelink.EntityPage, sharelink.Target{})
+	f.checker.Allow(policyv1.Page.ManageShareLinks(pageID))
+	requested := time.Now().Add(time.Hour).Truncate(time.Microsecond).Add(999 * time.Nanosecond)
+
+	created, err := f.links.CreateShareLink(callerContext(t), sharelink.CreateShareLinkCommand{EntityType: sharelink.EntityPage, EntityID: pageID, ExpiresAt: &requested})
+	require.NoError(t, err)
+	require.Equal(t, requested.Truncate(time.Microsecond), created.ExpiresAt)
+	require.Equal(t, []sharelink.Link{created}, f.store.Links())
 }
