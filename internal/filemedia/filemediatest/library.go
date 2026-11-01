@@ -66,6 +66,7 @@ func NewLibraryStore() *LibraryStore {
 	return &LibraryStore{ScopedOwners: map[string]ScopedOwner{}, Policies: map[string]PolicyRecord{}, Segments: map[string]domain.PolicySegment{}, PolicyDenied: map[string]error{}, AssetIDs: map[string]bool{}, Generations: map[string]mediaasset.Generation{}, References: map[string][]string{}, TrackReleases: map[string]string{}, MediaAssets: assets, MeshRecords: map[string]MeshRecord{}, Derivatives: map[string][]domain.StoredDerivativeDelivery{}, IngestBindings: map[string]domain.IngestBinding{}, PrincipalFence: &identitystatetest.Fence{}, ReadyMeshes: map[string]domain.MeshDeliveryWitness{}, AvatarOwners: map[string]string{}, DeliveryOwners: map[string]domain.DeliveryOwner{}, ExactUsages: map[string]bool{}, Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
 }
 func (s *LibraryStore) Savepoint() func() {
+	assetIDs := maps.Clone(s.AssetIDs)
 	saved := maps.Clone(s.Folders)
 	files := maps.Clone(s.Files)
 	writes := s.Writes
@@ -74,6 +75,7 @@ func (s *LibraryStore) Savepoint() func() {
 	assets := s.MediaAssets.Savepoint()
 	favicon, outbox, audits := slices.Clone(s.FaviconDeletions), slices.Clone(s.DeletionOutbox), slices.Clone(s.Audits)
 	return func() {
+		s.AssetIDs = assetIDs
 		s.Folders = saved
 		s.Files = files
 		s.Writes = writes

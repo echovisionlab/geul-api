@@ -11,23 +11,19 @@ import (
 	"strings"
 	"time"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
-
 	"github.com/echovisionlab/geul-api/internal/mediamime"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -96,19 +92,18 @@ func (s *Service) promoteSourceFileToPublicAsset(
 	if err != nil {
 		return nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.db), s.cdnDomain)
 	if ready {
-		return mediaasset.ReferenceResultProto(lifecycle.ReadyAssetRef(ctx, asset.ID))
+		return s.readySourcePromotionReference(ctx, asset.ID)
 	}
 
-	digest, err := s.streamSourceAssetPromotion(ctx, file, target.GetObjectKey())
+	digest, err := s.streamSourceAssetPromotion(ctx, file, target.ObjectKey)
 	if err != nil {
 		concurrentReady, failureErr := s.failSourceAssetPromotion(ctx, asset.ID, err)
 		if failureErr != nil {
 			return nil, fmt.Errorf("%v; record public asset promotion failure: %w", err, failureErr)
 		}
 		if concurrentReady {
-			return mediaasset.ReferenceResultProto(lifecycle.ReadyAssetRef(ctx, asset.ID))
+			return s.readySourcePromotionReference(ctx, asset.ID)
 		}
 		return nil, err
 	}
@@ -118,30 +113,27 @@ func (s *Service) promoteSourceFileToPublicAsset(
 		// resolved by the ready-row re-read in completeSourceAssetPromotion.
 		return nil, err
 	}
-	return mediaasset.ReferenceResultProto(lifecycle.ReadyAssetRef(ctx, asset.ID))
+	return s.readySourcePromotionReference(ctx, asset.ID)
 }
 
 func (s *Service) prepareSourceAssetPromotion(
 	ctx context.Context,
 	sourceFileID string,
 	kind string,
-) (model.File, *model.PublicAsset, *commonv1.AssetWriteTarget, bool, error) {
+) (File, *mediaasset.Asset, *mediaasset.WriteTarget, bool, error) {
 	var lastErr error
 	for range 2 {
-		var file model.File
-		var asset *model.PublicAsset
-		var target *commonv1.AssetWriteTarget
+		var file File
+		var asset *mediaasset.Asset
+		var target *mediaasset.WriteTarget
 		var ready bool
 		callbackCompleted := false
-		txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, []string{sourceFileID}); err != nil {
-				return err
-			}
-			if err := tx.
-				Select("id", "mime_type", "file_size", "extension").
-				Where("id = ?", sourceFileID).
-				Take(&file).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
+		var err error
+		txErr := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+			store := unit.Store()
+			file, err = store.PromotionFile(ctx, sourceFileID, true)
+			if err != nil {
+				if errors.Is(err, domain.ErrFileNotFound) {
 					return domainerr.ResourceNotFound("file", sourceFileID)
 				}
 				return err
@@ -150,9 +142,7 @@ func (s *Service) prepareSourceAssetPromotion(
 				return err
 			}
 
-			lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), s.cdnDomain)
-			var err error
-			asset, target, ready, err = prepareSourceAssetPromotion(ctx, tx, lifecycle, file, kind)
+			asset, target, ready, err = prepareSourceAssetPromotion(ctx, store, s.cdnDomain, file, kind)
 			if err != nil {
 				return err
 			}
@@ -164,25 +154,25 @@ func (s *Service) prepareSourceAssetPromotion(
 		}
 		lastErr = txErr
 		if !callbackCompleted {
-			return model.File{}, nil, nil, false, txErr
+			return File{}, nil, nil, false, txErr
 		}
 
 		slog.ErrorContext(ctx, "Source asset allocation commit failed; reconciling", failurecause.Attr(txErr), "file_id", file.ID)
 		// A commit acknowledgement can be lost after the allocation/resume row
 		// became durable. Re-read the source authority before retrying allocation.
 		existing, recoveredTarget, recoveredReady, recoverErr := recoverSourceAssetPromotionAllocation(
-			ctx, s.db, file, kind, txErr,
+			ctx, s.units, file, kind, txErr,
 		)
 		if recoverErr == nil {
 			return file, existing, recoveredTarget, recoveredReady, nil
 		}
 	}
-	return model.File{}, nil, nil, false, lastErr
+	return File{}, nil, nil, false, lastErr
 }
 
 func (s *Service) streamSourceAssetPromotion(
 	ctx context.Context,
-	file model.File,
+	file File,
 	targetObjectKey string,
 ) ([]byte, error) {
 	sourceKey, err := mediaauth.MediaObjectKey(file.ID, file.Extension)
@@ -224,7 +214,7 @@ func (s *Service) streamSourceAssetPromotion(
 	return hasher.Sum(nil), nil
 }
 
-func validateSourceAssetPromotionFile(file model.File, kind string) error {
+func validateSourceAssetPromotionFile(file File, kind string) error {
 	if file.FileSize <= 0 ||
 		strings.TrimSpace(file.Extension) == "" || canonicalMimeType(file.MimeType) == "" {
 		return domainerr.Precondition("public asset source is missing verified metadata")
@@ -240,30 +230,18 @@ func validateSourceAssetPromotionFile(file model.File, kind string) error {
 
 func prepareSourceAssetPromotion(
 	ctx context.Context,
-	tx *gorm.DB,
-	lifecycle *mediaasset.Lifecycle,
-	file model.File,
+	store Store,
+	cdnDomain string,
+	file File,
 	kind string,
-) (*model.PublicAsset, *commonv1.AssetWriteTarget, bool, error) {
-	var existing model.PublicAsset
-	err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Where("source_file_id = ? AND status <> ?", file.ID, model.PublicAssetStatusDeleted).
-		Order("created_at DESC").
-		Take(&existing).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		asset, target, allocateErr := mediaasset.AllocationResultProto(lifecycle.AllocatePublicAsset(ctx, mediaasset.Allocation{
-			SourceFileID: &file.ID,
-			Kind:         kind,
-			Extension:    file.Extension,
-			MimeType:     file.MimeType,
-			Disposition:  mediaasset.DispositionInline,
-		}))
+) (*mediaasset.Asset, *mediaasset.WriteTarget, bool, error) {
+	existing, err := store.SourcePromotionAsset(ctx, file.ID, true)
+	if errors.Is(err, mediaasset.ErrAssetNotFound) {
+		asset, target, allocateErr := store.AllocatePromotionAsset(ctx, cdnDomain, mediaasset.Allocation{SourceFileID: &file.ID, Kind: kind, Extension: file.Extension, MimeType: file.MimeType, Disposition: mediaasset.DispositionInline})
 		if allocateErr != nil {
 			return nil, nil, false, allocateErr
 		}
-		row := mediaassetpostgres.AssetRow(*asset)
-		return &row, target, false, nil
+		return asset, target, false, nil
 	}
 	if err != nil {
 		return nil, nil, false, err
@@ -274,33 +252,21 @@ func prepareSourceAssetPromotion(
 	}
 
 	switch existing.Status {
-	case model.PublicAssetStatusReady:
+	case mediaasset.AssetReady:
 		return &existing, nil, true, nil
-	case model.PublicAssetStatusAllocated:
-	case model.PublicAssetStatusFailed:
+	case mediaasset.AssetAllocated:
+	case mediaasset.AssetFailed:
 		now := dbtime.Now()
-		result := tx.Model(&model.PublicAsset{}).
-			Where("id = ? AND status = ?", existing.ID, model.PublicAssetStatusFailed).
-			Updates(structured.Fields{
-				"file_size":           nil,
-				"sha256":              nil,
-				"status":              model.PublicAssetStatusAllocated,
-				"ready_at":            nil,
-				"delete_requested_at": nil,
-				"deleted_at":          nil,
-				"failed_at":           nil,
-				"failure_reason":      nil,
-				"updated_at":          now,
-			})
-		if result.Error != nil {
-			return nil, nil, false, result.Error
+		resumed, resumeErr := store.ResumePromotionAsset(ctx, existing.ID, true, now)
+		if resumeErr != nil {
+			return nil, nil, false, resumeErr
 		}
-		if result.RowsAffected != 1 {
+		if !resumed {
 			return nil, nil, false, domainerr.Precondition("failed public asset could not be resumed")
 		}
 		existing.FileSize = nil
 		existing.SHA256 = nil
-		existing.Status = model.PublicAssetStatusAllocated
+		existing.Status = mediaasset.AssetAllocated
 		existing.ReadyAt = nil
 		existing.DeleteRequestedAt = nil
 		existing.DeletedAt = nil
@@ -316,15 +282,16 @@ func prepareSourceAssetPromotion(
 
 func loadSourceAssetPromotion(
 	ctx context.Context,
-	db *gorm.DB,
-	file model.File,
+	reader fileDeliveryReader,
+	file File,
 	kind string,
-) (*model.PublicAsset, *commonv1.AssetWriteTarget, bool, error) {
-	var existing model.PublicAsset
-	if err := db.WithContext(ctx).
-		Where("source_file_id = ? AND status <> ?", file.ID, model.PublicAssetStatusDeleted).
-		Order("created_at DESC").
-		Take(&existing).Error; err != nil {
+) (*mediaasset.Asset, *mediaasset.WriteTarget, bool, error) {
+	var existing mediaasset.Asset
+	if err := reader.Read(ctx, func(store Store) error {
+		var err error
+		existing, err = store.SourcePromotionAsset(ctx, file.ID, false)
+		return err
+	}); err != nil {
 		return nil, nil, false, err
 	}
 	target, err := sourceAssetPromotionTarget(existing, file, kind)
@@ -332,9 +299,9 @@ func loadSourceAssetPromotion(
 		return nil, nil, false, err
 	}
 	switch existing.Status {
-	case model.PublicAssetStatusReady:
+	case mediaasset.AssetReady:
 		return &existing, target, true, nil
-	case model.PublicAssetStatusAllocated, model.PublicAssetStatusFailed:
+	case mediaasset.AssetAllocated, mediaasset.AssetFailed:
 		return &existing, target, false, nil
 	default:
 		return nil, nil, false, domainerr.Precondition("source file public asset cannot be promoted from its current state")
@@ -343,26 +310,26 @@ func loadSourceAssetPromotion(
 
 func recoverSourceAssetPromotionAllocation(
 	ctx context.Context,
-	db *gorm.DB,
-	file model.File,
+	reader fileDeliveryReader,
+	file File,
 	kind string,
 	commitErr error,
-) (*model.PublicAsset, *commonv1.AssetWriteTarget, bool, error) {
-	existing, target, ready, err := loadSourceAssetPromotion(ctx, db, file, kind)
+) (*mediaasset.Asset, *mediaasset.WriteTarget, bool, error) {
+	existing, target, ready, err := loadSourceAssetPromotion(ctx, reader, file, kind)
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to reconcile source asset allocation", failurecause.Attr(err), "file_id", file.ID)
 	}
-	if err == nil && (ready || existing.Status == model.PublicAssetStatusAllocated) {
+	if err == nil && (ready || existing.Status == mediaasset.AssetAllocated) {
 		return existing, target, ready, nil
 	}
 	return nil, nil, false, commitErr
 }
 
 func sourceAssetPromotionTarget(
-	existing model.PublicAsset,
-	file model.File,
+	existing mediaasset.Asset,
+	file File,
 	kind string,
-) (*commonv1.AssetWriteTarget, error) {
+) (*mediaasset.WriteTarget, error) {
 	if existing.Kind != kind || existing.Extension != file.Extension || existing.MimeType != file.MimeType ||
 		existing.Disposition != "inline" || existing.DownloadFilename != nil {
 		return nil, domainerr.Precondition("source file is already promoted with a different public asset contract")
@@ -371,12 +338,12 @@ func sourceAssetPromotionTarget(
 	if err != nil || expectedObjectKey != existing.ObjectKey {
 		return nil, domainerr.Precondition("source file public asset has a non-canonical object key").WithCause(failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("asset_id", existing.ID))))
 	}
-	return &commonv1.AssetWriteTarget{
-		AssetId:     existing.ID,
+	return &mediaasset.WriteTarget{
+		AssetID:     existing.ID,
 		ObjectKey:   existing.ObjectKey,
 		Extension:   existing.Extension,
 		MimeType:    existing.MimeType,
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
+		Disposition: mediaasset.DispositionInline,
 	}, nil
 }
 
@@ -384,32 +351,33 @@ func (s *Service) failSourceAssetPromotion(ctx context.Context, assetID string, 
 	var lastErr error
 	for range 2 {
 		now := time.Now().UTC()
-		result := s.db.WithContext(ctx).Model(&model.PublicAsset{}).
-			Where("id = ? AND status = ?", assetID, model.PublicAssetStatusAllocated).
-			Updates(structured.Fields{
-				"status":         model.PublicAssetStatusFailed,
-				"failed_at":      now,
-				"failure_reason": strings.TrimSpace(cause.Error()),
-				"updated_at":     now,
-			})
-		lastErr = result.Error
-		if result.Error == nil && result.RowsAffected == 1 {
+		changed := false
+		err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+			var err error
+			changed, err = unit.Store().FailPromotionAsset(ctx, assetID, strings.TrimSpace(cause.Error()), now)
+			return err
+		})
+		lastErr = err
+		if err == nil && changed {
 			return false, nil
 		}
-
-		var asset model.PublicAsset
-		if err := s.db.WithContext(ctx).Where("id = ?", assetID).Take(&asset).Error; err != nil {
+		var asset mediaasset.Asset
+		if err := s.units.Read(ctx, func(store Store) error {
+			var err error
+			asset, err = store.PromotionAsset(ctx, assetID, false)
+			return err
+		}); err != nil {
 			if lastErr != nil {
 				return false, lastErr
 			}
 			return false, err
 		}
 		switch asset.Status {
-		case model.PublicAssetStatusReady:
+		case mediaasset.AssetReady:
 			return true, nil
-		case model.PublicAssetStatusFailed:
+		case mediaasset.AssetFailed:
 			return false, nil
-		case model.PublicAssetStatusAllocated:
+		case mediaasset.AssetAllocated:
 			continue
 		default:
 			return false, domainerr.Precondition("source file public asset cannot fail from its current state")
@@ -425,45 +393,35 @@ func (s *Service) failSourceAssetPromotion(ctx context.Context, assetID string, 
 // resuming it first when an earlier attempt failed.
 func (s *Service) completeLockedSourceAsset(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	sourceFileID string,
 	assetID string,
-	result *commonv1.AssetWriteResult,
+	result mediaasset.WrittenAsset,
 ) error {
 	// File is the serialization authority for both new product references
 	// and deletion. Keep the global File -> public_asset lock order.
-	if err := mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, []string{sourceFileID}); err != nil {
+	if _, err := store.PromotionFile(ctx, sourceFileID, true); err != nil {
 		return err
 	}
-	var asset model.PublicAsset
-	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?", assetID).Take(&asset).Error; err != nil {
+	asset, err := store.PromotionAsset(ctx, assetID, true)
+	if err != nil {
 		return err
 	}
 	if asset.SourceFileID == nil || *asset.SourceFileID != sourceFileID {
 		return domainerr.Precondition("public asset no longer belongs to the source file")
 	}
-	if asset.Status == model.PublicAssetStatusFailed {
+	if asset.Status == mediaasset.AssetFailed {
 		now := time.Now().UTC()
-		resumed := tx.Model(&model.PublicAsset{}).
-			Where("id = ? AND status = ?", assetID, model.PublicAssetStatusFailed).
-			Updates(structured.Fields{
-				"file_size":      nil,
-				"sha256":         nil,
-				"status":         model.PublicAssetStatusAllocated,
-				"ready_at":       nil,
-				"failed_at":      nil,
-				"failure_reason": nil,
-				"updated_at":     now,
-			})
-		if resumed.Error != nil {
-			return resumed.Error
+		resumed, err := store.ResumePromotionAsset(ctx, assetID, false, now)
+		if err != nil {
+			return err
 		}
-		if resumed.RowsAffected != 1 {
+		if !resumed {
 			return domainerr.Precondition("failed public asset could not be resumed")
 		}
+
 	}
-	_, err := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), s.cdnDomain).CompletePublicAsset(ctx, mediaasset.WrittenAssetFromProto(result))
-	return err
+	return store.CompletePromotionAsset(ctx, s.cdnDomain, result)
 }
 
 func (s *Service) completeSourceAssetPromotion(
@@ -473,12 +431,13 @@ func (s *Service) completeSourceAssetPromotion(
 	fileSize int64,
 	digest []byte,
 ) error {
-	result := &commonv1.AssetWriteResult{AssetId: assetID, FileSize: fileSize, Sha256: append([]byte(nil), digest...)}
+	result := mediaasset.WrittenAsset{AssetID: assetID, FileSize: fileSize, SHA256: append([]byte(nil), digest...)}
 	var lastErr error
 	for range 2 {
 		callbackCompleted := false
-		txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := s.completeLockedSourceAsset(ctx, tx, sourceFileID, assetID, result); err != nil {
+		txErr := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+			store := unit.Store()
+			if err := s.completeLockedSourceAsset(ctx, store, sourceFileID, assetID, result); err != nil {
 				return err
 			}
 			callbackCompleted = true
@@ -495,7 +454,7 @@ func (s *Service) completeSourceAssetPromotion(
 		slog.ErrorContext(ctx, "Source asset completion commit failed; reconciling", failurecause.Attr(txErr), "file_id", sourceFileID, "asset_id", assetID)
 		// Resolve an ambiguous outer commit from the authoritative asset row.
 		resolved, recoverErr := recoverSourceAssetPromotionCompletion(
-			ctx, s.db, sourceFileID, assetID, fileSize, digest, txErr,
+			ctx, s.units, sourceFileID, assetID, fileSize, digest, txErr,
 		)
 		if recoverErr != nil {
 			return recoverErr
@@ -509,25 +468,30 @@ func (s *Service) completeSourceAssetPromotion(
 
 func recoverSourceAssetPromotionCompletion(
 	ctx context.Context,
-	db *gorm.DB,
+	reader fileDeliveryReader,
 	sourceFileID string,
 	assetID string,
 	fileSize int64,
 	digest []byte,
 	commitErr error,
 ) (bool, error) {
-	var file model.File
-	if err := db.WithContext(ctx).
-		Select("id", "delete_requested_at").
-		Where("id = ?", sourceFileID).
-		Take(&file).Error; err != nil || file.DeleteRequestedAt != nil {
+	var file File
+	if err := reader.Read(ctx, func(store Store) error {
+		var err error
+		file, err = store.PromotionFile(ctx, sourceFileID, false)
+		return err
+	}); err != nil || file.DeleteRequestedAt != nil {
 		if err != nil {
 			slog.ErrorContext(ctx, "Failed to reconcile source file after asset completion", failurecause.Attr(err), "file_id", sourceFileID, "asset_id", assetID)
 		}
 		return false, commitErr
 	}
-	var asset model.PublicAsset
-	if err := db.WithContext(ctx).Where("id = ?", assetID).Take(&asset).Error; err != nil {
+	var asset mediaasset.Asset
+	if err := reader.Read(ctx, func(store Store) error {
+		var err error
+		asset, err = store.PromotionAsset(ctx, assetID, false)
+		return err
+	}); err != nil {
 		slog.ErrorContext(ctx, "Failed to reconcile completed source asset", failurecause.Attr(err), "file_id", sourceFileID, "asset_id", assetID)
 		return false, commitErr
 	}
@@ -535,14 +499,24 @@ func recoverSourceAssetPromotionCompletion(
 		return false, commitErr
 	}
 	switch asset.Status {
-	case model.PublicAssetStatusReady:
+	case mediaasset.AssetReady:
 		if asset.FileSize != nil && *asset.FileSize == fileSize && bytes.Equal(asset.SHA256, digest) {
 			return true, nil
 		}
 		return false, domainerr.Precondition("public asset completion conflicts with ready metadata")
-	case model.PublicAssetStatusAllocated, model.PublicAssetStatusFailed:
+	case mediaasset.AssetAllocated, mediaasset.AssetFailed:
 		return false, nil
 	default:
 		return false, commitErr
 	}
+}
+
+func (s *Service) readySourcePromotionReference(ctx context.Context, id string) (*commonv1.AssetRef, error) {
+	var ref *mediaasset.Reference
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		ref, err = store.ReadyPromotionReference(ctx, s.cdnDomain, id)
+		return err
+	})
+	return mediaasset.ReferenceResultProto(ref, err)
 }
