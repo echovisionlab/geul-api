@@ -178,7 +178,7 @@ func (s *Service) ListPagesAdmin(ctx context.Context, query ListPagesAdminQuery)
 		views[i] = newView(page, &source)
 	}
 	return PageList{Pages: views, Pagination: Pagination{
-		Total: int32(total), Limit: limit, Offset: offset, HasMore: offset+limit < int32(total),
+		Total: int32(total), Limit: limit, Offset: offset, HasMore: int64(offset)+int64(limit) < total,
 	}}, nil
 }
 

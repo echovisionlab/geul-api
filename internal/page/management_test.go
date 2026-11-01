@@ -2,6 +2,7 @@ package page_test
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -169,6 +170,12 @@ func TestListPagesAdminPagesSourceTitlesForAnAdministrator(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, page.Pagination{Total: 3, Limit: 2, Offset: 0, HasMore: true}, list.Pagination)
 	require.Equal(t, []string{"Third", "Second"}, []string{list.Pages[0].Title, list.Pages[1].Title})
+
+	// An offset near the int32 limit pages past the end instead of wrapping.
+	last, err := h.service.ListPagesAdmin(admin.context(t), page.ListPagesAdminQuery{Page: page.Paging{Limit: 20, Offset: math.MaxInt32 - 1}})
+	require.NoError(t, err)
+	require.Empty(t, last.Pages)
+	require.False(t, last.Pagination.HasMore)
 
 	listAction, err := policyv1.Page.List()
 	require.NoError(t, err)
