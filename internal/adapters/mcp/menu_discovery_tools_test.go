@@ -11,7 +11,6 @@ import (
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -49,10 +48,10 @@ func TestMenuDiscoveryDescriptorsAndDependencies(t *testing.T) {
 func TestMenuDiscoveryPreservesNativeAuthorityAndProjectsSelectionOnly(t *testing.T) {
 	actor := &auth.UserInfo{Authenticated: true, IdentityID: "identity", MemberID: "member"}
 	ctx := auth.WithUser(t.Context(), actor)
-	fixture := &recordingMenuDiscovery{
-		menus:      []*managev1.Menu{nil, {Id: managementWorkID, Name: "Main", SourceLocale: "ko", Items: []*managev1.MenuItem{{Label: "private menu body"}}}},
-		pagination: &commonv1.PaginationResponse{Total: 31, HasMore: true},
-	}
+	fixture := &recordingMenuDiscovery{page: menu.MenuPage{
+		Menus: []menu.Menu{{ID: managementWorkID, Name: "Main", SourceLocale: "ko", Items: []menu.Item{{Label: "private menu body"}}}},
+		Total: 31, HasMore: true,
+	}}
 	tools, err := NewMenuDiscoveryTools(fixture, fixture)
 	require.NoError(t, err)
 	result, err := tools.CallTool(ctx, mcpserver.Principal{}, ToolMenuList, toolArguments(t, `{"limit":10,"offset":20}`))
@@ -64,7 +63,7 @@ func TestMenuDiscoveryPreservesNativeAuthorityAndProjectsSelectionOnly(t *testin
 	items := result.StructuredContent["items"].([]any)
 	require.Equal(t, []any{map[string]any{"id": managementWorkID, "name": "Main", "source_locale": "ko"}}, items)
 	require.NotContains(t, result.Content[0]["text"], "private menu body")
-	fixture.pagination = nil
+	fixture.page = menu.MenuPage{}
 	result, err = tools.CallTool(ctx, mcpserver.Principal{}, ToolMenuList, toolArguments(t, `{}`))
 	require.NoError(t, err)
 	require.Equal(t, int32(20), fixture.paginationRequest.Limit)
@@ -81,7 +80,7 @@ func TestMenuDiscoveryRejectsInvalidInputsBeforeCallingOwners(t *testing.T) {
 		require.ErrorAs(t, err, &executionError, input)
 		require.Zero(t, fixture.calls, input)
 	}
-	fixture := &recordingMenuDiscovery{pagination: &commonv1.PaginationResponse{HasMore: true}}
+	fixture := &recordingMenuDiscovery{page: menu.MenuPage{HasMore: true}}
 	tools, err := NewMenuDiscoveryTools(fixture, fixture)
 	require.NoError(t, err)
 	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMenuList, toolArguments(t, `{"offset":2147483640,"limit":20}`))
@@ -135,8 +134,7 @@ func TestMenuDiscoveryReturnsOwnerDenialsAndKeepsInternalErrorsPrivate(t *testin
 }
 
 type recordingMenuDiscovery struct {
-	menus             []*managev1.Menu
-	pagination        *commonv1.PaginationResponse
+	page              menu.MenuPage
 	paginationRequest menu.ListMenusQuery
 	values            map[string]*structpb.Value
 	keys              []string
@@ -145,11 +143,11 @@ type recordingMenuDiscovery struct {
 	err               error
 }
 
-func (r *recordingMenuDiscovery) ListMenus(ctx context.Context, query menu.ListMenusQuery) (*managev1.ListMenusResponse, error) {
+func (r *recordingMenuDiscovery) ListMenus(ctx context.Context, query menu.ListMenusQuery) (menu.MenuPage, error) {
 	r.calls++
 	r.actor = auth.GetUser(ctx)
 	r.paginationRequest = query
-	return &managev1.ListMenusResponse{Menus: r.menus, Pagination: r.pagination}, r.err
+	return r.page, r.err
 }
 
 func (r *recordingMenuDiscovery) GetSetting(ctx context.Context, query sitesettings.GetSettingQuery) (*managev1.SiteSetting, error) {

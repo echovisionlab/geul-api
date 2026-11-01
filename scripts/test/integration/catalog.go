@@ -58,6 +58,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/legal/public",
 			"./internal/localization",
 			"./internal/mediaruntime",
+			"./internal/menu/postgres",
 			"./internal/mq",
 			"./internal/postgreslock",
 			"./internal/scheduler",

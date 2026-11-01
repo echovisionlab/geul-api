@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 // NormalizeItemLocalizationMode resolves the effective localization mode for
@@ -12,18 +11,18 @@ import (
 func NormalizeItemLocalizationMode(mode *string, fixedLocale *string) string {
 	if mode != nil {
 		switch strings.TrimSpace(*mode) {
-		case model.MenuItemLocalizationModeFixedLocale:
-			return model.MenuItemLocalizationModeFixedLocale
-		case "", model.MenuItemLocalizationModeTranslated:
-			return model.MenuItemLocalizationModeTranslated
+		case LocalizationFixedLocale:
+			return LocalizationFixedLocale
+		case "", LocalizationTranslated:
+			return LocalizationTranslated
 		}
 	}
 
 	if NormalizeItemFixedLocale(fixedLocale) != nil {
-		return model.MenuItemLocalizationModeFixedLocale
+		return LocalizationFixedLocale
 	}
 
-	return model.MenuItemLocalizationModeTranslated
+	return LocalizationTranslated
 }
 
 // NormalizeItemFixedLocale returns the canonical supported locale for a Menu
@@ -45,39 +44,40 @@ func CanonicalizeItemLocalization(mode *string, fixedLocale *string) (*string, *
 	}
 
 	switch modeValue {
-	case model.MenuItemLocalizationModeTranslated:
-		normalizedMode := model.MenuItemLocalizationModeTranslated
+	case LocalizationTranslated:
+		normalizedMode := LocalizationTranslated
 		return &normalizedMode, nil
-	case model.MenuItemLocalizationModeFixedLocale:
+	case LocalizationFixedLocale:
 		if normalizedLocale == nil {
 			return nil, nil
 		}
-		normalizedMode := model.MenuItemLocalizationModeFixedLocale
+		normalizedMode := LocalizationFixedLocale
 		return &normalizedMode, normalizedLocale
 	case "":
 		if normalizedLocale == nil {
 			return nil, nil
 		}
-		normalizedMode := model.MenuItemLocalizationModeFixedLocale
+		normalizedMode := LocalizationFixedLocale
 		return &normalizedMode, normalizedLocale
 	default:
 		return nil, nil
 	}
 }
 
-// ShouldTranslateItemLabel reports whether a Menu item label belongs to the
-// requested translation target. Fixed-locale labels are emitted only for their
-// own locale.
-func ShouldTranslateItemLabel(item *model.MenuItem, targetLocale string) bool {
-	if item == nil {
-		return false
-	}
-	if NormalizeItemLocalizationMode(item.LocalizationMode, item.FixedLocale) !=
-		model.MenuItemLocalizationModeFixedLocale {
+// ShouldTranslateItemLabel reports whether the label of a Menu item with
+// localizationMode and fixedLocale belongs to the requested translation
+// target. Fixed-locale labels are emitted only for their own locale.
+func ShouldTranslateItemLabel(localizationMode, fixedLocale *string, targetLocale string) bool {
+	if NormalizeItemLocalizationMode(localizationMode, fixedLocale) != LocalizationFixedLocale {
 		return true
 	}
 
-	fixedLocale := NormalizeItemFixedLocale(item.FixedLocale)
+	fixed := NormalizeItemFixedLocale(fixedLocale)
 	normalizedTarget := localization.NormalizeSupportedLocale(targetLocale)
-	return fixedLocale != nil && normalizedTarget != nil && *fixedLocale == *normalizedTarget
+	return fixed != nil && normalizedTarget != nil && *fixed == *normalizedTarget
+}
+
+// ownsLabel reports whether item's label belongs to locale.
+func (item *Item) ownsLabel(locale string) bool {
+	return item != nil && ShouldTranslateItemLabel(item.LocalizationMode, item.FixedLocale, locale)
 }

@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	menuadapter "github.com/echovisionlab/geul-api/internal/adapters/menu"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
-	menudomain "github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -82,7 +82,7 @@ func adminRequestContext(t *testing.T, db *gorm.DB) (context.Context, *auth.Spic
 }
 
 type referenceMenuTargetsTestAdapter struct {
-	lifecycle menudomain.TargetLifecycle
+	lifecycle menuadapter.TargetLifecycle
 }
 
 type referenceCatalogTestAssets struct{}
@@ -112,7 +112,7 @@ func (referenceCatalogTestAssets) ReadyRef(
 }
 
 func referenceMenuTargetsForTest(writer domainaudit.Appender) MenuTargets {
-	return referenceMenuTargetsTestAdapter{lifecycle: menudomain.NewTargetLifecycle(writer)}
+	return referenceMenuTargetsTestAdapter{lifecycle: menuadapter.NewTargetLifecycle(writer)}
 }
 
 func (adapter referenceMenuTargetsTestAdapter) UpdateSlug(

@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +22,7 @@ func TestMenuInterchangePreservesAbsentAndExplicitEmptyTargets(t *testing.T) {
 	require.NotContains(t, current, "item:about:label")
 
 	desired := mergeMenuInterchangeTargets(
-		managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		InterchangePatch,
 		current,
 		map[string]translation.UnitResult{
 			"item:about:label": {UnitID: "item:about:label", TranslatedText: "About"},
@@ -38,7 +37,7 @@ func TestMenuInterchangeRejectsTargetStructuralUnits(t *testing.T) {
 	t.Parallel()
 	mutation := TranslationInterchangeMutation{
 		MenuID: "menu-1", SourceLocale: "ko", TargetLocale: "en",
-		Mode: managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		Mode: InterchangePatch,
 		Plan: &translation.ExtractionPlan{
 			EntityType: "menu", EntityID: "menu-1", SourceLocale: "ko", TargetLocale: "en",
 			Units: []translation.Unit{{
@@ -64,7 +63,7 @@ func TestMenuInterchangeValidatesManifestAndReportsOnlyChangedImportedUnits(t *t
 	}
 	mutation := TranslationInterchangeMutation{
 		MenuID: "menu-1", SourceLocale: "ko", TargetLocale: "en",
-		Mode: managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		Mode: InterchangePatch,
 		Plan: plan,
 		Targets: map[string]translation.UnitResult{
 			"item:home:label":  {UnitID: "item:home:label", TranslatedText: "Home"},
@@ -74,7 +73,7 @@ func TestMenuInterchangeValidatesManifestAndReportsOnlyChangedImportedUnits(t *t
 	}
 	require.NoError(t, validateMenuInterchangeMutation(mutation))
 	require.Equal(t, []string{"item:about:label"}, changedMenuInterchangeHandles(
-		managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		InterchangePatch,
 		map[string]translation.UnitResult{
 			"item:home:label":  {UnitID: "item:home:label", TranslatedText: "Home"},
 			"item:about:label": {UnitID: "item:about:label", TranslatedText: "About"},
@@ -83,7 +82,7 @@ func TestMenuInterchangeValidatesManifestAndReportsOnlyChangedImportedUnits(t *t
 		mutation.UnitHandles,
 	))
 	require.Equal(t, []string{"item:about:label"}, changedMenuInterchangeHandles(
-		managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		InterchangeReplace,
 		map[string]translation.UnitResult{
 			"item:home:label":  {UnitID: "item:home:label", TranslatedText: "Home"},
 			"item:about:label": {UnitID: "item:about:label", TranslatedText: "About"},

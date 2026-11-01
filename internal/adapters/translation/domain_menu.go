@@ -2,15 +2,20 @@ package translationadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	menuadapter "github.com/echovisionlab/geul-api/internal/adapters/menu"
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/menu"
+	menupostgres "github.com/echovisionlab/geul-api/internal/menu/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -20,7 +25,7 @@ import (
 func menuDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	return newConfiguredDomainPort(core.KindMenu, domainPortFunctions{
 		loadSourceDocument: func(ctx context.Context, db *gorm.DB, _ *contentblock.Store, entityID string) (*core.SourceDocument, error) {
-			return menu.LoadTranslationSourceDocument(ctx, db, entityID)
+			return menu.LoadTranslationSourceDocument(ctx, menupostgres.NewStore(db, menupostgres.Ports{}), entityID)
 		},
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
 			return menu.BuildTranslationExtractionPlan(job.EntityID, job.SourceLocale, job.TargetLocale, source)
@@ -29,21 +34,26 @@ func menuDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			return menu.BuildTranslationCandidate(source, results)
 		},
 		applyCandidate: func(ctx context.Context, tx *gorm.DB, _ *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
-			input.Title = candidate.Title
-			input.Summary = candidate.Summary
-			input.ContentJSON = candidate.ContentJSON
-			input.ContentHTML = candidate.ContentHTML
-			input.ContentText = candidate.ContentText
-			return menu.ApplyProviderTranslationCandidateWithDB(ctx, tx, job, candidate, input, audit)
+			if job == nil || job.EntityType != string(core.KindMenu) {
+				return errors.New("menu provider translation candidate is required")
+			}
+			return menu.ApplyProviderTranslation(ctx, menuadapter.Join(tx, audit), menu.ProviderTranslation{
+				MenuID: job.EntityID, TargetLocale: job.TargetLocale, RequestedByMemberID: job.RequestedByMemberID,
+				Candidate: candidate, Now: input.Now,
+			})
 		},
 		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditMenuUpdated, sharedtelemetry.NewMenuSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(table string) string {
 			return fmt.Sprintf(`SELECT locale, NULL::text AS title, NULL::text AS summary, NULL::text AS content_html, NULL::text AS content_text, items_json AS content_json, updated_at, NULL::uuid AS og_asset_id FROM %s`, table)
 		},
-		requireInterchangeView:  menu.RequireViewAndLockWithDB,
-		requireSourceLocaleEdit: menu.RequireEditAndLockWithDB,
-		requireJobRead:          requireJobEdit(policyv1.Menu.Edit),
-		prepareSourceLocale:     prepareMenuSourceLocale,
+		requireInterchangeView: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, menuID string) error {
+			return menu.RequireViewAndLock(ctx, menupostgres.NewStore(tx, menupostgres.Ports{}), freshMenuCan(ctx, tx, spiceDB), menuID)
+		},
+		requireSourceLocaleEdit: func(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, menuID string) error {
+			return menu.RequireEditAndLock(ctx, menupostgres.NewStore(tx, menupostgres.Ports{}), freshMenuCan(ctx, tx, spiceDB), menuID)
+		},
+		requireJobRead:      requireJobEdit(policyv1.Menu.Edit),
+		prepareSourceLocale: prepareMenuSourceLocale,
 	})
 }
 
@@ -59,4 +69,12 @@ func prepareMenuSourceLocale(
 		return errs.Internal(err)
 	}
 	return nil
+}
+
+// freshMenuCan runs the Menu's fresh check in the translation pipeline's
+// transaction, through the production identity fence.
+func freshMenuCan(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient) mutation.Require {
+	return func(can policyv1.Can) error {
+		return identitystate.RequireFreshCan(ctx, tx, identitystate.PostgresFence{}, spiceDB, can)
+	}
 }

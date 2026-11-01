@@ -21,7 +21,7 @@ const (
 // Menu discovery delegates authorization to the owning Menu and Site Settings
 // services. It exposes selection metadata only; DCDP owns reads and mutations.
 type MenuDiscovery interface {
-	ListMenus(context.Context, menu.ListMenusQuery) (*managev1.ListMenusResponse, error)
+	ListMenus(context.Context, menu.ListMenusQuery) (menu.MenuPage, error)
 }
 
 type MenuLocationReader interface {
@@ -73,19 +73,16 @@ func (tools *MenuDiscoveryTools) CallTool(ctx context.Context, _ mcpserver.Princ
 		if input.Offset < 0 {
 			return executionError(errors.New("offset must be between 0 and 2147483647"))
 		}
-		response, err := tools.menus.ListMenus(ctx, menu.ListMenusQuery{Limit: limit, Offset: input.Offset})
+		page, err := tools.menus.ListMenus(ctx, menu.ListMenusQuery{Limit: limit, Offset: input.Offset})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		items := make([]map[string]any, 0, len(response.Menus))
-		for _, listed := range response.Menus {
-			if listed != nil {
-				items = append(items, map[string]any{"id": listed.Id, "name": listed.Name, "source_locale": listed.SourceLocale})
-			}
+		items := make([]map[string]any, 0, len(page.Menus))
+		for _, listed := range page.Menus {
+			items = append(items, map[string]any{"id": listed.ID, "name": listed.Name, "source_locale": listed.SourceLocale})
 		}
-		pagination := response.Pagination
-		output := map[string]any{"items": items, "total": pagination.GetTotal(), "limit": limit, "offset": input.Offset, "has_more": pagination.GetHasMore()}
-		if pagination.GetHasMore() {
+		output := map[string]any{"items": items, "total": page.Total, "limit": limit, "offset": input.Offset, "has_more": page.HasMore}
+		if page.HasMore {
 			output["next_offset"] = int64(input.Offset) + int64(limit)
 		}
 		return contentResult(output)

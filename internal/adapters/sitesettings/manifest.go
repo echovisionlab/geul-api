@@ -145,7 +145,7 @@ func projectManifestMenuLabels(
 	for i := range items {
 		item := items[i]
 		sourceLabel := item.Label
-		if menudomain.ShouldTranslateItemLabel(&item, sourceLocale) {
+		if menudomain.ShouldTranslateItemLabel(item.LocalizationMode, item.FixedLocale, sourceLocale) {
 			sourceLabel = labels[sourceLocale][item.ID]
 		}
 		locale := displayLocale

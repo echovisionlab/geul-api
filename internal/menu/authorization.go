@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
@@ -26,9 +24,6 @@ func checkMenuPermission(
 	action menuAction,
 	principal *auth.UserInfo,
 ) error {
-	if checker == nil {
-		return domainerr.DependencyUnavailable("SpiceDB")
-	}
 	if principal == nil || !principal.Authenticated || principal.IdentityID == "" || principal.MemberID == "" {
 		return domainerr.AuthenticationRequired()
 	}
@@ -71,11 +66,14 @@ func (s *Service) requireMenuPermissionOrNotFound(
 	if err == nil || !mutation.IsDenied(err) {
 		return err
 	}
-	var count int64
-	if dbErr := s.db.WithContext(ctx).Table("menu").Where("id = ?", menuID).Count(&count).Error; dbErr != nil {
-		return dbErr
+	var exists bool
+	if readErr := s.units.Read(ctx, func(store Store) (readErr error) {
+		exists, readErr = store.MenuExists(ctx, menuID)
+		return readErr
+	}); readErr != nil {
+		return readErr
 	}
-	if count == 0 {
+	if !exists {
 		return domainerr.ResourceNotFound("menu", menuID)
 	}
 	return err
@@ -86,7 +84,6 @@ func (s *Service) requireMenuPermissionOrNotFound(
 // with the principal fence require applies.
 func requireFreshMenuPermission(
 	ctx context.Context,
-	tx *gorm.DB,
 	require mutation.Require,
 	menuID string,
 	action menuAction,
@@ -95,18 +92,21 @@ func requireFreshMenuPermission(
 	if principal == nil {
 		return domainerr.AuthenticationRequired()
 	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
-	if err != nil {
-		return err
-	}
-	if !active {
+	if principal.MemberID == "" || principal.IdentityID == "" {
+		// The fence finds a principal without a Member or Identity inactive.
 		return domainerr.ResourceNotFound("menu", menuID)
 	}
 	can, err := action(menuID)
 	if err != nil {
 		return domainerr.ResourceNotFound("menu", menuID).WithCause(err)
 	}
-	return require(can)
+	if err := require(can); err != nil {
+		if errors.Is(err, identitystate.ErrInactivePrincipal) {
+			return domainerr.ResourceNotFound("menu", menuID)
+		}
+		return err
+	}
+	return nil
 }
 
 func requireMenuGlobalCan(
@@ -115,9 +115,6 @@ func requireMenuGlobalCan(
 	can policyv1.Can,
 ) error {
 	principal := auth.GetUser(ctx)
-	if checker == nil {
-		return domainerr.DependencyUnavailable("SpiceDB")
-	}
 	if principal == nil || !principal.Authenticated || principal.IdentityID == "" || principal.MemberID == "" {
 		return domainerr.AuthenticationRequired()
 	}
@@ -137,29 +134,29 @@ func requireMenuGlobalCan(
 
 func requireMenuPermissionAndLock(
 	ctx context.Context,
-	tx *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
+	store Store,
+	require mutation.Require,
 	menuID string,
 	action menuAction,
 ) error {
-	if _, err := lockMenuForUpdate(ctx, tx, menuID); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if _, err := store.LockMenu(ctx, menuID); err != nil {
+		if errors.Is(err, ErrMenuNotFound) {
 			return domainerr.ResourceNotFound("menu", menuID)
 		}
 		return err
 	}
-	return requireFreshMenuPermission(ctx, tx, func(can policyv1.Can) error {
-		return identitystate.RequireFreshCan(ctx, tx, identitystate.PostgresFence{}, spiceDB, can)
-	}, menuID, action)
+	return requireFreshMenuPermission(ctx, require, menuID, action)
 }
 
-// RequireViewAndLockWithDB is the translation read boundary for one Menu.
-func RequireViewAndLockWithDB(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, menuID string) error {
-	return requireMenuPermissionAndLock(ctx, tx, spiceDB, menuID, policyv1.Menu.View)
+// RequireViewAndLock is the translation read boundary for one Menu, in the
+// translation pipeline's transaction store is bound to: require runs the
+// fresh check there.
+func RequireViewAndLock(ctx context.Context, store Store, require mutation.Require, menuID string) error {
+	return requireMenuPermissionAndLock(ctx, store, require, menuID, policyv1.Menu.View)
 }
 
-// RequireEditAndLockWithDB is the translation source/target mutation boundary
-// for one Menu.
-func RequireEditAndLockWithDB(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, menuID string) error {
-	return requireMenuPermissionAndLock(ctx, tx, spiceDB, menuID, policyv1.Menu.Edit)
+// RequireEditAndLock is the translation source/target mutation boundary for
+// one Menu.
+func RequireEditAndLock(ctx context.Context, store Store, require mutation.Require, menuID string) error {
+	return requireMenuPermissionAndLock(ctx, store, require, menuID, policyv1.Menu.Edit)
 }

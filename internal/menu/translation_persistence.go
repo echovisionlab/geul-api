@@ -10,97 +10,99 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
 
-// ApplyProviderTranslationCandidateWithDB applies only the request-time Menu
-// label units that still belong to the current Menu graph. A source-locale
-// switch changes which locale row is source-owned, not whether the accepted
-// provider response may update its surviving stable labels.
-func ApplyProviderTranslationCandidateWithDB(
-	ctx context.Context,
-	tx *gorm.DB,
-	job *model.TranslationJob,
-	candidate *translation.Candidate,
-	input translation.EntryWrite,
-	auditWriter domainaudit.Appender,
-) error {
-	if tx == nil || job == nil || job.EntityType != "menu" || candidate == nil || !candidate.HasProviderUnitPatch() {
+// ProviderTranslation is one accepted provider response to a Menu
+// translation job.
+type ProviderTranslation struct {
+	MenuID              string
+	TargetLocale        string
+	RequestedByMemberID string
+	Candidate           *translation.Candidate
+	Now                 time.Time
+}
+
+// ApplyProviderTranslation applies, in the translation pipeline's joined
+// transaction, only the request-time Menu label units that still belong to
+// the current Menu graph. A source-locale switch changes which locale row is
+// source-owned, not whether the accepted provider response may update its
+// surviving stable labels.
+func ApplyProviderTranslation(ctx context.Context, joined Joined, applied ProviderTranslation) error {
+	if joined.Store == nil || applied.Candidate == nil || !applied.Candidate.HasProviderUnitPatch() {
 		return errors.New("menu provider translation candidate is required")
 	}
-	if auditWriter == nil {
+	if joined.Audit == nil {
 		return errors.New("menu provider translation Audit writer is required")
 	}
-	memberID, err := uuid.Parse(strings.TrimSpace(job.RequestedByMemberID))
-	if err != nil || memberID == uuid.Nil || memberID.String() != strings.TrimSpace(job.RequestedByMemberID) {
-		return fmt.Errorf("menu provider translation requires canonical requester Member, got %q", job.RequestedByMemberID)
+	memberID, err := uuid.Parse(strings.TrimSpace(applied.RequestedByMemberID))
+	if err != nil || memberID == uuid.Nil || memberID.String() != strings.TrimSpace(applied.RequestedByMemberID) {
+		return fmt.Errorf("menu provider translation requires canonical requester Member, got %q", applied.RequestedByMemberID)
 	}
-	now := input.Now.UTC()
+	now := applied.Now.UTC()
 	if now.IsZero() {
 		return errors.New("Menu provider translation time is required")
 	}
-	root, err := lockMenuForUpdate(ctx, tx, job.EntityID)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return domainerr.ResourceNotFound("menu", job.EntityID)
+	store := joined.Store
+	root, err := store.LockMenu(ctx, applied.MenuID)
+	if errors.Is(err, ErrMenuNotFound) {
+		return domainerr.ResourceNotFound("menu", applied.MenuID)
 	}
 	if err != nil {
 		return err
 	}
-	current, err := loadMenuAIDocumentSnapshotFromRoot(ctx, tx, *root, job.TargetLocale, true)
+	current, err := loadMenuAIDocumentSnapshotFromRoot(ctx, store, root, applied.TargetLocale, true)
 	if err != nil {
 		return err
 	}
-	incoming := providerMenuLabels(candidate)
-	incoming = canonicalMenuAIDocumentLabels(current.Items, job.TargetLocale, incoming)
+	incoming := canonicalMenuAIDocumentLabels(current.Items, applied.TargetLocale, providerMenuLabels(applied.Candidate))
 	next := cloneMenuAIDocumentSnapshot(current)
-	if next.Labels == nil {
-		next.Labels = make(map[string]string)
-	}
 	maps.Copy(next.Labels, incoming)
 	if maps.Equal(current.Labels, next.Labels) && current.LocaleExists {
 		return nil
 	}
+	operation, changed, err := persistProviderTranslation(ctx, store, current, next, now)
+	if err != nil || !changed {
+		return err
+	}
+	return domainaudit.AppendMember(
+		ctx, nil, joined.Audit, memberID.String(), sharedtelemetry.AuditMenuUpdated,
+		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewMenuLocaleContentAuditRecord(metadata, current.ID, applied.TargetLocale, operation)
+		},
+	)
+}
+
+// persistProviderTranslation writes the provider labels of next to the
+// source values row, advancing the content document, or to the target
+// locale row, and names the audited operation.
+func persistProviderTranslation(ctx context.Context, store Store, current, next AIDocumentSnapshot, now time.Time) (sharedtelemetry.AuditItemOperation, bool, error) {
 	operation := sharedtelemetry.AuditItemOperationUpdated
-	if job.TargetLocale == current.SourceLocale {
-		if !current.SourceValuesStored {
-			return domainerr.Precondition("Menu source locale values are not initialized")
-		}
-		if maps.Equal(current.Labels, next.Labels) {
-			return nil
-		}
-		if err := persistMenuAIDocumentSourceValues(ctx, tx, current, next, now); err != nil {
-			return err
-		}
-		expected, err := parseMenuContentDocumentUUID(current.DocumentRevision, "content_document.revision")
-		if err != nil {
-			return err
-		}
-		if err := advanceMenuContentDocument(ctx, tx, current.ID, current.contentDocumentID, expected, now); err != nil {
-			return err
-		}
-	} else {
+	if current.Locale != current.SourceLocale {
 		if !current.LocaleExists {
 			next.LocaleExists = true
 			operation = sharedtelemetry.AuditItemOperationCreated
 		}
-		if err := persistMenuAIDocumentTarget(ctx, tx, current, next, false, now); err != nil {
-			return err
-		}
+		return operation, true, persistMenuAIDocumentTarget(ctx, store, current, next, false, now)
 	}
-	return domainaudit.AppendMember(
-		ctx, tx, auditWriter, memberID.String(), sharedtelemetry.AuditMenuUpdated,
-		func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewMenuLocaleContentAuditRecord(metadata, current.ID, job.TargetLocale, operation)
-		},
-	)
+	if !current.SourceValuesStored {
+		return "", false, domainerr.Precondition("Menu source locale values are not initialized")
+	}
+	if maps.Equal(current.Labels, next.Labels) {
+		return "", false, nil
+	}
+	if err := persistMenuAIDocumentSourceValues(ctx, store, current, next, now); err != nil {
+		return "", false, err
+	}
+	expected, err := parseMenuContentDocumentUUID(current.DocumentRevision, "content_document.revision")
+	if err != nil {
+		return "", false, err
+	}
+	return operation, true, advanceMenuContentDocument(ctx, store, current.ID, current.contentDocumentID, expected, now)
 }
 
 // providerMenuLabels returns the translated item labels of a provider
@@ -119,17 +121,6 @@ func providerMenuLabels(candidate *translation.Candidate) map[string]string {
 	return labels
 }
 
-func decodeSourceItems(body []byte) ([]model.MenuItem, error) {
-	if len(body) == 0 {
-		return nil, nil
-	}
-	var items []model.MenuItem
-	if err := json.Unmarshal(body, &items); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 type translationLabelItem struct {
 	ID       string                 `json:"id"`
 	Label    json.RawMessage        `json:"label"`
@@ -141,7 +132,6 @@ type translationLabelItem struct {
 // Source-owned fields in legacy/full-tree payloads are ignored.
 func DecodeTranslationLabelValues(body []byte) (map[string]string, error) {
 	labels := map[string]string{}
-	seen := map[string]struct{}{}
 	if len(body) == 0 {
 		return labels, nil
 	}
@@ -149,34 +139,34 @@ func DecodeTranslationLabelValues(body []byte) (map[string]string, error) {
 	if err := json.Unmarshal(body, &items); err != nil {
 		return nil, domainerr.InvalidField("content_json", "must be a valid Menu label document").WithCause(err)
 	}
-	var collect func([]translationLabelItem) error
-	collect = func(current []translationLabelItem) error {
-		for _, item := range current {
-			id := strings.TrimSpace(item.ID)
-			if id == "" {
-				return errors.New("menu translation item ID is required")
-			}
-			if _, duplicate := seen[id]; duplicate {
-				return fmt.Errorf("menu translation item ID %q is duplicated", id)
-			}
-			seen[id] = struct{}{}
-			if len(item.Label) != 0 {
-				var label string
-				if err := json.Unmarshal(item.Label, &label); err != nil {
-					return fmt.Errorf("menu translation item %q label must be text: %w", id, err)
-				}
-				labels[id] = label
-			}
-			if err := collect(item.Children); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if err := collect(items); err != nil {
+	if err := collectTranslationLabels(items, labels, map[string]struct{}{}); err != nil {
 		return nil, domainerr.InvalidField("content_json", err.Error())
 	}
 	return labels, nil
+}
+
+func collectTranslationLabels(items []translationLabelItem, labels map[string]string, seen map[string]struct{}) error {
+	for _, item := range items {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			return errors.New("menu translation item ID is required")
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return fmt.Errorf("menu translation item ID %q is duplicated", id)
+		}
+		seen[id] = struct{}{}
+		if len(item.Label) != 0 {
+			var label string
+			if err := json.Unmarshal(item.Label, &label); err != nil {
+				return fmt.Errorf("menu translation item %q label must be text: %w", id, err)
+			}
+			labels[id] = label
+		}
+		if err := collectTranslationLabels(item.Children, labels, seen); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // EncodeTranslationLabelValues emits deterministic flat values-only rows.
@@ -197,195 +187,94 @@ func EncodeTranslationLabelValues(labels map[string]string) ([]byte, error) {
 	return json.Marshal(items)
 }
 
-func initializeCurrentSourceLabelValues(
-	ctx context.Context,
-	db *gorm.DB,
-	menuID string,
-	sourceJSON []byte,
-	rootUpdatedAt time.Time,
-) error {
-	var root struct {
-		SourceLocale string `gorm:"column:source_locale"`
-	}
-	if err := db.WithContext(ctx).Table("menu").Select("source_locale").
-		Where("id = ?", menuID).Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return domainerr.ResourceNotFound("menu", menuID)
-		}
-		return err
-	}
-	root.SourceLocale = strings.TrimSpace(root.SourceLocale)
-	if root.SourceLocale == "" {
+// initializeSourceLabelValues creates the source locale row of a new root
+// with the labels of its items.
+func initializeSourceLabelValues(ctx context.Context, store Store, root Root) error {
+	sourceLocale := strings.TrimSpace(root.SourceLocale)
+	if sourceLocale == "" {
 		return domainerr.Precondition("Menu source locale is not initialized")
 	}
-	sourceItems, err := decodeSourceItems(sourceJSON)
+	sourceItems, err := decodeSourceItems(root.ItemsJSON)
 	if err != nil {
 		return err
 	}
 	labels := make(map[string]string)
-	collectMenuLocaleLabelValues(sourceItems, root.SourceLocale, labels)
-	body, err := EncodeTranslationLabelValues(labels)
-	if err != nil {
-		return err
-	}
-	now := rootUpdatedAt.UTC()
+	collectMenuLocaleLabelValues(sourceItems, sourceLocale, labels)
+	now := root.UpdatedAt.UTC()
 	if now.IsZero() {
 		return domainerr.Precondition("Menu source timestamp is not initialized")
 	}
-	if err := db.WithContext(ctx).Exec(
-		`INSERT INTO menu_translation (entity_id, locale, items_json, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?)`,
-		menuID, root.SourceLocale, string(body), now, now,
-	).Error; err != nil {
-		return err
-	}
-	return nil
+	return store.InsertLocale(ctx, LocaleValues{MenuID: root.ID, Locale: sourceLocale, Labels: labels, UpdatedAt: now})
 }
 
-// SyncCurrentSourceLabelValues writes the full current source-locale label set
-// supplied by the direct Menu source editor. It requires the source version
-// row to exist and never creates or mutates a non-source locale row.
-func SyncCurrentSourceLabelValues(
-	ctx context.Context,
-	db *gorm.DB,
-	menuID string,
-	sourceItems []model.MenuItem,
-	now time.Time,
-) error {
-	var root struct {
-		SourceLocale string `gorm:"column:source_locale"`
-	}
-	if err := db.WithContext(ctx).Table("menu").Select("source_locale").Where("id = ?", menuID).Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return domainerr.ResourceNotFound("menu", menuID)
-		}
-		return err
-	}
-	root.SourceLocale = strings.TrimSpace(root.SourceLocale)
-	if root.SourceLocale == "" {
+// syncCurrentSourceLabelValues writes the full current source-locale label
+// set supplied by the direct Menu source editor. It requires the source
+// version row to exist and never creates or mutates a non-source locale row.
+func syncCurrentSourceLabelValues(ctx context.Context, store Store, root Root, sourceItems []Item, now time.Time) error {
+	sourceLocale := strings.TrimSpace(root.SourceLocale)
+	if sourceLocale == "" {
 		return domainerr.Precondition("Menu source locale is not initialized")
 	}
-	type sourceRow struct {
-		ItemsJSON []byte    `gorm:"column:items_json"`
-		UpdatedAt time.Time `gorm:"column:updated_at"`
-	}
-	var row sourceRow
-	if err := db.WithContext(ctx).Table("menu_translation").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("items_json, updated_at").
-		Where("entity_id = ? AND locale = ?", menuID, root.SourceLocale).Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	current, err := store.LockLocale(ctx, root.ID, sourceLocale)
+	if err != nil {
+		if errors.Is(err, ErrLocaleNotFound) {
 			return domainerr.Precondition("Menu source locale values are not initialized")
 		}
 		return err
 	}
-	current, err := DecodeTranslationLabelValues(row.ItemsJSON)
-	if err != nil {
-		return err
-	}
 	next := make(map[string]string)
-	collectMenuLocaleLabelValues(sourceItems, root.SourceLocale, next)
-	if maps.Equal(current, next) {
+	collectMenuLocaleLabelValues(sourceItems, sourceLocale, next)
+	if maps.Equal(current.Labels, next) {
 		return nil
 	}
-	body, err := EncodeTranslationLabelValues(next)
-	if err != nil {
-		return err
-	}
-	if err := db.WithContext(ctx).Exec(
-		`UPDATE menu_translation SET items_json = ?, updated_at = ?
-		 WHERE entity_id = ? AND locale = ?`,
-		string(body), translation.NextTargetUpdatedAt(now, row.UpdatedAt), menuID, root.SourceLocale,
-	).Error; err != nil {
-		return err
-	}
-	return nil
+	return store.UpdateLocale(ctx, LocaleValues{
+		MenuID: root.ID, Locale: sourceLocale, Labels: next,
+		UpdatedAt: translation.NextTargetUpdatedAt(now, current.UpdatedAt),
+	})
 }
 
-func collectMenuLocaleLabelValues(items []model.MenuItem, locale string, labels map[string]string) {
+func collectMenuLocaleLabelValues(items []Item, locale string, labels map[string]string) {
 	for i := range items {
-		if id := strings.TrimSpace(items[i].ID); id != "" && ShouldTranslateItemLabel(&items[i], locale) {
+		if id := strings.TrimSpace(items[i].ID); id != "" && items[i].ownsLabel(locale) {
 			labels[id] = items[i].Label
 		}
 		collectMenuLocaleLabelValues(items[i].Children, locale, labels)
 	}
 }
 
-// ReconcileTranslationRowsWithSourceJSON removes target values whose stable
-// source item no longer exists. Other source mutations leave target rows and
-// their revisions unchanged.
-func ReconcileTranslationRowsWithSourceJSON(
-	ctx context.Context,
-	db *gorm.DB,
-	menuID string,
-	sourceJSON []byte,
-	now time.Time,
-) error {
-	sourceItems, err := decodeSourceItems(sourceJSON)
-	if err != nil {
-		return err
-	}
-	return ReconcileTranslationRowsWithSourceItems(ctx, db, menuID, sourceItems, now)
-}
-
-// ReconcileTranslationRowsWithSourceItems prunes only labels belonging to
-// deleted source item IDs. It never creates rows, seeds new labels, or rewrites
-// an unchanged target row.
-func ReconcileTranslationRowsWithSourceItems(
-	ctx context.Context,
-	db *gorm.DB,
-	menuID string,
-	sourceItems []model.MenuItem,
-	now time.Time,
-) error {
+// reconcileTranslationRowsWithSourceItems prunes only labels belonging to
+// deleted source item IDs. It never creates rows, seeds new labels, or
+// rewrites an unchanged target row.
+func reconcileTranslationRowsWithSourceItems(ctx context.Context, store Store, menuID string, sourceItems []Item, now time.Time) error {
 	liveIDs := make(map[string]struct{})
 	collectMenuItemIDs(sourceItems, liveIDs)
 
-	type translationRow struct {
-		Locale    string    `gorm:"column:locale"`
-		ItemsJSON []byte    `gorm:"column:items_json"`
-		UpdatedAt time.Time `gorm:"column:updated_at"`
-	}
-	var rows []translationRow
-	if err := db.WithContext(ctx).
-		Table("menu_translation").
-		Select("locale, items_json, updated_at").
-		Where("entity_id = ?", menuID).
-		Find(&rows).Error; err != nil {
+	rows, err := store.Locales(ctx, menuID)
+	if err != nil {
 		return err
 	}
-
 	for _, row := range rows {
-		labels, err := DecodeTranslationLabelValues(row.ItemsJSON)
-		if err != nil {
-			return err
-		}
 		pruned := false
-		for id := range labels {
+		for id := range row.Labels {
 			if _, exists := liveIDs[id]; exists {
 				continue
 			}
-			delete(labels, id)
+			delete(row.Labels, id)
 			pruned = true
 		}
 		if !pruned {
 			continue
 		}
-		nextJSON, err := EncodeTranslationLabelValues(labels)
-		if err != nil {
-			return err
-		}
-		if err := db.WithContext(ctx).Exec(
-			`UPDATE menu_translation
-			 SET items_json = ?, updated_at = ?
-			 WHERE entity_id = ? AND locale = ?`,
-			string(nextJSON), translation.NextTargetUpdatedAt(now, row.UpdatedAt), menuID, row.Locale,
-		).Error; err != nil {
+		row.UpdatedAt = translation.NextTargetUpdatedAt(now, row.UpdatedAt)
+		// A row deleted since it was read has nothing left to prune.
+		if err := store.UpdateLocale(ctx, row); err != nil && !errors.Is(err, ErrLocaleNotFound) {
 			return err
 		}
 	}
 	return nil
 }
 
-func collectMenuItemIDs(items []model.MenuItem, ids map[string]struct{}) {
+func collectMenuItemIDs(items []Item, ids map[string]struct{}) {
 	for i := range items {
 		if id := strings.TrimSpace(items[i].ID); id != "" {
 			ids[id] = struct{}{}
