@@ -91,12 +91,12 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	_, err = stack.SpiceDBClient.ApplyRelationships(t.Context(), postPolicy)
 	require.NoError(t, err)
 
-	fileSvc := &Service{
+	fileSvc := withTestMutations(&Service{
 		db:             db,
 		spiceDB:        stack.SpiceDBClient,
 		auditWriter:    apitelemetry.NewDurableWriter(db),
 		asyncPublisher: &policySignalPublisher{},
-	}
+	})
 	fileSvc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
 	fileSvc.audienceAccess = newIntegrationAudienceAccess()
 	updated, err := NewConnectHandler(fileSvc).UpdateFileDownloadPolicy(
@@ -204,7 +204,7 @@ func TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegratio
 	require.NoError(t, err)
 	_, err = stack.SpiceDBClient.SyncAccountIdentityGlobalRole(t.Context(), subject, policyv1.Role.Admin())
 	require.NoError(t, err)
-	ctx := auth.WithUser(t.Context(), &auth.UserInfo{
+	ctx := auditedUserContext(t.Context(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	})
@@ -232,7 +232,7 @@ func TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegratio
 	_, err = stack.SpiceDBClient.ApplyRelationships(t.Context(), eventPolicy)
 	require.NoError(t, err)
 
-	svc := &Service{db: db, spiceDB: stack.SpiceDBClient}
+	svc := withTestMutations(&Service{db: db, spiceDB: stack.SpiceDBClient})
 	svc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
 	svc.programEventAttachment = newIntegrationProgramEventAccess(db)
 	svc.audienceAccess = newIntegrationAudienceAccess()

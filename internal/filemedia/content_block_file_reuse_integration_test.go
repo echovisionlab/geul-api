@@ -49,7 +49,7 @@ func TestContentBlockForeignFileReuseUsesFileListAdmissionIntegration(t *testing
 			identityID := uuid.NewString()
 			memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, test.name)
 			testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, test.role)
-			ctx := auth.WithUser(context.Background(), &auth.UserInfo{
+			ctx := auditedUserContext(context.Background(), &auth.UserInfo{
 				IdentityID:    auth.IdentityID(identityID),
 				MemberID:      auth.MemberID(memberID),
 				SessionID:     auth.SessionID(uuid.NewString()),

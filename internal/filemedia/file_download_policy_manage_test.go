@@ -57,9 +57,9 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 		Update("archived_at", time.Now().UTC()).Error)
 
 	signals := &policySignalPublisher{}
-	svc := &Service{
+	svc := withTestMutations(&Service{
 		db: db, spiceDB: stack.SpiceDBClient, asyncPublisher: signals,
-	}
+	})
 	svc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
 	svc.audienceAccess = newIntegrationAudienceAccess()
 	seedFileDeliveryContentPolicy(t, stack.SpiceDBClient, "post", postID)
@@ -190,7 +190,7 @@ func TestFileDownloadPolicyScopeUsesCurrentBindingInsteadOfIngestProvenance(t *t
 	seedFileDeliveryContentPolicy(t, stack.SpiceDBClient, "post", currentPostID)
 	seedFileDeliveryPostAuthority(t, stack.SpiceDBClient, currentPostID, manager.IdentityID)
 
-	svc := &Service{db: db, spiceDB: stack.SpiceDBClient, asyncPublisher: &policySignalPublisher{}}
+	svc := withTestMutations(&Service{db: db, spiceDB: stack.SpiceDBClient, asyncPublisher: &policySignalPublisher{}})
 	svc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
 	svc.audienceAccess = newIntegrationAudienceAccess()
 	response, err := NewConnectHandler(svc).UpdateFileDownloadPolicy(

@@ -2,7 +2,6 @@ package filemedia
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"slices"
@@ -16,10 +15,10 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -73,7 +72,7 @@ func (s *Service) GetFileDownloadPolicy(ctx context.Context, query GetFileDownlo
 		return nil, err
 	}
 	var policy *managev1.FileDownloadPolicy
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err = mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
 		relation, resolveErr := s.resolveFileDownloadPolicyRelation(ctx, tx, selector, false)
 		if resolveErr != nil {
 			return resolveErr
@@ -84,7 +83,7 @@ func (s *Service) GetFileDownloadPolicy(ctx context.Context, query GetFileDownlo
 		var loadErr error
 		policy, loadErr = s.loadManageFileDownloadPolicy(ctx, tx, relation)
 		return loadErr
-	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -182,69 +181,86 @@ func (s *Service) UpdateFileDownloadPolicy(ctx context.Context, command UpdateFi
 	if err != nil {
 		return nil, err
 	}
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := mutation.ReadCurrent(ctx, s.db, func(tx *gorm.DB) error {
 		return s.authorizeFileDownloadPolicyOwner(ctx, tx, initial, filePolicyOwnerEdit)
 	}); err != nil {
 		return nil, err
 	}
-	var policy *managev1.FileDownloadPolicy
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var applyErr error
-		policy, applyErr = s.applyFileDownloadPolicyChange(ctx, tx, change)
-		return applyErr
+	var resolved fileDownloadPolicyRelation
+	update, err := mutation.Run(ctx, s.mutations, mutation.Spec[fileDownloadPolicyUpdate]{
+		Lock: func(ctx context.Context, tx *gorm.DB) error {
+			// Audience Segment rows are the first database lock in policy and
+			// archive flows. This stable order prevents archive-versus-policy
+			// deadlocks.
+			if err := s.audienceAccess.ValidateAuthenticatedSegmentIDs(ctx, tx, change.segmentIDs); err != nil {
+				return err
+			}
+			var err error
+			resolved, err = s.resolveFileDownloadPolicyRelation(ctx, tx, change.selector, false)
+			return err
+		},
+		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+			return s.authorizeFileDownloadPolicyOwner(ctx, tx, resolved, filePolicyOwnerEdit)
+		}),
+		Change: func(ctx context.Context, tx *gorm.DB) (fileDownloadPolicyUpdate, error) {
+			return s.applyFileDownloadPolicyChange(ctx, tx, change)
+		},
+		Audit: func(update fileDownloadPolicyUpdate) mutation.Audit { return update.audit },
+		Outbox: func(ctx context.Context, tx *gorm.DB, update fileDownloadPolicyUpdate) error {
+			if !update.changed {
+				return nil
+			}
+			return s.publishFileDownloadPolicyChanged(ctx, tx, update.relation)
+		},
 	})
 	if err != nil {
 		return nil, err
 	}
-	return policy, nil
+	return update.policy, nil
 }
 
-func (s *Service) applyFileDownloadPolicyChange(ctx context.Context, tx *gorm.DB, change fileDownloadPolicyChange) (*managev1.FileDownloadPolicy, error) {
-	// Audience Segment rows are the first database lock in policy and archive
-	// flows. This stable order prevents archive-versus-policy deadlocks.
-	if err := s.audienceAccess.ValidateAuthenticatedSegmentIDs(ctx, tx, change.segmentIDs); err != nil {
-		return nil, err
-	}
-	resolved, err := s.resolveFileDownloadPolicyRelation(ctx, tx, change.selector, false)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.authorizeFileDownloadPolicyOwner(ctx, tx, resolved, filePolicyOwnerEdit); err != nil {
-		return nil, err
-	}
+// fileDownloadPolicyUpdate is the policy an update leaves, and when it
+// changed, the attachment it changed and the record of the change.
+type fileDownloadPolicyUpdate struct {
+	policy   *managev1.FileDownloadPolicy
+	changed  bool
+	relation fileDownloadPolicyRelation
+	audit    mutation.Audit
+}
+
+func (s *Service) applyFileDownloadPolicyChange(ctx context.Context, tx *gorm.DB, change fileDownloadPolicyChange) (fileDownloadPolicyUpdate, error) {
 	locked, err := s.resolveFileDownloadPolicyRelation(ctx, tx, change.selector, true)
 	if err != nil {
-		return nil, err
+		return fileDownloadPolicyUpdate{}, err
 	}
 	if locked.FileID != change.expectedFileID {
-		return nil, errs.FailedPrecondition("File attachment changed; reload before saving download policy")
+		return fileDownloadPolicyUpdate{}, errs.FailedPrecondition("File attachment changed; reload before saving download policy")
 	}
 	previousSegmentIDs, err := loadFileDownloadPolicySegmentIDs(ctx, tx, locked)
 	if err != nil {
-		return nil, err
+		return fileDownloadPolicyUpdate{}, err
 	}
 	nextAudience, nextSegmentIDs := mergeObservedFileDownloadPolicy(
 		locked.Audience, change.observedAudience, change.audience, previousSegmentIDs, change.observedSegmentIDs, change.segmentIDs,
 	)
 	if len(nextSegmentIDs) > maxFileDownloadAudienceSegments {
-		return nil, tooManyFileDownloadAudienceSegments("audience_segment_ids")
+		return fileDownloadPolicyUpdate{}, tooManyFileDownloadAudienceSegments("audience_segment_ids")
 	}
 	if locked.Audience == nextAudience && slices.Equal(previousSegmentIDs, nextSegmentIDs) {
-		return s.loadManageFileDownloadPolicy(ctx, tx, locked)
+		policy, err := s.loadManageFileDownloadPolicy(ctx, tx, locked)
+		return fileDownloadPolicyUpdate{policy: policy, audit: mutation.Unchanged()}, err
+	}
+	audit, err := relationFileDownloadPolicyAudit(locked, locked.Audience, nextAudience, previousSegmentIDs, nextSegmentIDs)
+	if err != nil {
+		return fileDownloadPolicyUpdate{}, err
 	}
 	if err := updateFileDownloadPolicyRelation(ctx, tx, locked, nextAudience, nextSegmentIDs); err != nil {
-		return nil, err
+		return fileDownloadPolicyUpdate{}, err
 	}
-	if err := appendRelationFileDownloadPolicyAudit(
-		ctx, tx, s.auditWriter, locked, locked.Audience, nextAudience, previousSegmentIDs, nextSegmentIDs,
-	); err != nil {
-		return nil, err
-	}
-	if err := s.publishFileDownloadPolicyChanged(ctx, tx, locked); err != nil {
-		return nil, err
-	}
+	signaled := locked
 	locked.Audience = nextAudience
-	return s.loadManageFileDownloadPolicy(ctx, tx, locked)
+	policy, err := s.loadManageFileDownloadPolicy(ctx, tx, locked)
+	return fileDownloadPolicyUpdate{policy: policy, changed: true, relation: signaled, audit: audit}, err
 }
 
 // Policy is attachment metadata. Track policies belong to their Release, not
@@ -608,14 +624,13 @@ func (s *Service) loadManageFileDownloadPolicy(
 	}, nil
 }
 
-func appendRelationFileDownloadPolicyAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	writer domainaudit.Appender,
+// relationFileDownloadPolicyAudit names the owner's record of a download
+// policy change.
+func relationFileDownloadPolicyAudit(
 	relation fileDownloadPolicyRelation,
 	previousAudience, audience mediaasset.FileDownloadAudience,
 	previousSegmentIDs, segmentIDs []string,
-) error {
+) (mutation.Audit, error) {
 	var action sharedtelemetry.AuditAction
 	var build func(sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error)
 	previous := sharedtelemetry.AuditState(previousAudience)
@@ -647,9 +662,9 @@ func appendRelationFileDownloadPolicyAudit(
 			return sharedtelemetry.NewReleaseTrackDownloadPolicyAuditRecord(m, relation.ResourceID, relation.Selector.EntityID, relation.FileID, previous, next, previousSegmentIDs, segmentIDs)
 		}
 	default:
-		return errs.InternalMsg("unsupported File download policy audit owner")
+		return mutation.Audit{}, errs.InternalMsg("unsupported File download policy audit owner")
 	}
-	return domainaudit.AppendOptionalRequest(ctx, tx, writer, action, build)
+	return mutation.RequestAudit(action, build), nil
 }
 
 func requireFileDownloadAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient) error {

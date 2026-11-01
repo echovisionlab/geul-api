@@ -116,7 +116,7 @@ func TestAuthorizeManageFileDeliveriesRejectsUnauthenticatedAndBannedUsers(t *te
 	seedFileDeliveryBinding(t, db, fileID, managev1.UploadType_UPLOAD_TYPE_USER_AVATAR, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, owner.MemberID)
 	svc := &Service{db: db, spiceDB: stack.SpiceDBClient, postAccess: newIntegrationPostAccess(db, stack.SpiceDBClient), programEventAttachment: newIntegrationProgramEventAccess(db)}
 	require.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(svc.authorizeManageFileDeliveries(context.Background(), []string{fileID})))
-	banned := auth.WithUser(context.Background(), &auth.UserInfo{IdentityID: auth.IdentityID(owner.IdentityID), MemberID: auth.MemberID(owner.MemberID), Authenticated: true, Banned: true})
+	banned := auditedUserContext(context.Background(), &auth.UserInfo{IdentityID: auth.IdentityID(owner.IdentityID), MemberID: auth.MemberID(owner.MemberID), Authenticated: true, Banned: true})
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(svc.authorizeManageFileDeliveries(banned, []string{fileID})))
 }
 
@@ -567,5 +567,5 @@ func seedCurrentSchemaPostFileDelivery(t *testing.T, db *gorm.DB) (string, strin
 }
 
 func fileDeliveryPrincipalContext(user *testutil.OryUser) context.Context {
-	return auth.WithUser(context.Background(), user.AuthUserInfo())
+	return auditedUserContext(context.Background(), user.AuthUserInfo())
 }

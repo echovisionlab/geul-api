@@ -63,7 +63,7 @@ func prepareDirectEditorImageMultipart(
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
 	})
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
 	response, err := NewConnectHandler(service).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
@@ -460,7 +460,7 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 
 	for _, role := range []policyv1.RoleID{policyv1.Role.Author(), policyv1.Role.User()} {
 		other := stack.CreateUser(t, role.ID())
-		otherCtx := auth.WithUser(context.Background(), other.AuthUserInfo())
+		otherCtx := auditedUserContext(context.Background(), other.AuthUserInfo())
 		recovered, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(otherCtx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{FileId: fixture.fileID, UploadId: wrongUploadID}))
 		if role == policyv1.Role.Author() {
 			require.NoError(t, err, "authors have file.list access")
@@ -472,7 +472,7 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 	}
 
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	adminCtx := auth.WithUser(context.Background(), admin.AuthUserInfo())
+	adminCtx := auditedUserContext(context.Background(), admin.AuthUserInfo())
 	adminRecovery, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(adminCtx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId:   fixture.fileID,
 		UploadId: wrongUploadID,
@@ -498,7 +498,7 @@ func TestCompleteMultipartUploadRestoresDedicatedAssetAfterResponseLossDirectInt
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
 	})
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	body, err := base64.StdEncoding.DecodeString("UklGRiwAAABXRUJQVlA4ICAAAAAwAQCdASoBAAEAAAAGJZwAA3AA/u4KZ/9qflZ7vuAAAA==")
 	require.NoError(t, err)
 	initiated, err := NewConnectHandler(service).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
@@ -563,7 +563,7 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
 	})
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	fileName := fmt.Sprintf("editor-image-%d.jpg", time.Now().UnixNano())
 	lastModified := time.Now().UnixMilli()
 	initResp, err := NewConnectHandler(svc).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
@@ -695,7 +695,7 @@ func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectInt
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
 	})
-	starterCtx := auth.WithUser(context.Background(), starter.AuthUserInfo())
+	starterCtx := auditedUserContext(context.Background(), starter.AuthUserInfo())
 	initiated, err := NewConnectHandler(svc).InitiateMultipartUpload(starterCtx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
 		FileName:   "Field Recording.jpg",
@@ -734,7 +734,7 @@ func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectInt
 	require.Equal(t, initiated.Msg.GetFileId(), candidate.Msg.GetFileId())
 
 	handleMultipartPartDirect(t, svc, completer, initiated.Msg.GetFileId(), initiated.Msg.GetUploadId(), 1, body)
-	completerCtx := auth.WithUser(context.Background(), completer.AuthUserInfo())
+	completerCtx := auditedUserContext(context.Background(), completer.AuthUserInfo())
 	completed, err := NewConnectHandler(svc).CompleteMultipartUpload(completerCtx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId: initiated.Msg.GetFileId(), UploadId: initiated.Msg.GetUploadId(),
 	}))
@@ -787,7 +787,7 @@ func TestFileServiceMultipartEditorMeshStoresGLBAndServesCDNDirectIntegration(t 
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
 	})
-	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), manager.AuthUserInfo())
 	fileName := fmt.Sprintf("editor-mesh-%d.glb", time.Now().UnixNano())
 	lastModified := time.Now().UnixMilli()
 	initResp, err := NewConnectHandler(svc).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{

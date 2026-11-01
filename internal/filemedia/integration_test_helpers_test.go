@@ -138,7 +138,7 @@ func integrationAdminCtxWithIdentity(t *testing.T, db *gorm.DB, spiceDB *auth.Sp
 	identityID := testutil.IntegrationUUID()
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "File/Media integration Admin")
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	return auditedUserContext(context.Background(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
@@ -323,4 +323,12 @@ func requireEditorUploadSessionAbsent(t *testing.T, db *gorm.DB, uploadID string
 	var count int64
 	require.NoError(t, db.Model(&model.UploadSession{}).Where("upload_id = ?", uploadID).Count(&count).Error)
 	require.Zero(t, count)
+}
+
+// memberRequestContext is a request of a Member no test fixture names, for a
+// use case that audits but does not authorize its caller.
+func memberRequestContext() context.Context {
+	return auditedUserContext(context.Background(), &auth.UserInfo{
+		IdentityID: auth.IdentityID(uuid.NewString()), MemberID: auth.MemberID(uuid.NewString()), Authenticated: true,
+	})
 }

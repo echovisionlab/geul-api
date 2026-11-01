@@ -87,7 +87,7 @@ func TestRemoteImportCommitAcknowledgementLossRestoresExactCommittedResultDirect
 	service.testVerifiedIngestCommitError = errors.New("injected lost commit acknowledgement")
 
 	err = service.createOrRestoreVerifiedRemoteImportRecord(
-		context.Background(),
+		memberRequestContext(),
 		fileIngestRecord{
 			id:              identity.fileID,
 			fileName:        fileName,
@@ -164,7 +164,7 @@ func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownl
 		SpiceDB:        stack.SpiceDBClient,
 	})
 
-	_, err = service.importRemoteFile(context.Background(), opts)
+	_, err = service.importRemoteFile(memberRequestContext(), opts)
 	require.ErrorContains(t, err, "stream source to public asset")
 	var preserved model.File
 	require.NoError(t, stack.DB.Where("id = ?", file.ID).Take(&preserved).Error)
@@ -175,7 +175,7 @@ func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownl
 	require.Equal(t, model.PublicAssetStatusFailed, failed.Status)
 
 	store.setFailTransfer(false)
-	result, err := service.importRemoteFile(context.Background(), opts)
+	result, err := service.importRemoteFile(memberRequestContext(), opts)
 	require.NoError(t, err)
 	require.Equal(t, file.ID, result.fileID)
 	require.NotNil(t, result.asset)
@@ -230,7 +230,7 @@ func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIn
 	providerURL := "https://does-not-resolve.invalid/social-avatar.webp"
 	opts.sourceURL = providerURL
 
-	_, err = service.importRemoteFile(context.Background(), opts)
+	_, err = service.importRemoteFile(memberRequestContext(), opts)
 	require.ErrorContains(t, err, "stream source to public asset")
 	var preserved model.File
 	require.NoError(t, stack.DB.Where("id = ?", file.ID).Take(&preserved).Error)
@@ -241,12 +241,12 @@ func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIn
 	require.Equal(t, model.PublicAssetStatusFailed, failed.Status)
 
 	store.setFailTransfer(false)
-	imported, err := service.importRemoteFile(context.Background(), opts)
+	imported, err := service.importRemoteFile(memberRequestContext(), opts)
 	require.NoError(t, err)
 	require.Equal(t, file.ID, imported.fileID)
 	require.Empty(t, store.deletedKeys())
 
-	asset, err := service.PromoteUserAvatarAsset(context.Background(), imported.fileID)
+	asset, err := service.PromoteUserAvatarAsset(memberRequestContext(), imported.fileID)
 	require.NoError(t, err)
 	require.Equal(t, failed.ID, asset.GetAssetId())
 	var ready model.PublicAsset
@@ -339,7 +339,7 @@ func TestRemoteImportRetryReconfirmsCommittedTrackWinnerWithoutRedownloadDirectI
 		SpiceDB:        stack.SpiceDBClient,
 	})
 
-	_, err = service.importRemoteFile(context.Background(), opts)
+	_, err = service.importRemoteFile(memberRequestContext(), opts)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "reconfirm durable file attachment")
 	require.Empty(t, decodeHardCutRoutedMessages(t, asyncPublisher.messages, eventpkg.SignalFileIngest, "", func() *managev1.FileIngestFailedEvent {
@@ -347,7 +347,7 @@ func TestRemoteImportRetryReconfirmsCommittedTrackWinnerWithoutRedownloadDirectI
 	}))
 
 	opts.sourceURL = "https://another-does-not-resolve.invalid/changed-retry-source.wav"
-	result, err := service.importRemoteFile(context.Background(), opts)
+	result, err := service.importRemoteFile(memberRequestContext(), opts)
 	require.NoError(t, err)
 	require.Equal(t, identity.fileID, result.fileID)
 	require.Equal(t, identity.attemptID, result.attemptID)

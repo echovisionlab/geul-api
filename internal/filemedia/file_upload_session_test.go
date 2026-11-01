@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -227,7 +226,7 @@ func newAbortMultipartUploadRPCFixture(
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
 	})
-	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), admin.AuthUserInfo())
 	request := connect.NewRequest(&managev1.AbortMultipartUploadRequest{UploadId: session.UploadID, FileId: session.FileID})
 	return service, db, ctx, request, session, abortRequests
 }

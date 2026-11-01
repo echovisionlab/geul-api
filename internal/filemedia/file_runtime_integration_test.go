@@ -28,7 +28,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
-	"github.com/echovisionlab/geul-api/internal/auth"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mq"
@@ -150,7 +149,7 @@ func TestRuntimeEditorFileRemoteImportIsIndependent(t *testing.T) {
 		CorrelationId: &correlationID,
 	})
 	response, err := NewConnectHandler(fileService).DownloadFromUrl(
-		auth.WithUser(context.Background(), manager.AuthUserInfo()),
+		auditedUserContext(context.Background(), manager.AuthUserInfo()),
 		request,
 	)
 	require.NoError(t, err)

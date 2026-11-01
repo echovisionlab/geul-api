@@ -14,10 +14,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/favicon"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -93,7 +93,26 @@ func (s *Service) DeleteFile(ctx context.Context, command DeleteFileCommand) err
 		return err
 	}
 
-	return s.deleteFileRecordByIDWithCan(ctx, fileID, &can)
+	now := time.Now().UTC()
+	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[*FileDeletionMutation]{
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, tx *gorm.DB) (*FileDeletionMutation, error) {
+			return markFileDeletionRequestedWithDB(ctx, tx, fileID, now)
+		},
+		Audit: func(deletion *FileDeletionMutation) mutation.Audit {
+			if deletion == nil || deletion.AlreadyPending {
+				return mutation.Unchanged()
+			}
+			return fileDeletedAudit(fileID)
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, deletion *FileDeletionMutation) error {
+			if deletion == nil {
+				return nil
+			}
+			return publishFileDeletionMutationWithDB(ctx, tx, fileDeleteAsyncPublisher{s.asyncPublisher}, deletion, now)
+		},
+	})
+	return err
 }
 
 type fileMediaGenerationDeleteRef struct {
@@ -277,31 +296,22 @@ func (s *Service) DeleteFileByID(ctx context.Context, fileID string) error {
 }
 
 func (s *Service) deleteFileRecordByID(ctx context.Context, fileID string) error {
-	return s.deleteFileRecordByIDWithCan(ctx, fileID, nil)
-}
-
-func (s *Service) deleteFileRecordByIDWithCan(ctx context.Context, fileID string, can *policyv1.Can) error {
 	fileID = strings.TrimSpace(fileID)
 	if fileID == "" {
 		return nil
 	}
 	now := time.Now().UTC()
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if can != nil {
-			if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, *can); err != nil {
-				return err
-			}
-		}
-		mutation, err := markFileDeletionRequestedWithDB(ctx, tx, fileID, now)
-		if err != nil || mutation == nil {
+		deletion, err := markFileDeletionRequestedWithDB(ctx, tx, fileID, now)
+		if err != nil || deletion == nil {
 			return err
 		}
-		if !mutation.AlreadyPending {
+		if !deletion.AlreadyPending {
 			if err := appendFileDeletedAudit(ctx, tx, s.auditWriter, fileID); err != nil {
 				return err
 			}
 		}
-		return publishFileDeletionMutationWithDB(ctx, tx, fileDeleteAsyncPublisher{s.asyncPublisher}, mutation, now)
+		return publishFileDeletionMutationWithDB(ctx, tx, fileDeleteAsyncPublisher{s.asyncPublisher}, deletion, now)
 	})
 }
 

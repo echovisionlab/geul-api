@@ -326,12 +326,12 @@ func TestFileManagerAuthorCanDownloadUnattachedFileIntegration(t *testing.T) {
 	db := testutil.NewIntegrationDB(t)
 	adminCtx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	user := auth.GetUser(adminCtx)
-	service := &Service{
+	service := withTestMutations(&Service{
 		db: db, spiceDB: spiceDB,
 		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
 		mediaSecret: "file-manager-unattached-secret", downloadTTL: time.Hour,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}
+	})
 	folder, err := NewConnectHandler(service).CreateFileFolder(adminCtx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Unattached"}))
 	require.NoError(t, err)
 	fileID := seedFileManagerFile(t, db, folder.Msg.Folder.GetId(), user.MemberID.String(), "standalone", "pdf", "application/pdf")
@@ -1180,13 +1180,13 @@ func newFileManagerDeliveryFenceFixture(
 	t.Helper()
 	db, spiceDB := newLocalKratosConcurrentServiceIntegrationDB(t)
 	ctx := integrationAdminCtxWithIdentity(t, db, spiceDB)
-	service := &Service{
+	service := withTestMutations(&Service{
 		db: db, spiceDB: spiceDB,
 		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
 		mediaSecret: "file-manager-fence-secret", downloadTTL: time.Hour,
 		asyncPublisher:  noopAsyncPublisher{},
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}
+	})
 	folder, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Fence"}))
 	require.NoError(t, err)
 	fileID := seedManagedFileManagerFenceFile(t, db, folder.Msg.Folder.GetId(), auth.GetUser(ctx).MemberID.String(), "race")
@@ -1201,16 +1201,16 @@ func newManagePostCollaboratorFenceFixture(
 	identityID := testutil.IntegrationUUID()
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Manage delivery collaborator")
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.User())
-	ctx := auth.WithUser(context.Background(), &auth.UserInfo{
+	ctx := auditedUserContext(context.Background(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
-	service := &Service{
+	service := withTestMutations(&Service{
 		db: db, spiceDB: spiceDB,
 		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
 		mediaSecret: "manage-usage-fence-secret", downloadTTL: time.Hour,
 		postAccess: newIntegrationPostAccess(db, spiceDB),
-	}
+	})
 	postID, fileID, blockID := seedManagePostCollaboratorUsage(t, db, spiceDB, auth.GetUser(ctx))
 	return db, ctx, service, postID, fileID, blockID
 }

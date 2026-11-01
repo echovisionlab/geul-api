@@ -409,7 +409,7 @@ func seedScopedPostFeaturedFixture(t *testing.T, db *gorm.DB) scopedFeaturedFixt
 	memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Scoped featured Post author")
 	spiceDB := integrationSpiceDB(t)
 	testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
-	ctx := auth.WithUser(t.Context(), &auth.UserInfo{
+	ctx := auditedUserContext(t.Context(), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	})

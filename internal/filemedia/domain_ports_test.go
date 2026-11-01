@@ -93,7 +93,7 @@ func TestPostUploadAuthorizationUsesOneStatusAwareDomainAction(t *testing.T) {
 
 	postID := uuid.NewString()
 	principal := postAccessPrincipal()
-	ctx := auth.WithUser(context.Background(), principal)
+	ctx := auditedUserContext(context.Background(), principal)
 
 	t.Run("initiation", func(t *testing.T) {
 		access := &recordingPostAccess{}
@@ -128,7 +128,7 @@ func TestVerifiedPostFileMutationPassesOuterTransactionToOneEditAction(t *testin
 	db := newPostAccessUnitDB(t)
 	access := &recordingPostAccess{}
 	service := &Service{db: db, postAccess: access}
-	ctx := auth.WithUser(context.Background(), postAccessPrincipal())
+	ctx := auditedUserContext(context.Background(), postAccessPrincipal())
 	postID := uuid.NewString()
 
 	require.NoError(t, requireFreshFileIngestAuthority(
@@ -153,7 +153,7 @@ func TestPostManageDeliveryUsesOneViewAction(t *testing.T) {
 	service := &Service{postAccess: access}
 	principal := postAccessPrincipal()
 	err := service.authorizeManageFilePermissionTarget(
-		auth.WithUser(context.Background(), principal),
+		auditedUserContext(context.Background(), principal),
 		principal,
 		manageFilePermissionTarget{resourceType: "post", resourceID: uuid.NewString()},
 	)
@@ -169,7 +169,7 @@ func TestPostFilePolicyActionsUseOneLockedActionInOuterTransaction(t *testing.T)
 
 	db := newPostAccessUnitDB(t)
 	postID, _ := seedUnitContentFileOwner(t, db, "post")
-	ctx := auth.WithUser(context.Background(), postAccessPrincipal())
+	ctx := auditedUserContext(context.Background(), postAccessPrincipal())
 
 	viewAccess := &recordingPostAccess{}
 	viewService := &Service{postAccess: viewAccess}
@@ -205,7 +205,7 @@ func TestProgramEventFileOperationsUseOneExactDomainAction(t *testing.T) {
 
 	db := newPostAccessUnitDB(t)
 	eventID, _ := seedUnitContentFileOwner(t, db, "program_event")
-	ctx := auth.WithUser(context.Background(), postAccessPrincipal())
+	ctx := auditedUserContext(context.Background(), postAccessPrincipal())
 
 	deliveryAccess := &recordingProgramEventAccess{}
 	deliveryService := &Service{programEventAttachment: deliveryAccess}

@@ -12,7 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -44,7 +43,7 @@ func TestInitiateMultipartUploadRejectsInvalidFilenameBeforeS3MutationUnit(t *te
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	svc.spiceDB = stack.SpiceDBClient
-	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
+	ctx := auditedUserContext(context.Background(), admin.AuthUserInfo())
 	_, err := NewConnectHandler(svc).InitiateMultipartUpload(ctx, connect.NewRequest(
 		&managev1.InitiateMultipartUploadRequest{
 			UploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,

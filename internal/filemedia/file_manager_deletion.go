@@ -9,8 +9,8 @@ import (
 	"gorm.io/gorm/clause"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -24,15 +24,9 @@ func (s *Service) GetFileDeletionImpact(ctx context.Context, query GetFileDeleti
 	if _, err := requireFileManagerAdmin(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
-	fileIDs, err := uniqueUUIDs(query.FileIDs, "file_ids")
+	fileIDs, err := validateFileManagerMutationIDs(query.FileIDs)
 	if err != nil {
 		return nil, err
-	}
-	if len(fileIDs) == 0 {
-		return nil, errs.Required("file_ids")
-	}
-	if len(fileIDs) > fileManagerMaxMutationSize {
-		return nil, errs.InvalidArgument("file_ids", "at most 100 files are allowed")
 	}
 	if err := s.validateFileManagerFileIDs(ctx, fileIDs); err != nil {
 		return nil, err
@@ -61,87 +55,134 @@ func (s *Service) DeleteFiles(ctx context.Context, command DeleteFilesCommand) (
 	if err != nil {
 		return FileDeletionOutcome{}, err
 	}
-	fileIDs, err := uniqueUUIDs(command.FileIDs, "file_ids")
+	fileIDs, err := validateFileManagerMutationIDs(command.FileIDs)
 	if err != nil {
 		return FileDeletionOutcome{}, err
 	}
+	now := time.Now().UTC()
+	deletion, err := mutation.Run(ctx, s.mutations, mutation.Spec[fileManagerDeletion]{
+		Lock:   s.fileMutationPrincipalHook(fileIDs),
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, tx *gorm.DB) (fileManagerDeletion, error) {
+			s.afterFileMutationPrincipal(fileIDs)
+			return requestFileManagerDeletions(ctx, tx, fileIDs, now)
+		},
+		Audit: func(deletion fileManagerDeletion) mutation.Audit {
+			audits := make([]mutation.Audit, 0, len(deletion.requested))
+			for _, fileID := range deletion.requested {
+				audits = append(audits, fileDeletedAudit(fileID))
+			}
+			return mutation.Audits(audits...)
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, deletion fileManagerDeletion) error {
+			return s.publishFileDeletionMutations(ctx, tx, deletion.mutations, now)
+		},
+	})
+	if err != nil {
+		return FileDeletionOutcome{}, err
+	}
+	return FileDeletionOutcome{AcceptedFileIDs: deletion.accepted, RejectedFiles: deletion.rejected}, nil
+}
+
+// fileManagerDeletion is what one File library deletion request scheduled:
+// the accepted Files, the referenced Files it rejected, the Files whose
+// deletion it newly requested, and the deletion commands to publish.
+type fileManagerDeletion struct {
+	accepted  []string
+	rejected  []*managev1.FileDeletionImpact
+	requested []string
+	mutations []*FileDeletionMutation
+}
+
+func requestFileManagerDeletions(ctx context.Context, tx *gorm.DB, fileIDs []string, now time.Time) (fileManagerDeletion, error) {
+	deletion := fileManagerDeletion{
+		accepted:  make([]string, 0, len(fileIDs)),
+		rejected:  make([]*managev1.FileDeletionImpact, 0),
+		mutations: make([]*FileDeletionMutation, 0, len(fileIDs)),
+	}
+	files, err := lockFileManagerDeletionRows(ctx, tx, fileIDs)
+	if err != nil {
+		return deletion, err
+	}
+	activeReferences, err := ActiveFileReferenceIDs(ctx, tx, fileIDs)
+	if err != nil {
+		return deletion, err
+	}
+	usageRows, err := loadFileUsages(ctx, tx, fileIDs)
+	if err != nil {
+		return deletion, err
+	}
+	byFile := make(map[string][]fileUsageRow)
+	for _, row := range usageRows {
+		byFile[row.FileID] = append(byFile[row.FileID], row)
+	}
+	for _, fileID := range fileIDs {
+		if _, referenced := activeReferences[fileID]; referenced {
+			deletion.rejected = append(deletion.rejected, buildFileDeletionImpact(fileID, byFile[fileID]))
+			continue
+		}
+		file := files[fileID]
+		if file.DeleteRequestedAt != nil {
+			deletion.mutations = append(deletion.mutations, &FileDeletionMutation{FileID: fileID, AlreadyPending: true})
+			deletion.accepted = append(deletion.accepted, fileID)
+			continue
+		}
+		requested, err := markLockedFileDeletionRequestedWithDB(ctx, tx, file, now)
+		if err != nil {
+			return deletion, err
+		}
+		if requested == nil {
+			continue
+		}
+		deletion.mutations = append(deletion.mutations, requested)
+		deletion.accepted = append(deletion.accepted, fileID)
+		if !requested.AlreadyPending {
+			deletion.requested = append(deletion.requested, fileID)
+		}
+	}
+	return deletion, nil
+}
+
+func (s *Service) publishFileDeletionMutations(ctx context.Context, tx *gorm.DB, mutations []*FileDeletionMutation, now time.Time) error {
+	for _, deletion := range mutations {
+		if err := publishFileDeletionMutationWithDB(ctx, tx, fileDeleteAsyncPublisher{s.asyncPublisher}, deletion, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateFileManagerMutationIDs normalizes the File IDs of one File library
+// mutation, at most fileManagerMaxMutationSize of them.
+func validateFileManagerMutationIDs(values []string) ([]string, error) {
+	fileIDs, err := uniqueUUIDs(values, "file_ids")
+	if err != nil {
+		return nil, err
+	}
 	if len(fileIDs) == 0 {
-		return FileDeletionOutcome{}, errs.Required("file_ids")
+		return nil, errs.Required("file_ids")
 	}
 	if len(fileIDs) > fileManagerMaxMutationSize {
-		return FileDeletionOutcome{}, errs.InvalidArgument("file_ids", "at most 100 files are allowed")
+		return nil, errs.InvalidArgument("file_ids", "at most 100 files are allowed")
 	}
-	accepted := make([]string, 0, len(fileIDs))
-	rejected := make([]*managev1.FileDeletionImpact, 0)
-	mutations := make([]*FileDeletionMutation, 0, len(fileIDs))
-	now := time.Now().UTC()
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	return fileIDs, nil
+}
+
+// fileMutationPrincipalHook lets a test act on the File rows before the
+// mutation authorizes its principal.
+func (s *Service) fileMutationPrincipalHook(fileIDs []string) func(context.Context, *gorm.DB) error {
+	return func(_ context.Context, tx *gorm.DB) error {
 		if s.testBeforeFileMutationPrincipal != nil {
 			s.testBeforeFileMutationPrincipal(tx, append([]string(nil), fileIDs...))
 		}
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		if s.testAfterFileMutationPrincipal != nil {
-			s.testAfterFileMutationPrincipal(append([]string(nil), fileIDs...))
-		}
-		files, err := lockFileManagerDeletionRows(ctx, tx, fileIDs)
-		if err != nil {
-			return err
-		}
-		activeReferences, err := ActiveFileReferenceIDs(ctx, tx, fileIDs)
-		if err != nil {
-			return err
-		}
-		usageRows, err := loadFileUsages(ctx, tx, fileIDs)
-		if err != nil {
-			return err
-		}
-		byFile := make(map[string][]fileUsageRow)
-		for _, row := range usageRows {
-			byFile[row.FileID] = append(byFile[row.FileID], row)
-		}
-		for _, fileID := range fileIDs {
-			if _, referenced := activeReferences[fileID]; referenced {
-				rejected = append(rejected, buildFileDeletionImpact(fileID, byFile[fileID]))
-				continue
-			}
-			file := files[fileID]
-			if file.DeleteRequestedAt != nil {
-				mutations = append(mutations, &FileDeletionMutation{FileID: fileID, AlreadyPending: true})
-				accepted = append(accepted, fileID)
-				continue
-			}
-			mutation, markErr := markLockedFileDeletionRequestedWithDB(ctx, tx, file, now)
-			if markErr != nil {
-				return markErr
-			}
-			if mutation != nil {
-				mutations = append(mutations, mutation)
-				accepted = append(accepted, fileID)
-				if !mutation.AlreadyPending {
-					if err := appendFileDeletedAudit(ctx, tx, s.auditWriter, fileID); err != nil {
-						return err
-					}
-				}
-			}
-		}
-		for _, mutation := range mutations {
-			if err := publishFileDeletionMutationWithDB(
-				ctx,
-				tx,
-				fileDeleteAsyncPublisher{s.asyncPublisher},
-				mutation,
-				now,
-			); err != nil {
-				return err
-			}
-		}
 		return nil
-	}); err != nil {
-		return FileDeletionOutcome{}, err
 	}
-	return FileDeletionOutcome{AcceptedFileIDs: accepted, RejectedFiles: rejected}, nil
+}
+
+func (s *Service) afterFileMutationPrincipal(fileIDs []string) {
+	if s.testAfterFileMutationPrincipal != nil {
+		s.testAfterFileMutationPrincipal(append([]string(nil), fileIDs...))
+	}
 }
 
 func lockFileManagerDeletionRows(ctx context.Context, tx *gorm.DB, fileIDs []string) (map[string]model.File, error) {
@@ -176,41 +217,26 @@ func (s *Service) DeleteFileFolder(ctx context.Context, command DeleteFileFolder
 	if err != nil {
 		return nil, err
 	}
-	var plan fileFolderDeletionPlan
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := identitystate.RequireFreshAdminCan(ctx, tx, s.spiceDB, can); err != nil {
-			return err
-		}
-		prepared, err := prepareFileFolderDeletion(ctx, tx, *folderID, time.Now().UTC())
-		if err == nil {
-			for _, fileID := range prepared.fileIDs {
-				if err := appendFileDeletedAudit(ctx, tx, s.auditWriter, fileID); err != nil {
-					return err
-				}
+	plan, err := mutation.Run(ctx, s.mutations, mutation.Spec[fileFolderDeletionPlan]{
+		Access: mutation.FreshAdminCan(can, nil),
+		Change: func(ctx context.Context, tx *gorm.DB) (fileFolderDeletionPlan, error) {
+			return prepareFileFolderDeletion(ctx, tx, *folderID, time.Now().UTC())
+		},
+		Audit: func(plan fileFolderDeletionPlan) mutation.Audit {
+			audits := make([]mutation.Audit, 0, len(plan.fileIDs)+len(plan.folderIDs))
+			for _, fileID := range plan.fileIDs {
+				audits = append(audits, fileDeletedAudit(fileID))
 			}
-			for _, deletedFolderID := range prepared.folderIDs {
-				if err := appendFileFolderDeletedAudit(ctx, tx, s.auditWriter, deletedFolderID); err != nil {
-					return err
-				}
+			for _, deletedFolderID := range plan.folderIDs {
+				audits = append(audits, fileFolderDeletedAudit(deletedFolderID))
 			}
-		}
-		plan = prepared
-		if err != nil {
-			return err
-		}
-		for _, mutation := range plan.mutations {
-			if err := publishFileDeletionMutationWithDB(
-				ctx,
-				tx,
-				fileDeleteAsyncPublisher{s.asyncPublisher},
-				mutation,
-				time.Now().UTC(),
-			); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
+			return mutation.Audits(audits...)
+		},
+		Outbox: func(ctx context.Context, tx *gorm.DB, plan fileFolderDeletionPlan) error {
+			return s.publishFileDeletionMutations(ctx, tx, plan.mutations, time.Now().UTC())
+		},
+	})
+	if err != nil {
 		return nil, err
 	}
 	return plan.fileIDs, nil

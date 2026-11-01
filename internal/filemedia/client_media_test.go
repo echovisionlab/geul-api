@@ -443,7 +443,7 @@ func TestClientMediaPreparedPlanIsImmutable(t *testing.T) {
 	session, _ := clientMediaTestBundle(t, "audio")
 	plan, err := decodeClientMediaPlan(session)
 	require.NoError(t, err)
-	ctx := auth.WithUser(t.Context(), &auth.UserInfo{MemberID: auth.MemberID(plan.MemberID), Authenticated: true})
+	ctx := auditedUserContext(t.Context(), &auth.UserInfo{MemberID: auth.MemberID(plan.MemberID), Authenticated: true})
 	request := &managev1.PrepareClientMediaUploadRequest{
 		FileId: session.FileID, UploadId: session.UploadID,
 		Kind: managev1.ClientMediaKind_CLIENT_MEDIA_KIND_AUDIO, DurationSeconds: plan.DurationSeconds,
