@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -51,6 +51,24 @@ type clientMediaPlan struct {
 }
 
 func validateClientMediaPlan(plan clientMediaPlan, session model.UploadSession) error {
+	if err := validateClientMediaPlanHeader(plan, session); err != nil {
+		return err
+	}
+	budget := newClientMediaBudget(plan.Kind)
+	for _, artifact := range plan.Artifacts {
+		if err := budget.admit(artifact, plan.Kind); err != nil {
+			return err
+		}
+	}
+	for name, found := range budget.required {
+		if !found {
+			return fmt.Errorf("missing required artifact %s", name)
+		}
+	}
+	return nil
+}
+
+func validateClientMediaPlanHeader(plan clientMediaPlan, session model.UploadSession) error {
 	if !IsValidUUID(plan.MemberID) {
 		return fmt.Errorf("invalid bundle member")
 	}
@@ -67,52 +85,60 @@ func validateClientMediaPlan(plan clientMediaPlan, session model.UploadSession) 
 	if len(plan.Artifacts) < 2 || len(plan.Artifacts) > maxClientMediaArtifacts {
 		return fmt.Errorf("invalid artifact count")
 	}
-	seen := map[string]bool{}
-	total := int64(0)
-	playlistBytes := int64(0)
-	playlistCount := 0
+	return nil
+}
+
+// clientMediaBudget admits a plan's artifacts one at a time against the
+// per-artifact, playlist and bundle limits, and records which of the kind's
+// required artifacts it has seen.
+type clientMediaBudget struct {
+	seen          map[string]bool
+	required      map[string]bool
+	total         int64
+	playlistBytes int64
+	playlistCount int
+}
+
+func newClientMediaBudget(kind string) *clientMediaBudget {
 	required := map[string]bool{"master.m3u8": false}
-	if plan.Kind == "audio" {
+	if kind == "audio" {
 		required["spectrogram.png"] = false
 		required["waveform.json"] = false
 	} else {
 		required["thumbnail.webp"] = false
 	}
-	for _, artifact := range plan.Artifacts {
-		if !clientMediaPathPattern.MatchString(artifact.Path) || seen[artifact.Path] || artifact.Size <= 0 || artifact.Size > maxClientMediaArtifactSize {
-			return fmt.Errorf("invalid artifact path or size")
-		}
-		seen[artifact.Path] = true
-		digest, err := artifact.digest()
-		if err != nil || len(digest) != 32 || strings.ToLower(artifact.SHA256) != artifact.SHA256 {
-			return fmt.Errorf("invalid artifact SHA256")
-		}
-		mime, deriv, err := clientMediaArtifactPolicy(artifact.Path, plan.Kind)
-		if err != nil || normalizeMimeType(artifact.MimeType) != mime || artifact.DerivativeType != int32(deriv) {
-			return fmt.Errorf("invalid artifact policy for %s", artifact.Path)
-		}
-		if strings.HasSuffix(artifact.Path, ".m3u8") {
-			playlistCount++
-			playlistBytes += artifact.Size
-			if artifact.Size > 1<<20 || playlistCount > 16 || playlistBytes > 8<<20 {
-				return fmt.Errorf("playlist budget exceeded")
-			}
-		}
-		if artifact.Path == "waveform.json" && artifact.Size > 128<<10 {
-			return fmt.Errorf("waveform too large")
-		}
-		total += artifact.Size
-		if total > maxClientMediaTotalSize {
-			return fmt.Errorf("bundle too large")
-		}
-		if _, ok := required[artifact.Path]; ok {
-			required[artifact.Path] = true
+	return &clientMediaBudget{seen: map[string]bool{}, required: required}
+}
+
+func (budget *clientMediaBudget) admit(artifact clientMediaArtifact, kind string) error {
+	if !clientMediaPathPattern.MatchString(artifact.Path) || budget.seen[artifact.Path] || artifact.Size <= 0 || artifact.Size > maxClientMediaArtifactSize {
+		return fmt.Errorf("invalid artifact path or size")
+	}
+	budget.seen[artifact.Path] = true
+	digest, err := artifact.digest()
+	if err != nil || len(digest) != 32 || strings.ToLower(artifact.SHA256) != artifact.SHA256 {
+		return fmt.Errorf("invalid artifact SHA256")
+	}
+	mime, deriv, err := clientMediaArtifactPolicy(artifact.Path, kind)
+	if err != nil || normalizeMimeType(artifact.MimeType) != mime || artifact.DerivativeType != int32(deriv) {
+		return fmt.Errorf("invalid artifact policy for %s", artifact.Path)
+	}
+	if strings.HasSuffix(artifact.Path, ".m3u8") {
+		budget.playlistCount++
+		budget.playlistBytes += artifact.Size
+		if artifact.Size > 1<<20 || budget.playlistCount > 16 || budget.playlistBytes > 8<<20 {
+			return fmt.Errorf("playlist budget exceeded")
 		}
 	}
-	for name, found := range required {
-		if !found {
-			return fmt.Errorf("missing required artifact %s", name)
-		}
+	if artifact.Path == "waveform.json" && artifact.Size > 128<<10 {
+		return fmt.Errorf("waveform too large")
+	}
+	budget.total += artifact.Size
+	if budget.total > maxClientMediaTotalSize {
+		return fmt.Errorf("bundle too large")
+	}
+	if _, ok := budget.required[artifact.Path]; ok {
+		budget.required[artifact.Path] = true
 	}
 	return nil
 }
@@ -168,17 +194,17 @@ func requireDirectClientMediaBundle(uploadType managev1.UploadType, verifiedMime
 		return nil
 	}
 	if session.ClientMediaBundleID == nil || session.ClientMediaManifest == nil || bundleID == "" {
-		return errs.FailedPrecondition("clientMediaBundleRequired: direct audio and video uploads require completed browser media")
+		return domainerr.Precondition("clientMediaBundleRequired: direct audio and video uploads require completed browser media")
 	}
 	if err := clientMediaBundleMatches(session, bundleID); err != nil {
 		return err
 	}
 	plan, err := decodeClientMediaPlan(session)
 	if err != nil {
-		return errs.WithCause(errs.FailedPrecondition("invalid prepared client media manifest"), failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("upload_id", session.UploadID), slog.String("file_id", session.FileID))))
+		return domainerr.Precondition("invalid prepared client media manifest").WithCause(failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("upload_id", session.UploadID), slog.String("file_id", session.FileID))))
 	}
 	if !strings.HasPrefix(verifiedMime, plan.Kind+"/") {
-		return errs.FailedPrecondition("client media kind differs from verified original")
+		return domainerr.Precondition("client media kind differs from verified original")
 	}
 	return nil
 }

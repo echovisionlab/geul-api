@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -84,12 +86,12 @@ func TestRemoteFileImportRejectsEntityKindsAndUnauthenticatedCaller(t *testing.T
 	service := &Service{}
 	for _, kind := range []managev1.UploadType{managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO, managev1.UploadType_UPLOAD_TYPE_RELEASE_ARTWORK, managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE} {
 		response, err := service.ImportRemoteFile(t.Context(), RemoteFileImportInput{UploadType: kind, SourceURL: "https://example.com/attachment", CorrelationID: uuid.NewString()})
-		if response != nil || connect.CodeOf(err) != connect.CodeInvalidArgument {
+		if response != nil || errs.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Fatalf("entity import kind accepted: %v / %v", kind, err)
 		}
 	}
 	response, err := service.ImportRemoteFile(t.Context(), RemoteFileImportInput{UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, SourceURL: "https://example.com/attachment", CorrelationID: uuid.NewString()})
-	if response != nil || connect.CodeOf(err) != connect.CodeUnauthenticated {
+	if response != nil || errs.CodeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("unauthenticated import = %+v / %v", response, err)
 	}
 }

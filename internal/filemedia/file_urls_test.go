@@ -58,8 +58,8 @@ func TestGetFileURLsForIDPreservesNotFoundForMissingOrDeletingFile(t *testing.T)
 		}
 		response, err := svc.getFileUrlsForID(t.Context(), fileID)
 		require.Nil(t, response)
-		require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
-		require.EqualError(t, err, errs.NotFound("file", fileID).Error())
+		require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
+		require.EqualError(t, errs.Wrap(err), errs.NotFound("file", fileID).Error())
 	}
 }
 

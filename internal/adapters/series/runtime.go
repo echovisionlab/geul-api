@@ -8,7 +8,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	seriesdomain "github.com/echovisionlab/geul-api/internal/series"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -45,10 +45,10 @@ func assetsFromRefs(refs map[string]*commonv1.AssetRef) map[string]*seriesdomain
 type Runtime struct {
 	db          *gorm.DB
 	cdnDomain   string
-	ogRefresher *og.Refresher
+	ogRefresher *ogpostgres.Refresher
 }
 
-func NewRuntime(db *gorm.DB, cdnDomain string, ogRefresher *og.Refresher) *Runtime {
+func NewRuntime(db *gorm.DB, cdnDomain string, ogRefresher *ogpostgres.Refresher) *Runtime {
 	if db == nil || ogRefresher == nil {
 		panic("series runtime: database and OG refresher are required")
 	}
@@ -165,7 +165,7 @@ func (r *Runtime) ReleaseFeaturedImage(ctx context.Context, tx *gorm.DB, seriesI
 }
 
 func (r *Runtime) CancelAndReleaseOG(ctx context.Context, tx *gorm.DB, seriesID string) error {
-	if err := og.NewLifecycle(tx, r.cdnDomain).CancelEntityWithDB(
+	if err := ogpostgres.CancelEntity(
 		ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_SERIES, seriesID,
 	); err != nil {
 		return err

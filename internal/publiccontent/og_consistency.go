@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"gorm.io/gorm"
 )
@@ -31,7 +32,7 @@ func ResolveOGConsistency(
 	if selection.DisplayedLocale == selection.SourceLocale {
 		return selection, nil
 	}
-	disposition, err := og.ResolveExactLocalizedGeneration(
+	disposition, err := ogpostgres.ResolveExactLocalizedGeneration(
 		ctx, db, spec.EntityType, entityID, selection.DisplayedLocale,
 	)
 	if err != nil {

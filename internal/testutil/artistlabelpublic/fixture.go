@@ -37,7 +37,7 @@ import (
 	labelpublicpostgres "github.com/echovisionlab/geul-api/internal/label/public/postgres"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
 	sharelinkdomain "github.com/echovisionlab/geul-api/internal/sharelink"
@@ -118,13 +118,13 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	contentBlocks := testutil.NewCreativeContentStore(t, spiceDB)
 	publisher := artistLabelAsyncPublisher{}
 	fileDeleter := artistLabelFileDeleter{}
-	artistRuntime := artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher(db))
+	artistRuntime := artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher())
 
 	manageArtist := artistdomain.NewConnectHandler(newFixtureArtistService(t, db, spiceDB, contentBlocks, publisher))
 	labelUnits, err := labelpostgres.NewUnits(db, labelpostgres.Deps{
 		ContentBlocks: contentBlocks, Publisher: publisher, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
 		Translation:   labeladapter.NewTranslation(),
-		Runtime:       labeladapter.NewRuntime(artistLabelPublicCDN, labelFixtureOGRefresher(db)),
+		Runtime:       labeladapter.NewRuntime(artistLabelPublicCDN, labelFixtureOGRefresher()),
 		Artists:       artistadapter.NewLabelRelations(),
 		Releases:      releaseadapter.NewLabelRelations(),
 		ProgramEvents: programeventadapter.NewLabelRelations(),
@@ -367,22 +367,22 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	}
 }
 
-func artistFixtureOGRefresher(db *gorm.DB) *og.Refresher {
-	planner := og.NewPlanner(db, artistLabelPublicCDN, sitesettingsadapter.NewRenderConfig(), artistadapter.NewProjection())
-	return og.NewRefresher(planner, og.NewResolver(artistadapter.NewRequests()))
+func artistFixtureOGRefresher() *ogpostgres.Refresher {
+	planner := ogpostgres.NewPlanner(artistLabelPublicCDN, sitesettingsadapter.NewRenderConfig(), artistadapter.NewProjection())
+	return ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(artistadapter.NewRequests()))
 }
 
-func labelFixtureOGRefresher(db *gorm.DB) *og.Refresher {
-	planner := og.NewPlanner(db, artistLabelPublicCDN, sitesettingsadapter.NewRenderConfig(), labeladapter.NewProjection())
-	return og.NewRefresher(planner, og.NewResolver(labeladapter.NewRequests()))
+func labelFixtureOGRefresher() *ogpostgres.Refresher {
+	planner := ogpostgres.NewPlanner(artistLabelPublicCDN, sitesettingsadapter.NewRenderConfig(), labeladapter.NewProjection())
+	return ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(labeladapter.NewRequests()))
 }
 
 func workFixtureRuntime(db *gorm.DB) *workadapter.Runtime {
-	planner := og.NewPlanner(db, artistLabelPublicCDN, sitesettingsadapter.NewRenderConfig(), workadapter.NewProjection())
+	planner := ogpostgres.NewPlanner(artistLabelPublicCDN, sitesettingsadapter.NewRenderConfig(), workadapter.NewProjection())
 	return workadapter.NewRuntime(
 		db,
 		artistLabelPublicCDN,
-		og.NewRefresher(planner, og.NewResolver(workadapter.NewRequests())),
+		ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(workadapter.NewRequests())),
 	)
 }
 
@@ -534,7 +534,7 @@ func newFixtureArtistService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBCli
 	units, err := artistpostgres.NewUnits(db, artistpostgres.Deps{
 		ContentBlocks: store, Publisher: publisher, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
 		Translation:   artistadapter.NewTranslation(),
-		Runtime:       artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher(db)),
+		Runtime:       artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher()),
 		Labels:        labeladapter.NewArtistLinks(),
 		Releases:      releaseadapter.NewArtistRelations(),
 		ProgramEvents: programeventadapter.NewArtistRelations(),

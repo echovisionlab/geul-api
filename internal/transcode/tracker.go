@@ -11,29 +11,18 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mq"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
-)
-
-const (
-	StatusQueued         = "TRANSCODE_JOB_STATUS_QUEUED"
-	StatusProcessing     = "TRANSCODE_JOB_STATUS_PROCESSING"
-	StatusCompleted      = "TRANSCODE_JOB_STATUS_COMPLETED"
-	StatusFailedTerminal = "TRANSCODE_JOB_STATUS_FAILED_TERMINAL"
-	StatusCancelled      = "TRANSCODE_JOB_STATUS_CANCELLED"
 )
 
 // Tracker persists queryable transcode domain progress. PGMQ owns command
 // delivery retry and DLQ state; this tracker never scans or republishes jobs.
 type Tracker struct {
-	db        *gorm.DB
+	units     mutation.UnitOfWork[Store]
 	publisher mq.TranscoderPublisher
 }
 
@@ -41,76 +30,32 @@ type transcodeCancelPublisher interface {
 	PublishTranscodeCancel(ctx context.Context, event *managev1.TranscodeCancelEvent) error
 }
 
-func NewTracker(db *gorm.DB, publisher mq.TranscoderPublisher) *Tracker {
-	if db == nil {
-		panic("transcode.NewTracker: db is required")
+func NewTracker(units mutation.UnitOfWork[Store], publisher mq.TranscoderPublisher) *Tracker {
+	if units == nil {
+		panic("transcode.NewTracker: units are required")
 	}
 	if publisher == nil {
 		panic("transcode.NewTracker: publisher is required")
 	}
-
-	return &Tracker{
-		db:        db,
-		publisher: publisher,
-	}
+	return &Tracker{units: units, publisher: publisher}
 }
 
 // PublishTranscodeAudio implements mq.TranscoderPublisher with DB tracking.
 func (t *Tracker) PublishTranscodeAudio(ctx context.Context, job *managev1.TranscodeAudioEvent) error {
-	return t.publishTrackedJob(ctx, func(tx *gorm.DB) error {
-		return t.RegisterTranscodeAudio(ctx, tx, job)
+	return t.publishTrackedJob(ctx, func(store Store) error {
+		return RegisterAudio(ctx, store, job)
 	}, func(ctx context.Context) error {
 		return t.publisher.PublishTranscodeAudio(ctx, job)
 	})
 }
 
-// RegisterTranscodeAudio stores the immutable audio allocation in the caller's
-// transaction. The caller must enqueue the same command through that
-// transaction before committing it.
-func (t *Tracker) RegisterTranscodeAudio(ctx context.Context, tx *gorm.DB, job *managev1.TranscodeAudioEvent) error {
-	if job == nil {
-		return errors.New("audio transcode job is nil")
-	}
-	if err := ValidateAudioTranscodeEvent(job); err != nil {
-		return err
-	}
-	return t.registerTrackedJob(ctx, tx,
-		eventpkg.QueueTranscoderAudio,
-		job.EventId,
-		job.EntityType.String(),
-		job.EntityId,
-		job.FileId,
-		job,
-	)
-}
-
 // PublishTranscodeVideo implements mq.TranscoderPublisher with DB tracking.
 func (t *Tracker) PublishTranscodeVideo(ctx context.Context, job *managev1.TranscodeVideoEvent) error {
-	return t.publishTrackedJob(ctx, func(tx *gorm.DB) error {
-		return t.RegisterTranscodeVideo(ctx, tx, job)
+	return t.publishTrackedJob(ctx, func(store Store) error {
+		return RegisterVideo(ctx, store, job)
 	}, func(ctx context.Context) error {
 		return t.publisher.PublishTranscodeVideo(ctx, job)
 	})
-}
-
-// RegisterTranscodeVideo stores the immutable video allocation in the caller's
-// transaction. The caller must enqueue the same command through that
-// transaction before committing it.
-func (t *Tracker) RegisterTranscodeVideo(ctx context.Context, tx *gorm.DB, job *managev1.TranscodeVideoEvent) error {
-	if job == nil {
-		return errors.New("video transcode job is nil")
-	}
-	if err := ValidateVideoTranscodeEvent(job); err != nil {
-		return err
-	}
-	return t.registerTrackedJob(ctx, tx,
-		eventpkg.QueueTranscoderVideo,
-		job.EventId,
-		job.EntityType.String(),
-		job.EntityId,
-		job.FileId,
-		job,
-	)
 }
 
 // PublishWaveformCancel forwards waveform cancel events through the shared publisher.
@@ -128,10 +73,12 @@ func (t *Tracker) PublishTranscodeCancel(ctx context.Context, event *managev1.Tr
 
 func (t *Tracker) publishTrackedJob(
 	ctx context.Context,
-	register func(*gorm.DB) error,
+	register func(Store) error,
 	publish func(context.Context) error,
 ) error {
-	if err := t.db.WithContext(ctx).Transaction(register); err != nil {
+	if err := t.units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error {
+		return register(tx.Store())
+	}); err != nil {
 		return err
 	}
 
@@ -141,56 +88,62 @@ func (t *Tracker) publishTrackedJob(
 	return publish(ctx)
 }
 
-func (t *Tracker) registerTrackedJob(
+// RegisterAudio stores the immutable audio allocation in store's
+// transaction. The caller must enqueue the same command through that
+// transaction before committing it.
+func RegisterAudio(ctx context.Context, store Store, job *managev1.TranscodeAudioEvent) error {
+	if job == nil {
+		return errors.New("audio transcode job is nil")
+	}
+	if err := ValidateAudioTranscodeEvent(job); err != nil {
+		return err
+	}
+	return registerTrackedJob(ctx, store, eventpkg.QueueTranscoderAudio,
+		job.EventId, job.EntityType.String(), job.EntityId, job.FileId, job)
+}
+
+// RegisterVideo stores the immutable video allocation in store's
+// transaction. The caller must enqueue the same command through that
+// transaction before committing it.
+func RegisterVideo(ctx context.Context, store Store, job *managev1.TranscodeVideoEvent) error {
+	if job == nil {
+		return errors.New("video transcode job is nil")
+	}
+	if err := ValidateVideoTranscodeEvent(job); err != nil {
+		return err
+	}
+	return registerTrackedJob(ctx, store, eventpkg.QueueTranscoderVideo,
+		job.EventId, job.EntityType.String(), job.EntityId, job.FileId, job)
+}
+
+func registerTrackedJob(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	queueName, eventID, entityType, entityID, fileID string,
 	msg proto.Message,
 ) error {
-	if tx == nil {
-		return errors.New("transcode job transaction is required")
-	}
 	payload, err := proto.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("marshal transcode payload: %w", err)
 	}
 
 	now := time.Now()
-	record := model.TranscodeJob{
-		EventID:    eventID,
-		QueueName:  queueName,
-		EntityType: entityType,
-		EntityID:   entityID,
-		FileID:     fileID,
-		Payload:    payload,
-		Status:     StatusQueued,
-		Progress:   0,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+	inserted, err := store.InsertJob(ctx, Job{
+		EventID: eventID, QueueName: queueName, EntityType: entityType, EntityID: entityID, FileID: fileID,
+		Payload: payload, Status: StatusQueued, CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		return fmt.Errorf("save transcode job %s: %w", eventID, err)
 	}
-
-	result := tx.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&record)
-	if result.Error != nil {
-		return fmt.Errorf("save transcode job %s: %w", eventID, result.Error)
-	}
-	if result.RowsAffected == 1 {
-		if err := tx.Model(&model.TranscodeJob{}).
-			Where("event_id <> ? AND queue_name = ? AND file_id = ? AND status IN ?", eventID, queueName, fileID, activeTranscodeStatuses()).
-			Updates(structured.Fields{
-				"status":       StatusCancelled,
-				"last_error":   "superseded by newer transcode request",
-				"updated_at":   now,
-				"completed_at": now,
-			}).Error; err != nil {
+	if inserted {
+		if err := store.CancelOtherActiveJobs(ctx, eventID, queueName, fileID, "superseded by newer transcode request", now); err != nil {
 			return fmt.Errorf("supersede previous transcode jobs: %w", err)
 		}
 		return nil
 	}
 
-	var existing model.TranscodeJob
-	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Where("event_id = ?", eventID).
-		Take(&existing).Error; err != nil {
+	existing, err := store.LockJob(ctx, eventID)
+	if err != nil {
 		return fmt.Errorf("load transcode job %s: %w", eventID, err)
 	}
 	if existing.QueueName != queueName || existing.EntityType != entityType ||
@@ -207,34 +160,17 @@ func (t *Tracker) HandleTranscodeProgress(ctx context.Context, event *managev1.T
 		return nil
 	}
 
-	now := time.Now()
-	return t.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var job model.TranscodeJob
-		err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			Where("event_id = ? AND status NOT IN ?", event.EventId, []string{
-				StatusCompleted,
-				StatusCancelled,
-				StatusFailedTerminal,
-			}).
-			Take(&job).Error
-		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil
-			}
+	return t.units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error {
+		store := tx.Store()
+		job, found, err := store.LockUnsettledJob(ctx, event.EventId)
+		if err != nil || !found {
 			return err
 		}
-
-		return tx.Model(&model.TranscodeJob{}).
-			Where("event_id = ?", event.EventId).
-			Updates(transcodeProgressUpdates(job, event, now)).Error
+		return store.RecordProgress(ctx, event.EventId, transcodeProgress(job, event), time.Now())
 	})
 }
 
-func transcodeProgressUpdates(
-	job model.TranscodeJob,
-	event *managev1.TranscodeProgressEvent,
-	now time.Time,
-) structured.Fields {
+func transcodeProgress(job Job, event *managev1.TranscodeProgressEvent) Progress {
 	lastSequence := job.LastSequence
 	isFreshSequence := event.SequenceNumber <= 0 ||
 		lastSequence == nil ||
@@ -252,21 +188,19 @@ func transcodeProgressUpdates(
 		)
 	}
 
-	updates := structured.Fields{
-		"status":               StatusProcessing,
-		"progress":             maxInt(job.Progress, progress),
-		"hls_progress":         hlsProgress,
-		"spectrogram_progress": spectrogramProgress,
-		"updated_at":           now,
+	result := Progress{
+		Progress:            max(job.Progress, progress),
+		HLSProgress:         hlsProgress,
+		SpectrogramProgress: spectrogramProgress,
 	}
 	if isFreshSequence && event.SequenceNumber > 0 {
-		updates["last_sequence"] = event.SequenceNumber
+		result.LastSequence = &event.SequenceNumber
 	}
 	if isFreshSequence && event.Stage != nil {
 		stage := event.GetStage().String()
-		updates["last_stage"] = stage
+		result.LastStage = &stage
 	}
-	return updates
+	return result
 }
 
 func clampTranscodeProgress(progress int32) int {
@@ -292,13 +226,13 @@ func applyTranscodeComponentProgress(
 	if queueName == eventpkg.QueueTranscoderVideo {
 		switch stage {
 		case managev1.TranscodeStage_TRANSCODE_STAGE_DOWNLOADING:
-			hlsProgress = maxInt(hlsProgress, stageProgress(progress, 0, 10))
+			hlsProgress = max(hlsProgress, stageProgress(progress, 0, 10))
 		case managev1.TranscodeStage_TRANSCODE_STAGE_PROCESSING,
 			managev1.TranscodeStage_TRANSCODE_STAGE_HLS_PROCESSING:
-			hlsProgress = maxInt(hlsProgress, stageProgress(progress, 10, 90))
+			hlsProgress = max(hlsProgress, stageProgress(progress, 10, 90))
 		case managev1.TranscodeStage_TRANSCODE_STAGE_UPLOADING,
 			managev1.TranscodeStage_TRANSCODE_STAGE_HLS_UPLOADING:
-			hlsProgress = maxInt(hlsProgress, stageProgress(progress, 90, 100))
+			hlsProgress = max(hlsProgress, stageProgress(progress, 90, 100))
 		}
 		return hlsProgress, spectrogramProgress
 	}
@@ -306,42 +240,30 @@ func applyTranscodeComponentProgress(
 	switch stage {
 	case managev1.TranscodeStage_TRANSCODE_STAGE_DOWNLOADING:
 		sharedProgress := stageProgress(progress, 0, 10)
-		hlsProgress = maxInt(hlsProgress, sharedProgress)
-		spectrogramProgress = maxInt(spectrogramProgress, sharedProgress)
+		hlsProgress = max(hlsProgress, sharedProgress)
+		spectrogramProgress = max(spectrogramProgress, sharedProgress)
 	case managev1.TranscodeStage_TRANSCODE_STAGE_SPECTROGRAM_PROCESSING:
-		hlsProgress = maxInt(hlsProgress, 10)
-		spectrogramProgress = maxInt(spectrogramProgress, stageProgress(progress, 10, 85))
+		hlsProgress = max(hlsProgress, 10)
+		spectrogramProgress = max(spectrogramProgress, stageProgress(progress, 10, 85))
 	case managev1.TranscodeStage_TRANSCODE_STAGE_SPECTROGRAM_UPLOADING:
-		hlsProgress = maxInt(hlsProgress, 10)
-		spectrogramProgress = maxInt(spectrogramProgress, stageProgress(progress, 85, 100))
+		hlsProgress = max(hlsProgress, 10)
+		spectrogramProgress = max(spectrogramProgress, stageProgress(progress, 85, 100))
 	case managev1.TranscodeStage_TRANSCODE_STAGE_PROCESSING,
 		managev1.TranscodeStage_TRANSCODE_STAGE_HLS_PROCESSING:
-		hlsProgress = maxInt(hlsProgress, stageProgress(progress, 10, 90))
-		spectrogramProgress = maxInt(spectrogramProgress, 100)
+		hlsProgress = max(hlsProgress, stageProgress(progress, 10, 90))
+		spectrogramProgress = max(spectrogramProgress, 100)
 	case managev1.TranscodeStage_TRANSCODE_STAGE_UPLOADING,
 		managev1.TranscodeStage_TRANSCODE_STAGE_HLS_UPLOADING:
-		hlsProgress = maxInt(hlsProgress, stageProgress(progress, 90, 100))
-		spectrogramProgress = maxInt(spectrogramProgress, 100)
+		hlsProgress = max(hlsProgress, stageProgress(progress, 90, 100))
+		spectrogramProgress = max(spectrogramProgress, 100)
 	}
 
 	return hlsProgress, spectrogramProgress
 }
 
 func stageProgress(progress int, start int, end int) int {
-	if progress < 0 {
-		progress = 0
-	}
-	if progress > 100 {
-		progress = 100
-	}
+	progress = min(max(progress, 0), 100)
 	return start + (((end-start)*progress + 50) / 100)
-}
-
-func maxInt(a int, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // HandleTranscodeComplete marks tracked job terminal state.
@@ -359,22 +281,21 @@ func (t *Tracker) HandleTranscodeComplete(ctx context.Context, event *managev1.T
 	}
 
 	now := time.Now()
-	if event.Success {
-		job, err := t.matchingTrackedCompletionJob(ctx, event, queueName)
-		if err != nil {
-			return err
-		}
-		if job == nil {
-			return nil
-		}
-		return t.db.WithContext(ctx).Where("event_id = ?", job.EventID).Delete(&model.TranscodeJob{}).Error
-	}
-
-	jobs, err := t.trackedCompletionJobs(ctx, event, queueName)
+	jobs, err := t.completionCandidates(ctx, event, queueName)
 	if err != nil {
 		return err
 	}
-	if len(jobs) != 1 || !stringInSlice(jobs[0].Status, activeTranscodeStatuses()) {
+	if event.Success {
+		job, err := matchingCompletionJob(event, jobs)
+		if err != nil || job == nil {
+			return err
+		}
+		return t.units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error {
+			return tx.Store().DeleteJob(ctx, job.EventID)
+		})
+	}
+
+	if len(jobs) != 1 || !slices.Contains(ActiveStatuses(), jobs[0].Status) {
 		slog.WarnContext(ctx, "Skipped uncorrelated transcode failure completion",
 			failurecause.Attr(errors.New(event.GetError())),
 			"entityType", event.EntityType.String(),
@@ -384,32 +305,32 @@ func (t *Tracker) HandleTranscodeComplete(ctx context.Context, event *managev1.T
 		)
 		return nil
 	}
-	job := jobs[0]
-
 	errText := "transcode failed"
 	if event.Error != nil && strings.TrimSpace(*event.Error) != "" {
 		errText = *event.Error
 	}
-	return t.db.WithContext(ctx).
-		Model(&model.TranscodeJob{}).
-		Where("event_id = ?", job.EventID).
-		Updates(structured.Fields{
-			"status":       StatusFailedTerminal,
-			"last_error":   errText,
-			"updated_at":   now,
-			"completed_at": now,
-		}).Error
+	return t.units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error {
+		return tx.Store().FailJob(ctx, jobs[0].EventID, errText, now)
+	})
 }
 
-func (t *Tracker) matchingTrackedCompletionJob(
+func (t *Tracker) completionCandidates(
 	ctx context.Context,
 	event *managev1.TranscodeCompleteEvent,
 	queueName string,
-) (*model.TranscodeJob, error) {
-	jobs, err := t.trackedCompletionJobs(ctx, event, queueName)
-	if err != nil {
-		return nil, err
-	}
+) ([]Job, error) {
+	var jobs []Job
+	err := t.units.Read(ctx, func(store Store) (err error) {
+		jobs, err = store.CompletionCandidates(ctx, CompletionIdentity{
+			EventID: event.EventId, QueueName: queueName, EntityType: event.EntityType.String(),
+			EntityID: event.EntityId, FileID: event.FileId,
+		})
+		return err
+	})
+	return jobs, err
+}
+
+func matchingCompletionJob(event *managev1.TranscodeCompleteEvent, jobs []Job) (*Job, error) {
 	for i := range jobs {
 		matches, err := MatchTranscodeCompletionPayload(event, jobs[i].Payload)
 		if err != nil {
@@ -422,55 +343,19 @@ func (t *Tracker) matchingTrackedCompletionJob(
 	return nil, nil
 }
 
-func (t *Tracker) trackedCompletionJobs(
-	ctx context.Context,
-	event *managev1.TranscodeCompleteEvent,
-	queueName string,
-) ([]model.TranscodeJob, error) {
-	query := t.db.WithContext(ctx).
-		Where("event_id = ? AND entity_type = ? AND entity_id = ? AND file_id = ?", event.EventId, event.EntityType.String(), event.EntityId, event.FileId)
-	if queueName != "" {
-		query = query.Where("queue_name = ?", queueName)
-	}
-	var jobs []model.TranscodeJob
-	if err := query.Order("created_at DESC").Find(&jobs).Error; err != nil {
-		return nil, err
-	}
-	return jobs, nil
-}
-
-func stringInSlice(value string, values []string) bool {
-	return slices.Contains(values, value)
-}
-
 // MarkCancelled marks active tracked jobs for a file as cancelled.
 func (t *Tracker) MarkCancelled(ctx context.Context, fileID string, reason managev1.TranscodeCancelReason) error {
 	if strings.TrimSpace(fileID) == "" {
 		return nil
 	}
-
-	now := time.Now()
-	return t.db.WithContext(ctx).
-		Model(&model.TranscodeJob{}).
-		Where("file_id = ? AND status IN ?", fileID, activeTranscodeStatuses()).
-		Updates(transcodeCancelledUpdates(reason, now)).Error
+	return t.units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error {
+		return tx.Store().CancelFileJobs(ctx, fileID, CancelReason(reason), time.Now())
+	})
 }
 
-func transcodeCancelledUpdates(reason managev1.TranscodeCancelReason, now time.Time) structured.Fields {
-	errText := fmt.Sprintf("cancelled: %s", reason.String())
-	return structured.Fields{
-		"status":       StatusCancelled,
-		"last_error":   errText,
-		"updated_at":   now,
-		"completed_at": now,
-	}
-}
-
-func activeTranscodeStatuses() []string {
-	return []string{
-		StatusQueued,
-		StatusProcessing,
-	}
+// CancelReason is the last error a job cancelled for reason records.
+func CancelReason(reason managev1.TranscodeCancelReason) string {
+	return fmt.Sprintf("cancelled: %s", reason.String())
 }
 
 func queueNameFromCompleteType(eventType managev1.TranscodeEventType) string {
@@ -482,4 +367,50 @@ func queueNameFromCompleteType(eventType managev1.TranscodeEventType) string {
 	default:
 		return ""
 	}
+}
+
+// WaveformCancelPublisher publishes the cancellation of a waveform job.
+type WaveformCancelPublisher interface {
+	PublishWaveformCancel(ctx context.Context, event *managev1.WaveformCancelEvent) error
+}
+
+// CancelTrackWaveformJobs marks active Track waveform jobs cancelled in
+// store's transaction before publishing their cancellation commands.
+func CancelTrackWaveformJobs(
+	ctx context.Context,
+	store Store,
+	publisher WaveformCancelPublisher,
+	trackIDs []string,
+	reason managev1.TranscodeCancelReason,
+) error {
+	if len(trackIDs) == 0 {
+		return nil
+	}
+	jobs, err := store.QueuedTrackWaveformJobs(ctx, trackIDs)
+	if err != nil || len(jobs) == 0 {
+		return err
+	}
+	jobEventIDs := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		jobEventIDs = append(jobEventIDs, job.EventID)
+	}
+	if err := store.CancelWaveformJobs(ctx, jobEventIDs, CancelReason(reason), time.Now()); err != nil {
+		return err
+	}
+	if publisher == nil {
+		return nil
+	}
+	for _, job := range jobs {
+		if err := publisher.PublishWaveformCancel(ctx, &managev1.WaveformCancelEvent{
+			EventId:     job.EventID,
+			EntityType:  managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK,
+			EntityId:    job.EntityID,
+			FileId:      job.FileID,
+			Reason:      reason,
+			TimestampMs: time.Now().UnixMilli(),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

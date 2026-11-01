@@ -24,7 +24,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/work"
 	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
@@ -59,8 +59,8 @@ func newFixture(t *testing.T) *fixture {
 
 // runtime is the production Work runtime over db.
 func runtime(db *gorm.DB) *workadapter.Runtime {
-	planner := og.NewPlanner(db, cdn, renderConfig{}, workadapter.NewProjection())
-	return workadapter.NewRuntime(db, cdn, og.NewRefresher(planner, og.NewResolver(workadapter.NewRequests())))
+	planner := ogpostgres.NewPlanner(cdn, renderConfig{}, workadapter.NewProjection())
+	return workadapter.NewRuntime(db, cdn, ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(workadapter.NewRequests())))
 }
 
 func (f *fixture) units(t *testing.T, db *gorm.DB) mutationtest.Harness[workpublic.Store] {

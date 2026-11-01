@@ -10,6 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -118,4 +119,4 @@ func loadArtistInterchangeTarget(
 	return projectCreativeInterchangeTarget(plan, target.Exists, target.Revision, target.Document)
 }
 
-var _ application.TranslationInterchangeDomains = (*ArtistInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*ArtistInterchange)(nil)

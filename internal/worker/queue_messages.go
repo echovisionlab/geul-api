@@ -80,7 +80,7 @@ func (h *Handlers) handleFileDeleteMessage(ctx context.Context, msg mq.Message) 
 	if err := requireStableDeliveryMessageID(msg, event.GetFileId()); err != nil {
 		return err
 	}
-	if err := h.HandleFileDelete(ctx, event); err != nil {
+	if err := h.files.HandleFileDelete(ctx, event); err != nil {
 		if errors.Is(err, filemediaapplication.ErrInvalidFileDeleteTarget) {
 			return terminalQueueContractError("invalid_file_delete_target", err)
 		}

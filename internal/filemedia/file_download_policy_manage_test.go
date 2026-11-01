@@ -1,5 +1,3 @@
-//go:build integration
-
 package filemedia
 
 import (
@@ -7,9 +5,11 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/glebarez/sqlite"
@@ -21,8 +21,9 @@ import (
 func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.T) {
 	t.Parallel()
 	db := newManageFileDownloadPolicyUnitDB(t)
-	stack := testutil.SetupOryStack(t)
-	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	manager := newUnitUser()
 	postID := uuid.NewString()
 	fileID := uuid.NewString()
 	segmentID := uuid.NewString()
@@ -58,12 +59,12 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 
 	signals := &policySignalPublisher{}
 	svc := withTestMutations(&Service{
-		db: db, spiceDB: stack.SpiceDBClient, asyncPublisher: signals,
+		db: db, spiceDB: spiceDB, asyncPublisher: signals,
 	})
-	svc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
+	svc.postAccess = newIntegrationPostAccess(db, spiceDB)
 	svc.audienceAccess = newIntegrationAudienceAccess()
-	seedFileDeliveryContentPolicy(t, stack.SpiceDBClient, "post", postID)
-	seedFileDeliveryPostAuthority(t, stack.SpiceDBClient, postID, manager.IdentityID)
+	checker.For(manager.IdentityID).Allow(policyv1.Post.View(postID))
+	checker.For(manager.IdentityID).Allow(policyv1.Post.Edit(postID))
 	ctx := fileDeliveryPrincipalContext(manager)
 
 	restrictedWithoutSegments, err := NewConnectHandler(svc).UpdateFileDownloadPolicy(ctx, connect.NewRequest(
@@ -129,7 +130,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 			ObservedPolicy:     observedFileDownloadPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, segmentID),
 		},
 	))
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 
 	_, err = NewConnectHandler(svc).UpdateFileDownloadPolicy(ctx, connect.NewRequest(
 		&managev1.UpdateFileDownloadPolicyRequest{
@@ -141,7 +142,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 			ObservedPolicy:     observedFileDownloadPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, segmentID),
 		},
 	))
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 
 	tooManySegmentIDs := make([]string, maxFileDownloadAudienceSegments+1)
 	for i := range tooManySegmentIDs {
@@ -157,14 +158,15 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 			ObservedPolicy:     observedFileDownloadPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, segmentID),
 		},
 	))
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 }
 
 func TestFileDownloadPolicyScopeUsesCurrentBindingInsteadOfIngestProvenance(t *testing.T) {
 	t.Parallel()
 	db := newManageFileDownloadPolicyUnitDB(t)
-	stack := testutil.SetupOryStack(t)
-	manager := stack.CreateUser(t, policyv1.Role.Author().ID())
+	checker := &authztest.Checker{}
+	spiceDB := checker.Client(t)
+	manager := newUnitUser()
 	originalPostID := uuid.NewString()
 	currentPostID := uuid.NewString()
 	fileID := uuid.NewString()
@@ -187,11 +189,11 @@ func TestFileDownloadPolicyScopeUsesCurrentBindingInsteadOfIngestProvenance(t *t
 		currentBlockID,
 		fileID,
 	).Error)
-	seedFileDeliveryContentPolicy(t, stack.SpiceDBClient, "post", currentPostID)
-	seedFileDeliveryPostAuthority(t, stack.SpiceDBClient, currentPostID, manager.IdentityID)
+	checker.For(manager.IdentityID).Allow(policyv1.Post.View(currentPostID))
+	checker.For(manager.IdentityID).Allow(policyv1.Post.Edit(currentPostID))
 
-	svc := withTestMutations(&Service{db: db, spiceDB: stack.SpiceDBClient, asyncPublisher: &policySignalPublisher{}})
-	svc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
+	svc := withTestMutations(&Service{db: db, spiceDB: spiceDB, asyncPublisher: &policySignalPublisher{}})
+	svc.postAccess = newIntegrationPostAccess(db, spiceDB)
 	svc.audienceAccess = newIntegrationAudienceAccess()
 	response, err := NewConnectHandler(svc).UpdateFileDownloadPolicy(
 		fileDeliveryPrincipalContext(manager),
@@ -205,65 +207,6 @@ func TestFileDownloadPolicyScopeUsesCurrentBindingInsteadOfIngestProvenance(t *t
 	)
 	require.NoError(t, err)
 	require.Equal(t, managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_PUBLIC, response.Msg.GetPolicy().GetAudience())
-}
-
-func TestAudienceServiceListSegmentsForAuthenticatedAccessUnit(t *testing.T) {
-	t.Parallel()
-	db := newManageFileDownloadPolicyUnitDB(t)
-	stack := testutil.SetupOryStack(t)
-	author := stack.CreateUser(t, policyv1.Role.Author().ID())
-	user := stack.CreateUser(t, policyv1.Role.User().ID())
-	memberTagSegmentID := uuid.NewString()
-	filterSegmentID := uuid.NewString()
-	archivedSegmentID := uuid.NewString()
-	seedManageAudienceSegment(
-		t,
-		db,
-		memberTagSegmentID,
-		"Tagged members",
-		managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS,
-		model.AudienceSegmentConfig{},
-	)
-	seedManageAudienceSegment(
-		t,
-		db,
-		filterSegmentID,
-		"Authors",
-		managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER,
-		model.AudienceSegmentConfig{AccountRoles: []string{"author"}},
-	)
-	seedManageAudienceSegment(
-		t,
-		db,
-		archivedSegmentID,
-		"Archived",
-		managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER,
-		model.AudienceSegmentConfig{},
-	)
-	require.NoError(t, db.Table("audience_segment").
-		Where("id = ?", archivedSegmentID).
-		Update("archived_at", time.Now().UTC()).Error)
-
-	svc := newAudienceServiceForTest(
-		db,
-		stack.SpiceDBClient,
-	)
-	ctx := fileDeliveryPrincipalContext(author)
-	response, err := svc.ListSegmentsForAuthenticatedAccess(
-		ctx,
-		connect.NewRequest(&managev1.ListSegmentsForAuthenticatedAccessRequest{}),
-	)
-	require.NoError(t, err)
-	require.Equal(t, int32(2), response.Msg.GetPagination().GetTotal())
-	require.Len(t, response.Msg.GetSegments(), 2)
-	require.Equal(t, filterSegmentID, response.Msg.GetSegments()[0].GetId())
-	require.Equal(t, memberTagSegmentID, response.Msg.GetSegments()[1].GetId())
-
-	_, err = svc.ListSegmentsForAuthenticatedAccess(
-		fileDeliveryPrincipalContext(user),
-		connect.NewRequest(&managev1.ListSegmentsForAuthenticatedAccessRequest{}),
-	)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 }
 
 func newManageFileDownloadPolicyUnitDB(t *testing.T) *gorm.DB {
@@ -454,5 +397,23 @@ func observedFileDownloadPolicy(audience managev1.FileDownloadAudience, segmentI
 	return &managev1.FileDownloadPolicyObservedState{
 		Audience:           audience,
 		AudienceSegmentIds: segmentIDs,
+	}
+}
+
+func seedAudienceSegmentRelationsForTest(
+	t *testing.T,
+	db *gorm.DB,
+	segmentID string,
+	config model.AudienceSegmentConfig,
+) {
+	t.Helper()
+	for _, tagID := range config.MemberTagIDs {
+		require.NoError(t, db.Create(&model.AudienceSegmentUserTag{AudienceSegmentID: segmentID, UserTagID: tagID}).Error)
+	}
+	for _, role := range config.AccountRoles {
+		require.NoError(t, db.Create(&model.AudienceSegmentUserRole{AudienceSegmentID: segmentID, Role: role}).Error)
+	}
+	for _, memberID := range config.ExcludeMemberIDs {
+		require.NoError(t, db.Create(&model.AudienceSegmentExcludedMember{AudienceSegmentID: segmentID, MemberID: memberID}).Error)
 	}
 }

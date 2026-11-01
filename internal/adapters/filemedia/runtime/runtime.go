@@ -19,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filemediaapplication "github.com/echovisionlab/geul-api/internal/filemedia/application"
 	transcodeapplication "github.com/echovisionlab/geul-api/internal/transcode/application"
+	applicationpostgres "github.com/echovisionlab/geul-api/internal/transcode/application/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -54,7 +55,7 @@ func New(
 	return &Runtime{
 		db:        db,
 		publisher: publisher,
-		transcode: transcodeapplication.New(db, publisher, jobs),
+		transcode: transcodeapplication.New(applicationpostgres.NewUnits(db), publisher, jobs),
 		spiceDB:   spiceDB,
 		s3Client:  s3Client,
 		bucket:    strings.TrimSpace(bucket),

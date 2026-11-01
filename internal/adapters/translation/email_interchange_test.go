@@ -7,7 +7,6 @@ import (
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 )
 
@@ -64,7 +63,7 @@ func TestBuildEmailRichTextInterchangeReplacementEmitsDeletes(t *testing.T) {
 	}
 	first := "block:" + firstID + ":typed:paragraph/content"
 	candidate, err := buildEmailRichTextInterchangeCandidate(application.TranslationInterchangeApply{
-		Mode: managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		Mode: application.InterchangeModeReplace,
 		Source: &core.SourceDocument{
 			Title: "source subject", ContentDocumentRevision: uuid.NewString(), ContentBlockDocument: source,
 		},

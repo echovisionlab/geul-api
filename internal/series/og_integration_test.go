@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -42,11 +43,7 @@ func TestResolveSeriesOgGenerationUsesLocaleTitlesAndAllowsNoFeaturedImageIntegr
 
 	resolve := func(selection *managev1.OgTargetSelection) []og.Request {
 		t.Helper()
-		requests, err := og.NewResolver(seriesadapter.NewRequests()).Resolve(t.Context(), db, &managev1.RegenerateOgImageRequest{
-			EntityType: managev1.OgEntityType_OG_ENTITY_TYPE_SERIES,
-			EntityId:   &seriesID,
-			Selection:  selection,
-		})
+		requests, err := og.ResolveRequests(t.Context(), ogpostgres.Bind(db, ogpostgres.Ports{Requests: ogpostgres.NewResolver(seriesadapter.NewRequests())}), "series", seriesID, og.SelectionFromProto(selection))
 		require.NoError(t, err)
 		return requests
 	}

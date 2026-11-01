@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -135,9 +135,9 @@ func connectUploadPermissionValidationError(err error) error {
 	var validationErr *uploadPermissionValidationError
 	if errors.As(err, &validationErr) {
 		if validationErr.required {
-			return errs.Required(validationErr.field)
+			return domainerr.Required(validationErr.field)
 		}
-		return errs.InvalidArgument(validationErr.field, validationErr.message)
+		return domainerr.InvalidField(validationErr.field, validationErr.message)
 	}
 	return err
 }
@@ -334,7 +334,7 @@ func uploadPermissionEditCan(resourceType, resourceID string) (policyv1.Can, err
 func requireUploadIdentity(ctx context.Context) error {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || strings.TrimSpace(user.IdentityID.String()) == "" {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	return nil
 }

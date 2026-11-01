@@ -8,7 +8,7 @@ import (
 	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
@@ -17,10 +17,10 @@ import (
 // OG adapts Form persistence to the shared Open Graph lifecycle.
 type OG struct {
 	cdnDomain string
-	refresher *og.Refresher
+	refresher *ogpostgres.Refresher
 }
 
-func NewOG(cdnDomain string, refresher *og.Refresher) *OG {
+func NewOG(cdnDomain string, refresher *ogpostgres.Refresher) *OG {
 	if refresher == nil {
 		panic("Form OG refresher is required")
 	}
@@ -44,8 +44,7 @@ func (o *OG) Request(
 }
 
 func (o *OG) CancelAndRelease(ctx context.Context, tx *gorm.DB, formID string) error {
-	if err := og.NewLifecycle(tx, o.cdnDomain).
-		CancelEntityWithDB(ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_FORM, formID); err != nil {
+	if err := ogpostgres.CancelEntity(ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_FORM, formID); err != nil {
 		return err
 	}
 	return mediaasset.NewLifecycle(tx, o.cdnDomain).

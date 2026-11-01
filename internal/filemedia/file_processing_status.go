@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/transcode"
+	transcodepostgres "github.com/echovisionlab/geul-api/internal/transcode/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
@@ -105,15 +105,15 @@ func (s *Service) populateFileProcessingStatus(
 		}
 	}
 
-	audioTranscodeFailures, err := transcode.FailedTranscodeCounts(ctx, s.db, audioIDs, eventpkg.QueueTranscoderAudio)
+	audioTranscodeFailures, err := transcodepostgres.FailedTranscodeCounts(ctx, s.db, audioIDs, eventpkg.QueueTranscoderAudio)
 	if err != nil {
 		return err
 	}
-	videoTranscodeFailures, err := transcode.FailedTranscodeCounts(ctx, s.db, videoIDs, eventpkg.QueueTranscoderVideo)
+	videoTranscodeFailures, err := transcodepostgres.FailedTranscodeCounts(ctx, s.db, videoIDs, eventpkg.QueueTranscoderVideo)
 	if err != nil {
 		return err
 	}
-	waveformFailures, err := transcode.FailedWaveformCounts(ctx, s.db, audioIDs)
+	waveformFailures, err := transcodepostgres.FailedWaveformCounts(ctx, s.db, audioIDs)
 	if err != nil {
 		return err
 	}

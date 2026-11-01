@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
@@ -51,7 +53,7 @@ func TestFileManagerGetDoesNotIssueAfterDeletionCommitIntegration(t *testing.T) 
 
 	got := <-done
 	require.Nil(t, got.response)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(got.err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(got.err))
 }
 
 func TestFileManagerListRetriesWithoutFileDeletedBeforeSigningIntegration(t *testing.T) {
@@ -194,7 +196,7 @@ func TestFileManagerGetDoesNotIssueAfterPrincipalRevocationCommitIntegration(t *
 	require.NoError(t, db.Table("kratos.identities").Where("id = ?", auth.GetUser(ctx).IdentityID.String()).Update("state", auth.KratosStateInactive).Error)
 	close(releaseFence)
 	released = true
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(<-done))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(<-done))
 }
 
 func TestFileManagerSigningCompletesBeforePrincipalRevocationCommitIntegration(t *testing.T) {
@@ -318,7 +320,7 @@ func TestFileManagerDeleteHoldingPrincipalCompletesWithoutSignerDeadlockIntegrat
 	<-beforeSignerFence
 	close(releaseMutation)
 	require.NoError(t, <-mutationDone)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(<-signerDone))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(<-signerDone))
 }
 
 func TestFileManagerAuthorCanDownloadUnattachedFileIntegration(t *testing.T) {
@@ -569,7 +571,7 @@ func TestManageGetMediaDeliveryDoesNotIssueAfterDeletionCommitIntegration(t *tes
 
 	got := <-done
 	require.Nil(t, got.response)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(got.err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(got.err))
 }
 
 func TestManageBulkMediaDeliveriesExcludesFileDeletedBeforeSigningIntegration(t *testing.T) {
@@ -671,7 +673,7 @@ func TestManageGetMediaDeliveryMetadataRetryIsBoundedIntegration(t *testing.T) {
 		require.NoError(t, db.Table("file").Where("id = ?", fileID).Update("duration_seconds", changeCount).Error)
 	}
 	_, err := NewConnectHandler(service).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: fileID}))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 	require.Equal(t, 2, changeCount)
 }
 
@@ -750,7 +752,7 @@ func TestManagePostCollaboratorDoesNotIssueAfterDetachCommitIntegration(t *testi
 	<-beforeFence
 	require.NoError(t, db.Exec("DELETE FROM content_block_attachment WHERE block_id = ?", blockID).Error)
 	close(releaseFence)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(<-done))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(<-done))
 }
 
 func TestManagePostCollaboratorDoesNotIssueAfterPrincipalRevocationCommitIntegration(t *testing.T) {
@@ -780,7 +782,7 @@ func TestManagePostCollaboratorDoesNotIssueAfterPrincipalRevocationCommitIntegra
 	require.NoError(t, db.Table("kratos.identities").Where("id = ?", auth.GetUser(ctx).IdentityID.String()).Update("state", auth.KratosStateInactive).Error)
 	close(releaseFence)
 	released = true
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(<-done))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(<-done))
 }
 
 func TestManagePostCollaboratorSigningCompletesBeforePrincipalRevocationCommitIntegration(t *testing.T) {
@@ -847,7 +849,7 @@ func TestManageStrongDeliveryDoesNotIssueAfterPrincipalRevocationCommitIntegrati
 	require.NoError(t, db.Table("kratos.identities").Where("id = ?", auth.GetUser(ctx).IdentityID.String()).Update("state", auth.KratosStateInactive).Error)
 	close(releaseFence)
 	released = true
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(<-done))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(<-done))
 }
 
 func TestManagePostCollaboratorSigningCompletesBeforeDetachCommitIntegration(t *testing.T) {
@@ -898,7 +900,7 @@ func TestManagePostCollaboratorDoesNotIssueAfterFileDeletionCommitIntegration(t 
 	<-beforeFence
 	require.NoError(t, db.Exec("UPDATE file SET delete_requested_at = CURRENT_TIMESTAMP WHERE id = ?", fileID).Error)
 	close(releaseFence)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(<-done))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(<-done))
 }
 
 func TestManagePostCollaboratorSigningCompletesBeforeFileDeletionCommitIntegration(t *testing.T) {

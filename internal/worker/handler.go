@@ -2,31 +2,16 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
+	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"google.golang.org/protobuf/proto"
-
-	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
-	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
-	filemediaruntime "github.com/echovisionlab/geul-api/internal/adapters/filemedia/runtime"
-	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/campaign"
-	"github.com/echovisionlab/geul-api/internal/config"
-	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/favicon"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/mq"
-	"github.com/echovisionlab/geul-api/internal/og"
-	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/scheduler"
-	"github.com/echovisionlab/geul-api/internal/telemetry"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
 )
 
 const (
@@ -42,161 +27,135 @@ const (
 	mediaResultRetryDelay   = 500 * time.Millisecond
 	userDeletionMaxRetries  = 5
 	userDeletionRetryDelay  = 5 * time.Second
-	schedulerMaxRetries     = 3
-	schedulerRetryDelay     = time.Second
-	schedulerRetryBackoff   = 2.0
 	translationMaxRetries   = 3
 	translationRetryDelay   = time.Second
 	translationRetryBackoff = 2.0
+
+	// scheduledCampaignBatch bounds the Campaign delivery runs one wake-up
+	// dispatches and resumes.
+	scheduledCampaignBatch = 25
 )
 
+// Handlers routes the scheduler's wake-ups and the queue messages to the
+// domains that own them. It decides the queue contract (terminal or
+// retryable), what a cleanup selects and in which order, and opens the
+// transactions the principal-less domain ports run in; it owns no table.
 type Handlers struct {
-	db               *gorm.DB
-	config           *config.Config
-	s3Client         *s3.Client
-	publisher        workerPublisher
-	fileIngest       fileIngestPublisher
-	adapterLoader    mailAdapterLoader
-	kratosClient     auth.IdentityManager
-	spicedbClient    *auth.SpiceDBClient
-	fileMediaRuntime *filemediaruntime.Runtime
-	mediaCleanup     *mediaasset.Cleanup
-	publicAssets     *mediaasset.PublicAssetCleanup
-	ogCleanup        *og.Cleanup
-	faviconCleanup   *favicon.Cleanup
-	metadataAI       MetadataAIJobProcessor
-	translationJobs  TranslationJobProcessor
-	mailMetrics      mailMetrics
-	httpClient       httpDoer
-	auditWriter      *telemetry.DurableWriter
-	ogPlanner        *og.Planner
-	memberDeletion   accountpostgres.MemberDeletion
-	campaignEmail    CampaignEmailRenderer
+	units           mutation.UnitOfWork[Jobs]
+	files           FileMedia
+	danglingFiles   DanglingFileCleanup
+	publicAssets    PublicAssetCleanup
+	ogCleanup       OGCleanup
+	faviconCleanup  FaviconCleanup
+	uploads         UploadSessions
+	uploadStorage   UploadStorage
+	fileIngest      FileIngestPublisher
+	shareLinks      ShareLinks
+	authCodes       AuthCodeIssuances
+	queueArchives   QueueArchives
+	memberDeletions MemberDeletions
+	legal           LegalPolicies
+	identities      IdentityLister
+	timedBans       TimedBans
+	geoIP           GeoIPRefresher
+	campaigns       CampaignDeliveries
+	emailDelivery   EmailDelivery
+	bulkEmail       BulkEmail
+	metadataAI      MetadataAIJobProcessor
+	translationJobs TranslationJobProcessor
+	siteOrigin      string
 }
 
-type CampaignEmailRenderer interface {
-	RenderCampaignEmail(
-		context.Context,
-		*gorm.DB,
-		string,
-		string,
-		map[string]string,
-	) (*email.RenderedEmail, error)
+// Deps are the worker's collaborators. MetadataAI and TranslationJobs may be
+// nil: their queues are then not consumed and the metadata AI recovery is
+// skipped. SiteOrigin may be empty.
+type Deps struct {
+	Units           mutation.UnitOfWork[Jobs] // workerpostgres.NewUnits
+	FileMedia       FileMedia
+	DanglingFiles   DanglingFileCleanup
+	PublicAssets    PublicAssetCleanup
+	OGCleanup       OGCleanup
+	FaviconCleanup  FaviconCleanup
+	Uploads         UploadSessions
+	UploadStorage   UploadStorage
+	FileIngest      FileIngestPublisher
+	ShareLinks      ShareLinks
+	AuthCodes       AuthCodeIssuances
+	QueueArchives   QueueArchives
+	MemberDeletions MemberDeletions
+	Legal           LegalPolicies
+	Identities      IdentityLister
+	TimedBans       TimedBans
+	GeoIP           GeoIPRefresher
+	Campaigns       CampaignDeliveries
+	EmailDelivery   EmailDelivery
+	BulkEmail       BulkEmail
+	MetadataAI      MetadataAIJobProcessor  // optional
+	TranslationJobs TranslationJobProcessor // optional
+	SiteOrigin      string                  // optional; the legal notice links
 }
 
-type httpDoer interface {
-	Do(req *http.Request) (*http.Response, error)
-}
-
-type MetadataAIJobProcessor interface {
-	ProcessJob(ctx context.Context, jobID string) error
-	RecoverExpiredJobs(ctx context.Context, tx *gorm.DB, limit int) (int, error)
-}
-
-type TranslationJobProcessor interface {
-	ProcessDelivery(ctx context.Context, jobID string) error
-}
-
-type mailAdapterLoader interface {
-	GetActiveAdapters(ctx context.Context) ([]email.Adapter, error)
-}
-
-type fileIngestPublisher interface {
-	PublishFileIngest(ctx context.Context, event proto.Message) error
-}
-
-type workerPublisher interface {
-	campaign.CampaignBulkPublisher
-	PublishFileDelete(ctx context.Context, event *managev1.FileDeleteEvent) error
-	PublishMediaProcessingLifecycle(ctx context.Context, event *managev1.MediaProcessingLifecycleEvent) error
-	PublishSendEmail(ctx context.Context, event *managev1.SendEmailEvent) error
-	PublishTranscodeCancel(ctx context.Context, event *managev1.TranscodeCancelEvent) error
-	PublishWaveformGenerate(ctx context.Context, event *managev1.WaveformGenerateEvent) error
-}
-
-// HandlerDeps are the worker's collaborators. MetadataAI, TranslationJobs
-// and CampaignEmail may be nil; NewHandlers panics on any other missing one.
-type HandlerDeps struct {
-	DB               *gorm.DB
-	Config           *config.Config
-	Publisher        *mq.Publisher
-	AdapterLoader    mailAdapterLoader
-	S3Client         *s3.Client
-	KratosClient     auth.IdentityManager
-	FileMediaRuntime *filemediaruntime.Runtime
-	MediaCleanup     *mediaasset.Cleanup
-	PublicAssets     *mediaasset.PublicAssetCleanup
-	OGCleanup        *og.Cleanup
-	FaviconCleanup   *favicon.Cleanup
-	MetadataAI       MetadataAIJobProcessor
-	TranslationJobs  TranslationJobProcessor
-	Audit            *telemetry.DurableWriter
-	SpiceDB          *auth.SpiceDBClient
-	OGPlanner        *og.Planner
-	MemberDeletion   accountpostgres.MemberDeletion
-	CampaignEmail    CampaignEmailRenderer
-}
-
-func NewHandlers(deps HandlerDeps) *Handlers {
-	if deps.DB == nil {
-		panic("worker.NewHandlers: db is required")
+// NewHandlers returns the worker handlers, or an error naming each missing
+// required collaborator.
+func NewHandlers(deps Deps) (*Handlers, error) {
+	var missing []string
+	for _, required := range []struct {
+		name    string
+		present bool
+	}{
+		{"Units", deps.Units != nil},
+		{"FileMedia", deps.FileMedia != nil},
+		{"DanglingFiles", deps.DanglingFiles != nil},
+		{"PublicAssets", deps.PublicAssets != nil},
+		{"OGCleanup", deps.OGCleanup != nil},
+		{"FaviconCleanup", deps.FaviconCleanup != nil},
+		{"Uploads", deps.Uploads != nil},
+		{"UploadStorage", deps.UploadStorage != nil},
+		{"FileIngest", deps.FileIngest != nil},
+		{"ShareLinks", deps.ShareLinks != nil},
+		{"AuthCodes", deps.AuthCodes != nil},
+		{"QueueArchives", deps.QueueArchives != nil},
+		{"MemberDeletions", deps.MemberDeletions != nil},
+		{"Legal", deps.Legal != nil},
+		{"Identities", deps.Identities != nil},
+		{"TimedBans", deps.TimedBans != nil},
+		{"GeoIP", deps.GeoIP != nil},
+		{"Campaigns", deps.Campaigns != nil},
+		{"EmailDelivery", deps.EmailDelivery != nil},
+		{"BulkEmail", deps.BulkEmail != nil},
+	} {
+		if !required.present {
+			missing = append(missing, required.name)
+		}
 	}
-	if deps.Config == nil {
-		panic("worker.NewHandlers: config is required")
-	}
-	if deps.Publisher == nil {
-		panic("worker.NewHandlers: publisher is required")
-	}
-	if deps.AdapterLoader == nil {
-		panic("worker.NewHandlers: adapterLoader is required")
-	}
-	if deps.S3Client == nil {
-		panic("worker.NewHandlers: s3Client is required")
-	}
-	if deps.KratosClient == nil {
-		panic("worker.NewHandlers: kratosClient is required")
-	}
-	if deps.FileMediaRuntime == nil {
-		panic("worker.NewHandlers: FileMedia runtime is required")
-	}
-	if deps.MediaCleanup == nil || deps.PublicAssets == nil || deps.OGCleanup == nil || deps.FaviconCleanup == nil {
-		panic("worker.NewHandlers: MediaAsset, OG, and Favicon cleanup applications are required")
-	}
-	if deps.Audit == nil {
-		panic("worker.NewHandlers: audit writer is required")
-	}
-	if deps.SpiceDB == nil {
-		panic("worker.NewHandlers: SpiceDB client is required")
-	}
-	if deps.OGPlanner == nil {
-		panic("worker.NewHandlers: OG planner is required")
-	}
-	if deps.MemberDeletion == nil {
-		panic("worker.NewHandlers: Member deletion lifecycle is required")
+	if len(missing) > 0 {
+		return nil, errors.New("worker dependencies are required: " + strings.Join(missing, ", "))
 	}
 	return &Handlers{
-		db:               deps.DB,
-		config:           deps.Config,
-		publisher:        deps.Publisher,
-		fileIngest:       deps.Publisher,
-		adapterLoader:    deps.AdapterLoader,
-		s3Client:         deps.S3Client,
-		kratosClient:     deps.KratosClient,
-		spicedbClient:    deps.SpiceDB,
-		fileMediaRuntime: deps.FileMediaRuntime,
-		mediaCleanup:     deps.MediaCleanup,
-		publicAssets:     deps.PublicAssets,
-		ogCleanup:        deps.OGCleanup,
-		faviconCleanup:   deps.FaviconCleanup,
-		metadataAI:       deps.MetadataAI,
-		translationJobs:  deps.TranslationJobs,
-		mailMetrics:      newMailMetrics(),
-		httpClient:       http.DefaultClient,
-		auditWriter:      deps.Audit,
-		ogPlanner:        deps.OGPlanner,
-		memberDeletion:   deps.MemberDeletion,
-		campaignEmail:    deps.CampaignEmail,
-	}
+		units:           deps.Units,
+		files:           deps.FileMedia,
+		danglingFiles:   deps.DanglingFiles,
+		publicAssets:    deps.PublicAssets,
+		ogCleanup:       deps.OGCleanup,
+		faviconCleanup:  deps.FaviconCleanup,
+		uploads:         deps.Uploads,
+		uploadStorage:   deps.UploadStorage,
+		fileIngest:      deps.FileIngest,
+		shareLinks:      deps.ShareLinks,
+		authCodes:       deps.AuthCodes,
+		queueArchives:   deps.QueueArchives,
+		memberDeletions: deps.MemberDeletions,
+		legal:           deps.Legal,
+		identities:      deps.Identities,
+		timedBans:       deps.TimedBans,
+		geoIP:           deps.GeoIP,
+		campaigns:       deps.Campaigns,
+		emailDelivery:   deps.EmailDelivery,
+		bulkEmail:       deps.BulkEmail,
+		metadataAI:      deps.MetadataAI,
+		translationJobs: deps.TranslationJobs,
+		siteOrigin:      deps.SiteOrigin,
+	}, nil
 }
 
 // HandleScheduled processes one coalescible scheduler wake-up.
@@ -204,75 +163,70 @@ func (h *Handlers) HandleScheduled(ctx context.Context, job scheduler.Job) error
 	switch job {
 	// Cleanup jobs
 	case scheduler.JobCleanupDangling:
-		return h.handleCleanupDanglingFiles(ctx)
+		return h.handleCleanupDanglingFiles(ctx, time.Now().UTC())
 	case scheduler.JobCleanupPublicAssets:
 		return h.handleCleanupPublicAssets(ctx, time.Now().UTC())
 	case scheduler.JobCleanupIncomplete:
-		return h.handleCleanupIncompleteUploads(ctx)
+		return h.handleCleanupIncompleteUploads(ctx, time.Now())
 	case scheduler.JobCleanupShareLinks:
-		return h.handleCleanupShareLinks(ctx)
+		return h.handleCleanupShareLinks(ctx, time.Now())
 	case scheduler.JobCleanupAuthCodeIssuance:
-		return h.handleCleanupAuthCodeIssuance(ctx)
+		return h.handleCleanupAuthCodeIssuance(ctx, time.Now())
 	case scheduler.JobCleanupPGMQArchives:
 		return h.handleCleanupPGMQArchives(ctx)
 	case scheduler.JobProcessUserDeletions:
-		return h.handleProcessUserDeletions(ctx)
+		return h.handleProcessUserDeletions(ctx, time.Now().UTC())
 
 	// Policy jobs
 	case scheduler.JobActivateTerms:
-		return h.handleActivateTerms(ctx)
+		return h.handleActivateLegal(ctx, termsActivation)
 	case scheduler.JobActivatePrivacy:
-		return h.handleActivatePrivacy(ctx)
+		return h.handleActivateLegal(ctx, privacyActivation)
 	case scheduler.JobUnbanExpired:
-		return h.handleUnbanExpired(ctx)
+		return h.handleUnbanExpired(ctx, time.Now().UTC())
 
 	// Maintenance jobs
 	case scheduler.JobUpdateGeoIP:
-		return h.handleUpdateGeoIP(ctx)
+		return h.handleUpdateGeoIP(ctx, time.Now().UTC())
 	case scheduler.JobProcessScheduledCampaigns:
-		dispatcher := h.newCampaignDeliveryDispatcher()
-		if _, err := dispatcher.DispatchDueEmailDeliveryRuns(ctx, 25); err != nil {
+		if _, err := h.campaigns.DispatchDueEmailDeliveryRuns(ctx, scheduledCampaignBatch); err != nil {
 			return err
 		}
-		_, err := dispatcher.ResumeActiveEmailDeliveryRuns(ctx, 25)
+		_, err := h.campaigns.ResumeActiveEmailDeliveryRuns(ctx, scheduledCampaignBatch)
 		return err
 	case scheduler.JobProcessScheduledPosts:
-		return h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			_, err := postpostgres.ProcessDueScheduledPosts(ctx, tx, 0)
+		return h.units.Transaction(ctx, false, func(tx mutation.Tx[Jobs]) error {
+			_, err := post.ProcessDueScheduledPosts(ctx, tx.Store().ScheduledPosts(), 0)
 			return err
 		})
 	case scheduler.JobRecoverMetadataAI:
-		if h.metadataAI == nil {
-			return nil
-		}
-		republished := 0
-		if err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			var err error
-			republished, err = h.metadataAI.RecoverExpiredJobs(ctx, tx, 0)
-			return err
-		}); err != nil {
-			return err
-		}
-		if republished > 0 {
-			slog.Info("Expired metadata AI jobs republished", "count", republished)
-		}
-		return nil
+		return h.handleRecoverMetadataAI(ctx)
 
 	default:
 		return fmt.Errorf("unknown scheduler job: %q", job)
 	}
 }
 
-func (h *Handlers) newCampaignDeliveryDispatcher() *campaignadapter.DeliveryDispatcher {
-	return campaignadapter.NewDeliveryDispatcher(h.db, campaign.NewAuditedCampaignDeliveryDispatcher(
-		h.spicedbClient,
-		h.publisher,
-		h.auditWriter,
-		campaign.WithLegalNoticeDeliveryPort(legaladapter.NewRuntime()),
-	))
+func (h *Handlers) handleRecoverMetadataAI(ctx context.Context) error {
+	if h.metadataAI == nil {
+		return nil
+	}
+	republished := 0
+	if err := h.units.Transaction(ctx, false, func(tx mutation.Tx[Jobs]) error {
+		var err error
+		republished, err = tx.Store().MetadataAIRecovery().RecoverExpiredJobs(ctx, 0)
+		return err
+	}); err != nil {
+		return err
+	}
+	if republished > 0 {
+		slog.Info("Expired metadata AI jobs republished", "count", republished)
+	}
+	return nil
 }
 
 // HandleEmailSend handles transactional email delivery events.
 func (h *Handlers) HandleEmailSend(ctx context.Context, event *managev1.SendEmailEvent) error {
-	return h.handleSendEmail(ctx, event)
+	_, err := h.handleEmailDelivery(ctx, event)
+	return err
 }

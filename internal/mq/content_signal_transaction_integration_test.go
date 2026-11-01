@@ -34,6 +34,8 @@ func TestContentUpdatedSignalIsAtomicWithTransaction(t *testing.T) {
 	t.Cleanup(func() { _ = listener.Close(context.Background()) })
 	_, err = listener.Exec(ctx, "LISTEN "+pgx.Identifier{eventpkg.SignalContentUpdated}.Sanitize())
 	require.NoError(t, err)
+	_, err = listener.Exec(ctx, "LISTEN "+pgx.Identifier{signalBarrier}.Sanitize())
+	require.NoError(t, err)
 
 	publisher := &Publisher{db: pg.SQLDB}
 	event := func(id string) *managev1.ContentUpdatedEvent {
@@ -59,7 +61,7 @@ func TestContentUpdatedSignalIsAtomicWithTransaction(t *testing.T) {
 		return rollback
 	})
 	require.ErrorIs(t, err, rollback)
-	requireNoContentSignal(t, listener)
+	requireNoContentSignal(t, pg.DB, listener)
 	var count int64
 	require.NoError(t, pg.DB.Raw(`SELECT count(*) FROM pgmq."q_content.updated"`).Scan(&count).Error)
 	require.Zero(t, count)
@@ -85,13 +87,23 @@ func TestContentUpdatedSignalIsAtomicWithTransaction(t *testing.T) {
 	require.NoError(t, pg.DB.Raw(`SELECT message->>'message_id' FROM pgmq."q_content.updated"`).Scan(&messageID).Error)
 	require.Equal(t, envelope.MessageID, messageID)
 
-	requireNoContentSignal(t, listener)
+	requireNoContentSignal(t, pg.DB, listener)
 }
 
-func requireNoContentSignal(t *testing.T, listener *pgx.Conn) {
+// signalBarrier is the channel requireNoContentSignal notifies after the
+// transactions under test ended.
+const signalBarrier = "mq_test_signal_barrier"
+
+// requireNoContentSignal fails when a signal is pending for listener.
+// PostgreSQL delivers notifications in commit order, so a barrier notified
+// after the transactions under test arrives first only when none of them
+// sent a signal; no fixed wait is needed.
+func requireNoContentSignal(t *testing.T, db *gorm.DB, listener *pgx.Conn) {
 	t.Helper()
-	waitCtx, cancel := context.WithTimeout(t.Context(), 750*time.Millisecond)
+	require.NoError(t, db.Exec(`SELECT pg_notify(?, '')`, signalBarrier).Error)
+	waitCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	notification, err := listener.WaitForNotification(waitCtx)
-	require.ErrorIs(t, err, context.DeadlineExceeded, "unexpected signal: %+v", notification)
+	require.NoError(t, err)
+	require.Equal(t, signalBarrier, notification.Channel, "unexpected signal: %+v", notification)
 }

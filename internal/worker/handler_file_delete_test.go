@@ -196,13 +196,11 @@ func TestHandleFileDeleteDeletesEveryTarget(t *testing.T) {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 		}
 	}))
-	publisher := &bulkEmailUnitPublisher{}
 	handlers := &Handlers{
-		publisher:        publisher,
-		fileMediaRuntime: newWorkerFileMediaRuntime(db, s3Client, newInMemoryFileAuthorizationDeletion()),
+		files: newWorkerFileMediaRuntime(db, s3Client, newInMemoryFileAuthorizationDeletion()),
 	}
 
-	err = handlers.HandleFileDelete(context.Background(), &managev1.FileDeleteEvent{
+	err = handlers.files.HandleFileDelete(context.Background(), &managev1.FileDeleteEvent{
 		FileId:   file.ID,
 		Original: original,
 		Generations: []*commonv1.MediaGenerationWriteTarget{{
@@ -215,9 +213,13 @@ func TestHandleFileDeleteDeletesEveryTarget(t *testing.T) {
 	var count int64
 	require.NoError(t, db.Table("file").Where("id = ?", file.ID).Count(&count).Error)
 	require.Zero(t, count)
-	require.Empty(t, publisher.publishedEvents)
 	require.Len(t, requests, 3)
 	require.Contains(t, requests, "DELETE /media/"+original.GetObjectKey()+"?x-id=DeleteObject")
+
+	// A redelivery after finalization is an idempotent no-op and does not need
+	// another storage request.
+	require.NoError(t, handlers.files.HandleFileDelete(context.Background(), &managev1.FileDeleteEvent{FileId: file.ID, Original: original}))
+	require.Len(t, requests, 3)
 }
 
 func TestHandleFileDeleteRejectsCleanupOnlyTargetsBeforeStorage(t *testing.T) {
@@ -231,9 +233,9 @@ func TestHandleFileDeleteRejectsCleanupOnlyTargetsBeforeStorage(t *testing.T) {
 		storageCalled = true
 	}))
 	authorization := newInMemoryFileAuthorizationDeletion()
-	handlers := &Handlers{fileMediaRuntime: newWorkerFileMediaRuntime(db, s3Client, authorization)}
+	handlers := &Handlers{files: newWorkerFileMediaRuntime(db, s3Client, authorization)}
 
-	err := handlers.HandleFileDelete(t.Context(), &managev1.FileDeleteEvent{
+	err := handlers.files.HandleFileDelete(t.Context(), &managev1.FileDeleteEvent{
 		FileId: file.ID, Assets: []*commonv1.AssetWriteTarget{assetTarget},
 		Generations: []*commonv1.MediaGenerationWriteTarget{generationTarget},
 	})
@@ -250,12 +252,12 @@ func TestHandleFileDeleteRejectsIncompleteFullGenerationSetBeforeStorage(t *test
 	require.NoError(t, err)
 	storageCalled := false
 	handlers := &Handlers{
-		fileMediaRuntime: newWorkerFileMediaRuntime(db, newFileDeleteTestS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		files: newWorkerFileMediaRuntime(db, newFileDeleteTestS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			storageCalled = true
 		})), nil),
 	}
 
-	err = handlers.HandleFileDelete(t.Context(), &managev1.FileDeleteEvent{FileId: file.ID, Original: original})
+	err = handlers.files.HandleFileDelete(t.Context(), &managev1.FileDeleteEvent{FileId: file.ID, Original: original})
 	require.ErrorIs(t, err, filemediaapplication.ErrInvalidFileDeleteTarget)
 	require.False(t, storageCalled)
 }
@@ -271,7 +273,7 @@ func TestHandleFileDeleteMessageRoutesCleanupOnlyPayloadToTerminalDLQ(t *testing
 	require.NoError(t, err)
 	storageCalled := false
 	handlers := &Handlers{
-		fileMediaRuntime: newWorkerFileMediaRuntime(db, newFileDeleteTestS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		files: newWorkerFileMediaRuntime(db, newFileDeleteTestS3Client(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 			storageCalled = true
 		})), nil),
 	}
@@ -335,15 +337,12 @@ func TestHandleFileDeleteReturnsStorageFailuresWithoutPublishingCompletion(t *te
 				w.WriteHeader(http.StatusInternalServerError)
 				_, _ = fmt.Fprint(w, `<Error><Code>InternalError</Code><Message>injected failure</Message></Error>`)
 			}))
-			publisher := &bulkEmailUnitPublisher{}
 			handlers := &Handlers{
-				publisher:        publisher,
-				fileMediaRuntime: newWorkerFileMediaRuntime(db, s3Client, nil),
+				files: newWorkerFileMediaRuntime(db, s3Client, nil),
 			}
 
-			err := handlers.HandleFileDelete(context.Background(), tt.event)
+			err := handlers.files.HandleFileDelete(context.Background(), tt.event)
 			require.Error(t, err)
-			require.Empty(t, publisher.publishedEvents)
 		})
 	}
 }
@@ -363,20 +362,20 @@ func TestHandleFileDeleteRetriesAfterS3SuccessAndDatabaseFinalizationFailure(t *
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	authorization := newInMemoryFileAuthorizationDeletion()
-	handlers := &Handlers{fileMediaRuntime: newWorkerFileMediaRuntime(db, s3Client, authorization)}
+	handlers := &Handlers{files: newWorkerFileMediaRuntime(db, s3Client, authorization)}
 	require.NoError(t, db.Exec(`
 		CREATE TRIGGER fail_file_delete BEFORE DELETE ON file
 		BEGIN SELECT RAISE(ABORT, 'injected finalization failure'); END
 	`).Error)
 	event := &managev1.FileDeleteEvent{FileId: file.ID, Original: original}
 
-	require.Error(t, handlers.HandleFileDelete(t.Context(), event))
+	require.Error(t, handlers.files.HandleFileDelete(t.Context(), event))
 	var retained model.File
 	require.NoError(t, db.First(&retained, "id = ?", file.ID).Error)
 	require.NotNil(t, retained.DeleteRequestedAt)
 	require.Len(t, authorization.restored, 1)
 	require.NoError(t, db.Exec("DROP TRIGGER fail_file_delete").Error)
-	require.NoError(t, handlers.HandleFileDelete(t.Context(), event))
+	require.NoError(t, handlers.files.HandleFileDelete(t.Context(), event))
 	require.ErrorIs(t, db.First(&retained, "id = ?", file.ID).Error, gorm.ErrRecordNotFound)
 	require.Equal(t, 2, deleteCalls, "S3 delete must be safely repeated after a finalization crash")
 	require.Len(t, authorization.deleted, 2)
@@ -397,15 +396,15 @@ func TestHandleFileDeleteDefersFinalizationUntilLateMeshResultIsRetired(t *testi
 		deleteCalls++
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	handlers := &Handlers{fileMediaRuntime: newWorkerFileMediaRuntime(db, s3Client, newInMemoryFileAuthorizationDeletion())}
+	handlers := &Handlers{files: newWorkerFileMediaRuntime(db, s3Client, newInMemoryFileAuthorizationDeletion())}
 	event := &managev1.FileDeleteEvent{FileId: file.ID, Original: original}
 
-	err = handlers.HandleFileDelete(t.Context(), event)
+	err = handlers.files.HandleFileDelete(t.Context(), event)
 	require.ErrorContains(t, err, "pending mesh optimization result")
 	var retained model.File
 	require.NoError(t, db.First(&retained, "id = ?", file.ID).Error)
 	require.NoError(t, db.Exec("DELETE FROM mesh_optimization_candidate WHERE source_file_id = ?", file.ID).Error)
-	require.NoError(t, handlers.HandleFileDelete(t.Context(), event))
+	require.NoError(t, handlers.files.HandleFileDelete(t.Context(), event))
 	require.ErrorIs(t, db.First(&retained, "id = ?", file.ID).Error, gorm.ErrRecordNotFound)
 	require.Equal(t, 2, deleteCalls, "S3 deletion remains idempotent while source finalization waits for a late result")
 }
@@ -425,17 +424,17 @@ func TestHandleFileDeleteDefersStorageUntilTranscodeWriterFinishes(t *testing.T)
 		deleteCalls++
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	handlers := &Handlers{fileMediaRuntime: newWorkerFileMediaRuntime(db, s3Client, newInMemoryFileAuthorizationDeletion())}
+	handlers := &Handlers{files: newWorkerFileMediaRuntime(db, s3Client, newInMemoryFileAuthorizationDeletion())}
 	event := &managev1.FileDeleteEvent{FileId: file.ID, Original: original}
 
-	err = handlers.HandleFileDelete(t.Context(), event)
+	err = handlers.files.HandleFileDelete(t.Context(), event)
 	require.ErrorContains(t, err, "pending transcode")
 	require.Zero(t, deleteCalls, "storage deletion must not race an allocated transcode writer")
 	var retained model.File
 	require.NoError(t, db.First(&retained, "id = ?", file.ID).Error)
 
 	require.NoError(t, db.Exec("DELETE FROM transcode_job WHERE event_id = ?", eventID).Error)
-	require.NoError(t, handlers.HandleFileDelete(t.Context(), event))
+	require.NoError(t, handlers.files.HandleFileDelete(t.Context(), event))
 	require.Equal(t, 1, deleteCalls)
 	require.ErrorIs(t, db.First(&retained, "id = ?", file.ID).Error, gorm.ErrRecordNotFound)
 }

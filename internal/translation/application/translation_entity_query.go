@@ -2,95 +2,20 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/localization"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
-
-func (s *Service) listEntityTranslations(
-	ctx context.Context,
-	entityType string,
-	entityID string,
-) ([]*managev1.TranslationEntry, error) {
-	definition, err := translationTargetDefinition(entityType)
-	if err != nil {
-		return nil, err
-	}
-	table, idValue := definition.EntryTable, entityID
-	selectSQL, err := s.domains.TranslationEntrySelectSQL(entityType, table)
-	if err != nil {
-		return nil, err
-	}
-
-	rows, err := s.db.WithContext(ctx).Raw(
-		fmt.Sprintf(`%s WHERE entity_id = ? ORDER BY locale ASC`, selectSQL),
-		idValue,
-	).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	entries := make([]*managev1.TranslationEntry, 0)
-	for rows.Next() {
-		entry, err := s.scanTranslationEntryRow(ctx, rows, entityType, entityID)
-		if err != nil {
-			return nil, err
-		}
-		entries = append(entries, entry)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return entries, nil
-}
-
-func (s *Service) getEntityTranslation(
-	ctx context.Context,
-	entityType string,
-	entityID string,
-	locale string,
-) (*managev1.TranslationEntry, error) {
-	definition, err := translationTargetDefinition(entityType)
-	if err != nil {
-		return nil, err
-	}
-	table, idValue := definition.EntryTable, entityID
-	selectSQL, err := s.domains.TranslationEntrySelectSQL(entityType, table)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := s.db.WithContext(ctx).Raw(
-		fmt.Sprintf(`%s WHERE entity_id = ? AND locale = ? LIMIT 1`, selectSQL),
-		idValue,
-		locale,
-	).Rows()
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
-		return nil, domainerr.ResourceNotFound("translation_entry", entityID+":"+locale)
-	}
-	entry, err := s.scanTranslationEntryRow(ctx, rows, entityType, entityID)
-	if err != nil {
-		return nil, err
-	}
-	return entry, nil
-}
 
 func (s *Service) resolveRequestedLocales(
 	ctx context.Context,
+	store Store,
 	sourceLocale string,
 	requested []string,
 ) ([]string, error) {
-	locales, err := localization.NewCatalog(s.db).MachineTranslationTargets(ctx)
+	locales, err := store.MachineTranslationTargets(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -127,4 +52,15 @@ func (s *Service) resolveRequestedLocales(
 		resolved = append(resolved, code)
 	}
 	return resolved, nil
+}
+
+// requireKnownLocale answers an unknown locale code as an invalid field.
+func requireKnownLocale(ctx context.Context, store Store, field, code string) error {
+	if _, err := store.Locale(ctx, code); err != nil {
+		if errors.Is(err, ErrLocaleNotFound) {
+			return domainerr.InvalidField(field, "unsupported locale")
+		}
+		return err
+	}
+	return nil
 }

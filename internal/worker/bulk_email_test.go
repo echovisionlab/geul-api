@@ -24,7 +24,7 @@ const bulkEmailPayloadUnitTokenSecret = "bulk-email-payload-unit-secret-at-least
 
 func TestHandleSendBulkEmailBatchRejectsEventWithoutDeliveryRunID(t *testing.T) {
 	publisher := &bulkEmailUnitPublisher{}
-	handlers := &Handlers{
+	handlers := &emailSeams{
 		config: &config.Config{
 			SiteOrigin:         "https://www.example.test",
 			TokenSigningSecret: bulkEmailPayloadUnitTokenSecret,
@@ -79,7 +79,7 @@ func TestBuildMaterializedCampaignEmailJobBuildsRecipientContexts(t *testing.T) 
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handlers := &Handlers{
+			handlers := &emailSeams{
 				config: &config.Config{
 					SiteOrigin:         "https://www.example.test",
 					TokenSigningSecret: bulkEmailPayloadUnitTokenSecret,
@@ -135,7 +135,7 @@ func TestBuildMaterializedCampaignEmailJobRejectsMissingRecipientContext(t *test
 		},
 	}
 
-	handlers := &Handlers{}
+	handlers := &emailSeams{}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			job, ok := handlers.buildMaterializedCampaignEmailJob(campaign.CampaignDeliveryRecipientJob{
@@ -164,7 +164,7 @@ func TestBuildMaterializedCampaignEmailJobRejectsPersistedRecipientTemplateData(
 ) {
 	campaignID := "campaign-persisted-recipient-data"
 	identityID := "identity-persisted-recipient-data"
-	handlers := &Handlers{}
+	handlers := &emailSeams{}
 	job, ok := handlers.buildMaterializedCampaignEmailJob(
 		campaign.CampaignDeliveryRecipientJob{
 			Recipient: materializedBulkEmailRecipient(

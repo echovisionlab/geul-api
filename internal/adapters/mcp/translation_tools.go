@@ -6,7 +6,6 @@ import (
 
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	translationapp "github.com/echovisionlab/geul-api/internal/translation/application"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const (
@@ -87,11 +86,11 @@ var translationTools = []mcpserver.Tool{
 type TranslationApplication interface {
 	ListTranslationJobs(context.Context, translationapp.ListTranslationJobsQuery) (translationapp.JobPage, error)
 	ListEntityTranslations(context.Context, translationapp.ListEntityTranslationsQuery) (translationapp.EntityTranslations, error)
-	GetEntityTranslation(context.Context, translationapp.GetEntityTranslationQuery) (*managev1.TranslationEntry, error)
+	GetEntityTranslation(context.Context, translationapp.GetEntityTranslationQuery) (translationapp.Entry, error)
 	CancelTranslationJob(context.Context, translationapp.CancelTranslationJobCommand) error
-	RegenerateEntityTranslations(context.Context, translationapp.RegenerateEntityTranslationsCommand) ([]*managev1.TranslationJob, error)
-	ExportEntityTranslationXLIFF(context.Context, translationapp.ExportTranslationXLIFFCommand) (*managev1.ExportEntityTranslationXLIFFResponse, error)
-	ImportEntityTranslationXLIFF(context.Context, translationapp.ImportTranslationXLIFFCommand) (*managev1.ImportEntityTranslationXLIFFResponse, error)
+	RegenerateEntityTranslations(context.Context, translationapp.RegenerateEntityTranslationsCommand) ([]translationapp.Job, error)
+	ExportEntityTranslationXLIFF(context.Context, translationapp.ExportTranslationXLIFFCommand) (translationapp.XLIFFExport, error)
+	ImportEntityTranslationXLIFF(context.Context, translationapp.ImportTranslationXLIFFCommand) (translationapp.XLIFFImport, error)
 }
 
 type TranslationTools struct {

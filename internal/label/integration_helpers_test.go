@@ -30,7 +30,7 @@ import (
 	labelpostgres "github.com/echovisionlab/geul-api/internal/label/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -179,9 +179,9 @@ func (labelTestRenderConfig) Snapshot(context.Context, *gorm.DB, string) ([]byte
 	return payload, fmt.Sprintf("%x", digest[:]), nil
 }
 
-func newOGRefresherForTest(db *gorm.DB, cdnDomain string) *og.Refresher {
-	planner := og.NewPlanner(db, cdnDomain, labelTestRenderConfig{}, labeladapter.NewProjection())
-	return og.NewRefresher(planner, og.NewResolver(labeladapter.NewRequests()))
+func newOGRefresherForTest(db *gorm.DB, cdnDomain string) *ogpostgres.Refresher {
+	planner := ogpostgres.NewPlanner(cdnDomain, labelTestRenderConfig{}, labeladapter.NewProjection())
+	return ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(labeladapter.NewRequests()))
 }
 
 func newLabelRuntimeForTest(db *gorm.DB, cdnDomain string) labelpostgres.Runtime {

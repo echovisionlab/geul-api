@@ -4,14 +4,12 @@ import (
 	"context"
 	"log/slog"
 	"time"
-
-	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
 )
 
 const authCodeIssuanceCleanupLimit = 1000
 
-func (h *Handlers) handleCleanupAuthCodeIssuance(ctx context.Context) error {
-	deleted, err := authenticationpostgres.CleanupExpiredAuthCodeIssuances(ctx, h.db, time.Now(), authCodeIssuanceCleanupLimit)
+func (h *Handlers) handleCleanupAuthCodeIssuance(ctx context.Context, now time.Time) error {
+	deleted, err := h.authCodes.CleanupExpired(ctx, now, authCodeIssuanceCleanupLimit)
 	if err != nil {
 		return err
 	}
@@ -22,18 +20,13 @@ func (h *Handlers) handleCleanupAuthCodeIssuance(ctx context.Context) error {
 }
 
 func (h *Handlers) handleCleanupPGMQArchives(ctx context.Context) error {
-	var results []struct {
-		QueueName    string `gorm:"column:queue_name"`
-		DeletedCount int64  `gorm:"column:deleted_count"`
-	}
-	if err := h.db.WithContext(ctx).
-		Raw("SELECT queue_name, deleted_count FROM public.purge_pgmq_archives()").
-		Scan(&results).Error; err != nil {
+	purged, err := h.queueArchives.PurgeExpired(ctx)
+	if err != nil {
 		return err
 	}
-	for _, result := range results {
-		if result.DeletedCount > 0 {
-			slog.InfoContext(ctx, "Purged expired PGMQ archive rows", "queue", result.QueueName, "count", result.DeletedCount)
+	for _, purge := range purged {
+		if purge.Deleted > 0 {
+			slog.InfoContext(ctx, "Purged expired PGMQ archive rows", "queue", purge.Queue, "count", purge.Deleted)
 		}
 	}
 	return nil

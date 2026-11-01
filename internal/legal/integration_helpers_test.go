@@ -27,7 +27,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/legal"
 	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -85,7 +85,7 @@ func newLegalIntegration(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient,
 	require.NoError(t, err)
 	units, err := legalpostgres.NewUnits(db, legalpostgres.Ports{
 		ContentBlocks: contents,
-		Routes:        legaladapter.NewOGRuntime(cdnDomain, og.NewPlanner(db, cdnDomain, legalTestRenderConfig{}, legaladapter.NewProjection())),
+		Routes:        legaladapter.NewOGRuntime(cdnDomain, ogpostgres.NewPlanner(cdnDomain, legalTestRenderConfig{}, legaladapter.NewProjection())),
 		Notices:       legaladapter.NewNoticeRuntime(),
 		PreviewLinks:  sharelinkadapter.LegalPreviewLinks{},
 		Members:       memberadapter.PreferredLocales{},

@@ -1,5 +1,3 @@
-//go:build integration
-
 package mediaasset_test
 
 import (
@@ -9,9 +7,9 @@ import (
 
 	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	. "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/glebarez/sqlite"
@@ -183,10 +181,9 @@ func TestEvaluateRestrictedDownloadAppliesFilterAndExclusionUnit(t *testing.T) {
 	t.Parallel()
 	db := newFileDownloadPolicyDB(t)
 	now := time.Now().UTC()
-	stack := testutil.SetupOryStack(t)
-	author := stack.CreateUser(t, policyv1.Role.Author().ID())
-	userID := author.MemberID
-	seedDownloadIdentityWithIdentityID(t, db, userID, author.IdentityID, policyv1.Role.Author().ID(), now.Add(-time.Hour))
+	userID, identityID := uuid.NewString(), uuid.NewString()
+	checker := (&authztest.Checker{}).For(identityID).Allow(policyv1.Platform.IsAuthor())
+	seedDownloadIdentityWithIdentityID(t, db, userID, identityID, policyv1.Role.Author().ID(), now.Add(-time.Hour))
 	fileID := uuid.NewString()
 	segmentID := uuid.NewString()
 	createdAfter := now.Add(-2 * time.Hour)
@@ -211,12 +208,15 @@ func TestEvaluateRestrictedDownloadAppliesFilterAndExclusionUnit(t *testing.T) {
 		now,
 	).Error)
 	source := FileDownloadSource{FileID: fileID, Audience: FileDownloadAudienceRestricted}
-	user := author.AuthUserInfo()
+	user := &auth.UserInfo{
+		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(userID),
+		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
+	}
 
 	allowed, err := evaluateSingleFileDownloadAccessBatchAt(
 		context.Background(),
 		db,
-		stack.SpiceDBClient,
+		checker.Client(t),
 		source,
 		user,
 		now,
@@ -234,7 +234,7 @@ func TestEvaluateRestrictedDownloadAppliesFilterAndExclusionUnit(t *testing.T) {
 	allowed, err = evaluateSingleFileDownloadAccessBatchAt(
 		context.Background(),
 		db,
-		stack.SpiceDBClient,
+		checker.Client(t),
 		source,
 		user,
 		now,

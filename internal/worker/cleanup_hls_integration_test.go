@@ -25,6 +25,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/scheduler"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -39,19 +40,26 @@ func randomHLSCleanupIntegrationUUID() string {
 	return uuid.NewString()
 }
 
+// Library files are deleted only through their owners, never by age,
+// usage or a missing reference; the orphan HLS cleanup leaves every File row,
+// derivative and object in place.
 func TestHandleCleanupDanglingFilesKeepsCommittedLibraryFiles(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	db := newWorkerIntegrationDB(t)
-	s3Client, cfg, err := newWorkerIntegrationS3FromSharedLease(ctx)
-	require.NoError(t, err)
-	publisher := &recordingWorkerPublisher{}
-	handlers := &Handlers{
-		db:        db,
-		config:    cfg,
-		s3Client:  s3Client,
-		publisher: publisher,
+	handlers := &cleanupFixture{
+		db:     db,
+		config: &config.Config{S3Bucket: "media"},
+		s3Client: newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet {
+				t.Errorf("unexpected object storage write %s %s", r.Method, r.URL)
+				http.Error(w, "unexpected", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>media</Name><KeyCount>0</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated></ListBucketResult>`)
+		})),
 	}
 
 	expiredAt := time.Now().Add(-48 * time.Hour)
@@ -115,35 +123,7 @@ func TestHandleCleanupDanglingFilesKeepsCommittedLibraryFiles(t *testing.T) {
 		VALUES (?, ?, 'poster')
 	`, eventID, eventMediaFileID).Error)
 
-	require.NoError(t, cleanupDanglingFilesBeforeForIntegration(
-		ctx,
-		handlers,
-		orphanCutoff,
-	))
-
-	for _, fileID := range []string{orphanFileID, youngFileID, referencedFileID, mapImageFileID, eventMediaFileID} {
-		requireWorkerFilePresent(t, db, fileID)
-	}
-	require.Empty(t, publisher.fileDeleteEvents)
-	require.Empty(t, publisher.transcodeCancelEvents)
-
-	var thumbnail model.PublicAsset
-	require.NoError(t, db.Where("id = ?", orphanThumbID).Take(&thumbnail).Error)
-	require.Equal(t, model.PublicAssetStatusReady, thumbnail.Status)
-	require.Nil(t, thumbnail.DeleteRequestedAt)
-}
-
-func TestHandleCleanupDanglingFilesDoesNotDeleteLibraryFilesByAgeOrUsage(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	db := newWorkerIntegrationDB(t)
-	s3Client, cfg, err := newWorkerIntegrationS3FromSharedLease(ctx)
-	require.NoError(t, err)
-	publisher := &recordingWorkerPublisher{}
-	handlers := &Handlers{db: db, config: cfg, s3Client: s3Client, publisher: publisher}
 	now := time.Now().UTC()
-
 	generalOrphanID := uuid.NewString()
 	structuredEditorID := uuid.NewString()
 	recentRichTextID := uuid.NewString()
@@ -190,21 +170,20 @@ func TestHandleCleanupDanglingFilesDoesNotDeleteLibraryFilesByAgeOrUsage(t *test
 	require.NoError(t, cleanupDanglingFilesBeforeForIntegration(
 		ctx,
 		handlers,
-		now.Add(-orphanHLSPrefixRetention),
+		orphanCutoff,
 	))
 
 	for _, fileID := range []string{
-		generalOrphanID,
-		structuredEditorID,
-		recentRichTextID,
-		expiredRichTextID,
-		recentTrackID,
-		expiredTrackID,
+		orphanFileID, youngFileID, referencedFileID, mapImageFileID, eventMediaFileID,
+		generalOrphanID, structuredEditorID, recentRichTextID, expiredRichTextID, recentTrackID, expiredTrackID,
 	} {
 		requireWorkerFilePresent(t, db, fileID)
 	}
-	require.Empty(t, publisher.fileDeleteEvents)
-	require.Empty(t, publisher.transcodeCancelEvents)
+
+	var thumbnail model.PublicAsset
+	require.NoError(t, db.Where("id = ?", orphanThumbID).Take(&thumbnail).Error)
+	require.Equal(t, model.PublicAssetStatusReady, thumbnail.Status)
+	require.Nil(t, thumbnail.DeleteRequestedAt)
 }
 
 func TestCleanupRetiredMediaGenerationsDeletesOnlyDueUnreferencedGeneration(t *testing.T) {
@@ -214,7 +193,7 @@ func TestCleanupRetiredMediaGenerationsDeletesOnlyDueUnreferencedGeneration(t *t
 	s3Client, cfg, err := newWorkerIntegrationS3FromSharedLease(ctx)
 	require.NoError(t, err)
 	cleanupStorage := mediaassetadapter.NewCleanupStorage(s3Client, cfg.S3Bucket)
-	handlers := &Handlers{
+	handlers := &cleanupFixture{
 		db:           db,
 		config:       cfg,
 		s3Client:     s3Client,
@@ -256,7 +235,7 @@ func TestCleanupRetiredMediaGenerationsDeletesOnlyDueUnreferencedGeneration(t *t
 			"delete_after": nil,
 		}).Error)
 
-	require.NoError(t, handlers.handleCleanupDanglingFiles(ctx))
+	require.NoError(t, handlers.handlers(t).HandleScheduled(ctx, scheduler.JobCleanupDangling))
 
 	requireWorkerMediaGenerationMissing(t, db, due.ID)
 	require.Empty(t, listWorkerIntegrationKeys(t, ctx, s3Client, cfg.S3Bucket, due.ObjectPrefix))
@@ -290,7 +269,7 @@ func TestCleanupRetiredMediaGenerationsS3FailureDoesNotStarveFollowingRows(t *te
 <Name>media</Name><Prefix>%s</Prefix><KeyCount>0</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>
 </ListBucketResult>`, prefix)
 	}))
-	handlers := &Handlers{
+	handlers := &cleanupFixture{
 		db:       db,
 		config:   &config.Config{S3Bucket: "media"},
 		s3Client: s3Client,
@@ -385,11 +364,8 @@ func testCleanupPublicAssetLifecycle(t *testing.T, purgeEnabled bool) {
 	require.NoError(t, db.Model(&model.PublicAsset{}).Where("id = ?", stale.ID).
 		Update("created_at", now.Add(-25*time.Hour)).Error)
 
-	handlers := &Handlers{db: db, config: cfg, s3Client: s3Client, httpClient: cloudflare.Client()}
-	ogCleanupForIntegration(handlers)
-	faviconCleanupForIntegration(handlers)
-	publicAssetCleanupForIntegration(handlers)
-	require.NoError(t, handlers.handleCleanupPublicAssets(ctx, now))
+	handlers := &cleanupFixture{db: db, config: cfg, s3Client: s3Client, httpClient: cloudflare.Client()}
+	require.NoError(t, handlers.handlers(t).handleCleanupPublicAssets(ctx, now))
 	var staleCount int64
 	require.NoError(t, db.Model(&model.PublicAsset{}).Where("id = ?", stale.ID).Count(&staleCount).Error)
 	require.Zero(t, staleCount, "unready cleanup must continue while a pending asset purge retries")

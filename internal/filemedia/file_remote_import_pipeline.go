@@ -17,7 +17,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -80,14 +80,11 @@ func (s *Service) prepareRemoteImport(ctx context.Context, opts remoteFileImport
 		slotID:     strings.TrimSpace(opts.slotID),
 	}
 	if request.config == nil {
-		return request, errs.InvalidArgument("upload_type", fmt.Sprintf("invalid upload type: %s", opts.uploadType.String()))
+		return request, domainerr.InvalidField("upload_type", fmt.Sprintf("invalid upload type: %s", opts.uploadType.String()))
 	}
 	if (request.uploadType == managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE ||
 		isEditorFileIngestUploadType(request.uploadType)) && request.entityID != "" {
-		return request, errs.InvalidArgument(
-			"entity_id",
-			"File library upload must omit document entity ID",
-		)
+		return request, domainerr.InvalidField("entity_id", "File library upload must omit document entity ID")
 	}
 	resolvedSiteEntityID, err := resolveSiteUploadEntityID(
 		s.legalRouteIdentity,
@@ -126,7 +123,7 @@ func (s *Service) prepareRemoteImport(ctx context.Context, opts remoteFileImport
 		request.projectionIdentity,
 	)
 	if err != nil {
-		return request, errs.InvalidArgument("correlation_id", err.Error())
+		return request, domainerr.InvalidField("correlation_id", err.Error())
 	}
 	if opts.operationIdentity != nil {
 		request.identity = *opts.operationIdentity
@@ -140,7 +137,7 @@ func (s *Service) checkRemoteImportPermission(ctx context.Context, request prepa
 	}
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	return s.checkEntityPermission(ctx, request.uploadType, request.entityType, request.entityID, user.MemberID.String())
 }
@@ -164,7 +161,7 @@ func (s *Service) importRemoteFileWithLock(ctx context.Context, request prepared
 func (s *Service) newRemoteImportEmitter(ctx context.Context, request preparedRemoteImport) (*fileIngestEventEmitter, error) {
 	if !request.opts.emitLifecycle {
 		if request.identity.durable && request.requiresAttachment() {
-			return nil, errs.InternalMsg("durable remote file ingest emitter is required")
+			return nil, errors.New("durable remote file ingest emitter is required")
 		}
 		return nil, nil
 	}
@@ -185,11 +182,11 @@ func (s *Service) newRemoteImportEmitter(ctx context.Context, request preparedRe
 	if emitter != nil {
 		emitter.setRequestIdentity(request.uploadType, request.slotID, request.identity.attemptID)
 		if err := emitter.setProjectionIdentity(request.projectionIdentity); err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 	}
 	if request.identity.durable && request.requiresAttachment() && emitter == nil {
-		return nil, errs.InternalMsg("durable remote file ingest emitter is required")
+		return nil, errors.New("durable remote file ingest emitter is required")
 	}
 	return emitter, nil
 }
@@ -197,7 +194,7 @@ func (s *Service) newRemoteImportEmitter(ctx context.Context, request preparedRe
 func remoteImportFailureReporter(emitter *fileIngestEventEmitter) func(error) error {
 	return func(err error) error {
 		if emitter != nil {
-			emitter.publishFailed(err.Error(), max(emitter.lastProgress, 0), nil)
+			emitter.publishFailed(clientErrorText(err), max(emitter.lastProgress, 0), nil)
 		}
 		return err
 	}
@@ -221,7 +218,7 @@ func (s *Service) restoreRemoteImport(
 		request.projectionIdentity,
 	)
 	if err != nil {
-		return nil, false, errs.Internal(fmt.Errorf("validate existing durable remote import: %w", err))
+		return nil, false, fmt.Errorf("validate existing durable remote import: %w", err)
 	}
 	if !found {
 		return nil, false, nil
@@ -247,14 +244,14 @@ func (s *Service) restoreRemoteImport(
 	restored.asset = asset
 	objectKey, err := mediaauth.MediaObjectKey(restored.fileID, mediaExtension(&restored.mimeType))
 	if err != nil {
-		return nil, false, errs.Internal(fmt.Errorf("build existing durable remote import target: %w", err))
+		return nil, false, fmt.Errorf("build existing durable remote import target: %w", err)
 	}
 	if emitter != nil {
 		emitter.setTarget(remoteImportMediaTarget(restored.fileID, objectKey, restored.mimeType))
 	}
 	if request.requiresAttachment() {
 		if err := emitter.publishAttachedConfirmed(restored.fileName, restored.mimeType, restored.size); err != nil {
-			return nil, false, errs.Internal(fmt.Errorf("failed to reconfirm durable file attachment: %w", err))
+			return nil, false, fmt.Errorf("failed to reconfirm durable file attachment: %w", err)
 		}
 	} else if err := s.finishConfirmedRemoteImport(ctx, request.opts, restored); err != nil {
 		return nil, false, err
@@ -306,7 +303,7 @@ func (s *Service) openRemoteImportSourceWithClient(
 	parsedURL, err := url.Parse(request.opts.sourceURL)
 	if err != nil {
 		client.CloseIdleConnections()
-		return nil, fail(errs.InvalidArgument("url", "invalid URL"))
+		return nil, fail(domainerr.InvalidField("url", "invalid URL"))
 	}
 	resolver := s.remoteImportResolver
 	if resolver == nil {
@@ -317,27 +314,27 @@ func (s *Service) openRemoteImportSourceWithClient(
 		client.CloseIdleConnections()
 		if errors.Is(err, errRemoteImportHostnameUnresolved) {
 			// The resolver failure stays out of the client message.
-			return nil, fail(errs.WithCause(errs.InvalidArgument("url", errRemoteImportHostnameUnresolved.Error()), err))
+			return nil, fail(domainerr.InvalidField("url", errRemoteImportHostnameUnresolved.Error()).WithCause(err))
 		}
-		return nil, fail(errs.InvalidArgument("url", err.Error()))
+		return nil, fail(domainerr.InvalidField("url", err.Error()))
 	}
 	requestContext := context.WithValue(ctx, remoteImportTargetContextKey{}, target)
 	httpRequest, err := http.NewRequestWithContext(requestContext, http.MethodGet, request.opts.sourceURL, nil)
 	if err != nil {
 		client.CloseIdleConnections()
-		return nil, fail(errs.Internal(fmt.Errorf("failed to create request: %w", err)))
+		return nil, fail(fmt.Errorf("failed to create request: %w", err))
 	}
 	response, err := client.Do(httpRequest)
 	if err != nil {
 		client.CloseIdleConnections()
 		cause := failurecause.WithAttrs(failurecause.WithPrivate(remoteImportDownloadCause(err), request.opts.fileName),
 			slog.String("file_id", request.identity.fileID), slog.String("correlation_id", request.opts.correlationID))
-		return nil, fail(errs.Internal(fmt.Errorf("failed to download: %w", cause)))
+		return nil, fail(fmt.Errorf("failed to download: %w", cause))
 	}
 	if response.StatusCode != http.StatusOK {
 		response.Body.Close()
 		client.CloseIdleConnections()
-		return nil, fail(errs.Internal(fmt.Errorf("download failed with status: %d", response.StatusCode)))
+		return nil, fail(fmt.Errorf("download failed with status: %d", response.StatusCode))
 	}
 	source, err := validateRemoteImportSource(response, parsedURL, request, emitter)
 	if err != nil {
@@ -376,25 +373,25 @@ func validateRemoteImportSource(
 ) (*remoteImportSource, error) {
 	selectionMaxSize := getRemoteImportSelectionMaxSize(request.uploadType, request.config.MaxSize)
 	if response.ContentLength > selectionMaxSize {
-		return nil, errs.InvalidArgument("url", fmt.Sprintf("remote file exceeds maximum size %d", selectionMaxSize))
+		return nil, domainerr.InvalidField("url", fmt.Sprintf("remote file exceeds maximum size %d", selectionMaxSize))
 	}
 	if emitter != nil {
 		emitter.totalBytes = response.ContentLength
 	}
 	prefix, body, err := readRemoteImportPrefix(response.Body, selectionMaxSize+1)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to read response prefix: %w", err))
+		return nil, fmt.Errorf("failed to read response prefix: %w", err)
 	}
 	if len(prefix) == 0 {
-		return nil, errs.InvalidArgument("url", "remote file is empty")
+		return nil, domainerr.InvalidField("url", "remote file is empty")
 	}
 	allowed := buildAllowedMimeSet(request.config.PermittedMimeTypes)
 	detectedMime := detectCanonicalMime(prefix, allowed)
 	if detectedMime == "" {
-		return nil, errs.InvalidArgument("mime_type", undeterminedMimeMessage(request.config.PermittedMimeTypes))
+		return nil, domainerr.InvalidField("mime_type", undeterminedMimeMessage(request.config.PermittedMimeTypes))
 	}
 	if _, ok := allowed[detectedMime]; !ok {
-		return nil, errs.InvalidArgument("mime_type", unsupportedMimeMessage(detectedMime, request.config.PermittedMimeTypes))
+		return nil, domainerr.InvalidField("mime_type", unsupportedMimeMessage(detectedMime, request.config.PermittedMimeTypes))
 	}
 	if detectedMime == "model/gltf-binary" && response.ContentLength > 0 {
 		if err := validateGLBUploadSize(prefix, response.ContentLength); err != nil {
@@ -410,7 +407,7 @@ func validateRemoteImportSource(
 		sourceMaxSize = selectionMaxSize
 	}
 	if response.ContentLength > sourceMaxSize {
-		return nil, errs.InvalidArgument("url", fmt.Sprintf("remote file exceeds maximum size %d", sourceMaxSize))
+		return nil, domainerr.InvalidField("url", fmt.Sprintf("remote file exceeds maximum size %d", sourceMaxSize))
 	}
 	return &remoteImportSource{
 		parsedURL:       parsedURL,
@@ -481,35 +478,35 @@ func (s *Service) storeNormalizedRemoteImport(
 	fileID := request.identity.fileID
 	sourceKey, err := s.buildManagedFileKey(fileID, source.detectedMime)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to build source file key: %w", err))
+		return nil, fmt.Errorf("failed to build source file key: %w", err)
 	}
 	if err := s.uploadRemoteImportObject(ctx, sourceKey, body, source.detectedMime); err != nil {
 		s.deleteS3ObjectBestEffort(ctx, sourceKey)
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if body.count > source.sourceMaxSize {
 		s.deleteS3ObjectBestEffort(ctx, sourceKey)
-		return nil, errs.InvalidArgument("url", fmt.Sprintf("remote file exceeds maximum size %d", source.sourceMaxSize))
+		return nil, domainerr.InvalidField("url", fmt.Sprintf("remote file exceeds maximum size %d", source.sourceMaxSize))
 	}
 	normalizedBody, mimeType, err := s.normalizeManagedRemoteImport(ctx, fileID, source.detectedMime)
 	s.deleteS3ObjectBestEffort(ctx, sourceKey)
 	if err != nil {
-		return nil, errs.InvalidArgument("url", err.Error())
+		return nil, domainerr.InvalidField("url", err.Error())
 	}
 	objectKey, err := s.buildManagedFileKey(fileID, mimeType)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to build file key: %w", err))
+		return nil, fmt.Errorf("failed to build file key: %w", err)
 	}
 	size := int64(len(normalizedBody))
 	if size > request.config.MaxSize {
-		return nil, errs.InvalidArgument("url", fmt.Sprintf("remote file exceeds maximum size %d", request.config.MaxSize))
+		return nil, domainerr.InvalidField("url", fmt.Sprintf("remote file exceeds maximum size %d", request.config.MaxSize))
 	}
 	if size < request.config.MinSize {
-		return nil, errs.InvalidArgument("url", fmt.Sprintf("remote file is below minimum size %d", request.config.MinSize))
+		return nil, domainerr.InvalidField("url", fmt.Sprintf("remote file is below minimum size %d", request.config.MinSize))
 	}
 	if err := s.uploadRemoteImportObject(ctx, objectKey, bytes.NewReader(normalizedBody), mimeType); err != nil {
 		s.deleteS3ObjectBestEffort(ctx, objectKey)
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	digest := sha256.Sum256(normalizedBody)
 	return &storedRemoteImport{
@@ -531,18 +528,18 @@ func (s *Service) storeRawRemoteImport(
 ) (*storedRemoteImport, error) {
 	objectKey, err := s.buildManagedFileKey(request.identity.fileID, source.detectedMime)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to build file key: %w", err))
+		return nil, fmt.Errorf("failed to build file key: %w", err)
 	}
 	if err := s.uploadRemoteImportObject(ctx, objectKey, body, source.detectedMime); err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if body.count > source.sourceMaxSize {
 		s.deleteS3ObjectBestEffort(ctx, objectKey)
-		return nil, errs.InvalidArgument("url", fmt.Sprintf("remote file exceeds maximum size %d", source.sourceMaxSize))
+		return nil, domainerr.InvalidField("url", fmt.Sprintf("remote file exceeds maximum size %d", source.sourceMaxSize))
 	}
 	if body.count < request.config.MinSize {
 		s.deleteS3ObjectBestEffort(ctx, objectKey)
-		return nil, errs.InvalidArgument("url", fmt.Sprintf("remote file is below minimum size %d", request.config.MinSize))
+		return nil, domainerr.InvalidField("url", fmt.Sprintf("remote file is below minimum size %d", request.config.MinSize))
 	}
 	if source.detectedMime == "model/gltf-binary" {
 		if err := validateGLBUploadSize(source.prefix, body.count); err != nil {
@@ -589,7 +586,7 @@ func (s *Service) finalizeRemoteImport(
 	)
 	if err != nil {
 		s.deleteS3ObjectBestEffort(ctx, stored.objectKey)
-		return nil, fail(errs.Internal(fmt.Errorf("failed to sign imported inline delivery: %w", err)))
+		return nil, fail(fmt.Errorf("failed to sign imported inline delivery: %w", err))
 	}
 	download, err := buildExpiringMediaFileRef(
 		s.mediaDomain,
@@ -603,7 +600,7 @@ func (s *Service) finalizeRemoteImport(
 	)
 	if err != nil {
 		s.deleteS3ObjectBestEffort(ctx, stored.objectKey)
-		return nil, fail(errs.Internal(fmt.Errorf("failed to sign imported file delivery: %w", err)))
+		return nil, fail(fmt.Errorf("failed to sign imported file delivery: %w", err))
 	}
 	if err := s.createOrRestoreVerifiedRemoteImportRecord(
 		ctx,
@@ -615,7 +612,7 @@ func (s *Service) finalizeRemoteImport(
 		request.opts,
 		stored.objectKey,
 	); err != nil {
-		return nil, fail(errs.Internal(fmt.Errorf("failed to create file record: %w", err)))
+		return nil, fail(fmt.Errorf("failed to create file record: %w", err))
 	}
 	asset, err := s.promoteDedicatedPublicUploadAsset(ctx, request.uploadType, request.slotID, fileID)
 	if err != nil {
@@ -636,7 +633,7 @@ func (s *Service) finalizeRemoteImport(
 		emitter.publishFinalized(100, &stored.downloadedBytes)
 		if request.requiresAttachment() {
 			if err := emitter.publishAttachedConfirmed(stored.fileName, stored.mimeType, stored.size); err != nil {
-				return nil, errs.Internal(fmt.Errorf("failed to confirm durable file attachment: %w", err))
+				return nil, fmt.Errorf("failed to confirm durable file attachment: %w", err)
 			}
 		}
 	}

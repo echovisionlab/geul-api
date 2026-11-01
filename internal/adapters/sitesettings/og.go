@@ -17,6 +17,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/sitelogo"
 	settingsdomain "github.com/echovisionlab/geul-api/internal/sitesettings"
 	sitesettingspostgres "github.com/echovisionlab/geul-api/internal/sitesettings/postgres"
@@ -38,13 +39,13 @@ type LegalRequestCollector func(context.Context, *gorm.DB, string, *string) ([]o
 
 // Invalidator translates an atomic Site Settings mutation into durable OG work.
 type Invalidator struct {
-	planner *og.Planner
+	planner *ogpostgres.Planner
 	all     RequestCollector
 	legal   LegalRequestCollector
 }
 
 func NewInvalidator(
-	planner *og.Planner,
+	planner *ogpostgres.Planner,
 	all RequestCollector,
 	legal LegalRequestCollector,
 ) *Invalidator {
@@ -356,5 +357,5 @@ func validateTarget(target og.Target) error {
 }
 
 var _ sitesettingspostgres.OG = (*Invalidator)(nil)
-var _ og.RenderConfig = (*RenderConfig)(nil)
-var _ og.Projection = (*Projection)(nil)
+var _ ogpostgres.RenderConfig = (*RenderConfig)(nil)
+var _ ogpostgres.Projection = (*Projection)(nil)

@@ -10,7 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	"gorm.io/gorm"
@@ -30,7 +30,7 @@ type domainPortFunctions struct {
 	buildExtractionPlan       func(*model.TranslationJob, *core.SourceDocument) (*core.ExtractionPlan, error)
 	buildCandidate            func(*core.ExtractionPlan, *core.SourceDocument, map[string]core.UnitResult) (*core.Candidate, error)
 	applyCandidate            func(context.Context, *gorm.DB, *contentblock.Store, *model.TranslationJob, *core.Candidate, core.EntryWrite) error
-	requestLocaleOG           func(context.Context, *gorm.DB, *og.Planner, *og.Refresher, string, string, string) (bool, error)
+	requestLocaleOG           func(context.Context, *gorm.DB, *ogpostgres.Planner, *ogpostgres.Refresher, string, string, string) (bool, error)
 	translationEntrySelectSQL func(string) string
 	requireEditable           func(context.Context, *gorm.DB, string) error
 	requireInterchangeView    func(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error
@@ -118,10 +118,8 @@ func (r *DomainRegistry) domainPort(entityType string) (domainPortFunctions, err
 	return port, nil
 }
 
-func noLocaleOG(context.Context, *gorm.DB, *og.Planner, *og.Refresher, string, string, string) (bool, error) {
+func noLocaleOG(context.Context, *gorm.DB, *ogpostgres.Planner, *ogpostgres.Refresher, string, string, string) (bool, error) {
 	return false, nil
 }
 
 func noDomainRequirement(context.Context, *gorm.DB, string) error { return nil }
-
-var _ application.DomainRegistry = (*DomainRegistry)(nil)

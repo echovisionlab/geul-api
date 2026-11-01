@@ -34,6 +34,7 @@ var pipelineDomains = []string{
 	"internal/maptheme",
 	"internal/member",
 	"internal/menu",
+	"internal/og",
 	"internal/page",
 	"internal/post",
 	"internal/programevent",
@@ -44,6 +45,7 @@ var pipelineDomains = []string{
 	"internal/sitesettings",
 	"internal/translation",
 	"internal/work",
+	"internal/worker",
 }
 
 func inPipelineDomain(pkg string) bool {

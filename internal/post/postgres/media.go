@@ -8,7 +8,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/post"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
@@ -66,7 +66,7 @@ func (s *store) RequestOG(ctx context.Context, postID, locale string, force bool
 }
 
 func (s *store) CancelOG(ctx context.Context, postID string) error {
-	if err := og.NewLifecycle(s.tx, s.deps.CDNDomain).CancelEntityWithDB(ctx, s.tx, managev1.OgEntityType_OG_ENTITY_TYPE_POST, postID); err != nil {
+	if err := ogpostgres.CancelEntity(ctx, s.tx, managev1.OgEntityType_OG_ENTITY_TYPE_POST, postID); err != nil {
 		return err
 	}
 	return mediaasset.NewLifecycle(s.tx, s.deps.CDNDomain).ReleasePublicAssetBindings(ctx, "post", postID, "og")

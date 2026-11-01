@@ -26,7 +26,7 @@ import (
 	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mq"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/securityaccess"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -65,10 +65,10 @@ func newStackForms(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, audit
 	cdnDomain := "https://cdn.example.test"
 	contents, err := contentblock.NewGeneratedStore(noFileReuse{})
 	require.NoError(t, err)
-	planner := og.NewPlanner(db, cdnDomain, renderConfig{}, formogadapter.NewProjection())
+	planner := ogpostgres.NewPlanner(cdnDomain, renderConfig{}, formogadapter.NewProjection())
 	units, err := formpostgres.NewUnits(db, formpostgres.Ports{
 		ContentBlocks: contents, Signals: &mq.Publisher{}, Assets: formadapter.NewAssets(cdnDomain),
-		OG:     formogadapter.NewOG(cdnDomain, og.NewRefresher(planner, og.NewResolver(formogadapter.NewRequests()))),
+		OG:     formogadapter.NewOG(cdnDomain, ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(formogadapter.NewRequests()))),
 		Routes: formadapter.NewRoutes(), Collaboration: formadapter.NewCollaboration(spiceDB),
 		Members: memberadapter.PreferredLocales{}, ShareLinks: sharelinkadapter.FormLinks{},
 	})

@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
@@ -23,12 +24,12 @@ import (
 // Runtime adapts legal-route OG persistence to the Legal domain port.
 type Runtime struct {
 	cdnDomain string
-	planner   *og.Planner
+	planner   *ogpostgres.Planner
 }
 
 func NewRuntime() *Runtime { return &Runtime{} }
 
-func NewOGRuntime(cdnDomain string, planner *og.Planner) *Runtime {
+func NewOGRuntime(cdnDomain string, planner *ogpostgres.Planner) *Runtime {
 	return &Runtime{cdnDomain: cdnDomain, planner: planner}
 }
 
@@ -62,8 +63,7 @@ func (r *Runtime) CancelAndRelease(
 	tx *gorm.DB,
 	kind, ownerID string,
 ) error {
-	if err := og.NewLifecycle(tx, r.cdnDomain).
-		CancelEntityWithDB(ctx, tx, og.EntityTypeForName(kind), ownerID); err != nil {
+	if err := ogpostgres.CancelEntity(ctx, tx, og.EntityTypeForName(kind), ownerID); err != nil {
 		return err
 	}
 	return mediaasset.NewLifecycle(tx, r.cdnDomain).
@@ -75,7 +75,7 @@ func (*Runtime) LocalizedOGDisposition(
 	db *gorm.DB,
 	kind, routeID, locale string,
 ) (legalpublic.OGDisposition, error) {
-	disposition, err := og.ResolveExactLocalizedGeneration(ctx, db, kind, routeID, locale)
+	disposition, err := ogpostgres.ResolveExactLocalizedGeneration(ctx, db, kind, routeID, locale)
 	if err != nil {
 		return legalpublic.OGUnavailable, err
 	}

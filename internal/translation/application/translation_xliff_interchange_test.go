@@ -6,12 +6,11 @@ import (
 	"connectrpc.com/connect"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestValidateXLIFFExportSelectionRequiresExplicitModeContract(t *testing.T) {
-	patch := managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH
-	replace := managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE
+	patch := InterchangeModePatch
+	replace := InterchangeModeReplace
 	if _, err := validateXLIFFExportSelection(patch, nil); err == nil {
 		t.Fatal("PATCH accepted no unit selection")
 	}
@@ -38,7 +37,7 @@ func TestSelectXLIFFUnitsPreservesOrderAcrossNonAdjacentGroups(t *testing.T) {
 	}
 	selected, err := selectXLIFFUnits(
 		document,
-		managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		InterchangeModePatch,
 		[]string{"a", "c"},
 	)
 	if err != nil {
@@ -80,7 +79,7 @@ func TestValidateImportedXLIFFRejectsUnitMissingFromCurrentGraph(t *testing.T) {
 	}
 
 	if _, _, err := validateImportedXLIFFAgainstCurrentPlan(
-		imported, plan, managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		imported, plan, InterchangeModePatch,
 	); errs.Wrap(err).Code() != connect.CodeInvalidArgument {
 		t.Fatalf("XLIFF unit missing from the current graph error = %v, want invalid argument", err)
 	}
@@ -106,7 +105,7 @@ func TestValidateImportedXLIFFUsesCurrentInlineAuthority(t *testing.T) {
 	}
 
 	results, handles, err := validateImportedXLIFFAgainstCurrentPlan(
-		imported, plan, managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		imported, plan, InterchangeModePatch,
 	)
 	if err != nil {
 		t.Fatalf("validateImportedXLIFFAgainstCurrentPlan() error = %v", err)
@@ -139,13 +138,13 @@ func TestValidateImportedXLIFFRequiresModeSpecificManifest(t *testing.T) {
 		}}},
 	}
 	if _, _, err := validateImportedXLIFFAgainstCurrentPlan(
-		partial, plan, managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		partial, plan, InterchangeModeReplace,
 	); errs.Wrap(err).Code() != connect.CodeInvalidArgument {
 		t.Fatalf("partial REPLACE error = %v, want invalid argument", err)
 	}
 	if _, _, err := validateImportedXLIFFAgainstCurrentPlan(
 		translation.XLIFFDocument{Version: translation.XLIFFVersion, SourceLocale: "ko", TargetLocale: "en", File: translation.XLIFFFile{ID: "post:post-a"}},
-		plan, managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		plan, InterchangeModePatch,
 	); errs.Wrap(err).Code() != connect.CodeInvalidArgument {
 		t.Fatalf("empty PATCH error = %v, want invalid argument", err)
 	}
@@ -156,7 +155,7 @@ func TestValidateImportedXLIFFRequiresModeSpecificManifest(t *testing.T) {
 		ID: "body", TranslationUnit: []translation.XLIFFUnit{{ID: "body", Source: "본문", Target: &body}},
 	})
 	results, handles, err := validateImportedXLIFFAgainstCurrentPlan(
-		complete, plan, managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		complete, plan, InterchangeModeReplace,
 	)
 	if err != nil || len(results) != 2 || len(handles) != 2 {
 		t.Fatalf("complete REPLACE = (%v, %v, %v)", results, handles, err)

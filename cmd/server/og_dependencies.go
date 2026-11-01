@@ -7,28 +7,31 @@ import (
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
+	"github.com/echovisionlab/geul-api/internal/adapters/ogprojection"
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	seriesadapter "github.com/echovisionlab/geul-api/internal/adapters/series"
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"gorm.io/gorm"
 )
 
 // ogDependencies is the one composition root for domain-neutral OG lifecycle
 // dependencies and entity-owned persistence adapters.
 type ogDependencies struct {
-	planner     *og.Planner
-	resolver    *og.Resolver
-	collector   *og.Collector
-	refresher   *og.Refresher
-	legal       *legaladapter.Requests
-	projections []og.Projection
+	planner   *ogpostgres.Planner
+	resolver  *ogpostgres.Resolver
+	collector *ogpostgres.Collector
+	refresher *ogpostgres.Refresher
+	legal     *legaladapter.Requests
+	units     mutation.UnitOfWork[og.Store]
 }
 
-func newOGDependencies(db *gorm.DB, cdnDomain string) *ogDependencies {
+func newOGDependencies(db *gorm.DB, cdnDomain string) (*ogDependencies, error) {
 	postRequests := postadapter.NewRequests()
 	pageRequests := pageadapter.NewRequests()
 	seriesRequests := seriesadapter.NewRequests()
@@ -39,27 +42,36 @@ func newOGDependencies(db *gorm.DB, cdnDomain string) *ogDependencies {
 	legalRequests := legaladapter.NewRequests()
 	siteRequests := sitesettingsadapter.NewRequests()
 
-	projections := []og.Projection{
+	projections := []ogpostgres.Projection{
 		postadapter.NewProjection(), pageadapter.NewProjection(), seriesadapter.NewProjection(),
 		workadapter.NewProjection(), labeladapter.NewProjection(), artistadapter.NewProjection(),
 		releaseadapter.NewProjection(), formogadapter.NewProjection(), legaladapter.NewProjection(),
 		sitesettingsadapter.NewProjection(),
 	}
-	requestSources := []og.RequestSource{
+	requestSources := []ogpostgres.RequestSource{
 		postRequests, pageRequests, seriesRequests, workRequests, labelRequests, artistRequests,
 		formRequests, legalRequests, siteRequests,
 	}
-	allSources := []og.AllRequestSource{
+	allSources := []ogpostgres.AllRequestSource{
 		postRequests, pageRequests, seriesRequests, workRequests, labelRequests, artistRequests,
 		formRequests, legalRequests, siteRequests,
 	}
-	planner := og.NewPlanner(db, cdnDomain, sitesettingsadapter.NewRenderConfig(), projections...)
-	resolver := og.NewResolver(requestSources...)
-	collector := og.NewCollector(allSources...)
+	renderConfig := sitesettingsadapter.NewRenderConfig()
+	planner := ogpostgres.NewPlanner(cdnDomain, renderConfig, projections...)
+	resolver := ogpostgres.NewResolver(requestSources...)
+	collector := ogpostgres.NewCollector(allSources...)
+	units, err := ogpostgres.NewUnits(db, ogpostgres.Ports{
+		CDNDomain: cdnDomain, RenderConfig: renderConfig, Projections: projections,
+		Requests: resolver, AllRequests: collector, Reconciler: labeladapter.NewGlobalReconciler(),
+		References: ogprojection.AssetReferences(),
+	})
+	if err != nil {
+		return nil, err
+	}
 	return &ogDependencies{
 		planner: planner, resolver: resolver, collector: collector,
-		refresher: og.NewRefresher(planner, resolver), legal: legalRequests, projections: projections,
-	}
+		refresher: ogpostgres.NewRefresher(planner, resolver), legal: legalRequests, units: units,
+	}, nil
 }
 
 func (d *ogDependencies) siteInvalidator() *sitesettingsadapter.Invalidator {

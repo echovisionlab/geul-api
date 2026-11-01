@@ -12,6 +12,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
@@ -337,7 +338,7 @@ func (r *Renderer) renderTemplate(
 			}
 			return r.campaignRenderer.RenderCampaignEmail(ctx, r.db, campaignID, targetLocale, templateData)
 		}
-		return email.RenderTemplateForLocale(ctx, r.db, job.GetTemplateType(), targetLocale, templateData)
+		return email.RenderTemplateForLocale(ctx, emailpostgres.Bind(r.db), job.GetTemplateType(), targetLocale, templateData)
 	}
 
 	var recipient model.CampaignDeliveryRecipient

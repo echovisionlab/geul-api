@@ -17,8 +17,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/email"
-	emailcontentpostgres "github.com/echovisionlab/geul-api/internal/emailcontent/postgres"
+	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailcontentpostgres "github.com/echovisionlab/geul-api/internal/emailcontent/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
@@ -211,5 +212,5 @@ func (s *store) EmailRenderData(ctx context.Context, cdnDomain, siteOrigin, loca
 }
 
 func (s *store) CheckTestSendReadiness(ctx context.Context, recipient string) error {
-	return email.CheckTestSendReadiness(ctx, s.tx, recipient)
+	return email.CheckTestSendReadiness(ctx, emailpostgres.Bind(s.tx), recipient)
 }

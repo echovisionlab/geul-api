@@ -14,6 +14,7 @@ import (
 	filemediaapplication "github.com/echovisionlab/geul-api/internal/filemedia/application"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -31,42 +32,6 @@ func (deletion signalingFileAuthorizationDeletion) DeleteAndVerify(
 ) (func(context.Context) error, time.Time, error) {
 	deletion.called <- struct{}{}
 	return func(context.Context) error { return nil }, time.Now(), nil
-}
-
-func TestFileDeleteConsumerFinalizesPendingPostgresRowAfterS3SuccessIntegration(t *testing.T) {
-	t.Parallel()
-	pg := newWorkerIntegrationPostgres(t)
-	db := pg.DB
-	now := time.Now().UTC()
-	file := model.File{
-		ID: uuid.NewString(), FileName: "field", MimeType: "audio/wav",
-		FileSize: 1024, Extension: "wav", SHA256: make([]byte, 32),
-		DeleteRequestedAt: &now, CreatedAt: now,
-	}
-	require.NoError(t, db.Create(&file).Error)
-	t.Cleanup(func() { _ = db.Exec(`DELETE FROM file WHERE id = ?`, file.ID).Error })
-	original, err := filemedia.CanonicalMediaObjectTargetForFile(file)
-	require.NoError(t, err)
-	deleteCalls := 0
-	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, http.MethodDelete, r.Method)
-		deleteCalls++
-		w.WriteHeader(http.StatusNoContent)
-	}))
-	handlers := &Handlers{
-		fileMediaRuntime: newWorkerFileMediaRuntime(db, s3Client, newInMemoryFileAuthorizationDeletion()),
-	}
-	event := &managev1.FileDeleteEvent{FileId: file.ID, Original: original}
-
-	require.NoError(t, handlers.HandleFileDelete(t.Context(), event))
-	var stored model.File
-	require.ErrorIs(t, db.First(&stored, "id = ?", file.ID).Error, gorm.ErrRecordNotFound)
-	require.Equal(t, 1, deleteCalls)
-
-	// A redelivery after finalization is an idempotent no-op and does not need
-	// another storage request.
-	require.NoError(t, handlers.HandleFileDelete(t.Context(), event))
-	require.Equal(t, 1, deleteCalls)
 }
 
 func TestFileDeleteConsumerIntentRejectsAttachWithoutStorageLockStarvationIntegration(t *testing.T) {
@@ -97,14 +62,12 @@ func TestFileDeleteConsumerIntentRejectsAttachWithoutStorageLockStarvationIntegr
 		<-releaseDelete
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	handlers := &Handlers{
-		fileMediaRuntime: newWorkerFileMediaRuntime(db, s3Client, newInMemoryFileAuthorizationDeletion()),
-	}
+	files := newWorkerFileMediaRuntime(db, s3Client, newInMemoryFileAuthorizationDeletion())
 	event := &managev1.FileDeleteEvent{FileId: file.ID, Original: original}
 
 	deleteDone := make(chan error, 1)
 	go func() {
-		deleteDone <- handlers.HandleFileDelete(context.Background(), event)
+		deleteDone <- files.HandleFileDelete(context.Background(), event)
 	}()
 	select {
 	case <-deleteStarted:
@@ -166,10 +129,11 @@ func TestFileDeleteFinalizerUsesGlobalAuthorizationMutationFenceIntegration(t *t
 	finalized := make(chan error, 1)
 	go func() { finalized <- deletion.Finalize(context.Background(), event) }()
 
+	testutil.RequireLockWaiters(t, db, 1)
 	select {
 	case <-authorizationCalled:
 		t.Fatal("File authorization deletion bypassed the global mutation fence")
-	case <-time.After(200 * time.Millisecond):
+	default:
 	}
 	require.NoError(t, blocker.Rollback().Error)
 	blockerClosed = true
