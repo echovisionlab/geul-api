@@ -4,17 +4,16 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
 )
 
-func validateFormSettings(form *model.Form) error {
+func validateFormSettings(form *Form) error {
 	if form == nil {
 		return domainerr.New(domainerr.Invalid, "", "form settings are required")
 	}
 
 	switch form.Status {
-	case model.FormStatusDraft, model.FormStatusPublished:
+	case StatusDraft, StatusPublished:
 	default:
 		return domainerr.InvalidField("status", "must be draft or published")
 	}

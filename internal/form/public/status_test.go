@@ -3,7 +3,7 @@ package public
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/form"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
@@ -17,11 +17,11 @@ func TestFormStatusToOpenCoversEveryAPIStatus(t *testing.T) {
 		if status == openv1.FormStatus_FORM_STATUS_UNSPECIFIED {
 			continue
 		}
-		if got := formStatusToOpen(model.FormStatus(name)); got != status {
+		if got := formStatusToOpen(form.Status(name)); got != status {
 			t.Fatalf("stored %q maps to %s", name, got)
 		}
 	}
-	if got := formStatusToOpen(model.FormStatus("FORM_STATUS_CORRUPT")); got != openv1.FormStatus_FORM_STATUS_UNSPECIFIED {
+	if got := formStatusToOpen(form.Status("FORM_STATUS_CORRUPT")); got != openv1.FormStatus_FORM_STATUS_UNSPECIFIED {
 		t.Fatalf("unknown stored status mapped to %s", got)
 	}
 }

@@ -5,17 +5,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lib/pq"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -40,37 +34,37 @@ type CreateFormCommand struct {
 
 // CreateForm creates a draft Form, its source locale document and its
 // authorization policy.
-func (s *Service) CreateForm(ctx context.Context, command CreateFormCommand) (*managev1.Form, error) {
+func (s *Service) CreateForm(ctx context.Context, command CreateFormCommand) (View, error) {
 	title := strings.TrimSpace(command.Title)
 	if title == "" {
-		return nil, domainerr.Required("title")
+		return View{}, domainerr.Required("title")
 	}
 	normalizedSlug, err := s.normalizeNewFormSlug(ctx, command.Slug)
 	if err != nil {
-		return nil, err
+		return View{}, err
 	}
 	if err := validateCanonicalFormSchema(command.Schema); err != nil {
-		return nil, domainerr.New(domainerr.Invalid, "", err.Error())
+		return View{}, domainerr.New(domainerr.Invalid, "", err.Error())
 	}
 	now := dbtime.Now()
 	form, err := s.newForm(command, normalizedSlug, now)
 	if err != nil {
-		return nil, err
+		return View{}, err
 	}
-	created, err := mutation.Run(ctx, s.mutations, mutation.Spec[*model.Form]{
+	created, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[*Form, Store]{
 		Access: s.freshFormCreation(),
-		Change: func(ctx context.Context, tx *gorm.DB) (*model.Form, error) {
-			return form, s.createForm(ctx, tx, form, title, command.Schema, command.AcceptLanguage, now)
+		Change: func(ctx context.Context, store Store) (*Form, error) {
+			return form, createForm(ctx, store, form, title, command.Schema, command.AcceptLanguage, now)
 		},
-		Audit: func(form *model.Form) mutation.Audit { return formCreatedAudit(form.ID) },
-		Relationships: func(form *model.Form) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
+		Audit: func(form *Form) mutation.Audit { return formCreatedAudit(form.ID) },
+		Relationships: func(form *Form) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
 			return formPolicyRelationships(form.ID, true)
 		},
 	})
 	if err != nil {
-		return nil, err
+		return View{}, err
 	}
-	return s.toProtoForm(ctx, created)
+	return s.view(ctx, *created)
 }
 
 // formPolicyRelationships is the Form policy write of a creation (touch) or
@@ -98,18 +92,17 @@ func (s *Service) normalizeNewFormSlug(ctx context.Context, requested *string) (
 	if err := pathslug.Validate(slug); err != nil {
 		return nil, err
 	}
-	if err := ensureSlugAvailable(ctx, s.db, slug, ""); err != nil {
-		return nil, err
-	}
-	if err := s.routes.EnsureAvailable(ctx, s.db, slug, ""); err != nil {
+	if err := s.units.Read(ctx, func(store Store) error {
+		return ensureSlugAvailable(ctx, store, slug, "")
+	}); err != nil {
 		return nil, err
 	}
 	return &slug, nil
 }
 
-func (s *Service) newForm(command CreateFormCommand, slug *string, now time.Time) (*model.Form, error) {
-	form := &model.Form{
-		Slug: slug, Status: model.FormStatusDraft,
+func (s *Service) newForm(command CreateFormCommand, slug *string, now time.Time) (*Form, error) {
+	form := &Form{
+		Slug: slug, Status: StatusDraft,
 		CreatedAt: now, RequireAuth: command.RequireAuth,
 		AllowDuplicateSubmission: command.AllowDuplicateSubmission,
 		MaxSubmissions:           command.MaxSubmissions,
@@ -131,7 +124,7 @@ func (s *Service) newForm(command CreateFormCommand, slug *string, now time.Time
 		if err != nil {
 			return nil, err
 		}
-		form.AllowedRoles = pq.StringArray(roles)
+		form.AllowedRoles = roles
 	}
 	if err := validateFormSettings(form); err != nil {
 		return nil, err
@@ -139,37 +132,37 @@ func (s *Service) newForm(command CreateFormCommand, slug *string, now time.Time
 	return form, nil
 }
 
-func (s *Service) createForm(
+func createForm(
 	ctx context.Context,
-	tx *gorm.DB,
-	form *model.Form,
+	store Store,
+	form *Form,
 	title string,
 	schema []byte,
 	acceptLanguage string,
 	now time.Time,
 ) error {
 	if form.Slug != nil && *form.Slug != "" {
-		if err := s.routes.EnsureAvailableLocked(ctx, tx, *form.Slug, ""); err != nil {
+		if err := store.LockRoute(ctx, *form.Slug); err != nil {
 			return err
 		}
 	}
-	sourceLocale := s.resolveInitialSourceLocale(ctx, tx, acceptLanguage)
-	document, err := s.contentBlocks.CreateDocument(ctx, tx, contentblock.CreateInput{
+	sourceLocale := resolveInitialSourceLocale(ctx, store, acceptLanguage)
+	documentID, err := store.CreateContentDocument(ctx, contentblock.CreateInput{
 		Profile: formContentDocumentProfile, SourceLocale: sourceLocale,
 	})
 	if err != nil {
 		return err
 	}
-	form.ContentDocumentID = document.Document.ID.String()
+	form.ContentDocumentID = documentID.String()
 	form.SourceLocale = sourceLocale
-	if err := tx.WithContext(ctx).Omit("ID").Clauses(clause.Returning{}).Create(form).Error; err != nil {
+	if err := store.InsertForm(ctx, form); err != nil {
 		return err
 	}
-	if err := saveFormSourceLocaleDocumentState(ctx, tx, form.ID, normalizeInitialSourceLocale(ctx, tx, sourceLocale), TranslationDocumentSaveInput{
+	if err := saveFormSourceLocaleDocumentState(ctx, store, form.ID, normalizeInitialSourceLocale(ctx, store, sourceLocale), TranslationDocumentSaveInput{
 		Title: &title, ContentJSON: schema, Now: now,
 	}); err != nil {
 		return err
 	}
-	_, err = s.og.Request(ctx, tx, form.ID, title, sourceLocale, false, "form_created")
+	_, err = store.RequestOG(ctx, form.ID, sourceLocale, false, "form_created")
 	return err
 }

@@ -2,7 +2,6 @@ package form
 
 import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -28,7 +27,7 @@ func formSettingsAudit(formID string, fields []string) mutation.Audit {
 	})
 }
 
-func formLifecycleAudit(formID string, previous, next model.FormStatus) mutation.Audit {
+func formLifecycleAudit(formID string, previous, next Status) mutation.Audit {
 	if previous == next {
 		return mutation.Unchanged()
 	}
@@ -58,8 +57,8 @@ func formLocaleContentRecord(formID, locale string, operation sharedtelemetry.Au
 	}
 }
 
-func formAuditState(status model.FormStatus) sharedtelemetry.AuditState {
-	if status == model.FormStatusPublished {
+func formAuditState(status Status) sharedtelemetry.AuditState {
+	if status == StatusPublished {
 		return sharedtelemetry.AuditStatePublished
 	}
 	return sharedtelemetry.AuditStateDraft

@@ -9,8 +9,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
 // VerifyFormPasswordQuery checks one Form access password, with the share
@@ -24,21 +22,21 @@ type VerifyFormPasswordQuery struct {
 
 // VerifyFormPassword validates one Form access password without exposing its
 // hash. A Form without a password accepts none.
-func (s *Service) VerifyFormPassword(ctx context.Context, query VerifyFormPasswordQuery) (*openv1.VerifyFormPasswordResponse, error) {
-	form, err := s.findFormBySlugOrID(ctx, query.Slug)
+func (s *Service) VerifyFormPassword(ctx context.Context, query VerifyFormPasswordQuery) (bool, error) {
+	found, err := s.findFormBySlugOrID(ctx, query.Slug)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 	shareTokenState := s.validateShareToken(
 		ctx,
-		form,
+		&found,
 		query.ShareToken,
 		query.SharePassword,
-		managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM,
-		managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD,
+		ShareLinkForm,
+		ShareLinkFormDashboard,
 	)
-	if err := s.enforceFormAccess(ctx, form, formAccessOptions{
-		context:                  openv1.FormAccessContext_FORM_ACCESS_CONTEXT_URL,
+	if err := s.enforceFormAccess(ctx, s.reads(), &found, formAccessOptions{
+		context:                  ContextURL,
 		hasValidPreviewToken:     shareTokenState.valid,
 		bypassAuth:               shareTokenState.valid,
 		bypassRoles:              shareTokenState.valid,
@@ -47,12 +45,12 @@ func (s *Service) VerifyFormPassword(ctx context.Context, query VerifyFormPasswo
 		checkSubmissionLimit:     false,
 		checkDuplicateSubmission: true,
 	}); err != nil {
-		return nil, err
+		return false, err
 	}
-	if form.AccessPassword == nil || *form.AccessPassword == "" {
-		return &openv1.VerifyFormPasswordResponse{Valid: false}, nil
+	if !found.HasPassword() {
+		return false, nil
 	}
-	return &openv1.VerifyFormPasswordResponse{Valid: s.verifyFormPassword(ctx, query.Password, *form.AccessPassword)}, nil
+	return s.verifyFormPassword(ctx, query.Password, *found.AccessPassword), nil
 }
 
 // verifyFormPassword checks if the password matches the hash.

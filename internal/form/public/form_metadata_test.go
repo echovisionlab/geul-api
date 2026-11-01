@@ -4,94 +4,62 @@ import (
 	"testing"
 	"time"
 
-	formdomain "github.com/echovisionlab/geul-api/internal/form"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/form"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildProtoFormMetadataUsesSourceTitle(t *testing.T) {
+func TestFormMetadataMessageUsesSourceTitle(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
-	formID := "form-metadata-source"
-	form := &model.Form{
-		ID:        formID,
-		IsPublic:  true,
-		CreatedAt: now,
-	}
-	sourceDocument := &formdomain.FormSourceDocument{
-		Title:  "문의 폼",
-		Schema: []byte(`{"id":"schema-1","steps":[]}`),
-	}
-
-	metadata := buildProtoFormMetadataFromResolvedDocument(
-		form,
-		sourceDocument,
-		nil,
-		openv1.FormStatus_FORM_STATUS_PUBLISHED,
-		nil,
-		nil,
-	)
+	metadata := formMessage(View{
+		Form:     form.Form{ID: "form-metadata-source", IsPublic: true, CreatedAt: now, Status: form.StatusPublished},
+		Metadata: true,
+		Document: form.FormSourceDocument{Title: "문의 폼", Schema: []byte(`{"id":"schema-1","steps":[]}`)},
+	})
 
 	assert.Equal(t, "문의 폼", metadata.Title)
+	assert.Nil(t, metadata.Schema, "metadata leaves out the schema")
+	assert.Equal(t, openv1.FormStatus_FORM_STATUS_PUBLISHED, metadata.Status)
 	assert.Nil(t, metadata.OgAsset)
+	assert.Nil(t, metadata.LocalizationInfo)
 }
 
-func TestBuildProtoFormMetadataIncludesOgFallbackAssets(t *testing.T) {
+func TestFormMetadataMessageIncludesOgFallbackAssets(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
-	form := &model.Form{
-		ID:        "form-metadata-assets",
-		IsPublic:  true,
-		CreatedAt: now,
-	}
-	sourceDocument := &formdomain.FormSourceDocument{Title: "Contact form"}
-	ogAsset := &commonv1.AssetRef{AssetId: "generated-og", Url: "https://cdn.example.com/generated-og.webp"}
-	featuredImageAsset := &commonv1.AssetRef{AssetId: "featured-image", Url: "https://cdn.example.com/featured.webp"}
+	metadata := formMessage(View{
+		Form:          form.Form{ID: "form-metadata-assets", IsPublic: true, CreatedAt: now},
+		Metadata:      true,
+		Document:      form.FormSourceDocument{Title: "Contact form"},
+		OgAsset:       &form.Asset{ID: "generated-og", URL: "https://cdn.example.com/generated-og.webp"},
+		FeaturedImage: &form.Asset{ID: "featured-image", URL: "https://cdn.example.com/featured.webp"},
+	})
 
-	metadata := buildProtoFormMetadataFromResolvedDocument(
-		form,
-		sourceDocument,
-		nil,
-		openv1.FormStatus_FORM_STATUS_PUBLISHED,
-		ogAsset,
-		featuredImageAsset,
-	)
-
-	assert.Equal(t, ogAsset, metadata.GetOgAsset())
-	assert.Equal(t, featuredImageAsset, metadata.GetFeaturedImageAsset())
+	assert.Equal(t, &commonv1.AssetRef{AssetId: "generated-og", Url: "https://cdn.example.com/generated-og.webp"}, metadata.GetOgAsset())
+	assert.Equal(t, &commonv1.AssetRef{AssetId: "featured-image", Url: "https://cdn.example.com/featured.webp"}, metadata.GetFeaturedImageAsset())
 }
 
-func TestBuildProtoFormUsesLocalizedFormTranslationWhenRequested(t *testing.T) {
+func TestFormMessageUsesLocalizedFormTranslationWhenRequested(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
-	formID := "form-metadata-localized"
-	form := &model.Form{
-		ID:        formID,
-		IsPublic:  true,
-		CreatedAt: now,
-	}
-	sourceDocument := &formdomain.FormSourceDocument{
+	sourceDocument := form.FormSourceDocument{
 		Title:       "Contact form",
 		Schema:      []byte(`{"id":"schema-1","steps":[{"id":"step-1","title":"Contact","fields":[{"id":"field-email","key":"email","label":"Email","type":"email"}]}]}`),
 		ContentText: new("Contact\nEmail"),
 	}
-	localization := localizedContentSelection{
+	localization := LocalizationSelection{
 		DisplayedLocale: "ko",
 		SourceLocale:    "en",
 		Title:           new("문의 폼"),
 		ContentJSON:     []byte(`{"id":"schema-1","steps":[{"id":"step-1","title":"문의","fields":[{"id":"field-email","key":"email","label":"이메일","type":"email"}]}]}`),
 		ContentText:     new("문의\n이메일"),
 	}
-	applyLocalizedFormDocument(t.Context(), sourceDocument, localization)
+	applyLocalizedFormDocument(t.Context(), &sourceDocument, localization)
 
-	protoForm := buildProtoFormFromResolvedDocument(
-		form,
-		sourceDocument,
-		&localization,
-		openv1.FormStatus_FORM_STATUS_PUBLISHED,
-		nil,
-		nil,
-	)
+	protoForm := formMessage(View{
+		Form:     form.Form{ID: "form-metadata-localized", IsPublic: true, CreatedAt: now, Status: form.StatusPublished},
+		Document: sourceDocument, Localization: &localization,
+	})
 
 	assert.Equal(t, "문의 폼", protoForm.Title)
 	assert.Equal(t, "ko", protoForm.GetLocalizationInfo().GetDisplayedLocale())
@@ -100,12 +68,12 @@ func TestBuildProtoFormUsesLocalizedFormTranslationWhenRequested(t *testing.T) {
 }
 
 func TestApplyLocalizedFormDocumentCanonicalizesAgainstCurrentSourceStructure(t *testing.T) {
-	sourceDocument := &formdomain.FormSourceDocument{
+	sourceDocument := &form.FormSourceDocument{
 		Title:       "Contact form",
 		Schema:      []byte(`{"id":"schema-1","steps":[{"id":"step-1","title":"Contact","fields":[{"id":"field-email","key":"email","label":"Email","type":"email"}]}]}`),
 		ContentText: new("Contact\nEmail"),
 	}
-	localization := localizedContentSelection{
+	localization := LocalizationSelection{
 		DisplayedLocale: "ko",
 		SourceLocale:    "en",
 		Title:           new("문의 폼"),

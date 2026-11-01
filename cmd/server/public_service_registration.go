@@ -20,8 +20,9 @@ import (
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	filepublic "github.com/echovisionlab/geul-api/internal/filemedia/public"
-	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	publicform "github.com/echovisionlab/geul-api/internal/form/public"
+	formpublicpostgres "github.com/echovisionlab/geul-api/internal/form/public/postgres"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	legalpublic "github.com/echovisionlab/geul-api/internal/legal/public"
 	legalpublicpostgres "github.com/echovisionlab/geul-api/internal/legal/public/postgres"
 	mapthemepostgres "github.com/echovisionlab/geul-api/internal/maptheme/postgres"
@@ -55,7 +56,7 @@ type publicServiceRegistration struct {
 	postMembers    *postadapter.MemberSummaries
 	workRuntime    *workadapter.Runtime
 	legalRuntime   *legaladapter.Runtime
-	formAssets     formdomain.PublicAssets
+	formAssets     formpublicpostgres.Assets
 	accounts       *accountdomain.Service
 }
 
@@ -159,9 +160,15 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicClientPath, publicClientHandler)
 	slog.Info("Registered public service", "path", publicClientPath)
 
+	publicFormUnits, err := formpublicpostgres.NewUnits(db, formpublicpostgres.Ports{
+		Assets: r.formAssets, Members: memberadapter.PreferredLocales{}, ShareLinks: sharelinkadapter.FormLinks{},
+	})
+	if err != nil {
+		return fmt.Errorf("initialize public Form store: %w", err)
+	}
 	publicFormService, err := publicform.NewService(publicform.Deps{
-		DB: db, SpiceDB: spicedbClient, Password: passwordHasher, Assets: r.formAssets,
-		Members: memberadapter.PreferredLocales{}, ShareLinks: sharelinkadapter.FormLinks{}, Audit: telemetryWriter,
+		Units: publicFormUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
+		Password: passwordHasher,
 	})
 	if err != nil {
 		return fmt.Errorf("initialize public Form service: %w", err)

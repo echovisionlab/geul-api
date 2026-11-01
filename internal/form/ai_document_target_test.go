@@ -1,9 +1,8 @@
 package form
 
 import (
+	"reflect"
 	"testing"
-
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestValidateFormAIDocumentTargetSchemaPreservesExplicitEmpty(t *testing.T) {
@@ -30,34 +29,35 @@ func TestValidateFormAIDocumentTargetSchemaRejectsLocaleNamedKeyOutsideOwnedPath
 	}
 }
 
-func TestFormAIDocumentContentUpdatedEventCoversTranslationLifecycle(t *testing.T) {
-	if event := formAIDocumentContentUpdatedEvent(AIDocumentMutation{}, AIDocumentMutationResult{}); event != nil {
-		t.Fatalf("no-op event = %+v", event)
+func TestFormAIDocumentContentUpdateCoversTranslationLifecycle(t *testing.T) {
+	if update := formAIDocumentContentUpdate(AIDocumentMutation{}, AIDocumentMutationResult{}); len(update.Fields) != 0 {
+		t.Fatalf("no-op update = %+v", update)
 	}
 	targetRevision := "target-revision"
-	event := formAIDocumentContentUpdatedEvent(
+	update := formAIDocumentContentUpdate(
 		AIDocumentMutation{FormID: "form", ContributorMemberID: "member", SetSchema: true, ExpectedSource: "en", Locale: "ko"},
 		AIDocumentMutationResult{DocumentRevision: "revision", TargetRevision: &targetRevision, Changed: true},
 	)
-	if event.GetEntityId() != "form" || event.GetDocumentRevision() != "revision" ||
-		event.GetSource() != managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI ||
-		event.GetLocale() != "ko" || !event.GetLocaleExists() || event.GetTargetRevision() != targetRevision ||
-		event.GetDocumentStateChanged() || len(event.GetContributorMemberIds()) != 1 || event.GetContributorMemberIds()[0] != "member" {
-		t.Fatalf("event = %+v", event)
+	if !reflect.DeepEqual(update, ContentUpdate{
+		FormID: "form", Locale: "ko", Fields: []string{"document.content"}, DocumentRevision: "revision",
+		Contributor: "member", TargetRevision: &targetRevision,
+	}) {
+		t.Fatalf("update = %+v", update)
 	}
-	sourceEvent := formAIDocumentContentUpdatedEvent(
+	sourceUpdate := formAIDocumentContentUpdate(
 		AIDocumentMutation{FormID: "form", ContributorMemberID: "member", SetTitle: true, ExpectedSource: "en", Locale: "en"},
 		AIDocumentMutationResult{DocumentRevision: "next", Changed: true},
 	)
-	if sourceEvent == nil || !sourceEvent.GetDocumentStateChanged() || sourceEvent.GetLocale() != "en" || !sourceEvent.GetLocaleExists() || sourceEvent.TargetRevision != nil {
-		t.Fatalf("source event = %+v", sourceEvent)
+	if !sourceUpdate.SourceLocale || sourceUpdate.Locale != "en" || sourceUpdate.LocaleDeleted || sourceUpdate.TargetRevision != nil ||
+		!reflect.DeepEqual(sourceUpdate.Fields, []string{"title"}) {
+		t.Fatalf("source update = %+v", sourceUpdate)
 	}
-	deleteEvent := formAIDocumentContentUpdatedEvent(
+	deleteUpdate := formAIDocumentContentUpdate(
 		AIDocumentMutation{FormID: "form", ContributorMemberID: "member", DeleteTranslation: true, ExpectedSource: "en", Locale: "ko"},
-		AIDocumentMutationResult{DocumentRevision: "next", Changed: true},
+		AIDocumentMutationResult{DocumentRevision: "next", TargetRevision: &targetRevision, Changed: true},
 	)
-	if deleteEvent == nil || deleteEvent.GetLocale() != "ko" || deleteEvent.GetLocaleExists() || deleteEvent.TargetRevision != nil || deleteEvent.GetDocumentStateChanged() {
-		t.Fatalf("delete event = %+v", deleteEvent)
+	if deleteUpdate.Locale != "ko" || !deleteUpdate.LocaleDeleted || deleteUpdate.TargetRevision != nil || deleteUpdate.SourceLocale {
+		t.Fatalf("delete update = %+v", deleteUpdate)
 	}
 }
 

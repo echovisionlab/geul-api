@@ -5,39 +5,23 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
-	"time"
-
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
 
-type formAIDocumentLocaleRow struct {
-	Revision    string    `gorm:"column:revision"`
-	Title       *string   `gorm:"column:title"`
-	Schema      []byte    `gorm:"column:content_json"`
-	ContentText *string   `gorm:"column:content_text"`
-	UpdatedAt   time.Time `gorm:"column:updated_at"`
-}
-
+// formAIDocumentRoot is the Form root with its Content Document revision.
 type formAIDocumentRoot struct {
-	Status           model.FormStatus `gorm:"column:status"`
-	SourceLocale     string           `gorm:"column:source_locale"`
-	DocumentID       string           `gorm:"column:content_document_id"`
-	DocumentRevision string           `gorm:"column:document_revision"`
+	DocumentRoot
+	DocumentRevision string
 }
 
 type formAIDocumentLoadedState struct {
 	State         AIDocumentState
-	Source        formAIDocumentLocaleRow
-	Current       formAIDocumentLocaleRow
+	Source        Locale
+	Current       Locale
 	CurrentExists bool
 }
 
@@ -63,18 +47,18 @@ func (s *Service) LoadAIDocument(ctx context.Context, query LoadAIDocumentQuery)
 		return AIDocumentState{}, domainerr.AuthenticationRequired()
 	}
 	var state AIDocumentState
-	err := mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
-		root, err := loadFormAIDocumentRoot(ctx, tx, formID, "KEY SHARE")
+	err := s.units.ReadLocked(ctx, func(store Store) error {
+		root, err := loadFormAIDocumentRoot(ctx, store, formID, KeyShareLock)
 		if err != nil {
 			return err
 		}
-		if !knownFormStatus(root.Status) {
+		if !root.Status.Known() {
 			return errFormUnsupportedLifecycle
 		}
 		if err := s.requireVisibleFormAction(ctx, formID, formActionView, domainerr.ResourceNotFound("form", formID)); err != nil {
 			return err
 		}
-		loaded, err := loadAIDocumentStateAfterAuthorization(ctx, tx, formID, locale, root, principal.MemberID.String(), false)
+		loaded, err := loadAIDocumentStateAfterAuthorization(ctx, store, formID, locale, root, principal.MemberID.String(), false)
 		state = loaded.State
 		return err
 	})
@@ -85,42 +69,32 @@ func (s *Service) LoadAIDocument(ctx context.Context, query LoadAIDocumentQuery)
 // know.
 var errFormUnsupportedLifecycle = errors.New("Form has an unsupported lifecycle status")
 
-// loadFormAIDocumentRoot reads the Form root and its Content Document
-// revision, locking the root with lock when set.
+// loadFormAIDocumentRoot reads the Form root with lock and its Content
+// Document revision.
 func loadFormAIDocumentRoot(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	formID string,
-	lock string,
+	lock RowLock,
 ) (formAIDocumentRoot, error) {
-	query := tx.WithContext(ctx).Table("form").
-		Select("status, source_locale, content_document_id").
-		Where("id = ?::uuid", formID)
-	if lock != "" {
-		query = query.Clauses(clause.Locking{Strength: lock})
-	}
-	var root formAIDocumentRoot
-	if err := query.Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return formAIDocumentRoot{}, domainerr.ResourceNotFound("form", formID)
-		}
-		return formAIDocumentRoot{}, err
+	root, err := store.DocumentRoot(ctx, formID, lock)
+	if err != nil {
+		return formAIDocumentRoot{}, formNotFound(err, domainerr.ResourceNotFound("form", formID))
 	}
 	documentID, err := formContentDocumentID(root.DocumentID)
 	if err != nil {
 		return formAIDocumentRoot{}, err
 	}
-	revision, err := contentblock.CurrentRevision(ctx, tx, documentID)
+	revision, err := store.DocumentRevision(ctx, documentID)
 	if err != nil {
 		return formAIDocumentRoot{}, err
 	}
-	root.DocumentRevision = revision.String()
-	return root, nil
+	return formAIDocumentRoot{DocumentRoot: root, DocumentRevision: revision.String()}, nil
 }
 
 func loadAIDocumentStateAfterAuthorization(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	formID string,
 	locale string,
 	root formAIDocumentRoot,
@@ -128,7 +102,7 @@ func loadAIDocumentStateAfterAuthorization(
 	update bool,
 ) (formAIDocumentLoadedState, error) {
 	sourceLocale := root.SourceLocale
-	source, exists, err := loadFormAIDocumentLocale(ctx, tx, formID, sourceLocale, update)
+	source, exists, err := store.Locale(ctx, formID, sourceLocale, update)
 	if err != nil {
 		return formAIDocumentLoadedState{}, err
 	}
@@ -137,7 +111,7 @@ func loadAIDocumentStateAfterAuthorization(
 	}
 	requested, requestedExists := source, true
 	if locale != sourceLocale {
-		requested, requestedExists, err = loadFormAIDocumentLocale(ctx, tx, formID, locale, update)
+		requested, requestedExists, err = store.Locale(ctx, formID, locale, update)
 		if err != nil {
 			return formAIDocumentLoadedState{}, err
 		}
@@ -162,32 +136,11 @@ func loadAIDocumentStateAfterAuthorization(
 	}, nil
 }
 
-func deriveFormTargetRevision(documentRevision string, row formAIDocumentLocaleRow) (string, error) {
+func deriveFormTargetRevision(documentRevision string, row Locale) (string, error) {
 	updatedAt := row.UpdatedAt
 	return translation.DeriveTargetRevision(translation.TargetRevisionFacts{
 		LocaleExists:     true,
 		DocumentRevision: documentRevision,
 		LocaleUpdatedAt:  &updatedAt,
 	})
-}
-
-func loadFormAIDocumentLocale(ctx context.Context, tx *gorm.DB, formID, locale string, update bool) (formAIDocumentLocaleRow, bool, error) {
-	query := tx.WithContext(ctx).Table("form_translation").Select("xmin::text AS revision", "title", "content_json", "content_text", "updated_at").Where("entity_id = ?::uuid AND locale = ?", formID, locale)
-	if update {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
-	}
-	var row formAIDocumentLocaleRow
-	result := query.Take(&row)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return formAIDocumentLocaleRow{}, false, nil
-	}
-	if result.Error != nil {
-		return formAIDocumentLocaleRow{}, false, result.Error
-	}
-	return row, true, nil
-}
-
-// knownFormStatus reports whether this build knows the stored status.
-func knownFormStatus(status model.FormStatus) bool {
-	return status == model.FormStatusDraft || status == model.FormStatusPublished
 }

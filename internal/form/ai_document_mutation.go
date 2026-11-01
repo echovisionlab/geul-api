@@ -10,20 +10,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/optional"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -56,20 +50,20 @@ func (s *Service) ExecuteAIDocumentMutation(ctx context.Context, command Execute
 	locale := strings.TrimSpace(command.Locale)
 	var root formAIDocumentRoot
 	var execution formAIDocumentExecution
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[formAIDocumentExecution]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[formAIDocumentExecution, Store]{
+		Lock: func(ctx context.Context, store Store) error {
 			var err error
-			if root, err = loadFormAIDocumentRoot(ctx, tx, command.FormID, clause.LockingStrengthUpdate); err != nil {
+			if root, err = loadFormAIDocumentRoot(ctx, store, command.FormID, UpdateLock); err != nil {
 				return err
 			}
-			if !knownFormStatus(root.Status) {
+			if !root.Status.Known() {
 				return errFormUnsupportedLifecycle
 			}
 			return nil
 		},
 		Access: s.formAIDocumentEdit(command.FormID),
-		Change: func(ctx context.Context, tx *gorm.DB) (formAIDocumentExecution, error) {
-			if err := s.executeAIDocumentMutation(ctx, tx, command, locale, root, &execution); err != nil {
+		Change: func(ctx context.Context, store Store) (formAIDocumentExecution, error) {
+			if err := executeAIDocumentMutation(ctx, store, command, locale, root, &execution); err != nil {
 				return formAIDocumentExecution{}, err
 			}
 			return execution, nil
@@ -80,17 +74,17 @@ func (s *Service) ExecuteAIDocumentMutation(ctx context.Context, command Execute
 			}
 			return formAIDocumentAudit(execution.mutation)
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, execution formAIDocumentExecution) error {
+		Outbox: func(ctx context.Context, store Store, execution formAIDocumentExecution) error {
 			if !execution.result.Changed {
 				return nil
 			}
 			compiled := execution.mutation
-			if _, err := s.og.RequestAfterMutation(
-				ctx, tx, compiled.FormID, compiled.Locale, compiled.Locale == execution.state.SourceLocale, "form_ai_document_saved",
+			if _, err := store.RequestOG(
+				ctx, compiled.FormID, compiled.Locale, compiled.Locale == execution.state.SourceLocale, "form_ai_document_saved",
 			); err != nil {
 				return err
 			}
-			return contentsignal.PublishInTransaction(ctx, tx, s.signals, formAIDocumentContentUpdatedEvent(compiled, execution.result))
+			return store.PublishContentUpdate(ctx, formAIDocumentContentUpdate(compiled, execution.result))
 		},
 	})
 	if err == nil || errors.Is(err, errRollbackFormAIDocumentValidation) {
@@ -122,9 +116,9 @@ func validateFormAIDocumentCommand(command ExecuteAIDocumentMutationCommand) err
 // formAIDocumentEdit is the access of an AI document mutation: a caller who
 // may not edit the Form, or who is not an onboarded Member, finds none.
 func (s *Service) formAIDocumentEdit(formID string) mutation.Access {
-	return mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+	return mutation.Fenced(func(ctx context.Context, _ Store, lockActive func(*auth.UserInfo) (bool, error)) error {
 		notFound := domainerr.ResourceNotFound("form", formID)
-		if err := s.requireFreshFormAction(ctx, tx, formID, formActionEdit); err != nil {
+		if err := s.requireFreshFormAction(ctx, lockActive, formID, formActionEdit); err != nil {
 			if mutation.IsUnauthenticated(err) || mutation.IsDenied(err) {
 				return notFound.WithCause(err)
 			}
@@ -142,16 +136,16 @@ func (s *Service) formAIDocumentEdit(formID string) mutation.Access {
 // executeAIDocumentMutation compiles the mutation against the locked state,
 // persists it and reads the revisions it produced into execution.
 // Validation rolls the transaction back.
-func (s *Service) executeAIDocumentMutation(
+func executeAIDocumentMutation(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	command ExecuteAIDocumentMutationCommand,
 	locale string,
 	root formAIDocumentRoot,
 	execution *formAIDocumentExecution,
 ) error {
 	viewer := auth.GetUser(ctx).MemberID.String()
-	loaded, err := loadAIDocumentStateAfterAuthorization(ctx, tx, command.FormID, locale, root, viewer, true)
+	loaded, err := loadAIDocumentStateAfterAuthorization(ctx, store, command.FormID, locale, root, viewer, true)
 	if err != nil {
 		return err
 	}
@@ -165,15 +159,15 @@ func (s *Service) executeAIDocumentMutation(
 	if err := validateFormAIDocumentMutation(execution.mutation); err != nil {
 		return err
 	}
-	changed, err := persistAIDocumentMutation(ctx, tx, s.contentBlocks, execution.mutation, root, loaded.Source, loaded.Current, loaded.CurrentExists)
+	changed, err := persistAIDocumentMutation(ctx, store, execution.mutation, root, loaded.Source, loaded.Current, loaded.CurrentExists)
 	if err != nil {
 		return err
 	}
-	nextRoot, err := loadFormAIDocumentRoot(ctx, tx, command.FormID, "")
+	nextRoot, err := loadFormAIDocumentRoot(ctx, store, command.FormID, Unlocked)
 	if err != nil {
 		return err
 	}
-	next, err := loadAIDocumentStateAfterAuthorization(ctx, tx, command.FormID, locale, nextRoot, viewer, false)
+	next, err := loadAIDocumentStateAfterAuthorization(ctx, store, command.FormID, locale, nextRoot, viewer, false)
 	if err != nil {
 		return err
 	}
@@ -220,19 +214,18 @@ func validateCompiledFormAIDocumentMutation(state AIDocumentState, input AIDocum
 // persistAIDocumentMutation writes input over the locked locale rows and
 // reports whether a row changed. A source locale write advances the Content
 // Document revision.
-func persistAIDocumentMutation(ctx context.Context, tx *gorm.DB, store *contentblock.Store, input AIDocumentMutation, root formAIDocumentRoot, source, current formAIDocumentLocaleRow, exists bool) (bool, error) {
+func persistAIDocumentMutation(ctx context.Context, store Store, input AIDocumentMutation, root formAIDocumentRoot, source, current Locale, exists bool) (bool, error) {
 	now := dbtime.Now()
 	switch {
 	case input.Noop:
 		return false, nil
 	case input.CreateTranslation:
-		return createFormAIDocumentTranslation(ctx, tx, input, source, now)
+		return createFormAIDocumentTranslation(ctx, store, input, source, now)
 	case input.DeleteTranslation:
-		result := tx.WithContext(ctx).Exec("DELETE FROM form_translation WHERE entity_id = ?::uuid AND locale = ?", input.FormID, input.Locale)
-		return result.RowsAffected != 0, result.Error
+		return store.DeleteLocale(ctx, input.FormID, input.Locale)
 	}
 	if !exists {
-		if _, err := createFormAIDocumentTranslation(ctx, tx, input, source, now); err != nil {
+		if _, err := createFormAIDocumentTranslation(ctx, store, input, source, now); err != nil {
 			return false, err
 		}
 	}
@@ -244,24 +237,21 @@ func persistAIDocumentMutation(ctx context.Context, tx *gorm.DB, store *contentb
 	if !isSource && exists {
 		writeNow = translation.NextTargetUpdatedAt(writeNow, current.UpdatedAt)
 	}
-	updates := formAIDocumentLocaleUpdates(input, current, exists, writeNow)
-	if len(updates) == 1 {
+	change, changed := formAIDocumentLocaleChange(input, current, exists, writeNow)
+	if !changed {
 		return false, nil
 	}
-	apply := func(ctx context.Context, tx *gorm.DB) (bool, error) {
-		result := tx.WithContext(ctx).Table("form_translation").
-			Where("entity_id = ?::uuid AND locale = ?", input.FormID, input.Locale).
-			Updates(updates)
-		return result.RowsAffected != 0, result.Error
+	apply := func(ctx context.Context, store Store) (bool, error) {
+		return store.UpdateLocale(ctx, input.FormID, input.Locale, change)
 	}
 	if !isSource {
-		return apply(ctx, tx)
+		return apply(ctx, store)
 	}
 	expectedRevision, err := uuid.Parse(input.ExpectedDocumentRevision)
 	if err != nil || expectedRevision == uuid.Nil {
 		return false, domainerr.InvalidField("expected_document_revision", "must be a canonical UUID")
 	}
-	advance, err := advanceFormSourceLocale(ctx, tx, store, root.DocumentID, expectedRevision, root.SourceLocale, apply)
+	advance, err := advanceFormSourceLocale(ctx, store, root.DocumentID, expectedRevision, root.SourceLocale, apply)
 	if err != nil {
 		return false, err
 	}
@@ -270,18 +260,17 @@ func persistAIDocumentMutation(ctx context.Context, tx *gorm.DB, store *contentb
 
 // createFormAIDocumentTranslation adds a missing target locale as an empty
 // overlay of the source schema.
-func createFormAIDocumentTranslation(ctx context.Context, tx *gorm.DB, input AIDocumentMutation, source formAIDocumentLocaleRow, now time.Time) (bool, error) {
+func createFormAIDocumentTranslation(ctx context.Context, store Store, input AIDocumentMutation, source Locale, now time.Time) (bool, error) {
 	emptySchema, err := formAIDocumentEmptyTargetSchema(source.Schema)
 	if err != nil {
 		return false, err
 	}
-	result := tx.WithContext(ctx).Exec(`INSERT INTO form_translation (entity_id, locale, title, content_json, created_at, updated_at) VALUES (?::uuid, ?, NULL, CAST(? AS jsonb), ?, ?) ON CONFLICT (entity_id, locale) DO NOTHING`, input.FormID, input.Locale, string(emptySchema), now, now)
-	return result.RowsAffected != 0, result.Error
+	return store.CreateEmptyLocale(ctx, input.FormID, input.Locale, emptySchema, now)
 }
 
 // validateFormAIDocumentSchemaWrite checks a schema write: a source schema
 // must be canonical and a target schema may change locale copy only.
-func validateFormAIDocumentSchemaWrite(input AIDocumentMutation, source formAIDocumentLocaleRow, isSource bool) error {
+func validateFormAIDocumentSchemaWrite(input AIDocumentMutation, source Locale, isSource bool) error {
 	if !input.SetSchema {
 		return nil
 	}
@@ -297,22 +286,20 @@ func validateFormAIDocumentSchemaWrite(input AIDocumentMutation, source formAIDo
 	return nil
 }
 
-// formAIDocumentLocaleUpdates is the form_translation update of input; it
-// holds only updated_at when nothing changes.
-func formAIDocumentLocaleUpdates(input AIDocumentMutation, current formAIDocumentLocaleRow, exists bool, now time.Time) structured.Fields {
-	updates := structured.Fields{"updated_at": now}
+// formAIDocumentLocaleChange is the locale write of input, and false when
+// nothing changes.
+func formAIDocumentLocaleChange(input AIDocumentMutation, current Locale, exists bool, now time.Time) (LocaleChange, bool) {
+	change := LocaleChange{UpdatedAt: now}
 	if input.SetTitle && (!exists || !formAIDocumentEqualString(current.Title, input.Title)) {
-		updates["title"] = input.Title
+		change.SetTitle, change.Title = true, input.Title
 	}
 	if input.SetSchema && (!exists || !formAIDocumentJSONEqual(current.Schema, input.Schema)) {
-		updates["content_json"] = input.Schema
-		if text := strings.TrimSpace(extractFormSchemaTextFromJSON(input.Schema)); text == "" {
-			updates["content_text"] = nil
-		} else {
-			updates["content_text"] = text
+		change.SetSchema, change.Schema = true, input.Schema
+		if text := strings.TrimSpace(extractFormSchemaTextFromJSON(input.Schema)); text != "" {
+			change.ContentText = &text
 		}
 	}
-	return updates
+	return change, change.SetTitle || change.SetSchema
 }
 
 func formAIDocumentEqualString(left, right *string) bool {
@@ -358,39 +345,24 @@ func formAIDocumentAuditOperation(input AIDocumentMutation) sharedtelemetry.Audi
 	}
 }
 
-func formAIDocumentContentUpdatedEvent(input AIDocumentMutation, result AIDocumentMutationResult) *managev1.ContentUpdatedEvent {
-	if !result.Changed {
-		return nil
-	}
-	fields := make([]*managev1.ContentUpdatedField, 0, 2)
-	textKind := managev1.ContentUpdatedFieldKind_CONTENT_UPDATED_FIELD_KIND_TEXT
+// formAIDocumentContentUpdate is the content.updated signal of a changed
+// locale.
+func formAIDocumentContentUpdate(input AIDocumentMutation, result AIDocumentMutationResult) ContentUpdate {
+	fields := make([]string, 0, 2)
 	if input.SetTitle {
-		fields = append(fields, &managev1.ContentUpdatedField{Path: "title", Kind: textKind})
+		fields = append(fields, "title")
 	}
 	if input.SetSchema || input.CreateTranslation || input.DeleteTranslation {
-		fields = append(fields, &managev1.ContentUpdatedField{Path: "document.content", Kind: textKind})
+		fields = append(fields, "document.content")
 	}
-	if len(fields) == 0 {
-		return nil
+	update := ContentUpdate{
+		FormID: input.FormID, Locale: input.Locale, Fields: fields, DocumentRevision: result.DocumentRevision,
+		Contributor: input.ContributorMemberID, SourceLocale: input.Locale == input.ExpectedSource,
+		LocaleDeleted: input.DeleteTranslation,
 	}
-	revision := result.DocumentRevision
-	locale := input.Locale
-	localeExists := !input.DeleteTranslation
-	event := &managev1.ContentUpdatedEvent{
-		EntityType:           managev1.ContentEntityType_CONTENT_ENTITY_TYPE_FORM,
-		EntityId:             input.FormID,
-		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
-		ChangedFields:        fields,
-		ContributorMemberIds: []string{input.ContributorMemberID},
-		DocumentRevision:     &revision,
-		DocumentStateChanged: input.Locale == input.ExpectedSource,
-		Locale:               &locale,
-		LocaleExists:         &localeExists,
-		TimestampMs:          time.Now().UnixMilli(),
-	}
-	if input.Locale != input.ExpectedSource && localeExists && result.TargetRevision != nil {
+	if input.Locale != input.ExpectedSource && !input.DeleteTranslation && result.TargetRevision != nil {
 		targetRevision := *result.TargetRevision
-		event.TargetRevision = &targetRevision
+		update.TargetRevision = &targetRevision
 	}
-	return event
+	return update
 }

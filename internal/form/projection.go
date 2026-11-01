@@ -2,135 +2,48 @@ package form
 
 import (
 	"context"
+	"log/slog"
 
-	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 )
 
-func (s *Service) toProtoForm(ctx context.Context, f *model.Form) (*managev1.Form, error) {
-	sourceState, err := LoadFormCanonicalSourceDocumentState(ctx, s.db, f.ID, f.SourceLocale)
-	if err != nil {
-		return nil, err
-	}
-	ogAsset, err := s.og.ReadyAsset(ctx, s.db, sourceState.OgAssetID, f.OgAssetID)
-	if err != nil {
-		return nil, err
-	}
-	form := &managev1.Form{
-		Id:           f.ID,
-		SourceLocale: f.SourceLocale,
-		Title:        resolveFormTitle(sourceState.Title),
-		Schema:       sourceState.ContentJSON,
-		Status:       formStatusToProto(f.Status),
-		IsPublic:     f.IsPublic,
-		AllowedRoles: f.AllowedRoles,
-		CreatedAt:    timestamppb.New(f.CreatedAt),
-		OgAsset:      ogAsset,
-	}
-
-	if f.Slug != nil {
-		form.Slug = f.Slug
-	}
-	if f.RequireAuth != nil {
-		form.RequireAuth = f.RequireAuth
-	}
-	if f.AllowDuplicateSubmission != nil {
-		form.AllowDuplicateSubmission = f.AllowDuplicateSubmission
-	}
-	if f.MaxSubmissions != nil {
-		form.MaxSubmissions = f.MaxSubmissions
-	}
-	if f.OpensAt != nil {
-		form.OpensAt = timestamppb.New(*f.OpensAt)
-	}
-	if f.ClosesAt != nil {
-		form.ClosesAt = timestamppb.New(*f.ClosesAt)
-	}
-	if f.UpdatedAt != nil {
-		form.UpdatedAt = timestamppb.New(*f.UpdatedAt)
-	}
-	if imageAsset := s.getFormFeaturedImageAsset(ctx, f.ID); imageAsset != nil {
-		form.FeaturedImageAsset = imageAsset
-	}
-	// HasPassword indicates if form is password protected (don't expose the hash)
-	form.HasPassword = f.AccessPassword != nil && *f.AccessPassword != ""
-
-	return form, nil
+// View is a Form as management reads it: the row, its source title and
+// schema, and its images.
+type View struct {
+	Form          Form
+	Title         string
+	Schema        []byte
+	OgAsset       *Asset
+	FeaturedImage *Asset
 }
 
-func loadFormSubmissionCounts(ctx context.Context, db *gorm.DB, formIDs []string) (map[string]int64, error) {
-	counts := make(map[string]int64, len(formIDs))
-	if len(formIDs) == 0 {
-		return counts, nil
+func (s *Service) view(ctx context.Context, form Form) (View, error) {
+	view := View{Form: form}
+	if err := s.units.Read(ctx, func(store Store) error {
+		sourceState, err := LoadFormCanonicalSourceDocumentState(ctx, store, form.ID, form.SourceLocale)
+		if err != nil {
+			return err
+		}
+		view.Title, view.Schema = resolveFormTitle(sourceState.Title), sourceState.ContentJSON
+		view.OgAsset, err = store.ReadyOGAsset(ctx, sourceState.OgAssetID, form.OgAssetID)
+		return err
+	}); err != nil {
+		return View{}, err
 	}
-
-	var rows []struct {
-		FormID string `gorm:"column:form_id"`
-		Count  int64  `gorm:"column:submission_count"`
-	}
-	if err := db.WithContext(ctx).
-		Table("form_submission").
-		Select("form_id, COUNT(*) AS submission_count").
-		Where("form_id IN ?", formIDs).
-		Group("form_id").
-		Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-	for _, row := range rows {
-		counts[row.FormID] = row.Count
-	}
-	return counts, nil
+	view.FeaturedImage = s.featuredImage(ctx, form.ID)
+	return view, nil
 }
 
-func toProtoFormSummaryWithSubmissionCount(
-	f *model.Form,
-	sourceTitle string,
-	submissionCount int64,
-) *managev1.FormSummary {
-	summary := &managev1.FormSummary{
-		Id:              f.ID,
-		Title:           resolveFormTitle(&sourceTitle),
-		Status:          formStatusToProto(f.Status),
-		SubmissionCount: int32(submissionCount),
-		CreatedAt:       timestamppb.New(f.CreatedAt),
-		SourceLocale:    f.SourceLocale,
+// featuredImage resolves the Form's featured image in a read of its own: a
+// failure is logged and serves the Form without one.
+func (s *Service) featuredImage(ctx context.Context, formID string) *Asset {
+	var image *Asset
+	if err := s.units.Read(ctx, func(store Store) error {
+		image = store.FeaturedImage(ctx, formID)
+		return nil
+	}); err != nil {
+		slog.ErrorContext(ctx, "Form featured image lookup failed; serving the Form without a featured image", failurecause.Attr(err), "form_id", formID)
+		return nil
 	}
-
-	if f.Slug != nil {
-		summary.Slug = f.Slug
-	}
-	if f.UpdatedAt != nil {
-		summary.UpdatedAt = timestamppb.New(*f.UpdatedAt)
-	}
-
-	return summary
-}
-
-func toProtoSubmission(sub *model.FormSubmission) *managev1.FormSubmission {
-	submission := &managev1.FormSubmission{
-		Id:          sub.ID,
-		FormId:      sub.FormID,
-		CountryCode: sub.CountryCode,
-		Data:        sub.Data,
-		CreatedAt:   timestamppb.New(sub.CreatedAt),
-	}
-
-	if sub.MemberID != nil {
-		submission.MemberId = sub.MemberID
-	}
-	if sub.IPAddress != nil {
-		submission.IpAddress = sub.IPAddress
-	}
-	if sub.UserAgent != nil {
-		submission.UserAgent = sub.UserAgent
-	}
-
-	return submission
-}
-
-func (s *Service) getFormFeaturedImageAsset(ctx context.Context, formID string) *commonv1.AssetRef {
-	return s.assets.FeaturedImage(ctx, s.db, formID)
+	return image
 }
