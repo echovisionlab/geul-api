@@ -19,6 +19,7 @@ const (
 // migration lands.
 var pipelineDomains = []string{
 	"internal/audience",
+	"internal/campaign",
 	"internal/emailauthoring",
 	"internal/emaildelivery",
 	"internal/legal",
