@@ -14,7 +14,12 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"go.akshayshah.org/connectproto"
+	"google.golang.org/protobuf/encoding/protojson"
+	"gorm.io/gorm"
+
 	"github.com/echovisionlab/geul-api/internal/account"
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	aidocumentadapter "github.com/echovisionlab/geul-api/internal/adapters/aidocument"
 	artistadapter "github.com/echovisionlab/geul-api/internal/adapters/artist"
@@ -80,6 +85,7 @@ import (
 	mapthemepostgres "github.com/echovisionlab/geul-api/internal/maptheme/postgres"
 	"github.com/echovisionlab/geul-api/internal/member"
 	memberpat "github.com/echovisionlab/geul-api/internal/member/pat"
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	"github.com/echovisionlab/geul-api/internal/menu"
 	menupostgres "github.com/echovisionlab/geul-api/internal/menu/postgres"
 	"github.com/echovisionlab/geul-api/internal/mq"
@@ -103,9 +109,6 @@ import (
 	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
-	"go.akshayshah.org/connectproto"
-	"google.golang.org/protobuf/encoding/protojson"
-	"gorm.io/gorm"
 )
 
 type serviceRegistrationDependencies struct {
@@ -291,34 +294,45 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(internalCollaborationAuthorizationPath, internalRPCTrust.collab(internalCollaborationAuthorizationHandler))
 	slog.Info("Registered internal service", "path", internalCollaborationAuthorizationPath)
 
-	memberService, err := member.NewService(member.Deps{
-		DB:            db,
-		SpiceDB:       spicedbClient,
-		Identity:      kratosClient,
-		AvatarFiles:   fileService,
-		WelcomeEmails: servicePublisher,
-		Accounts:      memberadapter.AccountSummaryReader{},
-		AccountEmails: memberadapter.AccountEmailProjection{},
-		Audit:         telemetryWriter,
-		CDNDomain:     cfg.CDNURL,
-		SiteOrigin:    cfg.SiteOrigin,
+	accountUnits, err := accountpostgres.NewUnits(db, accountpostgres.Ports{
+		Members: accountadapter.MemberDeletion{}, MemberEmails: accountadapter.MemberEmailProjection{},
+		Newsletter: accountadapter.NewsletterSubscription{}, Publisher: workerPublisher,
 	})
 	if err != nil {
-		return registeredServices{}, fmt.Errorf("initialize member service: %w", err)
+		return registeredServices{}, fmt.Errorf("initialize account units: %w", err)
 	}
 	accounts, err := account.NewService(account.Deps{
-		DB:             db,
-		SpiceDB:        spicedbClient,
-		Identity:       kratosClient,
-		Publisher:      workerPublisher,
-		Newsletter:     accountadapter.NewsletterSubscription{},
-		MemberDeletion: accountadapter.MemberDeletion{},
-		MemberEmails:   accountadapter.MemberEmailProjection{},
-		Audit:          telemetryWriter,
-		SiteOrigin:     cfg.SiteOrigin,
+		Units:      accountUnits,
+		SpiceDB:    spicedbClient,
+		Fence:      identitystate.PostgresFence{},
+		Identity:   kratosClient,
+		Emails:     accountpostgres.EmailCommands{Publisher: workerPublisher},
+		Members:    accountpostgres.MemberAuthorizations(db, accountadapter.MemberDeletion{}, spicedbClient),
+		Audit:      telemetryWriter,
+		SiteOrigin: cfg.SiteOrigin,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize account service: %w", err)
+	}
+	accountEmailProjection := memberadapter.AccountEmailProjection{Units: accountUnits, Identity: kratosClient}
+	memberUnits, err := memberpostgres.NewUnits(db, memberpostgres.Ports{
+		WelcomeEmails: servicePublisher, WelcomeRecipients: accountEmailProjection, CDNDomain: cfg.CDNURL,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize member units: %w", err)
+	}
+	memberService, err := member.NewService(member.Deps{
+		Units:       memberUnits,
+		SpiceDB:     spicedbClient,
+		Fence:       identitystate.PostgresFence{},
+		Identity:    kratosClient,
+		AvatarFiles: memberadapter.AvatarFiles{Files: fileService},
+		Accounts:    memberadapter.Accounts{Accounts: accounts},
+		Audit:       telemetryWriter,
+		SiteOrigin:  cfg.SiteOrigin,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize member service: %w", err)
 	}
 	personalAccessTokenRepository, err := memberpatadapter.NewPersonalAccessTokenRepository(db)
 	if err != nil {
@@ -352,17 +366,16 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	}
 
 	accountEmailChangeLifecycle := account.NewAccountEmailChangeLifecycle(
-		db,
+		accountUnits,
 		kratosClient,
-		hooksPublisher,
-		accountadapter.MemberEmailProjection{},
+		accountpostgres.EmailCommands{Publisher: hooksPublisher},
 	)
 	directRoles := accountadapter.AccountDirectRoleTransition{}
 	registrationMembers := member.NewMemberProvisioner(
-		db,
+		memberUnits,
 		kratosClient,
 		spicedbClient,
-		memberadapter.AccountEmailProjection{},
+		accountEmailProjection,
 		directRoles,
 	)
 	loginHooks := authentication.NewLoginHookService(
@@ -375,11 +388,10 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	)
 	accountSettingsHooks := account.NewAccountSettingsHookService(kratosClient, accountEmailChangeLifecycle)
 	credentialHooks := account.NewAccountCredentialHookLifecycle(
-		db,
+		accountUnits,
 		kratosClient,
 		telemetryWriter,
-		hooksPublisher,
-		accountadapter.MemberEmailProjection{},
+		accountpostgres.EmailCommands{Publisher: hooksPublisher},
 	)
 	// Hooks handler (for Kratos webhooks)
 	authenticationHooks := authenticationadapter.NewHooksHandler(loginHooks, registrationHooks)

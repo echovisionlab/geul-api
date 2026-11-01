@@ -3,9 +3,10 @@ package release
 import (
 	"context"
 
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
+
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/member"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -24,5 +25,5 @@ func NewMemberSummaries(db *gorm.DB, cdnDomain string) *MemberSummaries {
 }
 
 func (a *MemberSummaries) LoadMemberSummaries(ctx context.Context, memberIDs []string) (map[string]*commonv1.MemberSummary, error) {
-	return member.LoadSummaries(ctx, a.db, a.cdnDomain, memberIDs)
+	return memberpostgres.LoadSummaries(ctx, a.db, a.cdnDomain, memberIDs)
 }

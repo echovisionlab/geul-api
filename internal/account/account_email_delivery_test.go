@@ -1,54 +1,50 @@
-package account
+package account_test
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/account"
+	"github.com/echovisionlab/geul-api/internal/account/accounttest"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
-type deliveryCredentialIdentityManager struct {
+// identityGetter answers the base read and the credential-scoped read with
+// fixed Identities.
+type identityGetter struct {
 	base     *auth.Identity
 	included *auth.Identity
 }
 
-func (m deliveryCredentialIdentityManager) GetIdentity(context.Context, string) (*auth.Identity, error) {
+func (m identityGetter) GetIdentity(context.Context, string) (*auth.Identity, error) {
 	return m.base, nil
 }
 
-func (m deliveryCredentialIdentityManager) GetIdentityWithIncludeCredential(
-	context.Context,
-	string,
-	string,
-) (*auth.Identity, error) {
+func (m identityGetter) GetIdentityWithIncludeCredential(context.Context, string, string) (*auth.Identity, error) {
 	return m.included, nil
 }
 
+// readStep runs a Member projection read in one snapshot of units.
+func readStep(units *accounttest.Units) account.StepFunc {
+	return func(ctx context.Context, work func(account.Store) error) error { return units.Read(ctx, work) }
+}
+
+// seededProjection stores a linked pair whose Member primary email is
+// primaryEmail.
+func seededProjection(memberID, identityID, primaryEmail string) *accounttest.Units {
+	store, units := accounttest.New()
+	store.SeedPair(memberID, identityID, primaryEmail)
+	return units
+}
+
 func TestResolveMemberPrimaryEmailForIdentityKeepsCanonicalProvenAddress(t *testing.T) {
-	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE member (
-			id TEXT PRIMARY KEY,
-			account_identity_id TEXT,
-			primary_email TEXT,
-			deleted_at DATETIME
-		)
-	`).Error)
+	t.Parallel()
 	identityID := "11111111-1111-4111-8111-111111111111"
 	memberID := "22222222-2222-4222-8222-222222222222"
-	require.NoError(t, db.Exec(
-		"INSERT INTO member (id, account_identity_id, primary_email) VALUES (?, ?, ?)",
-		memberID, identityID, "delivery@example.com",
-	).Error)
+	units := seededProjection(memberID, identityID, "delivery@example.com")
 	identity := &auth.Identity{
 		ID:         identityID,
 		ExternalID: memberID,
@@ -62,8 +58,8 @@ func TestResolveMemberPrimaryEmailForIdentityKeepsCanonicalProvenAddress(t *test
 		},
 	}
 
-	accountEmail, reason, err := ResolveMemberPrimaryEmailForIdentity(
-		t.Context(), db, memberEmailProjectionStub{primary: "delivery@example.com"}, &fakeIdentityManager{identity: identity}, identityID,
+	accountEmail, reason, err := account.ResolveMemberPrimaryEmailForIdentity(
+		t.Context(), readStep(units), identityGetter{base: identity, included: identity}, identityID,
 	)
 
 	require.NoError(t, err)
@@ -74,22 +70,10 @@ func TestResolveMemberPrimaryEmailForIdentityKeepsCanonicalProvenAddress(t *test
 }
 
 func TestResolveMemberPrimaryEmailForIdentityRejectsStaleMemberProjection(t *testing.T) {
-	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE member (
-			id TEXT PRIMARY KEY,
-			account_identity_id TEXT,
-			primary_email TEXT,
-			deleted_at DATETIME
-		)
-	`).Error)
+	t.Parallel()
 	identityID := "55555555-5555-4555-8555-555555555555"
 	memberID := "66666666-6666-4666-8666-666666666666"
-	require.NoError(t, db.Exec(
-		"INSERT INTO member (id, account_identity_id, primary_email) VALUES (?, ?, ?)",
-		memberID, identityID, "stale@example.com",
-	).Error)
+	units := seededProjection(memberID, identityID, "stale@example.com")
 	identity := &auth.Identity{
 		ID:         identityID,
 		ExternalID: memberID,
@@ -102,61 +86,20 @@ func TestResolveMemberPrimaryEmailForIdentityRejectsStaleMemberProjection(t *tes
 		},
 	}
 
-	accountEmail, reason, err := ResolveMemberPrimaryEmailForIdentity(
-		t.Context(), db, memberEmailProjectionStub{primary: "stale@example.com"}, &fakeIdentityManager{identity: identity}, identityID,
+	accountEmail, reason, err := account.ResolveMemberPrimaryEmailForIdentity(
+		t.Context(), readStep(units), identityGetter{base: identity, included: identity}, identityID,
 	)
 
 	require.NoError(t, err)
 	require.Nil(t, accountEmail)
-	require.Equal(t, AccountEmailSkipReasonCanonicalMismatch, reason)
-}
-
-func TestIdentityHasUsableDeliveryEmailRefreshesLegacyProviderAssertion(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "Bearer provider-token", r.Header.Get("Authorization"))
-		w.Header().Set("Content-Type", "application/json")
-		_, err := w.Write([]byte(`{"email":"provider@example.com","email_verified":true}`))
-		require.NoError(t, err)
-	}))
-	t.Cleanup(server.Close)
-	previousEndpoint := googleUserInfoEndpoint
-	googleUserInfoEndpoint = server.URL
-	t.Cleanup(func() { googleUserInfoEndpoint = previousEndpoint })
-
-	identity := &auth.Identity{
-		Traits: structured.Fields{"email": "provider@example.com"},
-		Credentials: map[string]auth.Credential{
-			"oidc": {
-				Type: "oidc",
-				Config: structured.Fields{"providers": structured.Values{structured.Fields{
-					"provider":             "google",
-					"subject":              "provider-subject",
-					"initial_access_token": "provider-token",
-				}}},
-			},
-		},
-	}
-
-	require.True(t, IdentityHasUsableDeliveryEmail(t.Context(), identity, "provider@example.com"))
+	require.Equal(t, account.AccountEmailSkipReasonCanonicalMismatch, reason)
 }
 
 func TestResolveMemberPrimaryEmailForIdentityIncludesOIDCCredentialProof(t *testing.T) {
-	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE member (
-			id TEXT PRIMARY KEY,
-			account_identity_id TEXT,
-			primary_email TEXT,
-			deleted_at DATETIME
-		)
-	`).Error)
+	t.Parallel()
 	identityID := "33333333-3333-4333-8333-333333333333"
 	memberID := "44444444-4444-4444-8444-444444444444"
-	require.NoError(t, db.Exec(
-		"INSERT INTO member (id, account_identity_id, primary_email) VALUES (?, ?, ?)",
-		memberID, identityID, "provider@example.com",
-	).Error)
+	units := seededProjection(memberID, identityID, "provider@example.com")
 	identity := &auth.Identity{
 		ID:         identityID,
 		ExternalID: memberID,
@@ -178,7 +121,7 @@ func TestResolveMemberPrimaryEmailForIdentityIncludesOIDCCredentialProof(t *test
 		},
 	}
 
-	accountEmail, reason, err := ResolveMemberPrimaryEmailForIdentity(t.Context(), db, memberEmailProjectionStub{primary: "provider@example.com"}, deliveryCredentialIdentityManager{
+	accountEmail, reason, err := account.ResolveMemberPrimaryEmailForIdentity(t.Context(), readStep(units), identityGetter{
 		base: &auth.Identity{
 			ID:         identityID,
 			ExternalID: memberID,

@@ -7,15 +7,10 @@ import (
 	"log/slog"
 	"strings"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // VerifyAndReconcile runs after Kratos has persisted verification. The flow ID
@@ -37,17 +32,13 @@ func (s *AccountEmailChangeLifecycle) VerifyAndReconcile(
 		return fmt.Errorf("identity, previous email, and requested email are required")
 	}
 
-	return identitystate.WithMutation(ctx, s.db, identityID, func(
-		mutationCtx context.Context,
-		connection *gorm.DB,
-	) error {
-		request, err := loadAccountEmailChangeRequest(
-			connection,
-			identityID,
-			previousEmail,
-			requestedEmail,
-		)
-		if err != nil {
+	return s.units.Fenced(ctx, identityID, func(mutationCtx context.Context, steps Steps) error {
+		var request *EmailChangeRequest
+		if err := steps.Step(mutationCtx, func(store Store) error {
+			var err error
+			request, err = store.EmailChangeRequestFor(mutationCtx, identityID, previousEmail, requestedEmail)
+			return err
+		}); err != nil {
 			return err
 		}
 		if request == nil {
@@ -62,7 +53,7 @@ func (s *AccountEmailChangeLifecycle) VerifyAndReconcile(
 			}
 			return fmt.Errorf("verified account email was not durably staged")
 		}
-		return s.reconcileAccountEmailChangeRequest(mutationCtx, connection, request)
+		return s.reconcileAccountEmailChangeRequest(mutationCtx, steps, request)
 	})
 }
 
@@ -75,39 +66,38 @@ func (s *AccountEmailChangeLifecycle) ReconcileRequest(
 		return fmt.Errorf("account email change request id is required")
 	}
 
-	var request model.AccountEmailChangeRequest
-	if err := s.db.WithContext(ctx).First(&request, "id = ?", requestID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
-		}
+	var request *EmailChangeRequest
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		request, err = store.EmailChangeRequest(ctx, requestID)
+		return err
+	}); err != nil || request == nil {
 		return err
 	}
-	return identitystate.WithMutation(ctx, s.db, request.IdentityID, func(
-		mutationCtx context.Context,
-		connection *gorm.DB,
-	) error {
-		var current model.AccountEmailChangeRequest
-		if err := connection.First(&current, "id = ?", requestID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil
-			}
+	return s.units.Fenced(ctx, request.IdentityID, func(mutationCtx context.Context, steps Steps) error {
+		var current *EmailChangeRequest
+		if err := steps.Step(mutationCtx, func(store Store) error {
+			var err error
+			current, err = store.EmailChangeRequest(mutationCtx, requestID)
+			return err
+		}); err != nil || current == nil {
 			return err
 		}
-		return s.reconcileAccountEmailChangeRequest(mutationCtx, connection, &current)
+		return s.reconcileAccountEmailChangeRequest(mutationCtx, steps, current)
 	})
 }
 
 func (s *AccountEmailChangeLifecycle) reconcileAccountEmailChangeRequest(
 	ctx context.Context,
-	db *gorm.DB,
-	request *model.AccountEmailChangeRequest,
+	steps Steps,
+	request *EmailChangeRequest,
 ) error {
 	identity, err := s.identity.GetIdentity(ctx, request.IdentityID)
 	if err != nil {
 		return err
 	}
 	if identity == nil {
-		return s.finishAccountEmailChangeRequest(db, request, "invalid_identity")
+		return s.finishAccountEmailChangeRequest(ctx, steps, request, "invalid_identity")
 	}
 
 	currentEmail := normalizeAccountEmail(identity.CurrentEmail())
@@ -117,7 +107,7 @@ func (s *AccountEmailChangeLifecycle) reconcileAccountEmailChangeRequest(
 
 	if accountEmailsEqual(currentEmail, requestedEmail) {
 		return s.reconcileCanonicalRequestedAccountEmail(
-			ctx, db, request, identity, pendingEmail,
+			ctx, steps, request, identity, pendingEmail,
 		)
 	}
 
@@ -125,12 +115,12 @@ func (s *AccountEmailChangeLifecycle) reconcileAccountEmailChangeRequest(
 		if err := s.clearRequestedAddress(ctx, request, identity); err != nil {
 			return err
 		}
-		return s.finishAccountEmailChangeRequest(db, request, "canonical_conflict")
+		return s.finishAccountEmailChangeRequest(ctx, steps, request, "canonical_conflict")
 	}
 
 	if accountEmailsEqual(pendingEmail, requestedEmail) &&
 		identity.HasVerifiedEmailAddress(requestedEmail) {
-		return s.reconcileVerifiedPendingAccountEmail(ctx, db, request, identity)
+		return s.reconcileVerifiedPendingAccountEmail(ctx, steps, request, identity)
 	}
 
 	// An exact pending address is still an active user-visible request even when
@@ -144,7 +134,7 @@ func (s *AccountEmailChangeLifecycle) reconcileAccountEmailChangeRequest(
 		if err := s.clearRequestedAddress(ctx, request, identity); err != nil {
 			return err
 		}
-		return s.finishAccountEmailChangeRequest(db, request, "expired")
+		return s.finishAccountEmailChangeRequest(ctx, steps, request, "expired")
 	}
 	if s.now().UTC().Sub(request.CreatedAt) < accountEmailChangeProofGrace {
 		return nil
@@ -152,13 +142,13 @@ func (s *AccountEmailChangeLifecycle) reconcileAccountEmailChangeRequest(
 	if err := s.clearRequestedAddress(ctx, request, identity); err != nil {
 		return err
 	}
-	return s.finishAccountEmailChangeRequest(db, request, "abandoned")
+	return s.finishAccountEmailChangeRequest(ctx, steps, request, "abandoned")
 }
 
 func (s *AccountEmailChangeLifecycle) reconcileCanonicalRequestedAccountEmail(
 	ctx context.Context,
-	db *gorm.DB,
-	request *model.AccountEmailChangeRequest,
+	steps Steps,
+	request *EmailChangeRequest,
 	identity *auth.Identity,
 	pendingEmail string,
 ) error {
@@ -170,7 +160,7 @@ func (s *AccountEmailChangeLifecycle) reconcileCanonicalRequestedAccountEmail(
 		return fmt.Errorf("canonical requested email has another pending address")
 	}
 	if !accountEmailsEqual(pendingEmail, requestedEmail) {
-		return s.completeAccountEmailChangeRequest(ctx, db, request)
+		return s.completeAccountEmailChangeRequest(ctx, steps, request)
 	}
 	if err := s.identity.UpdateIdentityAccountEmailState(
 		ctx,
@@ -181,13 +171,13 @@ func (s *AccountEmailChangeLifecycle) reconcileCanonicalRequestedAccountEmail(
 	); err != nil {
 		return err
 	}
-	return s.completeAccountEmailChangeRequest(ctx, db, request)
+	return s.completeAccountEmailChangeRequest(ctx, steps, request)
 }
 
 func (s *AccountEmailChangeLifecycle) reconcileVerifiedPendingAccountEmail(
 	ctx context.Context,
-	db *gorm.DB,
-	request *model.AccountEmailChangeRequest,
+	steps Steps,
+	request *EmailChangeRequest,
 	identity *auth.Identity,
 ) error {
 	used, err := emailCodeAddressUsedByAnotherIdentity(
@@ -197,21 +187,21 @@ func (s *AccountEmailChangeLifecycle) reconcileVerifiedPendingAccountEmail(
 		return err
 	}
 	if used {
-		return s.rejectConflictingAccountEmail(ctx, db, request, identity)
+		return s.rejectConflictingAccountEmail(ctx, steps, request, identity)
 	}
 	if err := s.applyAccountEmailChangeRequest(ctx, request, identity); err != nil {
-		return s.resolveAccountEmailApplyError(ctx, db, request, err)
+		return s.resolveAccountEmailApplyError(ctx, steps, request, err)
 	}
-	return s.completeAccountEmailChangeRequest(ctx, db, request)
+	return s.completeAccountEmailChangeRequest(ctx, steps, request)
 }
 
 func (s *AccountEmailChangeLifecycle) rejectConflictingAccountEmail(
 	ctx context.Context,
-	db *gorm.DB,
-	request *model.AccountEmailChangeRequest,
+	steps Steps,
+	request *EmailChangeRequest,
 	identity *auth.Identity,
 ) error {
-	if err := s.clearConflictingAccountEmailRequest(ctx, db, request, identity); err != nil {
+	if err := s.clearConflictingAccountEmailRequest(ctx, steps, request, identity); err != nil {
 		return err
 	}
 	return ErrAccountEmailChangeConflict
@@ -219,8 +209,8 @@ func (s *AccountEmailChangeLifecycle) rejectConflictingAccountEmail(
 
 func (s *AccountEmailChangeLifecycle) resolveAccountEmailApplyError(
 	ctx context.Context,
-	db *gorm.DB,
-	request *model.AccountEmailChangeRequest,
+	steps Steps,
+	request *EmailChangeRequest,
 	applyErr error,
 ) error {
 	if !auth.IsKratosConflict(applyErr) {
@@ -230,7 +220,7 @@ func (s *AccountEmailChangeLifecycle) resolveAccountEmailApplyError(
 	if err != nil {
 		return err
 	}
-	if err := s.clearConflictingAccountEmailRequest(ctx, db, request, current); err != nil {
+	if err := s.clearConflictingAccountEmailRequest(ctx, steps, request, current); err != nil {
 		return err
 	}
 	// The text keeps the Kratos conflict; its body stays private.
@@ -242,7 +232,7 @@ func (s *AccountEmailChangeLifecycle) resolveAccountEmailApplyError(
 
 func (s *AccountEmailChangeLifecycle) applyAccountEmailChangeRequest(
 	ctx context.Context,
-	request *model.AccountEmailChangeRequest,
+	request *EmailChangeRequest,
 	identity *auth.Identity,
 ) error {
 	if !identity.HasVerifiedEmailAddress(request.RequestedEmailAddress) {
@@ -260,8 +250,8 @@ func (s *AccountEmailChangeLifecycle) applyAccountEmailChangeRequest(
 
 func (s *AccountEmailChangeLifecycle) completeAccountEmailChangeRequest(
 	ctx context.Context,
-	db *gorm.DB,
-	request *model.AccountEmailChangeRequest,
+	steps Steps,
+	request *EmailChangeRequest,
 ) error {
 	mergedIdentity, err := LoadIdentityWithEmailCredentials(ctx, s.identity, request.IdentityID)
 	if err != nil {
@@ -274,46 +264,45 @@ func (s *AccountEmailChangeLifecycle) completeAccountEmailChangeRequest(
 		return fmt.Errorf("account email identity did not converge")
 	}
 	providerCandidates := ResolveAccountEmailProviderCandidates(ctx, mergedIdentity.Credentials)
-	if _, err := NewAccountEmailService(s.db, s.identity, s.memberEmails).
+	// The projection syncs on the pool in a transaction of its own, outside
+	// the fenced connection.
+	if _, err := newAccountEmailService(s.identity, s.transact).
 		SyncMemberEmailProjection(ctx, request.IdentityID, mergedIdentity, providerCandidates); err != nil {
 		return fmt.Errorf("sync account email projection: %w", err)
 	}
 
 	referenceID := request.ID
-	messageID := "account-email-change:" + request.ID
-	if err := s.publisher.PublishSendEmail(ctx, &managev1.SendEmailEvent{
+	if err := s.publisher.PublishEmail(ctx, Email{
 		Recipient:    request.PreviousEmailAddress,
 		TemplateType: email.EventPrimaryEmailChanged.String(),
 		TemplateData: map[string]string{
 			"old_email": request.PreviousEmailAddress,
 			"new_email": request.RequestedEmailAddress,
 		},
-		ReferenceId: &referenceID,
-		MessageId:   &messageID,
-		RecipientContext: email.SystemDirectEmailContext(
-			email.EventPrimaryEmailChanged.String(),
-		),
+		ReferenceID:  &referenceID,
+		MessageID:    "account-email-change:" + request.ID,
+		SystemReason: email.EventPrimaryEmailChanged.String(),
 	}); err != nil {
 		return fmt.Errorf("%w: %v", ErrAccountEmailChangeNotificationPublish, err)
 	}
-	return s.finishAccountEmailChangeRequest(db, request, "changed")
+	return s.finishAccountEmailChangeRequest(ctx, steps, request, "changed")
 }
 
 func (s *AccountEmailChangeLifecycle) clearConflictingAccountEmailRequest(
 	ctx context.Context,
-	db *gorm.DB,
-	request *model.AccountEmailChangeRequest,
+	steps Steps,
+	request *EmailChangeRequest,
 	identity *auth.Identity,
 ) error {
 	if err := s.clearRequestedAddress(ctx, request, identity); err != nil {
 		return err
 	}
-	return s.finishAccountEmailChangeRequest(db, request, "address_conflict")
+	return s.finishAccountEmailChangeRequest(ctx, steps, request, "address_conflict")
 }
 
 func (s *AccountEmailChangeLifecycle) clearRequestedAddress(
 	ctx context.Context,
-	request *model.AccountEmailChangeRequest,
+	request *EmailChangeRequest,
 	identity *auth.Identity,
 ) error {
 	if identity == nil || accountEmailsEqual(identity.CurrentEmail(), request.RequestedEmailAddress) {
@@ -349,17 +338,20 @@ func (s *AccountEmailChangeLifecycle) clearRequestedAddress(
 }
 
 func (s *AccountEmailChangeLifecycle) finishAccountEmailChangeRequest(
-	db *gorm.DB,
-	request *model.AccountEmailChangeRequest,
+	ctx context.Context,
+	steps Steps,
+	request *EmailChangeRequest,
 	reason string,
 ) error {
-	if err := deleteAccountEmailChangeRequest(db, request.ID); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := steps.Step(ctx, func(store Store) error {
+		return store.DeleteEmailChangeRequest(ctx, request.ID)
+	}); err != nil {
+		if errors.Is(err, ErrEmailChangeRequestNotFound) {
 			return nil
 		}
 		return err
 	}
-	slog.InfoContext(db.Statement.Context,
+	slog.InfoContext(ctx,
 		"Account email change request finished",
 		"domain", "auth",
 		"event", "auth.account_email_change.finished",
@@ -369,26 +361,4 @@ func (s *AccountEmailChangeLifecycle) finishAccountEmailChangeRequest(
 		"identity_id", request.IdentityID,
 	)
 	return nil
-}
-
-func loadAccountEmailChangeRequest(
-	db *gorm.DB,
-	identityID string,
-	previousEmail string,
-	requestedEmail string,
-) (*model.AccountEmailChangeRequest, error) {
-	var request model.AccountEmailChangeRequest
-	err := db.Where(
-		"identity_id = ?::uuid AND previous_email_address = ? AND requested_email_address = ?",
-		identityID,
-		normalizeAccountEmail(previousEmail),
-		normalizeAccountEmail(requestedEmail),
-	).First(&request).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &request, nil
 }

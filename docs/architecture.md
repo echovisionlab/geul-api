@@ -492,6 +492,7 @@ These packages import no container and run in `go test ./...`:
 | `internal/identitystate/identitystatetest` | `identitystate.Fence` | `&identitystatetest.Fence{}` finds every principal active; `Deactivate(identityID)`, `Fence{Err: e}`; inspect `Locked()` |
 | `internal/mutation/mutationtest` | `mutation.UnitOfWork` | `mutationtest.New[Store](fake)` over a fake with `Savepoint`; inspect `Steps()` |
 | `internal/<domain>/<domain>test` | the domain's `Store` | the fake Store, its `New()` returning the fake and its unit of work, and the Store contract cases |
+| `internal/account/accounttest` | the Kratos admin API (`account.Identities`, `auth.IdentityDeleter`) | `accounttest.NewKratos(store)`; `Put`, `Update`, `Fail(method, err)`, `FailIdentity(id, err)`, `OnCall(method, hook)`; inspect `Calls()`, `Writes()`, `Identity(id)`. A deleted Identity also leaves the fake store |
 
 A use-case test on the fakes, in the shape `internal/maptheme` takes once it moves:
 
@@ -890,6 +891,28 @@ it.
   `units.Transaction(ctx, false, ...)`, the one read-committed transaction
   it always opened, or `units.Read` directly; its Store methods are
   contract cases like any other (`authentication.AuthCodeIssuanceLimiter`).
+- **A principal-less flow across Kratos calls.** A system flow that holds
+  an Identity's fence across Identity provider or SpiceDB calls (the Kratos
+  settings and credential hooks, the email change reconciler, the account
+  lifecycle reconcilers, the deletion worker, the timed-ban scheduler)
+  cannot be one `mutation.Run`: each database write has to commit before
+  the external call after it, so a later failure leaves it committed and a
+  retry resumes there. Its `Units` add `Fenced(ctx, identityID, work)`,
+  which holds the session form of the fence through
+  `identitystate.WithMutationSteps`, and `Steps.Step`, one transaction per
+  write in the order the flow commits them; `Lead` holds a reconciler's
+  leader lock. The fake units record the fenced Identities and their step
+  counts (`account.Units`, `accounttest.Units`).
+- **Audit of a change Kratos committed.** A request mutation whose state
+  change Kratos already committed under its own fence (an administrator's
+  social login removal, a canonical email change) appends its record in
+  one `units.Transaction` of its own after the Kratos call, and a hook that
+  completes a Kratos settings change appends the record the hook built,
+  with its audit ID, in the transaction that locks the pair. Neither runs
+  through `mutation.Run`, whose Access would take a fence the original
+  write did not take. A single system write with no audit record (the
+  retention scheduler's enqueue, the scheduled deletion dispatch) is
+  admission bookkeeping.
 - **Per-request reads outside a snapshot.** A read made on every request
   of a hot path (the session principal Oathkeeper's gateway check needs)
   stays one statement behind a port outside the unit of work

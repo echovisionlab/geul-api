@@ -2,7 +2,6 @@ package account
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,14 +9,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	emailpkg "github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // RequestAccountRecoveryCommand asks for a recovery link for the account
@@ -49,7 +42,7 @@ func (s *Service) RequestAccountRecovery(ctx context.Context, command RequestAcc
 	}
 
 	name := strings.TrimSpace(ptrStringValue(request.NotificationName))
-	job := &managev1.SendEmailEvent{
+	job := Email{
 		Recipient:    requestedEmail,
 		TemplateType: emailpkg.EventAccountRecoveryConfirm.String(),
 		TemplateData: map[string]string{
@@ -57,12 +50,13 @@ func (s *Service) RequestAccountRecovery(ctx context.Context, command RequestAcc
 			"confirm_url": fmt.Sprintf("%s/account/recovery/confirm?token=%s", s.baseURL, token),
 			"expires_in":  "24 hours",
 		},
-		RecipientContext: emailpkg.SystemDirectEmailContext("account_recovery_confirm"),
-		ReferenceId:      &tokenHash,
-		Locale:           request.NotificationLocale,
+		SystemReason: "account_recovery_confirm",
+		ReferenceID:  &tokenHash,
+		Locale:       request.NotificationLocale,
+		MessageID:    "account-recovery-confirm:" + tokenHash,
 	}
-	if err := emailpkg.PublishCommand(ctx, s.publisher, job, "account-recovery-confirm:"+tokenHash); err != nil {
-		return emailPublishFailure(err, job, "account-recovery-confirm:"+tokenHash, token)
+	if err := s.emails.PublishEmail(ctx, job); err != nil {
+		return emailPublishFailure(err, job, token)
 	}
 	return nil
 }
@@ -70,48 +64,41 @@ func (s *Service) RequestAccountRecovery(ctx context.Context, command RequestAcc
 // startRecovery moves the pending deletion recorded for requestedEmail to
 // recovery confirmation under tokenHash. It returns the zero request when no
 // deletion of that address is pending.
-func (s *Service) startRecovery(ctx context.Context, requestedEmail, tokenHash string) (model.UserDeletionRequest, error) {
+func (s *Service) startRecovery(ctx context.Context, requestedEmail, tokenHash string) (DeletionRequest, error) {
 	now := time.Now().UTC()
-	pending := func(db *gorm.DB) *gorm.DB {
-		return db.Where("lifecycle_state IN ? AND scheduled_at > ?", []string{
-			accountLifecycleStateScheduled,
-			accountLifecycleStateRecoveryConfirmationPending,
-		}, now).Where("notification_email IS NOT NULL AND LOWER(notification_email) = ?", requestedEmail)
+	var (
+		candidateIdentityID string
+		found               bool
+	)
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		candidateIdentityID, found, err = store.PendingRecoveryIdentity(ctx, requestedEmail, now)
+		return err
+	}); err != nil || !found {
+		return DeletionRequest{}, err
 	}
-	var candidate model.UserDeletionRequest
-	if err := pending(s.db.WithContext(ctx)).Select("identity_id").Take(&candidate).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return model.UserDeletionRequest{}, nil
-		}
-		return model.UserDeletionRequest{}, err
-	}
-	var request model.UserDeletionRequest
-	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
-		Lock: func(_ context.Context, tx *gorm.DB) error { return identitystate.Lock(tx, candidate.IdentityID) },
+	var request DeletionRequest
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
+		Lock: func(ctx context.Context, store Store) error { return store.LockIdentity(ctx, candidateIdentityID) },
 		// The recovery link goes only to the address the deletion recorded,
 		// so the address itself is the request's authority.
-		Access: mutation.Checked(func(_ context.Context, tx *gorm.DB) error {
-			err := pending(tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})).First(&request).Error
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil
+		Access: mutation.Checked(func(ctx context.Context, store Store) error {
+			current, found, err := store.LockPendingRecovery(ctx, requestedEmail, now)
+			if found {
+				request = current
 			}
 			return err
 		}),
-		Change: func(_ context.Context, tx *gorm.DB) (struct{}, error) {
+		Change: func(ctx context.Context, store Store) (struct{}, error) {
 			if request.ID == "" {
 				return struct{}{}, nil
 			}
-			return struct{}{}, tx.Model(&request).Updates(structured.Fields{
-				"token":            tokenHash,
-				"token_expires_at": now.Add(DeletionTokenExpiry),
-				"lifecycle_state":  accountLifecycleStateRecoveryConfirmationPending,
-				"updated_at":       now,
-			}).Error
+			return struct{}{}, store.StartRecovery(ctx, request.ID, tokenHash, now.Add(DeletionTokenExpiry), now)
 		},
 		// Only a confirmed recovery is a lifecycle transition worth a record.
 		Audit: func(struct{}) mutation.Audit { return mutation.Unchanged() },
 	}); err != nil {
-		return model.UserDeletionRequest{}, err
+		return DeletionRequest{}, err
 	}
 	return request, nil
 }
@@ -140,16 +127,17 @@ func (s *Service) ConfirmAccountRecovery(ctx context.Context, command ConfirmAcc
 	if err != nil {
 		return err
 	}
-	job := &managev1.SendEmailEvent{
-		Recipient:        recipient,
-		TemplateType:     emailpkg.EventAccountRecoveryComplete.String(),
-		TemplateData:     map[string]string{"name": name, "login_url": s.baseURL + "/login"},
-		RecipientContext: emailpkg.SystemDirectEmailContext("account_recovery_complete"),
-		ReferenceId:      &request.ID,
-		Locale:           request.NotificationLocale,
+	job := Email{
+		Recipient:    recipient,
+		TemplateType: emailpkg.EventAccountRecoveryComplete.String(),
+		TemplateData: map[string]string{"name": name, "login_url": s.baseURL + "/login"},
+		SystemReason: "account_recovery_complete",
+		ReferenceID:  &request.ID,
+		Locale:       request.NotificationLocale,
+		MessageID:    "account-recovery-complete:" + request.ID,
 	}
-	if err := emailpkg.PublishCommand(ctx, s.publisher, job, "account-recovery-complete:"+request.ID); err != nil {
-		return emailPublishFailure(err, job, "account-recovery-complete:"+request.ID, strings.TrimSpace(command.Token))
+	if err := s.emails.PublishEmail(ctx, job); err != nil {
+		return emailPublishFailure(err, job, strings.TrimSpace(command.Token))
 	}
 	return nil
 }

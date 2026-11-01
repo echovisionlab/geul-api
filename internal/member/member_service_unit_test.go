@@ -4,19 +4,15 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
-
-	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestMemberSummaryDeletedMemberNeverExposesProfilePII(t *testing.T) {
 	t.Parallel()
 	nickname := "Former name"
 	deletedAt := time.Now()
-	avatar := &commonv1.AssetRef{AssetId: "former-avatar"}
+	avatar := &Asset{ID: "former-avatar"}
 
-	summary := memberSummary(model.Member{
+	summary := memberSummary(Member{
 		ID:        "018f0d9c-1f54-7d51-8abc-a1b2c3d4e5f6",
 		Nickname:  nickname,
 		DeletedAt: &deletedAt,
@@ -28,7 +24,7 @@ func TestMemberSummaryDeletedMemberNeverExposesProfilePII(t *testing.T) {
 	if summary.Nickname != nickname {
 		t.Fatalf("nickname = %v, want %q", summary.Nickname, nickname)
 	}
-	if summary.AvatarAsset != nil {
+	if summary.Avatar != nil {
 		t.Fatal("deleted summary must not expose an avatar")
 	}
 }
@@ -99,8 +95,8 @@ func TestHideExtendedMemberProfilePreservesSummary(t *testing.T) {
 	t.Parallel()
 	bio := "biography"
 	website := "https://profile.example.test"
-	profile := &managev1.MemberProfile{
-		Summary:     &commonv1.MemberSummary{Id: "member-id", Nickname: "nickname"},
+	profile := &Profile{
+		Summary:     Summary{ID: "member-id", Nickname: "nickname"},
 		Bio:         &bio,
 		Website:     &website,
 		SocialLinks: map[string]string{"homepage": website},
@@ -110,7 +106,7 @@ func TestHideExtendedMemberProfilePreservesSummary(t *testing.T) {
 	if profile.Bio != nil || profile.Website != nil || profile.SocialLinks != nil {
 		t.Fatal("extended profile fields were not hidden")
 	}
-	if profile.Summary.GetId() != "member-id" || profile.Summary.GetNickname() != "nickname" {
+	if profile.Summary.ID != "member-id" || profile.Summary.Nickname != "nickname" {
 		t.Fatalf("summary changed: %+v", profile.Summary)
 	}
 }

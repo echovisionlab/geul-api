@@ -3,9 +3,10 @@ package series
 import (
 	"context"
 
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
+
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/member"
 	seriesdomain "github.com/echovisionlab/geul-api/internal/series"
 )
 
@@ -26,7 +27,7 @@ func (a *MemberSummaries) LoadSeriesManagers(
 	ctx context.Context,
 	memberIDs []string,
 ) (map[string]seriesdomain.ManagerSummary, error) {
-	summaries, err := member.LoadSummaries(ctx, a.db, a.cdnDomain, memberIDs)
+	summaries, err := memberpostgres.LoadSummaries(ctx, a.db, a.cdnDomain, memberIDs)
 	if err != nil {
 		return nil, err
 	}

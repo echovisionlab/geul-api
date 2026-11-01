@@ -5,8 +5,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestDeletedUserCompletionEmailUsesDurableMemberReference(t *testing.T) {
@@ -15,9 +13,9 @@ func TestDeletedUserCompletionEmailUsesDurableMemberReference(t *testing.T) {
 	email := "member@example.test"
 	name := "Member"
 	locale := "ko"
-	command := &managev1.UserDeleteIdentityCommand{
-		MemberId:           memberID,
-		IdentityId:         identityID,
+	command := DeleteIdentityCommand{
+		MemberID:           memberID,
+		IdentityID:         identityID,
 		NotificationEmail:  &email,
 		NotificationName:   &name,
 		NotificationLocale: &locale,
@@ -26,32 +24,32 @@ func TestDeletedUserCompletionEmailUsesDurableMemberReference(t *testing.T) {
 	job := deletedUserCompletionEmail(command)
 
 	require.NotNil(t, job)
-	require.Equal(t, memberID, job.GetReferenceId())
-	require.Equal(t, email, job.GetRecipient())
-	require.Equal(t, name, job.GetTemplateData()["name"])
+	require.Equal(t, memberID, *job.ReferenceID)
+	require.Equal(t, email, job.Recipient)
+	require.Equal(t, name, job.TemplateData["name"])
 }
 
 func TestDeletedUserCompletionEmailRequiresSnapshot(t *testing.T) {
-	require.Nil(t, deletedUserCompletionEmail(&managev1.UserDeleteIdentityCommand{
-		MemberId:   uuid.NewString(),
-		IdentityId: uuid.NewString(),
+	require.Nil(t, deletedUserCompletionEmail(DeleteIdentityCommand{
+		MemberID:   uuid.NewString(),
+		IdentityID: uuid.NewString(),
 	}))
 }
 
 func TestBuildUserDeleteAvatarCommandPreservesStableCleanupIdentity(t *testing.T) {
 	memberID := uuid.NewString()
 	assetID := uuid.NewString()
-	command := buildUserDeleteAvatarCommand(&managev1.UserDeleteIdentityCommand{
-		MemberId:      memberID,
-		AvatarAssetId: &assetID,
+	command := buildUserDeleteAvatarCommand(DeleteIdentityCommand{
+		MemberID:      memberID,
+		AvatarAssetID: &assetID,
 	})
 
-	require.Equal(t, memberID, command.GetMemberId())
-	require.Equal(t, assetID, command.GetAvatarAssetId())
+	require.Equal(t, memberID, command.MemberID)
+	require.Equal(t, assetID, *command.AvatarAssetID)
 }
 
 func TestBuildUserDeleteAvatarCommandAllowsMissingAvatarAsset(t *testing.T) {
-	command := buildUserDeleteAvatarCommand(&managev1.UserDeleteIdentityCommand{MemberId: uuid.NewString()})
+	command := buildUserDeleteAvatarCommand(DeleteIdentityCommand{MemberID: uuid.NewString()})
 
-	require.Empty(t, command.GetAvatarAssetId())
+	require.Nil(t, command.AvatarAssetID)
 }

@@ -2,53 +2,41 @@ package memberadapter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
+	"gorm.io/gorm"
+
 	"github.com/echovisionlab/geul-api/internal/account"
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
 )
 
-type AccountEmailProjection struct{}
-
-var _ memberdomain.AccountEmailProjection = AccountEmailProjection{}
-
-func (AccountEmailProjection) AdminDetails(
-	ctx context.Context, identity *auth.Identity,
-) (*managev1.AccountAdminDetails, error) {
-	candidates := account.ResolveAccountEmailProviderCandidates(ctx, identity.Credentials)
-	rows := account.ProjectedAccountEmailRows(identity, candidates)
-	details := &managev1.AccountAdminDetails{Providers: account.ProviderProto(identity)}
-	for _, row := range rows {
-		candidate := &managev1.AccountEmailCandidate{
-			Email:             row.DisplayEmail,
-			NormalizedEmail:   row.NormalizedEmail,
-			Current:           row.IsCurrentEmail,
-			IdentityVerified:  row.IdentityVerified,
-			EffectiveTrusted:  row.EffectiveTrusted,
-			UsableForDelivery: row.UsableForDelivery,
-		}
-		for _, source := range row.Sources {
-			candidate.Sources = append(candidate.Sources, &managev1.AccountEmailSource{
-				SourceType:      account.SourceTypeProto(string(source.SourceType)),
-				Provider:        source.Provider,
-				ProviderSubject: source.ProviderSubject,
-			})
-		}
-		details.EmailCandidates = append(details.EmailCandidates, candidate)
-	}
-	return details, nil
+// AccountEmailProjection is the Account email projection a Member
+// registration and welcome email read: Identity reads go to Identity, and
+// the projection syncs in its own transaction on DB.
+type AccountEmailProjection struct {
+	Units    account.Units
+	Identity auth.IdentityGetter
 }
 
-func (AccountEmailProjection) ResolveDelivery(
-	ctx context.Context, db *gorm.DB, identity auth.IdentityGetter, identityID string,
+var (
+	_ memberdomain.RegistrationAccountEmailProjection = AccountEmailProjection{}
+	_ memberpostgres.WelcomeRecipients                = AccountEmailProjection{}
+)
+
+func (p AccountEmailProjection) ResolveDelivery(
+	ctx context.Context, tx *gorm.DB, identityID string,
 ) (string, string, string, error) {
-	result, reason, err := account.ResolveMemberPrimaryEmailForIdentity(ctx, db, accountMemberEmailProjection{}, identity, identityID)
+	inTransaction := func(_ context.Context, work func(account.Store) error) error {
+		return work(accountpostgres.Bind(tx, accountpostgres.Ports{MemberEmails: accountMemberEmailProjection{}}))
+	}
+	result, reason, err := account.ResolveMemberPrimaryEmailForIdentity(ctx, inTransaction, p.Identity, identityID)
 	if err != nil || result == nil || result.Identity == nil {
 		return "", "", reason, err
 	}
@@ -107,10 +95,8 @@ func (AccountEmailProjection) PrepareRegistration(
 	return identity, current.NormalizedEmail, emails, nil
 }
 
-func (AccountEmailProjection) SyncMemberEmailProjection(
+func (p AccountEmailProjection) SyncMemberEmailProjection(
 	ctx context.Context,
-	db *gorm.DB,
-	identityManager auth.IdentityGetter,
 	identityID string,
 	identity *auth.Identity,
 ) error {
@@ -118,7 +104,7 @@ func (AccountEmailProjection) SyncMemberEmailProjection(
 	if identity != nil {
 		candidates = account.ResolveAccountEmailProviderCandidates(ctx, identity.Credentials)
 	}
-	_, err := account.NewAccountEmailService(db, identityManager, accountMemberEmailProjection{}).
+	_, err := account.NewAccountEmailService(p.Identity, p.Units).
 		SyncMemberEmailProjection(ctx, identityID, identity, candidates)
 	return err
 }
@@ -130,11 +116,19 @@ type accountMemberEmailProjection struct{}
 func (accountMemberEmailProjection) PrimaryEmail(
 	ctx context.Context, db *gorm.DB, memberID, identityID string,
 ) (string, error) {
-	return memberdomain.PrimaryEmail(ctx, db, memberID, identityID)
+	email, err := memberdomain.PrimaryEmail(ctx, memberpostgres.Bind(db), memberID, identityID)
+	if errors.Is(err, memberdomain.ErrMemberNotFound) {
+		return "", gorm.ErrRecordNotFound
+	}
+	return email, err
 }
 
 func (accountMemberEmailProjection) SyncEmailProjection(
 	ctx context.Context, db *gorm.DB, memberID, identityID, primaryEmail string, availableEmails []string,
 ) error {
-	return memberdomain.SyncEmailProjection(ctx, db, memberID, identityID, primaryEmail, availableEmails)
+	err := memberdomain.SyncEmailProjection(ctx, memberpostgres.Bind(db), memberID, identityID, primaryEmail, availableEmails)
+	if errors.Is(err, memberdomain.ErrMemberNotFound) {
+		return gorm.ErrRecordNotFound
+	}
+	return err
 }

@@ -11,19 +11,11 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
 )
 
 // CompleteOnboardingCommand completes the authenticated Member's onboarding
@@ -35,28 +27,28 @@ type CompleteOnboardingCommand struct {
 // onboarding is the result of an onboarding mutation: the Member after it,
 // and whether this call made the transition.
 type onboarding struct {
-	member       model.Member
+	member       Member
 	transitioned bool
 }
 
 // CompleteOnboarding onboards the authenticated Member, enqueues the welcome
 // email in the same transaction, and returns the Member summary. Repeating a
 // completed onboarding with the same nickname succeeds without a change.
-func (s *Service) CompleteOnboarding(ctx context.Context, command CompleteOnboardingCommand) (*commonv1.MemberSummary, error) {
+func (s *Service) CompleteOnboarding(ctx context.Context, command CompleteOnboardingCommand) (Summary, error) {
 	principal, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
-		return nil, err
+		return Summary{}, err
 	}
 	nickname, err := normalizeMemberNickname(command.Nickname)
 	if err != nil {
-		return nil, err
+		return Summary{}, err
 	}
 	memberID, identityID := principal.MemberID.String(), principal.IdentityID.String()
 	welcomeOutcome := ""
-	result, err := mutation.Run(ctx, s.mutations, mutation.Spec[onboarding]{
+	result, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[onboarding, Store]{
 		Access: mutation.PrincipalFence(principal),
-		Change: func(_ context.Context, tx *gorm.DB) (onboarding, error) {
-			return completeMemberOnboarding(tx, memberID, identityID, nickname)
+		Change: func(ctx context.Context, store Store) (onboarding, error) {
+			return completeMemberOnboarding(ctx, store, memberID, identityID, nickname)
 		},
 		Audit: func(result onboarding) mutation.Audit {
 			if !result.transitioned {
@@ -66,12 +58,12 @@ func (s *Service) CompleteOnboarding(ctx context.Context, command CompleteOnboar
 				return sharedtelemetry.NewMemberOnboardingCompletedAuditRecord(metadata, memberID, nickname)
 			})
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, result onboarding) error {
+		Outbox: func(ctx context.Context, store Store, result onboarding) error {
 			if !result.transitioned {
 				return nil
 			}
 			var err error
-			welcomeOutcome, err = s.enqueueOnboardingWelcomeEmail(ctx, tx, strings.TrimSpace(identityID), strings.TrimSpace(memberID), result.member)
+			welcomeOutcome, err = s.enqueueOnboardingWelcomeEmail(ctx, store, strings.TrimSpace(identityID), strings.TrimSpace(memberID), result.member)
 			return err
 		},
 	})
@@ -79,7 +71,7 @@ func (s *Service) CompleteOnboarding(ctx context.Context, command CompleteOnboar
 		s.onboardingMetrics.recordWelcomePublish(ctx, welcomeOutcome)
 	}
 	if err != nil {
-		return nil, failurecause.WithPrivate(err, nickname)
+		return Summary{}, failurecause.WithPrivate(err, nickname)
 	}
 	if result.transitioned && welcomeOutcome == "accepted" {
 		slog.InfoContext(ctx,
@@ -95,47 +87,34 @@ func (s *Service) CompleteOnboarding(ctx context.Context, command CompleteOnboar
 	return memberSummary(result.member, nil), nil
 }
 
-func completeMemberOnboarding(tx *gorm.DB, memberID, identityID, nickname string) (onboarding, error) {
-	result := tx.Model(&model.Member{}).
-		Where(`id = ?::uuid
-			AND account_identity_id = ?::uuid
-			AND deleted_at IS NULL
-			AND onboarded = FALSE`, memberID, identityID).
-		Updates(structured.Fields{
-			"nickname":   nickname,
-			"onboarded":  true,
-			"updated_at": time.Now().UTC(),
-		})
-	if result.Error != nil {
-		if dberrors.IsUniqueViolation(result.Error) {
-			return onboarding{}, domainerr.Duplicate("member", "nickname", nickname).WithCause(result.Error)
+func completeMemberOnboarding(ctx context.Context, store Store, memberID, identityID, nickname string) (onboarding, error) {
+	transitioned, err := store.CompleteOnboarding(ctx, memberID, identityID, nickname, time.Now().UTC())
+	if err != nil {
+		if errors.Is(err, ErrNicknameTaken) {
+			return onboarding{}, domainerr.Duplicate("member", "nickname", nickname).WithCause(err)
 		}
-		return onboarding{}, fmt.Errorf("complete member onboarding: %w", result.Error)
+		return onboarding{}, fmt.Errorf("complete member onboarding: %w", err)
 	}
-	if result.RowsAffected != 1 {
-		current, err := resolveUnchangedMemberOnboarding(tx, memberID, identityID, nickname)
+	if !transitioned {
+		current, err := resolveUnchangedMemberOnboarding(ctx, store, memberID, identityID, nickname)
 		return onboarding{member: current}, err
 	}
-	var member model.Member
-	if err := tx.Where("id = ?::uuid", memberID).Take(&member).Error; err != nil {
+	member, err := store.MemberByID(ctx, memberID)
+	if err != nil {
 		return onboarding{}, fmt.Errorf("load onboarded member: %w", err)
 	}
 	return onboarding{member: member, transitioned: true}, nil
 }
 
 func resolveUnchangedMemberOnboarding(
-	tx *gorm.DB,
+	ctx context.Context,
+	store Store,
 	memberID string,
 	identityID string,
 	nickname string,
-) (model.Member, error) {
-	var current model.Member
-	err := tx.Where(
-		"id = ?::uuid AND account_identity_id = ?::uuid AND deleted_at IS NULL",
-		memberID,
-		identityID,
-	).Take(&current).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+) (Member, error) {
+	current, err := store.LinkedMember(ctx, memberID, identityID)
+	if errors.Is(err, ErrMemberNotFound) {
 		return current, domainerr.InvalidSession()
 	}
 	if err != nil {
@@ -150,15 +129,14 @@ func resolveUnchangedMemberOnboarding(
 	return current, nil
 }
 
-func memberWelcomeRecipientFields(member model.Member) (string, string) {
+func memberWelcomeRecipientFields(member Member) (string, *string) {
 	nickname := strings.TrimSpace(member.Nickname)
-	locale := ""
 	if member.PreferredLocale != nil {
 		if normalized := localization.NormalizeSupportedLocale(*member.PreferredLocale); normalized != nil {
-			locale = *normalized
+			return nickname, normalized
 		}
 	}
-	return nickname, locale
+	return nickname, nil
 }
 
 // enqueueOnboardingWelcomeEmail enqueues the welcome command in the
@@ -166,18 +144,19 @@ func memberWelcomeRecipientFields(member model.Member) (string, string) {
 // retry sends it instead of the command being lost after the commit.
 func (s *Service) enqueueOnboardingWelcomeEmail(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	identityID string,
 	memberID string,
-	member model.Member,
+	member Member,
 ) (string, error) {
-	recipient, linkedMemberID, reason, err := s.accountEmails.ResolveDelivery(ctx, tx, s.identity, identityID)
+	delivery, err := store.WelcomeDelivery(ctx, identityID)
 	if err != nil {
 		return "failed", domainerr.DependencyUnavailable("account email").WithCause(
 			fmt.Errorf("resolve welcome email recipient: %w", err),
 		)
 	}
-	if recipient == "" {
+	if delivery.Recipient == "" {
+		reason := delivery.Reason
 		if reason == "" {
 			reason = "member_link_mismatch"
 		}
@@ -192,7 +171,7 @@ func (s *Service) enqueueOnboardingWelcomeEmail(
 		)
 		return "skipped", nil
 	}
-	if strings.TrimSpace(linkedMemberID) != member.ID || member.ID != memberID {
+	if strings.TrimSpace(delivery.LinkedMemberID) != member.ID || member.ID != memberID {
 		slog.WarnContext(ctx,
 			"Member onboarding welcome skipped for changed Identity link",
 			"domain", "member",
@@ -204,33 +183,15 @@ func (s *Service) enqueueOnboardingWelcomeEmail(
 		)
 		return "skipped", nil
 	}
-	executor, err := contentsignal.TransactionExecutor(tx)
-	if err != nil {
-		return "failed", err
-	}
 	nickname, locale := memberWelcomeRecipientFields(member)
-	commandID := "welcome:" + identityID
-	job := &managev1.SendEmailEvent{
-		Recipient:    recipient,
-		TemplateType: email.EventWelcome.String(),
-		TemplateData: map[string]string{
-			"name":      nickname,
-			"login_url": s.siteOrigin + "/login",
-		},
-		RecipientContext: email.AccountSelectedPrimaryEmailContext(identityID),
-		MessageId:        &commandID,
+	email := WelcomeEmail{
+		CommandID: "welcome:" + identityID, IdentityID: identityID, Recipient: delivery.Recipient,
+		Nickname: nickname, LoginURL: s.siteOrigin + "/login", Locale: locale,
 	}
-	if locale != "" {
-		job.Locale = &locale
-	}
-	if err := s.welcomeEmails.PublishSendEmailWithExecutor(ctx, executor, job); err != nil {
-		privateValues := []string{job.Recipient}
-		for _, value := range job.TemplateData {
-			privateValues = append(privateValues, value)
-		}
+	if err := store.EnqueueWelcomeEmail(ctx, email); err != nil {
 		return "failed", failurecause.WithAttrs(
-			failurecause.WithPrivate(fmt.Errorf("publish welcome email command: %w", err), privateValues...),
-			slog.String("command_id", commandID),
+			failurecause.WithPrivate(fmt.Errorf("publish welcome email command: %w", err), email.Recipient, email.Nickname, email.LoginURL),
+			slog.String("command_id", email.CommandID),
 		)
 	}
 	return "accepted", nil
@@ -268,21 +229,21 @@ type preferenceChange struct {
 }
 
 // UpdatePreferences applies command and returns the Member's settings.
-func (s *Service) UpdatePreferences(ctx context.Context, command UpdatePreferencesCommand) (*managev1.GetMySettingsResponse, error) {
+func (s *Service) UpdatePreferences(ctx context.Context, command UpdatePreferencesCommand) (Settings, error) {
 	principal, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
-		return nil, err
+		return Settings{}, err
 	}
 	memberID := principal.MemberID.String()
 	var preferredLocale *string
 	if command.PreferredLocale != nil {
 		normalized, err := normalizeMemberPreferenceLocale(*command.PreferredLocale)
 		if err != nil {
-			return nil, domainerr.InvalidField("preferred_locale", err.Error())
+			return Settings{}, domainerr.InvalidField("preferred_locale", err.Error())
 		}
 		preferredLocale = &normalized
 	}
-	var consentInput *model.UserCookieConsent
+	var consentInput *CookieConsent
 	if consent := command.CookieConsent; consent != nil {
 		version := consent.Version
 		if version <= 0 {
@@ -292,14 +253,14 @@ func (s *Service) UpdatePreferences(ctx context.Context, command UpdatePreferenc
 		if consent.Source != nil && strings.TrimSpace(*consent.Source) != "" {
 			source = strings.TrimSpace(*consent.Source)
 		}
-		consentInput = &model.UserCookieConsent{
-			MemberID: memberID, Essential: true, Analytics: consent.Analytics, ConsentVersion: version,
+		consentInput = &CookieConsent{
+			MemberID: memberID, Essential: true, Analytics: consent.Analytics, Version: version,
 			Source: source, RecordedAt: time.Now().UTC(),
 		}
 	}
 	if preferredLocale != nil || consentInput != nil {
 		if err := s.updatePreferences(ctx, principal, preferredLocale, consentInput); err != nil {
-			return nil, err
+			return Settings{}, err
 		}
 	}
 	return s.GetSettings(ctx)
@@ -309,41 +270,38 @@ func (s *Service) updatePreferences(
 	ctx context.Context,
 	principal *auth.UserInfo,
 	preferredLocale *string,
-	consentInput *model.UserCookieConsent,
+	consentInput *CookieConsent,
 ) error {
 	memberID := principal.MemberID.String()
-	target, err := authorizationtarget.Require(ctx, s.db, memberID)
+	target, err := s.requireTarget(ctx, memberID)
 	if err != nil {
 		return err
 	}
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[preferenceChange]{
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[preferenceChange, Store]{
 		Subjects: []string{target.IdentityID},
 		Access:   mutation.PrincipalFence(principal),
-		Change: func(_ context.Context, tx *gorm.DB) (preferenceChange, error) {
-			if err := recheckTarget(tx, memberID, target, authorizationtarget.ForMember); err != nil {
+		Change: func(ctx context.Context, store Store) (preferenceChange, error) {
+			if err := recheckTarget(ctx, store, memberID, target, currentTarget); err != nil {
 				return preferenceChange{}, err
 			}
-			var current model.Member
-			if err := tx.Where("id = ? AND deleted_at IS NULL AND account_identity_id IS NOT NULL AND onboarded = TRUE", memberID).Take(&current).Error; err != nil {
+			current, err := store.OwnMember(ctx, memberID)
+			if err != nil {
 				return preferenceChange{}, err
 			}
 			var change preferenceChange
 			if preferredLocale != nil && (current.PreferredLocale == nil || *current.PreferredLocale != *preferredLocale) {
-				if err := tx.Model(&model.Member{}).Where("id = ?", memberID).Updates(structured.Fields{
-					"preferred_locale": *preferredLocale,
-					"updated_at":       time.Now().UTC(),
-				}).Error; err != nil {
+				if err := store.UpdatePreferredLocale(ctx, memberID, *preferredLocale, time.Now().UTC()); err != nil {
 					return preferenceChange{}, err
 				}
 				change.fields = append(change.fields, "preferred_locale")
 				change.locale = *preferredLocale
 			}
 			if consentInput != nil {
-				row := *consentInput
-				if err := tx.Create(&row).Error; err != nil {
+				id, err := store.InsertCookieConsent(ctx, *consentInput)
+				if err != nil {
 					return preferenceChange{}, err
 				}
-				change.consentID = row.ID
+				change.consentID = id
 				change.fields = append(change.fields, "cookie_consent")
 			}
 			sort.Strings(change.fields)
@@ -358,7 +316,7 @@ func (s *Service) updatePreferences(
 			})
 		},
 	})
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	if errors.Is(err, ErrMemberNotFound) {
 		return domainerr.ResourceNotFound("member", memberID)
 	}
 	return err

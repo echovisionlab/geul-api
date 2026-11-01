@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/echovisionlab/geul-api/internal/identitystate"
+	memberpublicpostgres "github.com/echovisionlab/geul-api/internal/member/public/postgres"
+
 	"connectrpc.com/connect"
 	accountdomain "github.com/echovisionlab/geul-api/internal/account"
 	accountpublic "github.com/echovisionlab/geul-api/internal/account/public"
@@ -22,7 +25,6 @@ import (
 	filepublic "github.com/echovisionlab/geul-api/internal/filemedia/public"
 	publicform "github.com/echovisionlab/geul-api/internal/form/public"
 	formpublicpostgres "github.com/echovisionlab/geul-api/internal/form/public/postgres"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	legalpublic "github.com/echovisionlab/geul-api/internal/legal/public"
 	legalpublicpostgres "github.com/echovisionlab/geul-api/internal/legal/public/postgres"
 	mapthemepostgres "github.com/echovisionlab/geul-api/internal/maptheme/postgres"
@@ -177,8 +179,12 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicFormPath, publicFormHandler)
 	slog.Info("Registered public service", "path", publicFormPath)
 
+	publicMemberUnits, err := memberpublicpostgres.NewUnits(db, cfg.CDNURL)
+	if err != nil {
+		return fmt.Errorf("initialize public member units: %w", err)
+	}
 	publicMembers, err := memberpublic.NewService(memberpublic.Deps{
-		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, TokenSecret: cfg.TokenSigningSecret, CDNDomain: cfg.CDNURL,
+		Units: publicMemberUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter, TokenSecret: cfg.TokenSigningSecret,
 	})
 	if err != nil {
 		return fmt.Errorf("initialize public member service: %w", err)

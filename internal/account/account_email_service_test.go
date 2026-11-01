@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -91,7 +90,7 @@ func TestProjectedAccountEmailRowsIgnoresNonCanonicalEmailCodeIdentifier(t *test
 	require.NotNil(t, row)
 	require.True(t, row.UsableForDelivery)
 	require.Len(t, row.Sources, 1)
-	require.Equal(t, model.AccountEmailSourceTypeOIDCProvider, row.Sources[0].SourceType)
+	require.Equal(t, EmailSourceOIDCProvider, row.Sources[0].Type)
 }
 
 func TestProjectedAccountEmailRowsDoesNotTreatRawVerifiedAddressAsSource(t *testing.T) {

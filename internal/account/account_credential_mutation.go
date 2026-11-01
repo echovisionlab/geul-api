@@ -9,47 +9,26 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"gorm.io/gorm"
 )
 
 // AccountCredentialMutationService owns credential inventory validation,
 // credential mutation, session revocation, and the resulting email projection.
 // Handlers must not reproduce this ordering.
 type AccountCredentialMutationService struct {
-	db           *gorm.DB
-	fence        identitystate.Fence
-	identity     accountCredentialIdentityManager
-	memberEmails MemberEmailProjection
+	units    Units
+	identity accountCredentialIdentityManager
 }
 
 type accountCredentialIdentityManager interface {
-	auth.IdentityManager
+	auth.IdentityGetter
 	auth.IdentityCredentialIdentifierDeleter
-	auth.SessionRevoker
+	auth.IdentitySessionRevoker
 }
 
-func NewAccountCredentialMutationService(
-	db *gorm.DB,
-	fence identitystate.Fence,
-	identity accountCredentialIdentityManager,
-	memberEmails MemberEmailProjection,
-) *AccountCredentialMutationService {
-	if db == nil {
-		panic("account credential mutation database is required")
-	}
-	if fence == nil {
-		panic("account credential mutation identity fence is required")
-	}
-	if identity == nil {
-		panic("account credential mutation identity manager is required")
-	}
-	if memberEmails == nil {
-		panic("account credential mutation member email projection is required")
-	}
-	return &AccountCredentialMutationService{db: db, fence: fence, identity: identity, memberEmails: memberEmails}
+// credentials is the credential mutation service of the Account use cases.
+func (s *Service) credentials() *AccountCredentialMutationService {
+	return &AccountCredentialMutationService{units: s.units, identity: s.identity}
 }
 
 func (s *AccountCredentialMutationService) LoadIdentity(
@@ -61,7 +40,7 @@ func (s *AccountCredentialMutationService) LoadIdentity(
 
 func loadIdentityAuthenticationCredentials(
 	ctx context.Context,
-	identityReader auth.IdentityReader,
+	identityReader auth.IdentityGetter,
 	identityID string,
 ) (*auth.Identity, error) {
 	identity, err := loadIdentityWithCredentials(ctx, identityReader, identityID, "oidc", "code", "passkey")
@@ -85,7 +64,7 @@ func (s *AccountCredentialMutationService) RemoveOIDCProvider(
 	if provider == "" || identifier == "" {
 		return domainerr.Precondition("SSO provider identity is incomplete")
 	}
-	return s.fence.WithMutation(ctx, s.db, identityID, func(mutationCtx context.Context, tx *gorm.DB) error {
+	return s.units.Fenced(ctx, identityID, func(mutationCtx context.Context, steps Steps) error {
 		identity, err := s.LoadIdentity(mutationCtx, identityID)
 		if err != nil {
 			return err
@@ -101,7 +80,7 @@ func (s *AccountCredentialMutationService) RemoveOIDCProvider(
 			return err
 		}
 		providerCandidates := ResolveAccountEmailProviderCandidates(mutationCtx, updated.Credentials)
-		_, err = NewAccountEmailService(tx, s.identity, s.memberEmails).
+		_, err = newAccountEmailService(s.identity, steps.Step).
 			SyncMemberEmailProjection(mutationCtx, identityID, updated, providerCandidates)
 		return err
 	})
@@ -163,7 +142,7 @@ func validateCanonicalEmailAfterOIDCRemoval(
 
 func hasIndependentAccountEmailProof(row AccountEmailProjection) bool {
 	for _, source := range row.Sources {
-		if source.SourceType == model.AccountEmailSourceTypeEmailCode || source.SourceType == model.AccountEmailSourceTypeOIDCProvider {
+		if source.Type == EmailSourceEmailCode || source.Type == EmailSourceOIDCProvider {
 			return true
 		}
 	}
@@ -174,7 +153,7 @@ func hasOIDCProviderSource(row AccountEmailProjection, provider, subject string)
 	provider = auth.NormalizeOIDCProvider(provider)
 	subject = strings.TrimSpace(subject)
 	for _, source := range row.Sources {
-		if source.SourceType != model.AccountEmailSourceTypeOIDCProvider {
+		if source.Type != EmailSourceOIDCProvider {
 			continue
 		}
 		if auth.NormalizeOIDCProvider(ptrStringValue(source.Provider)) == provider && strings.TrimSpace(ptrStringValue(source.ProviderSubject)) == subject {

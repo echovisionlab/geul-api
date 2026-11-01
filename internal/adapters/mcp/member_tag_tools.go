@@ -68,7 +68,7 @@ func (tools *MemberTagTools) CallTool(ctx context.Context, _ mcpserver.Principal
 	for _, tag := range page.Tags {
 		items = append(items, map[string]any{"id": tag.ID, "name": tag.Name, "member_count": tag.MemberCount})
 	}
-	pagination := page.Pagination
+	pagination := member.PaginationMessage(page.Pagination)
 	output := map[string]any{"items": items, "total": pagination.GetTotal(), "limit": pagination.GetLimit(), "offset": pagination.GetOffset(), "has_more": pagination.GetHasMore()}
 	if pagination.GetHasMore() {
 		output["next_offset"] = int64(pagination.GetOffset()) + int64(pagination.GetLimit())

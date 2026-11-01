@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/artist"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -177,11 +176,11 @@ type recordingMemberReferences struct {
 	count int
 }
 
-func (r *recordingMemberReferences) SearchMembers(_ context.Context, query memberdomain.SearchMembersQuery) ([]*commonv1.MemberSummary, error) {
+func (r *recordingMemberReferences) SearchMembers(_ context.Context, query memberdomain.SearchMembersQuery) ([]memberdomain.Summary, error) {
 	r.query = query
-	items := make([]*commonv1.MemberSummary, r.count)
+	items := make([]memberdomain.Summary, r.count)
 	for index := range items {
-		items[index] = &commonv1.MemberSummary{Id: managementWorkID, Nickname: "Member"}
+		items[index] = memberdomain.Summary{ID: managementWorkID, Nickname: "Member"}
 	}
 	return items, nil
 }

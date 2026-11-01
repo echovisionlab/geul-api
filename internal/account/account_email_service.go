@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"gorm.io/gorm"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
@@ -19,14 +19,27 @@ import (
 // primary_email is the deletion-safe projection of this value.
 var ErrMemberPrimaryEmailUnavailable = errors.New("canonical account email is no longer backed by a usable identity candidate")
 
-type accountEmailIdentityManager interface {
-	auth.IdentityGetter
+// StepFunc runs work in one transaction: a step of a fenced flow, or a
+// transaction of its own.
+type StepFunc func(ctx context.Context, work func(Store) error) error
+
+// AccountEmailService derives the proven email candidates of an Identity and
+// keeps the Member email projection in step with them.
+type AccountEmailService struct {
+	identityManager auth.IdentityGetter
+	step            StepFunc
 }
 
-type AccountEmailService struct {
-	db              *gorm.DB
-	identityManager accountEmailIdentityManager
-	memberEmails    MemberEmailProjection
+func newAccountEmailService(identityManager auth.IdentityGetter, step StepFunc) *AccountEmailService {
+	return &AccountEmailService{identityManager: identityManager, step: step}
+}
+
+// NewAccountEmailService returns the email projection of identities over
+// units, each sync in a transaction of its own.
+func NewAccountEmailService(identities auth.IdentityGetter, units Units) *AccountEmailService {
+	return newAccountEmailService(identities, func(ctx context.Context, work func(Store) error) error {
+		return units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error { return work(tx.Store()) })
+	})
 }
 
 type AccountEmailProviderCandidate struct {
@@ -42,14 +55,6 @@ type AccountEmailBackfillResult struct {
 	Failed    int
 }
 
-func NewAccountEmailService(
-	db *gorm.DB,
-	identityManager accountEmailIdentityManager,
-	memberEmails MemberEmailProjection,
-) *AccountEmailService {
-	return &AccountEmailService{db: db, identityManager: identityManager, memberEmails: memberEmails}
-}
-
 // EnsureMemberPrimaryEmailUsable rejects an Identity credential projection
 // that would leave the canonical account email without proof. Member primary
 // is a deletion-safe projection of that canonical value, never an independent
@@ -60,11 +65,8 @@ func (s *AccountEmailService) EnsureMemberPrimaryEmailUsable(
 	identity *auth.Identity,
 	providerCandidates []AccountEmailProviderCandidate,
 ) error {
-	if s == nil || s.db == nil {
+	if s == nil || s.step == nil {
 		return fmt.Errorf("member database is required")
-	}
-	if s.memberEmails == nil {
-		return fmt.Errorf("member email projection is required")
 	}
 	identityID = strings.TrimSpace(identityID)
 	if identityID == "" {
@@ -76,8 +78,12 @@ func (s *AccountEmailService) EnsureMemberPrimaryEmailUsable(
 	if strings.TrimSpace(identity.ExternalID) == "" {
 		return fmt.Errorf("identity external id is required")
 	}
-	primaryEmail, err := s.memberEmails.PrimaryEmail(ctx, s.db, identity.ExternalID, identityID)
-	if err != nil {
+	var primaryEmail string
+	if err := s.step(ctx, func(store Store) error {
+		var err error
+		primaryEmail, err = store.MemberPrimaryEmail(ctx, identity.ExternalID, identityID)
+		return err
+	}); err != nil {
 		return err
 	}
 	canonical := emailutil.NormalizeAddressForDelivery(identity.CurrentEmail())
@@ -100,11 +106,8 @@ func (s *AccountEmailService) SyncMemberEmailProjection(
 	identity *auth.Identity,
 	providerCandidates []AccountEmailProviderCandidate,
 ) ([]AccountEmailProjection, error) {
-	if s == nil || s.db == nil {
+	if s == nil || s.step == nil {
 		return nil, fmt.Errorf("member database is required")
-	}
-	if s.memberEmails == nil {
-		return nil, fmt.Errorf("member email projection is required")
 	}
 	identityID = strings.TrimSpace(identityID)
 	if identityID == "" {
@@ -142,11 +145,11 @@ func (s *AccountEmailService) SyncMemberEmailProjection(
 	if !slices.Contains(emails, primaryEmail) {
 		return nil, fmt.Errorf("identity %s canonical email is not a proven usable candidate", identityID)
 	}
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return s.memberEmails.SyncEmailProjection(ctx, tx, identity.ExternalID, identityID, primaryEmail, emails)
+	err := s.step(ctx, func(store Store) error {
+		return store.SyncMemberEmails(ctx, identity.ExternalID, identityID, primaryEmail, emails)
 	})
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, ErrMemberLinkNotFound) {
 			return nil, fmt.Errorf("identity %s has no exact active Member link: %w", identityID, err)
 		}
 		return nil, err

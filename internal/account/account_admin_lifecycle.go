@@ -14,10 +14,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
 )
 
 // BanAccountCommand bans another Member's Identity, until Until when set.
@@ -47,12 +45,8 @@ type RemoveAccountSsoProviderCommand struct {
 // DeleteAccountCommand deletes another Member's account.
 type DeleteAccountCommand struct{ MemberID string }
 
-func (s *Service) accountBanTargetIdentity(
-	ctx context.Context,
-	identityManager auth.IdentityGetter,
-	identityID string,
-) (*auth.Identity, error) {
-	identity, err := identityManager.GetIdentity(ctx, identityID)
+func (s *Service) accountBanTargetIdentity(ctx context.Context, identityID string) (*auth.Identity, error) {
+	identity, err := s.identity.GetIdentity(ctx, identityID)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +69,7 @@ func (s *Service) accountBanTargetIdentity(
 
 // BanAccount deactivates another non-administrator Identity and revokes its
 // sessions. Banning a banned Identity changes nothing.
-func (s *Service) BanAccount(ctx context.Context, command BanAccountCommand) (*managev1.AccountSummary, error) {
+func (s *Service) BanAccount(ctx context.Context, command BanAccountCommand) (*Summary, error) {
 	actor, err := authorizationtarget.RequireGlobalAdmin(ctx, s.spicedb)
 	if err != nil {
 		return nil, err
@@ -87,11 +81,11 @@ func (s *Service) BanAccount(ctx context.Context, command BanAccountCommand) (*m
 	if err != nil {
 		return nil, err
 	}
-	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[bool, Store]{
 		Subjects: []string{identityID},
 		Access:   freshAdmin(),
-		Change: func(ctx context.Context, _ *gorm.DB) (bool, error) {
-			identity, err := s.accountBanTargetIdentity(ctx, s.identity, identityID)
+		Change: func(ctx context.Context, _ Store) (bool, error) {
+			identity, err := s.accountBanTargetIdentity(ctx, identityID)
 			if err != nil || identity.IsBanned() {
 				return false, err
 			}
@@ -113,7 +107,7 @@ func (s *Service) BanAccount(ctx context.Context, command BanAccountCommand) (*m
 
 // UnbanAccount reactivates a banned Identity whose account is not pending
 // deletion.
-func (s *Service) UnbanAccount(ctx context.Context, command UnbanAccountCommand) (*managev1.AccountSummary, error) {
+func (s *Service) UnbanAccount(ctx context.Context, command UnbanAccountCommand) (*Summary, error) {
 	if _, err := authorizationtarget.RequireGlobalAdmin(ctx, s.spicedb); err != nil {
 		return nil, err
 	}
@@ -121,11 +115,11 @@ func (s *Service) UnbanAccount(ctx context.Context, command UnbanAccountCommand)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[bool, Store]{
 		Subjects: []string{identityID},
 		Access:   freshAdmin(),
-		Change: func(ctx context.Context, tx *gorm.DB) (bool, error) {
-			return clearUserBan(ctx, tx, s.identity, identityID)
+		Change: func(ctx context.Context, store Store) (bool, error) {
+			return clearUserBan(ctx, store, s.identity, identityID)
 		},
 		Audit: func(cleared bool) mutation.Audit {
 			if !cleared {
@@ -149,9 +143,9 @@ func (s *Service) UnbanAccount(ctx context.Context, command UnbanAccountCommand)
 // itself. That lifecycle writes the Kratos Identity, which may be the
 // administrator's own, so the check cannot share its transaction.
 func (s *Service) requireFreshAdmin(ctx context.Context) error {
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[struct{}]{
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[struct{}, Store]{
 		Access: freshAdmin(),
-		Change: func(context.Context, *gorm.DB) (struct{}, error) { return struct{}{}, nil },
+		Change: func(context.Context, Store) (struct{}, error) { return struct{}{}, nil },
 		Audit:  func(struct{}) mutation.Audit { return mutation.Unchanged() },
 	})
 	return err
@@ -159,7 +153,7 @@ func (s *Service) requireFreshAdmin(ctx context.Context) error {
 
 // SetAccountCanonicalEmail makes a proven address the canonical email of a
 // Member's account.
-func (s *Service) SetAccountCanonicalEmail(ctx context.Context, command SetAccountCanonicalEmailCommand) (*managev1.AccountSummary, error) {
+func (s *Service) SetAccountCanonicalEmail(ctx context.Context, command SetAccountCanonicalEmailCommand) (*Summary, error) {
 	if _, err := authorizationtarget.RequireGlobalAdmin(ctx, s.spicedb); err != nil {
 		return nil, err
 	}
@@ -177,7 +171,7 @@ func (s *Service) SetAccountCanonicalEmail(ctx context.Context, command SetAccou
 }
 
 // RemoveAccountSsoProvider unlinks one social login of another Member.
-func (s *Service) RemoveAccountSsoProvider(ctx context.Context, command RemoveAccountSsoProviderCommand) (*managev1.AccountSummary, error) {
+func (s *Service) RemoveAccountSsoProvider(ctx context.Context, command RemoveAccountSsoProviderCommand) (*Summary, error) {
 	actor, err := authorizationtarget.RequireGlobalAdmin(ctx, s.spicedb)
 	if err != nil {
 		return nil, err
@@ -202,7 +196,7 @@ func (s *Service) RemoveAccountSsoProvider(ctx context.Context, command RemoveAc
 		return nil, errors.New("load account social credential: identity is missing")
 	}
 	hadCredential := auth.NewCredentialInventory(identity.Credentials).HasOIDCProvider(provider, providerSubject)
-	if err := s.credentials.RemoveOIDCProvider(ctx, identityID, provider, providerSubject); err != nil {
+	if err := s.credentials().RemoveOIDCProvider(ctx, identityID, provider, providerSubject); err != nil {
 		return nil, failurecause.WithAttrs(err, slog.String("identity_id", identityID), slog.String("provider", provider))
 	}
 	if hadCredential {
@@ -233,8 +227,12 @@ func (s *Service) DeleteAccount(ctx context.Context, command DeleteAccountComman
 	if err != nil || accepted {
 		return err
 	}
-	target, err := authorizationtarget.RequireLinkedMember(ctx, s.db, command.MemberID, true)
-	if err != nil {
+	var target Target
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		target, err = store.RequireLinkedMember(ctx, command.MemberID, true)
+		return err
+	}); err != nil {
 		return err
 	}
 	if err := s.scheduleImmediateDeletion(ctx, command.MemberID, target.IdentityID); err != nil {

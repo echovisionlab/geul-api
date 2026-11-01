@@ -2,33 +2,28 @@ package account
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/identityread"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
+// DispatchScheduledUserDeletion enqueues the deletion commands of a due
+// request and removes the request, in one transaction that holds the
+// request's Identity fence. A request that is gone or not due is left alone.
+// The step writes no audit record and answers to no principal, so it runs
+// in its own transaction rather than the mutation pipeline.
 func DispatchScheduledUserDeletion(
 	ctx context.Context,
-	db *gorm.DB,
-	publisher UserDeletionDispatchPublisher,
-	spicedb *auth.SpiceDBClient,
-	members MemberDeletionLifecycle,
+	units Units,
+	spicedb GlobalRoles,
 	requestID string,
 	now time.Time,
 ) error {
-	if db == nil || publisher == nil || spicedb == nil || members == nil {
+	if units == nil || spicedb == nil {
 		return fmt.Errorf("scheduled user deletion dependencies are required")
 	}
 	requestID = strings.TrimSpace(requestID)
@@ -36,52 +31,47 @@ func DispatchScheduledUserDeletion(
 		return fmt.Errorf("scheduled user deletion requires request id")
 	}
 	now = now.UTC()
-	var candidate model.UserDeletionRequest
-	if err := db.WithContext(ctx).
-		Select("member_id", "identity_id").
-		Where("id = ?", requestID).
-		Take(&candidate).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
-		}
+	var (
+		memberID, identityID string
+		found                bool
+	)
+	if err := units.Read(ctx, func(store Store) error {
+		var err error
+		memberID, identityID, found, err = store.DeletionRequestPair(ctx, requestID)
+		return err
+	}); err != nil || !found {
 		return err
 	}
-	if err := validateDeletionIDPair(candidate.MemberID, candidate.IdentityID); err != nil {
+	if err := validateDeletionIDPair(memberID, identityID); err != nil {
 		return err
 	}
 
-	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := identitystate.Lock(tx, candidate.IdentityID); err != nil {
+	return units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error {
+		store := tx.Store()
+		if err := store.LockIdentity(ctx, identityID); err != nil {
 			return err
 		}
-		var request model.UserDeletionRequest
-		if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			Where("id = ? AND member_id = ?::uuid AND identity_id = ?::uuid AND lifecycle_state IN ? AND scheduled_at IS NOT NULL AND scheduled_at <= ?", requestID, candidate.MemberID, candidate.IdentityID, accountLifecycleDeletionPendingStates, now).
-			Take(&request).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil
-			}
+		request, found, err := store.LockDueDeletionRequest(ctx, requestID, memberID, identityID, now)
+		if err != nil || !found {
 			return err
 		}
-		return dispatchLockedUserDeletion(ctx, tx, publisher, spicedb, members, &request)
+		return dispatchLockedUserDeletion(ctx, store, spicedb, &request)
 	})
 }
 
 // dispatchLockedUserDeletion enqueues the deletion commands of a due request
-// whose Identity fence tx holds, and removes the request in the same
-// transaction.
+// whose Identity fence the store's transaction holds, and removes the
+// request in the same transaction.
 func dispatchLockedUserDeletion(
 	ctx context.Context,
-	tx *gorm.DB,
-	publisher UserDeletionDispatchPublisher,
-	spicedb *auth.SpiceDBClient,
-	members MemberDeletionLifecycle,
-	request *model.UserDeletionRequest,
+	store Store,
+	spicedb GlobalRoles,
+	request *DeletionRequest,
 ) error {
-	if err := ValidateLastActiveAdminDeletionWithAuthorization(ctx, tx, request.MemberID, request.IdentityID, spicedb); err != nil {
+	if err := validateLastActiveAdminDeletion(ctx, store, spicedb, request.MemberID, request.IdentityID); err != nil {
 		return err
 	}
-	identityState, err := identityread.LockedState(ctx, tx, request.IdentityID)
+	identityState, err := store.LockedIdentityState(ctx, request.IdentityID)
 	if err != nil {
 		return err
 	}
@@ -91,62 +81,54 @@ func dispatchLockedUserDeletion(
 	if identityState == auth.KratosStateActive {
 		return ErrScheduledDeletionIdentityActive
 	}
-	command, err := buildUserDeleteIdentityCommand(ctx, tx, members, request)
+	command, err := buildUserDeleteIdentityCommand(ctx, store, request)
 	if err != nil {
 		return err
 	}
-	executor, err := contentsignal.TransactionExecutor(tx)
-	if err != nil {
+	if err := store.EnqueueUserDeleteIdentity(ctx, command); err != nil {
 		return err
 	}
-	transactionalPublisher, ok := publisher.(transactionalUserDeletionDispatchPublisher)
-	if !ok {
-		return fmt.Errorf("scheduled user deletion publisher does not support transactional dispatch")
-	}
-	if err := transactionalPublisher.PublishUserDeleteIdentityWithExecutor(ctx, executor, command); err != nil {
+	if err := store.EnqueueUserDeleteAvatar(ctx, buildUserDeleteAvatarCommand(command)); err != nil {
 		return err
 	}
-	if err := transactionalPublisher.PublishUserDeleteAvatarWithExecutor(ctx, executor, buildUserDeleteAvatarCommand(command)); err != nil {
-		return err
-	}
-	return tx.Delete(request).Error
+	return store.DeleteDeletionRequest(ctx, request.ID)
 }
 
-func buildUserDeleteAvatarCommand(command *managev1.UserDeleteIdentityCommand) *managev1.UserDeleteAvatarCommand {
-	avatar := &managev1.UserDeleteAvatarCommand{MemberId: command.GetMemberId()}
-	if assetID := strings.TrimSpace(command.GetAvatarAssetId()); assetID != "" {
-		avatar.AvatarAssetId = &assetID
+func buildUserDeleteAvatarCommand(command DeleteIdentityCommand) DeleteAvatarCommand {
+	avatar := DeleteAvatarCommand{MemberID: command.MemberID}
+	if command.AvatarAssetID != nil {
+		if assetID := strings.TrimSpace(*command.AvatarAssetID); assetID != "" {
+			avatar.AvatarAssetID = &assetID
+		}
 	}
 	return avatar
 }
 
-func buildUserDeleteIdentityCommand(
-	ctx context.Context, db *gorm.DB, members MemberDeletionLifecycle, request *model.UserDeletionRequest,
-) (*managev1.UserDeleteIdentityCommand, error) {
+func buildUserDeleteIdentityCommand(ctx context.Context, store Store, request *DeletionRequest) (DeleteIdentityCommand, error) {
 	if request == nil {
-		return nil, fmt.Errorf("user deletion request is required")
+		return DeleteIdentityCommand{}, fmt.Errorf("user deletion request is required")
 	}
 	if err := validateDeletionIDPair(request.MemberID, request.IdentityID); err != nil {
-		return nil, err
+		return DeleteIdentityCommand{}, err
 	}
 	emailSnapshot := normalizeAccountEmail(ptrStringValue(request.NotificationEmail))
 	nameSnapshot := strings.TrimSpace(ptrStringValue(request.NotificationName))
 	if emailSnapshot == "" || nameSnapshot == "" || request.NotificationEmailVerifiedAt == nil {
-		return nil, fmt.Errorf("verified deletion notification snapshot is required")
+		return DeleteIdentityCommand{}, fmt.Errorf("verified deletion notification snapshot is required")
 	}
-	command := &managev1.UserDeleteIdentityCommand{
-		Mode:              managev1.UserDeleteIdentityMode_TOMBSTONE,
-		MemberId:          request.MemberID,
-		IdentityId:        request.IdentityID,
+	command := DeleteIdentityCommand{
+		Mode:              DeleteIdentityTombstone,
+		MemberID:          request.MemberID,
+		IdentityID:        request.IdentityID,
 		NotificationEmail: &emailSnapshot,
 		NotificationName:  &nameSnapshot,
 	}
-	assetID, err := members.AvatarAssetID(ctx, db, request.MemberID)
+	assetID, err := store.MemberAvatarAssetID(ctx, request.MemberID)
 	if err != nil {
-		return nil, err
+		return DeleteIdentityCommand{}, err
 	}
 	if assetID != "" {
-		command.AvatarAssetId = &assetID
+		command.AvatarAssetID = &assetID
 	}
 	if request.NotificationLocale != nil {
 		if value := localization.NormalizeSupportedLocale(*request.NotificationLocale); value != nil {

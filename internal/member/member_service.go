@@ -20,7 +20,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otelmetric "go.opentelemetry.io/otel/metric"
-	"gorm.io/gorm"
 )
 
 const memberNicknameMaxLength = 100
@@ -32,18 +31,34 @@ type AuditAppender interface {
 	domainaudit.Appender
 }
 
+// Authorizer is the SpiceDB port of the Member use cases: the checks and
+// relationship writes of the pipeline, the global role and resource lookups,
+// and the direct role read of registration.
+type Authorizer interface {
+	mutation.Authorizer
+	LookupGlobalSubjects(ctx context.Context, lookup policyv1.SubjectLookup) ([]auth.AccountIdentitySubject, error)
+	LookupResources(ctx context.Context, lookup policyv1.ResourceLookup, actor policyv1.Actor) ([]string, error)
+	ReadDirectGlobalRole(ctx context.Context, subject auth.AccountIdentitySubject) (policyv1.RoleID, bool, error)
+}
+
+// UserAvatarAssetPromoter is the exact File capability required for Member
+// avatar projection; File storage remains outside this domain.
+type UserAvatarAssetPromoter interface {
+	PromoteUserAvatarAsset(ctx context.Context, fileID string) (*Asset, error)
+}
+
 // Deps are the collaborators of the Member use cases. Every field except the
 // two URLs is required; NewService rejects a missing one.
 type Deps struct {
-	DB       *gorm.DB
-	SpiceDB  *auth.SpiceDBClient
+	Units   mutation.UnitOfWork[Store]
+	SpiceDB Authorizer
+	Fence   identitystate.Fence
+	// Identity is the Kratos admin API.
 	Identity auth.IdentityGetter
 	// AvatarFiles promotes an uploaded avatar source to a public asset.
-	AvatarFiles   UserAvatarAssetPromoter
-	WelcomeEmails EmailCommandPublisher
-	Accounts      AccountSummaryReader
-	AccountEmails AccountEmailProjection
-	Audit         AuditAppender
+	AvatarFiles UserAvatarAssetPromoter
+	Accounts    Accounts
+	Audit       AuditAppender
 	// CDNDomain prefixes avatar URLs; empty keeps them relative.
 	CDNDomain string
 	// SiteOrigin is the origin of the welcome email login link.
@@ -53,9 +68,8 @@ type Deps struct {
 func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
-		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Identity": d.Identity == nil,
-		"AvatarFiles": d.AvatarFiles == nil, "WelcomeEmails": d.WelcomeEmails == nil,
-		"Accounts": d.Accounts == nil, "AccountEmails": d.AccountEmails == nil, "Audit": d.Audit == nil,
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Identity": d.Identity == nil,
+		"AvatarFiles": d.AvatarFiles == nil, "Accounts": d.Accounts == nil, "Audit": d.Audit == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -71,16 +85,13 @@ func (d Deps) validate() error {
 // Service holds the Member use cases. Connect and MCP adapters translate
 // their requests into its commands and queries.
 type Service struct {
-	db                 *gorm.DB
-	spicedb            *auth.SpiceDBClient
+	units              mutation.UnitOfWork[Store]
+	spicedb            Authorizer
 	identity           auth.IdentityGetter
 	avatarFiles        UserAvatarAssetPromoter
-	welcomeEmails      EmailCommandPublisher
-	accounts           AccountSummaryReader
-	accountEmails      AccountEmailProjection
-	mutations          *mutation.Runner
+	accounts           Accounts
+	mutations          *mutation.StoreRunner[Store]
 	personalDataAccess *securityaccess.Recorder
-	cdnDomain          string
 	siteOrigin         string
 	onboardingMetrics  memberOnboardingMetrics
 }
@@ -90,21 +101,18 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
 	return &Service{
-		db:                 deps.DB,
+		units:              deps.Units,
 		spicedb:            deps.SpiceDB,
 		identity:           deps.Identity,
 		avatarFiles:        deps.AvatarFiles,
-		welcomeEmails:      deps.WelcomeEmails,
 		accounts:           deps.Accounts,
-		accountEmails:      deps.AccountEmails,
 		mutations:          mutations,
 		personalDataAccess: securityaccess.New(deps.Audit),
-		cdnDomain:          deps.CDNDomain,
 		siteOrigin:         strings.TrimRight(strings.TrimSpace(deps.SiteOrigin), "/"),
 		onboardingMetrics:  newMemberOnboardingMetrics(),
 	}, nil
@@ -163,4 +171,9 @@ func (s *Service) isGlobalAuthor(ctx context.Context) (bool, error) {
 		return false, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	return allowed, nil
+}
+
+// read runs read in one read-only snapshot of the Member store.
+func (s *Service) read(ctx context.Context, read func(Store) error) error {
+	return s.units.Read(ctx, read)
 }

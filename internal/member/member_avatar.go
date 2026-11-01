@@ -6,20 +6,15 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
 )
 
 // avatarChange is the avatar binding after a mutation; assetID is the asset
 // the audit record names, empty when nothing changed.
 type avatarChange struct {
-	asset   *commonv1.AssetRef
+	asset   *Asset
 	assetID string
 }
 
@@ -34,95 +29,99 @@ func (change avatarChange) audit(memberID string, operation sharedtelemetry.Audi
 
 // setAvatar binds the public asset promoted from fileID as the Member's
 // avatar. An administrator may use any avatar upload; a Member only their own.
-func (s *Service) setAvatar(ctx context.Context, memberID, fileID string, access mutation.Access, admin bool) (*commonv1.MemberSummary, error) {
+func (s *Service) setAvatar(ctx context.Context, memberID, fileID string, access mutation.Access, admin bool) (Summary, error) {
 	if _, err := uuidutil.ParseCanonical(fileID, "file_id"); err != nil {
-		return nil, domainerr.InvalidField("file_id", "must be a canonical UUID")
+		return Summary{}, domainerr.InvalidField("file_id", "must be a canonical UUID")
 	}
-	target, err := authorizationtarget.RequireLinkedMember(ctx, s.db, memberID, !admin)
+	target, err := s.requireLinkedTarget(ctx, memberID, !admin)
 	if err != nil {
-		return nil, err
+		return Summary{}, err
 	}
-	change, err := mutation.Run(ctx, s.mutations, mutation.Spec[avatarChange]{
+	change, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[avatarChange, Store]{
 		Subjects: []string{target.IdentityID},
 		Access:   access,
-		Change: func(ctx context.Context, tx *gorm.DB) (avatarChange, error) {
-			if err := recheckTarget(tx, memberID, target, linkedMember(!admin)); err != nil {
+		Change: func(ctx context.Context, store Store) (avatarChange, error) {
+			if err := recheckTarget(ctx, store, memberID, target, linkedMember(!admin)); err != nil {
 				return avatarChange{}, err
 			}
-			query := tx.Model(&model.FileIngestBinding{}).Where("file_id = ? AND upload_type = ?", fileID, managev1.UploadType_UPLOAD_TYPE_USER_AVATAR.String())
-			if !admin {
-				query = query.Where("entity_id = ?", memberID)
+			owner := memberID
+			if admin {
+				owner = ""
 			}
-			var count int64
-			if err := query.Count(&count).Error; err != nil {
+			owned, err := store.AvatarSourceOwned(ctx, fileID, owner)
+			if err != nil {
 				return avatarChange{}, err
 			}
-			if count != 1 {
+			if !owned {
 				return avatarChange{}, domainerr.Denied("avatar source does not belong to this member")
 			}
 			promoted, err := s.avatarFiles.PromoteUserAvatarAsset(ctx, fileID)
 			if err != nil {
 				return avatarChange{}, err
 			}
-			binding, found, err := mediaasset.LoadPublicAssetBindingForUpdate(ctx, tx, "member", memberID, "avatar")
+			current, found, err := store.LockAvatarBinding(ctx, memberID)
 			if err != nil {
 				return avatarChange{}, err
 			}
-			if found && binding.AssetID == promoted.AssetId {
+			if found && current == promoted.ID {
 				return avatarChange{asset: promoted}, nil
 			}
-			if err := mediaasset.NewLifecycle(tx, s.cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{AssetID: promoted.AssetId, OwnerType: "member", OwnerID: memberID, BindingKey: "avatar", SourceFileID: &fileID}); err != nil {
+			if err := store.BindAvatar(ctx, memberID, promoted.ID, fileID); err != nil {
 				return avatarChange{}, err
 			}
-			return avatarChange{asset: promoted, assetID: promoted.AssetId}, nil
+			return avatarChange{asset: promoted, assetID: promoted.ID}, nil
 		},
 		Audit: func(change avatarChange) mutation.Audit {
 			return change.audit(memberID, sharedtelemetry.AuditCollectionOperationAdded)
 		},
 	})
 	if err != nil {
-		return nil, err
+		return Summary{}, err
 	}
 	return s.avatarMutationSummary(ctx, memberID, change.asset)
 }
 
-func (s *Service) deleteAvatar(ctx context.Context, memberID string, access mutation.Access, admin bool) (*commonv1.MemberSummary, error) {
-	target, err := authorizationtarget.RequireLinkedMember(ctx, s.db, memberID, !admin)
+func (s *Service) deleteAvatar(ctx context.Context, memberID string, access mutation.Access, admin bool) (Summary, error) {
+	target, err := s.requireLinkedTarget(ctx, memberID, !admin)
 	if err != nil {
-		return nil, err
+		return Summary{}, err
 	}
-	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[avatarChange]{
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[avatarChange, Store]{
 		Subjects: []string{target.IdentityID},
 		Access:   access,
-		Change: func(ctx context.Context, tx *gorm.DB) (avatarChange, error) {
-			if err := recheckTarget(tx, memberID, target, linkedMember(!admin)); err != nil {
+		Change: func(ctx context.Context, store Store) (avatarChange, error) {
+			if err := recheckTarget(ctx, store, memberID, target, linkedMember(!admin)); err != nil {
 				return avatarChange{}, err
 			}
-			binding, found, err := mediaasset.LoadPublicAssetBindingForUpdate(ctx, tx, "member", memberID, "avatar")
+			assetID, found, err := store.LockAvatarBinding(ctx, memberID)
 			if err != nil || !found {
 				return avatarChange{}, err
 			}
-			if err := mediaasset.NewLifecycle(tx, s.cdnDomain).ReleaseExactPublicAssetBindings(ctx, "member", memberID, []string{"avatar"}); err != nil {
+			if err := store.ReleaseAvatar(ctx, memberID); err != nil {
 				return avatarChange{}, err
 			}
-			return avatarChange{assetID: binding.AssetID}, nil
+			return avatarChange{assetID: assetID}, nil
 		},
 		Audit: func(change avatarChange) mutation.Audit {
 			return change.audit(memberID, sharedtelemetry.AuditCollectionOperationRemoved)
 		},
 	}); err != nil {
-		return nil, err
+		return Summary{}, err
 	}
 	return s.avatarMutationSummary(ctx, memberID, nil)
 }
 
-func (s *Service) avatarMutationSummary(ctx context.Context, memberID string, asset *commonv1.AssetRef) (*commonv1.MemberSummary, error) {
-	members, err := s.loadMembers(ctx, []string{memberID})
-	if err != nil {
-		return nil, fmt.Errorf("load member after avatar mutation: %w", err)
+func (s *Service) avatarMutationSummary(ctx context.Context, memberID string, asset *Asset) (Summary, error) {
+	var members []Member
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		members, err = store.Members(ctx, []string{memberID})
+		return err
+	}); err != nil {
+		return Summary{}, fmt.Errorf("load member after avatar mutation: %w", err)
 	}
 	if len(members) != 1 {
-		return nil, domainerr.ResourceNotFound("member", memberID)
+		return Summary{}, domainerr.ResourceNotFound("member", memberID)
 	}
 	return memberSummary(members[0], asset), nil
 }
@@ -134,19 +133,19 @@ type SetOwnAvatarCommand struct {
 }
 
 // SetOwnAvatar applies command and returns the Member summary.
-func (s *Service) SetOwnAvatar(ctx context.Context, command SetOwnAvatarCommand) (*commonv1.MemberSummary, error) {
+func (s *Service) SetOwnAvatar(ctx context.Context, command SetOwnAvatarCommand) (Summary, error) {
 	principal, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
-		return nil, err
+		return Summary{}, err
 	}
 	return s.setAvatar(ctx, principal.MemberID.String(), command.FileID, mutation.PrincipalFence(principal), false)
 }
 
 // DeleteOwnAvatar removes the authenticated Member's avatar.
-func (s *Service) DeleteOwnAvatar(ctx context.Context) (*commonv1.MemberSummary, error) {
+func (s *Service) DeleteOwnAvatar(ctx context.Context) (Summary, error) {
 	principal, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
-		return nil, err
+		return Summary{}, err
 	}
 	return s.deleteAvatar(ctx, principal.MemberID.String(), mutation.PrincipalFence(principal), false)
 }

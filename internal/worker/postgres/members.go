@@ -7,9 +7,10 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/account"
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/member"
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/worker"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -18,9 +19,9 @@ import (
 // MemberDeletionPublisher queues the deletion commands and their
 // notification emails (*mq.Publisher).
 type MemberDeletionPublisher interface {
-	account.UserDeletionDispatchPublisher
-	account.UserDeletionIdentityDispatchPublisher
-	account.UserDeletionFanoutPublisher
+	accountpostgres.UserDeletionDispatchPublisher
+	accountpostgres.UserDeletionIdentityDispatchPublisher
+	accountpostgres.EmailCommandPublisher
 }
 
 // memberDeletions calls Account's deletion runtime, which opens its own
@@ -30,16 +31,16 @@ type memberDeletions struct {
 	publisher MemberDeletionPublisher
 	identity  auth.IdentityDeleter
 	spiceDB   *auth.SpiceDBClient
-	lifecycle account.MemberDeletionLifecycle
+	lifecycle accountpostgres.MemberDeletion
 	audit     domainaudit.Appender
 }
 
 func (m memberDeletions) ScrubExpiredEmailProjections(ctx context.Context, now time.Time) (int64, error) {
-	return member.ScrubExpiredMemberEmailProjections(ctx, m.db, now)
+	return memberpostgres.ScrubExpiredMemberEmailProjections(ctx, m.db, now)
 }
 
 func (m memberDeletions) EnqueueExpiredUnonboarded(ctx context.Context, now time.Time) (int, error) {
-	return account.EnqueueExpiredUnonboardedMembers(
+	return accountpostgres.EnqueueExpiredUnonboardedMembers(
 		ctx, m.db, m.publisher, m.lifecycle, now, account.UnonboardedMemberCleanupBatchSize,
 	)
 }
@@ -60,17 +61,17 @@ func (m memberDeletions) DueScheduledDeletions(ctx context.Context, now time.Tim
 }
 
 func (m memberDeletions) DispatchScheduledDeletion(ctx context.Context, requestID string, now time.Time) error {
-	return account.DispatchScheduledUserDeletion(ctx, m.db, m.publisher, m.spiceDB, m.lifecycle, requestID, now)
+	return accountpostgres.DispatchScheduledUserDeletion(ctx, m.db, m.publisher, m.spiceDB, m.lifecycle, requestID, now)
 }
 
 func (m memberDeletions) DeleteIdentity(ctx context.Context, command *managev1.UserDeleteIdentityCommand) error {
-	return account.ProcessUserDeleteIdentityAudited(
+	return accountpostgres.ProcessUserDeleteIdentityAudited(
 		ctx, m.db, m.identity, m.spiceDB, m.lifecycle, m.publisher, m.audit, command,
 	)
 }
 
 func (m memberDeletions) DeleteAvatar(ctx context.Context, memberID, avatarAssetID string) error {
-	return account.ProcessUserDeleteAvatar(ctx, m.db, m.lifecycle, memberID, avatarAssetID)
+	return accountpostgres.ProcessUserDeleteAvatar(ctx, m.db, m.lifecycle, memberID, avatarAssetID)
 }
 
 // timedBans clears a timed ban through Account, which rechecks it under the
@@ -82,5 +83,5 @@ type timedBans struct {
 }
 
 func (b timedBans) ClearExpiredTimedBan(ctx context.Context, identityID string, now time.Time) (bool, error) {
-	return account.ClearExpiredTimedBan(ctx, b.db, b.identities, identityID, now, b.audit)
+	return accountpostgres.ClearExpiredTimedBan(ctx, b.db, b.identities, identityID, now, b.audit)
 }

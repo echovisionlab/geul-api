@@ -9,7 +9,6 @@ import (
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,7 +47,7 @@ func TestMemberTagListForwardsSupportedSearchAndNativePagination(t *testing.T) {
 		t.Run(test.arguments, func(t *testing.T) {
 			reader := &recordingMemberTagReader{response: memberdomain.TagPage{
 				Tags:       []memberdomain.Tag{{ID: memberAdminTestID, Name: "Patrons", MemberCount: 3}},
-				Pagination: &commonv1.PaginationResponse{Total: 7, Limit: test.limit, Offset: test.offset, HasMore: test.hasMore},
+				Pagination: memberdomain.Pagination{Total: 7, Limit: test.limit, Offset: test.offset, HasMore: test.hasMore},
 			}}
 			tools, err := NewMemberTagTools(reader)
 			require.NoError(t, err)

@@ -7,7 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/account"
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
 	geoipadapter "github.com/echovisionlab/geul-api/internal/adapters/geoip"
@@ -41,7 +41,7 @@ type Config struct {
 	SpiceDB         *auth.SpiceDBClient
 	Audit           *telemetry.DurableWriter
 	OGPlanner       *ogpostgres.Planner
-	MemberDeletion  account.MemberDeletionLifecycle
+	MemberDeletion  accountpostgres.MemberDeletion
 	FileMedia       worker.FileMedia
 	MediaCleanup    worker.DanglingFileCleanup
 	PublicAssets    worker.PublicAssetCleanup

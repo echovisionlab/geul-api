@@ -15,15 +15,8 @@
 7 internal/legal generated contracts
 2 internal/legal/public generated contracts
 1 internal/maptheme generated contracts
-10 internal/member generated contracts
-17 internal/member gorm
-15 internal/member model
-8 internal/member spicedb client
-1 internal/member sql driver
-3 internal/member/public generated contracts
-4 internal/member/public gorm
-3 internal/member/public model
-2 internal/member/public spicedb client
+3 internal/member generated contracts
+1 internal/member gorm
 1 internal/menu generated contracts
 11 internal/page generated contracts
 2 internal/page/public generated contracts

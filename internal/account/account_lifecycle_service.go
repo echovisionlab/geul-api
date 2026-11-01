@@ -10,7 +10,6 @@ const (
 	accountLifecycleStateRecovered                   = "recovered"
 	accountLifecycleReconcileInterval                = 2 * time.Second
 	accountLifecycleReconcileBatchSize               = 50
-	accountLifecycleLeaderLockKey                    = int64(0x4745554c41434354) // GEULACCT
 )
 
 var accountLifecycleDeletionPendingStates = []string{

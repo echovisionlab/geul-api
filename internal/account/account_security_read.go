@@ -11,17 +11,37 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
 )
 
+// Security is a principal's security settings.
+type Security struct {
+	Providers          []Provider
+	EmailCodeAvailable bool
+	CanonicalEmail     string
+	PasskeyCount       int32
+	EmailCandidates    []AccountEmailProjection
+	Sessions           []SecuritySession
+}
+
+// SecuritySession is one live session of the principal.
+type SecuritySession struct {
+	ID              string
+	Current         bool
+	Active          bool
+	AuthenticatedAt time.Time
+	ExpiresAt       time.Time
+}
+
 func (s *Service) deliveryPrimaryEmailForIdentity(ctx context.Context, memberID, identityID string) (string, error) {
-	email, err := s.memberEmails.PrimaryEmail(ctx, s.db, memberID, identityID)
+	var email string
+	err := s.read(ctx, func(store Store) error {
+		var err error
+		email, err = store.MemberPrimaryEmail(ctx, memberID, identityID)
+		return err
+	})
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, ErrMemberLinkNotFound) {
 			return "", domainerr.ResourceNotFound("member", memberID)
 		}
 		return "", err
@@ -34,7 +54,7 @@ func (s *Service) securityForIdentity(
 	memberID,
 	identityID,
 	currentSessionID string,
-) (*managev1.AccountSecurity, error) {
+) (*Security, error) {
 	if _, err := uuidutil.ParseCanonical(currentSessionID, "session_id"); err != nil {
 		return nil, domainerr.InvalidSession()
 	}
@@ -78,45 +98,29 @@ func (s *Service) securityForIdentity(
 	}
 	providerCandidates := ResolveAccountEmailProviderCandidates(ctx, identity.Credentials)
 	rows := projectedAccountEmailRows(identity, providerCandidates)
-	security := &managev1.AccountSecurity{
-		Providers:          providerProto(identity),
+	security := &Security{
+		Providers:          Providers(identity),
 		EmailCodeAvailable: auth.CodeCredentialHasAddress(inventoryCredential(identity.Credentials, "code"), canonicalEmail),
 		CanonicalEmail:     canonicalEmail,
+		EmailCandidates:    rows,
 	}
 	if passkeyCredential, ok := passkeyIdentity.Credentials["passkey"]; ok {
 		security.PasskeyCount = int32(auth.UsablePasskeyCredentialCount(passkeyCredential))
 	}
-	for _, row := range rows {
-		candidate := &managev1.AccountEmailCandidate{Email: row.DisplayEmail, NormalizedEmail: row.NormalizedEmail, Current: row.IsCurrentEmail, IdentityVerified: row.IdentityVerified, EffectiveTrusted: row.EffectiveTrusted, UsableForDelivery: row.UsableForDelivery}
-		for _, source := range row.Sources {
-			candidate.Sources = append(candidate.Sources, &managev1.AccountEmailSource{SourceType: sourceTypeProto(string(source.SourceType)), Provider: source.Provider, ProviderSubject: source.ProviderSubject})
-		}
-		security.EmailCandidates = append(security.EmailCandidates, candidate)
-	}
-	type sessionRow struct {
-		ID              string
-		Active          bool
-		AuthenticatedAt time.Time
-		ExpiresAt       time.Time
-	}
-	var sessions []sessionRow
-	if err := s.db.WithContext(ctx).Raw(`
-		SELECT CAST(id AS text) AS id, active, authenticated_at, expires_at
-		FROM `+identityread.LiveSessionsSQL+`
-		ORDER BY authenticated_at DESC, id DESC
-	`, identityID).Scan(&sessions).Error; err != nil {
+	var sessions []Session
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		sessions, err = store.LiveSessions(ctx, identityID)
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	currentFound := false
 	for _, row := range sessions {
 		current := row.ID == currentSessionID
 		currentFound = currentFound || current
-		security.Sessions = append(security.Sessions, &managev1.AccountSession{
-			Id:              row.ID,
-			Current:         current,
-			Active:          row.Active,
-			AuthenticatedAt: timestamppb.New(row.AuthenticatedAt),
-			ExpiresAt:       timestamppb.New(row.ExpiresAt),
+		security.Sessions = append(security.Sessions, SecuritySession{
+			ID: row.ID, Current: current, Active: row.Active, AuthenticatedAt: row.AuthenticatedAt, ExpiresAt: row.ExpiresAt,
 		})
 	}
 	if !currentFound {
@@ -139,7 +143,7 @@ func (s *Service) requireFreshSecuritySession(ctx context.Context, identityID, s
 
 // GetMySecurity reads the principal's security settings: providers, email
 // candidates, passkeys and active sessions.
-func (s *Service) GetMySecurity(ctx context.Context) (*managev1.AccountSecurity, error) {
+func (s *Service) GetMySecurity(ctx context.Context) (*Security, error) {
 	p, err := authorizationtarget.RequireAuthenticatedPrincipal(ctx)
 	if err != nil {
 		return nil, err
@@ -163,7 +167,7 @@ func (s *Service) setIdentityCanonicalEmail(ctx context.Context, identityID, ema
 		return "", "", false, domainerr.ResourceNotFound("identity", identityID)
 	}
 	previous := emailutil.NormalizeAddressForDelivery(before.CurrentEmail())
-	err = NewAccountEmailChangeLifecycle(s.db, s.identity, s.publisher, s.memberEmails).
+	err = NewAccountEmailChangeLifecycle(s.units, s.identity, s.emails).
 		ApplyProvenCandidate(ctx, identityID, normalized)
 	if err := accountCanonicalEmailMutationError(err, identityID); err != nil {
 		return "", "", false, err
@@ -193,7 +197,9 @@ func accountCanonicalEmailMutationError(err error, identityID string) error {
 		return domainerr.Precondition(err.Error())
 	case errors.Is(err, ErrAccountEmailChangeConflict):
 		return domainerr.Precondition("email is already used by another account").WithCause(err)
-	case errors.Is(err, gorm.ErrRecordNotFound):
+	// Each "record not found" the lifecycle answers: the Identity, its Member
+	// link, or a request a concurrent change removed.
+	case errors.Is(err, ErrIdentityNotFound), errors.Is(err, ErrMemberLinkNotFound), errors.Is(err, ErrEmailChangeRequestNotFound):
 		return domainerr.ResourceNotFound("identity", identityID).WithCause(err)
 	default:
 		return err

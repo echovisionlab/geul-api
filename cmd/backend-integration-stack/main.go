@@ -14,7 +14,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/testcontainers/testcontainers-go"
+
 	"github.com/echovisionlab/geul-api/internal/account"
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	authenticationadapter "github.com/echovisionlab/geul-api/internal/adapters/authentication"
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
@@ -26,12 +29,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/member"
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
-	"github.com/testcontainers/testcontainers-go"
 )
 
 const integrationInternalServiceHeaderName = "X-Internal-Service"
@@ -72,18 +75,33 @@ func main() {
 	}
 	telemetryWriter := apitelemetry.NewDurableWriter(stack.Postgres.DB)
 	directRoles := accountadapter.AccountDirectRoleTransition{}
+	accountUnits, err := accountpostgres.NewUnits(stack.Postgres.DB, accountpostgres.Ports{
+		Members: accountadapter.MemberDeletion{}, MemberEmails: accountadapter.MemberEmailProjection{},
+		Newsletter: accountadapter.NewsletterSubscription{}, Publisher: publisher,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "start backend integration account units: %v\n", failurecause.Message(err))
+		os.Exit(1)
+	}
 	accountEmailChangeLifecycle := account.NewAccountEmailChangeLifecycle(
-		stack.Postgres.DB,
+		accountUnits,
 		stack.KratosClient,
-		publisher,
-		accountadapter.MemberEmailProjection{},
+		accountpostgres.EmailCommands{Publisher: publisher},
 	)
 	go accountEmailChangeLifecycle.Start(ctx)
+	accountEmailProjection := memberadapter.AccountEmailProjection{Units: accountUnits, Identity: stack.KratosClient}
+	memberUnits, err := memberpostgres.NewUnits(stack.Postgres.DB, memberpostgres.Ports{
+		WelcomeEmails: publisher, WelcomeRecipients: accountEmailProjection,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "start backend integration member units: %v\n", failurecause.Message(err))
+		os.Exit(1)
+	}
 	registrationMembers := member.NewMemberProvisioner(
-		stack.Postgres.DB,
+		memberUnits,
 		stack.KratosClient,
 		stack.SpiceDBClient,
-		memberadapter.AccountEmailProjection{},
+		accountEmailProjection,
 		directRoles,
 	)
 	loginRoles, err := authentication.NewService(authentication.Deps{
@@ -107,11 +125,10 @@ func main() {
 		accountEmailChangeLifecycle,
 	)
 	credentialHooks := account.NewAccountCredentialHookLifecycle(
-		stack.Postgres.DB,
+		accountUnits,
 		stack.KratosClient,
 		telemetryWriter,
-		publisher,
-		accountadapter.MemberEmailProjection{},
+		accountpostgres.EmailCommands{Publisher: publisher},
 	)
 	authenticationHooks := authenticationadapter.NewHooksHandler(loginHooks, registrationHooks)
 	accountHooks := accountadapter.NewSettingsHooksHandler(accountSettingsHooks, credentialHooks)
