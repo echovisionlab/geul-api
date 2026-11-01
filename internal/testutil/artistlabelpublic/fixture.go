@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -597,7 +599,7 @@ func stringPointer(value string) *string { return &value }
 func seedArtistLabelFixtureFile(t *testing.T, db *gorm.DB, fileName, mimeType, assetKind string) string {
 	t.Helper()
 	fileID := uuid.NewString()
-	extension := model.GetExtensionFromMime(mimeType)
+	extension := mediamime.GetExtensionFromMime(mimeType)
 	fileName = strings.TrimSuffix(filepath.Base(fileName), filepath.Ext(fileName))
 	now := time.Now().UTC()
 	require.NoError(t, db.Create(&model.File{

@@ -9,12 +9,13 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
@@ -359,7 +360,7 @@ func (s store) ShareLink(ctx context.Context, token, workID string, now time.Tim
 	if err != nil {
 		return workpublic.ShareLink{}, false, err
 	}
-	return workpublic.ShareLink{PasswordHash: link.PasswordHash, Witness: mediaasset.ContentDownloadShareLinkWitnessFromModel(&link)}, true, nil
+	return workpublic.ShareLink{PasswordHash: link.PasswordHash, Witness: mediaassetpostgres.ContentDownloadShareLinkWitnessFromModel(&link)}, true, nil
 }
 
 func (s store) CreditArtist(ctx context.Context, artistID string) (workpublic.CreditArtistRow, bool, error) {

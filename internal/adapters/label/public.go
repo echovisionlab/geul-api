@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -165,12 +167,12 @@ func (runtime *PublicRuntime) ReadyForSourceFiles(ctx context.Context, tx *gorm.
 	if err := query.Order("source_file_id ASC, created_at DESC, id DESC").Find(&assets).Error; err != nil {
 		return nil, errs.Internal(err)
 	}
-	lifecycle := mediaasset.NewLifecycle(tx, runtime.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), runtime.cdnDomain)
 	for _, asset := range assets {
 		if asset.SourceFileID == nil || refs[*asset.SourceFileID] != nil || asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
 		if err != nil {
 			return nil, err
 		}
@@ -189,12 +191,12 @@ func (runtime *PublicRuntime) ReadyForAssetIDs(ctx context.Context, tx *gorm.DB,
 	if err := tx.WithContext(ctx).Where("id IN ? AND status = ?", ids, model.PublicAssetStatusReady).Find(&assets).Error; err != nil {
 		return nil, errs.Internal(err)
 	}
-	lifecycle := mediaasset.NewLifecycle(tx, runtime.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), runtime.cdnDomain)
 	for _, asset := range assets {
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
 		if err != nil {
 			return nil, err
 		}

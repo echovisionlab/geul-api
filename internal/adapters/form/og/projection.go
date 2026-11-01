@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -31,7 +33,7 @@ func (p *Projection) ReleasePending(ctx context.Context, tx *gorm.DB, target og.
 		Update("og_asset_id", nil).Error; err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).ReleaseExactPublicAssetBindings(
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).ReleaseExactPublicAssetBindings(
 		ctx, "form", target.EntityID, []string{formOgBindingKey(locale)},
 	)
 }
@@ -60,7 +62,7 @@ func (p *Projection) Complete(
 	if result.RowsAffected == 0 {
 		return og.ErrTranslationTargetMissing
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
 		AssetID: assetID, OwnerType: "form", OwnerID: target.EntityID, BindingKey: formOgBindingKey(locale),
 	})
 }

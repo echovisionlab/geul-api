@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
@@ -63,7 +65,7 @@ func (s *Service) withClientMediaFileLock(ctx context.Context, fileID string, au
 		if err := authorize(ctx, tx); err != nil {
 			return err
 		}
-		if err := mediaasset.LockAttachableFilesForUpdate(ctx, tx, []string{fileID}); err != nil {
+		if err := mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, []string{fileID}); err != nil {
 			return err
 		}
 		return apply(tx)
@@ -142,11 +144,11 @@ func (s *Service) copyClientArtifact(ctx context.Context, fileID, bundleID, gene
 }
 
 func (s *Service) completeClientMedia(ctx context.Context, tx *gorm.DB, session model.UploadSession, plan clientMediaPlan, result *commonv1.MediaGenerationWriteResult) error {
-	lifecycle := mediaasset.NewLifecycle(tx, s.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), s.cdnDomain)
 	if _, _, err := ensureStableFileIngestMediaGeneration(ctx, tx, session.FileID); err != nil {
 		return err
 	}
-	if _, err := lifecycle.CompleteMediaGeneration(ctx, result); err != nil {
+	if _, err := lifecycle.CompleteMediaGeneration(ctx, mediaasset.WrittenGenerationFromProto(result)); err != nil {
 		return err
 	}
 	if err := storeClientMediaDerivative(ctx, tx, session.FileID, clientHLS, nil, &result.GenerationId); err != nil {
@@ -164,7 +166,7 @@ func (s *Service) completeClientMedia(ctx context.Context, tx *gorm.DB, session 
 		if err != nil {
 			return err
 		}
-		if _, err := lifecycle.CompletePublicAsset(ctx, &commonv1.AssetWriteResult{AssetId: target.GetAssetId(), FileSize: artifact.Size, Sha256: digest}); err != nil {
+		if _, err := lifecycle.CompletePublicAsset(ctx, mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{AssetId: target.GetAssetId(), FileSize: artifact.Size, Sha256: digest})); err != nil {
 			return err
 		}
 		assetID := target.GetAssetId()

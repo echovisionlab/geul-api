@@ -4,8 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -51,5 +52,5 @@ func mediaExtension(mimeType *string) string {
 	if mimeType == nil || *mimeType == "" {
 		return "bin"
 	}
-	return model.GetExtensionFromMime(*mimeType)
+	return mediamime.GetExtensionFromMime(*mimeType)
 }

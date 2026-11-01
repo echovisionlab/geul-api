@@ -13,6 +13,10 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -171,7 +175,7 @@ func TestSyncSiteSettingFaviconBindingsReplacesAndClearsWholeBundle(t *testing.T
 		return settingAssets.ReplaceFavicon(t.Context(), tx, nil)
 	}))
 	var count int64
-	require.NoError(t, db.Model(&model.PublicAssetBinding{}).Scopes(func(q *gorm.DB) *gorm.DB { return mediaasset.WhereBindingKeyFamily(q, "favicon") }).Count(&count).Error)
+	require.NoError(t, db.Model(&model.PublicAssetBinding{}).Scopes(func(q *gorm.DB) *gorm.DB { return mediaassetpostgres.WhereBindingKeyFamily(q, "favicon") }).Count(&count).Error)
 	require.Zero(t, count)
 }
 
@@ -221,8 +225,8 @@ func TestRequestFaviconAssetsDeletionProtectsLegacyPNGAndICOSourceAssets(t *test
 		t.Run(mimeType, func(t *testing.T) {
 			db := newFaviconBundleUnitDB(t)
 			fileID := seedFaviconSource(t, db, mimeType)
-			assetID := seedReadyFaviconAsset(t, db, &fileID, model.GetExtensionFromMime(mimeType), mimeType)
-			lifecycle := mediaasset.NewLifecycle(db, "https://cdn.example.com")
+			assetID := seedReadyFaviconAsset(t, db, &fileID, mediamime.GetExtensionFromMime(mimeType), mimeType)
+			lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "https://cdn.example.com")
 			require.NoError(t, lifecycle.BindPublicAsset(t.Context(), mediaasset.Binding{
 				AssetID: assetID, OwnerType: "site_settings", OwnerID: "1", BindingKey: "favicon", SourceFileID: &fileID,
 			}))
@@ -522,7 +526,7 @@ func newFaviconBundleUnitDB(t *testing.T) *gorm.DB {
 func seedFaviconSource(t *testing.T, db *gorm.DB, mimeType string) string {
 	t.Helper()
 	fileID := uuid.NewString()
-	extension := model.GetExtensionFromMime(mimeType)
+	extension := mediamime.GetExtensionFromMime(mimeType)
 	digest := sha256.Sum256([]byte(fileID))
 	require.NoError(t, db.Create(&model.File{
 		ID:        fileID,
@@ -539,7 +543,7 @@ func seedFaviconSource(t *testing.T, db *gorm.DB, mimeType string) string {
 func seedFaviconSourceBytes(t *testing.T, db *gorm.DB, mimeType string, data []byte) string {
 	t.Helper()
 	fileID := uuid.NewString()
-	extension := model.GetExtensionFromMime(mimeType)
+	extension := mediamime.GetExtensionFromMime(mimeType)
 	digest := sha256.Sum256(data)
 	require.NoError(t, db.Create(&model.File{
 		ID:        fileID,
@@ -681,7 +685,7 @@ func assertFaviconBindings(t *testing.T, db *gorm.DB, sourceFileID string, want 
 	t.Helper()
 	var bindings []model.PublicAssetBinding
 	require.NoError(t, db.Where("owner_type = ? AND owner_id = ?", "site_settings", "1").
-		Scopes(func(q *gorm.DB) *gorm.DB { return mediaasset.WhereBindingKeyFamily(q, "favicon") }).
+		Scopes(func(q *gorm.DB) *gorm.DB { return mediaassetpostgres.WhereBindingKeyFamily(q, "favicon") }).
 		Order("binding_key ASC").
 		Find(&bindings).Error)
 	require.Len(t, bindings, want)

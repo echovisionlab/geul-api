@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	seriesadapter "github.com/echovisionlab/geul-api/internal/adapters/series"
@@ -214,7 +216,7 @@ func (r *PublicReader) loadReadySeriesAssetRefs(
 	if err := query.Order("source_file_id ASC, created_at DESC, id DESC").Find(&assets).Error; err != nil {
 		return nil, nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(r.db, r.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(r.db), r.cdnDomain)
 	for _, asset := range assets {
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
@@ -227,7 +229,7 @@ func (r *PublicReader) loadReadySeriesAssetRefs(
 		if !exactOG && !featured {
 			continue
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
 		if err != nil {
 			return nil, nil, err
 		}

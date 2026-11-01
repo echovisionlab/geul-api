@@ -18,7 +18,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -100,7 +101,7 @@ func (p *imageMagickProcessor) Process(
 	}
 	defer func() { _ = os.RemoveAll(tempDir) }()
 
-	sourceExtension := model.GetExtensionFromMime(sourceMime)
+	sourceExtension := mediamime.GetExtensionFromMime(sourceMime)
 	if sourceExtension == "bin" {
 		return nil, fmt.Errorf("unsupported favicon source MIME %q", sourceMime)
 	}

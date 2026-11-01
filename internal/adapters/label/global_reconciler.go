@@ -3,6 +3,8 @@ package label
 import (
 	"context"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -36,7 +38,7 @@ func (*GlobalReconciler) ReconcileBeforeGlobalGeneration(
 		); err != nil {
 			return err
 		}
-		if err := mediaasset.NewLifecycle(tx, cdnDomain).
+		if err := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).
 			ReleasePublicAssetBindings(ctx, "label", labelID, "og"); err != nil {
 			return err
 		}

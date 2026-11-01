@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/testutil"
 
 	"github.com/echovisionlab/geul-api/internal/transcode/application"
@@ -37,12 +39,12 @@ func TestHandleTranscodeCompleteRechecksJobAfterWaitingForFileLock(t *testing.T)
 	fileID := uuid.NewString()
 	postID := uuid.NewString()
 	seedWorkerTranscodeFile(t, db, fileID, "mp4", "video/mp4")
-	lifecycle := mediaasset.NewLifecycle(db, "")
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "")
 	_, hlsTarget := seedWorkerAllocatedMediaGeneration(t, db, fileID)
-	_, thumbnailTarget, err := lifecycle.AllocatePublicAsset(ctx, mediaasset.Allocation{
+	_, thumbnailTarget, err := mediaasset.AllocationResultProto(lifecycle.AllocatePublicAsset(ctx, mediaasset.Allocation{
 		SourceFileID: &fileID, Kind: "thumbnail", Extension: "webp", MimeType: "image/webp",
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
+		Disposition: mediaasset.DispositionInline,
+	}))
 	require.NoError(t, err)
 	source, err := filemedia.CanonicalMediaObjectTargetForFile(model.File{
 		ID: fileID, Extension: "mp4", MimeType: "video/mp4",
@@ -145,12 +147,12 @@ func TestHandleTrackTranscodeCompleteDoesNotMutateOwnerAfterJobCancellation(t *t
 			audio_original_file_id, processing_status
 		) VALUES (?, ?, 1, 'Race track', 11, ?, 'before')
 	`, trackID, releaseID, fileID).Error)
-	lifecycle := mediaasset.NewLifecycle(db, "")
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "")
 	_, hlsTarget := seedWorkerAllocatedMediaGeneration(t, db, fileID)
-	_, spectrogramTarget, err := lifecycle.AllocatePublicAsset(ctx, mediaasset.Allocation{
+	_, spectrogramTarget, err := mediaasset.AllocationResultProto(lifecycle.AllocatePublicAsset(ctx, mediaasset.Allocation{
 		SourceFileID: &fileID, Kind: "spectrogram", Extension: "png", MimeType: "image/png",
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
+		Disposition: mediaasset.DispositionInline,
+	}))
 	require.NoError(t, err)
 	source, err := filemedia.CanonicalMediaObjectTargetForFile(model.File{
 		ID: fileID, Extension: "ogg", MimeType: "audio/ogg",

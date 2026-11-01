@@ -1,4 +1,4 @@
-package model
+package mediamime
 
 import "strings"
 

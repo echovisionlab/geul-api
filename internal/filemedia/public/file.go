@@ -6,8 +6,9 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"gorm.io/gorm"
 )
@@ -16,7 +17,7 @@ import (
 type Deps struct {
 	DB          *gorm.DB
 	SpiceDB     *auth.SpiceDBClient
-	Segments    mediaasset.SegmentConfigLoader
+	Segments    mediaassetpostgres.SegmentConfigLoader
 	CDNDomain   string
 	MediaDomain string
 	MediaSecret string
@@ -34,7 +35,7 @@ type Service struct {
 	mediaDomain string
 	mediaSecret string
 	downloadTTL time.Duration
-	segments    mediaasset.SegmentConfigLoader
+	segments    mediaassetpostgres.SegmentConfigLoader
 }
 
 // NewService validates deps and returns the public File use cases.

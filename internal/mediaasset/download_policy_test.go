@@ -1,544 +1,121 @@
 package mediaasset_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
-	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
-	. "github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/mediaasset/mediaassettest"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
-func TestEvaluateFileDownloadAccessAudienceMatrixUnit(t *testing.T) {
-	t.Parallel()
-	db := newFileDownloadPolicyDB(t)
+func downloadUser(id string) *auth.UserInfo {
+	return &auth.UserInfo{IdentityID: auth.IdentityID(id), MemberID: auth.MemberID(id), SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true}
+}
+func downloadSource(id string, audience mediaasset.FileDownloadAudience) mediaasset.FileDownloadSource {
+	return mediaasset.FileDownloadSource{PolicyKey: id, PolicyKind: mediaasset.FileDownloadPolicyTrack, TrackID: id, FileID: id, Audience: audience}
+}
+func TestDownloadAudienceMatrixHasNoImplicitAdministratorBypass(t *testing.T) {
+	store := mediaassettest.NewDownload()
 	now := time.Now().UTC()
-	fileID := uuid.NewString()
-	userID := uuid.NewString()
-	adminID := uuid.NewString()
-	tagID := uuid.NewString()
-	segmentID := uuid.NewString()
-	seedDownloadIdentity(t, db, userID, policyv1.Role.User().ID(), now.Add(-time.Hour))
-	seedDownloadIdentity(t, db, adminID, policyv1.Role.Admin().ID(), now.Add(-time.Hour))
-	require.NoError(t, db.Exec(
-		`INSERT INTO user_tag (id, name, created_at) VALUES (?, 'Members', ?)`,
-		tagID,
-		now,
-	).Error)
-	require.NoError(t, db.Exec(
-		`INSERT INTO user_tag_mapping (member_id, tag_id, created_at) VALUES (?, ?, ?)`,
-		userID,
-		tagID,
-		now,
-	).Error)
-	seedDownloadAudienceSegment(
-		t,
-		db,
-		segmentID,
-		managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS,
-		model.AudienceSegmentConfig{MemberTagIDs: []string{tagID}},
-	)
-	require.NoError(t, db.Exec(
-		`INSERT INTO track_download_audience_segment (
-			track_id, audience_segment_id, created_at
-		) VALUES (?, ?, ?)`,
-		fileID,
-		segmentID,
-		now,
-	).Error)
-
-	tests := []struct {
+	user, administrator, source, tag, segment := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	store.Members[user] = mediaasset.DownloadMemberFacts{MemberID: user, IdentityID: user, Onboarded: true, CreatedAt: now}
+	store.Members[administrator] = mediaasset.DownloadMemberFacts{MemberID: administrator, IdentityID: administrator, Onboarded: true, CreatedAt: now}
+	store.Tags[tag] = map[string]bool{user: true}
+	store.SegmentRows[segment] = mediaasset.DownloadSegment{ID: segment, SegmentType: mediaasset.DownloadMemberTags, Config: mediaasset.DownloadSegmentConfig{MemberTagIDs: []string{tag}}}
+	store.Links = []mediaasset.DownloadAssociation{{PolicyKey: source, AudienceSegmentID: segment}}
+	for _, tc := range []struct {
 		name     string
-		audience FileDownloadAudience
+		audience mediaasset.FileDownloadAudience
 		user     *auth.UserInfo
 		want     bool
 	}{
-		{name: "disabled anonymous", audience: FileDownloadAudienceDisabled},
-		{
-			name:     "public anonymous",
-			audience: FileDownloadAudiencePublic,
-			want:     true,
-		},
-		{
-			name:     "authenticated active user",
-			audience: FileDownloadAudienceAuthenticated,
-			user:     downloadUserInfo(userID),
-			want:     true,
-		},
-		{
-			name:     "restricted anonymous",
-			audience: FileDownloadAudienceRestricted,
-		},
-		{
-			name:     "restricted matching member",
-			audience: FileDownloadAudienceRestricted,
-			user:     downloadUserInfo(userID),
-			want:     true,
-		},
-		{
-			name:     "restricted admin has no implicit bypass",
-			audience: FileDownloadAudienceRestricted,
-			user:     downloadUserInfo(adminID),
-		},
-	}
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			got, err := evaluateSingleFileDownloadAccessAt(
-				context.Background(),
-				db,
-				FileDownloadSource{FileID: fileID, Audience: testCase.audience},
-				testCase.user,
-				now,
-			)
+		{"disabled anonymous", mediaasset.FileDownloadAudienceDisabled, nil, false}, {"public anonymous", mediaasset.FileDownloadAudiencePublic, nil, true}, {"authenticated active user", mediaasset.FileDownloadAudienceAuthenticated, downloadUser(user), true}, {"restricted anonymous", mediaasset.FileDownloadAudienceRestricted, nil, false}, {"restricted matching member", mediaasset.FileDownloadAudienceRestricted, downloadUser(user), true}, {"restricted administrator", mediaasset.FileDownloadAudienceRestricted, downloadUser(administrator), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			allowed, err := mediaasset.EvaluateFileDownloadAccess(t.Context(), store, nil, downloadSource(source, tc.audience), tc.user)
 			require.NoError(t, err)
-			require.Equal(t, testCase.want, got)
+			require.Equal(t, tc.want, allowed)
 		})
 	}
-
-	require.NoError(t, db.Table("audience_segment").
-		Where("id = ?", segmentID).
-		Update("archived_at", now).Error)
-	allowed, err := evaluateSingleFileDownloadAccessAt(
-		context.Background(),
-		db,
-		FileDownloadSource{
-			FileID:   fileID,
-			Audience: FileDownloadAudienceRestricted,
-		},
-		downloadUserInfo(userID),
-		now,
-	)
+	current := store.SegmentRows[segment]
+	current.ArchivedAt = &now
+	store.SegmentRows[segment] = current
+	restricted := downloadSource(source, mediaasset.FileDownloadAudienceRestricted)
+	allowed, err := mediaasset.EvaluateFileDownloadAccess(t.Context(), store, nil, restricted, downloadUser(user))
 	require.NoError(t, err)
 	require.False(t, allowed)
-	presence, err := RestrictedFileDownloadSegmentPresence(
-		context.Background(),
-		db,
-		map[string]FileDownloadSource{fileID: trackDownloadSource(fileID, FileDownloadAudienceRestricted)},
-	)
+	presence, err := mediaasset.RestrictedFileDownloadSegmentPresence(t.Context(), store, map[string]mediaasset.FileDownloadSource{source: restricted})
 	require.NoError(t, err)
-	require.False(t, presence[fileID])
+	require.False(t, presence[source])
 }
-
-func TestEvaluateRestrictedDownloadFailsClosedForInvalidAndStaleAudienceConfigUnit(
-	t *testing.T,
-) {
-	t.Parallel()
-	db := newFileDownloadPolicyDB(t)
-	now := time.Now().UTC()
-	userID := uuid.NewString()
-	seedDownloadIdentity(t, db, userID, policyv1.Role.User().ID(), now.Add(-time.Hour))
-	user := downloadUserInfo(userID)
-
-	testCases := []struct {
-		name        string
-		segmentType managev1.SegmentType
-		config      model.AudienceSegmentConfig
-	}{
-		{
-			name:        "stale user tag",
-			segmentType: managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS,
-			config: model.AudienceSegmentConfig{
-				MemberTagIDs: []string{uuid.NewString()},
-			},
-		},
-	}
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			fileID := uuid.NewString()
-			segmentID := uuid.NewString()
-			seedDownloadAudienceSegment(t, db, segmentID, testCase.segmentType, testCase.config)
-			require.NoError(t, db.Exec(
-				`INSERT INTO track_download_audience_segment (
-					track_id, audience_segment_id, created_at
-				) VALUES (?, ?, ?)`,
-				fileID,
-				segmentID,
-				now,
-			).Error)
-			allowed, err := evaluateSingleFileDownloadAccessAt(
-				context.Background(),
-				db,
-				FileDownloadSource{FileID: fileID, Audience: FileDownloadAudienceRestricted},
-				user,
-				now,
-			)
+func TestRestrictedDownloadRejectsStaleOrMalformedTagConfigurations(t *testing.T) {
+	user, source, segment, tag := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+	for _, tc := range []struct {
+		name     string
+		config   mediaasset.DownloadSegmentConfig
+		existing bool
+	}{{"stale tag", mediaasset.DownloadSegmentConfig{MemberTagIDs: []string{tag}}, false}, {"malformed tag", mediaasset.DownloadSegmentConfig{MemberTagIDs: []string{"invalid"}}, true}, {"mixed filter", mediaasset.DownloadSegmentConfig{MemberTagIDs: []string{tag}, AccountRoles: []string{"user"}}, true}, {"no tags", mediaasset.DownloadSegmentConfig{}, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := mediaassettest.NewDownload()
+			store.Members[user] = mediaasset.DownloadMemberFacts{MemberID: user, IdentityID: user, Onboarded: true}
+			store.SegmentRows[segment] = mediaasset.DownloadSegment{ID: segment, SegmentType: mediaasset.DownloadMemberTags, Config: tc.config}
+			store.Links = []mediaasset.DownloadAssociation{{PolicyKey: source, AudienceSegmentID: segment}}
+			if tc.existing {
+				store.Tags[tag] = map[string]bool{user: true}
+			}
+			allowed, err := mediaasset.EvaluateFileDownloadAccess(t.Context(), store, nil, downloadSource(source, mediaasset.FileDownloadAudienceRestricted), downloadUser(user))
 			require.NoError(t, err)
 			require.False(t, allowed)
 		})
 	}
 }
-
-func TestEvaluateRestrictedDownloadAppliesFilterAndExclusionUnit(t *testing.T) {
-	t.Parallel()
-	db := newFileDownloadPolicyDB(t)
+func TestRestrictedDownloadEvaluatesRoleAndCreationWindowBeforeExclusion(t *testing.T) {
+	store := mediaassettest.NewDownload()
 	now := time.Now().UTC()
-	userID, identityID := uuid.NewString(), uuid.NewString()
-	checker := (&authztest.Checker{}).For(identityID).Allow(policyv1.Platform.IsAuthor())
-	seedDownloadIdentityWithIdentityID(t, db, userID, identityID, policyv1.Role.Author().ID(), now.Add(-time.Hour))
-	fileID := uuid.NewString()
-	segmentID := uuid.NewString()
-	createdAfter := now.Add(-2 * time.Hour)
-	createdBefore := now.Add(time.Hour)
-	seedDownloadAudienceSegment(
-		t,
-		db,
-		segmentID,
-		managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER,
-		model.AudienceSegmentConfig{
-			AccountRoles:  []string{policyv1.Role.Author().ID()},
-			CreatedAfter:  &createdAfter,
-			CreatedBefore: &createdBefore,
-		},
-	)
-	require.NoError(t, db.Exec(
-		`INSERT INTO track_download_audience_segment (
-			track_id, audience_segment_id, created_at
-		) VALUES (?, ?, ?)`,
-		fileID,
-		segmentID,
-		now,
-	).Error)
-	source := FileDownloadSource{FileID: fileID, Audience: FileDownloadAudienceRestricted}
-	user := &auth.UserInfo{
-		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(userID),
-		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
-	}
-
-	allowed, err := evaluateSingleFileDownloadAccessBatchAt(
-		context.Background(),
-		db,
-		checker.Client(t),
-		source,
-		user,
-		now,
-	)
+	user, source, segment := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	viewer := downloadUser(user)
+	store.Members[user] = mediaasset.DownloadMemberFacts{MemberID: user, IdentityID: user, Onboarded: true, CreatedAt: now.Add(-time.Hour)}
+	after, before := now.Add(-2*time.Hour), now.Add(time.Hour)
+	row := mediaasset.DownloadSegment{ID: segment, SegmentType: mediaasset.DownloadMembersByFilter, Config: mediaasset.DownloadSegmentConfig{AccountRoles: []string{policyv1.Role.Author().ID()}, CreatedAfter: &after, CreatedBefore: &before}}
+	store.SegmentRows[segment] = row
+	store.Links = []mediaasset.DownloadAssociation{{PolicyKey: source, AudienceSegmentID: segment}}
+	checker := (&authztest.Checker{}).For(user).Allow(policyv1.Platform.IsAuthor())
+	request := downloadSource(source, mediaasset.FileDownloadAudienceRestricted)
+	allowed, err := mediaasset.EvaluateFileDownloadAccess(t.Context(), store, checker, request, viewer)
 	require.NoError(t, err)
 	require.True(t, allowed)
-
-	require.NoError(t, db.Exec(
-		`INSERT INTO audience_segment_excluded_member (
-			audience_segment_id, member_id
-		) VALUES (?, ?)`,
-		segmentID,
-		userID,
-	).Error)
-	allowed, err = evaluateSingleFileDownloadAccessBatchAt(
-		context.Background(),
-		db,
-		checker.Client(t),
-		source,
-		user,
-		now,
-	)
+	row.Config.ExcludeMemberIDs = []string{user}
+	store.SegmentRows[segment] = row
+	allowed, err = mediaasset.EvaluateFileDownloadAccess(t.Context(), store, checker, request, viewer)
+	require.NoError(t, err)
+	require.False(t, allowed)
+	row.Config.ExcludeMemberIDs = nil
+	row.Config.CreatedAfter = &now
+	store.SegmentRows[segment] = row
+	allowed, err = mediaasset.EvaluateFileDownloadAccess(t.Context(), store, checker, request, viewer)
 	require.NoError(t, err)
 	require.False(t, allowed)
 }
-
-func TestEvaluateRestrictedDownloadBatchQueryCountDoesNotScaleWithSegmentsUnit(
-	t *testing.T,
-) {
-	t.Parallel()
-	oneSegmentQueries := evaluateRestrictedDownloadBatchQueryCount(t, 1)
-	manySegmentQueries := evaluateRestrictedDownloadBatchQueryCount(t, 12)
-
-	require.Positive(t, oneSegmentQueries)
-	require.Equal(t, oneSegmentQueries, manySegmentQueries)
-	require.LessOrEqual(t, manySegmentQueries, 7)
-}
-
-func evaluateRestrictedDownloadBatchQueryCount(t *testing.T, segmentCount int) int {
-	t.Helper()
-	db := newFileDownloadPolicyDB(t)
-	now := time.Now().UTC()
-	memberID := uuid.NewString()
-	fileID := uuid.NewString()
-	tagID := uuid.NewString()
-	seedDownloadIdentity(t, db, memberID, policyv1.Role.User().ID(), now.Add(-time.Hour))
-	require.NoError(t, db.Exec(
-		`INSERT INTO user_tag (id, name, created_at) VALUES (?, 'Members', ?)`,
-		tagID,
-		now,
-	).Error)
-	require.NoError(t, db.Exec(
-		`INSERT INTO user_tag_mapping (member_id, tag_id, created_at) VALUES (?, ?, ?)`,
-		memberID,
-		tagID,
-		now,
-	).Error)
-	for range segmentCount {
-		segmentID := uuid.NewString()
-		seedDownloadAudienceSegment(
-			t,
-			db,
-			segmentID,
-			managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS,
-			model.AudienceSegmentConfig{MemberTagIDs: []string{tagID}},
-		)
-		require.NoError(t, db.Exec(
-			`INSERT INTO track_download_audience_segment (
-				track_id, audience_segment_id, created_at
-			) VALUES (?, ?, ?)`,
-			fileID,
-			segmentID,
-			now,
-		).Error)
-	}
-
-	queryCount := 0
-	callbackName := "count_restricted_file_download_queries_" + uuid.NewString()
-	require.NoError(t, db.Callback().Query().Before("gorm:query").Register(
-		callbackName,
-		func(*gorm.DB) { queryCount++ },
-	))
-	t.Cleanup(func() {
-		require.NoError(t, db.Callback().Query().Remove(callbackName))
-	})
-	access, err := EvaluateFileDownloadAccessBatch(
-		t.Context(),
-		db,
-		nil,
-		map[string]FileDownloadSource{
-			fileID: trackDownloadSource(fileID, FileDownloadAudienceRestricted),
-		},
-		downloadUserInfo(memberID),
-		testSegmentConfigLoader{},
-	)
+func TestAuthenticatedDownloadRequiresTheExactActiveMemberWitness(t *testing.T) {
+	store := mediaassettest.NewDownload()
+	id := uuid.NewString()
+	user := downloadUser(id)
+	request := downloadSource(uuid.NewString(), mediaasset.FileDownloadAudienceAuthenticated)
+	allowed, err := mediaasset.EvaluateFileDownloadAccess(t.Context(), store, nil, request, user)
 	require.NoError(t, err)
-	require.True(t, access[fileID])
-	return queryCount
-}
-
-func newFileDownloadPolicyDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	db, err := gorm.Open(
-		sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"),
-		&gorm.Config{},
-	)
+	require.False(t, allowed)
+	store.Members[id] = mediaasset.DownloadMemberFacts{MemberID: id, IdentityID: uuid.NewString(), Onboarded: true}
+	allowed, err = mediaasset.EvaluateFileDownloadAccess(t.Context(), store, nil, request, user)
 	require.NoError(t, err)
-	require.NoError(t, db.Exec(`ATTACH DATABASE ':memory:' AS kratos`).Error)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE file ( client_media_bundle_id TEXT,
-			id TEXT PRIMARY KEY,
-			extension TEXT NOT NULL,
-			mime_type TEXT NOT NULL,
-			file_size INTEGER NOT NULL,
-			file_name TEXT,
-			delete_requested_at DATETIME
-		);
-		CREATE TABLE audience_segment (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			description TEXT,
-			segment_type TEXT NOT NULL,
-			created_after DATETIME,
-			created_before DATETIME,
-			archived_at DATETIME,
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME
-		);
-		CREATE TABLE audience_segment_user_tag (
-			audience_segment_id TEXT NOT NULL,
-			user_tag_id TEXT NOT NULL,
-			PRIMARY KEY (audience_segment_id, user_tag_id)
-		);
-		CREATE TABLE audience_segment_user_role (
-			audience_segment_id TEXT NOT NULL,
-			role TEXT NOT NULL,
-			PRIMARY KEY (audience_segment_id, role)
-		);
-		CREATE TABLE audience_segment_excluded_member (
-			audience_segment_id TEXT NOT NULL,
-			member_id TEXT NOT NULL,
-			PRIMARY KEY (audience_segment_id, member_id)
-		);
-		CREATE TABLE track_download_audience_segment (
-			track_id TEXT NOT NULL,
-			audience_segment_id TEXT NOT NULL,
-			created_at DATETIME NOT NULL,
-			PRIMARY KEY (track_id, audience_segment_id)
-		);
-		CREATE TABLE user_tag (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			created_at DATETIME NOT NULL
-		);
-		CREATE TABLE user_tag_mapping (
-			member_id TEXT NOT NULL,
-			tag_id TEXT NOT NULL,
-			created_at DATETIME NOT NULL,
-			PRIMARY KEY (member_id, tag_id)
-		);
-		CREATE TABLE member (
-			id TEXT PRIMARY KEY,
-			account_identity_id TEXT NOT NULL,
-			onboarded INTEGER NOT NULL DEFAULT 1,
-			deleted_at DATETIME,
-			created_at DATETIME NOT NULL
-		);
-		CREATE TABLE kratos.identities (
-			id TEXT PRIMARY KEY,
-			external_id TEXT NOT NULL,
-			state TEXT NOT NULL,
-			traits TEXT NOT NULL,
-			metadata_public TEXT NOT NULL,
-			metadata_admin TEXT NOT NULL,
-			created_at DATETIME NOT NULL
-		)
-	`).Error)
-	return db
-}
-
-func seedDownloadIdentity(
-	t *testing.T,
-	db *gorm.DB,
-	id string,
-	role string,
-	createdAt time.Time,
-) {
-	t.Helper()
-	identityID := id
-	require.NoError(t, db.Exec(
-		`INSERT INTO member (id, account_identity_id, onboarded, created_at) VALUES (?, ?, 1, ?)`,
-		id,
-		identityID,
-		createdAt,
-	).Error)
-	require.NoError(t, db.Exec(
-		`INSERT INTO kratos.identities (
-			id, external_id, state, traits, metadata_public, metadata_admin, created_at
-		) VALUES (?, ?, 'active', ?, ?, '{"banned":false}', ?)`,
-		identityID,
-		id,
-		`{}`,
-		`{"role":"`+role+`"}`,
-		createdAt,
-	).Error)
-}
-
-func seedDownloadIdentityWithIdentityID(
-	t *testing.T,
-	db *gorm.DB,
-	memberID string,
-	identityID string,
-	role string,
-	createdAt time.Time,
-) {
-	t.Helper()
-	require.NoError(t, db.Exec(
-		`INSERT INTO member (id, account_identity_id, onboarded, created_at) VALUES (?, ?, 1, ?)`,
-		memberID, identityID, createdAt,
-	).Error)
-	require.NoError(t, db.Exec(
-		`INSERT INTO kratos.identities (
-			id, external_id, state, traits, metadata_public, metadata_admin, created_at
-		) VALUES (?, ?, 'active', ?, ?, '{"banned":false}', ?)`,
-		identityID, memberID, `{}`, `{"role":"`+role+`"}`, createdAt,
-	).Error)
-}
-
-func seedDownloadAudienceSegment(
-	t *testing.T,
-	db *gorm.DB,
-	id string,
-	segmentType managev1.SegmentType,
-	config model.AudienceSegmentConfig,
-) {
-	t.Helper()
-	require.NoError(t, db.Exec(
-		`INSERT INTO audience_segment (
-			id, name, segment_type,
-			created_after, created_before, created_at, updated_at
-		) VALUES (?, 'Access', ?, ?, ?, ?, ?)`,
-		id,
-		segmentType.String(),
-		config.CreatedAfter,
-		config.CreatedBefore,
-		time.Now().UTC(),
-		time.Now().UTC(),
-	).Error)
-	seedAudienceSegmentRelationsForTest(t, db, id, config)
-}
-
-func seedAudienceSegmentRelationsForTest(
-	t *testing.T,
-	db *gorm.DB,
-	segmentID string,
-	config model.AudienceSegmentConfig,
-) {
-	t.Helper()
-	for _, tagID := range config.MemberTagIDs {
-		require.NoError(t, db.Create(&model.AudienceSegmentUserTag{
-			AudienceSegmentID: segmentID,
-			UserTagID:         tagID,
-		}).Error)
-	}
-	for _, role := range config.AccountRoles {
-		require.NoError(t, db.Create(&model.AudienceSegmentUserRole{
-			AudienceSegmentID: segmentID,
-			Role:              role,
-		}).Error)
-	}
-	for _, memberID := range config.ExcludeMemberIDs {
-		require.NoError(t, db.Create(&model.AudienceSegmentExcludedMember{
-			AudienceSegmentID: segmentID,
-			MemberID:          memberID,
-		}).Error)
-	}
-}
-
-func evaluateSingleFileDownloadAccessAt(
-	ctx context.Context,
-	db *gorm.DB,
-	source FileDownloadSource,
-	user *auth.UserInfo,
-	_ time.Time,
-) (bool, error) {
-	source = trackDownloadSource(source.FileID, source.Audience)
-	return EvaluateFileDownloadAccess(ctx, db, nil, source, user, testSegmentConfigLoader{})
-}
-
-func evaluateSingleFileDownloadAccessBatchAt(
-	ctx context.Context,
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	source FileDownloadSource,
-	user *auth.UserInfo,
-	_ time.Time,
-) (bool, error) {
-	source = trackDownloadSource(source.FileID, source.Audience)
-	access, err := EvaluateFileDownloadAccessBatch(ctx, db, spiceDB, map[string]FileDownloadSource{source.PolicyKey: source}, user, testSegmentConfigLoader{})
-	if err != nil {
-		return false, err
-	}
-	return access[source.PolicyKey], nil
-}
-
-func trackDownloadSource(fileID string, audience FileDownloadAudience) FileDownloadSource {
-	return FileDownloadSource{
-		PolicyKey: fileID, PolicyKind: FileDownloadPolicyTrack,
-		TrackID: fileID, FileID: fileID, Audience: audience,
-	}
-}
-
-type testSegmentConfigLoader struct{}
-
-func (testSegmentConfigLoader) LoadSegmentConfigs(ctx context.Context, db *gorm.DB, segments []*model.AudienceSegment) error {
-	return audiencepostgres.LoadSegmentConfigs(ctx, db, segments)
-}
-
-func downloadUserInfo(id string) *auth.UserInfo {
-	return &auth.UserInfo{
-		IdentityID:    auth.IdentityID(id),
-		MemberID:      auth.MemberID(id),
-		Authenticated: true,
-	}
+	require.False(t, allowed)
+	store.Members[id] = mediaasset.DownloadMemberFacts{MemberID: id, IdentityID: id, Onboarded: true}
+	user.Banned = true
+	allowed, err = mediaasset.EvaluateFileDownloadAccess(t.Context(), store, nil, request, user)
+	require.NoError(t, err)
+	require.False(t, allowed)
 }

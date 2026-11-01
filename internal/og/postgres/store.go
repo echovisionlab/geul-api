@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -451,7 +453,7 @@ func (s *store) ReadyAssetsForFiles(ctx context.Context, fileIDs []string) (map[
 		Order("source_file_id, created_at DESC").Find(&assets).Error; err != nil {
 		return nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(s.tx, s.ports.CDNDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.ports.CDNDomain)
 	refs := make(map[string]og.AssetRef, len(fileIDs))
 	for _, asset := range assets {
 		fileID := ""
@@ -461,7 +463,7 @@ func (s *store) ReadyAssetsForFiles(ctx context.Context, fileIDs []string) (map[
 		if _, exists := refs[fileID]; exists {
 			continue
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
 		if err != nil {
 			return nil, err
 		}
@@ -517,17 +519,17 @@ func (s *store) projectionFor(target og.Target) (Projection, error) {
 }
 
 func (s *store) CompleteAsset(ctx context.Context, written og.WrittenAsset) (og.Asset, error) {
-	asset, err := mediaasset.NewLifecycle(s.tx, s.ports.CDNDomain).CompletePublicAsset(ctx, &commonv1.AssetWriteResult{
+	asset, err := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.ports.CDNDomain).CompletePublicAsset(ctx, mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{
 		AssetId: written.AssetID, FileSize: written.FileSize, Sha256: written.SHA256,
-	})
+	}))
 	if err != nil {
 		return og.Asset{}, err
 	}
-	return assetFromModel(*asset), nil
+	return assetFromModel(mediaassetpostgres.AssetRow(*asset)), nil
 }
 
 func (s *store) AssetRef(asset og.Asset) (og.AssetRef, error) {
-	ref, err := mediaasset.NewLifecycle(s.tx, s.ports.CDNDomain).AssetRef(assetRow(asset))
+	ref, err := mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.ports.CDNDomain).AssetRef(mediaassetpostgres.Asset(assetRow(asset))))
 	if err != nil {
 		return og.AssetRef{}, err
 	}

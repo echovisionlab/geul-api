@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -208,7 +210,7 @@ func requestUnboundFileDerivativeAssetsDeletion(
 		bound[assetID] = struct{}{}
 	}
 
-	lifecycle := mediaasset.NewLifecycle(tx, "")
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), "")
 	for _, asset := range assets {
 		if _, retained := bound[asset.ID]; retained {
 			continue
@@ -269,7 +271,7 @@ func requestUnboundSourceFileAssetsDeletion(
 		bound[assetID] = struct{}{}
 	}
 
-	lifecycle := mediaasset.NewLifecycle(tx, "")
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), "")
 	for _, asset := range assets {
 		if _, retained := bound[asset.ID]; retained {
 			continue

@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -63,7 +65,7 @@ func (r *Runtime) CancelAndReleaseEntityWithDB(
 }
 
 func (*Runtime) LockAttachableFilesForUpdate(ctx context.Context, tx *gorm.DB, fileIDs []string) error {
-	return mediaasset.LockAttachableFilesForUpdate(ctx, tx, fileIDs)
+	return mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (r *Runtime) ReleasePublicAssetBindings(
@@ -73,7 +75,7 @@ func (r *Runtime) ReleasePublicAssetBindings(
 	ownerID string,
 	bindingPrefix string,
 ) error {
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).
 		ReleasePublicAssetBindings(ctx, ownerType, ownerID, bindingPrefix)
 }
 
@@ -92,12 +94,12 @@ func (r *Runtime) ResolveReadyAssetRefs(
 		Find(&assets).Error; err != nil {
 		return nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(tx, r.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain)
 	for _, asset := range assets {
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
 		if err != nil {
 			return nil, err
 		}
@@ -112,7 +114,7 @@ func (r *Runtime) ReadyPublicAssetRefForSourceFile(
 	sourceFileID string,
 	expectedKind string,
 ) (*commonv1.AssetRef, error) {
-	return mediaasset.ReadyPublicAssetRefForSourceFile(ctx, tx, r.cdnDomain, sourceFileID, expectedKind)
+	return mediaasset.ReferenceResultProto(mediaasset.ReadyPublicAssetRefForSourceFile(ctx, mediaassetpostgres.NewUnits(tx), r.cdnDomain, sourceFileID, expectedKind))
 }
 
 func (r *Runtime) BindReadyAssetForSourceFile(
@@ -124,9 +126,9 @@ func (r *Runtime) BindReadyAssetForSourceFile(
 	bindingKey string,
 	expectedKind string,
 ) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).BindReadyAssetForSourceFile(
+	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).BindReadyAssetForSourceFile(
 		ctx, sourceFileID, ownerType, ownerID, bindingKey, expectedKind,
-	)
+	))
 }
 
 func (*Runtime) LoadUnavailableVersionAttachmentKinds(
@@ -134,7 +136,7 @@ func (*Runtime) LoadUnavailableVersionAttachmentKinds(
 	tx *gorm.DB,
 	document proto.Message,
 ) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error) {
-	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, tx, document)
+	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, mediaassetpostgres.BindAttachments(tx), document)
 }
 
 func (r *Runtime) ResolveReadyOGAsset(

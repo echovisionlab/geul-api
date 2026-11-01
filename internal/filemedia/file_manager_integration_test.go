@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -229,15 +231,15 @@ func TestFileManagerGetFileIncludesGeneratedOutputsIntegration(t *testing.T) {
 	sourceFileID := seedFileManagerFile(t, db, folder.Msg.Folder.Id, memberID, "source", "glb", "model/gltf-binary")
 	outputFileID := seedFileManagerFile(t, db, folder.Msg.Folder.Id, memberID, "optimized", "glb", "model/gltf-binary")
 
-	asset, _, err := mediaasset.NewLifecycle(db, service.cdnDomain).AllocatePublicAsset(ctx, mediaasset.Allocation{
+	asset, _, err := mediaasset.AllocationResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), service.cdnDomain).AllocatePublicAsset(ctx, mediaasset.Allocation{
 		SourceFileID: &sourceFileID, Kind: "thumbnail", Extension: "webp", MimeType: "image/webp",
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
+		Disposition: mediaasset.DispositionInline,
+	}))
 	require.NoError(t, err)
 	digest := sha256.Sum256([]byte("generated thumbnail"))
-	_, err = mediaasset.NewLifecycle(db, service.cdnDomain).CompletePublicAsset(ctx, &commonv1.AssetWriteResult{
+	_, err = mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), service.cdnDomain).CompletePublicAsset(ctx, mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{
 		AssetId: asset.ID, FileSize: int64(len("generated thumbnail")), Sha256: digest[:],
-	})
+	}))
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&model.FileDerivative{
 		ID: uuid.NewString(), FileID: sourceFileID,

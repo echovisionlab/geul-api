@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -33,7 +35,7 @@ type store struct {
 }
 
 func (s store) lifecycle() *mediaasset.Lifecycle {
-	return mediaasset.NewLifecycle(s.tx, "")
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), "")
 }
 
 func (s store) FileAcceptsResults(ctx context.Context, fileID string) (bool, error) {
@@ -406,11 +408,11 @@ func (s store) GenerationDerivativeCount(ctx context.Context, generationID strin
 }
 
 func (s store) CompleteAsset(ctx context.Context, result *commonv1.AssetWriteResult) (application.Asset, error) {
-	asset, err := s.lifecycle().CompletePublicAsset(ctx, result)
+	asset, err := s.lifecycle().CompletePublicAsset(ctx, mediaasset.WrittenAssetFromProto(result))
 	if err != nil {
 		return application.Asset{}, err
 	}
-	return assetFromRow(*asset), nil
+	return application.Asset{ID: asset.ID, SourceFileID: asset.SourceFileID, Kind: asset.Kind, Status: string(asset.Status), FileSize: asset.FileSize, SHA256: asset.SHA256}, nil
 }
 
 func (s store) RequestAssetDeletion(ctx context.Context, assetID string) error {
@@ -457,22 +459,22 @@ func (s store) MarkAssetDeletePending(ctx context.Context, assetID string, now t
 }
 
 func (s store) AllocateWaveformOutput(ctx context.Context, fileID string) (*commonv1.AssetWriteTarget, error) {
-	_, target, err := s.lifecycle().AllocatePublicAsset(ctx, mediaasset.Allocation{
+	_, target, err := mediaasset.AllocationResultProto(s.lifecycle().AllocatePublicAsset(ctx, mediaasset.Allocation{
 		SourceFileID: &fileID,
 		Kind:         "waveform",
 		Extension:    "json",
 		MimeType:     "application/json",
-		Disposition:  commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
+		Disposition:  mediaasset.DispositionInline,
+	}))
 	return target, err
 }
 
 func (s store) CompleteMediaGeneration(ctx context.Context, result *commonv1.MediaGenerationWriteResult) (application.MediaGeneration, error) {
-	generation, err := s.lifecycle().CompleteMediaGeneration(ctx, result)
+	generation, err := s.lifecycle().CompleteMediaGeneration(ctx, mediaasset.WrittenGenerationFromProto(result))
 	if err != nil {
 		return application.MediaGeneration{}, err
 	}
-	return generationFromRow(*generation), nil
+	return application.MediaGeneration{ID: generation.ID, FileID: generation.FileID, Kind: generation.Kind, Status: string(generation.Status)}, nil
 }
 
 func (s store) LockMediaGeneration(ctx context.Context, generationID string) (application.MediaGeneration, bool, error) {

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -97,7 +99,7 @@ func normalizeSiteSettingMIME(value string) string {
 }
 
 func (a Assets) LockForAttachment(ctx context.Context, db *gorm.DB, fileIDs []string) error {
-	return mediaasset.LockAttachableFilesForUpdate(ctx, db, fileIDs)
+	return mediaassetpostgres.Bind(db).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (a Assets) BindReady(
@@ -109,18 +111,18 @@ func (a Assets) BindReady(
 	if err != nil {
 		return nil, err
 	}
-	return mediaasset.NewLifecycle(db, a.cdnDomain).BindReadyAssetForSourceFile(
+	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).BindReadyAssetForSourceFile(
 		ctx,
 		binding.SourceFileID,
 		siteSettingsAssetOwnerType,
 		siteSettingsAssetOwnerID,
 		binding.Key,
 		kind,
-	)
+	))
 }
 
 func (a Assets) Release(ctx context.Context, db *gorm.DB, bindingPrefix string) error {
-	return mediaasset.NewLifecycle(db, a.cdnDomain).ReleasePublicAssetBindings(
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).ReleasePublicAssetBindings(
 		ctx,
 		siteSettingsAssetOwnerType,
 		siteSettingsAssetOwnerID,
@@ -129,7 +131,7 @@ func (a Assets) Release(ctx context.Context, db *gorm.DB, bindingPrefix string) 
 }
 
 func (a Assets) ReplaceFavicon(ctx context.Context, db *gorm.DB, fileID *string) error {
-	lifecycle := mediaasset.NewLifecycle(db, a.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain)
 	if err := a.Release(ctx, db, "favicon"); err != nil {
 		return err
 	}
@@ -192,7 +194,7 @@ func (a Assets) ReadyRef(
 }
 
 func readySiteSettingAsset(ctx context.Context, db *gorm.DB, cdnDomain, fileID, kind string) (*commonv1.AssetRef, string, error) {
-	return mediaasset.NewLifecycle(db, cdnDomain).ReadyBrandingAssetRef(ctx, fileID, kind)
+	return mediaasset.BrandingResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), cdnDomain).ReadyBrandingAssetRef(ctx, fileID, kind))
 }
 
 func (a Assets) ReadyAsset(
@@ -200,7 +202,7 @@ func (a Assets) ReadyAsset(
 	db *gorm.DB,
 	assetID string,
 ) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(db, a.cdnDomain).ReadyAssetRef(ctx, assetID)
+	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).ReadyAssetRef(ctx, assetID))
 }
 
 func (a Assets) ProjectFavicon(

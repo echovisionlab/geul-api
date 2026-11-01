@@ -6,6 +6,10 @@ import (
 	"log/slog"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -29,7 +33,7 @@ func NewAssets(cdnDomain string) Assets {
 }
 
 func (a Assets) LockForAttachment(ctx context.Context, db *gorm.DB, fileIDs []string) error {
-	return mediaasset.LockAttachableFilesForUpdate(ctx, db, fileIDs)
+	return mediaassetpostgres.Bind(db).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (a Assets) BindReady(
@@ -37,14 +41,14 @@ func (a Assets) BindReady(
 	db *gorm.DB,
 	binding referencecatalog.AssetBinding,
 ) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(db, a.cdnDomain).BindReadyAssetForSourceFile(
+	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).BindReadyAssetForSourceFile(
 		ctx,
 		binding.SourceFileID,
 		binding.Owner.Type,
 		binding.Owner.ID,
 		binding.Key,
 		binding.Kind,
-	)
+	))
 }
 
 func (a Assets) Release(
@@ -52,7 +56,7 @@ func (a Assets) Release(
 	db *gorm.DB,
 	release referencecatalog.AssetRelease,
 ) error {
-	return mediaasset.NewLifecycle(db, a.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).
 		ReleasePublicAssetBindings(ctx, release.Owner.Type, release.Owner.ID, release.BindingPrefix)
 }
 
@@ -61,8 +65,8 @@ func (a Assets) ReadyRef(
 	db *gorm.DB,
 	source referencecatalog.AssetSource,
 ) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(db, a.cdnDomain).
-		ReadyAssetRefForSourceFile(ctx, source.FileID, source.Kind)
+	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).
+		ReadyAssetRefForSourceFile(ctx, source.FileID, source.Kind))
 }
 
 // PublicAssets resolves ready file-owned assets for public catalog projections.
@@ -97,13 +101,13 @@ func (a PublicAssets) ReadyRef(
 		}
 		return nil
 	}
-	expectedExtension := model.GetExtensionFromMime(asset.MimeType)
+	expectedExtension := mediamime.GetExtensionFromMime(asset.MimeType)
 	if strings.TrimSpace(asset.ID) == "" || strings.TrimSpace(asset.Extension) == "" || strings.TrimSpace(asset.MimeType) == "" ||
 		asset.FileSize == nil || *asset.FileSize <= 0 || len(asset.SHA256) != 32 ||
 		expectedExtension == "bin" || expectedExtension != asset.Extension {
 		return nil
 	}
-	ref, err := mediaasset.NewLifecycle(db, a.cdnDomain).AssetRef(asset)
+	ref, err := mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), a.cdnDomain).AssetRef(mediaassetpostgres.Asset(asset)))
 	if err != nil {
 		slog.ErrorContext(ctx, "Public catalog asset reference failed; serving without the asset", failurecause.Attr(err), "file_id", source.FileID, "asset_id", asset.ID)
 		return nil

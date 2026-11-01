@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -80,7 +82,7 @@ func (s store) AvatarAssetID(ctx context.Context, memberID string) (string, erro
 }
 
 func (s store) ReleaseAvatarBindings(ctx context.Context, memberID string) error {
-	return mediaasset.NewLifecycle(s.tx, "").ReleasePublicAssetBindings(ctx, "member", memberID, "avatar")
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), "").ReleasePublicAssetBindings(ctx, "member", memberID, "avatar")
 }
 
 func (s store) PublicAssetStatus(ctx context.Context, assetID string) (string, bool, error) {
@@ -95,11 +97,11 @@ func (s store) PublicAssetStatus(ctx context.Context, assetID string) (string, b
 }
 
 func (s store) RequestPublicAssetDeletion(ctx context.Context, assetID string) error {
-	return mediaasset.NewLifecycle(s.tx, "").RequestPublicAssetDeletion(ctx, assetID)
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), "").RequestPublicAssetDeletion(ctx, assetID)
 }
 
 func (s store) DeleteUnonboardedReferences(ctx context.Context, memberID string) error {
-	if err := mediaasset.NewLifecycle(s.tx, "").ReleasePublicAssetBindings(ctx, "member", memberID, "avatar"); err != nil {
+	if err := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), "").ReleasePublicAssetBindings(ctx, "member", memberID, "avatar"); err != nil {
 		return fmt.Errorf("release unonboarded Member avatar: %w", err)
 	}
 	if err := s.db(ctx).Where("member_id = ?::uuid", memberID).Delete(&model.UserTagMapping{}).Error; err != nil {

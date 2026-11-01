@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"connectrpc.com/connect"
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -299,9 +301,9 @@ func TestAuthorizeDownloadRequiresCurrentActivePrincipalForAuthenticatedPolicyIn
 
 	assertDenied := func() {
 		t.Helper()
-		sources, loadErr := mediaasset.LoadContentBlockDownloadSources(t.Context(), db, []mediaasset.ContentBlockDownloadSelector{{BlockID: blockID, ReferencePath: "file"}})
+		sources, loadErr := mediaasset.LoadContentBlockDownloadSources(t.Context(), mediaassetpostgres.BindDownload(db, nil), []mediaasset.ContentBlockDownloadSelector{{BlockID: blockID, ReferencePath: "file"}})
 		require.NoError(t, loadErr)
-		allowed, evaluateErr := mediaasset.EvaluateFileDownloadAccessBatch(t.Context(), db, stack.SpiceDBClient, sources, member.AuthUserInfo())
+		allowed, evaluateErr := mediaasset.EvaluateFileDownloadAccessBatch(t.Context(), mediaassetpostgres.BindDownload(db, nil), stack.SpiceDBClient, sources, member.AuthUserInfo())
 		require.NoError(t, evaluateErr)
 		require.False(t, allowed[mediaasset.ContentBlockDownloadPolicyKey(blockID, "file")])
 		response, authorizeErr := NewConnectHandler(svc).AuthorizeDownload(ctx, request)

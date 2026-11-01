@@ -11,6 +11,8 @@ import (
 	"slices"
 	"testing"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -303,14 +305,14 @@ func seedReadyImage(t *testing.T, db *gorm.DB) string {
 	id := uuid.NewString()
 	digest := sha256.Sum256([]byte(id))
 	require.NoError(t, db.Exec(`INSERT INTO file (id, file_name, mime_type, file_size, extension, sha256) VALUES (?, ?, 'image/webp', 1024, 'webp', ?)`, id, id, digest[:]).Error)
-	lifecycle := mediaasset.NewLifecycle(db, "https://cdn.example.com")
-	asset, _, err := lifecycle.AllocatePublicAsset(t.Context(), mediaasset.Allocation{
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "https://cdn.example.com")
+	asset, _, err := mediaasset.AllocationResultProto(lifecycle.AllocatePublicAsset(t.Context(), mediaasset.Allocation{
 		SourceFileID: &id, Kind: "image", Extension: "webp", MimeType: "image/webp",
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
+		Disposition: mediaasset.DispositionInline,
+	}))
 	require.NoError(t, err)
 	assetDigest := sha256.Sum256([]byte(asset.ID))
-	_, err = lifecycle.CompletePublicAsset(t.Context(), &commonv1.AssetWriteResult{AssetId: asset.ID, FileSize: 1024, Sha256: assetDigest[:]})
+	_, err = lifecycle.CompletePublicAsset(t.Context(), mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{AssetId: asset.ID, FileSize: 1024, Sha256: assetDigest[:]}))
 	require.NoError(t, err)
 	return id
 }

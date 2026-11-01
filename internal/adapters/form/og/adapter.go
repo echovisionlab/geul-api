@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -47,7 +49,7 @@ func (o *OG) CancelAndRelease(ctx context.Context, tx *gorm.DB, formID string) e
 	if err := ogpostgres.CancelEntity(ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_FORM, formID); err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, o.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), o.cdnDomain).
 		ReleasePublicAssetBindings(ctx, "form", formID, "og")
 }
 
@@ -82,7 +84,7 @@ func ReadyAsset(
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		return mediaasset.NewLifecycle(db, cdnDomain).AssetRef(asset)
+		return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), cdnDomain).AssetRef(mediaassetpostgres.Asset(asset)))
 	}
 	return nil, nil
 }

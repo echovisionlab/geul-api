@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
@@ -87,7 +89,7 @@ func (p *PublicMedia) readyAssetRefByID(ctx context.Context, assetID string) (*c
 		Take(&asset).Error; err != nil {
 		return nil, err
 	}
-	return mediaasset.NewLifecycle(p.db, p.runtime.cdnDomain).AssetRef(asset)
+	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(p.db), p.runtime.cdnDomain).AssetRef(mediaassetpostgres.Asset(asset)))
 }
 
 func (p *PublicMedia) LoadReleaseArtworkAssets(
@@ -159,9 +161,9 @@ func (p *PublicMedia) LoadReadySourceFileAssets(
 	kind string,
 	fileIDs []string,
 ) (map[string]*commonv1.AssetRef, error) {
-	return mediaasset.LoadReadyPublicAssetRefsForSourceFiles(
-		ctx, p.db, p.runtime.cdnDomain, kind, fileIDs,
-	)
+	return mediaasset.ReferenceMapResultProto(mediaasset.LoadReadyPublicAssetRefsForSourceFiles(
+		ctx, mediaassetpostgres.NewUnits(p.db), p.runtime.cdnDomain, kind, fileIDs,
+	))
 }
 
 var _ artistpublic.MediaProjection = (*PublicMedia)(nil)

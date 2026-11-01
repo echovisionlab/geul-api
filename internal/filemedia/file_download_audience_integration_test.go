@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"connectrpc.com/connect"
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -113,40 +115,26 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, updated.Msg.Policy.AudienceSegments, 1)
 
-	sources, err := mediaasset.LoadContentBlockDownloadSources(context.Background(), db, []mediaasset.ContentBlockDownloadSelector{{BlockID: blockID, ReferencePath: "file"}})
+	sources, err := mediaasset.LoadContentBlockDownloadSources(context.Background(), mediaassetpostgres.BindDownload(db, nil), []mediaasset.ContentBlockDownloadSelector{{BlockID: blockID, ReferencePath: "file"}})
 	require.NoError(t, err)
 	source := sources[mediaasset.ContentBlockDownloadPolicyKey(blockID, "file")]
-	allowed, err := mediaasset.EvaluateFileDownloadAccess(
-		context.Background(),
-		db,
-		stack.SpiceDBClient,
-		source,
-		&auth.UserInfo{
-			IdentityID:    auth.IdentityID(memberIdentityID),
-			MemberID:      auth.MemberID(memberID),
-			SessionID:     auth.SessionID(uuid.NewString()),
-			Authenticated: true,
-		},
-		mediaassetadapter.NewSegmentConfigs(),
-	)
+	allowed, err := mediaasset.EvaluateFileDownloadAccess(context.Background(), mediaassetpostgres.BindDownload(db, mediaassetadapter.NewSegmentConfigs()), stack.SpiceDBClient, source, &auth.UserInfo{
+		IdentityID:    auth.IdentityID(memberIdentityID),
+		MemberID:      auth.MemberID(memberID),
+		SessionID:     auth.SessionID(uuid.NewString()),
+		Authenticated: true,
+	})
 	require.NoError(t, err)
 	require.True(t, allowed)
 
 	require.NoError(t, db.Where("member_id = ?", memberID).
 		Delete(&model.UserTagMapping{}).Error)
-	allowed, err = mediaasset.EvaluateFileDownloadAccess(
-		context.Background(),
-		db,
-		stack.SpiceDBClient,
-		source,
-		&auth.UserInfo{
-			IdentityID:    auth.IdentityID(memberIdentityID),
-			MemberID:      auth.MemberID(memberID),
-			SessionID:     auth.SessionID(uuid.NewString()),
-			Authenticated: true,
-		},
-		mediaassetadapter.NewSegmentConfigs(),
-	)
+	allowed, err = mediaasset.EvaluateFileDownloadAccess(context.Background(), mediaassetpostgres.BindDownload(db, mediaassetadapter.NewSegmentConfigs()), stack.SpiceDBClient, source, &auth.UserInfo{
+		IdentityID:    auth.IdentityID(memberIdentityID),
+		MemberID:      auth.MemberID(memberID),
+		SessionID:     auth.SessionID(uuid.NewString()),
+		Authenticated: true,
+	})
 	require.NoError(t, err)
 	require.False(t, allowed)
 
@@ -175,19 +163,12 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	}
 	require.JSONEq(t, `{"changed_fields":["file_download_audience","file_download_audience_segment_ids"],"item_id":"`+blockID+`","file_id":"`+fileID+`","previous_state":"disabled","new_state":"restricted","previous_item_ids":[],"item_ids":["`+segmentID+`"]}`, string(auditRows[0].Attributes))
 	require.JSONEq(t, `{"changed_fields":["file_download_audience_segment_ids"],"item_id":"`+blockID+`","file_id":"`+fileID+`","previous_item_ids":["`+segmentID+`"],"item_ids":[]}`, string(auditRows[1].Attributes))
-	allowed, err = mediaasset.EvaluateFileDownloadAccess(
-		context.Background(),
-		db,
-		stack.SpiceDBClient,
-		source,
-		&auth.UserInfo{
-			IdentityID:    auth.IdentityID(memberIdentityID),
-			MemberID:      auth.MemberID(memberID),
-			SessionID:     auth.SessionID(uuid.NewString()),
-			Authenticated: true,
-		},
-		mediaassetadapter.NewSegmentConfigs(),
-	)
+	allowed, err = mediaasset.EvaluateFileDownloadAccess(context.Background(), mediaassetpostgres.BindDownload(db, mediaassetadapter.NewSegmentConfigs()), stack.SpiceDBClient, source, &auth.UserInfo{
+		IdentityID:    auth.IdentityID(memberIdentityID),
+		MemberID:      auth.MemberID(memberID),
+		SessionID:     auth.SessionID(uuid.NewString()),
+		Authenticated: true,
+	})
 	require.NoError(t, err)
 	require.False(t, allowed)
 }

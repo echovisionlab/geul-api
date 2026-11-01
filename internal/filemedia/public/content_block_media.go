@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -142,11 +144,11 @@ func (s *Service) evaluateContentDownloads(
 	if err != nil {
 		return downloadEvaluation{}, err
 	}
-	evaluation.sources, err = mediaasset.LoadContentBlockDownloadSources(ctx, tx, request.selectors)
+	evaluation.sources, err = mediaasset.LoadContentBlockDownloadSources(ctx, mediaassetpostgres.BindDownload(tx, nil), request.selectors)
 	if err != nil {
 		return downloadEvaluation{}, err
 	}
-	allowed, err := mediaasset.EvaluateFileDownloadAccessBatch(ctx, tx, s.spiceDB, evaluation.sources, request.user, s.segments)
+	allowed, err := mediaasset.EvaluateFileDownloadAccessBatch(ctx, mediaassetpostgres.BindDownload(tx, s.segments), s.spiceDB, evaluation.sources, request.user)
 	if err != nil {
 		return downloadEvaluation{}, err
 	}
@@ -154,11 +156,11 @@ func (s *Service) evaluateContentDownloads(
 	if err != nil {
 		return downloadEvaluation{}, err
 	}
-	evaluation.fingerprints, err = mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, evaluation.sources, s.segments)
+	evaluation.fingerprints, err = mediaasset.LoadFileDownloadPolicyFingerprints(ctx, mediaassetpostgres.BindDownload(tx, s.segments), evaluation.sources)
 	if err != nil {
 		return downloadEvaluation{}, err
 	}
-	evaluation.viewerFingerprint, err = mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, evaluation.sources, request.user)
+	evaluation.viewerFingerprint, err = mediaasset.LoadFileDownloadViewerFingerprint(ctx, mediaassetpostgres.BindDownload(tx, nil), evaluation.sources, request.user)
 	if err != nil {
 		return downloadEvaluation{}, err
 	}
@@ -195,7 +197,7 @@ func contentDownloadSignInHints(
 			restricted[key] = source
 		}
 	}
-	presence, err := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, tx, restricted)
+	presence, err := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, mediaassetpostgres.BindDownload(tx, nil), restricted)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +268,7 @@ func (s *Service) lockContentDownloads(
 	evaluation downloadEvaluation,
 ) (lockedContentDownloads, error) {
 	var current lockedContentDownloads
-	if err := mediaasset.LockFileDownloadPolicySegments(ctx, tx, evaluation.sources); err != nil {
+	if err := mediaasset.LockFileDownloadPolicySegments(ctx, mediaassetpostgres.BindDownload(tx, nil), evaluation.sources); err != nil {
 		return current, err
 	}
 	var err error
@@ -280,7 +282,7 @@ func (s *Service) lockContentDownloads(
 	if err != nil {
 		return current, err
 	}
-	current.viewerActive, err = mediaasset.LockFileDownloadViewerFacts(ctx, tx, evaluation.sources, request.user)
+	current.viewerActive, err = mediaasset.LockFileDownloadViewerFacts(ctx, mediaassetpostgres.BindDownload(tx, nil), evaluation.sources, request.user)
 	if err != nil {
 		return current, err
 	}
@@ -288,15 +290,15 @@ func (s *Service) lockContentDownloads(
 	if err != nil {
 		return current, err
 	}
-	current.sources, err = mediaasset.LoadContentBlockDownloadSources(ctx, tx, request.selectors)
+	current.sources, err = mediaasset.LoadContentBlockDownloadSources(ctx, mediaassetpostgres.BindDownload(tx, nil), request.selectors)
 	if err != nil {
 		return current, err
 	}
-	current.fingerprints, err = mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, current.sources, s.segments)
+	current.fingerprints, err = mediaasset.LoadFileDownloadPolicyFingerprints(ctx, mediaassetpostgres.BindDownload(tx, s.segments), current.sources)
 	if err != nil {
 		return current, err
 	}
-	current.viewerFingerprint, err = mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, current.sources, request.user)
+	current.viewerFingerprint, err = mediaasset.LoadFileDownloadViewerFingerprint(ctx, mediaassetpostgres.BindDownload(tx, nil), current.sources, request.user)
 	if err != nil {
 		return current, err
 	}

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -29,7 +31,7 @@ func SeedCanonicalPublicFileFixture(
 ) (string, string) {
 	t.Helper()
 	fileID := uuid.NewString()
-	extension := model.GetExtensionFromMime(mimeType)
+	extension := mediamime.GetExtensionFromMime(mimeType)
 	fileName = strings.TrimSuffix(filepath.Base(fileName), filepath.Ext(fileName))
 	now := time.Now().UTC()
 	fileDigest := sha256.Sum256([]byte(fileID))

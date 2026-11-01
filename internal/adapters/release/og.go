@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
@@ -25,7 +27,7 @@ func (o *OG) CancelAndRelease(ctx context.Context, tx *gorm.DB, releaseID string
 	); err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, o.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), o.cdnDomain).
 		ReleasePublicAssetBindings(ctx, "release", releaseID, "og")
 }
 

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -66,10 +68,10 @@ func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 					Updates(structured.Fields{"delete_requested_at": time.Now().UTC()}).Error)
 			},
 			SeedAllocatedAsset: func(t *testing.T, kind, fileID, extension, mimeType string) *commonv1.AssetWriteTarget {
-				_, target, err := mediaasset.NewLifecycle(db, "").AllocatePublicAsset(t.Context(), mediaasset.Allocation{
+				_, target, err := mediaasset.AllocationResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "").AllocatePublicAsset(t.Context(), mediaasset.Allocation{
 					SourceFileID: &fileID, Kind: kind, Extension: extension, MimeType: mimeType,
-					Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-				})
+					Disposition: mediaasset.DispositionInline,
+				}))
 				require.NoError(t, err)
 				return target
 			},

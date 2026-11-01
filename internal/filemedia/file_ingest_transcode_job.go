@@ -6,13 +6,14 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -108,7 +109,7 @@ func ensureStableFileIngestOutputs(
 	var asset *commonv1.AssetWriteTarget
 	var hlsAllocated, assetAllocated bool
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := mediaasset.LockAttachableFilesForUpdate(ctx, tx, []string{fileID}); err != nil {
+		if err := mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, []string{fileID}); err != nil {
 			return err
 		}
 		var err error

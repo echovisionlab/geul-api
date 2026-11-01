@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -94,7 +96,7 @@ func normalizeRemoteImportStoredFileName(fileName, mimeType string) string {
 		return ""
 	}
 
-	ext := model.GetExtensionFromMime(mimeType)
+	ext := mediamime.GetExtensionFromMime(mimeType)
 	if ext == "" || ext == "bin" {
 		return trimmed
 	}

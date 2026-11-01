@@ -6,12 +6,13 @@ import (
 	"log/slog"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -83,7 +84,7 @@ func (s *Service) attachTrackOriginalAudioWithDB(ctx context.Context, tx *gorm.D
 	if err := s.trackAttachment.LockExistsWithDB(ctx, tx, target.trackID); err != nil {
 		return TrackOriginalAudioAttachment{}, err
 	}
-	if err := mediaasset.LockAttachableFilesForUpdate(ctx, tx, []string{target.fileID}); err != nil {
+	if err := mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, []string{target.fileID}); err != nil {
 		return TrackOriginalAudioAttachment{}, err
 	}
 	file, err := loadTrackOriginalAudioFile(tx, target)

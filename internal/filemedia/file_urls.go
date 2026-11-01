@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -235,11 +237,11 @@ func (s *Service) loadFileURLResponses(
 			meshFileIDs = append(meshFileIDs, file.ID)
 		}
 	}
-	imageAssets, err := mediaasset.LoadReadyPublicAssetRefsForSourceFiles(ctx, s.db, s.cdnDomain, "image", imageFileIDs)
+	imageAssets, err := mediaasset.ReferenceMapResultProto(mediaasset.LoadReadyPublicAssetRefsForSourceFiles(ctx, mediaassetpostgres.NewUnits(s.db), s.cdnDomain, "image", imageFileIDs))
 	if err != nil {
 		return nil, err
 	}
-	meshAssets, err := mediaasset.LoadReadyPublicAssetRefsForSourceFiles(ctx, s.db, s.cdnDomain, "mesh", meshFileIDs)
+	meshAssets, err := mediaasset.ReferenceMapResultProto(mediaasset.LoadReadyPublicAssetRefsForSourceFiles(ctx, mediaassetpostgres.NewUnits(s.db), s.cdnDomain, "mesh", meshFileIDs))
 	if err != nil {
 		return nil, err
 	}
