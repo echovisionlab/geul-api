@@ -8,19 +8,19 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/postgreslock"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -81,7 +81,7 @@ func (completion *multipartCompletion) publishFailure(err error) error {
 		progress = 100
 	}
 	completed := completion.session.FileSize
-	completion.progressEmitter.publishFailed(err.Error(), progress, &completed)
+	completion.progressEmitter.publishFailed(clientErrorText(err), progress, &completed)
 	return err
 }
 
@@ -151,7 +151,7 @@ func (s *Service) loadAuthorizedMultipartCompletion(
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, false, nil
 		}
-		return nil, false, errs.Internal(fmt.Errorf("failed to load upload session: %w", err))
+		return nil, false, fmt.Errorf("failed to load upload session: %w", err)
 	}
 
 	if err := clientMediaBundleMatches(session, request.ClientMediaBundleID); err != nil {
@@ -159,16 +159,16 @@ func (s *Service) loadAuthorizedMultipartCompletion(
 	}
 	objectKey, err := uploadSessionObjectKey(session)
 	if err != nil {
-		return nil, false, errs.Internal(fmt.Errorf("invalid upload session target: %w", err))
+		return nil, false, fmt.Errorf("invalid upload session target: %w", err)
 	}
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return nil, false, errs.AuthenticationRequired()
+		return nil, false, domainerr.AuthenticationRequired()
 	}
 	entityType := derefString(session.EntityType)
 	uploadTypeValue, ok := managev1.UploadType_value[session.UploadType]
 	if !ok {
-		return nil, false, errs.Internal(fmt.Errorf("upload session contains unsupported upload type %q", session.UploadType))
+		return nil, false, fmt.Errorf("upload session contains unsupported upload type %q", session.UploadType)
 	}
 	uploadType := managev1.UploadType(uploadTypeValue)
 	if err := s.checkEntityPermission(ctx, uploadType, entityType, session.EntityID, user.MemberID.String()); err != nil {
@@ -180,7 +180,7 @@ func (s *Service) loadAuthorizedMultipartCompletion(
 	}
 	target, err := fileIngestTargetFromStoredSession(session)
 	if err != nil {
-		return nil, false, errs.Internal(fmt.Errorf("invalid upload session ingest target: %w", err))
+		return nil, false, fmt.Errorf("invalid upload session ingest target: %w", err)
 	}
 	completion := &multipartCompletion{
 		clientMediaPlan: verifiedClientPlan,
@@ -202,7 +202,7 @@ func (s *Service) loadAuthorizedMultipartCompletion(
 	)
 	if completion.progressEmitter != nil {
 		if err := s.bindUploadSessionIngestEmitter(completion.progressEmitter, session); err != nil {
-			return nil, false, errs.Internal(err)
+			return nil, false, err
 		}
 	}
 
@@ -227,16 +227,16 @@ func (s *Service) loadAuthorizedMultipartCompletion(
 	now := time.Now()
 	claimed, uploadedParts, err := s.claimMultipartCompletion(ctx, session, now)
 	if err != nil {
-		if errs.CodeOf(err) != connect.CodeUnknown {
+		if mutation.IsClassified(err) {
 			return nil, false, completion.publishFailure(err)
 		}
 		return nil, false, completion.publishFailure(
-			errs.Internal(fmt.Errorf("failed to update upload session state: %w", err)),
+			fmt.Errorf("failed to update upload session state: %w", err),
 		)
 	}
 	if !claimed {
 		return nil, false, completion.publishFailure(
-			errs.FailedPrecondition("upload session is no longer finalizable"),
+			domainerr.Precondition("upload session is no longer finalizable"),
 		)
 	}
 	completion.session.Status = model.UploadSessionStatusFinalizing
@@ -250,14 +250,14 @@ func (s *Service) recoverFinishedMultipartCompletion(
 ) (*managev1.CompleteMultipartUploadResponse, error) {
 	fileID := strings.TrimSpace(request.FileID)
 	if !IsValidUUID(fileID) {
-		return nil, errs.InvalidArgument("file_id", "invalid UUID format")
+		return nil, domainerr.InvalidField("file_id", "invalid UUID format")
 	}
 	if strings.TrimSpace(request.UploadID) == "" {
-		return nil, errs.Required("upload_id")
+		return nil, domainerr.Required("upload_id")
 	}
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired()
 	}
 
 	file, uploadType, err := s.loadFinishedMultipartFile(ctx, fileID)
@@ -275,10 +275,10 @@ func (s *Service) recoverFinishedMultipartCompletion(
 
 	target, err := CanonicalMediaObjectTargetForFile(file)
 	if err != nil {
-		return nil, errs.WithCause(errs.FailedPrecondition("completed file object target is invalid"), failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", file.ID))))
+		return nil, domainerr.Precondition("completed file object target is invalid").WithCause(failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", file.ID))))
 	}
 	if err := s.verifyCompletedObjectContent(ctx, target.ObjectKey, file.FileSize, file.MimeType, uploadType); err != nil {
-		return nil, errs.Internal(fmt.Errorf("verify completed file object: %w", err))
+		return nil, fmt.Errorf("verify completed file object: %w", err)
 	}
 
 	promotedAsset, err := s.restoreFinishedMultipartPromotedAsset(
@@ -327,36 +327,36 @@ func (s *Service) loadFinishedMultipartFile(ctx context.Context, fileID string) 
 		Model(&model.UploadSession{}).
 		Where("file_id = ?", fileID).
 		Count(&activeSessionCount).Error; err != nil {
-		return model.File{}, 0, errs.Internal(fmt.Errorf("inspect completed upload authority: %w", err))
+		return model.File{}, 0, fmt.Errorf("inspect completed upload authority: %w", err)
 	}
 	if activeSessionCount != 0 {
-		return model.File{}, 0, errs.NotFoundMsg("upload session not found")
+		return model.File{}, 0, domainerr.New(domainerr.NotFound, "", "upload session not found")
 	}
 
 	var file model.File
 	if err := s.db.WithContext(ctx).Where("id = ?", fileID).Take(&file).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return model.File{}, 0, errs.NotFoundMsg("upload session not found")
+			return model.File{}, 0, domainerr.New(domainerr.NotFound, "", "upload session not found")
 		}
-		return model.File{}, 0, errs.Internal(fmt.Errorf("load completed file: %w", err))
+		return model.File{}, 0, fmt.Errorf("load completed file: %w", err)
 	}
 	if file.DeleteRequestedAt != nil || file.FileSize <= 0 ||
 		strings.TrimSpace(file.FileName) == "" || strings.TrimSpace(file.MimeType) == "" ||
 		file.Extension != mediaExtension(&file.MimeType) ||
 		file.FileName != storedFileBasename(file.FileName, file.ID, file.Extension) {
-		return model.File{}, 0, errs.FailedPrecondition("completed file metadata is not deliverable")
+		return model.File{}, 0, domainerr.Precondition("completed file metadata is not deliverable")
 	}
 
 	var binding model.FileIngestBinding
 	if err := s.db.WithContext(ctx).Where("file_id = ?", fileID).Take(&binding).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return model.File{}, 0, errs.NotFoundMsg("upload session not found")
+			return model.File{}, 0, domainerr.New(domainerr.NotFound, "", "upload session not found")
 		}
-		return model.File{}, 0, errs.Internal(fmt.Errorf("load completed file binding: %w", err))
+		return model.File{}, 0, fmt.Errorf("load completed file binding: %w", err)
 	}
 	uploadTypeValue, ok := managev1.UploadType_value[binding.UploadType]
 	if !ok {
-		return model.File{}, 0, errs.FailedPrecondition("completed file binding has unsupported upload type")
+		return model.File{}, 0, domainerr.Precondition("completed file binding has unsupported upload type")
 	}
 	return file, managev1.UploadType(uploadTypeValue), nil
 }
@@ -366,17 +366,17 @@ func (s *Service) loadFinishedMultipartFile(ctx context.Context, fileID string) 
 // derivatives ready.
 func (s *Service) requireFinishedClientMediaBundle(ctx context.Context, file model.File, bundleID string, user *auth.UserInfo) error {
 	if file.ClientMediaBundleID == nil || *file.ClientMediaBundleID != bundleID {
-		return errs.FailedPrecondition("completed client media bundle does not match")
+		return domainerr.Precondition("completed client media bundle does not match")
 	}
 	if file.UploadedByMemberID == nil || *file.UploadedByMemberID != user.MemberID.String() {
-		return errs.PermissionDenied("completed client media bundle belongs to another member")
+		return domainerr.Denied("completed client media bundle belongs to another member")
 	}
 	ready, err := clientMediaFileReady(ctx, s.db, file)
 	if err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if !ready {
-		return errs.FailedPrecondition("completed client media derivatives are not ready")
+		return domainerr.Precondition("completed client media derivatives are not ready")
 	}
 	return nil
 }
@@ -393,7 +393,7 @@ func (s *Service) signFinishedMultipartDelivery(file model.File, promotedAsset *
 		mediaauth.InlineTTL,
 	)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("sign completed file inline delivery: %w", err))
+		return nil, fmt.Errorf("sign completed file inline delivery: %w", err)
 	}
 	downloadFileName := mediaauth.CanonicalDownloadFilename(&file.FileName, file.ID, file.Extension)
 	download, err := buildExpiringMediaFileRef(
@@ -407,7 +407,7 @@ func (s *Service) signFinishedMultipartDelivery(file model.File, promotedAsset *
 		s.effectiveDownloadTTL(),
 	)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("sign completed file download delivery: %w", err))
+		return nil, fmt.Errorf("sign completed file download delivery: %w", err)
 	}
 	return &commonv1.MediaDelivery{
 		FileId:    file.ID,
@@ -430,10 +430,10 @@ func (s *Service) restoreFinishedMultipartPromotedAsset(
 	if uploadType == managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON {
 		set, err := favicon.LoadSet(ctx, s.db, s.cdnDomain, fileID)
 		if err != nil {
-			return nil, errs.Internal(fmt.Errorf("restore completed favicon asset: %w", err))
+			return nil, fmt.Errorf("restore completed favicon asset: %w", err)
 		}
 		if set == nil || set.GetIconPng_32() == nil {
-			return nil, errs.FailedPrecondition("completed favicon asset is not ready")
+			return nil, domainerr.Precondition("completed favicon asset is not ready")
 		}
 		return set.GetIconPng_32(), nil
 	}
@@ -469,7 +469,7 @@ func (s *Service) completeMultipartObject(
 	)
 	domainApplied, err := s.completedFileRecordExists(ctx, completion.session.FileID)
 	if err != nil {
-		return errs.Internal(fmt.Errorf("failed to inspect completed file record: %w", err))
+		return fmt.Errorf("failed to inspect completed file record: %w", err)
 	}
 	completion.domainApplied = domainApplied
 	if domainApplied {
@@ -505,7 +505,7 @@ func (s *Service) completeMultipartObject(
 			}
 		}
 		return completion.publishFailure(
-			errs.Internal(fmt.Errorf("failed to reconcile multipart parts before completion: %w", err)),
+			fmt.Errorf("failed to reconcile multipart parts before completion: %w", err),
 		)
 	}
 	if err := validateMultipartCompletionParts(completion.session, storedParts); err != nil {
@@ -573,20 +573,20 @@ func (s *Service) handleMultipartCompletionStorageError(
 	// terminal.
 	if !terminal {
 		return completion.publishFailure(
-			errs.Internal(fmt.Errorf("failed to complete multipart upload: %w", completionErr)),
+			fmt.Errorf("failed to complete multipart upload: %w", completionErr),
 		)
 	}
 	if deleteCompletedObject {
 		if err := s.deleteMultipartCompletionObject(ctx, completion.objectKey); err != nil {
 			completionErr = errors.Join(completionErr, fmt.Errorf("delete invalid completed object: %w", err))
 			return completion.publishFailure(
-				errs.Internal(fmt.Errorf("failed to complete multipart upload: %w", completionErr)),
+				fmt.Errorf("failed to complete multipart upload: %w", completionErr),
 			)
 		}
 	}
 	s.markMultipartCompletionFailed(ctx, completion.session.UploadID)
 	return completion.publishFailure(
-		errs.Internal(fmt.Errorf("failed to complete multipart upload: %w", completionErr)),
+		fmt.Errorf("failed to complete multipart upload: %w", completionErr),
 	)
 }
 
@@ -640,7 +640,7 @@ func (s *Service) verifyMultipartCompletionObject(
 		return nil
 	}
 	if completion.domainApplied {
-		return errs.Internal(fmt.Errorf("failed to verify previously completed upload: %w", err))
+		return fmt.Errorf("failed to verify previously completed upload: %w", err)
 	}
 	// Metadata and MIME mismatches are definitive invalid objects. Fetch/read
 	// failures are ambiguous and must leave the session finalizing for retry.
@@ -652,7 +652,7 @@ func (s *Service) verifyMultipartCompletionObject(
 		}
 	}
 	return completion.publishFailure(
-		errs.Internal(fmt.Errorf("failed to verify completed upload: %w", err)),
+		fmt.Errorf("failed to verify completed upload: %w", err),
 	)
 }
 
@@ -678,13 +678,13 @@ func (s *Service) persistMultipartCompletion(
 			completion.uploadType,
 			resolvedEntityType,
 		); err != nil {
-			return errs.Internal(fmt.Errorf("failed to validate completed upload state: %w", err))
+			return fmt.Errorf("failed to validate completed upload state: %w", err)
 		}
 		return nil
 	}
 	authority, err := newMultipartFileIngestAuthority(completion.session)
 	if err != nil {
-		return completion.publishFailure(errs.Internal(err))
+		return completion.publishFailure(err)
 	}
 	err = s.createVerifiedFileIngestRecord(
 		ctx,
@@ -699,7 +699,7 @@ func (s *Service) persistMultipartCompletion(
 		// finalizing session so a transient database/CAS failure can retry the same
 		// file identity instead of destructively restarting the upload.
 		return completion.publishFailure(
-			errs.Internal(fmt.Errorf("failed to create verified file record: %w", err)),
+			fmt.Errorf("failed to create verified file record: %w", err),
 		)
 	}
 	return nil
@@ -751,7 +751,7 @@ func (s *Service) attachOrProjectMultipartCompletion(
 		mediaauth.InlineTTL,
 	)
 	if err != nil {
-		return completion.publishFailure(errs.Internal(err))
+		return completion.publishFailure(err)
 	}
 	download, err := buildExpiringMediaFileRef(
 		s.mediaDomain,
@@ -764,7 +764,7 @@ func (s *Service) attachOrProjectMultipartCompletion(
 		s.effectiveDownloadTTL(),
 	)
 	if err != nil {
-		return completion.publishFailure(errs.Internal(err))
+		return completion.publishFailure(err)
 	}
 	completion.delivery = &commonv1.MediaDelivery{
 		FileId:    completion.session.FileID,
@@ -793,7 +793,7 @@ func (s *Service) attachOrProjectMultipartCompletion(
 		completion.verifiedMime,
 		completion.session.FileSize,
 	); err != nil {
-		return errs.Internal(fmt.Errorf("failed to confirm durable file attachment: %w", err))
+		return fmt.Errorf("failed to confirm durable file attachment: %w", err)
 	}
 	return nil
 }
@@ -839,10 +839,10 @@ func (s *Service) finishMultipartCompletion(
 	completion *multipartCompletion,
 ) (*managev1.CompleteMultipartUploadResponse, error) {
 	if err := s.cleanupClientMediaStaging(ctx, completion.session); err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if err := s.deleteCompletedUploadSession(ctx, completion.session.UploadID); err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to delete completed upload session: %w", err))
+		return nil, fmt.Errorf("failed to delete completed upload session: %w", err)
 	}
 	return &managev1.CompleteMultipartUploadResponse{
 		FileId:   completion.session.FileID,

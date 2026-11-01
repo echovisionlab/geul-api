@@ -15,13 +15,13 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/transcoding/hls"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -150,17 +150,17 @@ func (s *Service) loadClientMediaPlan(ctx context.Context, session model.UploadS
 	}
 	plan, err := decodeClientMediaPlan(session)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if plan.MemberID != memberID {
-		return nil, errs.PermissionDenied("client media bundle belongs to another member")
+		return nil, domainerr.Denied("client media bundle belongs to another member")
 	}
 	if err := s.checkPartUploadPermission(ctx, memberID, session); err != nil {
 		return nil, err
 	}
 	ready, err := s.clientMediaRegistrationReady(ctx, session)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if ready {
 		return nil, nil
@@ -289,15 +289,22 @@ func (s *Service) clientMediaRegistrationReady(ctx context.Context, session mode
 }
 
 func clientMediaCompletionError(err error) error {
-	if errs.CodeOf(err) == connect.CodeUnavailable && strings.Contains(err.Error(), missingClientArtifactReason) {
+	if errors.As(err, new(missingClientArtifactError)) {
 		return err
 	}
-	if errs.CodeOf(err) == connect.CodePermissionDenied || errs.CodeOf(err) == connect.CodeUnauthenticated {
+	if mutation.IsDenied(err) || mutation.IsUnauthenticated(err) {
 		return err
 	}
-	return errs.FailedPrecondition(err.Error())
+	return domainerr.Precondition(clientErrorText(err))
 }
 
+// missingClientArtifactError answers a client media artifact that is not
+// staged yet; the client may upload it and retry.
+type missingClientArtifactError struct{ answer *domainerr.Error }
+
+func (err missingClientArtifactError) Error() string { return err.answer.Error() }
+func (err missingClientArtifactError) Unwrap() error { return err.answer }
+
 func missingClientArtifact(path string) error {
-	return connect.NewError(connect.CodeUnavailable, fmt.Errorf("%s %s", missingClientArtifactReason, path))
+	return missingClientArtifactError{domainerr.New(domainerr.Unavailable, "", fmt.Sprintf("%s %s", missingClientArtifactReason, path))}
 }

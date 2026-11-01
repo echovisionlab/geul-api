@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
@@ -18,7 +19,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -100,18 +100,18 @@ func meshOptimizationJobFromCandidate(candidate model.MeshOptimizationCandidate,
 		return nil, err
 	}
 	if candidate.JobID == nil || strings.TrimSpace(*candidate.JobID) == "" {
-		return nil, errs.Required("job_id")
+		return nil, domainerr.Required("job_id")
 	}
 	if strings.TrimSpace(candidate.OutputObjectID) == "" {
-		return nil, errs.Required("output_object_id")
+		return nil, domainerr.Required("output_object_id")
 	}
 	sourceTarget, err := meshMediaObjectTarget(source.ID, source.Extension, source.MimeType)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	outputTarget, err := meshMediaObjectTarget(candidate.OutputObjectID, "glb", "model/gltf-binary")
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	entityType, entityID := candidatePermissionTarget(candidate)
 	return &managev1.MeshOptimizationJob{
@@ -155,14 +155,14 @@ func ValidateMeshOptimizationRequest(targetRatioPercent int32, method string) er
 		return err
 	}
 	if normalizeMeshOptimizationMethod(method) != model.MeshOptimizationMethodDraco {
-		return errs.InvalidArgument("method", "only DRACO is supported")
+		return domainerr.InvalidField("method", "only DRACO is supported")
 	}
 	return nil
 }
 
 func validateMeshOptimizationTargetRatioPercent(targetRatioPercent int32) error {
 	if targetRatioPercent < 1 || targetRatioPercent > 100 {
-		return errs.InvalidArgument("target_ratio_percent", "must be between 1 and 100")
+		return domainerr.InvalidField("target_ratio_percent", "must be between 1 and 100")
 	}
 	return nil
 }
@@ -220,7 +220,7 @@ func meshOptimizationPipelineVersionForProfile(profile managev1.MeshOptimization
 	case managev1.MeshOptimizationProfile_MESH_OPTIMIZATION_PROFILE_PARTICLE_MESH_V1:
 		return model.MeshOptimizationPipelineVersionParticleMeshV1, nil
 	default:
-		return "", errs.InvalidArgument("profile", "unsupported mesh optimization profile")
+		return "", domainerr.InvalidField("profile", "unsupported mesh optimization profile")
 	}
 }
 
@@ -246,7 +246,7 @@ func validateMeshOptimizationOutputProfile(
 		return nil
 	}
 	if outputProfile != expected {
-		return errs.InvalidArgument("output.profile", "does not match the requested mesh optimization profile")
+		return domainerr.InvalidField("output.profile", "does not match the requested mesh optimization profile")
 	}
 	return nil
 }
@@ -255,7 +255,7 @@ func (s *MeshOptimizationService) ListCandidates(ctx context.Context, input Mesh
 	input.SourceFileID = strings.TrimSpace(input.SourceFileID)
 	input.EntityID = strings.TrimSpace(input.EntityID)
 	if input.SourceFileID == "" {
-		return nil, errs.Required("source_file_id")
+		return nil, domainerr.Required("source_file_id")
 	}
 	if err := s.ensureSourceFileReadable(ctx, input.SourceFileID, input.EntityType, input.EntityID); err != nil {
 		return nil, err
@@ -270,7 +270,7 @@ func (s *MeshOptimizationService) ListCandidates(ctx context.Context, input Mesh
 		Where("source_file_id = ? AND pipeline_version = ?", input.SourceFileID, pipelineVersion).
 		Order("target_ratio_percent ASC, created_at DESC").
 		Find(&candidates).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return candidates, nil
 }
@@ -288,7 +288,7 @@ func (s *MeshOptimizationService) GenerateCandidate(
 	}
 	input.PipelineVersion = pipelineVersion
 	if input.SourceFileID == "" {
-		return nil, errs.Required("source_file_id")
+		return nil, domainerr.Required("source_file_id")
 	}
 	if err := ValidateMeshOptimizationRequest(input.TargetRatioPercent, input.Method); err != nil {
 		return nil, err
@@ -304,7 +304,7 @@ func (s *MeshOptimizationService) GenerateCandidate(
 		input.PipelineVersion,
 	)
 	if s.publisher == nil {
-		return nil, errs.FailedPrecondition("mesh optimization publisher is not configured")
+		return nil, domainerr.Precondition("mesh optimization publisher is not configured")
 	}
 
 	var (
@@ -340,7 +340,7 @@ func (s *MeshOptimizationService) GenerateCandidate(
 		enqueued = true
 		return nil
 	}); err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to enqueue mesh optimization: %w", err))
+		return nil, fmt.Errorf("failed to enqueue mesh optimization: %w", err)
 	}
 	if cleanupOutputID != "" && s.fileDeleter != nil {
 		if err := s.fileDeleter.DeleteFileByID(ctx, cleanupOutputID); err != nil {
@@ -353,7 +353,7 @@ func (s *MeshOptimizationService) GenerateCandidate(
 func (s *MeshOptimizationService) MarkCandidateProcessing(ctx context.Context, candidateID string, startedAt time.Time) error {
 	candidateID = strings.TrimSpace(candidateID)
 	if candidateID == "" {
-		return errs.Required("candidate_id")
+		return domainerr.Required("candidate_id")
 	}
 	if startedAt.IsZero() {
 		startedAt = time.Now()
@@ -379,7 +379,7 @@ func (s *MeshOptimizationService) UseCandidate(ctx context.Context, candidateID 
 		return nil, err
 	}
 	if candidate.Status != model.MeshOptimizationCandidateStatusReady || candidate.OutputFileID == nil {
-		return nil, errs.FailedPrecondition("mesh optimization candidate is not ready")
+		return nil, domainerr.Precondition("mesh optimization candidate is not ready")
 	}
 	now := dbtime.Now()
 	if err := s.db.WithContext(ctx).
@@ -390,7 +390,7 @@ func (s *MeshOptimizationService) UseCandidate(ctx context.Context, candidateID 
 			"expires_at":  nil,
 			"updated_at":  now,
 		}).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	candidate.SelectedAt = &now
 	candidate.ExpiresAt = nil
@@ -422,7 +422,7 @@ func (s *MeshOptimizationService) DiscardCandidate(ctx context.Context, candidat
 				"expires_at":   now.Add(meshOptimizationCandidateTTL),
 				"updated_at":   now,
 			}).Error; err != nil {
-			return errs.Internal(err)
+			return err
 		}
 		return nil
 	}
@@ -434,10 +434,10 @@ func (s *MeshOptimizationService) HandleProgress(
 	event *managev1.MeshOptimizationProgressEvent,
 ) (_ *model.MeshOptimizationCandidate, resultErr error) {
 	if event == nil {
-		return nil, errs.Required("event")
+		return nil, domainerr.Required("event")
 	}
 	if strings.TrimSpace(event.GetJobId()) == "" {
-		return nil, errs.Required("job_id")
+		return nil, domainerr.Required("job_id")
 	}
 	candidate, err := s.loadCandidateForMeshEvent(ctx, event.GetJobId(), event.GetCorrelationId(), event.GetIdentity())
 	if err != nil {
@@ -445,7 +445,7 @@ func (s *MeshOptimizationService) HandleProgress(
 	}
 	if candidate.Status == model.MeshOptimizationCandidateStatusPending {
 		if err := s.MarkCandidateProcessing(ctx, candidate.ID, unixMillisTime(event.GetTimestampMs())); err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 		return s.loadCandidate(ctx, candidate.ID)
 	}
@@ -468,7 +468,7 @@ func (s *MeshOptimizationService) HandleComplete(
 		return err
 	})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if !sourceAcceptsResults || candidate.Status == model.MeshOptimizationCandidateStatusCancelled {
 		candidate.OutputObjectID = completion.outputFileID
@@ -497,14 +497,14 @@ func (s *MeshOptimizationService) prepareMeshOptimizationCompletion(
 	event *managev1.MeshOptimizationCompleteEvent,
 ) (meshOptimizationCompletion, *model.MeshOptimizationCandidate, error) {
 	if event == nil {
-		return meshOptimizationCompletion{}, nil, errs.Required("event")
+		return meshOptimizationCompletion{}, nil, domainerr.Required("event")
 	}
 	if strings.TrimSpace(event.GetJobId()) == "" {
-		return meshOptimizationCompletion{}, nil, errs.Required("job_id")
+		return meshOptimizationCompletion{}, nil, domainerr.Required("job_id")
 	}
 	output := event.GetOutput()
 	if output == nil {
-		return meshOptimizationCompletion{}, nil, errs.Required("output")
+		return meshOptimizationCompletion{}, nil, domainerr.Required("output")
 	}
 	candidate, err := s.loadCandidateForMeshEvent(ctx, event.GetJobId(), event.GetCorrelationId(), event.GetIdentity())
 	if err != nil {
@@ -524,24 +524,24 @@ func validateMeshOptimizationCompletionPayload(
 ) (meshOptimizationCompletion, error) {
 	written := output.GetWritten()
 	if written == nil {
-		return meshOptimizationCompletion{}, errs.Required("output.written")
+		return meshOptimizationCompletion{}, domainerr.Required("output.written")
 	}
 	outputFileID := strings.TrimSpace(written.GetFileId())
 	expectedOutputObjectID = strings.TrimSpace(expectedOutputObjectID)
 	if expectedOutputObjectID == "" {
-		return meshOptimizationCompletion{}, errs.FailedPrecondition("mesh optimization output was not allocated")
+		return meshOptimizationCompletion{}, domainerr.Precondition("mesh optimization output was not allocated")
 	}
 	if outputFileID != expectedOutputObjectID {
-		return meshOptimizationCompletion{}, errs.InvalidArgument("output.written.file_id", "does not match the allocated output file")
+		return meshOptimizationCompletion{}, domainerr.InvalidField("output.written.file_id", "does not match the allocated output file")
 	}
 	if output.OptimizedSizeBytes == nil {
-		return meshOptimizationCompletion{}, errs.Required("optimized_size_bytes")
+		return meshOptimizationCompletion{}, domainerr.Required("optimized_size_bytes")
 	}
 	if written.GetFileSize() <= 0 || written.GetFileSize() != output.GetOptimizedSizeBytes() {
-		return meshOptimizationCompletion{}, errs.InvalidArgument("output.written.file_size", "must match optimized_size_bytes and be positive")
+		return meshOptimizationCompletion{}, domainerr.InvalidField("output.written.file_size", "must match optimized_size_bytes and be positive")
 	}
 	if len(written.GetSha256()) != 32 {
-		return meshOptimizationCompletion{}, errs.InvalidArgument("output.written.sha256", "must be a 32-byte SHA-256 digest")
+		return meshOptimizationCompletion{}, domainerr.InvalidField("output.written.sha256", "must be a 32-byte SHA-256 digest")
 	}
 	completedAt := unixMillisTime(event.GetTimestampMs())
 	return meshOptimizationCompletion{
@@ -668,10 +668,10 @@ func meshOptimizationCompletionUpdates(
 
 func (s *MeshOptimizationService) HandleFailed(ctx context.Context, event *managev1.MeshOptimizationFailEvent) (_ *model.MeshOptimizationCandidate, resultErr error) {
 	if event == nil {
-		return nil, errs.Required("event")
+		return nil, domainerr.Required("event")
 	}
 	if strings.TrimSpace(event.GetJobId()) == "" {
-		return nil, errs.Required("job_id")
+		return nil, domainerr.Required("job_id")
 	}
 	candidate, err := s.loadCandidateForMeshEvent(ctx, event.GetJobId(), event.GetCorrelationId(), event.GetIdentity())
 	if err != nil {
@@ -704,7 +704,7 @@ func (s *MeshOptimizationService) HandleFailed(ctx context.Context, event *manag
 			"expires_at":    expiresAt,
 			"updated_at":    failedAt,
 		}).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return s.loadCandidate(ctx, candidate.ID)
 }
@@ -763,7 +763,7 @@ func (s *MeshOptimizationService) findOrCreateCandidate(
 		return revived, false, cleanupOutputID, err
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return model.MeshOptimizationCandidate{}, false, "", errs.Internal(err)
+		return model.MeshOptimizationCandidate{}, false, "", err
 	}
 
 	now := dbtime.Now()
@@ -771,7 +771,7 @@ func (s *MeshOptimizationService) findOrCreateCandidate(
 	candidateID := uuid.New().String()
 	outputObjectID := uuid.New().String()
 	if _, err := meshMediaObjectTarget(outputObjectID, "glb", "model/gltf-binary"); err != nil {
-		return model.MeshOptimizationCandidate{}, false, "", errs.Internal(err)
+		return model.MeshOptimizationCandidate{}, false, "", err
 	}
 	jobID := uuid.New().String()
 	status := model.MeshOptimizationCandidateStatusPending
@@ -796,7 +796,7 @@ func (s *MeshOptimizationService) findOrCreateCandidate(
 		UpdatedAt:          now,
 	}
 	if err := db.WithContext(ctx).Create(&candidate).Error; err != nil {
-		return model.MeshOptimizationCandidate{}, false, "", errs.Internal(err)
+		return model.MeshOptimizationCandidate{}, false, "", err
 	}
 	return candidate, false, "", nil
 }
@@ -811,7 +811,7 @@ func (s *MeshOptimizationService) requeueCandidate(
 	expiresAt := now.Add(meshOptimizationCandidateTTL)
 	outputObjectID := uuid.New().String()
 	if _, err := meshMediaObjectTarget(outputObjectID, "glb", "model/gltf-binary"); err != nil {
-		return model.MeshOptimizationCandidate{}, "", errs.Internal(err)
+		return model.MeshOptimizationCandidate{}, "", err
 	}
 	previousOutputObjectID := strings.TrimSpace(candidate.OutputObjectID)
 	jobID := uuid.New().String()
@@ -841,7 +841,7 @@ func (s *MeshOptimizationService) requeueCandidate(
 	if err := db.WithContext(ctx).Model(&model.MeshOptimizationCandidate{}).
 		Where("id = ?", candidate.ID).
 		Updates(updates).Error; err != nil {
-		return model.MeshOptimizationCandidate{}, "", errs.Internal(err)
+		return model.MeshOptimizationCandidate{}, "", err
 	}
 	candidate.OutputObjectID = outputObjectID
 	candidate.OutputFileID = nil
@@ -868,14 +868,14 @@ func (s *MeshOptimizationService) requeueCandidate(
 func (s *MeshOptimizationService) loadCandidate(ctx context.Context, candidateID string) (*model.MeshOptimizationCandidate, error) {
 	candidateID = strings.TrimSpace(candidateID)
 	if candidateID == "" {
-		return nil, errs.Required("candidate_id")
+		return nil, domainerr.Required("candidate_id")
 	}
 	var candidate model.MeshOptimizationCandidate
 	if err := s.db.WithContext(ctx).Where("id = ?", candidateID).Take(&candidate).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("mesh_optimization_candidate", candidateID)
+			return nil, domainerr.ResourceNotFound("mesh_optimization_candidate", candidateID)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return &candidate, nil
 }
@@ -889,7 +889,7 @@ func (s *MeshOptimizationService) loadCandidateForMeshEvent(
 	jobID = strings.TrimSpace(jobID)
 	correlationID = strings.TrimSpace(correlationID)
 	if jobID == "" || correlationID == "" || identity == nil {
-		return nil, errs.InvalidArgument("event", "job_id, correlation_id, and identity are required")
+		return nil, domainerr.InvalidField("event", "job_id, correlation_id, and identity are required")
 	}
 
 	var candidate model.MeshOptimizationCandidate
@@ -897,15 +897,15 @@ func (s *MeshOptimizationService) loadCandidateForMeshEvent(
 		Where("id = ? AND job_id = ?", correlationID, jobID).
 		Take(&candidate).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFoundMsg("mesh optimization candidate not found")
+			return nil, domainerr.New(domainerr.NotFound, "", "mesh optimization candidate not found")
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	entityType, entityID := candidatePermissionTarget(candidate)
 	if strings.TrimSpace(identity.GetFileId()) != candidate.SourceFileID ||
 		identity.GetEntityType() != entityType ||
 		strings.TrimSpace(identity.GetEntityId()) != strings.TrimSpace(entityID) {
-		return nil, errs.InvalidArgument("identity", "does not match the allocated mesh optimization job")
+		return nil, domainerr.InvalidField("identity", "does not match the allocated mesh optimization job")
 	}
 	return &candidate, nil
 }
@@ -943,11 +943,11 @@ func (s *MeshOptimizationService) ensureSourceFileReadable(
 ) error {
 	sourceFileID = strings.TrimSpace(sourceFileID)
 	if sourceFileID == "" {
-		return errs.Required("source_file_id")
+		return domainerr.Required("source_file_id")
 	}
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	if err := s.ensureMeshOptimizationPermission(ctx, entityType, entityID); err != nil {
 		return err
@@ -972,15 +972,15 @@ func (s *MeshOptimizationService) ensureSourceFileOptimizable(
 		Where("id = ? AND delete_requested_at IS NULL", sourceFileID).
 		Take(&file).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("file", sourceFileID)
+			return nil, domainerr.ResourceNotFound("file", sourceFileID)
 		}
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if strings.TrimSpace(file.MimeType) != "model/gltf-binary" {
-		return nil, errs.InvalidArgument("source_file_id", "source file must be a GLB mesh")
+		return nil, domainerr.InvalidField("source_file_id", "source file must be a GLB mesh")
 	}
 	if strings.TrimSpace(file.Extension) != "glb" {
-		return nil, errs.FailedPrecondition("source file extension is not canonical")
+		return nil, domainerr.Precondition("source file extension is not canonical")
 	}
 	return &file, nil
 }
@@ -994,10 +994,10 @@ func (s *MeshOptimizationService) ensureSourceFileLinkedToEntity(
 	sourceFileID = strings.TrimSpace(sourceFileID)
 	entityID = strings.TrimSpace(entityID)
 	if sourceFileID == "" {
-		return errs.Required("source_file_id")
+		return domainerr.Required("source_file_id")
 	}
 	if entityID == "" {
-		return errs.Required("entity_id")
+		return domainerr.Required("entity_id")
 	}
 	var ownerTable string
 	switch entityType {
@@ -1010,7 +1010,7 @@ func (s *MeshOptimizationService) ensureSourceFileLinkedToEntity(
 	case managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PROGRAM_EVENT:
 		ownerTable = "program_event"
 	default:
-		return errs.InvalidArgument("entity_type", "unsupported editor entity type")
+		return domainerr.InvalidField("entity_type", "unsupported editor entity type")
 	}
 
 	var count int64
@@ -1020,10 +1020,10 @@ func (s *MeshOptimizationService) ensureSourceFileLinkedToEntity(
 		Joins("JOIN "+ownerTable+" AS owner ON owner.content_document_id = cb.document_id").
 		Where("owner.id = ? AND cbf.selector_kind = 'active' AND cbf.file_id = ?", entityID, sourceFileID).
 		Count(&count).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if count == 0 {
-		return errs.NotFound("source_file", sourceFileID)
+		return domainerr.ResourceNotFound("source_file", sourceFileID)
 	}
 	return nil
 }
@@ -1035,36 +1035,36 @@ func (s *MeshOptimizationService) ensureMeshOptimizationPermission(
 ) error {
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	resourceType := meshOptimizationResourceType(entityType)
 	if resourceType == "" || strings.TrimSpace(entityID) == "" {
-		return errs.PermissionDenied("mesh optimization requires an editable entity")
+		return domainerr.Denied("mesh optimization requires an editable entity")
 	}
 	return s.ensureUserCanEditResource(ctx, resourceType, entityID, user)
 }
 
 func (s *MeshOptimizationService) ensureUserCanEditResource(ctx context.Context, resourceType, entityID string, user *auth.UserInfo) error {
 	if s == nil || s.spiceDB == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	can, err := meshOptimizationEditCan(resourceType, entityID)
 	if err != nil {
 		if errors.Is(err, errUnsupportedMeshOptimizationResource) {
-			return errs.PermissionDenied("mesh optimization requires an editable entity")
+			return domainerr.Denied("mesh optimization requires an editable entity")
 		}
-		return errs.InvalidArgument("entity_id", err.Error())
+		return domainerr.InvalidField("entity_id", err.Error())
 	}
 	decision, err := auth.AuthorizationDecision(auth.WithUser(ctx, user), can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	ok, err := s.spiceDB.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if !ok {
-		return errs.NoPermission("optimize mesh for", resourceType)
+		return domainerr.NoPermission("optimize mesh for", resourceType)
 	}
 	return nil
 }

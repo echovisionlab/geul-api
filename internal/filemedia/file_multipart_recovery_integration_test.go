@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -73,7 +75,7 @@ func TestMultipartMissingPartsRemainRetryableAndAbortableDirectIntegration(t *te
 		result := <-completionResults
 		require.Error(t, result.err)
 		require.Nil(t, result.response)
-		require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(result.err))
+		require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(result.err))
 		require.Contains(t, result.err.Error(), "uploaded part count")
 	}
 	requireEditorUploadSessionStatus(t, stack.DB, retrySession.GetUploadId(), model.UploadSessionStatusInitiated)
@@ -96,7 +98,7 @@ func TestMultipartMissingPartsRemainRetryableAndAbortableDirectIntegration(t *te
 		FileId:   abortSession.GetFileId(),
 	}))
 	require.Error(t, err)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	aborted, err := NewConnectHandler(service).AbortMultipartUpload(ctx, connect.NewRequest(&managev1.AbortMultipartUploadRequest{
 		UploadId: abortSession.GetUploadId(),
 		FileId:   abortSession.GetFileId(),
@@ -163,7 +165,7 @@ func TestMultipartPartReplacementRequiresFreshConfirmationDirectIntegration(t *t
 		FileId:   session.FileID,
 	}))
 	require.Error(t, err)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 
 	putReq, err := http.NewRequest(http.MethodPut, presigned.URL, bytes.NewReader(replacementBody))
 	require.NoError(t, err)
@@ -415,7 +417,7 @@ func TestMultipartResumeListPartsFailureDoesNotUseStaleDBCacheDirectIntegration(
 	resumed, err := NewConnectHandler(failingService).FindMultipartUploadCandidate(ctx, findCandidate())
 	require.Error(t, err)
 	require.Nil(t, resumed)
-	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInternal, errs.CodeOf(err))
 	require.Contains(t, err.Error(), "list multipart resume parts")
 
 	var cached model.UploadPart

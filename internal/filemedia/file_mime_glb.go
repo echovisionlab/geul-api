@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 )
 
 func parseGLBHeader(body []byte) (totalLength uint32, firstChunkLength uint32, ok bool) {
@@ -33,17 +33,14 @@ func parseGLBHeader(body []byte) (totalLength uint32, firstChunkLength uint32, o
 
 func validateGLBUploadSize(body []byte, expectedSize int64) error {
 	if expectedSize <= 0 {
-		return errs.InvalidArgument("file_size", "GLB upload size is required")
+		return domainerr.InvalidField("file_size", "GLB upload size is required")
 	}
 	totalLength, _, ok := parseGLBHeader(body)
 	if !ok {
 		return nil
 	}
 	if uint64(totalLength) != uint64(expectedSize) {
-		return errs.InvalidArgument(
-			"file_size",
-			fmt.Sprintf("GLB total length %d does not match upload size %d", totalLength, expectedSize),
-		)
+		return domainerr.InvalidField("file_size", fmt.Sprintf("GLB total length %d does not match upload size %d", totalLength, expectedSize))
 	}
 	return nil
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -48,9 +47,7 @@ func (s *Service) selectUnserializedMultipartResumeCandidate(
 		ctx, uploadType, entityID, entityType, identity,
 	)
 	if err != nil {
-		return multipartResumeSelection{}, errs.Internal(
-			fmt.Errorf("failed to find active upload sessions: %w", err),
-		)
+		return multipartResumeSelection{}, fmt.Errorf("failed to find active upload sessions: %w", err)
 	}
 	selection := multipartResumeSelection{activeSessions: activeSessions}
 	for i := range activeSessions {
@@ -75,7 +72,7 @@ func (s *Service) buildMultipartResumeResponse(
 ) (*managev1.InitiateMultipartUploadResponse, error) {
 	uploadedParts, err := s.loadUploadPartInfos(ctx, session.UploadID)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to load uploaded parts: %w", err))
+		return nil, fmt.Errorf("failed to load uploaded parts: %w", err)
 	}
 	s.refreshUploadSessionActivity(ctx, session.UploadID)
 	return multipartInitiateResponseFromSession(session, uploadedParts, true), nil

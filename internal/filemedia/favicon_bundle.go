@@ -17,7 +17,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -45,7 +45,7 @@ func (s *Service) generateFaviconBundle(
 
 	existing, err := favicon.LoadSet(bundleCtx, s.db, s.cdnDomain, sourceFileID)
 	if err != nil {
-		return nil, errs.FailedPrecondition(fmt.Sprintf("existing favicon bundle is invalid: %v", err))
+		return nil, domainerr.Precondition(fmt.Sprintf("existing favicon bundle is invalid: %v", err))
 	}
 	if existing != nil {
 		return existing.GetIconPng_32(), nil
@@ -82,32 +82,32 @@ func (s *Service) loadValidatedFaviconSource(
 		Select("id", "mime_type", "file_size", "extension").
 		Where("id = ?", sourceFileID).
 		Take(&source).Error; err != nil {
-		return model.File{}, nil, errs.Internal(fmt.Errorf("load favicon source: %w", err))
+		return model.File{}, nil, fmt.Errorf("load favicon source: %w", err)
 	}
 	objectKey, err := mediaauth.MediaObjectKey(source.ID, source.Extension)
 	if err != nil {
-		return model.File{}, nil, errs.WithCause(errs.FailedPrecondition("favicon source metadata is not canonical"), failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", source.ID))))
+		return model.File{}, nil, domainerr.Precondition("favicon source metadata is not canonical").WithCause(failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", source.ID))))
 	}
 	object, err := s.s3Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.s3Bucket),
 		Key:    aws.String(objectKey),
 	})
 	if err != nil {
-		return model.File{}, nil, errs.Internal(fmt.Errorf("read favicon source: %w", err))
+		return model.File{}, nil, fmt.Errorf("read favicon source: %w", err)
 	}
 	sourceBytes, readErr := io.ReadAll(io.LimitReader(object.Body, favicon.MaxSourceSize+1))
 	closeErr := object.Body.Close()
 	if readErr != nil {
-		return model.File{}, nil, errs.Internal(fmt.Errorf("read favicon source: %w", readErr))
+		return model.File{}, nil, fmt.Errorf("read favicon source: %w", readErr)
 	}
 	if closeErr != nil {
-		return model.File{}, nil, errs.Internal(fmt.Errorf("close favicon source: %w", closeErr))
+		return model.File{}, nil, fmt.Errorf("close favicon source: %w", closeErr)
 	}
 	if int64(len(sourceBytes)) != source.FileSize {
-		return model.File{}, nil, errs.FailedPrecondition("favicon source size does not match File")
+		return model.File{}, nil, domainerr.Precondition("favicon source size does not match File")
 	}
 	if err := favicon.ValidateSource(sourceBytes, source.MimeType); err != nil {
-		return model.File{}, nil, errs.FailedPrecondition(fmt.Sprintf("favicon source validation failed: %v", err))
+		return model.File{}, nil, domainerr.Precondition(fmt.Sprintf("favicon source validation failed: %v", err))
 	}
 	return source, sourceBytes, nil
 }
@@ -125,11 +125,11 @@ func (s *Service) generateFaviconOutputs(
 	// only bytes eligible for source-backed SVG publication.
 	outputs, err := processor.Process(ctx, append([]byte(nil), sourceBytes...), sourceMime)
 	if err != nil {
-		return nil, errs.FailedPrecondition(fmt.Sprintf("favicon processing failed: %v", err))
+		return nil, domainerr.Precondition(fmt.Sprintf("favicon processing failed: %v", err))
 	}
 	if err := favicon.ValidateOutputs(outputs, sourceMime); err != nil {
 		// The processor generated the bundle; an invalid one is a server fault.
-		return nil, errs.WithCause(errs.FailedPrecondition(fmt.Sprintf("favicon processing produced an invalid bundle: %v", err)), failurecause.ServerFault(err))
+		return nil, domainerr.Precondition(fmt.Sprintf("favicon processing produced an invalid bundle: %v", err)).WithCause(failurecause.ServerFault(err))
 	}
 	return outputs, nil
 }
@@ -154,7 +154,7 @@ func (s *Service) stageFaviconBundle(
 		}
 		if stageErr != nil {
 			s.scheduleStagedFaviconDeletion(cleanupCtx, staged, nil)
-			return nil, errs.Internal(fmt.Errorf("stage favicon SVG source asset: %w", stageErr))
+			return nil, fmt.Errorf("stage favicon SVG source asset: %w", stageErr)
 		}
 	}
 	for _, output := range outputs {
@@ -169,11 +169,11 @@ func (s *Service) stageFaviconBundle(
 		}
 		if stageErr != nil {
 			s.scheduleStagedFaviconDeletion(cleanupCtx, staged, nil)
-			return nil, errs.Internal(fmt.Errorf(
+			return nil, fmt.Errorf(
 				"stage favicon derivative %s: %w",
 				output.Spec.DerivativeType.String(),
 				stageErr,
-			))
+			)
 		}
 	}
 	return staged, nil
@@ -188,16 +188,16 @@ func (s *Service) commitFaviconBundle(
 	tx := s.db.WithContext(ctx).Begin()
 	if tx.Error != nil {
 		s.scheduleStagedFaviconDeletion(cleanupCtx, staged, nil)
-		return nil, errs.Internal(fmt.Errorf("begin favicon bundle transaction: %w", tx.Error))
+		return nil, fmt.Errorf("begin favicon bundle transaction: %w", tx.Error)
 	}
 	set, usedStaged, callbackErr := s.finalizeStagedFaviconBundle(ctx, tx, source, staged)
 	if callbackErr != nil {
 		rollbackErr := tx.Rollback().Error
 		s.scheduleStagedFaviconDeletion(cleanupCtx, staged, nil)
-		return nil, errs.Internal(fmt.Errorf(
+		return nil, fmt.Errorf(
 			"store generated favicon bundle: %w",
 			stderrors.Join(callbackErr, rollbackErr),
-		))
+		)
 	}
 	commitErr := tx.Commit().Error
 	if commitErr == nil && s.testFaviconCommitError != nil {
@@ -211,12 +211,12 @@ func (s *Service) commitFaviconBundle(
 			return winner.GetIconPng_32(), nil
 		}
 		slog.ErrorContext(ctx, "favicon bundle commit outcome could not be reconciled; preserving source and staged assets", failurecause.Attr(stderrors.Join(commitErr, reconcileErr)), "file_id", source.ID)
-		return nil, errs.Internal(fmt.Errorf(
+		return nil, fmt.Errorf(
 			"%w: commit error: %v; reconcile error: %v",
 			errFaviconBundleCommitUncertain,
 			commitErr,
 			reconcileErr,
-		))
+		)
 	}
 	if !usedStaged {
 		s.scheduleStagedFaviconDeletion(cleanupCtx, staged, favicon.AssetIDs(set))

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
@@ -35,7 +37,7 @@ func TestAuthorizeManageFileDeliveriesRequiresIndependentFileUploader(t *testing
 		fileID := uuid.NewString()
 		seedFileDeliveryBinding(t, db, fileID, uploadType, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, "", manager.MemberID)
 		require.NoError(t, svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(manager), []string{fileID}))
-		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(other), []string{fileID})))
+		require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(other), []string{fileID})))
 		require.NoError(t, svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(admin), []string{fileID}))
 	}
 }
@@ -50,8 +52,8 @@ func TestAuthorizeManageFileDeliveriesFailsClosedForMissingOrMixedBindings(t *te
 	seedFileDeliveryBinding(t, db, ownedFileID, managev1.UploadType_UPLOAD_TYPE_USER_AVATAR, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, owner.MemberID)
 	svc := &Service{db: db, spiceDB: spiceDB, postAccess: newIntegrationPostAccess(db, spiceDB), programEventAttachment: newIntegrationProgramEventAccess(db)}
 	ctx := fileDeliveryPrincipalContext(owner)
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(svc.authorizeManageFileDeliveries(ctx, []string{missingFileID})))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(svc.authorizeManageFileDeliveries(ctx, []string{ownedFileID, missingFileID})))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(svc.authorizeManageFileDeliveries(ctx, []string{missingFileID})))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(svc.authorizeManageFileDeliveries(ctx, []string{ownedFileID, missingFileID})))
 }
 
 func TestAuthorizeManageFileDeliveriesSupportsOwnerAndAdminBoundaries(t *testing.T) {
@@ -71,8 +73,8 @@ func TestAuthorizeManageFileDeliveriesSupportsOwnerAndAdminBoundaries(t *testing
 	seedFileDeliveryBinding(t, db, mapFileID, managev1.UploadType_UPLOAD_TYPE_MAP_IMAGE, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, mapEntityID)
 	svc := &Service{db: db, spiceDB: spiceDB, postAccess: newIntegrationPostAccess(db, spiceDB), programEventAttachment: newIntegrationProgramEventAccess(db)}
 	require.NoError(t, svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(avatarOwner), []string{avatarFileID}))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(otherUser), []string{avatarFileID})))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(ordinaryUser), []string{mapFileID})))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(otherUser), []string{avatarFileID})))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(ordinaryUser), []string{mapFileID})))
 	require.NoError(t, svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(admin), []string{avatarFileID, mapFileID}))
 }
 
@@ -107,9 +109,9 @@ func TestManageMediaDeliveryRejectsArbitraryAndMixedFileIDsBeforeSigning(t *test
 	svc := &Service{db: db, spiceDB: spiceDB, postAccess: newIntegrationPostAccess(db, spiceDB), programEventAttachment: newIntegrationProgramEventAccess(db)}
 	ctx := fileDeliveryPrincipalContext(owner)
 	_, err := NewConnectHandler(svc).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: arbitraryFileID}))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
 	_, err = NewConnectHandler(svc).GetBulkMediaDeliveries(ctx, connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{FileIds: []string{ownedFileID, arbitraryFileID}}))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
 }
 
 func TestAuthorizeManageFileDeliveriesRejectsUnauthenticatedAndBannedUsers(t *testing.T) {
@@ -121,9 +123,9 @@ func TestAuthorizeManageFileDeliveriesRejectsUnauthenticatedAndBannedUsers(t *te
 	fileID := uuid.NewString()
 	seedFileDeliveryBinding(t, db, fileID, managev1.UploadType_UPLOAD_TYPE_USER_AVATAR, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, owner.MemberID)
 	svc := &Service{db: db, spiceDB: spiceDB, postAccess: newIntegrationPostAccess(db, spiceDB), programEventAttachment: newIntegrationProgramEventAccess(db)}
-	require.Equal(t, connect.CodeUnauthenticated, connect.CodeOf(svc.authorizeManageFileDeliveries(context.Background(), []string{fileID})))
+	require.Equal(t, connect.CodeUnauthenticated, errs.CodeOf(svc.authorizeManageFileDeliveries(context.Background(), []string{fileID})))
 	banned := auditedUserContext(context.Background(), &auth.UserInfo{IdentityID: auth.IdentityID(owner.IdentityID), MemberID: auth.MemberID(owner.MemberID), Authenticated: true, Banned: true})
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(svc.authorizeManageFileDeliveries(banned, []string{fileID})))
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(svc.authorizeManageFileDeliveries(banned, []string{fileID})))
 }
 
 func TestAuthorizeManageFileDeliveriesDeduplicatesEntityPermissionChecks(t *testing.T) {
@@ -174,13 +176,13 @@ func TestAuthorizeManageFileDeliveriesUsesCurrentPostAttachmentsNotIngestBinding
 	svc := &Service{db: db, spiceDB: spiceDB, postAccess: newIntegrationPostAccess(db, spiceDB), programEventAttachment: newIntegrationProgramEventAccess(db)}
 	managerCtx := fileDeliveryPrincipalContext(manager)
 	require.NoError(t, svc.authorizeManageFileDeliveries(managerCtx, fileIDs))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(
 		svc.authorizeManageFileDeliveries(managerCtx, []string{unrelatedFileID}),
 	))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(
+	require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(
 		svc.authorizeManageFileDeliveries(managerCtx, []string{detachedFileID}),
 	))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(
 		svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(otherAuthor), []string{fileIDs[0]}),
 	))
 }
@@ -217,7 +219,7 @@ func TestArchivedPostFileBoundariesAllowAuthorViewAndRequireAdminEdit(t *testing
 		fileDownloadPolicyRelation{ResourceType: "post", ResourceID: postID},
 		filePolicyOwnerView,
 	))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(
 		service.authorizeFileDownloadPolicyOwner(
 			authorCtx,
 			db,
@@ -231,7 +233,7 @@ func TestArchivedPostFileBoundariesAllowAuthorViewAndRequireAdminEdit(t *testing
 		fileDownloadPolicyRelation{ResourceType: "post", ResourceID: postID},
 		filePolicyOwnerEdit,
 	))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(service.checkEntityPermission(
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(service.checkEntityPermission(
 		authorCtx,
 		managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE,
 		"",
@@ -246,7 +248,7 @@ func TestArchivedPostFileBoundariesAllowAuthorViewAndRequireAdminEdit(t *testing
 		admin.MemberID,
 	))
 
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(requireFreshFileIngestAuthority(
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(requireFreshFileIngestAuthority(
 		authorCtx,
 		db,
 		service,
@@ -295,7 +297,7 @@ func TestArchivedProgramEventFileBoundariesAllowAuthorViewAndRequireAdminEdit(t 
 		fileDownloadPolicyRelation{ResourceType: "program_event", ResourceID: eventID},
 		filePolicyOwnerView,
 	))
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(
 		service.authorizeFileDownloadPolicyOwner(
 			authorCtx,
 			db,
@@ -356,7 +358,7 @@ func TestAuthorizeManageFileDeliveriesUsesCurrentContentAttachmentsNotIngestBind
 				EntityType: &legacyEntityType, EntityID: entityID,
 			}).Error)
 			require.NoError(t, svc.authorizeManageFileDeliveries(adminCtx, []string{detachedFileID}))
-			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(
+			require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(
 				svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(other), []string{detachedFileID}),
 			))
 		})
@@ -400,7 +402,7 @@ func TestAuthorizeManageFileDeliveriesRejectsPendingDeleteFile(t *testing.T) {
 	require.NoError(t, db.Exec(`UPDATE file SET delete_requested_at = CURRENT_TIMESTAMP WHERE id = ?`, fileID).Error)
 	svc := &Service{db: db, spiceDB: spiceDB, postAccess: newIntegrationPostAccess(db, spiceDB), programEventAttachment: newIntegrationProgramEventAccess(db)}
 	for _, principal := range []*unitUser{uploader, admin} {
-		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(
+		require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(
 			svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(principal), []string{fileID}),
 		))
 	}

@@ -15,7 +15,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -53,24 +53,24 @@ func (s *Service) CreateGeneratedGeneralFile(
 	extension := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(input.Extension), "."))
 	mimeType := strings.ToLower(strings.TrimSpace(strings.Split(input.MimeType, ";")[0]))
 	if strings.TrimSpace(input.FileName) == "" || extension == "" || mimeType == "" || len(input.Body) == 0 {
-		return nil, errs.InvalidArgument("artifact", "file name, extension, MIME type, and body are required")
+		return nil, domainerr.InvalidField("artifact", "file name, extension, MIME type, and body are required")
 	}
 	if len(extension) > 16 {
-		return nil, errs.InvalidArgument("artifact.extension", "extension is too long")
+		return nil, domainerr.InvalidField("artifact.extension", "extension is too long")
 	}
 
 	fileID := uuid.NewString()
 	fileName := storedFileBasename(input.FileName, fileID, extension)
 	objectKey, err := mediaauth.MediaObjectKey(fileID, extension)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	download, err := buildExpiringMediaFileRef(
 		s.mediaDomain, s.mediaSecret, fileID, extension, mimeType, &fileName,
 		mediaauth.PurposeDownload, s.effectiveDownloadTTL(),
 	)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	digest := sha256.Sum256(input.Body)
 	if _, err := s.s3Client.PutObject(ctx, &s3.PutObjectInput{
@@ -78,7 +78,7 @@ func (s *Service) CreateGeneratedGeneralFile(
 		Body: bytes.NewReader(input.Body), ContentLength: aws.Int64(int64(len(input.Body))),
 		ContentType: aws.String(mimeType),
 	}); err != nil {
-		return nil, errs.Internal(fmt.Errorf("store generated File object: %w", err))
+		return nil, fmt.Errorf("store generated File object: %w", err)
 	}
 
 	file := fileIngestRecord{
@@ -105,10 +105,10 @@ func (s *Service) CreateGeneratedGeneralFile(
 		return download, nil
 	}
 	if existsErr != nil {
-		return nil, errs.Internal(errors.Join(createErr, fmt.Errorf("verify generated File commit: %w", existsErr)))
+		return nil, errors.Join(createErr, fmt.Errorf("verify generated File commit: %w", existsErr))
 	}
 	cleanupErr := s.deleteGeneratedFileObject(context.WithoutCancel(ctx), objectKey)
-	return nil, errs.Internal(errors.Join(createErr, cleanupErr))
+	return nil, errors.Join(createErr, cleanupErr)
 }
 
 func (s *Service) deleteGeneratedFileObject(ctx context.Context, objectKey string) error {
@@ -133,18 +133,18 @@ func (s *Service) ReadVerifiedFileBody(
 		return VerifiedFileBody{}, fmt.Errorf("verified File storage runtime is required")
 	}
 	if maximumBytes <= 0 {
-		return VerifiedFileBody{}, errs.InvalidArgument("maximum_bytes", "positive size limit is required")
+		return VerifiedFileBody{}, domainerr.InvalidField("maximum_bytes", "positive size limit is required")
 	}
 	response, err := s.GetMediaDelivery(ctx, GetMediaDeliveryQuery{FileID: strings.TrimSpace(fileID)})
 	if err != nil {
 		return VerifiedFileBody{}, err
 	}
 	if response == nil || response.Delivery == nil {
-		return VerifiedFileBody{}, errs.NotFound("file", fileID)
+		return VerifiedFileBody{}, domainerr.ResourceNotFound("file", fileID)
 	}
 	delivery := response.Delivery
 	if delivery.FileSize <= 0 || delivery.FileSize > maximumBytes {
-		return VerifiedFileBody{}, errs.InvalidArgument("file_id", "File is empty or exceeds the size limit")
+		return VerifiedFileBody{}, domainerr.InvalidField("file_id", "File is empty or exceeds the size limit")
 	}
 
 	var stored model.File
@@ -153,43 +153,43 @@ func (s *Service) ReadVerifiedFileBody(
 		Where("id = ? AND delete_requested_at IS NULL", delivery.FileId).
 		Take(&stored)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return VerifiedFileBody{}, errs.NotFound("file", fileID)
+		return VerifiedFileBody{}, domainerr.ResourceNotFound("file", fileID)
 	}
 	if result.Error != nil {
-		return VerifiedFileBody{}, errs.Internal(fmt.Errorf("load verified File metadata: %w", result.Error))
+		return VerifiedFileBody{}, fmt.Errorf("load verified File metadata: %w", result.Error)
 	}
 	if stored.ID != delivery.FileId || stored.Extension != delivery.Extension ||
 		stored.MimeType != delivery.MimeType || stored.FileSize != delivery.FileSize {
-		return VerifiedFileBody{}, errs.FailedPrecondition("verified File delivery metadata changed")
+		return VerifiedFileBody{}, domainerr.Precondition("verified File delivery metadata changed")
 	}
 	objectKey, err := mediaauth.MediaObjectKey(stored.ID, stored.Extension)
 	if err != nil {
-		return VerifiedFileBody{}, errs.Internal(err)
+		return VerifiedFileBody{}, err
 	}
 	object, err := s.s3Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.s3Bucket), Key: aws.String(objectKey),
 	})
 	if err != nil {
-		return VerifiedFileBody{}, errs.Internal(fmt.Errorf("read verified File object: %w", err))
+		return VerifiedFileBody{}, fmt.Errorf("read verified File object: %w", err)
 	}
 	defer func() {
 		if closeErr := object.Body.Close(); closeErr != nil && retErr == nil {
-			retErr = errs.Internal(fmt.Errorf("close verified File object: %w", closeErr))
+			retErr = fmt.Errorf("close verified File object: %w", closeErr)
 		}
 	}()
 	body, err := io.ReadAll(io.LimitReader(object.Body, maximumBytes+1))
 	if err != nil {
-		return VerifiedFileBody{}, errs.Internal(fmt.Errorf("read verified File body: %w", err))
+		return VerifiedFileBody{}, fmt.Errorf("read verified File body: %w", err)
 	}
 	if int64(len(body)) != stored.FileSize || int64(len(body)) > maximumBytes {
-		return VerifiedFileBody{}, errs.FailedPrecondition("verified File object size does not match metadata")
+		return VerifiedFileBody{}, domainerr.Precondition("verified File object size does not match metadata")
 	}
 	if len(stored.SHA256) != sha256.Size {
-		return VerifiedFileBody{}, errs.FailedPrecondition("verified File checksum is unavailable")
+		return VerifiedFileBody{}, domainerr.Precondition("verified File checksum is unavailable")
 	}
 	digest := sha256.Sum256(body)
 	if !bytes.Equal(stored.SHA256, digest[:]) {
-		return VerifiedFileBody{}, errs.FailedPrecondition("verified File checksum does not match the object")
+		return VerifiedFileBody{}, domainerr.Precondition("verified File checksum does not match the object")
 	}
 	return VerifiedFileBody{
 		FileID: stored.ID, Extension: stored.Extension, MimeType: stored.MimeType, Body: body,

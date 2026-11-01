@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -29,7 +29,7 @@ func (s *Service) GetFile(ctx context.Context, query GetFileQuery) (*managev1.Ge
 		return nil, err
 	}
 	if row.ID == "" {
-		return nil, errs.NotFound("file", *fileID)
+		return nil, domainerr.ResourceNotFound("file", *fileID)
 	}
 	members := map[string]*commonv1.MemberSummary{}
 	if row.MemberID != nil {
@@ -64,7 +64,7 @@ func (s *Service) GetFile(ctx context.Context, query GetFileQuery) (*managev1.Ge
 	}
 	file := files[*fileID]
 	if changed || file == nil {
-		return nil, errs.NotFound("file", *fileID)
+		return nil, domainerr.ResourceNotFound("file", *fileID)
 	}
 	return &managev1.GetFileResponse{File: file, DomainUsageSummary: summary, GeneratedOutputs: generatedOutputs}, nil
 }

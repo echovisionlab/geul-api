@@ -83,7 +83,7 @@ func TestGetLinkPreviewReadsPagesAndImagesThroughTheImportGuard(t *testing.T) {
 	if image.Msg.GetImageSource() != "https://www.example.com/cover.png" || image.Msg.GetTitle() != "" {
 		t.Fatalf("image preview = %+v", image.Msg)
 	}
-	if _, err := NewLinkPreviewConnectHandler(service).GetLinkPreview(t.Context(), connect.NewRequest(&managev1.GetLinkPreviewRequest{Url: "https://www.example.com/missing"})); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+	if _, err := NewLinkPreviewConnectHandler(service).GetLinkPreview(t.Context(), connect.NewRequest(&managev1.GetLinkPreviewRequest{Url: "https://www.example.com/missing"})); errs.CodeOf(err) != connect.CodeFailedPrecondition {
 		t.Fatalf("missing page error = %v", err)
 	}
 }
@@ -98,15 +98,15 @@ func TestGetLinkPreviewRejectsNonAuthorsAndInternalAddressesBeforeFetching(t *te
 	request := connect.NewRequest(&managev1.GetLinkPreviewRequest{Url: "https://intranet.example.com/"})
 
 	denied := linkPreviewTestService(server, []net.IP{net.ParseIP("8.8.8.8")}, errs.AuthorRequired())
-	if _, err := NewLinkPreviewConnectHandler(denied).GetLinkPreview(t.Context(), request); connect.CodeOf(err) != connect.CodePermissionDenied {
+	if _, err := NewLinkPreviewConnectHandler(denied).GetLinkPreview(t.Context(), request); errs.CodeOf(err) != connect.CodePermissionDenied {
 		t.Fatalf("non-author error = %v", err)
 	}
 	internal := linkPreviewTestService(server, []net.IP{net.ParseIP("10.0.0.8")}, nil)
-	if _, err := NewLinkPreviewConnectHandler(internal).GetLinkPreview(t.Context(), request); connect.CodeOf(err) != connect.CodeInvalidArgument {
+	if _, err := NewLinkPreviewConnectHandler(internal).GetLinkPreview(t.Context(), request); errs.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("internal address error = %v", err)
 	}
 	plain := connect.NewRequest(&managev1.GetLinkPreviewRequest{Url: "http://www.example.com/"})
-	if _, err := NewLinkPreviewConnectHandler(internal).GetLinkPreview(t.Context(), plain); connect.CodeOf(err) != connect.CodeInvalidArgument {
+	if _, err := NewLinkPreviewConnectHandler(internal).GetLinkPreview(t.Context(), plain); errs.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("plain HTTP error = %v", err)
 	}
 }

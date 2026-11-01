@@ -3,6 +3,8 @@ package filemedia
 import (
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
@@ -94,7 +96,7 @@ func TestResolveSiteUploadEntityIDRequiresLegalRouteIdentityForLegalSlots(t *tes
 		"privacy_og_background",
 	)
 	require.Error(t, err)
-	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
+	require.Equal(t, connect.CodeUnavailable, errs.CodeOf(err))
 }
 
 func TestBuildManagedFileKeyUsesCanonicalMediaKeyForPageFeaturedImage(t *testing.T) {

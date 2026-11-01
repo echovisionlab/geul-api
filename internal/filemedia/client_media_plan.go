@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -194,17 +194,17 @@ func requireDirectClientMediaBundle(uploadType managev1.UploadType, verifiedMime
 		return nil
 	}
 	if session.ClientMediaBundleID == nil || session.ClientMediaManifest == nil || bundleID == "" {
-		return errs.FailedPrecondition("clientMediaBundleRequired: direct audio and video uploads require completed browser media")
+		return domainerr.Precondition("clientMediaBundleRequired: direct audio and video uploads require completed browser media")
 	}
 	if err := clientMediaBundleMatches(session, bundleID); err != nil {
 		return err
 	}
 	plan, err := decodeClientMediaPlan(session)
 	if err != nil {
-		return errs.WithCause(errs.FailedPrecondition("invalid prepared client media manifest"), failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("upload_id", session.UploadID), slog.String("file_id", session.FileID))))
+		return domainerr.Precondition("invalid prepared client media manifest").WithCause(failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("upload_id", session.UploadID), slog.String("file_id", session.FileID))))
 	}
 	if !strings.HasPrefix(verifiedMime, plan.Kind+"/") {
-		return errs.FailedPrecondition("client media kind differs from verified original")
+		return domainerr.Precondition("client media kind differs from verified original")
 	}
 	return nil
 }

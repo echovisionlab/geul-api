@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -128,7 +130,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 			ObservedPolicy:     observedFileDownloadPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, segmentID),
 		},
 	))
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 
 	_, err = NewConnectHandler(svc).UpdateFileDownloadPolicy(ctx, connect.NewRequest(
 		&managev1.UpdateFileDownloadPolicyRequest{
@@ -140,7 +142,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 			ObservedPolicy:     observedFileDownloadPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, segmentID),
 		},
 	))
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 
 	tooManySegmentIDs := make([]string, maxFileDownloadAudienceSegments+1)
 	for i := range tooManySegmentIDs {
@@ -156,7 +158,7 @@ func TestFileServiceManageDownloadPolicyPersistsAudienceSegmentsUnit(t *testing.
 			ObservedPolicy:     observedFileDownloadPolicy(managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_RESTRICTED, segmentID),
 		},
 	))
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 }
 
 func TestFileDownloadPolicyScopeUsesCurrentBindingInsteadOfIngestProvenance(t *testing.T) {

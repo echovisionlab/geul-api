@@ -7,10 +7,10 @@ import (
 	"sort"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -52,10 +52,10 @@ func (s *Service) authorizeManageFileDeliveriesWithWitness(
 ) (*manageFileDeliveryAuthorization, error) {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || strings.TrimSpace(user.MemberID.String()) == "" {
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired()
 	}
 	if user.Banned {
-		return nil, errs.AccountBanned()
+		return nil, domainerr.AccountBanned()
 	}
 	uniqueFileIDs, err := sortedUniqueManageDeliveryFileIDs(fileIDs)
 	if err != nil {
@@ -67,11 +67,11 @@ func (s *Service) authorizeManageFileDeliveriesWithWitness(
 	}
 	listCan, err := policyv1.File.List()
 	if err != nil {
-		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	hasLibraryAccess, err := checkSpiceDBCan(ctx, user, listCan, s.spiceDB)
 	if err != nil {
-		return nil, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	authorization := &manageFileDeliveryAuthorization{
 		principal: user,
@@ -112,7 +112,7 @@ func sortedUniqueManageDeliveryFileIDs(fileIDs []string) ([]string, error) {
 	for _, rawFileID := range fileIDs {
 		fileID := strings.TrimSpace(rawFileID)
 		if !IsValidUUID(fileID) {
-			return nil, errs.InvalidArgument("file_id", "must be a valid UUID")
+			return nil, domainerr.InvalidField("file_id", "must be a valid UUID")
 		}
 		if _, ok := seen[fileID]; ok {
 			continue
@@ -132,7 +132,7 @@ func (s *Service) loadManageDeliveryFiles(ctx context.Context, fileIDs []string)
 		Select("id", "uploaded_by_member_id", "delete_requested_at").
 		Where("id IN ?", fileIDs).
 		Find(&files).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("load File ownership: %w", err))
+		return nil, fmt.Errorf("load File ownership: %w", err)
 	}
 	fileByID := make(map[string]model.File, len(files))
 	for _, file := range files {
@@ -143,7 +143,7 @@ func (s *Service) loadManageDeliveryFiles(ctx context.Context, fileIDs []string)
 	}
 	for _, fileID := range fileIDs {
 		if _, ok := fileByID[fileID]; !ok {
-			return nil, errs.PermissionDenied("file access denied")
+			return nil, domainerr.Denied("file access denied")
 		}
 	}
 	return fileByID, nil
@@ -176,7 +176,7 @@ func (s *Service) manageFileUsageDeliveryGrant(
 	decided map[string]error,
 ) (manageFileDeliveryGrant, error) {
 	if len(usages) == 0 {
-		return manageFileDeliveryGrant{}, errs.PermissionDenied("file access denied")
+		return manageFileDeliveryGrant{}, domainerr.Denied("file access denied")
 	}
 	authorizedUsages := make([]manageFileDeliveryUsageWitness, 0, len(usages))
 	var denied error
@@ -185,7 +185,7 @@ func (s *Service) manageFileUsageDeliveryGrant(
 		answer, checked := decided[target.key()]
 		if !checked {
 			answer = s.authorizeManageFilePermissionTarget(ctx, user, target)
-			if answer != nil && errs.CodeOf(answer) != connect.CodePermissionDenied && errs.CodeOf(answer) != connect.CodeNotFound {
+			if answer != nil && !mutation.IsDenied(answer) && !mutation.IsNotFound(answer) {
 				return manageFileDeliveryGrant{}, answer
 			}
 			decided[target.key()] = answer
@@ -200,7 +200,7 @@ func (s *Service) manageFileUsageDeliveryGrant(
 		if denied != nil {
 			return manageFileDeliveryGrant{}, denied
 		}
-		return manageFileDeliveryGrant{}, errs.PermissionDenied("file access denied")
+		return manageFileDeliveryGrant{}, domainerr.Denied("file access denied")
 	}
 	return manageFileDeliveryGrant{usageWitnesses: authorizedUsages}, nil
 }
@@ -307,7 +307,7 @@ func (s *Service) currentManageFileDeliveryUsages(
 			current_content_files.owner_fingerprint
 		FROM (` + strings.Join(queries, ` UNION ALL `) + `) AS current_content_files`
 	if err := s.db.WithContext(ctx).Raw(query, arguments...).Scan(&rows).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("load current Content file usage: %w", err))
+		return nil, fmt.Errorf("load current Content file usage: %w", err)
 	}
 	seen := make(map[string]map[string]struct{})
 	for _, row := range rows {
@@ -355,7 +355,7 @@ func (s *Service) loadOptionalManageFileIngestBindings(
 	}
 	var bindings []model.FileIngestBinding
 	if err := s.db.WithContext(ctx).Where("file_id IN ?", fileIDs).Find(&bindings).Error; err != nil {
-		return nil, errs.Internal(fmt.Errorf("load file ingest classification: %w", err))
+		return nil, fmt.Errorf("load file ingest classification: %w", err)
 	}
 	for _, binding := range bindings {
 		result[binding.FileID] = binding
@@ -418,32 +418,32 @@ func (s *Service) authorizeManageFilePermissionTarget(
 	}
 	adminCan, err := policyv1.File.ManageLibrary()
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	isAdmin, err := checkSpiceDBCan(ctx, user, adminCan, s.spiceDB)
 	if err != nil {
-		return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if isAdmin {
 		return nil
 	}
 	can, err := uploadPermissionEditCan(target.resourceType, target.resourceID)
 	if errors.Is(err, errUnsupportedUploadAuthorizationResource) {
-		return errs.PermissionDenied("file access denied")
+		return domainerr.Denied("file access denied")
 	}
 	if err != nil {
-		return errs.WithCause(errs.PermissionDenied("file access denied"), err)
+		return domainerr.Denied("file access denied").WithCause(err)
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	allowed, err := s.spiceDB.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.InternalMsg("permission check failed"), err)
+		return fmt.Errorf("permission check failed: %w", err)
 	}
 	if !allowed {
-		return errs.PermissionDenied("file access denied")
+		return domainerr.Denied("file access denied")
 	}
 	return nil
 }

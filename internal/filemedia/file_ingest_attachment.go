@@ -6,7 +6,7 @@ import (
 
 	"github.com/google/uuid"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -55,16 +55,10 @@ func normalizeExpectedCurrentFileID(value *string) (*string, error) {
 	}
 	normalized := strings.TrimSpace(*value)
 	if normalized == "" {
-		return nil, errs.InvalidArgument(
-			"expected_current_file_id",
-			"expected current file ID must be omitted or non-empty",
-		)
+		return nil, domainerr.InvalidField("expected_current_file_id", "expected current file ID must be omitted or non-empty")
 	}
 	if _, err := uuid.Parse(normalized); err != nil {
-		return nil, errs.InvalidArgument(
-			"expected_current_file_id",
-			"expected current file ID must be a UUID",
-		)
+		return nil, domainerr.InvalidField("expected_current_file_id", "expected current file ID must be a UUID")
 	}
 	return &normalized, nil
 }
@@ -96,16 +90,10 @@ func normalizeFileIngestProjectionIdentity(
 
 	if uploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO {
 		if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK {
-			return fileIngestProjectionIdentity{}, errs.InvalidArgument(
-				"entity_type",
-				"track audio attachment requires a track entity",
-			)
+			return fileIngestProjectionIdentity{}, domainerr.InvalidField("entity_type", "track audio attachment requires a track entity")
 		}
 		if normalizedSlotID != "" {
-			return fileIngestProjectionIdentity{}, errs.InvalidArgument(
-				"slot_id",
-				"track audio attachment must omit slot ID",
-			)
+			return fileIngestProjectionIdentity{}, domainerr.InvalidField("slot_id", "track audio attachment must omit slot ID")
 		}
 		return fileIngestProjectionIdentity{
 			mode:                  fileIngestTargetModeTrackProjection,
@@ -114,10 +102,7 @@ func normalizeFileIngestProjectionIdentity(
 	}
 
 	if expected != nil {
-		return fileIngestProjectionIdentity{}, errs.InvalidArgument(
-			"expected_current_file_id",
-			"attachment CAS is supported only for Track original audio",
-		)
+		return fileIngestProjectionIdentity{}, domainerr.InvalidField("expected_current_file_id", "attachment CAS is supported only for Track original audio")
 	}
 	return fileIngestProjectionIdentity{
 		mode:   fileIngestTargetModeGeneral,
@@ -131,16 +116,10 @@ func normalizeGeneralFileIngestProjectionIdentity(
 	expectedCurrentFileID *string,
 ) (fileIngestProjectionIdentity, error) {
 	if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
-		return fileIngestProjectionIdentity{}, errs.InvalidArgument(
-			"entity_type",
-			"general File Manager upload must omit entity type",
-		)
+		return fileIngestProjectionIdentity{}, domainerr.InvalidField("entity_type", "general File Manager upload must omit entity type")
 	}
 	if slotID != "" || expectedCurrentFileID != nil {
-		return fileIngestProjectionIdentity{}, errs.InvalidArgument(
-			"slot_id",
-			"general File Manager upload must omit entity, slot, and attachment CAS targets",
-		)
+		return fileIngestProjectionIdentity{}, domainerr.InvalidField("slot_id", "general File Manager upload must omit entity, slot, and attachment CAS targets")
 	}
 	return fileIngestProjectionIdentity{mode: fileIngestTargetModeGeneral}, nil
 }
@@ -152,16 +131,10 @@ func normalizeEditorFileIngestProjectionIdentity(
 	expectedCurrentFileID *string,
 ) (fileIngestProjectionIdentity, error) {
 	if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
-		return fileIngestProjectionIdentity{}, errs.InvalidArgument(
-			"entity_type",
-			"editor File upload must omit document entity type",
-		)
+		return fileIngestProjectionIdentity{}, domainerr.InvalidField("entity_type", "editor File upload must omit document entity type")
 	}
 	if slotID != "" || expectedCurrentFileID != nil {
-		return fileIngestProjectionIdentity{}, errs.InvalidArgument(
-			"slot_id",
-			"editor file upload is independent of document block attachment",
-		)
+		return fileIngestProjectionIdentity{}, domainerr.InvalidField("slot_id", "editor file upload is independent of document block attachment")
 	}
 	_ = uploadType
 	return fileIngestProjectionIdentity{

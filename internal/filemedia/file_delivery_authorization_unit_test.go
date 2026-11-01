@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -17,5 +19,5 @@ func TestManageBulkMediaDeliveryRejectsOversizedRequestUnit(t *testing.T) {
 		fileIDs[index] = uuid.NewString()
 	}
 	_, err := NewConnectHandler((&Service{})).GetBulkMediaDeliveries(context.Background(), connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{FileIds: fileIDs}))
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 }

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -49,6 +51,6 @@ func TestInitiateMultipartUploadRejectsInvalidFilenameBeforeS3MutationUnit(t *te
 		},
 	))
 	require.Error(t, err)
-	assert.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	assert.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 	assert.Zero(t, requestCount)
 }

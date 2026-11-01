@@ -17,7 +17,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -175,7 +175,7 @@ func validateSiteEmailLogoMime(uploadType managev1.UploadType, slotID string, mi
 	if normalizeMimeType(mimeType) == siteEmailLogoStableMime {
 		return nil
 	}
-	return errs.InvalidArgument("mime_type", "email logo uploads must be PNG")
+	return domainerr.InvalidField("mime_type", "email logo uploads must be PNG")
 }
 
 func validateMultipartCompletionVerifiedMime(
@@ -184,10 +184,10 @@ func validateMultipartCompletionVerifiedMime(
 	config *model.UploadConfig,
 ) (string, error) {
 	if session.DetectedMime == nil || *session.DetectedMime == "" {
-		return "", errs.FailedPrecondition(errs.MsgMimeNotVerified)
+		return "", domainerr.Precondition("MIME type not verified")
 	}
 	if config == nil {
-		return "", errs.InvalidArgument("upload_type", fmt.Sprintf("invalid upload type: %s", session.UploadType))
+		return "", domainerr.InvalidField("upload_type", fmt.Sprintf("invalid upload type: %s", session.UploadType))
 	}
 
 	verifiedMime, err := validateMultipartCompletionMime(
@@ -513,17 +513,17 @@ func resolveSiteUploadEntityID(
 		if entityID, ok := siteLogoUploadEntityIDs[slot]; ok {
 			return entityID, nil
 		}
-		return "", errs.InvalidArgument("slot_id", fmt.Sprintf("unsupported site logo slot: %s", slot))
+		return "", domainerr.InvalidField("slot_id", fmt.Sprintf("unsupported site logo slot: %s", slot))
 
 	case managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON:
 		if slot != "" && slot != "favicon" {
-			return "", errs.InvalidArgument("slot_id", fmt.Sprintf("unsupported site favicon slot: %s", slot))
+			return "", domainerr.InvalidField("slot_id", fmt.Sprintf("unsupported site favicon slot: %s", slot))
 		}
 		return siteUploadEntityIDFavicon, nil
 
 	case managev1.UploadType_UPLOAD_TYPE_SITE_LOADER:
 		if slot != "" && slot != "loader" {
-			return "", errs.InvalidArgument("slot_id", fmt.Sprintf("unsupported site loader slot: %s", slot))
+			return "", domainerr.InvalidField("slot_id", fmt.Sprintf("unsupported site loader slot: %s", slot))
 		}
 		return siteUploadEntityIDLoader, nil
 
@@ -533,16 +533,16 @@ func resolveSiteUploadEntityID(
 			return siteUploadEntityIDSiteOgBackground, nil
 		case "privacy_og_background":
 			if legalRoutes == nil {
-				return "", errs.DependencyUnavailable("Legal route identity")
+				return "", domainerr.DependencyUnavailable("Legal route identity")
 			}
 			return legalRoutes.RouteID("privacy"), nil
 		case "terms_og_background":
 			if legalRoutes == nil {
-				return "", errs.DependencyUnavailable("Legal route identity")
+				return "", domainerr.DependencyUnavailable("Legal route identity")
 			}
 			return legalRoutes.RouteID("terms"), nil
 		default:
-			return "", errs.InvalidArgument("slot_id", fmt.Sprintf("unsupported site OG background slot: %s", slot))
+			return "", domainerr.InvalidField("slot_id", fmt.Sprintf("unsupported site OG background slot: %s", slot))
 		}
 	}
 
@@ -556,10 +556,10 @@ func (s *Service) checkPartUploadPermission(ctx context.Context, userID string, 
 	if session.ClientMediaBundleID != nil {
 		plan, err := decodeClientMediaPlan(session)
 		if err != nil {
-			return errs.Internal(err)
+			return err
 		}
 		if plan.MemberID != userID {
-			return errs.PermissionDenied("client media bundle belongs to another member")
+			return domainerr.Denied("client media bundle belongs to another member")
 		}
 	}
 	uploadType := managev1.UploadType(managev1.UploadType_value[session.UploadType])
@@ -582,7 +582,7 @@ func (s *Service) checkPartUploadPermission(ctx context.Context, userID string, 
 func (s *Service) checkEntityPermission(ctx context.Context, uploadType managev1.UploadType, entityType, entityID, userID string) error {
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 
 	entityID = strings.TrimSpace(entityID)
@@ -591,14 +591,14 @@ func (s *Service) checkEntityPermission(ctx context.Context, uploadType managev1
 		return connectUploadPermissionValidationError(err)
 	}
 	if uploadPermissionRequiresEntityID(uploadType, target) && entityID == "" {
-		return errs.Required("entity_id")
+		return domainerr.Required("entity_id")
 	}
 	entityID, err = s.resolveUploadPermissionEntityID(ctx, uploadType, entityID)
 	if err != nil {
 		return err
 	}
 	if uploadPermissionRequiresEntityID(uploadType, target) && strings.TrimSpace(entityID) == "" {
-		return errs.Required("entity_id")
+		return domainerr.Required("entity_id")
 	}
 	if target.resourceType != "post" && target.resourceType != "program_event" {
 		if err := s.ensureUploadPermissionEntityExists(ctx, target, entityID); err != nil {
@@ -632,10 +632,10 @@ func (s *Service) resolveUploadPermissionEntityID(
 	}
 	releaseID, err := s.resolveTrackReleaseID(ctx, entityID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", errs.NotFoundMsg("track not found")
+		return "", domainerr.New(domainerr.NotFound, "", "track not found")
 	}
 	if err != nil {
-		return "", errs.Internal(fmt.Errorf("failed to resolve track release: %w", err))
+		return "", fmt.Errorf("failed to resolve track release: %w", err)
 	}
 	return releaseID, nil
 }
@@ -662,11 +662,11 @@ func checkUploadPrincipalPolicy(
 ) (bool, error) {
 	adminCan, err := policyv1.File.ManageLibrary()
 	if err != nil {
-		return true, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return true, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	isAdmin, err := checkSpiceDBCan(ctx, user, adminCan, spiceDB)
 	if err != nil {
-		return true, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+		return true, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if isAdmin {
 		return true, nil
@@ -674,24 +674,24 @@ func checkUploadPrincipalPolicy(
 	if target.authorOnly {
 		authorCan, err := policyv1.File.List()
 		if err != nil {
-			return true, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+			return true, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 		}
 		isAuthor, err := checkSpiceDBCan(ctx, user, authorCan, spiceDB)
 		if err != nil {
-			return true, errs.WithCause(errs.DependencyUnavailable("SpiceDB"), err)
+			return true, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 		}
 		if !isAuthor {
-			return true, errs.NoPermission("upload to", "the file manager")
+			return true, domainerr.NoPermission("upload to", "the file manager")
 		}
 	}
 	if target.userOwned {
 		if entityID != userID {
-			return true, errs.PermissionDenied("cannot upload avatar for another user")
+			return true, domainerr.Denied("cannot upload avatar for another user")
 		}
 		return true, nil
 	}
 	if target.adminOnly {
-		return true, errs.AdminRequired()
+		return true, domainerr.AdminRequired()
 	}
 	return false, nil
 }
@@ -710,20 +710,20 @@ func (s *Service) checkSpiceDBUploadPermission(
 	can, err := uploadPermissionEditCan(target.resourceType, entityID)
 	if err != nil {
 		if errors.Is(err, errUnsupportedUploadAuthorizationResource) {
-			return errs.InvalidArgument("entity_type", "unsupported authorization resource")
+			return domainerr.InvalidField("entity_type", "unsupported authorization resource")
 		}
-		return errs.InvalidArgument("entity_id", err.Error())
+		return domainerr.InvalidField("entity_id", err.Error())
 	}
 	decision, err := auth.AuthorizationDecision(ctx, can)
 	if err != nil {
-		return errs.WithCause(errs.AuthenticationRequired(), err)
+		return domainerr.AuthenticationRequired().WithCause(err)
 	}
 	hasPermission, err := s.spiceDB.Can(ctx, decision)
 	if err != nil {
-		return errs.WithCause(errs.InternalMsg("permission check failed"), failurecause.WithAttrs(err, slog.String("resource_type", target.resourceType), slog.String("entity_id", entityID)))
+		return fmt.Errorf("permission check failed: %w", failurecause.WithAttrs(err, slog.String("resource_type", target.resourceType), slog.String("entity_id", entityID)))
 	}
 	if !hasPermission {
-		return errs.NoPermission("upload to", "this entity")
+		return domainerr.NoPermission("upload to", "this entity")
 	}
 	return nil
 }
@@ -744,10 +744,10 @@ func (s *Service) ensureUploadPermissionEntityExists(
 
 	var count int64
 	if err := s.db.WithContext(ctx).Table(table).Where("id = ?", entityID).Count(&count).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if count == 0 {
-		return errs.NotFound(target.resourceType, entityID)
+		return domainerr.ResourceNotFound(target.resourceType, entityID)
 	}
 	return nil
 }
@@ -791,14 +791,14 @@ func (s *Service) AbortMultipartUpload(ctx context.Context, command AbortMultipa
 		Where("upload_id = ? AND file_id = ?", command.UploadID, command.FileID).
 		First(&session).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errs.NotFoundMsg("upload session not found")
+			return domainerr.New(domainerr.NotFound, "", "upload session not found")
 		}
-		return errs.Internal(fmt.Errorf("failed to load upload session: %w", err))
+		return fmt.Errorf("failed to load upload session: %w", err)
 	}
 
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return errs.AuthenticationRequired()
+		return domainerr.AuthenticationRequired()
 	}
 	entityType := ""
 	if session.EntityType != nil {
@@ -821,7 +821,7 @@ func (s *Service) AbortMultipartUpload(ctx context.Context, command AbortMultipa
 	)
 	if progressEmitter != nil {
 		if err := s.bindUploadSessionIngestEmitter(progressEmitter, session); err != nil {
-			return errs.Internal(err)
+			return err
 		}
 	}
 	if session.ClientMediaBundleID != nil {
@@ -831,14 +831,14 @@ func (s *Service) AbortMultipartUpload(ctx context.Context, command AbortMultipa
 	}
 	fileKey, err := uploadSessionObjectKey(session)
 	if err != nil {
-		return errs.Internal(fmt.Errorf("invalid upload session target: %w", err))
+		return fmt.Errorf("invalid upload session target: %w", err)
 	}
 	claimed, err := s.claimUploadSessionAbort(ctx, session.UploadID, session.FileID, time.Now())
 	if err != nil {
-		return errs.Internal(fmt.Errorf("failed to claim upload session abort: %w", err))
+		return fmt.Errorf("failed to claim upload session abort: %w", err)
 	}
 	if !claimed {
-		return errs.FailedPrecondition("upload session is finalizing and can no longer be aborted")
+		return domainerr.Precondition("upload session is finalizing and can no longer be aborted")
 	}
 
 	cleanupCtx, cancel := newStorageCompensationContext(ctx)
@@ -850,7 +850,7 @@ func (s *Service) AbortMultipartUpload(ctx context.Context, command AbortMultipa
 	})
 	if err != nil {
 		if !IsMissingMultipartUploadAbortError(err) {
-			return errs.Internal(fmt.Errorf("failed to abort multipart upload: %w", err))
+			return fmt.Errorf("failed to abort multipart upload: %w", err)
 		}
 		slog.Info("Multipart upload was already absent during abort cleanup", "uploadId", session.UploadID, "fileId", session.FileID)
 	}
@@ -860,10 +860,10 @@ func (s *Service) AbortMultipartUpload(ctx context.Context, command AbortMultipa
 	}
 
 	if err := s.cleanupClientMediaStaging(cleanupCtx, session); err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if err := s.deleteAbortedUploadSession(cleanupCtx, session.UploadID); err != nil {
-		return errs.Internal(fmt.Errorf("failed to delete upload session after abort: %w", err))
+		return fmt.Errorf("failed to delete upload session after abort: %w", err)
 	}
 
 	return nil
@@ -900,7 +900,7 @@ func (s *Service) FindMultipartUploadCandidate(
 ) (*managev1.FindMultipartUploadCandidateResponse, error) {
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return nil, errs.AuthenticationRequired()
+		return nil, domainerr.AuthenticationRequired()
 	}
 
 	search, err := s.prepareMultipartCandidateSearch(ctx, query, user.MemberID.String())
@@ -909,14 +909,14 @@ func (s *Service) FindMultipartUploadCandidate(
 	}
 	session, found, err := s.findMultipartUploadCandidate(ctx, search)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to find upload session candidate: %w", err))
+		return nil, fmt.Errorf("failed to find upload session candidate: %w", err)
 	}
 	if !found {
 		return &managev1.FindMultipartUploadCandidateResponse{}, nil
 	}
 	response, err := s.prepareMultipartCandidateResponse(ctx, session)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to reconcile upload session candidate: %w", err))
+		return nil, fmt.Errorf("failed to reconcile upload session candidate: %w", err)
 	}
 	return response, nil
 }

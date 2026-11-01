@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"testing"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -81,7 +83,7 @@ func TestMeshOptimizationServiceRequiresSourceFileLinkedToEntity(t *testing.T) {
 		Method:             model.MeshOptimizationMethodDraco,
 	})
 	require.Error(t, err)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 
 	_, err = service.ListCandidates(ctx, MeshOptimizationListInput{
 		SourceFileID: unlinkedSourceID,
@@ -89,15 +91,15 @@ func TestMeshOptimizationServiceRequiresSourceFileLinkedToEntity(t *testing.T) {
 		EntityID:     pageID,
 	})
 	require.Error(t, err)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 
 	_, err = service.UseCandidate(ctx, unlinkedCandidate.ID)
 	require.Error(t, err)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 
 	err = service.DiscardCandidate(ctx, unlinkedCandidate.ID)
 	require.Error(t, err)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 }
 
 func TestMeshOptimizationProfilesUseIndependentPipelinesAndCaches(t *testing.T) {
@@ -274,7 +276,7 @@ func TestMeshOptimizationHandleCompleteRequiresOptimizedSize(t *testing.T) {
 		},
 	})
 	require.Error(t, err)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 	requireUnitFileAbsent(t, db, outputFileID)
 }
 
@@ -394,7 +396,7 @@ func TestMeshOptimizationHandleCompleteValidatesAllocatedResultAndIsIdempotent(t
 	event.Output.Written.FileId = wrongID
 	_, err = service.HandleComplete(context.Background(), event)
 	require.Error(t, err)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 	event.Output.Written.FileId = outputFileID
 
 	wrongDigest := sha256.Sum256([]byte("different bytes"))
@@ -445,7 +447,7 @@ func TestMeshOptimizationHandleCompleteRejectsUnspecifiedProfileForParticleMesh(
 
 	_, err := service.HandleComplete(context.Background(), event)
 	require.Error(t, err)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 	require.Contains(t, err.Error(), "output.profile")
 	requireUnitFileAbsent(t, db, outputFileID)
 
@@ -481,7 +483,7 @@ func TestMeshOptimizationEventsRequireExactIdentity(t *testing.T) {
 		},
 	})
 	require.Error(t, err)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
 
 	_, err = service.HandleProgress(context.Background(), &managev1.MeshOptimizationProgressEvent{
 		JobId:         jobID,
@@ -493,7 +495,7 @@ func TestMeshOptimizationEventsRequireExactIdentity(t *testing.T) {
 		},
 	})
 	require.Error(t, err)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 }
 
 func TestMeshOptimizationRequeueReturnsStoredCandidate(t *testing.T) {

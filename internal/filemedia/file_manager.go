@@ -16,7 +16,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -35,14 +35,14 @@ const (
 func fileManagerAuthority(ctx context.Context) (*auth.UserInfo, policyv1.Can, error) {
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || user.IdentityID == "" {
-		return nil, policyv1.Can{}, errs.AuthenticationRequired()
+		return nil, policyv1.Can{}, domainerr.AuthenticationRequired()
 	}
 	if user.Banned {
-		return nil, policyv1.Can{}, errs.AccountBanned()
+		return nil, policyv1.Can{}, domainerr.AccountBanned()
 	}
 	can, err := policyv1.File.ManageLibrary()
 	if err != nil {
-		return nil, policyv1.Can{}, errs.Internal(err)
+		return nil, policyv1.Can{}, err
 	}
 	return user, can, nil
 }
@@ -141,7 +141,7 @@ func normalizeFileManagerUUID(value, field string, optional bool) (*string, erro
 	}
 	parsed, err := uuid.Parse(value)
 	if err != nil {
-		return nil, errs.InvalidArgument(field, "must be a UUID")
+		return nil, domainerr.InvalidField(field, "must be a UUID")
 	}
 	normalized := parsed.String()
 	return &normalized, nil
@@ -151,10 +151,10 @@ func normalizeFileManagerName(value, field string) (string, error) {
 	value = strings.TrimSpace(value)
 	length := utf8.RuneCountInString(value)
 	if length < 1 || length > 255 {
-		return "", errs.InvalidArgument(field, "must contain 1 to 255 characters")
+		return "", domainerr.InvalidField(field, "must contain 1 to 255 characters")
 	}
 	if value == "." || value == ".." || strings.ContainsAny(value, `/\`) {
-		return "", errs.InvalidArgument(field, "must not be '.', '..', or contain a path separator")
+		return "", domainerr.InvalidField(field, "must not be '.', '..', or contain a path separator")
 	}
 	return value, nil
 }
@@ -175,15 +175,15 @@ func decodeFileManagerPageToken(token string) (int, error) {
 	}
 	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(token))
 	if err != nil {
-		return 0, errs.InvalidArgument("page_token", "is invalid")
+		return 0, domainerr.InvalidField("page_token", "is invalid")
 	}
 	parts := strings.Split(string(decoded), ":")
 	if len(parts) != 2 || parts[0] != "v1" {
-		return 0, errs.InvalidArgument("page_token", "is invalid")
+		return 0, domainerr.InvalidField("page_token", "is invalid")
 	}
 	offset, err := strconv.Atoi(parts[1])
 	if err != nil || offset < 0 {
-		return 0, errs.InvalidArgument("page_token", "is invalid")
+		return 0, domainerr.InvalidField("page_token", "is invalid")
 	}
 	return offset, nil
 }
@@ -199,10 +199,10 @@ func (s *Service) requireFileManagerFolder(ctx context.Context, folderID *string
 	}
 	var count int64
 	if err := s.db.WithContext(ctx).Table("file_folder").Where("id = ?", *folderID).Count(&count).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if count == 0 {
-		return errs.NotFound("folder", *folderID)
+		return domainerr.ResourceNotFound("folder", *folderID)
 	}
 	return nil
 }
@@ -307,7 +307,7 @@ func (s *Service) listFileManagerItems(
 		if allowChangedRetry {
 			return s.listFileManagerItems(ctx, req, false)
 		}
-		return FileManagerItemPage{}, errs.DependencyUnavailable("file catalog")
+		return FileManagerItemPage{}, domainerr.DependencyUnavailable("file catalog")
 	}
 
 	items, err := fileManagerItemsFromCatalog(rows, members, fencedFiles)
@@ -502,7 +502,7 @@ func fileManagerItemsFromCatalog(
 		}
 		file := fencedFiles[row.ID]
 		if file == nil {
-			return nil, errs.DependencyUnavailable("file catalog")
+			return nil, domainerr.DependencyUnavailable("file catalog")
 		}
 		items = append(items, &managev1.FileManagerItem{
 			Type: managev1.FileManagerItemType_FILE_MANAGER_ITEM_TYPE_FILE,

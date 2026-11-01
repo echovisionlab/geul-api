@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -163,7 +165,7 @@ func TestFinalizingMultipartSessionRejectsAbortAndReplacementDirectIntegration(t
 	}))
 	require.Error(t, err)
 	require.Nil(t, abortResponse)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 
 	replacement, err := NewConnectHandler(fixture.service).InitiateMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
@@ -230,7 +232,7 @@ func TestDeleteTrackGuardsFinalizingUploadSessionDirectIntegration(t *testing.T)
 	response, err := trackService.DeleteTrack(ctx, connect.NewRequest(&managev1.DeleteTrackRequest{Id: trackID}))
 	require.Error(t, err)
 	require.Nil(t, response)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	requireUploadSessionStatus(
 		t,
 		stack.DB,
@@ -369,7 +371,7 @@ func TestConcurrentTrackInitiateAndDeleteLeavesNoMultipartOrSessionDirectIntegra
 			}
 			if testCase.pauseBeforeInsert {
 				require.Error(t, initiated.err)
-				require.Equal(t, connect.CodeNotFound, connect.CodeOf(initiated.err))
+				require.Equal(t, connect.CodeNotFound, errs.CodeOf(initiated.err))
 				require.Nil(t, initiated.response)
 			} else {
 				require.NoError(t, initiated.err)
@@ -422,7 +424,7 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 		UploadId: wrongUploadID,
 	}))
 	require.Error(t, err)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 	require.Equal(t, 0, observer.count(), "a wrong upload identity must not bypass an active session")
 
 	response, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(fixture.ctx, connect.NewRequest(request))
@@ -465,7 +467,7 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 			require.Equal(t, fixture.fileID, recovered.Msg.GetFileId())
 		} else {
 			require.Error(t, err)
-			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+			require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(err))
 		}
 	}
 

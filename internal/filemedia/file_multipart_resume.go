@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -42,7 +42,7 @@ func (s *Service) prepareMultipartResumeResponse(
 		return response, nil
 	}
 	if err := s.publishMultipartResumeProgress(ctx, session, response); err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	return response, nil
 }
@@ -57,7 +57,7 @@ func (s *Service) reconcileMultipartResumeResponse(
 	}
 	reconciliation, err := s.reconcileWritableMultipartResumeParts(ctx, session)
 	if err != nil {
-		return model.UploadSession{}, errs.Internal(fmt.Errorf("failed to reconcile multipart resume parts: %w", err))
+		return model.UploadSession{}, fmt.Errorf("failed to reconcile multipart resume parts: %w", err)
 	}
 	response.Status = uploadSessionStatusToProto(reconciliation.session.Status)
 	response.UploadedParts = reconciliation.parts
@@ -155,12 +155,12 @@ func (s *Service) loadMultipartResumeSessionState(
 			Where("upload_id = ? AND file_id = ?", expected.UploadID, expected.FileID).
 			Take(&current).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.FailedPrecondition("upload session changed before multipart resume reconciliation")
+				return domainerr.Precondition("upload session changed before multipart resume reconciliation")
 			}
 			return err
 		}
 		if !sameMultipartResumeSessionShape(current, expected) {
-			return errs.FailedPrecondition("upload session shape changed before multipart resume reconciliation")
+			return domainerr.Precondition("upload session shape changed before multipart resume reconciliation")
 		}
 		switch current.Status {
 		case model.UploadSessionStatusInitiated, model.UploadSessionStatusUploading:
@@ -170,7 +170,7 @@ func (s *Service) loadMultipartResumeSessionState(
 				Order("part_number ASC").
 				Find(&cachedParts).Error
 		default:
-			return errs.FailedPrecondition("upload session is no longer resumable")
+			return domainerr.Precondition("upload session is no longer resumable")
 		}
 	})
 	return current, cachedParts, err
@@ -204,11 +204,11 @@ func (s *Service) listAndValidateMultipartResumeParts(
 		}
 		for _, listed := range page.Parts {
 			if listed.PartNumber == nil || listed.Size == nil || listed.ETag == nil {
-				return nil, errs.FailedPrecondition("object-store multipart inventory is missing required part identity")
+				return nil, domainerr.Precondition("object-store multipart inventory is missing required part identity")
 			}
 			partNumber := *listed.PartNumber
 			if _, duplicate := seen[partNumber]; duplicate {
-				return nil, errs.FailedPrecondition("object-store multipart inventory contains duplicate part numbers")
+				return nil, domainerr.Precondition("object-store multipart inventory contains duplicate part numbers")
 			}
 			seen[partNumber] = struct{}{}
 
@@ -219,9 +219,7 @@ func (s *Service) listAndValidateMultipartResumeParts(
 				partNumber,
 			)
 			if partNumber <= 0 || partNumber > session.TotalParts || etag == "" || expectedSize <= 0 || *listed.Size != expectedSize {
-				return nil, errs.FailedPrecondition(
-					fmt.Sprintf("object-store multipart part %d does not match the upload session shape", partNumber),
-				)
+				return nil, domainerr.Precondition(fmt.Sprintf("object-store multipart part %d does not match the upload session shape", partNumber))
 			}
 			parts = append(parts, model.UploadPart{
 				UploadID:   session.UploadID,
@@ -247,7 +245,7 @@ func nextMultipartListPartsMarker(page *s3.ListPartsOutput, previous string) (st
 	}
 	next := strings.TrimSpace(aws.ToString(page.NextPartNumberMarker))
 	if next == "" || next == previous {
-		return "", errs.FailedPrecondition("object-store multipart inventory returned an invalid pagination marker")
+		return "", domainerr.Precondition("object-store multipart inventory returned an invalid pagination marker")
 	}
 	return next, nil
 }
@@ -268,12 +266,12 @@ func (s *Service) reconcileMultipartResumePartCache(
 			).
 			Take(&current).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.FailedPrecondition("upload session changed before multipart resume reconciliation")
+				return domainerr.Precondition("upload session changed before multipart resume reconciliation")
 			}
 			return err
 		}
 		if !sameMultipartResumeSessionShape(current, expected) {
-			return errs.FailedPrecondition("upload session shape changed before multipart resume reconciliation")
+			return domainerr.Precondition("upload session shape changed before multipart resume reconciliation")
 		}
 
 		if err := tx.Where("upload_id = ?", expected.UploadID).Delete(&model.UploadPart{}).Error; err != nil {
@@ -300,7 +298,7 @@ func (s *Service) reconcileMultipartResumePartCache(
 			return updated.Error
 		}
 		if updated.RowsAffected != 1 {
-			return errs.FailedPrecondition("upload session changed before multipart resume reconciliation")
+			return domainerr.Precondition("upload session changed before multipart resume reconciliation")
 		}
 		return nil
 	})
