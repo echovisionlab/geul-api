@@ -62,10 +62,7 @@ func TestSourceAssetPromotionStreamsLargeObjectThroughMinIOMultipartIntegration(
 		_ = stack.DB.Where("id = ?", file.ID).Delete(&model.File{}).Error
 	})
 
-	service := withTestStorage(&Service{
-		db: stack.DB, s3Client: client, s3Bucket: stack.S3MediaBucket,
-		cdnDomain: stack.CDNURL,
-	})
+	service := withNativeFileUnits(&Service{s3Client: client, s3Bucket: stack.S3MediaBucket, cdnDomain: stack.CDNURL}, stack.DB, nativeFilePorts{})
 	ref, err := service.promoteSourceFileToPublicAsset(t.Context(), file.ID, "image")
 	require.NoError(t, err)
 	require.Equal(t, digest[:], ref.GetSha256())
@@ -194,7 +191,7 @@ func TestSourceAssetPromotionCompletionSerializesAfterFileDeletionIntentIntegrat
 	digest := sha256.Sum256([]byte("verified public source"))
 	completionDone := make(chan error, 1)
 	go func() {
-		completionDone <- (withTestStorage(&Service{db: db})).completeSourceAssetPromotion(
+		completionDone <- (withNativeFileUnits(&Service{}, db, nativeFilePorts{})).completeSourceAssetPromotion(
 			context.Background(), fileID, assetID, 22, digest[:],
 		)
 	}()
@@ -233,7 +230,7 @@ func seedSourceAssetPromotionIntegrationFixture(
 		_ = db.Where("id = ?", file.ID).Delete(&model.File{}).Error
 	})
 	store := newSourceAssetPromotionS3Fixture(t, file, body)
-	service := withTestStorage(&Service{db: db, s3Client: store.client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com"})
+	service := withNativeFileUnits(&Service{s3Client: store.client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com"}, db, nativeFilePorts{})
 	return file, store, service
 }
 

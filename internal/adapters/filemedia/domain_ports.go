@@ -21,36 +21,15 @@ import (
 	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	releasepostgres "github.com/echovisionlab/geul-api/internal/release/postgres"
-	workdomain "github.com/echovisionlab/geul-api/internal/work"
-	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 type PostAccess struct {
-	db      *gorm.DB
 	spiceDB *auth.SpiceDBClient
 }
 
-func NewPostAccess(db *gorm.DB, spiceDB *auth.SpiceDBClient) *PostAccess {
-	return &PostAccess{db: db, spiceDB: spiceDB}
-}
-
-func (a *PostAccess) RequireView(ctx context.Context, postID string) error {
-	if a == nil || a.db == nil {
-		return errs.DependencyUnavailable("Post access")
-	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return a.RequireLockedView(ctx, tx, postID)
-	})
-}
-
-func (a *PostAccess) RequireEdit(ctx context.Context, postID string) error {
-	if a == nil || a.db == nil {
-		return errs.DependencyUnavailable("Post access")
-	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return a.RequireLockedEdit(ctx, tx, postID)
-	})
+func NewPostAccess(spiceDB *auth.SpiceDBClient) *PostAccess {
+	return &PostAccess{spiceDB: spiceDB}
 }
 
 func (a *PostAccess) RequireLockedView(ctx context.Context, tx *gorm.DB, postID string) error {
@@ -81,45 +60,7 @@ func maskPrivateDomainAccess(err error, domain, resourceID string) error {
 	return err
 }
 
-type WorkAttachment struct{ db *gorm.DB }
-
-func NewWorkAttachment(db *gorm.DB) *WorkAttachment { return &WorkAttachment{db: db} }
-
-func (a *WorkAttachment) RequireExists(ctx context.Context, workID string) error {
-	return workdomain.RequireExists(ctx, workpostgres.Bind(a.db, workpostgres.Ports{}, nil).Store, workID)
-}
-
-type ProgramEventAttachment struct{ db *gorm.DB }
-
-func NewProgramEventAttachment(db *gorm.DB) *ProgramEventAttachment {
-	return &ProgramEventAttachment{db: db}
-}
-
-func (a *ProgramEventAttachment) RequireView(
-	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
-	eventID string,
-) error {
-	if a == nil || a.db == nil {
-		return errs.DependencyUnavailable("Program Event access")
-	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return a.RequireLockedView(ctx, tx, spiceDB, eventID)
-	})
-}
-
-func (a *ProgramEventAttachment) RequireEdit(
-	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
-	eventID string,
-) error {
-	if a == nil || a.db == nil {
-		return errs.DependencyUnavailable("Program Event access")
-	}
-	return a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return a.RequireLockedEdit(ctx, tx, spiceDB, eventID)
-	})
-}
+type ProgramEventAttachment struct{}
 
 func (a *ProgramEventAttachment) RequireLockedView(
 	ctx context.Context,

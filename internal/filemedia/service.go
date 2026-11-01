@@ -8,9 +8,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
@@ -27,10 +25,10 @@ type Deps struct {
 	FaviconCommits domain.FaviconCommits
 	Units          mutation.UnitOfWork[Store]
 	Fence          identitystate.Fence
-	DB             *gorm.DB
-	SpiceDB        *auth.SpiceDBClient
-	Audit          domainaudit.Appender
-	S3             *s3.Client
+
+	SpiceDB mutation.Authorizer
+	Audit   domainaudit.Appender
+	S3      *s3.Client
 	// Presigner signs multipart part uploads; nil signs with S3.
 	Presigner      *s3.PresignClient
 	AsyncPublisher AsyncPublisher
@@ -44,28 +42,18 @@ type Deps struct {
 	DownloadTTL time.Duration
 	// EditorImageMaxSize overrides the editor image upload limit; zero keeps
 	// the default.
-	EditorImageMaxSize     int64
-	LegalRoutes            LegalRouteIdentity
-	PostAccess             PostAccess
-	PagePolicyAccess       PagePolicyAccess
-	WorkAttachment         WorkAttachment
-	WorkPolicyAccess       WorkPolicyAccess
-	ProgramEventAttachment ProgramEventAttachment
-	TrackAttachment        TrackAttachment
-	ReleasePolicyAccess    ReleasePolicyAccess
-	MemberSummaries        MemberSummaries
+	EditorImageMaxSize int64
+	LegalRoutes        LegalRouteIdentity
+
+	MemberSummaries MemberSummaries
 }
 
 func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
-		"IngestLocks": d.IngestLocks == nil, "FaviconCommits": d.FaviconCommits == nil, "Units": d.Units == nil, "Fence": d.Fence == nil, "DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil, "S3": d.S3 == nil,
+		"IngestLocks": d.IngestLocks == nil, "FaviconCommits": d.FaviconCommits == nil, "Units": d.Units == nil, "Fence": d.Fence == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil, "S3": d.S3 == nil,
 		"AsyncPublisher": d.AsyncPublisher == nil, "Transcoder": d.Transcoder == nil,
-		"LegalRoutes": d.LegalRoutes == nil, "PostAccess": d.PostAccess == nil,
-		"PagePolicyAccess": d.PagePolicyAccess == nil, "WorkAttachment": d.WorkAttachment == nil,
-		"WorkPolicyAccess": d.WorkPolicyAccess == nil, "ProgramEventAttachment": d.ProgramEventAttachment == nil,
-		"TrackAttachment": d.TrackAttachment == nil, "ReleasePolicyAccess": d.ReleasePolicyAccess == nil,
-		"MemberSummaries": d.MemberSummaries == nil,
+		"LegalRoutes": d.LegalRoutes == nil, "MemberSummaries": d.MemberSummaries == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -83,32 +71,25 @@ func (d Deps) validate() error {
 // other domains call. Connect and MCP adapters translate their requests into
 // its commands and queries.
 type Service struct {
-	ingestLocks               domain.IngestLocks
-	faviconCommits            domain.FaviconCommits
-	uploadReads               fileStoreReader
-	ownerPreflights           fileStoreReader
-	units                     mutation.UnitOfWork[Store]
-	storeMutations            *mutation.StoreRunner[Store]
-	db                        *gorm.DB
-	s3Bucket                  string
-	cdnDomain                 string
-	mediaDomain               string
-	mediaSecret               string
-	downloadTTL               time.Duration
-	s3Client                  *s3.Client
-	s3PresignClient           *s3.PresignClient
-	asyncPublisher            AsyncPublisher
-	publisher                 mq.TranscoderPublisher
-	spiceDB                   *auth.SpiceDBClient
-	auditWriter               domainaudit.Appender
-	mutations                 *mutation.Runner
-	postAccess                PostAccess
-	pagePolicyAccess          PagePolicyAccess
-	workAttachment            WorkAttachment
-	workPolicyAccess          WorkPolicyAccess
-	programEventAttachment    ProgramEventAttachment
-	trackAttachment           TrackAttachment
-	releasePolicyAccess       ReleasePolicyAccess
+	ingestLocks     domain.IngestLocks
+	faviconCommits  domain.FaviconCommits
+	uploadReads     fileStoreReader
+	ownerPreflights fileStoreReader
+	units           mutation.UnitOfWork[Store]
+	storeMutations  *mutation.StoreRunner[Store]
+
+	s3Bucket        string
+	cdnDomain       string
+	mediaDomain     string
+	mediaSecret     string
+	downloadTTL     time.Duration
+	s3Client        *s3.Client
+	s3PresignClient *s3.PresignClient
+	asyncPublisher  AsyncPublisher
+	publisher       mq.TranscoderPublisher
+	spiceDB         mutation.Authorizer
+	auditWriter     domainaudit.Appender
+
 	memberSummaries           MemberSummaries
 	remoteImportResolver      remoteImportResolver
 	remoteImportDialer        remoteImportDialer
@@ -139,10 +120,6 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
-	if err != nil {
-		return nil, err
-	}
 	storeMutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
@@ -160,15 +137,24 @@ func NewService(deps Deps) (*Service, error) {
 		editorImage.MaxSize = deps.EditorImageMaxSize
 	}
 	return &Service{
-		ingestLocks: deps.IngestLocks, faviconCommits: deps.FaviconCommits, units: deps.Units, storeMutations: storeMutations, db: deps.DB, spiceDB: deps.SpiceDB, auditWriter: deps.Audit, mutations: mutations,
-		s3Client: deps.S3, s3PresignClient: presigner, asyncPublisher: deps.AsyncPublisher,
-		publisher: deps.Transcoder, s3Bucket: deps.S3Bucket, cdnDomain: deps.CDNDomain,
-		mediaDomain: deps.MediaDomain, mediaSecret: deps.MediaSecret, downloadTTL: downloadTTL,
-		uploadConfigs: uploadConfigs, faviconProcessor: favicon.NewProcessor(),
-		legalRouteIdentity: deps.LegalRoutes, postAccess: deps.PostAccess,
-		pagePolicyAccess: deps.PagePolicyAccess, workAttachment: deps.WorkAttachment,
-		workPolicyAccess: deps.WorkPolicyAccess, programEventAttachment: deps.ProgramEventAttachment,
-		trackAttachment: deps.TrackAttachment, releasePolicyAccess: deps.ReleasePolicyAccess,
-		memberSummaries: deps.MemberSummaries,
+		ingestLocks:        deps.IngestLocks,
+		faviconCommits:     deps.FaviconCommits,
+		units:              deps.Units,
+		storeMutations:     storeMutations,
+		spiceDB:            deps.SpiceDB,
+		auditWriter:        deps.Audit,
+		s3Client:           deps.S3,
+		s3PresignClient:    presigner,
+		asyncPublisher:     deps.AsyncPublisher,
+		publisher:          deps.Transcoder,
+		s3Bucket:           deps.S3Bucket,
+		cdnDomain:          deps.CDNDomain,
+		mediaDomain:        deps.MediaDomain,
+		mediaSecret:        deps.MediaSecret,
+		downloadTTL:        downloadTTL,
+		uploadConfigs:      uploadConfigs,
+		faviconProcessor:   favicon.NewProcessor(),
+		legalRouteIdentity: deps.LegalRoutes,
+		memberSummaries:    deps.MemberSummaries,
 	}, nil
 }

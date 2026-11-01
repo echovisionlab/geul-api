@@ -11,7 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -255,7 +254,7 @@ func (s *Service) createMultipartUploadSession(
 	fileID := uuid.NewString()
 	fileKey, err := s.buildManagedFileKey(fileID, initiation.canonicalMime)
 	if err != nil {
-		return nil, multipartFileKeyError(err)
+		return nil, fmt.Errorf("failed to build file key: %w", err)
 	}
 	output, err := s.s3Client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
 		Bucket:      aws.String(s.s3Bucket),
@@ -270,20 +269,13 @@ func (s *Service) createMultipartUploadSession(
 	s.beforeMultipartSessionInsert(session)
 	if err := s.createUploadSession(ctx, &session); err != nil {
 		s.abortMultipartUploadAfterInsertFailure(ctx, fileKey, output.UploadId)
-		return nil, multipartSessionInsertError(err)
+		return nil, fmt.Errorf("failed to create upload session: %w", err)
 	}
 	s.afterMultipartSessionInsert(session)
 	if err := s.publishMultipartUploadStarted(ctx, session); err != nil {
 		return nil, err
 	}
 	return multipartInitiateResponseFromSession(session, nil, false), nil
-}
-
-func multipartFileKeyError(err error) error {
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return domainerr.New(domainerr.NotFound, "", "track not found")
-	}
-	return fmt.Errorf("failed to build file key: %w", err)
 }
 
 func newMultipartUploadSession(
@@ -342,13 +334,6 @@ func (s *Service) abortMultipartUploadAfterInsertFailure(
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to abort multipart upload after session insert failure", failurecause.Attr(err), "fileKey", fileKey)
 	}
-}
-
-func multipartSessionInsertError(err error) error {
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return domainerr.New(domainerr.NotFound, "", "track not found")
-	}
-	return fmt.Errorf("failed to create upload session: %w", err)
 }
 
 func (s *Service) publishMultipartUploadStarted(ctx context.Context, session domain.UploadSession) error {

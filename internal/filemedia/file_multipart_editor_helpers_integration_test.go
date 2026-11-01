@@ -145,7 +145,7 @@ func handleMultipartPartDirect(
 		prefixReq.ContentLength = int64(prefixSize)
 		prefixRec := httptest.NewRecorder()
 		auth.RequireGatewaySession(
-			svc.db,
+			testFileDB(svc),
 			http.HandlerFunc(svc.HandleVerifyUploadPrefix),
 		).ServeHTTP(prefixRec, prefixReq)
 		require.Equal(t, http.StatusNoContent, prefixRec.Code, prefixRec.Body.String())
@@ -155,7 +155,7 @@ func handleMultipartPartDirect(
 	testutil.ApplyAuthHeaders(presignReq.Header, user)
 	presignRec := httptest.NewRecorder()
 	auth.RequireGatewaySession(
-		svc.db,
+		testFileDB(svc),
 		http.HandlerFunc(svc.HandlePresignUploadPart),
 	).ServeHTTP(presignRec, presignReq)
 	require.Equal(t, http.StatusOK, presignRec.Code, presignRec.Body.String())
@@ -175,7 +175,7 @@ func handleMultipartPartDirect(
 	testutil.ApplyAuthHeaders(confirmReq.Header, user)
 	confirmRec := httptest.NewRecorder()
 	auth.RequireGatewaySession(
-		svc.db,
+		testFileDB(svc),
 		http.HandlerFunc(svc.HandleConfirmUploadPart),
 	).ServeHTTP(confirmRec, confirmReq)
 	require.Equal(t, http.StatusOK, confirmRec.Code, confirmRec.Body.String())

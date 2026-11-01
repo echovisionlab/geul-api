@@ -36,6 +36,8 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+func testFileDB(s *Service) *gorm.DB { return s.units.(nativeFileUnits).db }
+
 type postSeriesAuditRow struct {
 	Action        string
 	TargetType    string `gorm:"column:target_type"`
@@ -192,7 +194,6 @@ func seedAudiencePostFileAttachment(t *testing.T, db *gorm.DB, postID, fileID st
 
 func newEditorUploadSerializationFileService(stack *testutil.RuntimeStack, s3Client *s3.Client) *Service {
 	return newTestService(Deps{
-		DB:             stack.DB,
 		S3:             s3Client,
 		AsyncPublisher: &hardCutAsyncPublisher{},
 		S3Bucket:       stack.S3MediaBucket,
@@ -201,14 +202,14 @@ func newEditorUploadSerializationFileService(stack *testutil.RuntimeStack, s3Cli
 		MediaSecret:    stack.MediaSigningSecret,
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
-	})
+	}, stack.DB, nativeFilePorts{})
 }
 
 type directTrackAttachment struct {
 	audit domainaudit.Appender
 }
 
-func newDirectTrackAttachment(db *gorm.DB) TrackAttachment {
+func newDirectTrackAttachment(db *gorm.DB) *directTrackAttachment {
 	return &directTrackAttachment{audit: apitelemetry.NewDurableWriter(db)}
 }
 

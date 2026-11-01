@@ -33,7 +33,7 @@ func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorit
 			Where("upload_id = ?", session.UploadID).
 			Update("upload_type", managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO.String()).Error)
 
-		err = (withTestMutations(&Service{db: stack.DB, spiceDB: stack.SpiceDBClient})).createVerifiedFileIngestRecord(
+		err = (withTestMutations(withNativeFileUnits(&Service{spiceDB: stack.SpiceDBClient}, stack.DB, nativeFilePorts{}))).createVerifiedFileIngestRecord(
 			ctx,
 			verifiedMultipartAuthorityFile(session.FileID),
 			managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
@@ -53,7 +53,7 @@ func TestMultipartVerifiedFileMutationRevalidatesIndependentFileAndActorAuthorit
 			Where("id = ?", manager.MemberID).
 			Update("account_identity_id", nil).Error)
 
-		err = (withTestMutations(&Service{db: stack.DB, spiceDB: stack.SpiceDBClient})).createVerifiedFileIngestRecord(
+		err = (withTestMutations(withNativeFileUnits(&Service{spiceDB: stack.SpiceDBClient}, stack.DB, nativeFilePorts{}))).createVerifiedFileIngestRecord(
 			ctx,
 			verifiedMultipartAuthorityFile(session.FileID),
 			managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,

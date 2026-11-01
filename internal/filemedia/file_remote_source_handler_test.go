@@ -33,7 +33,7 @@ func uploadSourceTestService(t *testing.T, handler http.Handler, maxSize int64) 
 			managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE.String(): {PermittedMimeTypes: []string{"image/png"}, MaxSize: maxSize},
 		},
 		remoteImportResolver:      &remoteImportTestResolver{ips: []net.IP{net.ParseIP("8.8.8.8")}},
-		remoteImportBaseTransport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, // Local TLS fixture only.
+		remoteImportBaseTransport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
 		remoteImportDialer: func(ctx context.Context, network, address string) (net.Conn, error) {
 			require.Equal(t, "8.8.8.8:443", address)
 			return new(net.Dialer).DialContext(ctx, network, upstream.Listener.Addr().String())

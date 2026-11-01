@@ -121,7 +121,7 @@ func TestMeshProfilesKeepIndependentPipelinesCachesAndClearScope(t *testing.T) {
 	particleRow.Status = domain.MeshStatusFailed
 	f.store.PutMeshCandidate(legacyRow)
 	f.store.PutMeshCandidate(particleRow)
-	service := filemedia.ExportMeshFileService(f.units, f.checker.Client(t))
+	service := filemedia.ExportMeshFileService(f.units, f.checker)
 	response, err := filemedia.NewConnectHandler(service).ClearMeshOptimizationCandidates(f.ctx, connect.NewRequest(&managev1.ClearMeshOptimizationCandidatesRequest{SourceFileId: f.source, EntityType: input.EntityType, EntityId: f.page, Profile: input.Profile}))
 	require.NoError(t, err)
 	require.True(t, response.Msg.Success)

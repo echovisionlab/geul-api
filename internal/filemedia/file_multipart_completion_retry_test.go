@@ -25,8 +25,7 @@ func TestVerifyMultipartCompletionTransientFetchFailureKeepsFinalizing(t *testin
 	service := newObjectVerificationService(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "temporary storage failure", http.StatusServiceUnavailable)
 	})
-	service.db = db
-	withTestStorage(service)
+	withNativeFileUnits(service, db, nativeFilePorts{})
 
 	completion := insertFinalizingCompletion(t, db, 10)
 	err := service.verifyMultipartCompletionObject(context.Background(), completion)
@@ -39,8 +38,7 @@ func TestCompleteMultipartObjectTransientFailureKeepsFinalizing(t *testing.T) {
 	service := newObjectVerificationService(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "temporary complete failure", http.StatusServiceUnavailable)
 	})
-	service.db = db
-	withTestStorage(service)
+	withNativeFileUnits(service, db, nativeFilePorts{})
 
 	completion := insertFinalizingCompletion(t, db, 10)
 	completion.verifiedMime = "audio/wav"
@@ -58,8 +56,7 @@ func TestCompleteMultipartObjectRepairablePartFailureKeepsFinalizing(t *testing.
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = fmt.Fprintf(w, "<Error><Code>%s</Code><Message>repairable part list</Message></Error>", code)
 			})
-			service.db = db
-			withTestStorage(service)
+			withNativeFileUnits(service, db, nativeFilePorts{})
 
 			completion := insertFinalizingCompletion(t, db, 10)
 			completion.verifiedMime = "audio/wav"
@@ -85,8 +82,7 @@ func TestVerifyMultipartCompletionSizeMismatchFailsAndDeletesObject(t *testing.T
 			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
 		}
 	})
-	service.db = db
-	withTestStorage(service)
+	withNativeFileUnits(service, db, nativeFilePorts{})
 
 	completion := insertFinalizingCompletion(t, db, 10)
 	completion.verifiedMime = "image/png"
@@ -98,7 +94,7 @@ func TestVerifyMultipartCompletionSizeMismatchFailsAndDeletesObject(t *testing.T
 
 func TestPersistMultipartCompletionDatabaseFailureKeepsFinalizing(t *testing.T) {
 	db := newMultipartCompletionRetryDB(t)
-	service := withTestStorage(&Service{db: db})
+	service := withNativeFileUnits(&Service{}, db, nativeFilePorts{})
 	completion := insertFinalizingCompletion(t, db, 10)
 	completion.uploadType = managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO
 	completion.session.FileName = "field-recording.wav"
@@ -111,7 +107,7 @@ func TestPersistMultipartCompletionDatabaseFailureKeepsFinalizing(t *testing.T) 
 
 func TestMarkMultipartCompletionFailedCannotOverwriteNonFinalizingState(t *testing.T) {
 	db := newMultipartCompletionRetryDB(t)
-	service := withTestStorage(&Service{db: db})
+	service := withNativeFileUnits(&Service{}, db, nativeFilePorts{})
 	completion := insertFinalizingCompletion(t, db, 10)
 
 	require.NoError(t, db.Model(&model.UploadSession{}).
@@ -131,10 +127,7 @@ func TestMultipartPublicAssetPromotionRetryPreservesVerifiedSourceAndFinalizingS
 	store.setFailTransfer(true)
 	uploadID := uuid.NewString()
 	insertMultipartPromotionRetrySession(t, db, uploadID, file.ID)
-	service := withTestStorage(&Service{
-		db: db, s3Client: store.client, s3Bucket: "media-bucket",
-		cdnDomain: "https://cdn.example.com", mediaSecret: "test-media-secret",
-	})
+	service := withNativeFileUnits(&Service{s3Client: store.client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com", mediaSecret: "test-media-secret"}, db, nativeFilePorts{})
 	completion := &multipartCompletion{
 		session: domain.UploadSession{
 			UploadID: uploadID, FileID: file.ID, FileName: file.FileName,
@@ -175,13 +168,15 @@ func TestMultipartFaviconCommitAmbiguityPreservesSourceAndFinalizingSession(t *t
 	store := newFaviconS3Fixture(t, fileID, "png", source, 0)
 	uploadID := uuid.NewString()
 	insertMultipartPromotionRetrySession(t, db, uploadID, fileID)
-	service := withTestStorage(&Service{
-		db: db, s3Client: store.client, s3Bucket: "media-bucket",
-		cdnDomain: "https://cdn.example.com", mediaSecret: "test-media-secret",
+	service := withNativeFileUnits(&Service{
+		s3Client:                  store.client,
+		s3Bucket:                  "media-bucket",
+		cdnDomain:                 "https://cdn.example.com",
+		mediaSecret:               "test-media-secret",
 		faviconProcessor:          staticFaviconProcessor{outputs: faviconTestGeneratedOutputs(t)},
 		testFaviconCommitError:    fmt.Errorf("injected lost commit acknowledgement"),
 		testFaviconReconcileError: fmt.Errorf("injected reconciliation read failure"),
-	})
+	}, db, nativeFilePorts{})
 	completion := &multipartCompletion{
 		session: domain.UploadSession{
 			UploadID: uploadID, FileID: fileID, FileName: "favicon.png",

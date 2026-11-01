@@ -19,12 +19,9 @@ import (
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-// withTestMutations gives a Service built as a struct literal the mutation
-// runner NewService builds from its database, SpiceDB client and audit
-// appender. An unset appender records in memory.
+// withTestMutations adds the runner used by the service constructor.
 func withTestMutations(service *Service) *Service {
-	service = withTestStorage(service)
-	if service.db == nil {
+	if service.units == nil {
 		return service
 	}
 	audit := service.auditWriter
@@ -32,23 +29,16 @@ func withTestMutations(service *Service) *Service {
 		audit = &audittest.Recorder{}
 		service.auditWriter = audit
 	}
-	spiceDB := service.spiceDB
-	if spiceDB == nil {
-		spiceDB = &auth.SpiceDBClient{}
+	checker := service.spiceDB
+	if checker == nil {
+		checker = &auth.SpiceDBClient{}
 	}
-	runner, err := mutation.NewRunner(service.db, spiceDB, identitystate.PostgresFence{}, audit)
-	if err != nil {
-		panic(err)
-	}
-	if service.mutations == nil {
-		service.mutations = runner
-	}
-
 	if service.storeMutations == nil {
-		service.storeMutations, err = mutation.NewStoreRunner(service.units, spiceDB, identitystate.PostgresFence{}, audit)
+		runner, err := mutation.NewStoreRunner(service.units, checker, identitystate.PostgresFence{}, audit)
 		if err != nil {
 			panic(err)
 		}
+		service.storeMutations = runner
 	}
 	return service
 }
@@ -69,23 +59,43 @@ func auditedUserContext(ctx context.Context, user *auth.UserInfo) context.Contex
 	return auth.WithUser(sharedtelemetry.WithRequestContext(ctx, request), user)
 }
 
-func withTestStorage(service *Service) *Service {
-	if service.db != nil {
-		service.ingestLocks = filemediapostgres.NewIngestLocks(service.db, testFilePorts(service))
-		service.faviconCommits = filemediapostgres.NewFaviconCommits(service.db, filemediapostgres.Ports{})
-		service.units = mutation.Postgres(service.db, func(tx *gorm.DB) Store {
-			return testFileStore(service, tx)
-		})
+type nativeFilePorts struct {
+	Posts, Pages, Works, Releases filemediapolicy.LockedPolicyAccess
+	Events                        filemediapolicy.EventPolicyAccess
+	Tracks                        filemediapostgres.UploadTracks
+}
+
+type nativeFileUnits struct {
+	mutation.UnitOfWork[Store]
+	db    *gorm.DB
+	ports filemediapostgres.Ports
+}
+
+func withNativeFileUnits(service *Service, db *gorm.DB, owners nativeFilePorts) *Service {
+	client, _ := service.spiceDB.(*auth.SpiceDBClient)
+	ports := filemediapostgres.Ports{UploadWorks: filemediapolicy.WorkExistence{}, UploadTracks: owners.Tracks, PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: owners.Posts, Pages: owners.Pages, Works: owners.Works, Events: owners.Events, Releases: owners.Releases, SpiceDB: client}), PolicyAudiences: filemediapolicy.Audiences{}}
+	service.units = nativeFileUnits{UnitOfWork: service.units, db: db, ports: ports}
+	ports = testFilePorts(service)
+	if db != nil {
+		service.units = nativeFileUnits{filemediapostgres.NewUnits(db, ports), db, ports}
+		service.ingestLocks = filemediapostgres.NewIngestLocks(db, ports)
+		service.faviconCommits = filemediapostgres.NewFaviconCommits(db, ports)
 	}
 	return service
 }
-
 func testFileStore(s *Service, tx *gorm.DB) Store {
 	return filemediapostgres.NewStore(tx, testFilePorts(s))
 }
-
 func testFilePorts(s *Service) filemediapostgres.Ports {
-	return filemediapostgres.Ports{UploadWorks: filemediapolicy.WorkExistence{}, MeshJobs: filemediaqueue.Mesh(s.publisher, s.asyncPublisher), IngestTranscodes: filemediaqueue.Transcodes(s.publisher, s.asyncPublisher), UploadTracks: s.trackAttachment, DeletionQueue: filemediaqueue.Async(s.asyncPublisher), PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: s.postAccess, Pages: s.pagePolicyAccess, Works: s.workPolicyAccess, Events: s.programEventAttachment, Releases: s.releasePolicyAccess, SpiceDB: s.spiceDB}), PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(s.asyncPublisher)}
+	var ports filemediapostgres.Ports
+	if units, ok := s.units.(nativeFileUnits); ok {
+		ports = units.ports
+	}
+	ports.MeshJobs = filemediaqueue.Mesh(s.publisher, s.asyncPublisher)
+	ports.IngestTranscodes = filemediaqueue.Transcodes(s.publisher, s.asyncPublisher)
+	ports.DeletionQueue = filemediaqueue.Async(s.asyncPublisher)
+	ports.PolicySignals = filemediaqueue.Policy(s.asyncPublisher)
+	return ports
 }
 
 func freshFileIngestAuthorityForTest(ctx context.Context, tx *gorm.DB, service *Service, upload managev1.UploadType, entity managev1.TranscodeEntityType, id string) error {

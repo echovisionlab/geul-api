@@ -27,12 +27,7 @@ func TestFileServiceDeleteFilePersistsRequestAndPublishesDeleteEventIntegration(
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	publisher := &hardCutAsyncPublisher{}
-	service := withTestMutations(withTestStorage(&Service{
-		db:             db,
-		s3Bucket:       "media-bucket",
-		spiceDB:        stack.SpiceDBClient,
-		asyncPublisher: publisher,
-	}))
+	service := withTestMutations(withNativeFileUnits(&Service{s3Bucket: "media-bucket", spiceDB: stack.SpiceDBClient, asyncPublisher: publisher}, db, nativeFilePorts{}))
 	fileID := uuid.NewString()
 	seedFileDeleteLifecycleFile(t, db, fileID, "poster.jpg", "image/jpeg", "jpg")
 	seedFileDeleteLifecyclePolicy(t, stack.SpiceDBClient, fileID)
@@ -105,12 +100,7 @@ func TestFileServiceDeleteFileCleansUnselectedMeshOptimizationCandidatesIntegrat
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	publisher := &hardCutAsyncPublisher{}
-	service := withTestMutations(withTestStorage(&Service{
-		db:             db,
-		s3Bucket:       "media-bucket",
-		spiceDB:        stack.SpiceDBClient,
-		asyncPublisher: publisher,
-	}))
+	service := withTestMutations(withNativeFileUnits(&Service{s3Bucket: "media-bucket", spiceDB: stack.SpiceDBClient, asyncPublisher: publisher}, db, nativeFilePorts{}))
 	pageID := seedHardCutPageFixture(t, db)
 	sourceFileID := seedMeshOptimizationSourceFile(t, db)
 	seedFileDeleteLifecyclePolicy(t, stack.SpiceDBClient, sourceFileID)

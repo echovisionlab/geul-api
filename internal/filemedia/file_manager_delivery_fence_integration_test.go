@@ -275,8 +275,6 @@ func TestFileManagerSigningCompletesBeforeRenameAndDeletePrincipalFenceIntegrati
 			var runnerErr error
 			service.storeMutations, runnerErr = mutationpkg.NewStoreRunner(service.units, service.spiceDB, fence, service.auditWriter)
 			require.NoError(t, runnerErr)
-			service.mutations, runnerErr = mutationpkg.NewRunner(service.db, service.spiceDB, fence, service.auditWriter)
-			require.NoError(t, runnerErr)
 
 			mutationDone := make(chan error, 1)
 			go func() {
@@ -338,12 +336,14 @@ func TestFileManagerAuthorCanDownloadUnattachedFileIntegration(t *testing.T) {
 	db := testutil.NewIntegrationDB(t)
 	adminCtx, spiceDB := integrationAdminCtxWithIdentityAndSpiceDB(t, db)
 	user := auth.GetUser(adminCtx)
-	service := withTestMutations(withTestStorage(&Service{
-		db: db, spiceDB: spiceDB,
-		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
-		mediaSecret: "file-manager-unattached-secret", downloadTTL: time.Hour,
+	service := withTestMutations(withNativeFileUnits(&Service{
+		spiceDB:         spiceDB,
+		cdnDomain:       "https://cdn.example.test",
+		mediaDomain:     "https://media.example.test",
+		mediaSecret:     "file-manager-unattached-secret",
+		downloadTTL:     time.Hour,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}))
+	}, db, nativeFilePorts{}))
 	folder, err := NewConnectHandler(service).CreateFileFolder(adminCtx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Unattached"}))
 	require.NoError(t, err)
 	fileID := seedFileManagerFile(t, db, folder.Msg.Folder.GetId(), user.MemberID.String(), "standalone", "pdf", "application/pdf")
@@ -969,7 +969,7 @@ func TestManageBulkUsesPerFileDeliveryCapabilitiesIntegration(t *testing.T) {
 func TestManageBulkExcludesDetachedUsageButKeepsCurrentUsageIntegration(t *testing.T) {
 	t.Parallel()
 	db, ctx, service, _, firstFileID, firstBlockID := newManagePostCollaboratorFenceFixture(t)
-	_, secondFileID, secondBlockID := seedManagePostCollaboratorUsage(t, db, service.spiceDB, auth.GetUser(ctx))
+	_, secondFileID, secondBlockID := seedManagePostCollaboratorUsage(t, db, service.spiceDB.(*auth.SpiceDBClient), auth.GetUser(ctx))
 	expected := []string{firstFileID, secondFileID}
 	sort.Strings(expected)
 	beforeFence := make(chan struct{})
@@ -1003,7 +1003,7 @@ func TestManageSameFileRemainsAvailableThroughAnotherAuthorizedUsageIntegration(
 	t.Parallel()
 	db, ctx, service, _, fileID, firstBlockID := newManagePostCollaboratorFenceFixture(t)
 	user := auth.GetUser(ctx)
-	postID, _, secondBlockID := seedManagePostCollaboratorUsageForFile(t, db, service.spiceDB, user, fileID)
+	postID, _, secondBlockID := seedManagePostCollaboratorUsageForFile(t, db, service.spiceDB.(*auth.SpiceDBClient), user, fileID)
 	require.NotEmpty(t, postID)
 	beforeFence := make(chan struct{})
 	releaseFence := make(chan struct{})
@@ -1033,7 +1033,7 @@ func TestManageSameFileRemainsAvailableThroughAnotherAuthorizedUsageIntegration(
 func TestManageGlobalAuthorDownloadIsIndependentOfUsageDetachIntegration(t *testing.T) {
 	t.Parallel()
 	db, ctx, service, _, fileID, blockID := newManagePostCollaboratorFenceFixture(t)
-	testutil.GrantIntegrationGlobalRole(t, service.spiceDB, auth.GetUser(ctx).IdentityID.String(), policyv1.Role.Author())
+	testutil.GrantIntegrationGlobalRole(t, service.spiceDB.(*auth.SpiceDBClient), auth.GetUser(ctx).IdentityID.String(), policyv1.Role.Author())
 	beforeFence := make(chan struct{})
 	releaseFence := make(chan struct{})
 	service.testBeforeManageDeliveryFence = func([]string) {
@@ -1192,13 +1192,15 @@ func newFileManagerDeliveryFenceFixture(
 	t.Helper()
 	db, spiceDB := newLocalKratosConcurrentServiceIntegrationDB(t)
 	ctx := integrationAdminCtxWithIdentity(t, db, spiceDB)
-	service := withTestMutations(withTestStorage(&Service{
-		db: db, spiceDB: spiceDB,
-		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
-		mediaSecret: "file-manager-fence-secret", downloadTTL: time.Hour,
+	service := withTestMutations(withNativeFileUnits(&Service{
+		spiceDB:         spiceDB,
+		cdnDomain:       "https://cdn.example.test",
+		mediaDomain:     "https://media.example.test",
+		mediaSecret:     "file-manager-fence-secret",
+		downloadTTL:     time.Hour,
 		asyncPublisher:  noopAsyncPublisher{},
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
-	}))
+	}, db, nativeFilePorts{}))
 	folder, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Fence"}))
 	require.NoError(t, err)
 	fileID := seedManagedFileManagerFenceFile(t, db, folder.Msg.Folder.GetId(), auth.GetUser(ctx).MemberID.String(), "race")
@@ -1217,12 +1219,7 @@ func newManagePostCollaboratorFenceFixture(
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(testutil.IntegrationUUID()), Authenticated: true, Onboarded: true,
 	})
-	service := withTestMutations(withTestStorage(&Service{
-		db: db, spiceDB: spiceDB,
-		cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test",
-		mediaSecret: "manage-usage-fence-secret", downloadTTL: time.Hour,
-		postAccess: newIntegrationPostAccess(db, spiceDB),
-	}))
+	service := withTestMutations(withNativeFileUnits(&Service{spiceDB: spiceDB, cdnDomain: "https://cdn.example.test", mediaDomain: "https://media.example.test", mediaSecret: "manage-usage-fence-secret", downloadTTL: time.Hour}, db, nativeFilePorts{Posts: newIntegrationPostAccess(db, spiceDB)}))
 	postID, fileID, blockID := seedManagePostCollaboratorUsage(t, db, spiceDB, auth.GetUser(ctx))
 	return db, ctx, service, postID, fileID, blockID
 }

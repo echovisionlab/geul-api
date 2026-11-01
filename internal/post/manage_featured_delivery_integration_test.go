@@ -101,31 +101,23 @@ func newManagePostFeaturedDeliveryFixture(t *testing.T) managePostFeaturedDelive
 	editorCtx := testutil.PostIntegrationContext(editorID)
 	store := testutil.NewPostContentBlockStore(t)
 
-	filePostAccess := filemediaadapter.NewPostAccess(db, spiceDB)
+	filePostAccess := filemediaadapter.NewPostAccess(spiceDB)
 	filePorts := filemediapostgres.Ports{PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: filePostAccess, SpiceDB: spiceDB}), PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(postFeaturedAsyncPublisher{})}
 	fileService, err := filemedia.NewService(filemedia.Deps{
-		IngestLocks:    filemediapostgres.NewIngestLocks(db, filePorts),
-		FaviconCommits: filemediapostgres.NewFaviconCommits(db, filePorts),
-		Units:          filemediapostgres.NewUnits(db, filePorts), Fence: identitystate.PostgresFence{},
-		DB:                     db,
-		S3:                     s3.New(s3.Options{Region: "integration"}),
-		AsyncPublisher:         postFeaturedAsyncPublisher{},
-		S3Bucket:               "integration",
-		CDNDomain:              "https://cdn.example.test",
-		MediaDomain:            "https://media.example.test",
-		MediaSecret:            "post-featured-integration-secret",
-		Transcoder:             postFeaturedTranscoderPublisher{},
-		SpiceDB:                spiceDB,
-		Audit:                  &audittest.Recorder{},
-		PostAccess:             filePostAccess,
-		LegalRoutes:            postFeaturedUnusedLegalRoutes{},
-		PagePolicyAccess:       postFeaturedUnusedPagePolicyAccess{},
-		WorkAttachment:         postFeaturedUnusedWorkAttachment{},
-		WorkPolicyAccess:       postFeaturedUnusedWorkPolicyAccess{},
-		ProgramEventAttachment: postFeaturedUnusedProgramEventAttachment{},
-		TrackAttachment:        postFeaturedUnusedTrackAttachment{},
-		ReleasePolicyAccess:    postFeaturedUnusedReleasePolicyAccess{},
-
+		IngestLocks:     filemediapostgres.NewIngestLocks(db, filePorts),
+		FaviconCommits:  filemediapostgres.NewFaviconCommits(db, filePorts),
+		Units:           filemediapostgres.NewUnits(db, filePorts),
+		Fence:           identitystate.PostgresFence{},
+		S3:              s3.New(s3.Options{Region: "integration"}),
+		AsyncPublisher:  postFeaturedAsyncPublisher{},
+		S3Bucket:        "integration",
+		CDNDomain:       "https://cdn.example.test",
+		MediaDomain:     "https://media.example.test",
+		MediaSecret:     "post-featured-integration-secret",
+		Transcoder:      postFeaturedTranscoderPublisher{},
+		SpiceDB:         spiceDB,
+		Audit:           &audittest.Recorder{},
+		LegalRoutes:     postFeaturedUnusedLegalRoutes{},
 		MemberSummaries: postFeaturedUnusedMemberSummaries{},
 	})
 	require.NoError(t, err)
@@ -235,13 +227,5 @@ func (publisher postFeaturedAsyncPublisher) NotifyProtobufWithExecutor(
 
 // The ports this test does not reach panic if called.
 type postFeaturedUnusedLegalRoutes struct{ filemedia.LegalRouteIdentity }
-type postFeaturedUnusedPagePolicyAccess struct{ filemedia.PagePolicyAccess }
-type postFeaturedUnusedWorkAttachment struct{ filemedia.WorkAttachment }
-type postFeaturedUnusedWorkPolicyAccess struct{ filemedia.WorkPolicyAccess }
-type postFeaturedUnusedProgramEventAttachment struct {
-	filemedia.ProgramEventAttachment
-}
-type postFeaturedUnusedTrackAttachment struct{ filemedia.TrackAttachment }
-type postFeaturedUnusedReleasePolicyAccess struct{ filemedia.ReleasePolicyAccess }
 
 type postFeaturedUnusedMemberSummaries struct{ filemedia.MemberSummaries }

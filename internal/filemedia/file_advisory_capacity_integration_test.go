@@ -20,7 +20,7 @@ func TestPrepareClientMediaUsesReservedAdvisoryConnectionIntegration(t *testing.
 	pool, err := db.DB()
 	require.NoError(t, err)
 	pool.SetMaxOpenConns(1)
-	service := withTestStorage(&Service{db: db})
+	service := withNativeFileUnits(&Service{}, db, nativeFilePorts{})
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
 	_, err = service.PrepareClientMediaUpload(ctx, PrepareClientMediaUploadCommand{UploadID: uuid.NewString(), FileID: uuid.NewString()})

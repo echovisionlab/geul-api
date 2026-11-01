@@ -7,9 +7,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
@@ -175,7 +174,7 @@ func resolvePartUploadPermissionTargetUsing(ctx context.Context, uploadType mana
 		return target, entityID, nil
 	}
 	releaseID, err := lookup(ctx, session.EntityID)
-	if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, domain.ErrUploadTrackNotFound) {
+	if errors.Is(err, domain.ErrUploadTrackNotFound) {
 		return target, "", fmt.Errorf("track not found")
 	}
 	if err != nil {
@@ -344,7 +343,7 @@ func checkSpiceDBCan(
 	ctx context.Context,
 	user *auth.UserInfo,
 	can policyv1.Can,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB authz.AuthorizationDecisionChecker,
 ) (bool, error) {
 	if user == nil || spiceDB == nil {
 		return false, fmt.Errorf("SpiceDB authorization is not configured")

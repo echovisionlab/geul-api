@@ -46,7 +46,7 @@ func fileManagerAuthority(ctx context.Context) (*auth.UserInfo, policyv1.Can, er
 	return user, can, nil
 }
 
-func requireFileManagerAdmin(ctx context.Context, spiceDB *auth.SpiceDBClient) (*auth.UserInfo, error) {
+func requireFileManagerAdmin(ctx context.Context, spiceDB authz.AuthorizationDecisionChecker) (*auth.UserInfo, error) {
 	user, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err

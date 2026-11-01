@@ -97,7 +97,7 @@ func TestPostUploadAuthorizationUsesOneStatusAwareDomainAction(t *testing.T) {
 
 	t.Run("initiation", func(t *testing.T) {
 		access := &recordingPostAccess{}
-		service := withTestStorage(&Service{db: newPostAccessUnitDB(t), postAccess: access})
+		service := withNativeFileUnits(&Service{}, newPostAccessUnitDB(t), nativeFilePorts{Posts: access})
 		err := service.checkEntityPermission(
 			ctx,
 			managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE,
@@ -113,7 +113,7 @@ func TestPostUploadAuthorizationUsesOneStatusAwareDomainAction(t *testing.T) {
 
 	t.Run("part", func(t *testing.T) {
 		access := &recordingPostAccess{}
-		service := withTestStorage(&Service{db: newPostAccessUnitDB(t), postAccess: access})
+		service := withNativeFileUnits(&Service{}, newPostAccessUnitDB(t), nativeFilePorts{Posts: access})
 		err := service.checkPartUploadPermission(ctx, principal.MemberID.String(), postUploadSession(postID))
 		require.NoError(t, err)
 		require.Zero(t, access.requireEditCount)
@@ -127,7 +127,7 @@ func TestVerifiedPostFileMutationPassesOuterTransactionToOneEditAction(t *testin
 
 	db := newPostAccessUnitDB(t)
 	access := &recordingPostAccess{}
-	service := withTestStorage(&Service{db: db, postAccess: access})
+	service := withNativeFileUnits(&Service{}, db, nativeFilePorts{Posts: access})
 	ctx := auditedUserContext(context.Background(), postAccessPrincipal())
 	postID := uuid.NewString()
 
@@ -150,7 +150,7 @@ func TestPostManageDeliveryUsesOneViewAction(t *testing.T) {
 	t.Parallel()
 
 	access := &recordingPostAccess{}
-	service := withTestStorage(&Service{db: newPostAccessUnitDB(t), postAccess: access})
+	service := withNativeFileUnits(&Service{}, newPostAccessUnitDB(t), nativeFilePorts{Posts: access})
 	principal := postAccessPrincipal()
 	err := service.authorizeManageFilePermissionTarget(
 		auditedUserContext(context.Background(), principal),
@@ -172,7 +172,7 @@ func TestPostFilePolicyActionsUseOneLockedActionInOuterTransaction(t *testing.T)
 	ctx := auditedUserContext(context.Background(), postAccessPrincipal())
 
 	viewAccess := &recordingPostAccess{}
-	viewService := &Service{postAccess: viewAccess}
+	viewService := withNativeFileUnits(&Service{}, nil, nativeFilePorts{Posts: viewAccess})
 	require.NoError(t, viewService.authorizeFileDownloadPolicyOwner(
 		ctx,
 		testFileStore(viewService, db),
@@ -186,7 +186,7 @@ func TestPostFilePolicyActionsUseOneLockedActionInOuterTransaction(t *testing.T)
 	require.Zero(t, viewAccess.requireLockedEditCount)
 
 	editAccess := &recordingPostAccess{}
-	editService := &Service{postAccess: editAccess}
+	editService := withNativeFileUnits(&Service{}, nil, nativeFilePorts{Posts: editAccess})
 	require.NoError(t, editService.authorizeFileDownloadPolicyOwner(
 		ctx,
 		testFileStore(editService, db),
@@ -208,7 +208,7 @@ func TestProgramEventFileOperationsUseOneExactDomainAction(t *testing.T) {
 	ctx := auditedUserContext(context.Background(), postAccessPrincipal())
 
 	deliveryAccess := &recordingProgramEventAccess{}
-	deliveryService := withTestStorage(&Service{db: db, programEventAttachment: deliveryAccess})
+	deliveryService := withNativeFileUnits(&Service{}, db, nativeFilePorts{Events: deliveryAccess})
 	require.NoError(t, deliveryService.authorizeManageFilePermissionTarget(
 		ctx,
 		auth.GetUser(ctx),
@@ -220,7 +220,7 @@ func TestProgramEventFileOperationsUseOneExactDomainAction(t *testing.T) {
 	require.Zero(t, deliveryAccess.requireLockedEditCount)
 
 	viewAccess := &recordingProgramEventAccess{}
-	viewService := &Service{programEventAttachment: viewAccess}
+	viewService := withNativeFileUnits(&Service{}, nil, nativeFilePorts{Events: viewAccess})
 	require.NoError(t, viewService.authorizeFileDownloadPolicyOwner(
 		ctx,
 		testFileStore(viewService, db),
@@ -234,7 +234,7 @@ func TestProgramEventFileOperationsUseOneExactDomainAction(t *testing.T) {
 	require.Zero(t, viewAccess.requireLockedEditCount)
 
 	editAccess := &recordingProgramEventAccess{}
-	editService := &Service{programEventAttachment: editAccess}
+	editService := withNativeFileUnits(&Service{}, nil, nativeFilePorts{Events: editAccess})
 	require.NoError(t, editService.authorizeFileDownloadPolicyOwner(
 		ctx,
 		testFileStore(editService, db),

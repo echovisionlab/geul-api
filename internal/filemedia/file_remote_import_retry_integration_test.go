@@ -74,7 +74,6 @@ func TestRemoteImportCommitAcknowledgementLossRestoresExactCommittedResultDirect
 	})
 
 	service := newTestService(Deps{
-		DB:             stack.DB,
 		S3:             s3Client,
 		AsyncPublisher: &flakyAttachedConfirmPublisher{},
 		S3Bucket:       stack.S3MediaBucket,
@@ -83,7 +82,7 @@ func TestRemoteImportCommitAcknowledgementLossRestoresExactCommittedResultDirect
 		MediaSecret:    stack.MediaSigningSecret,
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
-	})
+	}, stack.DB, nativeFilePorts{})
 	service.testVerifiedIngestCommitError = errors.New("injected lost commit acknowledgement")
 
 	err = service.createOrRestoreVerifiedRemoteImportRecord(
@@ -153,7 +152,6 @@ func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownl
 	store := newSourceAssetPromotionS3Fixture(t, file, body)
 	store.setFailTransfer(true)
 	service := newTestService(Deps{
-		DB:             stack.DB,
 		S3:             store.client,
 		AsyncPublisher: &hardCutAsyncPublisher{},
 		S3Bucket:       "media-bucket",
@@ -162,7 +160,7 @@ func TestRemoteImportPublicAssetPromotionRetryReusesVerifiedSourceWithoutRedownl
 		MediaSecret:    stack.MediaSigningSecret,
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
-	})
+	}, stack.DB, nativeFilePorts{})
 
 	_, err = service.importRemoteFile(memberRequestContext(), opts)
 	require.ErrorContains(t, err, "stream source to public asset")
@@ -214,7 +212,6 @@ func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIn
 	store := newSourceAssetPromotionS3Fixture(t, file, body)
 	store.setFailTransfer(true)
 	service := newTestService(Deps{
-		DB:             stack.DB,
 		S3:             store.client,
 		AsyncPublisher: &hardCutAsyncPublisher{},
 		S3Bucket:       "media-bucket",
@@ -223,7 +220,7 @@ func TestRemoteUserAvatarImportPromotionRetryUsesStableCallerCorrelationDirectIn
 		MediaSecret:    stack.MediaSigningSecret,
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
-	})
+	}, stack.DB, nativeFilePorts{})
 	// The provider URL is deliberately unreachable. The successful second call
 	// proves that the same caller correlation restores the verified source and
 	// resumes promotion without downloading the provider image again.
@@ -328,7 +325,6 @@ func TestRemoteImportRetryReconfirmsCommittedTrackWinnerWithoutRedownloadDirectI
 
 	asyncPublisher := &flakyAttachedConfirmPublisher{failuresRemaining: 1}
 	service := newTestService(Deps{
-		DB:             stack.DB,
 		S3:             s3Client,
 		AsyncPublisher: asyncPublisher,
 		S3Bucket:       stack.S3MediaBucket,
@@ -337,7 +333,7 @@ func TestRemoteImportRetryReconfirmsCommittedTrackWinnerWithoutRedownloadDirectI
 		MediaSecret:    stack.MediaSigningSecret,
 		Transcoder:     &recordingFileTranscoderPublisher{},
 		SpiceDB:        stack.SpiceDBClient,
-	})
+	}, stack.DB, nativeFilePorts{})
 
 	_, err = service.importRemoteFile(memberRequestContext(), opts)
 	require.Error(t, err)
