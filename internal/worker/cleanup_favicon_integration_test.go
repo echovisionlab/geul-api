@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -48,7 +50,7 @@ func TestFaviconCleanupAndBindingSerializeOnPostgresAssetRow(t *testing.T) {
 		<-locked
 		bindDone := make(chan error, 1)
 		go func() {
-			bindDone <- mediaasset.NewLifecycle(pg.DB, "").BindPublicAsset(context.Background(), mediaasset.Binding{
+			bindDone <- mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(pg.DB), "").BindPublicAsset(context.Background(), mediaasset.Binding{
 				AssetID: asset.ID, OwnerType: "integration", OwnerID: uuid.NewString(), BindingKey: "favicon",
 			})
 		}()
@@ -68,7 +70,7 @@ func TestFaviconCleanupAndBindingSerializeOnPostgresAssetRow(t *testing.T) {
 		tx := pg.DB.Begin()
 		require.NoError(t, tx.Error)
 		ownerID := uuid.NewString()
-		require.NoError(t, mediaasset.NewLifecycle(tx, "").BindPublicAsset(t.Context(), mediaasset.Binding{
+		require.NoError(t, mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), "").BindPublicAsset(t.Context(), mediaasset.Binding{
 			AssetID: asset.ID, OwnerType: "integration", OwnerID: ownerID, BindingKey: "favicon",
 		}))
 		type cleanupResult struct {

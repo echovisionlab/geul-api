@@ -16,16 +16,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identityread"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
-	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type FileDownloadAudience string
@@ -40,15 +33,15 @@ const (
 type FileDownloadSource struct {
 	PolicyKey     string
 	PolicyKind    FileDownloadPolicyKind
-	BlockID       string               `gorm:"column:block_id"`
-	ReferencePath string               `gorm:"column:reference_path"`
-	TrackID       string               `gorm:"column:track_id"`
-	FileID        string               `gorm:"column:id"`
-	Extension     string               `gorm:"column:extension"`
-	MimeType      string               `gorm:"column:mime_type"`
-	FileSize      int64                `gorm:"column:file_size"`
-	FileName      *string              `gorm:"column:file_name"`
-	Audience      FileDownloadAudience `gorm:"column:download_audience"`
+	BlockID       string
+	ReferencePath string
+	TrackID       string
+	FileID        string
+	Extension     string
+	MimeType      string
+	FileSize      int64
+	FileName      *string
+	Audience      FileDownloadAudience
 }
 
 type FileDownloadPolicyKind string
@@ -103,41 +96,13 @@ func ContentDownloadOwnerAuthorizationFromContext(ctx context.Context) (ContentD
 	return authorization, ok
 }
 
-func ContentDownloadShareLinkWitnessFromModel(link *model.ShareLink) *ContentDownloadShareLinkWitness {
-	if link == nil {
-		return nil
-	}
-	return &ContentDownloadShareLinkWitness{
-		ID: link.ID, EntityType: link.EntityType, EntityID: link.EntityID,
-		ExpiresAt: link.ExpiresAt,
-	}
-}
-
 func ContentBlockDownloadPolicyKey(blockID, referencePath string) string {
 	return strings.TrimSpace(blockID) + "\x00" + strings.TrimSpace(referencePath)
 }
 
-type restrictedFileDownloadMemberFacts struct {
-	MemberID   string    `gorm:"column:member_id"`
-	IdentityID string    `gorm:"column:identity_id"`
-	Onboarded  bool      `gorm:"column:onboarded"`
-	CreatedAt  time.Time `gorm:"column:member_created_at"`
-}
-
-type restrictedFileDownloadTagFact struct {
-	TagID          string  `gorm:"column:tag_id"`
-	MappedMemberID *string `gorm:"column:mapped_member_id"`
-}
-
-// SegmentConfigLoader hydrates the Audience-owned segment configuration used
-// by File download policy without coupling File/media authority to Audience.
-type SegmentConfigLoader interface {
-	LoadSegmentConfigs(context.Context, *gorm.DB, []*model.AudienceSegment) error
-}
-
 func LoadContentBlockDownloadSources(
 	ctx context.Context,
-	db *gorm.DB,
+	store DownloadStore,
 	selectors []ContentBlockDownloadSelector,
 ) (map[string]FileDownloadSource, error) {
 	requested := make(map[string]struct{}, len(selectors))
@@ -155,24 +120,11 @@ func LoadContentBlockDownloadSources(
 	if len(blockIDs) == 0 {
 		return map[string]FileDownloadSource{}, nil
 	}
-	var rows []FileDownloadSource
-	err := db.WithContext(ctx).Raw(`
-		SELECT attachment.block_id, attachment.reference_path,
-		       file.id, file.extension, file.mime_type, file.file_size, file.file_name,
-		       attachment.download_audience
-		FROM content_block_attachment AS attachment
-		JOIN content_block AS block ON block.id = attachment.block_id
-		JOIN file ON file.id = attachment.file_id
-		WHERE attachment.block_id IN ?
-		  AND block.kind = 'file'
-		  AND attachment.reference_path = 'file'
-		  AND attachment.selector_kind = 'active'
-		  AND file.delete_requested_at IS NULL
-	`, blockIDs).
-		Find(&rows).Error
+	rows, err := store.ContentSources(ctx, blockIDs)
 	if err != nil {
 		return nil, err
 	}
+
 	sources := make(map[string]FileDownloadSource, len(rows))
 	for _, source := range rows {
 		key := ContentBlockDownloadPolicyKey(source.BlockID, source.ReferencePath)
@@ -191,23 +143,18 @@ func LoadContentBlockDownloadSources(
 
 func LoadTrackDownloadSources(
 	ctx context.Context,
-	db *gorm.DB,
+	store DownloadStore,
 	trackIDs []string,
 ) (map[string]FileDownloadSource, error) {
 	trackIDs = sliceutil.SortedUniqueTrimmed(trackIDs)
 	if len(trackIDs) == 0 {
 		return map[string]FileDownloadSource{}, nil
 	}
-	var rows []FileDownloadSource
-	if err := db.WithContext(ctx).Raw(`
-		SELECT track.id AS track_id, file.id, file.extension, file.mime_type,
-		       file.file_size, file.file_name, track.download_audience
-		FROM track
-		JOIN file ON file.id = track.audio_original_file_id
-		WHERE track.id IN ? AND file.delete_requested_at IS NULL
-	`, trackIDs).Find(&rows).Error; err != nil {
+	rows, err := store.TrackSources(ctx, trackIDs)
+	if err != nil {
 		return nil, err
 	}
+
 	sources := make(map[string]FileDownloadSource, len(rows))
 	for _, source := range rows {
 		if !source.Audience.Valid() {
@@ -222,20 +169,18 @@ func LoadTrackDownloadSources(
 
 func EvaluateFileDownloadAccess(
 	ctx context.Context,
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
+	store DownloadStore,
+	spiceDB DownloadAuthorizer,
 	source FileDownloadSource,
 	user *auth.UserInfo,
-	loaders ...SegmentConfigLoader,
 ) (bool, error) {
 	access, err := evaluateFileDownloadAccessBatchAt(
 		ctx,
-		db,
+		store,
 		spiceDB,
 		map[string]FileDownloadSource{source.PolicyKey: source},
 		user,
 		time.Now().UTC(),
-		loaders...,
 	)
 	if err != nil {
 		return false, err
@@ -245,22 +190,21 @@ func EvaluateFileDownloadAccess(
 
 func EvaluateFileDownloadAccessBatch(
 	ctx context.Context,
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
+	store DownloadStore,
+	spiceDB DownloadAuthorizer,
 	sources map[string]FileDownloadSource,
 	user *auth.UserInfo,
-	loaders ...SegmentConfigLoader,
 ) (map[string]bool, error) {
-	return evaluateFileDownloadAccessBatchAt(ctx, db, spiceDB, sources, user, time.Now().UTC(), loaders...)
+	return evaluateFileDownloadAccessBatchAt(ctx, store, spiceDB, sources, user, time.Now().UTC())
 }
 
 func RestrictedFileDownloadSegmentPresence(
 	ctx context.Context,
-	db *gorm.DB,
+	store DownloadStore,
 	sources map[string]FileDownloadSource,
 ) (map[string]bool, error) {
 	result := make(map[string]bool, len(sources))
-	associations, err := loadFileDownloadAudienceAssociations(ctx, db, sources, true)
+	associations, err := store.Associations(ctx, sources, true)
 	if err != nil {
 		return nil, err
 	}
@@ -268,11 +212,6 @@ func RestrictedFileDownloadSegmentPresence(
 		result[association.PolicyKey] = true
 	}
 	return result, nil
-}
-
-type fileDownloadAudienceAssociation struct {
-	PolicyKey         string
-	AudienceSegmentID string
 }
 
 type fileDownloadPolicyFingerprint struct {
@@ -290,11 +229,11 @@ type fileDownloadPolicyFingerprint struct {
 }
 
 type fileDownloadPolicySegmentRecord struct {
-	ID          string                      `json:"id"`
-	SegmentType string                      `json:"segment_type"`
-	ArchivedAt  *time.Time                  `json:"archived_at,omitempty"`
-	UpdatedAt   *time.Time                  `json:"updated_at,omitempty"`
-	Config      model.AudienceSegmentConfig `json:"config"`
+	ID          string                `json:"id"`
+	SegmentType string                `json:"segment_type"`
+	ArchivedAt  *time.Time            `json:"archived_at,omitempty"`
+	UpdatedAt   *time.Time            `json:"updated_at,omitempty"`
+	Config      DownloadSegmentConfig `json:"config"`
 }
 
 type fileDownloadViewerFingerprint struct {
@@ -313,11 +252,10 @@ type fileDownloadViewerFingerprint struct {
 // then lock and compare this value before local signing.
 func LoadFileDownloadPolicyFingerprints(
 	ctx context.Context,
-	db *gorm.DB,
+	store DownloadStore,
 	sources map[string]FileDownloadSource,
-	loader SegmentConfigLoader,
 ) (map[string]string, error) {
-	associations, err := loadFileDownloadAudienceAssociations(ctx, db, sources, false)
+	associations, err := store.Associations(ctx, sources, false)
 	if err != nil {
 		return nil, err
 	}
@@ -328,20 +266,10 @@ func LoadFileDownloadPolicyFingerprints(
 		allSegmentIDs = append(allSegmentIDs, association.AudienceSegmentID)
 	}
 	allSegmentIDs = sliceutil.SortedUniqueTrimmed(allSegmentIDs)
-	segmentsByID := make(map[string]model.AudienceSegment, len(allSegmentIDs))
+	segmentsByID := make(map[string]DownloadSegment, len(allSegmentIDs))
 	if len(allSegmentIDs) > 0 {
-		var segments []model.AudienceSegment
-		if err := db.WithContext(ctx).Where("id IN ?", allSegmentIDs).Find(&segments).Error; err != nil {
-			return nil, err
-		}
-		if loader == nil {
-			return nil, domainerr.DependencyUnavailable("Audience segment configuration")
-		}
-		pointers := make([]*model.AudienceSegment, 0, len(segments))
-		for i := range segments {
-			pointers = append(pointers, &segments[i])
-		}
-		if err := loader.LoadSegmentConfigs(ctx, db, pointers); err != nil {
+		segments, err := store.Segments(ctx, allSegmentIDs, false)
+		if err != nil {
 			return nil, err
 		}
 		for _, segment := range segments {
@@ -389,7 +317,7 @@ func LoadFileDownloadPolicyFingerprints(
 // newly issued stale URL.
 func LoadFileDownloadViewerFingerprint(
 	ctx context.Context,
-	db *gorm.DB,
+	store DownloadStore,
 	sources map[string]FileDownloadSource,
 	user *auth.UserInfo,
 ) (string, error) {
@@ -414,8 +342,8 @@ func LoadFileDownloadViewerFingerprint(
 		return hex.EncodeToString(digest[:]), nil
 	}
 	record.Authenticated = true
-	facts, found, err := loadRestrictedFileDownloadMemberFacts(
-		ctx, db, user.MemberID.String(), user.IdentityID.String(),
+	facts, found, err := store.MemberFacts(
+		ctx, user.MemberID.String(), user.IdentityID.String(),
 	)
 	if err != nil {
 		return "", err
@@ -427,11 +355,9 @@ func LoadFileDownloadViewerFingerprint(
 		record.Onboarded = facts.Onboarded
 		record.CreatedAt = facts.CreatedAt
 		if restricted {
-			if err := db.WithContext(ctx).
-				Table("user_tag_mapping AS mapping").
-				Joins("JOIN user_tag AS tag ON tag.id = mapping.tag_id").
-				Where("mapping.member_id = ?", facts.MemberID).
-				Pluck("mapping.tag_id", &record.TagIDs).Error; err != nil {
+			var err error
+			record.TagIDs, err = store.ViewerTagIDs(ctx, facts.MemberID)
+			if err != nil {
 				return "", err
 			}
 			record.TagIDs = sliceutil.SortedUniqueTrimmed(record.TagIDs)
@@ -449,10 +375,10 @@ func LoadFileDownloadViewerFingerprint(
 // before an owning root and exact relation are locked for final signing.
 func LockFileDownloadPolicySegments(
 	ctx context.Context,
-	db *gorm.DB,
+	store DownloadStore,
 	sources map[string]FileDownloadSource,
 ) error {
-	associations, err := loadFileDownloadAudienceAssociations(ctx, db, sources, false)
+	associations, err := store.Associations(ctx, sources, false)
 	if err != nil {
 		return err
 	}
@@ -464,24 +390,12 @@ func LockFileDownloadPolicySegments(
 	if len(segmentIDs) == 0 {
 		return nil
 	}
-	var locked []struct {
-		ID string `gorm:"column:id"`
-	}
-	return db.WithContext(ctx).
-		Table("audience_segment").
-		Select("id").
-		Where("id IN ?", segmentIDs).
-		Order("id").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-		Find(&locked).Error
+	return store.LockSegments(ctx, segmentIDs)
 }
 
-// LockFileDownloadViewerFacts locks the database-owned authenticated viewer
-// witness after Segment locks and before the exact relation lock. The boolean
-// reports whether the exact Member and Identity pair remains active.
 func LockFileDownloadViewerFacts(
 	ctx context.Context,
-	db *gorm.DB,
+	store DownloadStore,
 	sources map[string]FileDownloadSource,
 	user *auth.UserInfo,
 ) (bool, error) {
@@ -504,122 +418,28 @@ func LockFileDownloadViewerFacts(
 	if strings.TrimSpace(user.IdentityID.String()) == "" || user.Banned {
 		return false, nil
 	}
-	var active bool
-	if db.Dialector.Name() == "sqlite" {
-		_, found, err := loadRestrictedFileDownloadMemberFacts(
-			ctx, db, user.MemberID.String(), user.IdentityID.String(),
-		)
-		if err != nil {
-			return false, err
-		}
-		active = found
-	} else {
-		var err error
-		active, err = identitystate.LockActivePrincipal(ctx, db, user)
-		if err != nil {
-			return false, err
-		}
-	}
-	if !active || !restricted {
-		return active, nil
-	}
-	var rows []struct {
-		MemberID string `gorm:"column:member_id"`
-	}
-	err := db.WithContext(ctx).
-		Table("user_tag_mapping AS mapping").
-		Select("mapping.member_id").
-		Joins("JOIN user_tag AS tag ON tag.id = mapping.tag_id").
-		Where("mapping.member_id = ?", user.MemberID.String()).
-		Order("mapping.tag_id").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-		Find(&rows).Error
-	return err == nil, err
-}
-
-func loadFileDownloadAudienceAssociations(
-	ctx context.Context,
-	db *gorm.DB,
-	sources map[string]FileDownloadSource,
-	activeOnly bool,
-) ([]fileDownloadAudienceAssociation, error) {
-	contentSources := make(map[string]FileDownloadSource)
-	trackIDs := make([]string, 0)
-	blockIDs := make([]string, 0)
-	for key, source := range sources {
-		switch source.PolicyKind {
-		case FileDownloadPolicyContentBlock:
-			contentSources[key] = source
-			blockIDs = append(blockIDs, source.BlockID)
-		case FileDownloadPolicyTrack:
-			trackIDs = append(trackIDs, source.TrackID)
-		}
-	}
-	associations := make([]fileDownloadAudienceAssociation, 0)
-	if blockIDs = sliceutil.SortedUniqueTrimmed(blockIDs); len(blockIDs) > 0 {
-		var rows []struct {
-			BlockID           string `gorm:"column:block_id"`
-			ReferencePath     string `gorm:"column:reference_path"`
-			AudienceSegmentID string `gorm:"column:audience_segment_id"`
-		}
-		query := db.WithContext(ctx).
-			Table("content_block_attachment_download_audience_segment AS association").
-			Select("association.block_id, association.reference_path, association.audience_segment_id").
-			Where("association.block_id IN ?", blockIDs)
-		if activeOnly {
-			query = query.Joins("JOIN audience_segment AS segment ON segment.id = association.audience_segment_id").
-				Where("segment.archived_at IS NULL")
-		}
-		if err := query.Find(&rows).Error; err != nil {
-			return nil, err
-		}
-		for _, row := range rows {
-			key := ContentBlockDownloadPolicyKey(row.BlockID, row.ReferencePath)
-			if _, ok := contentSources[key]; ok {
-				associations = append(associations, fileDownloadAudienceAssociation{PolicyKey: key, AudienceSegmentID: row.AudienceSegmentID})
-			}
-		}
-	}
-	if trackIDs = sliceutil.SortedUniqueTrimmed(trackIDs); len(trackIDs) > 0 {
-		var rows []model.TrackDownloadAudienceSegment
-		query := db.WithContext(ctx).
-			Table("track_download_audience_segment AS association").
-			Select("association.track_id, association.audience_segment_id").
-			Where("association.track_id IN ?", trackIDs)
-		if activeOnly {
-			query = query.Joins("JOIN audience_segment AS segment ON segment.id = association.audience_segment_id").
-				Where("segment.archived_at IS NULL")
-		}
-		if err := query.Find(&rows).Error; err != nil {
-			return nil, err
-		}
-		for _, row := range rows {
-			associations = append(associations, fileDownloadAudienceAssociation{PolicyKey: row.TrackID, AudienceSegmentID: row.AudienceSegmentID})
-		}
-	}
-	return associations, nil
+	return store.LockViewer(ctx, user, restricted)
 }
 
 func evaluateFileDownloadAccessBatchAt(
 	ctx context.Context,
-	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
+	store DownloadStore,
+	spiceDB DownloadAuthorizer,
 	sources map[string]FileDownloadSource,
 	user *auth.UserInfo,
 	_ time.Time,
-	loaders ...SegmentConfigLoader,
 ) (map[string]bool, error) {
 	hasAuthenticatedUser := user != nil &&
 		user.Authenticated &&
 		!user.Banned &&
 		strings.TrimSpace(user.MemberID.String()) != "" &&
 		strings.TrimSpace(user.IdentityID.String()) != ""
-	activeMember := restrictedFileDownloadMemberFacts{}
+	activeMember := DownloadMemberFacts{}
 	activeMemberFound := false
 	if hasAuthenticatedUser {
 		var err error
-		activeMember, activeMemberFound, err = loadRestrictedFileDownloadMemberFacts(
-			ctx, db, user.MemberID.String(), user.IdentityID.String(),
+		activeMember, activeMemberFound, err = store.MemberFacts(
+			ctx, user.MemberID.String(), user.IdentityID.String(),
 		)
 		if err != nil {
 			return nil, err
@@ -636,7 +456,7 @@ func evaluateFileDownloadAccessBatchAt(
 	for _, key := range restrictedPolicyKeys {
 		restrictedSources[key] = sources[key]
 	}
-	associations, err := loadFileDownloadAudienceAssociations(ctx, db, restrictedSources, false)
+	associations, err := store.Associations(ctx, restrictedSources, false)
 	if err != nil {
 		return nil, err
 	}
@@ -648,18 +468,18 @@ func evaluateFileDownloadAccessBatchAt(
 	if len(segmentIDs) == 0 {
 		return result, nil
 	}
-	segments, err := loadRestrictedFileDownloadSegments(ctx, db, segmentIDs, loaders)
+	segments, err := store.Segments(ctx, segmentIDs, true)
 	if err != nil {
 		return nil, err
 	}
-	segmentsByID := make(map[string]model.AudienceSegment, len(segments))
+	segmentsByID := make(map[string]DownloadSegment, len(segments))
 	for _, segment := range segments {
 		segmentsByID[segment.ID] = segment
 	}
 	memberFacts := activeMember
 	existingTagIDs, memberTagIDs, err := loadRestrictedFileDownloadTagFacts(
 		ctx,
-		db,
+		store,
 		memberFacts.MemberID,
 		segments,
 	)
@@ -723,92 +543,16 @@ func fileDownloadAudienceDecisions(sources map[string]FileDownloadSource, eligib
 
 // loadRestrictedFileDownloadSegments loads the live segments a restricted
 // policy names, with their configuration.
-func loadRestrictedFileDownloadSegments(
-	ctx context.Context,
-	db *gorm.DB,
-	segmentIDs []string,
-	loaders []SegmentConfigLoader,
-) ([]model.AudienceSegment, error) {
-	var segments []model.AudienceSegment
-	if err := db.WithContext(ctx).
-		Where("id IN ? AND archived_at IS NULL", segmentIDs).
-		Find(&segments).Error; err != nil {
-		return nil, err
-	}
-	segmentPointers := make([]*model.AudienceSegment, 0, len(segments))
-	for i := range segments {
-		segmentPointers = append(segmentPointers, &segments[i])
-	}
-	if len(loaders) != 1 || loaders[0] == nil {
-		return nil, domainerr.DependencyUnavailable("Audience segment configuration")
-	}
-	if err := loaders[0].LoadSegmentConfigs(ctx, db, segmentPointers); err != nil {
-		return nil, err
-	}
-	return segments, nil
-}
-
-func loadRestrictedFileDownloadMemberFacts(
-	ctx context.Context,
-	db *gorm.DB,
-	memberID string,
-	identityID string,
-) (restrictedFileDownloadMemberFacts, bool, error) {
-	if _, err := uuidutil.ParseCanonical(memberID, "member_id"); err != nil {
-		return restrictedFileDownloadMemberFacts{}, false, nil //nolint:nilerr // a malformed member ID matches no row; report not found (deny), not a failure
-	}
-	if _, err := uuidutil.ParseCanonical(identityID, "identity_id"); err != nil {
-		return restrictedFileDownloadMemberFacts{}, false, nil //nolint:nilerr // a malformed identity ID matches no row; report not found (deny), not a failure
-	}
-
-	query := db.WithContext(ctx).
-		Table("member AS member").
-		Joins(identityread.JoinLinked("member", "identity")).
-		Where("member.id = ?", memberID).
-		Where("member.account_identity_id = ?", identityID).
-		Where("identity.id = ?", identityID).
-		Where("member.deleted_at IS NULL").
-		Where("member.onboarded = ?", true).
-		Where("identity.state = ?", auth.KratosStateActive)
-	if db.Dialector.Name() == "sqlite" {
-		query = query.Select(`
-			member.id AS member_id,
-			identity.id AS identity_id,
-			member.onboarded AS onboarded,
-			member.created_at AS member_created_at`)
-		query = query.Where(
-			"(json_extract(identity.metadata_admin, '$.banned') IS NULL OR json_extract(identity.metadata_admin, '$.banned') = 0)",
-		)
-	} else {
-		query = query.Select(`
-			member.id AS member_id,
-			identity.id::text AS identity_id,
-			member.onboarded AS onboarded,
-			member.created_at AS member_created_at`)
-		query = query.Where(
-			"(identity.metadata_admin->>'banned' IS NULL OR identity.metadata_admin->>'banned' = 'false')",
-		)
-	}
-	var facts restrictedFileDownloadMemberFacts
-	if err := query.Take(&facts).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return restrictedFileDownloadMemberFacts{}, false, nil
-		}
-		return restrictedFileDownloadMemberFacts{}, false, err
-	}
-	return facts, true, nil
-}
-
 func loadRestrictedFileDownloadTagFacts(
 	ctx context.Context,
-	db *gorm.DB,
+	store DownloadStore,
 	memberID string,
-	segments []model.AudienceSegment,
+	segments []DownloadSegment,
 ) (map[string]struct{}, map[string]struct{}, error) {
 	referencedTagIDs := make([]string, 0)
 	for _, segment := range segments {
 		if strings.TrimSpace(string(segment.SegmentType)) !=
-			managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String() {
+			string(DownloadMemberTags) {
 			continue
 		}
 		tagIDs, valid := validUUIDSet(segment.Config.MemberTagIDs)
@@ -823,16 +567,8 @@ func loadRestrictedFileDownloadTagFacts(
 		return existingTagIDs, memberTagIDs, nil
 	}
 
-	var rows []restrictedFileDownloadTagFact
-	if err := db.WithContext(ctx).
-		Table("user_tag AS tag").
-		Select(`
-			tag.id AS tag_id,
-			mapping.member_id AS mapped_member_id`).
-		Joins(`LEFT JOIN user_tag_mapping AS mapping
-			ON mapping.tag_id = tag.id AND mapping.member_id = ?`, memberID).
-		Where("tag.id IN ?", referencedTagIDs).
-		Find(&rows).Error; err != nil {
+	rows, err := store.TagFacts(ctx, memberID, referencedTagIDs)
+	if err != nil {
 		return nil, nil, err
 	}
 	for _, row := range rows {
@@ -845,8 +581,8 @@ func loadRestrictedFileDownloadTagFacts(
 }
 
 func restrictedFileDownloadMemberMatchesSegment(
-	member restrictedFileDownloadMemberFacts,
-	segment *model.AudienceSegment,
+	member DownloadMemberFacts,
+	segment *DownloadSegment,
 	existingTagIDs map[string]struct{},
 	memberTagIDs map[string]struct{},
 	permissions map[policyv1.RoleID]bool,
@@ -857,11 +593,11 @@ func restrictedFileDownloadMemberMatchesSegment(
 
 	config := segment.Config
 	switch strings.TrimSpace(string(segment.SegmentType)) {
-	case managev1.SegmentType_SEGMENT_TYPE_ALL_MEMBERS.String():
+	case string(DownloadAllMembers):
 		return true
-	case managev1.SegmentType_SEGMENT_TYPE_MEMBER_TAGS.String():
+	case string(DownloadMemberTags):
 		return restrictedFileDownloadMemberMatchesTagSegment(config, existingTagIDs, memberTagIDs)
-	case managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String():
+	case string(DownloadMembersByFilter):
 		return restrictedFileDownloadMemberMatchesFilterSegment(member, config, permissions)
 	default:
 		return false
@@ -869,7 +605,7 @@ func restrictedFileDownloadMemberMatchesSegment(
 }
 
 func restrictedFileDownloadMemberMatchesTagSegment(
-	config model.AudienceSegmentConfig,
+	config DownloadSegmentConfig,
 	existingTagIDs map[string]struct{},
 	memberTagIDs map[string]struct{},
 ) bool {
@@ -894,8 +630,8 @@ func restrictedFileDownloadMemberMatchesTagSegment(
 }
 
 func restrictedFileDownloadMemberMatchesFilterSegment(
-	member restrictedFileDownloadMemberFacts,
-	config model.AudienceSegmentConfig,
+	member DownloadMemberFacts,
+	config DownloadSegmentConfig,
 	permissions map[policyv1.RoleID]bool,
 ) bool {
 	if len(config.MemberTagIDs) > 0 {
@@ -931,13 +667,13 @@ func restrictedFileDownloadMemberMatchesFilterSegment(
 
 func resolveRestrictedFileDownloadPermissions(
 	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB DownloadAuthorizer,
 	user *auth.UserInfo,
-	segments []model.AudienceSegment,
+	segments []DownloadSegment,
 ) (map[policyv1.RoleID]bool, error) {
 	requested := make(map[policyv1.RoleID]struct{})
 	for _, segment := range segments {
-		if strings.TrimSpace(string(segment.SegmentType)) != managev1.SegmentType_SEGMENT_TYPE_MEMBERS_BY_FILTER.String() {
+		if strings.TrimSpace(string(segment.SegmentType)) != string(DownloadMembersByFilter) {
 			continue
 		}
 		permissions, err := normalizeFileDownloadAccountPermissions(segment.Config.AccountRoles)

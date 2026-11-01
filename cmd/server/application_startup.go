@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
 	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	transcodepostgres "github.com/echovisionlab/geul-api/internal/transcode/postgres"
@@ -198,7 +200,7 @@ func initializeApplicationDependencies(
 	)
 	cleanupStorage := mediaassetadapter.NewCleanupStorage(deps.s3Client, cfg.S3Bucket)
 	ogCleanup := og.NewCleanup(deps.og.units)
-	mediaCleanup := mediaasset.NewCleanup(deps.db, cleanupStorage)
+	mediaCleanup := mediaasset.NewCleanup(mediaassetpostgres.NewCleanupUnits(deps.db), cleanupStorage, mediaassetadapter.NewActiveTranscodes(deps.db))
 	publicAssetCache := mediaassetadapter.NewPublicAssetCache(
 		cfg.CDNURL,
 		cfg.CloudflareAPIURL,
@@ -208,10 +210,10 @@ func initializeApplicationDependencies(
 		http.DefaultClient,
 	)
 	publicAssetCleanup := mediaasset.NewPublicAssetCleanup(
-		deps.db,
+		mediaassetpostgres.NewCleanupUnits(deps.db),
 		cleanupStorage,
 		publicAssetCache,
-		ogpostgres.NewAssetProtector(ogprojection.AssetReferences()...),
+		ogpostgres.NewAssetProtector(deps.db, ogprojection.AssetReferences()...),
 	)
 	faviconCleanup := favicon.NewCleanup(faviconpostgres.NewUnits(deps.db, ""))
 	workerDeps, err := workerpostgres.New(workerpostgres.Config{

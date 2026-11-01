@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 
 	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
@@ -51,8 +53,9 @@ type cleanupFixture struct {
 func mediaAssetCleanupForIntegration(h *cleanupFixture) *mediaassetdomain.Cleanup {
 	if h.mediaCleanup == nil {
 		h.mediaCleanup = mediaassetdomain.NewCleanup(
-			h.db,
+			mediaassetpostgres.NewCleanupUnits(h.db),
 			mediaassetadapter.NewCleanupStorage(h.s3Client, cleanupBucketForIntegration(h)),
+			mediaassetadapter.NewActiveTranscodes(h.db),
 		)
 	}
 	return h.mediaCleanup
@@ -84,10 +87,10 @@ func publicAssetCleanupForIntegration(h *cleanupFixture) *mediaassetdomain.Publi
 			h.httpClient,
 		)
 		h.publicAssets = mediaassetdomain.NewPublicAssetCleanup(
-			h.db,
+			mediaassetpostgres.NewCleanupUnits(h.db),
 			storage,
 			cache,
-			ogpostgres.NewAssetProtector(ogprojection.AssetReferences()...),
+			ogpostgres.NewAssetProtector(h.db, ogprojection.AssetReferences()...),
 		)
 	}
 	return h.publicAssets

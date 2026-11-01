@@ -32,6 +32,7 @@ var pipelineDomains = []string{
 	"internal/label",
 	"internal/legal",
 	"internal/maptheme",
+	"internal/mediaasset",
 	"internal/member",
 	"internal/menu",
 	"internal/og",

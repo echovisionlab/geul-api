@@ -1,423 +1,242 @@
-package mediaasset
+package mediaasset_test
 
 import (
+	"context"
 	"crypto/sha256"
+	"errors"
 	"testing"
 	"time"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-
 	"connectrpc.com/connect"
-	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/glebarez/sqlite"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	"github.com/echovisionlab/geul-api/internal/mediaasset/mediaassettest"
+	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
-func seedAllocatedMediaGeneration(
-	t *testing.T,
-	service *Lifecycle,
-	fileID string,
-) (*model.MediaGeneration, *commonv1.MediaGenerationWriteTarget) {
+func lifecycleFixture(t *testing.T) (*mediaasset.Lifecycle, *mediaassettest.Store, time.Time) {
 	t.Helper()
-	generationID := uuid.NewString()
-	objectPrefix, err := mediaauth.MediaHLSObjectPrefix(fileID, generationID)
-	require.NoError(t, err)
-	now := service.now().UTC()
-	generation := &model.MediaGeneration{
-		ID:           generationID,
-		FileID:       fileID,
-		Kind:         "hls",
-		ObjectPrefix: objectPrefix,
-		ManifestName: "master.m3u8",
-		Status:       model.MediaGenerationStatusAllocated,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
-	require.NoError(t, service.db.Create(generation).Error)
-	return generation, &commonv1.MediaGenerationWriteTarget{
-		GenerationId: generation.ID,
-		FileId:       generation.FileID,
-		ObjectPrefix: generation.ObjectPrefix,
-	}
-}
-
-func TestMediaAssetLifecyclePublicAsset(t *testing.T) {
-	db := newUnitDB(t)
+	store, units := mediaassettest.New()
+	service := mediaasset.NewLifecycle(units, "https://cdn.example.com/")
 	now := time.Date(2026, time.July, 10, 8, 0, 0, 0, time.UTC)
-	service := NewLifecycle(db, "https://cdn.example.com/")
-	service.now = func() time.Time { return now }
-	sourceFileID := uuid.NewString()
-	require.NoError(t, db.Exec(
-		"INSERT INTO file (id, delete_requested_at) VALUES (?, NULL)", sourceFileID,
-	).Error)
-
-	_, _, err := service.AllocatePublicAsset(t.Context(), Allocation{
-		Kind:        "unknown",
-		Extension:   "webp",
-		MimeType:    "image/webp",
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
-	require.Error(t, err)
-
-	asset, target, err := service.AllocatePublicAsset(t.Context(), Allocation{
-		SourceFileID: &sourceFileID,
-		Kind:         "image",
-		Extension:    "webp",
-		MimeType:     "image/webp; charset=binary",
-		Disposition:  commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
+	mediaasset.SetLifecycleClock(service, func() time.Time { return now })
+	return service, store, now
+}
+func allocation() mediaasset.Allocation {
+	return mediaasset.Allocation{Kind: "image", Extension: "webp", MimeType: "image/webp", Disposition: mediaasset.DispositionInline}
+}
+func writtenAsset(id string) *mediaasset.WrittenAsset {
+	digest := sha256.Sum256([]byte(id))
+	return &mediaasset.WrittenAsset{AssetID: id, FileSize: 128, SHA256: digest[:]}
+}
+func allocateReady(t *testing.T, service *mediaasset.Lifecycle, input mediaasset.Allocation) *mediaasset.Asset {
+	t.Helper()
+	asset, _, err := service.AllocatePublicAsset(t.Context(), input)
 	require.NoError(t, err)
-	require.Equal(t, "asset/"+asset.ID+".webp", target.GetObjectKey())
-	require.Equal(t, model.PublicAssetStatusAllocated, asset.Status)
-
-	digest := sha256.Sum256([]byte("asset bytes"))
-	_, err = service.CompletePublicAsset(t.Context(), &commonv1.AssetWriteResult{
-		AssetId:  asset.ID,
-		FileSize: 0,
-		Sha256:   digest[:],
-	})
-	require.Error(t, err)
-
-	result := &commonv1.AssetWriteResult{AssetId: asset.ID, FileSize: 123, Sha256: digest[:]}
+	asset, err = service.CompletePublicAsset(t.Context(), writtenAsset(asset.ID))
+	require.NoError(t, err)
+	return asset
+}
+func TestLifecycleNormalizesAllocationAndCompletesImmutableAsset(t *testing.T) {
+	service, store, now := lifecycleFixture(t)
+	source := uuid.NewString()
+	store.PutFile(source, nil)
+	input := allocation()
+	input.SourceFileID = new(" " + source + " ")
+	input.Kind = " image "
+	input.Extension = " WEBP "
+	input.MimeType = " image/webp; charset=binary "
+	asset, target, err := service.AllocatePublicAsset(t.Context(), input)
+	require.NoError(t, err)
+	require.Equal(t, mediaasset.AssetAllocated, asset.Status)
+	require.Equal(t, "asset/"+asset.ID+".webp", target.ObjectKey)
+	require.Equal(t, source, *asset.SourceFileID)
+	require.Equal(t, now, asset.CreatedAt)
+	result := writtenAsset(asset.ID)
 	ready, err := service.CompletePublicAsset(t.Context(), result)
 	require.NoError(t, err)
-	require.Equal(t, model.PublicAssetStatusReady, ready.Status)
-	require.Equal(t, int64(123), *ready.FileSize)
-
-	ready, err = service.CompletePublicAsset(t.Context(), result)
+	require.Equal(t, mediaasset.AssetReady, ready.Status)
+	require.Equal(t, result.SHA256, ready.SHA256)
+	again, err := service.CompletePublicAsset(t.Context(), result)
 	require.NoError(t, err)
-	ref, err := service.ReadyAssetRef(t.Context(), ready.ID)
+	require.Equal(t, ready, again)
+	ref, err := service.ReadyAssetRef(t.Context(), asset.ID)
 	require.NoError(t, err)
-	require.Equal(t, "https://cdn.example.com/asset/"+ready.ID+"/image.webp", ref.GetUrl())
-	require.Equal(t, digest[:], ref.GetSha256())
-
-	conflictingDigest := sha256.Sum256([]byte("other bytes"))
-	_, err = service.CompletePublicAsset(t.Context(), &commonv1.AssetWriteResult{
-		AssetId:  asset.ID,
-		FileSize: 123,
-		Sha256:   conflictingDigest[:],
-	})
-	require.Error(t, err)
-
-	ownerID := uuid.NewString()
-	bound, err := service.BindReadyAssetForSourceFile(
-		t.Context(), sourceFileID, "post", ownerID, "featured_image", "image",
-	)
-	require.NoError(t, err)
-	require.Equal(t, asset.ID, bound.GetAssetId())
-	err = service.RequestPublicAssetDeletion(t.Context(), asset.ID)
-	require.Error(t, err)
+	require.Equal(t, "https://cdn.example.com/asset/"+asset.ID+"/image.webp", ref.URL)
+	require.Equal(t, result.SHA256, ref.SHA256)
+	changed := *result
+	changed.FileSize++
+	_, err = service.CompletePublicAsset(t.Context(), &changed)
 	require.Equal(t, connect.CodeFailedPrecondition, errs.Wrap(err).Code())
-
-	require.NoError(t, service.ReleasePublicAssetBindings(t.Context(), "post", ownerID, "featured_image"))
-	var deleting model.PublicAsset
-	require.NoError(t, db.First(&deleting, "id = ?", asset.ID).Error)
-	require.Equal(t, model.PublicAssetStatusReady, deleting.Status)
-	require.Nil(t, deleting.DeleteRequestedAt)
-	require.NoError(t, service.RequestPublicAssetDeletion(t.Context(), asset.ID))
-	require.NoError(t, db.First(&deleting, "id = ?", asset.ID).Error)
-	require.Equal(t, model.PublicAssetStatusDeletePending, deleting.Status)
-	require.Equal(t, now, *deleting.DeleteRequestedAt)
+	require.Equal(t, result.SHA256, ready.SHA256)
 }
-
-func TestMediaAssetLifecycleLastBindingDeletion(t *testing.T) {
-	t.Run("one of many bindings keeps asset ready", func(t *testing.T) {
-		db := newUnitDB(t)
-		service := NewLifecycle(db, "")
-		asset := allocateAndCompleteTestPublicAsset(t, service, validGeneratedPublicAssetAllocation())
-		firstOwnerID := uuid.NewString()
-		secondOwnerID := uuid.NewString()
-		require.NoError(t, service.BindPublicAsset(t.Context(), Binding{
-			AssetID: asset.ID, OwnerType: "post", OwnerID: firstOwnerID, BindingKey: "generated_first",
-		}))
-		require.NoError(t, service.BindPublicAsset(t.Context(), Binding{
-			AssetID: asset.ID, OwnerType: "post", OwnerID: secondOwnerID, BindingKey: "generated_second",
-		}))
-
-		require.NoError(t, service.ReleasePublicAssetBindings(t.Context(), "post", firstOwnerID, "generated"))
-		requirePublicAssetState(t, db, asset.ID, model.PublicAssetStatusReady, false)
-		require.NoError(t, service.ReleasePublicAssetBindings(t.Context(), "post", secondOwnerID, "generated"))
-		requirePublicAssetState(t, db, asset.ID, model.PublicAssetStatusDeletePending, true)
-	})
-
-	t.Run("replacement preserves reusable source projections", func(t *testing.T) {
-		db := newUnitDB(t)
-		now := time.Date(2026, time.August, 4, 6, 0, 0, 0, time.UTC)
-		service := NewLifecycle(db, "")
-		service.now = func() time.Time { return now }
-		oldAsset := allocateAndCompleteTestPublicAsset(t, service, validPublicAssetAllocation())
-		newAsset := allocateAndCompleteTestPublicAsset(t, service, validPublicAssetAllocation())
-		ownerID := uuid.NewString()
-		binding := Binding{
-			AssetID: oldAsset.ID, OwnerType: "page", OwnerID: ownerID, BindingKey: "featured_image",
-		}
-		require.NoError(t, service.BindPublicAsset(t.Context(), binding))
-		now = now.Add(time.Minute)
-		binding.AssetID = newAsset.ID
-		require.NoError(t, service.BindPublicAsset(t.Context(), binding))
-
-		requirePublicAssetState(t, db, oldAsset.ID, model.PublicAssetStatusReady, false)
-		requirePublicAssetState(t, db, newAsset.ID, model.PublicAssetStatusReady, false)
-		var retired model.PublicAsset
-		require.NoError(t, db.Where("id = ?", oldAsset.ID).Take(&retired).Error)
-		require.Nil(t, retired.DeleteRequestedAt)
-		var storedBinding model.PublicAssetBinding
-		require.NoError(t, db.Where(
-			"owner_type = ? AND owner_id = ? AND binding_key = ?", binding.OwnerType, binding.OwnerID, binding.BindingKey,
-		).Take(&storedBinding).Error)
-		require.Equal(t, newAsset.ID, storedBinding.AssetID)
-
-		binding.AssetID = oldAsset.ID
-		require.NoError(t, service.BindPublicAsset(t.Context(), binding))
-		require.NoError(t, db.Where(
-			"owner_type = ? AND owner_id = ? AND binding_key = ?", binding.OwnerType, binding.OwnerID, binding.BindingKey,
-		).Take(&storedBinding).Error)
-		require.Equal(t, oldAsset.ID, storedBinding.AssetID)
-		requirePublicAssetState(t, db, newAsset.ID, model.PublicAssetStatusReady, false)
-	})
-
-	t.Run("prefix release changes exact affected assets", func(t *testing.T) {
-		db := newUnitDB(t)
-		service := NewLifecycle(db, "")
-		canonical := allocateAndCompleteTestPublicAsset(t, service, validGeneratedPublicAssetAllocation())
-		localized := allocateAndCompleteTestPublicAsset(t, service, validGeneratedPublicAssetAllocation())
-		featured := allocateAndCompleteTestPublicAsset(t, service, validPublicAssetAllocation())
-		ownerID := uuid.NewString()
-		for _, binding := range []Binding{
-			{AssetID: canonical.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: "og"},
-			{AssetID: localized.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: "og_ko"},
-			{AssetID: featured.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: "featured_image"},
-		} {
-			require.NoError(t, service.BindPublicAsset(t.Context(), binding))
-		}
-
-		require.NoError(t, service.ReleasePublicAssetBindings(t.Context(), "post", ownerID, "og"))
-		requirePublicAssetState(t, db, canonical.ID, model.PublicAssetStatusDeletePending, true)
-		requirePublicAssetState(t, db, localized.ID, model.PublicAssetStatusDeletePending, true)
-		requirePublicAssetState(t, db, featured.ID, model.PublicAssetStatusReady, false)
-		var bindingCount int64
-		require.NoError(t, db.Model(&model.PublicAssetBinding{}).
-			Where("owner_type = ? AND owner_id = ?", "post", ownerID).
-			Count(&bindingCount).Error)
-		require.Equal(t, int64(1), bindingCount)
-	})
-
-	t.Run("prefix release matches only the literal underscore family", func(t *testing.T) {
-		db := newUnitDB(t)
-		service := NewLifecycle(db, "")
-		ownerID := uuid.NewString()
-		keys := []string{
-			"og", "og_ko", "ogx", "og-ko", "og:ko",
-			"featured_image", "featured_image_alt", "featuredXimage", "featuredXimage_ko",
-		}
-		assets := make(map[string]*model.PublicAsset, len(keys))
-		for _, key := range keys {
-			asset := allocateAndCompleteTestPublicAsset(t, service, validGeneratedPublicAssetAllocation())
-			assets[key] = asset
-			require.NoError(t, service.BindPublicAsset(t.Context(), Binding{
-				AssetID: asset.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: key,
-			}))
-		}
-		remainingKeys := func() []string {
-			t.Helper()
-			var remaining []string
-			require.NoError(t, db.Model(&model.PublicAssetBinding{}).
-				Where("owner_type = ? AND owner_id = ?", "post", ownerID).
-				Order("binding_key ASC").
-				Pluck("binding_key", &remaining).Error)
-			return remaining
-		}
-
-		require.NoError(t, service.ReleasePublicAssetBindings(t.Context(), "post", ownerID, "og"))
-		require.ElementsMatch(t, []string{
-			"ogx", "og-ko", "og:ko", "featured_image", "featured_image_alt", "featuredXimage", "featuredXimage_ko",
-		}, remainingKeys())
-		requirePublicAssetState(t, db, assets["og"].ID, model.PublicAssetStatusDeletePending, true)
-		requirePublicAssetState(t, db, assets["og_ko"].ID, model.PublicAssetStatusDeletePending, true)
-		requirePublicAssetState(t, db, assets["ogx"].ID, model.PublicAssetStatusReady, false)
-
-		require.NoError(t, service.ReleasePublicAssetBindings(t.Context(), "post", ownerID, "featured_image"))
-		require.ElementsMatch(t, []string{"ogx", "og-ko", "og:ko", "featuredXimage", "featuredXimage_ko"}, remainingKeys())
-		requirePublicAssetState(t, db, assets["featuredXimage"].ID, model.PublicAssetStatusReady, false)
-	})
-
-	t.Run("exact release preserves sibling localized binding", func(t *testing.T) {
-		db := newUnitDB(t)
-		service := NewLifecycle(db, "")
-		english := allocateAndCompleteTestPublicAsset(t, service, validGeneratedPublicAssetAllocation())
-		korean := allocateAndCompleteTestPublicAsset(t, service, validGeneratedPublicAssetAllocation())
-		ownerID := uuid.NewString()
-		for _, binding := range []Binding{
-			{AssetID: english.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: "og_en"},
-			{AssetID: korean.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: "og_ko"},
-		} {
-			require.NoError(t, service.BindPublicAsset(t.Context(), binding))
-		}
-
-		require.NoError(t, service.ReleaseExactPublicAssetBindings(
-			t.Context(), "post", ownerID, []string{"og_en"},
-		))
-		requirePublicAssetState(t, db, english.ID, model.PublicAssetStatusDeletePending, true)
-		requirePublicAssetState(t, db, korean.ID, model.PublicAssetStatusReady, false)
-		var binding model.PublicAssetBinding
-		require.NoError(t, db.Where(
-			"owner_type = ? AND owner_id = ? AND binding_key = ?", "post", ownerID, "og_ko",
-		).Take(&binding).Error)
-		require.Equal(t, korean.ID, binding.AssetID)
-	})
+func TestLifecycleBindingReplacementRetainsSourcesAndDeletesOnlyLastGeneratedBinding(t *testing.T) {
+	for _, sourceBacked := range []bool{false, true} {
+		t.Run(map[bool]string{false: "generated", true: "source backed"}[sourceBacked], func(t *testing.T) {
+			service, store, _ := lifecycleFixture(t)
+			input := allocation()
+			if sourceBacked {
+				id := uuid.NewString()
+				store.PutFile(id, nil)
+				input.SourceFileID = &id
+			}
+			first := allocateReady(t, service, input)
+			second := allocateReady(t, service, allocation())
+			owner := uuid.NewString()
+			bind := func(assetID, key string) error {
+				return service.BindPublicAsset(t.Context(), mediaasset.Binding{AssetID: assetID, OwnerType: "post", OwnerID: owner, BindingKey: key})
+			}
+			require.NoError(t, bind(first.ID, "image"))
+			require.NoError(t, bind(first.ID, "image_alt"))
+			require.NoError(t, bind(second.ID, "image"))
+			current, err := store.Asset(t.Context(), first.ID)
+			require.NoError(t, err)
+			require.Equal(t, mediaasset.AssetReady, current.Status)
+			require.NoError(t, service.ReleaseExactPublicAssetBindings(t.Context(), "post", owner, []string{"image_alt"}))
+			current, err = store.Asset(t.Context(), first.ID)
+			require.NoError(t, err)
+			if sourceBacked {
+				require.Equal(t, mediaasset.AssetReady, current.Status)
+			} else {
+				require.Equal(t, mediaasset.AssetDeletePending, current.Status)
+				require.NotNil(t, current.DeleteRequestedAt)
+			}
+			require.NoError(t, service.ReleasePublicAssetBindings(t.Context(), "post", owner, "image"))
+			current, err = store.Asset(t.Context(), second.ID)
+			require.NoError(t, err)
+			require.Equal(t, mediaasset.AssetDeletePending, current.Status)
+		})
+	}
 }
-
-func TestMediaAssetLifecycleDeletionStateContract(t *testing.T) {
-	db := newUnitDB(t)
-	now := time.Date(2026, time.August, 4, 7, 0, 0, 0, time.UTC)
-	service := NewLifecycle(db, "")
-	service.now = func() time.Time { return now }
-
-	allocated := allocateTestPublicAsset(t, service, validPublicAssetAllocation())
+func TestLifecycleAttachmentDecisionsFailClosed(t *testing.T) {
+	service, store, now := lifecycleFixture(t)
+	source := uuid.NewString()
+	store.PutFile(source, &now)
+	input := allocation()
+	input.SourceFileID = &source
+	_, _, err := service.AllocatePublicAsset(t.Context(), input)
+	require.ErrorContains(t, err, "pending deletion")
+	allocated, _, err := service.AllocatePublicAsset(t.Context(), allocation())
+	require.NoError(t, err)
+	require.Error(t, service.BindPublicAsset(t.Context(), mediaasset.Binding{AssetID: allocated.ID, OwnerType: "post", OwnerID: uuid.NewString(), BindingKey: "image"}))
 	require.Error(t, service.RequestPublicAssetDeletion(t.Context(), allocated.ID))
-	requirePublicAssetState(t, db, allocated.ID, model.PublicAssetStatusAllocated, false)
-
-	failed := allocateTestPublicAsset(t, service, validPublicAssetAllocation())
-	require.NoError(t, db.Model(&model.PublicAsset{}).Where("id = ?", failed.ID).
-		Update("status", model.PublicAssetStatusFailed).Error)
-	require.NoError(t, service.RequestPublicAssetDeletion(t.Context(), failed.ID))
-	requirePublicAssetState(t, db, failed.ID, model.PublicAssetStatusDeletePending, true)
-	require.NoError(t, service.RequestPublicAssetDeletion(t.Context(), failed.ID))
-
-	require.NoError(t, db.Model(&model.PublicAsset{}).Where("id = ?", failed.ID).
-		Update("status", model.PublicAssetStatusDeleted).Error)
-	require.NoError(t, service.RequestPublicAssetDeletion(t.Context(), failed.ID))
+	ready := allocateReady(t, service, allocation())
+	require.NoError(t, service.BindPublicAsset(t.Context(), mediaasset.Binding{AssetID: ready.ID, OwnerType: "post", OwnerID: uuid.NewString(), BindingKey: "image"}))
+	require.ErrorContains(t, service.RequestPublicAssetDeletion(t.Context(), ready.ID), "still has bindings")
 }
-
-func requirePublicAssetState(t *testing.T, db *gorm.DB, assetID string, status string, deletionRequested bool) {
-	t.Helper()
-	var asset model.PublicAsset
-	require.NoError(t, db.Where("id = ?", assetID).Take(&asset).Error)
-	require.Equal(t, status, asset.Status)
-	if deletionRequested {
-		require.NotNil(t, asset.DeleteRequestedAt)
-	} else {
-		require.Nil(t, asset.DeleteRequestedAt)
+func TestLifecycleBindSourceUsesOneTransactionAndReadyReference(t *testing.T) {
+	service, store, _ := lifecycleFixture(t)
+	source := uuid.NewString()
+	store.PutFile(source, nil)
+	input := allocation()
+	input.SourceFileID = &source
+	asset := allocateReady(t, service, input)
+	owner := uuid.NewString()
+	ref, err := service.BindReadyAssetForSourceFile(t.Context(), source, "post", owner, "image", "image")
+	require.NoError(t, err)
+	require.Equal(t, asset.ID, ref.AssetID)
+	binding, found, err := store.Binding(t.Context(), "post", owner, "image")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, source, *binding.SourceFileID)
+}
+func TestLifecycleRequestDeletionIsIdempotentAndPreservesFailedStateUntilRequested(t *testing.T) {
+	service, store, now := lifecycleFixture(t)
+	for _, status := range []mediaasset.AssetStatus{mediaasset.AssetReady, mediaasset.AssetFailed, mediaasset.AssetDeletePending, mediaasset.AssetDeleted} {
+		asset := mediaassettest.ReadyAsset(now)
+		asset.Status = status
+		store.PutAsset(asset)
+		require.NoError(t, service.RequestPublicAssetDeletion(t.Context(), asset.ID))
+		require.NoError(t, service.RequestPublicAssetDeletion(t.Context(), asset.ID))
+		got, err := store.Asset(t.Context(), asset.ID)
+		require.NoError(t, err)
+		if status == mediaasset.AssetDeleted {
+			require.Equal(t, status, got.Status)
+		} else {
+			require.Equal(t, mediaasset.AssetDeletePending, got.Status)
+		}
+	}
+	require.Equal(t, connect.CodeNotFound, errs.Wrap(service.RequestPublicAssetDeletion(t.Context(), uuid.NewString())).Code())
+}
+func TestLifecycleReadyReferencesUseNewestValidAssetAndBrandingFallback(t *testing.T) {
+	_, store, now := lifecycleFixture(t)
+	source := uuid.NewString()
+	store.PutFile(source, nil)
+	valid := mediaassettest.ReadyAsset(now)
+	valid.SourceFileID = &source
+	store.PutAsset(valid)
+	corrupt := mediaassettest.ReadyAsset(now.Add(time.Minute))
+	corrupt.SourceFileID = &source
+	corrupt.FileSize = nil
+	store.PutAsset(corrupt)
+	// Batch resolution skips a corrupt projection and keeps the newest usable one.
+	all := mutationtest.New[mediaasset.Store](store)
+	refs, err := mediaasset.LoadReadyPublicAssetRefsForSourceFiles(t.Context(), all, "https://cdn.example.com", "image", []string{source, source})
+	require.NoError(t, err)
+	require.Equal(t, valid.ID, refs[source].AssetID)
+	for _, tc := range []struct {
+		mime, extension, kind string
+		allowed               bool
+	}{{"image/png", "png", mediaasset.BrandingKindEmailImage, true}, {"image/svg+xml", "svg", mediaasset.BrandingKindLogo, true}, {"image/svg+xml", "svg", mediaasset.BrandingKindEmailImage, false}, {"image/webp", "webp", mediaasset.BrandingKindLogo, false}} {
+		t.Run(tc.mime+tc.kind, func(t *testing.T) {
+			service, store, now := lifecycleFixture(t)
+			source := uuid.NewString()
+			asset := mediaassettest.ReadyAsset(now)
+			asset.SourceFileID = &source
+			asset.MimeType = tc.mime
+			asset.Extension = tc.extension
+			store.PutAsset(asset)
+			ref, kind, err := service.ReadyBrandingAssetRef(t.Context(), source, tc.kind)
+			if tc.allowed {
+				require.NoError(t, err)
+				require.Equal(t, asset.ID, ref.AssetID)
+				require.Equal(t, "image", kind)
+			} else {
+				require.Error(t, err)
+			}
+		})
 	}
 }
-
-func TestPublicAssetAllocatorRejectsPendingSourceFile(t *testing.T) {
-	t.Parallel()
-	db := newUnitDB(t)
-	fileID := uuid.NewString()
-	now := time.Now().UTC()
-	require.NoError(t, db.Exec(
-		"INSERT INTO file (id, delete_requested_at) VALUES (?, ?)", fileID, now,
-	).Error)
-
-	_, _, err := NewLifecycle(db, "").AllocatePublicAsset(
-		t.Context(),
-		Allocation{
-			SourceFileID: &fileID, Kind: "thumbnail", Extension: "webp",
-			MimeType: "image/webp", Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-		},
-	)
-	require.Error(t, err)
-	require.Equal(t, connect.CodeFailedPrecondition, errs.Wrap(err).Code())
-
-	var assetCount int64
-	require.NoError(t, db.Model(&model.PublicAsset{}).Count(&assetCount).Error)
-	require.Zero(t, assetCount)
+func TestLifecycleGenerationSwitchRollsBackWhenCompletionFails(t *testing.T) {
+	service, store, now := lifecycleFixture(t)
+	file := uuid.NewString()
+	oldID, newID := uuid.NewString(), uuid.NewString()
+	digest := sha256.Sum256([]byte("manifest"))
+	count, size := int32(4), int64(1024)
+	store.PutGeneration(mediaasset.Generation{ID: oldID, FileID: file, Status: mediaasset.GenerationReady, ManifestSHA256: digest[:], ObjectCount: &count, TotalSize: &size})
+	store.PutGeneration(mediaasset.Generation{ID: newID, FileID: file, Status: mediaasset.GenerationAllocated})
+	failure := errors.New("completion failed")
+	broken := generationFailure{Store: store, failure: failure}
+	units := mutationtest.New[mediaasset.Store](broken)
+	failing := mediaasset.NewLifecycle(units, "")
+	_, err := failing.CompleteMediaGeneration(t.Context(), &mediaasset.WrittenGeneration{GenerationID: newID, ManifestSHA256: digest[:], ObjectCount: count, TotalSize: size})
+	require.ErrorContains(t, err, "completion failed")
+	old, err := store.Generation(t.Context(), oldID)
+	require.NoError(t, err)
+	require.Equal(t, mediaasset.GenerationReady, old.Status)
+	result := &mediaasset.WrittenGeneration{GenerationID: newID, ManifestSHA256: digest[:], ObjectCount: count, TotalSize: size}
+	ready, err := service.CompleteMediaGeneration(t.Context(), result)
+	require.NoError(t, err)
+	require.Equal(t, mediaasset.GenerationReady, ready.Status)
+	old, err = store.Generation(t.Context(), oldID)
+	require.NoError(t, err)
+	require.Equal(t, mediaasset.GenerationRetired, old.Status)
+	require.Equal(t, now.Add(mediaasset.RetiredMediaGenerationRetention), *old.DeleteAfter)
+	_, err = service.CompleteMediaGeneration(t.Context(), result)
+	require.NoError(t, err)
+	changed := *result
+	changed.TotalSize++
+	_, err = service.CompleteMediaGeneration(t.Context(), &changed)
+	require.ErrorContains(t, err, "conflicts with ready metadata")
 }
 
-func TestMediaAssetLifecycleGenerationAtomicSwitch(t *testing.T) {
-	db := newUnitDB(t)
-	now := time.Date(2026, time.July, 10, 9, 0, 0, 0, time.UTC)
-	service := NewLifecycle(db, "")
-	service.now = func() time.Time { return now }
-	fileID := uuid.NewString()
-
-	first, firstTarget := seedAllocatedMediaGeneration(t, service, fileID)
-	require.Equal(t, "media/"+fileID+"/hls/"+first.ID, firstTarget.GetObjectPrefix())
-	firstDigest := sha256.Sum256([]byte("first manifest"))
-	firstReady, err := service.CompleteMediaGeneration(t.Context(), &commonv1.MediaGenerationWriteResult{
-		GenerationId:   first.ID,
-		ManifestSha256: firstDigest[:],
-		ObjectCount:    4,
-		TotalSize:      1000,
-	})
-	require.NoError(t, err)
-	require.Equal(t, model.MediaGenerationStatusReady, firstReady.Status)
-
-	now = now.Add(time.Minute)
-	second, _ := seedAllocatedMediaGeneration(t, service, fileID)
-	secondDigest := sha256.Sum256([]byte("second manifest"))
-	secondResult := &commonv1.MediaGenerationWriteResult{
-		GenerationId:   second.ID,
-		ManifestSha256: secondDigest[:],
-		ObjectCount:    5,
-		TotalSize:      2000,
-	}
-	secondReady, err := service.CompleteMediaGeneration(t.Context(), secondResult)
-	require.NoError(t, err)
-	require.Equal(t, model.MediaGenerationStatusReady, secondReady.Status)
-	_, err = service.CompleteMediaGeneration(t.Context(), secondResult)
-	require.NoError(t, err)
-
-	var retired model.MediaGeneration
-	require.NoError(t, db.First(&retired, "id = ?", first.ID).Error)
-	require.Equal(t, model.MediaGenerationStatusRetired, retired.Status)
-	require.Equal(t, now.Add(retiredMediaGenerationRetention), *retired.DeleteAfter)
-
-	conflicting := proto.Clone(secondResult).(*commonv1.MediaGenerationWriteResult)
-	conflicting.TotalSize++
-	_, err = service.CompleteMediaGeneration(t.Context(), conflicting)
-	require.Error(t, err)
+type generationFailure struct {
+	*mediaassettest.Store
+	failure error
 }
 
-func newUnitDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE file ( client_media_bundle_id TEXT,
-			id text PRIMARY KEY, file_name text, mime_type text, file_size integer,
-			extension text, sha256 blob, duration_seconds integer,
-			ingest_slot_id text, ingest_attempt_id text,
-			delete_requested_at datetime, created_at datetime
-		)
-	`).Error)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE public_asset (
-			id text PRIMARY KEY, source_file_id text, kind text NOT NULL,
-			object_key text NOT NULL UNIQUE, extension text NOT NULL, mime_type text NOT NULL,
-			file_size integer, sha256 blob, disposition text NOT NULL, download_filename text,
-			status text NOT NULL, ready_at datetime, delete_requested_at datetime, deleted_at datetime,
-			failed_at datetime, failure_reason text, created_at datetime NOT NULL, updated_at datetime NOT NULL
-		)
-	`).Error)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE public_asset_binding (
-			asset_id text NOT NULL, owner_type text NOT NULL, owner_id text NOT NULL,
-			binding_key text NOT NULL, source_file_id text, created_at datetime NOT NULL,
-			updated_at datetime NOT NULL, PRIMARY KEY (owner_type, owner_id, binding_key)
-		)
-	`).Error)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE media_generation (
-			id text PRIMARY KEY, file_id text NOT NULL, kind text NOT NULL,
-			object_prefix text NOT NULL UNIQUE, manifest_name text NOT NULL,
-			manifest_sha256 blob, object_count integer, total_size integer, status text NOT NULL,
-			ready_at datetime, retired_at datetime, delete_after datetime,
-			created_at datetime NOT NULL, updated_at datetime NOT NULL
-		)
-	`).Error)
-	require.NoError(t, db.Exec(`
-		CREATE TABLE file_ingest_binding (
-			file_id text PRIMARY KEY, upload_type text NOT NULL, entity_type text,
-			entity_id text NOT NULL, created_at datetime NOT NULL
-		)
-	`).Error)
-	return db
+func (s generationFailure) CompleteGeneration(context.Context, string, []byte, int32, int64, time.Time) error {
+	return s.failure
 }

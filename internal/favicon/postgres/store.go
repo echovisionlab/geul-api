@@ -7,6 +7,8 @@ import (
 	"errors"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -112,7 +114,7 @@ func (s store) NewestReadySourceAsset(ctx context.Context, fileID string) (favic
 }
 
 func (s store) AssetRef(asset favicon.DerivativeAsset) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(s.db, s.cdnDomain).AssetRef(model.PublicAsset{
+	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.db), s.cdnDomain).AssetRef(mediaassetpostgres.Asset(model.PublicAsset{
 		ID:               asset.ID,
 		SourceFileID:     asset.SourceFileID,
 		Kind:             asset.Kind,
@@ -124,7 +126,7 @@ func (s store) AssetRef(asset favicon.DerivativeAsset) (*commonv1.AssetRef, erro
 		Disposition:      asset.Disposition,
 		DownloadFilename: asset.DownloadFilename,
 		Status:           asset.Status,
-	})
+	})))
 }
 
 func (s store) FaviconDerivativeCount(ctx context.Context, fileID string) (int64, error) {
@@ -176,7 +178,7 @@ func (s store) BindingCount(ctx context.Context, assetIDs []string) (int64, erro
 }
 
 func (s store) RequestAssetDeletion(ctx context.Context, assetID string) error {
-	return mediaasset.NewLifecycle(s.db, "").RequestPublicAssetDeletion(ctx, assetID)
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.db), "").RequestPublicAssetDeletion(ctx, assetID)
 }
 
 func (s store) DanglingReadyAssetIDs(ctx context.Context, cutoff time.Time) ([]string, error) {

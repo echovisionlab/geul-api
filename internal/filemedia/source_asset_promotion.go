@@ -11,6 +11,10 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -92,9 +96,9 @@ func (s *Service) promoteSourceFileToPublicAsset(
 	if err != nil {
 		return nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(s.db, s.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.db), s.cdnDomain)
 	if ready {
-		return lifecycle.ReadyAssetRef(ctx, asset.ID)
+		return mediaasset.ReferenceResultProto(lifecycle.ReadyAssetRef(ctx, asset.ID))
 	}
 
 	digest, err := s.streamSourceAssetPromotion(ctx, file, target.GetObjectKey())
@@ -104,7 +108,7 @@ func (s *Service) promoteSourceFileToPublicAsset(
 			return nil, fmt.Errorf("%v; record public asset promotion failure: %w", err, failureErr)
 		}
 		if concurrentReady {
-			return lifecycle.ReadyAssetRef(ctx, asset.ID)
+			return mediaasset.ReferenceResultProto(lifecycle.ReadyAssetRef(ctx, asset.ID))
 		}
 		return nil, err
 	}
@@ -114,7 +118,7 @@ func (s *Service) promoteSourceFileToPublicAsset(
 		// resolved by the ready-row re-read in completeSourceAssetPromotion.
 		return nil, err
 	}
-	return lifecycle.ReadyAssetRef(ctx, asset.ID)
+	return mediaasset.ReferenceResultProto(lifecycle.ReadyAssetRef(ctx, asset.ID))
 }
 
 func (s *Service) prepareSourceAssetPromotion(
@@ -130,7 +134,7 @@ func (s *Service) prepareSourceAssetPromotion(
 		var ready bool
 		callbackCompleted := false
 		txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			if err := mediaasset.LockAttachableFilesForUpdate(ctx, tx, []string{sourceFileID}); err != nil {
+			if err := mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, []string{sourceFileID}); err != nil {
 				return err
 			}
 			if err := tx.
@@ -146,7 +150,7 @@ func (s *Service) prepareSourceAssetPromotion(
 				return err
 			}
 
-			lifecycle := mediaasset.NewLifecycle(tx, s.cdnDomain)
+			lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), s.cdnDomain)
 			var err error
 			asset, target, ready, err = prepareSourceAssetPromotion(ctx, tx, lifecycle, file, kind)
 			if err != nil {
@@ -225,7 +229,7 @@ func validateSourceAssetPromotionFile(file model.File, kind string) error {
 		strings.TrimSpace(file.Extension) == "" || canonicalMimeType(file.MimeType) == "" {
 		return domainerr.Precondition("public asset source is missing verified metadata")
 	}
-	if model.GetExtensionFromMime(file.MimeType) != file.Extension {
+	if mediamime.GetExtensionFromMime(file.MimeType) != file.Extension {
 		return domainerr.Precondition("public asset source MIME and extension do not match")
 	}
 	if reason := mediaasset.PublicAssetKindMediaContractViolation(kind, file.Extension, file.MimeType); reason != "" {
@@ -248,14 +252,18 @@ func prepareSourceAssetPromotion(
 		Order("created_at DESC").
 		Take(&existing).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		asset, target, allocateErr := lifecycle.AllocatePublicAsset(ctx, mediaasset.Allocation{
+		asset, target, allocateErr := mediaasset.AllocationResultProto(lifecycle.AllocatePublicAsset(ctx, mediaasset.Allocation{
 			SourceFileID: &file.ID,
 			Kind:         kind,
 			Extension:    file.Extension,
 			MimeType:     file.MimeType,
-			Disposition:  commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-		})
-		return asset, target, false, allocateErr
+			Disposition:  mediaasset.DispositionInline,
+		}))
+		if allocateErr != nil {
+			return nil, nil, false, allocateErr
+		}
+		row := mediaassetpostgres.AssetRow(*asset)
+		return &row, target, false, nil
 	}
 	if err != nil {
 		return nil, nil, false, err
@@ -424,7 +432,7 @@ func (s *Service) completeLockedSourceAsset(
 ) error {
 	// File is the serialization authority for both new product references
 	// and deletion. Keep the global File -> public_asset lock order.
-	if err := mediaasset.LockAttachableFilesForUpdate(ctx, tx, []string{sourceFileID}); err != nil {
+	if err := mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, []string{sourceFileID}); err != nil {
 		return err
 	}
 	var asset model.PublicAsset
@@ -454,7 +462,7 @@ func (s *Service) completeLockedSourceAsset(
 			return domainerr.Precondition("failed public asset could not be resumed")
 		}
 	}
-	_, err := mediaasset.NewLifecycle(tx, s.cdnDomain).CompletePublicAsset(ctx, result)
+	_, err := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), s.cdnDomain).CompletePublicAsset(ctx, mediaasset.WrittenAssetFromProto(result))
 	return err
 }
 

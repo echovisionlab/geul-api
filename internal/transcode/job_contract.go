@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -116,7 +117,7 @@ func validateMediaObjectTarget(fileID string, target *commonv1.MediaObjectTarget
 	if mimeType == "" || mimeType != canonicalJobMimeType(mimeType) {
 		return fmt.Errorf("mime_type is not canonical")
 	}
-	if expected := model.GetExtensionFromMime(mimeType); expected == "bin" || expected != extension {
+	if expected := mediamime.GetExtensionFromMime(mimeType); expected == "bin" || expected != extension {
 		return fmt.Errorf("extension does not match verified mime_type")
 	}
 	expectedKey, err := mediaauth.MediaObjectKey(fileID, extension)

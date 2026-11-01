@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -19,7 +21,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 func TestPromoteUserAvatarAssetStreamsWebPAndReusesReadyAsset(t *testing.T) {
@@ -138,13 +139,13 @@ func TestPromoteUserAvatarAssetResumesAllocatedAsset(t *testing.T) {
 	fileID := uuid.NewString()
 	digest := sha256.Sum256([]byte("verified-avatar"))
 	createAvatarSourceFile(t, db, fileID, int64(len("verified-avatar")), digest[:])
-	allocated, _, err := mediaasset.NewLifecycle(db, "https://cdn.example.com").AllocatePublicAsset(t.Context(), mediaasset.Allocation{
+	allocated, _, err := mediaasset.AllocationResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "https://cdn.example.com").AllocatePublicAsset(t.Context(), mediaasset.Allocation{
 		SourceFileID: &fileID,
 		Kind:         "avatar",
 		Extension:    "webp",
 		MimeType:     "image/webp",
-		Disposition:  commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
+		Disposition:  mediaasset.DispositionInline,
+	}))
 	require.NoError(t, err)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
 
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
@@ -67,7 +69,7 @@ func (r *Runtime) CancelAndRelease(
 	if err := ogpostgres.CancelEntity(ctx, tx, og.EntityTypeForName(kind), ownerID); err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).
 		ReleasePublicAssetBindings(ctx, kind, ownerID, "og")
 }
 
@@ -99,7 +101,7 @@ func (r *Runtime) ReadyLocalizedOGAsset(
 	if err != nil || !bound {
 		return nil, err
 	}
-	ref, err := mediaasset.NewLifecycle(db, r.cdnDomain).ReadyAssetRef(ctx, assetID)
+	ref, err := mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), r.cdnDomain).ReadyAssetRef(ctx, assetID))
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

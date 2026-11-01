@@ -9,6 +9,8 @@ import (
 	"errors"
 	"log/slog"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
@@ -117,7 +119,7 @@ func (s store) RequireShareLink(ctx context.Context, token, password, pageID str
 	if err != nil {
 		return nil, err
 	}
-	return mediaasset.ContentDownloadShareLinkWitnessFromModel(link), nil
+	return mediaassetpostgres.ContentDownloadShareLinkWitnessFromModel(link), nil
 }
 
 func (s store) ResolveOGConsistency(ctx context.Context, pageID string, selection publiccontent.Selection, ready func(context.Context, string) (bool, error)) (publiccontent.Selection, error) {

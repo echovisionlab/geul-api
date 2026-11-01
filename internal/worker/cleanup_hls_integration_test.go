@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -197,7 +199,7 @@ func TestCleanupRetiredMediaGenerationsDeletesOnlyDueUnreferencedGeneration(t *t
 		db:           db,
 		config:       cfg,
 		s3Client:     s3Client,
-		mediaCleanup: mediaasset.NewCleanup(db, cleanupStorage),
+		mediaCleanup: mediaasset.NewCleanup(mediaassetpostgres.NewCleanupUnits(db), cleanupStorage, mediaassetadapter.NewActiveTranscodes(db)),
 	}
 	now := time.Now().UTC()
 
@@ -336,29 +338,29 @@ func testCleanupPublicAssetLifecycle(t *testing.T, purgeEnabled bool) {
 	cfg.CloudflareZoneID = "test-zone"
 	cfg.CloudflareAPIToken = "test-token"
 
-	lifecycle := mediaasset.NewLifecycle(db, cfg.CDNURL)
-	asset, target, err := lifecycle.AllocatePublicAsset(ctx, mediaasset.Allocation{
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), cfg.CDNURL)
+	asset, target, err := mediaasset.AllocationResultProto(lifecycle.AllocatePublicAsset(ctx, mediaasset.Allocation{
 		Kind:        "image",
 		Extension:   "webp",
 		MimeType:    "image/webp",
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
+		Disposition: mediaasset.DispositionInline,
+	}))
 	require.NoError(t, err)
 	body := "ready asset"
 	require.NoError(t, putWorkerIntegrationObject(ctx, s3Client, cfg.S3Bucket, target.GetObjectKey(), body))
 	digest := sha256.Sum256([]byte(body))
-	_, err = lifecycle.CompletePublicAsset(ctx, &commonv1.AssetWriteResult{
+	_, err = lifecycle.CompletePublicAsset(ctx, mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{
 		AssetId: asset.ID, FileSize: int64(len(body)), Sha256: digest[:],
-	})
+	}))
 	require.NoError(t, err)
 	require.NoError(t, lifecycle.RequestPublicAssetDeletion(ctx, asset.ID))
 
-	stale, staleTarget, err := lifecycle.AllocatePublicAsset(ctx, mediaasset.Allocation{
+	stale, staleTarget, err := mediaasset.AllocationResultProto(lifecycle.AllocatePublicAsset(ctx, mediaasset.Allocation{
 		Kind:        "image",
 		Extension:   "webp",
 		MimeType:    "image/webp",
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
+		Disposition: mediaasset.DispositionInline,
+	}))
 	require.NoError(t, err)
 	require.NoError(t, putWorkerIntegrationObject(ctx, s3Client, cfg.S3Bucket, staleTarget.GetObjectKey(), "stale"))
 	require.NoError(t, db.Model(&model.PublicAsset{}).Where("id = ?", stale.ID).

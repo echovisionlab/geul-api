@@ -10,16 +10,16 @@ import (
 	"testing"
 	"time"
 
+	mediaassetdomain "github.com/echovisionlab/geul-api/internal/mediaasset"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 func TestCloudflareCachePrefixUsesProviderHostPathGrammar(t *testing.T) {
 	t.Parallel()
 
-	asset := model.PublicAsset{ID: "11111111-1111-4111-8111-111111111111", Kind: "image", Extension: "webp"}
+	asset := mediaassetdomain.Asset{ID: "11111111-1111-4111-8111-111111111111", Kind: "image", Extension: "webp"}
 	for _, enabled := range []bool{true, false} {
 		prefix, err := NewPublicAssetCache("https://cdn.example.com/", "", "", "", enabled, nil).Prefix(asset)
 		require.NoError(t, err)
@@ -33,7 +33,7 @@ func TestCloudflareCachePrefixUsesProviderHostPathGrammar(t *testing.T) {
 			_, err := NewPublicAssetCache(value, "", "", "", enabled, nil).Prefix(asset)
 			require.Error(t, err, value)
 		}
-		_, err = NewPublicAssetCache("https://cdn.example.com/", "", "", "", enabled, nil).Prefix(model.PublicAsset{ID: "invalid", Kind: "image", Extension: "webp"})
+		_, err = NewPublicAssetCache("https://cdn.example.com/", "", "", "", enabled, nil).Prefix(mediaassetdomain.Asset{ID: "invalid", Kind: "image", Extension: "webp"})
 		require.Error(t, err)
 	}
 }
@@ -48,7 +48,7 @@ func (c forbiddenPurgeClient) Do(*http.Request) (*http.Response, error) {
 func TestCloudflareCacheDisabledSkipsHTTPButHonorsBatchAndCancellation(t *testing.T) {
 	t.Parallel()
 	cache := NewPublicAssetCache("https://cdn.example.com", "", "", "", false, forbiddenPurgeClient{t})
-	prefix, err := cache.Prefix(model.PublicAsset{ID: "11111111-1111-4111-8111-111111111111", Kind: "image", Extension: "webp"})
+	prefix, err := cache.Prefix(mediaassetdomain.Asset{ID: "11111111-1111-4111-8111-111111111111", Kind: "image", Extension: "webp"})
 	require.NoError(t, err)
 	require.NoError(t, cache.PurgePrefixes(t.Context(), []string{prefix}))
 	require.Error(t, cache.PurgePrefixes(t.Context(), nil))

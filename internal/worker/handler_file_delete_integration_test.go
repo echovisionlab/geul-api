@@ -9,10 +9,11 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filemediaapplication "github.com/echovisionlab/geul-api/internal/filemedia/application"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -78,7 +79,7 @@ func TestFileDeleteConsumerIntentRejectsAttachWithoutStorageLockStarvationIntegr
 	attachDone := make(chan error, 1)
 	go func() {
 		attachDone <- db.WithContext(context.Background()).Transaction(func(tx *gorm.DB) error {
-			return mediaasset.LockAttachableFilesForUpdate(context.Background(), tx, []string{file.ID})
+			return mediaassetpostgres.Bind(tx).LockAttachableFiles(context.Background(), []string{file.ID})
 		})
 	}()
 	select {

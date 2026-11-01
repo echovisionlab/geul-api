@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -31,7 +33,7 @@ func NewRuntime(cdnDomain string, refresher *ogpostgres.Refresher) *Runtime {
 }
 
 func (*Runtime) LockAttachableFilesForUpdate(ctx context.Context, tx *gorm.DB, fileIDs []string) error {
-	return mediaasset.LockAttachableFilesForUpdate(ctx, tx, fileIDs)
+	return mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (runtime *Runtime) BindReadyAssetForSourceFile(
@@ -39,8 +41,8 @@ func (runtime *Runtime) BindReadyAssetForSourceFile(
 	tx *gorm.DB,
 	fileID, ownerType, ownerID, bindingKey, kind string,
 ) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(tx, runtime.cdnDomain).
-		BindReadyAssetForSourceFile(ctx, fileID, ownerType, ownerID, bindingKey, kind)
+	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), runtime.cdnDomain).
+		BindReadyAssetForSourceFile(ctx, fileID, ownerType, ownerID, bindingKey, kind))
 }
 
 func (runtime *Runtime) ReleasePublicAssetBindings(
@@ -48,7 +50,7 @@ func (runtime *Runtime) ReleasePublicAssetBindings(
 	tx *gorm.DB,
 	ownerType, ownerID, bindingPrefix string,
 ) error {
-	return mediaasset.NewLifecycle(tx, runtime.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), runtime.cdnDomain).
 		ReleasePublicAssetBindings(ctx, ownerType, ownerID, bindingPrefix)
 }
 
@@ -58,7 +60,7 @@ func (runtime *Runtime) ReleaseExactPublicAssetBindings(
 	ownerType, ownerID string,
 	bindingKeys []string,
 ) error {
-	return mediaasset.NewLifecycle(tx, runtime.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), runtime.cdnDomain).
 		ReleaseExactPublicAssetBindings(ctx, ownerType, ownerID, bindingKeys)
 }
 
@@ -110,7 +112,7 @@ func (runtime *Runtime) assetRefs(
 	bySourceFile bool,
 ) (map[string]*commonv1.AssetRef, error) {
 	refs := make(map[string]*commonv1.AssetRef, len(assets))
-	lifecycle := mediaasset.NewLifecycle(tx, runtime.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), runtime.cdnDomain)
 	for _, asset := range assets {
 		key := asset.ID
 		if bySourceFile {
@@ -122,7 +124,7 @@ func (runtime *Runtime) assetRefs(
 		if refs[key] != nil || asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
 		if err != nil {
 			return nil, err
 		}

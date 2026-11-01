@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
@@ -173,7 +175,7 @@ func formatAllowedExtensions(allowed []string) string {
 			continue
 		}
 
-		ext := strings.ToUpper(model.GetExtensionFromMime(normalized))
+		ext := strings.ToUpper(mediamime.GetExtensionFromMime(normalized))
 		if ext == "BIN" {
 			parts := strings.Split(normalized, "/")
 			if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {

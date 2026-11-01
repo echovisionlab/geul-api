@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"gorm.io/gorm"
@@ -43,7 +45,7 @@ func expiredUpload(session filemediaadapter.ExpiredUploadSession) worker.Expired
 		FileID:                session.FileID,
 		UploadType:            session.UploadType,
 		RequestedMime:         session.RequestedMime,
-		Extension:             model.GetExtensionFromMime(session.RequestedMime),
+		Extension:             mediamime.GetExtensionFromMime(session.RequestedMime),
 		EntityID:              session.EntityID,
 		EntityType:            session.EntityType,
 		SlotID:                session.SlotID,

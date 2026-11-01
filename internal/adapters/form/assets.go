@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
@@ -27,7 +29,7 @@ func NewAssets(cdnDomain string) *Assets {
 }
 
 func (a *Assets) LockAttachableFiles(ctx context.Context, tx *gorm.DB, fileIDs []string) error {
-	return mediaasset.LockAttachableFilesForUpdate(ctx, tx, fileIDs)
+	return mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (a *Assets) BindFeaturedImage(
@@ -35,18 +37,18 @@ func (a *Assets) BindFeaturedImage(
 	tx *gorm.DB,
 	fileID, formID string,
 ) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(tx, a.cdnDomain).BindReadyAssetForSourceFile(
+	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), a.cdnDomain).BindReadyAssetForSourceFile(
 		ctx,
 		fileID,
 		"form",
 		formID,
 		"featured_image",
 		"image",
-	)
+	))
 }
 
 func (a *Assets) ReleaseFeaturedImage(ctx context.Context, tx *gorm.DB, formID string) error {
-	return mediaasset.NewLifecycle(tx, a.cdnDomain).ReleasePublicAssetBindings(
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), a.cdnDomain).ReleasePublicAssetBindings(
 		ctx,
 		"form",
 		formID,
@@ -65,7 +67,7 @@ func (a *Assets) FeaturedImage(ctx context.Context, db *gorm.DB, formID string) 
 		}
 		return nil
 	}
-	asset, err := mediaasset.ReadyPublicAssetRefForSourceFile(ctx, db, a.cdnDomain, *row.FileID, "image")
+	asset, err := mediaasset.ReferenceResultProto(mediaasset.ReadyPublicAssetRefForSourceFile(ctx, mediaassetpostgres.NewUnits(db), a.cdnDomain, *row.FileID, "image"))
 	if err != nil {
 		slog.Log(ctx, errs.OperationLogLevel(err), "Form featured image asset resolution failed; serving the Form without a featured image", failurecause.Attr(err), "form_id", formID, "file_id", *row.FileID)
 		return nil

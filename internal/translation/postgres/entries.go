@@ -7,6 +7,8 @@ import (
 	"slices"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
@@ -105,7 +107,7 @@ func (s *store) scanEntries(ctx context.Context, entityType, entityID, query str
 			ContentJSON: row.contentJSON,
 		}
 		if row.ogAssetID.Valid {
-			asset, err := mediaasset.NewLifecycle(s.tx, s.ports.CDNDomain).ReadyAssetRef(ctx, row.ogAssetID.String)
+			asset, err := mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.ports.CDNDomain).ReadyAssetRef(ctx, row.ogAssetID.String))
 			if err != nil {
 				return nil, err
 			}

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -134,10 +136,10 @@ func TestSeriesOgRequestReleasesStaleLocaleProjectionUntilReplacementIsReadyInte
 
 func seedHardCutReadyPublicAsset(t *testing.T, db *gorm.DB, kind, extension, mimeType string, sourceFileID *string) *commonv1.AssetRef {
 	t.Helper()
-	asset, _, err := mediaasset.NewLifecycle(db, "https://cdn.example.com").AllocatePublicAsset(t.Context(), mediaasset.Allocation{
+	asset, _, err := mediaasset.AllocationResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "https://cdn.example.com").AllocatePublicAsset(t.Context(), mediaasset.Allocation{
 		SourceFileID: sourceFileID, Kind: kind, Extension: extension, MimeType: mimeType,
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
+		Disposition: mediaasset.DispositionInline,
+	}))
 	require.NoError(t, err)
 	now := time.Now().UTC()
 	fileSize := int64(128)

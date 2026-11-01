@@ -5,11 +5,13 @@ import (
 	"errors"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -199,15 +201,16 @@ func CancelEntity(ctx context.Context, tx *gorm.DB, entityType managev1.OgEntity
 // AssetProtector keeps an OG asset an entity row still points at from public
 // asset cleanup.
 type AssetProtector struct {
+	db         *gorm.DB
 	references []AssetReference
 }
 
-func NewAssetProtector(references ...AssetReference) *AssetProtector {
-	return &AssetProtector{references: references}
+func NewAssetProtector(db *gorm.DB, references ...AssetReference) *AssetProtector {
+	return &AssetProtector{db: db, references: references}
 }
 
-func (p *AssetProtector) IsPublicAssetProtected(ctx context.Context, tx *gorm.DB, asset model.PublicAsset) (bool, error) {
-	return og.AssetProtected(ctx, Bind(tx, Ports{References: p.references}), assetFromModel(asset))
+func (p *AssetProtector) IsPublicAssetProtected(ctx context.Context, asset mediaasset.Asset) (bool, error) {
+	return og.AssetProtected(ctx, Bind(p.db.WithContext(ctx), Ports{References: p.references}), assetFromModel(mediaassetpostgres.AssetRow(asset)))
 }
 
 // ResolveExactLocalizedGeneration classifies the latest generation attached to

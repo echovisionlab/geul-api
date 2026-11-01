@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/collaboration"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -307,7 +309,7 @@ func (l memberLoader) LoadActiveSummary(
 		return nil, false, assetResult.Error
 	}
 	if assetResult.Error == nil {
-		asset, err := mediaasset.NewLifecycle(l.db, l.cdnDomain).AssetRef(avatar.PublicAsset)
+		asset, err := mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(l.db), l.cdnDomain).AssetRef(mediaassetpostgres.Asset(avatar.PublicAsset)))
 		if err != nil {
 			return nil, false, err
 		}

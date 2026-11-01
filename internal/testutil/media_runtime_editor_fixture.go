@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	"connectrpc.com/connect"
 
 	"github.com/google/uuid"
@@ -523,7 +525,7 @@ func seedTypedEditorMediaDocument(
 ) {
 	t.Helper()
 	fileID := seedEditorPlaceholderFile(t, db, defaultMimeForEditorBlockType(blockType))
-	name := "editor-media-placeholder." + model.GetExtensionFromMime(defaultMimeForEditorBlockType(blockType))
+	name := "editor-media-placeholder." + mediamime.GetExtensionFromMime(defaultMimeForEditorBlockType(blockType))
 	attachment := &contentv1.FileAttachment{State: &contentv1.FileAttachment_ActiveFileId{ActiveFileId: fileID}}
 	fileBlock := &contentv1.RichTextBlock{
 		Id: blockID,
@@ -717,7 +719,7 @@ func seedEditorPlaceholderFile(t *testing.T, db *gorm.DB, mimeType string) strin
 	fileID := uuid.NewString()
 	require.NoError(t, db.Create(&model.File{
 		ID: fileID, FileName: "editor-placeholder", MimeType: mimeType,
-		FileSize: 1, Extension: model.GetExtensionFromMime(mimeType), SHA256: make([]byte, 32), CreatedAt: time.Now().UTC(),
+		FileSize: 1, Extension: mediamime.GetExtensionFromMime(mimeType), SHA256: make([]byte, 32), CreatedAt: time.Now().UTC(),
 	}).Error)
 	return fileID
 }

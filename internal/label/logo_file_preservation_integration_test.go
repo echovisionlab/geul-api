@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"testing"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -114,7 +116,7 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 		require.NotNil(t, lightRemoved.Msg.OgGenerationRunId)
 
 		staleOgAssetID := seedReadyLabelOgAsset(t, db, "label-stale-og")
-		require.NoError(t, mediaasset.NewLifecycle(db, "").BindPublicAsset(ctx, mediaasset.Binding{
+		require.NoError(t, mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "").BindPublicAsset(ctx, mediaasset.Binding{
 			AssetID: staleOgAssetID, OwnerType: "label", OwnerID: labelID, BindingKey: "og",
 		}))
 		require.NoError(t, db.Model(&model.Label{}).Where("id = ?", labelID).
@@ -160,12 +162,12 @@ func TestLabelLogoReplacementAndRemovalPreserveFilesIntegration(t *testing.T) {
 		queuedGenerationID := *target.LatestGenerationID
 		require.NoError(t, db.Model(&model.Label{}).Where("id = ?", labelID).
 			Update("logo_dark_file_id", nil).Error)
-		require.NoError(t, mediaasset.NewLifecycle(db, "").ReleaseExactPublicAssetBindings(
+		require.NoError(t, mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "").ReleaseExactPublicAssetBindings(
 			ctx, "label", labelID, []string{"logo_dark"},
 		))
 
 		staleOgAssetID := seedReadyLabelOgAsset(t, db, "label-global-stale-og")
-		require.NoError(t, mediaasset.NewLifecycle(db, "").BindPublicAsset(ctx, mediaasset.Binding{
+		require.NoError(t, mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "").BindPublicAsset(ctx, mediaasset.Binding{
 			AssetID: staleOgAssetID, OwnerType: "label", OwnerID: labelID, BindingKey: "og",
 		}))
 		require.NoError(t, db.Model(&model.Label{}).Where("id = ?", labelID).
@@ -252,18 +254,18 @@ func requireLabelLogoFileID(
 
 func seedReadyLabelOgAsset(t *testing.T, db *gorm.DB, content string) string {
 	t.Helper()
-	assetLifecycle := mediaasset.NewLifecycle(db, "")
-	asset, _, err := assetLifecycle.AllocatePublicAsset(t.Context(), mediaasset.Allocation{
+	assetLifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "")
+	asset, _, err := mediaasset.AllocationResultProto(assetLifecycle.AllocatePublicAsset(t.Context(), mediaasset.Allocation{
 		Kind:        "og",
 		Extension:   "webp",
 		MimeType:    "image/webp",
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
+		Disposition: mediaasset.DispositionInline,
+	}))
 	require.NoError(t, err)
 	digest := sha256.Sum256([]byte(content))
-	_, err = assetLifecycle.CompletePublicAsset(t.Context(), &commonv1.AssetWriteResult{
+	_, err = assetLifecycle.CompletePublicAsset(t.Context(), mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{
 		AssetId: asset.ID, FileSize: int64(len(content)), Sha256: digest[:],
-	})
+	}))
 	require.NoError(t, err)
 	return asset.ID
 }

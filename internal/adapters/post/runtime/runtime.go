@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -51,7 +53,7 @@ func (VersionRestore) LoadUnavailableVersionAttachmentKinds(
 	tx *gorm.DB,
 	document proto.Message,
 ) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error) {
-	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, tx, document)
+	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, mediaassetpostgres.BindAttachments(tx), document)
 }
 
 var (

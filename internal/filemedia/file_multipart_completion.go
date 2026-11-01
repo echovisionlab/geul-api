@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -441,8 +443,8 @@ func (s *Service) restoreFinishedMultipartPromotedAsset(
 	if !promoted {
 		return nil, nil
 	}
-	asset, err := mediaasset.NewLifecycle(s.db, s.cdnDomain).
-		ReadyAssetRefForSourceFile(ctx, fileID, kind)
+	asset, err := mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.db), s.cdnDomain).
+		ReadyAssetRefForSourceFile(ctx, fileID, kind))
 	if err != nil {
 		return nil, err
 	}

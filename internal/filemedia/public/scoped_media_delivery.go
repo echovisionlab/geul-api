@@ -7,8 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -208,7 +209,7 @@ func projectScopedMediaURL(
 	generationsByID map[string]readyMediaGenerationRow,
 	publicAsset readyPublicAssetRow,
 ) (*commonv1.MediaDelivery, error) {
-	if expected := model.GetExtensionFromMime(file.MimeType); expected == "bin" || expected != file.Extension {
+	if expected := mediamime.GetExtensionFromMime(file.MimeType); expected == "bin" || expected != file.Extension {
 		return nil, errors.New("file extension does not match MIME type")
 	}
 	response := &commonv1.MediaDelivery{

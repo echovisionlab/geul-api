@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -78,7 +80,7 @@ func (p ports) assetStatus(t *testing.T, assetID string) string {
 
 func (p ports) assetURL(t *testing.T, fileID, kind string) string {
 	t.Helper()
-	asset, err := mediaasset.ReadyPublicAssetRefForSourceFile(t.Context(), p.db, "https://cdn.example.com", fileID, kind)
+	asset, err := mediaasset.ReferenceResultProto(mediaasset.ReadyPublicAssetRefForSourceFile(t.Context(), mediaassetpostgres.NewUnits(p.db), "https://cdn.example.com", fileID, kind))
 	require.NoError(t, err)
 	return asset.GetUrl()
 }

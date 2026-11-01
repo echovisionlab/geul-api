@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -144,22 +146,22 @@ func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testin
 
 	allocateExpired := func(t *testing.T) model.PublicAsset {
 		t.Helper()
-		asset, _, allocateErr := mediaasset.NewLifecycle(pg.DB, "").AllocatePublicAsset(
+		asset, _, allocateErr := mediaasset.AllocationResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(pg.DB), "").AllocatePublicAsset(
 			t.Context(),
 			mediaasset.Allocation{
 				Kind:        "image",
 				Extension:   "webp",
 				MimeType:    "image/webp",
-				Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
+				Disposition: mediaasset.DispositionInline,
 			},
-		)
+		))
 		require.NoError(t, allocateErr)
 		require.NoError(t, pg.DB.Model(&model.PublicAsset{}).Where("id = ?", asset.ID).
 			Update("created_at", now.Add(-25*time.Hour)).Error)
 		t.Cleanup(func() {
 			_ = pg.DB.Where("id = ?", asset.ID).Delete(&model.PublicAsset{}).Error
 		})
-		return *asset
+		return mediaassetpostgres.AssetRow(*asset)
 	}
 
 	t.Run("cleanup lock wins", func(t *testing.T) {
@@ -183,9 +185,9 @@ func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testin
 
 		completeDone := make(chan error, 1)
 		go func() {
-			_, completeErr := mediaasset.NewLifecycle(pg.DB, "").CompletePublicAsset(
+			_, completeErr := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(pg.DB), "").CompletePublicAsset(
 				context.Background(),
-				&commonv1.AssetWriteResult{AssetId: asset.ID, FileSize: 9, Sha256: digest[:]},
+				mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{AssetId: asset.ID, FileSize: 9, Sha256: digest[:]}),
 			)
 			completeDone <- completeErr
 		}()
@@ -207,9 +209,9 @@ func TestExpiredUnreadyCleanupSerializesWithAssetCompletionIntegration(t *testin
 		asset := allocateExpired(t)
 		tx := pg.DB.Begin()
 		require.NoError(t, tx.Error)
-		_, err := mediaasset.NewLifecycle(tx, "").CompletePublicAsset(
+		_, err := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), "").CompletePublicAsset(
 			t.Context(),
-			&commonv1.AssetWriteResult{AssetId: asset.ID, FileSize: 9, Sha256: digest[:]},
+			mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{AssetId: asset.ID, FileSize: 9, Sha256: digest[:]}),
 		)
 		require.NoError(t, err)
 

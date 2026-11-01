@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -172,7 +174,7 @@ func (s *store) ShareLink(ctx context.Context, token, password, postID string) (
 	if err != nil {
 		return nil, err
 	}
-	return mediaasset.ContentDownloadShareLinkWitnessFromModel(link), nil
+	return mediaassetpostgres.ContentDownloadShareLinkWitnessFromModel(link), nil
 }
 
 func (s *store) ResolveLocalization(ctx context.Context, postID, acceptLanguage string) (public.LocalizedContentSelection, error) {
@@ -200,7 +202,7 @@ func (s *store) ReadyOgAsset(ctx context.Context, candidates ...*string) (*commo
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		return mediaasset.NewLifecycle(s.tx, s.deps.CDNDomain).AssetRef(asset)
+		return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.deps.CDNDomain).AssetRef(mediaassetpostgres.Asset(asset)))
 	}
 	return nil, nil
 }

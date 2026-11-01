@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -59,7 +61,7 @@ func (r *Runtime) CancelAndReleaseEntityWithDB(
 }
 
 func (*Runtime) LockAttachableFilesForUpdate(ctx context.Context, tx *gorm.DB, fileIDs []string) error {
-	return mediaasset.LockAttachableFilesForUpdate(ctx, tx, fileIDs)
+	return mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (r *Runtime) ReleasePublicAssetBindings(
@@ -69,7 +71,7 @@ func (r *Runtime) ReleasePublicAssetBindings(
 	ownerID string,
 	bindingPrefix string,
 ) error {
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).
 		ReleasePublicAssetBindings(ctx, ownerType, ownerID, bindingPrefix)
 }
 
@@ -80,7 +82,7 @@ func (r *Runtime) ReleaseExactPublicAssetBindings(
 	ownerID string,
 	bindingKeys []string,
 ) error {
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).
 		ReleaseExactPublicAssetBindings(ctx, ownerType, ownerID, bindingKeys)
 }
 
@@ -99,12 +101,12 @@ func (r *Runtime) ResolveReadyAssetRefs(
 		Find(&assets).Error; err != nil {
 		return nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(tx, r.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain)
 	for _, asset := range assets {
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
 		if err != nil {
 			return nil, err
 		}
@@ -118,5 +120,5 @@ func (*Runtime) LoadUnavailableVersionAttachmentKinds(
 	tx *gorm.DB,
 	document proto.Message,
 ) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error) {
-	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, tx, document)
+	return mediaasset.LoadUnavailableVersionAttachmentKinds(ctx, mediaassetpostgres.BindAttachments(tx), document)
 }

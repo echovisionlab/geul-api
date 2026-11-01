@@ -847,7 +847,7 @@ it.
   shows as `pg_stat_activity.wait_event = 'PostgresFdwGetResult'`, not in
   `pg_locks`. A lock-wait assertion on such a row counts both.
 - **Shared runtimes behind Ports.** Runtimes that still take `*gorm.DB`
-  (`contentblock`, `mediaasset`, other domains' adapters) are called only
+  (`contentblock`, other domains' adapters) are called only
   from the `postgres` package, so its `Ports` fields may name `*gorm.DB`.
   The domain sees a Store method.
 - **Adapter tests.** A production adapter behind `Ports` (logo slots, image
@@ -885,6 +885,12 @@ it.
   sentinel from `Change`; Run hands it back after the rollback, and the use
   case matches it by identity so a joined rollback failure still surfaces
   (`authentication.SyncLoginRole`).
+- **Immutable media lifecycle.** `mediaasset.Lifecycle` receives units of
+  work over its Store. The owner's PostgreSQL adapter binds those units to
+  its existing transaction when it allocates, completes or replaces an
+  asset; the owner's mutation supplies authorization and audit. Cleanup
+  receives a separate `CleanupStore`, an object store, a cache and owner
+  ports, keeping physical deletion outside the prepare/finalize transactions.
 - **Admission bookkeeping.** A write that no principal authorizes and no
   audit record describes, such as the auth code issuance reservation of an
   anonymous request, is not a domain mutation. It calls

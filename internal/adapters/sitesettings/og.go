@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
@@ -254,7 +256,7 @@ func (p *Projection) ReleasePending(
 		Update("site_og_asset_id", nil).Error; err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).ReleaseExactPublicAssetBindings(
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).ReleaseExactPublicAssetBindings(
 		ctx, "site_settings", "1", []string{"og"},
 	)
 }
@@ -278,7 +280,7 @@ func (p *Projection) Complete(
 	if result.RowsAffected == 0 {
 		return gorm.ErrRecordNotFound
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
 		AssetID: assetID, OwnerType: "site_settings", OwnerID: "1", BindingKey: "og",
 	})
 }

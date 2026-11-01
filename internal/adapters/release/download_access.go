@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -21,10 +23,10 @@ import (
 type DownloadAccess struct {
 	db       *gorm.DB
 	spiceDB  *auth.SpiceDBClient
-	segments mediaasset.SegmentConfigLoader
+	segments mediaassetpostgres.SegmentConfigLoader
 }
 
-func NewDownloadAccess(db *gorm.DB, spiceDB *auth.SpiceDBClient, segments mediaasset.SegmentConfigLoader) *DownloadAccess {
+func NewDownloadAccess(db *gorm.DB, spiceDB *auth.SpiceDBClient, segments mediaassetpostgres.SegmentConfigLoader) *DownloadAccess {
 	if segments == nil {
 		panic("release download access: segment config loader is required")
 	}
@@ -67,7 +69,7 @@ func (a *DownloadAccess) Resolve(
 			evaluatedSources = map[string]mediaasset.FileDownloadSource{}
 			return nil
 		}
-		sources, loadErr := mediaasset.LoadTrackDownloadSources(ctx, tx, trackIDs)
+		sources, loadErr := mediaasset.LoadTrackDownloadSources(ctx, mediaassetpostgres.BindDownload(tx, nil), trackIDs)
 		if loadErr != nil {
 			return loadErr
 		}
@@ -76,7 +78,7 @@ func (a *DownloadAccess) Resolve(
 				delete(sources, trackID)
 			}
 		}
-		allowed, evaluateErr := mediaasset.EvaluateFileDownloadAccessBatch(ctx, tx, a.spiceDB, sources, user, a.segments)
+		allowed, evaluateErr := mediaasset.EvaluateFileDownloadAccessBatch(ctx, mediaassetpostgres.BindDownload(tx, a.segments), a.spiceDB, sources, user)
 		if evaluateErr != nil {
 			return evaluateErr
 		}
@@ -93,7 +95,7 @@ func (a *DownloadAccess) Resolve(
 					// Signing in changes nothing: the download is off, or already open.
 				}
 			}
-			presence, presenceErr := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, tx, restricted)
+			presence, presenceErr := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, mediaassetpostgres.BindDownload(tx, nil), restricted)
 			if presenceErr != nil {
 				return presenceErr
 			}
@@ -105,11 +107,11 @@ func (a *DownloadAccess) Resolve(
 		for id, source := range sources {
 			access[id] = trackDownloadAccess(source, user, allowed[id], signIn[id])
 		}
-		fingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, sources, a.segments)
+		fingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, mediaassetpostgres.BindDownload(tx, a.segments), sources)
 		if fingerprintErr != nil {
 			return fingerprintErr
 		}
-		viewerFingerprint, viewerErr := mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, sources, user)
+		viewerFingerprint, viewerErr := mediaasset.LoadFileDownloadViewerFingerprint(ctx, mediaassetpostgres.BindDownload(tx, nil), sources, user)
 		if viewerErr != nil {
 			return viewerErr
 		}
@@ -125,7 +127,7 @@ func (a *DownloadAccess) Resolve(
 	}
 
 	err = a.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if lockErr := mediaasset.LockFileDownloadPolicySegments(ctx, tx, evaluatedSources); lockErr != nil {
+		if lockErr := mediaasset.LockFileDownloadPolicySegments(ctx, mediaassetpostgres.BindDownload(tx, nil), evaluatedSources); lockErr != nil {
 			return lockErr
 		}
 		var releaseRow struct {
@@ -149,7 +151,7 @@ func (a *DownloadAccess) Resolve(
 		if !ownerAuthorized {
 			return nil
 		}
-		viewerActive, lockErr := mediaasset.LockFileDownloadViewerFacts(ctx, tx, evaluatedSources, user)
+		viewerActive, lockErr := mediaasset.LockFileDownloadViewerFacts(ctx, mediaassetpostgres.BindDownload(tx, nil), evaluatedSources, user)
 		if lockErr != nil {
 			return lockErr
 		}
@@ -161,15 +163,15 @@ func (a *DownloadAccess) Resolve(
 			Order("id").Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).Find(&lockedTracks).Error; lockErr != nil {
 			return lockErr
 		}
-		currentSources, loadErr := mediaasset.LoadTrackDownloadSources(ctx, tx, trackIDs)
+		currentSources, loadErr := mediaasset.LoadTrackDownloadSources(ctx, mediaassetpostgres.BindDownload(tx, nil), trackIDs)
 		if loadErr != nil {
 			return loadErr
 		}
-		currentFingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, currentSources, a.segments)
+		currentFingerprints, fingerprintErr := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, mediaassetpostgres.BindDownload(tx, a.segments), currentSources)
 		if fingerprintErr != nil {
 			return fingerprintErr
 		}
-		viewerFingerprint, viewerErr := mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, currentSources, user)
+		viewerFingerprint, viewerErr := mediaasset.LoadFileDownloadViewerFingerprint(ctx, mediaassetpostgres.BindDownload(tx, nil), currentSources, user)
 		if viewerErr != nil {
 			return viewerErr
 		}

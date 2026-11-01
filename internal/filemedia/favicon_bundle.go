@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
@@ -148,7 +150,7 @@ func (s *Service) stageFaviconBundle(
 			Kind:        "favicon",
 			Extension:   "svg",
 			MimeType:    "image/svg+xml",
-			Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
+			Disposition: mediaasset.DispositionInline,
 		}, managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_UNSPECIFIED, true)
 		if asset.AssetID != "" {
 			staged = append(staged, asset)
@@ -163,7 +165,7 @@ func (s *Service) stageFaviconBundle(
 			Kind:        "favicon",
 			Extension:   output.Spec.Extension,
 			MimeType:    output.Spec.MimeType,
-			Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
+			Disposition: mediaasset.DispositionInline,
 		}, output.Spec.DerivativeType, false)
 		if asset.AssetID != "" {
 			staged = append(staged, asset)
@@ -238,8 +240,8 @@ func (s *Service) stageFaviconAsset(
 	derivativeType managev1.FileDerivativeType,
 	sourceSVG bool,
 ) (stagedFaviconAsset, error) {
-	lifecycle := mediaasset.NewLifecycle(s.db, s.cdnDomain)
-	_, target, err := lifecycle.AllocatePublicAsset(ctx, allocation)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.db), s.cdnDomain)
+	_, target, err := mediaasset.AllocationResultProto(lifecycle.AllocatePublicAsset(ctx, allocation))
 	if err != nil {
 		return stagedFaviconAsset{}, err
 	}
@@ -258,11 +260,11 @@ func (s *Service) stageFaviconAsset(
 		return staged, err
 	}
 	digest := sha256.Sum256(data)
-	if _, err := lifecycle.CompletePublicAsset(ctx, &commonv1.AssetWriteResult{
+	if _, err := lifecycle.CompletePublicAsset(ctx, mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{
 		AssetId:  target.GetAssetId(),
 		FileSize: int64(len(data)),
 		Sha256:   digest[:],
-	}); err != nil {
+	})); err != nil {
 		return staged, err
 	}
 	return staged, nil

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -22,7 +24,7 @@ func NewRuntime(cdnDomain string) *Runtime {
 }
 
 func (*Runtime) LockAttachableFilesForUpdate(ctx context.Context, tx *gorm.DB, fileIDs []string) error {
-	return mediaasset.LockAttachableFilesForUpdate(ctx, tx, fileIDs)
+	return mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (r *Runtime) BindReadyAssetForSourceFile(
@@ -34,16 +36,16 @@ func (r *Runtime) BindReadyAssetForSourceFile(
 	bindingKey string,
 	expectedKind string,
 ) (*commonv1.AssetRef, error) {
-	lifecycle := mediaasset.NewLifecycle(tx, r.cdnDomain)
-	asset, err := lifecycle.BindReadyAssetForSourceFile(
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain)
+	asset, err := mediaasset.ReferenceResultProto(lifecycle.BindReadyAssetForSourceFile(
 		ctx, sourceFileID, ownerType, ownerID, bindingKey, expectedKind,
-	)
+	))
 	if expectedKind != "poster" || !mutation.IsNotFound(err) {
 		return asset, err
 	}
-	return lifecycle.BindReadyAssetForSourceFile(
+	return mediaasset.ReferenceResultProto(lifecycle.BindReadyAssetForSourceFile(
 		ctx, sourceFileID, ownerType, ownerID, bindingKey, "image",
-	)
+	))
 }
 
 func (r *Runtime) ReleasePublicAssetBindings(
@@ -53,7 +55,7 @@ func (r *Runtime) ReleasePublicAssetBindings(
 	ownerID string,
 	bindingPrefix string,
 ) error {
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).
 		ReleasePublicAssetBindings(ctx, ownerType, ownerID, bindingPrefix)
 }
 
@@ -63,7 +65,7 @@ func (r *Runtime) ReadyPublicAssetRefForSourceFile(
 	sourceFileID string,
 	expectedKind string,
 ) (*commonv1.AssetRef, error) {
-	return mediaasset.ReadyPublicAssetRefForSourceFile(ctx, tx, r.cdnDomain, sourceFileID, expectedKind)
+	return mediaasset.ReferenceResultProto(mediaasset.ReadyPublicAssetRefForSourceFile(ctx, mediaassetpostgres.NewUnits(tx), r.cdnDomain, sourceFileID, expectedKind))
 }
 
 func (r *Runtime) ResolveSingleReadyInlineAssetForSourceFile(
@@ -88,5 +90,5 @@ func (r *Runtime) ResolveSingleReadyInlineAssetForSourceFile(
 	if assets[0].FileSize == nil || *assets[0].FileSize <= 0 || len(assets[0].SHA256) != 32 {
 		return nil, fmt.Errorf("program event Content Block image File public asset integrity metadata is incomplete")
 	}
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).AssetRef(assets[0])
+	return mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).AssetRef(mediaassetpostgres.Asset(assets[0])))
 }

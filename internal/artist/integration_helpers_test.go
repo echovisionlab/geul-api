@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 
@@ -287,15 +289,15 @@ func seedArtistImageFile(t *testing.T, db *gorm.DB, fileID, fileName string) {
 		ID: fileID, FileName: fileName, MimeType: "image/webp", FileSize: 1024,
 		Extension: "webp", SHA256: digest[:],
 	}).Error)
-	lifecycle := mediaasset.NewLifecycle(db, "https://cdn.example.com")
-	asset, _, err := lifecycle.AllocatePublicAsset(t.Context(), mediaasset.Allocation{
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "https://cdn.example.com")
+	asset, _, err := mediaasset.AllocationResultProto(lifecycle.AllocatePublicAsset(t.Context(), mediaasset.Allocation{
 		SourceFileID: &fileID, Kind: "image", Extension: "webp", MimeType: "image/webp",
-		Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
+		Disposition: mediaasset.DispositionInline,
+	}))
 	require.NoError(t, err)
-	_, err = lifecycle.CompletePublicAsset(t.Context(), &commonv1.AssetWriteResult{
+	_, err = lifecycle.CompletePublicAsset(t.Context(), mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{
 		AssetId: asset.ID, FileSize: 1024, Sha256: digest[:],
-	})
+	}))
 	require.NoError(t, err)
 }
 

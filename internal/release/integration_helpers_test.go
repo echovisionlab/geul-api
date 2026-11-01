@@ -12,6 +12,10 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -164,7 +168,7 @@ func seedIntegrationFile(t *testing.T, db *gorm.DB, fileID, fileName, mimeType s
 	digest := sha256.Sum256([]byte(fileID))
 	require.NoError(t, db.Create(&model.File{
 		ID: fileID, FileName: fileName, MimeType: mimeType, FileSize: 1024,
-		Extension: model.GetExtensionFromMime(mimeType), SHA256: digest[:], IngestAttemptID: attemptID,
+		Extension: mediamime.GetExtensionFromMime(mimeType), SHA256: digest[:], IngestAttemptID: attemptID,
 	}).Error)
 }
 
@@ -175,21 +179,21 @@ func seedHardCutReadyPublicAsset(
 	sourceFileID *string,
 ) *commonv1.AssetRef {
 	t.Helper()
-	lifecycle := mediaasset.NewLifecycle(db, "https://cdn.example.com")
-	asset, _, err := lifecycle.AllocatePublicAsset(t.Context(), mediaasset.Allocation{
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "https://cdn.example.com")
+	asset, _, err := mediaasset.AllocationResultProto(lifecycle.AllocatePublicAsset(t.Context(), mediaasset.Allocation{
 		SourceFileID: sourceFileID,
 		Kind:         kind,
 		Extension:    extension,
 		MimeType:     mimeType,
-		Disposition:  commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE,
-	})
+		Disposition:  mediaasset.DispositionInline,
+	}))
 	require.NoError(t, err)
 	digest := sha256.Sum256([]byte(asset.ID))
-	_, err = lifecycle.CompletePublicAsset(t.Context(), &commonv1.AssetWriteResult{
+	_, err = lifecycle.CompletePublicAsset(t.Context(), mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{
 		AssetId: asset.ID, FileSize: 1024, Sha256: digest[:],
-	})
+	}))
 	require.NoError(t, err)
-	ref, err := lifecycle.ReadyAssetRef(t.Context(), asset.ID)
+	ref, err := mediaasset.ReferenceResultProto(lifecycle.ReadyAssetRef(t.Context(), asset.ID))
 	require.NoError(t, err)
 	return ref
 }

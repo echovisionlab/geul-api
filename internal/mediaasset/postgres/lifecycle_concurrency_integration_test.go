@@ -1,11 +1,13 @@
 //go:build integration
 
-package mediaasset_test
+package mediaassetpostgres_test
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 
@@ -23,7 +25,7 @@ import (
 
 func TestMediaAssetLifecycleBindRechecksReadyAfterAssetLockIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewConcurrentPostIntegrationDB(t)
+	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	asset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
 	ownerID := uuid.NewString()
 
@@ -38,14 +40,14 @@ func TestMediaAssetLifecycleBindRechecksReadyAfterAssetLockIntegration(t *testin
 
 	result := make(chan error, 1)
 	go func() {
-		result <- mediaasset.NewLifecycle(db, "").BindPublicAsset(
+		result <- mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "").BindPublicAsset(
 			context.Background(),
 			mediaasset.Binding{
 				AssetID: asset.ID, OwnerType: "post", OwnerID: ownerID, BindingKey: "featured_image",
 			},
 		)
 	}()
-	requireMediaAssetCallStillWaiting(t, result)
+	testutil.RequireLockWaiters(t, db, 1)
 	require.NoError(t, blocker.Model(&model.PublicAsset{}).
 		Where("id = ?", asset.ID).
 		Updates(structured.Fields{
@@ -66,14 +68,13 @@ func TestMediaAssetLifecycleBindRechecksReadyAfterAssetLockIntegration(t *testin
 
 func TestMediaAssetLifecycleRebindFailsClosedWhenBindingChangesWhileWaitingIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewConcurrentPostIntegrationDB(t)
+	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	oldAsset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
 	newAsset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
 	concurrentAsset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
 	ownerID := uuid.NewString()
 	bindingKey := "featured_image"
-	mutationDB, applicationName := newMediaAssetMutationDB(t)
-	service := mediaasset.NewLifecycle(mutationDB, "")
+	service := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "")
 	require.NoError(t, service.BindPublicAsset(t.Context(), mediaasset.Binding{
 		AssetID: oldAsset.ID, OwnerType: "page", OwnerID: ownerID, BindingKey: bindingKey,
 	}))
@@ -95,7 +96,7 @@ func TestMediaAssetLifecycleRebindFailsClosedWhenBindingChangesWhileWaitingInteg
 			AssetID: newAsset.ID, OwnerType: "page", OwnerID: ownerID, BindingKey: bindingKey,
 		})
 	}()
-	requireMediaAssetMutationWaitingOnLock(t, db, applicationName, result)
+	testutil.RequireLockWaiters(t, db, 1)
 	require.NoError(t, blocker.Model(&model.PublicAssetBinding{}).
 		Where("owner_type = ? AND owner_id = ? AND binding_key = ?", "page", ownerID, bindingKey).
 		Updates(structured.Fields{
@@ -116,7 +117,7 @@ func TestMediaAssetLifecycleRebindFailsClosedWhenBindingChangesWhileWaitingInteg
 
 func TestMediaAssetLifecycleConcurrentFirstBindConvergesIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewConcurrentPostIntegrationDB(t)
+	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	firstAsset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
 	secondAsset := seedMediaAssetLifecycleReadyAssetIntegration(t, db)
 	ownerID := uuid.NewString()
@@ -125,7 +126,7 @@ func TestMediaAssetLifecycleConcurrentFirstBindConvergesIntegration(t *testing.T
 	for _, assetID := range []string{firstAsset.ID, secondAsset.ID} {
 		go func(assetID string) {
 			<-start
-			results <- mediaasset.NewLifecycle(db, "").BindPublicAsset(
+			results <- mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), "").BindPublicAsset(
 				context.Background(),
 				mediaasset.Binding{
 					AssetID: assetID, OwnerType: "post", OwnerID: ownerID, BindingKey: "featured_image",
@@ -206,27 +207,6 @@ func requireMediaAssetState(t *testing.T, db *gorm.DB, assetID string, status st
 	require.Nil(t, asset.DeleteRequestedAt)
 }
 
-func newMediaAssetMutationDB(t *testing.T) (*gorm.DB, string) {
-	t.Helper()
-	applicationName := "geul_media_asset_" + testutil.IntegrationUUID()
-	db := testutil.NewConcurrentPostIntegrationDB(t)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	sqlDB.SetMaxIdleConns(1)
-	require.NoError(t, db.Exec(`SELECT set_config('application_name', ?, false)`, applicationName).Error)
-	return db, applicationName
-}
-
-func requireMediaAssetCallStillWaiting(t *testing.T, result <-chan error) {
-	t.Helper()
-	select {
-	case err := <-result:
-		require.FailNow(t, "call returned before the Media Asset row lock was released", "error: %v", err)
-	default:
-	}
-}
-
 func requireMediaAssetCallResult(t *testing.T, result <-chan error) error {
 	t.Helper()
 	select {
@@ -236,30 +216,4 @@ func requireMediaAssetCallResult(t *testing.T, result <-chan error) error {
 		require.FailNow(t, "Media Asset call did not return after its row lock was released")
 		return nil
 	}
-}
-
-func requireMediaAssetMutationWaitingOnLock(t *testing.T, db *gorm.DB, applicationName string, result <-chan error) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		select {
-		case err := <-result:
-			require.FailNow(t, "mutation returned before its asset lock was reached", "error: %v", err)
-		default:
-		}
-		var waiting bool
-		err := db.Raw(`SELECT EXISTS (
-			SELECT 1
-			FROM pg_stat_activity
-			WHERE application_name = ?
-			  AND wait_event_type = 'Lock'
-			  AND cardinality(pg_blocking_pids(pid)) > 0
-		)`, applicationName).Scan(&waiting).Error
-		require.NoError(t, err)
-		if waiting {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("media-asset mutation did not reach its asset lock within 5s")
 }

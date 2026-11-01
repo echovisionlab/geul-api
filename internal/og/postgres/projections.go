@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/og"
 
@@ -64,7 +66,7 @@ func (p *TranslationProjection) ReleasePending(ctx context.Context, tx *gorm.DB,
 		Update("og_asset_id", nil).Error; err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).ReleaseExactPublicAssetBindings(
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).ReleaseExactPublicAssetBindings(
 		ctx, target.EntityType, target.EntityID, []string{localeBindingKey(locale)},
 	)
 }
@@ -92,7 +94,7 @@ func (p *TranslationProjection) Complete(
 	if err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
 		AssetID: assetID, OwnerType: target.EntityType, OwnerID: target.EntityID, BindingKey: localeBindingKey(locale),
 	})
 }
@@ -155,7 +157,7 @@ func (p *EntityProjection) ReleasePending(ctx context.Context, tx *gorm.DB, targ
 		Update("og_asset_id", nil).Error; err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).ReleaseExactPublicAssetBindings(
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).ReleaseExactPublicAssetBindings(
 		ctx, p.entityType, target.EntityID, []string{entityBindingKey},
 	)
 }
@@ -177,7 +179,7 @@ func (p *EntityProjection) Complete(
 	if err := updateOGPointer(ctx, tx, p.entityType, "id = ?", assetID, now, gorm.ErrRecordNotFound, target.EntityID); err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
 		AssetID: assetID, OwnerType: p.entityType, OwnerID: target.EntityID, BindingKey: entityBindingKey,
 	})
 }

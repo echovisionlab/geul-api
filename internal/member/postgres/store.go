@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -261,9 +263,9 @@ func (s store) Avatars(ctx context.Context, memberIDs []string) (map[string]*mem
 	`, memberIDs).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(s.tx, s.ports.CDNDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.ports.CDNDomain)
 	for _, row := range rows {
-		asset, err := lifecycle.AssetRef(row.PublicAsset)
+		asset, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(row.PublicAsset)))
 		if err != nil {
 			return nil, err
 		}
@@ -539,16 +541,16 @@ func (s store) AvatarSourceOwned(ctx context.Context, fileID, ownerID string) (b
 }
 
 func (s store) LockAvatarBinding(ctx context.Context, memberID string) (string, bool, error) {
-	binding, found, err := mediaasset.LoadPublicAssetBindingForUpdate(ctx, s.tx, "member", memberID, "avatar")
+	binding, found, err := mediaassetpostgres.Bind(s.tx).LockBinding(ctx, "member", memberID, "avatar")
 	return binding.AssetID, found, err
 }
 
 func (s store) BindAvatar(ctx context.Context, memberID, assetID, sourceFileID string) error {
-	return mediaasset.NewLifecycle(s.tx, s.ports.CDNDomain).BindPublicAsset(ctx, mediaasset.Binding{AssetID: assetID, OwnerType: "member", OwnerID: memberID, BindingKey: "avatar", SourceFileID: &sourceFileID})
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.ports.CDNDomain).BindPublicAsset(ctx, mediaasset.Binding{AssetID: assetID, OwnerType: "member", OwnerID: memberID, BindingKey: "avatar", SourceFileID: &sourceFileID})
 }
 
 func (s store) ReleaseAvatar(ctx context.Context, memberID string) error {
-	return mediaasset.NewLifecycle(s.tx, s.ports.CDNDomain).ReleaseExactPublicAssetBindings(ctx, "member", memberID, []string{"avatar"})
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.ports.CDNDomain).ReleaseExactPublicAssetBindings(ctx, "member", memberID, []string{"avatar"})
 }
 
 func (s store) WelcomeDelivery(ctx context.Context, identityID string) (member.WelcomeDelivery, error) {

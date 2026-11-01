@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -106,12 +108,12 @@ func (r *Runtime) ReadyAssets(ctx context.Context, candidateIDs ...*string) (map
 		Find(&assets).Error; err != nil {
 		return nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(r.db, r.cdnDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(r.db), r.cdnDomain)
 	for _, asset := range assets {
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
 		if err != nil {
 			return nil, err
 		}
@@ -125,7 +127,7 @@ func (r *Runtime) ReadyAssetsForSourceFiles(
 	kind string,
 	fileIDs []string,
 ) (map[string]*seriesdomain.Asset, error) {
-	refs, err := mediaasset.LoadReadyPublicAssetRefsForSourceFiles(ctx, r.db, r.cdnDomain, kind, fileIDs)
+	refs, err := mediaasset.ReferenceMapResultProto(mediaasset.LoadReadyPublicAssetRefsForSourceFiles(ctx, mediaassetpostgres.NewUnits(r.db), r.cdnDomain, kind, fileIDs))
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +135,7 @@ func (r *Runtime) ReadyAssetsForSourceFiles(
 }
 
 func (r *Runtime) ReadyAssetForSourceFile(ctx context.Context, fileID, kind string) (*seriesdomain.Asset, error) {
-	ref, err := mediaasset.ReadyPublicAssetRefForSourceFile(ctx, r.db, r.cdnDomain, fileID, kind)
+	ref, err := mediaasset.ReferenceResultProto(mediaasset.ReadyPublicAssetRefForSourceFile(ctx, mediaassetpostgres.NewUnits(r.db), r.cdnDomain, fileID, kind))
 	return AssetFromRef(ref), err
 }
 
@@ -143,13 +145,13 @@ func (r *Runtime) BindFeaturedImage(
 	fileID string,
 	seriesID string,
 ) (*seriesdomain.Asset, error) {
-	ref, err := mediaasset.NewLifecycle(tx, r.cdnDomain).
-		BindReadyAssetForSourceFile(ctx, fileID, "series", seriesID, "featured_image", "image")
+	ref, err := mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).
+		BindReadyAssetForSourceFile(ctx, fileID, "series", seriesID, "featured_image", "image"))
 	return AssetFromRef(ref), err
 }
 
 func (r *Runtime) RequireAttachableFile(ctx context.Context, tx *gorm.DB, fileID string) error {
-	if err := mediaasset.LockAttachableFilesForUpdate(ctx, tx, []string{fileID}); err != nil {
+	if err := mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, []string{fileID}); err != nil {
 		return err
 	}
 	var file model.File
@@ -160,7 +162,7 @@ func (r *Runtime) RequireAttachableFile(ctx context.Context, tx *gorm.DB, fileID
 }
 
 func (r *Runtime) ReleaseFeaturedImage(ctx context.Context, tx *gorm.DB, seriesID string) error {
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).
 		ReleasePublicAssetBindings(ctx, "series", seriesID, "featured_image")
 }
 
@@ -170,7 +172,7 @@ func (r *Runtime) CancelAndReleaseOG(ctx context.Context, tx *gorm.DB, seriesID 
 	); err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), r.cdnDomain).
 		ReleasePublicAssetBindings(ctx, "series", seriesID, "og")
 }
 

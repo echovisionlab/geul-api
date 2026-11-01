@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediamime"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -113,7 +115,7 @@ func projectReadyPublicAsset(cdnDomain string, row readyPublicAssetRow) (*member
 	if row.FileSize <= 0 || len(row.SHA256) != 32 || row.Disposition != "inline" {
 		return nil, errors.New("ready public asset integrity metadata is incomplete")
 	}
-	if expected := model.GetExtensionFromMime(row.MimeType); expected == "bin" || expected != row.Extension {
+	if expected := mediamime.GetExtensionFromMime(row.MimeType); expected == "bin" || expected != row.Extension {
 		return nil, errors.New("ready public asset extension does not match MIME type")
 	}
 	assetPath, err := mediaauth.AssetPath(row.AssetID, row.Kind, row.Extension)

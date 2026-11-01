@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -233,8 +235,8 @@ func (s store) readyEmailLogoURL(ctx context.Context, cdnDomain string, logoFile
 	if logoFileID == nil || strings.TrimSpace(*logoFileID) == "" {
 		return nil
 	}
-	asset, _, err := mediaasset.NewLifecycle(s.tx, cdnDomain).
-		ReadyBrandingAssetRef(ctx, strings.TrimSpace(*logoFileID), mediaasset.BrandingKindEmailImage)
+	asset, _, err := mediaasset.BrandingResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), cdnDomain).
+		ReadyBrandingAssetRef(ctx, strings.TrimSpace(*logoFileID), mediaasset.BrandingKindEmailImage))
 	if err != nil {
 		slog.WarnContext(ctx, "Failed to resolve ready email logo asset", "fileId", *logoFileID, failurecause.Attr(err))
 		return nil

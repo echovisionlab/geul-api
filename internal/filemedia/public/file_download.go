@@ -8,6 +8,8 @@ import (
 	"strings"
 	"unicode"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -219,7 +221,7 @@ func (s *Service) evaluateFileDownload(ctx context.Context, tx *gorm.DB, target 
 // draft principal, viewer and attachment still match the evaluation.
 func (s *Service) revalidateFileDownload(ctx context.Context, tx *gorm.DB, target fileDownloadTarget, evaluation fileDownloadEvaluation) (*openv1.AuthorizeDownloadResponse, error) {
 	evaluatedSources := map[string]mediaasset.FileDownloadSource{evaluation.source.PolicyKey: evaluation.source}
-	if err := mediaasset.LockFileDownloadPolicySegments(ctx, tx, evaluatedSources); err != nil {
+	if err := mediaasset.LockFileDownloadPolicySegments(ctx, mediaassetpostgres.BindDownload(tx, nil), evaluatedSources); err != nil {
 		return nil, err
 	}
 	ownerStatus, ownerFound, err := target.lockOwner(ctx, tx)
@@ -245,7 +247,7 @@ func (s *Service) revalidateFileDownload(ctx context.Context, tx *gorm.DB, targe
 	if !draftPrincipalActive {
 		return unavailableFileDownloadResponse(), nil
 	}
-	viewerActive, err := mediaasset.LockFileDownloadViewerFacts(ctx, tx, evaluatedSources, auth.GetUser(ctx))
+	viewerActive, err := mediaasset.LockFileDownloadViewerFacts(ctx, mediaassetpostgres.BindDownload(tx, nil), evaluatedSources, auth.GetUser(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -275,11 +277,11 @@ func (s *Service) revalidateFileDownload(ctx context.Context, tx *gorm.DB, targe
 // attachment source.
 func (s *Service) fileDownloadFingerprints(ctx context.Context, tx *gorm.DB, source mediaasset.FileDownloadSource) (string, string, error) {
 	sources := map[string]mediaasset.FileDownloadSource{source.PolicyKey: source}
-	fingerprints, err := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, tx, sources, s.segments)
+	fingerprints, err := mediaasset.LoadFileDownloadPolicyFingerprints(ctx, mediaassetpostgres.BindDownload(tx, s.segments), sources)
 	if err != nil {
 		return "", "", err
 	}
-	viewerFingerprint, err := mediaasset.LoadFileDownloadViewerFingerprint(ctx, tx, sources, auth.GetUser(ctx))
+	viewerFingerprint, err := mediaasset.LoadFileDownloadViewerFingerprint(ctx, mediaassetpostgres.BindDownload(tx, nil), sources, auth.GetUser(ctx))
 	if err != nil {
 		return "", "", err
 	}
@@ -379,7 +381,7 @@ func (s *Service) resolveContentBlockDownloadSource(
 		}
 		return mediaasset.FileDownloadSource{}, "", false, result.Error
 	}
-	sources, err := mediaasset.LoadContentBlockDownloadSources(ctx, db, []mediaasset.ContentBlockDownloadSelector{{
+	sources, err := mediaasset.LoadContentBlockDownloadSources(ctx, mediaassetpostgres.BindDownload(db, nil), []mediaasset.ContentBlockDownloadSelector{{
 		BlockID: blockID, ReferencePath: referencePath,
 	}})
 	if err != nil {
@@ -414,7 +416,7 @@ func (s *Service) resolveReleaseTrackDownloadSource(
 	if result.Error != nil {
 		return mediaasset.FileDownloadSource{}, "", false, result.Error
 	}
-	sources, err := mediaasset.LoadTrackDownloadSources(ctx, db, []string{trackID})
+	sources, err := mediaasset.LoadTrackDownloadSources(ctx, mediaassetpostgres.BindDownload(db, nil), []string{trackID})
 	if err != nil {
 		return mediaasset.FileDownloadSource{}, "", false, err
 	}
@@ -492,14 +494,14 @@ func (s *Service) evaluateReferencedFileDownload(
 ) (*openv1.FileDownloadAccess, error) {
 
 	user := auth.GetUser(ctx)
-	allowed, err := mediaasset.EvaluateFileDownloadAccess(ctx, db, s.spiceDB, source, user, s.segments)
+	allowed, err := mediaasset.EvaluateFileDownloadAccess(ctx, mediaassetpostgres.BindDownload(db, s.segments), s.spiceDB, source, user)
 	if err != nil {
 		return nil, err
 	}
 	signInActionable := source.Audience == mediaasset.FileDownloadAudienceAuthenticated
 	if source.Audience == mediaasset.FileDownloadAudienceRestricted &&
 		(user == nil || !user.Authenticated || user.MemberID == "") {
-		presence, err := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, db, map[string]mediaasset.FileDownloadSource{source.PolicyKey: source})
+		presence, err := mediaasset.RestrictedFileDownloadSegmentPresence(ctx, mediaassetpostgres.BindDownload(db, nil), map[string]mediaasset.FileDownloadSource{source.PolicyKey: source})
 		if err != nil {
 			return nil, err
 		}

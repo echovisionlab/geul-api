@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -94,7 +96,7 @@ func TestPrepareSourceAssetPromotionRejectsDifferentActiveContract(t *testing.T)
 	_, _, _, err := prepareSourceAssetPromotion(
 		t.Context(),
 		db,
-		mediaasset.NewLifecycle(db, ""),
+		mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), ""),
 		model.File{
 			ID:        fileID,
 			MimeType:  "model/gltf-binary",

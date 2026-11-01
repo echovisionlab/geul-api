@@ -3,6 +3,8 @@ package postpostgres
 import (
 	"context"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"github.com/google/uuid"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -16,7 +18,7 @@ import (
 )
 
 func (s *store) LockAttachableFiles(ctx context.Context, fileIDs []string) error {
-	return mediaasset.LockAttachableFilesForUpdate(ctx, s.tx, fileIDs)
+	return mediaassetpostgres.Bind(s.tx).LockAttachableFiles(ctx, fileIDs)
 }
 
 func (s *store) FindFile(ctx context.Context, fileID string) error {
@@ -32,12 +34,12 @@ func (s *store) ReadyOgAssets(ctx context.Context, assetIDs []string) (map[strin
 		Find(&assets).Error; err != nil {
 		return nil, err
 	}
-	lifecycle := mediaasset.NewLifecycle(s.tx, s.deps.CDNDomain)
+	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.deps.CDNDomain)
 	for _, asset := range assets {
 		if asset.FileSize == nil || len(asset.SHA256) != 32 {
 			continue
 		}
-		ref, err := lifecycle.AssetRef(asset)
+		ref, err := mediaasset.ReferenceResultProto(lifecycle.AssetRef(mediaassetpostgres.Asset(asset)))
 		if err != nil {
 			return nil, err
 		}
@@ -69,7 +71,7 @@ func (s *store) CancelOG(ctx context.Context, postID string) error {
 	if err := ogpostgres.CancelEntity(ctx, s.tx, managev1.OgEntityType_OG_ENTITY_TYPE_POST, postID); err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(s.tx, s.deps.CDNDomain).ReleasePublicAssetBindings(ctx, "post", postID, "og")
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.tx), s.deps.CDNDomain).ReleasePublicAssetBindings(ctx, "post", postID, "og")
 }
 
 func (s *store) DeleteShareLinks(ctx context.Context, postID string) error {

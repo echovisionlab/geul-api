@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+
 	"gorm.io/gorm"
 
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
@@ -331,7 +333,7 @@ func RequestSaved(
 // ReleaseAssets removes static legal OG bindings after the legal owner has
 // deleted a policy version. The durable OG projection owns pointer clearing.
 func ReleaseAssets(ctx context.Context, db *gorm.DB, cdnDomain, kind, documentID string) error {
-	return mediaasset.NewLifecycle(db, cdnDomain).
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(db), cdnDomain).
 		ReleasePublicAssetBindings(ctx, strings.TrimSpace(kind), documentID, "og")
 }
 
@@ -367,7 +369,7 @@ func (p *Projection) ReleasePending(
 	if err := validateTarget(target); err != nil {
 		return err
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).ReleaseExactPublicAssetBindings(
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).ReleaseExactPublicAssetBindings(
 		ctx, target.EntityType, target.EntityID, []string{bindingKey(target.Locale)},
 	)
 }
@@ -412,7 +414,7 @@ func (p *Projection) Complete(
 	if matched != 1 {
 		return og.ErrTranslationTargetMissing
 	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
+	return mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), cdnDomain).BindPublicAsset(ctx, mediaasset.Binding{
 		AssetID: assetID, OwnerType: target.EntityType, OwnerID: target.EntityID,
 		BindingKey: bindingKey(target.Locale),
 	})
