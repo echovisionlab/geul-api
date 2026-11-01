@@ -4,6 +4,7 @@ import "github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 type Store = domain.Store
 type FileFolder = domain.FileFolder
+type FolderView = domain.FolderView
 
 var (
 	ErrFolderNotFound   = domain.ErrFolderNotFound

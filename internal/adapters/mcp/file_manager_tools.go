@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
@@ -29,9 +30,9 @@ type FileManager interface {
 	DeleteFiles(context.Context, filemedia.DeleteFilesCommand) (filemedia.FileDeletionOutcome, error)
 	RenameFile(context.Context, filemedia.RenameFileCommand) (*managev1.FileManagerFile, error)
 	MoveFiles(context.Context, filemedia.MoveFilesCommand) ([]*managev1.FileManagerFile, error)
-	CreateFileFolder(context.Context, filemedia.CreateFileFolderCommand) (*managev1.FileFolder, error)
-	RenameFileFolder(context.Context, filemedia.RenameFileFolderCommand) (*managev1.FileFolder, error)
-	MoveFileFolder(context.Context, filemedia.MoveFileFolderCommand) (*managev1.FileFolder, error)
+	CreateFileFolder(context.Context, filemedia.CreateFileFolderCommand) (*filemedia.FolderView, error)
+	RenameFileFolder(context.Context, filemedia.RenameFileFolderCommand) (*filemedia.FolderView, error)
+	MoveFileFolder(context.Context, filemedia.MoveFileFolderCommand) (*filemedia.FolderView, error)
 	DeleteFileFolder(context.Context, filemedia.DeleteFileFolderCommand) ([]string, error)
 }
 
@@ -311,8 +312,14 @@ type fileManagerFolder struct {
 	UpdatedAt string  `json:"updated_at"`
 }
 
-func projectFileManagerFolder(folder *managev1.FileFolder) fileManagerFolder {
-	return fileManagerFolder{ID: folder.GetId(), ParentID: folder.ParentId, Name: folder.GetName(), CreatedAt: timestampString(folder.GetCreatedAt()), UpdatedAt: timestampString(folder.GetUpdatedAt())}
+func projectFileManagerFolder(folder *filemedia.FolderView) fileManagerFolder {
+	return fileManagerFolder{ID: folder.ID, ParentID: folder.ParentID, Name: folder.Name, CreatedAt: fileManagerTimeString(folder.CreatedAt), UpdatedAt: fileManagerTimeString(folder.UpdatedAt)}
+}
+func fileManagerTimeString(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339)
 }
 
 type fileManagerUsage struct {

@@ -19,6 +19,13 @@ type FileFolder struct {
 	CreatedByMemberID    *string
 	CreatedAt, UpdatedAt time.Time
 }
+type FolderView struct {
+	ID, Name             string
+	ParentID             *string
+	CreatedByMember      *MemberSummary
+	CreatedAt, UpdatedAt *time.Time
+}
+
 type Store interface {
 	MeshStore
 	FaviconStore

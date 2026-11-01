@@ -313,7 +313,7 @@ func fileManagerItemsFromCatalog(
 				CreatedAt: timestamppb.New(row.CreatedAt), UpdatedAt: timestamppb.New(row.UpdatedAt),
 			}
 			if row.MemberID != nil {
-				folder.CreatedByMember = memberSummaryProto(members, *row.MemberID)
+				folder.CreatedByMember = memberSummaryProto(memberSummaryForID(members, *row.MemberID))
 			}
 			items = append(items, &managev1.FileManagerItem{
 				Type: managev1.FileManagerItemType_FILE_MANAGER_ITEM_TYPE_FOLDER,
