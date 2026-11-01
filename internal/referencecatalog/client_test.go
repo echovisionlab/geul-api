@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -265,4 +266,18 @@ func TestUpdateClientServesWithoutLogosItCannotRead(t *testing.T) {
 	require.Equal(t, name, updated.Client.Name)
 	require.Nil(t, updated.LightLogo)
 	require.Nil(t, updated.DarkLogo)
+}
+
+func TestClientListsReportNoMorePagesPastTheLastClient(t *testing.T) {
+	f, p := newFixture(t, nil, nil), newPrincipal(t)
+	f.store.SeedClient(referencecatalog.Client{Name: "Only"})
+	query := referencecatalog.ListClientsQuery{Limit: 20, Offset: math.MaxInt32 - 5}
+
+	page, err := f.service.ListClients(p.ctx, query)
+	require.NoError(t, err)
+	require.Empty(t, page.Items)
+	require.Equal(t, referencecatalog.Pagination{Total: 1, Limit: 20, Offset: math.MaxInt32 - 5}, page.Pagination, "the offset and limit do not wrap")
+	admin, err := f.service.ListClientsAdmin(p.ctx, query)
+	require.NoError(t, err)
+	require.False(t, admin.Pagination.HasMore)
 }

@@ -146,12 +146,7 @@ func listClients(ctx context.Context, store Store, query ListClientsQuery) ([]Cl
 	if err != nil {
 		return nil, Pagination{}, err
 	}
-	return clients, Pagination{
-		Total:   int32(total),
-		Limit:   page.Limit,
-		Offset:  page.Offset,
-		HasMore: page.Offset+page.Limit < int32(total),
-	}, nil
+	return clients, paginationOf(page.Limit, page.Offset, total), nil
 }
 
 func clientViews(ctx context.Context, store Store, clients []Client) []ClientView {
