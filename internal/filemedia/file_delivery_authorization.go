@@ -91,12 +91,13 @@ func (s *Service) authorizeManageFileDeliveriesWithWitness(
 	if err != nil {
 		return nil, err
 	}
+	decided := make(map[string]error)
 	for _, fileID := range uniqueFileIDs {
 		if grant, owned := manageFileOwnerDeliveryGrant(user, fileByID[fileID], bindings[fileID]); owned {
 			authorization.files[fileID] = grant
 			continue
 		}
-		grant, err := s.manageFileUsageDeliveryGrant(ctx, user, usagesByFileID[fileID])
+		grant, err := s.manageFileUsageDeliveryGrant(ctx, user, usagesByFileID[fileID], decided)
 		if err != nil {
 			return nil, err
 		}
@@ -166,33 +167,33 @@ func manageFileOwnerDeliveryGrant(user *auth.UserInfo, file model.File, binding 
 
 // manageFileUsageDeliveryGrant grants a delivery witnessed by each usage
 // whose owner the principal may manage, answering the first owner denial
-// when there is none.
-func (s *Service) manageFileUsageDeliveryGrant(ctx context.Context, user *auth.UserInfo, usages []manageFileDeliveryUsageWitness) (manageFileDeliveryGrant, error) {
+// when there is none. decided holds each owner's answer across the request's
+// Files, so an owner shared by several Files is checked once.
+func (s *Service) manageFileUsageDeliveryGrant(
+	ctx context.Context,
+	user *auth.UserInfo,
+	usages []manageFileDeliveryUsageWitness,
+	decided map[string]error,
+) (manageFileDeliveryGrant, error) {
 	if len(usages) == 0 {
 		return manageFileDeliveryGrant{}, errs.PermissionDenied("file access denied")
 	}
-	authorizedTargets := make(map[string]bool)
 	authorizedUsages := make([]manageFileDeliveryUsageWitness, 0, len(usages))
 	var denied error
 	for _, usage := range usages {
 		target := manageFilePermissionTarget{resourceType: usage.resourceType, resourceID: usage.resourceID}
-		allowed, checked := authorizedTargets[target.key()]
+		answer, checked := decided[target.key()]
 		if !checked {
-			err := s.authorizeManageFilePermissionTarget(ctx, user, target)
-			switch {
-			case err == nil:
-				allowed = true
-			case errs.CodeOf(err) == connect.CodePermissionDenied || errs.CodeOf(err) == connect.CodeNotFound:
-				if denied == nil {
-					denied = err
-				}
-			default:
-				return manageFileDeliveryGrant{}, err
+			answer = s.authorizeManageFilePermissionTarget(ctx, user, target)
+			if answer != nil && errs.CodeOf(answer) != connect.CodePermissionDenied && errs.CodeOf(answer) != connect.CodeNotFound {
+				return manageFileDeliveryGrant{}, answer
 			}
-			authorizedTargets[target.key()] = allowed
+			decided[target.key()] = answer
 		}
-		if allowed {
+		if answer == nil {
 			authorizedUsages = append(authorizedUsages, usage)
+		} else if denied == nil {
+			denied = answer
 		}
 	}
 	if len(authorizedUsages) == 0 {

@@ -137,6 +137,14 @@ func TestAuthorizeManageFileDeliveriesDeduplicatesEntityPermissionChecks(t *test
 	checker.For(manager.IdentityID).Allow(policyv1.Post.View(postID))
 	svc := &Service{db: db, spiceDB: spiceDB, postAccess: newIntegrationPostAccess(db, spiceDB), programEventAttachment: newIntegrationProgramEventAccess(db)}
 	require.NoError(t, svc.authorizeManageFileDeliveries(fileDeliveryPrincipalContext(manager), fileIDs))
+	list, err := policyv1.File.List()
+	require.NoError(t, err)
+	view, err := policyv1.Post.View(postID)
+	require.NoError(t, err)
+	require.Equal(t, []authztest.Check{
+		authztest.Of(manager.IdentityID, list, nil),
+		authztest.Of(manager.IdentityID, view, nil),
+	}, checker.Checks(), "three Files of one Post check the Post once")
 }
 
 func TestAuthorizeManageFileDeliveriesUsesCurrentPostAttachmentsNotIngestBinding(t *testing.T) {
