@@ -44,7 +44,7 @@ type metadataAIRecoveryTestProcessor struct {
 
 func (*metadataAIRecoveryTestProcessor) ProcessJob(context.Context, string) error { return nil }
 
-func (p *metadataAIRecoveryTestProcessor) RecoverExpiredJobs(_ context.Context, _ *gorm.DB, limit int) (int, error) {
+func (p *metadataAIRecoveryTestProcessor) RecoverExpiredJobs(_ context.Context, limit int) (int, error) {
 	p.calls++
 	p.limit = limit
 	return 0, p.err

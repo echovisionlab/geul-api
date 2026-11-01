@@ -47,6 +47,7 @@ import (
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/admin"
 	"github.com/echovisionlab/geul-api/internal/ai"
+	aipostgres "github.com/echovisionlab/geul-api/internal/ai/postgres"
 	"github.com/echovisionlab/geul-api/internal/aieditor"
 	"github.com/echovisionlab/geul-api/internal/audience"
 	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
@@ -456,8 +457,12 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	}
 	music.registerTaxonomy(referenceCatalog)
 
+	aiUnits, err := aipostgres.NewUnits(db, servicePublisher)
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize AI store: %w", err)
+	}
 	aiService, err := ai.NewService(ai.Deps{
-		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, Publisher: servicePublisher,
+		Units: aiUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize AI service: %w", err)

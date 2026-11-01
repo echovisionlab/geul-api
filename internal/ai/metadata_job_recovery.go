@@ -4,77 +4,50 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/lib/pq"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 )
 
 // RecoverExpiredJobs republishes durable commands only after their queue retry
 // window has elapsed and no transport row with the job's stable message ID
-// remains in PGMQ. The job timestamp update and enqueue share tx, the
-// scheduler job's transaction.
-func (m *MetadataJobManager) RecoverExpiredJobs(ctx context.Context, tx *gorm.DB, limit int) (int, error) {
+// remains in PGMQ. The job timestamp update and enqueue share one
+// transaction.
+func (m *MetadataJobManager) RecoverExpiredJobs(ctx context.Context, limit int) (int, error) {
 	if limit <= 0 {
 		limit = metadataAIJobRecoveryBatch
 	}
+	return mutation.Run(ctx, m.mutations, mutation.StoreSpec[int, Store]{
+		Access: runnerAccess,
+		Change: func(ctx context.Context, store Store) (int, error) {
+			return recoverExpiredJobs(ctx, store, limit)
+		},
+		// Metadata jobs are operational queue rows, not audited content.
+		Audit: func(int) mutation.Audit { return mutation.Unchanged() },
+	})
+}
+
+func recoverExpiredJobs(ctx context.Context, store Store, limit int) (int, error) {
 	now := dbtime.Now()
 	recoveryBefore := now.Add(-metadataAIJobRecoveryDelay)
 	staleBefore := now.Add(-metadataAIJobLeaseDuration)
-	queueTable := pq.QuoteIdentifier("q_" + eventpkg.QueueAiMetadataGenerate)
-	republished := 0
-	var jobs []metadataJobRecord
-	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Options: clause.LockingOptionsSkipLocked}).
-		Where(
-			"(status = ? AND updated_at <= ?) OR (status = ? AND updated_at <= ? AND (started_at IS NULL OR started_at <= ?))",
-			metadataAIJobStatusQueued,
-			recoveryBefore,
-			metadataAIJobStatusRunning,
-			recoveryBefore,
-			staleBefore,
-		).
-		Order("updated_at ASC").
-		Limit(limit).
-		Find(&jobs).Error; err != nil {
+	jobs, err := store.LockExpiredJobs(ctx, recoveryBefore, staleBefore, limit)
+	if err != nil {
 		return 0, fmt.Errorf("failed to scan expired metadata AI jobs: %w", err)
 	}
-
+	republished := 0
 	for _, job := range jobs {
-		var transportPending bool
-		query := "SELECT EXISTS (SELECT 1 FROM pgmq." + queueTable + " WHERE message->>'message_id' = ?)"
-		if err := tx.Raw(query, job.ID).Scan(&transportPending).Error; err != nil {
+		transportPending, err := store.TransportPending(ctx, job.ID)
+		if err != nil {
 			return 0, fmt.Errorf("failed to inspect metadata AI queue message %s: %w", job.ID, err)
 		}
-
-		update := tx.Model(&metadataJobRecord{}).
-			Where("id = ? AND status = ? AND updated_at = ?", job.ID, job.Status, job.UpdatedAt)
-		if job.Status == metadataAIJobStatusRunning {
-			if job.StartedAt == nil {
-				update = update.Where("started_at IS NULL")
-			} else {
-				update = update.Where("started_at = ?", *job.StartedAt)
-			}
+		touched, err := store.TouchExpiredJob(ctx, job, now)
+		if err != nil {
+			return 0, fmt.Errorf("failed to refresh expired metadata AI job %s: %w", job.ID, err)
 		}
-		result := update.Updates(structured.Fields{"updated_at": now})
-		if result.Error != nil {
-			return 0, fmt.Errorf("failed to refresh expired metadata AI job %s: %w", job.ID, result.Error)
-		}
-		if result.RowsAffected == 0 || transportPending {
+		if !touched || transportPending {
 			continue
 		}
-
-		if err := publishDurableProtoInTransaction(
-			ctx,
-			m.asyncPublisher,
-			tx,
-			eventpkg.QueueAiMetadataGenerate,
-			job.ID,
-			&managev1.MetadataGenerationQueueEvent{JobId: job.ID},
-		); err != nil {
+		if err := store.EnqueueGenerate(ctx, job.ID); err != nil {
 			return 0, fmt.Errorf("failed to republish expired metadata AI job %s: %w", job.ID, err)
 		}
 		republished++

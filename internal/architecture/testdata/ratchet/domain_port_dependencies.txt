@@ -4,10 +4,6 @@
 1 internal/admin generated contracts
 2 internal/admin gorm
 3 internal/admin spicedb client
-5 internal/ai generated contracts
-6 internal/ai gorm
-7 internal/ai spicedb client
-1 internal/ai sql driver
 12 internal/artist generated contracts
 2 internal/artist/public generated contracts
 1 internal/audience generated contracts
