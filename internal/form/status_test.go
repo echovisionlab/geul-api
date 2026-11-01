@@ -3,7 +3,6 @@ package form
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -20,11 +19,11 @@ func TestFormStatusMappingCoversEveryAPIStatus(t *testing.T) {
 			}
 			continue
 		}
-		if !known || string(stored) != name || formStatusToProto(stored) != status {
-			t.Fatalf("%s maps to %q (known %t) and back to %s", name, stored, known, formStatusToProto(stored))
+		if !known || string(stored) != name || StatusMessage(stored) != status {
+			t.Fatalf("%s maps to %q (known %t) and back to %s", name, stored, known, StatusMessage(stored))
 		}
 	}
-	if got := formStatusToProto(model.FormStatus("FORM_STATUS_ARCHIVED")); got != managev1.FormStatus_FORM_STATUS_UNSPECIFIED {
+	if got := StatusMessage(Status("FORM_STATUS_ARCHIVED")); got != managev1.FormStatus_FORM_STATUS_UNSPECIFIED {
 		t.Fatalf("unknown stored status mapped to %s", got)
 	}
 }

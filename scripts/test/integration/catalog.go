@@ -110,7 +110,6 @@ var integrationCatalog = []integrationBand{
 			"./internal/emaildelivery",
 			"./internal/filemedia/public",
 			"./internal/form",
-			"./internal/form/public",
 			"./internal/identitystate",
 			"./internal/label",
 			"./internal/label/public",

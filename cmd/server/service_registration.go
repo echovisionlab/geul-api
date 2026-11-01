@@ -64,6 +64,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filepublic "github.com/echovisionlab/geul-api/internal/filemedia/public"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
+	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	llmproviders "github.com/echovisionlab/geul-api/internal/llm/providers"
@@ -605,11 +606,18 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(internalMenuPath, internalRPCTrust.collab(internalMenuHandler))
 	slog.Info("Registered internal service", "path", internalMenuPath)
 
-	formService, err := formdomain.NewService(formdomain.Deps{
-		DB: db, SpiceDB: spicedbClient, Password: passwordHasher, ContentBlocks: contentBlockStore,
-		Assets: formAssets, OG: formogadapter.NewOG(cfg.CDNURL, ogDeps.refresher), Routes: formadapter.NewRoutes(),
+	formUnits, err := formpostgres.NewUnits(db, formpostgres.Ports{
+		ContentBlocks: contentBlockStore, Signals: servicePublisher, Assets: formAssets,
+		OG: formogadapter.NewOG(cfg.CDNURL, ogDeps.refresher), Routes: formadapter.NewRoutes(),
 		Collaboration: formadapter.NewCollaboration(spicedbClient), Members: memberadapter.PreferredLocales{},
-		ShareLinks: sharelinkadapter.FormLinks{}, Signals: servicePublisher, Audit: telemetryWriter,
+		ShareLinks: sharelinkadapter.FormLinks{},
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Form store: %w", err)
+	}
+	formService, err := formdomain.NewService(formdomain.Deps{
+		Units: formUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
+		Password: passwordHasher,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize Form service: %w", err)
@@ -834,7 +842,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		domainRegistry:           translationRegistry,
 		emailAuthoringReferences: emailAuthoringReferences,
 		legalDocuments:           legalAIDocumentService,
-		internalFormService:      formService,
 		seriesService:            seriesService,
 		fileService:              fileService,
 	}).register()

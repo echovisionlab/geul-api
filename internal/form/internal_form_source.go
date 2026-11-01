@@ -8,32 +8,43 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
+// DocumentMeta is one locale's canonical title and schema as a collaboration
+// room holds them.
+type DocumentMeta struct {
+	Title  *string
+	Schema *string
+}
+
 // SaveFormDocumentCommand saves one Form room's canonical locale state: the
 // locale's title and schema, the revisions the room loaded, the locale values
-// it holds and its one origin Member.
+// it holds and its one origin Member. A nil Meta holds neither.
 type SaveFormDocumentCommand struct {
 	FormID                   string
 	Locale                   string
 	ExpectedDocumentRevision string
 	ExpectedTargetRevision   *string
 	ContributorMemberIDs     []string
-	Meta                     *intrav1.FormMeta
+	Meta                     *DocumentMeta
 	PresentLocaleValues      []*managev1.AIDocumentFieldTarget
+}
+
+// DocumentSave is the revisions a collaboration save left.
+type DocumentSave struct {
+	Locale           string
+	DocumentRevision string
+	TargetRevision   *string
 }
 
 // SaveFormDocument persists only the Form room's canonical locale product
@@ -41,30 +52,30 @@ type SaveFormDocumentCommand struct {
 // storage or semantic-change authority. editor-collab calls as itself: the
 // origin Member's current permission authorizes the save under the Form root
 // lock.
-func (s *Service) SaveFormDocument(ctx context.Context, command SaveFormDocumentCommand) (_ *intrav1.SaveFormDocumentResponse, returnErr error) {
+func (s *Service) SaveFormDocument(ctx context.Context, command SaveFormDocumentCommand) (_ DocumentSave, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("form_id", command.FormID))
 	save, err := parseFormDocumentSave(command)
 	if err != nil {
-		return nil, err
+		return DocumentSave{}, err
 	}
 	now := dbtime.Now()
 	var root formAIDocumentRoot
 	var contributorMemberID string
-	result, err := mutation.Run(ctx, s.mutations, mutation.Spec[formCollaborativeSaveResult]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	result, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[formCollaborativeSaveResult, Store]{
+		Lock: func(ctx context.Context, store Store) error {
 			var err error
-			root, err = lockFormDocumentRoot(ctx, tx, save)
+			root, err = lockFormDocumentRoot(ctx, store, save)
 			return err
 		},
-		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
+		Access: mutation.Checked(func(ctx context.Context, store Store) error {
 			var err error
 			if contributorMemberID, err = canonicalFormCollaborationContributor(save.contributorMemberIDs); err != nil {
 				return err
 			}
-			return s.collaboration.RequireCurrentContributor(ctx, tx, save.formID, contributorMemberID)
+			return store.RequireCurrentContributor(ctx, save.formID, contributorMemberID)
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (formCollaborativeSaveResult, error) {
-			return s.saveFormDocument(ctx, tx, root, save, now)
+		Change: func(ctx context.Context, store Store) (formCollaborativeSaveResult, error) {
+			return saveFormDocument(ctx, store, root, save, now)
 		},
 		Audit: func(saved formCollaborativeSaveResult) mutation.Audit {
 			if !saved.changed {
@@ -73,27 +84,22 @@ func (s *Service) SaveFormDocument(ctx context.Context, command SaveFormDocument
 			return mutation.MemberAudit(contributorMemberID, sharedtelemetry.AuditFormUpdated,
 				formLocaleContentRecord(save.formID, save.locale, sharedtelemetry.AuditItemOperationUpdated))
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, saved formCollaborativeSaveResult) error {
+		Outbox: func(ctx context.Context, store Store, saved formCollaborativeSaveResult) error {
 			if !saved.changed || !saved.titleChanged {
 				return nil
 			}
-			_, err := s.og.RequestAfterMutation(ctx, tx, save.formID, save.locale, save.locale == root.SourceLocale, "form_document_saved")
+			_, err := store.RequestOG(ctx, save.formID, save.locale, save.locale == root.SourceLocale, "form_document_saved")
 			return err
 		},
 	})
 	if err != nil {
 		err = normalizeFormDocumentSaveError(err)
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, domainerr.ResourceNotFound("form", save.formID).WithCause(err)
+		if errors.Is(err, ErrContentDocumentNotFound) {
+			return DocumentSave{}, domainerr.ResourceNotFound("form", save.formID).WithCause(err)
 		}
-		return nil, err
+		return DocumentSave{}, err
 	}
-	return &intrav1.SaveFormDocumentResponse{
-		Success:          true,
-		Locale:           result.locale,
-		DocumentRevision: result.documentRevision,
-		TargetRevision:   result.targetRevision,
-	}, nil
+	return DocumentSave{Locale: result.locale, DocumentRevision: result.documentRevision, TargetRevision: result.targetRevision}, nil
 }
 
 // formDocumentSave is a validated SaveFormDocumentCommand.
@@ -135,8 +141,8 @@ func parseFormDocumentSave(command SaveFormDocumentCommand) (formDocumentSave, e
 // lockFormDocumentRoot locks the Form root of a collaboration save and
 // rejects a save of another Content Document revision before the contributor
 // is authorized.
-func lockFormDocumentRoot(ctx context.Context, tx *gorm.DB, save formDocumentSave) (formAIDocumentRoot, error) {
-	root, err := loadFormAIDocumentRoot(ctx, tx, save.formID, clause.LockingStrengthUpdate)
+func lockFormDocumentRoot(ctx context.Context, store Store, save formDocumentSave) (formAIDocumentRoot, error) {
+	root, err := loadFormAIDocumentRoot(ctx, store, save.formID, UpdateLock)
 	if err != nil {
 		return formAIDocumentRoot{}, err
 	}
@@ -146,14 +152,14 @@ func lockFormDocumentRoot(ctx context.Context, tx *gorm.DB, save formDocumentSav
 	return root, nil
 }
 
-func (s *Service) saveFormDocument(
+func saveFormDocument(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	root formAIDocumentRoot,
 	save formDocumentSave,
 	now time.Time,
 ) (formCollaborativeSaveResult, error) {
-	current, exists, err := loadFormAIDocumentLocale(ctx, tx, save.formID, save.locale, true)
+	current, exists, err := store.Locale(ctx, save.formID, save.locale, true)
 	if err != nil {
 		return formCollaborativeSaveResult{}, err
 	}
@@ -167,14 +173,14 @@ func (s *Service) saveFormDocument(
 			return formCollaborativeSaveResult{}, domainerr.InvalidField("expected_target_revision", "source locale has no target revision")
 		}
 	} else {
-		if err := validateFormTargetSave(ctx, tx, root, current, save); err != nil {
+		if err := validateFormTargetSave(ctx, store, root, current, save); err != nil {
 			return formCollaborativeSaveResult{}, err
 		}
 		writeNow = translation.NextTargetUpdatedAt(writeNow, current.UpdatedAt)
 	}
 
 	update, titleChanged := formCollaborativeLocaleUpdates(current, save.title, save.schema, writeNow)
-	changed, documentRevision, err := s.writeFormLocale(ctx, tx, root, save, update, writeNow)
+	changed, documentRevision, err := writeFormLocale(ctx, store, root, save, update)
 	if err != nil {
 		return formCollaborativeSaveResult{}, err
 	}
@@ -182,7 +188,7 @@ func (s *Service) saveFormDocument(
 		locale: save.locale, documentRevision: documentRevision, changed: changed, titleChanged: titleChanged,
 	}
 	if !isSource {
-		result.targetRevision, err = savedFormTargetRevision(ctx, tx, save, documentRevision)
+		result.targetRevision, err = savedFormTargetRevision(ctx, store, save, documentRevision)
 		if err != nil {
 			return formCollaborativeSaveResult{}, err
 		}
@@ -194,9 +200,9 @@ func (s *Service) saveFormDocument(
 // target revision and the source schema it translates.
 func validateFormTargetSave(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	root formAIDocumentRoot,
-	current formAIDocumentLocaleRow,
+	current Locale,
 	save formDocumentSave,
 ) error {
 	currentTargetRevision, err := deriveFormTargetRevision(root.DocumentRevision, current)
@@ -208,7 +214,7 @@ func validateFormTargetSave(
 	); err != nil {
 		return translation.WithDocumentRevision(err, root.DocumentRevision)
 	}
-	source, sourceExists, err := loadFormAIDocumentLocale(ctx, tx, save.formID, root.SourceLocale, false)
+	source, sourceExists, err := store.Locale(ctx, save.formID, root.SourceLocale, false)
 	if err != nil {
 		return err
 	}
@@ -223,22 +229,21 @@ func validateFormTargetSave(
 
 // writeFormLocale applies update to the saved locale. A source locale write
 // advances the Content Document revision; a target write leaves it as is.
-func (s *Service) writeFormLocale(
+func writeFormLocale(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	root formAIDocumentRoot,
 	save formDocumentSave,
 	update formCollaborativeLocaleUpdate,
-	now time.Time,
 ) (changed bool, documentRevision string, err error) {
-	apply := func(ctx context.Context, tx *gorm.DB) (bool, error) {
-		return applyFormCollaborativeLocaleUpdates(ctx, tx, save.formID, save.locale, update, now)
+	apply := func(ctx context.Context, store Store) (bool, error) {
+		return applyFormCollaborativeLocaleUpdates(ctx, store, save.formID, save.locale, update)
 	}
 	if save.locale != root.SourceLocale {
-		changed, err = apply(ctx, tx)
+		changed, err = apply(ctx, store)
 		return changed, root.DocumentRevision, err
 	}
-	advance, err := advanceFormSourceLocale(ctx, tx, s.contentBlocks, root.DocumentID, save.expectedDocumentRevision, root.SourceLocale, apply)
+	advance, err := advanceFormSourceLocale(ctx, store, root.DocumentID, save.expectedDocumentRevision, root.SourceLocale, apply)
 	if err != nil {
 		return false, "", err
 	}
@@ -250,26 +255,24 @@ func (s *Service) writeFormLocale(
 // domain fence, so the fence only names the source locale.
 func advanceFormSourceLocale(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	documentID string,
 	expectedRevision uuid.UUID,
 	sourceLocale string,
-	apply func(context.Context, *gorm.DB) (bool, error),
+	apply func(context.Context, Store) (bool, error),
 ) (contentblock.AdvanceResult, error) {
 	document, err := formContentDocumentID(documentID)
 	if err != nil {
 		return contentblock.AdvanceResult{}, err
 	}
-	return store.AdvanceRevision(
+	return store.AdvanceContentRevision(
 		ctx,
-		tx,
 		contentblock.AdvanceInput{DocumentID: document, ExpectedRevision: expectedRevision},
-		func(context.Context, *gorm.DB, uuid.UUID) (contentblock.DomainContext, error) {
+		func(context.Context, Store, uuid.UUID) (contentblock.DomainContext, error) {
 			return contentblock.DomainContext{SourceLocale: sourceLocale}, nil
 		},
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-			applied, err := apply(ctx, tx)
+		func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
+			applied, err := apply(ctx, store)
 			if err != nil {
 				return contentblock.MetadataEffect{}, err
 			}
@@ -291,11 +294,11 @@ func formContentDocumentID(value string) (uuid.UUID, error) {
 
 func savedFormTargetRevision(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	save formDocumentSave,
 	documentRevision string,
 ) (*string, error) {
-	updated, updatedExists, err := loadFormAIDocumentLocale(ctx, tx, save.formID, save.locale, false)
+	updated, updatedExists, err := store.Locale(ctx, save.formID, save.locale, false)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +351,7 @@ type formCollaborativeSaveResult struct {
 }
 
 // formCollaborativeLocaleUpdate is what a collaborative save changes in one
-// form_translation row.
+// stored locale.
 type formCollaborativeLocaleUpdate struct {
 	titleChanged  bool
 	title         *string
@@ -358,7 +361,7 @@ type formCollaborativeLocaleUpdate struct {
 }
 
 func formCollaborativeLocaleUpdates(
-	current formAIDocumentLocaleRow,
+	current Locale,
 	title *string,
 	schema []byte,
 	now time.Time,
@@ -373,45 +376,37 @@ func formCollaborativeLocaleUpdates(
 	return update, update.titleChanged
 }
 
-// columns is the form_translation column update, empty when nothing changed.
-func (u formCollaborativeLocaleUpdate) columns() structured.Fields {
-	columns := structured.Fields{}
+// change is the locale write of the update, and false when nothing changed.
+func (u formCollaborativeLocaleUpdate) change() (LocaleChange, bool) {
+	change := LocaleChange{UpdatedAt: u.updatedAt}
 	if u.titleChanged {
-		columns["title"] = u.title
+		change.SetTitle, change.Title = true, u.title
 	}
 	if u.schemaChanged {
-		columns["content_json"] = u.schema
-		columns["content_text"] = formCanonicalContentText(u.schema)
+		change.SetSchema, change.Schema, change.ContentText = true, u.schema, formCanonicalContentText(u.schema)
 	}
-	if len(columns) != 0 {
-		columns["updated_at"] = u.updatedAt
-	}
-	return columns
+	return change, u.titleChanged || u.schemaChanged
 }
 
 func applyFormCollaborativeLocaleUpdates(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	formID string,
 	locale string,
 	update formCollaborativeLocaleUpdate,
-	now time.Time,
 ) (bool, error) {
-	columns := update.columns()
-	if len(columns) == 0 {
+	change, changed := update.change()
+	if !changed {
 		return false, nil
 	}
-	result := tx.WithContext(ctx).Table("form_translation").
-		Where("entity_id = ?::uuid AND locale = ?", formID, locale).
-		Updates(columns)
-	if result.Error != nil {
-		return false, result.Error
+	exists, err := store.UpdateLocale(ctx, formID, locale, change)
+	if err != nil {
+		return false, err
 	}
-	if result.RowsAffected != 1 {
+	if !exists {
 		return false, domainerr.Precondition("Form locale document disappeared")
 	}
-	if err := tx.WithContext(ctx).Table("form").Where("id = ?::uuid", formID).
-		Update("updated_at", now).Error; err != nil {
+	if err := store.TouchForm(ctx, formID, update.updatedAt); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -423,78 +418,93 @@ type LoadFormDocumentQuery struct {
 	Locale string
 }
 
+// CollaborationDocument is one Form room's canonical locale state: the
+// source locale's metadata every locale projects over and, when the locale
+// exists, its metadata, present values and, for a target locale, revision.
+type CollaborationDocument struct {
+	SourceMetadata      DocumentMeta
+	SourceLocale        string
+	Locale              string
+	DocumentRevision    string
+	LocaleExists        bool
+	LocaleMetadata      *DocumentMeta
+	PresentLocaleValues []*managev1.AIDocumentFieldTarget
+	TargetRevision      *string
+}
+
 // LoadFormDocument returns only canonical persisted Form values. Collab turns
 // this response into a transient Y.Doc and cannot revive historical Yjs bytes.
-func (s *Service) LoadFormDocument(ctx context.Context, query LoadFormDocumentQuery) (*intrav1.LoadFormDocumentResponse, error) {
+func (s *Service) LoadFormDocument(ctx context.Context, query LoadFormDocumentQuery) (CollaborationDocument, error) {
 	locale := strings.TrimSpace(query.Locale)
 	if locale == "" {
-		return nil, domainerr.Required("locale")
+		return CollaborationDocument{}, domainerr.Required("locale")
 	}
-	var response *intrav1.LoadFormDocumentResponse
-	err := mutation.Read(ctx, s.db, func(tx *gorm.DB) error {
-		root, err := loadFormAIDocumentRoot(ctx, tx, query.FormID, "")
+	var document CollaborationDocument
+	err := s.units.Read(ctx, func(store Store) error {
+		root, err := loadFormAIDocumentRoot(ctx, store, query.FormID, Unlocked)
 		if err != nil {
 			return err
 		}
-		source, sourceMeta, err := loadFormDocumentSource(ctx, tx, query.FormID, root.SourceLocale)
+		source, sourceMeta, err := loadFormDocumentSource(ctx, store, query.FormID, root.SourceLocale)
 		if err != nil {
 			return err
 		}
-		response = &intrav1.LoadFormDocumentResponse{
+		document = CollaborationDocument{
 			SourceMetadata: sourceMeta, SourceLocale: root.SourceLocale, Locale: locale, DocumentRevision: root.DocumentRevision,
 		}
 		requested, requestedExists := source, true
 		if locale != root.SourceLocale {
-			if requested, requestedExists, err = loadFormAIDocumentLocale(ctx, tx, query.FormID, locale, false); err != nil {
+			if requested, requestedExists, err = store.Locale(ctx, query.FormID, locale, false); err != nil {
 				return err
 			}
 		}
-		response.LocaleExists = requestedExists
+		document.LocaleExists = requestedExists
 		if !requestedExists {
 			return nil
 		}
-		return projectFormDocumentLocale(response, root, source, requested)
+		return projectFormDocumentLocale(&document, root, source, requested)
 	})
 	if err != nil {
-		return nil, err
+		return CollaborationDocument{}, err
 	}
-	return response, nil
+	return document, nil
 }
 
 // loadFormDocumentSource reads the Form source locale document a room
 // projects every locale over.
-func loadFormDocumentSource(ctx context.Context, tx *gorm.DB, formID, sourceLocale string) (formAIDocumentLocaleRow, *intrav1.FormMeta, error) {
-	source, exists, err := loadFormAIDocumentLocale(ctx, tx, formID, sourceLocale, false)
+func loadFormDocumentSource(ctx context.Context, store Store, formID, sourceLocale string) (Locale, DocumentMeta, error) {
+	source, exists, err := store.Locale(ctx, formID, sourceLocale, false)
 	if err != nil {
-		return formAIDocumentLocaleRow{}, nil, err
+		return Locale{}, DocumentMeta{}, err
 	}
 	if !exists {
-		return formAIDocumentLocaleRow{}, nil, domainerr.Precondition("Form source locale document is missing")
+		return Locale{}, DocumentMeta{}, domainerr.Precondition("Form source locale document is missing")
 	}
 	meta, err := formMetaFromCanonicalRow(source)
 	if err != nil {
-		return formAIDocumentLocaleRow{}, nil, domainerr.Precondition("Form source locale document is invalid").WithCause(failurecause.ServerFault(err))
+		return Locale{}, DocumentMeta{}, domainerr.Precondition("Form source locale document is invalid").WithCause(failurecause.ServerFault(err))
 	}
 	return source, meta, nil
 }
 
 // projectFormDocumentLocale sets the requested locale's metadata, present
-// values and, for a target locale, its revision on response.
-func projectFormDocumentLocale(response *intrav1.LoadFormDocumentResponse, root formAIDocumentRoot, source, requested formAIDocumentLocaleRow) error {
+// values and, for a target locale, its revision on document.
+func projectFormDocumentLocale(document *CollaborationDocument, root formAIDocumentRoot, source, requested Locale) error {
 	invalid := func(err error) error {
 		return domainerr.Precondition("Form requested locale document is invalid").WithCause(failurecause.ServerFault(err))
 	}
-	var err error
-	if response.LocaleMetadata, err = formMetaFromCanonicalRow(requested); err != nil {
+	meta, err := formMetaFromCanonicalRow(requested)
+	if err != nil {
 		return invalid(err)
 	}
-	isTarget := response.Locale != root.SourceLocale
+	document.LocaleMetadata = &meta
+	isTarget := document.Locale != root.SourceLocale
 	if isTarget {
 		if err := validateFormAIDocumentTargetSchema(source.Schema, requested.Schema); err != nil {
 			return invalid(err)
 		}
 	}
-	if response.PresentLocaleValues, err = formCanonicalLocaleTargets(requested.Title, requested.Schema); err != nil {
+	if document.PresentLocaleValues, err = formCanonicalLocaleTargets(requested.Title, requested.Schema); err != nil {
 		return invalid(err)
 	}
 	if !isTarget {
@@ -504,6 +514,6 @@ func projectFormDocumentLocale(response *intrav1.LoadFormDocumentResponse, root 
 	if err != nil {
 		return err
 	}
-	response.TargetRevision = &revision
+	document.TargetRevision = &revision
 	return nil
 }

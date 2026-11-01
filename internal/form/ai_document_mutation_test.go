@@ -77,13 +77,13 @@ func formTestStringPointer(value string) *string { return &value }
 
 func TestDeriveFormTargetRevisionBindsDocumentAndLocaleWriteFact(t *testing.T) {
 	updatedAt := time.Date(2026, time.August, 25, 0, 0, 0, 0, time.UTC)
-	row := formAIDocumentLocaleRow{UpdatedAt: updatedAt}
+	row := Locale{UpdatedAt: updatedAt}
 	base, err := deriveFormTargetRevision("document-1", row)
 	if err != nil {
 		t.Fatal(err)
 	}
 	nextLocale, err := deriveFormTargetRevision(
-		"document-1", formAIDocumentLocaleRow{UpdatedAt: updatedAt.Add(time.Microsecond)},
+		"document-1", Locale{UpdatedAt: updatedAt.Add(time.Microsecond)},
 	)
 	if err != nil {
 		t.Fatal(err)

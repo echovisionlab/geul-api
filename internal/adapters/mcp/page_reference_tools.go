@@ -23,7 +23,7 @@ var pageReferenceTools = []mcpserver.Tool{
 }
 
 type FormReferenceDiscovery interface {
-	ListFormsAdmin(context.Context, form.ListFormsAdminQuery) (*managev1.ListFormsAdminResponse, error)
+	ListFormsAdmin(context.Context, form.ListFormsAdminQuery) (form.FormList, error)
 }
 
 type PostSeriesReferenceDiscovery interface {
@@ -101,15 +101,14 @@ func (tools *PageReferenceTools) CallTool(ctx context.Context, _ mcpserver.Princ
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = response.Pagination
+		responsePagination = &commonv1.PaginationResponse{Total: response.Pagination.Total, HasMore: response.Pagination.HasMore}
 		for _, item := range response.Forms {
-			if item != nil {
-				projected := map[string]any{"id": item.Id, "title": item.Title, "status": item.Status.String(), "source_locale": item.SourceLocale}
-				if item.Slug != nil {
-					projected["slug"] = *item.Slug
-				}
-				items = append(items, projected)
+			listed := item.Form
+			projected := map[string]any{"id": listed.ID, "title": item.Title, "status": form.StatusMessage(listed.Status).String(), "source_locale": listed.SourceLocale}
+			if listed.Slug != nil {
+				projected["slug"] = *listed.Slug
 			}
+			items = append(items, projected)
 		}
 	case ToolPostSeriesList:
 		response, err := tools.series.ListSeriesAdmin(ctx, series.ListSeriesAdminQuery{

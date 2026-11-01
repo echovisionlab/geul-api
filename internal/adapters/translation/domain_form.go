@@ -2,11 +2,13 @@ package translationadapter
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/form"
+	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -21,7 +23,7 @@ func formDomainRegistration(audit domainaudit.Appender) domainRegistration {
 	}
 	return newConfiguredDomainPort(core.KindForm, domainPortFunctions{
 		loadSourceDocument: func(ctx context.Context, db *gorm.DB, _ *contentblock.Store, entityID string) (*core.SourceDocument, error) {
-			return form.LoadTranslationSourceDocument(ctx, db, entityID)
+			return form.LoadTranslationSourceDocument(ctx, formStore(db, nil), entityID)
 		},
 		buildExtractionPlan: func(job *model.TranslationJob, source *core.SourceDocument) (*core.ExtractionPlan, error) {
 			return form.BuildTranslationExtractionPlan(job.EntityID, job.SourceLocale, job.TargetLocale, source)
@@ -30,16 +32,22 @@ func formDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			return form.ApplyTranslationCandidate(source, results)
 		},
 		applyCandidate: func(ctx context.Context, tx *gorm.DB, store *contentblock.Store, job *model.TranslationJob, candidate *core.Candidate, input core.EntryWrite) error {
+			if tx == nil || store == nil || job == nil || candidate == nil {
+				return errors.New("form provider translation dependencies are required")
+			}
 			input.Title = candidate.Title
 			input.Summary = candidate.Summary
 			input.ContentJSON = candidate.ContentJSON
 			input.ContentHTML = candidate.ContentHTML
 			input.ContentText = candidate.ContentText
-			return form.ApplyProviderTranslationCandidateWithDB(ctx, tx, store, job, candidate, input, audit)
+			return form.ApplyProviderTranslationCandidate(ctx, formpostgres.Bind(tx, formpostgres.Ports{ContentBlocks: store}, audit), form.TranslationJob{
+				EntityType: job.EntityType, EntityID: job.EntityID, TargetLocale: job.TargetLocale,
+				RequestedByMemberID: job.RequestedByMemberID,
+			}, candidate, input)
 		},
 		sourceLocaleAudit: sourceLocaleAudit(sharedtelemetry.AuditFormUpdated, sharedtelemetry.NewFormSourceLocaleAuditRecord),
 		translationEntrySelectSQL: func(string) string {
-			return form.TranslationEntrySelectSQL()
+			return formpostgres.TranslationEntrySelectSQL()
 		},
 		requestLocaleOG: localeAwareOG(core.KindForm),
 		requireInterchangeView: genericInterchangeView(
@@ -64,7 +72,16 @@ func formDomainRegistration(audit domainaudit.Appender) domainRegistration {
 			"",
 		),
 		prepareSourceLocale: func(ctx context.Context, db *gorm.DB, entityID string, currentSourceLocale string, requestedLocale string, now time.Time) error {
-			return form.PrepareSourceLocaleSwitch(ctx, db, entityID, currentSourceLocale, requestedLocale, now)
+			if db == nil {
+				return form.PrepareSourceLocaleSwitch(ctx, nil, entityID, currentSourceLocale, requestedLocale, now)
+			}
+			return form.PrepareSourceLocaleSwitch(ctx, formStore(db, nil), entityID, currentSourceLocale, requestedLocale, now)
 		},
 	})
+}
+
+// formStore binds the Form Store to the translation domain's database
+// handle, with the content store it hands the delivery.
+func formStore(db *gorm.DB, contents *contentblock.Store) form.Store {
+	return formpostgres.NewStore(db, formpostgres.Ports{ContentBlocks: contents})
 }

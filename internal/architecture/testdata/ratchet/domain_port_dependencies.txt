@@ -25,15 +25,8 @@
 7 internal/emaildelivery model
 2 internal/emaildelivery spicedb client
 1 internal/entityparticipant generated contracts
-17 internal/form generated contracts
-23 internal/form gorm
-16 internal/form model
-2 internal/form spicedb client
-2 internal/form sql driver
-7 internal/form/public generated contracts
-3 internal/form/public gorm
-6 internal/form/public model
-2 internal/form/public spicedb client
+8 internal/form generated contracts
+2 internal/form/public generated contracts
 12 internal/label generated contracts
 2 internal/label/public generated contracts
 10 internal/legal generated contracts

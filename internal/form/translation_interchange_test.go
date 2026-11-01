@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,7 +23,7 @@ func TestFormInterchangePreservesSparseEmptyValuesAndSourceTopology(t *testing.T
 	plan, err := BuildTranslationExtractionPlan(formID, "en", "ko", source)
 	require.NoError(t, err)
 	empty := ""
-	row := formAIDocumentLocaleRow{
+	row := Locale{
 		Title: &empty,
 		Schema: []byte(`{
 			"id":"schema","steps":[{"id":"step-a","title":"","fields":[
@@ -42,7 +41,7 @@ func TestFormInterchangePreservesSparseEmptyValuesAndSourceTopology(t *testing.T
 	require.NotContains(t, current, "field:email:label")
 
 	desired := mergeFormInterchangeTargets(
-		managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		InterchangePatch,
 		current,
 		map[string]translation.UnitResult{
 			"field:email:label": {UnitID: "field:email:label", TranslatedText: "이메일"},
@@ -105,7 +104,7 @@ func TestFormInterchangeValidatesManifestAndReportsOnlyChangedImportedUnits(t *t
 	}
 	mutation := TranslationInterchangeMutation{
 		FormID: formID, SourceLocale: "en", TargetLocale: "ko",
-		Mode:   managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		Mode:   InterchangePatch,
 		Source: &translation.SourceDocument{}, Plan: plan,
 		Targets: map[string]translation.UnitResult{
 			"entity:title":      {UnitID: "entity:title", TranslatedText: "문의"},
