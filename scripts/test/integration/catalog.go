@@ -52,6 +52,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/adapters/release",
 			"./internal/adapters/sitemap",
 			"./internal/adapters/sitesettings",
+			"./internal/artist/postgres",
 			"./internal/contentblock",
 			"./internal/email",
 			"./internal/geoip",

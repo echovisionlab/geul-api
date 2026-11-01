@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -204,3 +205,38 @@ func artistTargetParagraphBatch(
 	}
 }
 
+func seedInternalArtist(t *testing.T, db *gorm.DB, contentBlocks *contentblock.Store) string {
+	t.Helper()
+
+	artistID := uuid.NewString()
+	now := time.Now().UTC()
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		document, err := contentBlocks.CreateDocument(t.Context(), tx, contentblock.CreateInput{
+			Profile: "compact", SourceLocale: "en",
+		})
+		if err != nil {
+			return err
+		}
+		return tx.Exec(`
+			INSERT INTO artist (id, status, source_locale, content_document_id, created_at, updated_at)
+			VALUES (?, 'ARTIST_STATUS_DRAFT', 'en', ?, ?, ?)
+		`, artistID, document.Document.ID, now, now).Error
+	}))
+	return artistID
+}
+
+func requireInternalResourceAdmin(t *testing.T, spiceDB *auth.SpiceDBClient, identityID string) {
+	t.Helper()
+	subject, err := auth.NewAccountIdentitySubject(auth.IdentityID(identityID))
+	require.NoError(t, err)
+	_, err = spiceDB.SyncAccountIdentityGlobalRole(t.Context(), subject, policyv1.Role.Admin())
+	require.NoError(t, err)
+}
+
+func attachInternalResourcePolicy(t *testing.T, spiceDB *auth.SpiceDBClient, resourceID string) {
+	t.Helper()
+	mutation, err := policyv1.Artist.TouchPolicy(resourceID)
+	require.NoError(t, err)
+	_, err = spiceDB.ApplyRelationships(t.Context(), mutation)
+	require.NoError(t, err)
+}
