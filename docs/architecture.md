@@ -784,14 +784,21 @@ it.
   transaction another domain opened (translation apply and interchange, the
   source-locale switch, an owner's target rewrite, an owner's cleanup
   adapter) binds the Store to that transaction:
-  `<domain>postgres.Bind(tx, ports) <domain>.Joined`, where
+  `<domain>postgres.Bind(tx, ports, audit) <domain>.Joined`, where
   `type Joined struct { Store Store; Audit domainaudit.Appender }` carries an
   appender bound to the same transaction. The domain function takes
   `Joined` and never sees `*gorm.DB`.
-- **Reads that write.** `units.Read` is a read-only snapshot. A read that
-  writes (`publiccontent.Resolve*` and `translation.LoadRuntimeSettings`
-  insert default settings) runs under `units.ReadLocked`, or goes through a
-  port outside the snapshot when it must not hold locks.
+- **Which unit a read needs.** `units.Read` is a read-only repeatable-read
+  snapshot, `units.ReadLocked` a repeatable-read snapshot that may lock, and
+  `units.ReadCurrent` an authorized read-committed read that locks what it
+  reads. A Store method that locks or writes (`PublicEvent` takes a share
+  lock; `publiccontent.Resolve*` and `translation.LoadRuntimeSettings`
+  insert default settings) says so in its comment and is never called under
+  `units.Read`; the fake cannot catch this, so the contract case calls it
+  through the PostgreSQL unit it needs. A read that must not hold locks goes
+  through a port outside the snapshot.
+- **Best-effort reads.** A read whose failure is logged and ignored runs in
+  its own `units.Read`, so its error cannot abort the main transaction.
 - **The fence in a domain check.** A `Checked` step of a Store domain reaches
   the identity fence through `mutation.Fenced`. Inside `Locked`,
   `errors.Is(err, identitystate.ErrInactivePrincipal)` tells an inactive
@@ -804,9 +811,13 @@ it.
   descriptors and `domainerr` enum payloads, a domain may keep generated
   types that are the vocabulary of a port it calls: the `commonv1` query
   language (`FilterSpec`, `SortSpec`), the content store's rich-text and
-  `contentblock` types, `managev1.AIDocumentFieldTarget`. A value the domain
-  branches on (an asset's disposition, a member summary's fields) gets a
-  domain type instead. The `generated contracts` lines left in
+  `contentblock` types, `managev1.AIDocumentFieldTarget`, collaboration
+  conflict and rejection reasons (`intrav1`), the public localization
+  fallback reason (`openv1`). Prefer a domain type for media and member
+  references (`commonv1.AssetRef`, `MemberSummary`, media delivery refs):
+  the final wave replaces the remaining ones, so a domain moved from now on
+  declares its own. A value the domain branches on gets a domain type in
+  any case. The `generated contracts` lines left in
   `domain_port_dependencies.txt` are these uses; the final wave exempts them
   in the ratchet.
 - **Undecodable stored values.** When use cases answer a corrupt stored JSON
@@ -833,6 +844,33 @@ it.
   `kratos.*` are `postgres_fdw` foreign tables: a wait on an Identity row
   shows as `pg_stat_activity.wait_event = 'PostgresFdwGetResult'`, not in
   `pg_locks`. A lock-wait assertion on such a row counts both.
+- **Shared runtimes behind Ports.** Runtimes that still take `*gorm.DB`
+  (`contentblock`, `mediaasset`, other domains' adapters) are called only
+  from the `postgres` package, so its `Ports` fields may name `*gorm.DB`.
+  The domain sees a Store method.
+- **Adapter tests.** A production adapter behind `Ports` (logo slots, image
+  bindings, menu target rewrites) is checked on PostgreSQL alone in the
+  `postgres` package, with authorization and the fence faked; it is neither
+  a contract case nor an end-to-end test.
+- **Query budgets.** A test that counts the SQL statements of a list or a
+  read (N+1 guards) stays on PostgreSQL in the `postgres` package; a call
+  count on the fake does not replace it.
+- **Public stores.** A public package's Store gets a fake and a contract
+  suite like the domain's when its methods allow; otherwise its SQL is
+  covered by PostgreSQL-only tests in `<domain>/public/postgres`. The
+  package is named `<domain>publicpostgres`.
+- **Kratos rows in a contract.** A Store method that joins `kratos.*`
+  (credited or contributing Members) opens the contract database with
+  `BootstrapKratosStub: true`; it stays a PostgreSQL-only test.
+- **Lock waits outside a contract.** Use `testutil.RequireLockWaiters` /
+  `RequireKratosLockWaiters`, which count waiters of the test's own
+  database, including `PostgresFdwGetResult` waits; never a fixed sleep.
+- **Runtime-only tests.** A test that needs the running API process (route
+  registration of several domains) lives in a runtime test package such as
+  `cmd/server/runtimetest`, not in a domain package.
+- **Version restore.** Until the shared `versionrestore` takes a port,
+  a domain re-implements `Restore.Apply` over its Store (page, work, post);
+  the final wave generalizes it.
 - **The catalog.** Add `./internal/<domain>/postgres` to the `db` band in
   `scripts/test/integration/catalog.go`, and remove a package whose last
   integration test is gone; the catalog drift test fails otherwise.
