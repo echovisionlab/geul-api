@@ -10,9 +10,16 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
+	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
+	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
+	postpublicpostgres "github.com/echovisionlab/geul-api/internal/post/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
@@ -200,4 +207,36 @@ func requirePublicPostUpdateWaitsForSnapshot(t *testing.T, db *gorm.DB, writeDon
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("Post unpublish did not wait for the public root SHARE lock")
+}
+
+type snapshotFileService struct{}
+
+func (snapshotFileService) ResolvePublicDisplayMedia(context.Context, []string) (map[string]*commonv1.MediaDelivery, error) {
+	return map[string]*commonv1.MediaDelivery{}, nil
+}
+
+func (snapshotFileService) ResolveAuthorizedContentBlockMedia(
+	context.Context,
+	uuid.UUID,
+) ([]*contentv1.ContentBlockMediaItem, error) {
+	return nil, nil
+}
+
+var _ postpublic.FileService = snapshotFileService{}
+
+// newPublicPostHandler composes the public Post RPCs over db.
+func newPublicPostHandler(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentblock.Store) *postpublic.ConnectHandler {
+	t.Helper()
+	localization := postadapter.NewLocalization()
+	units, err := postpublicpostgres.NewUnits(db, postpublicpostgres.Deps{
+		ContentBlocks: store, Localization: localization,
+		MapPlaces: referencecatalogadapter.PublicMapPlaces{}, ShareLinks: postruntime.ShareLinks{},
+	})
+	require.NoError(t, err)
+	service, err := postpublic.NewService(postpublic.Deps{
+		Units: units, SpiceDB: spiceDB, Files: snapshotFileService{},
+		Localizer: postpublicpostgres.NewLocalizer(db, localization), Members: postadapter.NewMemberSummaries(db, ""),
+	})
+	require.NoError(t, err)
+	return postpublic.NewConnectHandler(service)
 }

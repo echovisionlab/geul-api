@@ -186,7 +186,10 @@ type files struct {
 	mu         sync.Mutex
 	deliveries map[string]*commonv1.MediaDelivery
 	deleted    []string
-	err        error
+	// resolved are the Post and File of every authorized featured image
+	// resolution.
+	resolved [][2]string
+	err      error
 }
 
 func newFiles() *files { return &files{deliveries: map[string]*commonv1.MediaDelivery{}} }
@@ -206,9 +209,10 @@ func (f *files) DeleteFileByID(_ context.Context, fileID string) error {
 	return f.err
 }
 
-func (f *files) ResolveAuthorizedPostFeaturedImage(_ context.Context, _ string, fileID string) (*commonv1.MediaDelivery, error) {
+func (f *files) ResolveAuthorizedPostFeaturedImage(_ context.Context, postID, fileID string) (*commonv1.MediaDelivery, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.resolved = append(f.resolved, [2]string{postID, fileID})
 	if f.err != nil {
 		return nil, f.err
 	}

@@ -24,26 +24,11 @@ import (
 	"gorm.io/gorm"
 )
 
+// The File signer rechecks the featured image against live authority and
+// the stored Post after the domain read it; who may enter the read and
+// which File it names are unit tests.
 func TestManagePostFeaturedImageUsesExactFinalOwnerBoundaryIntegration(t *testing.T) {
 	t.Parallel()
-	t.Run("public reader cannot enter manage private delivery", func(t *testing.T) {
-		fixture := newManagePostFeaturedDeliveryFixture(t)
-		fixture.files.beforeExact = func() { t.Fatal("anonymous manage read reached the private File signer") }
-
-		_, err := fixture.posts.GetPost(context.Background(), connect.NewRequest(&managev1.GetPostRequest{Id: fixture.postID}))
-		require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
-	})
-
-	t.Run("current collaborator receives inline without original download", func(t *testing.T) {
-		fixture := newManagePostFeaturedDeliveryFixture(t)
-
-		response, err := fixture.posts.GetPost(fixture.editorCtx, connect.NewRequest(&managev1.GetPostRequest{Id: fixture.postID}))
-		require.NoError(t, err)
-		require.NotEmpty(t, response.Msg.GetFeaturedImageDelivery().GetInline().GetUrl())
-		require.Nil(t, response.Msg.GetFeaturedImageDelivery().GetDownload())
-		require.Equal(t, fixture.fileID, fixture.files.expectedFileID)
-	})
-
 	t.Run("permission revoked after pre-read cannot issue", func(t *testing.T) {
 		fixture := newManagePostFeaturedDeliveryFixture(t)
 		fixture.files.beforeExact = func() {

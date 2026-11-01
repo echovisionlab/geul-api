@@ -498,3 +498,25 @@ func TestGetPostHidesWhatTheReaderMayNotView(t *testing.T) {
 	require.Equal(t, value.ConfigurationRevision, view.ConfigurationRevision)
 	require.NotContains(t, view.Actions, post.ActionEdit)
 }
+
+func TestGetPostResolvesTheFeaturedImageOnlyForAReader(t *testing.T) {
+	reader := newPrincipal()
+	checker := &authztest.Checker{}
+	h := newHarness(t, withChecker(checker))
+	h.member(reader, "Reader")
+	fileID := uuid.NewString()
+	delivery := h.files.put(fileID)
+	value := h.seedPost("Featured", "", func(value *post.Post) { value.FeaturedImageFileID = &fileID })
+
+	_, err := h.service.GetPost(t.Context(), post.GetPostQuery{ID: value.ID})
+	require.Error(t, err, "a public reader cannot enter the manage read")
+	_, err = h.service.GetPost(reader.context(t), post.GetPostQuery{ID: value.ID})
+	requireCode(t, err, connect.CodeNotFound, "")
+	require.Empty(t, h.files.resolved, "a denied read never reaches the File signer")
+
+	checker.For(reader.identityID).Allow(policyv1.Post.View(value.ID))
+	view, err := h.service.GetPost(reader.context(t), post.GetPostQuery{ID: value.ID})
+	require.NoError(t, err)
+	require.Equal(t, delivery, view.FeaturedImage)
+	require.Equal(t, [][2]string{{value.ID, fileID}}, h.files.resolved, "the File is resolved against its owning Post")
+}
