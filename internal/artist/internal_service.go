@@ -7,16 +7,12 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 // LoadArtistBlockDocumentQuery opens the Artist document of a collaboration
@@ -27,53 +23,76 @@ type LoadArtistBlockDocumentQuery struct {
 	SessionID string
 }
 
+// LocaleMetadata is the title of one Artist locale a room shows.
+type LocaleMetadata struct {
+	Locale string
+	Title  *string
+}
+
+// RoomMetadata is the Artist metadata a room shows, with its Labels by ID.
+type RoomMetadata struct {
+	DocumentMetadata
+	LabelIDs []string
+}
+
+// RoomDocument is a collaboration room's Artist document with its locale
+// and Artist metadata.
+type RoomDocument struct {
+	Document            *contentv1.LocalizedRichTextDocument
+	DocumentRevision    string
+	SourceMetadata      LocaleMetadata
+	Metadata            RoomMetadata
+	Locale              string
+	LocaleExists        bool
+	LocaleMetadata      *LocaleMetadata
+	TargetRevision      *string
+	PresentLocaleValues []*managev1.AIDocumentFieldTarget
+}
+
 // LoadArtistBlockDocument returns the room's document with its locale and
 // Artist metadata.
-func (s *Service) LoadArtistBlockDocument(ctx context.Context, query LoadArtistBlockDocumentQuery) (*intrav1.LoadArtistBlockDocumentResponse, error) {
+func (s *Service) LoadArtistBlockDocument(ctx context.Context, query LoadArtistBlockDocumentQuery) (RoomDocument, error) {
 	locale, err := normalizeArtistDocumentLocale(query.Locale)
 	if err != nil {
-		return nil, err
+		return RoomDocument{}, err
 	}
 	var localeState artistTargetLocaleState
-	var metadata *intrav1.ArtistDocumentMetadata
-	bootstrap, err := loadCreativeContentBlockBootstrap(
-		ctx, s.db, s.contentBlocks, s.spiceDB, artistContentEntity, query.ArtistID, query.SessionID,
-		func(ctx context.Context, tx *gorm.DB) error {
-			documentID, err := loadCreativeContentDocumentID(ctx, tx, query.ArtistID)
-			if err != nil {
-				return err
-			}
-			if localeState, err = loadArtistTargetLocaleState(ctx, tx, s.contentBlocks, query.ArtistID, documentID, locale, false); err != nil {
-				return err
-			}
-			metadata, err = loadArtistDocumentMetadata(ctx, tx, query.ArtistID)
+	var metadata RoomMetadata
+	bootstrap, err := s.loadCreativeContentBlockBootstrap(ctx, query.ArtistID, query.SessionID, func(ctx context.Context, store Store) error {
+		documentID, err := loadCreativeContentDocumentID(ctx, store, query.ArtistID)
+		if err != nil {
 			return err
-		},
-	)
+		}
+		if localeState, err = loadArtistTargetLocaleState(ctx, store, query.ArtistID, documentID, locale, false); err != nil {
+			return err
+		}
+		metadata, err = loadArtistDocumentMetadata(ctx, store, query.ArtistID)
+		return err
+	})
 	if err != nil {
-		return nil, err
+		return RoomDocument{}, err
 	}
 	document, err := artistLocalizedDocument(localeState, locale)
 	if err != nil {
-		return nil, err
+		return RoomDocument{}, err
 	}
 	presentLocaleValues, err := contentblock.PresentRichTextLocaleValues(bootstrap.Snapshot, locale)
 	if err != nil {
-		return nil, err
+		return RoomDocument{}, err
 	}
-	response := &intrav1.LoadArtistBlockDocumentResponse{
+	room := RoomDocument{
 		Document: document, DocumentRevision: bootstrap.Snapshot.Document.Revision.String(),
-		SourceMetadata: &intrav1.ArtistLocaleMetadata{Locale: localeState.SourceLocale, Title: localeState.SourceMetadata.Title},
+		SourceMetadata: LocaleMetadata{Locale: localeState.SourceLocale, Title: localeState.SourceMetadata.Title},
 		Metadata:       metadata, Locale: locale,
 		LocaleExists: localeState.TargetMetadata != nil, PresentLocaleValues: presentLocaleValues,
 	}
 	if localeState.TargetMetadata != nil {
-		response.LocaleMetadata = &intrav1.ArtistLocaleMetadata{Locale: locale, Title: localeState.TargetMetadata.Title}
+		room.LocaleMetadata = &LocaleMetadata{Locale: locale, Title: localeState.TargetMetadata.Title}
 		if locale != localeState.SourceLocale {
-			response.TargetRevision = &localeState.TargetRevision
+			room.TargetRevision = &localeState.TargetRevision
 		}
 	}
-	return response, nil
+	return room, nil
 }
 
 // ApplyArtistBlockBatchCommand applies a collaboration room's Block batch
@@ -119,19 +138,19 @@ func (s *Service) ApplyArtistBlockBatch(ctx context.Context, command ApplyArtist
 		return BlockBatchResult{}, err
 	}
 	contributors := command.Batch.ContributorMemberIds
-	result, err := mutation.Run(ctx, s.mutations, mutation.Spec[BlockBatchResult]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	result, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[BlockBatchResult, Store]{
+		Lock: func(ctx context.Context, store Store) error {
 			var err error
-			batch.domain, err = internalCreativeContentFence(command.ArtistID)(ctx, tx, batch.documentID)
+			batch.domain, err = internalCreativeContentFence(command.ArtistID)(ctx, store, batch.documentID)
 			return err
 		},
-		Access: s.contributorAccess(command.ArtistID, contributors),
-		Change: func(ctx context.Context, tx *gorm.DB) (BlockBatchResult, error) {
+		Access: contributorAccess(command.ArtistID, contributors),
+		Change: func(ctx context.Context, store Store) (BlockBatchResult, error) {
 			batch.contributor = contributors[0]
 			if batch.locale != batch.domain.SourceLocale {
-				return s.applyArtistTargetRoomBatch(ctx, tx, batch)
+				return applyArtistTargetRoomBatch(ctx, store, batch)
 			}
-			return s.applyArtistSourceRoomBatch(ctx, tx, batch)
+			return applyArtistSourceRoomBatch(ctx, store, batch)
 		},
 		Audit: func(result BlockBatchResult) mutation.Audit {
 			if !result.Content.Changed {
@@ -139,24 +158,23 @@ func (s *Service) ApplyArtistBlockBatch(ctx context.Context, command ApplyArtist
 			}
 			return artistMemberLocaleAudit(batch.contributor, command.ArtistID, result.Locale, sharedtelemetry.AuditItemOperationUpdated)
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, result BlockBatchResult) error {
+		Outbox: func(ctx context.Context, store Store, result BlockBatchResult) error {
 			if !result.Content.Changed {
 				return nil
 			}
-			return contentsignal.PublishInTransaction(ctx, tx, s.publisher, buildArtistLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-				EntityID:             command.ArtistID,
+			return store.PublishContentUpdate(ctx, ContentUpdate{ArtistID: command.ArtistID, Kind: LocaleUpdate, Locale: LocaleChange{
 				Fields:               []string{"content"},
 				DocumentRevision:     result.Content.DocumentRevision.String(),
 				Contributors:         contributors,
-				Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				Source:               SourceCollaboration,
 				Locale:               batch.locale,
 				TargetRevision:       result.TargetRevision,
 				DocumentStateChanged: batch.locale == result.SourceLocale,
-			}))
+			}})
 		},
 	})
 	if err != nil {
-		return BlockBatchResult{}, normalizeCreativeContentBlockError(artistContentEntity, err)
+		return BlockBatchResult{}, normalizeCreativeContentBlockError(err)
 	}
 	return result, nil
 }
@@ -167,7 +185,7 @@ func (s *Service) prepareArtistRoomBatch(ctx context.Context, command ApplyArtis
 	if err != nil {
 		return artistRoomBatch{}, err
 	}
-	documentID, err := loadCreativeContentDocumentID(ctx, s.db, command.ArtistID)
+	documentID, err := s.readCreativeContentDocumentID(ctx, command.ArtistID)
 	if err != nil {
 		return artistRoomBatch{}, err
 	}
@@ -190,21 +208,21 @@ func (s *Service) prepareArtistRoomBatch(ctx context.Context, command ApplyArtis
 
 // contributorAccess authorizes a collaboration save by its contributors and
 // rechecks their current room authority.
-func (s *Service) contributorAccess(artistID string, contributors []string) mutation.Access {
-	return mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-		if err := s.translation.RequireDocumentContributors(ctx, tx, contributors); err != nil {
+func contributorAccess(artistID string, contributors []string) mutation.Access {
+	return mutation.Checked(func(ctx context.Context, store Store) error {
+		if err := store.RequireDocumentContributors(ctx, contributors); err != nil {
 			return err
 		}
-		return requireArtistCollaborationContributors(ctx, tx, s.checkpoints, artistID, contributors)
+		return store.RequireCurrentContributors(ctx, artistID, contributors)
 	})
 }
 
-func (s *Service) applyArtistTargetRoomBatch(ctx context.Context, tx *gorm.DB, b artistRoomBatch) (BlockBatchResult, error) {
+func applyArtistTargetRoomBatch(ctx context.Context, store Store, b artistRoomBatch) (BlockBatchResult, error) {
 	batch, err := contentblock.BatchFromRichTextStorage(b.documentID, b.input.Profile, b.storage)
 	if err != nil {
-		return BlockBatchResult{}, normalizeCreativeContentBlockError(artistContentEntity, err)
+		return BlockBatchResult{}, normalizeCreativeContentBlockError(err)
 	}
-	result, targetRevision, err := applyArtistTargetLocaleMutation(ctx, tx, s.contentBlocks, artistTargetLocaleMutationInput{
+	result, targetRevision, err := applyArtistTargetLocaleMutation(ctx, store, artistTargetLocaleMutationInput{
 		ArtistID: b.artistID, DocumentID: b.documentID, Locale: b.locale, Batch: batch,
 		ExpectedTargetRevision: b.expectedTargetRevision, Now: time.Now().UTC(),
 		Fence: internalCreativeContentFence(b.artistID),
@@ -215,7 +233,7 @@ func (s *Service) applyArtistTargetRoomBatch(ctx context.Context, tx *gorm.DB, b
 	return BlockBatchResult{Locale: b.locale, SourceLocale: b.domain.SourceLocale, Content: result, TargetRevision: &targetRevision}, nil
 }
 
-func (s *Service) applyArtistSourceRoomBatch(ctx context.Context, tx *gorm.DB, b artistRoomBatch) (BlockBatchResult, error) {
+func applyArtistSourceRoomBatch(ctx context.Context, store Store, b artistRoomBatch) (BlockBatchResult, error) {
 	if b.expectedTargetRevision != nil {
 		return BlockBatchResult{}, domainerr.InvalidField("expected_target_revision", "source Artist room cannot carry a target revision")
 	}
@@ -224,19 +242,19 @@ func (s *Service) applyArtistSourceRoomBatch(ctx context.Context, tx *gorm.DB, b
 	}
 	batch, err := contentblock.BatchFromRichTextStorage(b.documentID, b.input.Profile, b.storage)
 	if err != nil {
-		return BlockBatchResult{}, normalizeCreativeContentBlockError(artistContentEntity, err)
+		return BlockBatchResult{}, normalizeCreativeContentBlockError(err)
 	}
-	result, err := s.contentBlocks.ApplyBatch(ctx, tx, batch, artistSourceRoomFence(b.artistID, b.domain.SourceLocale))
+	result, err := store.ApplyContentBatch(ctx, batch, artistSourceRoomFence(b.artistID, b.domain.SourceLocale))
 	if err != nil {
-		return BlockBatchResult{}, normalizeCreativeContentBlockError(artistContentEntity, err)
+		return BlockBatchResult{}, normalizeCreativeContentBlockError(err)
 	}
 	if result.Changed {
-		if err := tx.WithContext(ctx).Model(&model.Artist{}).Where("id = ?", b.artistID).UpdateColumn("updated_at", time.Now().UTC()).Error; err != nil {
+		if err := store.StampArtist(ctx, b.artistID, time.Now().UTC()); err != nil {
 			return BlockBatchResult{}, err
 		}
 	}
 	if result.TranslationSourceChanged {
-		if _, err := s.runtime.RequestCurrentWithDB(ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_ARTIST, b.artistID, "", false, "artist_source_document_saved"); err != nil {
+		if _, err := store.RequestOG(ctx, b.artistID, "", false, "artist_source_document_saved"); err != nil {
 			return BlockBatchResult{}, err
 		}
 	}
@@ -269,37 +287,36 @@ func (s *Service) UpdateArtistLocaleMetadata(ctx context.Context, command Update
 	if err != nil {
 		return TitleUpdate{}, err
 	}
-	sourceAuthority, err := loadCreativeDocumentAuthority(ctx, s.db, artistContentEntity, command.ArtistID)
+	sourceLocale, err := s.readCreativeDocumentAuthority(ctx, command.ArtistID)
 	if err != nil {
 		return TitleUpdate{}, err
 	}
-	title, err := s.prepareArtistTitle(ctx, command, locale, locale != sourceAuthority.SourceLocale)
+	title, err := s.prepareArtistTitle(ctx, command, locale, locale != sourceLocale)
 	if err != nil {
 		return TitleUpdate{}, err
 	}
-	return mutation.Run(ctx, s.mutations, mutation.Spec[TitleUpdate]{
-		Access: s.contributorAccess(command.ArtistID, command.ContributorMemberIDs),
-		Change: func(ctx context.Context, tx *gorm.DB) (TitleUpdate, error) {
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[TitleUpdate, Store]{
+		Access: contributorAccess(command.ArtistID, command.ContributorMemberIDs),
+		Change: func(ctx context.Context, store Store) (TitleUpdate, error) {
 			if title.target {
-				return s.saveArtistTargetTitle(ctx, tx, title)
+				return saveArtistTargetTitle(ctx, store, title)
 			}
-			return s.saveArtistSourceTitle(ctx, tx, title)
+			return saveArtistSourceTitle(ctx, store, title)
 		},
 		Audit: func(TitleUpdate) mutation.Audit { return mutation.Unchanged() },
-		Outbox: func(ctx context.Context, tx *gorm.DB, update TitleUpdate) error {
+		Outbox: func(ctx context.Context, store Store, update TitleUpdate) error {
 			if !update.Result.Changed {
 				return nil
 			}
-			return contentsignal.PublishInTransaction(ctx, tx, s.publisher, buildArtistLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-				EntityID:             command.ArtistID,
+			return store.PublishContentUpdate(ctx, ContentUpdate{ArtistID: command.ArtistID, Kind: LocaleUpdate, Locale: LocaleChange{
 				Fields:               []string{"title"},
 				DocumentRevision:     update.Result.DocumentRevision.String(),
 				Contributors:         command.ContributorMemberIDs,
-				Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+				Source:               SourceCollaboration,
 				Locale:               locale,
 				TargetRevision:       update.TargetRevision,
 				DocumentStateChanged: !title.target,
-			}))
+			}})
 		},
 	})
 }
@@ -339,15 +356,15 @@ func (s *Service) prepareArtistTitle(ctx context.Context, command UpdateArtistLo
 	if title.expectedRevision, err = uuid.Parse(command.ExpectedRevision); err != nil {
 		return artistRoomTitle{}, domainerr.InvalidField("expected_revision", "must be a UUID")
 	}
-	if title.documentID, err = loadCreativeContentDocumentID(ctx, s.db, command.ArtistID); err != nil {
+	if title.documentID, err = s.readCreativeContentDocumentID(ctx, command.ArtistID); err != nil {
 		return artistRoomTitle{}, err
 	}
 	return title, nil
 }
 
-func (s *Service) saveArtistTargetTitle(ctx context.Context, tx *gorm.DB, title artistRoomTitle) (TitleUpdate, error) {
+func saveArtistTargetTitle(ctx context.Context, store Store, title artistRoomTitle) (TitleUpdate, error) {
 	result, targetRevision, err := updateArtistTargetLocaleTitle(
-		ctx, tx, s.contentBlocks, title.artistID, title.documentID, title.locale,
+		ctx, store, title.artistID, title.documentID, title.locale,
 		title.expectedRevision, title.expectedTargetRevision, title.title, time.Now().UTC(),
 		internalCreativeContentFence(title.artistID),
 	)
@@ -359,17 +376,17 @@ func (s *Service) saveArtistTargetTitle(ctx context.Context, tx *gorm.DB, title 
 
 // saveArtistSourceTitle advances the document revision with the new source
 // title and refreshes the OG image when the translation source changed.
-func (s *Service) saveArtistSourceTitle(ctx context.Context, tx *gorm.DB, title artistRoomTitle) (TitleUpdate, error) {
+func saveArtistSourceTitle(ctx context.Context, store Store, title artistRoomTitle) (TitleUpdate, error) {
 	now := time.Now().UTC()
-	advanced, err := s.contentBlocks.AdvanceRevision(
-		ctx, tx, contentblock.AdvanceInput{DocumentID: title.documentID, ExpectedRevision: title.expectedRevision},
+	advanced, err := store.AdvanceContentRevision(
+		ctx, contentblock.AdvanceInput{DocumentID: title.documentID, ExpectedRevision: title.expectedRevision},
 		artistSourceRoomFence(title.artistID, title.locale),
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-			return saveArtistSourceTitleRow(ctx, tx, title, now)
+		func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
+			return saveArtistSourceTitleRow(ctx, store, title, now)
 		},
 	)
 	if err != nil {
-		return TitleUpdate{}, normalizeCreativeContentBlockError(artistContentEntity, err)
+		return TitleUpdate{}, normalizeCreativeContentBlockError(err)
 	}
 	update := TitleUpdate{
 		Locale: title.locale, SourceChanged: advanced.TranslationSourceChanged,
@@ -379,70 +396,50 @@ func (s *Service) saveArtistSourceTitle(ctx context.Context, tx *gorm.DB, title 
 		update.Result.ChangedLocales = []string{title.locale}
 	}
 	if advanced.TranslationSourceChanged {
-		if _, err := s.runtime.RequestCurrentWithDB(ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_ARTIST, title.artistID, "", false, artistContentEntity+"_source_title_saved"); err != nil {
+		if _, err := store.RequestOG(ctx, title.artistID, "", false, artistContentEntity+"_source_title_saved"); err != nil {
 			return TitleUpdate{}, err
 		}
 	}
 	return update, nil
 }
 
-func saveArtistSourceTitleRow(ctx context.Context, tx *gorm.DB, title artistRoomTitle, now time.Time) (contentblock.MetadataEffect, error) {
-	sourceAuthority, err := lockCreativeTranslationSourceContext(ctx, tx, artistContentEntity, title.artistID)
+func saveArtistSourceTitleRow(ctx context.Context, store Store, title artistRoomTitle, now time.Time) (contentblock.MetadataEffect, error) {
+	sourceAuthority, err := lockCreativeTranslationSourceContext(ctx, store, title.artistID)
 	if err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
 	if sourceAuthority.SourceLocale != title.locale {
 		return contentblock.MetadataEffect{}, domainerr.Precondition("only source locale metadata is editable")
 	}
-	current, err := loadCreativeLocaleMetadataState(ctx, tx, title.artistID, title.locale)
+	current, exists, err := store.LocaleTitleValue(ctx, title.artistID, title.locale)
 	if err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
-	if current != nil && current.Title != nil && *current.Title == *title.title {
+	if exists && current != nil && *current == *title.title {
 		return contentblock.MetadataEffect{}, nil
 	}
-	if err := saveArtistSourceLocaleDocumentState(ctx, tx, title.artistID, title.locale, translationLocaleDocumentSaveInput{
+	if err := saveCreativeSourceLocaleMetadata(ctx, store, title.artistID, title.locale, translationLocaleDocumentSaveInput{
 		SourceLocale: sourceAuthority.SourceLocale, Title: title.title, Now: now,
 	}); err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
-	if err := touchArtistRootUpdatedAt(ctx, tx, title.artistID, now); err != nil {
+	if err := touchArtist(ctx, store, title.artistID, now); err != nil {
 		return contentblock.MetadataEffect{}, err
 	}
 	return contentblock.MetadataEffect{Changed: true, AffectsTranslationSource: true}, nil
 }
 
-func loadArtistDocumentMetadata(
-	ctx context.Context,
-	db *gorm.DB,
-	artistID string,
-) (*intrav1.ArtistDocumentMetadata, error) {
-	var artist model.Artist
-	if err := db.WithContext(ctx).
-		Select("id", "real_name", "country_code", "website", "social_links", "slug", "parent_artist_id").
-		Where("id = ?", artistID).
-		Take(&artist).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, domainerr.ResourceNotFound("artist", artistID)
+func loadArtistDocumentMetadata(ctx context.Context, store Store, artistID string) (RoomMetadata, error) {
+	metadata, err := store.DocumentMetadata(ctx, artistID)
+	if err != nil {
+		if errors.Is(err, ErrArtistNotFound) {
+			return RoomMetadata{}, domainerr.ResourceNotFound("artist", artistID)
 		}
-		return nil, err
+		return RoomMetadata{}, err
 	}
-	var labelIDs []string
-	if err := db.WithContext(ctx).
-		Table("artist_label").
-		Select("label_id::text").
-		Where("artist_id = ?", artistID).
-		Order("label_id ASC").
-		Scan(&labelIDs).Error; err != nil {
-		return nil, err
+	labelIDs, err := store.LabelIDs(ctx, artistID)
+	if err != nil {
+		return RoomMetadata{}, err
 	}
-	return &intrav1.ArtistDocumentMetadata{
-		RealName:       artist.RealName,
-		CountryCode:    artist.CountryCode,
-		Website:        artist.Website,
-		SocialLinks:    artist.SocialLinks,
-		Slug:           artist.Slug,
-		LabelIds:       labelIDs,
-		ParentArtistId: artist.ParentArtistID,
-	}, nil
+	return RoomMetadata{DocumentMetadata: metadata, LabelIDs: labelIDs}, nil
 }

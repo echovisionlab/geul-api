@@ -24,6 +24,7 @@ import (
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
+	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	artistpublic "github.com/echovisionlab/geul-api/internal/artist/public"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -521,17 +522,20 @@ func createPublishedArtistLabelFixtureLabel(
 // recorder.
 func newFixtureArtistService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentblock.Store, publisher artistLabelAsyncPublisher) *artistdomain.Service {
 	t.Helper()
-	service, err := artistdomain.NewService(artistdomain.Deps{
-		DB: db, SpiceDB: spiceDB, Audit: &audittest.Recorder{}, Publisher: publisher,
-		ContentBlocks: store, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
+	units, err := artistpostgres.NewUnits(db, artistpostgres.Deps{
+		ContentBlocks: store, Publisher: publisher, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
 		Translation:   artistadapter.NewTranslation(),
-		Members:       artistadapter.NewMemberProjection(db, artistLabelPublicCDN),
 		Runtime:       artistadapter.NewRuntime(artistLabelPublicCDN, artistFixtureOGRefresher(db)),
 		Labels:        labeladapter.NewArtistLinks(),
 		Releases:      releaseadapter.NewArtistRelations(),
 		ProgramEvents: programeventadapter.NewArtistRelations(),
 		Works:         workadapter.NewArtistRelations(),
 		ShareLinks:    sharelinkadapter.NewCatalogLinks(),
+	})
+	require.NoError(t, err)
+	service, err := artistdomain.NewService(artistdomain.Deps{
+		Units: units, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: &audittest.Recorder{},
+		Members: artistadapter.NewMemberProjection(db, artistLabelPublicCDN),
 	})
 	require.NoError(t, err)
 	return service

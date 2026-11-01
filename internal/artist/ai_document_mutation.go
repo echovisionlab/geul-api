@@ -7,19 +7,14 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 var errRollbackArtistAIDocumentValidation = errors.New("rollback Artist AI document validation")
@@ -49,12 +44,12 @@ func (s *Service) ExecuteAIDocumentMutation(
 	if err != nil {
 		return AIDocumentMutationResult{}, err
 	}
-	var root artistAIDocumentRoot
+	var root DocumentRoot
 	var outcome artistAIDocumentOutcome
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[artistAIDocumentOutcome]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[artistAIDocumentOutcome, Store]{
+		Lock: func(ctx context.Context, store Store) error {
 			var err error
-			if root, err = loadArtistAIDocumentRoot(ctx, tx, canonicalArtistID.String(), clause.LockingStrengthUpdate); err != nil {
+			if root, err = loadArtistAIDocumentRoot(ctx, store, canonicalArtistID.String(), UpdateLock); err != nil {
 				return err
 			}
 			if _, valid := artistAIDocumentLifecycle(root.Status); !valid {
@@ -62,8 +57,8 @@ func (s *Service) ExecuteAIDocumentMutation(
 			}
 			return nil
 		},
-		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-			allowed, err := requireArtistAIDocumentMutationAuthority(ctx, tx, s.spiceDB, root.ID)
+		Access: mutation.Fenced(func(ctx context.Context, _ Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+			allowed, err := requireArtistAIDocumentMutationAuthority(ctx, lockActive, s.spiceDB, root.ID)
 			if err != nil {
 				return err
 			}
@@ -72,21 +67,20 @@ func (s *Service) ExecuteAIDocumentMutation(
 			}
 			return nil
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (artistAIDocumentOutcome, error) {
+		Change: func(ctx context.Context, store Store) (artistAIDocumentOutcome, error) {
 			var err error
-			outcome, err = s.applyAIDocumentMutation(ctx, tx, root, locale, compiler)
+			outcome, err = applyAIDocumentMutation(ctx, store, root, locale, compiler)
 			return outcome, err
 		},
 		Audit: func(outcome artistAIDocumentOutcome) mutation.Audit { return outcome.audit() },
-		Outbox: func(ctx context.Context, tx *gorm.DB, outcome artistAIDocumentOutcome) error {
+		Outbox: func(ctx context.Context, store Store, outcome artistAIDocumentOutcome) error {
 			if mode == AIDocumentExecutionValidate {
 				return errRollbackArtistAIDocumentValidation
 			}
 			if !outcome.result.Changed {
 				return nil
 			}
-			return contentsignal.PublishInTransaction(ctx, tx, s.publisher,
-				artistAIDocumentContentUpdatedEvent(outcome.input, outcome.result, outcome.input.ContributorMemberID.String()))
+			return store.PublishContentUpdate(ctx, artistAIDocumentContentUpdate(outcome.input, outcome.result, outcome.input.ContributorMemberID.String()))
 		},
 	})
 	if errors.Is(err, errRollbackArtistAIDocumentValidation) {
@@ -119,10 +113,10 @@ type artistAIDocumentOutcome struct {
 
 // applyAIDocumentMutation compiles the mutation against the locked state and
 // applies it as the principal's Member.
-func (s *Service) applyAIDocumentMutation(
+func applyAIDocumentMutation(
 	ctx context.Context,
-	tx *gorm.DB,
-	root artistAIDocumentRoot,
+	store Store,
+	root DocumentRoot,
 	locale string,
 	compiler AIDocumentMutationCompiler,
 ) (artistAIDocumentOutcome, error) {
@@ -134,7 +128,7 @@ func (s *Service) applyAIDocumentMutation(
 	if err != nil {
 		return artistAIDocumentOutcome{}, domainerr.ResourceNotFound("artist", root.ID).WithCause(err)
 	}
-	state, err := s.loadAIDocumentStateAfterAuthorization(ctx, tx, root, locale, memberID.String())
+	state, err := loadAIDocumentStateAfterAuthorization(ctx, store, root, locale, memberID.String())
 	if err != nil {
 		return artistAIDocumentOutcome{}, err
 	}
@@ -147,17 +141,17 @@ func (s *Service) applyAIDocumentMutation(
 	if err != nil {
 		return outcome, err
 	}
-	if err := s.translation.RequireDocumentContributors(ctx, tx, []string{memberID.String()}); err != nil {
+	if err := store.RequireDocumentContributors(ctx, []string{memberID.String()}); err != nil {
 		return outcome, err
 	}
 	fence := artistAuthorizedAIDocumentFence(root, input.Locale, input.ExpectedSource, input.ExpectedPresence)
-	result, targetRevision, err := s.applyAIDocumentMode(ctx, tx, input, expected, memberID, *root.DocumentID, fence)
+	result, targetRevision, err := applyAIDocumentMode(ctx, store, input, expected, memberID, *root.DocumentID, fence)
 	if err != nil {
 		return outcome, mapArtistAIDocumentMutationError(err)
 	}
 	outcome.result = AIDocumentMutationResult{Revision: result.DocumentRevision.String(), TargetRevision: targetRevision, Changed: result.Changed}
 	if result.Changed {
-		if _, err := s.runtime.RequestCurrentWithDB(ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_ARTIST, root.ID, input.Locale, result.TranslationSourceChanged, "artist_ai_document_saved"); err != nil {
+		if _, err := store.RequestOG(ctx, root.ID, input.Locale, result.TranslationSourceChanged, "artist_ai_document_saved"); err != nil {
 			return outcome, err
 		}
 	}
@@ -226,12 +220,12 @@ func validateCompiledArtistAIDocumentMutation(
 	return expected, nil
 }
 
-func (s *Service) applyAIDocumentMode(ctx context.Context, tx *gorm.DB, input AIDocumentMutation, expected, memberID, documentID uuid.UUID, fence contentblock.DomainFence) (contentblock.Result, *string, error) {
+func applyAIDocumentMode(ctx context.Context, store Store, input AIDocumentMutation, expected, memberID, documentID uuid.UUID, fence ContentFence) (contentblock.Result, *string, error) {
 	if input.Locale != input.ExpectedSource {
 		if input.Batch != nil {
 			batch := *input.Batch
 			batch.ExpectedRevision, batch.ContributorMemberIDs = expected, []uuid.UUID{memberID}
-			result, revision, err := applyArtistTargetLocaleMutation(ctx, tx, s.contentBlocks, artistTargetLocaleMutationInput{
+			result, revision, err := applyArtistTargetLocaleMutation(ctx, store, artistTargetLocaleMutationInput{
 				ArtistID: input.ArtistID, DocumentID: documentID, Locale: input.Locale, Batch: batch,
 				ExpectedTargetRevision: input.ExpectedTargetRevision, Now: time.Now().UTC(), Fence: fence,
 			})
@@ -242,7 +236,7 @@ func (s *Service) applyAIDocumentMode(ctx context.Context, tx *gorm.DB, input AI
 				DocumentID: documentID, ExpectedRevision: expected,
 				ContributorMemberIDs: []uuid.UUID{memberID},
 			}
-			result, revision, err := applyArtistTargetLocaleMutation(ctx, tx, s.contentBlocks, artistTargetLocaleMutationInput{
+			result, revision, err := applyArtistTargetLocaleMutation(ctx, store, artistTargetLocaleMutationInput{
 				ArtistID: input.ArtistID, DocumentID: documentID, Locale: input.Locale, Batch: batch,
 				ExpectedTargetRevision: input.ExpectedTargetRevision, Policy: targetlocale.Policy{AllowCreate: true},
 				Now: time.Now().UTC(), Fence: fence,
@@ -250,7 +244,7 @@ func (s *Service) applyAIDocumentMode(ctx context.Context, tx *gorm.DB, input AI
 			return result, &revision, err
 		}
 		result, err := deleteArtistTargetLocale(
-			ctx, tx, s.contentBlocks, input.ArtistID, documentID, input.Locale, expected,
+			ctx, store, input.ArtistID, documentID, input.Locale, expected,
 			input.ExpectedTargetRevision, []uuid.UUID{memberID}, fence,
 		)
 		return result, nil, err
@@ -264,12 +258,12 @@ func (s *Service) applyAIDocumentMode(ctx context.Context, tx *gorm.DB, input AI
 			return contentblock.Result{}, nil, domainerr.InvalidField("document", "Artist content document does not match")
 		}
 		batch.ExpectedRevision, batch.ContributorMemberIDs = expected, []uuid.UUID{memberID}
-		result, err := s.contentBlocks.ApplyBatch(ctx, tx, batch, fence)
+		result, err := store.ApplyContentBatch(ctx, batch, fence)
 		return result, nil, err
 	}
 	if input.CreateTranslation {
-		advanced, err := s.contentBlocks.AdvanceRevision(ctx, tx, contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: expected}, fence, func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-			created, err := createArtistAIDocumentTranslation(ctx, tx, input.ArtistID, input.Locale)
+		advanced, err := store.AdvanceContentRevision(ctx, contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: expected}, fence, func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
+			created, err := store.EnsureTargetLocale(ctx, input.ArtistID, input.Locale)
 			return contentblock.MetadataEffect{Changed: created, ChangedLocales: []string{input.Locale}}, err
 		})
 		return contentblock.Result{DocumentRevision: advanced.DocumentRevision, Changed: advanced.Changed, TranslationSourceChanged: advanced.TranslationSourceChanged}, nil, err
@@ -278,26 +272,26 @@ func (s *Service) applyAIDocumentMode(ctx context.Context, tx *gorm.DB, input AI
 }
 
 func artistAuthorizedAIDocumentFence(
-	root artistAIDocumentRoot,
+	root DocumentRoot,
 	locale string,
 	expectedSource string,
 	expectedPresence bool,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
+) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		if root.ID == "" || root.DocumentID == nil || documentID != *root.DocumentID {
 			return contentblock.DomainContext{}, domainerr.Precondition("Artist content document changed; reload before saving")
 		}
-		source, err := lockCreativeTranslationSourceContext(ctx, tx, artistContentEntity, root.ID)
+		source, err := lockCreativeTranslationSourceContext(ctx, store, root.ID)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		var count int64
-		if err := tx.WithContext(ctx).Table("artist_translation").Where("entity_id = ?::uuid AND locale = ?", root.ID, locale).Count(&count).Error; err != nil {
+		exists, err := store.LocaleExists(ctx, root.ID, locale)
+		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		if source.SourceLocale != expectedSource || (count != 0) != expectedPresence {
-			current, err := contentblock.CurrentRevision(ctx, tx, documentID)
-			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		if source.SourceLocale != expectedSource || exists != expectedPresence {
+			current, err := store.CurrentContentRevision(ctx, documentID)
+			if err != nil && !errors.Is(err, ErrDocumentRowNotFound) {
 				return contentblock.DomainContext{}, err
 			}
 			return contentblock.DomainContext{}, &AIDocumentRevisionConflictError{CurrentRevision: current.String()}
@@ -306,9 +300,9 @@ func artistAuthorizedAIDocumentFence(
 	}
 }
 
-func requireArtistAIDocumentMutationAuthority(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient, artistID string) (bool, error) {
+func requireArtistAIDocumentMutationAuthority(ctx context.Context, lockActive func(*auth.UserInfo) (bool, error), checker Authorizer, artistID string) (bool, error) {
 	principal := auth.GetUser(ctx)
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
+	active, err := lockActive(principal)
 	if err != nil {
 		return false, err
 	}
@@ -323,35 +317,26 @@ func requireArtistAIDocumentMutationAuthority(ctx context.Context, tx *gorm.DB, 
 	if err != nil {
 		return false, errAuthenticationRequired.WithCause(err)
 	}
-	allowed, err := spiceDB.Can(ctx, decision)
+	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
 		return false, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	return allowed, nil
 }
 
-func artistAIDocumentContentUpdatedEvent(input AIDocumentMutation, result AIDocumentMutationResult, contributor string) *managev1.ContentUpdatedEvent {
-	if !result.Changed {
-		return nil
-	}
+func artistAIDocumentContentUpdate(input AIDocumentMutation, result AIDocumentMutationResult, contributor string) ContentUpdate {
 	exists := input.Locale == input.ExpectedSource || !input.DeleteTranslation
 	documentChanged := input.Locale == input.ExpectedSource
-	return buildArtistLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-		EntityID:             input.ArtistID,
+	return ContentUpdate{ArtistID: input.ArtistID, Kind: LocaleUpdate, Locale: LocaleChange{
 		Fields:               []string{"content"},
 		DocumentRevision:     result.Revision,
 		Contributors:         []string{contributor},
-		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_AI,
+		Source:               SourceAI,
 		Locale:               input.Locale,
 		LocaleDeleted:        !exists,
 		TargetRevision:       result.TargetRevision,
 		DocumentStateChanged: documentChanged,
-	})
-}
-
-func createArtistAIDocumentTranslation(ctx context.Context, tx *gorm.DB, artistID, locale string) (bool, error) {
-	result := tx.WithContext(ctx).Exec("INSERT INTO artist_translation (entity_id, locale, title, created_at, updated_at) VALUES (?::uuid, ?, NULL, now(), now()) ON CONFLICT (entity_id, locale) DO NOTHING", artistID, locale)
-	return result.RowsAffected != 0, result.Error
+	}}
 }
 
 func artistTargetConflictRevision(conflict *translation.TargetRevisionConflict) *string {

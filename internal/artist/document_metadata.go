@@ -10,11 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 // artistDocumentMetadataPlan is a parsed Artist document-metadata update:
@@ -26,34 +22,47 @@ type artistDocumentMetadataPlan struct {
 	setLabelIDs bool
 }
 
-func buildArtistDocumentMetadataPlan(
-	input *intrav1.ArtistDocumentMetadataUpdate,
-) (artistDocumentMetadataPlan, error) {
+// DocumentMetadataUpdate is a collaboration room's Artist metadata update.
+// A nil mutation leaves its field alone; SocialLinksPresent replaces the
+// social links and LabelIDsPresent the Labels.
+type DocumentMetadataUpdate struct {
+	RealName           *entityparticipant.StringMutation
+	CountryCode        *entityparticipant.StringMutation
+	Website            *entityparticipant.StringMutation
+	Slug               *entityparticipant.StringMutation
+	ParentArtistID     *entityparticipant.StringMutation
+	SocialLinksPresent bool
+	SocialLinks        map[string]string
+	LabelIDsPresent    bool
+	LabelIDs           []string
+}
+
+func buildArtistDocumentMetadataPlan(input *DocumentMetadataUpdate) (artistDocumentMetadataPlan, error) {
 	if input == nil {
 		return artistDocumentMetadataPlan{}, domainerr.Required("update")
 	}
 	var plan artistDocumentMetadataPlan
 	var err error
-	if plan.realName, err = entityparticipant.LegacyParseNullableStringUpdate("real_name", input.RealName); err != nil {
+	if plan.realName, err = entityparticipant.ParseNullableStringUpdate("real_name", input.RealName); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
-	if plan.columns.CountryCode, err = entityparticipant.LegacyParseNullableStringUpdate("country_code", input.CountryCode); err != nil {
+	if plan.columns.CountryCode, err = entityparticipant.ParseNullableStringUpdate("country_code", input.CountryCode); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
-	if plan.columns.Website, err = entityparticipant.LegacyParseNullableStringUpdate("website", input.Website); err != nil {
+	if plan.columns.Website, err = entityparticipant.ParseNullableStringUpdate("website", input.Website); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
-	if plan.columns.Slug, err = entityparticipant.LegacyParseNullableStringUpdate("slug", input.Slug); err != nil {
+	if plan.columns.Slug, err = entityparticipant.ParseNullableStringUpdate("slug", input.Slug); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
-	if plan.columns.Parent, err = entityparticipant.LegacyParseNullableStringUpdate("parent_artist_id", input.ParentArtistId); err != nil {
+	if plan.columns.Parent, err = entityparticipant.ParseNullableStringUpdate("parent_artist_id", input.ParentArtistID); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
-	if err := artistEntity.Complete(&plan.columns, input.SocialLinks != nil, input.SocialLinks.GetValues()); err != nil {
+	if err := artistEntity.Complete(&plan.columns, input.SocialLinksPresent, input.SocialLinks); err != nil {
 		return artistDocumentMetadataPlan{}, err
 	}
-	if input.LabelIds != nil {
-		plan.labelIDs, err = normalizeArtistLabelIDs(input.LabelIds.Values)
+	if input.LabelIDsPresent {
+		plan.labelIDs, err = normalizeArtistLabelIDs(input.LabelIDs)
 		if err != nil {
 			return artistDocumentMetadataPlan{}, err
 		}
@@ -84,56 +93,17 @@ func normalizeArtistLabelIDs(values []string) ([]string, error) {
 	return result, nil
 }
 
-func loadArtistLabelIDsForUpdate(
-	ctx context.Context,
-	tx *gorm.DB,
-	artistID string,
-) ([]string, error) {
-	var labelIDs []string
-	if err := tx.WithContext(ctx).
-		Table("artist_label").
-		Select("label_id::text").
-		Where("artist_id = ?", artistID).
-		Order("label_id ASC").
-		Scan(&labelIDs).Error; err != nil {
-		return nil, err
-	}
-	return labelIDs, nil
-}
-
 // validateArtistLabelIDsExist requires every Label of labelIDs to exist.
-func (s *Service) validateArtistLabelIDsExist(ctx context.Context, tx *gorm.DB, labelIDs []string) error {
+func validateArtistLabelIDsExist(ctx context.Context, store Store, labelIDs []string) error {
 	if len(labelIDs) == 0 {
 		return nil
 	}
-	existing, err := s.labels.LabelTitles(ctx, tx, labelIDs)
+	existing, err := store.LabelTitles(ctx, labelIDs)
 	if err != nil {
 		return err
 	}
 	if len(existing) != len(labelIDs) {
 		return domainerr.InvalidField("label_ids", "contains a Label that does not exist")
-	}
-	return nil
-}
-
-func replaceArtistLabelIDs(
-	ctx context.Context,
-	tx *gorm.DB,
-	artistID string,
-	labelIDs []string,
-) error {
-	if err := tx.WithContext(ctx).
-		Where("artist_id = ?", artistID).
-		Delete(&model.ArtistLabel{}).Error; err != nil {
-		return err
-	}
-	for index, labelID := range labelIDs {
-		if err := tx.WithContext(ctx).Exec(`
-			INSERT INTO artist_label (artist_id, label_id, sort_order)
-			VALUES (?::uuid, ?::uuid, ?)
-		`, artistID, labelID, index).Error; err != nil {
-			return err
-		}
 	}
 	return nil
 }
@@ -144,7 +114,7 @@ type UpdateArtistDocumentMetadataCommand struct {
 	ArtistID             string
 	Locale               string
 	ExpectedRevision     string
-	Update               *intrav1.ArtistDocumentMetadataUpdate
+	Update               *DocumentMetadataUpdate
 	ContributorMemberIDs []string
 }
 
@@ -158,8 +128,12 @@ type MetadataUpdate struct {
 // social links, slug, parent Artist and Labels, moving the SpiceDB parent
 // with it. Only the source-locale room may save metadata.
 func (s *Service) UpdateArtistDocumentMetadata(ctx context.Context, command UpdateArtistDocumentMetadataCommand) (MetadataUpdate, error) {
-	locale, err := requireArtistSourceRoomLocale(ctx, s.db, command.ArtistID, command.Locale)
-	if err != nil {
+	var locale string
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		locale, err = requireArtistSourceRoomLocale(ctx, store, command.ArtistID, command.Locale)
+		return err
+	}); err != nil {
 		return MetadataUpdate{}, err
 	}
 	plan, err := buildArtistDocumentMetadataPlan(command.Update)
@@ -170,77 +144,90 @@ func (s *Service) UpdateArtistDocumentMetadata(ctx context.Context, command Upda
 	if err != nil {
 		return MetadataUpdate{}, domainerr.InvalidField("expected_revision", "must be a UUID")
 	}
-	documentID, err := loadCreativeContentDocumentID(ctx, s.db, command.ArtistID)
+	documentID, err := s.readCreativeContentDocumentID(ctx, command.ArtistID)
 	if err != nil {
 		return MetadataUpdate{}, err
 	}
-	parent, err := artistEntity.LegacyPlanParentUpdate(ctx, s.db, command.ArtistID, plan.columns.Parent)
-	if err != nil {
+	var parent entityparticipant.ParentUpdate
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		parent, err = artistEntity.PlanParentUpdate(ctx, store, command.ArtistID, plan.columns.Parent)
+		return err
+	}); err != nil {
 		return MetadataUpdate{}, err
 	}
-	advanced, err := s.participants.LegacySaveMetadata(ctx, entityparticipant.LegacyMetadataSave{
-		EntityID: command.ArtistID, Documents: s.contentBlocks, DocumentID: documentID, ExpectedRevision: expectedRevision,
-		Parent: parent, Access: s.contributorAccess(command.ArtistID, command.ContributorMemberIDs),
-		Fence: artistSourceRoomFence(command.ArtistID, locale),
-		Apply: func(ctx context.Context, tx *gorm.DB, writesParent bool) (entityparticipant.LegacyMetadataApplied, error) {
-			return s.applyArtistDocumentMetadata(ctx, tx, command.ArtistID, plan, parent, writesParent)
+	fence := artistSourceRoomFence(command.ArtistID, locale)
+	advanced, err := s.participants.SaveMetadata(ctx, entityparticipant.MetadataSave[Store]{
+		EntityID: command.ArtistID, Parent: parent, Access: contributorAccess(command.ArtistID, command.ContributorMemberIDs),
+		Save: func(ctx context.Context, store Store, writesParent bool) (contentblock.AdvanceResult, *string, error) {
+			var currentParent *string
+			advanced, err := store.AdvanceContentRevision(
+				ctx, contentblock.AdvanceInput{DocumentID: documentID, ExpectedRevision: expectedRevision}, fence,
+				func(ctx context.Context, store Store) (contentblock.MetadataEffect, error) {
+					changed, parentID, err := applyArtistDocumentMetadata(ctx, store, command.ArtistID, plan, parent, writesParent)
+					currentParent = parentID
+					return contentblock.MetadataEffect{Changed: changed}, err
+				},
+			)
+			if err != nil {
+				return contentblock.AdvanceResult{}, currentParent, normalizeCreativeContentBlockError(err)
+			}
+			return advanced, currentParent, nil
 		},
-		NormalizeError: func(err error) error { return normalizeCreativeContentBlockError(artistContentEntity, err) },
 	})
 	return MetadataUpdate{Locale: locale, Advance: advanced}, err
 }
 
 // applyArtistDocumentMetadata writes the changed metadata columns of the
-// Artist row and replaces its Labels under the content fence.
-func (s *Service) applyArtistDocumentMetadata(ctx context.Context, tx *gorm.DB, artistID string, plan artistDocumentMetadataPlan, parent entityparticipant.ParentUpdate, writesParent bool) (entityparticipant.LegacyMetadataApplied, error) {
-	var current model.Artist
-	if err := tx.WithContext(ctx).
-		Select("id", "real_name", "country_code", "website", "social_links", "slug", "parent_artist_id").
-		Where("id = ?", artistID).
-		Take(&current).Error; err != nil {
-		return entityparticipant.LegacyMetadataApplied{}, err
+// Artist row and replaces its Labels under the content fence. It reports
+// whether anything changed and the parent it read under the lock.
+func applyArtistDocumentMetadata(ctx context.Context, store Store, artistID string, plan artistDocumentMetadataPlan, parent entityparticipant.ParentUpdate, writesParent bool) (bool, *string, error) {
+	current, err := store.DocumentMetadata(ctx, artistID)
+	if err != nil {
+		return false, nil, err
 	}
-	applied := entityparticipant.LegacyMetadataApplied{CurrentParent: current.ParentArtistID}
-	fields := structured.Fields{}
-	realNameChanged := plan.realName.LegacyAssign(fields, "real_name", current.RealName)
-	changed, err := artistEntity.LegacyAssignColumns(ctx, tx, artistID, plan.columns, parent, writesParent, entityparticipant.MetadataRow{
+	var change MetadataChange
+	realNameChanged := plan.realName.Assign(&change.RealName, current.RealName)
+	changed, err := artistEntity.AssignColumns(ctx, store, artistID, plan.columns, parent, writesParent, entityparticipant.MetadataRow{
 		Slug: current.Slug, CountryCode: current.CountryCode, Website: current.Website,
 		Parent: current.ParentArtistID, SocialLinks: current.SocialLinks,
-	}, fields, func(ctx context.Context, tx *gorm.DB, slug string) error {
-		if err := ensureSlugAvailable(ctx, tx, &model.Artist{}, "artist", slug, artistID); err != nil {
+	}, &change.MetadataChange, func(ctx context.Context, slug string) error {
+		taken, err := store.SlugTaken(ctx, slug, artistID)
+		if err != nil {
 			return err
 		}
-		return requireArtistRouteAvailableWithDB(ctx, s.runtime, tx, &slug)
+		if taken {
+			return domainerr.Duplicate("artist", "slug", slug)
+		}
+		return store.LockResourceRoute(ctx, slug)
 	})
 	if err != nil {
-		return applied, err
+		return false, current.ParentArtistID, err
 	}
-	labelsChanged, err := s.replaceChangedArtistLabels(ctx, tx, artistID, plan)
+	labelsChanged, err := replaceChangedArtistLabels(ctx, store, artistID, plan)
 	if err != nil || (!changed && !realNameChanged && !labelsChanged) {
-		return applied, err
+		return false, current.ParentArtistID, err
 	}
-	if len(fields) > 0 {
-		fields["updated_at"] = time.Now().UTC()
-		if err := tx.WithContext(ctx).Model(&model.Artist{}).Where("id = ?", artistID).Updates(fields).Error; err != nil {
-			return applied, err
+	if !change.Empty() {
+		if err := store.UpdateDocumentMetadata(ctx, artistID, change, time.Now().UTC()); err != nil {
+			return false, current.ParentArtistID, err
 		}
 	}
-	applied.Changed = true
-	return applied, nil
+	return true, current.ParentArtistID, nil
 }
 
 // replaceChangedArtistLabels replaces the Artist's Labels when the plan
 // sets different ones.
-func (s *Service) replaceChangedArtistLabels(ctx context.Context, tx *gorm.DB, artistID string, plan artistDocumentMetadataPlan) (bool, error) {
-	currentLabelIDs, err := loadArtistLabelIDsForUpdate(ctx, tx, artistID)
+func replaceChangedArtistLabels(ctx context.Context, store Store, artistID string, plan artistDocumentMetadataPlan) (bool, error) {
+	currentLabelIDs, err := store.LabelIDs(ctx, artistID)
 	if err != nil {
 		return false, err
 	}
 	if !plan.setLabelIDs || slices.Equal(currentLabelIDs, plan.labelIDs) {
 		return false, nil
 	}
-	if err := s.validateArtistLabelIDsExist(ctx, tx, plan.labelIDs); err != nil {
+	if err := validateArtistLabelIDsExist(ctx, store, plan.labelIDs); err != nil {
 		return false, err
 	}
-	return true, replaceArtistLabelIDs(ctx, tx, artistID, plan.labelIDs)
+	return true, store.ReplaceLabelIDs(ctx, artistID, plan.labelIDs)
 }

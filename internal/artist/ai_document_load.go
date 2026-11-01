@@ -6,12 +6,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/mutation"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // LoadAIDocumentState preserves published visibility while keeping non-public
@@ -31,8 +27,8 @@ func (s *Service) LoadAIDocumentState(ctx context.Context, artistID, locale stri
 	}
 
 	var state AIDocumentState
-	err = mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
-		root, err := loadArtistAIDocumentRoot(ctx, tx, id.String(), "KEY SHARE")
+	err = s.units.ReadLocked(ctx, func(store Store) error {
+		root, err := loadArtistAIDocumentRoot(ctx, store, id.String(), KeyShareLock)
 		if err != nil {
 			return err
 		}
@@ -45,50 +41,35 @@ func (s *Service) LoadAIDocumentState(ctx context.Context, artistID, locale stri
 				return err
 			}
 		}
-		state, err = s.loadAIDocumentStateAfterAuthorization(
-			ctx, tx, root, locale, principal.MemberID.String(),
+		state, err = loadAIDocumentStateAfterAuthorization(
+			ctx, store, root, locale, principal.MemberID.String(),
 		)
 		return err
 	})
 	return state, err
 }
 
-type artistAIDocumentRoot struct {
-	ID         string             `gorm:"column:id"`
-	Status     model.ArtistStatus `gorm:"column:status"`
-	DocumentID *uuid.UUID         `gorm:"column:content_document_id"`
-}
-
-func loadArtistAIDocumentRoot(
-	ctx context.Context,
-	tx *gorm.DB,
-	artistID string,
-	lock string,
-) (artistAIDocumentRoot, error) {
-	query := tx.WithContext(ctx).
-		Table("artist").
-		Select("id::text AS id", "status", "content_document_id").
-		Where("id = ?::uuid", artistID)
-	if lock != "" {
-		query = query.Clauses(clause.Locking{Strength: lock})
-	}
-	var root artistAIDocumentRoot
-	if err := query.Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return artistAIDocumentRoot{}, domainerr.ResourceNotFound("artist", artistID)
+// loadArtistAIDocumentRoot reads the Artist root with lock; a missing
+// Artist answers not found and one without a document fails its
+// precondition.
+func loadArtistAIDocumentRoot(ctx context.Context, store Store, artistID string, lock RowLock) (DocumentRoot, error) {
+	root, err := store.DocumentRoot(ctx, artistID, lock)
+	if err != nil {
+		if errors.Is(err, ErrArtistNotFound) {
+			return DocumentRoot{}, domainerr.ResourceNotFound("artist", artistID)
 		}
-		return artistAIDocumentRoot{}, err
+		return DocumentRoot{}, err
 	}
 	if root.DocumentID == nil || *root.DocumentID == uuid.Nil {
-		return artistAIDocumentRoot{}, domainerr.Precondition("Artist content document is not initialized")
+		return DocumentRoot{}, domainerr.Precondition("Artist content document is not initialized")
 	}
 	return root, nil
 }
 
-func (s *Service) loadAIDocumentStateAfterAuthorization(
+func loadAIDocumentStateAfterAuthorization(
 	ctx context.Context,
-	tx *gorm.DB,
-	root artistAIDocumentRoot,
+	store Store,
+	root DocumentRoot,
 	locale string,
 	viewerMemberID string,
 ) (AIDocumentState, error) {
@@ -96,9 +77,7 @@ func (s *Service) loadAIDocumentStateAfterAuthorization(
 	if err != nil {
 		return AIDocumentState{}, err
 	}
-	localeState, err := loadArtistTargetLocaleState(
-		ctx, tx, s.contentBlocks, root.ID, *root.DocumentID, locale, false,
-	)
+	localeState, err := loadArtistTargetLocaleState(ctx, store, root.ID, *root.DocumentID, locale, false)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
@@ -119,11 +98,11 @@ func (s *Service) loadAIDocumentStateAfterAuthorization(
 	}, nil
 }
 
-func artistAIDocumentLifecycle(status model.ArtistStatus) (published, valid bool) {
+func artistAIDocumentLifecycle(status Status) (published, valid bool) {
 	switch status {
-	case model.ArtistStatusDraft:
+	case StatusDraft:
 		return false, true
-	case model.ArtistStatusPublished:
+	case StatusPublished:
 		return true, true
 	default:
 		return false, false

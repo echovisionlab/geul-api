@@ -1,11 +1,12 @@
 //go:build integration
 
-package artist
+package artist_test
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	artist "github.com/echovisionlab/geul-api/internal/artist"
 	"sort"
 	"testing"
 	"time"
@@ -37,7 +38,7 @@ const (
 )
 
 type documentMetadataCharacterizationService struct {
-	service *InternalConnectHandler
+	service *artist.InternalConnectHandler
 }
 
 func newDocumentMetadataCharacterizationService(
@@ -48,16 +49,14 @@ func newDocumentMetadataCharacterizationService(
 	publisher *participantCharacterizationPublisher,
 ) documentMetadataCharacterizationService {
 	t.Helper()
-	return documentMetadataCharacterizationService{service: NewInternalConnectHandler(newTestService(t, Deps{
+	return documentMetadataCharacterizationService{service: artist.NewInternalConnectHandler(newTestService(t, integrationDeps{
 		DB: db, SpiceDB: spiceDB, Audit: apitelemetry.NewDurableWriter(db), Publisher: publisher, ContentBlocks: store,
 	}))}
 }
 
 func saveDocumentMetadataCharacterizationTitle(t *testing.T, db *gorm.DB, entityID, title string, now time.Time) {
 	t.Helper()
-	require.NoError(t, saveArtistSourceLocaleDocumentState(t.Context(), db, entityID, "en", translationLocaleDocumentSaveInput{
-		SourceLocale: "en", Title: &title, Now: now,
-	}))
+	seedArtistSourceTitle(t, db, entityID, "en", title, now)
 }
 
 func documentMetadataCharacterizationParentMutation(t *testing.T, entityID, parentID string) policyv1.RelationshipMutation {
@@ -625,7 +624,7 @@ func TestArtistDocumentMetadataCharacterizationIntegration(t *testing.T) {
 		t.Helper()
 		labelID := uuid.NewString()
 		require.NoError(t, env.db.Transaction(func(tx *gorm.DB) error {
-			document, err := env.store.CreateDocument(t.Context(), tx, contentblock.CreateInput{Profile: creativeContentProfile, SourceLocale: "en"})
+			document, err := env.store.CreateDocument(t.Context(), tx, contentblock.CreateInput{Profile: "compact", SourceLocale: "en"})
 			if err != nil {
 				return err
 			}

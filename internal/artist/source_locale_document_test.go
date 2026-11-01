@@ -1,6 +1,6 @@
 //go:build integration
 
-package artist
+package artist_test
 
 import (
 	"testing"
@@ -18,9 +18,7 @@ func TestArtistSourceLocaleMetadataUsesRootAuthorityIntegration(t *testing.T) {
 	artistID := seedInternalArtist(t, db, store)
 	now := time.Unix(1_700_000_000, 0).UTC()
 	title := "Root authority"
-	require.NoError(t, saveArtistSourceLocaleDocumentState(t.Context(), db, artistID, "en", translationLocaleDocumentSaveInput{
-		SourceLocale: "en", Title: &title, Now: now,
-	}))
+	seedArtistSourceTitle(t, db, artistID, "en", title, now)
 	var persisted string
 	require.NoError(t, db.Raw(
 		`SELECT source_locale FROM artist WHERE id = ?::uuid`, artistID,

@@ -1,7 +1,6 @@
 package public
 
 import (
-	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -9,7 +8,7 @@ import (
 
 var ArtistFilterConfig = &queryutil.FilterConfig{
 	Fields: map[string]queryutil.FieldDef{
-		"search":       {Type: queryutil.TypeText, AllowedOps: queryutil.SearchOps, SearchColumns: []string{artistdomain.ArtistSourceTitleSQL("artist"), "real_name"}},
+		"search":       {Type: queryutil.TypeText, AllowedOps: queryutil.SearchOps, SearchColumns: []string{artistSourceTitleSQL(), "real_name"}},
 		"status":       {Column: "status", Type: queryutil.TypeEnum, AllowedOps: queryutil.EnumOps, EnumValues: []string{string(model.ArtistStatusDraft), string(model.ArtistStatusPublished)}},
 		"country_code": {Column: "country_code", Type: queryutil.TypeText, AllowedOps: []commonv1.FilterOp{commonv1.FilterOp_FILTER_OP_EQ, commonv1.FilterOp_FILTER_OP_IN}},
 		"published_at": {Column: "published_at", Type: queryutil.TypeDate, AllowedOps: queryutil.DateOps},
@@ -17,4 +16,4 @@ var ArtistFilterConfig = &queryutil.FilterConfig{
 	DefaultFilters: []*commonv1.FilterSpec{{Field: "status", Op: commonv1.FilterOp_FILTER_OP_NEQ, Value: string(model.ArtistStatusDraft)}},
 }
 
-var ArtistSortConfig = &queryutil.SortConfig{AllowedFields: map[string]string{"name": artistdomain.ArtistSourceTitleSQL("artist"), "published_at": "published_at"}, DefaultSort: artistdomain.ArtistSourceTitleSQL("artist") + " ASC"}
+var ArtistSortConfig = &queryutil.SortConfig{AllowedFields: map[string]string{"name": artistSourceTitleSQL(), "published_at": "published_at"}, DefaultSort: artistSourceTitleSQL() + " ASC"}

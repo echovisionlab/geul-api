@@ -8,10 +8,7 @@
 6 internal/ai gorm
 7 internal/ai spicedb client
 1 internal/ai sql driver
-21 internal/artist generated contracts
-17 internal/artist gorm
-14 internal/artist model
-5 internal/artist spicedb client
+12 internal/artist generated contracts
 7 internal/artist/public generated contracts
 3 internal/artist/public gorm
 4 internal/artist/public model
@@ -33,9 +30,7 @@
 2 internal/emaildelivery kratos tables
 7 internal/emaildelivery model
 2 internal/emaildelivery spicedb client
-2 internal/entityparticipant generated contracts
-1 internal/entityparticipant gorm
-5 internal/entityparticipant spicedb client
+1 internal/entityparticipant generated contracts
 17 internal/form generated contracts
 23 internal/form gorm
 16 internal/form model

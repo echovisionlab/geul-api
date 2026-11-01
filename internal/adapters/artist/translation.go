@@ -3,6 +3,7 @@ package artist
 import (
 	entityparticipantadapter "github.com/echovisionlab/geul-api/internal/adapters/entityparticipant"
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
+	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	"gorm.io/gorm"
 )
 
@@ -18,6 +19,6 @@ func NewMemberProjection(db *gorm.DB, cdnDomain string) *entityparticipantadapte
 }
 
 var (
-	_ artistdomain.Translation      = (*entityparticipantadapter.Translation)(nil)
+	_ artistpostgres.Translation    = (*entityparticipantadapter.Translation)(nil)
 	_ artistdomain.MemberProjection = (*entityparticipantadapter.MemberProjection)(nil)
 )

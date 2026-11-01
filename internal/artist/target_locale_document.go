@@ -9,30 +9,21 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // artistEntityName names the owner in shared content document messages.
 const artistEntityName = "Artist"
 
-type artistLocaleMetadataRow struct {
-	Locale    string    `gorm:"column:locale"`
-	Title     *string   `gorm:"column:title"`
-	UpdatedAt time.Time `gorm:"column:updated_at"`
-}
-
 type artistTargetLocaleState struct {
 	Snapshot       contentblock.Snapshot
 	SourceLocale   string
-	SourceMetadata artistLocaleMetadataRow
-	TargetMetadata *artistLocaleMetadataRow
+	SourceMetadata LocaleTitle
+	TargetMetadata *LocaleTitle
 	TargetRevision string
 }
 
@@ -53,7 +44,7 @@ func normalizeArtistDocumentLocale(locale string) (string, error) {
 
 func requireArtistSourceRoomLocale(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	artistID string,
 	locale string,
 ) (string, error) {
@@ -61,11 +52,11 @@ func requireArtistSourceRoomLocale(
 	if err != nil {
 		return "", err
 	}
-	source, err := loadCreativeDocumentAuthority(ctx, db, artistContentEntity, artistID)
+	sourceLocale, err := loadCreativeDocumentAuthority(ctx, store, artistID, Unlocked)
 	if err != nil {
 		return "", err
 	}
-	if normalized != source.SourceLocale {
+	if normalized != sourceLocale {
 		return "", domainerr.CollaborationRejection(
 			intrav1.CollaborationMutationRejectionReason_COLLABORATION_MUTATION_REJECTION_REASON_NON_SOURCE_DOCUMENT_METADATA_FORBIDDEN,
 			"Artist document metadata and audit checkpoints are source-locale only",
@@ -74,15 +65,15 @@ func requireArtistSourceRoomLocale(
 	return normalized, nil
 }
 
-func artistSourceRoomFence(artistID string, locale string) contentblock.DomainFence {
+func artistSourceRoomFence(artistID string, locale string) ContentFence {
 	base := internalCreativeContentFence(artistID)
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		domain, err := base(ctx, tx, documentID)
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		domain, err := base(ctx, store, documentID)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if domain.SourceLocale != locale {
-			return contentblock.DomainContext{}, contentblock.LocaleOwnershipConflict(ctx, tx, documentID,
+			return contentblock.DomainContext{}, store.LocaleOwnershipConflict(ctx, documentID,
 				"Artist source locale changed since the room was loaded; reload before saving",
 			)
 		}
@@ -90,30 +81,7 @@ func artistSourceRoomFence(artistID string, locale string) contentblock.DomainFe
 	}
 }
 
-func loadOptionalArtistLocaleMetadataRow(
-	ctx context.Context,
-	tx *gorm.DB,
-	artistID string,
-	locale string,
-	forUpdate bool,
-) (artistLocaleMetadataRow, bool, error) {
-	query := tx.WithContext(ctx).Table("artist_translation").
-		Select("locale", "title", "updated_at").
-		Where("entity_id = ?::uuid AND locale = ?", artistID, locale)
-	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
-	}
-	var row artistLocaleMetadataRow
-	if err := query.Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return artistLocaleMetadataRow{}, false, nil
-		}
-		return artistLocaleMetadataRow{}, false, err
-	}
-	return row, true, nil
-}
-
-func deriveArtistTargetRevision(documentRevision string, metadata artistLocaleMetadataRow) (string, error) {
+func deriveArtistTargetRevision(documentRevision string, metadata LocaleTitle) (string, error) {
 	updatedAt := metadata.UpdatedAt
 	revision, err := translation.DeriveTargetRevision(translation.TargetRevisionFacts{
 		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &updatedAt,
@@ -126,8 +94,7 @@ func deriveArtistTargetRevision(documentRevision string, metadata artistLocaleMe
 
 func loadArtistTargetLocaleState(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	artistID string,
 	documentID uuid.UUID,
 	locale string,
@@ -137,35 +104,29 @@ func loadArtistTargetLocaleState(
 	if err != nil {
 		return artistTargetLocaleState{}, err
 	}
-	lock := clause.LockingStrengthShare
+	lock := ShareLock
 	if forUpdate {
-		lock = clause.LockingStrengthUpdate
+		lock = UpdateLock
 	}
-	lockedDocumentID, err := loadCreativeContentDocumentIDWithStrength(
-		ctx, tx, artistContentEntity, artistID, lock,
-	)
+	lockedDocumentID, err := loadCreativeContentDocumentIDWithStrength(ctx, store, artistID, lock)
 	if err != nil {
 		return artistTargetLocaleState{}, err
 	}
 	if lockedDocumentID != documentID {
 		return artistTargetLocaleState{}, domainerr.Precondition("Artist content document changed; reload before saving")
 	}
-	source, err := loadCreativeDocumentAuthorityWithStrength(
-		ctx, tx, artistContentEntity, artistID, lock,
-	)
+	sourceLocale, err := loadCreativeDocumentAuthority(ctx, store, artistID, lock)
 	if err != nil {
 		return artistTargetLocaleState{}, err
 	}
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, source.SourceLocale)
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, sourceLocale)
 	if err != nil {
-		return artistTargetLocaleState{}, normalizeCreativeContentBlockError(artistContentEntity, err)
+		return artistTargetLocaleState{}, normalizeCreativeContentBlockError(err)
 	}
-	if snapshot.SourceLocale != source.SourceLocale || snapshot.Document.Profile != creativeContentProfile {
+	if snapshot.SourceLocale != sourceLocale || snapshot.Document.Profile != creativeContentProfile {
 		return artistTargetLocaleState{}, domainerr.Precondition("Artist content document source or profile is inconsistent")
 	}
-	sourceMetadata, sourceExists, err := loadOptionalArtistLocaleMetadataRow(
-		ctx, tx, artistID, source.SourceLocale, forUpdate,
-	)
+	sourceMetadata, sourceExists, err := store.LocaleTitle(ctx, artistID, sourceLocale, forUpdate)
 	if err != nil {
 		return artistTargetLocaleState{}, err
 	}
@@ -173,13 +134,13 @@ func loadArtistTargetLocaleState(
 		return artistTargetLocaleState{}, domainerr.Precondition("Artist source locale metadata is missing")
 	}
 	state := artistTargetLocaleState{
-		Snapshot: snapshot, SourceLocale: source.SourceLocale, SourceMetadata: sourceMetadata,
+		Snapshot: snapshot, SourceLocale: sourceLocale, SourceMetadata: sourceMetadata,
 	}
-	if locale == source.SourceLocale {
+	if locale == sourceLocale {
 		state.TargetMetadata = &sourceMetadata
 		return state, nil
 	}
-	target, exists, err := loadOptionalArtistLocaleMetadataRow(ctx, tx, artistID, locale, forUpdate)
+	target, exists, err := store.LocaleTitle(ctx, artistID, locale, forUpdate)
 	if err != nil {
 		return artistTargetLocaleState{}, err
 	}
@@ -221,21 +182,20 @@ type artistTargetLocaleMutationInput struct {
 	ExpectedTargetRevision *string
 	Policy                 targetlocale.Policy
 	Now                    time.Time
-	Fence                  contentblock.DomainFence
+	Fence                  ContentFence
 }
 
 func applyArtistTargetLocaleMutation(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	input artistTargetLocaleMutationInput,
 ) (contentblock.Result, string, error) {
 	artistID, documentID, locale := input.ArtistID, input.DocumentID, input.Locale
-	domain, err := input.Fence(ctx, tx, documentID)
+	domain, err := input.Fence(ctx, store, documentID)
 	if err != nil {
 		return contentblock.Result{}, "", err
 	}
-	state, err := loadArtistTargetLocaleState(ctx, tx, store, artistID, documentID, locale, true)
+	state, err := loadArtistTargetLocaleState(ctx, store, artistID, documentID, locale, true)
 	if err != nil {
 		return contentblock.Result{}, "", err
 	}
@@ -250,22 +210,19 @@ func applyArtistTargetLocaleMutation(
 		return contentblock.Result{}, "", err
 	}
 	now := targetlocale.WriteTime(input.Now)
-	var final artistLocaleMetadataRow
-	result, err := store.ApplyTargetLocaleBatchWithMetadata(
-		ctx, tx, batch, locale, contentblock.LockedFence(artistEntityName, documentID, domain),
-		func(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
+	var final LocaleTitle
+	result, err := store.ApplyTargetLocaleContentBatch(
+		ctx, batch, locale, lockedContentFence(documentID, domain),
+		func(ctx context.Context, store Store, contentChanged bool) (contentblock.MetadataEffect, error) {
 			if state.TargetMetadata == nil {
-				created := tx.WithContext(ctx).Exec(
-					"INSERT INTO artist_translation (entity_id, locale, title, created_at, updated_at) VALUES (?::uuid, ?, NULL, ?, ?)",
-					artistID, locale, now, now,
-				)
-				if created.Error != nil {
-					return contentblock.MetadataEffect{}, created.Error
+				created, err := store.CreateTargetLocale(ctx, artistID, locale, now)
+				if err != nil {
+					return contentblock.MetadataEffect{}, err
 				}
-				if created.RowsAffected != 1 {
+				if !created {
 					return contentblock.MetadataEffect{}, errors.New("Artist target locale could not be created")
 				}
-				final = artistLocaleMetadataRow{Locale: locale, UpdatedAt: now}
+				final = LocaleTitle{Locale: locale, UpdatedAt: now}
 				return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
 			}
 			final = *state.TargetMetadata
@@ -273,25 +230,21 @@ func applyArtistTargetLocaleMutation(
 				return contentblock.MetadataEffect{}, nil
 			}
 			final.UpdatedAt = translation.NextTargetUpdatedAt(now, final.UpdatedAt)
-			updated := tx.WithContext(ctx).Table("artist_translation").
-				Where("entity_id = ?::uuid AND locale = ?", artistID, locale).
-				UpdateColumn("updated_at", final.UpdatedAt)
-			if updated.Error != nil {
-				return contentblock.MetadataEffect{}, updated.Error
+			updated, err := store.TouchTargetLocale(ctx, artistID, locale, final.UpdatedAt)
+			if err != nil {
+				return contentblock.MetadataEffect{}, err
 			}
-			if updated.RowsAffected != 1 {
+			if !updated {
 				return contentblock.MetadataEffect{}, errors.New("Artist target locale disappeared while saving")
 			}
 			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
 		},
 	)
 	if err != nil {
-		return contentblock.Result{}, "", normalizeCreativeContentBlockError(artistContentEntity, err)
+		return contentblock.Result{}, "", normalizeCreativeContentBlockError(err)
 	}
 	if result.Changed {
-		if err := tx.WithContext(ctx).Model(&model.Artist{}).
-			Where("id = ?", artistID).
-			UpdateColumn("updated_at", now).Error; err != nil {
+		if err := store.StampArtist(ctx, artistID, now); err != nil {
 			return contentblock.Result{}, "", err
 		}
 	}
@@ -304,8 +257,7 @@ func applyArtistTargetLocaleMutation(
 
 func updateArtistTargetLocaleTitle(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	artistID string,
 	documentID uuid.UUID,
 	locale string,
@@ -313,16 +265,16 @@ func updateArtistTargetLocaleTitle(
 	expectedTargetRevision *string,
 	title *string,
 	now time.Time,
-	fence contentblock.DomainFence,
+	fence ContentFence,
 ) (contentblock.Result, string, error) {
 	if title == nil {
 		return contentblock.Result{}, "", domainerr.InvalidField("title", "is required")
 	}
-	domain, err := fence(ctx, tx, documentID)
+	domain, err := fence(ctx, store, documentID)
 	if err != nil {
 		return contentblock.Result{}, "", err
 	}
-	state, err := loadArtistTargetLocaleState(ctx, tx, store, artistID, documentID, locale, true)
+	state, err := loadArtistTargetLocaleState(ctx, store, artistID, documentID, locale, true)
 	if err != nil {
 		return contentblock.Result{}, "", err
 	}
@@ -342,33 +294,29 @@ func updateArtistTargetLocaleTitle(
 	batch := contentblock.Batch{DocumentID: documentID, ExpectedRevision: expectedRevision}
 	now = targetlocale.WriteTime(now)
 	final := *state.TargetMetadata
-	result, err := store.ApplyTargetLocaleBatchWithMetadata(
-		ctx, tx, batch, locale, contentblock.LockedFence(artistEntityName, documentID, domain),
-		func(ctx context.Context, tx *gorm.DB, _ bool) (contentblock.MetadataEffect, error) {
+	result, err := store.ApplyTargetLocaleContentBatch(
+		ctx, batch, locale, lockedContentFence(documentID, domain),
+		func(ctx context.Context, store Store, _ bool) (contentblock.MetadataEffect, error) {
 			if final.Title != nil && *final.Title == normalizedTitle {
 				return contentblock.MetadataEffect{}, nil
 			}
 			final.Title = &normalizedTitle
 			final.UpdatedAt = translation.NextTargetUpdatedAt(now, final.UpdatedAt)
-			updated := tx.WithContext(ctx).Table("artist_translation").
-				Where("entity_id = ?::uuid AND locale = ?", artistID, locale).
-				Updates(map[string]any{"title": normalizedTitle, "updated_at": final.UpdatedAt})
-			if updated.Error != nil {
-				return contentblock.MetadataEffect{}, updated.Error
+			updated, err := store.SetTargetLocaleTitle(ctx, artistID, locale, normalizedTitle, final.UpdatedAt)
+			if err != nil {
+				return contentblock.MetadataEffect{}, err
 			}
-			if updated.RowsAffected != 1 {
+			if !updated {
 				return contentblock.MetadataEffect{}, errors.New("Artist target locale disappeared while saving")
 			}
 			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
 		},
 	)
 	if err != nil {
-		return contentblock.Result{}, "", normalizeCreativeContentBlockError(artistContentEntity, err)
+		return contentblock.Result{}, "", normalizeCreativeContentBlockError(err)
 	}
 	if result.Changed {
-		if err := tx.WithContext(ctx).Model(&model.Artist{}).
-			Where("id = ?", artistID).
-			UpdateColumn("updated_at", now).Error; err != nil {
+		if err := store.StampArtist(ctx, artistID, now); err != nil {
 			return contentblock.Result{}, "", err
 		}
 	}
@@ -381,21 +329,20 @@ func updateArtistTargetLocaleTitle(
 
 func deleteArtistTargetLocale(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	artistID string,
 	documentID uuid.UUID,
 	locale string,
 	expectedRevision uuid.UUID,
 	expectedTargetRevision *string,
 	contributors []uuid.UUID,
-	fence contentblock.DomainFence,
+	fence ContentFence,
 ) (contentblock.Result, error) {
-	domain, err := fence(ctx, tx, documentID)
+	domain, err := fence(ctx, store, documentID)
 	if err != nil {
 		return contentblock.Result{}, err
 	}
-	state, err := loadArtistTargetLocaleState(ctx, tx, store, artistID, documentID, locale, true)
+	state, err := loadArtistTargetLocaleState(ctx, store, artistID, documentID, locale, true)
 	if err != nil {
 		return contentblock.Result{}, err
 	}
@@ -416,28 +363,24 @@ func deleteArtistTargetLocale(
 		ContributorMemberIDs: append([]uuid.UUID(nil), contributors...),
 		LocaleGroups:         targetlocale.DeleteGroups(state.Snapshot, locale),
 	}
-	result, err := store.ApplyTargetLocaleBatchWithMetadata(
-		ctx, tx, batch, locale, contentblock.LockedFence(artistEntityName, documentID, domain),
-		func(ctx context.Context, tx *gorm.DB, _ bool) (contentblock.MetadataEffect, error) {
-			deleted := tx.WithContext(ctx).Exec(
-				"DELETE FROM artist_translation WHERE entity_id = ?::uuid AND locale = ?", artistID, locale,
-			)
-			if deleted.Error != nil {
-				return contentblock.MetadataEffect{}, deleted.Error
+	result, err := store.ApplyTargetLocaleContentBatch(
+		ctx, batch, locale, lockedContentFence(documentID, domain),
+		func(ctx context.Context, store Store, _ bool) (contentblock.MetadataEffect, error) {
+			deleted, err := store.DeleteTargetLocale(ctx, artistID, locale)
+			if err != nil {
+				return contentblock.MetadataEffect{}, err
 			}
-			if deleted.RowsAffected != 1 {
+			if !deleted {
 				return contentblock.MetadataEffect{}, errors.New("Artist target locale disappeared while deleting")
 			}
 			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{locale}}, nil
 		},
 	)
 	if err != nil {
-		return contentblock.Result{}, normalizeCreativeContentBlockError(artistContentEntity, err)
+		return contentblock.Result{}, normalizeCreativeContentBlockError(err)
 	}
 	if result.Changed {
-		if err := tx.WithContext(ctx).Model(&model.Artist{}).
-			Where("id = ?", artistID).
-			UpdateColumn("updated_at", time.Now().UTC()).Error; err != nil {
+		if err := store.StampArtist(ctx, artistID, time.Now().UTC()); err != nil {
 			return contentblock.Result{}, err
 		}
 	}
@@ -450,7 +393,7 @@ func artistLocalizedDocument(
 ) (*contentv1.LocalizedRichTextDocument, error) {
 	document, err := contentblock.MaterializeSnapshotRichTextLocale(state.Snapshot, locale)
 	if err != nil {
-		return nil, normalizeCreativeContentBlockError(artistContentEntity, err)
+		return nil, normalizeCreativeContentBlockError(err)
 	}
 	return document, nil
 }
@@ -465,7 +408,7 @@ func artistSparseLocalizedDocument(
 ) (*contentv1.LocalizedRichTextDocument, error) {
 	document, err := contentblock.SnapshotToLocalizedRichTextDocument(state.Snapshot, locale)
 	if err != nil {
-		return nil, normalizeCreativeContentBlockError(artistContentEntity, err)
+		return nil, normalizeCreativeContentBlockError(err)
 	}
 	return document, nil
 }

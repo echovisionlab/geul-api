@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	"gorm.io/gorm"
 )
 
 // TranslationInterchangeTarget is Artist's raw sparse target projection.
@@ -21,12 +19,11 @@ type TranslationInterchangeTarget struct {
 
 func LoadTypedTranslationInterchangeTarget(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	artistID string,
 	targetLocale string,
 ) (TranslationInterchangeTarget, error) {
-	if tx == nil || store == nil {
+	if store == nil {
 		return TranslationInterchangeTarget{}, errors.New("artist translation interchange dependencies are not configured")
 	}
 	if _, err := canonicalArtistUUID(artistID); err != nil {
@@ -36,18 +33,14 @@ func LoadTypedTranslationInterchangeTarget(
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}
-	snapshot, source, err := loadCreativeContentSnapshotInTransaction(
-		ctx, tx, store, artistContentEntity, artistID,
-	)
+	snapshot, sourceLocale, err := loadCreativeContentSnapshotInTransaction(ctx, store, artistID)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}
-	if source.SourceLocale == normalizedLocale {
+	if sourceLocale == normalizedLocale {
 		return TranslationInterchangeTarget{}, domainerr.InvalidField("target_locale", "must differ from the Artist source locale")
 	}
-	state, err := loadArtistTargetLocaleState(
-		ctx, tx, store, artistID, snapshot.Document.ID, normalizedLocale, false,
-	)
+	state, err := loadArtistTargetLocaleState(ctx, store, artistID, snapshot.Document.ID, normalizedLocale, false)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}

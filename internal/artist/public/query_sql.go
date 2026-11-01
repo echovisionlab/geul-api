@@ -24,3 +24,9 @@ func workSourceSummarySQL(alias string) string {
 func labelSourceTitleSQL(alias string) string {
 	return "COALESCE(NULLIF(" + sourceColumnSQL(alias, "label", "label_translation", "lt", "title") + ", ''), '')"
 }
+
+// artistSourceTitleSQL is the source-locale title of the Artist row
+// aliased "artist".
+func artistSourceTitleSQL() string {
+	return "COALESCE((SELECT at.title FROM artist_translation AS at WHERE at.entity_id = artist.id AND at.locale = artist.source_locale LIMIT 1), '')"
+}

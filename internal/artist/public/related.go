@@ -5,7 +5,6 @@ import (
 
 	"gorm.io/gorm"
 
-	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
@@ -27,7 +26,7 @@ func loadArtistReleaseOtherArtists(
 	}
 	if err := db.WithContext(ctx).
 		Table("release_artist").
-		Select("release_artist.release_id::text, artist.id::text AS artist_id, "+artistdomain.ArtistSourceTitleSQL("artist")+" AS artist_name, artist.slug AS artist_slug").
+		Select("release_artist.release_id::text, artist.id::text AS artist_id, "+artistSourceTitleSQL()+" AS artist_name, artist.slug AS artist_slug").
 		Joins("JOIN artist ON artist.id = release_artist.artist_id").
 		Where("release_artist.release_id IN ? AND release_artist.artist_id != ?::uuid", releaseIDs, excludeArtistID).
 		Order("release_artist.release_id, release_artist.sort_order, release_artist.created_at, release_artist.artist_id").

@@ -1,10 +1,11 @@
 //go:build integration
 
-package artist
+package artist_test
 
 import (
 	"context"
 	"errors"
+	artist "github.com/echovisionlab/geul-api/internal/artist"
 	"sort"
 	"sync"
 	"testing"
@@ -43,7 +44,7 @@ const (
 )
 
 type participantCharacterizationService struct {
-	service *ConnectHandler
+	service *artist.ConnectHandler
 }
 
 func newParticipantCharacterizationService(
@@ -53,7 +54,7 @@ func newParticipantCharacterizationService(
 	publisher *participantCharacterizationPublisher,
 ) participantCharacterizationService {
 	t.Helper()
-	return participantCharacterizationService{service: NewConnectHandler(newTestService(t, Deps{
+	return participantCharacterizationService{service: artist.NewConnectHandler(newTestService(t, integrationDeps{
 		DB: db, SpiceDB: spiceDB, Audit: apitelemetry.NewDurableWriter(db), Publisher: publisher,
 	}))}
 }
@@ -64,7 +65,7 @@ func seedParticipantCharacterizationEntity(t *testing.T, db *gorm.DB, store *con
 	now := time.Now().UTC()
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		document, err := store.CreateDocument(t.Context(), tx, contentblock.CreateInput{
-			Profile: creativeContentProfile, SourceLocale: "en",
+			Profile: "compact", SourceLocale: "en",
 		})
 		if err != nil {
 			return err
@@ -88,9 +89,9 @@ func participantCharacterizationRelationshipMutation(
 	require.NoError(t, err)
 	var mutation policyv1.RelationshipMutation
 	switch role {
-	case ParticipantRoleOwner:
+	case artist.ParticipantRoleOwner:
 		mutation, err = policyv1.Artist.TouchOwner(entityID, actor)
-	case ParticipantRoleManager:
+	case artist.ParticipantRoleManager:
 		mutation, err = policyv1.Artist.TouchManager(entityID, actor)
 	default:
 		t.Fatalf("unsupported participant role %q", role)
@@ -121,9 +122,9 @@ func (s participantCharacterizationService) set(
 ) (*participantCharacterizationResponse, error) {
 	protoRole := managev1.ArtistParticipantRole_ARTIST_PARTICIPANT_ROLE_UNSPECIFIED
 	switch role {
-	case ParticipantRoleOwner:
+	case artist.ParticipantRoleOwner:
 		protoRole = managev1.ArtistParticipantRole_ARTIST_PARTICIPANT_ROLE_OWNER
-	case ParticipantRoleManager:
+	case artist.ParticipantRoleManager:
 		protoRole = managev1.ArtistParticipantRole_ARTIST_PARTICIPANT_ROLE_MANAGER
 	}
 	response, err := s.service.SetArtistParticipant(ctx, connect.NewRequest(&managev1.SetArtistParticipantRequest{
@@ -138,9 +139,9 @@ func (s participantCharacterizationService) set(
 	}
 	switch response.Msg.GetRole() {
 	case managev1.ArtistParticipantRole_ARTIST_PARTICIPANT_ROLE_OWNER:
-		result.Role = ParticipantRoleOwner
+		result.Role = artist.ParticipantRoleOwner
 	case managev1.ArtistParticipantRole_ARTIST_PARTICIPANT_ROLE_MANAGER:
-		result.Role = ParticipantRoleManager
+		result.Role = artist.ParticipantRoleManager
 	}
 	return result, nil
 }
@@ -271,7 +272,7 @@ func (env *participantCharacterizationEnv) seedEntity(t *testing.T, initial map[
 		role := initial[key]
 		actor := env.actors[key]
 		table := participantCharacterizationManagerTable
-		if role == ParticipantRoleOwner {
+		if role == artist.ParticipantRoleOwner {
 			table = participantCharacterizationOwnerTable
 		}
 		createdAt := time.Now().UTC().Add(time.Duration(index-len(keys)) * time.Minute).Truncate(time.Microsecond)
@@ -449,43 +450,43 @@ func participantCharacterizationCases() []participantCharacterizationCase {
 	return []participantCharacterizationCase{
 		{
 			name: "admin adds manager", initial: map[string]string{"ownerA": "owner"},
-			caller: "admin", target: "target", role: ParticipantRoleManager,
+			caller: "admin", target: "target", role: artist.ParticipantRoleManager,
 			wantRoles:  map[string]string{"ownerA": "owner", "target": "manager"},
 			wantAudits: []participantCharacterizationAudit{audit("admin", "none", "manager")},
 		},
 		{
 			name: "admin adds owner", initial: map[string]string{"ownerA": "owner"},
-			caller: "admin", target: "target", role: ParticipantRoleOwner,
+			caller: "admin", target: "target", role: artist.ParticipantRoleOwner,
 			wantRoles:  map[string]string{"ownerA": "owner", "target": "owner"},
 			wantAudits: []participantCharacterizationAudit{audit("admin", "none", "owner")},
 		},
 		{
 			name: "admin promotes manager to owner", initial: map[string]string{"ownerA": "owner", "target": "manager"},
-			caller: "admin", target: "target", role: ParticipantRoleOwner,
+			caller: "admin", target: "target", role: artist.ParticipantRoleOwner,
 			wantRoles:  map[string]string{"ownerA": "owner", "target": "owner"},
 			wantAudits: []participantCharacterizationAudit{audit("admin", "manager", "owner")},
 		},
 		{
 			name: "admin demotes one of two owners", initial: map[string]string{"ownerA": "owner", "target": "owner"},
-			caller: "admin", target: "target", role: ParticipantRoleManager,
+			caller: "admin", target: "target", role: artist.ParticipantRoleManager,
 			wantRoles:  map[string]string{"ownerA": "owner", "target": "manager"},
 			wantAudits: []participantCharacterizationAudit{audit("admin", "owner", "manager")},
 		},
 		{
 			name: "demoting the last owner is rejected", initial: map[string]string{"target": "owner"},
-			caller: "admin", target: "target", role: ParticipantRoleManager,
+			caller: "admin", target: "target", role: artist.ParticipantRoleManager,
 			wantCode: connect.CodeFailedPrecondition, wantMessage: lastOwner,
 			wantRoles: map[string]string{"target": "owner"},
 		},
 		{
 			name: "setting the current manager role is rejected", initial: map[string]string{"ownerA": "owner", "target": "manager"},
-			caller: "admin", target: "target", role: ParticipantRoleManager,
+			caller: "admin", target: "target", role: artist.ParticipantRoleManager,
 			wantCode: connect.CodeFailedPrecondition, wantMessage: sameRole,
 			wantRoles: map[string]string{"ownerA": "owner", "target": "manager"},
 		},
 		{
 			name: "setting the current owner role is rejected", initial: map[string]string{"ownerA": "owner", "target": "owner"},
-			caller: "admin", target: "target", role: ParticipantRoleOwner,
+			caller: "admin", target: "target", role: artist.ParticipantRoleOwner,
 			wantCode: connect.CodeFailedPrecondition, wantMessage: sameRole,
 			wantRoles: map[string]string{"ownerA": "owner", "target": "owner"},
 		},
@@ -515,13 +516,13 @@ func participantCharacterizationCases() []participantCharacterizationCase {
 		},
 		{
 			name: "owner adds manager", initial: map[string]string{"ownerA": "owner"},
-			caller: "ownerA", target: "target", role: ParticipantRoleManager,
+			caller: "ownerA", target: "target", role: artist.ParticipantRoleManager,
 			wantRoles:  map[string]string{"ownerA": "owner", "target": "manager"},
 			wantAudits: []participantCharacterizationAudit{audit("ownerA", "none", "manager")},
 		},
 		{
 			name: "owner adds owner", initial: map[string]string{"ownerA": "owner"},
-			caller: "ownerA", target: "target", role: ParticipantRoleOwner,
+			caller: "ownerA", target: "target", role: artist.ParticipantRoleOwner,
 			wantRoles:  map[string]string{"ownerA": "owner", "target": "owner"},
 			wantAudits: []participantCharacterizationAudit{audit("ownerA", "none", "owner")},
 		},
@@ -533,7 +534,7 @@ func participantCharacterizationCases() []participantCharacterizationCase {
 		},
 		{
 			name: "owner cannot demote another owner", initial: map[string]string{"ownerA": "owner", "target": "owner"},
-			caller: "ownerA", target: "target", role: ParticipantRoleManager,
+			caller: "ownerA", target: "target", role: artist.ParticipantRoleManager,
 			wantCode: connect.CodeNotFound, wantMessage: entityNotFound,
 			wantRoles: map[string]string{"ownerA": "owner", "target": "owner"},
 		},
@@ -545,13 +546,13 @@ func participantCharacterizationCases() []participantCharacterizationCase {
 		},
 		{
 			name: "owner sees the same role rejection for an owner", initial: map[string]string{"ownerA": "owner", "target": "owner"},
-			caller: "ownerA", target: "target", role: ParticipantRoleOwner,
+			caller: "ownerA", target: "target", role: artist.ParticipantRoleOwner,
 			wantCode: connect.CodeFailedPrecondition, wantMessage: sameRole,
 			wantRoles: map[string]string{"ownerA": "owner", "target": "owner"},
 		},
 		{
 			name: "manager cannot add participants", initial: map[string]string{"ownerA": "owner", "outsider": "manager"},
-			caller: "outsider", target: "target", role: ParticipantRoleManager,
+			caller: "outsider", target: "target", role: artist.ParticipantRoleManager,
 			wantCode: connect.CodeNotFound, wantMessage: entityNotFound,
 			wantRoles: map[string]string{"ownerA": "owner", "outsider": "manager"},
 		},
@@ -563,19 +564,19 @@ func participantCharacterizationCases() []participantCharacterizationCase {
 		},
 		{
 			name: "outsider cannot add participants", initial: map[string]string{"ownerA": "owner"},
-			caller: "outsider", target: "target", role: ParticipantRoleManager,
+			caller: "outsider", target: "target", role: artist.ParticipantRoleManager,
 			wantCode: connect.CodeNotFound, wantMessage: entityNotFound,
 			wantRoles: map[string]string{"ownerA": "owner"},
 		},
 		{
 			name: "anonymous caller is not found", initial: map[string]string{"ownerA": "owner"},
-			caller: "anonymous", target: "target", role: ParticipantRoleManager,
+			caller: "anonymous", target: "target", role: artist.ParticipantRoleManager,
 			wantCode: connect.CodeNotFound, wantMessage: entityNotFound,
 			wantRoles: map[string]string{"ownerA": "owner"},
 		},
 		{
 			name: "unknown member is not found", initial: map[string]string{"ownerA": "owner"},
-			caller: "admin", target: "unknown", role: ParticipantRoleManager,
+			caller: "admin", target: "unknown", role: artist.ParticipantRoleManager,
 			wantCode: connect.CodeNotFound,
 			wantMessage: func(_, memberID string) string {
 				return "member not found: " + memberID
@@ -590,7 +591,7 @@ func participantCharacterizationCases() []participantCharacterizationCase {
 		},
 		{
 			name: "set on a missing entity is not found", missingEntity: true,
-			caller: "admin", target: "target", role: ParticipantRoleManager,
+			caller: "admin", target: "target", role: artist.ParticipantRoleManager,
 			wantCode: connect.CodeNotFound, wantMessage: entityNotFound,
 		},
 		{

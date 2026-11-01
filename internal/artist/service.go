@@ -6,48 +6,45 @@ import (
 	"slices"
 	"strings"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/entityparticipant"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
+
+// Authorizer is the SpiceDB port of the Artist use cases: the fresh checks
+// and relationship writes of the mutation pipeline, a participant's
+// effective authority, the Artists the caller manages and the relationship
+// snapshot a deletion removes. *auth.SpiceDBClient implements it.
+type Authorizer interface {
+	mutation.Authorizer
+	entityparticipant.ActorChecker
+	LookupResources(ctx context.Context, lookup policyv1.ResourceLookup, actor policyv1.Actor) ([]string, error)
+	SnapshotResourceRelationshipDescriptors(ctx context.Context, plan policyv1.RelationshipSnapshotPlan) ([]auth.RelationshipSnapshot, auth.ZedToken, error)
+}
+
+// MemberProjection supplies the Member-owned summaries needed by Artist
+// participant reads and mutation responses.
+type MemberProjection = entityparticipant.Members
 
 // Deps are the collaborators of the Artist use cases; all are required.
 type Deps struct {
-	DB            *gorm.DB
-	SpiceDB       *auth.SpiceDBClient
-	Audit         domainaudit.Appender
-	Publisher     contentsignal.Publisher
-	ContentBlocks *contentblock.Store
-	Checkpoints   persistencecheckpoint.ContributorFence
-	Translation   Translation
-	Members       MemberProjection
-	Runtime       Runtime
-	Labels        Labels
-	Releases      ReleaseRelations
-	ProgramEvents ProgramEventRelations
-	Works         WorkRelations
-	ShareLinks    ShareLinks
+	Units   mutation.UnitOfWork[Store] // artistpostgres.NewUnits
+	SpiceDB Authorizer
+	Fence   identitystate.Fence
+	Audit   domainaudit.Appender
+	Members MemberProjection
 }
 
 func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
-		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil, "Publisher": d.Publisher == nil,
-		"ContentBlocks": d.ContentBlocks == nil, "Checkpoints": d.Checkpoints == nil,
-		"Translation": d.Translation == nil, "Members": d.Members == nil, "Runtime": d.Runtime == nil,
-		"Labels": d.Labels == nil, "Releases": d.Releases == nil, "ProgramEvents": d.ProgramEvents == nil,
-		"Works": d.Works == nil, "ShareLinks": d.ShareLinks == nil,
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
+		"Members": d.Members == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -64,21 +61,11 @@ func (d Deps) validate() error {
 // service, AI documents and translation delivery. Connect, MCP and AI
 // document adapters translate their requests into its commands and queries.
 type Service struct {
-	db            *gorm.DB
-	spiceDB       *auth.SpiceDBClient
-	publisher     contentsignal.Publisher
-	contentBlocks *contentblock.Store
-	checkpoints   persistencecheckpoint.ContributorFence
-	translation   Translation
-	members       MemberProjection
-	runtime       Runtime
-	labels        Labels
-	releases      ReleaseRelations
-	programEvents ProgramEventRelations
-	works         WorkRelations
-	shareLinks    ShareLinks
-	mutations     *mutation.Runner
-	participants  entityparticipant.LegacyMutations
+	units        mutation.UnitOfWork[Store]
+	spiceDB      Authorizer
+	members      MemberProjection
+	mutations    *mutation.StoreRunner[Store]
+	participants entityparticipant.Mutations[Store]
 }
 
 // NewService validates deps and returns the Artist use cases.
@@ -86,17 +73,28 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
 	return &Service{
-		db: deps.DB, spiceDB: deps.SpiceDB, publisher: deps.Publisher, contentBlocks: deps.ContentBlocks,
-		checkpoints: deps.Checkpoints, translation: deps.Translation, members: deps.Members, runtime: deps.Runtime,
-		labels: deps.Labels, releases: deps.Releases, programEvents: deps.ProgramEvents, works: deps.Works,
-		shareLinks: deps.ShareLinks, mutations: mutations, participants: artistEntity.LegacyMutations(mutations, deps.SpiceDB),
+		units: deps.Units, spiceDB: deps.SpiceDB, members: deps.Members, mutations: mutations,
+		participants: entityparticipant.NewMutations(artistEntity, mutations, deps.SpiceDB),
 	}, nil
 }
+
+// Action is an Artist action the caller may take.
+type Action uint8
+
+const (
+	ActionEdit Action = iota + 1
+	ActionManageShareLinks
+	ActionDelete
+	ActionManageParticipants
+	ActionPublish
+	ActionUnpublish
+	ActionRemoveOwner
+)
 
 // GetArtistEditorDataQuery reads one Artist for its editor.
 type GetArtistEditorDataQuery struct {
@@ -106,20 +104,22 @@ type GetArtistEditorDataQuery struct {
 // EditorData is an Artist with its non-draft Labels, image revision and the
 // actions the caller may take on it.
 type EditorData struct {
-	Artist         *managev1.Artist
+	Artist         View
 	LabelIDs       []string
-	AllowedActions []managev1.ArtistAction
+	AllowedActions []Action
 	ImageRevision  string
 }
 
 // GetArtistEditorData returns an Artist the caller may edit. A caller
 // without Edit learns nothing about whether the Artist exists.
 func (s *Service) GetArtistEditorData(ctx context.Context, query GetArtistEditorDataQuery) (EditorData, error) {
-	var artist model.Artist
-	if err := s.db.WithContext(ctx).
-		Where("id = ?", query.ID).
-		First(&artist).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	var artist Artist
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		artist, err = store.FindArtist(ctx, query.ID)
+		return err
+	}); err != nil {
+		if errors.Is(err, ErrArtistNotFound) {
 			return EditorData{}, domainerr.ResourceNotFound("artist", query.ID)
 		}
 		return EditorData{}, err
@@ -131,7 +131,7 @@ func (s *Service) GetArtistEditorData(ctx context.Context, query GetArtistEditor
 	if auth.GetUser(ctx) == nil {
 		return EditorData{}, errAuthenticationRequired
 	}
-	if !hasArtistAction(actions, managev1.ArtistAction_ARTIST_ACTION_EDIT) {
+	if !slices.Contains(actions, ActionEdit) {
 		return EditorData{}, domainerr.ResourceNotFound("artist", artist.ID)
 	}
 	labelIDs, err := s.getArtistLabelIDs(ctx, artist.ID)
@@ -142,17 +142,16 @@ func (s *Service) GetArtistEditorData(ctx context.Context, query GetArtistEditor
 	if err != nil {
 		return EditorData{}, err
 	}
-	images, err := loadArtistImages(ctx, s.runtime, s.db, artist.ID)
+	images, err := s.loadArtistImages(ctx, artist.ID)
 	if err != nil {
 		return EditorData{}, err
 	}
-	ogAsset, err := readyManageOgAssetRef(ctx, s.runtime, s.db, document.OgAssetID)
+	ogAsset, err := s.readyManageOgAssetRef(ctx, document.OgAssetID)
 	if err != nil {
 		return EditorData{}, err
 	}
-	protoArtist := toProtoArtist(&artist, document, ogAsset)
-	applyManageArtistImages(protoArtist, images)
-	return EditorData{Artist: protoArtist, LabelIDs: labelIDs, AllowedActions: actions, ImageRevision: artistImageRevision(images)}, nil
+	view := artistView(artist, document, ogAsset, images)
+	return EditorData{Artist: view, LabelIDs: labelIDs, AllowedActions: actions, ImageRevision: artistImageRevision(images)}, nil
 }
 
 // ListArtistsQuery pages through Artists. A label_id filter keeps the
@@ -164,27 +163,39 @@ type ListArtistsQuery struct {
 	Sorts   []*commonv1.SortSpec
 }
 
+// Pagination is where a page sits among every matching Artist.
+type Pagination struct {
+	Total   int32
+	Limit   int32
+	Offset  int32
+	HasMore bool
+}
+
 // ArtistPage is one page of Artists.
 type ArtistPage struct {
-	Artists    []*managev1.Artist
-	Pagination *commonv1.PaginationResponse
+	Artists    []View
+	Pagination Pagination
 }
 
 // ListArtists returns one page of published Artists.
 func (s *Service) ListArtists(ctx context.Context, query ListArtistsQuery) (ArtistPage, error) {
-	artists, err := s.listArtists(ctx, s.db.WithContext(ctx).
-		Model(&model.Artist{}).
-		Where("status = ?", model.ArtistStatusPublished), query, false)
+	artists, err := s.listArtists(ctx, ListPage{PublishedOnly: true}, query)
 	if err != nil {
 		return ArtistPage{}, err
 	}
 	return ArtistPage{Artists: artists.project(), Pagination: artists.pagination}, nil
 }
 
+// AdminView is an Artist with its Release count.
+type AdminView struct {
+	Artist       View
+	ReleaseCount int32
+}
+
 // AdminArtistPage is one page of Artists with their Release counts.
 type AdminArtistPage struct {
-	Artists    []*managev1.ArtistWithStats
-	Pagination *commonv1.PaginationResponse
+	Artists    []AdminView
+	Pagination Pagination
 }
 
 // ListArtistsAdmin returns one page of every Artist to a caller with the
@@ -193,7 +204,7 @@ func (s *Service) ListArtistsAdmin(ctx context.Context, query ListArtistsQuery) 
 	if err := artistEntity.RequireList(ctx, s.spiceDB); err != nil {
 		return AdminArtistPage{}, err
 	}
-	artists, err := s.listArtists(ctx, s.db.WithContext(ctx).Model(&model.Artist{}), query, true)
+	artists, err := s.listArtists(ctx, ListPage{TieByID: true}, query)
 	if err != nil {
 		return AdminArtistPage{}, err
 	}
@@ -201,14 +212,18 @@ func (s *Service) ListArtistsAdmin(ctx context.Context, query ListArtistsQuery) 
 	for i, artist := range artists.rows {
 		artistIDs[i] = artist.ID
 	}
-	releaseCounts, err := s.releases.CountReleasesByArtist(ctx, s.db, artistIDs)
-	if err != nil {
+	var releaseCounts map[string]int32
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		releaseCounts, err = store.CountReleasesByArtist(ctx, artistIDs)
+		return err
+	}); err != nil {
 		return AdminArtistPage{}, err
 	}
 	projected := artists.project()
-	withStats := make([]*managev1.ArtistWithStats, len(projected))
+	withStats := make([]AdminView, len(projected))
 	for i, artist := range projected {
-		withStats[i] = &managev1.ArtistWithStats{Artist: artist, ReleaseCount: releaseCounts[artist.Id]}
+		withStats[i] = AdminView{Artist: artist, ReleaseCount: releaseCounts[artist.Artist.ID]}
 	}
 	return AdminArtistPage{Artists: withStats, Pagination: artists.pagination}, nil
 }
@@ -216,62 +231,39 @@ func (s *Service) ListArtistsAdmin(ctx context.Context, query ListArtistsQuery) 
 // artistListing is one page of Artist rows with what their projection
 // needs.
 type artistListing struct {
-	rows       []model.Artist
+	rows       []Artist
 	documents  []artistDocument
 	ogAssets   map[string]*commonv1.AssetRef
 	images     map[string][]ArtistImageProjection
-	pagination *commonv1.PaginationResponse
+	pagination Pagination
 }
 
-func (l artistListing) project() []*managev1.Artist {
-	projected := make([]*managev1.Artist, len(l.rows))
+func (l artistListing) project() []View {
+	projected := make([]View, len(l.rows))
 	for i := range l.rows {
-		projected[i] = toProtoArtist(&l.rows[i], l.documents[i], manageOgAssetFromReadyMap(l.ogAssets, l.documents[i].OgAssetID))
-		applyManageArtistImages(projected[i], l.images[l.rows[i].ID])
+		projected[i] = artistView(l.rows[i], l.documents[i], manageOgAssetFromReadyMap(l.ogAssets, l.documents[i].OgAssetID), l.images[l.rows[i].ID])
 	}
 	return projected
 }
 
-// listArtists filters, counts, sorts and pages base, then loads each
-// Artist's source-locale document, OG image and images. byID breaks sort
-// ties by ID.
-func (s *Service) listArtists(ctx context.Context, base *gorm.DB, query ListArtistsQuery, byID bool) (artistListing, error) {
-	var remainingFilters []*commonv1.FilterSpec
-	for _, f := range query.Filters {
-		if f == nil {
-			continue
-		}
-		if f.GetField() == "label_id" && f.GetValue() != "" {
-			base = base.Where("id IN (SELECT artist_id FROM artist_label WHERE label_id = ?)", f.GetValue())
-		} else {
-			remainingFilters = append(remainingFilters, f)
-		}
-	}
-	filtered, err := ArtistFilterConfig.ApplyFilters(base, remainingFilters)
-	if err != nil {
-		return artistListing{}, err
-	}
-	var total int64
-	if err := filtered.Count(&total).Error; err != nil {
-		return artistListing{}, err
-	}
+// listArtists lists one page of base, then loads each Artist's
+// source-locale document, OG image and images.
+func (s *Service) listArtists(ctx context.Context, base ListPage, query ListArtistsQuery) (artistListing, error) {
 	limit := int32(20)
 	if query.Limit > 0 {
 		limit = query.Limit
 	}
-	sorted, err := artistSortConfig.ApplySort(filtered, query.Sorts)
-	if err != nil {
+	base.Filters, base.Sorts, base.Limit, base.Offset = query.Filters, query.Sorts, limit, query.Offset
+	var listing artistListing
+	var total int64
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		listing.rows, total, err = store.ListArtists(ctx, base)
+		return err
+	}); err != nil {
 		return artistListing{}, err
 	}
-	if byID {
-		sorted = sorted.Order("artist.id ASC")
-	}
-	listing := artistListing{pagination: &commonv1.PaginationResponse{
-		Total: int32(total), Limit: limit, Offset: query.Offset, HasMore: query.Offset+limit < int32(total),
-	}}
-	if err := sorted.Limit(int(limit)).Offset(int(query.Offset)).Find(&listing.rows).Error; err != nil {
-		return artistListing{}, err
-	}
+	listing.pagination = Pagination{Total: int32(total), Limit: limit, Offset: query.Offset, HasMore: query.Offset+limit < int32(total)}
 	return listing, s.loadArtistListing(ctx, &listing)
 }
 
@@ -283,6 +275,17 @@ func (s *Service) loadArtistListing(ctx context.Context, listing *artistListing)
 	if listing.ogAssets, err = s.loadReadyArtistOgAssets(ctx, listing.documents); err != nil {
 		return err
 	}
-	listing.images, err = s.runtime.LoadArtistImages(ctx, s.db, collectManageArtistIDs(listing.rows))
-	return err
+	return s.units.Read(ctx, func(store Store) error {
+		var err error
+		listing.images, err = store.Images(ctx, collectArtistIDs(listing.rows))
+		return err
+	})
+}
+
+func collectArtistIDs(artists []Artist) []string {
+	ids := make([]string, 0, len(artists))
+	for _, artist := range artists {
+		ids = append(ids, artist.ID)
+	}
+	return ids
 }

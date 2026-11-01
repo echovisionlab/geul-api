@@ -9,15 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -31,13 +25,18 @@ type ArtistImageProjection struct {
 	Asset     *commonv1.AssetRef
 }
 
-func loadArtistImages(
-	ctx context.Context,
-	runtime Runtime,
-	db *gorm.DB,
-	artistID string,
-) ([]ArtistImageProjection, error) {
-	images, err := runtime.LoadArtistImages(ctx, db, []string{artistID})
+func (s *Service) loadArtistImages(ctx context.Context, artistID string) ([]ArtistImageProjection, error) {
+	var images []ArtistImageProjection
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		images, err = loadStoredArtistImages(ctx, store, artistID)
+		return err
+	})
+	return images, err
+}
+
+func loadStoredArtistImages(ctx context.Context, store Store, artistID string) ([]ArtistImageProjection, error) {
+	images, err := store.Images(ctx, []string{artistID})
 	if err != nil {
 		return nil, err
 	}
@@ -53,25 +52,6 @@ func artistImageRevision(images []ArtistImageProjection) string {
 		_, _ = hash.Write([]byte(image.FileID))
 	}
 	return hex.EncodeToString(hash.Sum(nil))
-}
-
-func applyManageArtistImages(artist *managev1.Artist, images []ArtistImageProjection) {
-	if artist == nil {
-		return
-	}
-	artist.Images = make([]*managev1.ArtistImage, 0, len(images))
-	for index, image := range images {
-		primary := index == 0
-		artist.Images = append(artist.Images, &managev1.ArtistImage{
-			FileId:    image.FileID,
-			Asset:     image.Asset,
-			SortOrder: int32(index),
-			Primary:   primary,
-		})
-		if primary {
-			artist.ImageAsset = image.Asset
-		}
-	}
 }
 
 // SetArtistImagesCommand replaces the Artist's ordered images when they
@@ -152,20 +132,19 @@ func (s *Service) replaceArtistImages(
 	fileIDs []string,
 	expectedRevision *string,
 ) (ImageUpdate, error) {
-	ogRunID, err := mutation.Run(ctx, s.mutations, mutation.Spec[*artistImageChange]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
-			var artist model.Artist
-			if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id").First(&artist, "id = ?", artistID).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
+	ogRunID, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[*artistImageChange, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			if _, err := store.LockArtistID(ctx, artistID); err != nil {
+				if errors.Is(err, ErrArtistNotFound) {
 					return domainerr.ResourceNotFound("artist", artistID)
 				}
 				return err
 			}
 			return nil
 		},
-		Access: artistEntity.LegacyLockedAccess(s.spiceDB, artistID, policyv1.Artist.Manage),
-		Change: func(ctx context.Context, tx *gorm.DB) (*artistImageChange, error) {
-			return s.bindArtistImages(ctx, tx, artistID, fileIDs, expectedRevision)
+		Access: artistEntity.LockedAccess(s.spiceDB, artistID, policyv1.Artist.Manage),
+		Change: func(ctx context.Context, store Store) (*artistImageChange, error) {
+			return bindArtistImages(ctx, store, artistID, fileIDs, expectedRevision)
 		},
 		Audit: func(change *artistImageChange) mutation.Audit {
 			if change == nil {
@@ -175,19 +154,17 @@ func (s *Service) replaceArtistImages(
 				return sharedtelemetry.NewArtistGalleryAuditRecord(m, artistID, fileIDs)
 			})
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, change *artistImageChange) error {
+		Outbox: func(ctx context.Context, store Store, change *artistImageChange) error {
 			if change == nil {
 				return nil
 			}
-			return contentsignal.PublishInTransaction(ctx, tx, s.publisher, buildManageMediaMutationContentUpdatedEvent(
-				managev1.ContentEntityType_CONTENT_ENTITY_TYPE_ARTIST, artistID, "media.images",
-			))
+			return store.PublishContentUpdate(ctx, ContentUpdate{ArtistID: artistID, Kind: MediaUpdate})
 		},
 	})
 	if err != nil {
 		return ImageUpdate{}, err
 	}
-	images, err := loadArtistImages(ctx, s.runtime, s.db, artistID)
+	images, err := s.loadArtistImages(ctx, artistID)
 	if err != nil {
 		return ImageUpdate{}, err
 	}
@@ -207,8 +184,8 @@ type artistImageChange struct {
 	ogRunID *string
 }
 
-func (s *Service) bindArtistImages(ctx context.Context, tx *gorm.DB, artistID string, fileIDs []string, expectedRevision *string) (*artistImageChange, error) {
-	current, err := loadArtistImages(ctx, s.runtime, tx, artistID)
+func bindArtistImages(ctx context.Context, store Store, artistID string, fileIDs []string, expectedRevision *string) (*artistImageChange, error) {
+	current, err := loadStoredArtistImages(ctx, store, artistID)
 	if err != nil {
 		return nil, err
 	}
@@ -219,12 +196,12 @@ func (s *Service) bindArtistImages(ctx context.Context, tx *gorm.DB, artistID st
 		return nil, nil
 	}
 	primaryChanged := artistPrimaryImageID(current) != firstString(fileIDs)
-	if err := s.runtime.ReplaceArtistImageBindings(ctx, tx, artistID, fileIDs); err != nil {
+	if err := store.ReplaceImageBindings(ctx, artistID, fileIDs); err != nil {
 		return nil, err
 	}
 	change := &artistImageChange{}
 	if primaryChanged {
-		runID, err := s.runtime.RequestCurrentWithDB(ctx, tx, managev1.OgEntityType_OG_ENTITY_TYPE_ARTIST, artistID, "", false, "artist_primary_image_updated")
+		runID, err := store.RequestOG(ctx, artistID, "", false, "artist_primary_image_updated")
 		if err != nil {
 			return nil, err
 		}

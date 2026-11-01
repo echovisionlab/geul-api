@@ -8,7 +8,6 @@ import (
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -70,13 +69,12 @@ func (a *ArtistInterchange) ApplyTranslationInterchange(
 	if err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
-	job := &model.TranslationJob{
+	job := artistdomain.TranslationJob{
 		EntityType: command.EntityType, EntityID: command.EntityID,
-		SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
-		RequestedByMemberID: memberID,
+		TargetLocale: command.TargetLocale, RequestedByMemberID: memberID,
 	}
-	if err := artistdomain.ApplyTypedTranslationInterchangeCandidateWithDB(
-		ctx, db, store, job, candidate, core.EntryWrite{Now: command.Now.UTC()}, command.ExpectedRevision,
+	if err := artistdomain.ApplyTypedTranslationInterchangeCandidate(
+		ctx, artistStore(db, store), job, candidate, core.EntryWrite{Now: command.Now.UTC()}, command.ExpectedRevision,
 	); err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
@@ -113,7 +111,7 @@ func loadArtistInterchangeTarget(
 	if err := validateCreativeInterchangeLoad(db, store, entityType, entityID, locale, plan, string(core.KindArtist)); err != nil {
 		return creativeInterchangeTarget{}, err
 	}
-	target, err := artistdomain.LoadTypedTranslationInterchangeTarget(ctx, db, store, entityID, locale)
+	target, err := artistdomain.LoadTypedTranslationInterchangeTarget(ctx, artistStore(db, store), entityID, locale)
 	if err != nil {
 		return creativeInterchangeTarget{}, err
 	}

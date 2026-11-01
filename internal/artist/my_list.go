@@ -5,9 +5,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -32,9 +29,9 @@ func (s *Service) ListMyArtists(ctx context.Context, query ListArtistsQuery) (Ar
 		return ArtistPage{}, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if len(artistIDs) == 0 {
-		return ArtistPage{Artists: []*managev1.Artist{}, Pagination: &commonv1.PaginationResponse{Limit: 20}}, nil
+		return ArtistPage{Artists: []View{}, Pagination: Pagination{Limit: 20}}, nil
 	}
-	artists, err := s.listArtists(ctx, s.db.WithContext(ctx).Model(&model.Artist{}).Where("id IN ?", artistIDs), query, false)
+	artists, err := s.listArtists(ctx, ListPage{IDs: artistIDs}, query)
 	if err != nil {
 		return ArtistPage{}, err
 	}

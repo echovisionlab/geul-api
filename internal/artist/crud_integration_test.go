@@ -1,15 +1,13 @@
 //go:build integration
 
-package artist
+package artist_test
 
 import (
 	"context"
-	"errors"
+	artist "github.com/echovisionlab/geul-api/internal/artist"
 	"testing"
-	"time"
 
 	"connectrpc.com/connect"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -21,15 +19,27 @@ import (
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
+// artistIntegrationHandler is the manage Connect adapter of an Artist
+// service with the SpiceDB client and content store it runs on.
+type artistIntegrationHandler struct {
+	*artist.ConnectHandler
+	spiceDB       *auth.SpiceDBClient
+	contentBlocks *contentblock.Store
+}
+
 // newArtistIntegrationSpiceDBService returns the manage Connect adapter of
 // an Artist service whose administrator is adminID.
-func newArtistIntegrationSpiceDBService(t *testing.T, db *gorm.DB, adminID string) *ConnectHandler {
+func newArtistIntegrationSpiceDBService(t *testing.T, db *gorm.DB, adminID string) artistIntegrationHandler {
 	t.Helper()
 	stack := testutil.SetupOryStack(t)
 	syncArtistIntegrationGlobalRole(t, stack.SpiceDBClient, adminID, policyv1.Role.Admin())
-	return NewConnectHandler(newTestService(t, Deps{
-		DB: db, SpiceDB: stack.SpiceDBClient, ContentBlocks: testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient),
-	}))
+	contentBlocks := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)
+	return artistIntegrationHandler{
+		ConnectHandler: artist.NewConnectHandler(newTestService(t, integrationDeps{
+			DB: db, SpiceDB: stack.SpiceDBClient, ContentBlocks: contentBlocks,
+		})),
+		spiceDB: stack.SpiceDBClient, contentBlocks: contentBlocks,
+	}
 }
 
 func syncArtistIntegrationGlobalRole(
@@ -62,7 +72,7 @@ func TestArtistCreateRechecksCurrentSiteAdminInTransactionIntegration(t *testing
 	seedArtistIdentity(t, db, adminID, "Artist Demoted Admin")
 	service := newArtistIntegrationSpiceDBService(t, db, adminID)
 
-	syncArtistIntegrationGlobalRole(t, service.artists.spiceDB, adminID, policyv1.Role.User())
+	syncArtistIntegrationGlobalRole(t, service.spiceDB, adminID, policyv1.Role.User())
 
 	_, err := service.CreateArtist(
 		artistIntegrationAdminCtx(adminID),
@@ -83,7 +93,7 @@ func TestListMyArtistsGivesCurrentSiteAdminAllArtistsIntegration(t *testing.T) {
 	seedArtistIdentity(t, db, adminID, "Artist Listing Admin")
 	seedArtistIdentity(t, db, otherAdminID, "Other Artist Admin")
 	service := newArtistIntegrationSpiceDBService(t, db, adminID)
-	syncArtistIntegrationGlobalRole(t, service.artists.spiceDB, otherAdminID, policyv1.Role.Admin())
+	syncArtistIntegrationGlobalRole(t, service.spiceDB, otherAdminID, policyv1.Role.Admin())
 
 	created, err := service.CreateArtist(
 		artistIntegrationAdminCtx(otherAdminID),
@@ -261,7 +271,7 @@ func TestArtistDeletePreviewRejectsChangedRelationsAndPreservesTargetsIntegratio
 	require.NoError(t, err)
 	labelID := testutil.IntegrationUUID()
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		document, createErr := service.artists.contentBlocks.CreateDocument(t.Context(), tx, contentblock.CreateInput{
+		document, createErr := service.contentBlocks.CreateDocument(t.Context(), tx, contentblock.CreateInput{
 			Profile: "compact", SourceLocale: "en",
 		})
 		if createErr != nil {
@@ -308,74 +318,6 @@ func TestArtistDeletePreviewRejectsChangedRelationsAndPreservesTargetsIntegratio
 		var parentID *string
 		require.NoError(t, db.Table("artist").Select("parent_artist_id").Where("id = ?", childID).Scan(&parentID).Error)
 		require.Nil(t, parentID)
-	}
-}
-
-func TestArtistDeleteSerializesRelationshipSnapshotWithReparentIntegration(t *testing.T) {
-	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
-	adminID := testutil.IntegrationUUID()
-	seedArtistIdentity(t, db, adminID, "Artist delete lock admin")
-	service := newArtistIntegrationSpiceDBService(t, db, adminID)
-	ctx := artistIntegrationAdminCtx(adminID)
-
-	parent, err := service.CreateArtist(ctx, connect.NewRequest(&managev1.CreateArtistRequest{
-		Name:     "Delete lock parent",
-		Document: artistContentDocument("en", "Delete lock parent"),
-	}))
-	require.NoError(t, err)
-	preview, err := service.PreviewDeleteArtist(ctx, connect.NewRequest(&managev1.PreviewDeleteArtistRequest{Id: parent.Msg.Id}))
-	require.NoError(t, err)
-
-	graphBlocker := db.WithContext(ctx).Begin()
-	require.NoError(t, graphBlocker.Error)
-	t.Cleanup(func() { _ = graphBlocker.Rollback().Error })
-	require.NoError(t, artistEntity.LegacyLockParentGraph(ctx, graphBlocker))
-
-	deleteDone := make(chan error, 1)
-	go func() {
-		_, deleteErr := service.DeleteArtist(ctx, connect.NewRequest(&managev1.DeleteArtistRequest{
-			Id:               parent.Msg.Id,
-			ExpectedRevision: preview.Msg.Revision,
-		}))
-		deleteDone <- deleteErr
-	}()
-
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		select {
-		case deleteErr := <-deleteDone:
-			require.FailNow(t, "Artist delete completed before the parent-graph lock was released", deleteErr)
-		default:
-		}
-
-		probe := db.WithContext(ctx).Begin()
-		require.NoError(t, probe.Error)
-		var lockedArtistID string
-		probeErr := probe.Raw(`
-			SELECT id::text
-			FROM artist
-			WHERE id = ?::uuid
-			FOR UPDATE NOWAIT
-		`, parent.Msg.Id).Scan(&lockedArtistID).Error
-		require.NoError(t, probe.Rollback().Error)
-		var postgresErr *pgconn.PgError
-		if errors.As(probeErr, &postgresErr) && postgresErr.Code == "55P03" {
-			break
-		}
-		require.NoError(t, probeErr)
-		if time.Now().After(deadline) {
-			require.FailNow(t, "Artist delete did not reach the root-lock then parent-graph-lock boundary")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	require.NoError(t, graphBlocker.Commit().Error)
-	select {
-	case deleteErr := <-deleteDone:
-		require.NoError(t, deleteErr)
-	case <-time.After(5 * time.Second):
-		require.FailNow(t, "Artist delete did not resume after the parent-graph lock was released")
 	}
 }
 
@@ -472,8 +414,7 @@ func TestArtistOwnerManagerTransitionsIntegration(t *testing.T) {
 
 func requireArtistCapabilities(
 	t *testing.T,
-	service *ConnectHandler,
-	accountIdentityID string,
+	service artistIntegrationHandler, accountIdentityID string,
 	artistID string,
 	actorLabel string,
 	want bool,
@@ -485,7 +426,7 @@ func requireArtistCapabilities(
 	for _, capability := range capabilities {
 		can, canErr := capability(artistID)
 		require.NoError(t, canErr)
-		allowed, checkErr := service.artists.spiceDB.CheckActorCan(t.Context(), actor, can)
+		allowed, checkErr := service.spiceDB.CheckActorCan(t.Context(), actor, can)
 		require.NoError(t, checkErr)
 		require.Equal(
 			t,

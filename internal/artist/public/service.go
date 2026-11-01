@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
+	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -22,6 +23,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/google/uuid"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -160,14 +162,14 @@ func (s *Service) List(ctx context.Context, query ListArtistsQuery) (ArtistPage,
 // artistSummaries renders artists with their source titles, primary images
 // and OG images.
 func (s *Service) artistSummaries(ctx context.Context, artists []model.Artist) ([]*openv1.ArtistSummary, error) {
-	sourceTitles, err := artistdomain.LoadCreativeSourceTitlesForPublic(ctx, s.db, collectArtistIDs(artists))
+	sourceTitles, err := loadSourceTitles(ctx, s.db, collectArtistIDs(artists))
 	if err != nil {
 		return nil, err
 	}
 	for i := range artists {
 		artists[i].Name = sourceTitles[artists[i].ID]
 	}
-	sourceOgAssetIDs, err := artistdomain.LoadCreativeSourceOgAssetIDsForPublic(ctx, s.db, collectArtistIDs(artists))
+	sourceOgAssetIDs, err := loadSourceOgAssetIDs(ctx, s.db, collectArtistIDs(artists))
 	if err != nil {
 		return nil, err
 	}
@@ -252,7 +254,7 @@ func (s *Service) Get(ctx context.Context, query GetArtistQuery) (*openv1.Artist
 	var err error
 
 	// UUID-first approach
-	if artistdomain.IsValidUUID(slugOrID) {
+	if isValidUUID(slugOrID) {
 		err = s.db.WithContext(ctx).First(&artist, "id = ?", slugOrID).Error
 	} else {
 		err = s.db.WithContext(ctx).First(&artist, "slug = ?", slugOrID).Error
@@ -594,8 +596,8 @@ func (s *Service) buildArtistResponseInTransaction(
 	if err != nil {
 		return nil, err
 	}
-	content, err := artistdomain.LoadCreativeContentDocumentForPublicInTransaction(
-		ctx, s.db, s.contentBlocks, artistID, localization.DisplayedLocale,
+	content, err := artistdomain.LoadCreativeContentDocumentForPublic(
+		ctx, artistpostgres.Bind(s.db, artistpostgres.Deps{ContentBlocks: s.contentBlocks}), artistID, localization.DisplayedLocale,
 	)
 	if err != nil {
 		return nil, err
@@ -636,7 +638,7 @@ func (s *Service) buildArtistResponseInTransaction(
 	if artist.PublishedAt != nil {
 		protoArtist.PublishedAt = timestamppb.New(*artist.PublishedAt)
 	}
-	sourceOgAssetIDs, err := artistdomain.LoadCreativeSourceOgAssetIDsForPublic(ctx, s.db, []string{artist.ID})
+	sourceOgAssetIDs, err := loadSourceOgAssetIDs(ctx, s.db, []string{artist.ID})
 	if err != nil {
 		return nil, err
 	}
@@ -801,4 +803,50 @@ func (s *Service) getArtistLabels(ctx context.Context, artistID string) ([]*open
 	}
 
 	return protoLabels, nil
+}
+
+func isValidUUID(value string) bool { _, err := uuid.Parse(value); return err == nil }
+
+// loadSourceTitles maps each Artist to its source-locale title; one without
+// answers not found.
+func loadSourceTitles(ctx context.Context, db *gorm.DB, artistIDs []string) (map[string]string, error) {
+	result := make(map[string]string, len(artistIDs))
+	if len(artistIDs) == 0 {
+		return result, nil
+	}
+	var rows []struct {
+		EntityID string `gorm:"column:entity_id"`
+		Title    string `gorm:"column:title"`
+	}
+	if err := db.WithContext(ctx).Table("artist_translation AS localized").Select("localized.entity_id, localized.title").Joins(`JOIN artist ON artist.id = localized.entity_id AND artist.source_locale = localized.locale`).Where("localized.entity_id IN ?", artistIDs).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		result[row.EntityID] = row.Title
+	}
+	for _, id := range artistIDs {
+		if _, ok := result[id]; !ok {
+			return nil, domainerr.ResourceNotFound("artist_translation", id)
+		}
+	}
+	return result, nil
+}
+
+// loadSourceOgAssetIDs maps each Artist to its source-locale OG image.
+func loadSourceOgAssetIDs(ctx context.Context, db *gorm.DB, artistIDs []string) (map[string]*string, error) {
+	result := make(map[string]*string, len(artistIDs))
+	if len(artistIDs) == 0 {
+		return result, nil
+	}
+	var rows []struct {
+		EntityID  string  `gorm:"column:entity_id"`
+		OgAssetID *string `gorm:"column:og_asset_id"`
+	}
+	if err := db.WithContext(ctx).Table("artist_translation AS localized").Select("localized.entity_id, localized.og_asset_id").Joins(`JOIN artist ON artist.id = localized.entity_id AND artist.source_locale = localized.locale`).Where("localized.entity_id IN ?", artistIDs).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		result[row.EntityID] = row.OgAssetID
+	}
+	return result, nil
 }

@@ -1,9 +1,9 @@
 //go:build integration
 
-package artist
+package artist_test
 
 import (
-	"context"
+	artist "github.com/echovisionlab/geul-api/internal/artist"
 	"testing"
 	"time"
 
@@ -26,7 +26,7 @@ func seedInternalArtist(t *testing.T, db *gorm.DB, contentBlocks *contentblock.S
 	now := time.Now().UTC()
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		document, err := contentBlocks.CreateDocument(t.Context(), tx, contentblock.CreateInput{
-			Profile: creativeContentProfile, SourceLocale: "en",
+			Profile: "compact", SourceLocale: "en",
 		})
 		if err != nil {
 			return err
@@ -45,11 +45,11 @@ func TestInternalArtistParentRelationRejectsCyclesAndCanBeClearedIntegration(t *
 	stack := testutil.SetupOryStack(t)
 	identityID := uuid.NewString()
 	requireInternalResourceAdmin(t, stack.SpiceDBClient, identityID)
-	service := NewInternalConnectHandler(newTestService(t, Deps{
+	contentBlocks := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)
+	service := artist.NewInternalConnectHandler(newTestService(t, integrationDeps{
 		DB: db, SpiceDB: stack.SpiceDBClient, Audit: apitelemetry.NewDurableWriter(db),
-		ContentBlocks: testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient),
+		ContentBlocks: contentBlocks,
 	}))
-	contentBlocks := service.artists.contentBlocks
 	rootID := seedInternalArtist(t, db, contentBlocks)
 	childID := seedInternalArtist(t, db, contentBlocks)
 	grandchildID := seedInternalArtist(t, db, contentBlocks)
@@ -57,12 +57,7 @@ func TestInternalArtistParentRelationRejectsCyclesAndCanBeClearedIntegration(t *
 		now := time.Now().UTC()
 		title := "Internal Artist " + artistID
 		require.NoError(t, db.Exec("UPDATE artist SET source_locale = 'en' WHERE id = ?::uuid", artistID).Error)
-		require.NoError(t, saveArtistSourceLocaleDocumentState(
-			context.Background(), db, artistID, "en",
-			translationLocaleDocumentSaveInput{
-				SourceLocale: "en", Title: &title, Now: now,
-			},
-		))
+		seedArtistSourceTitle(t, db, artistID, "en", title, now)
 		attachArtistContentDocument(t, db, contentBlocks, artistID, "en", title)
 		attachInternalResourcePolicy(t, stack.SpiceDBClient, artistID)
 	}
