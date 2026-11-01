@@ -3,10 +3,12 @@ package release
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -14,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
@@ -157,7 +160,7 @@ func applyAIDocumentMutation(
 // cause and a revision race with the conflict the AI document port reports.
 func mapReleaseAIDocumentExecutionError(err error, input AIDocumentMutation) error {
 	var compilerErr *releaseAIDocumentCompilerError
-	var conflict *AIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	var stale *contentblock.StaleRevisionError
 	var targetConflict *translation.TargetRevisionConflict
 	switch {
@@ -166,9 +169,18 @@ func mapReleaseAIDocumentExecutionError(err error, input AIDocumentMutation) err
 	case errors.As(err, &conflict):
 		return conflict
 	case errors.As(err, &stale):
-		return &AIDocumentRevisionConflictError{Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: stale.CurrentRevision.String()}
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: stale.CurrentRevision.String(),
+			Message:                 fmt.Sprintf("Release AI document revision conflict: current document revision is %q", stale.CurrentRevision.String()),
+		}
 	case errors.As(err, &targetConflict):
-		return &AIDocumentRevisionConflictError{Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: input.ExpectedDocumentRevision, CurrentTargetRevision: releaseTargetConflictRevision(targetConflict)}
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
+			CurrentDocumentRevision: input.ExpectedDocumentRevision,
+			CurrentTargetRevision:   releaseTargetConflictRevision(targetConflict),
+			Message:                 fmt.Sprintf("Release AI document revision conflict: current document revision is %q", input.ExpectedDocumentRevision),
+		}
 	default:
 		return mapReleaseAIDocumentMutationError(err)
 	}
@@ -183,10 +195,19 @@ func validateCompiledReleaseAIDocumentMutation(state AIDocumentState, input AIDo
 		return uuid.Nil, domainerr.InvalidField("mutation", "compiled Release identity, locale, contributor, source observation, and locale presence must match the locked state")
 	}
 	if input.ExpectedDocumentRevision != state.DocumentRevision {
-		return uuid.Nil, &AIDocumentRevisionConflictError{Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: state.DocumentRevision}
+		return uuid.Nil, &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: state.DocumentRevision,
+			Message:                 fmt.Sprintf("Release AI document revision conflict: current document revision is %q", state.DocumentRevision),
+		}
 	}
 	if !optional.Equal(input.ExpectedTargetRevision, state.TargetRevision) {
-		return uuid.Nil, &AIDocumentRevisionConflictError{Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: state.DocumentRevision, CurrentTargetRevision: optional.Clone(state.TargetRevision)}
+		return uuid.Nil, &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
+			CurrentDocumentRevision: state.DocumentRevision,
+			CurrentTargetRevision:   optional.Clone(state.TargetRevision),
+			Message:                 fmt.Sprintf("Release AI document revision conflict: current document revision is %q", state.DocumentRevision),
+		}
 	}
 	if input.Batch != nil && (input.Batch.DocumentID != state.DocumentID || input.Batch.ExpectedRevision != expected || len(input.Batch.ContributorMemberIDs) != 1 || input.Batch.ContributorMemberIDs[0] != memberID) {
 		return uuid.Nil, domainerr.InvalidField("mutation", "compiled Release document, revision, and attribution must match the locked state")

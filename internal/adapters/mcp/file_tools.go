@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -22,8 +23,8 @@ const (
 	ToolFileUpload   = "file_upload"
 )
 
-var fileTools = []mcpserver.Tool{
-	{
+var fileTools = toolRegistry[FileTools]{
+	fileTransferTool(mcpserver.Tool{
 		Name: ToolFileTransfer, Title: "Transfer a File",
 		Description: "Begin, inspect, or complete one File ingest through the existing File authority. " +
 			"Field sets per action: begin multipart (t=browser_upload_page|presigned_multipart) takes k,t,n,m,s and optional lm; " +
@@ -37,22 +38,22 @@ var fileTools = []mcpserver.Tool{
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, false, true),
 		Meta:            oauthSecurityMeta(),
-	},
-	{
+	}),
+	defineTool(mcpserver.Tool{
 		Name: ToolFileRead, Title: "Read a File",
 		Description: "Read authorized File metadata and existing delivery or derivative references.",
 		InputSchema: fileReadInputSchema(), OutputSchema: fileReadOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
 		Meta:            oauthSecurityMeta(),
-	},
-	{
+	}, (*FileTools).read),
+	defineTool(mcpserver.Tool{
 		Name: ToolFileUpload, Title: "Upload a chat attachment",
 		Description: "Import one uploaded chat attachment as a standalone rawsector File. Pass the connector-resolved file descriptor and a stable correlation_id reused on retry. File bytes are streamed, verified, and processed by existing File authority. MIME is sniffed from bytes; no document or Track association is created. Use file_transfer for Track audio.",
 		InputSchema: json.RawMessage(fileUploadInputJSONSchema), OutputSchema: fileReadOutputSchema(),
 		SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, true),
 		Meta: fileUploadMeta(),
-	},
+	}, (*FileTools).upload),
 }
 
 func fileUploadMeta() map[string]any {
@@ -74,12 +75,10 @@ func NewFileTools(files *filemedia.MCPFileFacade) (*FileTools, error) {
 	return &FileTools{files: files}, nil
 }
 
-func (*FileTools) ToolNames() []string {
-	return toolDefinitionNames(fileTools)
-}
+func (*FileTools) ToolNames() []string { return fileTools.names() }
 
 func (*FileTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(fileTools), nil
+	return fileTools.list(), nil
 }
 
 func (tools *FileTools) CallTool(
@@ -88,25 +87,14 @@ func (tools *FileTools) CallTool(
 	name string,
 	arguments mcpserver.ToolArguments,
 ) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolFileTransfer:
-		return tools.transfer(ctx, arguments)
-	case ToolFileRead:
-		return tools.read(ctx, arguments)
-	case ToolFileUpload:
-		return tools.upload(ctx, arguments)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return fileTools.call(tools, ctx, name, arguments)
 }
 
-func (tools *FileTools) upload(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	var input struct {
-		File          filemedia.MCPFileUploadInput `json:"file"`
-		Kind          filemedia.MCPFileKind        `json:"kind"`
-		CorrelationID string                       `json:"correlation_id"`
-	}
-	if err := decodeArguments(arguments, &input); err != nil {
+func (tools *FileTools) upload(ctx context.Context, _ string, call toolCall[fileUploadArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
+	var input fileUploadArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := rejectNullArguments(arguments, "file", "kind", "correlation_id"); err != nil {
@@ -151,7 +139,9 @@ type fileReadArguments struct {
 	FileID string `json:"f"`
 }
 
-func (tools *FileTools) transfer(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *FileTools) transfer(ctx context.Context, call fileTransferCall) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	action, err := fileTransferAction(arguments)
 	if err != nil {
 		return executionError(err)
@@ -161,7 +151,7 @@ func (tools *FileTools) transfer(ctx context.Context, arguments mcpserver.ToolAr
 	switch action {
 	case "begin":
 		var input fileBeginArguments
-		if err := decodeArguments(arguments, &input); err != nil {
+		if err := call.Begin.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if err := rejectNullArguments(arguments, "k", "t", "n", "m", "s", "lm", "u", "track_id", "expected_current_file_id", "correlation_id"); err != nil {
@@ -178,7 +168,7 @@ func (tools *FileTools) transfer(ctx context.Context, arguments mcpserver.ToolAr
 		})
 	case "status":
 		var input fileSessionArguments
-		if err := decodeArguments(arguments, &input); err != nil {
+		if err := call.Status.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if err := rejectNullArguments(arguments, "h"); err != nil {
@@ -191,7 +181,7 @@ func (tools *FileTools) transfer(ctx context.Context, arguments mcpserver.ToolAr
 		result, err = tools.files.Status(ctx, handle)
 	case "complete":
 		var input fileCompleteArguments
-		if err := decodeArguments(arguments, &input); err != nil {
+		if err := call.Complete.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if err := rejectNullArguments(arguments, "h", "client_media_bundle_id"); err != nil {
@@ -216,9 +206,9 @@ func (tools *FileTools) transfer(ctx context.Context, arguments mcpserver.ToolAr
 	return structuredResult(encoded, false)
 }
 
-func (tools *FileTools) read(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *FileTools) read(ctx context.Context, _ string, call toolCall[fileReadArguments]) (mcpserver.ToolResult, error) {
 	var input fileReadArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	file, err := tools.files.Read(ctx, input.FileID)
@@ -467,3 +457,33 @@ var (
 	_ mcpserver.ToolDispatcher = (*FileTools)(nil)
 	_ ToolProvider             = (*FileTools)(nil)
 )
+
+type fileUploadArguments = struct {
+	File          filemedia.MCPFileUploadInput `json:"file"`
+	Kind          filemedia.MCPFileKind        `json:"kind"`
+	CorrelationID string                       `json:"correlation_id"`
+}
+
+type fileTransferCall struct {
+	Arguments mcpserver.ToolArguments
+	Begin     toolCall[fileBeginArguments]
+	Status    toolCall[fileSessionArguments]
+	Complete  toolCall[fileCompleteArguments]
+}
+
+func fileTransferTool(definition mcpserver.Tool) registeredTool[FileTools] {
+	schema, err := generateInputSchema(definition.InputSchema,
+		reflect.TypeFor[fileBeginArguments](), reflect.TypeFor[fileSessionArguments](), reflect.TypeFor[fileCompleteArguments]())
+	if err != nil {
+		panic(fmt.Sprintf("MCP tool %s input schema: %v", definition.Name, err))
+	}
+	definition.InputSchema = schema
+	return registeredTool[FileTools]{definition: definition, call: func(tools *FileTools, ctx context.Context, _ string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+		return tools.transfer(ctx, fileTransferCall{
+			Arguments: arguments,
+			Begin:     toolCall[fileBeginArguments]{Arguments: arguments},
+			Status:    toolCall[fileSessionArguments]{Arguments: arguments},
+			Complete:  toolCall[fileCompleteArguments]{Arguments: arguments},
+		})
+	}}
+}

@@ -27,16 +27,16 @@ const (
 	ToolReleaseSlugCheck      = "release_slug_check"
 )
 
-var releaseManagementTools = []mcpserver.Tool{
-	oauthTool(ToolReleaseCreate, "Create Release", "Create a draft Release with an empty typed document in the explicit source locale. Use document_open and document_read before adding body text with document_apply. Edit the locale-owned title with document_metadata_update. Resolve related artist, label, genre, style, format, and credit references before using the Release relation tools.", releaseCreateInputJSONSchema, releaseSettingsOutputJSONSchema, false, false),
-	oauthTool(ToolReleaseSettingsGet, "Get Release settings", "Read authorized Release root settings and its current content document revision without returning the body or media delivery URLs. Use document_open and document_read for localized title and body editing, and release_relations_get for relation observations.", contentIDInputJSONSchema, releaseSettingsOutputJSONSchema, true, false),
-	oauthTool(ToolReleaseSettingsUpdate, "Update Release settings", "Update Release slug, type, catalog number, release date, or streaming URLs through the existing Release service. Read the locale-owned title with document_read and edit it with document_metadata_update using the exact current revision. Use Release relation tools for relations. The content document revision is not a settings compare-and-set token.", releaseSettingsUpdateInputJSONSchema, releaseMutationOutputJSONSchema, false, true),
-	oauthTool(ToolReleasePublish, "Publish Release", "Publish a draft Release through the existing lifecycle. Publishing an already published Release returns changed=false.", contentIDInputJSONSchema, releaseMutationOutputJSONSchema, false, true),
-	oauthTool(ToolReleaseUnpublish, "Unpublish Release", "Move a published Release back to draft through the existing lifecycle. A Release already in draft returns changed=false.", contentIDInputJSONSchema, releaseMutationOutputJSONSchema, false, true),
-	oauthTool(ToolReleaseDelete, "Delete Release", "Permanently delete a Release and its owned state when allowed by the existing Release service.", contentIDInputJSONSchema, releaseMutationOutputJSONSchema, false, true),
-	oauthTool(ToolReleaseArtworkSet, "Set Release artwork", "Reuse an existing attachable File as Release artwork through the existing Release service. Resolve file_id with file_list. This changes the artwork relation without uploading or deleting File bytes. success reports an accepted native operation; it does not distinguish a changed relation from an existing attachment.", releaseArtworkSetInputJSONSchema, releaseArtworkOutputJSONSchema, false, true),
-	oauthTool(ToolReleaseArtworkRemove, "Remove Release artwork", "Remove the Release artwork relation through the existing Release service without deleting File bytes. success also covers an already absent artwork relation.", contentIDInputJSONSchema, releaseArtworkOutputJSONSchema, false, true),
-	oauthTool(ToolReleaseSlugCheck, "Check Release slug", "Check Release route availability through the existing authorized service. Supply exclude_document_id when checking the current Release's slug. Availability is advisory; creation or update checks again when writing.", releaseSlugCheckInputJSONSchema, releaseSlugCheckOutputJSONSchema, true, false),
+var releaseManagementTools = toolRegistry[ReleaseManagementTools]{
+	defineTool(oauthTool(ToolReleaseCreate, "Create Release", "Create a draft Release with an empty typed document in the explicit source locale. Use document_open and document_read before adding body text with document_apply. Edit the locale-owned title with document_metadata_update. Resolve related artist, label, genre, style, format, and credit references before using the Release relation tools.", releaseCreateInputJSONSchema, releaseSettingsOutputJSONSchema, false, false), (*ReleaseManagementTools).create),
+	defineTool(oauthTool(ToolReleaseSettingsGet, "Get Release settings", "Read authorized Release root settings and its current content document revision without returning the body or media delivery URLs. Use document_open and document_read for localized title and body editing, and release_relations_get for relation observations.", contentIDInputJSONSchema, releaseSettingsOutputJSONSchema, true, false), (*ReleaseManagementTools).getSettings),
+	defineTool(oauthTool(ToolReleaseSettingsUpdate, "Update Release settings", "Update Release slug, type, catalog number, release date, or streaming URLs through the existing Release service. Read the locale-owned title with document_read and edit it with document_metadata_update using the exact current revision. Use Release relation tools for relations. The content document revision is not a settings compare-and-set token.", releaseSettingsUpdateInputJSONSchema, releaseMutationOutputJSONSchema, false, true), (*ReleaseManagementTools).updateSettings),
+	defineTool(oauthTool(ToolReleasePublish, "Publish Release", "Publish a draft Release through the existing lifecycle. Publishing an already published Release returns changed=false.", contentIDInputJSONSchema, releaseMutationOutputJSONSchema, false, true), (*ReleaseManagementTools).mutateLifecycle),
+	defineTool(oauthTool(ToolReleaseUnpublish, "Unpublish Release", "Move a published Release back to draft through the existing lifecycle. A Release already in draft returns changed=false.", contentIDInputJSONSchema, releaseMutationOutputJSONSchema, false, true), (*ReleaseManagementTools).mutateLifecycle),
+	defineTool(oauthTool(ToolReleaseDelete, "Delete Release", "Permanently delete a Release and its owned state when allowed by the existing Release service.", contentIDInputJSONSchema, releaseMutationOutputJSONSchema, false, true), (*ReleaseManagementTools).mutateLifecycle),
+	defineTool(oauthTool(ToolReleaseArtworkSet, "Set Release artwork", "Reuse an existing attachable File as Release artwork through the existing Release service. Resolve file_id with file_list. This changes the artwork relation without uploading or deleting File bytes. success reports an accepted native operation; it does not distinguish a changed relation from an existing attachment.", releaseArtworkSetInputJSONSchema, releaseArtworkOutputJSONSchema, false, true), (*ReleaseManagementTools).setArtwork),
+	defineTool(oauthTool(ToolReleaseArtworkRemove, "Remove Release artwork", "Remove the Release artwork relation through the existing Release service without deleting File bytes. success also covers an already absent artwork relation.", contentIDInputJSONSchema, releaseArtworkOutputJSONSchema, false, true), (*ReleaseManagementTools).removeArtwork),
+	defineTool(oauthTool(ToolReleaseSlugCheck, "Check Release slug", "Check Release route availability through the existing authorized service. Supply exclude_document_id when checking the current Release's slug. Availability is advisory; creation or update checks again when writing.", releaseSlugCheckInputJSONSchema, releaseSlugCheckOutputJSONSchema, true, false), (*ReleaseManagementTools).checkSlug),
 }
 
 type ReleaseManagementApplication interface {
@@ -62,33 +62,14 @@ func NewReleaseManagementTools(application ReleaseManagementApplication) (*Relea
 	return &ReleaseManagementTools{application: application}, nil
 }
 
-func (*ReleaseManagementTools) ToolNames() []string {
-	return toolDefinitionNames(releaseManagementTools)
-}
+func (*ReleaseManagementTools) ToolNames() []string { return releaseManagementTools.names() }
 
 func (*ReleaseManagementTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(releaseManagementTools), nil
+	return releaseManagementTools.list(), nil
 }
 
 func (tools *ReleaseManagementTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolReleaseCreate:
-		return tools.create(ctx, arguments)
-	case ToolReleaseSettingsGet:
-		return tools.getSettings(ctx, arguments)
-	case ToolReleaseSettingsUpdate:
-		return tools.updateSettings(ctx, arguments)
-	case ToolReleasePublish, ToolReleaseUnpublish, ToolReleaseDelete:
-		return tools.mutateLifecycle(ctx, name, arguments)
-	case ToolReleaseArtworkSet:
-		return tools.setArtwork(ctx, arguments)
-	case ToolReleaseArtworkRemove:
-		return tools.removeArtwork(ctx, arguments)
-	case ToolReleaseSlugCheck:
-		return tools.checkSlug(ctx, arguments)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return releaseManagementTools.call(tools, ctx, name, arguments)
 }
 
 type releaseCreateArguments struct {
@@ -104,9 +85,11 @@ type releaseCreateArguments struct {
 	YoutubeMusicURL *string `json:"youtube_music_url,omitempty"`
 }
 
-func (tools *ReleaseManagementTools) create(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ReleaseManagementTools) create(ctx context.Context, _ string, call toolCall[releaseCreateArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	var input releaseCreateArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := rejectNullArguments(arguments, "slug", "catalog_number", "release_date", "spotify_url", "apple_music_url", "bandcamp_url", "youtube_music_url"); err != nil {
@@ -139,9 +122,9 @@ func (tools *ReleaseManagementTools) create(ctx context.Context, arguments mcpse
 	return contentResult(output)
 }
 
-func (tools *ReleaseManagementTools) getSettings(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ReleaseManagementTools) getSettings(ctx context.Context, _ string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateUUID("document_id", input.DocumentID); err != nil {
@@ -167,9 +150,11 @@ type releaseSettingsArguments struct {
 	YoutubeMusicURL  *string `json:"youtube_music_url,omitempty"`
 }
 
-func (tools *ReleaseManagementTools) updateSettings(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ReleaseManagementTools) updateSettings(ctx context.Context, _ string, call toolCall[releaseSettingsArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	var input releaseSettingsArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := rejectNullArguments(arguments, "slug", "type", "catalog_number", "release_date", "clear_release_date", "spotify_url", "apple_music_url", "bandcamp_url", "youtube_music_url"); err != nil {
@@ -215,9 +200,9 @@ func (tools *ReleaseManagementTools) updateSettings(ctx context.Context, argumen
 	return contentResult(output)
 }
 
-func (tools *ReleaseManagementTools) mutateLifecycle(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ReleaseManagementTools) mutateLifecycle(ctx context.Context, name string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateUUID("document_id", input.DocumentID); err != nil {
@@ -254,9 +239,9 @@ type releaseArtworkArguments struct {
 	FileID     string `json:"file_id"`
 }
 
-func (tools *ReleaseManagementTools) setArtwork(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ReleaseManagementTools) setArtwork(ctx context.Context, _ string, call toolCall[releaseArtworkArguments]) (mcpserver.ToolResult, error) {
 	var input releaseArtworkArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateUUID("document_id", input.DocumentID); err != nil {
@@ -276,9 +261,9 @@ func (tools *ReleaseManagementTools) setArtwork(ctx context.Context, arguments m
 	return contentResult(output)
 }
 
-func (tools *ReleaseManagementTools) removeArtwork(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ReleaseManagementTools) removeArtwork(ctx context.Context, _ string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateUUID("document_id", input.DocumentID); err != nil {
@@ -295,9 +280,11 @@ type releaseSlugArguments struct {
 	ExcludeDocumentID *string `json:"exclude_document_id,omitempty"`
 }
 
-func (tools *ReleaseManagementTools) checkSlug(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ReleaseManagementTools) checkSlug(ctx context.Context, _ string, call toolCall[releaseSlugArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	var input releaseSlugArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if _, supplied := arguments["slug"]; !supplied {

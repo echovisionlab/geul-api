@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/translation"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -139,13 +141,15 @@ func legalAIDocumentResult(
 	var compilerErr *legalAIDocumentCompilerError
 	var stale *contentblock.StaleRevisionError
 	var targetConflict *translation.TargetRevisionConflict
-	var revisionConflict *AIDocumentRevisionConflict
+	var revisionConflict *aidocument.RevisionConflict
 	switch {
 	case errors.As(err, &compilerErr):
 		return AIDocumentMutationResult{}, compilerErr.cause
 	case errors.As(err, &stale):
-		return AIDocumentMutationResult{}, &AIDocumentRevisionConflict{
-			Kind: AIDocumentDocumentRevisionConflict, CurrentRevision: stale.CurrentRevision.String(),
+		return AIDocumentMutationResult{}, &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: stale.CurrentRevision.String(),
+			Message:                 "Legal AI document revision changed; reload before saving",
 		}
 	case errors.As(err, &targetConflict):
 		var currentTargetRevision *string
@@ -153,10 +157,11 @@ func legalAIDocumentResult(
 			current := targetConflict.CurrentRevision
 			currentTargetRevision = &current
 		}
-		return AIDocumentMutationResult{}, &AIDocumentRevisionConflict{
-			Kind:                  AIDocumentTargetRevisionConflict,
-			CurrentRevision:       result.CurrentDocumentRevision,
-			CurrentTargetRevision: currentTargetRevision,
+		return AIDocumentMutationResult{}, &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
+			CurrentDocumentRevision: result.CurrentDocumentRevision,
+			CurrentTargetRevision:   currentTargetRevision,
+			Message:                 "Legal AI document revision changed; reload before saving",
 		}
 	case errors.As(err, &revisionConflict):
 		return AIDocumentMutationResult{}, revisionConflict

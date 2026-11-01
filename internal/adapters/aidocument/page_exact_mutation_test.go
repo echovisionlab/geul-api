@@ -286,8 +286,10 @@ func TestPageExactMutationMapsSplitRevisionConflicts(t *testing.T) {
 		t.Parallel()
 		port, api, identity := newExactPagePortForLocale(t, "en", true)
 		currentDocument := uuid.NewString()
-		api.executeErr = &pagedomain.AIDocumentRevisionConflictError{
-			Kind: pagedomain.AIDocumentDocumentRevisionConflict, CurrentRevision: currentDocument,
+		api.executeErr = &core.RevisionConflict{
+			Kind:                    core.ConflictDocumentRevision,
+			CurrentDocumentRevision: currentDocument,
+			Message:                 "Page AI document revision changed: current revision is " + currentDocument,
 		}
 		service, err := core.NewService(port)
 		require.NoError(t, err)
@@ -308,9 +310,11 @@ func TestPageExactMutationMapsSplitRevisionConflicts(t *testing.T) {
 		t.Parallel()
 		port, api, identity := newExactPagePortForLocale(t, "ko", true)
 		currentTarget := "tr1_ko-current"
-		api.executeErr = &pagedomain.AIDocumentRevisionConflictError{
-			Kind: pagedomain.AIDocumentTargetRevisionConflict, CurrentRevision: api.state.Revision,
-			CurrentTargetRevision: &currentTarget,
+		api.executeErr = &core.RevisionConflict{
+			Kind:                    core.ConflictTargetRevision,
+			CurrentDocumentRevision: api.state.Revision,
+			CurrentTargetRevision:   &currentTarget,
+			Message:                 "Page AI document revision changed: current revision is " + api.state.Revision,
 		}
 		service, err := core.NewService(port)
 		require.NoError(t, err)

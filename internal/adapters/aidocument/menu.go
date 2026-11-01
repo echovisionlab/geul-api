@@ -118,86 +118,54 @@ func (p *menuAIDocumentPort) executeMutation(
 ) (core.ValidationResult, core.ApplyResult, error) {
 	identity := request.Identity()
 	if identity.Domain != core.DomainMenu {
-		return core.ValidationResult{}, core.ApplyResult{}, fmt.Errorf(
-			"menu AI document adapter cannot mutate domain %q", identity.Domain,
-		)
+		return core.ValidationResult{}, core.ApplyResult{}, fmt.Errorf("menu AI document adapter cannot mutate domain %q", identity.Domain)
 	}
 	action := menuMutationAction(request.Operations)
-	run := newExactMutationRun("Menu")
-	domainResult, err := p.domain.ExecuteAIDocumentMutation(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		action,
-		mode,
-		func(snapshot menudomain.AIDocumentSnapshot) (menudomain.AIDocumentApply, error) {
+
+	return executeExactMutation(request, exactMutationSpec[menudomain.AIDocumentSnapshot, menudomain.AIDocumentApply, menudomain.AIDocumentApplyResult]{
+		Domain:       "Menu",
+		ValidateOnly: mode == menudomain.AIDocumentExecutionValidate,
+		Execute: func(compiler func(menudomain.AIDocumentSnapshot) (menudomain.AIDocumentApply, error)) (menudomain.AIDocumentApplyResult, error) {
+			return p.domain.ExecuteAIDocumentMutation(ctx, string(identity.Reference), string(request.Locale), action, mode, compiler)
+		},
+		Project: func(snapshot menudomain.AIDocumentSnapshot) (core.Document, error) {
 			if snapshot.ID != string(identity.Reference) || snapshot.Locale != string(request.Locale) {
-				return menudomain.AIDocumentApply{}, errors.New(
-					"menu AI document domain returned a different identity or locale",
-				)
+				return core.Document{}, errors.New("menu AI document domain returned a different identity or locale")
 			}
 			current := projectMenuAIDocument(snapshot)
-			if err := run.validateLoaded(current, request); err != nil {
-				return menudomain.AIDocumentApply{}, err
-			}
-			operations, issues := compileMenuAIDocumentOperations(current, run.command.Operations)
-			if err := run.rejectIssues(issues); err != nil {
-				return menudomain.AIDocumentApply{}, err
-			}
-			return menudomain.AIDocumentApply{
-				MenuID: string(identity.Reference), Locale: string(request.Locale),
-				ExpectedDocumentRevision: string(run.command.ExpectedDocumentRevision),
-				ExpectedTargetRevision:   core.OptionalRevisionString(run.command.ExpectedTargetRevision),
-				AffectedHandles:          append([]string(nil), run.command.AffectedHandles...),
-				Operations:               operations,
-			}, nil
+
+			return current, nil
 		},
-	)
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == menudomain.AIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var domainValidation *menudomain.AIDocumentValidationError
-		if errors.As(err, &domainValidation) {
-			run.validation.Issues = append(run.validation.Issues, menuDomainIssues(domainValidation.Issues)...)
-			if mode == menudomain.AIDocumentExecutionValidate {
-				return run.validation, core.ApplyResult{}, nil
+		Compile: func(snapshot menudomain.AIDocumentSnapshot, current core.Document, command core.ValidatedApply) (menudomain.AIDocumentApply, []core.OperationIssue, error) {
+			operations, issues := compileMenuAIDocumentOperations(current, command.Operations)
+			return menudomain.AIDocumentApply{
+				MenuID:                   string(identity.Reference),
+				Locale:                   string(request.Locale),
+				ExpectedDocumentRevision: string(command.ExpectedDocumentRevision),
+				ExpectedTargetRevision:   core.OptionalRevisionString(command.ExpectedTargetRevision),
+				AffectedHandles:          append([]string(nil), command.AffectedHandles...),
+				Operations:               operations,
+			}, issues, nil
+		},
+		Result: func(domainResult menudomain.AIDocumentApplyResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			result := core.ApplyResult{
+				DocumentRevision: core.Revision(domainResult.DocumentRevision),
+				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
+				Changed:          domainResult.Changed,
 			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ValidationError{Result: run.validation}
-		}
-		var conflict *menudomain.AIDocumentRevisionConflict
-		if errors.As(err, &conflict) {
-			code := core.ConflictDocumentRevision
-			if conflict.Target {
-				code = core.ConflictTargetRevision
+			result = withOperationChanges(command, result)
+
+			return result, nil
+		},
+		ConflictHandles: func(conflict *core.RevisionConflict, _ core.ValidatedApply) []string { return conflict.AffectedHandles },
+		PreConflictIssues: func(err error) ([]core.OperationIssue, bool) {
+			var invalid *menudomain.AIDocumentValidationError
+			if !errors.As(err, &invalid) {
+				return nil, false
 			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
-				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
-				AffectedHandles:       append([]string(nil), conflict.AffectedHandles...),
-			}}
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == menudomain.AIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
-	result := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.DocumentRevision),
-		TargetRevision:   core.OptionalRevision(domainResult.TargetRevision), Changed: domainResult.Changed,
-	}
-	if domainResult.Changed {
-		for index, operation := range run.command.Operations {
-			result.Changes = append(result.Changes, core.Change{
-				Operation: index, Kind: operation.Kind,
-				AffectedHandles: menuOperationHandles(operation),
-			})
-		}
-	}
-	accepted, err := run.accept(result)
-	return run.validation, accepted, err
+			return menuDomainIssues(invalid.Issues), true
+		},
+	})
 }
 
 func menuMutationAction(operations []core.Operation) menudomain.AIDocumentMutationAction {
@@ -222,27 +190,6 @@ func menuDomainIssues(issues []menudomain.AIDocumentIssue) []core.OperationIssue
 		})
 	}
 	return result
-}
-
-func menuOperationHandles(operation core.Operation) []string {
-	switch operation.Kind {
-	case core.OperationSetField:
-		return []string{string(operation.SetField.Target.Block), string(operation.SetField.Target.Field)}
-	case core.OperationUnsetField:
-		return []string{string(operation.UnsetField.Target.Block), string(operation.UnsetField.Target.Field)}
-	case core.OperationInsertBlock:
-		return []string{string(operation.InsertBlock.Block)}
-	case core.OperationDeleteBlock:
-		return []string{string(operation.DeleteBlock.Block)}
-	case core.OperationMoveBlock:
-		return []string{string(operation.MoveBlock.Block)}
-	case core.OperationReplaceBlockKind:
-		return []string{string(operation.ReplaceBlockKind.Block)}
-	case core.OperationCreateTranslation, core.OperationDeleteTranslation:
-		return []string{"locale"}
-	default:
-		return nil
-	}
 }
 
 func projectMenuAIDocument(snapshot menudomain.AIDocumentSnapshot) core.Document {

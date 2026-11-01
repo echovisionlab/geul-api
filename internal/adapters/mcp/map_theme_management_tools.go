@@ -36,36 +36,9 @@ type MapThemeManagement interface {
 	UpdateMapThemeSnapshot(context.Context, maptheme.UpdateMapThemeSnapshotCommand) (maptheme.SnapshotUpdate, error)
 }
 
-var mapThemeManagementTools = []mcpserver.Tool{
-	oauthTool(ToolMapThemeList, "List map themes", "List current map themes and the site default through the existing management reader.", mapThemeListInputJSONSchema, mapThemeListOutputJSONSchema, true, false),
-	oauthTool(ToolMapThemeResolve, "Resolve a map theme", "Resolve the requested theme or current site default, using light or dark scheme. A missing requested theme falls back to the default.", mapThemeResolveInputJSONSchema, mapThemeResolveOutputJSONSchema, true, false),
-	oauthTool(ToolMapThemeGet, "Get map theme settings", "Read a map theme's revision and complete editable snapshot. Requires existing administrator view permission.", mapThemeIDInputJSONSchema, mapThemeOutputJSONSchema, true, false),
-	oauthTool(ToolMapThemeCreate, "Create a map theme", "Create a theme from the complete snapshot shape. Requires existing administrator creation permission.", mapThemeSnapshotInputJSONSchema, mapThemeOutputJSONSchema, false, false),
-	oauthTool(ToolMapThemeDelete, "Delete a map theme", "Delete a theme through its existing administrator policy. Select another site default before deleting the current default.", mapThemeIDInputJSONSchema, mapThemeDeleteOutputJSONSchema, false, true),
-	oauthTool(ToolMapThemeCopy, "Copy a map theme", "Copy an existing theme under a new name through the administrator creation policy.", mapThemeCopyInputJSONSchema, mapThemeOutputJSONSchema, false, false),
-	oauthTool(ToolMapThemeSetDefault, "Set the default map theme", "Select the site's default theme through its existing administrator management policy.", mapThemeIDInputJSONSchema, mapThemeDefaultOutputJSONSchema, false, false),
-	oauthTool(ToolMapThemeSettingsUpdate, "Update map theme settings", "Replace the complete editable snapshot using the revision from map_theme_get. Requires current administrator edit permission; identical normalized values are a no-op. Reload after a revision conflict.", mapThemeUpdateInputJSONSchema, mapThemeUpdateOutputJSONSchema, false, false),
-}
-
-type MapThemeManagementTools struct{ service MapThemeManagement }
-
-func NewMapThemeManagementTools(service MapThemeManagement) (*MapThemeManagementTools, error) {
-	if interfaceValueIsNil(service) {
-		return nil, errors.New("MCP Map Theme management is required")
-	}
-	return &MapThemeManagementTools{service: service}, nil
-}
-func (*MapThemeManagementTools) ToolNames() []string {
-	return toolDefinitionNames(mapThemeManagementTools)
-}
-func (*MapThemeManagementTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(mapThemeManagementTools), nil
-}
-
-func (tools *MapThemeManagementTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolMapThemeList:
-		if err := decodeArguments(arguments, &struct{}{}); err != nil {
+var mapThemeManagementTools = toolRegistry[MapThemeManagementTools]{
+	defineTool(oauthTool(ToolMapThemeList, "List map themes", "List current map themes and the site default through the existing management reader.", mapThemeListInputJSONSchema, mapThemeListOutputJSONSchema, true, false), func(tools *MapThemeManagementTools, ctx context.Context, name string, call toolCall[struct{}]) (mcpserver.ToolResult, error) {
+		if err := call.Decode(&struct{}{}); err != nil {
 			return executionError(err)
 		}
 		list, err := tools.service.ListMapThemes(ctx)
@@ -80,15 +53,15 @@ func (tools *MapThemeManagementTools) CallTool(ctx context.Context, _ mcpserver.
 			Themes    []mapThemeOutput `json:"themes"`
 			DefaultID string           `json:"default_map_theme_id"`
 		}{themes, list.DefaultID})
-	case ToolMapThemeResolve:
+	}),
+	defineTool(oauthTool(ToolMapThemeResolve, "Resolve a map theme", "Resolve the requested theme or current site default, using light or dark scheme. A missing requested theme falls back to the default.", mapThemeResolveInputJSONSchema, mapThemeResolveOutputJSONSchema, true, false), func(tools *MapThemeManagementTools, ctx context.Context, name string, call toolCall[mapThemeResolveArguments]) (mcpserver.ToolResult, error) {
+		arguments := call.Arguments
+
 		if err := rejectNullArguments(arguments, "theme_id", "scheme"); err != nil {
 			return executionError(err)
 		}
-		var input struct {
-			ThemeID *string `json:"theme_id"`
-			Scheme  string  `json:"scheme"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+		var input mapThemeResolveArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if input.ThemeID != nil {
@@ -112,9 +85,19 @@ func (tools *MapThemeManagementTools) CallTool(ctx context.Context, _ mcpserver.
 			Settings mapThemeSettings `json:"settings"`
 			Variant  mapThemeVariant  `json:"variant"`
 		}{resolved.ThemeID, resolved.Scheme, mapThemeSettings(resolved.Settings), mapThemeVariant(resolved.Variant)})
-	case ToolMapThemeCreate:
+	}),
+	defineTool(oauthTool(ToolMapThemeGet, "Get map theme settings", "Read a map theme's revision and complete editable snapshot. Requires existing administrator view permission.", mapThemeIDInputJSONSchema, mapThemeOutputJSONSchema, true, false), func(tools *MapThemeManagementTools, ctx context.Context, name string, call toolCall[mapThemeIDArguments]) (mcpserver.ToolResult, error) {
+		var input mapThemeIDArguments
+		if err := call.Decode(&input); err != nil {
+			return executionError(err)
+		}
+		return tools.callTheme(ctx, name, mapThemeCommandArguments{ThemeID: input.ThemeID})
+	}),
+	defineTool(oauthTool(ToolMapThemeCreate, "Create a map theme", "Create a theme from the complete snapshot shape. Requires existing administrator creation permission.", mapThemeSnapshotInputJSONSchema, mapThemeOutputJSONSchema, false, false), func(tools *MapThemeManagementTools, ctx context.Context, name string, call toolCall[mapThemeSnapshot]) (mcpserver.ToolResult, error) {
+		arguments := call.Arguments
+
 		var snapshot mapThemeSnapshot
-		if err := decodeArguments(arguments, &snapshot); err != nil {
+		if err := call.Decode(&snapshot); err != nil {
 			return executionError(err)
 		}
 		raw, err := json.Marshal(arguments)
@@ -131,16 +114,36 @@ func (tools *MapThemeManagementTools) CallTool(ctx context.Context, _ mcpserver.
 		return mapThemeResult(struct {
 			Theme mapThemeOutput `json:"theme"`
 		}{projectMapTheme(theme)})
-	case ToolMapThemeSettingsUpdate:
+	}),
+	defineTool(oauthTool(ToolMapThemeDelete, "Delete a map theme", "Delete a theme through its existing administrator policy. Select another site default before deleting the current default.", mapThemeIDInputJSONSchema, mapThemeDeleteOutputJSONSchema, false, true), func(tools *MapThemeManagementTools, ctx context.Context, name string, call toolCall[mapThemeIDArguments]) (mcpserver.ToolResult, error) {
+		var input mapThemeIDArguments
+		if err := call.Decode(&input); err != nil {
+			return executionError(err)
+		}
+		return tools.callTheme(ctx, name, mapThemeCommandArguments{ThemeID: input.ThemeID})
+	}),
+	defineTool(oauthTool(ToolMapThemeCopy, "Copy a map theme", "Copy an existing theme under a new name through the administrator creation policy.", mapThemeCopyInputJSONSchema, mapThemeOutputJSONSchema, false, false), func(tools *MapThemeManagementTools, ctx context.Context, name string, call toolCall[mapThemeCommandArguments]) (mcpserver.ToolResult, error) {
+		var input mapThemeCommandArguments
+		if err := call.Decode(&input); err != nil {
+			return executionError(err)
+		}
+		return tools.callTheme(ctx, name, input)
+	}),
+	defineTool(oauthTool(ToolMapThemeSetDefault, "Set the default map theme", "Select the site's default theme through its existing administrator management policy.", mapThemeIDInputJSONSchema, mapThemeDefaultOutputJSONSchema, false, false), func(tools *MapThemeManagementTools, ctx context.Context, name string, call toolCall[mapThemeIDArguments]) (mcpserver.ToolResult, error) {
+		var input mapThemeIDArguments
+		if err := call.Decode(&input); err != nil {
+			return executionError(err)
+		}
+		return tools.callTheme(ctx, name, mapThemeCommandArguments{ThemeID: input.ThemeID})
+	}),
+	defineTool(oauthTool(ToolMapThemeSettingsUpdate, "Update map theme settings", "Replace the complete editable snapshot using the revision from map_theme_get. Requires current administrator edit permission; identical normalized values are a no-op. Reload after a revision conflict.", mapThemeUpdateInputJSONSchema, mapThemeUpdateOutputJSONSchema, false, false), func(tools *MapThemeManagementTools, ctx context.Context, name string, call toolCall[mapThemeSettingsUpdateArguments]) (mcpserver.ToolResult, error) {
+		arguments := call.Arguments
+
 		if err := rejectNullArguments(arguments, "expected_revision", "snapshot"); err != nil {
 			return executionError(err)
 		}
-		var input struct {
-			ThemeID          string            `json:"theme_id"`
-			ExpectedRevision int64             `json:"expected_revision"`
-			Snapshot         *mapThemeSnapshot `json:"snapshot"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+		var input mapThemeSettingsUpdateArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if err := validateUUID("theme_id", input.ThemeID); err != nil {
@@ -162,61 +165,24 @@ func (tools *MapThemeManagementTools) CallTool(ctx context.Context, _ mcpserver.
 			Theme   mapThemeOutput `json:"theme"`
 			Changed bool           `json:"changed"`
 		}{projectMapTheme(update.Theme), update.Changed})
-	case ToolMapThemeGet, ToolMapThemeDelete, ToolMapThemeCopy, ToolMapThemeSetDefault:
-		var input struct {
-			ThemeID string `json:"theme_id"`
-			Name    string `json:"name"`
-		}
-		if name != ToolMapThemeCopy {
-			var target struct {
-				ThemeID string `json:"theme_id"`
-			}
-			if err := decodeArguments(arguments, &target); err != nil {
-				return executionError(err)
-			}
-			input.ThemeID = target.ThemeID
-		} else if err := decodeArguments(arguments, &input); err != nil {
-			return executionError(err)
-		}
-		if err := validateUUID("theme_id", input.ThemeID); err != nil {
-			return executionError(err)
-		}
-		switch name {
-		case ToolMapThemeGet:
-			theme, err := tools.service.GetMapTheme(ctx, maptheme.GetMapThemeQuery{ID: input.ThemeID})
-			if err != nil {
-				return expectedToolError(err)
-			}
-			return mapThemeResult(struct {
-				Theme mapThemeOutput `json:"theme"`
-			}{projectMapTheme(theme)})
-		case ToolMapThemeDelete:
-			if err := tools.service.DeleteMapTheme(ctx, maptheme.DeleteMapThemeCommand{ID: input.ThemeID}); err != nil {
-				return expectedToolError(err)
-			}
-			return mapThemeResult(struct {
-				ThemeID string `json:"theme_id"`
-				Success bool   `json:"success"`
-			}{input.ThemeID, true})
-		case ToolMapThemeCopy:
-			theme, err := tools.service.CopyMapTheme(ctx, maptheme.CopyMapThemeCommand{ID: input.ThemeID, Name: input.Name})
-			if err != nil {
-				return expectedToolError(err)
-			}
-			return mapThemeResult(struct {
-				Theme mapThemeOutput `json:"theme"`
-			}{projectMapTheme(theme)})
-		case ToolMapThemeSetDefault:
-			defaultID, err := tools.service.SetDefaultMapTheme(ctx, maptheme.SetDefaultMapThemeCommand{ThemeID: input.ThemeID})
-			if err != nil {
-				return expectedToolError(err)
-			}
-			return mapThemeResult(struct {
-				DefaultID string `json:"default_map_theme_id"`
-			}{defaultID})
-		}
+	}),
+}
+
+type MapThemeManagementTools struct{ service MapThemeManagement }
+
+func NewMapThemeManagementTools(service MapThemeManagement) (*MapThemeManagementTools, error) {
+	if interfaceValueIsNil(service) {
+		return nil, errors.New("MCP Map Theme management is required")
 	}
-	return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
+	return &MapThemeManagementTools{service: service}, nil
+}
+func (*MapThemeManagementTools) ToolNames() []string { return mapThemeManagementTools.names() }
+func (*MapThemeManagementTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
+	return mapThemeManagementTools.list(), nil
+}
+
+func (tools *MapThemeManagementTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	return mapThemeManagementTools.call(tools, ctx, name, arguments)
 }
 
 type mapThemeOutput struct {
@@ -308,4 +274,64 @@ func mapThemeResult(value any) (mcpserver.ToolResult, error) {
 		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP Map Theme result: %w", err)
 	}
 	return structuredResult(encoded, false)
+}
+
+type mapThemeResolveArguments = struct {
+	ThemeID *string `json:"theme_id"`
+	Scheme  string  `json:"scheme"`
+}
+
+type mapThemeSettingsUpdateArguments = struct {
+	ThemeID          string            `json:"theme_id"`
+	ExpectedRevision int64             `json:"expected_revision"`
+	Snapshot         *mapThemeSnapshot `json:"snapshot"`
+}
+
+type mapThemeIDArguments = struct {
+	ThemeID string `json:"theme_id"`
+}
+type mapThemeCommandArguments = struct {
+	ThemeID string `json:"theme_id"`
+	Name    string `json:"name"`
+}
+
+func (tools *MapThemeManagementTools) callTheme(ctx context.Context, name string, input mapThemeCommandArguments) (mcpserver.ToolResult, error) {
+	if err := validateUUID("theme_id", input.ThemeID); err != nil {
+		return executionError(err)
+	}
+	switch name {
+	case ToolMapThemeGet:
+		theme, err := tools.service.GetMapTheme(ctx, maptheme.GetMapThemeQuery{ID: input.ThemeID})
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return mapThemeResult(struct {
+			Theme mapThemeOutput `json:"theme"`
+		}{projectMapTheme(theme)})
+	case ToolMapThemeDelete:
+		if err := tools.service.DeleteMapTheme(ctx, maptheme.DeleteMapThemeCommand{ID: input.ThemeID}); err != nil {
+			return expectedToolError(err)
+		}
+		return mapThemeResult(struct {
+			ThemeID string `json:"theme_id"`
+			Success bool   `json:"success"`
+		}{input.ThemeID, true})
+	case ToolMapThemeCopy:
+		theme, err := tools.service.CopyMapTheme(ctx, maptheme.CopyMapThemeCommand{ID: input.ThemeID, Name: input.Name})
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return mapThemeResult(struct {
+			Theme mapThemeOutput `json:"theme"`
+		}{projectMapTheme(theme)})
+	case ToolMapThemeSetDefault:
+		defaultID, err := tools.service.SetDefaultMapTheme(ctx, maptheme.SetDefaultMapThemeCommand{ThemeID: input.ThemeID})
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return mapThemeResult(struct {
+			DefaultID string `json:"default_map_theme_id"`
+		}{defaultID})
+	}
+	return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
 }

@@ -5,9 +5,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/email"
@@ -18,8 +16,13 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -371,9 +374,9 @@ func TestLayoutAIDocumentReplacesTargetValuesAndRejectsAStaleTarget(t *testing.T
 			mutation.ExpectedTargetRevision = &stale
 			return mutation, err
 		})
-	var conflict *emailauthoring.EmailLayoutAIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	require.ErrorAs(t, err, &conflict)
-	require.Equal(t, emailauthoring.EmailLayoutAIDocumentTargetRevisionConflict, conflict.Kind)
+	require.Equal(t, aidocument.ConflictTargetRevision, conflict.Kind)
 	require.Len(t, h.audit.Records(), 1)
 }
 

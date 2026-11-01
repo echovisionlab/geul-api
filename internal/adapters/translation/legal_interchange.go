@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/aidocument"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
@@ -146,7 +148,7 @@ func (a *LegalInterchange) ApplyTranslationInterchange(
 		},
 	)
 	if err != nil {
-		var revisionConflict *legal.AIDocumentRevisionConflict
+		var revisionConflict *aidocument.RevisionConflict
 		if errors.As(err, &revisionConflict) {
 			return application.TranslationInterchangeApplyResult{}, errs.WithCause(connect.NewError(
 				connect.CodeAborted,

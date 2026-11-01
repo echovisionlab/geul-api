@@ -25,50 +25,10 @@ const (
 const releaseRelationSetGuidance = "Supply the unchanged observed snapshot from release_relations_get and the intended desired array. An empty desired array removes observed entries while preserving concurrent additions. Native success confirms completion, not whether data changed; call release_relations_get separately after success for the next canonical snapshot. "
 const releaseRelationOrderGuidance = "Use order_intent to move item_id before next_item_id, otherwise after previous_item_id, otherwise to the end. Array position and sort_order alone do not reorder existing entries."
 
-var releaseRelationTools = []mcpserver.Tool{
-	oauthTool(ToolReleaseRelationsGet, "Get Release relations", "Read the authorized canonical editable relation snapshots. Copy the corresponding array unchanged to observed_artists, observed_labels, observed_category_ids, observed_genre_ids, observed_style_ids, observed_formats, or observed_credits before editing. Stable credit IDs identify existing credits; omit id only when adding a new credit.", releaseRelationsGetInputJSONSchema, releaseRelationsOutputJSONSchema, true, false),
-	oauthTool(ToolReleaseArtistsSet, "Set Release artists", releaseRelationSetGuidance+releaseRelationOrderGuidance, releaseArtistsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
-	oauthTool(ToolReleaseLabelsSet, "Set Release labels", releaseRelationSetGuidance+releaseRelationOrderGuidance, releaseLabelsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
-	oauthTool(ToolReleaseCategoriesSet, "Set Release categories", releaseRelationSetGuidance, releaseCategoriesSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
-	oauthTool(ToolReleaseGenresSet, "Set Release genres", releaseRelationSetGuidance, releaseGenresSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
-	oauthTool(ToolReleaseStylesSet, "Set Release styles", releaseRelationSetGuidance, releaseStylesSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
-	oauthTool(ToolReleaseFormatsSet, "Set Release formats", releaseRelationSetGuidance, releaseFormatsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
-	oauthTool(ToolReleaseCreditsSet, "Set Release credits", releaseRelationSetGuidance+releaseRelationOrderGuidance+" Omit id or supply null only for a new credit; retain every existing credit's id and unchanged optional attributes in the desired array.", releaseCreditsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false),
-}
-
-// ReleaseRelationApplication retains the native observed-merge and permission boundaries.
-type ReleaseRelationApplication interface {
-	GetReleaseRelations(context.Context, releasedomain.GetReleaseRelationsQuery) (releasedomain.Relations, error)
-	SetReleaseArtists(context.Context, releasedomain.SetReleaseArtistsCommand) error
-	SetReleaseLabels(context.Context, releasedomain.SetReleaseLabelsCommand) error
-	SetReleaseCategories(context.Context, releasedomain.SetReleaseCategoriesCommand) error
-	SetReleaseGenres(context.Context, releasedomain.SetReleaseGenresCommand) error
-	SetReleaseStyles(context.Context, releasedomain.SetReleaseStylesCommand) error
-	SetReleaseFormats(context.Context, releasedomain.SetReleaseFormatsCommand) error
-	SetReleaseCredits(context.Context, releasedomain.SetReleaseCreditsCommand) error
-}
-
-type ReleaseRelationTools struct{ application ReleaseRelationApplication }
-
-func NewReleaseRelationTools(application ReleaseRelationApplication) (*ReleaseRelationTools, error) {
-	if interfaceValueIsNil(application) {
-		return nil, errors.New("MCP Release relation application is required")
-	}
-	return &ReleaseRelationTools{application: application}, nil
-}
-
-func (*ReleaseRelationTools) ToolNames() []string { return toolDefinitionNames(releaseRelationTools) }
-func (*ReleaseRelationTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(releaseRelationTools), nil
-}
-
-func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolReleaseRelationsGet:
-		var input struct {
-			ReleaseID string `json:"release_id"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+var releaseRelationTools = toolRegistry[ReleaseRelationTools]{
+	defineTool(oauthTool(ToolReleaseRelationsGet, "Get Release relations", "Read the authorized canonical editable relation snapshots. Copy the corresponding array unchanged to observed_artists, observed_labels, observed_category_ids, observed_genre_ids, observed_style_ids, observed_formats, or observed_credits before editing. Stable credit IDs identify existing credits; omit id only when adding a new credit.", releaseRelationsGetInputJSONSchema, releaseRelationsOutputJSONSchema, true, false), func(tools *ReleaseRelationTools, ctx context.Context, name string, call toolCall[releaseRelationsGetArguments]) (mcpserver.ToolResult, error) {
+		var input releaseRelationsGetArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if err := validateUUID("release_id", input.ReleaseID); err != nil {
@@ -79,14 +39,12 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 			return expectedToolError(err)
 		}
 		return releaseRelationsResult(projectReleaseRelations(releasedomain.RelationsMessage(relations)))
-	case ToolReleaseArtistsSet:
-		var input struct {
-			ReleaseID   string                         `json:"release_id"`
-			Artists     []*managev1.ReleaseArtistInput `json:"artists"`
-			Observed    []*managev1.ReleaseArtistInput `json:"observed_artists"`
-			OrderIntent *managev1.RelationOrderIntent  `json:"order_intent,omitempty"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+	}),
+	defineTool(oauthTool(ToolReleaseArtistsSet, "Set Release artists", releaseRelationSetGuidance+releaseRelationOrderGuidance, releaseArtistsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false), func(tools *ReleaseRelationTools, ctx context.Context, name string, call toolCall[releaseArtistsSetArguments]) (mcpserver.ToolResult, error) {
+		arguments := call.Arguments
+
+		var input releaseArtistsSetArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if err := validateReleaseRelationRows(arguments, input.ReleaseID, input.OrderIntent, "artists", "observed_artists"); err != nil {
@@ -105,14 +63,12 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 			OrderIntent: releasedomain.RelationOrderIntentFromProto(input.OrderIntent),
 		})
 		return releaseRelationMutationResult(input.ReleaseID, err)
-	case ToolReleaseLabelsSet:
-		var input struct {
-			ReleaseID   string                        `json:"release_id"`
-			Labels      []*managev1.ReleaseLabelInput `json:"labels"`
-			Observed    []*managev1.ReleaseLabelInput `json:"observed_labels"`
-			OrderIntent *managev1.RelationOrderIntent `json:"order_intent,omitempty"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+	}),
+	defineTool(oauthTool(ToolReleaseLabelsSet, "Set Release labels", releaseRelationSetGuidance+releaseRelationOrderGuidance, releaseLabelsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false), func(tools *ReleaseRelationTools, ctx context.Context, name string, call toolCall[releaseLabelsSetArguments]) (mcpserver.ToolResult, error) {
+		arguments := call.Arguments
+
+		var input releaseLabelsSetArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if err := validateReleaseRelationRows(arguments, input.ReleaseID, input.OrderIntent, "labels", "observed_labels"); err != nil {
@@ -131,13 +87,10 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 			OrderIntent: releasedomain.RelationOrderIntentFromProto(input.OrderIntent),
 		})
 		return releaseRelationMutationResult(input.ReleaseID, err)
-	case ToolReleaseCategoriesSet:
-		var input struct {
-			ReleaseID string   `json:"release_id"`
-			IDs       []string `json:"category_ids"`
-			Observed  []string `json:"observed_category_ids"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+	}),
+	defineTool(oauthTool(ToolReleaseCategoriesSet, "Set Release categories", releaseRelationSetGuidance, releaseCategoriesSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false), func(tools *ReleaseRelationTools, ctx context.Context, name string, call toolCall[releaseCategoriesSetArguments]) (mcpserver.ToolResult, error) {
+		var input releaseCategoriesSetArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if err := validateReleaseRelationIDs(input.ReleaseID, input.IDs, input.Observed); err != nil {
@@ -147,13 +100,10 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 			ReleaseID: input.ReleaseID, CategoryIDs: input.IDs, Observed: &releasedomain.Snapshot[string]{Items: input.Observed},
 		})
 		return releaseRelationMutationResult(input.ReleaseID, err)
-	case ToolReleaseGenresSet:
-		var input struct {
-			ReleaseID string   `json:"release_id"`
-			IDs       []string `json:"genre_ids"`
-			Observed  []string `json:"observed_genre_ids"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+	}),
+	defineTool(oauthTool(ToolReleaseGenresSet, "Set Release genres", releaseRelationSetGuidance, releaseGenresSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false), func(tools *ReleaseRelationTools, ctx context.Context, name string, call toolCall[releaseGenresSetArguments]) (mcpserver.ToolResult, error) {
+		var input releaseGenresSetArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if err := validateReleaseRelationIDs(input.ReleaseID, input.IDs, input.Observed); err != nil {
@@ -163,13 +113,10 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 			ReleaseID: input.ReleaseID, GenreIDs: input.IDs, Observed: &releasedomain.Snapshot[string]{Items: input.Observed},
 		})
 		return releaseRelationMutationResult(input.ReleaseID, err)
-	case ToolReleaseStylesSet:
-		var input struct {
-			ReleaseID string   `json:"release_id"`
-			IDs       []string `json:"style_ids"`
-			Observed  []string `json:"observed_style_ids"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+	}),
+	defineTool(oauthTool(ToolReleaseStylesSet, "Set Release styles", releaseRelationSetGuidance, releaseStylesSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false), func(tools *ReleaseRelationTools, ctx context.Context, name string, call toolCall[releaseStylesSetArguments]) (mcpserver.ToolResult, error) {
+		var input releaseStylesSetArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if err := validateReleaseRelationIDs(input.ReleaseID, input.IDs, input.Observed); err != nil {
@@ -179,13 +126,12 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 			ReleaseID: input.ReleaseID, StyleIDs: input.IDs, Observed: &releasedomain.Snapshot[string]{Items: input.Observed},
 		})
 		return releaseRelationMutationResult(input.ReleaseID, err)
-	case ToolReleaseFormatsSet:
-		var input struct {
-			ReleaseID string                         `json:"release_id"`
-			Formats   []*managev1.ReleaseFormatInput `json:"formats"`
-			Observed  []*managev1.ReleaseFormatInput `json:"observed_formats"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+	}),
+	defineTool(oauthTool(ToolReleaseFormatsSet, "Set Release formats", releaseRelationSetGuidance, releaseFormatsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false), func(tools *ReleaseRelationTools, ctx context.Context, name string, call toolCall[releaseFormatsSetArguments]) (mcpserver.ToolResult, error) {
+		arguments := call.Arguments
+
+		var input releaseFormatsSetArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if err := validateReleaseRelationRows(arguments, input.ReleaseID, nil, "formats", "observed_formats"); err != nil {
@@ -203,14 +149,12 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 			Observed: &releasedomain.Snapshot[*releasedomain.ReleaseFormatInput]{Items: releasedomain.ReleaseFormatInputsFromProto(input.Observed)},
 		})
 		return releaseRelationMutationResult(input.ReleaseID, err)
-	case ToolReleaseCreditsSet:
-		var input struct {
-			ReleaseID   string                         `json:"release_id"`
-			Credits     []*managev1.ReleaseCreditInput `json:"credits"`
-			Observed    []*managev1.ReleaseCreditInput `json:"observed_credits"`
-			OrderIntent *managev1.RelationOrderIntent  `json:"order_intent,omitempty"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+	}),
+	defineTool(oauthTool(ToolReleaseCreditsSet, "Set Release credits", releaseRelationSetGuidance+releaseRelationOrderGuidance+" Omit id or supply null only for a new credit; retain every existing credit's id and unchanged optional attributes in the desired array.", releaseCreditsSetInputJSONSchema, releaseRelationMutationOutputJSONSchema, false, false), func(tools *ReleaseRelationTools, ctx context.Context, name string, call toolCall[releaseCreditsSetArguments]) (mcpserver.ToolResult, error) {
+		arguments := call.Arguments
+
+		var input releaseCreditsSetArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if err := validateReleaseRelationRows(arguments, input.ReleaseID, input.OrderIntent, "credits", "observed_credits"); err != nil {
@@ -238,9 +182,37 @@ func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Pri
 			OrderIntent: releasedomain.RelationOrderIntentFromProto(input.OrderIntent),
 		})
 		return releaseRelationMutationResult(input.ReleaseID, err)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
+	}),
+}
+
+// ReleaseRelationApplication retains the native observed-merge and permission boundaries.
+type ReleaseRelationApplication interface {
+	GetReleaseRelations(context.Context, releasedomain.GetReleaseRelationsQuery) (releasedomain.Relations, error)
+	SetReleaseArtists(context.Context, releasedomain.SetReleaseArtistsCommand) error
+	SetReleaseLabels(context.Context, releasedomain.SetReleaseLabelsCommand) error
+	SetReleaseCategories(context.Context, releasedomain.SetReleaseCategoriesCommand) error
+	SetReleaseGenres(context.Context, releasedomain.SetReleaseGenresCommand) error
+	SetReleaseStyles(context.Context, releasedomain.SetReleaseStylesCommand) error
+	SetReleaseFormats(context.Context, releasedomain.SetReleaseFormatsCommand) error
+	SetReleaseCredits(context.Context, releasedomain.SetReleaseCreditsCommand) error
+}
+
+type ReleaseRelationTools struct{ application ReleaseRelationApplication }
+
+func NewReleaseRelationTools(application ReleaseRelationApplication) (*ReleaseRelationTools, error) {
+	if interfaceValueIsNil(application) {
+		return nil, errors.New("MCP Release relation application is required")
 	}
+	return &ReleaseRelationTools{application: application}, nil
+}
+
+func (*ReleaseRelationTools) ToolNames() []string { return releaseRelationTools.names() }
+func (*ReleaseRelationTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
+	return releaseRelationTools.list(), nil
+}
+
+func (tools *ReleaseRelationTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	return releaseRelationTools.call(tools, ctx, name, arguments)
 }
 
 func validateReleaseRelationRows(arguments mcpserver.ToolArguments, releaseID string, intent *managev1.RelationOrderIntent, names ...string) error {
@@ -358,4 +330,53 @@ func releaseRelationsResult(value any) (mcpserver.ToolResult, error) {
 		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP Release relation result: %w", err)
 	}
 	return structuredResult(encoded, false)
+}
+
+type releaseRelationsGetArguments = struct {
+	ReleaseID string `json:"release_id"`
+}
+
+type releaseArtistsSetArguments = struct {
+	ReleaseID   string                         `json:"release_id"`
+	Artists     []*managev1.ReleaseArtistInput `json:"artists"`
+	Observed    []*managev1.ReleaseArtistInput `json:"observed_artists"`
+	OrderIntent *managev1.RelationOrderIntent  `json:"order_intent,omitempty"`
+}
+
+type releaseLabelsSetArguments = struct {
+	ReleaseID   string                        `json:"release_id"`
+	Labels      []*managev1.ReleaseLabelInput `json:"labels"`
+	Observed    []*managev1.ReleaseLabelInput `json:"observed_labels"`
+	OrderIntent *managev1.RelationOrderIntent `json:"order_intent,omitempty"`
+}
+
+type releaseCategoriesSetArguments = struct {
+	ReleaseID string   `json:"release_id"`
+	IDs       []string `json:"category_ids"`
+	Observed  []string `json:"observed_category_ids"`
+}
+
+type releaseGenresSetArguments = struct {
+	ReleaseID string   `json:"release_id"`
+	IDs       []string `json:"genre_ids"`
+	Observed  []string `json:"observed_genre_ids"`
+}
+
+type releaseStylesSetArguments = struct {
+	ReleaseID string   `json:"release_id"`
+	IDs       []string `json:"style_ids"`
+	Observed  []string `json:"observed_style_ids"`
+}
+
+type releaseFormatsSetArguments = struct {
+	ReleaseID string                         `json:"release_id"`
+	Formats   []*managev1.ReleaseFormatInput `json:"formats"`
+	Observed  []*managev1.ReleaseFormatInput `json:"observed_formats"`
+}
+
+type releaseCreditsSetArguments = struct {
+	ReleaseID   string                         `json:"release_id"`
+	Credits     []*managev1.ReleaseCreditInput `json:"credits"`
+	Observed    []*managev1.ReleaseCreditInput `json:"observed_credits"`
+	OrderIntent *managev1.RelationOrderIntent  `json:"order_intent,omitempty"`
 }

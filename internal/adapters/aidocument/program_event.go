@@ -130,101 +130,64 @@ func (p *programEventPort) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 
-	run := newExactMutationRun("Program Event")
 	var changes []core.Change
-	domainResult, err := p.service.ExecuteAIDocument(ctx, programeventdomain.ExecuteAIDocumentCommand{
-		EventID: string(identity.Reference),
-		Locale:  string(request.Locale),
-		Mode:    mode,
-		Compiler: func(state programeventdomain.AIDocumentState) (programeventdomain.AIDocumentCommand, error) {
-			current, err := p.project(identity, request.Locale, state)
-			if err != nil {
-				return programeventdomain.AIDocumentCommand{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return programeventdomain.AIDocumentCommand{}, err
-			}
-			if err := run.rejectIssues(validateProgramEventOperations(current, run.command.Operations)); err != nil {
-				return programeventdomain.AIDocumentCommand{}, err
+
+	return executeExactMutation(request, exactMutationSpec[programeventdomain.AIDocumentState, programeventdomain.AIDocumentCommand, programeventdomain.AIDocumentResult]{
+		Domain:       "Program Event",
+		ValidateOnly: mode == programeventdomain.AIDocumentExecutionValidate,
+		Execute: func(compiler func(programeventdomain.AIDocumentState) (programeventdomain.AIDocumentCommand, error)) (programeventdomain.AIDocumentResult, error) {
+			return p.service.ExecuteAIDocument(ctx, programeventdomain.ExecuteAIDocumentCommand{
+				EventID:  string(identity.Reference),
+				Locale:   string(request.Locale),
+				Mode:     mode,
+				Compiler: compiler,
+			})
+		},
+		Project: func(state programeventdomain.AIDocumentState) (core.Document, error) {
+			return p.project(identity, request.Locale, state)
+		},
+		Compile: func(state programeventdomain.AIDocumentState, current core.Document, command core.ValidatedApply) (programeventdomain.AIDocumentCommand, []core.OperationIssue, error) {
+			if issues := validateProgramEventOperations(current, command.Operations); len(issues) != 0 {
+				return programeventdomain.AIDocumentCommand{}, issues, nil
 			}
 			contributor, err := uuid.Parse(state.ViewerMemberID)
 			if err != nil || contributor == uuid.Nil || contributor.String() != state.ViewerMemberID {
-				return programeventdomain.AIDocumentCommand{}, errors.New("program Event AI document contributor Member UUID is invalid")
+				return programeventdomain.AIDocumentCommand{}, nil, errors.New("program Event AI document contributor Member UUID is invalid")
 			}
 			localized, err := programEventLocalizedDocument(state)
 			if err != nil {
-				return programeventdomain.AIDocumentCommand{}, err
+				return programeventdomain.AIDocumentCommand{}, nil, err
 			}
-			changes, err = programEventSemanticChanges(current, run.command.Operations)
+			changes, err = programEventSemanticChanges(current, command.Operations)
 			if err != nil {
-				return programeventdomain.AIDocumentCommand{}, err
+				return programeventdomain.AIDocumentCommand{}, nil, err
 			}
-			compiled, issues, err := p.compileCommand(state, localized, contributor, current, run.command.Operations)
+			compiled, issues, err := p.compileCommand(state, localized, contributor, current, command.Operations)
 			if err != nil {
-				return programeventdomain.AIDocumentCommand{}, err
+				return programeventdomain.AIDocumentCommand{}, nil, err
 			}
-			if err := run.rejectIssues(issues); err != nil {
-				return programeventdomain.AIDocumentCommand{}, err
-			}
-			return compiled, nil
+			return compiled, issues, nil
 		},
+		Result: func(domainResult programeventdomain.AIDocumentResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			applicationResult := core.ApplyResult{
+				DocumentRevision: core.Revision(domainResult.DocumentRevision),
+				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
+				Changed:          domainResult.Changed,
+			}
+			if domainResult.Changed {
+				if len(changes) == 0 {
+					return core.ApplyResult{}, errors.New("program Event persisted a mutation without a semantic DCDP change")
+				}
+				applicationResult.Changes = changes
+			}
+
+			return applicationResult, nil
+		},
+		ConflictHandles: func(_ *core.RevisionConflict, _ core.ValidatedApply) []string {
+			return core.AffectedHandles(request.Operations, request.Locale)
+		},
+		DomainIssue: programEventDomainIssue,
 	})
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == programeventdomain.AIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *programeventdomain.AIDocumentConflict
-		if errors.As(err, &conflict) {
-			code := core.ConflictDocumentRevision
-			if conflict.Kind == programeventdomain.AIDocumentTargetRevisionConflict {
-				code = core.ConflictTargetRevision
-			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
-				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
-				AffectedHandles:       append([]string(nil), programEventRequestAffectedHandles(request)...),
-			}}
-		}
-		operations := run.command.Operations
-		if len(operations) == 0 {
-			operations = request.Operations
-		}
-		if issue := programEventDomainIssue(err, operations); issue != nil {
-			run.validation.Issues = append(run.validation.Issues, *issue)
-			if mode == programeventdomain.AIDocumentExecutionValidate {
-				return run.validation, core.ApplyResult{}, nil
-			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ValidationError{Result: run.validation}
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == programeventdomain.AIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
-
-	applicationResult := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.DocumentRevision),
-		TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
-		Changed:          domainResult.Changed,
-	}
-	if domainResult.Changed {
-		if len(changes) == 0 {
-			return core.ValidationResult{}, core.ApplyResult{}, errors.New("program Event persisted a mutation without a semantic DCDP change")
-		}
-		applicationResult.Changes = changes
-	}
-	accepted, err := run.accept(applicationResult)
-	return run.validation, accepted, err
-}
-
-func programEventRequestAffectedHandles(request core.ApplyRequest) []string {
-	var handles []string
-	for _, operation := range request.Operations {
-		handles = append(handles, programEventOperationHandles(operation)...)
-	}
-	return handles
 }
 
 func (p *programEventPort) compileCommand(
@@ -299,7 +262,7 @@ func compileProgramEventMetadataOperation(patch *programeventdomain.AIDocumentMe
 		return false, nil
 	}
 	fail := func(code core.IssueCode, message string) (bool, *core.OperationIssue) {
-		return true, &core.OperationIssue{Operation: index, Code: code, Handle: strings.Join(programEventOperationHandles(operation), ":"), Message: message}
+		return true, &core.OperationIssue{Operation: index, Code: code, Handle: strings.Join(programEventIssuePath(operation), ":"), Message: message}
 	}
 	if target.Relation != "" || target.Item != "" || len(target.Path) != 0 {
 		return fail(core.IssueInvalidOperation, "Program Event metadata does not expose nested or relation targets")
@@ -386,7 +349,7 @@ func validateProgramEventOperations(document core.Document, operations []core.Op
 			if ok && rule.Ownership == core.FieldOwnershipLocale {
 				issues = append(issues, core.OperationIssue{
 					Operation: index, Code: core.IssueInvalidOperation,
-					Handle:  strings.Join(programEventOperationHandles(operation), ","),
+					Handle:  strings.Join(programEventIssuePath(operation), ","),
 					Message: "Program Event locale values use explicit empty; locale-owned fields cannot be unset",
 				})
 			}
@@ -418,7 +381,7 @@ func programEventDomainIssue(err error, operations []core.Operation) *core.Opera
 	return &core.OperationIssue{Operation: index, Code: core.IssueInvalidFileReference, Message: err.Error()}
 }
 
-func programEventOperationHandles(operation core.Operation) []string {
+func programEventIssuePath(operation core.Operation) []string {
 	switch operation.Kind {
 	case core.OperationSetField:
 		return []string{string(operation.SetField.Target.Block) + ":" + string(operation.SetField.Target.Field)}
@@ -457,7 +420,7 @@ func programEventSemanticChanges(document core.Document, operations []core.Opera
 		if current.LocaleExists != next.LocaleExists || !reflect.DeepEqual(current.Nodes, next.Nodes) {
 			changes = append(changes, core.Change{
 				Operation: index, Kind: operation.Kind,
-				AffectedHandles: programEventOperationHandles(operation),
+				AffectedHandles: core.OperationHandles(operation, document.Locale),
 			})
 		}
 		current = next

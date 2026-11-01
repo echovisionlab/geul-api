@@ -10,8 +10,8 @@ import (
 
 const ToolMemberTagList = "member_tag_list"
 
-var memberTagTools = []mcpserver.Tool{
-	oauthTool(ToolMemberTagList, "List Member tags", "List or search administrator-only Member tag IDs, names, and member counts. Use returned IDs to interpret tag_ids from member_admin_get or member_admin_list. Continue with the same query and next_offset. Authorization remains in the owning Member service.", memberTagListInputJSONSchema, memberTagListOutputJSONSchema, true, false),
+var memberTagTools = toolRegistry[MemberTagTools]{
+	defineTool(oauthTool(ToolMemberTagList, "List Member tags", "List or search administrator-only Member tag IDs, names, and member counts. Use returned IDs to interpret tag_ids from member_admin_get or member_admin_list. Continue with the same query and next_offset. Authorization remains in the owning Member service.", memberTagListInputJSONSchema, memberTagListOutputJSONSchema, true, false), (*MemberTagTools).list),
 }
 
 type MemberTagReader interface {
@@ -27,25 +27,24 @@ func NewMemberTagTools(reader MemberTagReader) (*MemberTagTools, error) {
 	return &MemberTagTools{reader: reader}, nil
 }
 
-func (*MemberTagTools) ToolNames() []string { return toolDefinitionNames(memberTagTools) }
+func (*MemberTagTools) ToolNames() []string { return memberTagTools.names() }
 
 func (*MemberTagTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(memberTagTools), nil
+	return memberTagTools.list(), nil
 }
 
 func (tools *MemberTagTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	if name != ToolMemberTagList {
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return memberTagTools.call(tools, ctx, name, arguments)
+}
+
+func (tools *MemberTagTools) list(ctx context.Context, name string, call toolCall[memberTagListArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	if err := rejectNullArguments(arguments, "query", "limit", "offset"); err != nil {
 		return executionError(err)
 	}
-	var input struct {
-		Query  string `json:"query"`
-		Limit  *int32 `json:"limit"`
-		Offset int32  `json:"offset"`
-	}
-	if err := decodeArguments(arguments, &input); err != nil {
+	var input memberTagListArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	limit := int32(50)
@@ -74,4 +73,10 @@ func (tools *MemberTagTools) CallTool(ctx context.Context, _ mcpserver.Principal
 		output["next_offset"] = int64(pagination.GetOffset()) + int64(pagination.GetLimit())
 	}
 	return contentResult(output)
+}
+
+type memberTagListArguments = struct {
+	Query  string `json:"query"`
+	Limit  *int32 `json:"limit"`
+	Offset int32  `json:"offset"`
 }

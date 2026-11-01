@@ -19,45 +19,15 @@ const (
 	ToolMemberAdminGet  = "member_admin_get"
 )
 
-var memberAdminTools = []mcpserver.Tool{
-	oauthTool(ToolMemberAdminList, "List members as administrator", "Search members by nickname or email, including unonboarded, banned, pending-deletion, and deleted members. Requires current administrator permission and records personal-data access through the owning Member service.", memberAdminListInputJSONSchema, memberAdminListOutputJSONSchema, true, false),
-	oauthTool(ToolMemberAdminGet, "Get member as administrator", "Read a member profile, account status, global role, email verification, and administrative state. Requires current administrator permission and records personal-data access. Authentication credentials and provider identifiers are excluded.", memberAdminGetInputJSONSchema, memberAdminGetOutputJSONSchema, true, false),
-}
+var memberAdminTools = toolRegistry[MemberAdminTools]{
+	defineTool(oauthTool(ToolMemberAdminList, "List members as administrator", "Search members by nickname or email, including unonboarded, banned, pending-deletion, and deleted members. Requires current administrator permission and records personal-data access through the owning Member service.", memberAdminListInputJSONSchema, memberAdminListOutputJSONSchema, true, false), func(tools *MemberAdminTools, ctx context.Context, name string, call toolCall[memberAdminListArguments]) (mcpserver.ToolResult, error) {
+		arguments := call.Arguments
 
-// MemberAdminReader retains the owning service's authorization and access audit.
-type MemberAdminReader interface {
-	ListAdminMembers(context.Context, member.ListAdminMembersQuery) (member.AdminMemberPage, error)
-	GetAdminMember(context.Context, member.GetAdminMemberQuery) (member.AdminMember, error)
-}
-
-type MemberAdminTools struct{ reader MemberAdminReader }
-
-func NewMemberAdminTools(reader MemberAdminReader) (*MemberAdminTools, error) {
-	if interfaceValueIsNil(reader) {
-		return nil, errors.New("MCP administrator Member reader is required")
-	}
-	return &MemberAdminTools{reader: reader}, nil
-}
-
-func (*MemberAdminTools) ToolNames() []string { return toolDefinitionNames(memberAdminTools) }
-
-func (*MemberAdminTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(memberAdminTools), nil
-}
-
-func (tools *MemberAdminTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolMemberAdminList:
 		if err := rejectNullArguments(arguments, "query", "status", "limit", "offset"); err != nil {
 			return executionError(err)
 		}
-		var input struct {
-			Query  string `json:"query"`
-			Status string `json:"status"`
-			Limit  int    `json:"limit"`
-			Offset int    `json:"offset"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+		var input memberAdminListArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if _, supplied := arguments["limit"]; !supplied {
@@ -93,11 +63,10 @@ func (tools *MemberAdminTools) CallTool(ctx context.Context, _ mcpserver.Princip
 			Offset  int32               `json:"offset"`
 			HasMore bool                `json:"has_more"`
 		}{members, page.Pagination.Total, page.Pagination.Limit, page.Pagination.Offset, page.Pagination.HasMore})
-	case ToolMemberAdminGet:
-		var input struct {
-			MemberID string `json:"member_id"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+	}),
+	defineTool(oauthTool(ToolMemberAdminGet, "Get member as administrator", "Read a member profile, account status, global role, email verification, and administrative state. Requires current administrator permission and records personal-data access. Authentication credentials and provider identifiers are excluded.", memberAdminGetInputJSONSchema, memberAdminGetOutputJSONSchema, true, false), func(tools *MemberAdminTools, ctx context.Context, name string, call toolCall[memberAdminGetArguments]) (mcpserver.ToolResult, error) {
+		var input memberAdminGetArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if err := validateUUID("member_id", input.MemberID); err != nil {
@@ -110,9 +79,32 @@ func (tools *MemberAdminTools) CallTool(ctx context.Context, _ mcpserver.Princip
 		return memberAdminResult(struct {
 			Member memberAdminOutput `json:"member"`
 		}{projectMemberAdmin(member.AdminMemberMessage(adminMember))})
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
+	}),
+}
+
+// MemberAdminReader retains the owning service's authorization and access audit.
+type MemberAdminReader interface {
+	ListAdminMembers(context.Context, member.ListAdminMembersQuery) (member.AdminMemberPage, error)
+	GetAdminMember(context.Context, member.GetAdminMemberQuery) (member.AdminMember, error)
+}
+
+type MemberAdminTools struct{ reader MemberAdminReader }
+
+func NewMemberAdminTools(reader MemberAdminReader) (*MemberAdminTools, error) {
+	if interfaceValueIsNil(reader) {
+		return nil, errors.New("MCP administrator Member reader is required")
 	}
+	return &MemberAdminTools{reader: reader}, nil
+}
+
+func (*MemberAdminTools) ToolNames() []string { return memberAdminTools.names() }
+
+func (*MemberAdminTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
+	return memberAdminTools.list(), nil
+}
+
+func (tools *MemberAdminTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	return memberAdminTools.call(tools, ctx, name, arguments)
 }
 
 type memberAdminOutput struct {
@@ -194,4 +186,15 @@ func memberAdminResult(value any) (mcpserver.ToolResult, error) {
 		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP administrator Member result: %w", err)
 	}
 	return structuredResult(encoded, false)
+}
+
+type memberAdminListArguments = struct {
+	Query  string `json:"query"`
+	Status string `json:"status"`
+	Limit  int    `json:"limit"`
+	Offset int    `json:"offset"`
+}
+
+type memberAdminGetArguments = struct {
+	MemberID string `json:"member_id"`
 }

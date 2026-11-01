@@ -5,14 +5,16 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/programevent"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -262,8 +264,8 @@ func TestExecuteAIDocumentAnswersARevisionConflictWithTheCurrentRevision(t *test
 		EventID: event.ID, Locale: "en", Mode: programevent.AIDocumentExecutionApply, Compiler: compileFrom(nil),
 	})
 
-	var conflict *programevent.AIDocumentConflict
+	var conflict *aidocument.RevisionConflict
 	require.ErrorAs(t, err, &conflict)
-	require.Equal(t, programevent.AIDocumentDocumentRevisionConflict, conflict.Kind)
+	require.Equal(t, aidocument.ConflictDocumentRevision, conflict.Kind)
 	require.Equal(t, current.String(), conflict.CurrentDocumentRevision)
 }

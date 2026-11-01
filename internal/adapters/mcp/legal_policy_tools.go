@@ -22,14 +22,14 @@ const (
 	ToolPolicyDelete         = "policy_delete"
 )
 
-var legalPolicyTools = []mcpserver.Tool{
-	oauthTool(ToolPolicyList, "List legal policies", "List authorized Terms of Service or Privacy Policy versions, optionally filtered by lifecycle status. Use returned document_id UUIDs with policy_get or document_open/read (p=terms or p=privacy).", policyListInputJSONSchema, policyListOutputJSONSchema, true, false),
-	oauthTool(ToolPolicyGet, "Get legal policy", "Read legal policy metadata, lifecycle and current document_revision without returning the body. Read the body with document_open/read using the returned source_locale. Source title and body edits are allowed in every lifecycle with the required permissions; use document_metadata_update and document paragraph/block tools. Editing sends no notice email.", policyIDInputJSONSchema, policyOutputJSONSchema, true, false),
-	oauthTool(ToolPolicyCreate, "Create legal policy version", "Create a new draft Terms of Service or Privacy Policy version with an empty typed document. Creation sends no notice email. The existing service selects source_locale from the caller preference and site defaults; use the returned locale for document tools. Fill title/body with document_metadata_update and document paragraph/block tools, then explicitly schedule or activate to start notice delivery.", policyCreateInputJSONSchema, policyOutputJSONSchema, false, false),
-	oauthTool(ToolPolicySchedule, "Schedule legal policy", "Schedule a draft legal policy using its exact current document_revision as expected_document_revision and an RFC 3339 effective_from instant. This starts the existing notice email flow: advance notice is due seven days before effect (or immediately when closer), followed by an effective notice at activation. Reread and reassess after stale revisions; never blindly retry.", policyScheduleInputJSONSchema, policyMutationOutputJSONSchema, false, true),
-	oauthTool(ToolPolicyScheduleCancel, "Cancel legal policy schedule", "Return a scheduled legal policy to draft through the existing service. Cancellation is rejected if notice delivery has already started; delivery history is preserved. This does not send a new notice email.", policyIDInputJSONSchema, policyMutationOutputJSONSchema, false, true),
-	oauthTool(ToolPolicyActivateNow, "Activate legal policy now", "Activate a draft or scheduled legal policy immediately with its exact current document_revision as expected_document_revision. This archives the previous active version and starts the existing effective notice email flow. Reread and reassess after stale revisions; never blindly retry.", policyRevisionInputJSONSchema, policyMutationOutputJSONSchema, false, true),
-	oauthTool(ToolPolicyDelete, "Delete legal policy", "Permanently delete a legal policy in any lifecycle using its exact current document_revision as expected_document_revision, including versions with notice delivery history. Sealed delivery history is retained; outstanding notices and pending recipients are cancelled. The public route and OG image are refreshed. This sends no new notice email.", policyRevisionInputJSONSchema, policyMutationOutputJSONSchema, false, true),
+var legalPolicyTools = toolRegistry[LegalPolicyTools]{
+	defineTool(oauthTool(ToolPolicyList, "List legal policies", "List authorized Terms of Service or Privacy Policy versions, optionally filtered by lifecycle status. Use returned document_id UUIDs with policy_get or document_open/read (p=terms or p=privacy).", policyListInputJSONSchema, policyListOutputJSONSchema, true, false), (*LegalPolicyTools).list),
+	defineTool(oauthTool(ToolPolicyGet, "Get legal policy", "Read legal policy metadata, lifecycle and current document_revision without returning the body. Read the body with document_open/read using the returned source_locale. Source title and body edits are allowed in every lifecycle with the required permissions; use document_metadata_update and document paragraph/block tools. Editing sends no notice email.", policyIDInputJSONSchema, policyOutputJSONSchema, true, false), (*LegalPolicyTools).policyCommand),
+	defineTool(oauthTool(ToolPolicyCreate, "Create legal policy version", "Create a new draft Terms of Service or Privacy Policy version with an empty typed document. Creation sends no notice email. The existing service selects source_locale from the caller preference and site defaults; use the returned locale for document tools. Fill title/body with document_metadata_update and document paragraph/block tools, then explicitly schedule or activate to start notice delivery.", policyCreateInputJSONSchema, policyOutputJSONSchema, false, false), (*LegalPolicyTools).create),
+	defineTool(oauthTool(ToolPolicySchedule, "Schedule legal policy", "Schedule a draft legal policy using its exact current document_revision as expected_document_revision and an RFC 3339 effective_from instant. This starts the existing notice email flow: advance notice is due seven days before effect (or immediately when closer), followed by an effective notice at activation. Reread and reassess after stale revisions; never blindly retry.", policyScheduleInputJSONSchema, policyMutationOutputJSONSchema, false, true), (*LegalPolicyTools).policyCommand),
+	defineTool(oauthTool(ToolPolicyScheduleCancel, "Cancel legal policy schedule", "Return a scheduled legal policy to draft through the existing service. Cancellation is rejected if notice delivery has already started; delivery history is preserved. This does not send a new notice email.", policyIDInputJSONSchema, policyMutationOutputJSONSchema, false, true), (*LegalPolicyTools).policyCommand),
+	defineTool(oauthTool(ToolPolicyActivateNow, "Activate legal policy now", "Activate a draft or scheduled legal policy immediately with its exact current document_revision as expected_document_revision. This archives the previous active version and starts the existing effective notice email flow. Reread and reassess after stale revisions; never blindly retry.", policyRevisionInputJSONSchema, policyMutationOutputJSONSchema, false, true), (*LegalPolicyTools).policyCommand),
+	defineTool(oauthTool(ToolPolicyDelete, "Delete legal policy", "Permanently delete a legal policy in any lifecycle using its exact current document_revision as expected_document_revision, including versions with notice delivery history. Sealed delivery history is retained; outstanding notices and pending recipients are cancelled. The public route and OG image are refreshed. This sends no new notice email.", policyRevisionInputJSONSchema, policyMutationOutputJSONSchema, false, true), (*LegalPolicyTools).policyCommand),
 }
 
 // LegalPolicyManagementApplication is the Terms and Privacy management use
@@ -57,9 +57,9 @@ func NewLegalPolicyTools(policies LegalPolicyManagementApplication) (*LegalPolic
 	}
 	return &LegalPolicyTools{policies: policies}, nil
 }
-func (*LegalPolicyTools) ToolNames() []string { return toolDefinitionNames(legalPolicyTools) }
+func (*LegalPolicyTools) ToolNames() []string { return legalPolicyTools.names() }
 func (*LegalPolicyTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(legalPolicyTools), nil
+	return legalPolicyTools.list(), nil
 }
 
 type policyArguments struct {
@@ -70,56 +70,7 @@ type policyArguments struct {
 }
 
 func (tools *LegalPolicyTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolPolicyCreate:
-		return tools.create(ctx, arguments)
-	case ToolPolicyList:
-		return tools.list(ctx, arguments)
-	case ToolPolicyGet, ToolPolicySchedule, ToolPolicyScheduleCancel, ToolPolicyActivateNow, ToolPolicyDelete:
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
-	// Decode only the advertised arguments for each command, including runtime
-	// validation for clients that do not enforce the JSON schema.
-	allowed := map[string]bool{"document_type": true, "document_id": true}
-	if name == ToolPolicySchedule || name == ToolPolicyActivateNow || name == ToolPolicyDelete {
-		allowed["expected_document_revision"] = true
-	}
-	if name == ToolPolicySchedule {
-		allowed["effective_from"] = true
-	}
-	for field := range arguments {
-		if !allowed[field] {
-			return executionError(fmt.Errorf("unexpected argument %q", field))
-		}
-	}
-	var input policyArguments
-	if err := decodeArguments(arguments, &input); err != nil {
-		return executionError(err)
-	}
-	if err := validatePolicyType(input.DocumentType); err != nil {
-		return executionError(err)
-	}
-	if err := validateUUID("document_id", input.DocumentID); err != nil {
-		return executionError(err)
-	}
-	if allowed["expected_document_revision"] {
-		if err := validateUUID("expected_document_revision", input.ExpectedDocumentRevision); err != nil {
-			return executionError(err)
-		}
-	}
-	var effectiveFrom *time.Time
-	if name == ToolPolicySchedule {
-		instant, err := time.Parse(time.RFC3339Nano, input.EffectiveFrom)
-		if err != nil {
-			return mcpserver.ToolResult{}, &mcpserver.ToolExecutionError{Message: "effective_from must be an RFC 3339 instant", Cause: err}
-		}
-		if err := timestamppb.New(instant).CheckValid(); err != nil {
-			return executionError(err)
-		}
-		effectiveFrom = &instant
-	}
-	return tools.callPolicy(ctx, name, legal.PolicyKind(input.DocumentType), input, effectiveFrom)
+	return legalPolicyTools.call(tools, ctx, name, arguments)
 }
 
 func validatePolicyType(value string) error {
@@ -129,12 +80,11 @@ func validatePolicyType(value string) error {
 	return nil
 }
 
-func (tools *LegalPolicyTools) create(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	var input struct {
-		DocumentType string  `json:"document_type"`
-		Title        *string `json:"title,omitempty"`
-	}
-	if err := decodeArguments(arguments, &input); err != nil {
+func (tools *LegalPolicyTools) create(ctx context.Context, _ string, call toolCall[policyCreateArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
+	var input policyCreateArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := rejectNullArguments(arguments, "title"); err != nil {
@@ -156,14 +106,11 @@ func (tools *LegalPolicyTools) create(ctx context.Context, arguments mcpserver.T
 	return contentResult(output)
 }
 
-func (tools *LegalPolicyTools) list(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	var input struct {
-		DocumentType string  `json:"document_type"`
-		Status       *string `json:"status,omitempty"`
-		Limit        *int32  `json:"limit,omitempty"`
-		Offset       int32   `json:"offset,omitempty"`
-	}
-	if err := decodeArguments(arguments, &input); err != nil {
+func (tools *LegalPolicyTools) list(ctx context.Context, _ string, call toolCall[policyListArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
+	var input policyListArguments
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := rejectNullArguments(arguments, "status", "limit", "offset"); err != nil {
@@ -262,3 +209,59 @@ func policyLifecycleOutput(kind, id string, changed bool, revision, status strin
 }
 
 var _ ToolProvider = (*LegalPolicyTools)(nil)
+
+type policyCreateArguments = struct {
+	DocumentType string  `json:"document_type"`
+	Title        *string `json:"title,omitempty"`
+}
+
+type policyListArguments = struct {
+	DocumentType string  `json:"document_type"`
+	Status       *string `json:"status,omitempty"`
+	Limit        *int32  `json:"limit,omitempty"`
+	Offset       int32   `json:"offset,omitempty"`
+}
+
+func (tools *LegalPolicyTools) policyCommand(ctx context.Context, name string, call toolCall[policyArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
+	allowed := map[string]bool{"document_type": true, "document_id": true}
+	if name == ToolPolicySchedule || name == ToolPolicyActivateNow || name == ToolPolicyDelete {
+		allowed["expected_document_revision"] = true
+	}
+	if name == ToolPolicySchedule {
+		allowed["effective_from"] = true
+	}
+	for field := range arguments {
+		if !allowed[field] {
+			return executionError(fmt.Errorf("unexpected argument %q", field))
+		}
+	}
+	var input policyArguments
+	if err := call.Decode(&input); err != nil {
+		return executionError(err)
+	}
+	if err := validatePolicyType(input.DocumentType); err != nil {
+		return executionError(err)
+	}
+	if err := validateUUID("document_id", input.DocumentID); err != nil {
+		return executionError(err)
+	}
+	if allowed["expected_document_revision"] {
+		if err := validateUUID("expected_document_revision", input.ExpectedDocumentRevision); err != nil {
+			return executionError(err)
+		}
+	}
+	var effectiveFrom *time.Time
+	if name == ToolPolicySchedule {
+		instant, err := time.Parse(time.RFC3339Nano, input.EffectiveFrom)
+		if err != nil {
+			return mcpserver.ToolResult{}, &mcpserver.ToolExecutionError{Message: "effective_from must be an RFC 3339 instant", Cause: err}
+		}
+		if err := timestamppb.New(instant).CheckValid(); err != nil {
+			return executionError(err)
+		}
+		effectiveFrom = &instant
+	}
+	return tools.callPolicy(ctx, name, legal.PolicyKind(input.DocumentType), input, effectiveFrom)
+}

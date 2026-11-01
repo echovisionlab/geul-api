@@ -5,13 +5,14 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/form/formtest"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -169,9 +170,9 @@ func TestExecuteAIDocumentMutationRejections(t *testing.T) {
 	_, err = h.service.ExecuteAIDocumentMutation(editor.context(t), form.ExecuteAIDocumentMutationCommand{
 		FormID: stored.ID, Locale: "en", Mode: form.AIDocumentExecutionApply, Compile: stale,
 	})
-	var conflict *form.AIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	require.ErrorAs(t, err, &conflict)
-	require.Equal(t, form.AIDocumentDocumentRevisionConflict, conflict.Kind)
+	require.Equal(t, aidocument.ConflictDocumentRevision, conflict.Kind)
 
 	_, err = h.service.ExecuteAIDocumentMutation(editor.context(t), form.ExecuteAIDocumentMutationCommand{
 		FormID: stored.ID, Locale: "en", Mode: form.AIDocumentExecutionApply, Compile: nil,

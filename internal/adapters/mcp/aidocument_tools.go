@@ -28,8 +28,8 @@ const (
 	ToolDocumentApply    = "document_apply"
 )
 
-var documentTools = []mcpserver.Tool{
-	{
+var documentTools = toolRegistry[AIDocumentTools]{
+	defineTool(mcpserver.Tool{
 		Name: ToolDocumentOpen, Title: "Open AI document",
 		Description: "Open a locale-aware DCDP/1 document by canonical UUID. " +
 			"Use d returned by document_list when selecting a Post; do not pass a URL slug as d.",
@@ -37,8 +37,8 @@ var documentTools = []mcpserver.Tool{
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
 		Meta:            oauthSecurityMeta(),
-	},
-	{
+	}, (*AIDocumentTools).open),
+	defineTool(mcpserver.Tool{
 		Name: ToolDocumentRead, Title: "Read AI document",
 		Description: "Read a compact outline, selected blocks, or selected fields by stable handles. Site variable atoms use [\"siteVariable\",key] or [\"siteVariable\",key,true]; discover the six keys and permitted links in document schemas. " +
 			"outline accepts no selectors; blocks requires non-empty b and no f; fields requires non-empty f and no b. " +
@@ -47,8 +47,8 @@ var documentTools = []mcpserver.Tool{
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
 		Meta:            oauthSecurityMeta(),
-	},
-	{
+	}, (*AIDocumentTools).read),
+	defineTool(mcpserver.Tool{
 		Name: ToolParagraphCreate, Title: "Create document paragraph",
 		Description: "Create one plain-text Paragraph Block in an existing document. " +
 			"Read the document first and pass its exact current revision. Page paragraphs require parent_block_id set to an existing rich-text section; after_block_id, when present, must be a sibling in that parent. The server assigns the new Block UUID." + syncRequiredGuidance,
@@ -56,8 +56,8 @@ var documentTools = []mcpserver.Tool{
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, false, false),
 		Meta:            oauthSecurityMeta(),
-	},
-	{
+	}, (*AIDocumentTools).createParagraph),
+	defineTool(mcpserver.Tool{
 		Name: ToolParagraphUpdate, Title: "Update document paragraph",
 		Description: "Replace the plain text of one existing Paragraph Block. " +
 			"Read the Block first and pass its stable block_id with the exact current document and target revisions." + syncRequiredGuidance,
@@ -65,18 +65,21 @@ var documentTools = []mcpserver.Tool{
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
-	},
-	{Name: ToolHeadingCreate, Title: "Create document heading",
+	}, (*AIDocumentTools).updateParagraph),
+	defineTool(mcpserver.Tool{Name: ToolHeadingCreate, Title: "Create document heading",
 		Description: "Create a plain-text heading with level 1..3 and optional alignment in a Page rich-text section or Post body. Pass exact current revisions. Page requires parent_block_id; after_block_id must be a sibling. Omit after_block_id to insert first. The server assigns the Block UUID." + syncRequiredGuidance,
-		InputSchema: headingInputSchema(false), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta()},
-	{Name: ToolHeadingUpdate, Title: "Update document heading",
+		InputSchema: headingInputSchema(false), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta()}, func(tools *AIDocumentTools, ctx context.Context, name string, call toolCall[headingArguments]) (mcpserver.ToolResult, error) {
+		return tools.mutateHeading(ctx, call, false)
+	}),
+	defineTool(mcpserver.Tool{Name: ToolHeadingUpdate, Title: "Update document heading",
 		Description: "Replace an existing heading's plain text and level (1..3), with optional alignment, in a Page or Post. Pass its stable block_id and exact current revisions. Omitted alignment is preserved." + syncRequiredGuidance,
-		InputSchema: headingInputSchema(true), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta()},
-	{Name: ToolTableCreate, Title: "Create document table",
+		InputSchema: headingInputSchema(true), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, true, false), Meta: oauthSecurityMeta()}, func(tools *AIDocumentTools, ctx context.Context, name string, call toolCall[headingArguments]) (mcpserver.ToolResult, error) {
+		return tools.mutateHeading(ctx, call, true)
+	}),
+	defineTool(mcpserver.Tool{Name: ToolTableCreate, Title: "Create document table",
 		Description: "Create a rectangular table of plain-text rows in a Page rich-text section or Post body, with optional header row/column. Pass exact current revisions. Page requires parent_block_id. Insert after after_block_id, or omit it to append to that section/body. The server assigns Block, row and cell UUIDs and writes structure and locale content in one mutation." + syncRequiredGuidance,
-		InputSchema: tableCreateInputSchema(), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta()},
-
-	{
+		InputSchema: tableCreateInputSchema(), OutputSchema: mutationOutputSchema(focusedMutationOutputJSONSchema), SecuritySchemes: oauthSecuritySchemes(), Annotations: toolAnnotations(false, false, false), Meta: oauthSecurityMeta()}, (*AIDocumentTools).createTable),
+	defineTool(mcpserver.Tool{
 		Name: ToolBlockDelete, Title: "Delete document block",
 		Description: "Delete one existing Block by its stable handle. " +
 			"Read the document first and pass the exact current document revision. Structural deletion is allowed only in the current source locale." + syncRequiredGuidance,
@@ -84,8 +87,8 @@ var documentTools = []mcpserver.Tool{
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
-	},
-	{
+	}, (*AIDocumentTools).deleteBlock),
+	defineTool(mcpserver.Tool{
 		Name: ToolMetadataUpdate, Title: "Update document metadata",
 		Description: "Update title or summary for a Post, Work, Page, or Program Event, localized title for a Release, Terms of Service or Privacy Policy, source-owned category_ids or tag_ids for a Post, or source-owned document_layout for a Page. Program Event title is source-owned; its summary is locale-owned. Release and legal policies have no summary field. Legal policy titles can be edited in every lifecycle with the required source or translation permissions; editing sends no notice email. " +
 			"For Program Event, clear_summary removes the source summary; use an empty summary string for an existing target locale's explicit empty value. " +
@@ -94,8 +97,8 @@ var documentTools = []mcpserver.Tool{
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
-	},
-	{
+	}, (*AIDocumentTools).updateMetadata),
+	defineTool(mcpserver.Tool{
 		Name: ToolDocumentValidate, Title: "Validate AI document mutation",
 		Description: "Dry-run compact typed DCDP/1 operations without mutating the document when the user explicitly asks to validate or preview an advanced batch. " +
 			"If the user then chooses to apply it, pass the returned normalized operations to document_apply." + syncRequiredGuidance,
@@ -103,8 +106,8 @@ var documentTools = []mcpserver.Tool{
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(true, false, false),
 		Meta:            oauthSecurityMeta(),
-	},
-	{
+	}, (*AIDocumentTools).validate),
+	defineTool(mcpserver.Tool{
 		Name: ToolDocumentApply, Title: "Apply AI document mutation",
 		Description: "Apply an advanced typed DCDP/1 operation batch that the focused tools cannot represent. " +
 			"Use exact current revisions and schema-defined tuples; document_validate is optional unless the user requests a dry run. Page rich blocks require a rich-text section parent. Heading level is ['n','1'|'2'|'3']. Tables use bi plus fs table (shared UUID rows/cells, id equal to handle, header flags) and fs tableContent (locale cell inline content). Pages forbid inline math. See document_catalog." + syncRequiredGuidance,
@@ -112,7 +115,7 @@ var documentTools = []mcpserver.Tool{
 		SecuritySchemes: oauthSecuritySchemes(),
 		Annotations:     toolAnnotations(false, true, false),
 		Meta:            oauthSecurityMeta(),
-	},
+	}, (*AIDocumentTools).apply),
 }
 
 func mutationInputSchema() json.RawMessage {
@@ -159,41 +162,14 @@ func NewAIDocumentTools(application AIDocumentApplication) (*AIDocumentTools, er
 	return &AIDocumentTools{application: application}, nil
 }
 
-func (*AIDocumentTools) ToolNames() []string {
-	return toolDefinitionNames(documentTools)
-}
+func (*AIDocumentTools) ToolNames() []string { return documentTools.names() }
 
 func (tools *AIDocumentTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(documentTools), nil
+	return documentTools.list(), nil
 }
 
 func (tools *AIDocumentTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolDocumentOpen:
-		return tools.open(ctx, arguments)
-	case ToolDocumentRead:
-		return tools.read(ctx, arguments)
-	case ToolParagraphCreate:
-		return tools.createParagraph(ctx, arguments)
-	case ToolParagraphUpdate:
-		return tools.updateParagraph(ctx, arguments)
-	case ToolHeadingCreate:
-		return tools.mutateHeading(ctx, arguments, false)
-	case ToolHeadingUpdate:
-		return tools.mutateHeading(ctx, arguments, true)
-	case ToolTableCreate:
-		return tools.createTable(ctx, arguments)
-	case ToolBlockDelete:
-		return tools.deleteBlock(ctx, arguments)
-	case ToolMetadataUpdate:
-		return tools.updateMetadata(ctx, arguments)
-	case ToolDocumentValidate:
-		return tools.validate(ctx, arguments)
-	case ToolDocumentApply:
-		return tools.apply(ctx, arguments)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return documentTools.call(tools, ctx, name, arguments)
 }
 
 type openArguments struct {
@@ -249,9 +225,9 @@ type metadataUpdateArguments struct {
 	DocumentLayout *documentLayoutArguments `json:"document_layout,omitempty"`
 }
 
-func (tools *AIDocumentTools) open(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *AIDocumentTools) open(ctx context.Context, _ string, call toolCall[openArguments]) (mcpserver.ToolResult, error) {
 	var input openArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateMCPDocumentReference(input.Document); err != nil {
@@ -270,9 +246,9 @@ func (tools *AIDocumentTools) open(ctx context.Context, arguments mcpserver.Tool
 	return structuredResult(encoded, false)
 }
 
-func (tools *AIDocumentTools) read(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *AIDocumentTools) read(ctx context.Context, _ string, call toolCall[readArguments]) (mcpserver.ToolResult, error) {
 	var input readArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateMCPDocumentReference(input.Document); err != nil {
@@ -307,9 +283,11 @@ func (tools *AIDocumentTools) read(ctx context.Context, arguments mcpserver.Tool
 	return structuredResult(encoded, false)
 }
 
-func (tools *AIDocumentTools) createParagraph(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *AIDocumentTools) createParagraph(ctx context.Context, _ string, call toolCall[paragraphCreateArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	var input paragraphCreateArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if input.Text == nil {
@@ -329,9 +307,9 @@ func (tools *AIDocumentTools) createParagraph(ctx context.Context, arguments mcp
 	return tools.applyRequest(ctx, request, block)
 }
 
-func (tools *AIDocumentTools) updateParagraph(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *AIDocumentTools) updateParagraph(ctx context.Context, _ string, call toolCall[paragraphUpdateArguments]) (mcpserver.ToolResult, error) {
 	var input paragraphUpdateArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if input.Text == nil {
@@ -346,9 +324,9 @@ func (tools *AIDocumentTools) updateParagraph(ctx context.Context, arguments mcp
 	return tools.applyRequest(ctx, request, "")
 }
 
-func (tools *AIDocumentTools) deleteBlock(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *AIDocumentTools) deleteBlock(ctx context.Context, _ string, call toolCall[blockDeleteArguments]) (mcpserver.ToolResult, error) {
 	var input blockDeleteArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	request, err := focusedApplyRequest(input.focusedMutationArguments, []core.Operation{core.DeleteBlockOperation(input.Block)})
@@ -358,9 +336,11 @@ func (tools *AIDocumentTools) deleteBlock(ctx context.Context, arguments mcpserv
 	return tools.applyRequest(ctx, request, "")
 }
 
-func (tools *AIDocumentTools) updateMetadata(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *AIDocumentTools) updateMetadata(ctx context.Context, _ string, call toolCall[metadataUpdateArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	var input metadataUpdateArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := rejectNullArguments(arguments, "title", "summary", "clear_summary", "category_ids", "tag_ids", "document_layout"); err != nil {
@@ -459,7 +439,8 @@ func focusedApplyRequest(input focusedMutationArguments, operations []core.Opera
 	}, nil
 }
 
-func (tools *AIDocumentTools) validate(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *AIDocumentTools) validate(ctx context.Context, _ string, call toolCall[core.ApplyRequest]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
 	request, err := decodeMutation(arguments)
 	if err != nil {
 		return executionError(err)
@@ -482,7 +463,8 @@ func (tools *AIDocumentTools) validate(ctx context.Context, arguments mcpserver.
 	return structuredResult(encoded, false)
 }
 
-func (tools *AIDocumentTools) apply(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *AIDocumentTools) apply(ctx context.Context, _ string, call toolCall[core.ApplyRequest]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
 	request, err := decodeMutation(arguments)
 	if err != nil {
 		return executionError(err)

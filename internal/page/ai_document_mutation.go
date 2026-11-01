@@ -5,14 +5,16 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/google/uuid"
-
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	"github.com/google/uuid"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -40,23 +42,6 @@ type AIDocumentMutationResult struct {
 	DocumentRevision string
 	TargetRevision   *string
 	Changed          bool
-}
-
-type AIDocumentRevisionConflictKind string
-
-const (
-	AIDocumentDocumentRevisionConflict AIDocumentRevisionConflictKind = "document"
-	AIDocumentTargetRevisionConflict   AIDocumentRevisionConflictKind = "target"
-)
-
-type AIDocumentRevisionConflictError struct {
-	Kind                  AIDocumentRevisionConflictKind
-	CurrentRevision       string
-	CurrentTargetRevision *string
-}
-
-func (e *AIDocumentRevisionConflictError) Error() string {
-	return "Page AI document revision changed: current revision is " + e.CurrentRevision
 }
 
 // ExecuteAIDocumentMutationCommand runs Compile against the locked state
@@ -210,7 +195,7 @@ func pageAIDocumentContentUpdate(compiled AIDocumentMutation, applied pageAIDocu
 // content store failure.
 func pageAIDocumentExecutionError(err error, currentRevision string) error {
 	var compilerErr *pageAIDocumentCompilerError
-	var conflict *AIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	var stale *contentblock.StaleRevisionError
 	var targetConflict *translation.TargetRevisionConflict
 	switch {
@@ -219,13 +204,17 @@ func pageAIDocumentExecutionError(err error, currentRevision string) error {
 	case errors.As(err, &conflict):
 		return conflict
 	case errors.As(err, &stale):
-		return &AIDocumentRevisionConflictError{
-			Kind: AIDocumentDocumentRevisionConflict, CurrentRevision: stale.CurrentRevision.String(),
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: stale.CurrentRevision.String(),
+			Message:                 "Page AI document revision changed: current revision is " + stale.CurrentRevision.String(),
 		}
 	case errors.As(err, &targetConflict):
-		return &AIDocumentRevisionConflictError{
-			Kind: AIDocumentTargetRevisionConflict, CurrentRevision: currentRevision,
-			CurrentTargetRevision: pageTargetConflictRevision(targetConflict),
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
+			CurrentDocumentRevision: currentRevision,
+			CurrentTargetRevision:   pageTargetConflictRevision(targetConflict),
+			Message:                 "Page AI document revision changed: current revision is " + currentRevision,
 		}
 	default:
 		return normalizePageContentBlockError(err)
@@ -268,12 +257,18 @@ func validateCompiledPageAIDocumentMutation(
 		)
 	}
 	if mutation.ExpectedRevision.String() != state.Revision {
-		return &AIDocumentRevisionConflictError{Kind: AIDocumentDocumentRevisionConflict, CurrentRevision: state.Revision}
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: state.Revision,
+			Message:                 "Page AI document revision changed: current revision is " + state.Revision,
+		}
 	}
 	if !optional.Equal(mutation.ExpectedTargetRevision, state.TargetRevision) {
-		return &AIDocumentRevisionConflictError{
-			Kind: AIDocumentTargetRevisionConflict, CurrentRevision: state.Revision,
-			CurrentTargetRevision: cloneOptionalString(state.TargetRevision),
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
+			CurrentDocumentRevision: state.Revision,
+			CurrentTargetRevision:   cloneOptionalString(state.TargetRevision),
+			Message:                 "Page AI document revision changed: current revision is " + state.Revision,
 		}
 	}
 	return nil

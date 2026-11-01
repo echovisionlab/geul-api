@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -308,9 +309,11 @@ func TestFormExactTargetMutationPassesTargetFenceAndMapsTargetConflict(t *testin
 	}
 
 	currentTarget := "form-target-3"
-	api.executeErr = &formdomain.AIDocumentRevisionConflictError{
-		Kind:                    formdomain.AIDocumentTargetRevisionConflict,
-		CurrentDocumentRevision: "form-document-1", CurrentTargetRevision: &currentTarget,
+	api.executeErr = &core.RevisionConflict{
+		Kind:                    core.ConflictTargetRevision,
+		CurrentDocumentRevision: "form-document-1",
+		CurrentTargetRevision:   &currentTarget,
+		Message:                 fmt.Sprintf("Form AI document %s revision conflict", "target"),
 	}
 	_, err = service.Apply(t.Context(), request)
 	var conflict *core.ConflictError

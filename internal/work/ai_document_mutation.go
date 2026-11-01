@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -32,25 +33,6 @@ type workAIDocumentCompilerError struct{ cause error }
 
 func (e *workAIDocumentCompilerError) Error() string { return e.cause.Error() }
 func (e *workAIDocumentCompilerError) Unwrap() error { return e.cause }
-
-type AIDocumentRevisionConflictKind uint8
-
-const (
-	AIDocumentDocumentRevisionConflict AIDocumentRevisionConflictKind = iota + 1
-	AIDocumentTargetRevisionConflict
-)
-
-// AIDocumentRevisionConflictError preserves the current shared document token
-// and, for target-only conflicts, the exact locale token.
-type AIDocumentRevisionConflictError struct {
-	Kind                    AIDocumentRevisionConflictKind
-	CurrentDocumentRevision string
-	CurrentTargetRevision   *string
-}
-
-func (e *AIDocumentRevisionConflictError) Error() string {
-	return "Work AI document revision changed: current revision is " + e.CurrentDocumentRevision
-}
 
 // ExecuteAIDocumentMutation locks the Work root before authority evaluation,
 // selects Edit or EditArchived from that locked lifecycle, and performs one
@@ -144,7 +126,7 @@ func (s *Service) ExecuteAIDocumentMutation(
 // failure as itself, a revision conflict with the current revisions.
 func workAIDocumentFailure(err error, currentDocumentRevision string) error {
 	var compilerErr *workAIDocumentCompilerError
-	var conflict *AIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	var stale *contentblock.StaleRevisionError
 	var targetConflict *translation.TargetRevisionConflict
 	switch {
@@ -154,13 +136,17 @@ func workAIDocumentFailure(err error, currentDocumentRevision string) error {
 		return conflict
 	case errors.As(err, &targetConflict):
 		current := targetConflict.CurrentRevision
-		return &AIDocumentRevisionConflictError{
-			Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: currentDocumentRevision,
-			CurrentTargetRevision: &current,
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
+			CurrentDocumentRevision: currentDocumentRevision,
+			CurrentTargetRevision:   &current,
+			Message:                 "Work AI document revision changed: current revision is " + currentDocumentRevision,
 		}
 	case errors.As(err, &stale):
-		return &AIDocumentRevisionConflictError{
-			Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: stale.CurrentRevision.String(),
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: stale.CurrentRevision.String(),
+			Message:                 "Work AI document revision changed: current revision is " + stale.CurrentRevision.String(),
 		}
 	default:
 		return normalizeWorkContentBlockError(err)
@@ -186,14 +172,18 @@ func validateCompiledWorkAIDocumentMutation(
 		)
 	}
 	if mutation.ExpectedRevision.String() != state.DocumentRevision {
-		return &AIDocumentRevisionConflictError{
-			Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: state.DocumentRevision,
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: state.DocumentRevision,
+			Message:                 "Work AI document revision changed: current revision is " + state.DocumentRevision,
 		}
 	}
 	if !optional.Equal(mutation.ExpectedTargetRevision, state.TargetRevision) {
-		return &AIDocumentRevisionConflictError{
-			Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: state.DocumentRevision,
-			CurrentTargetRevision: optional.Clone(state.TargetRevision),
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
+			CurrentDocumentRevision: state.DocumentRevision,
+			CurrentTargetRevision:   optional.Clone(state.TargetRevision),
+			Message:                 "Work AI document revision changed: current revision is " + state.DocumentRevision,
 		}
 	}
 	return nil

@@ -76,16 +76,6 @@ type emailRichTextDomain interface {
 	) (emailRichTextMutationResult, error)
 }
 
-type emailRichTextRevisionConflict struct {
-	kind                    core.ConflictCode
-	currentDocumentRevision string
-	currentTargetRevision   *string
-}
-
-func (e *emailRichTextRevisionConflict) Error() string {
-	return fmt.Sprintf("Email profile AI document revision conflict: current revision is %q", e.currentDocumentRevision)
-}
-
 type emailRichTextPort struct {
 	domain  core.Domain
 	name    string
@@ -158,81 +148,49 @@ func (p *emailRichTextPort) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 
-	run := newExactMutationRun(p.name)
 	var changes []core.Change
-	domainResult, err := p.service.Execute(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(state emailRichTextState) (emailRichTextMutation, error) {
-			current, err := p.document(identity, request.Locale, state)
-			if err != nil {
-				return emailRichTextMutation{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return emailRichTextMutation{}, err
-			}
+
+	return executeExactMutation(request, exactMutationSpec[emailRichTextState, emailRichTextMutation, emailRichTextMutationResult]{
+		Domain:       p.name,
+		ValidateOnly: mode == emailRichTextExecutionValidate,
+		Execute: func(compiler func(emailRichTextState) (emailRichTextMutation, error)) (emailRichTextMutationResult, error) {
+			return p.service.Execute(ctx, string(identity.Reference), string(request.Locale), mode, compiler)
+		},
+		Project: func(state emailRichTextState) (core.Document, error) {
+			return p.document(identity, request.Locale, state)
+		},
+		Compile: func(state emailRichTextState, current core.Document, command core.ValidatedApply) (emailRichTextMutation, []core.OperationIssue, error) {
 			contributor, err := uuid.Parse(state.ViewerMemberID)
 			if err != nil || contributor == uuid.Nil || contributor.String() != state.ViewerMemberID {
-				return emailRichTextMutation{}, fmt.Errorf("%s AI document contributor Member UUID is invalid", p.name)
+				return emailRichTextMutation{}, nil, fmt.Errorf("%s AI document contributor Member UUID is invalid", p.name)
 			}
-			changes, err = emailRichTextSemanticChanges(current, run.command.Operations)
+			changes, err = emailRichTextSemanticChanges(current, command.Operations)
 			if err != nil {
-				return emailRichTextMutation{}, err
+				return emailRichTextMutation{}, nil, err
 			}
-			mutation, issues, err := p.compile(state, current, contributor, run.command.Operations)
+			mutation, issues, err := p.compile(state, current, contributor, command.Operations)
 			if err != nil {
-				return emailRichTextMutation{}, err
+				return emailRichTextMutation{}, nil, err
 			}
-			if err := run.rejectIssues(issues); err != nil {
-				return emailRichTextMutation{}, err
-			}
-			return mutation, nil
+			return mutation, issues, nil
 		},
-	)
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == emailRichTextExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *emailRichTextRevisionConflict
-		if errors.As(err, &conflict) {
-			return core.ValidationResult{}, core.ApplyResult{}, p.conflict(conflict, run.command.AffectedHandles)
-		}
-		operations := run.command.Operations
-		if len(operations) == 0 {
-			operations = request.Operations
-		}
-		if issue := emailRichTextDomainIssue(err, operations); issue != nil {
-			run.validation.Issues = append(run.validation.Issues, *issue)
-			if mode == emailRichTextExecutionValidate {
-				return run.validation, core.ApplyResult{}, nil
+		Result: func(domainResult emailRichTextMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			if domainResult.Changed && len(changes) == 0 {
+				return core.ApplyResult{}, fmt.Errorf("%s persisted a mutation without a semantic DCDP change", p.name)
 			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ValidationError{Result: run.validation}
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == emailRichTextExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
-	if domainResult.Changed && len(changes) == 0 {
-		return core.ValidationResult{}, core.ApplyResult{}, fmt.Errorf(
-			"%s persisted a mutation without a semantic DCDP change",
-			p.name,
-		)
-	}
-	result := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.DocumentRevision),
-		TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
-		Changed:          domainResult.Changed,
-	}
-	if domainResult.Changed {
-		result.Changes = changes
-	}
-	accepted, err := run.accept(result)
-	return run.validation, accepted, err
+			result := core.ApplyResult{
+				DocumentRevision: core.Revision(domainResult.DocumentRevision),
+				TargetRevision:   core.OptionalRevision(domainResult.TargetRevision),
+				Changed:          domainResult.Changed,
+			}
+			if domainResult.Changed {
+				result.Changes = changes
+			}
+
+			return result, nil
+		},
+		DomainIssue: emailRichTextDomainIssue,
+	})
 }
 
 func (p *emailRichTextPort) document(
@@ -328,7 +286,7 @@ func (p *emailRichTextPort) validateOperation(
 	invalid := func(message string) *core.OperationIssue {
 		return &core.OperationIssue{
 			Operation: index, Code: core.IssueInvalidOperation,
-			Handle: strings.Join(emailRichTextOperationHandles(operation), "/"), Message: message,
+			Handle: strings.Join(emailRichTextIssuePath(operation), "/"), Message: message,
 		}
 	}
 	switch operation.Kind {
@@ -414,15 +372,6 @@ func (p *emailRichTextPort) validateIdentity(identity core.DocumentIdentity) err
 	return nil
 }
 
-func (p *emailRichTextPort) conflict(conflict *emailRichTextRevisionConflict, handles []string) error {
-	return &core.ConflictError{Conflict: core.Conflict{
-		Code:                    conflict.kind,
-		CurrentDocumentRevision: core.Revision(conflict.currentDocumentRevision),
-		CurrentTargetRevision:   core.OptionalRevision(conflict.currentTargetRevision),
-		AffectedHandles:         append([]string(nil), handles...),
-	}}
-}
-
 func emailRichTextDomainIssue(err error, operations []core.Operation) *core.OperationIssue {
 	if !errors.Is(err, contentblock.ErrFileReference) {
 		return nil
@@ -459,7 +408,7 @@ func emailRichTextSemanticChanges(document core.Document, operations []core.Oper
 		if current.LocaleExists != next.LocaleExists || !reflect.DeepEqual(current.Nodes, next.Nodes) {
 			changes = append(changes, core.Change{
 				Operation: index, Kind: operation.Kind,
-				AffectedHandles: emailRichTextOperationHandles(operation),
+				AffectedHandles: core.OperationHandles(operation, document.Locale),
 			})
 		}
 		current = next
@@ -467,7 +416,7 @@ func emailRichTextSemanticChanges(document core.Document, operations []core.Oper
 	return changes, nil
 }
 
-func emailRichTextOperationHandles(operation core.Operation) []string {
+func emailRichTextIssuePath(operation core.Operation) []string {
 	switch operation.Kind {
 	case core.OperationSetField:
 		return []string{string(operation.SetField.Target.Block) + ":" + string(operation.SetField.Target.Field)}

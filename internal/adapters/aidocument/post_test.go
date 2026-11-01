@@ -265,9 +265,11 @@ func TestPostExactTargetConflictMapsBothCurrentCASValues(t *testing.T) {
 	currentTargetRevision := "target-revision-current"
 	api := &exactPostDocumentAPI{
 		state: postdomain.AIDocumentState{PostID: postID.String(), RequestedLocale: "ko"},
-		authorizeErr: &postdomain.AIDocumentRevisionConflictError{
-			Kind:                    postdomain.AIDocumentTargetRevisionConflict,
-			CurrentDocumentRevision: documentRevision.String(), CurrentTargetRevision: &currentTargetRevision,
+		authorizeErr: &core.RevisionConflict{
+			Kind:                    core.ConflictTargetRevision,
+			CurrentDocumentRevision: documentRevision.String(),
+			CurrentTargetRevision:   &currentTargetRevision,
+			Message:                 "Post AI document revision changed: current document revision is " + documentRevision.String(),
 		},
 	}
 	port.service = api

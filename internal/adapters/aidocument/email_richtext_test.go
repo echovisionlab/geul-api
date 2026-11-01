@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -220,8 +221,11 @@ func TestEmailRichTextValidationMapsDomainCASConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	domain.validateErr = &emailRichTextRevisionConflict{
-		kind: core.ConflictDocumentRevision, currentDocumentRevision: uuid.NewString(),
+	currentRevision := uuid.NewString()
+	domain.validateErr = &core.RevisionConflict{
+		Kind:                    core.ConflictDocumentRevision,
+		CurrentDocumentRevision: currentRevision,
+		Message:                 fmt.Sprintf("Email profile AI document revision conflict: current revision is %q", currentRevision),
 	}
 	service, err := core.NewService(port)
 	if err != nil {

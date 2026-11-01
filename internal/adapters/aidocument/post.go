@@ -111,86 +111,38 @@ func (p *postPort) executeMutation(
 		return core.ValidationResult{}, core.ApplyResult{}, err
 	}
 
-	run := newExactMutationRun("Post")
-	domainResult, err := p.service.ExecuteAIDocumentMutation(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(state postdomain.AIDocumentState) (postdomain.AIDocumentMutation, error) {
-			current, err := p.project(identity, request.Locale, state)
-			if err != nil {
-				return postdomain.AIDocumentMutation{}, err
-			}
-			if err := run.validateLoaded(current, request); err != nil {
-				return postdomain.AIDocumentMutation{}, err
-			}
+	return executeExactMutation(request, exactMutationSpec[postdomain.AIDocumentState, postdomain.AIDocumentMutation, postdomain.AIDocumentMutationResult]{
+		Domain:       "Post",
+		ValidateOnly: mode == postdomain.AIDocumentExecutionValidate,
+		Execute: func(compiler func(postdomain.AIDocumentState) (postdomain.AIDocumentMutation, error)) (postdomain.AIDocumentMutationResult, error) {
+			return p.service.ExecuteAIDocumentMutation(ctx, string(identity.Reference), string(request.Locale), mode, compiler)
+		},
+		Project: func(state postdomain.AIDocumentState) (core.Document, error) {
+			return p.project(identity, request.Locale, state)
+		},
+		Compile: func(state postdomain.AIDocumentState, current core.Document, command core.ValidatedApply) (postdomain.AIDocumentMutation, []core.OperationIssue, error) {
 			contributor, err := uuid.Parse(state.ViewerMemberID)
 			if err != nil || contributor == uuid.Nil || contributor.String() != state.ViewerMemberID {
-				return postdomain.AIDocumentMutation{}, errors.New("post AI document contributor Member UUID is invalid")
+				return postdomain.AIDocumentMutation{}, nil, errors.New("post AI document contributor Member UUID is invalid")
 			}
-			mutation, issues, err := p.compile(state, current, contributor, run.command.Operations)
+			mutation, issues, err := p.compile(state, current, contributor, command.Operations)
 			if err != nil {
-				return postdomain.AIDocumentMutation{}, err
+				return postdomain.AIDocumentMutation{}, nil, err
 			}
-			if err := run.rejectIssues(issues); err != nil {
-				return postdomain.AIDocumentMutation{}, err
-			}
-			return mutation, nil
+			return mutation, issues, nil
 		},
-	)
-	if err != nil {
-		if invalid, mapped, handled := handleExactMutationValidationError(
-			err, mode == postdomain.AIDocumentExecutionValidate,
-		); handled {
-			return invalid, core.ApplyResult{}, mapped
-		}
-		var conflict *postdomain.AIDocumentRevisionConflictError
-		if errors.As(err, &conflict) {
-			code := core.ConflictDocumentRevision
-			if conflict.Kind == postdomain.AIDocumentTargetRevisionConflict {
-				code = core.ConflictTargetRevision
+		Result: func(domainResult postdomain.AIDocumentMutationResult, command core.ValidatedApply) (core.ApplyResult, error) {
+			output := core.ApplyResult{DocumentRevision: core.Revision(domainResult.Result.DocumentRevision.String()), Changed: domainResult.Result.Changed}
+			if domainResult.TargetRevision != nil {
+				targetRevision := core.Revision(*domainResult.TargetRevision)
+				output.TargetRevision = &targetRevision
 			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
-				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
-				CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
-				AffectedHandles:       append([]string(nil), run.command.AffectedHandles...),
-			}}
-		}
-		operations := run.command.Operations
-		if len(operations) == 0 {
-			operations = request.Operations
-		}
-		if issue := postDomainIssue(err, operations); issue != nil {
-			run.validation.Issues = append(run.validation.Issues, *issue)
-			if mode == postdomain.AIDocumentExecutionValidate {
-				return run.validation, core.ApplyResult{}, nil
-			}
-			return core.ValidationResult{}, core.ApplyResult{}, &core.ValidationError{Result: run.validation}
-		}
-		return core.ValidationResult{}, core.ApplyResult{}, err
-	}
-	if mode == postdomain.AIDocumentExecutionValidate {
-		return run.validation, core.ApplyResult{}, nil
-	}
+			output = withOperationChanges(command, output)
 
-	output := core.ApplyResult{
-		DocumentRevision: core.Revision(domainResult.Result.DocumentRevision.String()),
-		Changed:          domainResult.Result.Changed,
-	}
-	if domainResult.TargetRevision != nil {
-		targetRevision := core.Revision(*domainResult.TargetRevision)
-		output.TargetRevision = &targetRevision
-	}
-	if domainResult.Result.Changed {
-		for index, operation := range run.command.Operations {
-			output.Changes = append(output.Changes, core.Change{
-				Operation: index, Kind: operation.Kind, AffectedHandles: postOperationHandles(operation),
-			})
-		}
-	}
-	accepted, err := run.accept(output)
-	return run.validation, accepted, err
+			return output, nil
+		},
+		DomainIssue: postDomainIssue,
+	})
 }
 
 func (p *postPort) project(
@@ -322,7 +274,7 @@ func compilePostMetadataOperation(
 	fail := func(code core.IssueCode, message string) (bool, *core.OperationIssue) {
 		return true, &core.OperationIssue{
 			Operation: index, Code: code,
-			Handle: strings.Join(postOperationHandles(operation), ":"), Message: message,
+			Handle: strings.Join(operationIssuePath(operation), ":"), Message: message,
 		}
 	}
 	if target.Relation != "" || target.Item != "" || len(target.Path) != 0 {
@@ -429,31 +381,6 @@ func postDomainIssue(err error, operations []core.Operation) *core.OperationIssu
 		return nil
 	}
 	return &core.OperationIssue{Operation: index, Code: code, Message: err.Error()}
-}
-
-func postOperationHandles(operation core.Operation) []string {
-	switch operation.Kind {
-	case core.OperationSetField:
-		return []string{string(operation.SetField.Target.Block), string(operation.SetField.Target.Field)}
-	case core.OperationUnsetField:
-		return []string{string(operation.UnsetField.Target.Block), string(operation.UnsetField.Target.Field)}
-	case core.OperationInsertBlock:
-		return []string{string(operation.InsertBlock.Block)}
-	case core.OperationDeleteBlock:
-		return []string{string(operation.DeleteBlock.Block)}
-	case core.OperationMoveBlock:
-		return []string{string(operation.MoveBlock.Block)}
-	case core.OperationReplaceBlockKind:
-		return []string{string(operation.ReplaceBlockKind.Block)}
-	case core.OperationAttachFile:
-		return []string{string(operation.AttachFile.Target.Block), string(operation.AttachFile.Target.Field), string(operation.AttachFile.File)}
-	case core.OperationDetachFile:
-		return []string{string(operation.DetachFile.Target.Block), string(operation.DetachFile.Target.Field)}
-	case core.OperationCreateTranslation, core.OperationDeleteTranslation:
-		return []string{"locale"}
-	default:
-		return nil
-	}
 }
 
 var _ core.DomainPort = (*postPort)(nil)

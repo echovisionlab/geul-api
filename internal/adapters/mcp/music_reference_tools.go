@@ -14,10 +14,10 @@ const (
 	ToolFormatList = "format_list"
 )
 
-var musicReferenceTools = []mcpserver.Tool{
-	oauthTool(ToolGenreList, "List Genres", "List or search canonical Genre IDs and native catalog names before selecting Release genre relations. Continue with next_offset and the same query. Authorization remains in the native admin list.", musicReferenceListInputJSONSchema, musicNamedReferenceListOutputJSONSchema, true, false),
-	oauthTool(ToolStyleList, "List Styles", "List or search canonical Style IDs and native catalog names before selecting Release style relations. Continue with next_offset and the same query. Authorization remains in the native admin list.", musicReferenceListInputJSONSchema, musicNamedReferenceListOutputJSONSchema, true, false),
-	oauthTool(ToolFormatList, "List Formats", "List or search canonical Format IDs and native catalog names before selecting Release format relations. Continue with next_offset and the same query. Authorization remains in the native admin list.", musicReferenceListInputJSONSchema, musicFormatListOutputJSONSchema, true, false),
+var musicReferenceTools = toolRegistry[MusicReferenceTools]{
+	defineTool(oauthTool(ToolGenreList, "List Genres", "List or search canonical Genre IDs and native catalog names before selecting Release genre relations. Continue with next_offset and the same query. Authorization remains in the native admin list.", musicReferenceListInputJSONSchema, musicNamedReferenceListOutputJSONSchema, true, false), (*MusicReferenceTools).list),
+	defineTool(oauthTool(ToolStyleList, "List Styles", "List or search canonical Style IDs and native catalog names before selecting Release style relations. Continue with next_offset and the same query. Authorization remains in the native admin list.", musicReferenceListInputJSONSchema, musicNamedReferenceListOutputJSONSchema, true, false), (*MusicReferenceTools).list),
+	defineTool(oauthTool(ToolFormatList, "List Formats", "List or search canonical Format IDs and native catalog names before selecting Release format relations. Continue with next_offset and the same query. Authorization remains in the native admin list.", musicReferenceListInputJSONSchema, musicFormatListOutputJSONSchema, true, false), (*MusicReferenceTools).list),
 }
 
 type GenreReferenceDiscovery interface {
@@ -45,42 +45,14 @@ func NewMusicReferenceTools(genres GenreReferenceDiscovery, styles StyleReferenc
 	return &MusicReferenceTools{genres: genres, styles: styles, formats: formats}, nil
 }
 
-func (*MusicReferenceTools) ToolNames() []string {
-	return toolDefinitionNames(musicReferenceTools)
-}
+func (*MusicReferenceTools) ToolNames() []string { return musicReferenceTools.names() }
 
 func (*MusicReferenceTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(musicReferenceTools), nil
+	return musicReferenceTools.list(), nil
 }
 
 func (tools *MusicReferenceTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	if name != ToolGenreList && name != ToolStyleList && name != ToolFormatList {
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
-	query, err := musicReferenceListQuery(arguments)
-	if err != nil {
-		return executionError(err)
-	}
-	switch name {
-	case ToolGenreList:
-		page, err := tools.genres.ListGenresAdmin(ctx, query)
-		if err != nil {
-			return expectedToolError(err)
-		}
-		return musicReferenceResult(query, page.Pagination, projectMusicReferences(page.Items, describedMusicReference))
-	case ToolStyleList:
-		page, err := tools.styles.ListStylesAdmin(ctx, query)
-		if err != nil {
-			return expectedToolError(err)
-		}
-		return musicReferenceResult(query, page.Pagination, projectMusicReferences(page.Items, describedMusicReference))
-	default:
-		page, err := tools.formats.ListFormatsAdmin(ctx, query)
-		if err != nil {
-			return expectedToolError(err)
-		}
-		return musicReferenceResult(query, page.Pagination, projectMusicReferences(page.Items, projectFormatReference))
-	}
+	return musicReferenceTools.call(tools, ctx, name, arguments)
 }
 
 func musicReferenceResult(query referencecatalog.ReferenceListQuery, pagination referencecatalog.Pagination, items []map[string]any) (mcpserver.ToolResult, error) {
@@ -97,11 +69,7 @@ func musicReferenceListQuery(arguments mcpserver.ToolArguments) (referencecatalo
 	if err := rejectNullArguments(arguments, "query", "limit", "offset"); err != nil {
 		return referencecatalog.ReferenceListQuery{}, err
 	}
-	var input struct {
-		Query  string `json:"query,omitempty"`
-		Limit  *int32 `json:"limit,omitempty"`
-		Offset int32  `json:"offset,omitempty"`
-	}
+	var input musicReferenceListArguments
 	if err := decodeArguments(arguments, &input); err != nil {
 		return referencecatalog.ReferenceListQuery{}, err
 	}
@@ -138,4 +106,38 @@ func describedMusicReference(reference referencecatalog.Reference) map[string]an
 
 func projectFormatReference(format referencecatalog.Reference) map[string]any {
 	return map[string]any{"id": format.ID, "name": format.Name, "slug": format.Slug}
+}
+
+func (tools *MusicReferenceTools) list(ctx context.Context, name string, call toolCall[musicReferenceListArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+	query, err := musicReferenceListQuery(arguments)
+	if err != nil {
+		return executionError(err)
+	}
+	switch name {
+	case ToolGenreList:
+		page, err := tools.genres.ListGenresAdmin(ctx, query)
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return musicReferenceResult(query, page.Pagination, projectMusicReferences(page.Items, describedMusicReference))
+	case ToolStyleList:
+		page, err := tools.styles.ListStylesAdmin(ctx, query)
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return musicReferenceResult(query, page.Pagination, projectMusicReferences(page.Items, describedMusicReference))
+	default:
+		page, err := tools.formats.ListFormatsAdmin(ctx, query)
+		if err != nil {
+			return expectedToolError(err)
+		}
+		return musicReferenceResult(query, page.Pagination, projectMusicReferences(page.Items, projectFormatReference))
+	}
+}
+
+type musicReferenceListArguments = struct {
+	Query  string `json:"query,omitempty"`
+	Limit  *int32 `json:"limit,omitempty"`
+	Offset int32  `json:"offset,omitempty"`
 }

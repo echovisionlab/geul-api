@@ -5,8 +5,11 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 )
@@ -67,8 +70,8 @@ func TestValidateCompiledLabelAIDocumentMutationKeepsLockedStateAuthoritative(t 
 	stale.Batch = nil
 	stale.DeleteTranslation = true
 	_, err = validateCompiledLabelAIDocumentMutation(state, stale, contributor)
-	var conflict *AIDocumentRevisionConflictError
-	if !errors.As(err, &conflict) || conflict.Kind != AIDocumentDocumentRevisionConflict || conflict.CurrentDocumentRevision != state.Revision {
+	var conflict *aidocument.RevisionConflict
+	if !errors.As(err, &conflict) || conflict.Kind != aidocument.ConflictDocumentRevision || conflict.CurrentDocumentRevision != state.Revision {
 		t.Fatalf("stale compiled mutation error = %v", err)
 	}
 
@@ -76,7 +79,7 @@ func TestValidateCompiledLabelAIDocumentMutationKeepsLockedStateAuthoritative(t 
 	staleTargetRevision := "tr1_stale"
 	staleTarget.ExpectedTargetRevision = &staleTargetRevision
 	_, err = validateCompiledLabelAIDocumentMutation(state, staleTarget, contributor)
-	if !errors.As(err, &conflict) || conflict.Kind != AIDocumentTargetRevisionConflict || conflict.CurrentTargetRevision == nil || *conflict.CurrentTargetRevision != targetRevision {
+	if !errors.As(err, &conflict) || conflict.Kind != aidocument.ConflictTargetRevision || conflict.CurrentTargetRevision == nil || *conflict.CurrentTargetRevision != targetRevision {
 		t.Fatalf("stale target mutation error = %v", err)
 	}
 }

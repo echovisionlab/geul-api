@@ -24,54 +24,9 @@ const (
 	ToolMailAdapterSenderUpdate = "mail_adapter_sender_update"
 )
 
-var adminSettingsTools = []mcpserver.Tool{
-	oauthTool(ToolSiteSettingsGet, "Get site settings", "Read administrator site settings, source File IDs (including the full, symbol and email logos, light and dark), social links, branding, contact details, navigation, OG configuration, and read-only runtime site_origin. Requires the admin UI's Site Settings view permission. File IDs are source IDs, not rendered asset IDs.", adminSettingsEmptyInputJSONSchema, siteSettingsGetOutputJSONSchema, true, false),
-	oauthTool(ToolSiteSettingsUpdate, "Update site settings", "Atomically update only supplied settings through the admin UI's Site Settings service, validation and audit. Read site_settings_get first. Omitted keys stay unchanged; null clears or resets values according to the existing admin service. social_links and og_image_config replace whole objects; dotted OG section keys replace only that section. To set a logo, upload the SVG/PNG with file_upload kind=image (email logos must be PNG) and assign its File UUID to the matching logo_* key. Loader files, default_map_theme_id and runtime site_origin are read-only here; use map_theme_set_default for the default theme.", siteSettingsUpdateInputJSONSchema, siteSettingsUpdateOutputJSONSchema, false, false),
-	oauthTool(ToolMailAdapterList, "List mail adapters", "List administrator mail adapters in priority order with safe sender and provider metadata. Requires the admin UI's Mail Adapter list permission. Credentials, access keys, passwords, usernames and tokens are excluded. Continue with next_offset while has_more.", mailAdapterListInputJSONSchema, mailAdapterListOutputJSONSchema, true, false),
-	oauthTool(ToolMailAdapterSenderUpdate, "Update mail adapter sender", "Partially update from_name/from_email and optionally is_active/priority for a mail adapter ID from mail_adapter_list. Supply at least one of from_name, from_email, is_active, or priority. Omitted fields and all stored credentials remain unchanged; an empty from_name clears the display name. Sender changes require SES or SMTP. Uses the admin UI's fresh Mail Adapter update permission, audit and provider verification, which may send a verification email to the resulting sender address. No credentials are accepted or returned.", mailAdapterSenderUpdateInputJSONSchema, mailAdapterSenderUpdateOutputJSONSchema, false, false),
-}
-
-// These ports retain the same application services and request context as RPC.
-type SiteSettingsAdminApplication interface {
-	GetSettings(context.Context) (sitesettings.AdminSettings, error)
-	GetSetting(context.Context, sitesettings.GetSettingQuery) (sitesettings.Setting, error)
-	SetManySettings(context.Context, sitesettings.SetManySettingsCommand) (sitesettings.SettingsUpdate, error)
-}
-
-type MailAdapterAdminApplication interface {
-	ListMailAdapters(context.Context, emaildelivery.ListMailAdaptersQuery) (emaildelivery.MailAdapterPage, error)
-	UpdateMailAdapterSender(context.Context, emaildelivery.MailAdapterSenderUpdate) (emaildelivery.MailAdapter, error)
-}
-
-type AdminSettingsTools struct {
-	settings SiteSettingsAdminApplication
-	mail     MailAdapterAdminApplication
-}
-
-func NewAdminSettingsTools(settings SiteSettingsAdminApplication, mail MailAdapterAdminApplication) (*AdminSettingsTools, error) {
-	if interfaceValueIsNil(settings) || interfaceValueIsNil(mail) {
-		return nil, errors.New("MCP administrator Site Settings and Mail Adapter applications are required")
-	}
-	return &AdminSettingsTools{settings: settings, mail: mail}, nil
-}
-
-func (*AdminSettingsTools) ToolNames() []string { return toolDefinitionNames(adminSettingsTools) }
-func (*AdminSettingsTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(adminSettingsTools), nil
-}
-
-func (tools *AdminSettingsTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	result, err := tools.callTool(ctx, name, arguments)
-	if err == nil || errors.Is(err, mcpserver.ErrUnknownTool) {
-		return result, err
-	}
-	return expectedToolError(err)
-}
-
-func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolSiteSettingsGet:
-		if err := decodeArguments(arguments, &struct{}{}); err != nil {
+var adminSettingsTools = toolRegistry[AdminSettingsTools]{
+	defineTool(oauthTool(ToolSiteSettingsGet, "Get site settings", "Read administrator site settings, source File IDs (including the full, symbol and email logos, light and dark), social links, branding, contact details, navigation, OG configuration, and read-only runtime site_origin. Requires the admin UI's Site Settings view permission. File IDs are source IDs, not rendered asset IDs.", adminSettingsEmptyInputJSONSchema, siteSettingsGetOutputJSONSchema, true, false), func(tools *AdminSettingsTools, ctx context.Context, name string, call toolCall[struct{}]) (mcpserver.ToolResult, error) {
+		if err := call.Decode(&struct{}{}); err != nil {
 			return executionError(err)
 		}
 		all, err := tools.settings.GetSettings(ctx)
@@ -79,8 +34,6 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 			return mcpserver.ToolResult{}, err
 		}
 		settings := projectSiteSettings(all)
-		// Rendered Asset IDs are not source File IDs. Fetch the original bindings
-		// via the existing authorized single-setting API used by the admin UI.
 		for _, key := range siteSettingsFileKeys {
 			binding, err := tools.settings.GetSetting(ctx, sitesettings.GetSettingQuery{Key: key})
 			if err != nil {
@@ -89,11 +42,10 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 			settings[key] = binding.Value
 		}
 		return adminSettingsResult(map[string]any{"settings": settings})
-	case ToolSiteSettingsUpdate:
-		var input struct {
-			Settings map[string]json.RawMessage `json:"settings"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+	}),
+	defineTool(oauthTool(ToolSiteSettingsUpdate, "Update site settings", "Atomically update only supplied settings through the admin UI's Site Settings service, validation and audit. Read site_settings_get first. Omitted keys stay unchanged; null clears or resets values according to the existing admin service. social_links and og_image_config replace whole objects; dotted OG section keys replace only that section. To set a logo, upload the SVG/PNG with file_upload kind=image (email logos must be PNG) and assign its File UUID to the matching logo_* key. Loader files, default_map_theme_id and runtime site_origin are read-only here; use map_theme_set_default for the default theme.", siteSettingsUpdateInputJSONSchema, siteSettingsUpdateOutputJSONSchema, false, false), func(tools *AdminSettingsTools, ctx context.Context, name string, call toolCall[siteSettingsUpdateArguments]) (mcpserver.ToolResult, error) {
+		var input siteSettingsUpdateArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if len(input.Settings) == 0 {
@@ -120,15 +72,15 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 			return mcpserver.ToolResult{}, err
 		}
 		return adminSettingsResult(map[string]any{"success": true, "og_generation_run_id": update.OGGenerationRunID})
-	case ToolMailAdapterList:
+	}),
+	defineTool(oauthTool(ToolMailAdapterList, "List mail adapters", "List administrator mail adapters in priority order with safe sender and provider metadata. Requires the admin UI's Mail Adapter list permission. Credentials, access keys, passwords, usernames and tokens are excluded. Continue with next_offset while has_more.", mailAdapterListInputJSONSchema, mailAdapterListOutputJSONSchema, true, false), func(tools *AdminSettingsTools, ctx context.Context, name string, call toolCall[mailAdapterListArguments]) (mcpserver.ToolResult, error) {
+		arguments := call.Arguments
+
 		if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
 			return executionError(err)
 		}
-		var input struct {
-			Limit  *int32 `json:"limit"`
-			Offset int32  `json:"offset"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+		var input mailAdapterListArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		limit := int32(20)
@@ -154,18 +106,15 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 			output["next_offset"] = next
 		}
 		return adminSettingsResult(output)
-	case ToolMailAdapterSenderUpdate:
+	}),
+	defineTool(oauthTool(ToolMailAdapterSenderUpdate, "Update mail adapter sender", "Partially update from_name/from_email and optionally is_active/priority for a mail adapter ID from mail_adapter_list. Supply at least one of from_name, from_email, is_active, or priority. Omitted fields and all stored credentials remain unchanged; an empty from_name clears the display name. Sender changes require SES or SMTP. Uses the admin UI's fresh Mail Adapter update permission, audit and provider verification, which may send a verification email to the resulting sender address. No credentials are accepted or returned.", mailAdapterSenderUpdateInputJSONSchema, mailAdapterSenderUpdateOutputJSONSchema, false, false), func(tools *AdminSettingsTools, ctx context.Context, name string, call toolCall[mailAdapterSenderUpdateArguments]) (mcpserver.ToolResult, error) {
+		arguments := call.Arguments
+
 		if err := rejectNullArguments(arguments, "id", "from_name", "from_email", "is_active", "priority"); err != nil {
 			return executionError(err)
 		}
-		var input struct {
-			ID        string  `json:"id"`
-			FromName  *string `json:"from_name"`
-			FromEmail *string `json:"from_email"`
-			IsActive  *bool   `json:"is_active"`
-			Priority  *int32  `json:"priority"`
-		}
-		if err := decodeArguments(arguments, &input); err != nil {
+		var input mailAdapterSenderUpdateArguments
+		if err := call.Decode(&input); err != nil {
 			return executionError(err)
 		}
 		if err := validateUUID("id", input.ID); err != nil {
@@ -181,9 +130,48 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 			return mcpserver.ToolResult{}, err
 		}
 		return adminSettingsResult(map[string]any{"adapter": projectMailAdapterAdmin(ctx, adapter)})
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
+	}),
+}
+
+// These ports retain the same application services and request context as RPC.
+type SiteSettingsAdminApplication interface {
+	GetSettings(context.Context) (sitesettings.AdminSettings, error)
+	GetSetting(context.Context, sitesettings.GetSettingQuery) (sitesettings.Setting, error)
+	SetManySettings(context.Context, sitesettings.SetManySettingsCommand) (sitesettings.SettingsUpdate, error)
+}
+
+type MailAdapterAdminApplication interface {
+	ListMailAdapters(context.Context, emaildelivery.ListMailAdaptersQuery) (emaildelivery.MailAdapterPage, error)
+	UpdateMailAdapterSender(context.Context, emaildelivery.MailAdapterSenderUpdate) (emaildelivery.MailAdapter, error)
+}
+
+type AdminSettingsTools struct {
+	settings SiteSettingsAdminApplication
+	mail     MailAdapterAdminApplication
+}
+
+func NewAdminSettingsTools(settings SiteSettingsAdminApplication, mail MailAdapterAdminApplication) (*AdminSettingsTools, error) {
+	if interfaceValueIsNil(settings) || interfaceValueIsNil(mail) {
+		return nil, errors.New("MCP administrator Site Settings and Mail Adapter applications are required")
 	}
+	return &AdminSettingsTools{settings: settings, mail: mail}, nil
+}
+
+func (*AdminSettingsTools) ToolNames() []string { return adminSettingsTools.names() }
+func (*AdminSettingsTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
+	return adminSettingsTools.list(), nil
+}
+
+func (tools *AdminSettingsTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	result, err := tools.callTool(ctx, name, arguments)
+	if err == nil || errors.Is(err, mcpserver.ErrUnknownTool) {
+		return result, err
+	}
+	return expectedToolError(err)
+}
+
+func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+	return adminSettingsTools.call(tools, ctx, name, arguments)
 }
 
 // siteSettingsFileKeys are the source File settings; reads resolve each through
@@ -281,4 +269,21 @@ func adminSettingsResult(value any) (mcpserver.ToolResult, error) {
 		return mcpserver.ToolResult{}, fmt.Errorf("encode MCP administrator settings result: %w", err)
 	}
 	return structuredResult(encoded, false)
+}
+
+type siteSettingsUpdateArguments = struct {
+	Settings map[string]json.RawMessage `json:"settings"`
+}
+
+type mailAdapterListArguments = struct {
+	Limit  *int32 `json:"limit"`
+	Offset int32  `json:"offset"`
+}
+
+type mailAdapterSenderUpdateArguments = struct {
+	ID        string  `json:"id"`
+	FromName  *string `json:"from_name"`
+	FromEmail *string `json:"from_email"`
+	IsActive  *bool   `json:"is_active"`
+	Priority  *int32  `json:"priority"`
 }

@@ -23,13 +23,13 @@ const (
 	ToolProgramEventDelete         = "program_event_delete"
 )
 
-var programEventManagementTools = []mcpserver.Tool{
-	oauthTool(ToolProgramEventCreate, "Create Program Event", "Create a draft event with an empty typed content document. Resolve type_id with program_event_type_list and optional relations with reference tools. Specify the source locale, RFC 3339 start instant, IANA timezone, and location mode explicitly; map_place and hybrid require map_place_id. Add body text using document_paragraph_create after reading the new document.", programEventCreateInputJSONSchema, programEventSettingsOutputJSONSchema, false, false),
-	oauthTool(ToolProgramEventSettingsGet, "Get Program Event settings", "Read authorized event settings and locale metadata without returning the body. Copy the returned artists, labels, and clients unchanged into observed_artists, observed_labels, and observed_clients before editing those relations. Read body content with document_open and document_read; use their exact revisions for document edits.", contentIDInputJSONSchema, programEventSettingsOutputJSONSchema, true, false),
-	oauthTool(ToolProgramEventSettingsUpdate, "Update Program Event settings", "Update event dates, timezone, location, type, series, poster, URLs, or relations through the existing event service. Supply unchanged observed relation arrays from program_event_settings_get when editing artists, labels, or clients; empty desired arrays explicitly remove observed entries while preserving concurrent additions. Credits use whole-list replacement. Use document_metadata_update for title or summary.", programEventSettingsUpdateInputJSONSchema, programEventMutationOutputJSONSchema, false, true),
-	oauthTool(ToolProgramEventPublish, "Publish Program Event", "Publish a draft event or restore an archived event using the existing event lifecycle. Restoring an archived event preserves its original publication date.", contentIDInputJSONSchema, programEventMutationOutputJSONSchema, false, true),
-	oauthTool(ToolProgramEventArchive, "Archive Program Event", "Move a published event to archived using the existing event lifecycle. This does not move the event to draft; program_event_publish restores an archived event.", contentIDInputJSONSchema, programEventMutationOutputJSONSchema, false, true),
-	oauthTool(ToolProgramEventDelete, "Delete Program Event", "Permanently delete an event when permitted by the existing event service and its current lifecycle.", contentIDInputJSONSchema, programEventMutationOutputJSONSchema, false, true),
+var programEventManagementTools = toolRegistry[ProgramEventManagementTools]{
+	defineTool(oauthTool(ToolProgramEventCreate, "Create Program Event", "Create a draft event with an empty typed content document. Resolve type_id with program_event_type_list and optional relations with reference tools. Specify the source locale, RFC 3339 start instant, IANA timezone, and location mode explicitly; map_place and hybrid require map_place_id. Add body text using document_paragraph_create after reading the new document.", programEventCreateInputJSONSchema, programEventSettingsOutputJSONSchema, false, false), (*ProgramEventManagementTools).create),
+	defineTool(oauthTool(ToolProgramEventSettingsGet, "Get Program Event settings", "Read authorized event settings and locale metadata without returning the body. Copy the returned artists, labels, and clients unchanged into observed_artists, observed_labels, and observed_clients before editing those relations. Read body content with document_open and document_read; use their exact revisions for document edits.", contentIDInputJSONSchema, programEventSettingsOutputJSONSchema, true, false), (*ProgramEventManagementTools).getSettings),
+	defineTool(oauthTool(ToolProgramEventSettingsUpdate, "Update Program Event settings", "Update event dates, timezone, location, type, series, poster, URLs, or relations through the existing event service. Supply unchanged observed relation arrays from program_event_settings_get when editing artists, labels, or clients; empty desired arrays explicitly remove observed entries while preserving concurrent additions. Credits use whole-list replacement. Use document_metadata_update for title or summary.", programEventSettingsUpdateInputJSONSchema, programEventMutationOutputJSONSchema, false, true), (*ProgramEventManagementTools).updateSettings),
+	defineTool(oauthTool(ToolProgramEventPublish, "Publish Program Event", "Publish a draft event or restore an archived event using the existing event lifecycle. Restoring an archived event preserves its original publication date.", contentIDInputJSONSchema, programEventMutationOutputJSONSchema, false, true), (*ProgramEventManagementTools).mutateLifecycle),
+	defineTool(oauthTool(ToolProgramEventArchive, "Archive Program Event", "Move a published event to archived using the existing event lifecycle. This does not move the event to draft; program_event_publish restores an archived event.", contentIDInputJSONSchema, programEventMutationOutputJSONSchema, false, true), (*ProgramEventManagementTools).mutateLifecycle),
+	defineTool(oauthTool(ToolProgramEventDelete, "Delete Program Event", "Permanently delete an event when permitted by the existing event service and its current lifecycle.", contentIDInputJSONSchema, programEventMutationOutputJSONSchema, false, true), (*ProgramEventManagementTools).mutateLifecycle),
 }
 
 // ProgramEventManagementApplication is the Program Event use cases the
@@ -54,27 +54,14 @@ func NewProgramEventManagementTools(application ProgramEventManagementApplicatio
 	return &ProgramEventManagementTools{application: application}, nil
 }
 
-func (*ProgramEventManagementTools) ToolNames() []string {
-	return toolDefinitionNames(programEventManagementTools)
-}
+func (*ProgramEventManagementTools) ToolNames() []string { return programEventManagementTools.names() }
 
 func (*ProgramEventManagementTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(programEventManagementTools), nil
+	return programEventManagementTools.list(), nil
 }
 
 func (tools *ProgramEventManagementTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolProgramEventCreate:
-		return tools.create(ctx, arguments)
-	case ToolProgramEventSettingsGet:
-		return tools.getSettings(ctx, arguments)
-	case ToolProgramEventSettingsUpdate:
-		return tools.updateSettings(ctx, arguments)
-	case ToolProgramEventPublish, ToolProgramEventArchive, ToolProgramEventDelete:
-		return tools.mutateLifecycle(ctx, name, arguments)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return programEventManagementTools.call(tools, ctx, name, arguments)
 }
 
 type programEventCreateArguments struct {
@@ -101,9 +88,9 @@ type programEventCreateArguments struct {
 	Credits      []programEventCreditArguments  `json:"credits,omitempty"`
 }
 
-func (tools *ProgramEventManagementTools) create(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ProgramEventManagementTools) create(ctx context.Context, _ string, call toolCall[programEventCreateArguments]) (mcpserver.ToolResult, error) {
 	var input programEventCreateArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	for _, field := range []struct{ name, value string }{{"title", input.Title}, {"slug", input.Slug}, {"source_locale", input.SourceLocale}} {
@@ -152,9 +139,9 @@ func (tools *ProgramEventManagementTools) create(ctx context.Context, arguments 
 	return contentResult(output)
 }
 
-func (tools *ProgramEventManagementTools) getSettings(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ProgramEventManagementTools) getSettings(ctx context.Context, _ string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateUUID("document_id", input.DocumentID); err != nil {
@@ -194,9 +181,11 @@ type programEventSettingsArguments struct {
 	Credits          *[]programEventCreditArguments  `json:"credits,omitempty"`
 }
 
-func (tools *ProgramEventManagementTools) updateSettings(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ProgramEventManagementTools) updateSettings(ctx context.Context, _ string, call toolCall[programEventSettingsArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	var input programEventSettingsArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := rejectNullArguments(arguments, "artists", "observed_artists", "labels", "observed_labels", "clients", "observed_clients", "credits"); err != nil {
@@ -308,9 +297,9 @@ func containsNil[Row any](rows *[]*Row) bool {
 	return false
 }
 
-func (tools *ProgramEventManagementTools) mutateLifecycle(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ProgramEventManagementTools) mutateLifecycle(ctx context.Context, name string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if err := validateUUID("document_id", input.DocumentID); err != nil {

@@ -2,6 +2,7 @@ package aidocumentadapter
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -42,7 +43,7 @@ func TestPageExactMutationGolden(t *testing.T) {
 	runMutationGolden(t, mutationGoldenSubject{
 		name: "page", domain: core.DomainPage, reference: goldenEntityID,
 		sourceLocale: "en", targetLocale: "ko", service: service,
-		handles: pageOperationHandles,
+		handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 		arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 			state := pageStateForCodecTest(goldenBlockID)
 			revision := uuid.MustParse(goldenDocumentRevision)
@@ -64,13 +65,17 @@ func TestPageExactMutationGolden(t *testing.T) {
 		},
 		conflict: func(target bool) error {
 			if target {
-				return &pagedomain.AIDocumentRevisionConflictError{
-					Kind: pagedomain.AIDocumentTargetRevisionConflict, CurrentRevision: goldenDocumentRevision,
-					CurrentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+				return &core.RevisionConflict{
+					Kind:                    core.ConflictTargetRevision,
+					CurrentDocumentRevision: goldenDocumentRevision,
+					CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+					Message:                 "Page AI document revision changed: current revision is " + "0a000000-0000-4000-8000-000000000001",
 				}
 			}
-			return &pagedomain.AIDocumentRevisionConflictError{
-				Kind: pagedomain.AIDocumentDocumentRevisionConflict, CurrentRevision: goldenCurrentDocumentRevision,
+			return &core.RevisionConflict{
+				Kind:                    core.ConflictDocumentRevision,
+				CurrentDocumentRevision: goldenCurrentDocumentRevision,
+				Message:                 "Page AI document revision changed: current revision is " + "0a000000-0000-4000-8000-000000000003",
 			}
 		},
 		sourceOps:    []core.Operation{core.SetFieldOperation(pageMetadataBlockID, pageTitleField, core.Text("changed title"))},
@@ -100,7 +105,7 @@ func TestLegalExactMutationGolden(t *testing.T) {
 			runMutationGolden(t, mutationGoldenSubject{
 				name: "legal_" + legalDomain.name, domain: legalDomain.domain, reference: goldenEntityID,
 				sourceLocale: "en", targetLocale: "ko", service: service,
-				handles: legalOperationHandles,
+				handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 				arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 					locale := goldenLocale(target)
 					title := locale + " title"
@@ -117,13 +122,17 @@ func TestLegalExactMutationGolden(t *testing.T) {
 				},
 				conflict: func(target bool) error {
 					if target {
-						return &legal.AIDocumentRevisionConflict{
-							Kind: legal.AIDocumentTargetRevisionConflict, CurrentRevision: goldenDocumentRevision,
-							CurrentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+						return &core.RevisionConflict{
+							Kind:                    core.ConflictTargetRevision,
+							CurrentDocumentRevision: goldenDocumentRevision,
+							CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+							Message:                 "Legal AI document revision changed; reload before saving",
 						}
 					}
-					return &legal.AIDocumentRevisionConflict{
-						Kind: legal.AIDocumentDocumentRevisionConflict, CurrentRevision: goldenCurrentDocumentRevision,
+					return &core.RevisionConflict{
+						Kind:                    core.ConflictDocumentRevision,
+						CurrentDocumentRevision: goldenCurrentDocumentRevision,
+						Message:                 "Legal AI document revision changed; reload before saving",
 					}
 				},
 				sourceOps: []core.Operation{
@@ -148,7 +157,7 @@ func TestProgramEventExactMutationGolden(t *testing.T) {
 	runMutationGolden(t, mutationGoldenSubject{
 		name: "program_event", domain: core.DomainProgramEvent, reference: goldenEntityID,
 		sourceLocale: "en", targetLocale: "ko", service: service,
-		handles: programEventOperationHandles,
+		handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 		arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 			locale := goldenLocale(target)
 			api.state = programeventdomain.AIDocumentState{
@@ -165,13 +174,17 @@ func TestProgramEventExactMutationGolden(t *testing.T) {
 		},
 		conflict: func(target bool) error {
 			if target {
-				return &programeventdomain.AIDocumentConflict{
-					Kind: programeventdomain.AIDocumentTargetRevisionConflict, CurrentDocumentRevision: goldenDocumentRevision,
-					CurrentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+				return &core.RevisionConflict{
+					Kind:                    core.ConflictTargetRevision,
+					CurrentDocumentRevision: goldenDocumentRevision,
+					CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+					Message:                 fmt.Sprintf("Program Event AI document revision changed: current revision is %s", "0a000000-0000-4000-8000-000000000001"),
 				}
 			}
-			return &programeventdomain.AIDocumentConflict{
-				Kind: programeventdomain.AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: goldenCurrentDocumentRevision,
+			return &core.RevisionConflict{
+				Kind:                    core.ConflictDocumentRevision,
+				CurrentDocumentRevision: goldenCurrentDocumentRevision,
+				Message:                 fmt.Sprintf("Program Event AI document revision changed: current revision is %s", "0a000000-0000-4000-8000-000000000003"),
 			}
 		},
 		sourceOps:    []core.Operation{goldenContentEdit("changed source")},
@@ -190,7 +203,7 @@ func TestMenuExactMutationGolden(t *testing.T) {
 	runMutationGolden(t, mutationGoldenSubject{
 		name: "menu", domain: core.DomainMenu, reference: goldenEntityID,
 		sourceLocale: "ko", targetLocale: "en", service: service,
-		handles: menuOperationHandles,
+		handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 		arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 			snapshot := menuAdapterSnapshot("ko", true)
 			if target {
@@ -206,15 +219,19 @@ func TestMenuExactMutationGolden(t *testing.T) {
 		},
 		conflict: func(target bool) error {
 			if target {
-				return &menudomain.AIDocumentRevisionConflict{
-					Target: true, CurrentDocumentRevision: goldenDocumentRevision,
-					CurrentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
-					AffectedHandles:       []string{"menu-domain-handle"},
+				return &core.RevisionConflict{
+					Kind:                    core.ConflictTargetRevision,
+					CurrentDocumentRevision: goldenDocumentRevision,
+					CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+					AffectedHandles:         []string{"menu-domain-handle"},
+					Message:                 "Menu AI document revision conflict",
 				}
 			}
-			return &menudomain.AIDocumentRevisionConflict{
+			return &core.RevisionConflict{
 				CurrentDocumentRevision: goldenCurrentDocumentRevision,
 				AffectedHandles:         []string{"menu-domain-handle"},
+				Kind:                    core.ConflictDocumentRevision,
+				Message:                 "Menu AI document revision conflict",
 			}
 		},
 		sourceOps:    []core.Operation{core.SetFieldOperation("parent", menuFieldLabel, core.Text("changed parent"))},
@@ -242,7 +259,7 @@ func TestEmailRichTextExactMutationGolden(t *testing.T) {
 			runMutationGolden(t, mutationGoldenSubject{
 				name: "email_richtext_" + string(emailDomain), domain: emailDomain, reference: goldenEntityID,
 				sourceLocale: "en", targetLocale: "ko", service: service,
-				handles: emailRichTextOperationHandles,
+				handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 				arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 					locale := goldenLocale(target)
 					subject := locale + " subject"
@@ -258,13 +275,17 @@ func TestEmailRichTextExactMutationGolden(t *testing.T) {
 				},
 				conflict: func(target bool) error {
 					if target {
-						return &emailRichTextRevisionConflict{
-							kind: core.ConflictTargetRevision, currentDocumentRevision: goldenDocumentRevision,
-							currentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+						return &core.RevisionConflict{
+							Kind:                    core.ConflictTargetRevision,
+							CurrentDocumentRevision: goldenDocumentRevision,
+							CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+							Message:                 fmt.Sprintf("Email profile AI document revision conflict: current revision is %q", goldenDocumentRevision),
 						}
 					}
-					return &emailRichTextRevisionConflict{
-						kind: core.ConflictDocumentRevision, currentDocumentRevision: goldenCurrentDocumentRevision,
+					return &core.RevisionConflict{
+						Kind:                    core.ConflictDocumentRevision,
+						CurrentDocumentRevision: goldenCurrentDocumentRevision,
+						Message:                 fmt.Sprintf("Email profile AI document revision conflict: current revision is %q", goldenCurrentDocumentRevision),
 					}
 				},
 				sourceOps: []core.Operation{
@@ -299,7 +320,7 @@ func TestEmailLayoutExactMutationGolden(t *testing.T) {
 		name: "email_layout", domain: core.DomainEmailLayout, reference: goldenEntityID,
 		sourceLocale: "en", targetLocale: "ko", service: service,
 		handles: func(operation core.Operation) []string {
-			return compactOperationHandles(operation, "ko", "email_layout")
+			return core.OperationHandles(operation, "ko")
 		},
 		arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 			locale := goldenLocale(target)
@@ -320,15 +341,17 @@ func TestEmailLayoutExactMutationGolden(t *testing.T) {
 		},
 		conflict: func(target bool) error {
 			if target {
-				return &emailauthoring.EmailLayoutAIDocumentRevisionConflictError{
-					Kind:                    emailauthoring.EmailLayoutAIDocumentTargetRevisionConflict,
+				return &core.RevisionConflict{
+					Kind:                    core.ConflictTargetRevision,
 					CurrentDocumentRevision: goldenDocumentRevision,
 					CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+					Message:                 fmt.Sprintf("Email Layout AI document revision conflict: current document revision is %q", "0a000000-0000-4000-8000-000000000001"),
 				}
 			}
-			return &emailauthoring.EmailLayoutAIDocumentRevisionConflictError{
-				Kind:                    emailauthoring.EmailLayoutAIDocumentDocumentRevisionConflict,
+			return &core.RevisionConflict{
+				Kind:                    core.ConflictDocumentRevision,
 				CurrentDocumentRevision: goldenCurrentDocumentRevision,
+				Message:                 fmt.Sprintf("Email Layout AI document revision conflict: current document revision is %q", "0a000000-0000-4000-8000-000000000003"),
 			}
 		},
 		sourceOps: []core.Operation{
@@ -348,7 +371,7 @@ func TestFormExactMutationGolden(t *testing.T) {
 	runMutationGolden(t, mutationGoldenSubject{
 		name: "form", domain: core.DomainForm, reference: goldenEntityID,
 		sourceLocale: "en", targetLocale: "ko", service: service,
-		handles: func(operation core.Operation) []string { return compactOperationHandles(operation, "ko", "form") },
+		handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 		arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 			locale := goldenLocale(target)
 			sourceTitle, title := "Contact", locale+" title"
@@ -366,13 +389,17 @@ func TestFormExactMutationGolden(t *testing.T) {
 		},
 		conflict: func(target bool) error {
 			if target {
-				return &formdomain.AIDocumentRevisionConflictError{
-					Kind: formdomain.AIDocumentTargetRevisionConflict, CurrentDocumentRevision: goldenDocumentRevision,
-					CurrentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+				return &core.RevisionConflict{
+					Kind:                    core.ConflictTargetRevision,
+					CurrentDocumentRevision: goldenDocumentRevision,
+					CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+					Message:                 fmt.Sprintf("Form AI document %s revision conflict", "target"),
 				}
 			}
-			return &formdomain.AIDocumentRevisionConflictError{
-				Kind: formdomain.AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: goldenCurrentDocumentRevision,
+			return &core.RevisionConflict{
+				Kind:                    core.ConflictDocumentRevision,
+				CurrentDocumentRevision: goldenCurrentDocumentRevision,
+				Message:                 fmt.Sprintf("Form AI document %s revision conflict", "document"),
 			}
 		},
 		sourceOps: []core.Operation{core.SetFieldOperation(formRootID, formRootTitleField, core.Text("changed title"))},

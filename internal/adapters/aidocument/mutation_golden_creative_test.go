@@ -2,6 +2,7 @@ package aidocumentadapter
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -179,7 +180,7 @@ func TestArtistExactMutationGolden(t *testing.T) {
 	runMutationGolden(t, mutationGoldenSubject{
 		name: "artist", domain: core.DomainArtist, reference: goldenEntityID,
 		sourceLocale: "en", targetLocale: "ko", service: service,
-		handles: func(operation core.Operation) []string { return artistOperationHandles(operation, "ko") },
+		handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 		arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 			locale := goldenLocale(target)
 			api.state = artistdomain.AIDocumentState{
@@ -195,13 +196,17 @@ func TestArtistExactMutationGolden(t *testing.T) {
 		},
 		conflict: func(target bool) error {
 			if target {
-				return &artistdomain.AIDocumentRevisionConflictError{
-					Kind: artistdomain.AIDocumentTargetRevisionConflict, CurrentRevision: goldenDocumentRevision,
-					CurrentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+				return &core.RevisionConflict{
+					Kind:                    core.ConflictTargetRevision,
+					CurrentDocumentRevision: goldenDocumentRevision,
+					CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+					Message:                 fmt.Sprintf("Artist AI document revision conflict: current revision is %q", "0a000000-0000-4000-8000-000000000001"),
 				}
 			}
-			return &artistdomain.AIDocumentRevisionConflictError{
-				Kind: artistdomain.AIDocumentDocumentRevisionConflict, CurrentRevision: goldenCurrentDocumentRevision,
+			return &core.RevisionConflict{
+				Kind:                    core.ConflictDocumentRevision,
+				CurrentDocumentRevision: goldenCurrentDocumentRevision,
+				Message:                 fmt.Sprintf("Artist AI document revision conflict: current revision is %q", "0a000000-0000-4000-8000-000000000003"),
 			}
 		},
 		sourceOps:    []core.Operation{goldenContentEdit("changed source")},
@@ -219,7 +224,7 @@ func TestLabelExactMutationGolden(t *testing.T) {
 	runMutationGolden(t, mutationGoldenSubject{
 		name: "label", domain: core.DomainLabel, reference: goldenEntityID,
 		sourceLocale: "en", targetLocale: "ko", service: service,
-		handles: func(operation core.Operation) []string { return labelOperationHandles(operation, "ko") },
+		handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 		arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 			locale := goldenLocale(target)
 			api.state = labeldomain.AIDocumentState{
@@ -236,13 +241,17 @@ func TestLabelExactMutationGolden(t *testing.T) {
 		},
 		conflict: func(target bool) error {
 			if target {
-				return &labeldomain.AIDocumentRevisionConflictError{
-					Kind: labeldomain.AIDocumentTargetRevisionConflict, CurrentDocumentRevision: goldenDocumentRevision,
-					CurrentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+				return &core.RevisionConflict{
+					Kind:                    core.ConflictTargetRevision,
+					CurrentDocumentRevision: goldenDocumentRevision,
+					CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+					Message:                 fmt.Sprintf("label AI document revision conflict: current document revision is %q", "0a000000-0000-4000-8000-000000000001"),
 				}
 			}
-			return &labeldomain.AIDocumentRevisionConflictError{
-				Kind: labeldomain.AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: goldenCurrentDocumentRevision,
+			return &core.RevisionConflict{
+				Kind:                    core.ConflictDocumentRevision,
+				CurrentDocumentRevision: goldenCurrentDocumentRevision,
+				Message:                 fmt.Sprintf("label AI document revision conflict: current document revision is %q", "0a000000-0000-4000-8000-000000000003"),
 			}
 		},
 		sourceOps:    []core.Operation{goldenContentEdit("changed source")},
@@ -260,7 +269,7 @@ func TestReleaseExactMutationGolden(t *testing.T) {
 	runMutationGolden(t, mutationGoldenSubject{
 		name: "release", domain: core.DomainRelease, reference: goldenEntityID,
 		sourceLocale: "en", targetLocale: "ko", service: service,
-		handles: func(operation core.Operation) []string { return compactOperationHandles(operation, "ko", "release") },
+		handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 		arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 			locale := goldenLocale(target)
 			title := locale + " title"
@@ -278,13 +287,17 @@ func TestReleaseExactMutationGolden(t *testing.T) {
 		},
 		conflict: func(target bool) error {
 			if target {
-				return &releasedomain.AIDocumentRevisionConflictError{
-					Kind: releasedomain.AIDocumentTargetRevisionConflict, CurrentDocumentRevision: goldenDocumentRevision,
-					CurrentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+				return &core.RevisionConflict{
+					Kind:                    core.ConflictTargetRevision,
+					CurrentDocumentRevision: goldenDocumentRevision,
+					CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+					Message:                 fmt.Sprintf("Release AI document revision conflict: current document revision is %q", "0a000000-0000-4000-8000-000000000001"),
 				}
 			}
-			return &releasedomain.AIDocumentRevisionConflictError{
-				Kind: releasedomain.AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: goldenCurrentDocumentRevision,
+			return &core.RevisionConflict{
+				Kind:                    core.ConflictDocumentRevision,
+				CurrentDocumentRevision: goldenCurrentDocumentRevision,
+				Message:                 fmt.Sprintf("Release AI document revision conflict: current document revision is %q", "0a000000-0000-4000-8000-000000000003"),
 			}
 		},
 		sourceOps: []core.Operation{
@@ -308,7 +321,7 @@ func TestWorkExactMutationGolden(t *testing.T) {
 	runMutationGolden(t, mutationGoldenSubject{
 		name: "work", domain: core.DomainWork, reference: goldenEntityID,
 		sourceLocale: "en", targetLocale: "ko", service: service,
-		handles: workOperationHandles,
+		handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 		arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 			locale := goldenLocale(target)
 			title := locale + " title"
@@ -330,13 +343,17 @@ func TestWorkExactMutationGolden(t *testing.T) {
 		},
 		conflict: func(target bool) error {
 			if target {
-				return &workdomain.AIDocumentRevisionConflictError{
-					Kind: workdomain.AIDocumentTargetRevisionConflict, CurrentDocumentRevision: goldenDocumentRevision,
-					CurrentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+				return &core.RevisionConflict{
+					Kind:                    core.ConflictTargetRevision,
+					CurrentDocumentRevision: goldenDocumentRevision,
+					CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+					Message:                 "Work AI document revision changed: current revision is " + "0a000000-0000-4000-8000-000000000001",
 				}
 			}
-			return &workdomain.AIDocumentRevisionConflictError{
-				Kind: workdomain.AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: goldenCurrentDocumentRevision,
+			return &core.RevisionConflict{
+				Kind:                    core.ConflictDocumentRevision,
+				CurrentDocumentRevision: goldenCurrentDocumentRevision,
+				Message:                 "Work AI document revision changed: current revision is " + "0a000000-0000-4000-8000-000000000003",
 			}
 		},
 		sourceOps: []core.Operation{
@@ -361,7 +378,7 @@ func TestPostExactMutationGolden(t *testing.T) {
 	runMutationGolden(t, mutationGoldenSubject{
 		name: "post", domain: core.DomainPost, reference: goldenEntityID,
 		sourceLocale: "en", targetLocale: "ko", service: service,
-		handles: postOperationHandles,
+		handles: func(operation core.Operation) []string { return core.OperationHandles(operation, "ko") },
 		arrange: func(target bool, result mutationGoldenDomainResult, err error) {
 			locale := goldenLocale(target)
 			title, sourceTitle := locale+" title", "en title"
@@ -382,13 +399,17 @@ func TestPostExactMutationGolden(t *testing.T) {
 		},
 		conflict: func(target bool) error {
 			if target {
-				return &postdomain.AIDocumentRevisionConflictError{
-					Kind: postdomain.AIDocumentTargetRevisionConflict, CurrentDocumentRevision: goldenDocumentRevision,
-					CurrentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+				return &core.RevisionConflict{
+					Kind:                    core.ConflictTargetRevision,
+					CurrentDocumentRevision: goldenDocumentRevision,
+					CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+					Message:                 "Post AI document revision changed: current document revision is " + "0a000000-0000-4000-8000-000000000001",
 				}
 			}
-			return &postdomain.AIDocumentRevisionConflictError{
-				Kind: postdomain.AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: goldenCurrentDocumentRevision,
+			return &core.RevisionConflict{
+				Kind:                    core.ConflictDocumentRevision,
+				CurrentDocumentRevision: goldenCurrentDocumentRevision,
+				Message:                 "Post AI document revision changed: current document revision is " + "0a000000-0000-4000-8000-000000000003",
 			}
 		},
 		sourceOps: []core.Operation{

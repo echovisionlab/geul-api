@@ -46,9 +46,9 @@ const fileListOutputJSONSchema = `{
   }
 }`
 
-var referenceDiscoveryTools = []mcpserver.Tool{
-	oauthTool(ToolReferenceSearch, "Search content references", "Search canonical Category, Tag, Client, Map Place, Member, or Artist IDs before using them in content management tools. Client and Map Place limits are at most 50; other types allow 100. For Client, Map Place, and Member, has_more is null at a full service cap, so refine the query to find omitted candidates.", referenceSearchInputJSONSchema, referenceSearchOutputJSONSchema, true, false),
-	oauthTool(ToolFileList, "List or search Files", "Browse a File Manager folder or search Files and folders. Use returned File IDs for featured images and other file relations.", fileListInputJSONSchema, fileListOutputJSONSchema, true, false),
+var referenceDiscoveryTools = toolRegistry[ReferenceDiscoveryTools]{
+	defineTool(oauthTool(ToolReferenceSearch, "Search content references", "Search canonical Category, Tag, Client, Map Place, Member, or Artist IDs before using them in content management tools. Client and Map Place limits are at most 50; other types allow 100. For Client, Map Place, and Member, has_more is null at a full service cap, so refine the query to find omitted candidates.", referenceSearchInputJSONSchema, referenceSearchOutputJSONSchema, true, false), (*ReferenceDiscoveryTools).searchReferences),
+	defineTool(oauthTool(ToolFileList, "List or search Files", "Browse a File Manager folder or search Files and folders. Use returned File IDs for featured images and other file relations.", fileListInputJSONSchema, fileListOutputJSONSchema, true, false), (*ReferenceDiscoveryTools).listFiles),
 }
 
 type CategoryReferenceDiscovery interface {
@@ -90,22 +90,13 @@ func NewReferenceDiscoveryTools(categories CategoryReferenceDiscovery, tags TagR
 	return &ReferenceDiscoveryTools{categories: categories, tags: tags, clients: clients, mapPlaces: mapPlaces, members: members, artists: artists, files: files}, nil
 }
 
-func (*ReferenceDiscoveryTools) ToolNames() []string {
-	return toolDefinitionNames(referenceDiscoveryTools)
-}
+func (*ReferenceDiscoveryTools) ToolNames() []string { return referenceDiscoveryTools.names() }
 func (*ReferenceDiscoveryTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(referenceDiscoveryTools), nil
+	return referenceDiscoveryTools.list(), nil
 }
 
 func (tools *ReferenceDiscoveryTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolReferenceSearch:
-		return tools.searchReferences(ctx, arguments)
-	case ToolFileList:
-		return tools.listFiles(ctx, arguments)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return referenceDiscoveryTools.call(tools, ctx, name, arguments)
 }
 
 type referenceSearchArguments struct {
@@ -114,9 +105,9 @@ type referenceSearchArguments struct {
 	Limit         int32  `json:"limit,omitempty"`
 }
 
-func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, _ string, call toolCall[referenceSearchArguments]) (mcpserver.ToolResult, error) {
 	var input referenceSearchArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	input.Query = strings.TrimSpace(input.Query)
@@ -239,12 +230,14 @@ type fileListArguments struct {
 	PageToken      *string `json:"page_token,omitempty"`
 }
 
-func (tools *ReferenceDiscoveryTools) listFiles(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ReferenceDiscoveryTools) listFiles(ctx context.Context, _ string, call toolCall[fileListArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	if err := rejectNullArguments(arguments, "page_size"); err != nil {
 		return executionError(err)
 	}
 	var input fileListArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if _, supplied := arguments["page_size"]; !supplied {

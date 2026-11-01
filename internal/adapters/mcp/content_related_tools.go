@@ -37,24 +37,24 @@ const (
 	ToolDocumentSlugCheck           = "document_slug_check"
 )
 
-var contentRelatedTools = []mcpserver.Tool{
-	oauthTool(ToolDocumentFeaturedImageSet, "Set featured image", "Set an existing File as the featured image of a Post, Work, or Page.", featuredImageSetInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	oauthTool(ToolDocumentFeaturedImageDelete, "Delete featured image", "Remove the featured image from a Post, Work, or Page.", documentTypeAndIDInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	oauthTool(ToolPostParticipantsList, "List Post participants", "List the authors and collaborators assigned to a Post, including effective authority.", contentIDInputJSONSchema, postParticipantsOutputJSONSchema, true, false),
-	oauthTool(ToolPostAuthorAdd, "Add Post author", "Add a Member as a Post author using the existing Post authority rules.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	oauthTool(ToolPostAuthorRemove, "Remove Post author", "Remove a Member from the Post author role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	oauthTool(ToolPostCollaboratorAdd, "Add Post collaborator", "Add a Member as a Post collaborator.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	oauthTool(ToolPostCollaboratorRemove, "Remove Post collaborator", "Remove a Member from the Post collaborator role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	oauthTool(ToolWorkCreditsGet, "Get Work credits", "Read all credit groups and credits attached to a Work.", contentIDInputJSONSchema, workCreditsOutputJSONSchema, true, false),
-	oauthTool(ToolWorkCreditGroupCreate, "Create Work credit group", "Create a named credit group on a Work.", workCreditGroupCreateInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	oauthTool(ToolWorkCreditGroupUpdate, "Update Work credit group", "Rename a Work credit group and return its current fields.", workCreditGroupUpdateInputJSONSchema, workCreditGroupUpdateOutputJSONSchema, false, true),
-	oauthTool(ToolWorkCreditGroupDelete, "Delete Work credit group", "Delete a Work credit group using the existing Work credit rules.", workCreditGroupDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	oauthTool(ToolWorkCreditAdd, "Add Work credit", "Add an artist, Member, or literal-name credit to a Work, optionally inside a credit group. Supply exactly one of artist_id, member_id, or name.", workCreditAddInputJSONSchema, contentActionOutputJSONSchema, false, false),
-	oauthTool(ToolWorkCreditUpdate, "Update Work credit", "Move a Work credit between groups or change its role and return its current fields. Supply group_id, credit_role, or both.", workCreditUpdateInputJSONSchema, workCreditUpdateOutputJSONSchema, false, true),
-	oauthTool(ToolWorkCreditDelete, "Delete Work credit", "Delete one Work credit.", workCreditDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	oauthTool(ToolDocumentVersionsList, "List document versions", "List version checkpoints for a Post, Work, or Page.", documentVersionsListInputJSONSchema, documentVersionsOutputJSONSchema, true, false),
-	oauthTool(ToolDocumentVersionRestore, "Restore document version", "Restore one version checkpoint into the current Post, Work, or Page.", documentVersionRestoreInputJSONSchema, contentActionOutputJSONSchema, false, true),
-	oauthTool(ToolDocumentSlugCheck, "Check document slug", "Check whether a slug is available for a Post, Work, or Page, optionally excluding the current document.", documentSlugCheckInputJSONSchema, documentSlugCheckOutputJSONSchema, true, false),
+var contentRelatedTools = toolRegistry[ContentRelatedTools]{
+	defineTool(oauthTool(ToolDocumentFeaturedImageSet, "Set featured image", "Set an existing File as the featured image of a Post, Work, or Page.", featuredImageSetInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).featuredImage),
+	defineTool(oauthTool(ToolDocumentFeaturedImageDelete, "Delete featured image", "Remove the featured image from a Post, Work, or Page.", documentTypeAndIDInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).featuredImage),
+	defineTool(oauthTool(ToolPostParticipantsList, "List Post participants", "List the authors and collaborators assigned to a Post, including effective authority.", contentIDInputJSONSchema, postParticipantsOutputJSONSchema, true, false), (*ContentRelatedTools).listPostParticipants),
+	defineTool(oauthTool(ToolPostAuthorAdd, "Add Post author", "Add a Member as a Post author using the existing Post authority rules.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false), (*ContentRelatedTools).mutatePostParticipant),
+	defineTool(oauthTool(ToolPostAuthorRemove, "Remove Post author", "Remove a Member from the Post author role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).mutatePostParticipant),
+	defineTool(oauthTool(ToolPostCollaboratorAdd, "Add Post collaborator", "Add a Member as a Post collaborator.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, false), (*ContentRelatedTools).mutatePostParticipant),
+	defineTool(oauthTool(ToolPostCollaboratorRemove, "Remove Post collaborator", "Remove a Member from the Post collaborator role.", postParticipantInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).mutatePostParticipant),
+	defineTool(oauthTool(ToolWorkCreditsGet, "Get Work credits", "Read all credit groups and credits attached to a Work.", contentIDInputJSONSchema, workCreditsOutputJSONSchema, true, false), (*ContentRelatedTools).getWorkCredits),
+	defineTool(oauthTool(ToolWorkCreditGroupCreate, "Create Work credit group", "Create a named credit group on a Work.", workCreditGroupCreateInputJSONSchema, contentActionOutputJSONSchema, false, false), (*ContentRelatedTools).mutateWorkCreditGroup),
+	defineTool(oauthTool(ToolWorkCreditGroupUpdate, "Update Work credit group", "Rename a Work credit group and return its current fields.", workCreditGroupUpdateInputJSONSchema, workCreditGroupUpdateOutputJSONSchema, false, true), (*ContentRelatedTools).mutateWorkCreditGroup),
+	defineTool(oauthTool(ToolWorkCreditGroupDelete, "Delete Work credit group", "Delete a Work credit group using the existing Work credit rules.", workCreditGroupDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).mutateWorkCreditGroup),
+	defineTool(oauthTool(ToolWorkCreditAdd, "Add Work credit", "Add an artist, Member, or literal-name credit to a Work, optionally inside a credit group. Supply exactly one of artist_id, member_id, or name.", workCreditAddInputJSONSchema, contentActionOutputJSONSchema, false, false), (*ContentRelatedTools).mutateWorkCredit),
+	defineTool(oauthTool(ToolWorkCreditUpdate, "Update Work credit", "Move a Work credit between groups or change its role and return its current fields. Supply group_id, credit_role, or both.", workCreditUpdateInputJSONSchema, workCreditUpdateOutputJSONSchema, false, true), (*ContentRelatedTools).mutateWorkCredit),
+	defineTool(oauthTool(ToolWorkCreditDelete, "Delete Work credit", "Delete one Work credit.", workCreditDeleteInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).mutateWorkCredit),
+	defineTool(oauthTool(ToolDocumentVersionsList, "List document versions", "List version checkpoints for a Post, Work, or Page.", documentVersionsListInputJSONSchema, documentVersionsOutputJSONSchema, true, false), (*ContentRelatedTools).listDocumentVersions),
+	defineTool(oauthTool(ToolDocumentVersionRestore, "Restore document version", "Restore one version checkpoint into the current Post, Work, or Page.", documentVersionRestoreInputJSONSchema, contentActionOutputJSONSchema, false, true), (*ContentRelatedTools).restoreDocumentVersion),
+	defineTool(oauthTool(ToolDocumentSlugCheck, "Check document slug", "Check whether a slug is available for a Post, Work, or Page, optionally excluding the current document.", documentSlugCheckInputJSONSchema, documentSlugCheckOutputJSONSchema, true, false), (*ContentRelatedTools).checkDocumentSlug),
 }
 
 type PostRelatedApplication interface {
@@ -106,34 +106,13 @@ func NewContentRelatedTools(posts PostRelatedApplication, works WorkRelatedAppli
 	return &ContentRelatedTools{posts: posts, works: works, pages: pages}, nil
 }
 
-func (*ContentRelatedTools) ToolNames() []string { return toolDefinitionNames(contentRelatedTools) }
+func (*ContentRelatedTools) ToolNames() []string { return contentRelatedTools.names() }
 func (*ContentRelatedTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(contentRelatedTools), nil
+	return contentRelatedTools.list(), nil
 }
 
 func (tools *ContentRelatedTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	switch name {
-	case ToolDocumentFeaturedImageSet, ToolDocumentFeaturedImageDelete:
-		return tools.featuredImage(ctx, name, arguments)
-	case ToolPostParticipantsList:
-		return tools.listPostParticipants(ctx, arguments)
-	case ToolPostAuthorAdd, ToolPostAuthorRemove, ToolPostCollaboratorAdd, ToolPostCollaboratorRemove:
-		return tools.mutatePostParticipant(ctx, name, arguments)
-	case ToolWorkCreditsGet:
-		return tools.getWorkCredits(ctx, arguments)
-	case ToolWorkCreditGroupCreate, ToolWorkCreditGroupUpdate, ToolWorkCreditGroupDelete:
-		return tools.mutateWorkCreditGroup(ctx, name, arguments)
-	case ToolWorkCreditAdd, ToolWorkCreditUpdate, ToolWorkCreditDelete:
-		return tools.mutateWorkCredit(ctx, name, arguments)
-	case ToolDocumentVersionsList:
-		return tools.listDocumentVersions(ctx, arguments)
-	case ToolDocumentVersionRestore:
-		return tools.restoreDocumentVersion(ctx, arguments)
-	case ToolDocumentSlugCheck:
-		return tools.checkDocumentSlug(ctx, arguments)
-	default:
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
+	return contentRelatedTools.call(tools, ctx, name, arguments)
 }
 
 type featuredImageArguments struct {
@@ -142,14 +121,16 @@ type featuredImageArguments struct {
 	FileID       string `json:"file_id,omitempty"`
 }
 
-func (tools *ContentRelatedTools) featuredImage(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentRelatedTools) featuredImage(ctx context.Context, name string, call toolCall[featuredImageArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	if name == ToolDocumentFeaturedImageDelete {
 		if err := rejectUnadvertisedArguments(arguments, "document_type", "document_id"); err != nil {
 			return executionError(err)
 		}
 	}
 	var input featuredImageArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if name == ToolDocumentFeaturedImageSet {
@@ -213,9 +194,9 @@ func featuredImageDeleted(input featuredImageArguments, deleted *managev1.OgAsse
 	return contentResult(map[string]any{"resource_type": "featured_image", "resource_id": input.DocumentID, "document_type": input.DocumentType, "document_id": input.DocumentID, "changed": deleted.Success, "deleted": deleted.Success, "og_generation_run_id": optionalStringValue(deleted.OgGenerationRunId)})
 }
 
-func (tools *ContentRelatedTools) listPostParticipants(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentRelatedTools) listPostParticipants(ctx context.Context, _ string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	listed, err := tools.posts.ListPostParticipants(ctx, postdomain.PostParticipantsQuery{PostID: input.DocumentID})
@@ -243,9 +224,9 @@ type postParticipantArguments struct {
 	MemberID   string `json:"member_id"`
 }
 
-func (tools *ContentRelatedTools) mutatePostParticipant(ctx context.Context, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentRelatedTools) mutatePostParticipant(ctx context.Context, name string, call toolCall[postParticipantArguments]) (mcpserver.ToolResult, error) {
 	var input postParticipantArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	role := "author"
@@ -270,9 +251,9 @@ func (tools *ContentRelatedTools) mutatePostParticipant(ctx context.Context, nam
 	return contentResult(map[string]any{"resource_type": "post_participant", "resource_id": input.MemberID, "document_type": "post", "document_id": input.DocumentID, "member_id": input.MemberID, "role": role, "changed": true, "deleted": name == ToolPostAuthorRemove || name == ToolPostCollaboratorRemove})
 }
 
-func (tools *ContentRelatedTools) getWorkCredits(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentRelatedTools) getWorkCredits(ctx context.Context, _ string, call toolCall[contentIDArguments]) (mcpserver.ToolResult, error) {
 	var input contentIDArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	workCredits, err := tools.works.GetWorkCredits(ctx, work.GetWorkCreditsQuery{WorkID: input.DocumentID})
@@ -309,12 +290,14 @@ var workCreditGroupAdvertisedArguments = map[string][]string{
 	ToolWorkCreditGroupDelete: {"group_id"},
 }
 
-func (tools *ContentRelatedTools) mutateWorkCreditGroup(ctx context.Context, toolName string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentRelatedTools) mutateWorkCreditGroup(ctx context.Context, toolName string, call toolCall[workCreditGroupArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	if err := rejectUnadvertisedArguments(arguments, workCreditGroupAdvertisedArguments[toolName]...); err != nil {
 		return executionError(err)
 	}
 	var input workCreditGroupArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	output := map[string]any{"resource_type": "work_credit_group"}
@@ -361,12 +344,14 @@ var workCreditAdvertisedArguments = map[string][]string{
 	ToolWorkCreditDelete: {"credit_id"},
 }
 
-func (tools *ContentRelatedTools) mutateWorkCredit(ctx context.Context, toolName string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentRelatedTools) mutateWorkCredit(ctx context.Context, toolName string, call toolCall[workCreditArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	if err := rejectUnadvertisedArguments(arguments, workCreditAdvertisedArguments[toolName]...); err != nil {
 		return executionError(err)
 	}
 	var input workCreditArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	output := map[string]any{"resource_type": "work_credit"}
@@ -454,12 +439,14 @@ type documentVersionsArguments struct {
 	Offset       int32  `json:"offset,omitempty"`
 }
 
-func (tools *ContentRelatedTools) listDocumentVersions(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentRelatedTools) listDocumentVersions(ctx context.Context, _ string, call toolCall[documentVersionsArguments]) (mcpserver.ToolResult, error) {
+	arguments := call.Arguments
+
 	if err := rejectNullArguments(arguments, "limit", "offset"); err != nil {
 		return executionError(err)
 	}
 	var input documentVersionsArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	if _, supplied := arguments["limit"]; !supplied {
@@ -553,9 +540,9 @@ type documentVersionRestoreArguments struct {
 	VersionID    string `json:"version_id"`
 }
 
-func (tools *ContentRelatedTools) restoreDocumentVersion(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentRelatedTools) restoreDocumentVersion(ctx context.Context, _ string, call toolCall[documentVersionRestoreArguments]) (mcpserver.ToolResult, error) {
 	var input documentVersionRestoreArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	output := map[string]any{"resource_type": "document", "resource_id": input.DocumentID, "document_type": input.DocumentType, "document_id": input.DocumentID, "changed": true}
@@ -592,9 +579,9 @@ type documentSlugArguments struct {
 	ExcludeDocumentID *string `json:"exclude_document_id,omitempty"`
 }
 
-func (tools *ContentRelatedTools) checkDocumentSlug(ctx context.Context, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
+func (tools *ContentRelatedTools) checkDocumentSlug(ctx context.Context, _ string, call toolCall[documentSlugArguments]) (mcpserver.ToolResult, error) {
 	var input documentSlugArguments
-	if err := decodeArguments(arguments, &input); err != nil {
+	if err := call.Decode(&input); err != nil {
 		return executionError(err)
 	}
 	var available bool

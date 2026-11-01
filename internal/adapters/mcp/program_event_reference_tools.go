@@ -18,10 +18,12 @@ const (
 	ToolLabelList              = "label_list"
 )
 
-var programEventReferenceTools = []mcpserver.Tool{
-	oauthTool(ToolProgramEventTypeList, "List Program Event types", "List canonical Program Event type IDs, localized names, status, and place/stream requirements before program_event_create or program_event_settings_update. Choose an active type and pass its id as type_id. Type name search is not supported; continue with next_offset to see more types. Authorization remains in the native admin list.", programEventTypeListInputJSONSchema, programEventTypeListOutputJSONSchema, true, false),
-	oauthTool(ToolProgramEventSeriesList, "List Program Event series", "List or search canonical Program Event series IDs and titles. Pass a selected id as the optional series_id in program_event_create or program_event_settings_update. Continue with next_offset and the same filters. Authorization remains in the native admin list.", programEventSeriesListInputJSONSchema, programEventSeriesListOutputJSONSchema, true, false),
-	oauthTool(ToolLabelList, "List Labels", "List or search canonical Label IDs and source names. Use returned IDs for optional Program Event label relations. Continue with next_offset and the same filters. Authorization remains in the native admin list.", labelListInputJSONSchema, labelListOutputJSONSchema, true, false),
+var programEventReferenceTools = toolRegistry[ProgramEventReferenceTools]{
+	programEventReferenceTool(oauthTool(ToolProgramEventTypeList, "List Program Event types", "List canonical Program Event type IDs, localized names, status, and place/stream requirements before program_event_create or program_event_settings_update. Choose an active type and pass its id as type_id. Type name search is not supported; continue with next_offset to see more types. Authorization remains in the native admin list.", programEventTypeListInputJSONSchema, programEventTypeListOutputJSONSchema, true, false), func(input programEventReferenceListArguments) programEventReferenceSearchArguments {
+		return programEventReferenceSearchArguments{programEventReferenceListArguments: input}
+	}),
+	programEventReferenceTool(oauthTool(ToolProgramEventSeriesList, "List Program Event series", "List or search canonical Program Event series IDs and titles. Pass a selected id as the optional series_id in program_event_create or program_event_settings_update. Continue with next_offset and the same filters. Authorization remains in the native admin list.", programEventSeriesListInputJSONSchema, programEventSeriesListOutputJSONSchema, true, false), func(input programEventReferenceSearchArguments) programEventReferenceSearchArguments { return input }),
+	programEventReferenceTool(oauthTool(ToolLabelList, "List Labels", "List or search canonical Label IDs and source names. Use returned IDs for optional Program Event label relations. Continue with next_offset and the same filters. Authorization remains in the native admin list.", labelListInputJSONSchema, labelListOutputJSONSchema, true, false), func(input programEventReferenceSearchArguments) programEventReferenceSearchArguments { return input }),
 }
 
 // These interfaces consume only the native authorized reference lists.
@@ -50,12 +52,10 @@ func NewProgramEventReferenceTools(types ProgramEventTypeReferenceDiscovery, ser
 	return &ProgramEventReferenceTools{types: types, series: series, labels: labels}, nil
 }
 
-func (*ProgramEventReferenceTools) ToolNames() []string {
-	return toolDefinitionNames(programEventReferenceTools)
-}
+func (*ProgramEventReferenceTools) ToolNames() []string { return programEventReferenceTools.names() }
 
 func (*ProgramEventReferenceTools) ListTools(context.Context, mcpserver.Principal) ([]mcpserver.Tool, error) {
-	return cloneToolDefinitions(programEventReferenceTools), nil
+	return programEventReferenceTools.list(), nil
 }
 
 type programEventReferenceListArguments struct {
@@ -84,23 +84,10 @@ func (input programEventReferenceListArguments) pagination() (*commonv1.Paginati
 }
 
 func (tools *ProgramEventReferenceTools) CallTool(ctx context.Context, _ mcpserver.Principal, name string, arguments mcpserver.ToolArguments) (mcpserver.ToolResult, error) {
-	if name != ToolProgramEventTypeList && name != ToolProgramEventSeriesList && name != ToolLabelList {
-		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
-	}
-	if err := rejectNullArguments(arguments, "query", "status", "limit", "offset"); err != nil {
-		return executionError(err)
-	}
-	var input programEventReferenceSearchArguments
-	var err error
-	if name == ToolProgramEventTypeList {
-		// Types have no native name search; do not accept an ignored query.
-		err = decodeArguments(arguments, &input.programEventReferenceListArguments)
-	} else {
-		err = decodeArguments(arguments, &input)
-	}
-	if err != nil {
-		return executionError(err)
-	}
+	return programEventReferenceTools.call(tools, ctx, name, arguments)
+}
+
+func (tools *ProgramEventReferenceTools) listReferences(ctx context.Context, name string, arguments mcpserver.ToolArguments, input programEventReferenceSearchArguments) (mcpserver.ToolResult, error) {
 	pagination, err := input.pagination()
 	if err != nil {
 		return executionError(err)
@@ -174,4 +161,17 @@ func (tools *ProgramEventReferenceTools) CallTool(ctx context.Context, _ mcpserv
 		output["next_offset"] = int64(pagination.Offset) + int64(pagination.Limit)
 	}
 	return contentResult(output)
+}
+
+func programEventReferenceTool[Input any](definition mcpserver.Tool, normalize func(Input) programEventReferenceSearchArguments) registeredTool[ProgramEventReferenceTools] {
+	return defineTool(definition, func(tools *ProgramEventReferenceTools, ctx context.Context, name string, call toolCall[Input]) (mcpserver.ToolResult, error) {
+		if err := rejectNullArguments(call.Arguments, "query", "status", "limit", "offset"); err != nil {
+			return executionError(err)
+		}
+		var input Input
+		if err := call.Decode(&input); err != nil {
+			return executionError(err)
+		}
+		return tools.listReferences(ctx, name, call.Arguments, normalize(input))
+	})
 }

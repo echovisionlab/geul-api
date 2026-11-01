@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -16,8 +17,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
@@ -70,25 +74,6 @@ type AIDocumentResult struct {
 	DocumentRevision string
 	TargetRevision   *string
 	Changed          bool
-}
-
-// AIDocumentConflict preserves the authoritative current CAS token for the
-// shared DCDP conflict response.
-type AIDocumentConflictKind string
-
-const (
-	AIDocumentDocumentRevisionConflict AIDocumentConflictKind = "document_revision"
-	AIDocumentTargetRevisionConflict   AIDocumentConflictKind = "target_revision"
-)
-
-type AIDocumentConflict struct {
-	Kind                    AIDocumentConflictKind
-	CurrentDocumentRevision string
-	CurrentTargetRevision   *string
-}
-
-func (e *AIDocumentConflict) Error() string {
-	return fmt.Sprintf("Program Event AI document revision changed: current revision is %s", e.CurrentDocumentRevision)
 }
 
 // AIDocumentExecutionMode selects whether the exact Program Event mutation
@@ -355,9 +340,10 @@ func aiDocumentFailure(err error, command AIDocumentCommand) error {
 	case errors.As(err, &compilerErr):
 		return compilerErr.cause
 	case errors.As(err, &stale):
-		return &AIDocumentConflict{
-			Kind:                    AIDocumentDocumentRevisionConflict,
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
 			CurrentDocumentRevision: stale.CurrentRevision.String(),
+			Message:                 fmt.Sprintf("Program Event AI document revision changed: current revision is %s", stale.CurrentRevision.String()),
 		}
 	case errors.As(err, &target):
 		var current *string
@@ -365,10 +351,11 @@ func aiDocumentFailure(err error, command AIDocumentCommand) error {
 			value := target.CurrentRevision
 			current = &value
 		}
-		return &AIDocumentConflict{
-			Kind:                    AIDocumentTargetRevisionConflict,
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
 			CurrentDocumentRevision: command.ExpectedRevision.String(),
 			CurrentTargetRevision:   current,
+			Message:                 fmt.Sprintf("Program Event AI document revision changed: current revision is %s", command.ExpectedRevision.String()),
 		}
 	default:
 		return normalizeProgramEventContentBlockError(err)
@@ -502,10 +489,11 @@ func checkAIDocumentCommand(
 	localeExists := lockedState.LocaleExists
 	if lockedState.DocumentRevision != command.ExpectedRevision.String() ||
 		sourceState.SourceLocale != command.ObservedSourceLocale || localeExists != command.ObservedLocaleExists {
-		return programEventSourceState{}, &AIDocumentConflict{
-			Kind:                    AIDocumentDocumentRevisionConflict,
+		return programEventSourceState{}, &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
 			CurrentDocumentRevision: lockedState.DocumentRevision,
 			CurrentTargetRevision:   lockedState.TargetRevision,
+			Message:                 fmt.Sprintf("Program Event AI document revision changed: current revision is %s", lockedState.DocumentRevision),
 		}
 	}
 	locale := command.RequestedLocale

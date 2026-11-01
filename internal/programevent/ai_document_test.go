@@ -2,8 +2,10 @@ package programevent
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -19,8 +21,12 @@ func TestNewServiceRequiresEveryCollaborator(t *testing.T) {
 
 func TestProgramEventAIDocumentConflictCarriesCurrentRevision(t *testing.T) {
 	t.Parallel()
-	err := &AIDocumentConflict{CurrentDocumentRevision: "00000000-0000-4000-8000-000000000001"}
-	var conflict *AIDocumentConflict
+	err := &aidocument.RevisionConflict{
+		CurrentDocumentRevision: "00000000-0000-4000-8000-000000000001",
+		Kind:                    aidocument.ConflictDocumentRevision,
+		Message:                 fmt.Sprintf("Program Event AI document revision changed: current revision is %s", "00000000-0000-4000-8000-000000000001"),
+	}
+	var conflict *aidocument.RevisionConflict
 	if !errors.As(err, &conflict) || conflict.CurrentDocumentRevision == "" {
 		t.Fatalf("conflict lost revision: %#v", err)
 	}

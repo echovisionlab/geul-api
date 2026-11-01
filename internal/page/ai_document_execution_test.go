@@ -5,14 +5,16 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/page/pagetest"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -171,10 +173,10 @@ func TestExecuteAIDocumentMutationAnswersCompilerAndRevisionFailures(t *testing.
 			return mutation, err
 		},
 	})
-	var conflict *page.AIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	require.ErrorAs(t, err, &conflict)
-	require.Equal(t, page.AIDocumentDocumentRevisionConflict, conflict.Kind)
-	require.Equal(t, h.revision(t, stored.ID).String(), conflict.CurrentRevision)
+	require.Equal(t, aidocument.ConflictDocumentRevision, conflict.Kind)
+	require.Equal(t, h.revision(t, stored.ID).String(), conflict.CurrentDocumentRevision)
 
 	_, err = h.service.ExecuteAIDocumentMutation(editor.context(t), page.ExecuteAIDocumentMutationCommand{
 		PageID: stored.ID, Locale: "en", Mode: page.AIDocumentExecutionApply,
