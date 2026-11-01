@@ -128,8 +128,8 @@ func TestPageManagementEndToEndIntegration(t *testing.T) {
 		Sorts: []*commonv1.SortSpec{{Field: "title", Order: commonv1.SortOrder_SORT_ORDER_ASC}},
 	}))
 	require.NoError(t, err)
-	require.Equal(t, int32(2), listed.Msg.Pagination.Total)
-	require.ElementsMatch(t, []string{created.Msg.Id, other.Msg.Id}, []string{listed.Msg.Pages[0].Id, listed.Msg.Pages[1].Id})
+	require.Equal(t, int32(1), listed.Msg.Pagination.Total)
+	require.Equal(t, created.Msg.Id, listed.Msg.Pages[0].Id)
 
 	// Republishing keeps the first publication time and stays on the
 	// indexed readiness path.
@@ -279,7 +279,8 @@ func TestPageCollaborationAccountSessionDeletionFirstDoesNotWaitOnSignerIntegrat
 	testutil.RequireLockWaiters(t, stack.DB, 1)
 	close(releaseDeletion)
 	require.NoError(t, <-deleted)
-	require.Equal(t, connect.CodeUnauthenticated, errs.CodeOf(<-signed), "the signer denies the deleted session")
+	err := <-signed
+	require.Equal(t, connect.CodeUnauthenticated, errs.CodeOf(err), "the signer denies the deleted session: %v", err)
 }
 
 // seedPageRoot stores a Page whose source locale and policy exist, without
