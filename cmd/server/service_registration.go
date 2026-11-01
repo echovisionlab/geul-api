@@ -353,12 +353,11 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		return registeredServices{}, fmt.Errorf("initialize MCP gateway author admission: %w", err)
 	}
 
-	accountEmailChangeLifecycle := account.NewAuditedAccountEmailChangeLifecycle(
+	accountEmailChangeLifecycle := account.NewAccountEmailChangeLifecycle(
 		db,
 		kratosClient,
 		hooksPublisher,
 		accountadapter.MemberEmailProjection{},
-		telemetryWriter,
 	)
 	directRoles := accountadapter.AccountDirectRoleTransition{}
 	registrationMembers := member.NewMemberProvisioner(

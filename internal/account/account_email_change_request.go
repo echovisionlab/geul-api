@@ -11,7 +11,6 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -52,7 +51,6 @@ type AccountEmailChangeLifecycle struct {
 	db           *gorm.DB
 	identity     accountEmailChangeIdentityManager
 	publisher    AccountEmailChangePublisher
-	auditWriter  domainaudit.Appender
 	now          func() time.Time
 	interval     time.Duration
 	memberEmails MemberEmailProjection
@@ -123,21 +121,6 @@ func NewAccountEmailChangeLifecycle(
 		now:          time.Now,
 		interval:     accountEmailChangeReconcileInterval,
 	}
-	return lifecycle
-}
-
-func NewAuditedAccountEmailChangeLifecycle(
-	db *gorm.DB,
-	identity accountEmailChangeIdentityManager,
-	publisher AccountEmailChangePublisher,
-	memberEmails MemberEmailProjection,
-	auditWriter domainaudit.Appender,
-) *AccountEmailChangeLifecycle {
-	if auditWriter == nil {
-		panic("account email change lifecycle: audit writer is required")
-	}
-	lifecycle := NewAccountEmailChangeLifecycle(db, identity, publisher, memberEmails)
-	lifecycle.auditWriter = auditWriter
 	return lifecycle
 }
 
