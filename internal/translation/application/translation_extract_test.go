@@ -10,14 +10,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 func TestBuildTranslationExtractionPlanFormUsesStructuredSchemaUnits(t *testing.T) {
 	t.Parallel()
 
-	job := &model.TranslationJob{EntityType: "form", EntityID: "form-1", SourceLocale: "en", TargetLocale: "ko"}
+	job := &Job{EntityType: "form", EntityID: "form-1", SourceLocale: "en", TargetLocale: "ko"}
 	plan, err := buildTranslationExtractionPlan(testTranslationDomains{}, job, &translation.SourceDocument{
 		Title: "Contact form",
 		ContentJSON: []byte(`{
@@ -48,7 +46,7 @@ func TestBuildTranslationExtractionPlanFormUsesStructuredSchemaUnits(t *testing.
 func TestBuildTranslationCandidateContentAppliesFormSchemaTranslations(t *testing.T) {
 	t.Parallel()
 
-	job := &model.TranslationJob{EntityType: "form", EntityID: "form-1", SourceLocale: "en", TargetLocale: "ko"}
+	job := &Job{EntityType: "form", EntityID: "form-1", SourceLocale: "en", TargetLocale: "ko"}
 	source := &translation.SourceDocument{
 		Title: "Contact form",
 		ContentJSON: []byte(`{
@@ -90,7 +88,7 @@ func TestBuildTranslationCandidateContentAppliesFormSchemaTranslations(t *testin
 func TestBuildEntityTranslationBundlesSplitsOversizedContainer(t *testing.T) {
 	t.Parallel()
 
-	job := &model.TranslationJob{EntityType: "form", EntityID: "form-large", SourceLocale: "en", TargetLocale: "ko"}
+	job := &Job{EntityType: "form", EntityID: "form-large", SourceLocale: "en", TargetLocale: "ko"}
 	units := make([]translation.Unit, 0, translation.MaxUnitsPerProviderBundle+1)
 	for index := range translation.MaxUnitsPerProviderBundle + 1 {
 		units = append(units, translation.Unit{
@@ -113,7 +111,7 @@ func TestBuildEntityTranslationBundlesSplitsOversizedContainer(t *testing.T) {
 func TestBuildEntityTranslationBundlesSplitsOversizedSourceBytes(t *testing.T) {
 	t.Parallel()
 
-	job := &model.TranslationJob{EntityType: "form", EntityID: "form-large-text", SourceLocale: "en", TargetLocale: "ko"}
+	job := &Job{EntityType: "form", EntityID: "form-large-text", SourceLocale: "en", TargetLocale: "ko"}
 	units := []translation.Unit{
 		{UnitID: "block:block-a:text:0", EntityType: job.EntityType, EntityID: job.EntityID, ContainerType: translation.ContainerTypeBlock, ContainerID: "block-a", FieldName: "text", SourceText: strings.Repeat("a", translation.MaxSourceBytesPerProviderBundle), SourceFormat: translation.SourceFormatPlainText, SourceLocale: job.SourceLocale},
 		{UnitID: "block:block-a:text:1", EntityType: job.EntityType, EntityID: job.EntityID, ContainerType: translation.ContainerTypeBlock, ContainerID: "block-a", FieldName: "text", SourceText: "next paragraph", SourceFormat: translation.SourceFormatPlainText, SourceLocale: job.SourceLocale},
@@ -129,7 +127,7 @@ func TestBuildEntityTranslationBundlesSplitsOversizedSourceBytes(t *testing.T) {
 func TestBuildTranslationExtractionPlanRejectsEmptyLegacySource(t *testing.T) {
 	t.Parallel()
 
-	_, err := buildTranslationExtractionPlan(testTranslationDomains{}, &model.TranslationJob{
+	_, err := buildTranslationExtractionPlan(testTranslationDomains{}, &Job{
 		EntityType: "form", EntityID: "form-1", SourceLocale: "en", TargetLocale: "ja",
 	}, &translation.SourceDocument{})
 	require.Error(t, err)
@@ -139,7 +137,7 @@ func TestBuildTranslationExtractionPlanRejectsEmptyLegacySource(t *testing.T) {
 func TestBuildTranslationCandidateContentUsesFieldMapping(t *testing.T) {
 	t.Parallel()
 
-	job := &model.TranslationJob{EntityType: "series", EntityID: "series-1", SourceLocale: "en", TargetLocale: "fr"}
+	job := &Job{EntityType: "series", EntityID: "series-1", SourceLocale: "en", TargetLocale: "fr"}
 	source := &translation.SourceDocument{Title: "Original title", Summary: translationJobStringPtr("Original summary"), ContentText: translationJobStringPtr("Original body")}
 	plan, err := buildTranslationExtractionPlan(testTranslationDomains{}, job, source)
 	require.NoError(t, err)
@@ -160,7 +158,7 @@ func TestBuildTranslationCandidateContentUsesFieldMapping(t *testing.T) {
 func TestBuildTranslationCandidateContentPreservesEmailLayoutWrapperMarkup(t *testing.T) {
 	t.Parallel()
 
-	job := &model.TranslationJob{EntityType: "email_layout", EntityID: "layout-1", SourceLocale: "ko", TargetLocale: "en"}
+	job := &Job{EntityType: "email_layout", EntityID: "layout-1", SourceLocale: "ko", TargetLocale: "en"}
 	sourceHTML, err := email.CanonicalizeLayoutSourceMarkers(`<!DOCTYPE html>
 <html lang="{{email_lang}}" dir="{{email_direction}}">
 <head>

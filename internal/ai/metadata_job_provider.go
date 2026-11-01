@@ -10,11 +10,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/llm"
-	"gorm.io/gorm"
 )
 
 func (m *MetadataJobManager) ProcessJob(ctx context.Context, jobID string) (retErr error) {
-	var job metadataJobRecord
+	var job Job
 	defer func() {
 		// The PGMQ consumer logs a returned failure, which can quote the job's
 		// context and prompt.
@@ -25,19 +24,23 @@ func (m *MetadataJobManager) ProcessJob(ctx context.Context, jobID string) (retE
 		return fmt.Errorf("job ID is required")
 	}
 
-	if err := m.db.WithContext(ctx).First(&job, "id = ?", jobID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := m.units.Read(ctx, func(store Store) error {
+		var err error
+		job, err = store.Job(ctx, jobID)
+		return err
+	}); err != nil {
+		if errors.Is(err, ErrJobNotFound) {
 			return nil
 		}
 		return fmt.Errorf("failed to load metadata AI job %s: %w", jobID, err)
 	}
-	if job.Status != metadataAIJobStatusQueued && job.Status != metadataAIJobStatusRunning {
+	if job.Status != JobQueued && job.Status != JobRunning {
 		return nil
 	}
 
 	startedAt := dbtime.Now()
 	staleBefore := startedAt.Add(-metadataAIJobLeaseDuration)
-	if job.Status == metadataAIJobStatusRunning && job.StartedAt != nil && job.StartedAt.After(staleBefore) {
+	if job.Status == JobRunning && job.StartedAt != nil && job.StartedAt.After(staleBefore) {
 		return fmt.Errorf("%w: %s", errMetadataAIJobLeaseUnavailable, job.ID)
 	}
 	claimed, err := m.claimJob(ctx, &job, startedAt)

@@ -14,7 +14,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -150,8 +150,8 @@ func validateEmailLayoutInterchangeApply(
 		command.Plan.SourceLocale != command.SourceLocale || command.Plan.TargetLocale != command.TargetLocale {
 		return errs.InvalidArgument("target", "Email Layout translation interchange source does not match the extraction plan")
 	}
-	if command.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH &&
-		command.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
+	if command.Mode != application.InterchangeModePatch &&
+		command.Mode != application.InterchangeModeReplace {
 		return errs.InvalidArgument("mode", "PATCH or REPLACE is required")
 	}
 	return nil
@@ -178,4 +178,4 @@ func projectEmailLayoutInterchangeTargets(
 	}
 }
 
-var _ application.TranslationInterchangeDomains = (*EmailLayoutInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*EmailLayoutInterchange)(nil)

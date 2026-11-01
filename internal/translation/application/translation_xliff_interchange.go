@@ -11,20 +11,25 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const translationXLIFFMaximumBytes = 20 << 20
+
+// InterchangeMode is how an XLIFF exchange covers a target locale: PATCH
+// names the units it carries, REPLACE carries every current unit.
+type InterchangeMode string
+
+const (
+	InterchangeModeUnspecified InterchangeMode = ""
+	InterchangeModePatch       InterchangeMode = "patch"
+	InterchangeModeReplace     InterchangeMode = "replace"
+)
 
 // TranslationXLIFFArtifact is the bounded server-side payload handed to the
 // existing File ingest/storage authority. It never crosses MCP or Connect as
@@ -71,7 +76,7 @@ type TranslationInterchangeApply struct {
 	EntityID         string
 	SourceLocale     string
 	TargetLocale     string
-	Mode             managev1.TranslationInterchangeMode
+	Mode             InterchangeMode
 	ExpectedRevision *string
 	Source           *translation.SourceDocument
 	Plan             *translation.ExtractionPlan
@@ -86,50 +91,38 @@ type TranslationInterchangeApplyResult struct {
 	AffectedUnitHandles []string
 }
 
-// TranslationInterchangeDomains owns target-row/document locking, CAS,
-// locale-value projection, mutation, Audit and collaboration relay for all 15
-// translation domains. Translation application owns XLIFF and request mapping,
-// not domain persistence.
-type TranslationInterchangeDomains interface {
-	LoadTranslationInterchangeTarget(
-		context.Context,
-		*gorm.DB,
-		*contentblock.Store,
-		string,
-		string,
-		string,
-		*translation.ExtractionPlan,
-	) (TranslationInterchangeTargetState, error)
-	ApplyTranslationInterchange(
-		context.Context,
-		*gorm.DB,
-		*contentblock.Store,
-		TranslationInterchangeApply,
-	) (TranslationInterchangeApplyResult, error)
-}
-
 // ExportTranslationXLIFFCommand exports one target locale of an entity as an
 // XLIFF 2.2 File: every current unit for REPLACE, the selected UnitHandles
 // for PATCH.
 type ExportTranslationXLIFFCommand struct {
-	Target       *managev1.TranslationTarget
+	Target       *Target
 	TargetLocale string
-	Mode         managev1.TranslationInterchangeMode
+	Mode         InterchangeMode
 	UnitHandles  []string
+}
+
+// XLIFFExport is a stored XLIFF export and the target it describes.
+// TargetRevision is nil while the target locale has no values.
+type XLIFFExport struct {
+	Artifact       *commonv1.ExpiringMediaRef
+	SourceLocale   string
+	TargetLocale   string
+	TargetRevision *string
+	Mode           InterchangeMode
 }
 
 // ExportEntityTranslationXLIFF builds the XLIFF under the entity's view
 // authority and stores it as a short-lived File.
-func (s *Service) ExportEntityTranslationXLIFF(ctx context.Context, command ExportTranslationXLIFFCommand) (*managev1.ExportEntityTranslationXLIFFResponse, error) {
+func (s *Service) ExportEntityTranslationXLIFF(ctx context.Context, command ExportTranslationXLIFFCommand) (XLIFFExport, error) {
 	entityType, entityID, targetLocale, err := s.validateTranslationInterchangeRequest(
 		ctx, command.Target, command.TargetLocale, command.Mode,
 	)
 	if err != nil {
-		return nil, err
+		return XLIFFExport{}, err
 	}
 	unitHandles, err := validateXLIFFExportSelection(command.Mode, command.UnitHandles)
 	if err != nil {
-		return nil, err
+		return XLIFFExport{}, err
 	}
 
 	var artifact TranslationXLIFFArtifact
@@ -137,17 +130,15 @@ func (s *Service) ExportEntityTranslationXLIFF(ctx context.Context, command Expo
 	var targetRevision *string
 	// The view check locks the root and the principal; the build reads
 	// their committed state.
-	err = mutation.ReadCurrent(ctx, s.db, func(tx *gorm.DB) error {
-		if err := s.requireTranslationInterchangeView(ctx, tx, entityType, entityID); err != nil {
+	err = s.units.ReadCurrent(ctx, func(store Store) error {
+		if err := store.Domains().RequireInterchangeView(ctx, entityType, entityID); err != nil {
 			return err
 		}
-		plan, _, planErr := s.buildTranslationInterchangePlan(ctx, tx, entityType, entityID, targetLocale)
+		plan, _, planErr := s.buildTranslationInterchangePlan(ctx, store, entityType, entityID, targetLocale)
 		if planErr != nil {
 			return planErr
 		}
-		state, stateErr := s.interchangeDomains.LoadTranslationInterchangeTarget(
-			ctx, tx, s.contentBlocks, entityType, entityID, targetLocale, plan,
-		)
+		state, stateErr := store.Domains().LoadInterchangeTarget(ctx, entityType, entityID, targetLocale, plan)
 		if stateErr != nil {
 			return stateErr
 		}
@@ -180,17 +171,17 @@ func (s *Service) ExportEntityTranslationXLIFF(ctx context.Context, command Expo
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return XLIFFExport{}, err
 	}
 
 	ref, err := s.xliffFiles.CreateTranslationXLIFF(ctx, artifact)
 	if err != nil {
-		return nil, err
+		return XLIFFExport{}, err
 	}
 	if err := validateTranslationXLIFFArtifactRef(ref, s.now().UTC()); err != nil {
-		return nil, err
+		return XLIFFExport{}, err
 	}
-	return &managev1.ExportEntityTranslationXLIFFResponse{
+	return XLIFFExport{
 		Artifact: ref, SourceLocale: sourceLocale, TargetLocale: targetLocale,
 		TargetRevision: targetRevision, Mode: command.Mode,
 	}, nil
@@ -200,53 +191,60 @@ func (s *Service) ExportEntityTranslationXLIFF(ctx context.Context, command Expo
 // into one target locale. ExpectedTargetRevision, when set, must match the
 // target's current revision.
 type ImportTranslationXLIFFCommand struct {
-	Target                 *managev1.TranslationTarget
+	Target                 *Target
 	TargetLocale           string
-	Mode                   managev1.TranslationInterchangeMode
+	Mode                   InterchangeMode
 	FileID                 string
 	ExpectedTargetRevision *string
 }
 
+// XLIFFImport is the target after an import.
+type XLIFFImport struct {
+	TargetRevision      string
+	Changed             bool
+	AffectedUnitHandles []string
+}
+
 // ImportEntityTranslationXLIFF validates the upload against the current
 // extraction plan and applies its targets through the owning domain.
-func (s *Service) ImportEntityTranslationXLIFF(ctx context.Context, command ImportTranslationXLIFFCommand) (*managev1.ImportEntityTranslationXLIFFResponse, error) {
+func (s *Service) ImportEntityTranslationXLIFF(ctx context.Context, command ImportTranslationXLIFFCommand) (XLIFFImport, error) {
 	entityType, entityID, targetLocale, err := s.validateTranslationInterchangeRequest(
 		ctx, command.Target, command.TargetLocale, command.Mode,
 	)
 	if err != nil {
-		return nil, err
+		return XLIFFImport{}, err
 	}
 	fileID, err := canonicalTranslationXLIFFFileID(command.FileID)
 	if err != nil {
-		return nil, err
+		return XLIFFImport{}, err
 	}
 	expectedRevision, err := validateExpectedTranslationTargetRevision(command.ExpectedTargetRevision)
 	if err != nil {
-		return nil, err
+		return XLIFFImport{}, err
 	}
 
 	upload, err := s.xliffFiles.ReadVerifiedTranslationXLIFF(ctx, fileID, translationXLIFFMaximumBytes)
 	if err != nil {
-		return nil, err
+		return XLIFFImport{}, err
 	}
 	if err := validateVerifiedTranslationXLIFF(upload, fileID); err != nil {
-		return nil, err
+		return XLIFFImport{}, err
 	}
 	imported, err := translation.UnmarshalXLIFFInterchange(upload.Body)
 	if err != nil {
-		return nil, domainerr.InvalidField("file_id", err.Error())
+		return XLIFFImport{}, domainerr.InvalidField("file_id", err.Error())
 	}
 	if imported.File.ID != entityType+":"+entityID || imported.TargetLocale != targetLocale {
-		return nil, domainerr.InvalidField("file_id", "XLIFF target identity does not match the request")
+		return XLIFFImport{}, domainerr.InvalidField("file_id", "XLIFF target identity does not match the request")
 	}
 
 	now := s.now().UTC()
-	result, err := mutation.Run(ctx, s.mutations, mutation.Spec[TranslationInterchangeApplyResult]{
-		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-			return s.requireTranslationInterchangeEdit(ctx, tx, entityType, entityID)
+	result, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[TranslationInterchangeApplyResult, Store]{
+		Access: mutation.Checked(func(ctx context.Context, store Store) error {
+			return store.Domains().RequireInterchangeEdit(ctx, entityType, entityID)
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (TranslationInterchangeApplyResult, error) {
-			return s.applyImportedXLIFF(ctx, tx, *imported, TranslationInterchangeApply{
+		Change: func(ctx context.Context, store Store) (TranslationInterchangeApplyResult, error) {
+			return s.applyImportedXLIFF(ctx, store, *imported, TranslationInterchangeApply{
 				EntityType: entityType, EntityID: entityID, TargetLocale: targetLocale,
 				Mode: command.Mode, ExpectedRevision: expectedRevision, Now: now,
 			})
@@ -255,9 +253,9 @@ func (s *Service) ImportEntityTranslationXLIFF(ctx context.Context, command Impo
 		Audit: func(TranslationInterchangeApplyResult) mutation.Audit { return mutation.Unchanged() },
 	})
 	if err != nil {
-		return nil, err
+		return XLIFFImport{}, err
 	}
-	return &managev1.ImportEntityTranslationXLIFFResponse{
+	return XLIFFImport{
 		TargetRevision: result.Revision, Changed: result.Changed,
 		AffectedUnitHandles: append([]string(nil), result.AffectedUnitHandles...),
 	}, nil
@@ -267,11 +265,11 @@ func (s *Service) ImportEntityTranslationXLIFF(ctx context.Context, command Impo
 // current extraction plan and requests the target locale's OG.
 func (s *Service) applyImportedXLIFF(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	imported translation.XLIFFDocument,
 	apply TranslationInterchangeApply,
 ) (TranslationInterchangeApplyResult, error) {
-	plan, source, err := s.buildTranslationInterchangePlan(ctx, tx, apply.EntityType, apply.EntityID, apply.TargetLocale)
+	plan, source, err := s.buildTranslationInterchangePlan(ctx, store, apply.EntityType, apply.EntityID, apply.TargetLocale)
 	if err != nil {
 		return TranslationInterchangeApplyResult{}, err
 	}
@@ -287,7 +285,7 @@ func (s *Service) applyImportedXLIFF(
 	}
 	apply.SourceLocale, apply.Source, apply.Plan = plan.SourceLocale, source, plan
 	apply.Targets, apply.UnitHandles = targets, handles
-	result, err := s.interchangeDomains.ApplyTranslationInterchange(ctx, tx, s.contentBlocks, apply)
+	result, err := store.Domains().ApplyInterchange(ctx, apply)
 	if err != nil {
 		return TranslationInterchangeApplyResult{}, err
 	}
@@ -295,9 +293,8 @@ func (s *Service) applyImportedXLIFF(
 		return TranslationInterchangeApplyResult{}, errors.New("translation interchange apply returned no target revision")
 	}
 	if result.Changed {
-		if _, err := s.domains.RequestLocaleOG(
-			ctx, tx, s.ogPlanner, s.ogRefresher,
-			apply.EntityType, apply.EntityID, apply.TargetLocale, "translation_xliff_import",
+		if _, err := store.Domains().RequestLocaleOG(
+			ctx, apply.EntityType, apply.EntityID, apply.TargetLocale, "translation_xliff_import",
 		); err != nil {
 			return TranslationInterchangeApplyResult{}, err
 		}
@@ -305,50 +302,26 @@ func (s *Service) applyImportedXLIFF(
 	return result, nil
 }
 
-func (s *Service) requireTranslationInterchangeView(
-	ctx context.Context,
-	tx *gorm.DB,
-	entityType string,
-	entityID string,
-) error {
-	return s.domains.RequireTranslationInterchangeView(
-		ctx, tx, s.spiceDB, entityType, entityID,
-	)
-}
-
-func (s *Service) requireTranslationInterchangeEdit(
-	ctx context.Context,
-	tx *gorm.DB,
-	entityType string,
-	entityID string,
-) error {
-	return s.domains.RequireTranslationInterchangeEdit(
-		ctx, tx, s.spiceDB, entityType, entityID,
-	)
-}
-
 func (s *Service) validateTranslationInterchangeRequest(
 	ctx context.Context,
-	target *managev1.TranslationTarget,
+	target *Target,
 	targetLocale string,
-	mode managev1.TranslationInterchangeMode,
+	mode InterchangeMode,
 ) (string, string, string, error) {
 	entityType, entityID, err := parseTranslationTarget(target)
 	if err != nil {
 		return "", "", "", err
 	}
-	if mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH &&
-		mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
+	if mode != InterchangeModePatch && mode != InterchangeModeReplace {
 		return "", "", "", domainerr.InvalidField("mode", "PATCH or REPLACE is required")
 	}
 	targetLocale = strings.TrimSpace(targetLocale)
 	if targetLocale == "" {
 		return "", "", "", domainerr.InvalidField("target_locale", "target locale is required")
 	}
-	if _, err := localization.NewCatalog(s.db).Find(ctx, targetLocale); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", "", "", domainerr.InvalidField("target_locale", "unsupported locale")
-		}
+	if err := s.units.Read(ctx, func(store Store) error {
+		return requireKnownLocale(ctx, store, "target_locale", targetLocale)
+	}); err != nil {
 		return "", "", "", err
 	}
 	return entityType, entityID, targetLocale, nil
@@ -356,25 +329,25 @@ func (s *Service) validateTranslationInterchangeRequest(
 
 func (s *Service) buildTranslationInterchangePlan(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	entityType string,
 	entityID string,
 	targetLocale string,
 ) (*translation.ExtractionPlan, *translation.SourceDocument, error) {
-	authority, err := loadTranslationDocumentAuthority(ctx, db, entityType, entityID)
+	authority, err := loadTranslationDocumentAuthority(ctx, store, entityType, entityID)
 	if err != nil {
 		return nil, nil, err
 	}
 	if authority.SourceLocale == targetLocale {
 		return nil, nil, domainerr.InvalidField("target_locale", "target locale must differ from source locale")
 	}
-	source, err := s.domains.LoadSourceDocument(ctx, db, s.contentBlocks, entityType, entityID)
+	source, err := store.Domains().LoadSourceDocument(ctx, entityType, entityID)
 	if err != nil {
 		return nil, nil, err
 	}
 	source.SourceLocale = authority.SourceLocale
 	source.ContentDocumentRevision = authority.DocumentRevision.String()
-	plan, err := s.domains.BuildExtractionPlan(&model.TranslationJob{
+	plan, err := s.plans.BuildExtractionPlan(Job{
 		EntityType: entityType, EntityID: entityID,
 		SourceLocale: authority.SourceLocale, TargetLocale: targetLocale,
 	}, source)
@@ -391,7 +364,7 @@ func mapTranslationInterchangeBuildError(err error) error {
 	return err
 }
 
-func validateXLIFFExportSelection(mode managev1.TranslationInterchangeMode, values []string) ([]string, error) {
+func validateXLIFFExportSelection(mode InterchangeMode, values []string) ([]string, error) {
 	handles := make([]string, 0, len(values))
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -406,11 +379,11 @@ func validateXLIFFExportSelection(mode managev1.TranslationInterchangeMode, valu
 		handles = append(handles, handle)
 	}
 	switch mode {
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH:
+	case InterchangeModePatch:
 		if len(handles) == 0 {
 			return nil, domainerr.InvalidField("unit_handles", "PATCH requires a non-empty explicit unit selection")
 		}
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE:
+	case InterchangeModeReplace:
 		if len(handles) != 0 {
 			return nil, domainerr.InvalidField("unit_handles", "REPLACE requires the complete manifest and no unit selection")
 		}
@@ -420,10 +393,10 @@ func validateXLIFFExportSelection(mode managev1.TranslationInterchangeMode, valu
 
 func selectXLIFFUnits(
 	document translation.XLIFFDocument,
-	mode managev1.TranslationInterchangeMode,
+	mode InterchangeMode,
 	handles []string,
 ) (translation.XLIFFDocument, error) {
-	if mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
+	if mode == InterchangeModeReplace {
 		return document, nil
 	}
 	requested := make(map[string]struct{}, len(handles))
@@ -461,7 +434,7 @@ func selectXLIFFUnits(
 func validateImportedXLIFFAgainstCurrentPlan(
 	imported translation.XLIFFDocument,
 	plan *translation.ExtractionPlan,
-	mode managev1.TranslationInterchangeMode,
+	mode InterchangeMode,
 ) (map[string]translation.UnitResult, []string, error) {
 	current, err := translation.BuildXLIFFDocument(plan)
 	if err != nil {
@@ -519,7 +492,7 @@ func validateImportedXLIFFAgainstCurrentPlan(
 func validateImportedXLIFFManifest(
 	importedHandles map[string]struct{},
 	plan *translation.ExtractionPlan,
-	mode managev1.TranslationInterchangeMode,
+	mode InterchangeMode,
 ) error {
 	currentHandles := make(map[string]struct{}, len(plan.Units))
 	for _, unit := range plan.Units {
@@ -533,11 +506,11 @@ func validateImportedXLIFFManifest(
 		}
 	}
 	switch mode {
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH:
+	case InterchangeModePatch:
 		if len(importedHandles) == 0 {
 			return domainerr.InvalidField("file_id", "PATCH requires a non-empty explicit unit manifest")
 		}
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE:
+	case InterchangeModeReplace:
 		if len(importedHandles) != len(currentHandles) {
 			return domainerr.InvalidField("file_id", "REPLACE requires the complete current stable unit manifest")
 		}

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func parseMetadataSuggestionPayload(
@@ -142,22 +141,4 @@ func normalizeMetadataSuggestionKey(key string) string {
 	default:
 		return key
 	}
-}
-
-func buildMetadataSuggestionMessage(values map[string]string) *managev1.MetadataSuggestion {
-	if len(values) == 0 {
-		return nil
-	}
-
-	message := &managev1.MetadataSuggestion{}
-	for key, value := range values {
-		definition, ok := metadataSuggestionRegistry[key]
-		if !ok {
-			continue
-		}
-		if value = strings.TrimSpace(value); value != "" {
-			definition.setProto(message, value)
-		}
-	}
-	return message
 }

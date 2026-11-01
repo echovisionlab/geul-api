@@ -123,5 +123,3 @@ func noLocaleOG(context.Context, *gorm.DB, *og.Planner, *og.Refresher, string, s
 }
 
 func noDomainRequirement(context.Context, *gorm.DB, string) error { return nil }
-
-var _ application.DomainRegistry = (*DomainRegistry)(nil)

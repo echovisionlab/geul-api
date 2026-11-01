@@ -6,32 +6,30 @@ import (
 	"slices"
 	"strings"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 // Deps are the collaborators of the metadata-generation use cases; all are
 // required.
 type Deps struct {
-	DB      *gorm.DB
-	SpiceDB *auth.SpiceDBClient
+	Units   mutation.UnitOfWork[Store]
+	SpiceDB mutation.Authorizer
+	Fence   identitystate.Fence
 	// Audit is required by the mutation pipeline; metadata jobs are
 	// operational rows and append no record.
-	Audit     domainaudit.Appender
-	Publisher AsyncPublisher
+	Audit domainaudit.Appender
 }
 
 func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
-		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil, "Publisher": d.Publisher == nil,
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Audit": d.Audit == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -47,10 +45,9 @@ func (d Deps) validate() error {
 // Service holds the durable metadata-generation use cases. Interactive
 // document editing is owned by the typed AI document protocol.
 type Service struct {
-	db        *gorm.DB
-	spiceDB   *auth.SpiceDBClient
-	publisher AsyncPublisher
-	mutations *mutation.Runner
+	units     mutation.UnitOfWork[Store]
+	spiceDB   mutation.Authorizer
+	mutations *mutation.StoreRunner[Store]
 }
 
 // NewService returns the metadata-generation use cases over deps.
@@ -58,20 +55,20 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
+	mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
-	return &Service{db: deps.DB, spiceDB: deps.SpiceDB, publisher: deps.Publisher, mutations: mutations}, nil
+	return &Service{units: deps.Units, spiceDB: deps.SpiceDB, mutations: mutations}, nil
 }
 
 func canUseAI(
 	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB authz.AuthorizationDecisionChecker,
 	user *auth.UserInfo,
-	target *managev1.AIResourceTarget,
+	target *Target,
 ) (bool, error) {
-	if target != nil && target.Type == managev1.AIResourceType_AI_RESOURCE_TYPE_WORK {
+	if target != nil && target.Type == TargetWork {
 		return checkAIAdmin(ctx, spiceDB, user)
 	}
 	if allowed, err := checkAIAdmin(ctx, spiceDB, user); err != nil {
@@ -88,39 +85,34 @@ func canUseAI(
 	if target == nil {
 		return false, nil
 	}
-	targetID := strings.TrimSpace(target.Id)
+	targetID := strings.TrimSpace(target.ID)
 	if targetID == "" {
 		return false, nil
 	}
 
 	switch target.Type {
-	case managev1.AIResourceType_AI_RESOURCE_TYPE_POST:
+	case TargetPost:
 		can, err := policyv1.Post.Edit(targetID)
 		if err != nil {
 			return false, nil //nolint:nilerr // a malformed target ID names no resource the requester may edit; deny it
 		}
 		return canManageAIResource(ctx, spiceDB, can, user)
-	case managev1.AIResourceType_AI_RESOURCE_TYPE_ARTIST:
+	case TargetArtist:
 		can, err := policyv1.Artist.Edit(targetID)
 		if err != nil {
 			return false, nil //nolint:nilerr // a malformed target ID names no resource the requester may edit; deny it
 		}
 		return canManageAIResource(ctx, spiceDB, can, user)
-	case managev1.AIResourceType_AI_RESOURCE_TYPE_PAGE,
-		managev1.AIResourceType_AI_RESOURCE_TYPE_FORM,
-		managev1.AIResourceType_AI_RESOURCE_TYPE_RELEASE,
-		managev1.AIResourceType_AI_RESOURCE_TYPE_LABEL,
-		managev1.AIResourceType_AI_RESOURCE_TYPE_CAMPAIGN,
-		managev1.AIResourceType_AI_RESOURCE_TYPE_EMAIL_TEMPLATE:
-		return false, nil
 	default:
+		// Pages, Forms, Releases, Labels, Campaigns and Email Templates
+		// have no per-resource metadata authority.
 		return false, nil
 	}
 }
 
 func canManageAIResource(
 	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB authz.AuthorizationDecisionChecker,
 	can policyv1.Can,
 	user *auth.UserInfo,
 ) (bool, error) {
@@ -130,7 +122,7 @@ func canManageAIResource(
 	return checkAICan(ctx, spiceDB, user, can)
 }
 
-func checkAIAdmin(ctx context.Context, spiceDB *auth.SpiceDBClient, user *auth.UserInfo) (bool, error) {
+func checkAIAdmin(ctx context.Context, spiceDB authz.AuthorizationDecisionChecker, user *auth.UserInfo) (bool, error) {
 	can, err := policyv1.Platform.IsAdmin()
 	if err != nil {
 		return false, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
@@ -138,7 +130,7 @@ func checkAIAdmin(ctx context.Context, spiceDB *auth.SpiceDBClient, user *auth.U
 	return checkAICan(ctx, spiceDB, user, can)
 }
 
-func checkAIAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient, user *auth.UserInfo) (bool, error) {
+func checkAIAuthor(ctx context.Context, spiceDB authz.AuthorizationDecisionChecker, user *auth.UserInfo) (bool, error) {
 	can, err := policyv1.Platform.IsAuthor()
 	if err != nil {
 		return false, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
@@ -148,7 +140,7 @@ func checkAIAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient, user *auth.
 
 func checkAICan(
 	ctx context.Context,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB authz.AuthorizationDecisionChecker,
 	user *auth.UserInfo,
 	can policyv1.Can,
 ) (bool, error) {

@@ -12,7 +12,7 @@ import (
 	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 )
 
 // FormInterchange maps Translation application's generic XLIFF command to
@@ -80,15 +80,15 @@ func (a *FormInterchange) ApplyTranslationInterchange(
 
 // formInterchangeMode names the Form import mode of mode; an unknown mode
 // stays unknown for the Form to reject.
-func formInterchangeMode(mode managev1.TranslationInterchangeMode) formdomain.InterchangeMode {
+func formInterchangeMode(mode application.InterchangeMode) formdomain.InterchangeMode {
 	switch mode {
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH:
+	case application.InterchangeModePatch:
 		return formdomain.InterchangePatch
-	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE:
+	case application.InterchangeModeReplace:
 		return formdomain.InterchangeReplace
 	default:
 		return 0
 	}
 }
 
-var _ application.TranslationInterchangeDomains = (*FormInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*FormInterchange)(nil)

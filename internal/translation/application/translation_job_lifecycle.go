@@ -6,33 +6,25 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
 )
 
-func (m *TranslationJobManager) loadTranslationJob(ctx context.Context, jobID string) (*model.TranslationJob, error) {
-	var job model.TranslationJob
-	result := m.db.WithContext(ctx).
-		Raw(`SELECT id, entity_type, entity_id, target_locale, source_locale,
-		             request_artifact_digest,
-		             operation_id, status, requested_by_member_id, provider, model,
-		             provider_document_id, provider_document_key, provider_document_submitted_at,
-		             requested_at, started_at, created_at, updated_at
-			FROM translation_job
-			WHERE id = ?
-			LIMIT 1`, jobID).
-		Scan(&job)
-	if result.Error != nil {
-		return nil, result.Error
+func (m *TranslationJobManager) loadTranslationJob(ctx context.Context, jobID string) (*Job, error) {
+	var job Job
+	var found bool
+	err := m.units.Read(ctx, func(store JobStore) error {
+		var err error
+		job, found, err = store.Job(ctx, jobID)
+		return err
+	})
+	if err != nil {
+		return nil, err
 	}
-	if result.RowsAffected == 0 {
+	if !found {
 		return nil, nil
 	}
-	if err := validateTranslationJobRequester(&job); err != nil {
+	if err := ValidateJobRequester(&job); err != nil {
 		return nil, err
 	}
 	return &job, nil
@@ -40,38 +32,9 @@ func (m *TranslationJobManager) loadTranslationJob(ctx context.Context, jobID st
 
 func (m *TranslationJobManager) claimTranslationJob(ctx context.Context, jobID string, generator translation.Generator) (bool, error) {
 	now := m.now().UTC()
-	result := m.db.WithContext(ctx).Exec(
-		`UPDATE translation_job
-		SET status = ?,
-			provider = ?,
-			model = ?,
-			started_at = COALESCE(started_at, ?),
-			updated_at = ?
-		WHERE id = ? AND status = ?
-			AND (
-				(provider_document_id IS NULL AND provider_document_key IS NULL AND provider_document_submitted_at IS NULL)
-				OR (
-					provider_document_id IS NOT NULL
-					AND provider_document_key IS NOT NULL
-					AND provider_document_submitted_at IS NOT NULL
-					AND provider = ?
-					AND model = ?
-				)
-			)`,
-		translationJobStatusRunning,
-		generator.ProviderName(),
-		generator.ModelName(),
-		now,
-		now,
-		jobID,
-		translationJobStatusQueued,
-		generator.ProviderName(),
-		generator.ModelName(),
-	)
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected > 0, nil
+	return m.runJobUpdate(ctx, func(ctx context.Context, store JobStore) (bool, error) {
+		return store.ClaimJob(ctx, jobID, generator.ProviderName(), generator.ModelName(), now)
+	})
 }
 
 func (m *TranslationJobManager) resumeTranslationJob(
@@ -80,34 +43,9 @@ func (m *TranslationJobManager) resumeTranslationJob(
 	generator translation.Generator,
 ) (bool, error) {
 	now := m.now().UTC()
-	result := m.db.WithContext(ctx).Exec(
-		`UPDATE translation_job
-		SET provider = ?,
-			model = ?,
-			updated_at = ?
-		WHERE id = ? AND status = ?
-			AND (
-				(provider_document_id IS NULL AND provider_document_key IS NULL AND provider_document_submitted_at IS NULL)
-				OR (
-					provider_document_id IS NOT NULL
-					AND provider_document_key IS NOT NULL
-					AND provider_document_submitted_at IS NOT NULL
-					AND provider = ?
-					AND model = ?
-				)
-			)`,
-		generator.ProviderName(),
-		generator.ModelName(),
-		now,
-		jobID,
-		translationJobStatusRunning,
-		generator.ProviderName(),
-		generator.ModelName(),
-	)
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected > 0, nil
+	return m.runJobUpdate(ctx, func(ctx context.Context, store JobStore) (bool, error) {
+		return store.ResumeJob(ctx, jobID, generator.ProviderName(), generator.ModelName(), now)
+	})
 }
 
 func (m *TranslationJobManager) updateRunningJobProvider(
@@ -118,12 +56,12 @@ func (m *TranslationJobManager) updateRunningJobProvider(
 	if generator == nil {
 		return errTranslationProviderUnavailable
 	}
-	return runRunningJobStep(ctx, m.mutations, jobID, func(ctx context.Context, tx *gorm.DB) error {
-		job, err := lockTranslationProviderDocumentJob(ctx, tx, jobID)
+	return runRunningJobStep(ctx, m.mutations, jobID, func(ctx context.Context, store JobStore) error {
+		job, err := lockTranslationProviderDocumentJob(ctx, store, jobID)
 		if err != nil {
 			return err
 		}
-		if job.Status != translationJobStatusRunning {
+		if job.Status != JobRunning {
 			return errTranslationJobNoLongerCurrent
 		}
 		hasProviderDocumentState := job.ProviderDocumentID != nil || job.ProviderDocumentKey != nil ||
@@ -136,31 +74,25 @@ func (m *TranslationJobManager) updateRunningJobProvider(
 				return errTranslationProviderDocumentHandleMismatch
 			}
 		}
-		return tx.WithContext(ctx).
-			Model(&model.TranslationJob{}).
-			Where("id = ? AND status = ?", jobID, translationJobStatusRunning).
-			Updates(structured.Fields{
-				"provider":   generator.ProviderName(),
-				"model":      generator.ModelName(),
-				"updated_at": m.now().UTC(),
-			}).Error
+		return store.SetJobProvider(ctx, jobID, generator.ProviderName(), generator.ModelName(), m.now().UTC())
 	})
 }
 
 func (m *TranslationJobManager) finishJob(
 	ctx context.Context,
-	job *model.TranslationJob,
-	status string,
+	job *Job,
+	status JobStatus,
 	failureReason *string,
 	now time.Time,
 ) error {
-	result := m.db.WithContext(ctx).
-		Where("id = ? AND status = ?", job.ID, translationJobStatusRunning).
-		Delete(&model.TranslationJob{})
-	if result.Error != nil {
-		return result.Error
+	deleted, err := m.runJobUpdate(ctx, func(ctx context.Context, store JobStore) (bool, error) {
+		rows, err := store.DeleteJob(ctx, job.ID, JobRunning)
+		return rows != 0, err
+	})
+	if err != nil {
+		return err
 	}
-	if result.RowsAffected == 0 {
+	if !deleted {
 		return errTranslationJobNoLongerCurrent
 	}
 	job.Status = status
@@ -177,22 +109,22 @@ func (m *TranslationJobManager) finishJob(
 
 func (m *TranslationJobManager) failJob(
 	ctx context.Context,
-	job *model.TranslationJob,
+	job *Job,
 	startedAt time.Time,
 	cause error,
 ) error {
 	now := m.now().UTC()
 	reason := classifyTranslationFailure(cause)
 	if job != nil {
-		if err := m.finishJob(ctx, job, translationJobStatusFailed, &reason, now); err != nil {
+		if err := m.finishJob(ctx, job, JobFailed, &reason, now); err != nil {
 			if errors.Is(err, errTranslationJobNoLongerCurrent) {
 				return nil
 			}
 			return fmt.Errorf("translation job failed and terminal cleanup could not be completed: %w", err)
 		}
-		m.publishLifecycle(ctx, job, managev1.TranslationLifecycleStatus_TRANSLATION_LIFECYCLE_STATUS_FAILED, &reason)
-		m.metrics.recordJobStatus(ctx, job, translationJobStatusFailed)
-		m.metrics.recordJobDuration(ctx, job, translationJobStatusFailed, startedAt, now)
+		m.publishLifecycle(ctx, job, LifecycleFailed, &reason)
+		m.metrics.recordJobStatus(ctx, job, JobFailed)
+		m.metrics.recordJobDuration(ctx, job, JobFailed, startedAt, now)
 		emitTranslationJobTerminal(ctx, job, translationJobTerminalOutcomeFailed, reason, startedAt, now)
 	}
 	return nil
@@ -200,7 +132,7 @@ func (m *TranslationJobManager) failJob(
 
 func (m *TranslationJobManager) failQueuedJob(
 	ctx context.Context,
-	job *model.TranslationJob,
+	job *Job,
 	cause error,
 ) error {
 	if job == nil {
@@ -208,34 +140,35 @@ func (m *TranslationJobManager) failQueuedJob(
 	}
 	now := m.now().UTC()
 	reason := classifyTranslationFailure(cause)
-	result := m.db.WithContext(ctx).
-		Where("id = ? AND status = ?", job.ID, translationJobStatusQueued).
-		Delete(&model.TranslationJob{})
-	if result.Error != nil {
-		return result.Error
+	deleted, err := m.runJobUpdate(ctx, func(ctx context.Context, store JobStore) (bool, error) {
+		rows, err := store.DeleteJob(ctx, job.ID, JobQueued)
+		return rows != 0, err
+	})
+	if err != nil {
+		return err
 	}
-	if result.RowsAffected == 0 {
+	if !deleted {
 		return nil
 	}
-	job.Status = translationJobStatusFailed
+	job.Status = JobFailed
 	job.CompletedAt = &now
 	job.UpdatedAt = now
 	job.FailureReason = &reason
-	m.publishLifecycle(ctx, job, managev1.TranslationLifecycleStatus_TRANSLATION_LIFECYCLE_STATUS_FAILED, &reason)
-	m.metrics.recordJobStatus(ctx, job, translationJobStatusFailed)
+	m.publishLifecycle(ctx, job, LifecycleFailed, &reason)
+	m.metrics.recordJobStatus(ctx, job, JobFailed)
 	startedAt := translationJobStartedAt(job, now)
-	m.metrics.recordJobDuration(ctx, job, translationJobStatusFailed, startedAt, now)
+	m.metrics.recordJobDuration(ctx, job, JobFailed, startedAt, now)
 	emitTranslationJobTerminal(ctx, job, translationJobTerminalOutcomeFailed, reason, startedAt, now)
 	return nil
 }
 
 // runRunningJobStep runs one bookkeeping step of a running job in a
 // mutation authorized by that job.
-func runRunningJobStep(ctx context.Context, mutations *mutation.Runner, jobID string, step func(context.Context, *gorm.DB) error) error {
-	_, err := mutation.Run(ctx, mutations, mutation.Spec[struct{}]{
+func runRunningJobStep(ctx context.Context, mutations *mutation.StoreRunner[JobStore], jobID string, step func(context.Context, JobStore) error) error {
+	_, err := mutation.Run(ctx, mutations, mutation.StoreSpec[struct{}, JobStore]{
 		Access: runningJobAccess(jobID),
-		Change: func(ctx context.Context, tx *gorm.DB) (struct{}, error) {
-			return struct{}{}, step(ctx, tx)
+		Change: func(ctx context.Context, store JobStore) (struct{}, error) {
+			return struct{}{}, step(ctx, store)
 		},
 		// Translation jobs are operational queue rows, not audited content.
 		Audit: func(struct{}) mutation.Audit { return mutation.Unchanged() },

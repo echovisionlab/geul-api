@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -79,7 +78,7 @@ func newTranslationMetrics() translationMetrics {
 	return metrics
 }
 
-func (m translationMetrics) recordQueuedJob(ctx context.Context, job *model.TranslationJob) {
+func (m translationMetrics) recordQueuedJob(ctx context.Context, job *Job) {
 	if m.queuedJobCounter == nil || job == nil {
 		return
 	}
@@ -99,7 +98,7 @@ func (m translationMetrics) recordAdminAction(ctx context.Context, action string
 	))
 }
 
-func (m translationMetrics) recordOgHandoff(ctx context.Context, job *model.TranslationJob, outcome string) {
+func (m translationMetrics) recordOgHandoff(ctx context.Context, job *Job, outcome string) {
 	if m.ogHandoffCounter == nil || job == nil {
 		return
 	}
@@ -112,8 +111,8 @@ func (m translationMetrics) recordOgHandoff(ctx context.Context, job *model.Tran
 
 func (m translationMetrics) recordJobStatus(
 	ctx context.Context,
-	job *model.TranslationJob,
-	status string,
+	job *Job,
+	status JobStatus,
 ) {
 	if m.jobStatusCounter == nil || job == nil {
 		return
@@ -122,9 +121,9 @@ func (m translationMetrics) recordJobStatus(
 	attributes := []attribute.KeyValue{
 		attribute.String("entity_type", job.EntityType),
 		attribute.String("target_locale", job.TargetLocale),
-		attribute.String("status", status),
+		attribute.String("status", string(status)),
 	}
-	if status == translationJobStatusFailed && job.FailureReason != nil {
+	if status == JobFailed && job.FailureReason != nil {
 		attributes = append(attributes, attribute.String(
 			"failure_reason", boundedTranslationFailureReasonLabel(job.FailureReason),
 		))
@@ -134,28 +133,28 @@ func (m translationMetrics) recordJobStatus(
 
 func boundedTranslationFailureReasonLabel(reason *string) string {
 	if reason == nil {
-		return translationFailureInternal
+		return FailureInternal
 	}
 	switch normalized := strings.TrimSpace(*reason); normalized {
-	case translationFailureProviderConfiguration,
-		translationFailureProviderAuthentication,
-		translationFailureProviderRateLimited,
-		translationFailureProviderUnavailable,
-		translationFailureProviderRejected,
-		translationFailureProviderResponseInvalid,
-		translationFailureTargetApplyFailed,
-		translationFailureOgHandoffFailed,
-		translationFailureInternal:
+	case FailureProviderConfiguration,
+		FailureProviderAuthentication,
+		FailureProviderRateLimited,
+		FailureProviderUnavailable,
+		FailureProviderRejected,
+		FailureProviderResponseInvalid,
+		FailureTargetApplyFailed,
+		FailureOgHandoffFailed,
+		FailureInternal:
 		return normalized
 	default:
-		return translationFailureInternal
+		return FailureInternal
 	}
 }
 
 func (m translationMetrics) recordJobDuration(
 	ctx context.Context,
-	job *model.TranslationJob,
-	status string,
+	job *Job,
+	status JobStatus,
 	startedAt time.Time,
 	finishedAt time.Time,
 ) {
@@ -169,7 +168,7 @@ func (m translationMetrics) recordJobDuration(
 		otelmetric.WithAttributes(
 			attribute.String("entity_type", job.EntityType),
 			attribute.String("target_locale", job.TargetLocale),
-			attribute.String("status", status),
+			attribute.String("status", string(status)),
 		),
 	)
 }

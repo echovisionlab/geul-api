@@ -15,6 +15,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
+	translationpostgres "github.com/echovisionlab/geul-api/internal/translation/postgres"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -187,4 +188,4 @@ func buildEmailRichTextInterchangeCandidate(
 	return candidate, nil
 }
 
-var _ application.TranslationInterchangeDomains = (*EmailTemplateInterchange)(nil)
+var _ translationpostgres.InterchangeRegistry = (*EmailTemplateInterchange)(nil)
