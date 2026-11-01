@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	mutationpkg "github.com/echovisionlab/geul-api/internal/mutation"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 
 	"connectrpc.com/connect"
@@ -261,13 +263,18 @@ func TestFileManagerSigningCompletesBeforeRenameAndDeletePrincipalFenceIntegrati
 			<-signed
 			backendPID := make(chan int, 1)
 			attempted := make(chan struct{})
-			service.testBeforeFileMutationPrincipal = func(tx *gorm.DB, fileIDs []string) {
-				require.Equal(t, []string{fileID}, fileIDs)
+			fence := fileMutationPIDFence{Fence: identitystate.PostgresFence{}, before: func(tx *gorm.DB) {
 				var pid int
 				require.NoError(t, tx.Raw("SELECT pg_backend_pid()").Scan(&pid).Error)
 				backendPID <- pid
 				close(attempted)
-			}
+			}}
+			var runnerErr error
+			service.storeMutations, runnerErr = mutationpkg.NewStoreRunner(service.units, service.spiceDB, fence, service.auditWriter)
+			require.NoError(t, runnerErr)
+			service.mutations, runnerErr = mutationpkg.NewRunner(service.db, service.spiceDB, fence, service.auditWriter)
+			require.NoError(t, runnerErr)
+
 			mutationDone := make(chan error, 1)
 			go func() {
 				switch mutation {
@@ -1552,4 +1559,14 @@ func requireFileManagerDeletionPending(t *testing.T, db *gorm.DB, fileID string)
 	var count int64
 	require.NoError(t, db.Table("file").Where("id = ? AND delete_requested_at IS NOT NULL", fileID).Count(&count).Error)
 	require.EqualValues(t, 1, count)
+}
+
+type fileMutationPIDFence struct {
+	identitystate.Fence
+	before func(*gorm.DB)
+}
+
+func (f fileMutationPIDFence) LockActivePrincipal(ctx context.Context, tx *gorm.DB, user *auth.UserInfo) (bool, error) {
+	f.before(tx)
+	return f.Fence.LockActivePrincipal(ctx, tx, user)
 }

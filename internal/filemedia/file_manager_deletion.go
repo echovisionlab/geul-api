@@ -61,7 +61,6 @@ func (s *Service) DeleteFiles(ctx context.Context, command DeleteFilesCommand) (
 	}
 	now := time.Now().UTC()
 	deletion, err := mutation.Run(ctx, s.mutations, mutation.Spec[fileManagerDeletion]{
-		Lock:   s.fileMutationPrincipalHook(fileIDs),
 		Access: mutation.FreshAdminCan(can, nil),
 		Change: func(ctx context.Context, tx *gorm.DB) (fileManagerDeletion, error) {
 			s.afterFileMutationPrincipal(fileIDs)
@@ -166,17 +165,6 @@ func validateFileManagerMutationIDs(values []string) ([]string, error) {
 		return nil, domainerr.InvalidField("file_ids", "at most 100 files are allowed")
 	}
 	return fileIDs, nil
-}
-
-// fileMutationPrincipalHook lets a test act on the File rows before the
-// mutation authorizes its principal.
-func (s *Service) fileMutationPrincipalHook(fileIDs []string) func(context.Context, *gorm.DB) error {
-	return func(_ context.Context, tx *gorm.DB) error {
-		if s.testBeforeFileMutationPrincipal != nil {
-			s.testBeforeFileMutationPrincipal(tx, append([]string(nil), fileIDs...))
-		}
-		return nil
-	}
 }
 
 func (s *Service) afterFileMutationPrincipal(fileIDs []string) {

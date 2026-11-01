@@ -20,6 +20,11 @@ type FileFolder struct {
 	CreatedAt, UpdatedAt time.Time
 }
 type Store interface {
+	LockFileForRename(context.Context, string) (File, error)
+	LockFilesForMove(context.Context, []string) ([]File, error)
+	RenameFile(context.Context, string, string) error
+	MoveFile(context.Context, string, *string) error
+	FileCount(context.Context, []string) (int64, error)
 	Catalog(context.Context, CatalogQuery) ([]CatalogRow, error)
 	FileCatalog(context.Context, string) (CatalogRow, error)
 	FileCatalogs(context.Context, []string) ([]CatalogRow, error)
