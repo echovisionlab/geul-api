@@ -352,6 +352,16 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		require.ErrorAs(t, err, &stale)
 		require.Equal(t, first.DocumentRevision, stale.CurrentRevision)
 	},
+	"a content snapshot share-locks the document in a snapshot that may lock": func(t *testing.T, h Harness) {
+		template := insertTemplate(t, h, key())
+		documentID := uuid.MustParse(*template.ContentDocumentID)
+		require.NoError(t, h.Units.ReadLocked(t.Context(), func(store emailauthoring.Store) error {
+			snapshot, err := store.ContentSnapshot(t.Context(), documentID, "en")
+			require.NoError(t, err)
+			require.Equal(t, documentID, snapshot.Document.ID)
+			return nil
+		}))
+	},
 	"a layout key another layout holds is taken on insert and update": func(t *testing.T, h Harness) {
 		taken, other := insertLayout(t, h, key()), insertLayout(t, h, key())
 		err := mutationtest.Transact(t, h, func(ctx context.Context, store emailauthoring.Store) error {

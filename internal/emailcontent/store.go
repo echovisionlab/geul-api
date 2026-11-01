@@ -54,7 +54,8 @@ type Store interface {
 // runs before the document rows are locked.
 type ContentDocuments interface {
 	CreateContentDocument(ctx context.Context, input contentblock.CreateInput) (contentblock.Snapshot, error)
-	// ContentSnapshot reads the document in one snapshot of its own.
+	// ContentSnapshot reads the document in one snapshot of its own, which
+	// share-locks its rows: never call it under a read-only unit.
 	ContentSnapshot(ctx context.Context, documentID uuid.UUID, sourceLocale string) (contentblock.Snapshot, error)
 	// LockedContentSnapshot share-locks and reads the document in the
 	// transaction, after the caller locked the owner's root.

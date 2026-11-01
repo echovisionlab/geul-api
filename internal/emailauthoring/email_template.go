@@ -79,7 +79,9 @@ func (s *Service) GetEmailTemplate(ctx context.Context, query GetEmailTemplateQu
 		return TemplateDocument{}, err
 	}
 	var document TemplateDocument
-	err := s.units.Read(ctx, func(store Store) error {
+	// The source document share-locks its rows, so the read is not read
+	// only.
+	err := s.units.ReadLocked(ctx, func(store Store) error {
 		template, err := findTemplate(ctx, store, query.ID)
 		if err != nil {
 			return err
@@ -255,7 +257,7 @@ func (s *Service) CreateEmailTemplate(ctx context.Context, command CreateEmailTe
 		return TemplateDocument{}, err
 	}
 	var document TemplateDocument
-	err = s.units.Read(ctx, func(store Store) error {
+	err = s.units.ReadLocked(ctx, func(store Store) error {
 		document, err = templateWithDocument(ctx, store, template)
 		return err
 	})
