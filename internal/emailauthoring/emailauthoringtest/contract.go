@@ -294,7 +294,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			replaced := "Replaced"
 			return store.UpsertLocaleSubject(ctx, template.ID, "ko", &replaced, now)
 		})
-		require.NoError(t, mutationtest.Read(t, h, func(ctx context.Context, store emailauthoring.Store) error {
+		require.NoError(t, mutationtest.Transact(t, h, func(ctx context.Context, store emailauthoring.Store) error {
 			names, err := store.LocaleNames(ctx, template.ID)
 			require.NoError(t, err)
 			require.Equal(t, []string{"en", "ja", "ko"}, names)
@@ -414,7 +414,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			if err := store.SeedLayoutTranslation(ctx, layout.ID, "ja", "en", now); err != nil {
 				return err
 			}
-			html, text := "<p>ja</p>", "ja"
+			html, text := "<p>ja</p>{{content}}", "ja"
 			return store.UpsertLayoutTranslation(ctx, layout.ID, "ko", translation.EntryWrite{ContentHTML: &html, ContentText: &text, Now: now})
 		})
 		transact(t, h, func(ctx context.Context, store emailauthoring.Store) error {
@@ -424,7 +424,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			require.NotNil(t, seeded.ContentHTML)
 			upserted, err := store.LayoutTranslationEntry(ctx, layout.ID, "ko")
 			require.NoError(t, err)
-			require.Equal(t, "<p>ja</p>", *upserted.ContentHTML)
+			require.Equal(t, "<p>ja</p>{{content}}", *upserted.ContentHTML)
 			sources, err := store.CanonicalLayoutSources(ctx, []string{layout.ID})
 			require.NoError(t, err)
 			require.Equal(t, map[string]string{layout.ID: LayoutSourceHTML}, sources)
