@@ -20,8 +20,9 @@ func NewLibraryStore() *LibraryStore {
 }
 func (s *LibraryStore) Savepoint() func() {
 	saved := maps.Clone(s.Folders)
+	files := maps.Clone(s.Files)
 	writes := s.Writes
-	return func() { s.Folders = saved; s.Writes = writes }
+	return func() { s.Folders = saved; s.Files = files; s.Writes = writes }
 }
 func (s *LibraryStore) FolderExists(_ context.Context, id string) (bool, error) {
 	_, exists := s.Folders[id]

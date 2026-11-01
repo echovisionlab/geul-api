@@ -3,6 +3,7 @@ package filemediatest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -20,6 +21,100 @@ type CatalogHarness struct {
 func RunCatalogContract(t *testing.T, open func(*testing.T) CatalogHarness) {
 	t.Helper()
 	cases := map[string]func(*testing.T, CatalogHarness){
+		"rename lock projection and missing sentinel": func(t *testing.T, h CatalogHarness) {
+			row := CatalogFile("original", nil)
+			h.SeedFile(t, row, true, false)
+			require.NoError(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				file, err := s.LockFileForRename(ctx, row.ID)
+				require.NoError(t, err)
+				require.Equal(t, row.ID, file.ID)
+				require.Equal(t, row.Name, file.FileName)
+				require.Equal(t, *row.Extension, file.Extension)
+				require.NotNil(t, file.DeleteRequestedAt)
+				require.Empty(t, file.MimeType)
+				require.Zero(t, file.FileSize)
+				_, err = s.LockFileForRename(ctx, uuid.NewString())
+				require.ErrorIs(t, err, domain.ErrFileNotFound)
+				return nil
+			}))
+		},
+		"move lock projection and presence include pending files": func(t *testing.T, h CatalogHarness) {
+			parent := insertFolder(t, h.Harness, nil, "parent")
+			a, b := CatalogFile("a", &parent.ID), CatalogFile("b", nil)
+			a.ID = "11111111-1111-4111-8111-111111111111"
+			b.ID = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+			h.SeedFile(t, a, false, false)
+			h.SeedFile(t, b, true, false)
+			require.NoError(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				rows, err := s.LockFilesForMove(ctx, []string{b.ID, a.ID, uuid.NewString()})
+				require.NoError(t, err)
+				require.Len(t, rows, 2)
+				require.Equal(t, a.ID, rows[0].ID)
+				require.Equal(t, a.ParentID, rows[0].FolderID)
+				require.Empty(t, rows[0].FileName)
+				require.NotNil(t, rows[1].DeleteRequestedAt)
+				count, err := s.FileCount(ctx, []string{b.ID, a.ID, a.ID, uuid.NewString()})
+				require.Equal(t, int64(2), count)
+				return err
+			}))
+		},
+		"rename and move preserve file metadata and rollback": func(t *testing.T, h CatalogHarness) {
+			parent := insertFolder(t, h.Harness, nil, "parent")
+			row := CatalogFile("original", nil)
+			h.SeedFile(t, row, false, false)
+			require.NoError(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				require.NoError(t, s.RenameFile(ctx, row.ID, "renamed"))
+				return s.MoveFile(ctx, row.ID, &parent.ID)
+			}))
+			require.NoError(t, mutationtest.Read(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				got, err := s.FileCatalog(ctx, row.ID)
+				require.NoError(t, err)
+				require.Equal(t, "renamed", got.Name)
+				require.Equal(t, &parent.ID, got.ParentID)
+				require.Equal(t, row.Extension, got.Extension)
+				require.Equal(t, row.FileSize, got.FileSize)
+				return nil
+			}))
+			abort := errors.New("abort")
+			require.ErrorIs(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				require.NoError(t, s.RenameFile(ctx, row.ID, "rollback"))
+				require.NoError(t, s.MoveFile(ctx, row.ID, nil))
+				return abort
+			}), abort)
+			require.NoError(t, mutationtest.Read(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				got, err := s.FileCatalog(ctx, row.ID)
+				require.Equal(t, "renamed", got.Name)
+				require.Equal(t, &parent.ID, got.ParentID)
+				return err
+			}))
+		},
+		"rename row lock blocks a second writer": func(t *testing.T, h CatalogHarness) {
+			row := CatalogFile("before", nil)
+			h.SeedFile(t, row, false, false)
+			require.NoError(t, mutationtest.RequireSecondWaits(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				_, err := s.LockFileForRename(ctx, row.ID)
+				return err
+			}, func(ctx context.Context, s domain.Store) error { return s.RenameFile(ctx, row.ID, "after") }, func(ctx context.Context, s domain.Store) error {
+				got, err := s.LockFileForRename(ctx, row.ID)
+				require.Equal(t, "after", got.FileName)
+				return err
+			}))
+		},
+		"move row lock blocks a second writer": func(t *testing.T, h CatalogHarness) {
+			parent := insertFolder(t, h.Harness, nil, "parent")
+			row := CatalogFile("file", nil)
+			h.SeedFile(t, row, false, false)
+			require.NoError(t, mutationtest.RequireSecondWaits(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				_, err := s.LockFilesForMove(ctx, []string{row.ID})
+				return err
+			}, func(ctx context.Context, s domain.Store) error { return s.MoveFile(ctx, row.ID, &parent.ID) }, func(ctx context.Context, s domain.Store) error {
+				got, err := s.LockFilesForMove(ctx, []string{row.ID})
+				require.Len(t, got, 1)
+				require.Equal(t, &parent.ID, got[0].FolderID)
+				return err
+			}))
+		},
+
 		"directory scope and folder priority": func(t *testing.T, h CatalogHarness) {
 			parent := insertFolder(t, h.Harness, nil, "z-folder")
 			insertFolder(t, h.Harness, &parent.ID, "child")

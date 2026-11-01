@@ -125,7 +125,6 @@ type Service struct {
 	testBeforeManageDeliveryFence      func([]string)
 	testBeforeManagePrincipalLock      func([]string)
 	testAfterManageDeliverySigned      func([]string)
-	testBeforeFileMutationPrincipal    func(*gorm.DB, []string)
 	testAfterFileMutationPrincipal     func([]string)
 	testAfterScopedFeaturedSigned      func(string, string, string)
 	testAfterScopedBlockMediaSigned    func(string, string, []string)

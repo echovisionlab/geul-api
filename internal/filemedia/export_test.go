@@ -13,3 +13,6 @@ func ExportLibraryService(units mutation.UnitOfWork[Store], authorizer mutation.
 	}
 	return &Service{units: units, storeMutations: runner, memberSummaries: members}
 }
+
+var ExportRenameLockedFile = renameLockedFile
+var ExportMoveLockedFiles = moveLockedFiles

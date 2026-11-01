@@ -6,16 +6,11 @@ import (
 	"slices"
 	"strings"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -40,12 +35,11 @@ func (s *Service) RenameFile(ctx context.Context, command RenameFileCommand) (_ 
 	if err != nil {
 		return nil, err
 	}
-	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
-		Lock:   s.fileMutationPrincipalHook([]string{*fileID}),
+	if _, err := mutation.Run(ctx, s.storeMutations, mutation.StoreSpec[bool, Store]{
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(_ context.Context, tx *gorm.DB) (bool, error) {
+		Change: func(ctx context.Context, store Store) (bool, error) {
 			s.afterFileMutationPrincipal([]string{*fileID})
-			return renameLockedFile(tx, *fileID, name)
+			return renameLockedFile(ctx, store, *fileID, name)
 		},
 		Audit: func(renamed bool) mutation.Audit {
 			if !renamed {
@@ -65,12 +59,12 @@ func (s *Service) RenameFile(ctx context.Context, command RenameFileCommand) (_ 
 
 // renameLockedFile locks the File row and renames it, reporting whether the
 // name changed.
-func renameLockedFile(tx *gorm.DB, fileID, name string) (bool, error) {
-	var file model.File
-	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id", "file_name", "extension", "delete_requested_at").Where("id = ?", fileID).First(&file).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, domainerr.ResourceNotFound("file", fileID)
-		}
+func renameLockedFile(ctx context.Context, store Store, fileID, name string) (bool, error) {
+	file, err := store.LockFileForRename(ctx, fileID)
+	if errors.Is(err, ErrFileNotFound) {
+		return false, domainerr.ResourceNotFound("file", fileID)
+	}
+	if err != nil {
 		return false, err
 	}
 	if file.DeleteRequestedAt != nil {
@@ -82,7 +76,7 @@ func renameLockedFile(tx *gorm.DB, fileID, name string) (bool, error) {
 	if file.FileName == name {
 		return false, nil
 	}
-	if err := tx.Table("file").Where("id = ?", fileID).Updates(structured.Fields{"file_name": name, "updated_at": gorm.Expr("CURRENT_TIMESTAMP")}).Error; err != nil {
+	if err := store.RenameFile(ctx, fileID, name); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -112,12 +106,11 @@ func (s *Service) MoveFiles(ctx context.Context, command MoveFilesCommand) ([]*m
 		return nil, err
 	}
 	nextParentID := pointerValue(folderID)
-	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[[]fileMove]{
-		Lock:   s.fileMutationPrincipalHook(fileIDs),
+	if _, err := mutation.Run(ctx, s.storeMutations, mutation.StoreSpec[[]fileMove, Store]{
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(_ context.Context, tx *gorm.DB) ([]fileMove, error) {
+		Change: func(ctx context.Context, store Store) ([]fileMove, error) {
 			s.afterFileMutationPrincipal(fileIDs)
-			return moveLockedFiles(tx, fileIDs, folderID)
+			return moveLockedFiles(ctx, store, fileIDs, folderID)
 		},
 		Audit: func(moves []fileMove) mutation.Audit {
 			audits := make([]mutation.Audit, 0, len(moves))
@@ -140,9 +133,9 @@ type fileMove struct {
 
 // moveLockedFiles locks the File rows in ID order and moves each one not
 // already in folderID.
-func moveLockedFiles(tx *gorm.DB, fileIDs []string, folderID *string) ([]fileMove, error) {
-	var files []model.File
-	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id", "folder_id", "delete_requested_at").Where("id IN ?", fileIDs).Order("id").Find(&files).Error; err != nil {
+func moveLockedFiles(ctx context.Context, store Store, fileIDs []string, folderID *string) ([]fileMove, error) {
+	files, err := store.LockFilesForMove(ctx, fileIDs)
+	if err != nil {
 		return nil, err
 	}
 	if len(files) != len(fileIDs) {
@@ -158,7 +151,7 @@ func moveLockedFiles(tx *gorm.DB, fileIDs []string, folderID *string) ([]fileMov
 		if previousParentID == nextParentID {
 			continue
 		}
-		if err := tx.Table("file").Where("id = ?", file.ID).Updates(structured.Fields{"folder_id": folderID, "updated_at": gorm.Expr("CURRENT_TIMESTAMP")}).Error; err != nil {
+		if err := store.MoveFile(ctx, file.ID, folderID); err != nil {
 			return nil, err
 		}
 		moves = append(moves, fileMove{fileID: file.ID, previousParentID: previousParentID})
@@ -250,7 +243,7 @@ func impactsForFiles(fileIDs []string, rows []fileUsageRow) []*managev1.FileDele
 
 func (s *Service) validateFileManagerFileIDs(ctx context.Context, fileIDs []string) error {
 	var count int64
-	if err := s.db.WithContext(ctx).Table("file").Where("id IN ?", fileIDs).Count(&count).Error; err != nil {
+	if err := s.units.Read(ctx, func(store Store) error { var err error; count, err = store.FileCount(ctx, fileIDs); return err }); err != nil {
 		return err
 	}
 	if count != int64(len(fileIDs)) {
