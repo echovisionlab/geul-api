@@ -14,6 +14,8 @@ import (
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediapolicy"
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
@@ -99,8 +101,10 @@ func newManagePostFeaturedDeliveryFixture(t *testing.T) managePostFeaturedDelive
 	editorCtx := testutil.PostIntegrationContext(editorID)
 	store := testutil.NewPostContentBlockStore(t)
 
+	filePostAccess := filemediaadapter.NewPostAccess(db, spiceDB)
+	filePorts := filemediapostgres.Ports{PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: filePostAccess, SpiceDB: spiceDB}), PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(postFeaturedAsyncPublisher{})}
 	fileService, err := filemedia.NewService(filemedia.Deps{
-		Units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), Fence: identitystate.PostgresFence{},
+		Units: filemediapostgres.NewUnits(db, filePorts), Fence: identitystate.PostgresFence{},
 		DB:                     db,
 		S3:                     s3.New(s3.Options{Region: "integration"}),
 		AsyncPublisher:         postFeaturedAsyncPublisher{},
@@ -111,7 +115,7 @@ func newManagePostFeaturedDeliveryFixture(t *testing.T) managePostFeaturedDelive
 		Transcoder:             postFeaturedTranscoderPublisher{},
 		SpiceDB:                spiceDB,
 		Audit:                  &audittest.Recorder{},
-		PostAccess:             filemediaadapter.NewPostAccess(db, spiceDB),
+		PostAccess:             filePostAccess,
 		LegalRoutes:            postFeaturedUnusedLegalRoutes{},
 		PagePolicyAccess:       postFeaturedUnusedPagePolicyAccess{},
 		WorkAttachment:         postFeaturedUnusedWorkAttachment{},
