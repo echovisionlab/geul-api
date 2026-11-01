@@ -5,13 +5,10 @@ import (
 	"errors"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -31,7 +28,7 @@ func (s *Service) GetFileDeletionImpact(ctx context.Context, query GetFileDeleti
 	if err := s.validateFileManagerFileIDs(ctx, fileIDs); err != nil {
 		return nil, err
 	}
-	rows, err := loadFileUsages(ctx, s.db, fileIDs)
+	rows, err := s.loadLibraryFileUsages(ctx, fileIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -60,11 +57,11 @@ func (s *Service) DeleteFiles(ctx context.Context, command DeleteFilesCommand) (
 		return FileDeletionOutcome{}, err
 	}
 	now := time.Now().UTC()
-	deletion, err := mutation.Run(ctx, s.mutations, mutation.Spec[fileManagerDeletion]{
+	deletion, err := mutation.Run(ctx, s.storeMutations, mutation.StoreSpec[fileManagerDeletion, Store]{
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(ctx context.Context, tx *gorm.DB) (fileManagerDeletion, error) {
+		Change: func(ctx context.Context, store Store) (fileManagerDeletion, error) {
 			s.afterFileMutationPrincipal(fileIDs)
-			return requestFileManagerDeletions(ctx, tx, fileIDs, now)
+			return requestFileManagerDeletions(ctx, store, fileIDs, now)
 		},
 		Audit: func(deletion fileManagerDeletion) mutation.Audit {
 			audits := make([]mutation.Audit, 0, len(deletion.requested))
@@ -73,8 +70,8 @@ func (s *Service) DeleteFiles(ctx context.Context, command DeleteFilesCommand) (
 			}
 			return mutation.Audits(audits...)
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, deletion fileManagerDeletion) error {
-			return s.publishFileDeletionMutations(ctx, tx, deletion.mutations, now)
+		Outbox: func(ctx context.Context, store Store, deletion fileManagerDeletion) error {
+			return s.publishFileDeletionMutations(ctx, store, deletion.mutations, now)
 		},
 	})
 	if err != nil {
@@ -93,21 +90,21 @@ type fileManagerDeletion struct {
 	mutations []*FileDeletionMutation
 }
 
-func requestFileManagerDeletions(ctx context.Context, tx *gorm.DB, fileIDs []string, now time.Time) (fileManagerDeletion, error) {
+func requestFileManagerDeletions(ctx context.Context, store Store, fileIDs []string, now time.Time) (fileManagerDeletion, error) {
 	deletion := fileManagerDeletion{
 		accepted:  make([]string, 0, len(fileIDs)),
 		rejected:  make([]*managev1.FileDeletionImpact, 0),
 		mutations: make([]*FileDeletionMutation, 0, len(fileIDs)),
 	}
-	files, err := lockFileManagerDeletionRows(ctx, tx, fileIDs)
+	files, err := lockFileManagerDeletionRows(ctx, store, fileIDs)
 	if err != nil {
 		return deletion, err
 	}
-	activeReferences, err := ActiveFileReferenceIDs(ctx, tx, fileIDs)
+	activeReferences, err := store.ActiveFileReferenceIDs(ctx, fileIDs)
 	if err != nil {
 		return deletion, err
 	}
-	usageRows, err := loadFileUsages(ctx, tx, fileIDs)
+	usageRows, err := loadFileUsages(ctx, store, fileIDs)
 	if err != nil {
 		return deletion, err
 	}
@@ -126,7 +123,7 @@ func requestFileManagerDeletions(ctx context.Context, tx *gorm.DB, fileIDs []str
 			deletion.accepted = append(deletion.accepted, fileID)
 			continue
 		}
-		requested, err := markLockedFileDeletionRequestedWithDB(ctx, tx, file, now)
+		requested, err := domain.MarkLockedFileDeletionRequested(ctx, store, file, now)
 		if err != nil {
 			return deletion, err
 		}
@@ -142,9 +139,9 @@ func requestFileManagerDeletions(ctx context.Context, tx *gorm.DB, fileIDs []str
 	return deletion, nil
 }
 
-func (s *Service) publishFileDeletionMutations(ctx context.Context, tx *gorm.DB, mutations []*FileDeletionMutation, now time.Time) error {
+func (s *Service) publishFileDeletionMutations(ctx context.Context, store Store, mutations []*FileDeletionMutation, now time.Time) error {
 	for _, deletion := range mutations {
-		if err := publishFileDeletionMutationWithDB(ctx, tx, fileDeleteAsyncPublisher{s.asyncPublisher}, deletion, now); err != nil {
+		if err := domain.PublishFileDeletionMutation(ctx, store, deletion, now); err != nil {
 			return err
 		}
 	}
@@ -173,16 +170,15 @@ func (s *Service) afterFileMutationPrincipal(fileIDs []string) {
 	}
 }
 
-func lockFileManagerDeletionRows(ctx context.Context, tx *gorm.DB, fileIDs []string) (map[string]model.File, error) {
-	var files []model.File
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Select("id", "delete_requested_at").Where("id IN ?", fileIDs).Order("id ASC").Find(&files).Error; err != nil {
+func lockFileManagerDeletionRows(ctx context.Context, store Store, fileIDs []string) (map[string]File, error) {
+	files, err := store.LockDeletionCandidates(ctx, fileIDs)
+	if err != nil {
 		return nil, err
 	}
 	if len(files) != len(fileIDs) {
 		return nil, domainerr.Precondition("one or more files no longer exist")
 	}
-	result := make(map[string]model.File, len(files))
+	result := make(map[string]File, len(files))
 	for _, file := range files {
 		result[file.ID] = file
 	}
@@ -205,10 +201,10 @@ func (s *Service) DeleteFileFolder(ctx context.Context, command DeleteFileFolder
 	if err != nil {
 		return nil, err
 	}
-	plan, err := mutation.Run(ctx, s.mutations, mutation.Spec[fileFolderDeletionPlan]{
+	plan, err := mutation.Run(ctx, s.storeMutations, mutation.StoreSpec[fileFolderDeletionPlan, Store]{
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(ctx context.Context, tx *gorm.DB) (fileFolderDeletionPlan, error) {
-			return prepareFileFolderDeletion(ctx, tx, *folderID, time.Now().UTC())
+		Change: func(ctx context.Context, store Store) (fileFolderDeletionPlan, error) {
+			return prepareFileFolderDeletion(ctx, store, *folderID, time.Now().UTC())
 		},
 		Audit: func(plan fileFolderDeletionPlan) mutation.Audit {
 			audits := make([]mutation.Audit, 0, len(plan.fileIDs)+len(plan.folderIDs))
@@ -220,8 +216,8 @@ func (s *Service) DeleteFileFolder(ctx context.Context, command DeleteFileFolder
 			}
 			return mutation.Audits(audits...)
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, plan fileFolderDeletionPlan) error {
-			return s.publishFileDeletionMutations(ctx, tx, plan.mutations, time.Now().UTC())
+		Outbox: func(ctx context.Context, store Store, plan fileFolderDeletionPlan) error {
+			return s.publishFileDeletionMutations(ctx, store, plan.mutations, time.Now().UTC())
 		},
 	})
 	if err != nil {
@@ -238,77 +234,54 @@ type fileFolderDeletionPlan struct {
 
 func prepareFileFolderDeletion(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	folderID string,
 	now time.Time,
 ) (fileFolderDeletionPlan, error) {
-	subtreeIDs, err := lockFileFolderSubtree(ctx, tx, folderID)
+	subtreeIDs, err := lockFileFolderSubtree(ctx, store, folderID)
 	if err != nil {
 		return fileFolderDeletionPlan{}, err
 	}
-	fileIDs, err := loadFolderDeletionFileIDs(ctx, tx, subtreeIDs)
+	fileIDs, err := store.FolderDeletionFileIDs(ctx, subtreeIDs)
 	if err != nil {
 		return fileFolderDeletionPlan{}, err
 	}
-	mutations, err := prepareFolderFileDeletionMutations(ctx, tx, fileIDs, now)
+	mutations, err := prepareFolderFileDeletionMutations(ctx, store, fileIDs, now)
 	if err != nil {
 		return fileFolderDeletionPlan{}, err
 	}
-	if len(fileIDs) > 0 {
-		if err := tx.Table("file").Where("id IN ?", fileIDs).Updates(structured.Fields{
-			"folder_id": nil, "updated_at": gorm.Expr("CURRENT_TIMESTAMP"),
-		}).Error; err != nil {
-			return fileFolderDeletionPlan{}, err
-		}
+	if err := store.DetachDeletionFiles(ctx, fileIDs); err != nil {
+		return fileFolderDeletionPlan{}, err
 	}
-	if err := tx.Delete(&model.FileFolder{}, "id = ?", folderID).Error; err != nil {
+	if err := store.DeleteFolder(ctx, folderID); err != nil {
 		return fileFolderDeletionPlan{}, err
 	}
 	return fileFolderDeletionPlan{fileIDs: fileIDs, folderIDs: subtreeIDs, mutations: mutations}, nil
 }
 
-func lockFileFolderSubtree(ctx context.Context, tx *gorm.DB, folderID string) ([]string, error) {
-	if err := lockFileFolderHierarchy(tx); err != nil {
-		return nil, err
+func lockFileFolderSubtree(ctx context.Context, store Store, id string) ([]string, error) {
+	ids, err := store.LockFolderSubtree(ctx, id)
+	if errors.Is(err, domain.ErrFolderNotFound) {
+		return nil, domainerr.ResourceNotFound("folder", id)
 	}
-	var folder model.FileFolder
-	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id = ?", folderID).First(&folder).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, domainerr.ResourceNotFound("folder", folderID)
-		}
-		return nil, err
-	}
-	var subtreeIDs []string
-	if err := tx.WithContext(ctx).Raw(`WITH RECURSIVE subtree AS (SELECT id FROM file_folder WHERE id = ? UNION ALL SELECT child.id FROM file_folder child JOIN subtree parent ON child.parent_id = parent.id) SELECT id::text FROM subtree ORDER BY id`, folderID).Scan(&subtreeIDs).Error; err != nil {
-		return nil, err
-	}
-	if err := tx.WithContext(ctx).Table("file_folder").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("id IN ?", subtreeIDs).Order("id").Pluck("id", &subtreeIDs).Error; err != nil {
-		return nil, err
-	}
-	return subtreeIDs, nil
-}
-
-func loadFolderDeletionFileIDs(ctx context.Context, tx *gorm.DB, subtreeIDs []string) ([]string, error) {
-	var fileIDs []string
-	err := tx.WithContext(ctx).Table("file").Where("folder_id IN ? AND delete_requested_at IS NULL", subtreeIDs).Order("id").Pluck("id", &fileIDs).Error
-	return fileIDs, err
+	return ids, err
 }
 
 func prepareFolderFileDeletionMutations(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	fileIDs []string,
 	now time.Time,
 ) ([]*FileDeletionMutation, error) {
-	files, err := lockFileManagerDeletionRows(ctx, tx, fileIDs)
+	files, err := lockFileManagerDeletionRows(ctx, store, fileIDs)
 	if err != nil {
 		return nil, err
 	}
-	activeReferences, err := ActiveFileReferenceIDs(ctx, tx, fileIDs)
+	activeReferences, err := store.ActiveFileReferenceIDs(ctx, fileIDs)
 	if err != nil {
 		return nil, err
 	}
-	usageRows, err := loadFileUsages(ctx, tx, fileIDs)
+	usageRows, err := loadFileUsages(ctx, store, fileIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +295,7 @@ func prepareFolderFileDeletionMutations(
 			mutations = append(mutations, &FileDeletionMutation{FileID: fileID, AlreadyPending: true})
 			continue
 		}
-		mutation, err := markLockedFileDeletionRequestedWithDB(ctx, tx, file, now)
+		mutation, err := domain.MarkLockedFileDeletionRequested(ctx, store, file, now)
 		if err != nil {
 			return nil, err
 		}

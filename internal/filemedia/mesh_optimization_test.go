@@ -1,8 +1,6 @@
 package filemedia
 
 import (
-	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
-
 	"context"
 	"testing"
 	"time"
@@ -215,12 +213,12 @@ func TestFileServiceMeshOptimizationServiceUsesAsyncPublisherFallback(t *testing
 	t.Parallel()
 
 	asyncPublisher := &recordingFileMeshAsyncPublisher{}
-	service := &Service{units: filemediapostgres.NewUnits(newMeshOptimizationUnitDB(t), filemediapostgres.Ports{}),
+	service := withTestStorage(&Service{
 		db:             newMeshOptimizationUnitDB(t),
 		asyncPublisher: asyncPublisher,
 		publisher:      fileMeshTranscoderOnlyPublisher{},
 		spiceDB:        nil,
-	}
+	})
 
 	meshOptimization := service.meshOptimizationService()
 

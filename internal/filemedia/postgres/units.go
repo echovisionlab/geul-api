@@ -2,13 +2,24 @@
 package filemediapostgres
 
 import (
+	"context"
+
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"gorm.io/gorm"
 )
 
-type Ports struct{}
-type store struct{ tx *gorm.DB }
+type DeletionQueue interface {
+	EnqueueFileDeletion(context.Context, eventpkg.DBTX, domain.DeletionTarget) error
+}
+type Ports struct {
+	DeletionQueue DeletionQueue
+}
+type store struct {
+	tx    *gorm.DB
+	ports Ports
+}
 
 func NewUnits(db *gorm.DB, ports Ports) mutation.UnitOfWork[domain.Store] {
 	if db == nil {
@@ -16,7 +27,7 @@ func NewUnits(db *gorm.DB, ports Ports) mutation.UnitOfWork[domain.Store] {
 	}
 	return mutation.Postgres(db, func(tx *gorm.DB) domain.Store { return Bind(tx, ports) })
 }
-func Bind(tx *gorm.DB, _ Ports) domain.Store { return &store{tx: tx} }
+func Bind(tx *gorm.DB, ports Ports) domain.Store { return &store{tx: tx, ports: ports} }
 
 type storeError struct {
 	error

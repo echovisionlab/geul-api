@@ -1,8 +1,6 @@
 package filemedia
 
 import (
-	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
-
 	"context"
 	"errors"
 	"testing"
@@ -75,7 +73,7 @@ func TestFileDownloadPolicySignalUsesOwningTransactionAndCurrentRevision(t *test
 		INSERT INTO file VALUES ('audio', NULL);
 		INSERT INTO track VALUES ('track', 'release', 'audio', 'disabled')`).Error)
 	publisher := &policySignalPublisher{}
-	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db, asyncPublisher: publisher}
+	service := withTestStorage(&Service{db: db, asyncPublisher: publisher})
 	relation, err := service.resolveFileDownloadPolicyRelation(context.Background(), db, fileDownloadPolicySelector{
 		EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK, EntityID: "track",
 	}, false)

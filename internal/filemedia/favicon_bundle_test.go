@@ -1,8 +1,6 @@
 package filemedia
 
 import (
-	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
-
 	"context"
 	"crypto/sha256"
 	"fmt"
@@ -252,7 +250,7 @@ func TestDeleteFaviconSourceMarksAssetsAndFilePendingBeforeWorkerFinalization(t 
 	createFileAttachmentReferenceTablesForServiceTests(t, db)
 	fileID := seedFaviconSource(t, db, "image/png")
 	seedCompleteFaviconDerivatives(t, db, fileID)
-	svc := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), db: db, asyncPublisher: noopAsyncPublisher{}}
+	svc := withTestStorage(&Service{db: db, asyncPublisher: noopAsyncPublisher{}})
 	require.NoError(t, svc.deleteFileRecordByID(t.Context(), fileID))
 	var file model.File
 	require.NoError(t, db.First(&file, "id = ?", fileID).Error)
@@ -269,13 +267,13 @@ func TestGenerateFaviconBundlePersistsCleanupRecordsOnWriteFailure(t *testing.T)
 	source := faviconTestPNG(t, 151, 152, color.NRGBA{R: 200, A: 255})
 	fileID := seedFaviconSourceBytes(t, db, "image/png", source)
 	store := newFaviconS3Fixture(t, fileID, "png", source, 3)
-	svc := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	svc := withTestStorage(&Service{
 		db:               db,
 		s3Client:         store.client,
 		s3Bucket:         "media-bucket",
 		cdnDomain:        "https://cdn.example.com",
 		faviconProcessor: staticFaviconProcessor{outputs: faviconTestGeneratedOutputs(t)},
-	}
+	})
 
 	asset, err := svc.generateFaviconBundle(t.Context(), fileID)
 	require.Nil(t, asset)
@@ -298,13 +296,13 @@ func TestGenerateFaviconBundleProcessorFailureWritesNothing(t *testing.T) {
 	source := faviconTestPNG(t, 151, 152, color.NRGBA{R: 200, A: 255})
 	fileID := seedFaviconSourceBytes(t, db, "image/png", source)
 	store := newFaviconS3Fixture(t, fileID, "png", source, 0)
-	svc := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	svc := withTestStorage(&Service{
 		db:               db,
 		s3Client:         store.client,
 		s3Bucket:         "media-bucket",
 		cdnDomain:        "https://cdn.example.com",
 		faviconProcessor: staticFaviconProcessor{err: fmt.Errorf("injected processor failure")},
-	}
+	})
 
 	asset, err := svc.generateFaviconBundle(t.Context(), fileID)
 	require.Nil(t, asset)
@@ -320,13 +318,13 @@ func TestGenerateFaviconBundleStoresCompleteSetBeforeSuccess(t *testing.T) {
 	source := faviconTestPNG(t, 151, 152, color.NRGBA{R: 200, A: 255})
 	fileID := seedFaviconSourceBytes(t, db, "image/png", source)
 	store := newFaviconS3Fixture(t, fileID, "png", source, 0)
-	svc := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	svc := withTestStorage(&Service{
 		db:               db,
 		s3Client:         store.client,
 		s3Bucket:         "media-bucket",
 		cdnDomain:        "https://cdn.example.com",
 		faviconProcessor: staticFaviconProcessor{outputs: faviconTestGeneratedOutputs(t)},
-	}
+	})
 
 	asset, err := svc.generateFaviconBundle(t.Context(), fileID)
 	require.NoError(t, err)
@@ -352,7 +350,7 @@ func TestGenerateFaviconBundleConcurrentCallsConvergeOnOneSet(t *testing.T) {
 	store := newFaviconS3Fixture(t, fileID, "png", source, 0)
 	entered := make(chan struct{}, 2)
 	release := make(chan struct{})
-	svc := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	svc := withTestStorage(&Service{
 		db:        db,
 		s3Client:  store.client,
 		s3Bucket:  "media-bucket",
@@ -362,7 +360,7 @@ func TestGenerateFaviconBundleConcurrentCallsConvergeOnOneSet(t *testing.T) {
 			entered: entered,
 			release: release,
 		},
-	}
+	})
 	type result struct {
 		assetID string
 		err     error
@@ -398,7 +396,7 @@ func TestGenerateFaviconBundleCommitAckAmbiguityPreservesTrackedAssetsAndSource(
 	source := faviconTestPNG(t, 151, 152, color.NRGBA{R: 200, A: 255})
 	fileID := seedFaviconSourceBytes(t, db, "image/png", source)
 	store := newFaviconS3Fixture(t, fileID, "png", source, 0)
-	svc := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	svc := withTestStorage(&Service{
 		db:                        db,
 		s3Client:                  store.client,
 		s3Bucket:                  "media-bucket",
@@ -406,7 +404,7 @@ func TestGenerateFaviconBundleCommitAckAmbiguityPreservesTrackedAssetsAndSource(
 		faviconProcessor:          staticFaviconProcessor{outputs: faviconTestGeneratedOutputs(t)},
 		testFaviconCommitError:    fmt.Errorf("injected lost commit acknowledgement"),
 		testFaviconReconcileError: fmt.Errorf("injected reconciliation read failure"),
-	}
+	})
 
 	asset, err := svc.generateFaviconBundle(t.Context(), fileID)
 	require.Nil(t, asset)
@@ -432,14 +430,14 @@ func TestGenerateFaviconBundleCommitAckAmbiguityReturnsPersistedWinner(t *testin
 	source := faviconTestPNG(t, 151, 152, color.NRGBA{R: 200, A: 255})
 	fileID := seedFaviconSourceBytes(t, db, "image/png", source)
 	store := newFaviconS3Fixture(t, fileID, "png", source, 0)
-	svc := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	svc := withTestStorage(&Service{
 		db:                     db,
 		s3Client:               store.client,
 		s3Bucket:               "media-bucket",
 		cdnDomain:              "https://cdn.example.com",
 		faviconProcessor:       staticFaviconProcessor{outputs: faviconTestGeneratedOutputs(t)},
 		testFaviconCommitError: fmt.Errorf("injected lost commit acknowledgement"),
-	}
+	})
 	asset, err := svc.generateFaviconBundle(t.Context(), fileID)
 	require.NoError(t, err)
 	require.NotNil(t, asset)
@@ -451,14 +449,14 @@ func TestGenerateFaviconBundleWholeDeadline(t *testing.T) {
 	source := faviconTestPNG(t, 16, 16, color.NRGBA{R: 200, A: 255})
 	fileID := seedFaviconSourceBytes(t, db, "image/png", source)
 	store := newFaviconS3Fixture(t, fileID, "png", source, 0)
-	svc := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	svc := withTestStorage(&Service{
 		db:                       db,
 		s3Client:                 store.client,
 		s3Bucket:                 "media-bucket",
 		cdnDomain:                "https://cdn.example.com",
 		faviconProcessor:         blockingFaviconProcessor{},
 		testFaviconBundleTimeout: 40 * time.Millisecond,
-	}
+	})
 	started := time.Now()
 	_, err := svc.generateFaviconBundle(t.Context(), fileID)
 	require.ErrorContains(t, err, "deadline exceeded")
@@ -471,13 +469,13 @@ func TestGenerateFaviconBundlePublishesVerifiedSVGSourceRef(t *testing.T) {
 	source := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="151" height="152"><rect width="151" height="152" fill="red"/></svg>`)
 	fileID := seedFaviconSourceBytes(t, db, "image/svg+xml", source)
 	store := newFaviconS3Fixture(t, fileID, "svg", source, 0)
-	svc := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	svc := withTestStorage(&Service{
 		db:               db,
 		s3Client:         store.client,
 		s3Bucket:         "media-bucket",
 		cdnDomain:        "https://cdn.example.com",
 		faviconProcessor: staticFaviconProcessor{outputs: faviconTestGeneratedOutputs(t)},
-	}
+	})
 
 	_, err := svc.generateFaviconBundle(t.Context(), fileID)
 	require.NoError(t, err)
@@ -492,10 +490,10 @@ func TestGenerateFaviconBundleRejectsUnsafeSVGBeforePublicStorage(t *testing.T) 
 	source := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><style>.x{fill:red}</style><rect class="x"/></svg>`)
 	fileID := seedFaviconSourceBytes(t, db, "image/svg+xml", source)
 	store := newFaviconS3Fixture(t, fileID, "svg", source, 0)
-	svc := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}),
+	svc := withTestStorage(&Service{
 		db: db, s3Client: store.client, s3Bucket: "media-bucket", cdnDomain: "https://cdn.example.com",
 		faviconProcessor: staticFaviconProcessor{outputs: faviconTestGeneratedOutputs(t)},
-	}
+	})
 	asset, err := svc.generateFaviconBundle(t.Context(), fileID)
 	require.Nil(t, asset)
 	require.ErrorContains(t, err, "style")

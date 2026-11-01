@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
+
 	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 
@@ -22,14 +24,14 @@ var errUnusedTestDependency = errors.New("test did not configure this File depen
 // unset in deps get stand-ins that fail if a test reaches them, and a
 // recording audit appender.
 func newTestService(deps Deps) *Service {
-	if deps.Units == nil {
-		deps.Units = filemediapostgres.NewUnits(deps.DB, filemediapostgres.Ports{})
-	}
 	if deps.Fence == nil {
 		deps.Fence = identitystate.PostgresFence{}
 	}
 	if deps.Audit == nil {
 		deps.Audit = &audittest.Recorder{}
+	}
+	if deps.Units == nil {
+		deps.Units = filemediapostgres.NewUnits(deps.DB, filemediapostgres.Ports{DeletionQueue: filemediaqueue.Async(deps.AsyncPublisher)})
 	}
 	if deps.LegalRoutes == nil {
 		deps.LegalRoutes = unusedFilePorts{}

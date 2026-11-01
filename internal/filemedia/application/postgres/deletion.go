@@ -7,6 +7,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/filemedia/application"
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
@@ -43,7 +44,7 @@ func (s *store) LockDeletionFile(ctx context.Context, id string) (filemedia.File
 	return file(row), err
 }
 func (s *store) ActiveFileReferenceNames(ctx context.Context, id string) ([]string, error) {
-	return filemedia.ActiveFileReferenceNames(ctx, s.tx, id)
+	return filemediapostgres.ActiveFileReferenceNames(ctx, s.tx, id)
 }
 func (s *store) PendingTranscodeResultCounts(ctx context.Context, id string) (int64, int64, error) {
 	return transcodepostgres.PendingResultCounts(ctx, s.tx, id)

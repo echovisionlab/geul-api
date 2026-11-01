@@ -32,6 +32,7 @@ import (
 	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
 	formadapter "github.com/echovisionlab/geul-api/internal/adapters/form"
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
@@ -248,7 +249,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	legalRuntime := legaladapter.NewOGRuntime(cfg.CDNURL, ogDeps.planner)
 	campaignDeliveryDispatcher := campaignadapter.NewDeliveryDispatcher(db, spicedbClient, workerPublisher, telemetryWriter, legalRuntime)
 	fileService, err := filemedia.NewService(filemedia.Deps{
-		Units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{}), Fence: identitystate.PostgresFence{},
+		Units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{DeletionQueue: filemediaqueue.Async(servicePublisher)}), Fence: identitystate.PostgresFence{},
 		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, S3: s3Client, Presigner: s3PresignClient,
 		AsyncPublisher: servicePublisher, Transcoder: transcodeTracker, S3Bucket: cfg.S3Bucket,
 		CDNDomain: cfg.CDNURL, MediaDomain: cfg.MediaURL, MediaSecret: cfg.MediaSigningSecret,

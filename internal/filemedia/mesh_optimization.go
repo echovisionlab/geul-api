@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
@@ -740,11 +742,7 @@ func meshOptimizationCandidateCacheUsable(status string) bool {
 }
 
 func MeshOptimizationOutputProtectionStatuses() []string {
-	return []string{
-		model.MeshOptimizationCandidateStatusPending,
-		model.MeshOptimizationCandidateStatusProcessing,
-		model.MeshOptimizationCandidateStatusReady,
-	}
+	return domain.MeshOutputProtectionStatuses()
 }
 
 func (s *MeshOptimizationService) findOrCreateCandidate(

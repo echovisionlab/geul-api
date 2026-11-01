@@ -67,6 +67,9 @@ func deliveryFile(record CatalogFileRecord) domain.File {
 	if record.PendingDeletion {
 		at := time.Unix(1, 0).UTC()
 		row.DeleteRequestedAt = &at
+		if record.DeleteRequestedAt != nil {
+			row.DeleteRequestedAt = record.DeleteRequestedAt
+		}
 	}
 	return row
 }

@@ -189,3 +189,21 @@ func appendRecord(
 func actionAttr(action sharedtelemetry.AuditAction) slog.Attr {
 	return slog.String("action", string(action))
 }
+
+// Bind appends through writer in tx, regardless of the caller's transaction.
+// A nil writer stays nil.
+func Bind(tx *gorm.DB, writer Appender) Appender {
+	if writer == nil {
+		return nil
+	}
+	return boundAppender{tx: tx, writer: writer}
+}
+
+type boundAppender struct {
+	tx     *gorm.DB
+	writer Appender
+}
+
+func (b boundAppender) AppendDomainAuditInTransaction(ctx context.Context, _ *gorm.DB, r sharedtelemetry.AuditRecord) error {
+	return b.writer.AppendDomainAuditInTransaction(ctx, b.tx, r)
+}

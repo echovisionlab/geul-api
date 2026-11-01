@@ -1,9 +1,11 @@
-package filemedia
+package filemediapostgres
 
 import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 	"gorm.io/gorm"
 
@@ -45,7 +47,7 @@ var fileAttachmentReferenceRegistry = []fileAttachmentReferenceSpec{
 		table:     "mesh_optimization_candidate",
 		predicate: "ref.output_file_id = %s.id",
 		active:    "ref.status IN ?",
-		args:      structured.Values{MeshOptimizationOutputProtectionStatuses()},
+		args:      structured.Values{domain.MeshOutputProtectionStatuses()},
 	},
 }
 
@@ -131,4 +133,11 @@ func repeatStructuredValue(value structured.Value, count int) structured.Values 
 		values[index] = value
 	}
 	return values
+}
+
+func (s *store) ActiveFileReferenceNames(ctx context.Context, id string) ([]string, error) {
+	return ActiveFileReferenceNames(ctx, s.tx, id)
+}
+func (s *store) ActiveFileReferenceIDs(ctx context.Context, ids []string) (map[string]struct{}, error) {
+	return ActiveFileReferenceIDs(ctx, s.tx, ids)
 }

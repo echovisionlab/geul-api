@@ -7,8 +7,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -19,14 +20,6 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
-
-func loadFileUsageCounts(ctx context.Context, db *gorm.DB, fileIDs []string) (map[string]int32, error) {
-	rows, err := loadFileUsages(ctx, db, fileIDs)
-	if err != nil {
-		return nil, err
-	}
-	return countFileUsageRows(rows), nil
-}
 
 func countFileUsageRows(rows []fileUsageRow) map[string]int32 {
 	result := make(map[string]int32)
@@ -49,9 +42,9 @@ func (s *Service) loadVisibleFileUsageCounts(ctx context.Context, fileIDs []stri
 		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	if isAdmin {
-		return loadFileUsageCounts(ctx, s.db, fileIDs)
+		return s.loadLibraryUsageCounts(ctx, fileIDs)
 	}
-	rows, err := loadFileUsages(ctx, s.db, fileIDs)
+	rows, err := s.loadLibraryFileUsages(ctx, fileIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -87,21 +80,18 @@ func (s *Service) fileManagerFileFromCatalogRow(
 	return file, nil
 }
 
-func loadFileUsages(ctx context.Context, db *gorm.DB, fileIDs []string) ([]fileUsageRow, error) {
+func loadFileUsages(ctx context.Context, store Store, fileIDs []string) ([]fileUsageRow, error) {
 	if len(fileIDs) == 0 {
 		return nil, nil
 	}
-	var rows []fileUsageRow
-	if err := db.WithContext(ctx).Raw(
-		"SELECT file_id::text AS file_id, domain, entity_id, reference_path, block_id, block_type, label FROM ("+fileUsageUnionSQL+") AS usage WHERE file_id IN ? ORDER BY file_id, domain, entity_id, reference_path, COALESCE(block_id, '')",
-		fileIDs,
-	).Scan(&rows).Error; err != nil {
+	rows, err := store.FileUsages(ctx, fileIDs)
+	if err != nil {
 		return nil, err
 	}
-	return hydrateFileUsageLinks(ctx, db, rows)
+	return hydrateFileUsageLinks(ctx, store, rows)
 }
 
-func hydrateFileUsageLinks(ctx context.Context, db *gorm.DB, rows []fileUsageRow) ([]fileUsageRow, error) {
+func hydrateFileUsageLinks(ctx context.Context, store Store, rows []fileUsageRow) ([]fileUsageRow, error) {
 	entityIDSet := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
 		entityIDSet[row.EntityID] = struct{}{}
@@ -112,29 +102,15 @@ func hydrateFileUsageLinks(ctx context.Context, db *gorm.DB, rows []fileUsageRow
 	}
 	sort.Strings(entityIDs)
 
-	type slugRow struct {
-		Domain   string  `gorm:"column:domain"`
-		EntityID string  `gorm:"column:entity_id"`
-		Slug     *string `gorm:"column:slug"`
-	}
-	var slugs []slugRow
+	var slugs []domain.FileUsageSlug
 	if len(entityIDs) > 0 {
-		if err := db.WithContext(ctx).Raw(`
-			SELECT 'post' AS domain, id::text AS entity_id, slug FROM post WHERE id::text IN ?
-			UNION ALL SELECT 'page', id::text, slug FROM page WHERE id::text IN ?
-			UNION ALL SELECT 'work', id::text, slug FROM work WHERE id::text IN ?
-			UNION ALL SELECT 'program_event', id::text, slug FROM program_event WHERE id::text IN ?
-			UNION ALL SELECT 'artist', id::text, slug FROM artist WHERE id::text IN ?
-			UNION ALL SELECT 'label', id::text, slug FROM label WHERE id::text IN ?
-			UNION ALL SELECT 'release', id::text, slug FROM release WHERE id::text IN ?
-			UNION ALL SELECT 'series', id::text, slug FROM series WHERE id::text IN ?
-			UNION ALL SELECT 'form', id::text, slug FROM form WHERE id::text IN ?
-			UNION ALL SELECT 'track', t.id::text, COALESCE(NULLIF(r.slug, ''), r.id::text)
-			FROM track t JOIN release r ON r.id = t.release_id WHERE t.id::text IN ?
-		`, entityIDs, entityIDs, entityIDs, entityIDs, entityIDs, entityIDs, entityIDs, entityIDs, entityIDs, entityIDs).Scan(&slugs).Error; err != nil {
+		var err error
+		slugs, err = store.FileUsageSlugs(ctx, entityIDs)
+		if err != nil {
 			return nil, err
 		}
 	}
+
 	slugByResource := make(map[string]string, len(slugs))
 	for _, row := range slugs {
 		if row.Slug != nil {
@@ -263,15 +239,13 @@ func (s *Service) fileUsageTrackReleaseIDs(ctx context.Context, rows []fileUsage
 	if len(trackIDs) == 0 {
 		return releaseIDByTrackID, nil
 	}
-	var tracks []struct {
-		ID        string `gorm:"column:id"`
-		ReleaseID string `gorm:"column:release_id"`
-	}
-	if err := s.db.WithContext(ctx).Table("track").Select("id, release_id").Where("id IN ?", sliceutil.SortedUniqueTrimmed(trackIDs)).Find(&tracks).Error; err != nil {
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		releaseIDByTrackID, err = store.TrackReleaseIDs(ctx, sliceutil.SortedUniqueTrimmed(trackIDs))
+		return err
+	})
+	if err != nil {
 		return nil, err
-	}
-	for _, track := range tracks {
-		releaseIDByTrackID[track.ID] = track.ReleaseID
 	}
 	return releaseIDByTrackID, nil
 }
@@ -387,7 +361,7 @@ func (s *Service) ListFileUsages(ctx context.Context, req ListFileUsagesQuery) (
 	if err := s.requireFileManagerFile(ctx, *fileID); err != nil {
 		return FileUsagePage{}, err
 	}
-	rows, err := loadFileUsages(ctx, s.db, []string{*fileID})
+	rows, err := s.loadLibraryFileUsages(ctx, []string{*fileID})
 	if err != nil {
 		return FileUsagePage{}, err
 	}
@@ -413,11 +387,24 @@ func (s *Service) ListFileUsages(ctx context.Context, req ListFileUsagesQuery) (
 
 func (s *Service) requireFileManagerFile(ctx context.Context, fileID string) error {
 	var count int64
-	if err := s.db.WithContext(ctx).Table("file").Where("id = ? AND delete_requested_at IS NULL", fileID).Count(&count).Error; err != nil {
+	if err := s.units.Read(ctx, func(store Store) error { var err error; count, err = store.ActiveFileCount(ctx, fileID); return err }); err != nil {
 		return err
 	}
 	if count == 0 {
 		return domainerr.ResourceNotFound("file", fileID)
 	}
 	return nil
+}
+
+func (s *Service) loadLibraryFileUsages(ctx context.Context, ids []string) ([]fileUsageRow, error) {
+	var rows []fileUsageRow
+	err := s.units.Read(ctx, func(store Store) error { var err error; rows, err = loadFileUsages(ctx, store, ids); return err })
+	return rows, err
+}
+func (s *Service) loadLibraryUsageCounts(ctx context.Context, ids []string) (map[string]int32, error) {
+	rows, err := s.loadLibraryFileUsages(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	return countFileUsageRows(rows), nil
 }

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
@@ -17,6 +19,12 @@ import (
 )
 
 type CatalogHarness struct {
+	Audit            domainaudit.Appender
+	SeedAssetBinding func(*testing.T, string, string)
+	Asset            func(*testing.T, string) mediaasset.Asset
+	Outbox           func(*testing.T) []domain.DeletionTarget
+	AuditCount       func(*testing.T) int
+	Mesh             func(*testing.T, string) (MeshRecord, bool)
 	mutationtest.Harness[domain.Store]
 	SeedAsset         func(*testing.T, mediaasset.Asset)
 	SeedGeneration    func(*testing.T, mediaasset.Generation)
@@ -479,6 +487,9 @@ func RunCatalogContract(t *testing.T, open func(*testing.T) CatalogHarness) {
 			require.Empty(t, readCatalog(t, h, domain.CatalogQuery{MimePrefix: "audio/", PageSize: 50}))
 			require.Empty(t, readCatalog(t, h, domain.CatalogQuery{Uploader: uuid.NewString(), PageSize: 50}))
 		},
+	}
+	for name, run := range libraryDeletionCases() {
+		cases[name] = run
 	}
 	for name, run := range cases {
 		t.Run(name, func(t *testing.T) { t.Parallel(); run(t, open(t)) })

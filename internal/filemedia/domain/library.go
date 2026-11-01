@@ -21,6 +21,8 @@ type FileFolder struct {
 }
 type Store interface {
 	DeliveryStore
+	DeletionLifecycleStore
+	UsageStore
 	LockFileForRename(context.Context, string) (File, error)
 	LockFilesForMove(context.Context, []string) ([]File, error)
 	RenameFile(context.Context, string, string) error

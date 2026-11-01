@@ -3,6 +3,9 @@ package filemedia
 import (
 	"context"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
+	"gorm.io/gorm"
+
 	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 
 	"github.com/google/uuid"
@@ -18,6 +21,7 @@ import (
 // runner NewService builds from its database, SpiceDB client and audit
 // appender. An unset appender records in memory.
 func withTestMutations(service *Service) *Service {
+	service = withTestStorage(service)
 	if service.db == nil {
 		return service
 	}
@@ -37,9 +41,7 @@ func withTestMutations(service *Service) *Service {
 	if service.mutations == nil {
 		service.mutations = runner
 	}
-	if service.units == nil {
-		service.units = filemediapostgres.NewUnits(service.db, filemediapostgres.Ports{})
-	}
+
 	if service.storeMutations == nil {
 		service.storeMutations, err = mutation.NewStoreRunner(service.units, spiceDB, identitystate.PostgresFence{}, audit)
 		if err != nil {
@@ -63,4 +65,13 @@ func auditedUserContext(ctx context.Context, user *auth.UserInfo) context.Contex
 		panic(err)
 	}
 	return auth.WithUser(sharedtelemetry.WithRequestContext(ctx, request), user)
+}
+
+func withTestStorage(service *Service) *Service {
+	if service.db != nil {
+		service.units = mutation.Postgres(service.db, func(tx *gorm.DB) Store {
+			return filemediapostgres.Bind(tx, filemediapostgres.Ports{DeletionQueue: filemediaqueue.Async(service.asyncPublisher)})
+		})
+	}
+	return service
 }

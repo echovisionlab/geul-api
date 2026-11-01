@@ -15,12 +15,6 @@ func appendFileCreatedAudit(ctx context.Context, tx *gorm.DB, writer domainaudit
 	})
 }
 
-func appendFileDeletedAudit(ctx context.Context, tx *gorm.DB, writer domainaudit.Appender, id string) error {
-	return domainaudit.AppendOptionalRequest(ctx, tx, writer, sharedtelemetry.AuditFileDeleted, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-		return sharedtelemetry.NewFileDeletedAuditRecord(m, id)
-	})
-}
-
 func fileDeletedAudit(id string) mutation.Audit {
 	return mutation.RequestAudit(sharedtelemetry.AuditFileDeleted, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 		return sharedtelemetry.NewFileDeletedAuditRecord(m, id)
