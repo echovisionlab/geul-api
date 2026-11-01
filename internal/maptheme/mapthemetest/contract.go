@@ -148,6 +148,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 	"an inserted theme reads back at revision one with its stored snapshot": func(t *testing.T, h Harness) {
 		snapshot := Snapshot("Contract insert")
 		snapshot.Settings.CalloutScale = 1.1 // Not exactly representable in the float32 column.
+		snapshot.Settings.ShowAreaLabels = false // The column defaults to true.
 		snapshot.LightVariant.BuildingStrokeEnabled = false
 
 		inserted := insert(t, h, snapshot)
