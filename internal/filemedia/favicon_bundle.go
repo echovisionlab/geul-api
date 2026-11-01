@@ -28,7 +28,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const (
@@ -51,7 +50,7 @@ func (s *Service) generateFaviconBundle(
 		return nil, domainerr.Precondition(fmt.Sprintf("existing favicon bundle is invalid: %v", err))
 	}
 	if existing != nil {
-		return existing.GetIconPng_32(), nil
+		return mediaasset.ReferenceProto(existing.IconPNG32), nil
 	}
 
 	source, sourceBytes, err := s.loadValidatedFaviconSource(bundleCtx, sourceFileID)
@@ -151,7 +150,7 @@ func (s *Service) stageFaviconBundle(
 			Extension:   "svg",
 			MimeType:    "image/svg+xml",
 			Disposition: mediaasset.DispositionInline,
-		}, managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_UNSPECIFIED, true)
+		}, favicon.DerivativeType(""), true)
 		if asset.AssetID != "" {
 			staged = append(staged, asset)
 		}
@@ -211,7 +210,7 @@ func (s *Service) commitFaviconBundle(
 		winner, reconcileErr := s.reconcileFaviconBundle(cleanupCtx, source.ID)
 		if reconcileErr == nil && winner != nil {
 			s.scheduleStagedFaviconDeletion(cleanupCtx, staged, favicon.AssetIDs(winner))
-			return winner.GetIconPng_32(), nil
+			return mediaasset.ReferenceProto(winner.IconPNG32), nil
 		}
 		slog.ErrorContext(ctx, "favicon bundle commit outcome could not be reconciled; preserving source and staged assets", failurecause.Attr(stderrors.Join(commitErr, reconcileErr)), "file_id", source.ID)
 		return nil, fmt.Errorf(
@@ -224,12 +223,12 @@ func (s *Service) commitFaviconBundle(
 	if !usedStaged {
 		s.scheduleStagedFaviconDeletion(cleanupCtx, staged, favicon.AssetIDs(set))
 	}
-	return set.GetIconPng_32(), nil
+	return mediaasset.ReferenceProto(set.IconPNG32), nil
 }
 
 type stagedFaviconAsset struct {
 	AssetID        string
-	DerivativeType managev1.FileDerivativeType
+	DerivativeType favicon.DerivativeType
 	SourceSVG      bool
 }
 
@@ -237,7 +236,7 @@ func (s *Service) stageFaviconAsset(
 	ctx context.Context,
 	data []byte,
 	allocation mediaasset.Allocation,
-	derivativeType managev1.FileDerivativeType,
+	derivativeType favicon.DerivativeType,
 	sourceSVG bool,
 ) (stagedFaviconAsset, error) {
 	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.db), s.cdnDomain)
@@ -275,7 +274,7 @@ func (s *Service) finalizeStagedFaviconBundle(
 	tx *gorm.DB,
 	source model.File,
 	staged []stagedFaviconAsset,
-) (*commonv1.FaviconAssetSet, bool, error) {
+) (*favicon.Set, bool, error) {
 	var lockedSource model.File
 	if err := tx.WithContext(ctx).
 		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
@@ -292,7 +291,7 @@ func (s *Service) finalizeStagedFaviconBundle(
 		return existing, false, nil
 	}
 
-	stagedByType := make(map[managev1.FileDerivativeType]stagedFaviconAsset, len(staged))
+	stagedByType := make(map[favicon.DerivativeType]stagedFaviconAsset, len(staged))
 	for _, asset := range staged {
 		if asset.SourceSVG {
 			result := tx.WithContext(ctx).Model(&model.PublicAsset{}).
@@ -334,7 +333,7 @@ func (s *Service) finalizeStagedFaviconBundle(
 	if err != nil {
 		return nil, false, err
 	}
-	if set == nil || set.GetIconPng_32() == nil {
+	if set == nil || set.IconPNG32 == nil {
 		return nil, false, fmt.Errorf("generated favicon set is incomplete")
 	}
 	return set, true, nil
@@ -343,7 +342,7 @@ func (s *Service) finalizeStagedFaviconBundle(
 func (s *Service) reconcileFaviconBundle(
 	ctx context.Context,
 	sourceFileID string,
-) (*commonv1.FaviconAssetSet, error) {
+) (*favicon.Set, error) {
 	if s.testFaviconReconcileError != nil {
 		return nil, s.testFaviconReconcileError
 	}

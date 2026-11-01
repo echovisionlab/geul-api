@@ -202,7 +202,7 @@ func TestMultipartFaviconCommitAmbiguityPreservesSourceAndFinalizingSession(t *t
 	set, err := faviconpostgres.LoadSet(t.Context(), db, service.cdnDomain, fileID)
 	require.NoError(t, err)
 	require.NotNil(t, set)
-	readyAssetID := set.GetIconPng_32().GetAssetId()
+	readyAssetID := set.IconPNG32.AssetID
 	writtenBeforeRetry := store.writtenKeys()
 
 	service.testFaviconCommitError = nil

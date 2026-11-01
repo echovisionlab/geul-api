@@ -445,10 +445,10 @@ func (s *Service) restoreFinishedMultipartPromotedAsset(
 		if err != nil {
 			return nil, fmt.Errorf("restore completed favicon asset: %w", err)
 		}
-		if set == nil || set.GetIconPng_32() == nil {
+		if set == nil || set.IconPNG32 == nil {
 			return nil, domainerr.Precondition("completed favicon asset is not ready")
 		}
-		return set.GetIconPng_32(), nil
+		return mediaasset.ReferenceProto(set.IconPNG32), nil
 	}
 	kind, promoted := dedicatedPublicAssetKind(uploadType, slotID)
 	if !promoted {

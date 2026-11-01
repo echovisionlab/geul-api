@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
 )
 
 // Stored public asset statuses favicon decisions branch on.
@@ -44,7 +44,7 @@ type Store interface {
 	// NewestReadySourceAsset returns the newest ready favicon asset made
 	// directly from a File.
 	NewestReadySourceAsset(ctx context.Context, fileID string) (DerivativeAsset, bool, error)
-	AssetRef(asset DerivativeAsset) (*commonv1.AssetRef, error)
+	AssetRef(asset DerivativeAsset) (*mediaasset.Reference, error)
 
 	FaviconDerivativeCount(ctx context.Context, fileID string) (int64, error)
 	SourceAssetCount(ctx context.Context, fileID string) (int64, error)
