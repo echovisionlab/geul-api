@@ -1,4 +1,4 @@
-package application
+package filemediapostgres
 
 import (
 	"context"
@@ -9,12 +9,13 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/application"
 	"gorm.io/gorm"
 )
 
 const transactionCompensationTimeout = 10 * time.Second
 
-type registerTransactionCompensation func(time.Time, func(context.Context) error) error
+type registerTransactionCompensation = application.RegisterCompensation
 
 func executeCompensatedTransaction(
 	ctx context.Context,

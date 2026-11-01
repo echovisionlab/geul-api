@@ -18,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filemediaapplication "github.com/echovisionlab/geul-api/internal/filemedia/application"
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	transcodeapplication "github.com/echovisionlab/geul-api/internal/transcode/application"
 	applicationpostgres "github.com/echovisionlab/geul-api/internal/transcode/application/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -70,15 +71,16 @@ func (r *Runtime) HandleFileDelete(
 	if err := filemediaapplication.ValidateDeleteEvent(event); err != nil {
 		return fmt.Errorf("%w: %v", filemediaapplication.ErrInvalidFileDeleteTarget, err)
 	}
-	deletion := filemediaapplication.NewDeletion(r.db, r.fileAuth)
-	exists, err := deletion.ValidatePending(ctx, event)
+	deletion := filemediaapplication.NewDeletion(filemediapostgres.NewDeletionUnits(r.db), r.fileAuth)
+	target := filemediaapplication.DeletionTargetFromProto(event)
+	exists, err := deletion.ValidatePending(ctx, target)
 	if err != nil || !exists {
 		return err
 	}
 	if err := r.deleteFileObjects(ctx, event); err != nil {
 		return err
 	}
-	return deletion.Finalize(ctx, event)
+	return deletion.Finalize(ctx, target)
 }
 
 func (r *Runtime) deleteFileObjects(ctx context.Context, event *managev1.FileDeleteEvent) error {

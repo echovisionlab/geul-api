@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/google/uuid"
 
@@ -52,4 +53,26 @@ func ValidateDeleteEvent(event *managev1.FileDeleteEvent) error {
 		}
 	}
 	return nil
+}
+
+func DeletionTargetFromProto(event *managev1.FileDeleteEvent) *filemedia.DeletionTarget {
+	if event == nil {
+		return nil
+	}
+	target := &filemedia.DeletionTarget{FileID: event.GetFileId(), HasPublicAssets: len(event.GetAssets()) != 0}
+	if original := event.GetOriginal(); original != nil {
+		target.Original = &filemedia.ObjectTarget{FileID: original.GetFileId(), ObjectKey: original.GetObjectKey(), Extension: original.GetExtension(), MimeType: original.GetMimeType()}
+	}
+	if event.Generations != nil {
+		target.Generations = make([]*filemedia.GenerationTarget, len(event.Generations))
+		for i, generation := range event.Generations {
+			if generation != nil {
+				target.Generations[i] = &filemedia.GenerationTarget{GenerationID: generation.GetGenerationId(), FileID: generation.GetFileId(), ObjectPrefix: generation.GetObjectPrefix()}
+			}
+		}
+	}
+	if event.Timestamp != nil {
+		target.Timestamp = event.Timestamp.AsTime()
+	}
+	return target
 }
