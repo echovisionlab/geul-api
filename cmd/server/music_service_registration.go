@@ -18,6 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/artist"
 	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	artistpublic "github.com/echovisionlab/geul-api/internal/artist/public"
+	artistpublicpostgres "github.com/echovisionlab/geul-api/internal/artist/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/label"
@@ -85,8 +86,12 @@ func (m musicServiceRegistration) registerArtist() (*artist.Service, error) {
 	m.registerManage(managev1connect.NewArtistServiceHandler(artist.NewConnectHandler(artistService), m.manageOptions...))
 	m.registerInternal(intrav1connect.NewInternalArtistServiceHandler(artist.NewInternalConnectHandler(artistService), m.internalOptions...))
 
+	publicArtistUnits, err := artistpublicpostgres.NewUnits(deps.db, deps.contentBlockStore)
+	if err != nil {
+		return nil, fmt.Errorf("initialize public artist store: %w", err)
+	}
 	publicArtistService, err := artistpublic.NewService(artistpublic.Deps{
-		DB: deps.db, SpiceDB: deps.spicedbClient, ContentBlocks: deps.contentBlockStore,
+		Units: publicArtistUnits, SpiceDB: deps.spicedbClient,
 		Media: artistadapter.NewPublicMedia(deps.db, artistRuntime),
 	})
 	if err != nil {

@@ -9,10 +9,7 @@
 7 internal/ai spicedb client
 1 internal/ai sql driver
 12 internal/artist generated contracts
-7 internal/artist/public generated contracts
-3 internal/artist/public gorm
-4 internal/artist/public model
-3 internal/artist/public spicedb client
+2 internal/artist/public generated contracts
 5 internal/audience generated contracts
 7 internal/audience gorm
 8 internal/audience model

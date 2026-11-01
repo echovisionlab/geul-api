@@ -9,32 +9,23 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
-	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// artistReleasesSortColumns defines allowed sort fields for artist releases
-var artistReleasesSortColumns = map[string]string{
-	"release_date": "release.release_date",
-	"published_at": "release.published_at",
-	"title":        releaseSourceTitleSQL("release"),
-}
+// artistReleasesSortFields are the sort fields of the Artist Releases.
+var artistReleasesSortFields = map[string]bool{"release_date": true, "published_at": true, "title": true}
 
 // artistWorksSortAllowedFields defines allowed sort fields for artist works
 var artistWorksSortAllowedFields = map[string]bool{
@@ -42,18 +33,28 @@ var artistWorksSortAllowedFields = map[string]bool{
 	"published_at": true,
 }
 
+// MediaProjection resolves the public media of Artists and what they link.
+type MediaProjection interface {
+	LoadArtistImages(context.Context, []string) (map[string][]artistdomain.ArtistImageProjection, error)
+	ResolveReadyAssetRefs(context.Context, []*string) (map[string]*commonv1.AssetRef, error)
+	ResolveArtistOGAsset(context.Context, *string, *string) (*commonv1.AssetRef, error)
+	IsReadyAsset(context.Context, string) (bool, error)
+	LoadReleaseArtworkAssets(context.Context, []string) (map[string]*commonv1.AssetRef, error)
+	LoadWorkImageAssets(context.Context, map[string]*string) (map[string]*commonv1.AssetRef, error)
+	LoadReadySourceFileAssets(context.Context, string, []string) (map[string]*commonv1.AssetRef, error)
+}
+
 // Deps are the collaborators of the public Artist reads; all are required.
 type Deps struct {
-	DB            *gorm.DB
-	SpiceDB       *auth.SpiceDBClient
-	ContentBlocks *contentblock.Store
-	Media         MediaProjection
+	Units   mutation.UnitOfWork[Store] // artistpublicpostgres.NewUnits
+	SpiceDB authz.AuthorizationDecisionChecker
+	Media   MediaProjection
 }
 
 func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
-		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "ContentBlocks": d.ContentBlocks == nil, "Media": d.Media == nil,
+		"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Media": d.Media == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -68,10 +69,9 @@ func (d Deps) validate() error {
 
 // Service holds the public Artist reads.
 type Service struct {
-	db            *gorm.DB
-	spiceDB       *auth.SpiceDBClient
-	contentBlocks *contentblock.Store
-	media         MediaProjection
+	units   mutation.UnitOfWork[Store]
+	spiceDB authz.AuthorizationDecisionChecker
+	media   MediaProjection
 }
 
 // NewService validates deps and returns the public Artist reads.
@@ -79,7 +79,7 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	return &Service{db: deps.DB, spiceDB: deps.SpiceDB, contentBlocks: deps.ContentBlocks, media: deps.Media}, nil
+	return &Service{units: deps.Units, spiceDB: deps.SpiceDB, media: deps.Media}, nil
 }
 
 var errArtistNotFound = domainerr.New(domainerr.NotFound, "", "artist not found")
@@ -92,66 +92,60 @@ type ListArtistsQuery struct {
 	Sorts   []*commonv1.SortSpec
 }
 
+// Pagination is where a page sits among every published match.
+type Pagination struct {
+	Total   int32
+	Limit   int32
+	Offset  int32
+	HasMore bool
+}
+
+// Summary is a published Artist as a list shows it.
+type Summary struct {
+	ID          string
+	Name        string
+	Slug        *string
+	CountryCode *string
+	PublishedAt *time.Time
+	SocialLinks map[string]string
+	Image       *commonv1.AssetRef
+	OgImage     *commonv1.AssetRef
+}
+
 // ArtistPage is one page of published Artist summaries.
 type ArtistPage struct {
-	Artists    []*openv1.ArtistSummary
-	Pagination *commonv1.PaginationResponse
+	Artists    []Summary
+	Pagination Pagination
 }
 
 // List returns published artists with filtering and sorting
 func (s *Service) List(ctx context.Context, query ListArtistsQuery) (ArtistPage, error) {
-	// Base query - only published artists
-	artists := s.db.WithContext(ctx).Model(&model.Artist{}).Where("status = ?", model.ArtistStatusPublished)
-
-	// 1. 조인 필터 직접 처리
-	var remainingFilters []*commonv1.FilterSpec
-	for _, f := range query.Filters {
-		switch f.GetField() {
-		case "label_id":
-			switch f.GetOp() {
-			case commonv1.FilterOp_FILTER_OP_EQ:
-				artists = artists.Where("id IN (SELECT artist_id FROM artist_label WHERE label_id = ?)", f.GetValue())
-			case commonv1.FilterOp_FILTER_OP_IN:
-				artists = artists.Where("id IN (SELECT artist_id FROM artist_label WHERE label_id IN ?)", f.GetValues())
-			default:
-				return ArtistPage{}, domainerr.New(domainerr.Invalid, "", fmt.Sprintf("invalid filter operation '%s' for field '%s'", f.GetOp().String(), f.GetField()))
-			}
-		default:
-			remainingFilters = append(remainingFilters, f)
-		}
-	}
-
-	// 2. 나머지 필터 적용
-	filtered, err := ArtistFilterConfig.ApplyFilters(artists, remainingFilters)
-	if err != nil {
-		return ArtistPage{}, err
-	}
-
-	// Get total count before pagination
-	var total int64
-	if err := filtered.Count(&total).Error; err != nil {
-		return ArtistPage{}, err
-	}
-
-	// 3. Sort
-	sorted, err := ArtistSortConfig.ApplySort(filtered, query.Sorts)
-	if err != nil {
-		return ArtistPage{}, err
-	}
-
-	// 4. Pagination
 	pagination := queryutil.GetPaginationParams(query.Limit, query.Offset, 20)
-
-	// Fetch artists
-	var rows []model.Artist
-	if err := queryutil.ApplyPagination(sorted, pagination).Find(&rows).Error; err != nil {
+	var rows []artistdomain.Artist
+	var total int64
+	var titles map[string]string
+	var ogAssetIDs map[string]*string
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		if rows, total, err = store.ListPublishedArtists(ctx, ListPage{
+			Filters: query.Filters, Sorts: query.Sorts, Limit: pagination.Limit, Offset: pagination.Offset,
+		}); err != nil {
+			return err
+		}
+		ids := collectArtistIDs(rows)
+		if titles, err = sourceTitles(ctx, store, ids); err != nil {
+			return err
+		}
+		ogAssetIDs, err = store.SourceOgAssetIDs(ctx, ids)
+		return err
+	}); err != nil {
 		return ArtistPage{}, err
 	}
-	summaries, err := s.artistSummaries(ctx, rows)
+	summaries, err := s.artistSummaries(ctx, rows, titles, ogAssetIDs)
 	if err != nil {
 		return ArtistPage{}, err
 	}
-	return ArtistPage{Artists: summaries, Pagination: &commonv1.PaginationResponse{
+	return ArtistPage{Artists: summaries, Pagination: Pagination{
 		Total:   int32(total),
 		Limit:   pagination.Limit,
 		Offset:  pagination.Offset,
@@ -159,75 +153,59 @@ func (s *Service) List(ctx context.Context, query ListArtistsQuery) (ArtistPage,
 	}}, nil
 }
 
+// sourceTitles maps each Artist to its source-locale title; one without
+// answers not found.
+func sourceTitles(ctx context.Context, store Store, artistIDs []string) (map[string]string, error) {
+	titles := make(map[string]string, len(artistIDs))
+	if len(artistIDs) == 0 {
+		return titles, nil
+	}
+	titles, err := store.SourceTitles(ctx, artistIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range artistIDs {
+		if _, ok := titles[id]; !ok {
+			return nil, domainerr.ResourceNotFound("artist_translation", id)
+		}
+	}
+	return titles, nil
+}
+
 // artistSummaries renders artists with their source titles, primary images
 // and OG images.
-func (s *Service) artistSummaries(ctx context.Context, artists []model.Artist) ([]*openv1.ArtistSummary, error) {
-	sourceTitles, err := loadSourceTitles(ctx, s.db, collectArtistIDs(artists))
-	if err != nil {
-		return nil, err
-	}
-	for i := range artists {
-		artists[i].Name = sourceTitles[artists[i].ID]
-	}
-	sourceOgAssetIDs, err := loadSourceOgAssetIDs(ctx, s.db, collectArtistIDs(artists))
-	if err != nil {
-		return nil, err
-	}
-	for i := range artists {
-		artists[i].OgAssetID = sourceOgAssetIDs[artists[i].ID]
-	}
-	artistIDs := collectArtistIDs(artists)
-	readyImages, err := s.media.LoadArtistImages(ctx, artistIDs)
+func (s *Service) artistSummaries(ctx context.Context, artists []artistdomain.Artist, titles map[string]string, ogAssetIDs map[string]*string) ([]Summary, error) {
+	readyImages, err := s.media.LoadArtistImages(ctx, collectArtistIDs(artists))
 	if err != nil {
 		return nil, err
 	}
 	ogCandidates := make([]*string, 0, len(artists))
-	for index := range artists {
-		ogCandidates = append(ogCandidates, artists[index].OgAssetID)
+	for _, value := range artists {
+		ogCandidates = append(ogCandidates, ogAssetIDs[value.ID])
 	}
 	readyOgAssets, err := s.media.ResolveReadyAssetRefs(ctx, ogCandidates)
 	if err != nil {
 		return nil, err
 	}
-
-	// Convert to proto summaries
-	summaries := make([]*openv1.ArtistSummary, 0, len(artists))
-	for _, artist := range artists {
-		summary := buildArtistSummary(&artist)
-		if images := readyImages[artist.ID]; len(images) > 0 {
-			summary.ImageAsset = images[0].Asset
+	summaries := make([]Summary, 0, len(artists))
+	for _, value := range artists {
+		summary := buildArtistSummary(value, titles[value.ID])
+		if images := readyImages[value.ID]; len(images) > 0 {
+			summary.Image = images[0].Asset
 		}
-		if artist.OgAssetID != nil {
-			summary.OgAsset = readyOgAssets[*artist.OgAssetID]
+		if ogAssetID := ogAssetIDs[value.ID]; ogAssetID != nil {
+			summary.OgImage = readyOgAssets[*ogAssetID]
 		}
 		summaries = append(summaries, summary)
 	}
-
 	return summaries, nil
 }
 
-func buildArtistSummary(artist *model.Artist) *openv1.ArtistSummary {
-	if artist == nil {
-		return &openv1.ArtistSummary{}
+func buildArtistSummary(value artistdomain.Artist, name string) Summary {
+	summary := Summary{ID: value.ID, Name: name, Slug: value.Slug, CountryCode: value.CountryCode, PublishedAt: value.PublishedAt}
+	if len(value.SocialLinks) > 0 {
+		summary.SocialLinks = value.SocialLinks
 	}
-
-	summary := &openv1.ArtistSummary{
-		Id:   artist.ID,
-		Name: artist.Name,
-	}
-	if artist.Slug != nil {
-		summary.Slug = artist.Slug
-	}
-	if artist.CountryCode != nil {
-		summary.CountryCode = artist.CountryCode
-	}
-	if artist.PublishedAt != nil {
-		summary.PublishedAt = timestamppb.New(*artist.PublishedAt)
-	}
-	if len(artist.SocialLinks) > 0 {
-		summary.SocialLinks = artist.SocialLinks
-	}
-
 	return summary
 }
 
@@ -245,44 +223,27 @@ type GetArtistQuery struct {
 // - UUID-first: if input is valid UUID, query by ID; otherwise query by slug
 // - share_token allows access to draft artists
 // - authenticated accounts with the exact SpiceDB view permission can access drafts
-func (s *Service) Get(ctx context.Context, query GetArtistQuery) (*openv1.Artist, error) {
-	slugOrID := query.SlugOrID
-	shareToken := query.ShareToken
-	sharePassword := query.SharePassword
-
-	var artist model.Artist
-	var err error
-
-	// UUID-first approach
-	if isValidUUID(slugOrID) {
-		err = s.db.WithContext(ctx).First(&artist, "id = ?", slugOrID).Error
-	} else {
-		err = s.db.WithContext(ctx).First(&artist, "slug = ?", slugOrID).Error
-	}
-
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errArtistNotFound
+func (s *Service) Get(ctx context.Context, query GetArtistQuery) (Detail, error) {
+	var value artistdomain.Artist
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		value, err = store.FindArtist(ctx, query.SlugOrID, isValidUUID(query.SlugOrID))
+		return err
+	}); err != nil {
+		if errors.Is(err, artistdomain.ErrArtistNotFound) {
+			return Detail{}, errArtistNotFound
 		}
-		return nil, err
+		return Detail{}, err
 	}
-
-	// Check access for draft artists
-	if artist.Status != model.ArtistStatusPublished {
-		if err := s.requireDraftArtistAccess(ctx, artist.ID, shareToken, sharePassword); err != nil {
-			return nil, err
+	if value.Status != artistdomain.StatusPublished {
+		if err := s.requireDraftArtistAccess(ctx, value.ID, query.ShareToken, query.SharePassword); err != nil {
+			return Detail{}, err
 		}
 	}
-
-	return s.buildArtistResponse(ctx, query.AcceptLanguage, &artist)
+	return s.buildArtistResponse(ctx, query.AcceptLanguage, value)
 }
 
-func (s *Service) requireDraftArtistAccess(
-	ctx context.Context,
-	artistID string,
-	shareToken string,
-	sharePassword string,
-) error {
+func (s *Service) requireDraftArtistAccess(ctx context.Context, artistID, shareToken, sharePassword string) error {
 	allowed, err := hasDraftResourceView(ctx, s.spiceDB, artistID)
 	if err != nil {
 		return fmt.Errorf("check artist draft view permission: %w", err)
@@ -290,10 +251,55 @@ func (s *Service) requireDraftArtistAccess(
 	if allowed {
 		return nil
 	}
-	return requireOpaqueDraftShareLinkAccess(
-		ctx, s.db, shareToken, sharePassword,
-		managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_ARTIST, artistID, "artist",
-	)
+	return s.requireOpaqueDraftShareLinkAccess(ctx, shareToken, sharePassword, artistID, "artist")
+}
+
+func hasDraftResourceView(ctx context.Context, checker authz.AuthorizationDecisionChecker, resourceID string) (bool, error) {
+	user := auth.GetUser(ctx)
+	if user == nil || !user.Authenticated || user.Banned || strings.TrimSpace(user.IdentityID.String()) == "" {
+		return false, nil
+	}
+	can, err := policyv1.Artist.View(resourceID)
+	if err != nil {
+		return false, err
+	}
+	decision, err := auth.AuthorizationDecision(ctx, can)
+	if err != nil {
+		return false, err
+	}
+	return checker.Can(ctx, decision)
+}
+
+func (s *Service) requireOpaqueDraftShareLinkAccess(ctx context.Context, token, password, entityID, entityName string) error {
+	if token == "" {
+		return domainerr.New(domainerr.NotFound, "", entityName+" not found")
+	}
+	var passwordHash *string
+	var found bool
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		passwordHash, found, err = store.ShareLink(ctx, token, entityID, time.Now())
+		return err
+	}); err != nil {
+		return domainerr.New(domainerr.NotFound, "", entityName+" not found").WithCause(failurecause.ServerFault(failurecause.WithPrivate(err, token, password)))
+	}
+	if !found {
+		return domainerr.New(domainerr.NotFound, "", entityName+" not found")
+	}
+	if passwordHash == nil {
+		return nil
+	}
+	if password == "" {
+		return domainerr.New(domainerr.NotFound, "", entityName+" not found")
+	}
+	match, err := crypto.NewPasswordHasher(nil).Verify(password, *passwordHash)
+	if err != nil {
+		return domainerr.New(domainerr.NotFound, "", entityName+" not found").WithCause(failurecause.ServerFault(failurecause.WithPrivate(err, token, password, *passwordHash)))
+	}
+	if !match {
+		return domainerr.New(domainerr.NotFound, "", entityName+" not found")
+	}
+	return nil
 }
 
 // ArtistWorksQuery pages through the published Releases or Works of an
@@ -318,59 +324,56 @@ func (q ArtistWorksQuery) page() (int32, int32) {
 	return limit, offset
 }
 
+// Release is a published Release of an Artist with its other Artists.
+type Release struct {
+	ID          string
+	Title       string
+	Slug        *string
+	Type        string
+	ReleaseDate *time.Time
+	PublishedAt *time.Time
+	Artwork     *commonv1.AssetRef
+	Artists     []ReleaseArtist
+}
+
+// ReleaseArtist is another Artist credited on a Release.
+type ReleaseArtist struct {
+	ID   string
+	Name string
+	Slug *string
+}
+
+// ReleasesPage is one page of an Artist's published Releases.
+type ReleasesPage struct {
+	Releases []Release
+	Total    int32
+}
+
 // GetReleases returns releases by an artist
-func (s *Service) GetReleases(ctx context.Context, query ArtistWorksQuery) (*openv1.GetArtistReleasesResponse, error) {
+func (s *Service) GetReleases(ctx context.Context, query ArtistWorksQuery) (ReleasesPage, error) {
 	artistID := query.ArtistID
 	limit, offset := query.page()
-
-	// Build ORDER BY clause from SortSpec
-	orderBy := "release.release_date DESC NULLS LAST"
-	if len(query.Sorts) > 0 {
-		var orderParts []string
-		for _, sortSpec := range query.Sorts {
-			column, ok := artistReleasesSortColumns[sortSpec.GetField()]
-			if !ok {
-				return nil, domainerr.New(domainerr.Invalid, "", "invalid sort field: "+sortSpec.GetField())
-			}
-			order := "ASC"
-			if sortSpec.GetOrder() == commonv1.SortOrder_SORT_ORDER_DESC {
-				order = "DESC"
-			}
-			orderParts = append(orderParts, fmt.Sprintf("%s %s NULLS LAST", column, order))
+	sorts := make([]Sort, 0, len(query.Sorts))
+	for _, sortSpec := range query.Sorts {
+		if !artistReleasesSortFields[sortSpec.GetField()] {
+			return ReleasesPage{}, domainerr.New(domainerr.Invalid, "", "invalid sort field: "+sortSpec.GetField())
 		}
-		orderBy = strings.Join(orderParts, ", ")
+		sorts = append(sorts, Sort{Field: sortSpec.GetField(), Descending: sortSpec.GetOrder() == commonv1.SortOrder_SORT_ORDER_DESC})
 	}
-
-	var releases []struct {
-		ID          string     `gorm:"column:id"`
-		Title       string     `gorm:"column:title"`
-		Slug        *string    `gorm:"column:slug"`
-		Type        string     `gorm:"column:type"`
-		ReleaseDate *time.Time `gorm:"column:release_date"`
-		PublishedAt *time.Time `gorm:"column:published_at"`
+	var releases []ReleaseRow
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		releases, err = store.PublishedReleases(ctx, artistID, sorts, limit, offset)
+		return err
+	}); err != nil {
+		return ReleasesPage{}, err
 	}
-
-	err := s.db.WithContext(ctx).
-		Table("release_artist").
-		Select("DISTINCT release.id, "+releaseSourceTitleSQL("release")+" AS title, release.slug, release.type, release.release_date, release.published_at").
-		Joins("JOIN release ON release.id = release_artist.release_id").
-		Where("release_artist.artist_id = ? AND release.status = ?", artistID, managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String()).
-		Order(orderBy).
-		Limit(int(limit)).
-		Offset(int(offset)).
-		Scan(&releases).Error
-	if err != nil {
-		return nil, err
-	}
-
-	// Get total count
 	var total int64
-	if err := s.db.WithContext(ctx).
-		Table("release_artist").
-		Select("COUNT(DISTINCT release.id)").
-		Joins("JOIN release ON release.id = release_artist.release_id").
-		Where("release_artist.artist_id = ? AND release.status = ?", artistID, managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String()).
-		Scan(&total).Error; err != nil {
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		total, err = store.PublishedReleaseCount(ctx, artistID)
+		return err
+	}); err != nil {
 		slog.ErrorContext(ctx, "Artist release count query failed; reporting a zero total", "domain", "artist", "operation", "count_artist_releases", failurecause.Attr(err), "artist_id", artistID)
 	}
 	releaseIDs := make([]string, 0, len(releases))
@@ -379,124 +382,89 @@ func (s *Service) GetReleases(ctx context.Context, query ArtistWorksQuery) (*ope
 	}
 	artworkAssets, err := s.media.LoadReleaseArtworkAssets(ctx, releaseIDs)
 	if err != nil {
-		return nil, err
+		return ReleasesPage{}, err
 	}
-	otherArtists, err := loadArtistReleaseOtherArtists(ctx, s.db, releaseIDs, artistID)
-	if err != nil {
-		return nil, err
+	otherArtists := make(map[string][]ReleaseArtist, len(releaseIDs))
+	if len(releaseIDs) > 0 {
+		var rows []ReleaseArtistRow
+		if err := s.units.Read(ctx, func(store Store) error {
+			var err error
+			rows, err = store.ReleaseArtists(ctx, releaseIDs, artistID)
+			return err
+		}); err != nil {
+			return ReleasesPage{}, err
+		}
+		for _, row := range rows {
+			otherArtists[row.ReleaseID] = append(otherArtists[row.ReleaseID], ReleaseArtist{ID: row.ArtistID, Name: row.ArtistName, Slug: row.ArtistSlug})
+		}
 	}
-
-	protoReleases := make([]*openv1.ArtistRelease, 0, len(releases))
-	for _, r := range releases {
-		release := &openv1.ArtistRelease{
-			Id:    r.ID,
-			Title: r.Title,
-			Type:  r.Type,
-		}
-		if r.Slug != nil {
-			release.Slug = r.Slug
-		}
-		if r.ReleaseDate != nil {
-			release.ReleaseDate = timestamppb.New(*r.ReleaseDate)
-		}
-		if r.PublishedAt != nil {
-			release.PublishedAt = timestamppb.New(*r.PublishedAt)
-		}
-
-		release.ArtworkAsset = artworkAssets[r.ID]
-		release.Artists = otherArtists[r.ID]
-
-		protoReleases = append(protoReleases, release)
+	page := ReleasesPage{Releases: make([]Release, 0, len(releases)), Total: int32(total)}
+	for _, row := range releases {
+		page.Releases = append(page.Releases, Release{
+			ID: row.ID, Title: row.Title, Slug: row.Slug, Type: row.Type, ReleaseDate: row.ReleaseDate, PublishedAt: row.PublishedAt,
+			Artwork: artworkAssets[row.ID], Artists: otherArtists[row.ID],
+		})
 	}
-
-	return &openv1.GetArtistReleasesResponse{
-		Releases: protoReleases,
-		Total:    int32(total),
-	}, nil
+	return page, nil
 }
 
-// artistWorksOrderBy is the ORDER BY clause of sorts, newest first by
-// default.
-func artistWorksOrderBy(sorts []*commonv1.SortSpec) (string, error) {
-	if len(sorts) == 0 {
-		return "work.published_at DESC NULLS LAST", nil
-	}
-	orderParts := make([]string, 0, len(sorts))
-	for _, sortSpec := range sorts {
-		if !artistWorksSortAllowedFields[sortSpec.GetField()] {
-			return "", domainerr.New(domainerr.Invalid, "", "invalid sort field: "+sortSpec.GetField())
-		}
-		order := "ASC"
-		if sortSpec.GetOrder() == commonv1.SortOrder_SORT_ORDER_DESC {
-			order = "DESC"
-		}
-		if sortSpec.GetField() == "title" {
-			orderParts = append(orderParts, fmt.Sprintf("%s %s NULLS LAST", workSourceTitleSQL("work"), order))
-			continue
-		}
-		orderParts = append(orderParts, fmt.Sprintf("work.%s %s NULLS LAST", sortSpec.GetField(), order))
-	}
-	return strings.Join(orderParts, ", "), nil
+// Work is a published or archived Work of an Artist in the displayed
+// locale. Type is the stored Work type.
+type Work struct {
+	ID          string
+	Title       string
+	Slug        *string
+	Summary     *string
+	Type        string
+	PublishedAt *time.Time
+	Image       *commonv1.AssetRef
+}
+
+// WorksPage is one page of an Artist's visible Works.
+type WorksPage struct {
+	Works []Work
+	Total int32
 }
 
 // GetWorks returns works by an artist
-func (s *Service) GetWorks(ctx context.Context, query ArtistWorksQuery) (*openv1.GetArtistWorksResponse, error) {
+func (s *Service) GetWorks(ctx context.Context, query ArtistWorksQuery) (WorksPage, error) {
 	artistID := query.ArtistID
 	limit, offset := query.page()
-
-	orderBy, err := artistWorksOrderBy(query.Sorts)
-	if err != nil {
-		return nil, err
+	sorts := make([]Sort, 0, len(query.Sorts))
+	for _, sortSpec := range query.Sorts {
+		if !artistWorksSortAllowedFields[sortSpec.GetField()] {
+			return WorksPage{}, domainerr.New(domainerr.Invalid, "", "invalid sort field: "+sortSpec.GetField())
+		}
+		sorts = append(sorts, Sort{Field: sortSpec.GetField(), Descending: sortSpec.GetOrder() == commonv1.SortOrder_SORT_ORDER_DESC})
 	}
-
-	var works []struct {
-		ID          string     `gorm:"column:id"`
-		Title       string     `gorm:"column:title"`
-		Slug        *string    `gorm:"column:slug"`
-		Summary     *string    `gorm:"column:summary"`
-		Type        string     `gorm:"column:type"`
-		ImageFileID *string    `gorm:"column:image_file_id"`
-		PublishedAt *time.Time `gorm:"column:published_at"`
+	var works []WorkRow
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		works, err = store.VisibleWorks(ctx, artistID, sorts, limit, offset)
+		return err
+	}); err != nil {
+		return WorksPage{}, err
 	}
-
-	err = s.db.WithContext(ctx).
-		Table("work_credit").
-		Select("DISTINCT work.id, "+workSourceTitleSQL("work")+" AS title, "+workSourceSummarySQL("work")+" AS summary, work.slug, work.type, work.featured_image_file_id AS image_file_id, work.published_at").
-		Joins("JOIN work ON work.id = work_credit.work_id").
-		Where("work_credit.artist_id = ? AND work.status IN ?", artistID, []string{
-			managev1.WorkStatus_WORK_STATUS_PUBLISHED.String(),
-			managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(),
-		}).
-		Order(orderBy).
-		Limit(int(limit)).
-		Offset(int(offset)).
-		Scan(&works).Error
-	if err != nil {
-		return nil, err
+	workIDs := make([]string, 0, len(works))
+	for _, work := range works {
+		workIDs = append(workIDs, work.ID)
 	}
-
-	localizedSelections, err := publiccontent.ResolveBatch(
-		ctx,
-		s.db,
-		artistWorkLocalizationSpec,
-		collectArtistWorkIDs(works),
-		query.AcceptLanguage,
-	)
-	if err != nil {
+	var localizedSelections map[string]publiccontent.Selection
+	// Resolving a localization stores the default translation settings
+	// when none exist, which a read-only snapshot refuses.
+	if err := s.units.ReadLocked(ctx, func(store Store) error {
+		var err error
+		localizedSelections, err = store.WorkLocalizations(ctx, workIDs, query.AcceptLanguage)
+		return err
+	}); err != nil {
 		slog.ErrorContext(ctx, "Artist work localization lookup failed; serving unlocalized Works", "domain", "artist", "operation", "resolve_work_localizations", failurecause.Attr(err), "artist_id", artistID)
 	}
-
-	// Get total count
 	var total int64
-	if err := s.db.WithContext(ctx).
-		Table("work_credit").
-		Select("COUNT(DISTINCT work.id)").
-		Joins("JOIN work ON work.id = work_credit.work_id").
-		Where("work_credit.artist_id = ? AND work.status IN ?", artistID, []string{
-			managev1.WorkStatus_WORK_STATUS_PUBLISHED.String(),
-			managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(),
-		}).
-		Scan(&total).Error; err != nil {
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		total, err = store.VisibleWorkCount(ctx, artistID)
+		return err
+	}); err != nil {
 		slog.ErrorContext(ctx, "Artist work count query failed; reporting a zero total", "domain", "artist", "operation", "count_artist_works", failurecause.Attr(err), "artist_id", artistID)
 	}
 	workFileIDs := make(map[string]*string, len(works))
@@ -505,23 +473,12 @@ func (s *Service) GetWorks(ctx context.Context, query ArtistWorksQuery) (*openv1
 	}
 	workImageAssets, err := s.media.LoadWorkImageAssets(ctx, workFileIDs)
 	if err != nil {
-		return nil, err
+		return WorksPage{}, err
 	}
-
-	protoWorks := make([]*openv1.ArtistWork, 0, len(works))
-	for _, w := range works {
-		work := &openv1.ArtistWork{
-			Id:    w.ID,
-			Title: w.Title,
-			Type:  artistWorkTypeFromDatabase(w.Type),
-		}
-		if w.Slug != nil {
-			work.Slug = w.Slug
-		}
-		if w.Summary != nil {
-			work.Summary = w.Summary
-		}
-		if localized, ok := localizedSelections[w.ID]; ok {
+	page := WorksPage{Works: make([]Work, 0, len(works)), Total: int32(total)}
+	for _, row := range works {
+		work := Work{ID: row.ID, Title: row.Title, Slug: row.Slug, Summary: row.Summary, Type: row.Type, PublishedAt: row.PublishedAt, Image: workImageAssets[row.ID]}
+		if localized, ok := localizedSelections[row.ID]; ok {
 			if localized.Title != nil {
 				work.Title = *localized.Title
 			}
@@ -529,324 +486,161 @@ func (s *Service) GetWorks(ctx context.Context, query ArtistWorksQuery) (*openv1
 				work.Summary = localized.Summary
 			}
 		}
-		if w.PublishedAt != nil {
-			work.PublishedAt = timestamppb.New(*w.PublishedAt)
-		}
-
-		work.ImageAsset = workImageAssets[w.ID]
-
-		protoWorks = append(protoWorks, work)
+		page.Works = append(page.Works, work)
 	}
+	return page, nil
+}
 
-	return &openv1.GetArtistWorksResponse{
-		Works: protoWorks,
-		Total: int32(total),
-	}, nil
+// Detail is one Artist as the public API renders it.
+type Detail struct {
+	Artist       artistdomain.Artist
+	Name         string
+	Document     *contentv1.LocalizedRichTextDocument
+	Revision     string
+	IsGroup      bool
+	Localization publiccontent.Selection
+	OgImage      *commonv1.AssetRef
+	Images       []artistdomain.ArtistImageProjection
+	ReleaseCount int32
+	WorkCount    int32
+	Labels       []Label
+}
+
+// Label is a published Label of an Artist.
+type Label struct {
+	ID    string
+	Name  string
+	Slug  *string
+	Image *commonv1.AssetRef
 }
 
 // buildArtistResponse projects the Artist in one snapshot that waits out a
 // concurrent writer of its row.
-func (s *Service) buildArtistResponse(
-	ctx context.Context,
-	acceptLanguage string,
-	artist *model.Artist,
-) (*openv1.Artist, error) {
-	wasPublic := artist.Status == model.ArtistStatusPublished
-	var response *openv1.Artist
-	err := mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
-		projection := *s
-		projection.db = tx
+func (s *Service) buildArtistResponse(ctx context.Context, acceptLanguage string, value artistdomain.Artist) (Detail, error) {
+	wasPublic := value.Status == artistdomain.StatusPublished
+	var detail Detail
+	err := s.units.ReadLocked(ctx, func(store Store) error {
 		var err error
-		response, err = projection.buildArtistResponseInTransaction(
-			ctx, acceptLanguage, artist, wasPublic,
-		)
+		detail, err = s.buildArtistResponseInTransaction(ctx, store, acceptLanguage, value.ID, wasPublic)
 		return err
 	})
-	return response, err
+	return detail, err
 }
 
-func (s *Service) buildArtistResponseInTransaction(
-	ctx context.Context,
-	acceptLanguage string,
-	artist *model.Artist,
-	wasPublic bool,
-) (*openv1.Artist, error) {
-	artistID := artist.ID
-	var current model.Artist
-	if err := s.db.WithContext(ctx).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-		Where("id = ?", artistID).
-		Take(&current).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errArtistNotFound
+func (s *Service) buildArtistResponseInTransaction(ctx context.Context, store Store, acceptLanguage, artistID string, wasPublic bool) (Detail, error) {
+	current, err := store.ShareLockArtist(ctx, artistID)
+	if err != nil {
+		if errors.Is(err, artistdomain.ErrArtistNotFound) {
+			return Detail{}, errArtistNotFound
 		}
-		return nil, err
+		return Detail{}, err
 	}
-	if wasPublic && current.Status != model.ArtistStatusPublished {
-		return nil, errArtistNotFound
+	if wasPublic && current.Status != artistdomain.StatusPublished {
+		return Detail{}, errArtistNotFound
 	}
-	*artist = current
-	localization, err := publiccontent.Resolve(ctx, s.db, artistLocalizationSpec, artistID, acceptLanguage)
+	localization, err := store.ResolveLocalization(ctx, artistID, acceptLanguage)
 	if err != nil {
 		slog.ErrorContext(ctx, "Artist localization lookup failed; serving the unlocalized Artist", "domain", "artist", "operation", "resolve_artist_localization", failurecause.Attr(err), "artist_id", artistID)
 	}
-	localization, err = publiccontent.ResolveOGConsistency(
-		ctx, s.db, artistLocalizationSpec, artistID, localization, s.localizedOGAssetReady,
-	)
+	localization, err = store.ResolveOGConsistency(ctx, artistID, localization, s.media.IsReadyAsset)
 	if err != nil {
-		return nil, err
+		return Detail{}, err
 	}
-	content, err := artistdomain.LoadCreativeContentDocumentForPublic(
-		ctx, artistpostgres.Bind(s.db, artistpostgres.Deps{ContentBlocks: s.contentBlocks}), artistID, localization.DisplayedLocale,
-	)
+	content, err := store.Document(ctx, artistID, localization.DisplayedLocale)
 	if err != nil {
-		return nil, err
+		return Detail{}, err
 	}
-	artist.Name = content.SourceTitle
+	detail := Detail{
+		Artist: current, Name: content.SourceTitle, Document: content.Document, Revision: content.Revision,
+		IsGroup: isArtistGroup(ctx, store, artistID), Localization: localization,
+	}
 	if localization.Title != nil {
-		artist.Name = *localization.Title
+		detail.Name = *localization.Title
 	}
-
-	protoArtist := &openv1.Artist{
-		Id:          artist.ID,
-		Name:        artist.Name,
-		Document:    content.Document,
-		SocialLinks: artist.SocialLinks,
-		Status:      publicArtistStatus(artist.Status),
-		CreatedAt:   timestamppb.New(artist.CreatedAt),
-		IsGroup:     s.isArtistGroup(ctx, artist.ID),
-		Revision:    content.Revision,
-	}
-
-	if artist.UpdatedAt != nil {
-		protoArtist.UpdatedAt = timestamppb.New(*artist.UpdatedAt)
-	}
-
-	if artist.Slug != nil {
-		protoArtist.Slug = artist.Slug
-	}
-	if artist.RealName != nil {
-		protoArtist.RealName = artist.RealName
-	}
-	protoArtist.LocalizationInfo = publiccontent.ToProtoLocalizationInfo(localization)
-	if artist.CountryCode != nil {
-		protoArtist.CountryCode = artist.CountryCode
-	}
-	if artist.Website != nil {
-		protoArtist.Website = artist.Website
-	}
-	if artist.PublishedAt != nil {
-		protoArtist.PublishedAt = timestamppb.New(*artist.PublishedAt)
-	}
-	sourceOgAssetIDs, err := loadSourceOgAssetIDs(ctx, s.db, []string{artist.ID})
+	sourceOgAssetIDs, err := store.SourceOgAssetIDs(ctx, []string{artistID})
 	if err != nil {
-		return nil, err
+		return Detail{}, err
 	}
-	artistSourceOgAssetID := sourceOgAssetIDs[artist.ID]
+	artistSourceOgAssetID := sourceOgAssetIDs[artistID]
 	if localization.OmitSourceOgFallback {
 		artistSourceOgAssetID = nil
 	}
-	protoArtist.OgAsset, err = s.media.ResolveArtistOGAsset(ctx, artistSourceOgAssetID, localization.OgAssetID)
+	if detail.OgImage, err = s.media.ResolveArtistOGAsset(ctx, artistSourceOgAssetID, localization.OgAssetID); err != nil {
+		return Detail{}, err
+	}
+	images, err := s.media.LoadArtistImages(ctx, []string{artistID})
 	if err != nil {
-		return nil, err
+		return Detail{}, err
 	}
-	images, err := s.media.LoadArtistImages(ctx, []string{artist.ID})
+	detail.Images = images[artistID]
+	detail.ReleaseCount = artistReleaseCount(ctx, store, artistID)
+	detail.WorkCount = artistWorkCount(ctx, store, artistID)
+	if detail.Labels, err = s.artistLabels(ctx, store, artistID); err != nil {
+		return Detail{}, err
+	}
+	return detail, nil
+}
+
+func isArtistGroup(ctx context.Context, store Store, artistID string) bool {
+	group, err := store.IsGroup(ctx, artistID)
 	if err != nil {
-		return nil, err
-	}
-	applyOpenArtistImages(protoArtist, images[artist.ID])
-
-	// Get counts
-	protoArtist.ReleaseCount = s.getArtistReleaseCount(ctx, artist.ID)
-	protoArtist.WorkCount = s.getArtistWorkCount(ctx, artist.ID)
-
-	// Get labels
-	protoArtist.Labels, err = s.getArtistLabels(ctx, artist.ID)
-	if err != nil {
-		return nil, err
-	}
-	return protoArtist, nil
-}
-
-func applyOpenArtistImages(artist *openv1.Artist, images []artistdomain.ArtistImageProjection) {
-	if artist == nil {
-		return
-	}
-	artist.Images = make([]*openv1.ArtistImage, 0, len(images))
-	for index, image := range images {
-		primary := index == 0
-		artist.Images = append(artist.Images, &openv1.ArtistImage{
-			FileId:    image.FileID,
-			Asset:     image.Asset,
-			SortOrder: int32(index),
-			Primary:   primary,
-		})
-		if primary {
-			artist.ImageAsset = image.Asset
-		}
-	}
-}
-
-func collectArtistWorkIDs(
-	works []struct {
-		ID          string     `gorm:"column:id"`
-		Title       string     `gorm:"column:title"`
-		Slug        *string    `gorm:"column:slug"`
-		Summary     *string    `gorm:"column:summary"`
-		Type        string     `gorm:"column:type"`
-		ImageFileID *string    `gorm:"column:image_file_id"`
-		PublishedAt *time.Time `gorm:"column:published_at"`
-	},
-) []string {
-	ids := make([]string, 0, len(works))
-	for _, work := range works {
-		ids = append(ids, work.ID)
-	}
-	return ids
-}
-
-func collectArtistIDs(artists []model.Artist) []string {
-	ids := make([]string, 0, len(artists))
-	for _, artist := range artists {
-		ids = append(ids, artist.ID)
-	}
-	return ids
-}
-
-func (s *Service) isArtistGroup(ctx context.Context, artistID string) bool {
-	var count int64
-	if err := s.db.WithContext(ctx).
-		Model(&model.Artist{}).
-		Where("parent_artist_id = ?", artistID).
-		Count(&count).Error; err != nil {
 		slog.ErrorContext(ctx, "Artist group lookup failed; treating the Artist as solo", "domain", "artist", "operation", "check_artist_group", failurecause.Attr(err), "artist_id", artistID)
 		return false
 	}
-
-	return count > 0
+	return group
 }
 
-// getArtistReleaseCount gets the count of published releases for an artist
-func (s *Service) getArtistReleaseCount(ctx context.Context, artistID string) int32 {
-	var count int64
-	if err := s.db.WithContext(ctx).Raw(`
-		SELECT COUNT(DISTINCT release.id)
-		FROM release_artist
-		JOIN release ON release.id = release_artist.release_id
-		WHERE release_artist.artist_id = ? AND release.status = ?
-	`, artistID, managev1.ReleaseStatus_RELEASE_STATUS_PUBLISHED.String()).Scan(&count).Error; err != nil {
+// artistReleaseCount gets the count of published releases for an artist
+func artistReleaseCount(ctx context.Context, store Store, artistID string) int32 {
+	count, err := store.PublishedReleaseCount(ctx, artistID)
+	if err != nil {
 		slog.ErrorContext(ctx, "Artist release count query failed; reporting zero", "domain", "artist", "operation", "count_artist_releases", failurecause.Attr(err), "artist_id", artistID)
 	}
 	return int32(count)
 }
 
-// getArtistWorkCount gets the count of publicly visible works for an artist.
-func (s *Service) getArtistWorkCount(ctx context.Context, artistID string) int32 {
-	var count int64
-	if err := s.db.WithContext(ctx).Raw(`
-		SELECT COUNT(DISTINCT work.id)
-		FROM work_credit
-		JOIN work ON work.id = work_credit.work_id
-		WHERE work_credit.artist_id = ? AND work.status IN (?, ?)
-	`, artistID,
-		managev1.WorkStatus_WORK_STATUS_PUBLISHED.String(),
-		managev1.WorkStatus_WORK_STATUS_ARCHIVED.String(),
-	).Scan(&count).Error; err != nil {
+// artistWorkCount gets the count of publicly visible works for an artist.
+func artistWorkCount(ctx context.Context, store Store, artistID string) int32 {
+	count, err := store.VisibleWorkCount(ctx, artistID)
+	if err != nil {
 		slog.ErrorContext(ctx, "Artist work count query failed; reporting zero", "domain", "artist", "operation", "count_artist_works", failurecause.Attr(err), "artist_id", artistID)
 	}
 	return int32(count)
 }
 
-// getArtistLabels gets published labels associated with an artist
-func (s *Service) getArtistLabels(ctx context.Context, artistID string) ([]*openv1.ArtistLabel, error) {
-	var labels []struct {
-		ID          string  `gorm:"column:id"`
-		Name        string  `gorm:"column:name"`
-		Slug        *string `gorm:"column:slug"`
-		ImageFileID *string `gorm:"column:image_file_id"`
-	}
-
-	if err := s.db.WithContext(ctx).
-		Table("artist_label").
-		Select("label.id, "+labelSourceTitleSQL("label")+" AS name, label.slug, label.logo_light_file_id AS image_file_id").
-		Joins("JOIN label ON label.id = artist_label.label_id").
-		Where("artist_label.artist_id = ? AND label.status = ?", artistID, model.LabelStatusPublished).
-		Order(labelSourceTitleSQL("label") + " ASC").
-		Limit(12).
-		Scan(&labels).Error; err != nil {
+// artistLabels gets published labels associated with an artist
+func (s *Service) artistLabels(ctx context.Context, store Store, artistID string) ([]Label, error) {
+	rows, err := store.PublishedLabels(ctx, artistID)
+	if err != nil {
 		return nil, err
 	}
-	fileIDs := make([]string, 0, len(labels))
-	for _, label := range labels {
-		if label.ImageFileID != nil {
-			fileIDs = append(fileIDs, *label.ImageFileID)
+	fileIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.ImageFileID != nil {
+			fileIDs = append(fileIDs, *row.ImageFileID)
 		}
 	}
 	imageAssets, err := s.media.LoadReadySourceFileAssets(ctx, "logo", fileIDs)
 	if err != nil {
 		return nil, err
 	}
-
-	protoLabels := make([]*openv1.ArtistLabel, 0, len(labels))
-	for _, l := range labels {
-		label := &openv1.ArtistLabel{
-			Id:   l.ID,
-			Name: l.Name,
+	labels := make([]Label, 0, len(rows))
+	for _, row := range rows {
+		label := Label{ID: row.ID, Name: row.Name, Slug: row.Slug}
+		if row.ImageFileID != nil {
+			label.Image = imageAssets[*row.ImageFileID]
 		}
-		if l.Slug != nil {
-			label.Slug = l.Slug
-		}
-		if l.ImageFileID != nil {
-			label.ImageAsset = imageAssets[*l.ImageFileID]
-		}
-		protoLabels = append(protoLabels, label)
+		labels = append(labels, label)
 	}
+	return labels, nil
+}
 
-	return protoLabels, nil
+func collectArtistIDs(artists []artistdomain.Artist) []string {
+	ids := make([]string, 0, len(artists))
+	for _, value := range artists {
+		ids = append(ids, value.ID)
+	}
+	return ids
 }
 
 func isValidUUID(value string) bool { _, err := uuid.Parse(value); return err == nil }
-
-// loadSourceTitles maps each Artist to its source-locale title; one without
-// answers not found.
-func loadSourceTitles(ctx context.Context, db *gorm.DB, artistIDs []string) (map[string]string, error) {
-	result := make(map[string]string, len(artistIDs))
-	if len(artistIDs) == 0 {
-		return result, nil
-	}
-	var rows []struct {
-		EntityID string `gorm:"column:entity_id"`
-		Title    string `gorm:"column:title"`
-	}
-	if err := db.WithContext(ctx).Table("artist_translation AS localized").Select("localized.entity_id, localized.title").Joins(`JOIN artist ON artist.id = localized.entity_id AND artist.source_locale = localized.locale`).Where("localized.entity_id IN ?", artistIDs).Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-	for _, row := range rows {
-		result[row.EntityID] = row.Title
-	}
-	for _, id := range artistIDs {
-		if _, ok := result[id]; !ok {
-			return nil, domainerr.ResourceNotFound("artist_translation", id)
-		}
-	}
-	return result, nil
-}
-
-// loadSourceOgAssetIDs maps each Artist to its source-locale OG image.
-func loadSourceOgAssetIDs(ctx context.Context, db *gorm.DB, artistIDs []string) (map[string]*string, error) {
-	result := make(map[string]*string, len(artistIDs))
-	if len(artistIDs) == 0 {
-		return result, nil
-	}
-	var rows []struct {
-		EntityID  string  `gorm:"column:entity_id"`
-		OgAssetID *string `gorm:"column:og_asset_id"`
-	}
-	if err := db.WithContext(ctx).Table("artist_translation AS localized").Select("localized.entity_id, localized.og_asset_id").Joins(`JOIN artist ON artist.id = localized.entity_id AND artist.source_locale = localized.locale`).Where("localized.entity_id IN ?", artistIDs).Scan(&rows).Error; err != nil {
-		return nil, err
-	}
-	for _, row := range rows {
-		result[row.EntityID] = row.OgAssetID
-	}
-	return result, nil
-}

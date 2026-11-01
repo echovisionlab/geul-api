@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	artistpublic "github.com/echovisionlab/geul-api/internal/artist/public"
+	artistpublicpostgres "github.com/echovisionlab/geul-api/internal/artist/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -127,8 +128,10 @@ func TestArtistPublicReadsHideDraftsAndExposePublishedRelationsIntegration(t *te
 	require.NoError(t, err)
 	require.Equal(t, draftArtist.Id, adminDraftArtist.Msg.Artist.Id)
 
+	managerArtistUnits, err := artistpublicpostgres.NewUnits(db, testutil.NewCreativeContentStore(t, fixture.SpiceDB))
+	require.NoError(t, err)
 	managerArtistService, err := artistpublic.NewService(artistpublic.Deps{
-		DB: db, SpiceDB: fixture.SpiceDB, ContentBlocks: testutil.NewCreativeContentStore(t, fixture.SpiceDB), Media: fixture.ArtistMedia,
+		Units: managerArtistUnits, SpiceDB: fixture.SpiceDB, Media: fixture.ArtistMedia,
 	})
 	require.NoError(t, err)
 	managerArtistSvc := artistpublic.NewConnectHandler(managerArtistService)

@@ -26,6 +26,7 @@ import (
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 	artistpostgres "github.com/echovisionlab/geul-api/internal/artist/postgres"
 	artistpublic "github.com/echovisionlab/geul-api/internal/artist/public"
+	artistpublicpostgres "github.com/echovisionlab/geul-api/internal/artist/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
@@ -151,7 +152,9 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 	manageWork := workdomain.NewConnectHandler(workService)
 	shareLinks := sharelinktest.NewHandler(t, db, spiceDB)
 	artistMedia := artistadapter.NewPublicMedia(db, artistRuntime)
-	publicArtistService, err := artistpublic.NewService(artistpublic.Deps{DB: db, SpiceDB: spiceDB, ContentBlocks: contentBlocks, Media: artistMedia})
+	publicArtistUnits, err := artistpublicpostgres.NewUnits(db, contentBlocks)
+	require.NoError(t, err)
+	publicArtistService, err := artistpublic.NewService(artistpublic.Deps{Units: publicArtistUnits, SpiceDB: spiceDB, Media: artistMedia})
 	require.NoError(t, err)
 	publicArtist := artistpublic.NewConnectHandler(publicArtistService)
 	labelRuntime := labeladapter.NewPublicRuntime(db, artistLabelPublicCDN, spiceDB, contentBlocks)
