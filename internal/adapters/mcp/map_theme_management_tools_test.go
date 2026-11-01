@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -13,7 +14,6 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const mapThemeTestID = "11111111-1111-4111-8111-111111111111"
@@ -112,6 +112,32 @@ func TestMapThemeManagementGetSnapshotRoundtripsFalseAndZero(t *testing.T) {
 	require.Equal(t, mapThemeSnapshotInputForTest(), service.request.(maptheme.UpdateMapThemeSnapshotCommand).Snapshot)
 }
 
+// The tool output is the stored theme with RFC 3339 UTC timestamps, and
+// the resolve output is its light variant without the transport variant id.
+func TestMapThemeManagementProjectsTheThemeExactly(t *testing.T) {
+	theme := mapThemeForTest(t)
+	theme.CreatedAt = time.Date(2026, 10, 5, 10, 2, 3, 456789000, time.FixedZone("KST", 9*60*60))
+	theme.Snapshot.Settings.CalloutScale = float64(float32(1.1))
+	theme.Snapshot.DarkVariant.BackgroundColor = "#000"
+	service := &recordingMapThemeManagement{theme: theme}
+	tools, err := NewMapThemeManagementTools(service)
+	require.NoError(t, err)
+	variant := `"background_color":"%s","water_color":"#111","land_color":"#222","road_color":"#333","building_fill_color":"#444","building_stroke_enabled":false,"building_stroke_color":"#555","callout_line_color":"#666","callout_text_color":"#777","callout_background_color":"#888","callout_description_color":"#999","attribution_color":"transparent","label_text_color":"#aaa","cluster_color":"#bbb","cluster_hover_color":"#ccc","cluster_text_color":"#ddd","cluster_text_hover_color":"#eee","callout_hover_line_color":"#123","callout_hover_text_color":"#456","callout_hover_description_color":"#789","callout_hover_background_color":"#abc"`
+	settings := `{"callout_scale":1.100000023841858,"callout_offset_x":0,"callout_offset_y":0,"callout_fields":["name","address"],"attribution_font_size":12,"show_area_labels":false,"show_poi_labels":false}`
+
+	result, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMapThemeGet, mapThemeArgumentsForTest(t, map[string]any{"theme_id": mapThemeTestID}))
+	require.NoError(t, err)
+	encoded, err := json.Marshal(result.StructuredContent)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"theme":{"id":"`+mapThemeTestID+`","revision":7,"created_at":"2026-10-05T01:02:03Z","updated_at":"2026-10-05T01:02:03Z","snapshot":{"name":"Theme","settings":`+settings+`,"light_variant":{`+fmt.Sprintf(variant, "#fff")+`},"dark_variant":{`+fmt.Sprintf(variant, "#000")+`}}}}`, string(encoded))
+
+	result, err = tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMapThemeResolve, mapThemeArgumentsForTest(t, map[string]any{"theme_id": mapThemeTestID, "scheme": "dark"}))
+	require.NoError(t, err)
+	encoded, err = json.Marshal(result.StructuredContent)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"theme_id":"`+mapThemeTestID+`","scheme":"dark","settings":`+settings+`,"variant":{`+fmt.Sprintf(variant, "#000")+`}}`, string(encoded))
+}
+
 func TestMapThemeManagementRejectsInvalidShapeBeforeOwner(t *testing.T) {
 	for _, test := range []struct{ name, arguments string }{
 		{ToolMapThemeList, `{"theme_id":"` + mapThemeTestID + `"}`},
@@ -182,15 +208,14 @@ func mapThemeArgumentsForTest(t *testing.T, input map[string]any) mcpserver.Tool
 	return toolArguments(t, string(encoded))
 }
 
-func mapThemeForTest(t *testing.T) *managev1.MapTheme {
+func mapThemeForTest(t *testing.T) maptheme.Theme {
 	t.Helper()
-	snapshot := mapThemeNativeSnapshotForTest()
-	variant := &managev1.MapThemeVariant{}
-	encoded, err := json.Marshal(snapshot.LightVariant)
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(encoded, variant))
-	when := timestamppb.New(time.Date(2026, 10, 5, 1, 2, 3, 0, time.UTC))
-	return &managev1.MapTheme{Id: mapThemeTestID, Name: snapshot.Name, Revision: 7, Settings: snapshot.Settings, LightVariant: variant, DarkVariant: proto.Clone(variant).(*managev1.MapThemeVariant), CreatedAt: when, UpdatedAt: when}
+	input := mapThemeSnapshotInputForTest()
+	when := time.Date(2026, 10, 5, 1, 2, 3, 0, time.UTC)
+	return maptheme.Theme{
+		ID: mapThemeTestID, Revision: 7, CreatedAt: when, UpdatedAt: when,
+		Snapshot: maptheme.Snapshot{Name: input.Name, Settings: *input.Settings, LightVariant: *input.LightVariant, DarkVariant: *input.DarkVariant},
+	}
 }
 
 // mapThemeSnapshotInputForTest is mapThemeNativeSnapshotForTest as the use
@@ -202,7 +227,7 @@ func mapThemeSnapshotInputForTest() *maptheme.SnapshotInput {
 }
 
 type recordingMapThemeManagement struct {
-	theme   *managev1.MapTheme
+	theme   maptheme.Theme
 	err     error
 	changed bool
 	called  string
@@ -216,25 +241,25 @@ func (service *recordingMapThemeManagement) record(ctx context.Context, name str
 
 func (service *recordingMapThemeManagement) ListMapThemes(ctx context.Context) (maptheme.ThemeList, error) {
 	service.record(ctx, ToolMapThemeList, nil)
-	return maptheme.ThemeList{Themes: []*managev1.MapTheme{service.theme}, DefaultID: mapThemeTestID}, service.err
+	return maptheme.ThemeList{Themes: []maptheme.Theme{service.theme}, DefaultID: mapThemeTestID}, service.err
 }
 
-func (service *recordingMapThemeManagement) ResolveMapTheme(ctx context.Context, query maptheme.ResolveMapThemeQuery) (*managev1.ResolvedMapTheme, error) {
+func (service *recordingMapThemeManagement) ResolveMapTheme(ctx context.Context, query maptheme.ResolveMapThemeQuery) (maptheme.ResolvedTheme, error) {
 	service.record(ctx, ToolMapThemeResolve, query)
-	return &managev1.ResolvedMapTheme{ThemeId: mapThemeTestID, Scheme: query.Scheme, Settings: service.theme.GetSettings(), Variant: service.theme.GetLightVariant()}, service.err
+	return service.theme.Resolve(query.Scheme), service.err
 }
 
-func (service *recordingMapThemeManagement) GetMapTheme(ctx context.Context, query maptheme.GetMapThemeQuery) (*managev1.MapTheme, error) {
+func (service *recordingMapThemeManagement) GetMapTheme(ctx context.Context, query maptheme.GetMapThemeQuery) (maptheme.Theme, error) {
 	service.record(ctx, ToolMapThemeGet, query)
 	return service.theme, service.err
 }
 
-func (service *recordingMapThemeManagement) CreateMapTheme(ctx context.Context, command maptheme.CreateMapThemeCommand) (*managev1.MapTheme, error) {
+func (service *recordingMapThemeManagement) CreateMapTheme(ctx context.Context, command maptheme.CreateMapThemeCommand) (maptheme.Theme, error) {
 	service.record(ctx, ToolMapThemeCreate, command)
 	return service.theme, service.err
 }
 
-func (service *recordingMapThemeManagement) CopyMapTheme(ctx context.Context, command maptheme.CopyMapThemeCommand) (*managev1.MapTheme, error) {
+func (service *recordingMapThemeManagement) CopyMapTheme(ctx context.Context, command maptheme.CopyMapThemeCommand) (maptheme.Theme, error) {
 	service.record(ctx, ToolMapThemeCopy, command)
 	return service.theme, service.err
 }

@@ -4,34 +4,33 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
-
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/maptheme"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
+
+// Reads opens the read snapshots of the Map Theme store.
+type Reads interface {
+	Read(ctx context.Context, read func(maptheme.Store) error) error
+}
 
 // Deps are the collaborators of the public Map Theme reads.
 type Deps struct {
-	DB *gorm.DB
+	Units Reads // mapthemepostgres.NewUnits(db)
 }
 
 // Service holds the public Map Theme reads.
 type Service struct {
-	db *gorm.DB
+	units Reads
 }
 
 // NewService validates deps and returns the public Map Theme reads.
 func NewService(deps Deps) (*Service, error) {
-	if deps.DB == nil {
-		return nil, errors.New("public map theme dependencies are required: DB")
+	if deps.Units == nil {
+		return nil, errors.New("public map theme dependencies are required: Units")
 	}
-	return &Service{db: deps.DB}, nil
+	return &Service{units: deps.Units}, nil
 }
 
 // ResolveByIDsQuery names themes to resolve; an empty ID is skipped.
@@ -46,59 +45,18 @@ type ResolveQuery struct {
 	Scheme  string
 }
 
-func publicMapThemeVariantProto(themeID, scheme string, variant *model.MapThemeVariant) *openv1.MapThemeVariant {
-	proto := &openv1.MapThemeVariant{
-		Id: themeID + ":" + scheme, BackgroundColor: variant.BackgroundColor, WaterColor: variant.WaterColor,
-		LandColor: variant.LandColor, RoadColor: variant.RoadColor,
-		BuildingFillColor: variant.BuildingFillColor, BuildingStrokeEnabled: variant.BuildingStrokeEnabled,
-		BuildingStrokeColor: variant.BuildingStrokeColor, CalloutLineColor: variant.CalloutLineColor,
-		CalloutTextColor: variant.CalloutTextColor, CalloutBackgroundColor: variant.CalloutBackgroundColor,
-		CalloutDescriptionColor: variant.CalloutDescriptionColor, AttributionColor: variant.AttributionColor,
-		LabelTextColor: variant.LabelTextColor, ClusterColor: variant.ClusterColor,
-		ClusterHoverColor: variant.ClusterHoverColor, ClusterTextColor: variant.ClusterTextColor,
-		ClusterTextHoverColor:        variant.ClusterTextHoverColor,
-		CalloutHoverLineColor:        variant.CalloutHoverLineColor,
-		CalloutHoverTextColor:        variant.CalloutHoverTextColor,
-		CalloutHoverDescriptionColor: variant.CalloutHoverDescriptionColor,
-		CalloutHoverBackgroundColor:  variant.CalloutHoverBackgroundColor,
-	}
-	return proto
+// Resolution is the theme a requested ID resolved to.
+type Resolution struct {
+	RequestedID string
+	Theme       maptheme.Theme
 }
 
-func publicMapThemeProto(theme *model.MapTheme) *openv1.MapTheme {
-	proto := &openv1.MapTheme{
-		Id: theme.ID, Name: theme.Name, CreatedAt: timestamppb.New(theme.CreatedAt),
-		Settings: &openv1.MapThemeSettings{
-			CalloutScale: float64(theme.CalloutScale), CalloutOffsetX: int32(theme.CalloutOffsetX),
-			CalloutOffsetY: int32(theme.CalloutOffsetY), CalloutFields: theme.CalloutFields,
-			AttributionFontSize: int32(theme.AttributionFontSize), ShowAreaLabels: theme.ShowAreaLabels,
-			ShowPoiLabels: theme.ShowPoiLabels,
-		},
-		LightVariant: publicMapThemeVariantProto(theme.ID, "light", &theme.LightVariant),
-		DarkVariant:  publicMapThemeVariantProto(theme.ID, "dark", &theme.DarkVariant),
-	}
-	return proto
-}
-
-func publicDefaultMapThemeID(ctx context.Context, db *gorm.DB) (string, error) {
-	var settings model.SiteSettings
-	if err := db.WithContext(ctx).Select("default_map_theme_id").Where("id = ?", 1).Take(&settings).Error; err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(settings.DefaultMapThemeID) == "" {
-		return "", fmt.Errorf("site settings default map theme is empty")
-	}
-	return settings.DefaultMapThemeID, nil
-}
-
-func publicLoadMapThemes(
-	ctx context.Context, db *gorm.DB, requestedIDs []string,
-) (string, map[string]*model.MapTheme, error) {
+func (s *Service) loadThemes(ctx context.Context, requestedIDs []string) (string, map[string]maptheme.Theme, error) {
 	var defaultID string
-	var byID map[string]*model.MapTheme
-	err := mutation.Read(ctx, db, func(tx *gorm.DB) error {
+	var byID map[string]maptheme.Theme
+	err := s.units.Read(ctx, func(store maptheme.Store) error {
 		var err error
-		defaultID, err = publicDefaultMapThemeID(ctx, tx)
+		defaultID, err = store.DefaultThemeID(ctx)
 		if err != nil {
 			return err
 		}
@@ -112,15 +70,15 @@ func publicLoadMapThemes(
 		for id := range unique {
 			ids = append(ids, id)
 		}
-		var themes []model.MapTheme
-		if err := tx.Where("id IN ?", ids).Find(&themes).Error; err != nil {
+		themes, err := store.ThemesByID(ctx, ids)
+		if err != nil {
 			return err
 		}
-		byID = make(map[string]*model.MapTheme, len(themes))
-		for i := range themes {
-			byID[themes[i].ID] = &themes[i]
+		byID = make(map[string]maptheme.Theme, len(themes))
+		for _, theme := range themes {
+			byID[theme.ID] = theme
 		}
-		if byID[defaultID] == nil {
+		if _, ok := byID[defaultID]; !ok {
 			return fmt.Errorf("default map theme %s is missing", defaultID)
 		}
 		return nil
@@ -130,7 +88,7 @@ func publicLoadMapThemes(
 
 // ResolveByIDs resolves each requested theme, falling back to the site
 // default for a missing one.
-func (s *Service) ResolveByIDs(ctx context.Context, query ResolveByIDsQuery) ([]*openv1.ResolveMapThemeByIdResult, error) {
+func (s *Service) ResolveByIDs(ctx context.Context, query ResolveByIDsQuery) ([]Resolution, error) {
 	requested := make([]string, 0, len(query.ThemeIDs))
 	for _, id := range query.ThemeIDs {
 		if id == "" {
@@ -142,61 +100,47 @@ func (s *Service) ResolveByIDs(ctx context.Context, query ResolveByIDsQuery) ([]
 		requested = append(requested, id)
 	}
 	if len(requested) == 0 {
-		return []*openv1.ResolveMapThemeByIdResult{}, nil
+		return []Resolution{}, nil
 	}
-	defaultID, themes, err := publicLoadMapThemes(ctx, s.db, requested)
+	defaultID, themes, err := s.loadThemes(ctx, requested)
 	if err != nil {
 		return nil, fmt.Errorf("resolve map themes: %w", err)
 	}
-	defaultTheme := themes[defaultID]
-	results := make([]*openv1.ResolveMapThemeByIdResult, 0, len(requested))
+	results := make([]Resolution, 0, len(requested))
 	for _, requestedID := range requested {
-		resolved := themes[requestedID]
-		if resolved == nil {
-			resolved = defaultTheme
+		resolved, ok := themes[requestedID]
+		if !ok {
+			resolved = themes[defaultID]
 		}
-		proto := publicMapThemeProto(resolved)
-		results = append(results, &openv1.ResolveMapThemeByIdResult{RequestedThemeId: requestedID, Theme: proto})
+		results = append(results, Resolution{RequestedID: requestedID, Theme: resolved})
 	}
 	return results, nil
 }
 
-func (s *Service) Resolve(ctx context.Context, query ResolveQuery) (*openv1.ResolvedMapTheme, error) {
+func (s *Service) Resolve(ctx context.Context, query ResolveQuery) (maptheme.ResolvedTheme, error) {
 	scheme := query.Scheme
 	if scheme == "" {
 		scheme = "light"
 	}
 	if scheme != "light" && scheme != "dark" {
-		return nil, domainerr.InvalidField("scheme", "must be 'light' or 'dark'")
+		return maptheme.ResolvedTheme{}, domainerr.InvalidField("scheme", "must be 'light' or 'dark'")
 	}
 	requestedID := ""
 	if query.ThemeID != nil {
 		requestedID = *query.ThemeID
 		if requestedID != "" {
 			if _, err := uuidutil.ParseCanonical(requestedID, "theme_id"); err != nil {
-				return nil, domainerr.InvalidField("theme_id", "must be a canonical UUID")
+				return maptheme.ResolvedTheme{}, domainerr.InvalidField("theme_id", "must be a canonical UUID")
 			}
 		}
 	}
-	defaultID, themes, err := publicLoadMapThemes(ctx, s.db, []string{requestedID})
+	defaultID, themes, err := s.loadThemes(ctx, []string{requestedID})
 	if err != nil {
-		return nil, fmt.Errorf("resolve map theme: %w", err)
+		return maptheme.ResolvedTheme{}, fmt.Errorf("resolve map theme: %w", err)
 	}
-	theme := themes[requestedID]
-	if theme == nil {
+	theme, ok := themes[requestedID]
+	if !ok {
 		theme = themes[defaultID]
 	}
-	variant := &theme.LightVariant
-	if scheme == "dark" {
-		variant = &theme.DarkVariant
-	}
-	return &openv1.ResolvedMapTheme{
-		ThemeId: theme.ID, Scheme: scheme,
-		Settings: &openv1.MapThemeSettings{
-			CalloutScale: float64(theme.CalloutScale), CalloutOffsetX: int32(theme.CalloutOffsetX),
-			CalloutOffsetY: int32(theme.CalloutOffsetY), CalloutFields: theme.CalloutFields,
-			AttributionFontSize: int32(theme.AttributionFontSize), ShowAreaLabels: theme.ShowAreaLabels,
-			ShowPoiLabels: theme.ShowPoiLabels,
-		}, Variant: publicMapThemeVariantProto(theme.ID, scheme, variant),
-	}, nil
+	return theme.Resolve(scheme), nil
 }

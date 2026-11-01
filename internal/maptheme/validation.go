@@ -9,7 +9,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 )
 
@@ -230,47 +229,4 @@ func validateMapThemeSnapshot(snapshot *Snapshot) error {
 		return err
 	}
 	return validateMapThemeVariant("dark_variant", &snapshot.DarkVariant)
-}
-
-func mapThemeVariantModel(input Variant) model.MapThemeVariant {
-	return model.MapThemeVariant{
-		BackgroundColor: input.BackgroundColor, WaterColor: input.WaterColor,
-		LandColor: input.LandColor, RoadColor: input.RoadColor,
-		BuildingFillColor: input.BuildingFillColor, BuildingStrokeEnabled: input.BuildingStrokeEnabled,
-		BuildingStrokeColor: input.BuildingStrokeColor, CalloutLineColor: input.CalloutLineColor,
-		CalloutTextColor: input.CalloutTextColor, CalloutBackgroundColor: input.CalloutBackgroundColor,
-		CalloutDescriptionColor: input.CalloutDescriptionColor, AttributionColor: input.AttributionColor,
-		LabelTextColor: input.LabelTextColor, ClusterColor: input.ClusterColor,
-		ClusterHoverColor: input.ClusterHoverColor, ClusterTextColor: input.ClusterTextColor,
-		ClusterTextHoverColor: input.ClusterTextHoverColor, CalloutHoverLineColor: input.CalloutHoverLineColor,
-		CalloutHoverTextColor:        input.CalloutHoverTextColor,
-		CalloutHoverDescriptionColor: input.CalloutHoverDescriptionColor,
-		CalloutHoverBackgroundColor:  input.CalloutHoverBackgroundColor,
-	}
-}
-
-func variantFromModel(input model.MapThemeVariant) Variant {
-	return Variant{
-		BackgroundColor: input.BackgroundColor, WaterColor: input.WaterColor,
-		LandColor: input.LandColor, RoadColor: input.RoadColor,
-		BuildingFillColor: input.BuildingFillColor, BuildingStrokeEnabled: input.BuildingStrokeEnabled,
-		BuildingStrokeColor: input.BuildingStrokeColor, CalloutLineColor: input.CalloutLineColor,
-		CalloutTextColor: input.CalloutTextColor, CalloutBackgroundColor: input.CalloutBackgroundColor,
-		CalloutDescriptionColor: input.CalloutDescriptionColor, AttributionColor: input.AttributionColor,
-		LabelTextColor: input.LabelTextColor, ClusterColor: input.ClusterColor,
-		ClusterHoverColor: input.ClusterHoverColor, ClusterTextColor: input.ClusterTextColor,
-		ClusterTextHoverColor: input.ClusterTextHoverColor, CalloutHoverLineColor: input.CalloutHoverLineColor,
-		CalloutHoverTextColor:        input.CalloutHoverTextColor,
-		CalloutHoverDescriptionColor: input.CalloutHoverDescriptionColor,
-		CalloutHoverBackgroundColor:  input.CalloutHoverBackgroundColor,
-	}
-}
-
-func settingsFromModel(theme *model.MapTheme) Settings {
-	return Settings{
-		CalloutScale: float64(theme.CalloutScale), CalloutOffsetX: int32(theme.CalloutOffsetX),
-		CalloutOffsetY: int32(theme.CalloutOffsetY), CalloutFields: append([]string(nil), theme.CalloutFields...),
-		AttributionFontSize: int32(theme.AttributionFontSize), ShowAreaLabels: theme.ShowAreaLabels,
-		ShowPoiLabels: theme.ShowPoiLabels,
-	}
 }

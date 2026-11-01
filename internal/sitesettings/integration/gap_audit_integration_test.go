@@ -11,7 +11,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
+	mapthemepostgres "github.com/echovisionlab/geul-api/internal/maptheme/postgres"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -167,7 +169,9 @@ func siteSettingsGapAuditChangedFields(t *testing.T, db *gorm.DB) [][]string {
 
 func mapThemeHandler(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, writer domainaudit.Appender) *maptheme.ConnectHandler {
 	t.Helper()
-	service, err := maptheme.NewService(maptheme.Deps{DB: db, SpiceDB: spiceDB, Audit: writer})
+	service, err := maptheme.NewService(maptheme.Deps{
+		Units: mapthemepostgres.NewUnits(db), SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: writer,
+	})
 	require.NoError(t, err)
 	return maptheme.NewConnectHandler(service)
 }
