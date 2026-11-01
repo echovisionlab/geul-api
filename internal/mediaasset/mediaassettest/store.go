@@ -94,6 +94,24 @@ func (s *Store) InsertAsset(_ context.Context, asset mediaasset.Asset) error {
 	s.PutAsset(asset)
 	return nil
 }
+
+func (s *Store) EnsureAssetAllocation(ctx context.Context, asset mediaasset.Asset) (mediaasset.Asset, error) {
+	if s.Fail != nil {
+		return mediaasset.Asset{}, s.Fail
+	}
+	if _, ok := s.assets[asset.ID]; ok {
+		return s.Asset(ctx, asset.ID)
+	}
+	for _, existing := range s.assets {
+		if existing.ObjectKey == asset.ObjectKey {
+			return mediaasset.Asset{}, mediaasset.ErrAssetNotFound
+		}
+	}
+	if err := s.InsertAsset(ctx, asset); err != nil {
+		return mediaasset.Asset{}, err
+	}
+	return s.Asset(ctx, asset.ID)
+}
 func (s *Store) Asset(_ context.Context, id string) (mediaasset.Asset, error) {
 	if s.Fail != nil {
 		return mediaasset.Asset{}, s.Fail

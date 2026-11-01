@@ -17,9 +17,10 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/transcoding/hls"
@@ -173,12 +174,12 @@ func (s *Service) loadClientMediaPlan(ctx context.Context, session model.UploadS
 }
 
 func (s *Service) registerClientMediaBundle(ctx context.Context, completion *multipartCompletion) error {
-	return s.registerVerifiedClientMediaBundle(ctx, completion, func(ctx context.Context, tx *gorm.DB) error {
-		return requireFreshFileIngestAuthority(ctx, tx, s, completion.uploadType, uploadSessionEntityTypeToEnum(completion.session.EntityType), completion.session.EntityID)
+	return s.registerVerifiedClientMediaBundle(ctx, completion, func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+		return requireFreshFileIngestAuthority(ctx, store, s, completion.uploadType, uploadSessionEntityTypeToEnum(completion.session.EntityType), completion.session.EntityID, lockActive)
 	})
 }
 
-func clientMediaFileReady(ctx context.Context, db *gorm.DB, file model.File) (bool, error) {
+func clientMediaFileReady(ctx context.Context, store Store, file File) (bool, error) {
 	if file.ClientMediaBundleID == nil {
 		return false, nil
 	}
@@ -188,15 +189,20 @@ func clientMediaFileReady(ctx context.Context, db *gorm.DB, file model.File) (bo
 	} else {
 		required = append(required, clientThumbnail.String())
 	}
-	var count int64
-	err := db.WithContext(ctx).Table("file_derivative AS d").
-		Joins("LEFT JOIN media_generation AS g ON g.id = d.media_generation_id").
-		Joins("LEFT JOIN public_asset AS artifact ON artifact.id = d.asset_id").
-		Where("d.file_id = ? AND d.type IN ? AND ((g.file_id = ? AND g.status = ?) OR (artifact.source_file_id = ? AND artifact.status = ?))",
-			file.ID, required, file.ID, model.MediaGenerationStatusReady, file.ID, model.PublicAssetStatusReady).
-		Count(&count).Error
+	count, err := store.ReadyIngestDerivativeCount(ctx, file.ID, required)
 	return count == int64(len(required)), err
 }
+
+func (s *Service) clientMediaFileReady(ctx context.Context, file File) (bool, error) {
+	var ready bool
+	err := s.readUploadFacts(ctx, func(store Store) error {
+		var err error
+		ready, err = clientMediaFileReady(ctx, store, file)
+		return err
+	})
+	return ready, err
+}
+
 func (s *Service) publishClientMediaReady(ctx context.Context, completion *multipartCompletion) error {
 	if completion.session.ClientMediaBundleID == nil {
 		return nil
@@ -228,11 +234,15 @@ func (s *Service) publishClientMediaReady(ctx context.Context, completion *multi
 		entityType = managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK
 		entityID = completion.session.EntityID
 		trackID = &entityID
-		var track model.Track
-		if err := s.db.WithContext(ctx).Select("release_id").Where("id = ? AND audio_original_file_id = ?", entityID, fileID).Take(&track).Error; err != nil {
+		var release string
+		if err := s.units.Read(ctx, func(store Store) error {
+			var err error
+			release, err = store.AttachedIngestTrackRelease(ctx, entityID, fileID)
+			return err
+		}); err != nil {
 			return err
 		}
-		releaseID = &track.ReleaseID
+		releaseID = &release
 	}
 	event := &managev1.MediaProcessingLifecycleEvent{CorrelationId: completion.correlationID, EntityType: entityType, EntityId: entityID, FileId: fileID, Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY, Outputs: outputs, TimestampMs: time.Now().UnixMilli(), SlotId: completion.session.SlotID, AttemptId: completion.session.AttemptID, TrackId: trackID, ReleaseId: releaseID}
 	return publishSignalProto(ctx, s.asyncPublisher, eventpkg.SignalMediaProcessingLifecycle, event)
@@ -271,11 +281,12 @@ func CleanupClientMediaStaging(ctx context.Context, client *s3.Client, bucket, b
 }
 
 func (s *Service) clientMediaRegistrationReady(ctx context.Context, session model.UploadSession) (bool, error) {
-	var file model.File
-	err := s.db.WithContext(ctx).Where("id = ?", session.FileID).Take(&file).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	var file File
+	err := s.readUploadFacts(ctx, func(store Store) error { var err error; file, err = store.IngestFile(ctx, session.FileID); return err })
+	if errors.Is(err, domain.ErrFileNotFound) {
 		return false, nil
 	}
+
 	if err != nil {
 		return false, err
 	}
@@ -285,7 +296,7 @@ func (s *Service) clientMediaRegistrationReady(ctx context.Context, session mode
 	if session.ClientMediaBundleID == nil || *file.ClientMediaBundleID != *session.ClientMediaBundleID {
 		return false, fmt.Errorf("registered bundle authority differs")
 	}
-	return clientMediaFileReady(ctx, s.db, file)
+	return s.clientMediaFileReady(ctx, file)
 }
 
 func clientMediaCompletionError(err error) error {

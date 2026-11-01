@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -55,19 +56,9 @@ type MemberSummaries interface {
 	Load(context.Context, []string) (map[string]*commonv1.MemberSummary, error)
 }
 
-type TrackOriginalAudioInput struct {
-	ClientMediaReady      bool
-	DurationSeconds       *int
-	TrackID               string
-	VerifiedFileID        string
-	ExpectedCurrentFileID *string
-}
+type TrackOriginalAudioInput = domain.TrackOriginalAudioInput
 
-type TrackOriginalAudioAttachment struct {
-	AlreadyApplied bool
-	CurrentFileID  string
-	ReleaseID      string
-}
+type TrackOriginalAudioAttachment = domain.TrackOriginalAudioAttachment
 
 // TrackAttachment is the FileMedia-owned Release boundary used to serialize
 // Track upload sessions and attach a verified original audio File.

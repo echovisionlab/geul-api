@@ -83,6 +83,7 @@ type Generation struct {
 type Store interface {
 	LockAttachableFiles(context.Context, []string) error
 	InsertAsset(context.Context, Asset) error
+	EnsureAssetAllocation(context.Context, Asset) (Asset, error)
 	Asset(context.Context, string) (Asset, error)
 	LockAsset(context.Context, string) (Asset, error)
 	LockAssetForDeletion(context.Context, string) (Asset, error)

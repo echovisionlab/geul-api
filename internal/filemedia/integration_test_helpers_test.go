@@ -215,6 +215,17 @@ func (a *directTrackAttachment) LockExistsWithDB(ctx context.Context, tx *gorm.D
 	return releaseConnectError(releasepkg.LockTrackForUpload(ctx, releasepostgres.NewStore(tx, releasepostgres.Ports{}), trackID))
 }
 
+func (a *directTrackAttachment) CurrentReleaseForAudio(ctx context.Context, tx *gorm.DB, track, file string) (string, error) {
+	row, err := releasepostgres.NewStore(tx, releasepostgres.Ports{}).FindTrack(ctx, track)
+	if err != nil {
+		return "", err
+	}
+	if row.AudioOriginalFileID == nil || *row.AudioOriginalFileID != file {
+		return "", gorm.ErrRecordNotFound
+	}
+	return row.ReleaseID, nil
+}
+
 func (a *directTrackAttachment) AttachOriginalWithDB(
 	ctx context.Context,
 	tx *gorm.DB,

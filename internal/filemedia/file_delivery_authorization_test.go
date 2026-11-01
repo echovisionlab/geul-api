@@ -248,7 +248,7 @@ func TestArchivedPostFileBoundariesAllowAuthorViewAndRequireAdminEdit(t *testing
 		admin.MemberID,
 	))
 
-	require.Equal(t, connect.CodeNotFound, errs.CodeOf(requireFreshFileIngestAuthority(
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(freshFileIngestAuthorityForTest(
 		authorCtx,
 		db,
 		service,
@@ -256,7 +256,7 @@ func TestArchivedPostFileBoundariesAllowAuthorViewAndRequireAdminEdit(t *testing
 		managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED,
 		postID,
 	)))
-	require.NoError(t, requireFreshFileIngestAuthority(
+	require.NoError(t, freshFileIngestAuthorityForTest(
 		adminCtx,
 		db,
 		service,

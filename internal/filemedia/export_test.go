@@ -183,3 +183,23 @@ func ExportRestoreRemoteReceipt(s *Service, ctx context.Context, id, slot, attem
 	err = s.validateCompletedRemoteImportBinding(ctx, id, entityID, remoteFileImportOptions{uploadType: managev1.UploadType(uploadType), transcodeEntityType: managev1.TranscodeEntityType(entityType)})
 	return File(file), true, err
 }
+
+var ExportTriggerFileProcessing = (*Service).triggerFileScopedProcessingIfNeeded
+
+func ExportClientMediaStorage(t *testing.T, row domain.UploadSession) *s3.Client {
+	legacy := uploadSessionFromStore(row)
+	plan, err := decodeClientMediaPlan(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, objects := clientMediaTestBundle(t, plan.Kind)
+	return newClientMediaStorageService(t, legacy, objects).s3Client
+}
+
+func ExportConfigureClientMediaStorage(s *Service, client *s3.Client) {
+	s.s3Client, s.s3Bucket, s.cdnDomain = client, "media-bucket", "https://cdn.example.com"
+}
+
+func ExportRegisterClientMedia(s *Service, ctx context.Context, row domain.UploadSession, authorize func(context.Context, Store, func(*auth.UserInfo) (bool, error)) error) error {
+	return s.registerVerifiedClientMediaBundle(ctx, &multipartCompletion{session: uploadSessionFromStore(row)}, authorize)
+}

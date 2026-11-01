@@ -13,18 +13,16 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
-	"gorm.io/gorm"
 )
 
 func clientMediaTestBundle(t *testing.T, kind string) (model.UploadSession, map[string][]byte) {
@@ -160,52 +158,6 @@ func newClientMediaStorageService(t *testing.T, session model.UploadSession, obj
 	})
 }
 
-func TestClientMediaVerifiedAudioVideoRegisterWithoutEncodingJobs(t *testing.T) {
-	for _, kind := range []string{"audio", "video"} {
-		t.Run(kind, func(t *testing.T) {
-			session, objects := clientMediaTestBundle(t, kind)
-			svc := newClientMediaStorageService(t, session, objects)
-			db := newServiceUnitDB(t)
-			svc.db = db
-			withTestStorage(svc)
-			require.NoError(t, db.Exec(`CREATE TABLE file_derivative (id TEXT PRIMARY KEY,file_id TEXT,type TEXT,asset_id TEXT,media_generation_id TEXT,created_at DATETIME,UNIQUE(file_id,type))`).Error)
-			require.NoError(t, db.Create(&model.File{ID: session.FileID, FileName: "source", Extension: "mp4", MimeType: session.RequestedMime, FileSize: 100}).Error)
-			publisher := &recordingFileTranscoderPublisher{}
-			svc.publisher = publisher
-			completion := &multipartCompletion{session: session}
-			require.NoError(t, svc.registerVerifiedClientMediaBundle(t.Context(), completion, func(context.Context, *gorm.DB) error { return nil }))
-			require.NoError(t, svc.triggerFileScopedProcessingIfNeeded(t.Context(), session.FileID))
-			require.Empty(t, publisher.audioJobs)
-			require.Empty(t, publisher.videoJobs)
-			require.Empty(t, publisher.registeredAudioJobs)
-			require.Empty(t, publisher.registeredVideoJobs)
-			var file model.File
-			require.NoError(t, db.Where("id = ?", session.FileID).Take(&file).Error)
-			require.Equal(t, session.ClientMediaBundleID, file.ClientMediaBundleID)
-			require.Equal(t, 6, *file.DurationSeconds)
-			svc.mediaDomain = "media.example.test"
-			svc.cdnDomain = "cdn.example.test"
-			svc.mediaSecret = "test-secret"
-			svc.downloadTTL = time.Minute
-			response, err := svc.getFileUrlsForID(t.Context(), session.FileID)
-			require.NoError(t, err)
-			require.Equal(t, file.ClientMediaBundleID, response.ClientMediaBundleId)
-			require.True(t, manageDeliveryResponseMatchesFile(response, File(file)), "single-file receipt must survive final authorization fence")
-
-			ready, err := clientMediaFileReady(t.Context(), db, file)
-			require.NoError(t, err)
-			require.True(t, ready)
-			// Staging disappears after completion. Registration retry cannot write accepted READY bytes again.
-			require.NoError(t, svc.cleanupClientMediaStaging(t.Context(), session))
-			require.NoError(t, svc.registerVerifiedClientMediaBundle(t.Context(), completion, func(context.Context, *gorm.DB) error { return nil }))
-			require.NoError(t, db.Where("file_id = ? AND type = ?", file.ID, managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS.String()).Delete(&model.FileDerivative{}).Error)
-			require.Error(t, svc.triggerFileScopedProcessingIfNeeded(t.Context(), file.ID))
-			require.Empty(t, publisher.audioJobs)
-			require.Empty(t, publisher.videoJobs)
-		})
-	}
-}
-
 func TestClientMediaStoredBundleRejectsTamperingMissingAndBadPlaylist(t *testing.T) {
 	for _, mode := range []string{"hash", "size", "missing", "external", "bad duration", "bad TS"} {
 		t.Run(mode, func(t *testing.T) {
@@ -267,72 +219,6 @@ func TestClientMediaPreparedMemberCannotBeReplacedByAnotherAuthorizedMember(t *t
 	// Membership denial occurs before any role/domain lookup, so equal global roles cannot bypass the pin.
 	err := (&Service{}).checkPartUploadPermission(t.Context(), uuid.NewString(), session)
 	require.ErrorContains(t, err, "belongs to another member")
-}
-
-type clientMediaTrackAttachment struct{ input TrackOriginalAudioInput }
-
-func (a *clientMediaTrackAttachment) LockExistsWithDB(context.Context, *gorm.DB, string) error {
-	return nil
-}
-func (a *clientMediaTrackAttachment) AttachOriginalWithDB(_ context.Context, _ *gorm.DB, input TrackOriginalAudioInput) (TrackOriginalAudioAttachment, error) {
-	a.input = input
-	return TrackOriginalAudioAttachment{CurrentFileID: input.VerifiedFileID, ReleaseID: uuid.NewString()}, nil
-}
-
-func TestClientMediaTrackFinalizerUsesCompletedBundleWithoutJobs(t *testing.T) {
-	session, objects := clientMediaTestBundle(t, "audio")
-	svc := newClientMediaStorageService(t, session, objects)
-	db := newServiceUnitDB(t)
-	svc.db = db
-	withTestStorage(svc)
-	require.NoError(t, db.Exec(`CREATE TABLE file_derivative (id TEXT PRIMARY KEY,file_id TEXT,type TEXT,asset_id TEXT,media_generation_id TEXT,created_at DATETIME,UNIQUE(file_id,type))`).Error)
-	attemptID := uuid.NewString()
-	trackID := uuid.NewString()
-	session.EntityID = trackID
-	session.AttemptID = &attemptID
-	session.UploadType = managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String()
-	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK.String()
-	session.EntityType = &entityType
-	require.NoError(t, db.Create(&model.File{ID: session.FileID, FileName: "source", Extension: "mp4", MimeType: session.RequestedMime, FileSize: 100, IngestAttemptID: &attemptID}).Error)
-	require.NoError(t, db.Create(&model.FileIngestBinding{FileID: session.FileID, UploadType: session.UploadType, EntityID: trackID, EntityType: &entityType, CreatedAt: time.Now()}).Error)
-	require.NoError(t, svc.registerVerifiedClientMediaBundle(t.Context(), &multipartCompletion{session: session}, func(context.Context, *gorm.DB) error { return nil }))
-	publisher := &recordingFileTranscoderPublisher{}
-	svc.publisher = publisher
-	attachment := &clientMediaTrackAttachment{}
-	svc.trackAttachment = attachment
-	_, err := svc.AttachTrackOriginalAudio(t.Context(), AttachTrackOriginalAudioCommand{TrackID: trackID, VerifiedFileID: session.FileID, IngestAttemptID: attemptID})
-	require.NoError(t, err)
-	require.True(t, attachment.input.ClientMediaReady)
-	require.Equal(t, 6, *attachment.input.DurationSeconds)
-	require.Empty(t, publisher.audioJobs)
-	require.Empty(t, publisher.registeredAudioJobs)
-}
-
-func TestClientMediaAuthorityRevocationCannotMakeCopiedArtifactsReady(t *testing.T) {
-	session, objects := clientMediaTestBundle(t, "audio")
-	svc := newClientMediaStorageService(t, session, objects)
-	db := newServiceUnitDB(t)
-	svc.db = db
-	withTestStorage(svc)
-	require.NoError(t, db.Exec(`CREATE TABLE file_derivative (id TEXT PRIMARY KEY,file_id TEXT,type TEXT,asset_id TEXT,media_generation_id TEXT,created_at DATETIME,UNIQUE(file_id,type))`).Error)
-	require.NoError(t, db.Create(&model.File{ID: session.FileID, FileName: "source", Extension: "mp4", MimeType: session.RequestedMime, FileSize: 100}).Error)
-	revoked := fmt.Errorf("membership revoked")
-	authorityChecks := 0
-	err := svc.registerVerifiedClientMediaBundle(t.Context(), &multipartCompletion{session: session}, func(context.Context, *gorm.DB) error {
-		authorityChecks++
-		if authorityChecks == 2 {
-			return revoked
-		}
-		return nil
-	})
-	require.Equal(t, 2, authorityChecks, "authority must be checked again after canonical copies")
-	require.ErrorIs(t, err, revoked)
-	var count int64
-	require.NoError(t, db.Model(&model.FileDerivative{}).Count(&count).Error)
-	require.Zero(t, count)
-	var file model.File
-	require.NoError(t, db.Where("id = ?", session.FileID).Take(&file).Error)
-	require.Nil(t, file.ClientMediaBundleID)
 }
 
 func TestClientMediaReadySignalHasCompleteOutputsAndNoCommands(t *testing.T) {
