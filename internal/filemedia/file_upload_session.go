@@ -130,13 +130,6 @@ func uploadSessionStatusToProto(status model.UploadSessionStatus) managev1.Uploa
 	}
 }
 
-func uploadPartWritableSessionStatuses() []model.UploadSessionStatus {
-	return []model.UploadSessionStatus{
-		model.UploadSessionStatusInitiated,
-		model.UploadSessionStatusUploading,
-	}
-}
-
 func (s *Service) claimUploadPartActivity(
 	ctx context.Context,
 	uploadID string,
