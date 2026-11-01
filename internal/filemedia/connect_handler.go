@@ -122,12 +122,13 @@ func (h *ConnectHandler) DeleteFile(ctx context.Context, req *connect.Request[ma
 }
 
 func (h *ConnectHandler) InitiateMultipartUpload(ctx context.Context, req *connect.Request[managev1.InitiateMultipartUploadRequest]) (*connect.Response[managev1.InitiateMultipartUploadResponse], error) {
-	return respond(h.files.InitiateMultipartUpload(ctx, InitiateMultipartUploadCommand{
+	value, err := h.files.InitiateMultipartUpload(ctx, InitiateMultipartUploadCommand{
 		UploadType: req.Msg.UploadType, EntityID: req.Msg.EntityId, EntityType: req.Msg.EntityType,
 		FileName: req.Msg.FileName, FileSize: req.Msg.FileSize, MimeType: req.Msg.MimeType,
 		FileLastModified: req.Msg.FileLastModified, SlotID: req.Msg.SlotId,
 		ExpectedCurrentFileID: req.Msg.ExpectedCurrentFileId,
-	}))
+	})
+	return respond(multipartUploadMessage(value), err)
 }
 
 func (h *ConnectHandler) PrepareClientMediaUpload(ctx context.Context, req *connect.Request[managev1.PrepareClientMediaUploadRequest]) (*connect.Response[managev1.PrepareClientMediaUploadResponse], error) {
@@ -165,12 +166,13 @@ func (h *ConnectHandler) AbortMultipartUpload(ctx context.Context, req *connect.
 }
 
 func (h *ConnectHandler) FindMultipartUploadCandidate(ctx context.Context, req *connect.Request[managev1.FindMultipartUploadCandidateRequest]) (*connect.Response[managev1.FindMultipartUploadCandidateResponse], error) {
-	return respond(h.files.FindMultipartUploadCandidate(ctx, FindMultipartUploadCandidateQuery{
+	value, err := h.files.FindMultipartUploadCandidate(ctx, FindMultipartUploadCandidateQuery{
 		UploadType: req.Msg.UploadType, EntityID: req.Msg.EntityId, EntityType: req.Msg.EntityType,
 		FileID: req.Msg.FileId, UploadID: req.Msg.UploadId, FileName: req.Msg.FileName,
 		FileSize: req.Msg.FileSize, MimeType: req.Msg.MimeType, FileLastModified: req.Msg.FileLastModified,
 		SlotID: req.Msg.SlotId, ExpectedCurrentFileID: req.Msg.ExpectedCurrentFileId,
-	}))
+	})
+	return respond(multipartCandidateMessage(value), err)
 }
 
 func (h *ConnectHandler) DownloadFromUrl(ctx context.Context, req *connect.Request[managev1.DownloadFromUrlRequest]) (*connect.Response[managev1.DownloadFromUrlResponse], error) {
@@ -222,19 +224,20 @@ func meshOptimizationCandidatesQuery(sourceFileID string, entityType managev1.Tr
 
 func (h *ConnectHandler) ListMeshOptimizationCandidates(ctx context.Context, req *connect.Request[managev1.ListMeshOptimizationCandidatesRequest]) (*connect.Response[managev1.ListMeshOptimizationCandidatesResponse], error) {
 	candidates, err := h.files.ListMeshOptimizationCandidates(ctx, meshOptimizationCandidatesQuery(req.Msg.SourceFileId, req.Msg.EntityType, req.Msg.EntityId, req.Msg.Profile))
-	return respond(&managev1.ListMeshOptimizationCandidatesResponse{Candidates: candidates}, err)
+	return respond(&managev1.ListMeshOptimizationCandidatesResponse{Candidates: meshCandidatesMessage(candidates)}, err)
 }
 
 func (h *ConnectHandler) GenerateMeshOptimizationCandidate(ctx context.Context, req *connect.Request[managev1.GenerateMeshOptimizationCandidateRequest]) (*connect.Response[managev1.GenerateMeshOptimizationCandidateResponse], error) {
-	return respond(h.files.GenerateMeshOptimizationCandidate(ctx, GenerateMeshOptimizationCandidateCommand{
+	value, err := h.files.GenerateMeshOptimizationCandidate(ctx, GenerateMeshOptimizationCandidateCommand{
 		SourceFileID: req.Msg.SourceFileId, EntityType: req.Msg.EntityType, EntityID: req.Msg.EntityId,
 		TargetRatioPercent: req.Msg.TargetRatioPercent, Method: req.Msg.Method, Profile: req.Msg.Profile,
-	}))
+	})
+	return respond(meshGenerationMessage(value), err)
 }
 
 func (h *ConnectHandler) UseMeshOptimizationCandidate(ctx context.Context, req *connect.Request[managev1.UseMeshOptimizationCandidateRequest]) (*connect.Response[managev1.UseMeshOptimizationCandidateResponse], error) {
 	candidate, err := h.files.UseMeshOptimizationCandidate(ctx, UseMeshOptimizationCandidateCommand{CandidateID: req.Msg.CandidateId})
-	return respond(&managev1.UseMeshOptimizationCandidateResponse{Candidate: candidate}, err)
+	return respond(&managev1.UseMeshOptimizationCandidateResponse{Candidate: meshCandidateMessage(candidate)}, err)
 }
 
 func (h *ConnectHandler) ClearMeshOptimizationCandidates(ctx context.Context, req *connect.Request[managev1.ClearMeshOptimizationCandidatesRequest]) (*connect.Response[managev1.ClearMeshOptimizationCandidatesResponse], error) {

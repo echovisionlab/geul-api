@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"google.golang.org/protobuf/types/known/timestamppb"
-
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -32,12 +30,12 @@ func (q ListMeshOptimizationCandidatesQuery) input() MeshOptimizationListInput {
 	}
 }
 
-func (s *Service) ListMeshOptimizationCandidates(ctx context.Context, query ListMeshOptimizationCandidatesQuery) ([]*managev1.MeshOptimizationCandidate, error) {
+func (s *Service) ListMeshOptimizationCandidates(ctx context.Context, query ListMeshOptimizationCandidatesQuery) ([]*MeshCandidateView, error) {
 	candidates, err := s.meshOptimizationService().ListCandidates(ctx, query.input())
 	if err != nil {
 		return nil, err
 	}
-	projected := make([]*managev1.MeshOptimizationCandidate, 0, len(candidates))
+	projected := make([]*MeshCandidateView, 0, len(candidates))
 	for _, candidate := range candidates {
 		response, err := s.meshOptimizationCandidateResponse(candidate)
 		if err != nil {
@@ -59,7 +57,7 @@ type GenerateMeshOptimizationCandidateCommand struct {
 	Profile            managev1.MeshOptimizationProfile
 }
 
-func (s *Service) GenerateMeshOptimizationCandidate(ctx context.Context, command GenerateMeshOptimizationCandidateCommand) (*managev1.GenerateMeshOptimizationCandidateResponse, error) {
+func (s *Service) GenerateMeshOptimizationCandidate(ctx context.Context, command GenerateMeshOptimizationCandidateCommand) (*MeshCandidateGeneration, error) {
 	result, err := s.meshOptimizationService().GenerateCandidate(ctx, MeshOptimizationGenerateInput{
 		SourceFileID:       strings.TrimSpace(command.SourceFileID),
 		EntityType:         command.EntityType,
@@ -75,7 +73,7 @@ func (s *Service) GenerateMeshOptimizationCandidate(ctx context.Context, command
 	if err != nil {
 		return nil, err
 	}
-	return &managev1.GenerateMeshOptimizationCandidateResponse{
+	return &MeshCandidateGeneration{
 		Candidate: projected,
 		CacheHit:  result.CacheHit,
 		Enqueued:  result.Enqueued,
@@ -87,7 +85,7 @@ type UseMeshOptimizationCandidateCommand struct {
 	CandidateID string
 }
 
-func (s *Service) UseMeshOptimizationCandidate(ctx context.Context, command UseMeshOptimizationCandidateCommand) (*managev1.MeshOptimizationCandidate, error) {
+func (s *Service) UseMeshOptimizationCandidate(ctx context.Context, command UseMeshOptimizationCandidateCommand) (*MeshCandidateView, error) {
 	candidate, err := s.meshOptimizationService().UseCandidate(ctx, strings.TrimSpace(command.CandidateID))
 	if err != nil {
 		return nil, err
@@ -119,59 +117,19 @@ func (s *Service) ClearMeshOptimizationCandidates(ctx context.Context, command C
 	return nil
 }
 
-func (s *Service) meshOptimizationCandidateResponse(
-	candidate domain.MeshCandidate,
-) (*managev1.MeshOptimizationCandidate, error) {
-	response := &managev1.MeshOptimizationCandidate{
-		Id:                 candidate.ID,
-		SourceFileId:       candidate.SourceFileID,
-		Method:             meshOptimizationResponseMethod(candidate.Method),
-		TargetRatioPercent: candidate.TargetRatioPercent,
-		Profile:            meshOptimizationProfileForPipelineVersion(candidate.PipelineVersion),
-		Status:             meshOptimizationCandidateStatus(candidate.Status),
-		CreatedAt:          timestamppb.New(candidate.CreatedAt),
-		UpdatedAt:          timestamppb.New(candidate.UpdatedAt),
-	}
-	if candidate.EntityType != nil {
-		if value, ok := managev1.TranscodeEntityType_value[*candidate.EntityType]; ok {
-			entityType := managev1.TranscodeEntityType(value)
-			response.EntityType = &entityType
-		}
-	}
-	response.EntityId = candidate.EntityID
-	response.OriginalFileSize = cloneInt64(candidate.OriginalFileSize)
-	response.OptimizedFileSize = cloneInt64(candidate.OptimizedFileSize)
-	response.ProcessingTimeMs = cloneInt64(candidate.ProcessingTimeMs)
-	response.OriginalVertexCount = cloneInt64(candidate.OriginalVertexes)
-	response.OptimizedVertexCount = cloneInt64(candidate.OptimizedVertexes)
-	response.OriginalTriangleCount = cloneInt64(candidate.OriginalTriangles)
-	response.OptimizedTriangleCount = cloneInt64(candidate.OptimizedTriangles)
-	response.ErrorMessage = candidate.ErrorMessage
-	response.PublicAssetId = candidate.PublicAssetID
-	if candidate.SelectedAt != nil {
-		response.SelectedAt = timestamppb.New(*candidate.SelectedAt)
-	}
+func (s *Service) meshOptimizationCandidateResponse(candidate domain.MeshCandidate) (*MeshCandidateView, error) {
+	result := &MeshCandidateView{Record: candidate}
 	if meshOptimizationCandidateHasUsableOutput(candidate) {
 		outputFileID := strings.TrimSpace(*candidate.OutputFileID)
-		mimeType := "model/gltf-binary"
 		fileName := outputFileID + ".glb"
-		response.FileId = &outputFileID
-		response.FileName = &fileName
-		response.FileSize = cloneInt64(candidate.OptimizedFileSize)
-		delivery, err := s.fileURLsResponseFromStoredFile(
-			outputFileID,
-			"glb",
-			mimeType,
-			int64Value(candidate.OptimizedFileSize),
-			&fileName,
-		)
+		delivery, err := s.fileURLsResponseFromStoredFile(outputFileID, "glb", "model/gltf-binary", int64Value(candidate.OptimizedFileSize), &fileName)
 		if err != nil {
 			return nil, err
 		}
 		delivery.Delivery.FileName = &fileName
-		response.Delivery = DeliveryMessage(delivery.Delivery)
+		result.Delivery = delivery.Delivery
 	}
-	return response, nil
+	return result, nil
 }
 
 func meshOptimizationCandidateHasUsableOutput(candidate domain.MeshCandidate) bool {
@@ -189,30 +147,6 @@ func meshOptimizationRequestMethod(
 		return domain.MeshMethodDraco
 	default:
 		return ""
-	}
-}
-
-func meshOptimizationResponseMethod(method string) managev1.MeshOptimizationCompressionMethod {
-	if strings.EqualFold(strings.TrimSpace(method), domain.MeshMethodDraco) {
-		return managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_DRACO
-	}
-	return managev1.MeshOptimizationCompressionMethod_MESH_OPTIMIZATION_COMPRESSION_METHOD_UNSPECIFIED
-}
-
-func meshOptimizationCandidateStatus(status string) managev1.MeshOptimizationCandidateStatus {
-	switch status {
-	case domain.MeshStatusPending:
-		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_PENDING
-	case domain.MeshStatusProcessing:
-		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_PROCESSING
-	case domain.MeshStatusReady:
-		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_READY
-	case domain.MeshStatusFailed:
-		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_FAILED
-	case domain.MeshStatusCancelled:
-		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_CANCELLED
-	default:
-		return managev1.MeshOptimizationCandidateStatus_MESH_OPTIMIZATION_CANDIDATE_STATUS_UNSPECIFIED
 	}
 }
 

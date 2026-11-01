@@ -14,7 +14,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func multipartSessionChunkSize(session domain.UploadSession) int64 {
@@ -129,12 +128,12 @@ func toCompletedParts(parts []domain.UploadPart) []types.CompletedPart {
 	return completed
 }
 
-func uploadPartInfos(parts []domain.UploadPart) []*managev1.UploadPartInfo {
-	partInfos := make([]*managev1.UploadPartInfo, 0, len(parts))
+func uploadPartInfos(parts []domain.UploadPart) []*UploadedPart {
+	partInfos := make([]*UploadedPart, 0, len(parts))
 	for _, part := range parts {
-		partInfos = append(partInfos, &managev1.UploadPartInfo{
+		partInfos = append(partInfos, &UploadedPart{
 			PartNumber: part.PartNumber,
-			Etag:       part.ETag,
+			ETag:       part.ETag,
 		})
 	}
 	return partInfos

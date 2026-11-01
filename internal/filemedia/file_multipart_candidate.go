@@ -6,8 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"google.golang.org/protobuf/types/known/timestamppb"
-
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -121,31 +119,31 @@ func (s *Service) findMultipartUploadCandidate(
 	return row, found, err
 }
 
-func multipartCandidateResponse(session domain.UploadSession) *managev1.FindMultipartUploadCandidateResponse {
+func multipartCandidateResponse(session domain.UploadSession) *MultipartCandidate {
 	extension := mediaExtension(&session.RequestedMime)
-	return &managev1.FindMultipartUploadCandidateResponse{
-		ClientMediaBundleId:   session.ClientMediaBundleID,
-		UploadId:              &session.UploadID,
-		FileId:                &session.FileID,
+	return &MultipartCandidate{
+		ClientMediaBundleID:   session.ClientMediaBundleID,
+		UploadID:              &session.UploadID,
+		FileID:                &session.FileID,
 		Extension:             &extension,
 		TotalParts:            session.TotalParts,
 		ChunkSize:             session.ChunkSize,
-		Status:                uploadSessionStatusToProto(session.Status),
+		Status:                session.Status,
 		FileName:              &session.FileName,
 		FileSize:              session.FileSize,
 		MimeType:              &session.RequestedMime,
 		FileLastModified:      session.FileLastModified,
-		LastActivityAt:        timestamppb.New(session.LastActivityAt),
-		SlotId:                session.SlotID,
-		IngestAttemptId:       session.AttemptID,
-		ExpectedCurrentFileId: session.ExpectedFileID,
+		LastActivityAt:        &session.LastActivityAt,
+		SlotID:                session.SlotID,
+		IngestAttemptID:       session.AttemptID,
+		ExpectedCurrentFileID: session.ExpectedFileID,
 	}
 }
 
 func (s *Service) prepareMultipartCandidateResponse(
 	ctx context.Context,
 	session domain.UploadSession,
-) (*managev1.FindMultipartUploadCandidateResponse, error) {
+) (*MultipartCandidate, error) {
 	response := multipartCandidateResponse(session)
 	if session.Status == domain.UploadSessionStatusFinalizing {
 		parts, err := s.loadUploadPartInfos(ctx, session.UploadID)
@@ -159,7 +157,7 @@ func (s *Service) prepareMultipartCandidateResponse(
 	if err != nil {
 		return nil, err
 	}
-	response.Status = uploadSessionStatusToProto(reconciliation.session.Status)
+	response.Status = reconciliation.session.Status
 	response.UploadedParts = reconciliation.parts
 	return response, nil
 }

@@ -28,8 +28,8 @@ var (
 // creating MCP-specific upload state, storage, verification, or authorization.
 type MCPFileRuntime interface {
 	ImportRemoteFile(context.Context, filemediadomain.RemoteFileImportInput) (*filemediadomain.ImportedFile, error)
-	InitiateMultipartUpload(context.Context, filemediadomain.InitiateMultipartUploadCommand) (*managev1.InitiateMultipartUploadResponse, error)
-	FindMultipartUploadCandidate(context.Context, filemediadomain.FindMultipartUploadCandidateQuery) (*managev1.FindMultipartUploadCandidateResponse, error)
+	InitiateMultipartUpload(context.Context, filemediadomain.InitiateMultipartUploadCommand) (*filemediadomain.MultipartUpload, error)
+	FindMultipartUploadCandidate(context.Context, filemediadomain.FindMultipartUploadCandidateQuery) (*filemediadomain.MultipartCandidate, error)
 	CompleteMultipartUpload(context.Context, filemediadomain.CompleteMultipartUploadCommand) (*filemediadomain.CompletedUpload, error)
 	DownloadFromURL(context.Context, filemediadomain.DownloadFromURLCommand) (*filemediadomain.ImportedFile, error)
 	GetMediaDelivery(context.Context, filemediadomain.GetMediaDeliveryQuery) (*filemediadomain.MediaDeliveryResult, error)
@@ -251,7 +251,7 @@ func (facade *MCPFileFacade) Status(
 	if response == nil {
 		return MCPFileTransferResult{}, invalidMCPFileRuntime("status response is missing")
 	}
-	if response.GetFileId() == "" && response.GetUploadId() == "" {
+	if fileReferenceName(response.FileID) == "" && fileReferenceName(response.UploadID) == "" {
 		file, err := facade.Read(ctx, handle.FileID)
 		if err != nil {
 			return MCPFileTransferResult{}, err
@@ -460,16 +460,16 @@ func mcpUploadType(kind MCPFileKind) (managev1.UploadType, error) {
 func mcpFileSessionFromInitiation(
 	transport MCPFileTransport,
 	kind MCPFileKind,
-	response *managev1.InitiateMultipartUploadResponse,
+	response *filemediadomain.MultipartUpload,
 ) (MCPFileTransferSession, error) {
-	fileID, err := normalizeMCPFileUUID(response.GetFileId(), "runtime file_id")
+	fileID, err := normalizeMCPFileUUID(response.FileID, "runtime file_id")
 	if err != nil {
 		return MCPFileTransferSession{}, invalidMCPFileRuntime(err.Error())
 	}
-	if strings.TrimSpace(response.GetUploadId()) == "" || response.GetTotalParts() <= 0 || response.GetChunkSize() <= 0 {
+	if strings.TrimSpace(response.UploadID) == "" || response.TotalParts <= 0 || response.ChunkSize <= 0 {
 		return MCPFileTransferSession{}, invalidMCPFileRuntime("multipart initiation identity or part shape is invalid")
 	}
-	state, err := mcpTransferState(response.GetStatus())
+	state, err := mcpTransferState(response.Status)
 	if err != nil {
 		return MCPFileTransferSession{}, err
 	}
@@ -478,69 +478,69 @@ func mcpFileSessionFromInitiation(
 			Transport: transport,
 			Kind:      kind,
 			FileID:    fileID,
-			UploadID:  response.GetUploadId(),
+			UploadID:  response.UploadID,
 		},
 		State:               state,
-		TotalParts:          response.GetTotalParts(),
-		ChunkSize:           response.GetChunkSize(),
-		UploadedPartNumbers: mcpUploadedPartNumbers(response.GetUploadedParts()),
+		TotalParts:          response.TotalParts,
+		ChunkSize:           response.ChunkSize,
+		UploadedPartNumbers: mcpUploadedPartNumbers(response.UploadedParts),
 	}, nil
 }
 
 func mcpFileSessionFromCandidate(
 	handle MCPFileSessionHandle,
-	response *managev1.FindMultipartUploadCandidateResponse,
+	response *filemediadomain.MultipartCandidate,
 ) (MCPFileTransferSession, error) {
-	if response.GetFileId() != handle.FileID || response.GetUploadId() != handle.UploadID {
+	if fileReferenceName(response.FileID) != handle.FileID || fileReferenceName(response.UploadID) != handle.UploadID {
 		return MCPFileTransferSession{}, invalidMCPFileRuntime("status response does not match the session handle")
 	}
-	handle.ClientMediaBundleID = response.GetClientMediaBundleId()
-	state, err := mcpTransferState(response.GetStatus())
+	handle.ClientMediaBundleID = fileReferenceName(response.ClientMediaBundleID)
+	state, err := mcpTransferState(response.Status)
 	if err != nil {
 		return MCPFileTransferSession{}, err
 	}
-	if response.GetTotalParts() <= 0 || response.GetChunkSize() <= 0 {
+	if response.TotalParts <= 0 || response.ChunkSize <= 0 {
 		return MCPFileTransferSession{}, invalidMCPFileRuntime("status part shape is invalid")
 	}
 	var lastActivityAt *time.Time
-	if value := response.GetLastActivityAt(); value != nil {
-		if err := value.CheckValid(); err != nil {
+	if value := response.LastActivityAt; value != nil {
+		if value.UTC().Year() < 1 || value.UTC().Year() > 9999 {
 			return MCPFileTransferSession{}, invalidMCPFileRuntime("status last_activity_at is invalid")
 		}
-		converted := value.AsTime().UTC()
+		converted := value.UTC()
 		lastActivityAt = &converted
 	}
 	return MCPFileTransferSession{
 		Handle:              handle,
 		State:               state,
-		FileName:            response.GetFileName(),
-		MIMEType:            response.GetMimeType(),
-		FileSize:            response.GetFileSize(),
-		TotalParts:          response.GetTotalParts(),
-		ChunkSize:           response.GetChunkSize(),
-		UploadedPartNumbers: mcpUploadedPartNumbers(response.GetUploadedParts()),
+		FileName:            fileReferenceName(response.FileName),
+		MIMEType:            fileReferenceName(response.MimeType),
+		FileSize:            response.FileSize,
+		TotalParts:          response.TotalParts,
+		ChunkSize:           response.ChunkSize,
+		UploadedPartNumbers: mcpUploadedPartNumbers(response.UploadedParts),
 		LastActivityAt:      lastActivityAt,
 	}, nil
 }
 
-func mcpTransferState(status managev1.UploadSessionStatus) (MCPFileTransferState, error) {
+func mcpTransferState(status filemediadomain.UploadSessionStatus) (MCPFileTransferState, error) {
 	switch status {
-	case managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED:
+	case filemediadomain.UploadSessionStatusInitiated:
 		return MCPFileTransferInitiated, nil
-	case managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING:
+	case filemediadomain.UploadSessionStatusUploading:
 		return MCPFileTransferUploading, nil
-	case managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FINALIZING:
+	case filemediadomain.UploadSessionStatusFinalizing:
 		return MCPFileTransferFinalizing, nil
 	default:
 		return "", invalidMCPFileRuntime("upload session status is not active")
 	}
 }
 
-func mcpUploadedPartNumbers(parts []*managev1.UploadPartInfo) []int32 {
+func mcpUploadedPartNumbers(parts []*filemediadomain.UploadedPart) []int32 {
 	result := make([]int32, 0, len(parts))
 	for _, part := range parts {
-		if part != nil && part.GetPartNumber() > 0 {
-			result = append(result, part.GetPartNumber())
+		if part != nil && part.PartNumber > 0 {
+			result = append(result, part.PartNumber)
 		}
 	}
 	return result

@@ -21,14 +21,14 @@ import (
 // corresponding authoritative or frozen part snapshot.
 type multipartResumeReconciliation struct {
 	session domain.UploadSession
-	parts   []*managev1.UploadPartInfo
+	parts   []*UploadedPart
 }
 
 func (s *Service) prepareMultipartResumeResponse(
 	ctx context.Context,
 	session domain.UploadSession,
-	response *managev1.InitiateMultipartUploadResponse,
-) (*managev1.InitiateMultipartUploadResponse, error) {
+	response *MultipartUpload,
+) (*MultipartUpload, error) {
 	if session.Status != domain.UploadSessionStatusFinalizing {
 		reconciled, err := s.reconcileMultipartResumeResponse(ctx, session, response)
 		if err != nil {
@@ -48,7 +48,7 @@ func (s *Service) prepareMultipartResumeResponse(
 func (s *Service) reconcileMultipartResumeResponse(
 	ctx context.Context,
 	session domain.UploadSession,
-	response *managev1.InitiateMultipartUploadResponse,
+	response *MultipartUpload,
 ) (domain.UploadSession, error) {
 	if s.testBeforeResumeReconciliation != nil {
 		s.testBeforeResumeReconciliation(session)
@@ -57,7 +57,7 @@ func (s *Service) reconcileMultipartResumeResponse(
 	if err != nil {
 		return domain.UploadSession{}, fmt.Errorf("failed to reconcile multipart resume parts: %w", err)
 	}
-	response.Status = uploadSessionStatusToProto(reconciliation.session.Status)
+	response.Status = reconciliation.session.Status
 	response.UploadedParts = reconciliation.parts
 	return reconciliation.session, nil
 }
@@ -65,7 +65,7 @@ func (s *Service) reconcileMultipartResumeResponse(
 func (s *Service) publishMultipartResumeProgress(
 	ctx context.Context,
 	session domain.UploadSession,
-	response *managev1.InitiateMultipartUploadResponse,
+	response *MultipartUpload,
 ) error {
 	emitter := newFileIngestEventEmitter(
 		ctx,
@@ -85,7 +85,7 @@ func (s *Service) publishMultipartResumeProgress(
 	}
 	progress := int32(0)
 	if session.TotalParts > 0 {
-		progress = int32(len(response.GetUploadedParts()) * 100 / int(session.TotalParts))
+		progress = int32(len(response.UploadedParts) * 100 / int(session.TotalParts))
 	}
 	emitter.publishUploading(progress, nil)
 	return nil

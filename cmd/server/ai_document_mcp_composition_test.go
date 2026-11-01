@@ -532,12 +532,12 @@ func (receiver *compositionRelayReceiver) RelayInteractiveAIDocumentMutation(
 	return connect.NewResponse(&intrav1.RelayInteractiveAIDocumentMutationResponse{}), nil
 }
 
-func (*compositionFileRuntime) InitiateMultipartUpload(context.Context, filemedia.InitiateMultipartUploadCommand) (*managev1.InitiateMultipartUploadResponse, error) {
-	return &managev1.InitiateMultipartUploadResponse{}, nil
+func (*compositionFileRuntime) InitiateMultipartUpload(context.Context, filemedia.InitiateMultipartUploadCommand) (*filemedia.MultipartUpload, error) {
+	return &filemedia.MultipartUpload{}, nil
 }
 
-func (*compositionFileRuntime) FindMultipartUploadCandidate(context.Context, filemedia.FindMultipartUploadCandidateQuery) (*managev1.FindMultipartUploadCandidateResponse, error) {
-	return &managev1.FindMultipartUploadCandidateResponse{}, nil
+func (*compositionFileRuntime) FindMultipartUploadCandidate(context.Context, filemedia.FindMultipartUploadCandidateQuery) (*filemedia.MultipartCandidate, error) {
+	return &filemedia.MultipartCandidate{}, nil
 }
 
 func (*compositionFileRuntime) CompleteMultipartUpload(context.Context, filemedia.CompleteMultipartUploadCommand) (*filemedia.CompletedUpload, error) {
