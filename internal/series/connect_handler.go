@@ -41,35 +41,42 @@ func page(request interface {
 }
 
 func (h *ConnectHandler) ListSeriesPosts(ctx context.Context, req *connect.Request[managev1.ListSeriesPostsRequest]) (*connect.Response[managev1.ListSeriesPostsResponse], error) {
-	return respond(h.series.ListSeriesPosts(ctx, ListSeriesPostsQuery{SeriesID: req.Msg.SeriesId}))
+	posts, err := h.series.ListSeriesPosts(ctx, ListSeriesPostsQuery{SeriesID: req.Msg.SeriesId})
+	return respond(&managev1.ListSeriesPostsResponse{Posts: seriesPostMessages(posts)}, err)
 }
 
 func (h *ConnectHandler) ListMySeries(ctx context.Context, req *connect.Request[managev1.ListMySeriesRequest]) (*connect.Response[managev1.ListMySeriesResponse], error) {
-	return respond(h.series.ListMySeries(ctx, ListMySeriesQuery{Page: page(req.Msg.GetPagination())}))
+	listed, err := h.series.ListMySeries(ctx, ListMySeriesQuery{Page: page(req.Msg.GetPagination())})
+	return respond(&managev1.ListMySeriesResponse{Series: seriesWithStatsMessages(listed.Items), Pagination: paginationMessage(listed)}, err)
 }
 
 func (h *ConnectHandler) ListSeriesAdmin(ctx context.Context, req *connect.Request[managev1.ListSeriesAdminRequest]) (*connect.Response[managev1.ListSeriesAdminResponse], error) {
-	return respond(h.series.ListSeriesAdmin(ctx, ListSeriesAdminQuery{Page: page(req.Msg.GetPagination()), Filters: req.Msg.Filters, Sorts: req.Msg.Sorts}))
+	listed, err := h.series.ListSeriesAdmin(ctx, ListSeriesAdminQuery{Page: page(req.Msg.GetPagination()), Filters: req.Msg.Filters, Sorts: req.Msg.Sorts})
+	return respond(&managev1.ListSeriesAdminResponse{Series: seriesWithStatsMessages(listed.Items), Pagination: paginationMessage(listed)}, err)
 }
 
 func (h *ConnectHandler) ListSeriesSimple(ctx context.Context, _ *connect.Request[managev1.ListSeriesSimpleRequest]) (*connect.Response[managev1.ListSeriesSimpleResponse], error) {
-	return respond(h.series.ListSeriesSimple(ctx, ListSeriesSimpleQuery{}))
+	listed, err := h.series.ListSeriesSimple(ctx, ListSeriesSimpleQuery{})
+	return respond(&managev1.ListSeriesSimpleResponse{Series: seriesSimpleMessages(listed)}, err)
 }
 
 func (h *ConnectHandler) CreateSeries(ctx context.Context, req *connect.Request[managev1.CreateSeriesRequest]) (*connect.Response[managev1.Series], error) {
-	return respond(h.series.CreateSeries(ctx, CreateSeriesCommand{
+	created, err := h.series.CreateSeries(ctx, CreateSeriesCommand{
 		Title: req.Msg.Title, Slug: req.Msg.Slug, Description: req.Msg.Description, AcceptLanguage: req.Header().Get("Accept-Language"),
-	}))
+	})
+	return respond(seriesMessage(created), err)
 }
 
 func (h *ConnectHandler) CheckSeriesSlugAvailable(ctx context.Context, req *connect.Request[managev1.CheckSeriesSlugAvailableRequest]) (*connect.Response[managev1.CheckSeriesSlugAvailableResponse], error) {
-	return respond(h.series.CheckSeriesSlugAvailable(ctx, CheckSeriesSlugAvailableQuery{Slug: req.Msg.Slug, ExcludeID: req.Msg.ExcludeId}))
+	available, err := h.series.CheckSeriesSlugAvailable(ctx, CheckSeriesSlugAvailableQuery{Slug: req.Msg.Slug, ExcludeID: req.Msg.ExcludeId})
+	return respond(&managev1.CheckSeriesSlugAvailableResponse{Available: available}, err)
 }
 
 func (h *ConnectHandler) UpdateSeries(ctx context.Context, req *connect.Request[managev1.UpdateSeriesRequest]) (*connect.Response[managev1.Series], error) {
-	return respond(h.series.UpdateSeries(ctx, UpdateSeriesCommand{
+	updated, err := h.series.UpdateSeries(ctx, UpdateSeriesCommand{
 		ID: req.Msg.Id, Slug: req.Msg.Slug, Status: req.Msg.Status, Title: req.Msg.Title, Description: req.Msg.Description,
-	}))
+	})
+	return respond(seriesMessage(updated), err)
 }
 
 func (h *ConnectHandler) DeleteSeries(ctx context.Context, req *connect.Request[managev1.DeleteSeriesRequest]) (*connect.Response[managev1.DeleteResponse], error) {
@@ -77,19 +84,23 @@ func (h *ConnectHandler) DeleteSeries(ctx context.Context, req *connect.Request[
 }
 
 func (h *ConnectHandler) SetSeriesFeaturedImage(ctx context.Context, req *connect.Request[managev1.SetSeriesFeaturedImageRequest]) (*connect.Response[managev1.SetSeriesFeaturedImageResponse], error) {
-	return respond(h.series.SetSeriesFeaturedImage(ctx, SetSeriesFeaturedImageCommand{SeriesID: req.Msg.SeriesId, FileID: req.Msg.FileId}))
+	change, err := h.series.SetSeriesFeaturedImage(ctx, SetSeriesFeaturedImageCommand{SeriesID: req.Msg.SeriesId, FileID: req.Msg.FileId})
+	return respond(&managev1.SetSeriesFeaturedImageResponse{ImageAsset: assetRef(change.Asset), OgGenerationRunId: change.OgGenerationRunID}, err)
 }
 
 func (h *ConnectHandler) DeleteSeriesFeaturedImage(ctx context.Context, req *connect.Request[managev1.DeleteSeriesFeaturedImageRequest]) (*connect.Response[managev1.OgAssetDeleteResponse], error) {
-	return respond(h.series.DeleteSeriesFeaturedImage(ctx, DeleteSeriesFeaturedImageCommand{SeriesID: req.Msg.SeriesId}))
+	runID, err := h.series.DeleteSeriesFeaturedImage(ctx, DeleteSeriesFeaturedImageCommand{SeriesID: req.Msg.SeriesId})
+	return respond(&managev1.OgAssetDeleteResponse{Success: true, OgGenerationRunId: runID}, err)
 }
 
 func (h *ConnectHandler) GetSeriesWithManagers(ctx context.Context, req *connect.Request[managev1.GetSeriesWithManagersRequest]) (*connect.Response[managev1.GetSeriesWithManagersResponse], error) {
-	return respond(h.series.GetSeriesWithManagers(ctx, GetSeriesWithManagersQuery{ID: req.Msg.Id}))
+	found, err := h.series.GetSeriesWithManagers(ctx, GetSeriesWithManagersQuery{ID: req.Msg.Id})
+	return respond(&managev1.GetSeriesWithManagersResponse{Series: seriesMessage(found.Detail), Managers: managerMessages(found.Managers)}, err)
 }
 
 func (h *ConnectHandler) ListSeriesManagers(ctx context.Context, req *connect.Request[managev1.ListSeriesManagersRequest]) (*connect.Response[managev1.ListSeriesManagersResponse], error) {
-	return respond(h.series.ListSeriesManagers(ctx, ListSeriesManagersQuery{SeriesID: req.Msg.SeriesId}))
+	managers, err := h.series.ListSeriesManagers(ctx, ListSeriesManagersQuery{SeriesID: req.Msg.SeriesId})
+	return respond(&managev1.ListSeriesManagersResponse{Managers: managerMessages(managers)}, err)
 }
 
 func (h *ConnectHandler) AddSeriesManager(ctx context.Context, req *connect.Request[managev1.AddSeriesManagerRequest]) (*connect.Response[managev1.DeleteResponse], error) {
@@ -128,16 +139,28 @@ func (h *InternalConnectHandler) LoadDocument(ctx context.Context, req *connect.
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
-	return respond(h.series.LoadPostSeriesDocument(ctx, LoadPostSeriesDocumentQuery{SeriesID: req.Msg.SeriesId, Locale: req.Msg.Locale}))
+	document, err := h.series.LoadPostSeriesDocument(ctx, LoadPostSeriesDocumentQuery{SeriesID: req.Msg.SeriesId, Locale: req.Msg.Locale})
+	return respond(&intrav1.LoadPostSeriesDocumentResponse{
+		SourceLocale:     document.SourceLocale,
+		Locale:           document.Locale,
+		LocaleExists:     document.LocaleExists,
+		Source:           localeFieldsMessage(document.Source),
+		Requested:        localeFieldsMessage(document.Requested),
+		DocumentRevision: document.DocumentRevision,
+		TargetRevision:   document.TargetRevision,
+	}, err)
 }
 
 func (h *InternalConnectHandler) SaveDocument(ctx context.Context, req *connect.Request[intrav1.SavePostSeriesDocumentRequest]) (*connect.Response[intrav1.SavePostSeriesDocumentResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, errs.InvalidArgument("request", "request is required")
 	}
-	return respond(h.series.SavePostSeriesDocument(ctx, SavePostSeriesDocumentCommand{
+	saved, err := h.series.SavePostSeriesDocument(ctx, SavePostSeriesDocumentCommand{
 		SeriesID: req.Msg.SeriesId, Locale: req.Msg.Locale,
 		ExpectedDocumentRevision: req.Msg.ExpectedDocumentRevision, ExpectedTargetRevision: req.Msg.ExpectedTargetRevision,
-		Requested: req.Msg.Requested, ContributorMemberIDs: req.Msg.ContributorMemberIds,
-	}))
+		Requested: requestedLocaleFields(req.Msg.Requested), ContributorMemberIDs: req.Msg.ContributorMemberIds,
+	})
+	return respond(&intrav1.SavePostSeriesDocumentResponse{
+		Locale: saved.Locale, DocumentRevision: saved.DocumentRevision, TargetRevision: saved.TargetRevision,
+	}, err)
 }

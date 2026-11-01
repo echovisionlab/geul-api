@@ -9,9 +9,38 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	seriesdomain "github.com/echovisionlab/geul-api/internal/series"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
+
+// AssetFromRef is the Series form of a ready asset; nil stays nil.
+func AssetFromRef(ref *commonv1.AssetRef) *seriesdomain.Asset {
+	if ref == nil {
+		return nil
+	}
+	return &seriesdomain.Asset{
+		ID:               ref.AssetId,
+		URL:              ref.Url,
+		Extension:        ref.Extension,
+		MIMEType:         ref.MimeType,
+		FileSize:         ref.FileSize,
+		SHA256:           ref.Sha256,
+		Disposition:      seriesdomain.AssetDisposition(ref.Disposition),
+		DownloadFilename: ref.DownloadFilename,
+	}
+}
+
+func assetsFromRefs(refs map[string]*commonv1.AssetRef) map[string]*seriesdomain.Asset {
+	if refs == nil {
+		return nil
+	}
+	assets := make(map[string]*seriesdomain.Asset, len(refs))
+	for id, ref := range refs {
+		assets[id] = AssetFromRef(ref)
+	}
+	return assets
+}
 
 type Runtime struct {
 	db          *gorm.DB
@@ -34,7 +63,7 @@ func (r *Runtime) LoadManagerCounts(ctx context.Context, seriesIDs []string) (ma
 	return NewReadProjection(r.db).LoadManagerCounts(ctx, seriesIDs)
 }
 
-func (r *Runtime) ReadyAsset(ctx context.Context, candidateIDs ...*string) (*commonv1.AssetRef, error) {
+func (r *Runtime) ReadyAsset(ctx context.Context, candidateIDs ...*string) (*seriesdomain.Asset, error) {
 	ready, err := r.ReadyAssets(ctx, candidateIDs...)
 	if err != nil {
 		return nil, err
@@ -50,7 +79,7 @@ func (r *Runtime) ReadyAsset(ctx context.Context, candidateIDs ...*string) (*com
 	return nil, nil
 }
 
-func (r *Runtime) ReadyAssets(ctx context.Context, candidateIDs ...*string) (map[string]*commonv1.AssetRef, error) {
+func (r *Runtime) ReadyAssets(ctx context.Context, candidateIDs ...*string) (map[string]*seriesdomain.Asset, error) {
 	seen := make(map[string]struct{}, len(candidateIDs))
 	assetIDs := make([]string, 0, len(candidateIDs))
 	for _, candidateID := range candidateIDs {
@@ -67,7 +96,7 @@ func (r *Runtime) ReadyAssets(ctx context.Context, candidateIDs ...*string) (map
 		seen[id] = struct{}{}
 		assetIDs = append(assetIDs, id)
 	}
-	refs := make(map[string]*commonv1.AssetRef, len(assetIDs))
+	refs := make(map[string]*seriesdomain.Asset, len(assetIDs))
 	if len(assetIDs) == 0 {
 		return refs, nil
 	}
@@ -86,7 +115,7 @@ func (r *Runtime) ReadyAssets(ctx context.Context, candidateIDs ...*string) (map
 		if err != nil {
 			return nil, err
 		}
-		refs[asset.ID] = ref
+		refs[asset.ID] = AssetFromRef(ref)
 	}
 	return refs, nil
 }
@@ -95,12 +124,17 @@ func (r *Runtime) ReadyAssetsForSourceFiles(
 	ctx context.Context,
 	kind string,
 	fileIDs []string,
-) (map[string]*commonv1.AssetRef, error) {
-	return mediaasset.LoadReadyPublicAssetRefsForSourceFiles(ctx, r.db, r.cdnDomain, kind, fileIDs)
+) (map[string]*seriesdomain.Asset, error) {
+	refs, err := mediaasset.LoadReadyPublicAssetRefsForSourceFiles(ctx, r.db, r.cdnDomain, kind, fileIDs)
+	if err != nil {
+		return nil, err
+	}
+	return assetsFromRefs(refs), nil
 }
 
-func (r *Runtime) ReadyAssetForSourceFile(ctx context.Context, fileID, kind string) (*commonv1.AssetRef, error) {
-	return mediaasset.ReadyPublicAssetRefForSourceFile(ctx, r.db, r.cdnDomain, fileID, kind)
+func (r *Runtime) ReadyAssetForSourceFile(ctx context.Context, fileID, kind string) (*seriesdomain.Asset, error) {
+	ref, err := mediaasset.ReadyPublicAssetRefForSourceFile(ctx, r.db, r.cdnDomain, fileID, kind)
+	return AssetFromRef(ref), err
 }
 
 func (r *Runtime) BindFeaturedImage(
@@ -108,9 +142,10 @@ func (r *Runtime) BindFeaturedImage(
 	tx *gorm.DB,
 	fileID string,
 	seriesID string,
-) (*commonv1.AssetRef, error) {
-	return mediaasset.NewLifecycle(tx, r.cdnDomain).
+) (*seriesdomain.Asset, error) {
+	ref, err := mediaasset.NewLifecycle(tx, r.cdnDomain).
 		BindReadyAssetForSourceFile(ctx, fileID, "series", seriesID, "featured_image", "image")
+	return AssetFromRef(ref), err
 }
 
 func (r *Runtime) RequireAttachableFile(ctx context.Context, tx *gorm.DB, fileID string) error {

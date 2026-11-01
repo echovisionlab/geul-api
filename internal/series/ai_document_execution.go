@@ -7,9 +7,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-
-	"gorm.io/gorm"
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -40,11 +37,9 @@ func (s *Service) Load(
 		return core.Document{}, err
 	}
 	var document core.Document
-	access := mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
-		return s.access.RequirePermissionAndLock(ctx, tx, require, string(identity.Reference), policyv1.PostSeries.View)
-	})
-	err := s.readLocked(ctx, access, func(ctx context.Context, tx *gorm.DB) error {
-		state, err := s.loadAIDocumentState(ctx, tx, string(identity.Reference), string(locale))
+	access := lockedSeries(string(identity.Reference), policyv1.PostSeries.View)
+	err := s.readLocked(ctx, access, func(ctx context.Context, store Store) error {
+		state, err := loadAIDocumentState(ctx, store, string(identity.Reference), string(locale))
 		if err != nil {
 			return err
 		}
@@ -54,9 +49,9 @@ func (s *Service) Load(
 	return document, err
 }
 
-func (s *Service) validateAIDocumentDomain(
+func validateAIDocumentDomain(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	loaded core.Document,
 	operations []core.Operation,
 ) ([]core.OperationIssue, error) {
@@ -65,7 +60,7 @@ func (s *Service) validateAIDocumentDomain(
 	}
 	issues := make([]core.OperationIssue, 0)
 	for index, operation := range operations {
-		issue, err := postSeriesAIOperationIssue(ctx, db, loaded, operation)
+		issue, err := postSeriesAIOperationIssue(ctx, store, loaded, operation)
 		if err != nil {
 			return nil, err
 		}
@@ -79,14 +74,14 @@ func (s *Service) validateAIDocumentDomain(
 
 // postSeriesAIOperationIssue is the Series rule an operation breaks, if
 // any.
-func postSeriesAIOperationIssue(ctx context.Context, db *gorm.DB, loaded core.Document, operation core.Operation) (*core.OperationIssue, error) {
+func postSeriesAIOperationIssue(ctx context.Context, store Store, loaded core.Document, operation core.Operation) (*core.OperationIssue, error) {
 	handle := func() string { return postSeriesAIOperationHandles(operation)[0] }
 	issue := func(code core.IssueCode, message string) *core.OperationIssue {
 		return &core.OperationIssue{Code: code, Handle: handle(), Message: message}
 	}
 	switch operation.Kind {
 	case core.OperationSetField:
-		return postSeriesAISetFieldIssue(ctx, db, loaded, operation.SetField, issue)
+		return postSeriesAISetFieldIssue(ctx, store, loaded, operation.SetField, issue)
 	case core.OperationUnsetField:
 		return postSeriesAIUnsetFieldIssue(loaded, operation.UnsetField.Target.Field, issue), nil
 	case core.OperationInsertRelationItem:
@@ -119,7 +114,7 @@ func postSeriesAIOperationIssue(ctx context.Context, db *gorm.DB, loaded core.Do
 
 func postSeriesAISetFieldIssue(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	loaded core.Document,
 	set *core.SetField,
 	issue func(core.IssueCode, string) *core.OperationIssue,
@@ -135,7 +130,7 @@ func postSeriesAISetFieldIssue(
 		if err != nil {
 			return issue(core.IssueValueKindMismatch, err.Error()), nil
 		}
-		if err := validateSeriesUpdateSlug(ctx, db, string(loaded.Identity.Reference), &normalized); err != nil {
+		if err := validateSeriesUpdateSlug(ctx, store, string(loaded.Identity.Reference), &normalized); err != nil {
 			return nil, err
 		}
 	case postSeriesAIFieldStatus:
@@ -204,20 +199,20 @@ func (s *Service) executeMutation(
 	var command core.ValidatedApply
 	var audits seriesAudits
 	seriesID := string(identity.Reference)
-	result, err := mutation.Run(ctx, s.mutations, mutation.Spec[core.ApplyResult]{
+	result, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[core.ApplyResult, Store]{
 		// The root is locked before one exact action chosen from the batch;
 		// a caller without it learns nothing about the Series.
-		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
-			err := s.access.RequirePermissionAndLock(ctx, tx, require, seriesID, postSeriesAIDocumentAction(request.Operations))
+		Access: mutation.Locked(func(ctx context.Context, store Store, require mutation.Require) error {
+			err := requireSeriesPermissionAndLock(ctx, store, require, seriesID, postSeriesAIDocumentAction(request.Operations))
 			if mutation.IsDenied(err) || mutation.IsUnauthenticated(err) {
 				return domainerr.ResourceNotFound("series", seriesID)
 			}
 			return err
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (core.ApplyResult, error) {
+		Change: func(ctx context.Context, store Store) (core.ApplyResult, error) {
 			var result core.ApplyResult
 			var err error
-			command, validation, result, err = s.compileAndApplyAIDocument(ctx, tx, request, &audits)
+			command, validation, result, err = s.compileAndApplyAIDocument(ctx, store, request, &audits)
 			if err != nil {
 				return core.ApplyResult{}, err
 			}
@@ -227,9 +222,13 @@ func (s *Service) executeMutation(
 			return result, nil
 		},
 		Audit: func(core.ApplyResult) mutation.Audit { return audits.audit() },
-		Outbox: func(ctx context.Context, tx *gorm.DB, result core.ApplyResult) error {
+		Outbox: func(ctx context.Context, store Store, result core.ApplyResult) error {
 			deletesTranslation := len(command.Operations) == 1 && command.Operations[0].Kind == core.OperationDeleteTranslation
-			return contentsignal.PublishInteractive(ctx, tx, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_POST_SERIES, seriesID, string(request.Locale), string(result.DocumentRevision), postSeriesSignalTarget(result.TargetRevision), result.Changed, deletesTranslation, contentsignal.InteractiveMemberID(ctx))
+			return store.PublishContentSignal(ctx, ContentSignal{
+				SeriesID: seriesID, Locale: string(request.Locale), DocumentRevision: string(result.DocumentRevision),
+				TargetRevision: postSeriesSignalTarget(result.TargetRevision), Changed: result.Changed, Deleted: deletesTranslation,
+				MemberID: contentsignal.InteractiveMemberID(ctx),
+			})
 		},
 	})
 	if errors.Is(err, errRollbackPostSeriesAIValidation) {
@@ -255,12 +254,12 @@ func (s *Service) executeMutation(
 // document and the Series rules, then applies it.
 func (s *Service) compileAndApplyAIDocument(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	request core.ApplyRequest,
 	audits *seriesAudits,
 ) (core.ValidatedApply, core.ValidationResult, core.ApplyResult, error) {
 	identity := request.Identity()
-	state, err := s.loadAIDocumentState(ctx, tx, string(identity.Reference), string(request.Locale))
+	state, err := loadAIDocumentState(ctx, store, string(identity.Reference), string(request.Locale))
 	if err != nil {
 		return core.ValidatedApply{}, core.ValidationResult{}, core.ApplyResult{}, err
 	}
@@ -269,7 +268,7 @@ func (s *Service) compileAndApplyAIDocument(
 	if !validation.Valid() {
 		return command, validation, core.ApplyResult{}, &postSeriesAIAdapterValidationError{result: validation}
 	}
-	issues, err := s.validateAIDocumentDomain(ctx, tx, current, command.Operations)
+	issues, err := validateAIDocumentDomain(ctx, store, current, command.Operations)
 	if err != nil {
 		return command, validation, core.ApplyResult{}, err
 	}
@@ -277,13 +276,13 @@ func (s *Service) compileAndApplyAIDocument(
 		validation.Issues = append(validation.Issues, issues...)
 		return command, validation, core.ApplyResult{}, &postSeriesAIAdapterValidationError{result: validation}
 	}
-	result, err := s.applyAIDocumentCommand(ctx, tx, state, command, audits)
+	result, err := s.applyAIDocumentCommand(ctx, store, state, command, audits)
 	return command, validation, result, err
 }
 
 func (s *Service) applyAIDocumentCommand(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	state postSeriesAIDocumentState,
 	command core.ValidatedApply,
 	audits *seriesAudits,
@@ -291,7 +290,7 @@ func (s *Service) applyAIDocumentCommand(
 	mutation := postSeriesAIMutation{state: state}
 	defer func() { audits.records = append(audits.records, mutation.audits.records...) }()
 	for index, operation := range command.Operations {
-		changed, err := s.applyAIDocumentOperation(ctx, tx, &mutation, command, index, operation)
+		changed, err := applyAIDocumentOperation(ctx, store, &mutation, command, index, operation)
 		if err != nil {
 			return core.ApplyResult{}, err
 		}
@@ -321,11 +320,11 @@ func (s *Service) applyAIDocumentCommand(
 			TargetRevision:   clonePostSeriesRevision(state.targetRevision),
 		})
 	}
-	if err := s.persistAIDocumentMutation(ctx, tx, &mutation, command); err != nil {
+	if err := persistAIDocumentMutation(ctx, store, &mutation, command, s.now().UTC()); err != nil {
 		return core.ApplyResult{}, err
 	}
-	next, err := s.loadAIDocumentState(
-		ctx, tx, state.root.ID, string(command.Locale),
+	next, err := loadAIDocumentState(
+		ctx, store, state.root.ID, string(command.Locale),
 	)
 	if err != nil {
 		return core.ApplyResult{}, err

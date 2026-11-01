@@ -8,15 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	"github.com/google/uuid"
@@ -50,27 +44,10 @@ var postSeriesAIDocumentCatalog = core.Catalog{
 	}},
 }
 
-// aiDocumentAccess locks a Series root and requires one exact action on it.
-type aiDocumentAccess interface {
-	RequirePermissionAndLock(context.Context, *gorm.DB, mutation.Require, string, seriesAction) error
-}
-
-type seriesAIDocumentAccess struct{}
-
-func (seriesAIDocumentAccess) RequirePermissionAndLock(
-	ctx context.Context,
-	tx *gorm.DB,
-	require mutation.Require,
-	seriesID string,
-	action seriesAction,
-) error {
-	return requireSeriesPermissionAndLock(ctx, tx, require, seriesID, action)
-}
-
 type postSeriesAIDocumentState struct {
-	root              model.Series
-	source            model.SeriesTranslation
-	locale            *model.SeriesTranslation
+	root              Series
+	source            Translation
+	locale            *Translation
 	localeExists      bool
 	postIDs           []string
 	contentDocumentID uuid.UUID
@@ -87,7 +64,7 @@ type postSeriesAIMutation struct {
 	createTranslation  bool
 	deleteTranslation  bool
 	slug               *string
-	status             *model.SeriesStatus
+	status             *Status
 	postIDs            []string
 	localeChanged      bool
 	titleChanged       bool
@@ -97,9 +74,9 @@ type postSeriesAIMutation struct {
 	audits             seriesAudits
 }
 
-func (s *Service) applyAIDocumentOperation(
+func applyAIDocumentOperation(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	mutation *postSeriesAIMutation,
 	command core.ValidatedApply,
 	index int,
@@ -108,15 +85,15 @@ func (s *Service) applyAIDocumentOperation(
 	mutation.loadLocaleValues()
 	switch operation.Kind {
 	case core.OperationSetField:
-		return s.applyAISetField(ctx, tx, mutation, command, operation.SetField)
+		return applyAISetField(ctx, store, mutation, command, operation.SetField)
 	case core.OperationUnsetField:
-		return s.applyAIUnsetField(ctx, tx, mutation, command, operation.UnsetField)
+		return applyAIUnsetField(mutation, command, operation.UnsetField)
 	case core.OperationInsertRelationItem:
-		return s.applyAIInsertPost(ctx, tx, mutation, operation.InsertRelationItem)
+		return applyAIInsertPost(ctx, store, mutation, operation.InsertRelationItem)
 	case core.OperationDeleteRelationItem:
-		return s.applyAIDeletePost(ctx, tx, mutation, operation.DeleteRelationItem)
+		return applyAIDeletePost(ctx, store, mutation, operation.DeleteRelationItem)
 	case core.OperationMoveRelationItem:
-		return s.applyAIMovePost(ctx, tx, mutation, operation.MoveRelationItem)
+		return applyAIMovePost(ctx, store, mutation, operation.MoveRelationItem)
 	case core.OperationCreateTranslation:
 		mutation.createTranslation = true
 		mutation.localeChanged = true
@@ -142,9 +119,9 @@ func (m *postSeriesAIMutation) loadLocaleValues() {
 	m.postIDs = append([]string(nil), m.state.postIDs...)
 }
 
-func (s *Service) applyAISetField(
+func applyAISetField(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	mutation *postSeriesAIMutation,
 	command core.ValidatedApply,
 	operation *core.SetField,
@@ -187,7 +164,7 @@ func (s *Service) applyAISetField(
 		if value == current {
 			return false, nil
 		}
-		if err := validateSeriesUpdateSlug(ctx, tx, mutation.state.root.ID, &value); err != nil {
+		if err := validateSeriesUpdateSlug(ctx, store, mutation.state.root.ID, &value); err != nil {
 			return false, err
 		}
 		mutation.slug = &value
@@ -213,9 +190,7 @@ func (s *Service) applyAISetField(
 	}
 }
 
-func (s *Service) applyAIUnsetField(
-	_ context.Context,
-	_ *gorm.DB,
+func applyAIUnsetField(
 	mutation *postSeriesAIMutation,
 	command core.ValidatedApply,
 	operation *core.UnsetField,
@@ -246,9 +221,9 @@ func (s *Service) applyAIUnsetField(
 	}
 }
 
-func (s *Service) applyAIInsertPost(
+func applyAIInsertPost(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	mutation *postSeriesAIMutation,
 	operation *core.InsertRelationItem,
 ) (bool, error) {
@@ -256,24 +231,24 @@ func (s *Service) applyAIInsertPost(
 		return false, err
 	}
 	postID := string(operation.Item)
-	observed, err := lockPostSeriesRelation(ctx, tx, s.postMembership, postID)
+	observed, err := lockPostSeriesRelation(ctx, store.Posts(), postID)
 	if err != nil {
 		return false, err
 	}
-	if err := s.assignPostToSeriesAfterSeriesPermissionWithDB(ctx, tx, &mutation.audits, postID, mutation.state.root.ID, observed); err != nil {
+	if err := assignPostToSeriesAfterSeriesPermission(ctx, store, &mutation.audits, postID, mutation.state.root.ID, observed); err != nil {
 		return false, err
 	}
 	mutation.postIDs = insertPostAfter(mutation.postIDs, postID, string(operation.After))
-	if err := orderSeriesPosts(ctx, tx, s.postMembership, mutation.state.root.ID, mutation.postIDs, dbtime.Now()); err != nil {
+	if err := orderSeriesPosts(ctx, store.Posts(), mutation.state.root.ID, mutation.postIDs, dbtime.Now()); err != nil {
 		return false, err
 	}
 	mutation.audits.order(mutation.state.root.ID, mutation.postIDs)
 	return true, nil
 }
 
-func (s *Service) applyAIDeletePost(
+func applyAIDeletePost(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	mutation *postSeriesAIMutation,
 	operation *core.DeleteRelationItem,
 ) (bool, error) {
@@ -281,27 +256,28 @@ func (s *Service) applyAIDeletePost(
 		return false, err
 	}
 	postID := string(operation.Item)
-	current, err := lockPostSeriesRelation(ctx, tx, s.postMembership, postID)
+	posts := store.Posts()
+	current, err := lockPostSeriesRelation(ctx, posts, postID)
 	if err != nil {
 		return false, err
 	}
 	if current == nil || *current != mutation.state.root.ID {
 		return false, domainerr.InvalidField("post", "must belong to the Post Series")
 	}
-	if err := seriesRelationError(s.postMembership.ClearSeries(ctx, tx, postID, mutation.state.root.ID, dbtime.Now())); err != nil {
+	if err := seriesRelationError(posts.Clear(ctx, postID, mutation.state.root.ID, dbtime.Now())); err != nil {
 		return false, err
 	}
 	mutation.postIDs = removePostID(mutation.postIDs, postID)
-	if err := orderSeriesPosts(ctx, tx, s.postMembership, mutation.state.root.ID, mutation.postIDs, dbtime.Now()); err != nil {
+	if err := orderSeriesPosts(ctx, posts, mutation.state.root.ID, mutation.postIDs, dbtime.Now()); err != nil {
 		return false, err
 	}
 	mutation.audits.membership(mutation.state.root.ID, postID, mutation.state.root.ID, "")
 	return true, nil
 }
 
-func (s *Service) applyAIMovePost(
+func applyAIMovePost(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	mutation *postSeriesAIMutation,
 	operation *core.MoveRelationItem,
 ) (bool, error) {
@@ -315,7 +291,7 @@ func (s *Service) applyAIMovePost(
 	if sameSeriesPostOrder(mutation.postIDs, next) {
 		return false, nil
 	}
-	if err := orderSeriesPosts(ctx, tx, s.postMembership, mutation.state.root.ID, next, dbtime.Now()); err != nil {
+	if err := orderSeriesPosts(ctx, store.Posts(), mutation.state.root.ID, next, dbtime.Now()); err != nil {
 		return false, err
 	}
 	mutation.audits.order(mutation.state.root.ID, next)
@@ -323,19 +299,19 @@ func (s *Service) applyAIMovePost(
 	return true, nil
 }
 
-func (s *Service) persistAIDocumentMutation(
+func persistAIDocumentMutation(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	mutation *postSeriesAIMutation,
 	command core.ValidatedApply,
+	now time.Time,
 ) error {
-	now := s.now().UTC()
 	seriesID := mutation.state.root.ID
 	locale := string(command.Locale)
-	if err := persistPostSeriesAILocale(ctx, tx, mutation, locale, now); err != nil {
+	if err := persistPostSeriesAILocale(ctx, store, mutation, locale, now); err != nil {
 		return err
 	}
-	metadataFields, err := s.persistPostSeriesAIRoot(ctx, tx, mutation, now)
+	metadataFields, err := persistPostSeriesAIRoot(ctx, store, mutation, now)
 	if err != nil {
 		return err
 	}
@@ -344,7 +320,7 @@ func (s *Service) persistAIDocumentMutation(
 		(command.LocaleRole == core.LocaleRoleSource && mutation.localeChanged)
 	if sourceDocumentChanged {
 		if _, err := advanceSeriesContentDocument(
-			ctx, tx, seriesID, mutation.state.contentDocumentID,
+			ctx, store, seriesID, mutation.state.contentDocumentID,
 			mutation.state.contentRevision, now,
 		); err != nil {
 			return err
@@ -361,7 +337,7 @@ func (s *Service) persistAIDocumentMutation(
 		mutation.audits.lifecycle(seriesID, postSeriesAuditState(mutation.state.root.Status), postSeriesAuditState(*mutation.status))
 	}
 	if mutation.titleChanged || mutation.deleteTranslation {
-		_, err := s.ogRefresh.RequestCurrent(ctx, tx, seriesID, locale, false, "series_ai_document_title_updated")
+		_, err := store.RequestOG(ctx, seriesID, locale, false, "series_ai_document_title_updated")
 		if err != nil {
 			return err
 		}
@@ -371,23 +347,22 @@ func (s *Service) persistAIDocumentMutation(
 
 // persistPostSeriesAILocale creates, deletes or rewrites the locale row the
 // mutation changed.
-func persistPostSeriesAILocale(ctx context.Context, tx *gorm.DB, mutation *postSeriesAIMutation, locale string, now time.Time) error {
+func persistPostSeriesAILocale(ctx context.Context, store Store, mutation *postSeriesAIMutation, locale string, now time.Time) error {
 	seriesID := mutation.state.root.ID
 	if mutation.createTranslation {
-		if err := tx.WithContext(ctx).Table("series_translation").Create(&model.SeriesTranslation{
-			EntityID: seriesID, Locale: locale, CreatedAt: now, UpdatedAt: now,
-		}).Error; err != nil {
+		if err := store.InsertTranslation(ctx, Translation{
+			SeriesID: seriesID, Locale: locale, CreatedAt: now, UpdatedAt: now,
+		}); err != nil {
 			return err
 		}
 	}
 	if mutation.deleteTranslation {
-		result := tx.WithContext(ctx).Table("series_translation").Where("entity_id = ? AND locale = ?", seriesID, locale).
-			Delete(&model.SeriesTranslation{})
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected != 1 {
+		err := store.DeleteTranslation(ctx, seriesID, locale)
+		if errors.Is(err, ErrTranslationNotFound) {
 			return domainerr.Precondition("Post Series translation changed; retry")
+		}
+		if err != nil {
+			return err
 		}
 	}
 	if !mutation.localeChanged || mutation.createTranslation || mutation.deleteTranslation {
@@ -398,92 +373,68 @@ func persistPostSeriesAILocale(ctx context.Context, tx *gorm.DB, mutation *postS
 		updatedAt = translation.NextTargetUpdatedAt(now, mutation.state.locale.UpdatedAt)
 	}
 	if !mutation.state.localeExists {
-		return tx.WithContext(ctx).Table("series_translation").Create(&model.SeriesTranslation{
-			EntityID: seriesID, Locale: locale, Title: mutation.localeTitle, Summary: mutation.localeSummary,
+		return store.InsertTranslation(ctx, Translation{
+			SeriesID: seriesID, Locale: locale, Title: mutation.localeTitle, Summary: mutation.localeSummary,
 			ContentText: cloneString(mutation.localeSummary), CreatedAt: updatedAt, UpdatedAt: updatedAt,
-		}).Error
+		})
 	}
-	result := tx.WithContext(ctx).Table("series_translation").
-		Where("entity_id = ? AND locale = ?", seriesID, locale).
-		Updates(structured.Fields{"title": mutation.localeTitle, "summary": mutation.localeSummary, "content_text": mutation.localeSummary, "updated_at": updatedAt})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
+	err := store.UpdateTranslation(ctx, seriesID, locale, mutation.localeTitle, mutation.localeSummary, mutation.localeSummary, updatedAt)
+	if errors.Is(err, ErrTranslationNotFound) {
 		return domainerr.Precondition("Post Series locale changed; retry")
 	}
-	return nil
+	return err
 }
 
 // persistPostSeriesAIRoot writes a changed slug or status and returns the
 // changed metadata audit fields.
-func (s *Service) persistPostSeriesAIRoot(ctx context.Context, tx *gorm.DB, mutation *postSeriesAIMutation, now time.Time) ([]string, error) {
+func persistPostSeriesAIRoot(ctx context.Context, store Store, mutation *postSeriesAIMutation, now time.Time) ([]string, error) {
 	seriesID := mutation.state.root.ID
 	metadataFields := make([]string, 0, 2)
 	if mutation.slugChanged {
-		if err := tx.WithContext(ctx).Model(&model.Series{}).Where("id = ?", seriesID).
-			Updates(structured.Fields{"slug": *mutation.slug, "updated_at": now}).Error; err != nil {
+		if err := store.UpdateSeriesRoot(ctx, seriesID, mutation.slug, nil, now); err != nil {
 			return nil, err
 		}
-		if err := s.menuTargets.UpdateSlug(ctx, tx, "series", seriesID, mutation.state.root.Slug, *mutation.slug); err != nil {
+		if err := store.RenameMenuTargets(ctx, seriesID, mutation.state.root.Slug, *mutation.slug); err != nil {
 			return nil, err
 		}
 		metadataFields = append(metadataFields, "slug")
 	}
 	if mutation.statusChanged {
-		if err := tx.WithContext(ctx).Model(&model.Series{}).Where("id = ?", seriesID).
-			Updates(structured.Fields{"status": *mutation.status, "updated_at": now}).Error; err != nil {
+		if err := store.UpdateSeriesRoot(ctx, seriesID, nil, mutation.status, now); err != nil {
 			return nil, err
 		}
 	}
 	return metadataFields, nil
 }
 
-func (s *Service) loadAIDocumentState(
+func loadAIDocumentState(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	seriesID string,
 	locale string,
 ) (postSeriesAIDocumentState, error) {
 	var state postSeriesAIDocumentState
-	if err := tx.WithContext(ctx).Where("id = ?", seriesID).Take(&state.root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return state, domainerr.ResourceNotFound("series", seriesID)
-		}
+	var err error
+	if state.root, err = loadSeries(ctx, store, seriesID); err != nil {
 		return state, err
 	}
-	contentDocument, err := loadSeriesContentDocumentState(ctx, tx, seriesID, true)
+	contentDocument, err := loadSeriesContentDocumentState(ctx, store, seriesID, true)
 	if err != nil {
 		return state, err
 	}
 	state.contentDocumentID = contentDocument.ID
 	state.contentRevision = contentDocument.Revision
 	state.documentRevision = core.Revision(contentDocument.Revision.String())
-	if err := tx.WithContext(ctx).Table("series_translation").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Where("entity_id = ? AND locale = ?", seriesID, state.root.SourceLocale).
-		Take(&state.source).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if state.source, err = store.Translation(ctx, seriesID, state.root.SourceLocale, true); err != nil {
+		if errors.Is(err, ErrTranslationNotFound) {
 			return state, domainerr.ResourceNotFound("series_translation", seriesID)
 		}
 		return state, err
 	}
-	if locale == state.root.SourceLocale {
-		state.locale = &state.source
-		state.localeExists = true
-	} else {
-		var target model.SeriesTranslation
-		err := tx.WithContext(ctx).Table("series_translation").Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-			Where("entity_id = ? AND locale = ?", seriesID, locale).Take(&target).Error
-		switch {
-		case err == nil:
-			state.locale = &target
-			state.localeExists = true
-		case errors.Is(err, gorm.ErrRecordNotFound):
-		case err != nil:
-			return state, err
-		}
+	if err := state.loadLocale(ctx, store, locale); err != nil {
+		return state, err
 	}
-	if state.postIDs, err = s.postMembership.SeriesPostIDs(ctx, tx, seriesID); err != nil {
+	if state.postIDs, err = store.Posts().SeriesPostIDs(ctx, seriesID); err != nil {
 		return state, err
 	}
 	if locale != state.root.SourceLocale && state.localeExists {
@@ -498,6 +449,26 @@ func (s *Service) loadAIDocumentState(
 		state.targetRevision = &revision
 	}
 	return state, nil
+}
+
+// loadLocale points the state at the room's locale row: the source row, or
+// the target row locked FOR UPDATE when it exists.
+func (s *postSeriesAIDocumentState) loadLocale(ctx context.Context, store Store, locale string) error {
+	if locale == s.root.SourceLocale {
+		s.locale = &s.source
+		s.localeExists = true
+		return nil
+	}
+	target, err := store.Translation(ctx, s.root.ID, locale, true)
+	switch {
+	case err == nil:
+		s.locale = &target
+		s.localeExists = true
+	case errors.Is(err, ErrTranslationNotFound):
+	default:
+		return err
+	}
+	return nil
 }
 
 func (s postSeriesAIDocumentState) document(identity core.DocumentIdentity, locale core.Locale) core.Document {

@@ -3,34 +3,24 @@ package series
 import (
 	"context"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
-func isSlugAvailable(ctx context.Context, db *gorm.DB, value structured.Value, slug, excludeID string) (bool, error) {
+func isSlugAvailable(ctx context.Context, store Store, slug, excludeID string) (bool, error) {
 	if slug == "" {
 		return true, nil
 	}
-	query := db.WithContext(ctx).Model(value).Where("slug = ?", slug)
-	if excludeID != "" {
-		query = query.Where("id != ?", excludeID)
-	}
-	var count int64
-	if err := query.Count(&count).Error; err != nil {
-		return false, err
-	}
-	return count == 0, nil
+	taken, err := store.SlugTaken(ctx, slug, excludeID)
+	return !taken, err
 }
 
-func ensureSlugAvailable(ctx context.Context, db *gorm.DB, value structured.Value, entity, slug, excludeID string) error {
-	available, err := isSlugAvailable(ctx, db, value, slug, excludeID)
+func ensureSlugAvailable(ctx context.Context, store Store, slug, excludeID string) error {
+	available, err := isSlugAvailable(ctx, store, slug, excludeID)
 	if err != nil {
 		return err
 	}
 	if !available {
-		return domainerr.Duplicate(entity, "slug", slug)
+		return domainerr.Duplicate("series", "slug", slug)
 	}
 	return nil
 }

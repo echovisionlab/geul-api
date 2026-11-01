@@ -63,6 +63,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filepublic "github.com/echovisionlab/geul-api/internal/filemedia/public"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	llmproviders "github.com/echovisionlab/geul-api/internal/llm/providers"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
@@ -76,6 +77,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/series"
+	seriespostgres "github.com/echovisionlab/geul-api/internal/series/postgres"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
@@ -592,12 +594,21 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	seriesRuntime := seriesadapter.NewRuntime(db, cfg.CDNURL, ogDeps.refresher)
 	seriesMenuTargets := menu.NewTargetLifecycle(telemetryWriter)
 	seriesPostAccess := seriesadapter.PostAccess{}
+	seriesUnits, err := seriespostgres.NewUnits(db, seriespostgres.Collaborators{
+		Media: seriesRuntime, MenuTargets: seriesMenuTargets, Posts: postadapter.SeriesMembership{},
+		PostAccess: seriesPostAccess, SpiceDB: spicedbClient, Checkpoints: collaborationRuntime.Checkpoints,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Post Series store: %w", err)
+	}
+	seriesLocales, err := seriespostgres.NewLocales(db)
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Post Series locales: %w", err)
+	}
 	seriesService, err := series.NewService(series.Deps{
-		DB: db, SpiceDB: spicedbClient, Identity: kratosClient,
-		Media: seriesRuntime, OG: seriesRuntime, Reads: seriesRuntime,
-		MenuTargets: seriesMenuTargets, Posts: seriesPostAccess, Membership: postadapter.SeriesMembership{},
-		Members:     seriesadapter.NewMemberSummaries(db, cfg.CDNURL),
-		Checkpoints: collaborationRuntime.Checkpoints, Audit: telemetryWriter,
+		Units: seriesUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
+		Media: seriesRuntime, Reads: seriesRuntime, Members: seriesadapter.NewMemberSummaries(db, cfg.CDNURL),
+		Locales: seriesLocales,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize Post Series service: %w", err)

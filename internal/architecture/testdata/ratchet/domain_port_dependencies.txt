@@ -120,12 +120,8 @@
 4 internal/release/public gorm
 5 internal/release/public model
 3 internal/release/public spicedb client
-10 internal/series generated contracts
-17 internal/series gorm
-15 internal/series model
-6 internal/series spicedb client
-2 internal/series/public generated contracts
-1 internal/series/public model
+2 internal/series generated contracts
+1 internal/series/public generated contracts
 3 internal/sharelink generated contracts
 3 internal/sharelink gorm
 2 internal/sharelink model

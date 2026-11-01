@@ -8,18 +8,16 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
+// seriesPermissionChecker is the SpiceDB reads of the Series use cases
+// outside a mutation.
 type seriesPermissionChecker interface {
 	Can(context.Context, policyv1.AuthorizationDecision) (bool, error)
 	LookupResources(
@@ -36,30 +34,25 @@ type seriesAction = auth.ResourceAction
 // inactive or denied, finds no Series.
 func requireSeriesPermissionAndLock(
 	ctx context.Context,
-	tx *gorm.DB,
+	store TranslationStore,
 	require mutation.Require,
 	seriesID string,
 	action seriesAction,
 ) error {
-	if err := lockSeriesRoot(ctx, tx, seriesID); err != nil {
+	if err := lockSeriesRoot(ctx, store, seriesID); err != nil {
 		return err
 	}
-	principal := auth.GetUser(ctx)
-	if principal == nil {
+	if auth.GetUser(ctx) == nil {
 		return domainerr.AuthenticationRequired()
-	}
-	active, err := identitystate.LockActivePrincipal(ctx, tx, principal)
-	if err != nil {
-		return err
-	}
-	if !active {
-		return domainerr.ResourceNotFound("series", seriesID)
 	}
 	can, err := action(seriesID)
 	if err != nil {
 		return domainerr.ResourceNotFound("series", seriesID).WithCause(err)
 	}
 	if err := require(can); err != nil {
+		if errors.Is(err, identitystate.ErrInactivePrincipal) {
+			return domainerr.ResourceNotFound("series", seriesID)
+		}
 		if mutation.IsDenied(err) {
 			return domainerr.ResourceNotFound("series", seriesID).WithCause(err)
 		}
@@ -71,38 +64,22 @@ func requireSeriesPermissionAndLock(
 // lockedSeries is the access of a Series mutation: the root is locked
 // before the one exact action is checked.
 func lockedSeries(seriesID string, action seriesAction) mutation.Access {
-	return mutation.Locked(func(ctx context.Context, tx *gorm.DB, require mutation.Require) error {
-		return requireSeriesPermissionAndLock(ctx, tx, require, seriesID, action)
+	return mutation.Locked(func(ctx context.Context, store Store, require mutation.Require) error {
+		return requireSeriesPermissionAndLock(ctx, store, require, seriesID, action)
 	})
 }
 
-func freshRequire(ctx context.Context, tx *gorm.DB, spiceDB *auth.SpiceDBClient) mutation.Require {
-	return func(can policyv1.Can) error {
-		return identitystate.RequireFreshCan(ctx, tx, identitystate.PostgresFence{}, spiceDB, can)
-	}
+// RequireViewAndLock is the translation read boundary for a concrete
+// Series: the root is locked, then require checks the one generated view
+// action with the principal's identity fence.
+func RequireViewAndLock(ctx context.Context, store TranslationStore, require mutation.Require, seriesID string) error {
+	return requireSeriesPermissionAndLock(ctx, store, require, seriesID, policyv1.PostSeries.View)
 }
 
-// RequireViewAndLockWithDB is the translation read boundary for a concrete
-// Series. It performs exactly one generated view permission check after the
-// root and active principal are locked.
-func RequireViewAndLockWithDB(
-	ctx context.Context,
-	tx *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	seriesID string,
-) error {
-	return requireSeriesPermissionAndLock(ctx, tx, freshRequire(ctx, tx, spiceDB), seriesID, policyv1.PostSeries.View)
-}
-
-// RequireEditAndLockWithDB is the translation source/target mutation boundary
-// for a concrete Series.
-func RequireEditAndLockWithDB(
-	ctx context.Context,
-	tx *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
-	seriesID string,
-) error {
-	return requireSeriesPermissionAndLock(ctx, tx, freshRequire(ctx, tx, spiceDB), seriesID, policyv1.PostSeries.Edit)
+// RequireEditAndLock is the translation source/target mutation boundary for
+// a concrete Series.
+func RequireEditAndLock(ctx context.Context, store TranslationStore, require mutation.Require, seriesID string) error {
+	return requireSeriesPermissionAndLock(ctx, store, require, seriesID, policyv1.PostSeries.Edit)
 }
 
 func checkSeriesPermission(
@@ -141,7 +118,7 @@ func (s *Service) requireSeriesPermissionOrNotFound(
 	seriesID string,
 	action seriesAction,
 ) error {
-	return checkSeriesPermission(ctx, s.permissions, seriesID, action, auth.GetUser(ctx))
+	return checkSeriesPermission(ctx, s.spiceDB, seriesID, action, auth.GetUser(ctx))
 }
 
 func requireSeriesPlatformPermission(
@@ -186,26 +163,16 @@ func (s *Service) lookupSeriesResources(
 	if err != nil {
 		return nil, domainerr.AuthenticationRequired().WithCause(err)
 	}
-	if s.permissions == nil {
-		return nil, domainerr.DependencyUnavailable("SpiceDB")
-	}
-	ids, err := s.permissions.LookupResources(ctx, lookup, actor)
+	ids, err := s.spiceDB.LookupResources(ctx, lookup, actor)
 	if err != nil {
 		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
 	return ids, nil
 }
 
-func lockSeriesRoot(ctx context.Context, tx *gorm.DB, seriesID string) error {
-	var row struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := tx.WithContext(ctx).Table("series").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Select("id").
-		Where("id = ?", seriesID).
-		Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+func lockSeriesRoot(ctx context.Context, store TranslationStore, seriesID string) error {
+	if err := store.LockSeries(ctx, seriesID); err != nil {
+		if errors.Is(err, ErrSeriesNotFound) {
 			return domainerr.ResourceNotFound("series", seriesID)
 		}
 		return err
@@ -213,9 +180,9 @@ func lockSeriesRoot(ctx context.Context, tx *gorm.DB, seriesID string) error {
 	return nil
 }
 
-func lockPostSeriesRelation(ctx context.Context, tx *gorm.DB, posts PostMembership, postID string) (*string, error) {
-	seriesID, err := posts.LockSeriesRelation(ctx, tx, postID)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+func lockPostSeriesRelation(ctx context.Context, posts Posts, postID string) (*string, error) {
+	seriesID, err := posts.LockSeriesOf(ctx, postID)
+	if errors.Is(err, ErrPostNotFound) {
 		return nil, domainerr.ResourceNotFound("post", postID)
 	}
 	if err != nil {
@@ -224,8 +191,8 @@ func lockPostSeriesRelation(ctx context.Context, tx *gorm.DB, posts PostMembersh
 	return seriesID, nil
 }
 
-func lockSeriesOrderPosts(ctx context.Context, tx *gorm.DB, posts PostMembership, postIDs []string) error {
-	locked, err := posts.LockSeriesPosts(ctx, tx, postIDs)
+func lockSeriesOrderPosts(ctx context.Context, posts Posts, postIDs []string) error {
+	locked, err := posts.LockPosts(ctx, postIDs)
 	if err != nil {
 		return err
 	}
@@ -235,20 +202,20 @@ func lockSeriesOrderPosts(ctx context.Context, tx *gorm.DB, posts PostMembership
 	return nil
 }
 
-func compactSeriesPostOrders(ctx context.Context, tx *gorm.DB, posts PostMembership, seriesID string, now time.Time) error {
-	postIDs, err := posts.SeriesPostIDs(ctx, tx, seriesID)
+func compactSeriesPostOrders(ctx context.Context, posts Posts, seriesID string, now time.Time) error {
+	postIDs, err := posts.SeriesPostIDs(ctx, seriesID)
 	if err != nil {
 		return err
 	}
-	if err := lockSeriesOrderPosts(ctx, tx, posts, postIDs); err != nil {
+	if err := lockSeriesOrderPosts(ctx, posts, postIDs); err != nil {
 		return err
 	}
-	return orderSeriesPosts(ctx, tx, posts, seriesID, postIDs, now)
+	return orderSeriesPosts(ctx, posts, seriesID, postIDs, now)
 }
 
 // orderSeriesPosts gives the Posts of seriesID the positions of postIDs.
-func orderSeriesPosts(ctx context.Context, tx *gorm.DB, posts PostMembership, seriesID string, postIDs []string, now time.Time) error {
-	return seriesRelationError(posts.OrderSeries(ctx, tx, seriesID, postIDs, now))
+func orderSeriesPosts(ctx context.Context, posts Posts, seriesID string, postIDs []string, now time.Time) error {
+	return seriesRelationError(posts.Order(ctx, seriesID, postIDs, now))
 }
 
 func seriesRelationError(err error) error {
@@ -293,7 +260,7 @@ func sameStringSet(left, right []string) bool {
 	return true
 }
 
-func validateSeriesStatus(name string) (model.SeriesStatus, error) {
+func validateSeriesStatus(name string) (Status, error) {
 	status, known := parseSeriesStatus(name)
 	if !known {
 		return "", domainerr.InvalidField("status", "must be draft or published")

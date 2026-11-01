@@ -55,7 +55,7 @@ func TestPageReferenceNativeRequestsAndCompactProjection(t *testing.T) {
 	description := "Private native body"
 	fixture := &recordingPageReferences{
 		forms:      []*managev1.FormSummary{nil, {Id: managementWorkID, Title: "문의 폼", Slug: &slug, Status: managev1.FormStatus_FORM_STATUS_PUBLISHED, SourceLocale: "ko", SubmissionCount: 19}},
-		series:     []*managev1.SeriesWithStats{nil, {}, {Series: &managev1.Series{Id: managementWorkID, Title: "소식", Slug: "news", Status: "SERIES_STATUS_PUBLISHED", SourceLocale: "ko", Description: &description}, PostCount: 4, ManagerCount: 7}},
+		series:     []series.ListedSeries{{Detail: series.Detail{Series: series.Series{ID: managementWorkID, Title: "소식", Slug: "news", Status: series.StatusPublished, SourceLocale: "ko", Description: &description}}, PostCount: 4, ManagerCount: 7}},
 		pagination: &commonv1.PaginationResponse{Total: 31, HasMore: true},
 	}
 	tools := newPageReferenceFixture(t, fixture)
@@ -210,7 +210,7 @@ func newPageReferenceFixture(t *testing.T, fixture *recordingPageReferences) *Pa
 
 type recordingPageReferences struct {
 	forms             []*managev1.FormSummary
-	series            []*managev1.SeriesWithStats
+	series            []series.ListedSeries
 	pagination        *commonv1.PaginationResponse
 	requestPagination *commonv1.PaginationRequest
 	filters           []*commonv1.FilterSpec
@@ -226,9 +226,9 @@ func (r *recordingPageReferences) ListFormsAdmin(_ context.Context, query form.L
 	return &managev1.ListFormsAdminResponse{Forms: r.forms, Pagination: r.pagination}, r.err
 }
 
-func (r *recordingPageReferences) ListSeriesAdmin(_ context.Context, query series.ListSeriesAdminQuery) (*managev1.ListSeriesAdminResponse, error) {
+func (r *recordingPageReferences) ListSeriesAdmin(_ context.Context, query series.ListSeriesAdminQuery) (series.SeriesPage, error) {
 	r.calls++
 	r.requestPagination = &commonv1.PaginationRequest{Limit: query.Page.Limit, Offset: query.Page.Offset}
 	r.filters, r.sorts = query.Filters, query.Sorts
-	return &managev1.ListSeriesAdminResponse{Series: r.series, Pagination: r.pagination}, r.err
+	return series.SeriesPage{Items: r.series, Total: r.pagination.GetTotal(), HasMore: r.pagination.GetHasMore()}, r.err
 }

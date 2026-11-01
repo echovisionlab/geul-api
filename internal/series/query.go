@@ -3,20 +3,11 @@ package series
 import (
 	"context"
 	"errors"
-	"time"
-
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
-
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 func (s *Service) loadSeriesListDetails(
 	ctx context.Context,
-	seriesList []model.Series,
+	seriesList []Series,
 ) (map[string]SeriesListDetails, error) {
 	details := make(map[string]SeriesListDetails, len(seriesList))
 	seriesIDs := make([]string, 0, len(seriesList))
@@ -52,43 +43,29 @@ func (s *Service) loadSeriesListDetails(
 	return details, nil
 }
 
-type seriesManagerAttribution struct {
-	MemberID  string
-	CreatedAt time.Time
-}
-
-func loadSeriesManagerAttributions(ctx context.Context, db *gorm.DB, seriesID string) ([]seriesManagerAttribution, error) {
-	var rows []seriesManagerAttribution
-	err := db.WithContext(ctx).Table("series_manager").Select("member_id", "created_at").
-		Where("series_id = ?", seriesID).Order("created_at ASC, member_id ASC").Scan(&rows).Error
-	return rows, err
-}
-
-func (s *Service) loadSeriesManagerProjections(ctx context.Context, seriesID string) ([]*managev1.SeriesManager, error) {
-	rows, err := loadSeriesManagerAttributions(ctx, s.db, seriesID)
-	if err != nil {
-		return nil, err
-	}
-	result := make([]*managev1.SeriesManager, 0, len(rows))
-	if len(rows) == 0 {
+// seriesManagers projects the Member summary of each attributed manager,
+// in attribution order.
+func (s *Service) seriesManagers(ctx context.Context, attributions []ManagerAttribution) ([]Manager, error) {
+	result := make([]Manager, 0, len(attributions))
+	if len(attributions) == 0 {
 		return result, nil
 	}
-	memberIDs := make([]string, len(rows))
-	for i := range rows {
-		memberIDs[i] = rows[i].MemberID
+	memberIDs := make([]string, len(attributions))
+	for i := range attributions {
+		memberIDs[i] = attributions[i].MemberID
 	}
 	summaries, err := s.members.LoadSeriesManagers(ctx, memberIDs)
 	if err != nil {
 		return nil, err
 	}
-	for _, row := range rows {
-		summary := summaries[row.MemberID]
-		if summary == nil {
+	for _, attribution := range attributions {
+		summary, ok := summaries[attribution.MemberID]
+		if !ok {
 			return nil, errors.New("series manager member was not found")
 		}
-		manager := proto.Clone(summary).(*managev1.SeriesManager)
-		manager.CreatedAt = timestamppb.New(row.CreatedAt)
-		result = append(result, manager)
+		result = append(result, Manager{
+			MemberID: summary.MemberID, Nickname: summary.Nickname, Avatar: summary.Avatar, CreatedAt: attribution.CreatedAt,
+		})
 	}
 	return result, nil
 }
