@@ -79,26 +79,9 @@ func NewsletterAuditStates(subscribed bool) (sharedtelemetry.AuditState, sharedt
 	return newsletterSubscriptionAuditStates(subscribed)
 }
 
-// AppendNewsletterSubscriptionMemberAudit records a capability-authenticated
-// token opt-out with the exact linked Member as its actor and account target.
-func AppendNewsletterSubscriptionMemberAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	writer domainaudit.Appender,
-	memberID string,
-	previous, next sharedtelemetry.AuditState,
-) error {
-	return domainaudit.AppendMember(
-		ctx,
-		tx,
-		writer,
-		memberID,
-		sharedtelemetry.AuditAccountUpdated,
-		newsletterSubscriptionAuditBuilder(memberID, previous, next),
-	)
-}
-
-func newsletterSubscriptionAuditBuilder(
+// NewsletterSubscriptionAuditBuilder builds the account record of a
+// newsletter subscription transition of memberID.
+func NewsletterSubscriptionAuditBuilder(
 	memberID string,
 	previous, next sharedtelemetry.AuditState,
 ) domainaudit.Builder {

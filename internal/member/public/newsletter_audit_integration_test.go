@@ -27,7 +27,7 @@ func TestNewsletterTokenUnsubscribeAuditsOnlyCommittedTransitionIntegration(t *t
 	db, _ := newPublicIntegrationDB(t)
 	identityID, memberID := createNewsletterAuditMember(t, db)
 	require.NoError(t, db.Create(&model.NewsletterSubscription{IdentityID: identityID}).Error)
-	service := NewAuditedNewsletterService(db, publicNewsletterTokenTestSecret, apitelemetry.NewDurableWriter(db))
+	service := NewNewsletterConnectHandler(newTestService(t, Deps{DB: db, Audit: apitelemetry.NewDurableWriter(db)}))
 	token := crypto.GenerateSignedToken(
 		member.NewsletterUnsubscribeTokenID(identityID),
 		crypto.PurposeUnsubscribe,
@@ -77,7 +77,7 @@ func TestNewsletterTokenUnsubscribeAuditFailureRollsBackIntegration(t *testing.T
 	db, _ := newPublicIntegrationDB(t)
 	identityID, _ := createNewsletterAuditMember(t, db)
 	require.NoError(t, db.Create(&model.NewsletterSubscription{IdentityID: identityID}).Error)
-	service := NewAuditedNewsletterService(db, publicNewsletterTokenTestSecret, failingNewsletterAuditAppender{})
+	service := NewNewsletterConnectHandler(newTestService(t, Deps{DB: db, Audit: failingNewsletterAuditAppender{}}))
 	token := crypto.GenerateSignedToken(
 		member.NewsletterUnsubscribeTokenID(identityID),
 		crypto.PurposeUnsubscribe,
@@ -99,7 +99,7 @@ func TestNewsletterTokenUnsubscribeMissingMemberRollsBackIntegration(t *testing.
 	testutil.SeedKratosIdentityFixture(t, db, testutil.KratosIdentityFixture{ID: identityID, Email: "orphan-" + identityID + "@example.test"})
 	require.NoError(t, db.Exec("INSERT INTO account_identity (id) VALUES (?::uuid)", identityID).Error)
 	require.NoError(t, db.Create(&model.NewsletterSubscription{IdentityID: identityID}).Error)
-	service := NewAuditedNewsletterService(db, publicNewsletterTokenTestSecret, apitelemetry.NewDurableWriter(db))
+	service := NewNewsletterConnectHandler(newTestService(t, Deps{DB: db, Audit: apitelemetry.NewDurableWriter(db)}))
 	token := crypto.GenerateSignedToken(
 		member.NewsletterUnsubscribeTokenID(identityID),
 		crypto.PurposeUnsubscribe,

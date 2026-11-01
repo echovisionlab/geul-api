@@ -67,3 +67,10 @@ func publicSyncIntegrationRole(t *testing.T, spiceDB *auth.SpiceDBClient, identi
 	_, err = spiceDB.SyncAccountIdentityGlobalRole(context.Background(), subject, role)
 	require.NoError(t, err)
 }
+
+// newTestMemberHandler is the public Member Connect adapter of
+// newTestService(t, deps).
+func newTestMemberHandler(t *testing.T, deps Deps) *MemberConnectHandler {
+	t.Helper()
+	return NewMemberConnectHandler(newTestService(t, deps))
+}

@@ -1,4 +1,3 @@
 # Transactions and lifecycle locks opened directly in pipelineDomains, per
 # file. Mutations run through mutation.Run; lower with -update.
 1 internal/member/member_registration_provision.go
-1 internal/member/public/newsletter.go

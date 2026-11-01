@@ -85,7 +85,7 @@ func TestPublicMemberListAuthorsHasConstantQueryBudgetIntegration(t *testing.T) 
 		t.Run("limit_"+string(rune('0'+limit)), func(t *testing.T) {
 			budget := newMemberQueryBudgetLogger()
 			budgetDB := db.Session(&gorm.Session{Logger: budget})
-			svc := NewMemberService(budgetDB, "https://cdn.example.test", spiceDB)
+			svc := newTestMemberHandler(t, Deps{DB: budgetDB, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test"})
 
 			response, err := svc.ListAuthors(
 				ctx,
@@ -127,7 +127,7 @@ func TestPublicMemberListAuthorsReturnsOnlySelectedEffectiveAuthorsInRequestOrde
 		VALUES (?::uuid, ?::uuid, ?)
 	`, postID, authorID, now).Error)
 
-	response, err := NewMemberService(db, "https://cdn.example.test", spiceDB).ListAuthors(
+	response, err := newTestMemberHandler(t, Deps{DB: db, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test"}).ListAuthors(
 		ctx,
 		connect.NewRequest(&openv1.ListAuthorsRequest{MemberIds: []string{adminID, userID, authorID}}),
 	)
@@ -138,7 +138,7 @@ func TestPublicMemberListAuthorsReturnsOnlySelectedEffectiveAuthorsInRequestOrde
 	require.Equal(t, authorID, response.Msg.Authors[1].Member.Id)
 	require.Equal(t, int32(1), response.Msg.Authors[1].PostCount)
 
-	_, err = NewMemberService(db, "https://cdn.example.test", spiceDB).ListAuthors(
+	_, err = newTestMemberHandler(t, Deps{DB: db, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test"}).ListAuthors(
 		ctx,
 		connect.NewRequest(&openv1.ListAuthorsRequest{MemberIds: []string{authorID, authorID}}),
 	)
@@ -169,7 +169,7 @@ func TestExtendedMemberProfileVisibilityFollowsCurrentIdentityRoleIntegration(t 
 		VALUES (?::uuid, ?::uuid, ?)
 	`, postID, memberID, now).Error)
 
-	service := NewMemberService(db, "https://cdn.example.test", spiceDB)
+	service := newTestMemberHandler(t, Deps{DB: db, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test"})
 	assertVisibility := func(t *testing.T, visible bool) {
 		t.Helper()
 		profile, err := service.GetPublicMember(ctx, connect.NewRequest(&openv1.GetPublicMemberRequest{MemberId: memberID}))
@@ -226,7 +226,7 @@ func TestDeletedMemberMarkerSurvivesPublicProfileAndAuthorProjectionIntegration(
 		VALUES (?::uuid, ?::uuid)
 	`, postID, memberID).Error)
 
-	svc := NewMemberService(db, "https://cdn.example.test", spiceDB)
+	svc := newTestMemberHandler(t, Deps{DB: db, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test"})
 	profile, err := svc.GetPublicMember(
 		ctx,
 		connect.NewRequest(&openv1.GetPublicMemberRequest{MemberId: memberID}),
@@ -269,7 +269,7 @@ func TestUnlinkedMemberIsImmediatelyScrubbedAsPublicTombstoneIntegration(t *test
 		AssetID: avatarAssetID, OwnerType: "member", OwnerID: memberID, BindingKey: "avatar",
 	}).Error)
 
-	profile, err := NewMemberService(db, "https://cdn.example.test", spiceDB).GetPublicMember(
+	profile, err := newTestMemberHandler(t, Deps{DB: db, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test"}).GetPublicMember(
 		context.Background(),
 		connect.NewRequest(&openv1.GetPublicMemberRequest{MemberId: memberID}),
 	)
@@ -311,7 +311,7 @@ func TestUnonboardedMemberIsAbsentFromPublicProfileAndSharedProjectionIntegratio
 		`UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid`, memberID, identityID,
 	).Error)
 
-	profile, err := NewMemberService(db, "https://cdn.example.test", spiceDB).GetPublicMember(
+	profile, err := newTestMemberHandler(t, Deps{DB: db, SpiceDB: spiceDB, CDNDomain: "https://cdn.example.test"}).GetPublicMember(
 		context.Background(),
 		connect.NewRequest(&openv1.GetPublicMemberRequest{MemberId: memberID}),
 	)
