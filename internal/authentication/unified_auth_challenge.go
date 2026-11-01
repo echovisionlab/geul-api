@@ -95,29 +95,8 @@ func (h *UnifiedAuthHandler) submitInitialCodeChallenge(
 	registrationBlocked bool,
 	identifier string,
 ) {
-	query := make(url.Values)
-	if strings.TrimSpace(loginFlow.ReturnTo) != "" {
-		query.Set("return_to", loginFlow.ReturnTo)
-	}
-	registrationResponse := h.transport.capture(
-		request,
-		http.MethodGet,
-		"/self-service/registration/browser",
-		query,
-		nil,
-		true,
-	)
-	if registrationResponse.StatusCode != http.StatusOK {
-		h.copyResponse(request.Context(), w, registrationResponse)
-		return
-	}
-	registrationFlow, err := decodeUnifiedAuthFlow(registrationResponse.Body)
-	if err != nil || registrationFlow.ID == "" {
-		if err == nil {
-			err = errors.New("registration flow ID is missing")
-		}
-		recordAuthenticationFailure(request.Context(), fmt.Errorf("decode registration flow: %w", err))
-		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+	registrationResponse, registrationFlow, ok := h.startRegistrationFlow(w, request, loginFlow)
+	if !ok {
 		return
 	}
 	if registrationBlocked {
@@ -133,6 +112,7 @@ func (h *UnifiedAuthHandler) submitInitialCodeChallenge(
 		path = "/self-service/login"
 		flowID = loginFlow.ID
 	} else {
+		var err error
 		payload, err = buildRegistrationCodePayload(originalBody, contentType, registrationFlow, true)
 		if err != nil {
 			writeKratosProxyError(request.Context(), w, http.StatusBadRequest, "authentication code request is invalid", 0)
@@ -141,18 +121,8 @@ func (h *UnifiedAuthHandler) submitInitialCodeChallenge(
 		contentType = "application/json"
 	}
 
-	kratosCookies := (&http.Response{Header: registrationResponse.Header}).Cookies()
-	cookies := mergeCookies(request.Cookies(), kratosCookies)
-	forwardRequest := request.Clone(request.Context())
-	forwardRequest.Header = request.Header.Clone()
-	forwardRequest.Header.Set("Content-Type", contentType)
-	forwardRequest.Header.Del("Cookie")
-	for _, cookie := range cookies {
-		forwardRequest.AddCookie(cookie)
-	}
-
 	capture := h.transport.capture(
-		forwardRequest,
+		withRegistrationCookies(request, registrationResponse, contentType),
 		http.MethodPost,
 		path,
 		url.Values{"flow": {flowID}},
@@ -169,6 +139,56 @@ func (h *UnifiedAuthHandler) submitInitialCodeChallenge(
 		Header:     responseHeader,
 		Body:       capture.Body,
 	})
+}
+
+// startRegistrationFlow opens the registration browser flow the code
+// challenge is submitted against. When it fails, it has answered w and
+// reports false.
+func (h *UnifiedAuthHandler) startRegistrationFlow(
+	w http.ResponseWriter,
+	request *http.Request,
+	loginFlow unifiedAuthFlow,
+) (bufferedKratosResponse, unifiedAuthFlow, bool) {
+	query := make(url.Values)
+	if strings.TrimSpace(loginFlow.ReturnTo) != "" {
+		query.Set("return_to", loginFlow.ReturnTo)
+	}
+	registrationResponse := h.transport.capture(
+		request,
+		http.MethodGet,
+		"/self-service/registration/browser",
+		query,
+		nil,
+		true,
+	)
+	if registrationResponse.StatusCode != http.StatusOK {
+		h.copyResponse(request.Context(), w, registrationResponse)
+		return bufferedKratosResponse{}, unifiedAuthFlow{}, false
+	}
+	registrationFlow, err := decodeUnifiedAuthFlow(registrationResponse.Body)
+	if err != nil || registrationFlow.ID == "" {
+		if err == nil {
+			err = errors.New("registration flow ID is missing")
+		}
+		recordAuthenticationFailure(request.Context(), fmt.Errorf("decode registration flow: %w", err))
+		writeKratosProxyError(request.Context(), w, http.StatusServiceUnavailable, "authentication service is temporarily unavailable", 0)
+		return bufferedKratosResponse{}, unifiedAuthFlow{}, false
+	}
+	return registrationResponse, registrationFlow, true
+}
+
+// withRegistrationCookies clones request with contentType and the browser's
+// cookies merged with those the registration flow set.
+func withRegistrationCookies(request *http.Request, registrationResponse bufferedKratosResponse, contentType string) *http.Request {
+	kratosCookies := (&http.Response{Header: registrationResponse.Header}).Cookies()
+	forwardRequest := request.Clone(request.Context())
+	forwardRequest.Header = request.Header.Clone()
+	forwardRequest.Header.Set("Content-Type", contentType)
+	forwardRequest.Header.Del("Cookie")
+	for _, cookie := range mergeCookies(request.Cookies(), kratosCookies) {
+		forwardRequest.AddCookie(cookie)
+	}
+	return forwardRequest
 }
 
 // copyUndeliveredCodeChallenge returns the same public challenge surface as a
