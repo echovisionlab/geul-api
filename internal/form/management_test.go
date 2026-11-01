@@ -2,6 +2,7 @@ package form_test
 
 import (
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -373,4 +374,17 @@ func TestCheckFormSlugAvailableChecksFormsAndRoutes(t *testing.T) {
 	requireCode(t, err, connect.CodeNotFound, "form not found: "+missing)
 	_, err = h.forms.CheckFormSlugAvailable(ctx, connect.NewRequest(&managev1.CheckFormSlugAvailableRequest{Slug: "a/b"}))
 	requireCode(t, err, connect.CodeInvalidArgument, "")
+}
+
+func TestListFormsAdminHasNoMoreFormsPastTheLastOffset(t *testing.T) {
+	h := newHarness(t)
+	h.seedForm(t, nil)
+
+	listed, err := h.forms.ListFormsAdmin(newPrincipal().context(t), connect.NewRequest(&managev1.ListFormsAdminRequest{
+		Pagination: &commonv1.PaginationRequest{Limit: 100, Offset: math.MaxInt32 - 10},
+	}))
+
+	require.NoError(t, err)
+	require.Empty(t, listed.Msg.Forms)
+	require.False(t, listed.Msg.Pagination.HasMore, "the offset and limit must not overflow into a next page")
 }

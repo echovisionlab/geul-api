@@ -136,7 +136,7 @@ func (s *Service) ListFormsAdmin(ctx context.Context, query ListFormsAdminQuery)
 		if list.Forms, err = formSummaries(ctx, store, forms); err != nil {
 			return err
 		}
-		list.Pagination = Pagination{Total: int32(total), Limit: limit, Offset: offset, HasMore: offset+limit < int32(total)}
+		list.Pagination = Pagination{Total: int32(total), Limit: limit, Offset: offset, HasMore: int64(offset)+int64(limit) < total}
 		return nil
 	})
 	if err != nil {
