@@ -274,3 +274,18 @@ func TestListMenusPagesByNameAndOmitsAnUndecodableMenu(t *testing.T) {
 	_, err = f.service.ListMenus(f.ctx, menu.ListMenusQuery{})
 	requireCode(t, err, connect.CodePermissionDenied, "")
 }
+
+func TestCreateMenuAnswersATakenNameAfterAuthorizationAndTrimming(t *testing.T) {
+	f := newMenuFixture(t)
+	f.createMenu(t, "Taken")
+
+	_, err := f.service.CreateMenu(f.ctx, menu.CreateMenuCommand{Name: "  Taken  "})
+	requireCode(t, err, connect.CodeAlreadyExists, "menu with name 'Taken' already exists")
+
+	can, err := policyv1.Menu.Create()
+	require.NoError(t, err)
+	f.checker.Deny(can, nil)
+	_, err = f.service.CreateMenu(f.ctx, menu.CreateMenuCommand{Name: "Taken"})
+	requireCode(t, err, connect.CodePermissionDenied, "admin access required")
+	require.Equal(t, 1, f.store.MenuCount())
+}

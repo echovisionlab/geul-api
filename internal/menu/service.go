@@ -171,16 +171,6 @@ func (s *Service) CreateMenu(ctx context.Context, command CreateMenuCommand) (Me
 	if err := validateMenuName(command.Name); err != nil {
 		return Menu{}, err
 	}
-	var taken bool
-	if err := s.units.Read(ctx, func(store Store) (err error) {
-		taken, err = store.MenuNameTaken(ctx, command.Name, "")
-		return err
-	}); err != nil {
-		return Menu{}, fmt.Errorf("failed to check menu name uniqueness: %w", err)
-	}
-	if taken {
-		return Menu{}, domainerr.Duplicate("menu", "name", command.Name)
-	}
 	if err := validateMenuItems(command.Items, 0); err != nil {
 		return Menu{}, err
 	}
@@ -202,15 +192,23 @@ func (s *Service) CreateMenu(ctx context.Context, command CreateMenuCommand) (Me
 			return nil
 		}),
 		Change: func(ctx context.Context, store Store) (Root, error) {
+			name := strings.TrimSpace(command.Name)
+			if err := requireMenuNameAvailable(ctx, store, name, ""); err != nil {
+				return Root{}, err
+			}
 			documentID, err := createMenuContentDocument(ctx, store, now)
 			if err != nil {
 				return Root{}, err
 			}
 			root, err := store.InsertMenu(ctx, Root{
-				Name: strings.TrimSpace(command.Name), ItemsJSON: items,
+				Name: name, ItemsJSON: items,
 				SourceLocale: translation.DefaultLocale, ContentDocumentID: documentID.String(),
 				CreatedAt: now, UpdatedAt: now,
 			})
+			if errors.Is(err, ErrMenuNameTaken) {
+				// A concurrent create took the name since the check.
+				return Root{}, domainerr.Duplicate("menu", "name", name).WithCause(err)
+			}
 			if err != nil {
 				return Root{}, err
 			}

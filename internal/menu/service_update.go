@@ -201,13 +201,18 @@ func ensureUpdatedMenuNameAvailable(ctx context.Context, store Store, menuID str
 	if name == nil {
 		return nil
 	}
-	normalized := strings.TrimSpace(*name)
-	taken, err := store.MenuNameTaken(ctx, normalized, menuID)
+	return requireMenuNameAvailable(ctx, store, strings.TrimSpace(*name), menuID)
+}
+
+// requireMenuNameAvailable rejects name when a Menu other than exceptID
+// (any Menu when it is empty) has it.
+func requireMenuNameAvailable(ctx context.Context, store Store, name, exceptID string) error {
+	taken, err := store.MenuNameTaken(ctx, name, exceptID)
 	if err != nil {
 		return fmt.Errorf("failed to check menu name uniqueness: %w", err)
 	}
 	if taken {
-		return domainerr.Duplicate("menu", "name", normalized)
+		return domainerr.Duplicate("menu", "name", name)
 	}
 	return nil
 }
