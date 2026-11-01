@@ -420,6 +420,21 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			return nil
 		})
 	},
+	"a Client search matches its query literally": func(t *testing.T, h Harness) {
+		suffix := uuid.NewString()[:8]
+		literal := insertClient(t, h, "100% "+suffix)
+		insertClient(t, h, "1000 "+suffix)
+		insertClient(t, h, "1_0 "+suffix)
+		read(t, h, func(ctx context.Context, store referencecatalog.Store) error {
+			found, err := store.SearchClients(ctx, "100%", 10)
+			require.NoError(t, err)
+			require.Equal(t, []string{literal.Name}, names(found, clientName))
+			found, err = store.SearchClients(ctx, "1_", 10)
+			require.NoError(t, err)
+			require.Equal(t, []string{"1_0 " + suffix}, names(found, clientName))
+			return nil
+		})
+	},
 	"a Client's logo slots hold their own files": func(t *testing.T, h Harness) {
 		client := insertClient(t, h, "Logo "+uuid.NewString()[:8])
 		lightFileID, _ := h.SeedReadyFile(t, "logo")

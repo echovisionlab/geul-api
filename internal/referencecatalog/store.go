@@ -181,8 +181,9 @@ type Clients interface {
 	Client(ctx context.Context, id string) (Client, error)
 	// ListClients lists one page of Clients and counts every match.
 	ListClients(ctx context.Context, page ListPage) ([]Client, int64, error)
-	// SearchClients lists at most limit Clients whose name contains query,
-	// ignoring case, by name; an empty query matches every Client.
+	// SearchClients lists at most limit Clients whose name contains query
+	// literally, ignoring case, by name; an empty query matches every
+	// Client.
 	SearchClients(ctx context.Context, query string, limit int) ([]Client, error)
 	// CountClientWorks counts the Works of each Client; a Client without
 	// Works is absent.

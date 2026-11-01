@@ -84,7 +84,7 @@ func (s store) SearchClients(ctx context.Context, query string, limit int) ([]re
 	var clients []model.Client
 	scoped := s.tx.WithContext(ctx).Model(&model.Client{})
 	if query != "" {
-		scoped = scoped.Where("name ILIKE ?", "%"+query+"%")
+		scoped = scoped.Where("name ILIKE ?", "%"+queryutil.EscapeILIKEPattern(query)+"%")
 	}
 	if err := scoped.Order("name ASC").Limit(limit).Find(&clients).Error; err != nil {
 		return nil, err
