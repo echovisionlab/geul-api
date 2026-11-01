@@ -52,13 +52,13 @@ func seedMember(t *testing.T, db *gorm.DB, state authenticationtest.Member) (ide
 		if state.Deleted {
 			return tx.Exec(`
 				INSERT INTO member (id, nickname, onboarded, created_at, updated_at, deleted_at)
-				VALUES (?::uuid, 'deleted', ?, ?, ?, ?)`,
-				memberID, state.Onboarded, now, now, now).Error
+				VALUES (?::uuid, ?, ?, ?, ?, ?)`,
+				memberID, "member "+memberID, state.Onboarded, now, now, now).Error
 		}
 		return tx.Exec(`
 			INSERT INTO member (id, account_identity_id, nickname, onboarded, primary_email, available_emails, created_at, updated_at)
-			VALUES (?::uuid, ?::uuid, 'member', ?, ?, ARRAY[?], ?, ?)`,
-			memberID, identityID, state.Onboarded, email, email, now, now).Error
+			VALUES (?::uuid, ?::uuid, ?, ?, ?, ARRAY[?], ?, ?)`,
+			memberID, identityID, "member "+memberID, state.Onboarded, email, email, now, now).Error
 	}))
 	return identityID, memberID
 }
