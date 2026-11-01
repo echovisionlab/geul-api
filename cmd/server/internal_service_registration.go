@@ -52,7 +52,7 @@ type internalContentServiceRegistration struct {
 type internalContentServices struct {
 	work           *work.InternalWorkService
 	emailAuthoring *emailauthoring.InternalService
-	campaign       *campaign.InternalCampaignService
+	campaign       *campaign.InternalService
 	form           *formdomain.InternalFormService
 	legalDocuments *legal.AIDocumentService
 }
@@ -149,15 +149,14 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	mux.Handle(internalMapPath, internalRPCTrust.collab(internalMapHandler))
 	slog.Info("Registered internal service", "path", internalMapPath)
 
-	internalCampaignService := campaign.NewAuditedInternalCampaignService(
-		db,
-		telemetryWriter,
-		memberadapter.ContributorMembers{},
-		campaign.WithInternalCampaignContentBlockStore(contentBlockStore),
-		campaign.WithInternalCampaignSpiceDB(spicedbClient),
-		campaign.WithInternalCampaignCheckpoints(collaborationRuntime.Checkpoints),
-	)
-	internalCampaignPath, internalCampaignHandler := intrav1connect.NewInternalCampaignServiceHandler(internalCampaignService, internalHandlerOpts...)
+	internalCampaignService, err := campaign.NewInternalService(campaign.InternalDeps{
+		DB: db, SpiceDB: spicedbClient, Permissions: spicedbClient, ContentBlocks: contentBlockStore,
+		Checkpoints: collaborationRuntime.Checkpoints, Members: memberadapter.ContributorMembers{}, Audit: telemetryWriter,
+	})
+	if err != nil {
+		return internalContentServices{}, fmt.Errorf("initialize internal campaign service: %w", err)
+	}
+	internalCampaignPath, internalCampaignHandler := intrav1connect.NewInternalCampaignServiceHandler(campaign.NewInternalConnectHandler(internalCampaignService), internalHandlerOpts...)
 	mux.Handle(internalCampaignPath, internalRPCTrust.collab(internalCampaignHandler))
 	slog.Info("Registered internal service", "path", internalCampaignPath)
 

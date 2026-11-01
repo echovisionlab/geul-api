@@ -11,7 +11,6 @@
 1 internal/adapters/translation
 16 internal/artist
 18 internal/artist/public
-23 internal/campaign
 16 internal/filemedia/public
 15 internal/label
 12 internal/label/public

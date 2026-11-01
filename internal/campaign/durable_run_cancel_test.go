@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -30,7 +31,7 @@ func TestCampaignDeliveryRuntimeRejectsSendingRun(t *testing.T) {
 	err := db.Transaction(func(tx *gorm.DB) error {
 		return (&CampaignDeliveryRuntime{}).CancelActiveRuns(context.Background(), tx, "campaign-1", time.Now().UTC())
 	})
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 	require.Equal(t, CampaignDeliveryRunStatusSending, campaignCancelRunStatus(t, db, "sending"))
 }
 

@@ -12,7 +12,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
@@ -39,11 +39,11 @@ func (r *CampaignDeliveryRuntime) CountRecipients(
 	target CampaignDeliveryTarget,
 ) (int64, error) {
 	if r == nil || r.spiceDB == nil {
-		return 0, errs.DependencyUnavailable("Campaign recipient authorization")
+		return 0, domainerr.DependencyUnavailable("Campaign recipient authorization")
 	}
 	selection, err := campaignDeliveryTargetRecipientSelection(target)
 	if err != nil {
-		return 0, errs.InvalidArgumentMsg(err.Error())
+		return 0, domainerr.New(domainerr.Invalid, "", err.Error())
 	}
 	return countBulkEmailRecipients(ctx, tx, r.spiceDB, selection)
 }
@@ -55,20 +55,20 @@ func (*CampaignDeliveryRuntime) SealRun(
 ) (CampaignDeliveryRunRef, error) {
 	campaignID := strings.TrimSpace(definition.CampaignID)
 	if campaignID == "" {
-		return CampaignDeliveryRunRef{}, errs.Required("campaign_id")
+		return CampaignDeliveryRunRef{}, domainerr.Required("campaign_id")
 	}
 	if definition.SnapshotSchemaVersion != CampaignDeliverySnapshotSchemaVersion {
-		return CampaignDeliveryRunRef{}, errs.InvalidArgumentMsg("unsupported snapshot schema version")
+		return CampaignDeliveryRunRef{}, domainerr.New(domainerr.Invalid, "", "unsupported snapshot schema version")
 	}
 	if err := ValidateCampaignDeliverySnapshot(definition.Snapshot); err != nil {
-		return CampaignDeliveryRunRef{}, errs.InvalidArgumentMsg(err.Error())
+		return CampaignDeliveryRunRef{}, domainerr.New(domainerr.Invalid, "", err.Error())
 	}
 	if err := ValidateCampaignDeliveryTarget(definition.Target); err != nil {
-		return CampaignDeliveryRunRef{}, errs.InvalidArgumentMsg(err.Error())
+		return CampaignDeliveryRunRef{}, domainerr.New(domainerr.Invalid, "", err.Error())
 	}
 	renderSnapshot, err := campaignDeliverySnapshotJSONFields(definition.Snapshot)
 	if err != nil {
-		return CampaignDeliveryRunRef{}, errs.InvalidArgumentMsg(err.Error())
+		return CampaignDeliveryRunRef{}, domainerr.New(domainerr.Invalid, "", err.Error())
 	}
 
 	sourceCampaignUpdatedAt := definition.SourceCampaignUpdatedAt.UTC()
@@ -109,10 +109,10 @@ func (r *CampaignDeliveryRuntime) StartRun(
 	startedAt time.Time,
 ) error {
 	if r == nil || r.publisher == nil {
-		return errs.DependencyUnavailable("Campaign delivery publisher")
+		return domainerr.DependencyUnavailable("Campaign delivery publisher")
 	}
 	if targetCount <= 0 {
-		return errs.InvalidArgumentMsg("target count must be positive")
+		return domainerr.New(domainerr.Invalid, "", "target count must be positive")
 	}
 	var run model.CampaignDeliveryRun
 	if err := tx.WithContext(ctx).
@@ -121,7 +121,7 @@ func (r *CampaignDeliveryRuntime) StartRun(
 		return err
 	}
 	if run.RunKind != EmailDeliveryRunKindCampaign || run.CampaignID == nil || !run.DefinitionSealed {
-		return errs.FailedPrecondition("Campaign delivery run definition is invalid")
+		return domainerr.Precondition("Campaign delivery run definition is invalid")
 	}
 	run.TargetCount = int(targetCount)
 	return enqueueStartedCampaignDeliveryRun(ctx, tx, r.publisher, &run, startedAt.UTC())
@@ -139,7 +139,7 @@ func (*CampaignDeliveryRuntime) CancelActiveRuns(
 		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
 		Select("id").
 		First(&campaign, "id = ?", campaignID).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 
 	var activeRuns []model.CampaignDeliveryRun
@@ -155,11 +155,11 @@ func (*CampaignDeliveryRuntime) CancelActiveRuns(
 		).
 		Order("id ASC").
 		Find(&activeRuns).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	for i := range activeRuns {
 		if activeRuns[i].Status == CampaignDeliveryRunStatusSending {
-			return errs.FailedPrecondition("campaign delivery has already started")
+			return domainerr.Precondition("campaign delivery has already started")
 		}
 	}
 
@@ -174,7 +174,7 @@ func (*CampaignDeliveryRuntime) CancelActiveRuns(
 			"status":       CampaignDeliveryRunStatusCancelled,
 			"completed_at": now.UTC(),
 		}).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	return nil
 }
@@ -189,7 +189,7 @@ func (*CampaignDeliveryRuntime) HasHistory(
 		Model(&model.CampaignDeliveryRun{}).
 		Where("campaign_id = ?", strings.TrimSpace(campaignID)).
 		Count(&count).Error; err != nil {
-		return false, errs.Internal(err)
+		return false, err
 	}
 	return count > 0, nil
 }
@@ -214,7 +214,7 @@ func (*CampaignDeliveryRuntime) LatestStats(
 		Where("run_id = ?", run.ID).
 		Group("status").
 		Find(&counts).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	stats := CampaignDeliveryStats{}
 	for _, count := range counts {
@@ -253,7 +253,7 @@ func (*CampaignDeliveryRuntime) ListRecipients(
 		Model(&model.CampaignDeliveryRecipient{}).
 		Where("run_id = ?", run.ID).
 		Count(&total).Error; err != nil {
-		return CampaignDeliveryRecipientPage{}, errs.Internal(err)
+		return CampaignDeliveryRecipientPage{}, err
 	}
 	var rows []model.CampaignDeliveryRecipient
 	if err := db.WithContext(ctx).
@@ -262,7 +262,7 @@ func (*CampaignDeliveryRuntime) ListRecipients(
 		Limit(limit).
 		Offset(offset).
 		Find(&rows).Error; err != nil {
-		return CampaignDeliveryRecipientPage{}, errs.Internal(err)
+		return CampaignDeliveryRecipientPage{}, err
 	}
 	page := CampaignDeliveryRecipientPage{
 		Recipients: make([]CampaignDeliveryRecipient, len(rows)),
@@ -301,11 +301,11 @@ func sealCampaignOwnedEmailDeliveryRun(
 	target *CampaignDeliveryTarget,
 ) error {
 	if err := tx.WithContext(ctx).Create(run).Error; err != nil {
-		return errs.Internal(err)
+		return err
 	}
 	if target != nil {
 		if err := saveCampaignDeliveryTargetRelations(ctx, tx, run.ID, *target); err != nil {
-			return errs.Internal(err)
+			return err
 		}
 	}
 	sealed := tx.WithContext(ctx).
@@ -313,10 +313,10 @@ func sealCampaignOwnedEmailDeliveryRun(
 		Where("id = ? AND definition_sealed = FALSE", run.ID).
 		Update("definition_sealed", true)
 	if sealed.Error != nil {
-		return errs.Internal(sealed.Error)
+		return sealed.Error
 	}
 	if sealed.RowsAffected != 1 {
-		return errs.InternalMsg("email delivery run definition could not be sealed")
+		return errors.New("email delivery run definition could not be sealed")
 	}
 	run.DefinitionSealed = true
 	return nil
@@ -418,5 +418,5 @@ func latestCampaignDeliveryRun(
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
-	return nil, errs.Internal(err)
+	return nil, err
 }

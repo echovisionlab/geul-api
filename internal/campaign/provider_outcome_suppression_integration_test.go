@@ -145,7 +145,7 @@ func TestSESProviderOutcomeUpdatesCampaignHistoryAndDeduplicatesSuppressionInteg
 	require.Zero(t, run.SentCount)
 	require.Equal(t, 1, run.FailedCount)
 
-	adminContext, spiceDB := testutil.IntegrationAdminContext(t, db)
+	adminContext, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 	admin := auth.GetUser(adminContext)
 	delivery, err := emaildelivery.NewService(emaildelivery.Deps{
 		DB: db, SpiceDB: spiceDB, AdapterCache: noopMailAdapterCache{},

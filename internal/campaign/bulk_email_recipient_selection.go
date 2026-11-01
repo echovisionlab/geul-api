@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -290,20 +290,20 @@ func resolveBulkEmailRecipientSelectionPermissions(ctx context.Context, spiceDB 
 		return nil
 	}
 	if spiceDB == nil {
-		return errs.DependencyUnavailable("SpiceDB")
+		return domainerr.DependencyUnavailable("SpiceDB")
 	}
 	lookups, err := normalizeBulkEmailSubjectLookups(selection.Filters.AccountRoles)
 	if err != nil {
 		// The roles come from a stored audience segment or delivery target,
 		// which validated them on write, not from this request.
-		return errs.Internal(err)
+		return err
 	}
 	identityIDs := make([]string, 0)
 	seen := make(map[string]struct{})
 	for _, lookup := range lookups {
 		subjects, lookupErr := spiceDB.LookupGlobalSubjects(ctx, lookup)
 		if lookupErr != nil {
-			return errs.WithCause(errs.DependencyUnavailable("SpiceDB"), lookupErr)
+			return domainerr.DependencyUnavailable("SpiceDB").WithCause(lookupErr)
 		}
 		for _, subject := range subjects {
 			identityID := subject.ID.String()

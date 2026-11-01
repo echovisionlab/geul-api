@@ -5,7 +5,7 @@
 11 internal/adapters/translation
 6 internal/artist
 1 internal/authentication
-4 internal/campaign
+1 internal/campaign
 12 internal/form
 2 internal/form/public
 4 internal/label

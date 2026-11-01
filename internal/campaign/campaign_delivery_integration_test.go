@@ -22,7 +22,9 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -181,10 +183,7 @@ func TestAudienceArchiveAndCancelCampaignShareCampaignFirstLockOrderIntegration(
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
-	createdCampaign, err := NewCampaignService(
-		db, newCampaignRuntimeFixture(nil, nil), "", "", stack.SpiceDBClient,
-		WithCampaignContentBlockStore(testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)),
-	).CreateCampaign(adminContext, connect.NewRequest(&managev1.CreateCampaignRequest{
+	createdCampaign, err := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, nil), SpiceDB: stack.SpiceDBClient, ContentBlocks: testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)})).CreateCampaign(adminContext, connect.NewRequest(&managev1.CreateCampaignRequest{
 		Name: campaign.Name, Subject: campaign.Subject, SourceLocale: "en",
 		Target: &managev1.CreateCampaignRequest_SegmentId{SegmentId: segmentID},
 	}))
@@ -262,14 +261,7 @@ func TestAudienceArchiveAndCancelCampaignShareCampaignFirstLockOrderIntegration(
 	}()
 	cancelResult := make(chan error, 1)
 	go func() {
-		_, cancelErr := NewCampaignService(
-			cancelDB,
-			newCampaignRuntimeFixture(nil, nil),
-			"https://cdn.example.test",
-			"https://example.test",
-			stack.SpiceDBClient,
-			WithCampaignEmailDelivery(NewCampaignDeliveryRuntime(stack.SpiceDBClient, nil)),
-		).CancelCampaign(
+		_, cancelErr := NewConnectHandler(newTestService(t, Deps{DB: cancelDB, Runtime: newCampaignRuntimeFixture(nil, nil), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://example.test", SpiceDB: stack.SpiceDBClient, EmailDelivery: NewCampaignDeliveryRuntime(stack.SpiceDBClient, nil)})).CancelCampaign(
 			adminContext,
 			connect.NewRequest(&managev1.CancelCampaignRequest{Id: campaign.ID}),
 		)
@@ -297,7 +289,7 @@ func TestAudienceArchiveAndCancelCampaignShareCampaignFirstLockOrderIntegration(
 	require.NoError(t, archiveErr, "audience archive must not deadlock with campaign cancellation")
 	if cancelErr := <-cancelResult; cancelErr != nil {
 		logPostgresErrorDetail(t, cancelErr)
-		require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(cancelErr), "campaign cancellation must not deadlock with audience archive")
+		require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(cancelErr), "campaign cancellation must not deadlock with audience archive")
 	}
 
 	var persistedSegment model.AudienceSegment
@@ -366,7 +358,7 @@ func TestCampaignDeliveryMutationEntryPointsLockCampaignBeforeRunIntegration(
 				return MarkCampaignDeliveryRecipientResultWithAudit(
 					ctx,
 					db,
-					nil,
+					&audittest.Recorder{},
 					recipient.ID,
 					CampaignDeliveryRecipientStatusSent,
 					"provider-message-lock-test",
@@ -406,10 +398,7 @@ func TestCampaignDeliveryMutationEntryPointsLockCampaignBeforeRunIntegration(
 				campaignStatus = managev1.
 					CampaignStatus_CAMPAIGN_STATUS_SCHEDULED.String()
 			}
-			campaignService := NewCampaignService(
-				db, newCampaignRuntimeFixture(nil, nil), "", "", stack.SpiceDBClient,
-				WithCampaignContentBlockStore(testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)),
-			)
+			campaignService := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, nil), SpiceDB: stack.SpiceDBClient, ContentBlocks: testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)}))
 			created, err := campaignService.CreateCampaign(
 				adminContext,
 				connect.NewRequest(&managev1.CreateCampaignRequest{
@@ -682,12 +671,8 @@ func TestCampaignDeliveryDispatcherEnqueuesDueRunInPGMQIntegration(t *testing.T)
 
 	content := "<p>PGMQ scheduled campaign body</p>"
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx = auth.WithUser(context.Background(), admin.AuthUserInfo())
-	campaignSvc := NewCampaignService(
-		db, newCampaignRuntimeFixture(publisher, nil), "https://cdn.example.test", "https://www.example.test", stack.SpiceDBClient,
-		WithCampaignContentBlockStore(testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)),
-		WithCampaignEmailDelivery(NewCampaignDeliveryRuntime(stack.SpiceDBClient, publisher)),
-	)
+	ctx = campaignMemberContext(t, admin.AuthUserInfo())
+	campaignSvc := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(publisher, nil), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: stack.SpiceDBClient, ContentBlocks: testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient), EmailDelivery: NewCampaignDeliveryRuntime(stack.SpiceDBClient, publisher)}))
 	created, err := campaignSvc.CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{
 		Name:         "PGMQ scheduled campaign " + uuid.NewString(),
 		Subject:      "PGMQ scheduled subject",

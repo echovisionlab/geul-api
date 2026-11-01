@@ -2,49 +2,36 @@ package campaign
 
 import (
 	"context"
-	"errors"
 	"strings"
 
-	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
-// GetCampaignStats returns statistics for a sent campaign
-func (s *CampaignService) GetCampaignStats(
-	ctx context.Context,
-	req *connect.Request[managev1.GetCampaignStatsRequest],
-) (*connect.Response[managev1.GetCampaignStatsResponse], error) {
-	can, canErr := policyv1.Campaign.View(req.Msg.Id)
-	if err := s.requireCampaignCan(ctx, can, canErr); err != nil {
+// GetCampaignStatsQuery reads a Campaign's delivery statistics.
+type GetCampaignStatsQuery struct {
+	ID string
+}
+
+// GetCampaignStats returns the latest delivery run's counts, or the stored
+// sent count before any run.
+func (s *Service) GetCampaignStats(ctx context.Context, query GetCampaignStatsQuery) (*managev1.CampaignStats, error) {
+	can, canErr := policyv1.Campaign.View(query.ID)
+	if err := s.requireAdminCan(ctx, can, canErr); err != nil {
 		return nil, err
 	}
-
-	if req.Msg.Id == "" {
-		return nil, errs.Required("id")
+	if query.ID == "" {
+		return nil, domainerr.Required("id")
 	}
-
-	var campaign model.Campaign
-	if err := s.db.WithContext(ctx).First(&campaign, "id = ?", req.Msg.Id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFoundMsg("campaign not found")
-		}
-		return nil, errs.Internal(err)
+	campaign, err := s.loadCampaign(ctx, query.ID)
+	if err != nil {
+		return nil, err
 	}
-
-	stats := &managev1.CampaignStats{
-		TotalSent: int32(campaign.SentCount),
-	}
-
-	if s.emailDelivery == nil {
-		return nil, errs.DependencyUnavailable("Email Delivery")
-	}
-	deliveryStats, err := s.emailDelivery.LatestStats(ctx, s.db, req.Msg.Id)
+	stats := &managev1.CampaignStats{TotalSent: int32(campaign.SentCount)}
+	deliveryStats, err := s.emailDelivery.LatestStats(ctx, s.db, query.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -55,78 +42,71 @@ func (s *CampaignService) GetCampaignStats(
 		stats.TotalBlocked = deliveryStats.Blocked
 		stats.TotalSuppressed = deliveryStats.Suppressed
 	}
-
-	return connect.NewResponse(&managev1.GetCampaignStatsResponse{
-		Stats: stats,
-	}), nil
+	return stats, nil
 }
 
-// GetCampaignRecipients returns the recipients of a campaign
-func (s *CampaignService) GetCampaignRecipients(
-	ctx context.Context,
-	req *connect.Request[managev1.GetCampaignRecipientsRequest],
-) (*connect.Response[managev1.GetCampaignRecipientsResponse], error) {
-	can, canErr := policyv1.Campaign.Manage(req.Msg.Id)
-	if err := s.requireCampaignCan(ctx, can, canErr); err != nil {
-		return nil, err
-	}
+// GetCampaignRecipientsQuery pages through the recipients of a Campaign's
+// latest delivery run.
+type GetCampaignRecipientsQuery struct {
+	ID string
+	// Limit defaults to 50 and is capped at 1000.
+	Limit  int32
+	Offset int32
+}
 
-	if req.Msg.Id == "" {
-		return nil, errs.Required("id")
-	}
+// CampaignRecipientPage is one page of a Campaign's recipients.
+type CampaignRecipientPage struct {
+	Recipients []*managev1.CampaignRecipient
+	Total      int32
+}
 
-	limit := int(req.Msg.Limit)
+// GetCampaignRecipients returns one page of recipients and records the
+// administrator's access to them.
+func (s *Service) GetCampaignRecipients(ctx context.Context, query GetCampaignRecipientsQuery) (CampaignRecipientPage, error) {
+	can, canErr := policyv1.Campaign.Manage(query.ID)
+	if err := s.requireAdminCan(ctx, can, canErr); err != nil {
+		return CampaignRecipientPage{}, err
+	}
+	if query.ID == "" {
+		return CampaignRecipientPage{}, domainerr.Required("id")
+	}
+	limit := int(query.Limit)
 	if limit <= 0 {
 		limit = 50
 	}
-	if limit > 1000 {
-		limit = 1000
-	}
-	offset := int(req.Msg.Offset)
-
-	if s.emailDelivery == nil {
-		return nil, errs.DependencyUnavailable("Email Delivery")
-	}
-	page, err := s.emailDelivery.ListRecipients(
-		ctx,
-		s.db,
-		req.Msg.Id,
-		limit,
-		offset,
-	)
+	limit = min(limit, 1000)
+	page, err := s.emailDelivery.ListRecipients(ctx, s.db, query.ID, limit, int(query.Offset))
 	if err != nil {
-		return nil, err
+		return CampaignRecipientPage{}, err
 	}
 	if page.Total == 0 && len(page.Recipients) == 0 {
-		return connect.NewResponse(&managev1.GetCampaignRecipientsResponse{}), nil
+		return CampaignRecipientPage{}, nil
 	}
-
 	recipients := make([]*managev1.CampaignRecipient, len(page.Recipients))
 	for i, row := range page.Recipients {
-		recipient := &managev1.CampaignRecipient{
-			Email:    row.Email,
-			Status:   row.Status,
-			MemberId: strings.TrimSpace(row.MemberID),
-		}
-		if row.TerminalAt != nil {
-			recipient.TerminalAt = timestamppb.New(*row.TerminalAt)
-			if row.Status == CampaignDeliveryRecipientStatusSent ||
-				row.Status == CampaignDeliveryRecipientStatusDelivered {
-				recipient.SentAt = timestamppb.New(*row.TerminalAt)
-			}
-		}
-		if row.ErrorType != nil {
-			recipient.ErrorType = row.ErrorType
-		}
-
-		recipients[i] = recipient
+		recipients[i] = campaignRecipientMessage(row)
 	}
-	if err := s.runtime.AppendCampaignRecipientsAccess(ctx, req.Msg.Id); err != nil {
-		return nil, err
+	if err := s.runtime.AppendCampaignRecipientsAccess(ctx, query.ID); err != nil {
+		return CampaignRecipientPage{}, err
 	}
+	return CampaignRecipientPage{Recipients: recipients, Total: int32(page.Total)}, nil
+}
 
-	return connect.NewResponse(&managev1.GetCampaignRecipientsResponse{
-		Recipients: recipients,
-		Total:      int32(page.Total),
-	}), nil
+func campaignRecipientMessage(row CampaignDeliveryRecipient) *managev1.CampaignRecipient {
+	recipient := &managev1.CampaignRecipient{
+		Email:    row.Email,
+		Status:   row.Status,
+		MemberId: strings.TrimSpace(row.MemberID),
+	}
+	if row.TerminalAt != nil {
+		recipient.TerminalAt = timestamppb.New(*row.TerminalAt)
+		if row.Status == CampaignDeliveryRecipientStatusSent ||
+			row.Status == CampaignDeliveryRecipientStatusDelivered {
+			recipient.SentAt = timestamppb.New(*row.TerminalAt)
+		}
+	}
+	if row.ErrorType != nil {
+		recipient.ErrorType = row.ErrorType
+	}
+	return recipient
 }

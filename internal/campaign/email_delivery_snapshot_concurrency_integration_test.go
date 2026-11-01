@@ -19,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -35,7 +36,7 @@ func TestEmailLayoutDeleteAndCampaignAssignmentDoNotDeadlockIntegration(
 		}
 		t.Run(name, func(t *testing.T) {
 			db := newCampaignConcurrentIntegrationDB(t)
-			ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+			ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 			contentBlocks := testutil.NewEmailContentBlockStore(t, spiceDB)
 			references := emailauthoringadapter.NewCampaignDeliveryReferences()
 			campaignID := ""
@@ -63,15 +64,7 @@ func TestEmailLayoutDeleteAndCampaignAssignmentDoNotDeadlockIntegration(
 			)
 			require.NoError(t, err)
 			layoutID = layout.Msg.Id
-			campaign, err := NewCampaignService(
-				db,
-				newCampaignRuntimeFixture(nil, nil),
-				"https://cdn.example.test",
-				"https://www.example.test",
-				spiceDB,
-				WithCampaignContentBlockStore(contentBlocks),
-				WithCampaignEmailAuthoring(campaignEmailAuthoringConcurrencyFixture{}),
-			).CreateCampaign(
+			campaign, err := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, nil), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, ContentBlocks: contentBlocks, EmailAuthoring: campaignEmailAuthoringConcurrencyFixture{}})).CreateCampaign(
 				ctx,
 				connect.NewRequest(&managev1.CreateCampaignRequest{
 					Name:         "Delete race campaign " + uuid.NewString(),
@@ -115,14 +108,7 @@ func TestEmailLayoutDeleteAndCampaignAssignmentDoNotDeadlockIntegration(
 			) error {
 				targetMode := managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL
 				recipientScope := managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_SUBSCRIBED_USERS
-				_, assignErr := NewCampaignService(
-					operationDB,
-					newCampaignRuntimeFixture(nil, nil),
-					"https://cdn.example.test",
-					"https://www.example.test",
-					spiceDB,
-					WithCampaignEmailAuthoring(campaignEmailAuthoringConcurrencyFixture{}),
-				).UpdateCampaignConfiguration(
+				_, assignErr := NewConnectHandler(newTestService(t, Deps{DB: operationDB, Runtime: newCampaignRuntimeFixture(nil, nil), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, EmailAuthoring: campaignEmailAuthoringConcurrencyFixture{}})).UpdateCampaignConfiguration(
 					operationCtx,
 					connect.NewRequest(
 						&managev1.UpdateCampaignConfigurationRequest{
@@ -150,10 +136,10 @@ func TestEmailLayoutDeleteAndCampaignAssignmentDoNotDeadlockIntegration(
 			assignmentErr := <-assignmentDone
 			deleteWon := deleteErr == nil
 			if deleteWon {
-				require.Equal(t, connect.CodeNotFound, connect.CodeOf(assignmentErr))
+				require.Equal(t, connect.CodeNotFound, errs.CodeOf(assignmentErr))
 			} else {
 				require.NoError(t, assignmentErr)
-				require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(deleteErr), deleteErr)
+				require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(deleteErr), deleteErr)
 			}
 
 			var storedLayout model.EmailLayout
@@ -186,7 +172,7 @@ func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(
 		}
 		t.Run(name, func(t *testing.T) {
 			db := newCampaignConcurrentIntegrationDB(t)
-			ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+			ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 			contentBlocks := testutil.NewEmailContentBlockStore(t, spiceDB)
 			references := emailauthoringadapter.NewCampaignDeliveryReferences()
 			layoutID := ""
@@ -204,7 +190,7 @@ func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(
 							},
 						),
 					)
-					if connect.CodeOf(err) != connect.CodeNotFound {
+					if errs.CodeOf(err) != connect.CodeNotFound {
 						require.NoError(t, err)
 					}
 					_, err = templateService.DeleteEmailTemplate(
@@ -215,7 +201,7 @@ func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(
 							},
 						),
 					)
-					if connect.CodeOf(err) != connect.CodeNotFound {
+					if errs.CodeOf(err) != connect.CodeNotFound {
 						require.NoError(t, err)
 					}
 				}
@@ -228,7 +214,7 @@ func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(
 							},
 						),
 					)
-					if connect.CodeOf(err) != connect.CodeNotFound {
+					if errs.CodeOf(err) != connect.CodeNotFound {
 						require.NoError(t, err)
 					}
 				}
@@ -319,10 +305,10 @@ func TestEmailLayoutDeleteAndTemplateAssignmentDoNotDeadlockIntegration(
 			assignmentErr := <-assignmentDone
 			deleteWon := deleteErr == nil
 			if deleteWon {
-				require.Equal(t, connect.CodeNotFound, connect.CodeOf(assignmentErr))
+				require.Equal(t, connect.CodeNotFound, errs.CodeOf(assignmentErr))
 			} else {
 				require.NoError(t, assignmentErr)
-				require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(deleteErr))
+				require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(deleteErr))
 			}
 
 			var storedLayout model.EmailLayout
@@ -480,7 +466,7 @@ func cleanupConcurrentCampaignSnapshotFixture(
 				Id: layoutID,
 			}),
 		)
-		if connect.CodeOf(err) != connect.CodeNotFound {
+		if errs.CodeOf(err) != connect.CodeNotFound {
 			require.NoError(t, err)
 		}
 	}

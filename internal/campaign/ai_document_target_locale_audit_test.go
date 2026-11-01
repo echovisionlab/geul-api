@@ -5,7 +5,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 
 	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -29,14 +31,30 @@ func (capture *campaignLocaleAuditCapture) AppendDomainAuditInTransaction(
 	return capture.err
 }
 
+// runCampaignLocaleAudit commits change through the mutation pipeline with
+// record as its audit.
+func runCampaignLocaleAudit(t *testing.T, capture *campaignLocaleAuditCapture, record mutation.Audit, change func(*gorm.DB) error) (*gorm.DB, error) {
+	t.Helper()
+	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec(`CREATE TABLE mutation_fact (id TEXT PRIMARY KEY)`).Error)
+	runner, err := mutation.NewRunner(db, &auth.SpiceDBClient{}, capture)
+	require.NoError(t, err)
+	_, err = mutation.Run(t.Context(), runner, mutation.Spec[struct{}]{
+		Access: emailcontent.CollaborationAccess,
+		Change: func(_ context.Context, tx *gorm.DB) (struct{}, error) { return struct{}{}, change(tx) },
+		Audit:  func(struct{}) mutation.Audit { return record },
+	})
+	return db, err
+}
+
 func TestCampaignAIDocumentLocaleAuditIsMemberOwnedAndMinimal(t *testing.T) {
 	t.Parallel()
 	memberID := uuid.NewString()
 	capture := &campaignLocaleAuditCapture{}
-	require.NoError(t, appendCampaignLocaleContentAudit(
-		t.Context(), nil, capture, memberID, "campaign-1", "ja",
-		sharedtelemetry.AuditItemOperationUpdated,
-	))
+	record := campaignContent.LocaleContentChange(memberID, "campaign-1", "ja", sharedtelemetry.AuditItemOperationUpdated)
+	_, err := runCampaignLocaleAudit(t, capture, record, func(*gorm.DB) error { return nil })
+	require.NoError(t, err)
 	require.NoError(t, capture.record.Validate())
 	require.Equal(t, sharedtelemetry.AuditCampaignUpdated, capture.record.Action)
 	require.Equal(t, "campaign", capture.record.TargetType)
@@ -49,20 +67,11 @@ func TestCampaignAIDocumentLocaleAuditIsMemberOwnedAndMinimal(t *testing.T) {
 }
 
 func TestCampaignLocaleAuditFailureRollsBackOwningTransaction(t *testing.T) {
-	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE mutation_fact (id TEXT PRIMARY KEY)`).Error)
 	want := errors.New("append failed")
 	capture := &campaignLocaleAuditCapture{err: want}
-
-	err = db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec(`INSERT INTO mutation_fact (id) VALUES ('campaign-1')`).Error; err != nil {
-			return err
-		}
-		return appendCampaignLocaleContentAudit(
-			t.Context(), tx, capture, uuid.NewString(), "campaign-1", "ja",
-			sharedtelemetry.AuditItemOperationCreated,
-		)
+	record := campaignContent.LocaleContentChange(uuid.NewString(), "campaign-1", "ja", sharedtelemetry.AuditItemOperationCreated)
+	db, err := runCampaignLocaleAudit(t, capture, record, func(tx *gorm.DB) error {
+		return tx.Exec(`INSERT INTO mutation_fact (id) VALUES ('campaign-1')`).Error
 	})
 	require.ErrorIs(t, err, want)
 	var count int64

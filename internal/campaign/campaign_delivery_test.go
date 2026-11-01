@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -64,7 +65,7 @@ func TestCampaignRecipientScopeControlsNewsletterFilter(t *testing.T) {
 		RecipientScope: "LEGACY",
 	}, nil)
 	require.Error(t, err)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(err))
 }
 
 func TestDeriveCampaignDeliveryTargetUsesAudiencePortSnapshot(t *testing.T) {
@@ -114,7 +115,7 @@ func TestDeriveCampaignDeliveryTargetFailsClosedWithoutAudiencePort(t *testing.T
 		},
 		nil,
 	)
-	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
+	require.Equal(t, connect.CodeUnavailable, errs.CodeOf(err))
 }
 
 func TestCampaignDeliveryCompletionWaitsForPendingBusinessResults(t *testing.T) {

@@ -5,36 +5,34 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 func TestCreateCampaignTargetDefinitionRequiresExplicitTarget(t *testing.T) {
 	t.Parallel()
 
 	segmentID := uuid.NewString()
+	empty, invalid := "", "not-a-uuid"
 	tests := []struct {
 		name        string
-		request     *managev1.CreateCampaignRequest
+		target      CreateCampaignTarget
 		wantMode    string
 		wantSegment *string
 		wantErr     bool
 	}{
-		{name: "nil request", wantErr: true},
-		{name: "unset target", request: &managev1.CreateCampaignRequest{}, wantErr: true},
-		{name: "empty all", request: &managev1.CreateCampaignRequest{Target: &managev1.CreateCampaignRequest_All{}}, wantErr: true},
-		{name: "all", request: &managev1.CreateCampaignRequest{Target: &managev1.CreateCampaignRequest_All{All: &emptypb.Empty{}}}, wantMode: model.CampaignTargetModeAll},
-		{name: "empty segment", request: &managev1.CreateCampaignRequest{Target: &managev1.CreateCampaignRequest_SegmentId{}}, wantErr: true},
-		{name: "invalid segment", request: &managev1.CreateCampaignRequest{Target: &managev1.CreateCampaignRequest_SegmentId{SegmentId: "not-a-uuid"}}, wantErr: true},
-		{name: "segment", request: &managev1.CreateCampaignRequest{Target: &managev1.CreateCampaignRequest_SegmentId{SegmentId: segmentID}}, wantMode: model.CampaignTargetModeSegment, wantSegment: &segmentID},
+		{name: "unset target", wantErr: true},
+		{name: "empty all", target: CreateCampaignTarget{allMissing: true}, wantErr: true},
+		{name: "all", target: CreateCampaignTarget{All: true}, wantMode: model.CampaignTargetModeAll},
+		{name: "empty segment", target: CreateCampaignTarget{SegmentID: &empty}, wantErr: true},
+		{name: "invalid segment", target: CreateCampaignTarget{SegmentID: &invalid}, wantErr: true},
+		{name: "segment", target: CreateCampaignTarget{SegmentID: &segmentID}, wantMode: model.CampaignTargetModeSegment, wantSegment: &segmentID},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			mode, segment, err := createCampaignTargetDefinition(test.request)
+			mode, segment, err := createCampaignTargetDefinition(test.target)
 			if test.wantErr {
 				require.Error(t, err)
 				return

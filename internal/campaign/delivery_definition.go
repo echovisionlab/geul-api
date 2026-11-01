@@ -9,7 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 )
@@ -109,30 +109,30 @@ func deriveCampaignDeliveryTarget(
 		RecipientScope: campaign.RecipientScope,
 	}
 	if err := validateCampaignRecipientScope(target.RecipientScope); err != nil {
-		return CampaignDeliveryTarget{}, errs.FailedPrecondition(err.Error())
+		return CampaignDeliveryTarget{}, domainerr.Precondition(err.Error())
 	}
 	if err := validateCampaignTargetDefinition(campaign); err != nil {
-		return CampaignDeliveryTarget{}, errs.FailedPrecondition(err.Error())
+		return CampaignDeliveryTarget{}, domainerr.Precondition(err.Error())
 	}
 	if campaign.TargetMode == model.CampaignTargetModeAll {
 		return target, nil
 	}
 	segmentID := strings.TrimSpace(ptrStringValue(campaign.SegmentID))
 	if audienceTargets == nil {
-		return CampaignDeliveryTarget{}, errs.DependencyUnavailable("Campaign audience target")
+		return CampaignDeliveryTarget{}, domainerr.DependencyUnavailable("Campaign audience target")
 	}
 	segment, err := audienceTargets.LockTarget(ctx, tx, segmentID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return CampaignDeliveryTarget{}, errs.FailedPrecondition(errs.MsgCampaignSegmentNotFound)
+			return CampaignDeliveryTarget{}, domainerr.Precondition(msgCampaignSegmentNotFound)
 		}
 		return CampaignDeliveryTarget{}, err
 	}
 	if segment.Archived {
-		return CampaignDeliveryTarget{}, errs.FailedPrecondition("campaign audience segment is archived")
+		return CampaignDeliveryTarget{}, domainerr.Precondition("campaign audience segment is archived")
 	}
 	if !segment.Valid {
-		return CampaignDeliveryTarget{}, errs.FailedPrecondition("campaign audience segment is invalid")
+		return CampaignDeliveryTarget{}, domainerr.Precondition("campaign audience segment is invalid")
 	}
 	target.CreatedAfter = segment.CreatedAfter
 	target.CreatedBefore = segment.CreatedBefore
@@ -147,7 +147,7 @@ func deriveCampaignDeliveryTarget(
 	case model.AudienceSegmentMembersByFilter:
 		target.Mode = CampaignDeliveryTargetModeUsersByFilter
 	default:
-		return CampaignDeliveryTarget{}, errs.FailedPrecondition("campaign audience segment type is unsupported")
+		return CampaignDeliveryTarget{}, domainerr.Precondition("campaign audience segment type is unsupported")
 	}
 	return target, nil
 }

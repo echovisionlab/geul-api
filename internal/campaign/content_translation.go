@@ -23,7 +23,7 @@ func LoadTranslationSourceDocument(
 ) (*translation.SourceDocument, error) {
 	return campaignContent.LoadTranslationSourceDocument(ctx, db, store, campaignID,
 		func(ctx context.Context, db *gorm.DB, id, sourceLocale string) (string, error) {
-			return loadCampaignEmailSourceSubject(ctx, db, campaignContentEntity, id, sourceLocale)
+			return loadCampaignEmailSourceSubject(ctx, db, id, sourceLocale)
 		},
 	)
 }
@@ -46,7 +46,7 @@ func ApplyTranslationCandidate(
 	}
 	var fence contentblock.DomainFence
 	if job != nil {
-		fence = campaignTranslationJobApplyFence(campaignContentEntity, job.EntityID)
+		fence = campaignTranslationJobApplyFence(job.EntityID)
 	}
 	return campaignContent.ApplyTranslationCandidate(ctx, tx, store, emailcontent.TranslationCandidate{
 		Job: job, Candidate: candidate, Input: input, Fence: fence,

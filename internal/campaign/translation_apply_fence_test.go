@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/glebarez/sqlite"
 	"github.com/google/uuid"
@@ -40,10 +41,7 @@ func TestCampaignTranslationJobApplyFenceUsesRootExistenceOnly(t *testing.T) {
 				campaignID, documentID, "en", status,
 			).Error)
 
-			domain, err := campaignTranslationJobApplyFence(
-				campaignContentEntity,
-				campaignID,
-			)(t.Context(), db, documentID)
+			domain, err := campaignTranslationJobApplyFence(campaignID)(t.Context(), db, documentID)
 			require.NoError(t, err)
 			require.Equal(t, "en", domain.SourceLocale)
 
@@ -51,7 +49,7 @@ func TestCampaignTranslationJobApplyFenceUsesRootExistenceOnly(t *testing.T) {
 				_, editErr := campaignEmailContentFence(
 					campaignID,
 				)(t.Context(), db, documentID)
-				require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(editErr))
+				require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(editErr))
 			}
 		})
 	}
@@ -63,9 +61,6 @@ func TestCampaignTranslationJobApplyFenceUsesRootExistenceOnly(t *testing.T) {
 		deletedID, deletedDocumentID, "en", managev1.CampaignStatus_CAMPAIGN_STATUS_DRAFT.String(),
 	).Error)
 	require.NoError(t, db.Exec("DELETE FROM campaign WHERE id = ?", deletedID).Error)
-	_, err = campaignTranslationJobApplyFence(
-		campaignContentEntity,
-		deletedID,
-	)(t.Context(), db, deletedDocumentID)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	_, err = campaignTranslationJobApplyFence(deletedID)(t.Context(), db, deletedDocumentID)
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 }

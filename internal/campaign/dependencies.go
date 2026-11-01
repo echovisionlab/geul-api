@@ -2,15 +2,14 @@ package campaign
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"google.golang.org/protobuf/proto"
@@ -21,7 +20,6 @@ import (
 // required by Campaign collaboration mutations.
 type CollaborationPermissionChecker interface {
 	Can(context.Context, policyv1.AuthorizationDecision) (bool, error)
-	CheckActorCan(context.Context, policyv1.Actor, policyv1.Can) (bool, error)
 }
 
 func campaignEditCan(campaignID string) (policyv1.Can, error) {
@@ -75,58 +73,16 @@ func publishCampaignDurableProtoInTransaction(
 	return publisher.EnqueueProtobufWithExecutor(ctx, executor, queue, messageID, message)
 }
 
-func requireCampaignContributors(
-	ctx context.Context,
-	tx *gorm.DB,
-	members ContributorMembers,
-	contributors []string,
-) error {
-	if len(contributors) == 0 {
-		return errs.InvalidArgument(
-			"contributor_member_ids",
-			"collaboration mutation requires contributors",
-		)
-	}
-	for index, contributor := range contributors {
-		if _, err := uuidutil.ParseCanonical(contributor, "contributor_member_ids"); err != nil {
-			return errs.InvalidArgument(
-				"contributor_member_ids",
-				"collaboration mutation requires canonical Member UUIDs",
-			)
-		}
-		if index > 0 && contributors[index-1] >= contributor {
-			return errs.InvalidArgument(
-				"contributor_member_ids",
-				"collaboration mutation requires sorted unique Member UUIDs",
-			)
+func requireDependencies(name string, absent map[string]bool) error {
+	var missing []string
+	for field, isAbsent := range absent {
+		if isAbsent {
+			missing = append(missing, field)
 		}
 	}
-
-	locked, err := members.LockMembers(ctx, tx, contributors)
-	if err != nil {
-		return errs.Internal(fmt.Errorf("lock Campaign contributor Members: %w", err))
+	if len(missing) == 0 {
+		return nil
 	}
-	if len(locked) != len(contributors) {
-		return errs.InvalidArgument(
-			"contributor_member_ids",
-			"contains a Member that does not exist",
-		)
-	}
-	return nil
-}
-
-func requireCampaignCollaborationContributors(
-	ctx context.Context,
-	tx *gorm.DB,
-	checkpoints persistencecheckpoint.ContributorFence,
-	campaignID string,
-	contributors []string,
-) error {
-	return checkpoints.RequireCurrentContributors(
-		ctx,
-		tx,
-		intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_CAMPAIGN,
-		campaignID,
-		contributors,
-	)
+	slices.Sort(missing)
+	return errors.New(name + " dependencies are required: " + strings.Join(missing, ", "))
 }

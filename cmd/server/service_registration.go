@@ -674,15 +674,17 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered service", "path", commentPath)
 
 	campaignRuntime := campaignadapter.NewRuntime(workerPublisher, telemetryWriter)
-	campaignService := campaign.NewAuditedCampaignService(
-		db, campaignRuntime, cfg.CDNURL, cfg.SiteOrigin, telemetryWriter, spicedbClient,
-		campaign.WithCampaignContentBlockStore(contentBlockStore),
-		campaign.WithCampaignEmailAuthoring(campaignadapter.NewEmailAuthoring()),
-		campaign.WithCampaignEmailRendering(campaignadapter.NewEmailRendering()),
-		campaign.WithCampaignEmailDelivery(campaign.NewCampaignDeliveryRuntime(spicedbClient, workerPublisher)),
-		campaign.WithCampaignAudienceTargets(campaignadapter.NewAudienceTargets()),
-	)
-	campaignPath, campaignHandler := managev1connect.NewCampaignServiceHandler(campaignService, handlerOpts...)
+	campaignService, err := campaign.NewService(campaign.Deps{
+		DB: db, SpiceDB: spicedbClient, ContentBlocks: contentBlockStore, Runtime: campaignRuntime,
+		EmailAuthoring: campaignadapter.NewEmailAuthoring(), EmailRendering: campaignadapter.NewEmailRendering(),
+		EmailDelivery:   campaign.NewCampaignDeliveryRuntime(spicedbClient, workerPublisher),
+		AudienceTargets: campaignadapter.NewAudienceTargets(), Audit: telemetryWriter,
+		CDNDomain: cfg.CDNURL, SiteOrigin: cfg.SiteOrigin,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize campaign service: %w", err)
+	}
+	campaignPath, campaignHandler := managev1connect.NewCampaignServiceHandler(campaign.NewConnectHandler(campaignService), handlerOpts...)
 	mux.Handle(campaignPath, campaignHandler)
 	slog.Info("Registered service", "path", campaignPath)
 

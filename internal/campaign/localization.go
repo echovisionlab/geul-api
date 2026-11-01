@@ -5,12 +5,12 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 )
@@ -30,7 +30,7 @@ func ResolveLocalizedCampaign(
 	requestedLocale string,
 ) (model.Campaign, string, error) {
 	if contentBlocks == nil {
-		return campaign, "", errs.DependencyUnavailable("Campaign content Block store")
+		return campaign, "", domainerr.DependencyUnavailable("Campaign content Block store")
 	}
 	var sourceState struct {
 		SourceLocale string `gorm:"column:source_locale"`
@@ -41,13 +41,13 @@ func ResolveLocalizedCampaign(
 		Where("id = ?", campaign.ID).
 		Take(&sourceState).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return campaign, "", errs.NotFound("campaign source translation", campaign.ID)
+			return campaign, "", domainerr.ResourceNotFound("campaign source translation", campaign.ID)
 		}
 		return campaign, "", err
 	}
 	sourceLocale := normalizeCampaignLocale(sourceState.SourceLocale)
 	if sourceLocale == "" {
-		return campaign, "", errs.FailedPrecondition("Campaign source locale is unavailable")
+		return campaign, "", domainerr.Precondition("Campaign source locale is unavailable")
 	}
 	source, err := loadCampaignLocalizedContentRow(
 		ctx,
@@ -59,7 +59,7 @@ func ResolveLocalizedCampaign(
 		return campaign, sourceLocale, err
 	}
 	if source == nil {
-		return campaign, sourceLocale, errs.NotFound("campaign source translation", campaign.ID+":"+sourceLocale)
+		return campaign, sourceLocale, domainerr.ResourceNotFound("campaign source translation", campaign.ID+":"+sourceLocale)
 	}
 	selectedLocale := sourceLocale
 	var target *localizedCampaignContentRow
@@ -78,12 +78,7 @@ func ResolveLocalizedCampaign(
 			selectedLocale = requestedLocale
 		}
 	}
-	documentID, err := loadCampaignEmailContentDocumentID(
-		ctx,
-		db,
-		campaignContentEntity,
-		campaign.ID,
-	)
+	documentID, err := loadCampaignEmailContentDocumentRoot(ctx, db, campaign.ID, false)
 	if err != nil {
 		return campaign, selectedLocale, err
 	}

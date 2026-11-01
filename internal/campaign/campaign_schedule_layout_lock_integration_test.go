@@ -16,6 +16,7 @@ import (
 
 	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -25,7 +26,7 @@ func TestScheduleCampaignAndDeleteReferencedLayoutDoNotDeadlockIntegration(t *te
 	t.Parallel()
 	stack := newCampaignLocalKratosStack(t)
 	db := openCampaignIntegrationDB(t, stack)
-	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+	ctx, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
 	contentBlocks := testutil.NewEmailContentBlockStore(t, spiceDB)
 	references := emailauthoringadapter.NewCampaignDeliveryReferences()
 	var campaignID, layoutID string
@@ -42,17 +43,8 @@ func TestScheduleCampaignAndDeleteReferencedLayoutDoNotDeadlockIntegration(t *te
 	require.NoError(t, err)
 	layoutID = layout.Msg.Id
 
-	campaignService := func(operationDB *gorm.DB) *CampaignService {
-		return NewCampaignService(
-			operationDB,
-			newCampaignRuntimeFixture(nil, nil),
-			"https://cdn.example.test",
-			"https://www.example.test",
-			spiceDB,
-			WithCampaignContentBlockStore(contentBlocks),
-			WithCampaignEmailAuthoring(campaignEmailAuthoringConcurrencyFixture{}),
-			WithCampaignEmailDelivery(NewCampaignDeliveryRuntime(spiceDB, nil)),
-		)
+	campaignService := func(operationDB *gorm.DB) *ConnectHandler {
+		return NewConnectHandler(newTestService(t, Deps{DB: operationDB, Runtime: newCampaignRuntimeFixture(nil, nil), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", SpiceDB: spiceDB, ContentBlocks: contentBlocks, EmailAuthoring: campaignEmailAuthoringConcurrencyFixture{}, EmailDelivery: NewCampaignDeliveryRuntime(spiceDB, nil)}))
 	}
 	created, err := campaignService(db).CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{
 		Name:         "Schedule layout race " + uuid.NewString(),
@@ -106,7 +98,7 @@ func TestScheduleCampaignAndDeleteReferencedLayoutDoNotDeadlockIntegration(t *te
 	deleteErr := <-deleteDone
 	scheduleErr := <-scheduleDone
 	require.NoError(t, scheduleErr)
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(deleteErr), deleteErr)
+	require.Equal(t, connect.CodeFailedPrecondition, errs.CodeOf(deleteErr), deleteErr)
 	var persisted model.Campaign
 	require.NoError(t, db.First(&persisted, "id = ?", campaignID).Error)
 	require.Equal(t, managev1.CampaignStatus_CAMPAIGN_STATUS_SCHEDULED.String(), persisted.Status)

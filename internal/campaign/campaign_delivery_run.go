@@ -2,6 +2,7 @@ package campaign
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -9,7 +10,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/model"
 )
 
@@ -25,10 +26,10 @@ func createCampaignDeliveryRun(
 	delivery CampaignDeliveryPort,
 ) (CampaignDeliveryRunRef, error) {
 	if delivery == nil {
-		return CampaignDeliveryRunRef{}, errs.DependencyUnavailable("Campaign delivery")
+		return CampaignDeliveryRunRef{}, domainerr.DependencyUnavailable("Campaign delivery")
 	}
 	if targetCount < 0 {
-		return CampaignDeliveryRunRef{}, errs.InvalidArgumentMsg("target count cannot be negative")
+		return CampaignDeliveryRunRef{}, domainerr.New(domainerr.Invalid, "", "target count cannot be negative")
 	}
 	observedLayoutID, lockedLayouts, err := observeAndLockCampaignLayouts(
 		ctx,
@@ -47,7 +48,7 @@ func createCampaignDeliveryRun(
 		return CampaignDeliveryRunRef{}, err
 	}
 	if strings.TrimSpace(ptrStringValue(lockedCampaign.LayoutID)) != observedLayoutID {
-		return CampaignDeliveryRunRef{}, errs.FailedPrecondition("campaign layout assignment changed; retry")
+		return CampaignDeliveryRunRef{}, domainerr.Precondition("campaign layout assignment changed; retry")
 	}
 	campaign = lockedCampaign
 	target, err := deriveCampaignDeliveryTarget(
@@ -60,7 +61,7 @@ func createCampaignDeliveryRun(
 		return CampaignDeliveryRunRef{}, err
 	}
 	if campaign.UpdatedAt.IsZero() {
-		return CampaignDeliveryRunRef{}, errs.FailedPrecondition("campaign source revision is unavailable")
+		return CampaignDeliveryRunRef{}, domainerr.Precondition("campaign source revision is unavailable")
 	}
 	var sourceLayoutID *string
 	var sourceLayoutUpdatedAt *time.Time
@@ -68,7 +69,7 @@ func createCampaignDeliveryRun(
 		layoutID := strings.TrimSpace(*campaign.LayoutID)
 		layout, ok := lockedLayouts[layoutID]
 		if !ok {
-			return CampaignDeliveryRunRef{}, errs.FailedPrecondition("campaign email layout no longer exists")
+			return CampaignDeliveryRunRef{}, domainerr.Precondition("campaign email layout no longer exists")
 		}
 		sourceLayoutID = &layout.ID
 		updatedAt := layout.UpdatedAt.UTC()
@@ -80,10 +81,10 @@ func createCampaignDeliveryRun(
 	}
 	sourceCampaignUpdatedAt := campaign.UpdatedAt.UTC()
 	if err := ValidateCampaignDeliveryTarget(target); err != nil {
-		return CampaignDeliveryRunRef{}, errs.InvalidArgumentMsg(err.Error())
+		return CampaignDeliveryRunRef{}, domainerr.New(domainerr.Invalid, "", err.Error())
 	}
 	if err := ValidateCampaignDeliverySnapshot(snapshot); err != nil {
-		return CampaignDeliveryRunRef{}, errs.InvalidArgumentMsg(err.Error())
+		return CampaignDeliveryRunRef{}, domainerr.New(domainerr.Invalid, "", err.Error())
 	}
 	if err := validateCampaignRecipientScopeContent(target.RecipientScope, snapshot); err != nil {
 		return CampaignDeliveryRunRef{}, err
@@ -107,7 +108,7 @@ func createCampaignDeliveryRun(
 		return CampaignDeliveryRunRef{}, err
 	}
 	if strings.TrimSpace(run.ID) == "" {
-		return CampaignDeliveryRunRef{}, errs.InternalMsg("Campaign delivery run identity is unavailable")
+		return CampaignDeliveryRunRef{}, errors.New("Campaign delivery run identity is unavailable")
 	}
 	if targetCount > 0 {
 		if err := delivery.StartRun(ctx, tx, run.ID, targetCount, scheduledAt.UTC()); err != nil {

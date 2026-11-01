@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 
 	"gorm.io/gorm"
@@ -16,7 +17,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dependencycheck"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -100,9 +100,9 @@ func campaignStatusForCompletedRun(runStatus string, runKind string) string {
 	}
 	switch runStatus {
 	case CampaignDeliveryRunStatusSent:
-		return managev1.CampaignStatus_CAMPAIGN_STATUS_SENT.String()
+		return string(model.CampaignStatusSent)
 	case CampaignDeliveryRunStatusFailed:
-		return managev1.CampaignStatus_CAMPAIGN_STATUS_FAILED.String()
+		return string(model.CampaignStatusFailed)
 	default:
 		return ""
 	}
@@ -190,7 +190,7 @@ func (d *CampaignDeliveryDispatcher) DispatchDueEmailDeliveryRuns(ctx context.Co
 		Order("scheduled_at ASC, id ASC").
 		Limit(limit).
 		Find(&runs).Error; err != nil {
-		return 0, errs.Internal(err)
+		return 0, err
 	}
 
 	dispatched := 0
@@ -220,7 +220,7 @@ func (d *CampaignDeliveryDispatcher) ResumeActiveEmailDeliveryRuns(ctx context.C
 		Order("updated_at ASC, id ASC").
 		Limit(limit).
 		Find(&runs).Error; err != nil {
-		return 0, errs.Internal(err)
+		return 0, err
 	}
 
 	resumed := 0
@@ -356,10 +356,10 @@ func transitionCampaignDeliveryRunToDispatch(
 			return fmt.Errorf("campaign delivery run campaign lock is missing")
 		}
 		previousStatus := lockedCampaign.Status
-		if err := tx.Model(lockedCampaign).Update("status", managev1.CampaignStatus_CAMPAIGN_STATUS_FAILED.String()).Error; err != nil {
+		if err := tx.Model(lockedCampaign).Update("status", string(model.CampaignStatusFailed)).Error; err != nil {
 			return err
 		}
-		lockedCampaign.Status = managev1.CampaignStatus_CAMPAIGN_STATUS_FAILED.String()
+		lockedCampaign.Status = string(model.CampaignStatusFailed)
 		run.Status = CampaignDeliveryRunStatusFailed
 		run.CompletedAt = &now
 		return appendCampaignTerminalStatusAudit(ctx, tx, auditWriter, campaignID, campaignAuditState(previousStatus), sharedtelemetry.AuditStateFailed)
@@ -374,11 +374,11 @@ func transitionCampaignDeliveryRunToDispatch(
 	}
 	result := tx.Model(&model.Campaign{}).
 		Where("id = ? AND status IN ?", campaignID, []string{
-			managev1.CampaignStatus_CAMPAIGN_STATUS_SCHEDULED.String(),
-			managev1.CampaignStatus_CAMPAIGN_STATUS_SENDING.String(),
+			string(model.CampaignStatusScheduled),
+			string(model.CampaignStatusSending),
 		}).
 		Updates(structured.Fields{
-			"status": managev1.CampaignStatus_CAMPAIGN_STATUS_SENDING.String(), "scheduled_at": nil,
+			"status": string(model.CampaignStatusSending), "scheduled_at": nil,
 			"sent_at": nil, "sent_count": 0, "recipient_scope": run.TargetRecipientScope,
 		})
 	if result.Error != nil {
@@ -407,7 +407,7 @@ func transitionLegalNoticeDeliveryRunToDispatch(
 		}).Error
 	}
 	if legalNotice == nil {
-		return errs.DependencyUnavailable("Legal notice delivery")
+		return domainerr.DependencyUnavailable("Legal notice delivery")
 	}
 	if err := legalNotice.PrepareAutomaticPreviewShareLink(ctx, tx, *run, now); err != nil {
 		return err

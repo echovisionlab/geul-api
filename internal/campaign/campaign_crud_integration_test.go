@@ -3,14 +3,12 @@
 package campaign
 
 import (
-	"context"
 	"testing"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -21,13 +19,9 @@ func TestCampaignServiceCRUDIntegration(t *testing.T) {
 	db := testutil.NewIntegrationDB(t)
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
+	ctx := campaignMemberContext(t, admin.AuthUserInfo())
 	contentBlocks := testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)
-	campaignSvc := NewCampaignService(
-		db, newCampaignRuntimeFixture(nil, nil), "https://cdn.example.com", "https://example.com", stack.SpiceDBClient,
-		WithCampaignContentBlockStore(contentBlocks),
-		WithCampaignEmailDelivery(NewCampaignDeliveryRuntime(stack.SpiceDBClient, nil)),
-	)
+	campaignSvc := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, nil), CDNDomain: "https://cdn.example.com", SiteOrigin: "https://example.com", SpiceDB: stack.SpiceDBClient, ContentBlocks: contentBlocks, EmailDelivery: NewCampaignDeliveryRuntime(stack.SpiceDBClient, nil)}))
 
 	req := connect.NewRequest(&managev1.CreateCampaignRequest{
 		Name:         "Campaign Integration Name",

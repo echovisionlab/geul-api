@@ -16,10 +16,12 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/email"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // Every public Campaign mutation performs an inexpensive early
@@ -47,7 +49,7 @@ func TestCampaignMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 		requireCampaignAudienceMutationWaiting(t, db, identityLock, result)
 		testutil.GrantIntegrationGlobalRole(t, spiceDB, actorID, policyv1.Role.User())
 		require.NoError(t, identityLock.Commit().Error)
-		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(<-result))
+		require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(<-result))
 		var count int64
 		require.NoError(t, db.Table("campaign").Where("name = ?", "revoked create").Count(&count).Error)
 		require.Zero(t, count)
@@ -56,12 +58,12 @@ func TestCampaignMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		status string
-		invoke func(context.Context, *CampaignService, string) error
+		invoke func(context.Context, *ConnectHandler, string) error
 		assert func(*testing.T, *gorm.DB, string)
 	}{
 		{
 			name: "campaign name update", status: managev1.CampaignStatus_CAMPAIGN_STATUS_DRAFT.String(),
-			invoke: func(ctx context.Context, service *CampaignService, campaignID string) error {
+			invoke: func(ctx context.Context, service *ConnectHandler, campaignID string) error {
 				_, err := service.UpdateCampaignName(ctx, connect.NewRequest(&managev1.UpdateCampaignNameRequest{Id: campaignID, Name: "must not update"}))
 				return err
 			},
@@ -73,7 +75,7 @@ func TestCampaignMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 		},
 		{
 			name: "campaign configuration update", status: managev1.CampaignStatus_CAMPAIGN_STATUS_DRAFT.String(),
-			invoke: func(ctx context.Context, service *CampaignService, campaignID string) error {
+			invoke: func(ctx context.Context, service *ConnectHandler, campaignID string) error {
 				targetMode := managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL
 				recipientScope := managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_ALL_MATCHING_USERS
 				_, err := service.UpdateCampaignConfiguration(ctx, connect.NewRequest(&managev1.UpdateCampaignConfigurationRequest{
@@ -89,7 +91,7 @@ func TestCampaignMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 		},
 		{
 			name: "campaign delete", status: managev1.CampaignStatus_CAMPAIGN_STATUS_DRAFT.String(),
-			invoke: func(ctx context.Context, service *CampaignService, campaignID string) error {
+			invoke: func(ctx context.Context, service *ConnectHandler, campaignID string) error {
 				_, err := service.DeleteCampaign(ctx, connect.NewRequest(&managev1.DeleteCampaignRequest{Id: campaignID}))
 				return err
 			},
@@ -101,7 +103,7 @@ func TestCampaignMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 		},
 		{
 			name: "campaign schedule", status: managev1.CampaignStatus_CAMPAIGN_STATUS_DRAFT.String(),
-			invoke: func(ctx context.Context, service *CampaignService, campaignID string) error {
+			invoke: func(ctx context.Context, service *ConnectHandler, campaignID string) error {
 				_, err := service.ScheduleCampaign(ctx, connect.NewRequest(&managev1.ScheduleCampaignRequest{
 					Id: campaignID, ScheduledAt: timestamppb.New(time.Now().Add(time.Hour)),
 					RecipientScope: managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_SUBSCRIBED_USERS,
@@ -116,7 +118,7 @@ func TestCampaignMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 		},
 		{
 			name: "campaign cancel", status: managev1.CampaignStatus_CAMPAIGN_STATUS_SCHEDULED.String(),
-			invoke: func(ctx context.Context, service *CampaignService, campaignID string) error {
+			invoke: func(ctx context.Context, service *ConnectHandler, campaignID string) error {
 				_, err := service.CancelCampaign(ctx, connect.NewRequest(&managev1.CancelCampaignRequest{Id: campaignID}))
 				return err
 			},
@@ -128,7 +130,7 @@ func TestCampaignMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 		},
 		{
 			name: "campaign immediate send", status: managev1.CampaignStatus_CAMPAIGN_STATUS_DRAFT.String(),
-			invoke: func(ctx context.Context, service *CampaignService, campaignID string) error {
+			invoke: func(ctx context.Context, service *ConnectHandler, campaignID string) error {
 				_, err := service.SendCampaignNow(ctx, connect.NewRequest(&managev1.SendCampaignNowRequest{
 					Id: campaignID, RecipientScope: managev1.CampaignRecipientScope_CAMPAIGN_RECIPIENT_SCOPE_SUBSCRIBED_USERS,
 				}))
@@ -142,7 +144,7 @@ func TestCampaignMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 		},
 		{
 			name: "campaign test send", status: managev1.CampaignStatus_CAMPAIGN_STATUS_DRAFT.String(),
-			invoke: func(ctx context.Context, service *CampaignService, campaignID string) error {
+			invoke: func(ctx context.Context, service *ConnectHandler, campaignID string) error {
 				_, err := service.SendTestCampaign(ctx, connect.NewRequest(&managev1.SendTestCampaignRequest{Id: campaignID, Email: "test@example.test"}))
 				return err
 			},
@@ -166,24 +168,16 @@ func TestCampaignMutationsRecheckAdminAfterRootLockIntegration(t *testing.T) {
 			testutil.GrantIntegrationGlobalRole(t, spiceDB, actorID, policyv1.Role.User())
 			require.NoError(t, rootLock.Commit().Error)
 			mutationErr := <-result
-			require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(mutationErr), "error: %v", mutationErr)
+			require.Equal(t, connect.CodePermissionDenied, errs.CodeOf(mutationErr), "error: %v", mutationErr)
 			test.assert(t, db, campaignID)
 		})
 	}
 
 }
 
-func newCampaignAuthorityRaceService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *CampaignService {
+func newCampaignAuthorityRaceService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient) *ConnectHandler {
 	t.Helper()
-	return NewCampaignService(
-		db,
-		newCampaignRuntimeFixture(nil, nil),
-		"",
-		"",
-		spiceDB,
-		WithCampaignContentBlockStore(testutil.NewEmailContentBlockStore(t, spiceDB)),
-		WithCampaignEmailRendering(campaignAuthorityRaceEmailRendering{}),
-	)
+	return NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, nil), SpiceDB: spiceDB, ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB), EmailRendering: campaignAuthorityRaceEmailRendering{}}))
 }
 
 // campaignAuthorityRaceEmailRendering keeps this authorization-concurrency
@@ -210,7 +204,7 @@ func seedCampaignAuthorityRaceCampaign(
 	t *testing.T,
 	db *gorm.DB,
 	spiceDB *auth.SpiceDBClient,
-	service *CampaignService,
+	service *ConnectHandler,
 	actorID string,
 	actorMemberID string,
 	status string,
@@ -247,7 +241,11 @@ func scheduledAtForAuthorityRace(status string, now time.Time) any {
 }
 
 func campaignAudienceAuthorityContext(identityID, memberID string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	request, err := sharedtelemetry.NewPropagatedRequestContext(uuid.NewString(), sharedtelemetry.MemberActor{IdentityID: identityID, MemberID: memberID, SessionID: uuid.NewString()})
+	if err != nil {
+		panic(err)
+	}
+	return auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), request), &auth.UserInfo{
 		IdentityID: auth.IdentityID(identityID), MemberID: auth.MemberID(memberID),
 		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
 	})

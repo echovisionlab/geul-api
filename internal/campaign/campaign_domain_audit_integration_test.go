@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/auth"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/model"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
@@ -31,12 +30,7 @@ func TestCampaignDomainAuditMemberMutationsAndRollbackIntegration(t *testing.T) 
 	identityID, memberID := admin.IdentityID, admin.MemberID
 	spiceDB := stack.SpiceDBClient
 	ctx := testutil.NewAuditContext(t, identityID, memberID)
-	service := NewAuditedCampaignService(
-		db, newCampaignRuntimeFixture(nil, apitelemetry.NewDurableWriter(db)),
-		"https://cdn.example.test", "https://www.example.test",
-		apitelemetry.NewDurableWriter(db), spiceDB,
-		WithCampaignContentBlockStore(testutil.NewEmailContentBlockStore(t, spiceDB)),
-	)
+	service := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, apitelemetry.NewDurableWriter(db)), CDNDomain: "https://cdn.example.test", SiteOrigin: "https://www.example.test", Audit: apitelemetry.NewDurableWriter(db), SpiceDB: spiceDB, ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB)}))
 
 	created, err := service.CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{Name: "Audit campaign", Subject: "Audit subject", SourceLocale: "en", Target: campaignAllTarget()}))
 	require.NoError(t, err)
@@ -118,11 +112,7 @@ func TestCampaignDomainAuditMemberMutationsAndRollbackIntegration(t *testing.T) 
 	require.Contains(t, string(rows[3].Attributes), `"recipient_scope"`)
 	require.Contains(t, string(rows[4].Attributes), `"recipient_scope"`)
 
-	failing := NewAuditedCampaignService(
-		db, newCampaignRuntimeFixture(nil, apitelemetry.NewDurableWriter(db)),
-		"", "", campaignFailingAuditAppender{}, spiceDB,
-		WithCampaignContentBlockStore(testutil.NewEmailContentBlockStore(t, spiceDB)),
-	)
+	failing := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, apitelemetry.NewDurableWriter(db)), Audit: campaignFailingAuditAppender{}, SpiceDB: spiceDB, ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB)}))
 	_, err = failing.CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{Name: "must roll back", Subject: "subject", SourceLocale: "en", Target: campaignAllTarget()}))
 	require.Error(t, err)
 	var count int64
@@ -136,11 +126,8 @@ func TestCampaignDeliveryTerminalAuditIntegration(t *testing.T) {
 	ensureBulkEmailAudienceKratosIdentityColumns(t, db)
 	stack := testutil.SetupOryStack(t)
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
-	created, err := NewCampaignService(
-		db, newCampaignRuntimeFixture(nil, nil), "", "", stack.SpiceDBClient,
-		WithCampaignContentBlockStore(testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)),
-	).CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{
+	ctx := campaignMemberContext(t, admin.AuthUserInfo())
+	created, err := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(nil, nil), SpiceDB: stack.SpiceDBClient, ContentBlocks: testutil.NewEmailContentBlockStore(t, stack.SpiceDBClient)})).CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{
 		Name: "Terminal audit campaign", Subject: "Terminal audit subject", SourceLocale: "en",
 		Target: campaignAllTarget(),
 	}))
@@ -225,12 +212,7 @@ func TestCampaignLifecycleAndDeletionAuditIntegration(t *testing.T) {
 	spiceDB := stack.SpiceDBClient
 	ctx := testutil.NewAuditContext(t, identityID, memberID)
 	publisher := &recordingCampaignPublisher{}
-	service := NewAuditedCampaignService(
-		db, newCampaignRuntimeFixture(publisher, apitelemetry.NewDurableWriter(db)),
-		"", "", apitelemetry.NewDurableWriter(db), spiceDB,
-		WithCampaignContentBlockStore(testutil.NewEmailContentBlockStore(t, spiceDB)),
-		WithCampaignEmailDelivery(NewCampaignDeliveryRuntime(spiceDB, publisher)),
-	)
+	service := NewConnectHandler(newTestService(t, Deps{DB: db, Runtime: newCampaignRuntimeFixture(publisher, apitelemetry.NewDurableWriter(db)), Audit: apitelemetry.NewDurableWriter(db), SpiceDB: spiceDB, ContentBlocks: testutil.NewEmailContentBlockStore(t, spiceDB), EmailDelivery: NewCampaignDeliveryRuntime(spiceDB, publisher)}))
 	created, err := service.CreateCampaign(ctx, connect.NewRequest(&managev1.CreateCampaignRequest{Name: "Lifecycle campaign", Subject: "Lifecycle subject", SourceLocale: "en", Target: campaignAllTarget()}))
 	require.NoError(t, err)
 	campaignID := created.Msg.Campaign.Id
