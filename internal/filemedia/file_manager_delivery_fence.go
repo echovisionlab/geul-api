@@ -39,7 +39,7 @@ func (s *Service) finalizeFileManagerDeliveries(
 		s.testBeforeFileManagerDeliveryFence(append([]string(nil), fileIDs...))
 	}
 
-	files := make(map[string]*managev1.FileManagerFile, len(rows))
+	var files map[string]*managev1.FileManagerFile
 	outputs := cloneFileGeneratedOutputs(generatedOutputs)
 	meshWitnesses := fileManagerMeshDeliveryWitnesses(rows, outputs)
 	changed := false
@@ -52,69 +52,112 @@ func (s *Service) finalizeFileManagerDeliveries(
 			changed = true
 			return nil
 		}
-		var locked []model.File
-		query := tx.WithContext(ctx).
-			Select("id", "file_name", "extension", "mime_type", "file_size", "duration_seconds", "folder_id", "uploaded_by_member_id", "delete_requested_at", "created_at", "updated_at").
-			Where("id IN ?", fileIDs).
-			Order("id ASC")
-		if tx.Dialector.Name() == "postgres" {
-			query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
-		}
-		if err := query.Find(&locked).Error; err != nil {
+		lockedByID, err := shareLockDeliveryFiles(ctx, tx, fileIDs,
+			"id", "file_name", "extension", "mime_type", "file_size", "duration_seconds", "folder_id", "uploaded_by_member_id", "delete_requested_at", "created_at", "updated_at")
+		if err != nil {
 			return err
-		}
-		lockedByID := make(map[string]model.File, len(locked))
-		for _, file := range locked {
-			lockedByID[file.ID] = file
 		}
 		currentMeshCandidates, err := lockFileManagerMeshDeliveryWitnesses(ctx, tx, meshWitnesses)
 		if err != nil {
 			return err
 		}
-
-		for _, row := range rows {
-			if row.ItemType != "file" {
-				continue
-			}
-			file, ok := lockedByID[row.ID]
-			if !ok || file.DeleteRequestedAt != nil || !fileManagerCatalogRowMatchesFile(row, file) {
-				changed = true
-				continue
-			}
-			built, err := s.fileManagerFileFromCatalogRow(row, members, usageCounts[row.ID])
-			if err != nil {
-				return err
-			}
-			files[row.ID] = built
+		files, changed, err = s.fenceFileManagerCatalogFiles(rows, lockedByID, members, usageCounts)
+		if err != nil {
+			return err
 		}
-
-		for _, output := range outputs {
-			delivery := output.GetDelivery()
-			if delivery == nil || (delivery.GetInline() == nil && delivery.GetDownload() == nil) {
-				continue
-			}
-			if output.GetType() == managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_OPTIMIZED_MESH &&
-				!currentMeshCandidates[output.GetId()] {
-				output.Delivery = nil
-				continue
-			}
-			file, ok := lockedByID[delivery.GetFileId()]
-			if !ok || file.DeleteRequestedAt != nil || !fileManagerDeliveryMatchesFile(delivery, file) {
-				output.Delivery = nil
-				continue
-			}
-			fenced, err := s.rebuildLockedPrivateDelivery(delivery, file)
-			if err != nil {
-				return err
-			}
-			output.Delivery = fenced
+		if err := s.fenceFileManagerGeneratedOutputs(outputs, lockedByID, currentMeshCandidates); err != nil {
+			return err
 		}
 		if s.testAfterFileManagerDeliverySigned != nil {
 			s.testAfterFileManagerDeliverySigned(append([]string(nil), fileIDs...))
 		}
 		return nil
 	})
+	if files == nil {
+		files = make(map[string]*managev1.FileManagerFile, len(rows))
+	}
 	return files, outputs, changed, err
+}
+
+// shareLockDeliveryFiles share-locks the File rows a delivery signs, in ID
+// order, and returns the columns named by fields.
+func shareLockDeliveryFiles(ctx context.Context, tx *gorm.DB, fileIDs []string, fields ...string) (map[string]model.File, error) {
+	var locked []model.File
+	query := tx.WithContext(ctx).
+		Select(fields).
+		Where("id IN ?", fileIDs).
+		Order("id ASC")
+	if tx.Dialector.Name() == "postgres" {
+		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
+	}
+	if err := query.Find(&locked).Error; err != nil {
+		return nil, err
+	}
+	lockedByID := make(map[string]model.File, len(locked))
+	for _, file := range locked {
+		lockedByID[file.ID] = file
+	}
+	return lockedByID, nil
+}
+
+// fenceFileManagerCatalogFiles builds the catalog Files whose locked rows
+// still match what the catalog read; changed reports a File that did not.
+func (s *Service) fenceFileManagerCatalogFiles(
+	rows []fileManagerCatalogRow,
+	lockedByID map[string]model.File,
+	members map[string]*commonv1.MemberSummary,
+	usageCounts map[string]int32,
+) (map[string]*managev1.FileManagerFile, bool, error) {
+	files := make(map[string]*managev1.FileManagerFile, len(rows))
+	changed := false
+	for _, row := range rows {
+		if row.ItemType != "file" {
+			continue
+		}
+		file, ok := lockedByID[row.ID]
+		if !ok || file.DeleteRequestedAt != nil || !fileManagerCatalogRowMatchesFile(row, file) {
+			changed = true
+			continue
+		}
+		built, err := s.fileManagerFileFromCatalogRow(row, members, usageCounts[row.ID])
+		if err != nil {
+			return nil, changed, err
+		}
+		files[row.ID] = built
+	}
+	return files, changed, nil
+}
+
+// fenceFileManagerGeneratedOutputs re-signs each generated output delivery
+// against its locked File and drops the deliveries whose File or ready mesh
+// candidate changed.
+func (s *Service) fenceFileManagerGeneratedOutputs(
+	outputs []*managev1.FileGeneratedOutput,
+	lockedByID map[string]model.File,
+	currentMeshCandidates map[string]bool,
+) error {
+	for _, output := range outputs {
+		delivery := output.GetDelivery()
+		if delivery == nil || (delivery.GetInline() == nil && delivery.GetDownload() == nil) {
+			continue
+		}
+		if output.GetType() == managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_OPTIMIZED_MESH &&
+			!currentMeshCandidates[output.GetId()] {
+			output.Delivery = nil
+			continue
+		}
+		file, ok := lockedByID[delivery.GetFileId()]
+		if !ok || file.DeleteRequestedAt != nil || !fileManagerDeliveryMatchesFile(delivery, file) {
+			output.Delivery = nil
+			continue
+		}
+		fenced, err := s.rebuildLockedPrivateDelivery(delivery, file)
+		if err != nil {
+			return err
+		}
+		output.Delivery = fenced
+	}
+	return nil
 }
 
 type fileManagerMeshDeliveryWitness struct {
@@ -368,54 +411,21 @@ func (s *Service) finalizeStrongManageFileURLResponses(
 			changed = true
 			return nil
 		}
-		var locked []model.File
-		query := tx.WithContext(ctx).
-			Select("id", "file_name", "extension", "mime_type", "file_size", "duration_seconds", "ingest_slot_id", "ingest_attempt_id", "uploaded_by_member_id", "delete_requested_at", "client_media_bundle_id").
-			Where("id IN ?", fileIDs).
-			Order("id ASC")
-		if tx.Dialector.Name() == "postgres" {
-			query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
-		}
-		if err := query.Find(&locked).Error; err != nil {
+		lockedByID, err := shareLockDeliveryFiles(ctx, tx, fileIDs,
+			"id", "file_name", "extension", "mime_type", "file_size", "duration_seconds", "ingest_slot_id", "ingest_attempt_id", "uploaded_by_member_id", "delete_requested_at", "client_media_bundle_id")
+		if err != nil {
 			return err
 		}
-		lockedByID := make(map[string]model.File, len(locked))
-		for _, file := range locked {
-			lockedByID[file.ID] = file
-		}
 		for _, fileID := range fileIDs {
-			response := responses[fileID]
-			grant := authorization.files[fileID]
-			file, ok := lockedByID[fileID]
-			if !ok || file.DeleteRequestedAt != nil || !manageDeliveryResponseMatchesFile(response, file) ||
-				(grant.expectedUploader != "" && (file.UploadedByMemberID == nil || *file.UploadedByMemberID != grant.expectedUploader)) {
-				changed = true
-				continue
-			}
-			if grant.expectedAvatarOwner != "" {
-				var binding model.FileIngestBinding
-				bindingQuery := tx.WithContext(ctx).Where(
-					"file_id = ? AND upload_type = ? AND entity_id = ?",
-					fileID, managev1.UploadType_UPLOAD_TYPE_USER_AVATAR.String(), grant.expectedAvatarOwner,
-				)
-				if tx.Dialector.Name() == "postgres" {
-					bindingQuery = bindingQuery.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
-				}
-				if err := bindingQuery.Take(&binding).Error; err != nil {
-					if errors.Is(err, gorm.ErrRecordNotFound) {
-						changed = true
-						continue
-					}
-					return err
-				}
-			}
-			cloned := proto.Clone(response).(*managev1.GetMediaDeliveryResponse)
-			fenced, err := s.rebuildLockedPrivateDelivery(cloned.GetDelivery(), file)
+			fenced, current, err := s.fenceStrongManageDelivery(ctx, tx, responses[fileID], authorization.files[fileID], lockedByID, fileID)
 			if err != nil {
 				return err
 			}
-			cloned.Delivery = fenced
-			result[fileID] = cloned
+			if !current {
+				changed = true
+				continue
+			}
+			result[fileID] = fenced
 		}
 		if s.testAfterManageDeliverySigned != nil {
 			s.testAfterManageDeliverySigned(append([]string(nil), fileIDs...))
@@ -423,6 +433,47 @@ func (s *Service) finalizeStrongManageFileURLResponses(
 		return nil
 	})
 	return result, changed, err
+}
+
+// fenceStrongManageDelivery re-signs response against the locked File when
+// the File, its uploader and, for an avatar grant, its avatar binding are
+// still the ones authorization saw; current is false otherwise.
+func (s *Service) fenceStrongManageDelivery(
+	ctx context.Context,
+	tx *gorm.DB,
+	response *managev1.GetMediaDeliveryResponse,
+	grant manageFileDeliveryGrant,
+	lockedByID map[string]model.File,
+	fileID string,
+) (*managev1.GetMediaDeliveryResponse, bool, error) {
+	file, ok := lockedByID[fileID]
+	if !ok || file.DeleteRequestedAt != nil || !manageDeliveryResponseMatchesFile(response, file) ||
+		(grant.expectedUploader != "" && (file.UploadedByMemberID == nil || *file.UploadedByMemberID != grant.expectedUploader)) {
+		return nil, false, nil
+	}
+	if grant.expectedAvatarOwner != "" {
+		var binding model.FileIngestBinding
+		bindingQuery := tx.WithContext(ctx).Where(
+			"file_id = ? AND upload_type = ? AND entity_id = ?",
+			fileID, managev1.UploadType_UPLOAD_TYPE_USER_AVATAR.String(), grant.expectedAvatarOwner,
+		)
+		if tx.Dialector.Name() == "postgres" {
+			bindingQuery = bindingQuery.Clauses(clause.Locking{Strength: clause.LockingStrengthShare})
+		}
+		if err := bindingQuery.Take(&binding).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, false, nil
+			}
+			return nil, false, err
+		}
+	}
+	cloned := proto.Clone(response).(*managev1.GetMediaDeliveryResponse)
+	fenced, err := s.rebuildLockedPrivateDelivery(cloned.GetDelivery(), file)
+	if err != nil {
+		return nil, false, err
+	}
+	cloned.Delivery = fenced
+	return cloned, true, nil
 }
 
 func (s *Service) finalizeUsageManageFileURLResponses(
