@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -146,8 +146,8 @@ func TestExportedLockedPostAccessChecksAuthorityAfterRootLockIntegration(t *test
 		require  func(context.Context, *gorm.DB, *auth.SpiceDBClient, string) error
 		wantCode connect.Code
 	}{
-		{name: "view", require: postdomain.RequireLockedView, wantCode: connect.CodeNotFound},
-		{name: "source locale edit", require: postdomain.RequireLockedSourceLocaleEdit, wantCode: connect.CodePermissionDenied},
+		{name: "view", require: postpostgres.RequireLockedView, wantCode: connect.CodeNotFound},
+		{name: "source locale edit", require: postpostgres.RequireLockedSourceLocaleEdit, wantCode: connect.CodePermissionDenied},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

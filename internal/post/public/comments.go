@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -11,8 +12,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
@@ -76,7 +77,7 @@ func (s *Service) withCommentPost(
 func (s *Service) ListComments(ctx context.Context, query ListPostCommentsQuery) (*openv1.ListPostCommentsResponse, error) {
 	var response *openv1.ListPostCommentsResponse
 	err := s.withCommentPost(ctx, query.PostID, query.ShareToken, query.SharePassword, func(tx *gorm.DB) error {
-		result, err := postdomain.ReadComments(ctx, tx, commentMembers{s.members}, postdomain.ListCommentsQuery{
+		result, err := postdomain.ReadComments(ctx, postpostgres.Bind(tx, postpostgres.Deps{}), commentMembers{s.members}, postdomain.ListCommentsQuery{
 			PostID: query.PostID, Limit: query.Limit, Cursor: query.Cursor, ReplyLimit: query.ReplyLimit,
 		})
 		if err != nil {
@@ -101,21 +102,22 @@ func (s *Service) LoadMoreCommentReplies(ctx context.Context, query LoadMorePost
 	}
 	var response *openv1.ListPostCommentsResponse
 	err := s.withCommentPost(ctx, query.PostID, query.ShareToken, query.SharePassword, func(tx *gorm.DB) error {
-		var parent model.Comment
-		if err := tx.First(&parent, "id = ? AND post_id = ?", query.CommentID, query.PostID).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
+		store := postpostgres.Bind(tx, postpostgres.Deps{})
+		parent, err := store.FindPostComment(ctx, query.PostID, query.CommentID)
+		if err != nil {
+			if errors.Is(err, postdomain.ErrCommentNotFound) {
 				return domainerr.New(domainerr.NotFound, "", "comment not found")
 			}
 			return err
 		}
-		result, err := postdomain.ReadCommentReplies(ctx, tx, commentMembers{s.members}, postdomain.LoadMoreRepliesQuery{
+		result, err := postdomain.ReadCommentReplies(ctx, store, commentMembers{s.members}, postdomain.LoadMoreRepliesQuery{
 			CommentID: query.CommentID, Limit: query.Limit, Cursor: query.Cursor,
 		}, parent)
 		if err != nil {
 			return err
 		}
 		response = &openv1.ListPostCommentsResponse{
-			Comments: publicCommentNodes(result.Replies), NextCursor: result.NextCursor,
+			Comments: publicCommentNodes(result.Comments), NextCursor: result.NextCursor,
 			HasMore: result.HasMore, TotalCount: result.TotalCount,
 		}
 		return nil
@@ -126,15 +128,20 @@ func (s *Service) LoadMoreCommentReplies(ctx context.Context, query LoadMorePost
 	return response, nil
 }
 
-func publicCommentNodes(nodes []*managev1.CommentNode) []*openv1.PostCommentNode {
+func publicCommentNodes(nodes []*postdomain.CommentNode) []*openv1.PostCommentNode {
 	result := make([]*openv1.PostCommentNode, len(nodes))
 	for index, node := range nodes {
-		result[index] = &openv1.PostCommentNode{
-			Id: node.Id, PostId: node.PostId, ParentId: node.ParentId, Content: node.Content,
-			IsDeleted: node.IsDeleted, CreatedAt: node.CreatedAt, UpdatedAt: node.UpdatedAt,
+		message := &openv1.PostCommentNode{
+			Id: node.ID, PostId: node.PostID, ParentId: node.ParentID, Content: node.Content,
+			IsDeleted: node.IsDeleted, CreatedAt: timestamppb.New(node.CreatedAt), UpdatedAt: timestamppb.New(node.UpdatedAt),
 			Replies: publicCommentNodes(node.Replies), HasMoreReplies: node.HasMoreReplies,
-			TotalReplyCount: node.TotalReplyCount, MemberId: node.MemberId, Author: node.Author,
+			TotalReplyCount: node.TotalReplyCount,
 		}
+		if node.MemberID != nil {
+			message.MemberId = node.MemberID
+			message.Author = node.Author
+		}
+		result[index] = message
 	}
 	return result
 }

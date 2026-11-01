@@ -7,7 +7,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
+	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -54,7 +55,7 @@ func (VersionRestore) LoadUnavailableVersionAttachmentKinds(
 }
 
 var (
-	_ postdomain.ShareLinkValidator      = ShareLinks{}
-	_ postdomain.ContentBlockMediaLoader = ContentBlockMedia{}
-	_ postdomain.VersionRestoreSupport   = VersionRestore{}
+	_ postpublic.ShareLinkValidator        = ShareLinks{}
+	_ postpostgres.ContentBlockMediaLoader = ContentBlockMedia{}
+	_ postpostgres.VersionRestoreSupport   = VersionRestore{}
 )

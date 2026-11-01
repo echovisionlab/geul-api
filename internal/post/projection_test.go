@@ -4,8 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/documentlayout"
-	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -19,12 +17,10 @@ import (
 func TestManagePostProjectionIncludesSourceLocale(t *testing.T) {
 	for _, locale := range []string{"ko", "en", "pt-BR", "zh-TW"} {
 		t.Run(locale, func(t *testing.T) {
-			service := &Service{}
-			response, err := service.toProtoPost(&model.Post{
-				SourceLocale: locale, DocumentLayout: model.DefaultDocumentLayout(),
-				Series: &model.Series{SourceLocale: "ja"},
-			}, postContent{}, nil)
-			require.NoError(t, err)
+			response := PostMessage(View{Post: Post{
+				SourceLocale: locale, DocumentLayout: DefaultDocumentLayout(),
+				Series: &Series{SourceLocale: "ja"},
+			}})
 			if response.GetSourceLocale() != locale {
 				t.Fatalf("source locale = %q, want %q", response.GetSourceLocale(), locale)
 			}
@@ -50,39 +46,38 @@ func TestManagePostProjectionIncludesSourceLocale(t *testing.T) {
 func TestManagePostProjectionRejectsInvalidStoredDocumentLayout(t *testing.T) {
 	t.Parallel()
 	require.NotPanics(t, func() {
-		response, err := new(Service).toProtoPost(&model.Post{ID: "post", SourceLocale: "en"}, postContent{}, nil)
-		require.Error(t, err)
-		require.Nil(t, response)
+		_, err := postViewWithProjection(Post{ID: "post", SourceLocale: "en"}, postContent{}, nil, nil, nil, PostAuthority{})
+		require.EqualError(t, err, `invalid persisted document layout: invalid contentHeight ""`)
 	})
 }
 
 func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	id := uuid.NewString()
 	revision, configurationRevision, mapPlaceID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	layout := model.DefaultDocumentLayout()
+	layout := DefaultDocumentLayout()
 	now := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
 	document := &contentv1.RichTextDocument{SourceLocale: "ko"}
 	media := []*contentv1.ContentBlockMediaItem{{Delivery: &commonv1.MediaDelivery{FileId: uuid.NewString()}}}
 	can, err := policyv1.Post.Edit(id)
 	require.NoError(t, err)
-	view, err := policyv1.Post.View(id)
+	viewCan, err := policyv1.Post.View(id)
 	require.NoError(t, err)
 	author := &commonv1.MemberSummary{Id: uuid.NewString(), Nickname: "Author"}
 	featured := &commonv1.MediaDelivery{FileId: uuid.NewString()}
 	og := &commonv1.AssetRef{AssetId: uuid.NewString(), Url: "https://cdn.example/og.webp"}
-	response, err := new(Service).toProtoPostWithProjection(&model.Post{
+	view, err := postViewWithProjection(Post{
 		ID: id, Title: "Title", Slug: new("post"), Summary: new("Summary"), SourceLocale: "ko",
 		ContentRevision: revision, ConfigurationRevision: configurationRevision,
-		Status:          model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()),
+		Status:          StatusDraft,
 		CommentsEnabled: true, DocumentLayout: layout,
 		CreatedAt: now, UpdatedAt: now, PublishedAt: &now, ScheduledAt: &now, ScheduledTimeZone: new("Asia/Seoul"),
 		SeriesOrder: new(int32(3)), MapPlaceID: &mapPlaceID,
-		Categories: []model.Category{{ID: "category-1", Name: "Category", Slug: "category", CreatedAt: now}},
-		Tags:       []model.Tag{{ID: "tag-1", Name: "Tag", Slug: "tag", CreatedAt: now}},
-		Series:     &model.Series{ID: "series-1", Title: "Series", Slug: "series", SourceLocale: "ja", Status: "published", CreatedAt: now},
-	}, postContent{document: document, blockMedia: media}, og, []*commonv1.MemberSummary{author}, featured, postAuthority(view, can))
+		Categories: []Category{{ID: "category-1", Name: "Category", Slug: "category", CreatedAt: now}},
+		Tags:       []Tag{{ID: "tag-1", Name: "Tag", Slug: "tag", CreatedAt: now}},
+		Series:     &Series{ID: "series-1", Title: "Series", Slug: "series", SourceLocale: "ja", Status: "published", CreatedAt: now},
+	}, postContent{document: document, blockMedia: media}, og, []*commonv1.MemberSummary{author}, featured, postAuthority(viewCan, can))
 	require.NoError(t, err)
-	wire, err := protojson.Marshal(response)
+	wire, err := protojson.Marshal(PostMessage(view))
 	require.NoError(t, err)
 	decoded := new(managev1.Post)
 	require.NoError(t, protojson.Unmarshal(wire, decoded))
@@ -98,9 +93,11 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	require.True(t, proto.Equal(author, decoded.AuthorMembers[0]))
 	require.True(t, proto.Equal(featured, decoded.FeaturedImageDelivery))
 	require.True(t, proto.Equal(og, decoded.OgAsset))
-	layoutProto, err := documentlayout.ToProto(layout)
-	require.NoError(t, err)
-	require.True(t, proto.Equal(layoutProto, decoded.DocumentLayout))
+	require.True(t, proto.Equal(&commonv1.DocumentLayout{
+		ContentHeight: commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_CONTENT,
+		PageChrome:    commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_FLOW,
+		Footer:        commonv1.DocumentRegionPlacement_DOCUMENT_REGION_PLACEMENT_FLOW,
+	}, decoded.DocumentLayout))
 	require.True(t, decoded.CommentsEnabled)
 	require.Equal(t, managev1.PostStatus_POST_STATUS_DRAFT, decoded.Status)
 	require.Contains(t, decoded.AllowedActions, managev1.PostAction_POST_ACTION_EDIT)

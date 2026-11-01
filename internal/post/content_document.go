@@ -7,13 +7,11 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -23,24 +21,16 @@ import (
 
 const postContentDocumentProfile = "post"
 
-type postContentDocumentRoot struct {
-	ID                string           `gorm:"column:id"`
-	Status            model.PostStatus `gorm:"column:status"`
-	ContentDocumentID *uuid.UUID       `gorm:"column:content_document_id;type:uuid"`
-	SourceLocale      string           `gorm:"column:source_locale"`
-}
+// postEntityName names the owner in shared content document messages.
+const postEntityName = "Post"
 
-func loadPostContentDocumentID(ctx context.Context, db *gorm.DB, postID string) (uuid.UUID, error) {
+func loadPostContentDocumentID(ctx context.Context, store Store, postID string) (uuid.UUID, error) {
 	if _, err := uuidutil.ParseCanonical(postID, "post_id"); err != nil {
 		return uuid.Nil, domainerr.InvalidField("post_id", "must be a canonical UUID").WithCause(err)
 	}
-	var root postContentDocumentRoot
-	if err := db.WithContext(ctx).
-		Table("post").
-		Select("id", "status", "content_document_id", "source_locale").
-		Where("id = ?::uuid", postID).
-		Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	root, err := store.DocumentRoot(ctx, postID)
+	if err != nil {
+		if errors.Is(err, ErrPostNotFound) {
 			return uuid.Nil, domainerr.ResourceNotFound("post", postID)
 		}
 		return uuid.Nil, fmt.Errorf("load Post content document: %w", err)
@@ -53,56 +43,63 @@ func loadPostContentDocumentID(ctx context.Context, db *gorm.DB, postID string) 
 
 func lockPostContentDocumentRoot(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	postID string,
 	documentID uuid.UUID,
 	allowArchived bool,
-) (postContentDocumentRoot, error) {
-	var root postContentDocumentRoot
-	if err := tx.WithContext(ctx).
-		Table("post").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Select("id", "status", "content_document_id", "source_locale").
-		Where("id = ?::uuid", postID).
-		Take(&root).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return postContentDocumentRoot{}, domainerr.ResourceNotFound("post", postID)
+) (DocumentRoot, error) {
+	root, err := store.LockDocumentRoot(ctx, postID)
+	if err != nil {
+		if errors.Is(err, ErrPostNotFound) {
+			return DocumentRoot{}, domainerr.ResourceNotFound("post", postID)
 		}
-		return postContentDocumentRoot{}, err
+		return DocumentRoot{}, err
 	}
 	if root.ContentDocumentID == nil || *root.ContentDocumentID != documentID {
-		return postContentDocumentRoot{}, domainerr.Precondition("Post content document changed; reload before saving")
+		return DocumentRoot{}, domainerr.Precondition("Post content document changed; reload before saving")
 	}
-	if !allowArchived && root.Status == model.PostStatusArchived {
-		return postContentDocumentRoot{}, domainerr.Precondition("archived posts are read-only")
+	if !allowArchived && root.Status == StatusArchived {
+		return DocumentRoot{}, domainerr.Precondition("archived posts are read-only")
 	}
 	return root, nil
 }
 
+// lockedContentFence admits only documentID and answers with the domain
+// context the caller already authorized under its lock
+// (contentblock.LockedFence).
+func lockedContentFence(documentID uuid.UUID, domain contentblock.DomainContext) ContentFence {
+	return func(_ context.Context, _ Store, requested uuid.UUID) (contentblock.DomainContext, error) {
+		if requested != documentID {
+			return contentblock.DomainContext{}, domainerr.Precondition(postEntityName + " content document changed; reload before saving")
+		}
+		return domain, nil
+	}
+}
+
 func postCollaborationDocumentFence(
-	spiceDB *auth.SpiceDBClient,
+	spiceDB Authorizer,
 	postID string,
 	contributorMemberIDs []string,
-) contentblock.DomainFence {
+) ContentFence {
 	contributors := append([]string(nil), contributorMemberIDs...)
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		root, err := lockPostContentDocumentRoot(ctx, tx, postID, documentID, true)
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		root, err := lockPostContentDocumentRoot(ctx, store, postID, documentID, true)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		if err := requirePostContributorsPermission(ctx, tx, spiceDB, root.ID, root.Status, contributors); err != nil {
+		if err := requirePostContributorsPermission(ctx, store, spiceDB, root.ID, root.Status, contributors); err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		return loadPostContentDomainContext(ctx, tx, postID)
+		return loadPostContentDomainContext(ctx, store, postID)
 	}
 }
 
 func postCreationDocumentFence(
 	postID string,
 	sourceLocale string,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		if _, err := lockPostContentDocumentRoot(ctx, tx, postID, documentID, false); err != nil {
+) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		if _, err := lockPostContentDocumentRoot(ctx, store, postID, documentID, false); err != nil {
 			return contentblock.DomainContext{}, err
 		}
 		if strings.TrimSpace(sourceLocale) == "" {
@@ -114,8 +111,8 @@ func postCreationDocumentFence(
 
 func authorizePostBlockBootstrap(
 	ctx context.Context,
-	tx *gorm.DB,
-	spiceDB CollaborationPermissionChecker,
+	store Store,
+	checker authz.AuthorizationDecisionChecker,
 	postID string,
 	documentID uuid.UUID,
 	sessionID *string,
@@ -123,15 +120,11 @@ func authorizePostBlockBootstrap(
 	if sessionID == nil {
 		return nil, domainerr.InvalidField("principal", "is required")
 	}
-	root, err := lockPostContentDocumentRoot(ctx, tx, postID, documentID, true)
+	root, err := lockPostContentDocumentRoot(ctx, store, postID, documentID, true)
 	if err != nil {
 		return nil, err
 	}
-	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(
-		ctx,
-		tx,
-		*sessionID,
-	)
+	principal, err := store.ResolveSessionPrincipal(ctx, *sessionID)
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
 		return nil, domainerr.AuthenticationRequired()
 	}
@@ -142,7 +135,7 @@ func authorizePostBlockBootstrap(
 		return nil, domainerr.NoPermission("edit", "post")
 	}
 	principalContext := auth.WithUser(ctx, principal)
-	if root.Status == model.PostStatusArchived {
+	if root.Status == StatusArchived {
 		can, canErr := policyv1.Post.ViewArchived(postID)
 		if canErr != nil {
 			return nil, domainerr.InvalidField("post_id", "must be a canonical UUID").WithCause(canErr)
@@ -151,7 +144,7 @@ func authorizePostBlockBootstrap(
 		if decisionErr != nil {
 			return nil, domainerr.AuthenticationRequired().WithCause(decisionErr)
 		}
-		allowed, checkErr := spiceDB.Can(ctx, decision)
+		allowed, checkErr := checker.Can(ctx, decision)
 		if checkErr != nil {
 			return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(checkErr)
 		}
@@ -168,7 +161,7 @@ func authorizePostBlockBootstrap(
 	if err != nil {
 		return nil, domainerr.AuthenticationRequired().WithCause(err)
 	}
-	allowed, err := spiceDB.Can(ctx, decision)
+	allowed, err := checker.Can(ctx, decision)
 	if err != nil {
 		return nil, domainerr.DependencyUnavailable("SpiceDB").WithCause(err)
 	}
@@ -181,49 +174,43 @@ func authorizePostBlockBootstrap(
 func postLockedDocumentFence(
 	postID string,
 	allowArchived bool,
-) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
-		root, err := lockPostContentDocumentRoot(ctx, tx, postID, documentID, allowArchived)
+) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
+		root, err := lockPostContentDocumentRoot(ctx, store, postID, documentID, allowArchived)
 		if err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		return loadPostContentDomainContext(ctx, tx, root.ID)
+		return loadPostContentDomainContext(ctx, store, root.ID)
 	}
 }
 
-func postSystemTranslationDocumentFence(postID string) contentblock.DomainFence {
-	return func(ctx context.Context, tx *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
+func postSystemTranslationDocumentFence(postID string) ContentFence {
+	return func(ctx context.Context, store Store, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		// An accepted job may finish after archival; a deleted root is still
 		// rejected by the locked lookup.
-		if _, err := lockPostContentDocumentRoot(ctx, tx, postID, documentID, true); err != nil {
+		if _, err := lockPostContentDocumentRoot(ctx, store, postID, documentID, true); err != nil {
 			return contentblock.DomainContext{}, err
 		}
-		return loadPostContentDomainContext(ctx, tx, postID)
+		return loadPostContentDomainContext(ctx, store, postID)
 	}
 }
 
 func loadPostContentDomainContext(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	postID string,
 ) (contentblock.DomainContext, error) {
-	var row struct {
-		SourceLocale string `gorm:"column:source_locale"`
-	}
-	if err := db.WithContext(ctx).
-		Table("post").
-		Select("source_locale").
-		Where("id = ?::uuid", postID).
-		Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	sourceLocale, err := store.SourceLocale(ctx, postID)
+	if err != nil {
+		if errors.Is(err, ErrPostNotFound) {
 			return contentblock.DomainContext{}, domainerr.Precondition("Post source locale has not been initialized")
 		}
 		return contentblock.DomainContext{}, err
 	}
-	if strings.TrimSpace(row.SourceLocale) == "" {
+	if strings.TrimSpace(sourceLocale) == "" {
 		return contentblock.DomainContext{}, domainerr.Precondition("Post source locale is invalid")
 	}
-	return contentblock.DomainContext{SourceLocale: row.SourceLocale}, nil
+	return contentblock.DomainContext{SourceLocale: sourceLocale}, nil
 }
 
 func parsePostContentUUID(field, value string) (uuid.UUID, error) {

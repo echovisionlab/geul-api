@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -64,10 +63,10 @@ func postPublicDisplayOnly(delivery *commonv1.MediaDelivery) *commonv1.MediaDeli
 
 func (s *Service) loadPostPublicFeaturedImageDeliveries(
 	ctx context.Context,
-	posts []model.Post,
+	posts []Post,
 ) (map[string]*commonv1.MediaDelivery, error) {
-	deliveries, err := loadFeaturedImageDeliveries(ctx, posts, func(post model.Post) (string, *string) {
-		return post.ID, post.FeaturedImageFileID
+	deliveries, err := loadFeaturedImageDeliveries(ctx, posts, func(listed Post) (string, *string) {
+		return listed.ID, listed.FeaturedImageFileID
 	}, s.fileService.ResolvePublicDisplayMedia)
 	if err != nil {
 		return nil, err
@@ -80,15 +79,15 @@ func (s *Service) loadPostPublicFeaturedImageDeliveries(
 
 func (s *Service) resolveAuthorizedPostFeaturedImage(
 	ctx context.Context,
-	post *model.Post,
+	stored *Post,
 ) (*commonv1.MediaDelivery, error) {
 	expectedFileID := ""
-	if post != nil && post.FeaturedImageFileID != nil {
-		expectedFileID = strings.TrimSpace(*post.FeaturedImageFileID)
+	if stored != nil && stored.FeaturedImageFileID != nil {
+		expectedFileID = strings.TrimSpace(*stored.FeaturedImageFileID)
 	}
 	postID := ""
-	if post != nil {
-		postID = post.ID
+	if stored != nil {
+		postID = stored.ID
 	}
 	return s.fileService.ResolveAuthorizedPostFeaturedImage(ctx, postID, expectedFileID)
 }

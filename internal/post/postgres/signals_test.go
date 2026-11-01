@@ -1,21 +1,21 @@
-package post
+package postpostgres
 
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/post"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBuildPostContentUpdatedEvent(t *testing.T) {
-	event := buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-		EntityID:             "post-1",
+	event := contentUpdatedEvent(post.ContentUpdate{
+		PostID:               "post-1",
 		Fields:               []string{"summary", "content"},
 		DocumentRevision:     "edit-1",
 		Contributors:         []string{"member-1", "member-2"},
-		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Source:               post.SourceCollaboration,
 		Locale:               "en",
 		DocumentStateChanged: true,
 	})
@@ -36,12 +36,12 @@ func TestBuildPostContentUpdatedEvent(t *testing.T) {
 
 func TestBuildPostTargetContentUpdatedEventCarriesExactLocaleFence(t *testing.T) {
 	targetRevision := "target-revision"
-	event := buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-		EntityID:         "post-1",
+	event := contentUpdatedEvent(post.ContentUpdate{
+		PostID:           "post-1",
 		Fields:           []string{"summary"},
 		DocumentRevision: "document-revision",
 		Contributors:     []string{"member-1"},
-		Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Source:           post.SourceCollaboration,
 		Locale:           "ko",
 		TargetRevision:   &targetRevision,
 	})
@@ -55,20 +55,20 @@ func TestBuildPostTargetContentUpdatedEventCarriesExactLocaleFence(t *testing.T)
 
 func TestBuildPostContentUpdatedEventRejectsInconsistentLocaleFence(t *testing.T) {
 	targetRevision := "target-revision"
-	assert.Nil(t, buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-		EntityID:             "post-1",
+	assert.Nil(t, contentUpdatedEvent(post.ContentUpdate{
+		PostID:               "post-1",
 		Fields:               []string{"content"},
 		DocumentRevision:     "document-revision",
-		Source:               managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Source:               post.SourceCollaboration,
 		Locale:               "ko",
 		TargetRevision:       &targetRevision,
 		DocumentStateChanged: true,
 	}))
-	assert.Nil(t, buildPostLocaleContentUpdatedEvent(contentsignal.LocaleChange{
-		EntityID:         "post-1",
+	assert.Nil(t, contentUpdatedEvent(post.ContentUpdate{
+		PostID:           "post-1",
 		Fields:           []string{"content"},
 		DocumentRevision: "document-revision",
-		Source:           managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
+		Source:           post.SourceCollaboration,
 		Locale:           "en",
 	}))
 }

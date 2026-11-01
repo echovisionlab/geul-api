@@ -77,15 +77,15 @@ func contentTool(name, title, description, inputSchema string, destructive bool)
 }
 
 type PostManagementApplication interface {
-	GetPost(context.Context, postdomain.GetPostQuery) (*managev1.Post, error)
-	CreatePost(context.Context, postdomain.CreatePostCommand) (*managev1.Post, error)
-	UpdatePost(context.Context, postdomain.UpdatePostCommand) (*managev1.UpdatePostResponse, error)
-	PublishPost(context.Context, postdomain.PostLifecycleCommand) (*managev1.PostLifecycleMutationResponse, error)
-	UnpublishPost(context.Context, postdomain.PostLifecycleCommand) (*managev1.PostLifecycleMutationResponse, error)
-	ArchivePost(context.Context, postdomain.PostLifecycleCommand) (*managev1.PostLifecycleMutationResponse, error)
-	SchedulePost(context.Context, postdomain.SchedulePostCommand) (*managev1.PostLifecycleMutationResponse, error)
-	CancelPostSchedule(context.Context, postdomain.PostLifecycleCommand) (*managev1.PostLifecycleMutationResponse, error)
-	RepublishPost(context.Context, postdomain.PostLifecycleCommand) (*managev1.PostLifecycleMutationResponse, error)
+	GetPost(context.Context, postdomain.GetPostQuery) (postdomain.View, error)
+	CreatePost(context.Context, postdomain.CreatePostCommand) (postdomain.View, error)
+	UpdatePost(context.Context, postdomain.UpdatePostCommand) (postdomain.SettingsUpdate, error)
+	PublishPost(context.Context, postdomain.PostLifecycleCommand) (postdomain.Lifecycle, error)
+	UnpublishPost(context.Context, postdomain.PostLifecycleCommand) (postdomain.Lifecycle, error)
+	ArchivePost(context.Context, postdomain.PostLifecycleCommand) (postdomain.Lifecycle, error)
+	SchedulePost(context.Context, postdomain.SchedulePostCommand) (postdomain.Lifecycle, error)
+	CancelPostSchedule(context.Context, postdomain.PostLifecycleCommand) (postdomain.Lifecycle, error)
+	RepublishPost(context.Context, postdomain.PostLifecycleCommand) (postdomain.Lifecycle, error)
 	DeletePost(context.Context, postdomain.DeletePostCommand) error
 }
 
@@ -184,7 +184,7 @@ func (tools *ContentManagementTools) createPost(ctx context.Context, arguments m
 	if input.CommentsEnabled != nil {
 		commentsEnabled = *input.CommentsEnabled
 	}
-	created, err := tools.posts.CreatePost(ctx, postdomain.CreatePostCommand{
+	createdView, err := tools.posts.CreatePost(ctx, postdomain.CreatePostCommand{
 		Title: input.Title, Slug: input.Slug, Summary: input.Summary, CommentsEnabled: commentsEnabled,
 		CategoryIDs: input.CategoryIDs, TagIDs: input.TagIDs, MapPlaceID: input.MapPlaceID, SourceLocale: input.SourceLocale,
 		Document:       emptyRichTextDocument(contentv1.RichTextProfile_RICH_TEXT_PROFILE_POST, input.SourceLocale),
@@ -193,6 +193,7 @@ func (tools *ContentManagementTools) createPost(ctx context.Context, arguments m
 	if err != nil {
 		return expectedToolError(err)
 	}
+	created := postdomain.PostMessage(createdView)
 	return contentResult(map[string]any{
 		"document_type": "post", "document_id": created.Id, "changed": true, "title": created.Title,
 		"slug": optionalStringValue(created.Slug), "source_locale": created.SourceLocale,
@@ -249,10 +250,11 @@ func (tools *ContentManagementTools) getPostSettings(ctx context.Context, argume
 	if err := decodeArguments(arguments, &input); err != nil {
 		return executionError(err)
 	}
-	post, err := tools.posts.GetPost(ctx, postdomain.GetPostQuery{ID: input.DocumentID})
+	view, err := tools.posts.GetPost(ctx, postdomain.GetPostQuery{ID: input.DocumentID})
 	if err != nil {
 		return expectedToolError(err)
 	}
+	post := postdomain.PostMessage(view)
 	categories := make([]string, 0, len(post.Categories))
 	for _, category := range post.Categories {
 		categories = append(categories, category.Id)
@@ -316,13 +318,14 @@ func (tools *ContentManagementTools) updatePost(ctx context.Context, arguments m
 			return executionError(err)
 		}
 	}
-	updated, err := tools.posts.UpdatePost(ctx, postdomain.UpdatePostCommand{
+	update, err := tools.posts.UpdatePost(ctx, postdomain.UpdatePostCommand{
 		ID: input.DocumentID, Slug: input.Slug, CommentsEnabled: input.CommentsEnabled,
-		MapPlaceID: input.MapPlaceID, DocumentLayout: layout, ExpectedConfigurationRevision: input.ExpectedConfigurationRevision,
+		MapPlaceID: input.MapPlaceID, DocumentLayout: postdomain.DocumentLayoutFromMessage(layout), ExpectedConfigurationRevision: input.ExpectedConfigurationRevision,
 	})
 	if err != nil {
 		return expectedToolError(err)
 	}
+	updated := postdomain.SettingsUpdateMessage(update)
 	return contentResult(map[string]any{
 		"document_type": "post", "document_id": updated.Id, "changed": updated.Changed,
 		"slug": optionalStringValue(updated.Slug), "updated_at": timestampString(updated.UpdatedAt),
@@ -344,7 +347,7 @@ func (tools *ContentManagementTools) mutatePost(ctx context.Context, name string
 		return contentResult(map[string]any{"document_type": "post", "document_id": input.DocumentID, "changed": true, "deleted": true})
 	}
 	command := postdomain.PostLifecycleCommand{ID: input.DocumentID}
-	var result *managev1.PostLifecycleMutationResponse
+	var result postdomain.Lifecycle
 	var err error
 	switch name {
 	case ToolPostPublish:
@@ -361,7 +364,7 @@ func (tools *ContentManagementTools) mutatePost(ctx context.Context, name string
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return postLifecycleResult(result)
+	return postLifecycleResult(postdomain.LifecycleMessage(result))
 }
 
 type postScheduleArguments struct {
@@ -383,7 +386,7 @@ func (tools *ContentManagementTools) schedulePost(ctx context.Context, arguments
 	if err != nil {
 		return expectedToolError(err)
 	}
-	return postLifecycleResult(result)
+	return postLifecycleResult(postdomain.LifecycleMessage(result))
 }
 
 func postLifecycleResult(result *managev1.PostLifecycleMutationResponse) (mcpserver.ToolResult, error) {

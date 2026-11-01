@@ -6,6 +6,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -20,6 +21,19 @@ type FileService interface {
 // Reference Catalog owns that projection and composition injects its adapter here.
 type MapPlaceProjector interface {
 	Basic(*model.MapPlace) *openv1.MapPlaceBasic
+}
+
+// ShareLinkValidator keeps the shared ShareLink proof implementation outside
+// Post while Post retains the decision about when a private read may use it.
+type ShareLinkValidator interface {
+	ValidateShareLinkForEntity(
+		context.Context,
+		*gorm.DB,
+		string,
+		string,
+		managev1.ShareLinkEntityType,
+		string,
+	) (*model.ShareLink, error)
 }
 
 type MemberSummaryLoader interface {

@@ -23,6 +23,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -42,7 +43,7 @@ type Service struct {
 	localizer  LocalizationService
 	mapPlaces  MapPlaceProjector
 	members    MemberSummaryLoader
-	shareLinks postdomain.ShareLinkValidator
+	shareLinks ShareLinkValidator
 }
 
 // Deps are the collaborators of the public Post reads. Every field is
@@ -57,7 +58,7 @@ type Deps struct {
 	Localizer     LocalizationService
 	MapPlaces     MapPlaceProjector
 	Members       MemberSummaryLoader
-	ShareLinks    postdomain.ShareLinkValidator
+	ShareLinks    ShareLinkValidator
 }
 
 func (d Deps) validate() error {
@@ -303,14 +304,15 @@ func (s *Service) authorizePublicPostMedia(
 // the caller's Accept-Language selects.
 func (s *Service) loadPublicPostBody(ctx context.Context, tx *gorm.DB, snapshot *publicPostSnapshot, acceptLanguage string) error {
 	post := &snapshot.post
-	state, err := postdomain.LoadPostSourceLocaleDocumentStateForPublic(ctx, tx, post.ID)
+	states, err := postpostgres.SourceLocaleStates(ctx, tx, []string{post.ID})
 	if err != nil {
 		return err
 	}
-	if state == nil {
+	state, ok := states[post.ID]
+	if !ok {
 		return domainerr.ResourceNotFound("post_translation", post.ID)
 	}
-	postdomain.OverlayPostSourceLocaleDocumentForPublic(post, state)
+	overlaySourceLocale(post, state)
 	localization, err := s.localizer.ResolveSelectionWithPolicy(ctx, tx, "post", post.ID, acceptLanguage, true)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to resolve post localization", "postId", post.ID, "failure_cause", failurecause.Message(err))
@@ -319,8 +321,8 @@ func (s *Service) loadPublicPostBody(ctx context.Context, tx *gorm.DB, snapshot 
 	if err != nil {
 		return err
 	}
-	document, revision, err := postdomain.LoadLocalizedPostContentProjectionForPublic(
-		ctx, tx, s.blocks, post.ID, localization.DisplayedLocale,
+	document, revision, err := postdomain.LoadLocalizedContent(
+		ctx, postpostgres.Bind(tx, postpostgres.Deps{ContentBlocks: s.blocks}), post.ID, localization.DisplayedLocale,
 	)
 	if err != nil {
 		return err
@@ -469,7 +471,7 @@ func (s *Service) ListMapFeatures(ctx context.Context, request ListPostMapFeatur
 		Model(&model.Post{}).
 		Select(`
 			post.id AS post_id,
-			`+postdomain.PostSourceTitleSQL+` AS post_title,
+			`+postpostgres.PostSourceTitleSQL+` AS post_title,
 			post.slug AS post_slug,
 			map_place.id AS place_id,
 			map_place.name AS place_name,
@@ -502,7 +504,7 @@ func (s *Service) ListMapFeatures(ctx context.Context, request ListPostMapFeatur
 		return nil, err
 	}
 
-	sourceStates, err := postdomain.LoadPostSourceLocaleDocumentStatesForPublic(
+	sourceStates, err := postpostgres.SourceLocaleStates(
 		ctx,
 		s.db,
 		collectPostMapIDs(rows),
@@ -511,8 +513,8 @@ func (s *Service) ListMapFeatures(ctx context.Context, request ListPostMapFeatur
 		return nil, err
 	}
 	for i := range rows {
-		sourceState := sourceStates[rows[i].PostID]
-		if sourceState == nil {
+		sourceState, ok := sourceStates[rows[i].PostID]
+		if !ok {
 			return nil, domainerr.ResourceNotFound("post_translation", rows[i].PostID)
 		}
 		if sourceState.Title != nil {
@@ -736,7 +738,7 @@ func (s *Service) Search(ctx context.Context, request SearchPostsQuery) (*openv1
 
 	if err := withPublicPostStatusFence(s.db.WithContext(ctx).
 		Model(&model.Post{}).
-		Where(postdomain.PostSourceTitleSQL+" ILIKE ? OR "+postdomain.PostSourceContentTextSQL+" ILIKE ?", pattern, pattern).
+		Where(postpostgres.PostSourceTitleSQL+" ILIKE ? OR "+postpostgres.PostSourceContentTextSQL+" ILIKE ?", pattern, pattern).
 		Preload("Categories").
 		Preload("Tags").
 		Preload("FeaturedImage").
@@ -999,18 +1001,30 @@ func (s *Service) overlayPostSourceLocaleDocuments(
 	ctx context.Context,
 	posts []model.Post,
 ) error {
-	sourceStates, err := postdomain.LoadPostSourceLocaleDocumentStatesForPublic(ctx, s.db, collectPostIDs(posts))
+	sourceStates, err := postpostgres.SourceLocaleStates(ctx, s.db, collectPostIDs(posts))
 	if err != nil {
 		return err
 	}
 	for i := range posts {
-		sourceState := sourceStates[posts[i].ID]
-		if sourceState == nil {
+		sourceState, ok := sourceStates[posts[i].ID]
+		if !ok {
 			return domainerr.ResourceNotFound("post_translation", posts[i].ID)
 		}
-		postdomain.OverlayPostSourceLocaleDocumentForPublic(&posts[i], sourceState)
+		overlaySourceLocale(&posts[i], sourceState)
 	}
 	return nil
+}
+
+// overlaySourceLocale shows the source locale row's title, summary and OG
+// image on post.
+func overlaySourceLocale(post *model.Post, state postdomain.SourceLocaleState) {
+	if state.Title != nil {
+		post.Title = *state.Title
+	}
+	if state.Summary != nil {
+		post.Summary = state.Summary
+	}
+	post.SourceLocaleOgAssetID = state.OgAssetID
 }
 
 // loadPostAuthorMembers resolves durable post authors and Member

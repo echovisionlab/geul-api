@@ -411,15 +411,6 @@ func (s *store) MapPlaceExists(ctx context.Context, mapPlaceID string) (bool, er
 	return count != 0, nil
 }
 
-// postIDsOf lists the IDs of rows, in order.
-func postIDsOf(rows []model.Post) []string {
-	ids := make([]string, len(rows))
-	for index, row := range rows {
-		ids[index] = row.ID
-	}
-	return ids
-}
-
 // scopedPosts limits query to the Posts scope lets a principal view.
 func scopedPosts(query *gorm.DB, scope post.ViewScope) *gorm.DB {
 	archivedStatus := string(model.PostStatusArchived)

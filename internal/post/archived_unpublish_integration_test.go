@@ -29,9 +29,9 @@ func TestArchivedPostUnpublishStoresDirectDraftTransitionIntegration(t *testing.
 	testutil.GrantPostIntegrationRole(t, spiceDB, authorID, policyv1.Role.Author())
 	adminCtx := withPostAuditedRequestContext(t, testutil.PostIntegrationContext(adminID))
 	authorCtx := withPostAuditedRequestContext(t, testutil.PostIntegrationContext(authorID))
-	service := postdomain.NewConnectHandler(postintegration.NewService(t, postdomain.Deps{
+	service := postdomain.NewConnectHandler(postintegration.NewService(t, postintegration.Deps{
 		DB: db, SpiceDB: spiceDB, Files: postAuditFiles{}, Signals: postAuditAsyncPublisher{},
-		ShareLinks: postruntime.ShareLinks{}, MediaLoader: postruntime.ContentBlockMedia{},
+		MediaLoader:    postruntime.ContentBlockMedia{},
 		VersionRestore: postruntime.VersionRestore{},
 	}))
 	created, err := service.CreatePost(adminCtx, connect.NewRequest(&managev1.CreatePostRequest{

@@ -8,7 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/model"
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
+	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -65,7 +65,7 @@ func TestPostLateProviderTranslationCannotOverwritePromotedSourceIntegration(t *
 	}))
 
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return postdomain.ApplyTypedTranslationCandidateWithDB(
+		return postpostgres.ApplyTypedTranslationCandidateWithDB(
 			ctx, tx, store, job, candidate,
 			translation.EntryWrite{Title: &staleTitle, Now: time.Now().UTC()}, nil,
 		)

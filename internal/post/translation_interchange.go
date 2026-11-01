@@ -5,16 +5,13 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
 )
 
 // TranslationInterchangeMutationResult is the authoritative opaque Post target
@@ -41,20 +38,19 @@ func NewTranslationInterchange(audit domainaudit.Appender) (*TranslationIntercha
 	return &TranslationInterchange{audit: audit}, nil
 }
 
-// ApplyCandidateWithDB keeps XLIFF target replacement
-// on Post's existing typed translation write path, then appends the exact
-// target-locale Audit in the caller-owned transaction. Authorization and root
+// ApplyCandidate keeps XLIFF target replacement on Post's existing typed
+// translation write path, then appends the exact target-locale Audit in the
+// caller-owned transaction, which store is bound to. Authorization and root
 // locking are performed by the Translation application before this seam.
-func (i *TranslationInterchange) ApplyCandidateWithDB(
+func (i *TranslationInterchange) ApplyCandidate(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
-	job *model.TranslationJob,
+	store Store,
+	job TranslationJob,
 	candidate *translation.Candidate,
 	entry translation.EntryWrite,
 	expectedRevision *string,
 ) (TranslationInterchangeMutationResult, error) {
-	if i == nil || tx == nil || store == nil || job == nil || candidate == nil {
+	if i == nil || store == nil || candidate == nil {
 		return TranslationInterchangeMutationResult{}, errors.New("post translation interchange dependencies are required")
 	}
 	if job.EntityType != "post" || strings.TrimSpace(job.EntityID) == "" ||
@@ -70,23 +66,21 @@ func (i *TranslationInterchange) ApplyCandidateWithDB(
 	if strings.TrimSpace(job.RequestedByMemberID) == "" {
 		return TranslationInterchangeMutationResult{}, domainerr.Precondition("Post translation interchange requires requester Member attribution")
 	}
-	documentID, err := loadPostContentDocumentID(ctx, tx, job.EntityID)
+	documentID, err := loadPostContentDocumentID(ctx, store, job.EntityID)
 	if err != nil {
 		return TranslationInterchangeMutationResult{}, err
 	}
-	before, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, job.SourceLocale)
+	before, err := store.LockedContentSnapshot(ctx, documentID, job.SourceLocale)
 	if err != nil {
 		return TranslationInterchangeMutationResult{}, err
 	}
-	var targetCount int64
-	if err := tx.WithContext(ctx).Table("post_translation").
-		Where("entity_id = ? AND locale = ?", job.EntityID, job.TargetLocale).
-		Count(&targetCount).Error; err != nil {
+	targetCount, err := store.CountLocale(ctx, job.EntityID, job.TargetLocale)
+	if err != nil {
 		return TranslationInterchangeMutationResult{}, err
 	}
 	targetPreviouslyExists := targetCount == 1
 	if err := validatePostTranslationCandidate(
-		store, job, candidate, postTranslationCandidateAllowSparseInterchange,
+		candidate, postTranslationCandidateAllowSparseInterchange,
 	); err != nil {
 		return TranslationInterchangeMutationResult{}, err
 	}
@@ -99,7 +93,7 @@ func (i *TranslationInterchange) ApplyCandidateWithDB(
 	if err != nil {
 		return TranslationInterchangeMutationResult{}, err
 	}
-	mutation, err := applyPostTargetLocaleMutation(ctx, tx, store, postTargetLocaleMutationInput{
+	mutation, err := applyPostTargetLocaleMutation(ctx, store, postTargetLocaleMutationInput{
 		PostID: job.EntityID, Locale: job.TargetLocale,
 		ExpectedDocumentRevision: before.Document.Revision,
 		ExpectedTargetRevision:   expectedRevision,
@@ -128,7 +122,7 @@ func (i *TranslationInterchange) ApplyCandidateWithDB(
 	}
 	if err := appendPostTranslationInterchangeAudit(
 		ctx,
-		tx,
+		store,
 		i.audit,
 		strings.TrimSpace(job.RequestedByMemberID),
 		job.EntityID,
@@ -170,7 +164,7 @@ func postInterchangeTargetStorage(
 
 func appendPostTranslationInterchangeAudit(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	auditWriter domainaudit.Appender,
 	memberID string,
 	postID string,
@@ -181,5 +175,5 @@ func appendPostTranslationInterchangeAudit(
 	if !targetPreviouslyExists {
 		operation = sharedtelemetry.AuditItemOperationCreated
 	}
-	return appendPostMemberLocaleContentAudit(ctx, tx, auditWriter, memberID, postID, locale, operation)
+	return appendPostMemberLocaleContentAudit(ctx, store, auditWriter, memberID, postID, locale, operation)
 }

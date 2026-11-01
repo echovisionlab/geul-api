@@ -62,11 +62,7 @@
 2 internal/page/public generated contracts
 2 internal/page/public gorm
 2 internal/page/public model
-26 internal/post generated contracts
-28 internal/post gorm
-27 internal/post model
-12 internal/post spicedb client
-2 internal/post sql driver
+18 internal/post generated contracts
 7 internal/post/public generated contracts
 4 internal/post/public gorm
 7 internal/post/public model

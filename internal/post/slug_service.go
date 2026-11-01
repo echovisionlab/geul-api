@@ -5,14 +5,9 @@ import (
 	"errors"
 	"strings"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -23,35 +18,49 @@ type CheckSlugAvailableQuery struct {
 	ExcludePostID *string
 }
 
-func (s *Service) CheckSlugAvailable(ctx context.Context, query CheckSlugAvailableQuery) (*managev1.CheckSlugAvailableResponse, error) {
+// CheckSlugAvailable reports whether the slug is unclaimed by both a Post
+// and the shared Page route namespace.
+func (s *Service) CheckSlugAvailable(ctx context.Context, query CheckSlugAvailableQuery) (bool, error) {
 	if user := auth.GetUser(ctx); user == nil || !user.Authenticated || user.MemberID == "" {
-		return nil, domainerr.AuthenticationRequired()
+		return false, domainerr.AuthenticationRequired()
 	}
 	excludePostID := strings.TrimSpace(ptrStringValue(query.ExcludePostID))
 	if err := s.authorizeSlugExclusion(ctx, excludePostID); err != nil {
-		return nil, err
+		return false, err
 	}
-	available, err := CheckSlugAvailable(ctx, s.db, query.Slug, excludePostID)
+	return readStore(ctx, s, func(store Store) (bool, error) { return checkSlugAvailable(ctx, store, query.Slug, excludePostID) })
+}
+
+// checkSlugAvailable reports whether slug is unclaimed by both a Post and the
+// shared Page route namespace. excludePostID is the Post currently being
+// edited and must already have passed authorization.
+func checkSlugAvailable(ctx context.Context, store Store, slug, excludePostID string) (bool, error) {
+	if strings.Contains(slug, "/") {
+		return false, domainerr.InvalidField("slug", "must not contain '/'")
+	}
+	taken, err := store.SlugTaken(ctx, slug, excludePostID)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
-	return &managev1.CheckSlugAvailableResponse{Available: available}, nil
+	if taken {
+		return false, nil
+	}
+	return store.RouteAvailable(ctx, slug)
 }
 
 func (s *Service) authorizeSlugExclusion(ctx context.Context, postID string) error {
 	if postID == "" {
 		return nil
 	}
-	return s.readLocked(ctx, mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-		var post model.Post
-		err := tx.Clauses(clause.Locking{Strength: "KEY SHARE"}).Where("id = ?", postID).First(&post).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	return s.readLocked(ctx, mutation.Checked(func(ctx context.Context, store Store) error {
+		stored, err := store.KeyShareLockPost(ctx, postID)
+		if errors.Is(err, ErrPostNotFound) {
 			return domainerr.New(domainerr.NotFound, "", "post not found")
 		}
 		if err != nil {
 			return err
 		}
-		_, err = requirePostActionForStatus(ctx, s.spiceDB, post.ID, post.Status, policyv1.Post.Edit)
+		_, err = requirePostActionForStatus(ctx, s.spiceDB, stored.ID, stored.Status, policyv1.Post.Edit)
 		return err
-	}), func(context.Context, *gorm.DB) error { return nil })
+	}), func(context.Context, Store) error { return nil })
 }

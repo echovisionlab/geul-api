@@ -245,9 +245,9 @@ func newAuditedPostConfigurationService(
 	events *postConfigurationEventCapture,
 ) postintegration.Posts {
 	t.Helper()
-	service := postintegration.NewService(t, postdomain.Deps{
+	service := postintegration.NewService(t, postintegration.Deps{
 		DB: db, SpiceDB: spiceDB, Files: postAuditFiles{}, Signals: events,
-		ShareLinks: postruntime.ShareLinks{}, MediaLoader: postruntime.ContentBlockMedia{},
+		MediaLoader:    postruntime.ContentBlockMedia{},
 		VersionRestore: postruntime.VersionRestore{}, ContentBlocks: store,
 	})
 	return postintegration.Posts{ConnectHandler: postdomain.NewConnectHandler(service), Service: service}

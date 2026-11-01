@@ -7,20 +7,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 )
-
-// postEntityName names the owner in shared content document messages.
-const postEntityName = "Post"
 
 type postTargetLocaleMutationInput struct {
 	PostID                   string
@@ -35,7 +29,7 @@ type postTargetLocaleMutationInput struct {
 	SetSummary               bool
 	Summary                  *string
 	Now                      time.Time
-	Fence                    contentblock.DomainFence
+	Fence                    ContentFence
 }
 
 type postTargetLocaleMutationResult struct {
@@ -55,14 +49,14 @@ type postTargetLocaleDeleteInput struct {
 	ExpectedTargetRevision   *string
 	ContributorMemberIDs     []uuid.UUID
 	Now                      time.Time
-	Fence                    contentblock.DomainFence
+	Fence                    ContentFence
 }
 
 type postTargetLocaleState struct {
 	Snapshot       contentblock.Snapshot
 	SourceLocale   string
-	SourceMetadata postLocaleMetadataRow
-	TargetMetadata *postLocaleMetadataRow
+	SourceMetadata LocaleMetadata
+	TargetMetadata *LocaleMetadata
 	TargetRevision string
 }
 
@@ -73,23 +67,24 @@ func (state postTargetLocaleState) locked() targetlocale.State {
 	}
 }
 
+// loadPostTargetLocaleStateForDocument reads a target locale's state; with
+// forUpdate it locks the content document and the locale row first.
 func loadPostTargetLocaleStateForDocument(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	postID string,
 	documentID uuid.UUID,
 	locale string,
-	documentLock string,
+	forUpdate bool,
 ) (postTargetLocaleState, error) {
-	if tx == nil || store == nil || documentID == uuid.Nil {
+	if store == nil || documentID == uuid.Nil {
 		return postTargetLocaleState{}, errors.New("Post target locale dependencies are required")
 	}
 	normalizedLocale, err := validatePostAIDocumentIdentity(postID, locale)
 	if err != nil {
 		return postTargetLocaleState{}, err
 	}
-	domain, err := loadPostContentDomainContext(ctx, tx, postID)
+	domain, err := loadPostContentDomainContext(ctx, store, postID)
 	if err != nil {
 		return postTargetLocaleState{}, err
 	}
@@ -97,29 +92,23 @@ func loadPostTargetLocaleStateForDocument(
 		return postTargetLocaleState{}, domainerr.InvalidField("locale", "Post target locale must differ from the source locale")
 	}
 
-	if documentLock != "" {
-		var document contentblock.Document
-		if err := tx.WithContext(ctx).Table("content_document").
-			Clauses(clause.Locking{Strength: documentLock}).
-			Where("id = ?", documentID).
-			Take(&document).Error; err != nil {
+	if forUpdate {
+		if err := store.LockContentDocument(ctx, documentID); err != nil {
 			return postTargetLocaleState{}, normalizePostContentBlockError(err)
 		}
 	}
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, domain.SourceLocale)
 	if err != nil {
 		return postTargetLocaleState{}, normalizePostContentBlockError(err)
 	}
 	if snapshot.Document.Profile != postContentDocumentProfile {
 		return postTargetLocaleState{}, domainerr.Precondition("Post target locale requires the Post content profile")
 	}
-	sourceMetadata, err := loadPostLocaleMetadataRow(ctx, tx, postID, domain.SourceLocale)
+	sourceMetadata, err := loadPostLocaleMetadataRow(ctx, store, postID, domain.SourceLocale, false)
 	if err != nil {
 		return postTargetLocaleState{}, err
 	}
-	targetMetadata, exists, err := loadOptionalPostLocaleMetadataRow(
-		ctx, tx, postID, normalizedLocale, documentLock != "",
-	)
+	targetMetadata, exists, err := store.OptionalLocaleMetadata(ctx, postID, normalizedLocale, forUpdate)
 	if err != nil {
 		return postTargetLocaleState{}, err
 	}
@@ -139,30 +128,7 @@ func loadPostTargetLocaleStateForDocument(
 	return state, nil
 }
 
-func loadOptionalPostLocaleMetadataRow(
-	ctx context.Context,
-	tx *gorm.DB,
-	postID string,
-	locale string,
-	forUpdate bool,
-) (postLocaleMetadataRow, bool, error) {
-	query := tx.WithContext(ctx).Table("post_translation").
-		Select("locale", "title", "summary", "updated_at").
-		Where("entity_id = ?::uuid AND locale = ?", postID, locale)
-	if forUpdate {
-		query = query.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate})
-	}
-	var row postLocaleMetadataRow
-	if err := query.Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return postLocaleMetadataRow{}, false, nil
-		}
-		return postLocaleMetadataRow{}, false, err
-	}
-	return row, true, nil
-}
-
-func derivePostTargetRevision(documentRevision string, metadata postLocaleMetadataRow) (string, error) {
+func derivePostTargetRevision(documentRevision string, metadata LocaleMetadata) (string, error) {
 	updatedAt := metadata.UpdatedAt
 	revision, err := translation.DeriveTargetRevision(translation.TargetRevisionFacts{
 		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &updatedAt,
@@ -185,11 +151,11 @@ func postTargetRoomDocument(
 }
 
 func postTargetMetadataProjection(
-	source postLocaleMetadataRow,
-	target *postLocaleMetadataRow,
+	source LocaleMetadata,
+	target *LocaleMetadata,
 	locale string,
-) postLocaleMetadataRow {
-	projected := postLocaleMetadataRow{Locale: locale, Title: source.Title, Summary: source.Summary}
+) LocaleMetadata {
+	projected := LocaleMetadata{Locale: locale, Title: source.Title, Summary: source.Summary}
 	if target == nil {
 		return projected
 	}
@@ -205,25 +171,22 @@ func postTargetMetadataProjection(
 
 func applyPostTargetLocaleMutation(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	input postTargetLocaleMutationInput,
 ) (postTargetLocaleMutationResult, error) {
 	if input.ExpectedDocumentRevision == uuid.Nil || strings.TrimSpace(input.PostID) == "" ||
 		strings.TrimSpace(input.Locale) == "" || input.Fence == nil {
 		return postTargetLocaleMutationResult{}, domainerr.InvalidField("target", "Post target identity, revision, and fence are required")
 	}
-	documentID, err := loadPostContentDocumentID(ctx, tx, input.PostID)
+	documentID, err := loadPostContentDocumentID(ctx, store, input.PostID)
 	if err != nil {
 		return postTargetLocaleMutationResult{}, err
 	}
-	domain, err := input.Fence(ctx, tx, documentID)
+	domain, err := input.Fence(ctx, store, documentID)
 	if err != nil {
 		return postTargetLocaleMutationResult{}, err
 	}
-	state, err := loadPostTargetLocaleStateForDocument(
-		ctx, tx, store, input.PostID, documentID, input.Locale, clause.LockingStrengthUpdate,
-	)
+	state, err := loadPostTargetLocaleStateForDocument(ctx, store, input.PostID, documentID, input.Locale, true)
 	if err != nil {
 		return postTargetLocaleMutationResult{}, err
 	}
@@ -268,8 +231,8 @@ func applyPostTargetLocaleMutation(
 		LocaleCreated:    state.TargetMetadata == nil,
 	}
 	write := &postTargetMetadataWrite{input: input, state: state, now: now}
-	storeResult, err := store.ApplyTargetLocaleBatchWithMetadata(
-		ctx, tx, batch, input.Locale, contentblock.LockedFence(postEntityName, documentID, domain), write.apply,
+	storeResult, err := store.ApplyTargetLocaleContentBatch(
+		ctx, batch, input.Locale, lockedContentFence(documentID, domain), write.apply,
 	)
 	if err != nil {
 		return postTargetLocaleMutationResult{}, normalizePostContentBlockError(err)
@@ -278,9 +241,7 @@ func applyPostTargetLocaleMutation(
 	result.ContentChanged = storeResult.ContentChanged
 	result.MetadataChanged = storeResult.MetadataChanged
 	if result.Changed {
-		if err := tx.WithContext(ctx).Model(&model.Post{}).
-			Where("id = ?", input.PostID).
-			UpdateColumn("updated_at", now).Error; err != nil {
+		if err := store.TouchPost(ctx, input.PostID, now); err != nil {
 			return postTargetLocaleMutationResult{}, err
 		}
 	}
@@ -297,12 +258,12 @@ type postTargetMetadataWrite struct {
 	input        postTargetLocaleMutationInput
 	state        postTargetLocaleState
 	now          time.Time
-	final        postLocaleMetadataRow
+	final        LocaleMetadata
 	titleChanged bool
 }
 
-func (w *postTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, contentChanged bool) (contentblock.MetadataEffect, error) {
-	current := postLocaleMetadataRow{Locale: w.input.Locale}
+func (w *postTargetMetadataWrite) apply(ctx context.Context, store Store, contentChanged bool) (contentblock.MetadataEffect, error) {
+	current := LocaleMetadata{Locale: w.input.Locale}
 	if w.state.TargetMetadata != nil {
 		current = *w.state.TargetMetadata
 	} else if w.input.Policy.SeedSource {
@@ -320,19 +281,14 @@ func (w *postTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, conten
 		summary = w.input.Summary
 	}
 	if w.state.TargetMetadata == nil {
-		w.final = postLocaleMetadataRow{
+		w.final = LocaleMetadata{
 			Locale: w.input.Locale, Title: title, Summary: summary, UpdatedAt: w.now,
 		}
-		insert := tx.WithContext(ctx).Exec(
-			`INSERT INTO post_translation (
-				entity_id, locale, title, summary, created_at, updated_at
-			 ) VALUES (?::uuid, ?, ?, ?, ?, ?)`,
-			w.input.PostID, w.input.Locale, title, summary, w.now, w.now,
-		)
-		if insert.Error != nil {
-			return contentblock.MetadataEffect{}, insert.Error
+		created, err := store.InsertLocale(ctx, w.input.PostID, w.input.Locale, title, summary, w.now)
+		if err != nil {
+			return contentblock.MetadataEffect{}, err
 		}
-		if insert.RowsAffected != 1 {
+		if created != 1 {
 			return contentblock.MetadataEffect{}, errors.New("Post target locale could not be created")
 		}
 		return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{w.input.Locale}}, nil
@@ -342,16 +298,16 @@ func (w *postTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, conten
 		return contentblock.MetadataEffect{}, nil
 	}
 	updatedAt := translation.NextTargetUpdatedAt(w.now, current.UpdatedAt)
-	update := tx.WithContext(ctx).Table("post_translation").
-		Where("entity_id = ?::uuid AND locale = ?", w.input.PostID, w.input.Locale).
-		Updates(map[string]any{"title": title, "summary": summary, "updated_at": updatedAt})
-	if update.Error != nil {
-		return contentblock.MetadataEffect{}, update.Error
+	updated, err := store.UpdateLocaleMetadata(ctx, w.input.PostID, w.input.Locale, LocaleChange{
+		SetTitle: true, Title: title, SetSummary: true, Summary: summary, UpdatedAt: updatedAt,
+	})
+	if err != nil {
+		return contentblock.MetadataEffect{}, err
 	}
-	if update.RowsAffected != 1 {
+	if updated != 1 {
 		return contentblock.MetadataEffect{}, errors.New("Post target locale disappeared while saving")
 	}
-	w.final = postLocaleMetadataRow{
+	w.final = LocaleMetadata{
 		Locale: w.input.Locale, Title: title, Summary: summary, UpdatedAt: updatedAt,
 	}
 	return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{w.input.Locale}}, nil
@@ -359,25 +315,22 @@ func (w *postTargetMetadataWrite) apply(ctx context.Context, tx *gorm.DB, conten
 
 func deletePostTargetLocale(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	input postTargetLocaleDeleteInput,
 ) (contentblock.Result, error) {
 	if input.ExpectedDocumentRevision == uuid.Nil || strings.TrimSpace(input.PostID) == "" ||
 		strings.TrimSpace(input.Locale) == "" || input.Fence == nil {
 		return contentblock.Result{}, domainerr.InvalidField("target", "Post target delete identity, revision, and fence are required")
 	}
-	documentID, err := loadPostContentDocumentID(ctx, tx, input.PostID)
+	documentID, err := loadPostContentDocumentID(ctx, store, input.PostID)
 	if err != nil {
 		return contentblock.Result{}, err
 	}
-	domain, err := input.Fence(ctx, tx, documentID)
+	domain, err := input.Fence(ctx, store, documentID)
 	if err != nil {
 		return contentblock.Result{}, err
 	}
-	state, err := loadPostTargetLocaleStateForDocument(
-		ctx, tx, store, input.PostID, documentID, input.Locale, clause.LockingStrengthUpdate,
-	)
+	state, err := loadPostTargetLocaleStateForDocument(ctx, store, input.PostID, documentID, input.Locale, true)
 	if err != nil {
 		return contentblock.Result{}, err
 	}
@@ -401,21 +354,17 @@ func deletePostTargetLocale(
 		ContributorMemberIDs: append([]uuid.UUID(nil), input.ContributorMemberIDs...),
 		LocaleGroups:         targetlocale.DeleteGroups(state.Snapshot, input.Locale),
 	}
-	result, err := store.ApplyTargetLocaleBatchWithMetadata(
+	result, err := store.ApplyTargetLocaleContentBatch(
 		ctx,
-		tx,
 		batch,
 		input.Locale,
-		contentblock.LockedFence(postEntityName, documentID, domain),
-		func(ctx context.Context, tx *gorm.DB, _ bool) (contentblock.MetadataEffect, error) {
-			deleted := tx.WithContext(ctx).Exec(
-				"DELETE FROM post_translation WHERE entity_id = ?::uuid AND locale = ?",
-				input.PostID, input.Locale,
-			)
-			if deleted.Error != nil {
-				return contentblock.MetadataEffect{}, deleted.Error
+		lockedContentFence(documentID, domain),
+		func(ctx context.Context, store Store, _ bool) (contentblock.MetadataEffect, error) {
+			deleted, err := store.DeleteLocale(ctx, input.PostID, input.Locale)
+			if err != nil {
+				return contentblock.MetadataEffect{}, err
 			}
-			if deleted.RowsAffected != 1 {
+			if deleted != 1 {
 				return contentblock.MetadataEffect{}, errors.New("Post target locale disappeared while deleting")
 			}
 			return contentblock.MetadataEffect{Changed: true, ChangedLocales: []string{input.Locale}}, nil
@@ -429,9 +378,7 @@ func deletePostTargetLocale(
 		if now.IsZero() {
 			now = time.Now().UTC()
 		}
-		if err := tx.WithContext(ctx).Model(&model.Post{}).
-			Where("id = ?", input.PostID).
-			UpdateColumn("updated_at", now).Error; err != nil {
+		if err := store.TouchPost(ctx, input.PostID, now); err != nil {
 			return contentblock.Result{}, err
 		}
 	}

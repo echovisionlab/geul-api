@@ -2,17 +2,8 @@ package post
 
 import (
 	"context"
-	"time"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"github.com/google/uuid"
-	"google.golang.org/protobuf/proto"
-	"gorm.io/gorm"
 )
 
 // FileService is the Post-owned File capability. Singular private delivery
@@ -24,66 +15,8 @@ type FileService interface {
 	ResolvePublicDisplayMedia(context.Context, []string) (map[string]*commonv1.MediaDelivery, error)
 }
 
-// ShareLinkCleanup removes the share links of a Post in the deleting
-// transaction. Share Link owns the rows.
-type ShareLinkCleanup interface {
-	DeleteEntityShareLinks(ctx context.Context, tx *gorm.DB, postID string) error
-}
-
-type CollaborationPermissionChecker interface {
-	Can(context.Context, policyv1.AuthorizationDecision) (bool, error)
-}
-
-// ShareLinkValidator keeps the shared ShareLink proof implementation outside
-// Post while Post retains the decision about when a private read may use it.
-type ShareLinkValidator interface {
-	ValidateShareLinkForEntity(
-		context.Context,
-		*gorm.DB,
-		string,
-		string,
-		managev1.ShareLinkEntityType,
-		string,
-	) (*model.ShareLink, error)
-}
-
-// ContentBlockMediaLoader loads persisted attachment references only after a
-// Post operation has authorized the document.
-type ContentBlockMediaLoader interface {
-	LoadContentBlockMediaReferences(context.Context, *gorm.DB, uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error)
-}
-
-// ContentBlockMediaHydrator adds private delivery while Post holds the
-// authorized owner, document, and attachment witnesses in one transaction.
-type ContentBlockMediaHydrator interface {
-	HydrateAuthorizedPostBlockMediaWithDB(context.Context, *gorm.DB, string, uuid.UUID, *auth.UserInfo, []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
-}
-
 // MemberSummaryLoader supplies Member-owned manage projections after Post has
 // resolved the durable author, collaborator, or commenter identities.
 type MemberSummaryLoader interface {
 	LoadMemberSummaries(context.Context, []string) (map[string]*commonv1.MemberSummary, error)
-}
-
-type VersionRestoreSupport interface {
-	LoadUnavailableVersionAttachmentKinds(
-		context.Context,
-		*gorm.DB,
-		proto.Message,
-	) (map[uuid.UUID]contentv1.MissingAttachmentMediaKind, error)
-}
-
-type translationLocaleDocumentState struct {
-	Title       *string
-	Summary     *string
-	ContentJSON []byte
-	ContentHTML *string
-	ContentText *string
-	OgAssetID   *string
-}
-
-type translationLocaleDocumentSaveInput struct {
-	Title   *string
-	Summary *string
-	Now     time.Time
 }

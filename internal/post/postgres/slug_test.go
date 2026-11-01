@@ -1,45 +1,40 @@
-package post
+package postpostgres
 
 import (
 	"testing"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
-
-	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
-func TestCheckSlugAvailable(t *testing.T) {
+func TestStoreReportsPostAndPageRouteSlugs(t *testing.T) {
 	db := newSlugTestDB(t)
 	require.NoError(t, db.Exec("INSERT INTO post (id, slug) VALUES (?, ?)", "post-a", "taken").Error)
 	require.NoError(t, db.Exec("INSERT INTO page (slug) VALUES (?)", "posts/page-owned").Error)
 
+	store := Bind(db, Deps{})
 	tests := []struct {
 		name          string
 		slug          string
 		excludePostID string
-		available     bool
-		wantErr       bool
-		errorCode     connect.Code
+		taken         bool
+		routeFree     bool
 	}{
-		{name: "unclaimed", slug: "available", available: true},
-		{name: "claimed by post", slug: "taken", available: false},
-		{name: "current post excluded", slug: "taken", excludePostID: "post-a", available: true},
-		{name: "claimed by page route", slug: "page-owned", available: false},
-		{name: "slash rejected", slug: "not/valid", wantErr: true, errorCode: connect.CodeInvalidArgument},
+		{name: "unclaimed", slug: "available", routeFree: true},
+		{name: "claimed by post", slug: "taken", taken: true, routeFree: true},
+		{name: "current post excluded", slug: "taken", excludePostID: "post-a", routeFree: true},
+		{name: "claimed by page route", slug: "page-owned"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			available, err := CheckSlugAvailable(t.Context(), db, test.slug, test.excludePostID)
-			if test.wantErr {
-				require.Equal(t, test.errorCode, errs.CodeOf(err))
-				return
-			}
+			taken, err := store.SlugTaken(t.Context(), test.slug, test.excludePostID)
 			require.NoError(t, err)
-			require.Equal(t, test.available, available)
+			require.Equal(t, test.taken, taken)
+			routeFree, err := store.RouteAvailable(t.Context(), test.slug)
+			require.NoError(t, err)
+			require.Equal(t, test.routeFree, routeFree)
 		})
 	}
 }

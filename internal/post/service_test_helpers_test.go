@@ -7,11 +7,11 @@ import (
 )
 
 func TestNewServiceNamesEveryMissingDependency(t *testing.T) {
-	_, err := NewService(Deps{CDNDomain: "cdn.example"})
-	require.EqualError(t, err, "post dependencies are required: Audit, ContentBlocks, DB, Files, Media, MediaLoader, Members, OG, ShareLinkCleanup, ShareLinks, Signals, SpiceDB, VersionRestore")
+	_, err := NewService(Deps{})
+	require.EqualError(t, err, "post dependencies are required: Audit, Fence, Files, Members, SpiceDB, Units")
 }
 
 func TestNewCommentServiceNamesEveryMissingDependency(t *testing.T) {
 	_, err := NewCommentService(CommentDeps{})
-	require.EqualError(t, err, "comment dependencies are required: Audit, DB, Members, SpiceDB")
+	require.EqualError(t, err, "comment dependencies are required: Audit, Fence, Members, SpiceDB, Units")
 }

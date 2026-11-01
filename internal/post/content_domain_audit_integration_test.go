@@ -44,9 +44,9 @@ func TestPostDomainAuditClosesLifecycleVersionAndDeleteBoundariesIntegration(t *
 	files := postAuditFiles{}
 	contentBlocks, err := contentblock.NewGeneratedStore(filemedia.NewContentBlockFileReuseAuthorizer(spiceDB))
 	require.NoError(t, err)
-	service := postintegration.NewService(t, postdomain.Deps{
+	service := postintegration.NewService(t, postintegration.Deps{
 		DB: db, SpiceDB: spiceDB, Files: files, Signals: postAuditAsyncPublisher{},
-		ShareLinks: postruntime.ShareLinks{}, MediaLoader: postruntime.ContentBlockMedia{},
+		MediaLoader:    postruntime.ContentBlockMedia{},
 		VersionRestore: postruntime.VersionRestore{}, ContentBlocks: contentBlocks, Audit: writer,
 	})
 	postService := postdomain.NewConnectHandler(service)

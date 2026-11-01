@@ -11,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -50,7 +49,7 @@ func requireDraftShareLinkAccess(
 	entityType managev1.ShareLinkEntityType,
 	entityID string,
 	entityName string,
-	validator postdomain.ShareLinkValidator,
+	validator ShareLinkValidator,
 ) (*model.ShareLink, error) {
 	if shareToken == "" {
 		return nil, domainerr.New(domainerr.NotFound, "", entityName+" not found")

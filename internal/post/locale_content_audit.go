@@ -3,8 +3,6 @@ package post
 import (
 	"context"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -27,12 +25,12 @@ func postLocaleContentAudit(memberID, postID, locale string, operation sharedtel
 // transaction.
 func appendPostMemberLocaleContentAudit(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	writer domainaudit.Appender,
 	memberID string,
 	postID string,
 	locale string,
 	operation sharedtelemetry.AuditItemOperation,
 ) error {
-	return domainaudit.AppendMember(ctx, tx, writer, memberID, sharedtelemetry.AuditPostUpdated, postLocaleContentRecord(postID, locale, operation))
+	return store.AppendMemberAudit(ctx, writer, memberID, sharedtelemetry.AuditPostUpdated, postLocaleContentRecord(postID, locale, operation))
 }

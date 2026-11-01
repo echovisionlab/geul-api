@@ -5,11 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -54,7 +51,7 @@ func (s *Service) ListAIDocuments(
 	ctx context.Context,
 	input AIDocumentListInput,
 ) (AIDocumentListResult, error) {
-	if s == nil || s.db == nil || s.spiceDB == nil {
+	if s == nil || s.units == nil || s.spiceDB == nil {
 		return AIDocumentListResult{}, domainerr.DependencyUnavailable("Post AI document discovery")
 	}
 
@@ -76,108 +73,49 @@ func (s *Service) ListAIDocuments(
 		return AIDocumentListResult{}, domainerr.InvalidField("offset", "must be non-negative")
 	}
 
-	query, err := s.authorizedPostListQuery(ctx)
+	scope, err := s.authorizedPostScope(ctx)
 	if err != nil {
 		return AIDocumentListResult{}, err
 	}
-	if queryText != "" {
-		query = query.Where(
-			"("+PostSourceTitleSQL+") ILIKE ? ESCAPE E'\\\\'",
-			"%"+escapePostTitleSearch(queryText)+"%",
-		)
-	}
-
+	var items []AIDocumentListItem
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		items, total, err = store.ListAIDocuments(ctx, AIDocumentQuery{Scope: scope, Search: queryText, Limit: limit, Offset: input.Offset})
+		return err
+	}); err != nil {
 		return AIDocumentListResult{}, err
-	}
-
-	type row struct {
-		ID                    string           `gorm:"column:id"`
-		Title                 string           `gorm:"column:title"`
-		Slug                  *string          `gorm:"column:slug"`
-		SourceLocale          string           `gorm:"column:source_locale"`
-		Status                model.PostStatus `gorm:"column:status"`
-		UpdatedAt             time.Time        `gorm:"column:updated_at"`
-		ConfigurationRevision string           `gorm:"column:configuration_revision"`
-	}
-	var rows []row
-	if err := query.
-		Select(
-			"post.id::text AS id",
-			PostSourceTitleSQL+" AS title",
-			"post.slug",
-			"post.source_locale",
-			"post.status",
-			"post.updated_at",
-			"post.configuration_revision::text AS configuration_revision",
-		).
-		Order("post.updated_at DESC, post.id ASC").
-		Limit(limit).
-		Offset(input.Offset).
-		Find(&rows).Error; err != nil {
-		return AIDocumentListResult{}, err
-	}
-
-	items := make([]AIDocumentListItem, len(rows))
-	for index, item := range rows {
-		items[index] = AIDocumentListItem{
-			ID: item.ID, Title: item.Title, Slug: item.Slug,
-			SourceLocale: item.SourceLocale, Status: string(item.Status), UpdatedAt: item.UpdatedAt,
-			ConfigurationRevision: item.ConfigurationRevision,
-		}
 	}
 	return AIDocumentListResult{
 		Items: items, Total: total, Limit: limit, Offset: input.Offset,
 	}, nil
 }
 
-func (s *Service) authorizedPostListQuery(ctx context.Context) (*gorm.DB, error) {
-	if s == nil || s.db == nil || s.spiceDB == nil {
-		return nil, domainerr.DependencyUnavailable("Post list")
+// authorizedPostScope is the Posts the caller may view: those it may view
+// while not archived, and those it may view archived.
+func (s *Service) authorizedPostScope(ctx context.Context) (ViewScope, error) {
+	if s == nil || s.units == nil || s.spiceDB == nil {
+		return ViewScope{}, domainerr.DependencyUnavailable("Post list")
 	}
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return nil, domainerr.AuthenticationRequired()
+		return ViewScope{}, domainerr.AuthenticationRequired()
 	}
 	subject, err := auth.NewAccountIdentitySubject(user.IdentityID)
 	if err != nil {
-		return nil, domainerr.AuthenticationRequired().WithCause(err)
+		return ViewScope{}, domainerr.AuthenticationRequired().WithCause(err)
 	}
 	actor, err := policyv1.NewAccountIdentityActor(subject.ID.String())
 	if err != nil {
-		return nil, domainerr.AuthenticationRequired().WithCause(err)
+		return ViewScope{}, domainerr.AuthenticationRequired().WithCause(err)
 	}
 	viewPostIDs, err := lookupPostResources(ctx, s.spiceDB, actor, policyv1.Post.LookupView())
 	if err != nil {
-		return nil, err
+		return ViewScope{}, err
 	}
 	archivedPostIDs, err := lookupPostResources(ctx, s.spiceDB, actor, policyv1.Post.LookupViewArchived())
 	if err != nil {
-		return nil, err
+		return ViewScope{}, err
 	}
-
-	query := s.db.WithContext(ctx).Model(&model.Post{})
-	archivedStatus := string(model.PostStatusArchived)
-	switch {
-	case len(viewPostIDs) > 0 && len(archivedPostIDs) > 0:
-		return query.Where(
-			"((status <> ? AND id IN ?) OR (status = ? AND id IN ?))",
-			archivedStatus,
-			viewPostIDs,
-			archivedStatus,
-			archivedPostIDs,
-		), nil
-	case len(viewPostIDs) > 0:
-		return query.Where("status <> ? AND id IN ?", archivedStatus, viewPostIDs), nil
-	case len(archivedPostIDs) > 0:
-		return query.Where("status = ? AND id IN ?", archivedStatus, archivedPostIDs), nil
-	default:
-		return query.Where("FALSE"), nil
-	}
-}
-
-func escapePostTitleSearch(value string) string {
-	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	return replacer.Replace(value)
+	return ViewScope{ViewIDs: viewPostIDs, ArchivedIDs: archivedPostIDs}, nil
 }

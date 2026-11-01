@@ -1,16 +1,11 @@
 package post
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/og"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
-	"gorm.io/gorm"
 )
 
 const maxSpiceDBAtomicRelationshipMutations = 1000
@@ -83,18 +78,4 @@ func postAuthorizationDeletionBatches(
 		restores = append(restores, matched.Restore())
 	}
 	return deletes, restores, nil
-}
-
-func cancelAndReleaseEntityOgWithDB(
-	ctx context.Context,
-	tx *gorm.DB,
-	cdnDomain string,
-	entityType managev1.OgEntityType,
-	ownerType string,
-	ownerID string,
-) error {
-	if err := og.NewLifecycle(tx, cdnDomain).CancelEntityWithDB(ctx, tx, entityType, ownerID); err != nil {
-		return err
-	}
-	return mediaasset.NewLifecycle(tx, cdnDomain).ReleasePublicAssetBindings(ctx, ownerType, ownerID, "og")
 }
