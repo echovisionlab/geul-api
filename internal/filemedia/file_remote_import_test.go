@@ -13,10 +13,10 @@ import (
 	"testing"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 	"connectrpc.com/connect"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/postgreslock"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -698,12 +698,12 @@ func TestManagedRasterUploadLimits(t *testing.T) {
 		managev1.UploadType_UPLOAD_TYPE_RELEASE_ARTWORK,
 		managev1.UploadType_UPLOAD_TYPE_SITE_OG_BACKGROUND,
 	} {
-		cfg := model.DefaultUploadConfigs[uploadType]
+		cfg := domain.DefaultUploadConfigs[uploadType.String()]
 		if cfg == nil {
 			t.Fatalf("missing upload config for %s", uploadType)
 		}
-		if cfg.MaxSize != model.ManagedRasterFinalMaxSize {
-			t.Fatalf("%s max size = %d, want %d", uploadType, cfg.MaxSize, model.ManagedRasterFinalMaxSize)
+		if cfg.MaxSize != domain.ManagedRasterFinalMaxSize {
+			t.Fatalf("%s max size = %d, want %d", uploadType, cfg.MaxSize, domain.ManagedRasterFinalMaxSize)
 		}
 	}
 }

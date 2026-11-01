@@ -16,9 +16,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -153,7 +153,7 @@ func normalizeMultipartUploadTarget(
 }
 
 func validateMultipartUploadFile(
-	config *model.UploadConfig,
+	config *domain.UploadConfig,
 	request InitiateMultipartUploadCommand,
 	slotID string,
 ) (string, string, error) {
@@ -291,11 +291,11 @@ func newMultipartUploadSession(
 	initiation multipartUploadInitiation,
 	fileID string,
 	uploadID string,
-) model.UploadSession {
+) domain.UploadSession {
 	now := time.Now()
 	attemptID := uuid.NewString()
 	totalParts := max(int32((request.FileSize+int64(chunkSize)-1)/int64(chunkSize)), 1)
-	return model.UploadSession{
+	return domain.UploadSession{
 		UploadID:         uploadID,
 		FileID:           fileID,
 		UploadType:       initiation.uploadType.String(),
@@ -310,20 +310,20 @@ func newMultipartUploadSession(
 		RequestedMime:    initiation.canonicalMime,
 		TotalParts:       totalParts,
 		ChunkSize:        int32(chunkSize),
-		Status:           model.UploadSessionStatusInitiated,
+		Status:           domain.UploadSessionStatusInitiated,
 		LastActivityAt:   now,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
 }
 
-func (s *Service) beforeMultipartSessionInsert(session model.UploadSession) {
+func (s *Service) beforeMultipartSessionInsert(session domain.UploadSession) {
 	if session.UploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() && s.testBeforeTrackSessionInsert != nil {
 		s.testBeforeTrackSessionInsert(session)
 	}
 }
 
-func (s *Service) afterMultipartSessionInsert(session model.UploadSession) {
+func (s *Service) afterMultipartSessionInsert(session domain.UploadSession) {
 	if session.UploadType == managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() && s.testAfterTrackSessionInsert != nil {
 		s.testAfterTrackSessionInsert(session)
 	}
@@ -351,7 +351,7 @@ func multipartSessionInsertError(err error) error {
 	return fmt.Errorf("failed to create upload session: %w", err)
 }
 
-func (s *Service) publishMultipartUploadStarted(ctx context.Context, session model.UploadSession) error {
+func (s *Service) publishMultipartUploadStarted(ctx context.Context, session domain.UploadSession) error {
 	emitter := newFileIngestEventEmitter(
 		ctx,
 		s.asyncPublisher,

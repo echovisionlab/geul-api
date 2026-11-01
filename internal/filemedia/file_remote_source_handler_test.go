@@ -15,7 +15,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
@@ -29,8 +29,8 @@ func uploadSourceTestService(t *testing.T, handler http.Handler, maxSize int64) 
 	access := &recordingPostAccess{}
 	service := &Service{
 		units: mutationtest.New[Store](&sourcePreflightStore{access: access}),
-		uploadConfigs: map[managev1.UploadType]*model.UploadConfig{
-			managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE: {PermittedMimeTypes: []string{"image/png"}, MaxSize: maxSize},
+		uploadConfigs: map[string]*domain.UploadConfig{
+			managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE.String(): {PermittedMimeTypes: []string{"image/png"}, MaxSize: maxSize},
 		},
 		remoteImportResolver:      &remoteImportTestResolver{ips: []net.IP{net.ParseIP("8.8.8.8")}},
 		remoteImportBaseTransport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, // Local TLS fixture only.
@@ -261,7 +261,7 @@ func TestUploadSourceBelowMinimumRejected(t *testing.T) {
 	service, _ := uploadSourceTestService(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(uploadSourcePNG(20))
 	}), 100)
-	service.uploadConfigs[managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE].MinSize = 30
+	service.uploadConfigs[managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE.String()].MinSize = 30
 	rec := httptest.NewRecorder()
 	service.HandleUploadSource(rec, uploadSourceTestRequest(t))
 	require.Equal(t, http.StatusBadRequest, rec.Code)

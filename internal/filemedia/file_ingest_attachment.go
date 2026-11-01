@@ -8,7 +8,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -144,7 +143,7 @@ func normalizeEditorFileIngestProjectionIdentity(
 }
 
 func fileIngestTargetFromStoredSession(
-	session model.UploadSession,
+	session domain.UploadSession,
 ) (fileIngestProjectionIdentity, error) {
 	uploadTypeValue, ok := managev1.UploadType_value[session.UploadType]
 	if !ok {

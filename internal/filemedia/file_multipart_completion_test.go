@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -16,10 +16,10 @@ func TestValidateMultipartCompletionVerifiedMimeRequiresDetectedMime(t *testing.
 
 	_, err := validateMultipartCompletionVerifiedMime(
 		managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
-		model.UploadSession{
+		domain.UploadSession{
 			UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE.String(),
 		},
-		model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE],
+		domain.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE.String()],
 	)
 
 	require.Error(t, err)
@@ -30,14 +30,14 @@ func TestValidateMultipartCompletionVerifiedMimeRequiresDetectedMime(t *testing.
 func TestValidateMultipartCompletionVerifiedMimeAppliesSiteEmailLogoPNGPolicy(t *testing.T) {
 	t.Parallel()
 
-	cfg := model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_SITE_LOGO]
+	cfg := domain.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_SITE_LOGO.String()]
 	emailSlotID := siteLogoSlotEmailLight
 	regularSlotID := "logo"
 	svgMime := "image/svg+xml"
 
 	_, err := validateMultipartCompletionVerifiedMime(
 		managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-		model.UploadSession{
+		domain.UploadSession{
 			UploadType:    managev1.UploadType_UPLOAD_TYPE_SITE_LOGO.String(),
 			DetectedMime:  &svgMime,
 			RequestedMime: svgMime,
@@ -51,7 +51,7 @@ func TestValidateMultipartCompletionVerifiedMimeAppliesSiteEmailLogoPNGPolicy(t 
 
 	verifiedMime, err := validateMultipartCompletionVerifiedMime(
 		managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
-		model.UploadSession{
+		domain.UploadSession{
 			UploadType:    managev1.UploadType_UPLOAD_TYPE_SITE_LOGO.String(),
 			DetectedMime:  &svgMime,
 			RequestedMime: svgMime,
@@ -84,7 +84,7 @@ func TestCompletedMultipartFileRecordProjectsMetadata(t *testing.T) {
 	detectedMime := "image/png"
 	slotID := siteLogoSlotEmailLight
 	attemptID := "attempt-1"
-	session := model.UploadSession{
+	session := domain.UploadSession{
 		FileID:       "file-1",
 		FileName:     "email-logo.png",
 		FileSize:     512,

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -157,7 +158,7 @@ func TestFinalizingMultipartSessionRejectsAbortAndReplacementDirectIntegration(t
 	)
 	require.NoError(t, stack.DB.Model(&model.UploadSession{}).
 		Where("upload_id = ?", fixture.uploadID).
-		Update("status", model.UploadSessionStatusFinalizing).Error)
+		Update("status", domain.UploadSessionStatusFinalizing).Error)
 
 	abortResponse, err := NewConnectHandler(fixture.service).AbortMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.AbortMultipartUploadRequest{
 		UploadId: fixture.uploadID,
@@ -226,7 +227,7 @@ func TestDeleteTrackGuardsFinalizingUploadSessionDirectIntegration(t *testing.T)
 	require.NoError(t, err)
 	require.NoError(t, stack.DB.Model(&model.UploadSession{}).
 		Where("upload_id = ?", initiated.Msg.GetUploadId()).
-		Update("status", model.UploadSessionStatusFinalizing).Error)
+		Update("status", domain.UploadSessionStatusFinalizing).Error)
 
 	trackService := newDirectTrackService(t, stack, fileService)
 	response, err := trackService.DeleteTrack(ctx, connect.NewRequest(&managev1.DeleteTrackRequest{Id: trackID}))
@@ -245,7 +246,7 @@ func TestDeleteTrackGuardsFinalizingUploadSessionDirectIntegration(t *testing.T)
 
 	require.NoError(t, stack.DB.Model(&model.UploadSession{}).
 		Where("upload_id = ?", initiated.Msg.GetUploadId()).
-		Update("status", model.UploadSessionStatusUploading).Error)
+		Update("status", domain.UploadSessionStatusUploading).Error)
 	response, err = trackService.DeleteTrack(ctx, connect.NewRequest(&managev1.DeleteTrackRequest{Id: trackID}))
 	require.NoError(t, err)
 	require.True(t, response.Msg.GetSuccess())
@@ -291,7 +292,7 @@ func TestConcurrentTrackInitiateAndDeleteLeavesNoMultipartOrSessionDirectIntegra
 			// The Track deletion records an audit entry for its request actor.
 			ctx := releaseAuditContext(t, manager.IdentityID, manager.MemberID)
 
-			paused := make(chan model.UploadSession, 1)
+			paused := make(chan domain.UploadSession, 1)
 			resume := make(chan struct{})
 			var resumeOnce sync.Once
 			resumeInitiation := func() {
@@ -299,12 +300,12 @@ func TestConcurrentTrackInitiateAndDeleteLeavesNoMultipartOrSessionDirectIntegra
 			}
 			t.Cleanup(resumeInitiation)
 			if testCase.pauseBeforeInsert {
-				fileService.testBeforeTrackSessionInsert = func(session model.UploadSession) {
+				fileService.testBeforeTrackSessionInsert = func(session domain.UploadSession) {
 					paused <- session
 					<-resume
 				}
 			} else {
-				fileService.testAfterTrackSessionInsert = func(session model.UploadSession) {
+				fileService.testAfterTrackSessionInsert = func(session domain.UploadSession) {
 					paused <- session
 					<-resume
 				}

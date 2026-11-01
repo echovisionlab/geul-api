@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -30,7 +31,7 @@ func TestVerifyMultipartCompletionTransientFetchFailureKeepsFinalizing(t *testin
 	completion := insertFinalizingCompletion(t, db, 10)
 	err := service.verifyMultipartCompletionObject(context.Background(), completion)
 	require.Error(t, err)
-	require.Equal(t, model.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, completion.session.UploadID))
+	require.Equal(t, domain.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, completion.session.UploadID))
 }
 
 func TestCompleteMultipartObjectTransientFailureKeepsFinalizing(t *testing.T) {
@@ -45,7 +46,7 @@ func TestCompleteMultipartObjectTransientFailureKeepsFinalizing(t *testing.T) {
 	completion.verifiedMime = "audio/wav"
 	err := service.completeMultipartObject(context.Background(), completion)
 	require.Error(t, err)
-	require.Equal(t, model.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, completion.session.UploadID))
+	require.Equal(t, domain.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, completion.session.UploadID))
 }
 
 func TestCompleteMultipartObjectRepairablePartFailureKeepsFinalizing(t *testing.T) {
@@ -64,7 +65,7 @@ func TestCompleteMultipartObjectRepairablePartFailureKeepsFinalizing(t *testing.
 			completion.verifiedMime = "audio/wav"
 			err := service.completeMultipartObject(context.Background(), completion)
 			require.Error(t, err)
-			require.Equal(t, model.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, completion.session.UploadID))
+			require.Equal(t, domain.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, completion.session.UploadID))
 		})
 	}
 }
@@ -91,7 +92,7 @@ func TestVerifyMultipartCompletionSizeMismatchFailsAndDeletesObject(t *testing.T
 	completion.verifiedMime = "image/png"
 	err := service.verifyMultipartCompletionObject(context.Background(), completion)
 	require.Error(t, err)
-	require.Equal(t, model.UploadSessionStatusFailed, loadMultipartCompletionStatus(t, db, completion.session.UploadID))
+	require.Equal(t, domain.UploadSessionStatusFailed, loadMultipartCompletionStatus(t, db, completion.session.UploadID))
 	require.EqualValues(t, 1, deleteRequests.Load())
 }
 
@@ -105,7 +106,7 @@ func TestPersistMultipartCompletionDatabaseFailureKeepsFinalizing(t *testing.T) 
 
 	err := service.persistMultipartCompletion(context.Background(), completion)
 	require.Error(t, err)
-	require.Equal(t, model.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, completion.session.UploadID))
+	require.Equal(t, domain.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, completion.session.UploadID))
 }
 
 func TestMarkMultipartCompletionFailedCannotOverwriteNonFinalizingState(t *testing.T) {
@@ -115,10 +116,10 @@ func TestMarkMultipartCompletionFailedCannotOverwriteNonFinalizingState(t *testi
 
 	require.NoError(t, db.Model(&model.UploadSession{}).
 		Where("upload_id = ?", completion.session.UploadID).
-		Update("status", model.UploadSessionStatusAborted).Error)
+		Update("status", domain.UploadSessionStatusAborted).Error)
 	service.markMultipartCompletionFailed(context.Background(), completion.session.UploadID)
 
-	require.Equal(t, model.UploadSessionStatusAborted, loadMultipartCompletionStatus(t, db, completion.session.UploadID))
+	require.Equal(t, domain.UploadSessionStatusAborted, loadMultipartCompletionStatus(t, db, completion.session.UploadID))
 }
 
 func TestMultipartPublicAssetPromotionRetryPreservesVerifiedSourceAndFinalizingSession(t *testing.T) {
@@ -135,9 +136,9 @@ func TestMultipartPublicAssetPromotionRetryPreservesVerifiedSourceAndFinalizingS
 		cdnDomain: "https://cdn.example.com", mediaSecret: "test-media-secret",
 	})
 	completion := &multipartCompletion{
-		session: model.UploadSession{
+		session: domain.UploadSession{
 			UploadID: uploadID, FileID: file.ID, FileName: file.FileName,
-			FileSize: file.FileSize, Status: model.UploadSessionStatusFinalizing,
+			FileSize: file.FileSize, Status: domain.UploadSessionStatusFinalizing,
 		},
 		uploadType:   managev1.UploadType_UPLOAD_TYPE_CLIENT_LOGO,
 		verifiedMime: file.MimeType,
@@ -146,7 +147,7 @@ func TestMultipartPublicAssetPromotionRetryPreservesVerifiedSourceAndFinalizingS
 
 	err := service.attachOrProjectMultipartCompletion(t.Context(), completion)
 	require.ErrorContains(t, err, "stream source to public asset")
-	require.Equal(t, model.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, uploadID))
+	require.Equal(t, domain.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, uploadID))
 	var source model.File
 	require.NoError(t, db.Where("id = ?", file.ID).Take(&source).Error)
 	require.Nil(t, source.DeleteRequestedAt)
@@ -159,7 +160,7 @@ func TestMultipartPublicAssetPromotionRetryPreservesVerifiedSourceAndFinalizingS
 	require.NoError(t, service.attachOrProjectMultipartCompletion(t.Context(), completion))
 	require.NotNil(t, completion.promotedAsset)
 	require.Equal(t, failed.ID, completion.promotedAsset.GetAssetId())
-	require.Equal(t, model.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, uploadID))
+	require.Equal(t, domain.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, uploadID))
 	require.Empty(t, store.deletedKeys())
 	var ready model.PublicAsset
 	require.NoError(t, db.Where("id = ?", failed.ID).Take(&ready).Error)
@@ -182,9 +183,9 @@ func TestMultipartFaviconCommitAmbiguityPreservesSourceAndFinalizingSession(t *t
 		testFaviconReconcileError: fmt.Errorf("injected reconciliation read failure"),
 	})
 	completion := &multipartCompletion{
-		session: model.UploadSession{
+		session: domain.UploadSession{
 			UploadID: uploadID, FileID: fileID, FileName: "favicon.png",
-			FileSize: int64(len(source)), Status: model.UploadSessionStatusFinalizing,
+			FileSize: int64(len(source)), Status: domain.UploadSessionStatusFinalizing,
 		},
 		uploadType:   managev1.UploadType_UPLOAD_TYPE_SITE_FAVICON,
 		verifiedMime: "image/png",
@@ -194,7 +195,7 @@ func TestMultipartFaviconCommitAmbiguityPreservesSourceAndFinalizingSession(t *t
 	err := service.attachOrProjectMultipartCompletion(t.Context(), completion)
 	require.Error(t, err)
 	require.ErrorIs(t, err, errFaviconBundleCommitUncertain)
-	require.Equal(t, model.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, uploadID))
+	require.Equal(t, domain.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, uploadID))
 	var sourceCount int64
 	require.NoError(t, db.Model(&model.File{}).Where("id = ? AND delete_requested_at IS NULL", fileID).Count(&sourceCount).Error)
 	require.EqualValues(t, 1, sourceCount)
@@ -211,7 +212,7 @@ func TestMultipartFaviconCommitAmbiguityPreservesSourceAndFinalizingSession(t *t
 	require.NotNil(t, completion.promotedAsset)
 	require.Equal(t, readyAssetID, completion.promotedAsset.GetAssetId())
 	require.Equal(t, writtenBeforeRetry, store.writtenKeys(), "retry must reuse the committed bundle")
-	require.Equal(t, model.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, uploadID))
+	require.Equal(t, domain.UploadSessionStatusFinalizing, loadMultipartCompletionStatus(t, db, uploadID))
 	require.Empty(t, store.deletedKeys())
 }
 
@@ -233,7 +234,7 @@ func insertMultipartPromotionRetrySession(t *testing.T, db *gorm.DB, uploadID st
 		"INSERT INTO upload_session (upload_id, file_id, status, last_activity_at, updated_at) VALUES (?, ?, ?, ?, ?)",
 		uploadID,
 		fileID,
-		model.UploadSessionStatusFinalizing,
+		domain.UploadSessionStatusFinalizing,
 		now,
 		now,
 	).Error)
@@ -272,24 +273,24 @@ func insertFinalizingCompletion(t *testing.T, db *gorm.DB, fileSize int64) *mult
 		"INSERT INTO upload_session (upload_id, file_id, status, last_activity_at, updated_at) VALUES (?, ?, ?, ?, ?)",
 		uploadID,
 		fileID,
-		model.UploadSessionStatusFinalizing,
+		domain.UploadSessionStatusFinalizing,
 		now,
 		now,
 	).Error)
 	return &multipartCompletion{
-		session: model.UploadSession{
+		session: domain.UploadSession{
 			UploadID: uploadID,
 			FileID:   fileID,
 			FileSize: fileSize,
-			Status:   model.UploadSessionStatusFinalizing,
+			Status:   domain.UploadSessionStatusFinalizing,
 		},
 		objectKey: "media/" + fileID + ".wav",
 	}
 }
 
-func loadMultipartCompletionStatus(t *testing.T, db *gorm.DB, uploadID string) model.UploadSessionStatus {
+func loadMultipartCompletionStatus(t *testing.T, db *gorm.DB, uploadID string) domain.UploadSessionStatus {
 	t.Helper()
-	var status model.UploadSessionStatus
+	var status domain.UploadSessionStatus
 	require.NoError(t, db.Table("upload_session").Select("status").Where("upload_id = ?", uploadID).Scan(&status).Error)
 	return status
 }

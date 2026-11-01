@@ -46,7 +46,7 @@ func TestHandleTranscodeCompleteRechecksJobAfterWaitingForFileLock(t *testing.T)
 		Disposition: mediaasset.DispositionInline,
 	}))
 	require.NoError(t, err)
-	source, err := filemedia.CanonicalMediaObjectTargetForFile(model.File{
+	source, err := filemedia.CanonicalMediaObjectTargetForFile(filemedia.File{
 		ID: fileID, Extension: "mp4", MimeType: "video/mp4",
 	})
 	require.NoError(t, err)
@@ -154,7 +154,7 @@ func TestHandleTrackTranscodeCompleteDoesNotMutateOwnerAfterJobCancellation(t *t
 		Disposition: mediaasset.DispositionInline,
 	}))
 	require.NoError(t, err)
-	source, err := filemedia.CanonicalMediaObjectTargetForFile(model.File{
+	source, err := filemedia.CanonicalMediaObjectTargetForFile(filemedia.File{
 		ID: fileID, Extension: "ogg", MimeType: "audio/ogg",
 	})
 	require.NoError(t, err)

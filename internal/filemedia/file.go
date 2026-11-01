@@ -19,7 +19,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -41,7 +40,7 @@ func generalFileMaxSize(mimeType string) int64 {
 	case strings.HasPrefix(mimeType, "audio/"):
 		return 4 * 1024 * 1024 * 1024
 	case strings.HasPrefix(mimeType, "image/"):
-		return model.ManagedRasterFinalMaxSize
+		return domain.ManagedRasterFinalMaxSize
 	case strings.HasPrefix(mimeType, "model/"):
 		return 50 * 1024 * 1024
 	default:
@@ -99,9 +98,9 @@ func isMissingStoredObjectError(err error) bool {
 	}
 }
 
-func cloneUploadConfigs() map[managev1.UploadType]*model.UploadConfig {
-	configs := make(map[managev1.UploadType]*model.UploadConfig, len(model.DefaultUploadConfigs))
-	for uploadType, cfg := range model.DefaultUploadConfigs {
+func cloneUploadConfigs() map[string]*domain.UploadConfig {
+	configs := make(map[string]*domain.UploadConfig, len(domain.DefaultUploadConfigs))
+	for uploadType, cfg := range domain.DefaultUploadConfigs {
 		if cfg == nil {
 			continue
 		}
@@ -113,8 +112,8 @@ func cloneUploadConfigs() map[managev1.UploadType]*model.UploadConfig {
 }
 
 // getUploadConfig returns the upload config for the given type from DefaultUploadConfigs.
-func getUploadConfig(uploadType managev1.UploadType) *model.UploadConfig {
-	if cfg, ok := model.DefaultUploadConfigs[uploadType]; ok {
+func getUploadConfig(uploadType managev1.UploadType) *domain.UploadConfig {
+	if cfg, ok := domain.DefaultUploadConfigs[uploadType.String()]; ok {
 		return cfg
 	}
 	return nil
@@ -127,9 +126,9 @@ type LegalRouteIdentity interface {
 	RouteID(kind string) string
 }
 
-func (s *Service) getUploadConfig(uploadType managev1.UploadType) *model.UploadConfig {
+func (s *Service) getUploadConfig(uploadType managev1.UploadType) *domain.UploadConfig {
 	if s != nil && s.uploadConfigs != nil {
-		if cfg, ok := s.uploadConfigs[uploadType]; ok {
+		if cfg, ok := s.uploadConfigs[uploadType.String()]; ok {
 			return cfg
 		}
 	}
@@ -187,8 +186,8 @@ func validateSiteEmailLogoMime(uploadType managev1.UploadType, slotID string, mi
 
 func validateMultipartCompletionVerifiedMime(
 	uploadType managev1.UploadType,
-	session model.UploadSession,
-	config *model.UploadConfig,
+	session domain.UploadSession,
+	config *domain.UploadConfig,
 ) (string, error) {
 	if session.DetectedMime == nil || *session.DetectedMime == "" {
 		return "", domainerr.Precondition("MIME type not verified")
@@ -236,7 +235,7 @@ func (r fileIngestRecord) file() File {
 	return file
 }
 
-func completedMultipartFileRecord(session model.UploadSession) fileIngestRecord {
+func completedMultipartFileRecord(session domain.UploadSession) fileIngestRecord {
 	extension := mediaExtension(session.DetectedMime)
 	return fileIngestRecord{
 		id:              session.FileID,
@@ -328,7 +327,7 @@ func (s *Service) completedFileRecordExists(ctx context.Context, fileID string) 
 
 func (s *Service) validateCompletedFileRecord(
 	ctx context.Context,
-	session model.UploadSession,
+	session domain.UploadSession,
 	uploadType managev1.UploadType,
 	entityType managev1.TranscodeEntityType,
 ) error {
@@ -517,7 +516,7 @@ func resolveSiteUploadEntityID(
 // checkPartUploadPermission verifies that the user still has permission at
 // prefix verification, presign, and confirmation. A signed part URL itself is
 // intentionally independent of the application session until its short expiry.
-func (s *Service) checkPartUploadPermission(ctx context.Context, userID string, session model.UploadSession) error {
+func (s *Service) checkPartUploadPermission(ctx context.Context, userID string, session domain.UploadSession) error {
 	if session.ClientMediaBundleID != nil {
 		plan, err := decodeClientMediaPlan(session)
 		if err != nil {
@@ -763,7 +762,7 @@ func (s *Service) AbortMultipartUpload(ctx context.Context, command AbortMultipa
 		}
 		return fmt.Errorf("failed to load upload session: %w", err)
 	}
-	session := uploadSessionFromStore(row)
+	session := row
 
 	user := auth.GetUser(ctx)
 	if user == nil {

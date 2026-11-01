@@ -11,8 +11,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -23,7 +23,7 @@ const IncompleteUploadRetention = 7 * 24 * time.Hour
 
 func (s *Service) cleanupSupersededUploadSessions(
 	ctx context.Context,
-	sessions []model.UploadSession,
+	sessions []domain.UploadSession,
 	reason string,
 ) error {
 	if len(sessions) == 0 {
@@ -45,7 +45,7 @@ func (s *Service) cleanupSupersededUploadSessions(
 
 func (s *Service) abortUploadSession(
 	ctx context.Context,
-	session model.UploadSession,
+	session domain.UploadSession,
 	reason string,
 ) error {
 	if strings.TrimSpace(session.UploadID) == "" {
@@ -123,8 +123,8 @@ func (s *Service) CleanupTrackUploadSessions(
 	return s.cleanupSupersededUploadSessions(ctx, sessions, reason)
 }
 
-func (s *Service) claimTrackUploadSessionsForCleanup(ctx context.Context, trackID string) ([]model.UploadSession, error) {
-	var sessions []model.UploadSession
+func (s *Service) claimTrackUploadSessionsForCleanup(ctx context.Context, trackID string) ([]domain.UploadSession, error) {
+	var sessions []domain.UploadSession
 	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
 		store := unit.Store()
 		if err := store.RequireUploadTrack(ctx, trackID); err != nil {
@@ -134,10 +134,8 @@ func (s *Service) claimTrackUploadSessionsForCleanup(ctx context.Context, trackI
 		if err != nil {
 			return err
 		}
-		sessions = make([]model.UploadSession, len(rows))
-		for i, row := range rows {
-			sessions[i] = uploadSessionFromStore(row)
-		}
+		sessions = make([]domain.UploadSession, len(rows))
+		copy(sessions, rows)
 		if containsFinalizingUploadSession(sessions) {
 			return mediaasset.ErrUploadSessionNotAbortable
 		}

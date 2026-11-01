@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -20,7 +20,9 @@ func TestDirectS3UploadTypePolicy(t *testing.T) {
 		managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO:       {},
 	}
 
-	for uploadType := range model.DefaultUploadConfigs {
+	for stored := range domain.DefaultUploadConfigs {
+		require.Contains(t, managev1.UploadType_value, stored)
+		uploadType := managev1.UploadType(managev1.UploadType_value[stored])
 		_, expectedDirect := directTypes[uploadType]
 		require.Equalf(
 			t,

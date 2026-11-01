@@ -50,7 +50,7 @@ func TestFileDeleteConsumerIntentRejectsAttachWithoutStorageLockStarvationIntegr
 	t.Cleanup(func() {
 		require.NoError(t, db.Exec(`DELETE FROM file WHERE id = ?`, file.ID).Error)
 	})
-	original, err := filemedia.CanonicalMediaObjectTargetForFile(file)
+	original, err := filemedia.CanonicalMediaObjectTargetForFile(filemedia.File(file))
 	require.NoError(t, err)
 	deleteStarted := make(chan struct{}, 1)
 	releaseDelete := make(chan struct{})
@@ -110,7 +110,7 @@ func TestFileDeleteFinalizerUsesGlobalAuthorizationMutationFenceIntegration(t *t
 	}
 	require.NoError(t, db.Create(&file).Error)
 	t.Cleanup(func() { _ = db.Exec(`DELETE FROM file WHERE id = ?`, file.ID).Error })
-	original, err := filemedia.CanonicalMediaObjectTargetForFile(file)
+	original, err := filemedia.CanonicalMediaObjectTargetForFile(filemedia.File(file))
 	require.NoError(t, err)
 	event := &managev1.FileDeleteEvent{FileId: file.ID, Original: original}
 

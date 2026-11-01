@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -290,9 +290,9 @@ func postAccessPrincipal() *auth.UserInfo {
 	}
 }
 
-func postUploadSession(postID string) model.UploadSession {
+func postUploadSession(postID string) domain.UploadSession {
 	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST.String()
-	return model.UploadSession{
+	return domain.UploadSession{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_FEATURED_IMAGE.String(),
 		EntityType: &entityType,
 		EntityID:   postID,

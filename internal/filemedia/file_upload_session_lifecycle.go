@@ -8,12 +8,11 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *Service) createUploadSession(ctx context.Context, session *model.UploadSession) error {
+func (s *Service) createUploadSession(ctx context.Context, session *domain.UploadSession) error {
 	if session == nil {
 		return fmt.Errorf("upload session is required")
 	}
@@ -35,9 +34,9 @@ func (s *Service) createUploadSession(ctx context.Context, session *model.Upload
 				return err
 			}
 		}
-		row, err := store.InsertUploadSession(ctx, uploadSessionToStore(*session), mode)
+		row, err := store.InsertUploadSession(ctx, *session, mode)
 		if err == nil {
-			*session = uploadSessionFromStore(row)
+			*session = row
 		}
 		return err
 	})
@@ -90,9 +89,9 @@ func (s *Service) claimUploadSessionAbort(ctx context.Context, uploadID, fileID 
 	return claimed, err
 }
 
-func containsFinalizingUploadSession(sessions []model.UploadSession) bool {
+func containsFinalizingUploadSession(sessions []domain.UploadSession) bool {
 	for _, session := range sessions {
-		if session.Status == model.UploadSessionStatusFinalizing {
+		if session.Status == domain.UploadSessionStatusFinalizing {
 			return true
 		}
 	}

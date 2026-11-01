@@ -14,7 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -144,7 +143,7 @@ func (s *Service) copyClientArtifact(ctx context.Context, fileID, bundleID, gene
 	return nil
 }
 
-func (s *Service) completeClientMedia(ctx context.Context, store Store, session model.UploadSession, plan clientMediaPlan, result *mediaasset.WrittenGeneration) error {
+func (s *Service) completeClientMedia(ctx context.Context, store Store, session domain.UploadSession, plan clientMediaPlan, result *mediaasset.WrittenGeneration) error {
 	if _, _, err := ensureStableFileIngestMediaGeneration(ctx, store, session.FileID); err != nil {
 		return err
 	}

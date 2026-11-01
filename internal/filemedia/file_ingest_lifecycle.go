@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -88,7 +88,7 @@ func (e *fileIngestEventEmitter) setTarget(target *commonv1.MediaObjectTarget) {
 	e.target = target
 }
 
-func (e *fileIngestEventEmitter) setUploadIdentity(session model.UploadSession) {
+func (e *fileIngestEventEmitter) setUploadIdentity(session domain.UploadSession) {
 	if e == nil {
 		return
 	}

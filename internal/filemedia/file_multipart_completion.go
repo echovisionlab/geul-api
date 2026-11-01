@@ -18,7 +18,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -26,13 +25,13 @@ import (
 
 type multipartCompletion struct {
 	clientMediaPlan *clientMediaPlan
-	session         model.UploadSession
+	session         domain.UploadSession
 	uploadType      managev1.UploadType
 	target          fileIngestProjectionIdentity
 	objectKey       string
 	verifiedMime    string
 	correlationID   string
-	uploadedParts   []model.UploadPart
+	uploadedParts   []domain.UploadPart
 	domainApplied   bool
 	promotedAsset   *commonv1.AssetRef
 	delivery        *commonv1.MediaDelivery
@@ -122,7 +121,7 @@ func (s *Service) loadAuthorizedMultipartCompletion(
 		}
 		return nil, false, fmt.Errorf("failed to load upload session: %w", err)
 	}
-	session := uploadSessionFromStore(stored)
+	session := stored
 
 	if err := clientMediaBundleMatches(session, request.ClientMediaBundleID); err != nil {
 		return nil, false, err
@@ -209,7 +208,7 @@ func (s *Service) loadAuthorizedMultipartCompletion(
 			domainerr.Precondition("upload session is no longer finalizable"),
 		)
 	}
-	completion.session.Status = model.UploadSessionStatusFinalizing
+	completion.session.Status = domain.UploadSessionStatusFinalizing
 	completion.uploadedParts = uploadedParts
 	return completion, true, nil
 }
@@ -288,7 +287,7 @@ func (s *Service) recoverFinishedMultipartCompletion(
 
 // loadFinishedMultipartFile loads the deliverable File a completed upload
 // left behind and the upload type its ingest binding recorded.
-func (s *Service) loadFinishedMultipartFile(ctx context.Context, fileID string) (model.File, managev1.UploadType, error) {
+func (s *Service) loadFinishedMultipartFile(ctx context.Context, fileID string) (File, managev1.UploadType, error) {
 	// A different upload ID must not bypass an active session and return before
 	// attachment/downstream confirmation. Successful completion deletes the only
 	// session for this file after every required side effect has succeeded.
@@ -298,10 +297,10 @@ func (s *Service) loadFinishedMultipartFile(ctx context.Context, fileID string) 
 		active, err = store.HasFileUploadSessions(ctx, fileID)
 		return err
 	}); err != nil {
-		return model.File{}, 0, fmt.Errorf("inspect completed upload authority: %w", err)
+		return File{}, 0, fmt.Errorf("inspect completed upload authority: %w", err)
 	}
 	if active {
-		return model.File{}, 0, domainerr.New(domainerr.NotFound, "", "upload session not found")
+		return File{}, 0, domainerr.New(domainerr.NotFound, "", "upload session not found")
 	}
 	var stored File
 	if err := s.units.Read(ctx, func(store Store) error {
@@ -310,17 +309,17 @@ func (s *Service) loadFinishedMultipartFile(ctx context.Context, fileID string) 
 		return err
 	}); err != nil {
 		if errors.Is(err, domain.ErrFileNotFound) {
-			return model.File{}, 0, domainerr.New(domainerr.NotFound, "", "upload session not found")
+			return File{}, 0, domainerr.New(domainerr.NotFound, "", "upload session not found")
 		}
-		return model.File{}, 0, fmt.Errorf("load completed file: %w", err)
+		return File{}, 0, fmt.Errorf("load completed file: %w", err)
 	}
-	file := model.File(stored)
+	file := stored
 
 	if file.DeleteRequestedAt != nil || file.FileSize <= 0 ||
 		strings.TrimSpace(file.FileName) == "" || strings.TrimSpace(file.MimeType) == "" ||
 		file.Extension != mediaExtension(&file.MimeType) ||
 		file.FileName != storedFileBasename(file.FileName, file.ID, file.Extension) {
-		return model.File{}, 0, domainerr.Precondition("completed file metadata is not deliverable")
+		return File{}, 0, domainerr.Precondition("completed file metadata is not deliverable")
 	}
 
 	var binding domain.IngestBinding
@@ -330,14 +329,14 @@ func (s *Service) loadFinishedMultipartFile(ctx context.Context, fileID string) 
 		return err
 	}); err != nil {
 		if errors.Is(err, domain.ErrIngestBindingNotFound) {
-			return model.File{}, 0, domainerr.New(domainerr.NotFound, "", "upload session not found")
+			return File{}, 0, domainerr.New(domainerr.NotFound, "", "upload session not found")
 		}
-		return model.File{}, 0, fmt.Errorf("load completed file binding: %w", err)
+		return File{}, 0, fmt.Errorf("load completed file binding: %w", err)
 	}
 
 	uploadTypeValue, ok := managev1.UploadType_value[binding.UploadType]
 	if !ok {
-		return model.File{}, 0, domainerr.Precondition("completed file binding has unsupported upload type")
+		return File{}, 0, domainerr.Precondition("completed file binding has unsupported upload type")
 	}
 	return file, managev1.UploadType(uploadTypeValue), nil
 }
@@ -345,14 +344,14 @@ func (s *Service) loadFinishedMultipartFile(ctx context.Context, fileID string) 
 // requireFinishedClientMediaBundle requires the completed File's client media
 // bundle to be the requested one, uploaded by the caller, with its
 // derivatives ready.
-func (s *Service) requireFinishedClientMediaBundle(ctx context.Context, file model.File, bundleID string, user *auth.UserInfo) error {
+func (s *Service) requireFinishedClientMediaBundle(ctx context.Context, file File, bundleID string, user *auth.UserInfo) error {
 	if file.ClientMediaBundleID == nil || *file.ClientMediaBundleID != bundleID {
 		return domainerr.Precondition("completed client media bundle does not match")
 	}
 	if file.UploadedByMemberID == nil || *file.UploadedByMemberID != user.MemberID.String() {
 		return domainerr.Denied("completed client media bundle belongs to another member")
 	}
-	ready, err := s.clientMediaFileReady(ctx, File(file))
+	ready, err := s.clientMediaFileReady(ctx, file)
 	if err != nil {
 		return err
 	}
@@ -362,7 +361,7 @@ func (s *Service) requireFinishedClientMediaBundle(ctx context.Context, file mod
 	return nil
 }
 
-func (s *Service) signFinishedMultipartDelivery(file model.File, promotedAsset *commonv1.AssetRef) (*commonv1.MediaDelivery, error) {
+func (s *Service) signFinishedMultipartDelivery(file File, promotedAsset *commonv1.AssetRef) (*commonv1.MediaDelivery, error) {
 	inline, err := buildExpiringMediaFileRef(
 		s.mediaDomain,
 		s.mediaSecret,

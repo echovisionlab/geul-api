@@ -19,7 +19,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -83,7 +82,7 @@ func clientMediaPlanFromCommand(command PrepareClientMediaUploadCommand, memberI
 	return plan, nil
 }
 
-func (s *Service) prepareMediaBundle(ctx context.Context, session model.UploadSession, command PrepareClientMediaUploadCommand) (string, error) {
+func (s *Service) prepareMediaBundle(ctx context.Context, session domain.UploadSession, command PrepareClientMediaUploadCommand) (string, error) {
 	plan, err := clientMediaPlanFromCommand(command, auth.GetUser(ctx).MemberID.String())
 	if err != nil {
 		return "", err
@@ -126,11 +125,11 @@ func (s *Service) prepareMediaBundle(ctx context.Context, session model.UploadSe
 	return bundleID, nil
 }
 
-func clientMediaSessionWritable(session model.UploadSession) bool {
-	return session.Status == model.UploadSessionStatusInitiated || session.Status == model.UploadSessionStatusUploading
+func clientMediaSessionWritable(session domain.UploadSession) bool {
+	return session.Status == domain.UploadSessionStatusInitiated || session.Status == domain.UploadSessionStatusUploading
 }
-func (s *Service) authorizedClientMediaSession(ctx context.Context, uploadID, fileID string) (model.UploadSession, error) {
-	var session model.UploadSession
+func (s *Service) authorizedClientMediaSession(ctx context.Context, uploadID, fileID string) (domain.UploadSession, error) {
+	var session domain.UploadSession
 	if !IsValidUUID(fileID) || uploadID == "" || len(uploadID) > 256 {
 		return session, domainerr.InvalidField("upload_id", "invalid upload identity")
 	}
@@ -145,7 +144,7 @@ func (s *Service) authorizedClientMediaSession(ctx context.Context, uploadID, fi
 		}
 		return session, err
 	}
-	session = uploadSessionFromStore(row)
+	session = row
 
 	user := auth.GetUser(ctx)
 	if user == nil {
@@ -202,8 +201,8 @@ func (s *Service) HandleClientMediaArtifact(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Service) authorizeMediaArtifact(ctx context.Context, memberID, fileID, uploadID, bundleID, path string) (model.UploadSession, *clientMediaArtifact, error) {
-	var session model.UploadSession
+func (s *Service) authorizeMediaArtifact(ctx context.Context, memberID, fileID, uploadID, bundleID, path string) (domain.UploadSession, *clientMediaArtifact, error) {
+	var session domain.UploadSession
 	var row domain.UploadSession
 	if err := s.readUploadFacts(ctx, func(store Store) error {
 		var err error
@@ -212,7 +211,7 @@ func (s *Service) authorizeMediaArtifact(ctx context.Context, memberID, fileID, 
 	}); err != nil {
 		return session, nil, domainerr.New(domainerr.NotFound, "", "upload session not found").WithCause(failurecause.WithAttrs(err, slog.String("upload_id", uploadID), slog.String("file_id", fileID)))
 	}
-	session = uploadSessionFromStore(row)
+	session = row
 
 	if err := s.checkPartUploadPermission(ctx, memberID, session); err != nil {
 		return session, nil, domainerr.Denied("artifact upload permission denied").WithCause(failurecause.WithAttrs(err, slog.String("upload_id", uploadID), slog.String("file_id", fileID)))
@@ -269,7 +268,7 @@ func (s *Service) stageMediaArtifact(request *http.Request, bundleID string, art
 	return nil
 }
 
-func clientMediaBundleMatches(session model.UploadSession, bundleID string) error {
+func clientMediaBundleMatches(session domain.UploadSession, bundleID string) error {
 	if session.ClientMediaBundleID == nil {
 		if bundleID != "" {
 			return domainerr.Precondition("client media bundle is not prepared")
@@ -283,11 +282,11 @@ func clientMediaBundleMatches(session model.UploadSession, bundleID string) erro
 }
 
 // Finalizing repair changes staging only, and remains serialized with completion.
-func (s *Service) clientMediaArtifactWritable(ctx context.Context, session model.UploadSession) (bool, error) {
+func (s *Service) clientMediaArtifactWritable(ctx context.Context, session domain.UploadSession) (bool, error) {
 	if clientMediaSessionWritable(session) {
 		return true, nil
 	}
-	if session.Status != model.UploadSessionStatusFinalizing {
+	if session.Status != domain.UploadSessionStatusFinalizing {
 		return false, nil
 	}
 	var file File

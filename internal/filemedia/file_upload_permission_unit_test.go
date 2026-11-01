@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/require"
@@ -125,7 +125,7 @@ func TestCheckEntityPermissionAllowsIndependentEditorMesh(t *testing.T) {
 	t.Parallel()
 
 	svc := &Service{}
-	target, entityID, err := svc.resolvePartUploadPermissionTarget(context.Background(), managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH, model.UploadSession{})
+	target, entityID, err := svc.resolvePartUploadPermissionTarget(context.Background(), managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH, domain.UploadSession{})
 	require.NoError(t, err)
 	require.True(t, target.authorOnly)
 	require.Empty(t, entityID)
@@ -137,7 +137,7 @@ func TestCheckPartUploadPermissionRejectsDocumentTargetForEditorMesh(t *testing.
 	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE.String()
 	svc := &Service{}
 
-	_, _, err := svc.resolvePartUploadPermissionTarget(context.Background(), managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH, model.UploadSession{
+	_, _, err := svc.resolvePartUploadPermissionTarget(context.Background(), managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH, domain.UploadSession{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH.String(),
 		EntityType: &entityType,
 	})

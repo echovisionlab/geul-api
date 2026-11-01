@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -117,7 +118,7 @@ func requireUploadSessionStatus(t *testing.T, db *gorm.DB, uploadID string, expe
 
 	var session model.UploadSession
 	require.NoError(t, db.Where("upload_id = ?", uploadID).First(&session).Error)
-	require.Equal(t, expected, uploadSessionStatusToProto(session.Status))
+	require.Equal(t, expected, uploadSessionStatusToProto(domain.UploadSessionStatus(session.Status)))
 }
 
 func requireRuntimeCanonicalFileRecord(

@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 )
@@ -208,7 +208,7 @@ func TestEditorAudioAllowedMimeTypesDetectNewlyCoveredContainers(t *testing.T) {
 	t.Parallel()
 
 	allowed := buildAllowedMimeSet(
-		model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO].PermittedMimeTypes,
+		domain.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO.String()].PermittedMimeTypes,
 	)
 	tests := map[string]struct {
 		body     []byte
@@ -237,10 +237,10 @@ func TestWebMTrackPolicyUsesUploadTypeAllowedSet(t *testing.T) {
 	t.Parallel()
 
 	audioAllowed := buildAllowedMimeSet(
-		model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO].PermittedMimeTypes,
+		domain.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO.String()].PermittedMimeTypes,
 	)
 	videoAllowed := buildAllowedMimeSet(
-		model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO].PermittedMimeTypes,
+		domain.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO.String()].PermittedMimeTypes,
 	)
 
 	audioWebM := buildTestWebM(ebmlTrackTypeAudio)
@@ -254,7 +254,7 @@ func TestWebMTrackPolicyUsesUploadTypeAllowedSet(t *testing.T) {
 func TestValidateMultipartCompletionMimeCanonicalizesAIFFAlias(t *testing.T) {
 	t.Parallel()
 
-	allowed := model.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO].PermittedMimeTypes
+	allowed := domain.DefaultUploadConfigs[managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO.String()].PermittedMimeTypes
 	mimeType, err := validateMultipartCompletionMime("audio/x-aiff", "audio/aiff", allowed)
 	require.NoError(t, err)
 	require.Equal(t, "audio/aiff", mimeType)

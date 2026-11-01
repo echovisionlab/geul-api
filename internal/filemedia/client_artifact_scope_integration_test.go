@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -20,7 +21,7 @@ func TestArtifactRepairReadsUncommittedFileReceiptIntegration(t *testing.T) {
 	file := model.File{ID: uuid.NewString(), FileName: "source", Extension: "webp", MimeType: "image/webp", FileSize: 64}
 	require.NoError(t, db.Create(&file).Error)
 	service := &Service{units: filemediapostgres.NewUnits(db, filemediapostgres.Ports{})}
-	row := model.UploadSession{FileID: file.ID, Status: model.UploadSessionStatusFinalizing}
+	row := domain.UploadSession{FileID: file.ID, Status: domain.UploadSessionStatusFinalizing}
 	allowed, err := service.clientMediaArtifactWritable(t.Context(), row)
 	require.NoError(t, err)
 	require.True(t, allowed)
