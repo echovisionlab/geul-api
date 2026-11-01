@@ -246,23 +246,26 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 	},
 	"pointing targets moves only existing targets": func(t *testing.T, h Harness) {
 		at := now()
-		first := plan(t, h, at, localeTarget(uuid.NewString(), "en", at))
-		second := plan(t, h, at, localeTarget(first.targets[0].EntityID, "ko", at))
+		target := localeTarget(uuid.NewString(), "en", at)
+		first := plan(t, h, at, target)
+		second := plan(t, h, at, localeTarget(target.EntityID, "en", at))
+		targetID := first.targets[0].ID
+		require.Equal(t, second.generations[0].ID, *readTarget(t, h, targetID).LatestGenerationID)
 		updated := int64(0)
 		require.NoError(t, transact(t, h, func(ctx context.Context, store og.Store) (err error) {
 			updated, err = store.PointTargets(ctx, []og.TargetPointer{
-				{TargetID: first.targets[0].ID, GenerationID: second.generations[0].ID},
-				{TargetID: uuid.NewString(), GenerationID: second.generations[0].ID},
+				{TargetID: targetID, GenerationID: first.generations[0].ID},
+				{TargetID: uuid.NewString(), GenerationID: first.generations[0].ID},
 			}, at)
 			return err
 		}))
 		require.EqualValues(t, 1, updated)
-		require.Equal(t, second.generations[0].ID, *readTarget(t, h, first.targets[0].ID).LatestGenerationID)
+		require.Equal(t, first.generations[0].ID, *readTarget(t, h, targetID).LatestGenerationID)
 
 		require.NoError(t, transact(t, h, func(ctx context.Context, store og.Store) error {
-			return store.ClearTargetPointer(ctx, first.targets[0].ID, at)
+			return store.ClearTargetPointer(ctx, targetID, at)
 		}))
-		require.Nil(t, readTarget(t, h, first.targets[0].ID).LatestGenerationID)
+		require.Nil(t, readTarget(t, h, targetID).LatestGenerationID)
 	},
 	"claiming the latest target matches only its latest generation": func(t *testing.T, h Harness) {
 		at := now()
@@ -452,15 +455,18 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		require.Equal(t, replacement, *superseded.SupersededByID)
 		require.True(t, superseded.SupersededAt.Equal(at))
 		require.False(t, change(t, h, func(ctx context.Context, store og.Store) (bool, error) {
-			return store.MarkGenerationSuperseded(ctx, first.generations[0].ID, nil, true, at)
+			return store.MarkGenerationSuperseded(ctx, first.generations[0].ID, &replacement, true, at)
 		}))
 
+		third := plan(t, h, at, localeTarget(target.EntityID, "en", at)).generations[0].ID
+		start(t, h, replacement, at)
 		require.True(t, change(t, h, func(ctx context.Context, store og.Store) (bool, error) {
-			return store.MarkGenerationSuperseded(ctx, replacement, nil, true, at)
+			return store.MarkGenerationSuperseded(ctx, replacement, &third, true, at)
 		}))
-		queued := readGeneration(t, h, replacement)
-		require.Nil(t, queued.SupersededByID)
-		require.Nil(t, queued.LeaseToken)
+		cleared := readGeneration(t, h, replacement)
+		require.Equal(t, third, *cleared.SupersededByID)
+		require.Nil(t, cleared.LeaseToken)
+		require.Nil(t, cleared.LeaseExpiresAt)
 	},
 	"a replaced generation is superseded while queued or processing on its own target": func(t *testing.T, h Harness) {
 		at := now()
@@ -623,7 +629,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 	"a source file resolves to its newest ready asset": func(t *testing.T, h Harness) {
 		at := now()
 		fileID, other := h.SeedFile(t), h.SeedFile(t)
-		h.SeedReadyAsset(t, "image", fileID, at.Add(-time.Hour))
+		h.SeedReadyAsset(t, "thumbnail", fileID, at.Add(-time.Hour))
 		newest := h.SeedReadyAsset(t, "image", fileID, at)
 		var refs map[string]og.AssetRef
 		require.NoError(t, mutationtest.Read(t, h.Harness, func(ctx context.Context, store og.Store) (err error) {

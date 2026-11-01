@@ -7,13 +7,13 @@ import (
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
 	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
+	"github.com/echovisionlab/geul-api/internal/adapters/ogprojection"
 	pageadapter "github.com/echovisionlab/geul-api/internal/adapters/page"
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
 	releaseadapter "github.com/echovisionlab/geul-api/internal/adapters/release"
 	seriesadapter "github.com/echovisionlab/geul-api/internal/adapters/series"
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
-	"github.com/echovisionlab/geul-api/internal/adapters/ogprojection"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/og"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
@@ -23,12 +23,12 @@ import (
 // ogDependencies is the one composition root for domain-neutral OG lifecycle
 // dependencies and entity-owned persistence adapters.
 type ogDependencies struct {
-	planner     *ogpostgres.Planner
-	resolver    *ogpostgres.Resolver
-	collector   *ogpostgres.Collector
-	refresher   *ogpostgres.Refresher
-	legal       *legaladapter.Requests
-	units       mutation.UnitOfWork[og.Store]
+	planner   *ogpostgres.Planner
+	resolver  *ogpostgres.Resolver
+	collector *ogpostgres.Collector
+	refresher *ogpostgres.Refresher
+	legal     *legaladapter.Requests
+	units     mutation.UnitOfWork[og.Store]
 }
 
 func newOGDependencies(db *gorm.DB, cdnDomain string) (*ogDependencies, error) {
