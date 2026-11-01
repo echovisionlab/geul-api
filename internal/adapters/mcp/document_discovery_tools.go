@@ -17,6 +17,7 @@ import (
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const ToolDocumentList = "document_list"
@@ -41,7 +42,7 @@ type PostDocumentDiscovery interface {
 }
 
 type WorkDocumentDiscovery interface {
-	ListWorksAdmin(context.Context, workdomain.ListWorksAdminQuery) (*managev1.ListWorksAdminResponse, error)
+	ListWorksAdmin(context.Context, workdomain.ListWorksAdminQuery) (workdomain.AdminWorkPage, error)
 }
 
 type PageDocumentDiscovery interface {
@@ -196,16 +197,13 @@ func (tools *DocumentDiscoveryTools) listDocuments(
 		}
 		documents := make([]map[string]any, 0, len(listed.Works))
 		for _, item := range listed.Works {
-			if item == nil || item.Work == nil || item.Work.UpdatedAt == nil {
-				continue
-			}
-			work := item.Work
+			work := item.View
 			documents = append(documents, discoveryDocument(
-				"work", work.Id, work.Title, work.Slug, work.SourceLocale,
-				strings.TrimPrefix(work.Status.String(), "WORK_STATUS_"), work.UpdatedAt.AsTime(),
+				"work", work.ID, work.Title, work.Slug, work.SourceLocale,
+				strings.TrimPrefix(workdomain.WorkStatusName(work.Status), "WORK_STATUS_"), timestamppb.New(work.UpdatedAt).AsTime(),
 			))
 		}
-		return documents, int64(listed.Pagination.GetTotal()), int(listed.Pagination.GetLimit()), nil
+		return documents, int64(listed.Pagination.Total), int(listed.Pagination.Limit), nil
 	case "page":
 		listed, err := tools.pages.ListPagesAdmin(ctx, pagedomain.ListPagesAdminQuery{
 			Page:    pagedomain.Page{Limit: int32(limit), Offset: int32(offset)},

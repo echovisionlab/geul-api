@@ -3,8 +3,6 @@ package work
 import (
 	"context"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
@@ -23,14 +21,13 @@ func workLocaleContentAudit(memberID, workID, locale string, operation sharedtel
 }
 
 // appendWorkTranslationAudit appends the record of a translation the
-// requesting Member's job delivered, in the translation application's
-// transaction.
+// requesting Member's job delivered through writer, which is bound to the
+// translation application's transaction.
 func appendWorkTranslationAudit(
 	ctx context.Context,
-	tx *gorm.DB,
 	writer domainaudit.Appender,
 	memberID, workID, locale string,
 	operation sharedtelemetry.AuditItemOperation,
 ) error {
-	return domainaudit.AppendMember(ctx, tx, writer, memberID, sharedtelemetry.AuditWorkUpdated, workLocaleContentRecord(workID, locale, operation))
+	return domainaudit.AppendMember(ctx, nil, writer, memberID, sharedtelemetry.AuditWorkUpdated, workLocaleContentRecord(workID, locale, operation))
 }

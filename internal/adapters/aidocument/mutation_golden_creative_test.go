@@ -11,7 +11,6 @@ import (
 	artistdomain "github.com/echovisionlab/geul-api/internal/artist"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	labeldomain "github.com/echovisionlab/geul-api/internal/label"
-	"github.com/echovisionlab/geul-api/internal/model"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
@@ -315,7 +314,7 @@ func TestWorkExactMutationGolden(t *testing.T) {
 			title := locale + " title"
 			revision := uuid.MustParse(goldenDocumentRevision)
 			api.state = workdomain.AIDocumentState{
-				Work: model.Work{ID: goldenEntityID}, SourceLocale: "en", Locale: locale, LocaleExists: true,
+				Work: workdomain.Work{ID: goldenEntityID}, SourceLocale: "en", Locale: locale, LocaleExists: true,
 				DocumentRevision: goldenDocumentRevision, TargetRevision: goldenTargetRevisionFor(target), Title: &title,
 				Snapshot: contentblock.Snapshot{Document: contentblock.Document{
 					ID: uuid.MustParse(goldenDocumentID), Revision: revision,

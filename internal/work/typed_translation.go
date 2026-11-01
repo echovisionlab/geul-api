@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"google.golang.org/protobuf/proto"
@@ -13,7 +12,7 @@ import (
 // BuildTranslationExtractionPlan extracts Work-owned locale fields and typed
 // Rich Text units from the canonical source document.
 func BuildTranslationExtractionPlan(
-	job *model.TranslationJob,
+	job *TranslationJob,
 	source *translation.SourceDocument,
 ) (*translation.ExtractionPlan, error) {
 	if job == nil || job.EntityType != "work" || source == nil || source.ContentBlockDocument == nil {
@@ -109,11 +108,4 @@ func BuildTranslationCandidate(
 	}
 	translation.ApplyCandidateFields(candidate, plan.Bundles, results)
 	return candidate, nil
-}
-
-func optionalString(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }

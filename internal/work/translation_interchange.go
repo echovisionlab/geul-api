@@ -12,10 +12,16 @@ import (
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"google.golang.org/protobuf/proto"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+)
+
+// InterchangeMode is how an XLIFF import applies its targets: PATCH keeps
+// the targets it omits, REPLACE removes them.
+type InterchangeMode uint8
+
+const (
+	InterchangePatch InterchangeMode = iota + 1
+	InterchangeReplace
 )
 
 type ProjectRichTextInterchangeTargets func(
@@ -45,7 +51,7 @@ type TranslationInterchangeMutation struct {
 	WorkID           string
 	SourceLocale     string
 	TargetLocale     string
-	Mode             managev1.TranslationInterchangeMode
+	Mode             InterchangeMode
 	ExpectedRevision *string
 	Source           *translation.SourceDocument
 	Plan             *translation.ExtractionPlan
@@ -68,7 +74,7 @@ type TranslationInterchangeResult struct {
 type workInterchangeState struct {
 	documentID     string
 	snapshot       contentblock.Snapshot
-	metadata       workAIDocumentLocale
+	metadata       LocaleMetadata
 	document       *contentv1.LocalizedRichTextDocument
 	exists         bool
 	targets        map[string]translation.UnitResult
@@ -76,17 +82,17 @@ type workInterchangeState struct {
 }
 
 // LoadTranslationInterchangeTarget loads a coherent Work target after the
-// caller has completed request authorization and locked the owning root.
+// caller has completed request authorization and locked the owning root,
+// through store bound to the translation application's transaction.
 func LoadTranslationInterchangeTarget(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	workID string,
 	locale string,
 	plan *translation.ExtractionPlan,
 	project ProjectRichTextInterchangeTargets,
 ) (TranslationInterchangeTarget, error) {
-	state, err := loadWorkInterchangeState(ctx, tx, store, workID, locale, plan, clause.LockingStrengthShare, project)
+	state, err := loadWorkInterchangeState(ctx, store, workID, locale, plan, ShareLock, project)
 	if err != nil {
 		return TranslationInterchangeTarget{}, err
 	}
@@ -98,18 +104,18 @@ func LoadTranslationInterchangeTarget(
 // ApplyTranslationInterchange applies PATCH to only selected Blocks and
 // metadata fields. REPLACE uses the validated complete/current intersection
 // supplied by Translation application. Both paths use Work's existing
-// metadata presence and Content Block mutation boundary.
+// metadata presence and Content Block mutation boundary, through store
+// bound to the translation application's transaction.
 func ApplyTranslationInterchange(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	mutation TranslationInterchangeMutation,
 ) (TranslationInterchangeResult, error) {
 	if err := validateWorkInterchangeMutation(mutation); err != nil {
 		return TranslationInterchangeResult{}, err
 	}
 	state, err := loadWorkInterchangeState(
-		ctx, tx, store, mutation.WorkID, mutation.TargetLocale, mutation.Plan, clause.LockingStrengthUpdate, mutation.ProjectTargets,
+		ctx, store, mutation.WorkID, mutation.TargetLocale, mutation.Plan, UpdateLock, mutation.ProjectTargets,
 	)
 	if err != nil {
 		return TranslationInterchangeResult{}, err
@@ -125,7 +131,7 @@ func ApplyTranslationInterchange(
 	}
 
 	desired := make(map[string]translation.UnitResult, len(state.targets)+len(mutation.Targets))
-	if mutation.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH {
+	if mutation.Mode == InterchangePatch {
 		for handle, target := range state.targets {
 			desired[handle] = target
 		}
@@ -134,7 +140,7 @@ func ApplyTranslationInterchange(
 		desired[handle] = target
 	}
 	targetDocument := state.document
-	if mutation.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
+	if mutation.Mode == InterchangeReplace {
 		emptyTarget := proto.Clone(state.document).(*contentv1.LocalizedRichTextDocument)
 		emptyTarget.LocaleOverlay = &contentv1.RichTextLocaleOverlay{Locale: mutation.TargetLocale}
 		targetDocument = emptyTarget
@@ -150,7 +156,7 @@ func ApplyTranslationInterchange(
 	}
 	blockMutations := workInterchangeBlockMutations(
 		state.document.GetLocaleOverlay(), patch,
-		mutation.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		mutation.Mode == InterchangeReplace,
 	)
 	if len(blockMutations) != 0 {
 		batch, err = contentblock.BatchFromRichTextSystemProto(
@@ -171,7 +177,7 @@ func ApplyTranslationInterchange(
 	}
 
 	metadataPatch := workInterchangeMetadataPatch(mutation.Plan, desired)
-	result, targetRevision, err := applyWorkTargetLocaleMutation(ctx, tx, store, workTargetLocaleMutationInput{
+	result, targetRevision, err := applyWorkTargetLocaleMutation(ctx, store, workTargetLocaleMutationInput{
 		WorkID: mutation.WorkID, DocumentID: state.snapshot.Document.ID, Locale: mutation.TargetLocale,
 		Batch: batch, ExpectedTargetRevision: mutation.ExpectedRevision,
 		Patch: workTargetMetadataPatch{
@@ -183,7 +189,7 @@ func ApplyTranslationInterchange(
 		},
 		Policy: targetlocale.Policy{
 			AllowCreate:        true,
-			AllowLocaleDeletes: mutation.Mode == managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+			AllowLocaleDeletes: mutation.Mode == InterchangeReplace,
 		},
 		Now: mutation.Now.UTC(), Fence: workSystemTranslationDocumentFence(mutation.WorkID),
 	})
@@ -221,8 +227,8 @@ func validateWorkInterchangeMutation(mutation TranslationInterchangeMutation) er
 	if mutation.SourceLocale == mutation.TargetLocale {
 		return domainerr.InvalidField("target_locale", "Work source translation cannot be imported as a target")
 	}
-	if mutation.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH &&
-		mutation.Mode != managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE {
+	if mutation.Mode != InterchangePatch &&
+		mutation.Mode != InterchangeReplace {
 		return domainerr.InvalidField("mode", "PATCH or REPLACE is required")
 	}
 	known := make(map[string]struct{}, len(mutation.Plan.Units))
@@ -255,35 +261,33 @@ func validateWorkInterchangeMutation(mutation TranslationInterchangeMutation) er
 
 func loadWorkInterchangeState(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store Store,
 	workID string,
 	locale string,
 	plan *translation.ExtractionPlan,
-	lock string,
+	lock RowLock,
 	project ProjectRichTextInterchangeTargets,
 ) (workInterchangeState, error) {
-	if tx == nil || store == nil || plan == nil || plan.EntityType != "work" ||
+	if store == nil || plan == nil || plan.EntityType != "work" ||
 		plan.EntityID != workID || plan.TargetLocale != locale || project == nil {
 		return workInterchangeState{}, errors.New("Work translation interchange load identity is invalid")
 	}
-	root, documentID, err := loadWorkAIDocumentRoot(ctx, tx, workID, lock)
+	_, documentID, err := loadWorkAIDocumentRoot(ctx, store, workID, lock)
 	if err != nil {
 		return workInterchangeState{}, err
 	}
-	_ = root
-	domain, err := loadWorkContentDomainContext(ctx, tx, workID)
+	domain, err := loadWorkContentDomainContext(ctx, store, workID)
 	if err != nil {
 		return workInterchangeState{}, err
 	}
 	if domain.SourceLocale != plan.SourceLocale || locale == domain.SourceLocale {
 		return workInterchangeState{}, domainerr.InvalidField("target_locale", "Work XLIFF locale role no longer matches the owning document")
 	}
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, domain.SourceLocale)
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, domain.SourceLocale)
 	if err != nil {
 		return workInterchangeState{}, normalizeWorkContentBlockError(err)
 	}
-	metadata, exists, err := loadWorkAIDocumentLocaleForUpdate(ctx, tx, workID, locale)
+	metadata, exists, err := store.LockedLocaleText(ctx, workID, locale)
 	if err != nil {
 		return workInterchangeState{}, err
 	}
@@ -304,7 +308,7 @@ func loadWorkInterchangeState(
 		return workInterchangeState{}, err
 	}
 	state.targetRevision, err = workInterchangeTargetRevision(
-		ctx, tx, workID, locale, snapshot.Document.Revision.String(), true,
+		ctx, store, workID, locale, snapshot.Document.Revision.String(), true,
 	)
 	if err != nil {
 		return workInterchangeState{}, err
@@ -314,7 +318,7 @@ func loadWorkInterchangeState(
 
 func projectWorkInterchangeTargets(
 	plan *translation.ExtractionPlan,
-	metadata workAIDocumentLocale,
+	metadata LocaleMetadata,
 	document *contentv1.LocalizedRichTextDocument,
 	project ProjectRichTextInterchangeTargets,
 ) (map[string]translation.UnitResult, error) {
@@ -388,7 +392,7 @@ func workInterchangeMetadataPatch(plan *translation.ExtractionPlan, desired map[
 
 func workInterchangeTargetRevision(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	workID string,
 	locale string,
 	documentRevision string,
@@ -397,16 +401,12 @@ func workInterchangeTargetRevision(
 	if !exists {
 		return translation.DeriveTargetRevision(translation.TargetRevisionFacts{})
 	}
-	var row struct {
-		UpdatedAt time.Time `gorm:"column:updated_at"`
-	}
-	result := tx.WithContext(ctx).Table("work_translation").Select("updated_at").
-		Where("entity_id = ? AND locale = ?", workID, locale).Take(&row)
-	if result.Error != nil {
-		return "", result.Error
+	updatedAt, err := store.LocaleUpdatedAt(ctx, workID, locale)
+	if err != nil {
+		return "", err
 	}
 	revision, err := translation.DeriveTargetRevision(translation.TargetRevisionFacts{
-		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &row.UpdatedAt,
+		LocaleExists: true, DocumentRevision: documentRevision, LocaleUpdatedAt: &updatedAt,
 	})
 	if err != nil {
 		return "", err

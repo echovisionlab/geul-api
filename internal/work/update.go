@@ -2,23 +2,16 @@ package work
 
 import (
 	"context"
+	"errors"
 	"reflect"
+	"slices"
 	"strings"
 
-	"google.golang.org/protobuf/types/known/structpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/pathslug"
-	"github.com/echovisionlab/geul-api/internal/routeregistry"
+	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -43,31 +36,39 @@ type UpdateWorkCommand struct {
 	MapPlaceID       *string
 }
 
+// Update is an updated Work with its clients.
+type Update struct {
+	Work    Work
+	Changed bool
+	Clients []Client
+}
+
 type workUpdatePlan struct {
-	fields         structured.Fields
+	change         WorkChange
 	normalizedSlug *string
 	slugPresent    bool
+	mapPlace       bool
 }
 
 // workUpdate is the outcome of an update.
 type workUpdate struct {
-	work          model.Work
+	work          Work
 	changedFields []string
 	changed       bool
 }
 
-func (s *Service) UpdateWork(ctx context.Context, command UpdateWorkCommand) (*managev1.UpdateWorkResponse, error) {
-	if err := requireStoredWork(ctx, s.db, command.ID); err != nil {
-		return nil, err
+func (s *Service) UpdateWork(ctx context.Context, command UpdateWorkCommand) (Update, error) {
+	if err := s.requireStoredWork(ctx, command.ID); err != nil {
+		return Update{}, err
 	}
 	plan, err := s.buildWorkUpdatePlan(ctx, command)
 	if err != nil {
-		return nil, err
+		return Update{}, err
 	}
-	update, err := mutation.Run(ctx, s.mutations, mutation.Spec[workUpdate]{
+	update, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[workUpdate, Store]{
 		Access: lockedWork(command.ID, policyv1.Work.Manage, nil),
-		Change: func(ctx context.Context, tx *gorm.DB) (workUpdate, error) {
-			return s.applyWorkUpdatePlan(ctx, tx, command, plan)
+		Change: func(ctx context.Context, store Store) (workUpdate, error) {
+			return applyWorkUpdatePlan(ctx, store, command, plan)
 		},
 		Audit: func(update workUpdate) mutation.Audit {
 			if len(update.changedFields) == 0 {
@@ -77,101 +78,94 @@ func (s *Service) UpdateWork(ctx context.Context, command UpdateWorkCommand) (*m
 				return sharedtelemetry.NewWorkMetadataAuditRecord(metadata, update.work.ID, update.changedFields)
 			})
 		},
-		Outbox: func(ctx context.Context, tx *gorm.DB, update workUpdate) error {
+		Outbox: func(ctx context.Context, store Store, update workUpdate) error {
 			if !update.changed {
 				return nil
 			}
-			return contentsignal.PublishInTransaction(ctx, tx, s.signals, buildManageWorkContentUpdatedEvent(command))
+			return store.PublishContentUpdate(ctx, ContentUpdate{WorkID: command.ID, Kind: SettingsUpdate, Fields: workSettingsUpdateFields(command)})
 		},
 	})
 	if err != nil {
-		if !mutation.IsClassified(err) && dberrors.IsUniqueViolation(err) {
-			return nil, domainerr.Duplicate("work", "slug", "slug").WithCause(err)
+		if errors.Is(err, ErrSlugTaken) && !mutation.IsClassified(err) {
+			return Update{}, domainerr.Duplicate("work", "slug", "slug").WithCause(err)
 		}
-		return nil, err
+		return Update{}, err
 	}
-	work := update.work
-	metadata, err := structpb.NewStruct(work.Metadata)
+	clients, err := s.getWorkClients(ctx, update.work.ID)
 	if err != nil {
-		return nil, err
+		return Update{}, err
 	}
-	clients, err := s.getWorkClients(ctx, work.ID)
-	if err != nil {
-		return nil, err
+	return Update{Work: update.work, Changed: update.changed, Clients: clients}, nil
+}
+
+// workSettingsUpdateFields names the settings the command sets, in the
+// order the content.updated signal lists them.
+func workSettingsUpdateFields(request UpdateWorkCommand) []string {
+	fields := make([]string, 0, 11)
+	if request.Slug != nil {
+		fields = append(fields, "slug")
 	}
-	return &managev1.UpdateWorkResponse{
-		Id:         work.ID,
-		Changed:    update.changed,
-		Slug:       work.Slug,
-		Type:       managev1.WorkType(managev1.WorkType_value[work.Type]),
-		Metadata:   metadata,
-		Featured:   work.Featured,
-		Clients:    clients,
-		Year:       work.Year,
-		Month:      work.Month,
-		UntilYear:  work.UntilYear,
-		UntilMonth: work.UntilMonth,
-		IsPresent:  work.IsPresent,
-		MapPlaceId: work.MapPlaceID,
-		UpdatedAt:  timestamppb.New(work.UpdatedAt),
-	}, nil
+	if request.Type != nil {
+		fields = append(fields, "type")
+	}
+	if request.Metadata != nil {
+		fields = append(fields, "metadata")
+	}
+	if request.Featured != nil {
+		fields = append(fields, "featured")
+	}
+	if request.Clients != nil {
+		fields = append(fields, "clients")
+	}
+	if request.Year != nil {
+		fields = append(fields, "year")
+	}
+	if request.Month != nil {
+		fields = append(fields, "month")
+	}
+	if request.MapPlaceID != nil {
+		fields = append(fields, "mapPlaceId")
+	}
+	if request.UntilYear != nil {
+		fields = append(fields, "untilYear")
+	}
+	if request.UntilMonth != nil {
+		fields = append(fields, "untilMonth")
+	}
+	if request.IsPresent != nil {
+		fields = append(fields, "isPresent")
+	}
+	return fields
 }
 
 func (s *Service) buildWorkUpdatePlan(ctx context.Context, command UpdateWorkCommand) (workUpdatePlan, error) {
 	slug, slugPresent := normalizeOptionalNullableString(command.Slug)
-	if err := s.validateWorkUpdateSlug(ctx, slug); err != nil {
+	if err := s.validateWorkSlug(ctx, slug); err != nil {
 		return workUpdatePlan{}, err
 	}
-	plan := workUpdatePlan{
-		fields:         structured.Fields{},
-		normalizedSlug: slug,
-		slugPresent:    slugPresent,
+	plan := workUpdatePlan{normalizedSlug: slug, slugPresent: slugPresent}
+	if slugPresent {
+		plan.change.Slug, plan.change.ClearSlug = slug, slug == nil
 	}
-	assignWorkUpdateScalarFields(plan.fields, command, slug, slugPresent)
-	if err := s.assignWorkUpdateMapPlace(ctx, plan.fields, command.MapPlaceID); err != nil {
-		return workUpdatePlan{}, err
+	plan.change.Type = command.Type
+	plan.change.Featured = command.Featured
+	if command.MapPlaceID != nil {
+		mapPlaceID, err := s.normalizeMapPlaceID(ctx, *command.MapPlaceID)
+		if err != nil {
+			return workUpdatePlan{}, err
+		}
+		plan.mapPlace = true
+		plan.change.MapPlaceID, plan.change.ClearPlace = mapPlaceID, mapPlaceID == nil
 	}
 	return plan, nil
 }
 
-func (s *Service) validateWorkUpdateSlug(ctx context.Context, slug *string) error {
-	if slug == nil {
-		return nil
-	}
-	if err := pathslug.Validate(*slug); err != nil {
-		return err
-	}
-	return routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "work", "works", *slug)
-}
-
-func assignWorkUpdateScalarFields(
-	updates structured.Fields,
-	command UpdateWorkCommand,
-	slug *string,
-	slugPresent bool,
-) {
-	if slugPresent {
-		if slug == nil {
-			updates["slug"] = nil
-		} else {
-			updates["slug"] = *slug
-		}
-	}
-	if command.Type != nil {
-		updates["type"] = *command.Type
-	}
-	if command.Featured != nil {
-		updates["featured"] = *command.Featured
-	}
-}
-
-func assignWorkUpdateRange(
-	work model.Work,
-	request UpdateWorkCommand,
-) (structured.Fields, error) {
+// assignWorkUpdateRange writes to change the range values request touches,
+// validated against the locked current values.
+func assignWorkUpdateRange(work Work, request UpdateWorkCommand, change *WorkChange) error {
 	if request.Year == nil && request.Month == nil && request.UntilYear == nil &&
 		request.UntilMonth == nil && request.IsPresent == nil {
-		return nil, nil
+		return nil
 	}
 	year := fieldValueOr(request.Year, work.Year, request.Year != nil)
 	month := fieldValueOr(request.Month, work.Month, request.Month != nil)
@@ -189,29 +183,28 @@ func assignWorkUpdateRange(
 		untilMonth = nil
 	}
 	if err := validateWorkRange(year, month, untilYear, untilMonth, isPresent); err != nil {
-		return nil, err
+		return err
 	}
-	updates := structured.Fields{}
 	if request.Year != nil {
-		updates["year"] = year
+		change.Year = &year
 	}
 	if request.Month != nil {
-		updates["month"] = month
+		change.Month = &month
 	}
 	if request.UntilYear != nil {
-		updates["until_year"] = untilYear
+		change.UntilYear = OptionalInt32{Set: true, Value: untilYear}
 	}
 	if request.UntilMonth != nil {
-		updates["until_month"] = untilMonth
+		change.UntilMonth = OptionalInt32{Set: true, Value: untilMonth}
 	}
 	if request.IsPresent != nil {
-		updates["is_present"] = isPresent
+		change.IsPresent = &isPresent
 		if isPresent {
-			updates["until_year"] = (*int32)(nil)
-			updates["until_month"] = (*int32)(nil)
+			change.UntilYear = OptionalInt32{Set: true}
+			change.UntilMonth = OptionalInt32{Set: true}
 		}
 	}
-	return updates, nil
+	return nil
 }
 
 func fieldValueOr[T any](value *T, fallback T, provided bool) T {
@@ -229,76 +222,48 @@ func cloneInt32(value *int32) *int32 {
 	return &cloned
 }
 
-func (s *Service) assignWorkUpdateMapPlace(
-	ctx context.Context,
-	updates structured.Fields,
-	requested *string,
-) error {
-	if requested == nil {
-		return nil
-	}
-	mapPlaceID, err := s.normalizeMapPlaceID(ctx, *requested)
-	if err != nil {
-		return err
-	}
-	if mapPlaceID == nil {
-		updates["map_place_id"] = nil
-	} else {
-		updates["map_place_id"] = *mapPlaceID
-	}
-	return nil
-}
-
-func (s *Service) applyWorkUpdatePlan(
-	ctx context.Context,
-	tx *gorm.DB,
-	command UpdateWorkCommand,
-	plan workUpdatePlan,
-) (workUpdate, error) {
+func applyWorkUpdatePlan(ctx context.Context, store Store, command UpdateWorkCommand, plan workUpdatePlan) (workUpdate, error) {
 	var update workUpdate
-	if err := tx.WithContext(ctx).Take(&update.work, "id = ?", command.ID).Error; err != nil {
+	work, err := store.FindWork(ctx, command.ID)
+	if err != nil {
 		return update, err
 	}
-	work := &update.work
+	update.work = work
 	if err := validateWorkUpdateObservedFields(command); err != nil {
 		return update, err
 	}
-	rangeFields, err := assignWorkUpdateRange(*work, command)
-	if err != nil {
+	change := plan.change
+	if err := assignWorkUpdateRange(work, command, &change); err != nil {
 		return update, err
 	}
-	for field, value := range rangeFields {
-		plan.fields[field] = value
-	}
 	if command.Metadata != nil {
-		plan.fields["metadata"] = mergeWorkMetadataIntent(
+		change.Metadata = mergeWorkMetadataIntent(
 			sanitizeWorkMetadata(work.Metadata),
 			sanitizeWorkMetadata(command.ObservedMetadata),
 			sanitizeWorkMetadata(command.Metadata),
 		)
 	}
 	if plan.slugPresent && plan.normalizedSlug != nil {
-		if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "work", "works", *plan.normalizedSlug); err != nil {
+		if err := store.LockResourceRoute(ctx, *plan.normalizedSlug); err != nil {
 			return update, err
 		}
 	}
-	update.changedFields = workUpdateChangedFields(*work, plan.fields)
-	clientsChanged, clientIDs, err := workClientSetChanged(ctx, tx, work.ID, command.Clients, command.ObservedClients)
+	update.changedFields = workUpdateChangedFields(work, change, command.Metadata != nil, plan.mapPlace)
+	clientsChanged, clientIDs, err := workClientSetChanged(ctx, store, work.ID, command.Clients, command.ObservedClients)
 	if err != nil {
 		return update, err
 	}
 	if len(update.changedFields) > 0 {
-		mutationNow := dbtime.Now()
-		plan.fields["updated_at"] = mutationNow
-		if err := tx.Model(work).Updates(plan.fields).Error; err != nil {
+		change.UpdatedAt = dbtime.Now()
+		if err := store.UpdateWork(ctx, work.ID, change); err != nil {
 			return update, err
 		}
-		applyWorkUpdateFields(work, plan.fields)
-		work.UpdatedAt = mutationNow
+		applyWorkUpdateFields(&update.work, change, command.Metadata != nil)
+		update.work.UpdatedAt = change.UpdatedAt
 		update.changed = true
 	}
 	if clientsChanged {
-		if err := replaceWorkClients(ctx, tx, work.ID, clientIDs); err != nil {
+		if err := replaceWorkClients(ctx, store, work.ID, clientIDs); err != nil {
 			return update, err
 		}
 		update.changedFields = append(update.changedFields, "clients")
@@ -307,83 +272,81 @@ func (s *Service) applyWorkUpdatePlan(
 	return update, nil
 }
 
-func applyWorkUpdateFields(work *model.Work, fields structured.Fields) {
-	if value, ok := fields["slug"]; ok {
-		if value == nil {
-			work.Slug = nil
-		} else if slug, ok := value.(string); ok {
-			work.Slug = &slug
-		}
+func applyWorkUpdateFields(work *Work, change WorkChange, metadata bool) {
+	if change.ClearSlug {
+		work.Slug = nil
+	} else if change.Slug != nil {
+		slug := *change.Slug
+		work.Slug = &slug
 	}
-	if value, ok := fields["type"].(string); ok {
-		work.Type = value
+	if change.Type != nil {
+		work.Type = *change.Type
 	}
-	if value, ok := fields["metadata"].(structured.Fields); ok {
-		work.Metadata = value
+	if metadata {
+		work.Metadata = change.Metadata
 	}
-	if value, ok := fields["featured"].(bool); ok {
-		work.Featured = value
+	if change.Featured != nil {
+		work.Featured = *change.Featured
 	}
-	if value, ok := fields["year"].(int32); ok {
-		work.Year = value
+	if change.Year != nil {
+		work.Year = *change.Year
 	}
-	if value, ok := fields["month"].(int32); ok {
-		work.Month = value
+	if change.Month != nil {
+		work.Month = *change.Month
 	}
-	if value, exists := fields["until_year"]; exists {
-		work.UntilYear, _ = value.(*int32)
+	if change.UntilYear.Set {
+		work.UntilYear = change.UntilYear.Value
 	}
-	if value, exists := fields["until_month"]; exists {
-		work.UntilMonth, _ = value.(*int32)
+	if change.UntilMonth.Set {
+		work.UntilMonth = change.UntilMonth.Value
 	}
-	if value, ok := fields["is_present"].(bool); ok {
-		work.IsPresent = value
+	if change.IsPresent != nil {
+		work.IsPresent = *change.IsPresent
 	}
-	if value, exists := fields["map_place_id"]; exists {
-		if value == nil {
-			work.MapPlaceID = nil
-		} else if mapPlaceID, ok := value.(string); ok {
-			work.MapPlaceID = &mapPlaceID
-		}
+	if change.ClearPlace {
+		work.MapPlaceID = nil
+	} else if change.MapPlaceID != nil {
+		mapPlaceID := *change.MapPlaceID
+		work.MapPlaceID = &mapPlaceID
 	}
 }
 
-func workUpdateChangedFields(work model.Work, fields structured.Fields) []string {
+// workUpdateChangedFields names the columns change writes a different value
+// to.
+func workUpdateChangedFields(work Work, change WorkChange, metadata, mapPlace bool) []string {
 	changed := []string{}
-	if value, ok := fields["slug"]; ok {
-		if value == nil {
-			if work.Slug != nil {
-				changed = append(changed, "slug")
-			}
-		} else if slug, ok := value.(string); !ok || work.Slug == nil || slug != *work.Slug {
+	if change.ClearSlug {
+		if work.Slug != nil {
 			changed = append(changed, "slug")
 		}
+	} else if change.Slug != nil && (work.Slug == nil || *change.Slug != *work.Slug) {
+		changed = append(changed, "slug")
 	}
-	if value, ok := fields["type"].(string); ok && value != work.Type {
+	if change.Type != nil && *change.Type != work.Type {
 		changed = append(changed, "type")
 	}
-	if value, ok := fields["metadata"]; ok && !reflect.DeepEqual(value, work.Metadata) {
+	if metadata && !reflect.DeepEqual(change.Metadata, work.Metadata) {
 		changed = append(changed, "metadata")
 	}
-	if value, ok := fields["featured"].(bool); ok && value != work.Featured {
+	if change.Featured != nil && *change.Featured != work.Featured {
 		changed = append(changed, "featured")
 	}
-	if value, ok := fields["year"].(int32); ok && value != work.Year {
+	if change.Year != nil && *change.Year != work.Year {
 		changed = append(changed, "year")
 	}
-	if value, ok := fields["month"].(int32); ok && value != work.Month {
+	if change.Month != nil && *change.Month != work.Month {
 		changed = append(changed, "month")
 	}
-	if value, ok := fields["until_year"]; ok && !reflect.DeepEqual(value, work.UntilYear) {
+	if change.UntilYear.Set && !reflect.DeepEqual(change.UntilYear.Value, work.UntilYear) {
 		changed = append(changed, "until_year")
 	}
-	if value, ok := fields["until_month"]; ok && !reflect.DeepEqual(value, work.UntilMonth) {
+	if change.UntilMonth.Set && !reflect.DeepEqual(change.UntilMonth.Value, work.UntilMonth) {
 		changed = append(changed, "until_month")
 	}
-	if value, ok := fields["is_present"].(bool); ok && value != work.IsPresent {
+	if change.IsPresent != nil && *change.IsPresent != work.IsPresent {
 		changed = append(changed, "is_present")
 	}
-	if value, ok := fields["map_place_id"]; ok && !reflect.DeepEqual(value, work.MapPlaceID) {
+	if mapPlace && !optional.Equal(change.MapPlaceID, work.MapPlaceID) {
 		changed = append(changed, "map_place_id")
 	}
 	return changed
@@ -401,7 +364,7 @@ func validateWorkUpdateObservedFields(command UpdateWorkCommand) error {
 
 func workClientSetChanged(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	workID string,
 	clients *[]string,
 	observed *[]string,
@@ -412,33 +375,22 @@ func workClientSetChanged(
 	if observed == nil {
 		return false, nil, domainerr.InvalidField("observed_clients", "is required when updating clients")
 	}
-	var current []string
-	if err := tx.WithContext(ctx).Table("work_client").Where("work_id = ?", workID).Order("sort_order").Pluck("client_id", &current).Error; err != nil {
+	current, err := store.ClientIDs(ctx, workID)
+	if err != nil {
 		return false, nil, err
 	}
 	next := mergeWorkClientIntent(current, *observed, *clients)
-	return !reflect.DeepEqual(current, next), next, nil
+	return !slices.Equal(current, next), next, nil
 }
 
-func replaceWorkClients(ctx context.Context, tx *gorm.DB, workID string, clientIDs []string) error {
-	if err := validateWorkClientIDs(ctx, tx, clientIDs); err != nil {
+func replaceWorkClients(ctx context.Context, store Store, workID string, clientIDs []string) error {
+	if err := validateWorkClientIDs(ctx, store, clientIDs); err != nil {
 		return err
 	}
-	if err := tx.WithContext(ctx).Exec("DELETE FROM work_client WHERE work_id = ?", workID).Error; err != nil {
-		return err
-	}
-	for sortOrder, clientID := range clientIDs {
-		if err := tx.WithContext(ctx).Exec(
-			"INSERT INTO work_client (work_id, client_id, sort_order, created_at) VALUES (?, ?, ?, NOW())",
-			workID, clientID, sortOrder,
-		).Error; err != nil {
-			return err
-		}
-	}
-	return nil
+	return store.ReplaceClients(ctx, workID, clientIDs)
 }
 
-func validateWorkClientIDs(ctx context.Context, tx *gorm.DB, clientIDs []string) error {
+func validateWorkClientIDs(ctx context.Context, store Store, clientIDs []string) error {
 	if len(clientIDs) == 0 {
 		return nil
 	}
@@ -452,8 +404,8 @@ func validateWorkClientIDs(ctx context.Context, tx *gorm.DB, clientIDs []string)
 		}
 		seen[clientID] = struct{}{}
 	}
-	var validCount int64
-	if err := tx.WithContext(ctx).Table("client").Where("id IN ?", clientIDs).Count(&validCount).Error; err != nil {
+	validCount, err := store.CountExistingClients(ctx, clientIDs)
+	if err != nil {
 		return err
 	}
 	if int(validCount) != len(clientIDs) {

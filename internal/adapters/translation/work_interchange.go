@@ -2,6 +2,7 @@ package translationadapter
 
 import (
 	"context"
+	"errors"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -9,6 +10,7 @@ import (
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	"github.com/echovisionlab/geul-api/internal/work"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
 )
@@ -45,8 +47,11 @@ func (*WorkInterchangePort) LoadTranslationInterchangeTarget(
 			"target", "Work translation interchange identity does not match the route",
 		)
 	}
+	if db == nil || store == nil {
+		return application.TranslationInterchangeTargetState{}, errors.New("Work translation interchange load identity is invalid")
+	}
 	state, err := work.LoadTranslationInterchangeTarget(
-		ctx, db, store, entityID, locale, plan, ProjectRichTextInterchangeTargets,
+		ctx, workStore(db, store), entityID, locale, plan, ProjectRichTextInterchangeTargets,
 	)
 	if err != nil {
 		return application.TranslationInterchangeTargetState{}, err
@@ -73,9 +78,12 @@ func (p *WorkInterchangePort) ApplyTranslationInterchange(
 	if err != nil {
 		return application.TranslationInterchangeApplyResult{}, err
 	}
-	result, err := work.ApplyTranslationInterchange(ctx, db, store, work.TranslationInterchangeMutation{
+	if db == nil || store == nil {
+		return application.TranslationInterchangeApplyResult{}, errors.New("Work translation interchange load identity is invalid")
+	}
+	result, err := work.ApplyTranslationInterchange(ctx, workStore(db, store), work.TranslationInterchangeMutation{
 		WorkID: command.EntityID, SourceLocale: command.SourceLocale, TargetLocale: command.TargetLocale,
-		Mode: command.Mode, ExpectedRevision: command.ExpectedRevision,
+		Mode: workInterchangeMode(command.Mode), ExpectedRevision: command.ExpectedRevision,
 		Source: command.Source, Plan: command.Plan, Targets: command.Targets,
 		UnitHandles: command.UnitHandles, Now: command.Now,
 		ProjectTargets: ProjectRichTextInterchangeTargets,
@@ -99,3 +107,14 @@ func (p *WorkInterchangePort) ApplyTranslationInterchange(
 }
 
 var _ application.TranslationInterchangeDomains = (*WorkInterchangePort)(nil)
+
+func workInterchangeMode(mode managev1.TranslationInterchangeMode) work.InterchangeMode {
+	switch mode {
+	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH:
+		return work.InterchangePatch
+	case managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE:
+		return work.InterchangeReplace
+	default:
+		return 0
+	}
+}

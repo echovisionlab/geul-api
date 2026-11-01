@@ -328,32 +328,35 @@ type recordingWorkRelated struct {
 	creditUpdate *work.UpdateWorkCreditCommand
 }
 
-func (r *recordingWorkRelated) ListWorkVersions(_ context.Context, query work.ListWorkVersionsQuery) (*managev1.ListWorkVersionsResponse, error) {
+func (r *recordingWorkRelated) ListWorkVersions(_ context.Context, query work.ListWorkVersionsQuery) (work.VersionPage, error) {
 	r.versions = &query
-	return &managev1.ListWorkVersionsResponse{Pagination: (queryutil.Pagination{Limit: query.Page.Limit, Offset: query.Page.Offset}).BuildResponse(6)}, nil
+	pagination := queryutil.Pagination{Limit: query.Page.Limit, Offset: query.Page.Offset}
+	return work.VersionPage{Pagination: work.Pagination{
+		Total: 6, Limit: pagination.Limit, Offset: pagination.Offset, HasMore: pagination.HasMore(6),
+	}}, nil
 }
 
-func (r *recordingWorkRelated) SetWorkFeaturedImage(_ context.Context, command work.SetWorkFeaturedImageCommand) (*managev1.SetWorkFeaturedImageResponse, error) {
+func (r *recordingWorkRelated) SetWorkFeaturedImage(_ context.Context, command work.SetWorkFeaturedImageCommand) (work.FeaturedImageChange, error) {
 	r.featured = &command
-	return &managev1.SetWorkFeaturedImageResponse{}, nil
+	return work.FeaturedImageChange{}, nil
 }
 
-func (r *recordingWorkRelated) AddWorkCredit(_ context.Context, command work.AddWorkCreditCommand) (*managev1.WorkCredit, error) {
+func (r *recordingWorkRelated) AddWorkCredit(_ context.Context, command work.AddWorkCreditCommand) (work.CreditView, error) {
 	r.credit = &command
-	return &managev1.WorkCredit{Id: "77777777-7777-4777-8777-777777777777", Name: command.Name, CreditRole: command.CreditRole}, nil
+	return work.CreditView{Credit: work.Credit{ID: "77777777-7777-4777-8777-777777777777", Name: command.Name, CreditRole: command.CreditRole}}, nil
 }
 
-func (r *recordingWorkRelated) UpdateWorkCreditGroup(_ context.Context, command work.UpdateWorkCreditGroupCommand) (*managev1.WorkCreditGroup, error) {
+func (r *recordingWorkRelated) UpdateWorkCreditGroup(_ context.Context, command work.UpdateWorkCreditGroupCommand) (work.CreditGroup, error) {
 	name := ""
 	if command.Name != nil {
 		name = *command.Name
 	}
-	return &managev1.WorkCreditGroup{Id: command.GroupID, Name: name}, nil
+	return work.CreditGroup{ID: command.GroupID, Name: name}, nil
 }
 
-func (r *recordingWorkRelated) UpdateWorkCredit(_ context.Context, command work.UpdateWorkCreditCommand) (*managev1.WorkCredit, error) {
+func (r *recordingWorkRelated) UpdateWorkCredit(_ context.Context, command work.UpdateWorkCreditCommand) (work.CreditView, error) {
 	r.creditUpdate = &command
-	return &managev1.WorkCredit{Id: command.CreditID, CreditRole: command.CreditRole}, nil
+	return work.CreditView{Credit: work.Credit{ID: command.CreditID, CreditRole: command.CreditRole}}, nil
 }
 
 type recordingPageRelated struct {

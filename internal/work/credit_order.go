@@ -7,35 +7,27 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
+// OrderItem is one item of a Work's flattened credit order: a group, or a
+// credit in GroupID's group (nil when ungrouped).
+type OrderItem struct {
+	Kind    CreditItemKind
+	ID      string
+	GroupID *string
+}
+
 type workCreditOrderEntry struct {
-	kind    managev1.WorkCreditItemKind
+	kind    CreditItemKind
 	id      string
 	groupID *string
 }
 
-func loadWorkCreditRows(ctx context.Context, db *gorm.DB, workID string) ([]model.WorkCreditGroup, []model.WorkCredit, []workCreditOrderEntry, error) {
-	var groups []model.WorkCreditGroup
-	if err := db.WithContext(ctx).
-		Where("work_id = ?", workID).
-		Order("sort_order ASC").
-		Order("id ASC").
-		Find(&groups).Error; err != nil {
-		return nil, nil, nil, err
-	}
-
-	var credits []model.WorkCredit
-	if err := db.WithContext(ctx).
-		Where("work_id = ?", workID).
-		Order("sort_order ASC").
-		Order("id ASC").
-		Find(&credits).Error; err != nil {
+func loadWorkCreditRows(ctx context.Context, store Store, workID string) ([]CreditGroup, []Credit, []workCreditOrderEntry, error) {
+	groups, credits, err := store.CreditRows(ctx, workID)
+	if err != nil {
 		return nil, nil, nil, err
 	}
 
@@ -48,21 +40,21 @@ func loadWorkCreditRows(ctx context.Context, db *gorm.DB, workID string) ([]mode
 
 // buildWorkCreditOrder merges the group and credit rows when their sort orders
 // describe a valid canonical flattened list.
-func buildWorkCreditOrder(groups []model.WorkCreditGroup, credits []model.WorkCredit) ([]workCreditOrderEntry, error) {
+func buildWorkCreditOrder(groups []CreditGroup, credits []Credit) ([]workCreditOrderEntry, error) {
 	merged := make([]workCreditOrderEntry, 0, len(groups)+len(credits))
 	groupSortOrders := make(map[string]int, len(groups))
 	creditSortOrders := make(map[string]int, len(credits))
 	for _, group := range groups {
 		groupSortOrders[group.ID] = group.SortOrder
 		merged = append(merged, workCreditOrderEntry{
-			kind: managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP,
+			kind: CreditItemGroup,
 			id:   group.ID,
 		})
 	}
 	for _, credit := range credits {
 		creditSortOrders[credit.ID] = credit.SortOrder
 		merged = append(merged, workCreditOrderEntry{
-			kind:    managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT,
+			kind:    CreditItemCredit,
 			id:      credit.ID,
 			groupID: cloneGroupID(credit.GroupID),
 		})
@@ -85,7 +77,7 @@ func buildWorkCreditOrder(groups []model.WorkCreditGroup, credits []model.WorkCr
 }
 
 func orderEntrySortOrder(entry workCreditOrderEntry, groupSortOrders, creditSortOrders map[string]int) int {
-	if entry.kind == managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP {
+	if entry.kind == CreditItemGroup {
 		return groupSortOrders[entry.id]
 	}
 	return creditSortOrders[entry.id]
@@ -93,8 +85,8 @@ func orderEntrySortOrder(entry workCreditOrderEntry, groupSortOrders, creditSort
 
 func validPersistedWorkCreditOrder(
 	order []workCreditOrderEntry,
-	groups []model.WorkCreditGroup,
-	credits []model.WorkCredit,
+	groups []CreditGroup,
+	credits []Credit,
 	groupSortOrders map[string]int,
 	creditSortOrders map[string]int,
 ) bool {
@@ -122,7 +114,7 @@ func validPersistedWorkCreditOrder(
 	seenCredits := make(map[string]struct{}, len(credits))
 	for _, entry := range order {
 		switch entry.kind {
-		case managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP:
+		case CreditItemGroup:
 			if _, ok := groupIDs[entry.id]; !ok {
 				return false
 			}
@@ -131,7 +123,7 @@ func validPersistedWorkCreditOrder(
 			}
 			seenGroups[entry.id] = struct{}{}
 			activeGroup = entry.id
-		case managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT:
+		case CreditItemCredit:
 			if _, ok := creditIDs[entry.id]; !ok {
 				return false
 			}
@@ -153,10 +145,10 @@ func validPersistedWorkCreditOrder(
 	return len(seenGroups) == len(groups) && len(seenCredits) == len(credits)
 }
 
-func moveWorkCreditGroupOrder(order []workCreditOrderEntry, groupID string, after, before *managev1.WorkCreditOrderItem) ([]workCreditOrderEntry, bool) {
+func moveWorkCreditGroupOrder(order []workCreditOrderEntry, groupID string, after, before *OrderItem) ([]workCreditOrderEntry, bool) {
 	start := -1
 	for index, entry := range order {
-		if entry.kind == managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP && entry.id == groupID {
+		if entry.kind == CreditItemGroup && entry.id == groupID {
 			start = index
 			break
 		}
@@ -168,7 +160,7 @@ func moveWorkCreditGroupOrder(order []workCreditOrderEntry, groupID string, afte
 		return order, false
 	}
 	end := start + 1
-	for end < len(order) && order[end].kind == managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT &&
+	for end < len(order) && order[end].kind == CreditItemCredit &&
 		order[end].groupID != nil && *order[end].groupID == groupID {
 		end++
 	}
@@ -191,42 +183,42 @@ func moveWorkCreditGroupOrder(order []workCreditOrderEntry, groupID string, afte
 	return result, !sameWorkCreditOrder(order, result)
 }
 
-func workCreditGroupAnchorInSection(order []workCreditOrderEntry, anchor *managev1.WorkCreditOrderItem, groupID string) bool {
-	if anchor == nil || anchor.Id == "" {
+func workCreditGroupAnchorInSection(order []workCreditOrderEntry, anchor *OrderItem, groupID string) bool {
+	if anchor == nil || anchor.ID == "" {
 		return false
 	}
-	index := findWorkCreditOrderEntry(order, anchor.Kind, anchor.Id)
+	index := findWorkCreditOrderEntry(order, anchor.Kind, anchor.ID)
 	if index < 0 {
 		return false
 	}
 	entry := order[index]
-	if entry.kind == managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP {
+	if entry.kind == CreditItemGroup {
 		return entry.id == groupID
 	}
-	return entry.kind == managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT &&
+	return entry.kind == CreditItemCredit &&
 		entry.groupID != nil && *entry.groupID == groupID
 }
 
-func workCreditGroupAnchorPosition(order []workCreditOrderEntry, anchor *managev1.WorkCreditOrderItem, before bool) (int, bool) {
-	if anchor == nil || anchor.Id == "" {
+func workCreditGroupAnchorPosition(order []workCreditOrderEntry, anchor *OrderItem, before bool) (int, bool) {
+	if anchor == nil || anchor.ID == "" {
 		return 0, false
 	}
-	index := findWorkCreditOrderEntry(order, anchor.Kind, anchor.Id)
+	index := findWorkCreditOrderEntry(order, anchor.Kind, anchor.ID)
 	if index < 0 {
 		return 0, false
 	}
 	entry := order[index]
-	if entry.kind == managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP {
+	if entry.kind == CreditItemGroup {
 		if before {
 			return index, true
 		}
 		return workCreditGroupSectionEnd(order, index, entry.id), true
 	}
-	if entry.kind != managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT {
+	if entry.kind != CreditItemCredit {
 		return 0, false
 	}
 	if entry.groupID != nil {
-		groupIndex := findWorkCreditOrderEntry(order, managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP, *entry.groupID)
+		groupIndex := findWorkCreditOrderEntry(order, CreditItemGroup, *entry.groupID)
 		if groupIndex < 0 {
 			return 0, false
 		}
@@ -243,15 +235,15 @@ func workCreditGroupAnchorPosition(order []workCreditOrderEntry, anchor *managev
 
 func workCreditGroupSectionEnd(order []workCreditOrderEntry, groupIndex int, groupID string) int {
 	index := groupIndex + 1
-	for index < len(order) && order[index].kind == managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT &&
+	for index < len(order) && order[index].kind == CreditItemCredit &&
 		order[index].groupID != nil && *order[index].groupID == groupID {
 		index++
 	}
 	return index
 }
 
-func moveWorkCreditOrder(order []workCreditOrderEntry, creditID string, targetGroupID *string, after, before *managev1.WorkCreditOrderItem) ([]workCreditOrderEntry, bool) {
-	start := findWorkCreditOrderEntry(order, managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT, creditID)
+func moveWorkCreditOrder(order []workCreditOrderEntry, creditID string, targetGroupID *string, after, before *OrderItem) ([]workCreditOrderEntry, bool) {
+	start := findWorkCreditOrderEntry(order, CreditItemCredit, creditID)
 	if start < 0 {
 		return order, false
 	}
@@ -278,11 +270,11 @@ func moveWorkCreditOrder(order []workCreditOrderEntry, creditID string, targetGr
 	return result, !sameWorkCreditOrder(order, result)
 }
 
-func workCreditCreditAnchorPosition(order []workCreditOrderEntry, anchor *managev1.WorkCreditOrderItem, targetGroupID *string) (int, bool) {
-	if anchor == nil || anchor.Kind != managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT || anchor.Id == "" {
+func workCreditCreditAnchorPosition(order []workCreditOrderEntry, anchor *OrderItem, targetGroupID *string) (int, bool) {
+	if anchor == nil || anchor.Kind != CreditItemCredit || anchor.ID == "" {
 		return 0, false
 	}
-	index := findWorkCreditOrderEntry(order, anchor.Kind, anchor.Id)
+	index := findWorkCreditOrderEntry(order, anchor.Kind, anchor.ID)
 	if index < 0 || !sameOptionalString(order[index].groupID, targetGroupID) {
 		return 0, false
 	}
@@ -293,14 +285,14 @@ func workCreditGroupSectionEndForTarget(order []workCreditOrderEntry, groupID *s
 	if groupID == nil {
 		return len(order)
 	}
-	groupIndex := findWorkCreditOrderEntry(order, managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP, *groupID)
+	groupIndex := findWorkCreditOrderEntry(order, CreditItemGroup, *groupID)
 	if groupIndex < 0 {
 		return len(order)
 	}
 	return workCreditGroupSectionEnd(order, groupIndex, *groupID)
 }
 
-func findWorkCreditOrderEntry(order []workCreditOrderEntry, kind managev1.WorkCreditItemKind, id string) int {
+func findWorkCreditOrderEntry(order []workCreditOrderEntry, kind CreditItemKind, id string) int {
 	for index, entry := range order {
 		if entry.kind == kind && entry.id == id {
 			return index
@@ -315,33 +307,33 @@ func findWorkCreditOrderEntry(order []workCreditOrderEntry, kind managev1.WorkCr
 // or the target section's end.
 func validateWorkCreditMoveAnchors(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	order []workCreditOrderEntry,
-	movingKind managev1.WorkCreditItemKind,
+	movingKind CreditItemKind,
 	movingID string,
 	targetGroupID *string,
-	after, before *managev1.WorkCreditOrderItem,
+	after, before *OrderItem,
 ) error {
-	for _, anchor := range []*managev1.WorkCreditOrderItem{after, before} {
+	for _, anchor := range []*OrderItem{after, before} {
 		if anchor == nil {
 			continue
 		}
-		if strings.TrimSpace(anchor.Id) == "" {
+		if strings.TrimSpace(anchor.ID) == "" {
 			return domainerr.InvalidField("anchor.id", "must identify an item")
 		}
-		if anchor.Kind != managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP &&
-			anchor.Kind != managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT {
+		if anchor.Kind != CreditItemGroup &&
+			anchor.Kind != CreditItemCredit {
 			return domainerr.InvalidField("anchor.kind", "must identify a group or credit")
 		}
-		if anchor.Kind == movingKind && anchor.Id == movingID {
+		if anchor.Kind == movingKind && anchor.ID == movingID {
 			return domainerr.InvalidField("anchor", "cannot reference the moved item")
 		}
 
-		index := findWorkCreditOrderEntry(order, anchor.Kind, anchor.Id)
+		index := findWorkCreditOrderEntry(order, anchor.Kind, anchor.ID)
 		if index >= 0 {
-			if movingKind == managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT {
+			if movingKind == CreditItemCredit {
 				entry := order[index]
-				if anchor.Kind != managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT ||
+				if anchor.Kind != CreditItemCredit ||
 					!sameOptionalString(entry.groupID, targetGroupID) {
 					return domainerr.InvalidField("anchor", "must be a credit in the target group")
 				}
@@ -349,18 +341,15 @@ func validateWorkCreditMoveAnchors(
 			continue
 		}
 
-		parsedID, err := uuid.Parse(anchor.Id)
+		parsedID, err := uuid.Parse(anchor.ID)
 		if err != nil {
 			return domainerr.InvalidField("anchor.id", "must be a valid item ID")
 		}
-		var groupCount, creditCount int64
-		if err := tx.WithContext(ctx).Model(&model.WorkCreditGroup{}).Where("id = ?", parsedID.String()).Count(&groupCount).Error; err != nil {
+		exists, err := store.CreditItemExists(ctx, parsedID.String())
+		if err != nil {
 			return err
 		}
-		if err := tx.WithContext(ctx).Model(&model.WorkCredit{}).Where("id = ?", parsedID.String()).Count(&creditCount).Error; err != nil {
-			return err
-		}
-		if groupCount > 0 || creditCount > 0 {
+		if exists {
 			return domainerr.InvalidField("anchor", "must reference a compatible item in this Work")
 		}
 	}
@@ -396,7 +385,7 @@ func insertWorkCreditAtGroupEnd(order []workCreditOrderEntry, entry workCreditOr
 	return result
 }
 
-func removeWorkCreditOrderEntry(order []workCreditOrderEntry, kind managev1.WorkCreditItemKind, id string) []workCreditOrderEntry {
+func removeWorkCreditOrderEntry(order []workCreditOrderEntry, kind CreditItemKind, id string) []workCreditOrderEntry {
 	index := findWorkCreditOrderEntry(order, kind, id)
 	if index < 0 {
 		return order
@@ -407,58 +396,35 @@ func removeWorkCreditOrderEntry(order []workCreditOrderEntry, kind managev1.Work
 	return result
 }
 
-func protoWorkCreditOrder(order []workCreditOrderEntry) []*managev1.WorkCreditOrderItem {
-	result := make([]*managev1.WorkCreditOrderItem, 0, len(order))
+func workCreditOrderItems(order []workCreditOrderEntry) []OrderItem {
+	result := make([]OrderItem, 0, len(order))
 	for _, entry := range order {
-		item := &managev1.WorkCreditOrderItem{Kind: entry.kind, Id: entry.id}
-		if entry.kind == managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT {
-			groupID := ""
-			if entry.groupID != nil {
-				groupID = *entry.groupID
-			}
-			item.GroupId = &groupID
-		}
-		result = append(result, item)
+		result = append(result, OrderItem{Kind: entry.kind, ID: entry.id, GroupID: cloneGroupID(entry.groupID)})
 	}
 	return result
 }
 
-func persistWorkCreditOrder(ctx context.Context, tx *gorm.DB, workID string, order []workCreditOrderEntry) error {
+func persistWorkCreditOrder(ctx context.Context, store Store, workID string, order []workCreditOrderEntry) error {
 	for index, entry := range order {
 		sortOrder := index + 1
 		switch entry.kind {
-		case managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_GROUP:
-			result := tx.WithContext(ctx).
-				Model(&model.WorkCreditGroup{}).
-				Where("id = ? AND work_id = ?", entry.id, workID).
-				Update("sort_order", sortOrder)
-			if result.Error != nil {
-				return result.Error
+		case CreditItemGroup:
+			if err := store.SetGroupSortOrder(ctx, workID, entry.id, sortOrder); err != nil {
+				return err
 			}
-			if result.RowsAffected == 0 {
-				return gorm.ErrRecordNotFound
-			}
-		case managev1.WorkCreditItemKind_WORK_CREDIT_ITEM_KIND_CREDIT:
-			var groupID any
-			if entry.groupID != nil {
-				groupID = *entry.groupID
-			}
-			result := tx.WithContext(ctx).
-				Model(&model.WorkCredit{}).
-				Where("id = ? AND work_id = ?", entry.id, workID).
-				Updates(map[string]any{"group_id": groupID, "sort_order": sortOrder})
-			if result.Error != nil {
-				return result.Error
-			}
-			if result.RowsAffected == 0 {
-				return gorm.ErrRecordNotFound
+		case CreditItemCredit:
+			if err := store.SetCreditSortOrder(ctx, workID, entry.id, entry.groupID, sortOrder); err != nil {
+				return err
 			}
 		default:
-			return gorm.ErrInvalidData
+			return errInvalidCreditOrder
 		}
 	}
 	return nil
 }
+
+// errInvalidCreditOrder answers an order entry of no known kind.
+var errInvalidCreditOrder = errors.New("unsupported data")
 
 func cloneGroupID(groupID *string) *string {
 	if groupID == nil {

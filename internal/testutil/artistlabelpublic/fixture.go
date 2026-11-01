@@ -46,6 +46,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testutil/releasetest"
 	"github.com/echovisionlab/geul-api/internal/testutil/sharelinktest"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
+	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -141,12 +142,15 @@ func New(t *testing.T) *ArtistLabelPublicFixture {
 		WaveformJobs: releaseadapter.NewWaveformJobs(db, artistLabelTranscoderPublisher{}),
 		Assets:       releaseadapter.NewAssets(artistLabelPublicCDN), OG: releaseadapter.NewOG(artistLabelPublicCDN),
 	}))
+	workUnits, err := workpostgres.NewUnits(db, workpostgres.Ports{
+		ContentBlocks: contentBlocks, Signals: publisher, Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
+		Runtime: workFixtureRuntime(db), Media: artistLabelMediaHydrator{},
+		ShareLinks: sharelinkadapter.EntityLinks{Type: sharelinkdomain.EntityWork},
+	})
+	require.NoError(t, err)
 	workService, err := workdomain.NewService(workdomain.Deps{
-		DB: db, SpiceDB: spiceDB, Runtime: workFixtureRuntime(db), Signals: publisher,
-		ContentBlocks: contentBlocks, Media: artistLabelMediaHydrator{},
-		Members:     workadapter.NewMemberSummaries(db, artistLabelPublicCDN),
-		Checkpoints: testcollaboration.NewCheckpoints(db, spiceDB),
-		ShareLinks:  sharelinkadapter.EntityLinks{Type: sharelinkdomain.EntityWork}, Audit: apitelemetry.NewDurableWriter(db),
+		Units: workUnits, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Audit: apitelemetry.NewDurableWriter(db),
+		Members: workadapter.NewMemberSummaries(db, artistLabelPublicCDN),
 	})
 	require.NoError(t, err)
 	manageWork := workdomain.NewConnectHandler(workService)

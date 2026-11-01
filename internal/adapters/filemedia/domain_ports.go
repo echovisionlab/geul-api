@@ -20,6 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	releasedomain "github.com/echovisionlab/geul-api/internal/release"
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
+	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -84,7 +85,7 @@ type WorkAttachment struct{ db *gorm.DB }
 func NewWorkAttachment(db *gorm.DB) *WorkAttachment { return &WorkAttachment{db: db} }
 
 func (a *WorkAttachment) RequireExists(ctx context.Context, workID string) error {
-	return workdomain.RequireExists(ctx, a.db, workID)
+	return workdomain.RequireExists(ctx, workpostgres.Bind(a.db, workpostgres.Ports{}, nil).Store, workID)
 }
 
 type ProgramEventAttachment struct{ db *gorm.DB }

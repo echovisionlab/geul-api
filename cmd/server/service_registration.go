@@ -87,6 +87,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/transcode"
 	"github.com/echovisionlab/geul-api/internal/work"
+	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"go.akshayshah.org/connectproto"
@@ -468,12 +469,16 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(accountPath, accountHandler)
 	slog.Info("Registered service", "path", accountPath)
 
+	workUnits, err := workpostgres.NewUnits(db, workpostgres.Ports{
+		ContentBlocks: contentBlockStore, Signals: servicePublisher, Checkpoints: collaborationRuntime.Checkpoints,
+		Runtime: workRuntime, Media: fileService, ShareLinks: sharelinkadapter.EntityLinks{Type: sharelink.EntityWork},
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Work store: %w", err)
+	}
 	workService, err := work.NewService(work.Deps{
-		DB: db, SpiceDB: spicedbClient, Runtime: workRuntime, Signals: servicePublisher,
-		ContentBlocks: contentBlockStore, Media: fileService,
-		Members:     workadapter.NewMemberSummaries(db, cfg.CDNURL),
-		Checkpoints: collaborationRuntime.Checkpoints,
-		ShareLinks:  sharelinkadapter.EntityLinks{Type: sharelink.EntityWork}, Audit: telemetryWriter,
+		Units: workUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
+		Members: workadapter.NewMemberSummaries(db, cfg.CDNURL),
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize Work service: %w", err)

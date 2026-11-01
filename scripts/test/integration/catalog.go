@@ -73,6 +73,8 @@ var integrationCatalog = []integrationBand{
 			"./internal/transcode/application",
 			"./internal/transcoding/mq",
 			"./internal/translation",
+			"./internal/work/postgres",
+			"./internal/work/public/postgres",
 		},
 	},
 	{
@@ -126,8 +128,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/sitesettings/integration",
 			"./internal/sitesettings/public/integration",
 			"./internal/translation/application",
-			"./internal/work/integration",
-			"./internal/work/public/integration",
+			"./internal/work",
 			"./internal/worker",
 		},
 	},

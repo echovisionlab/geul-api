@@ -9,7 +9,6 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/echovisionlab/geul-api/internal/mapcluster"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -20,15 +19,15 @@ func TestNormalizeWorkMapViewportRequiresBounds(t *testing.T) {
 	_, err := normalizeWorkMapViewport(nil)
 	require.Error(t, err)
 
-	_, err = normalizeWorkMapViewport(&openv1.WorkMapViewport{})
+	_, err = normalizeWorkMapViewport(&Viewport{})
 	require.Error(t, err)
 }
 
 func TestNormalizeWorkMapViewportTreatsWorldWrappingWidthAsFullLongitude(t *testing.T) {
 	t.Parallel()
 
-	viewport, err := normalizeWorkMapViewport(&openv1.WorkMapViewport{
-		Bounds: &openv1.WorkMapBounds{
+	viewport, err := normalizeWorkMapViewport(&Viewport{
+		Bounds: &Bounds{
 			West:  -54.67106,
 			South: -61.14290,
 			East:  54.67106,
@@ -96,11 +95,11 @@ func TestClusterWorkMapPlaceGroupsStillClustersSameCoordinateGroupsAtLowZoom(t *
 	if len(items) != 0 {
 		t.Fatalf("expected no items at low zoom for identical coordinates, got %d", len(items))
 	}
-	if clusters[0].GetMinBreakoutZoom() != mapcluster.MapClusterSameCoordinateBreakoutZoom {
+	if minBreakoutZoom(clusters[0]) != mapcluster.MapClusterSameCoordinateBreakoutZoom {
 		t.Fatalf(
 			"expected min_breakout_zoom=%v, got %v",
 			mapcluster.MapClusterSameCoordinateBreakoutZoom,
-			clusters[0].GetMinBreakoutZoom(),
+			minBreakoutZoom(clusters[0]),
 		)
 	}
 }
@@ -127,14 +126,14 @@ func TestClusterWorkMapPlaceGroupsProvideBreakoutZoomForDistinctCoordinates(t *t
 		t.Fatalf("expected no standalone items for nearby coordinates, got %d", len(items))
 	}
 
-	breakoutZoom := clusters[0].GetMinBreakoutZoom()
+	breakoutZoom := minBreakoutZoom(clusters[0])
 	if breakoutZoom <= 4 {
 		t.Fatalf("expected breakout zoom above current zoom, got %v", breakoutZoom)
 	}
-	if clusters[0].Bounds.GetSouth() >= clusters[0].Bounds.GetNorth() {
+	if clusters[0].Bounds.South >= clusters[0].Bounds.North {
 		t.Fatalf("expected cluster bounds to track min/max latitude, got %+v", clusters[0].Bounds)
 	}
-	if clusters[0].Bounds.GetWest() >= clusters[0].Bounds.GetEast() {
+	if clusters[0].Bounds.West >= clusters[0].Bounds.East {
 		t.Fatalf("expected cluster bounds to track min/max longitude, got %+v", clusters[0].Bounds)
 	}
 }
@@ -158,7 +157,7 @@ func TestClusterWorkMapPlaceGroupsReturnsItemsWhenBelowMinimumClusterPoints(t *t
 	if len(items) != 1 {
 		t.Fatalf("expected one standalone item below min cluster points, got %d", len(items))
 	}
-	if items[0].PlaceId != "place-1" || items[0].PrimaryWorkId != "work-1" {
+	if items[0].PlaceID != "place-1" || items[0].PrimaryWorkID != "work-1" {
 		t.Fatalf("unexpected standalone item: %+v", items[0])
 	}
 }
@@ -166,8 +165,8 @@ func TestClusterWorkMapPlaceGroupsReturnsItemsWhenBelowMinimumClusterPoints(t *t
 func TestNormalizeWorkMapViewportUsesSharedClusterFallbacks(t *testing.T) {
 	t.Parallel()
 
-	viewport, err := normalizeWorkMapViewport(&openv1.WorkMapViewport{
-		Bounds: &openv1.WorkMapBounds{
+	viewport, err := normalizeWorkMapViewport(&Viewport{
+		Bounds: &Bounds{
 			West:  -54.67106,
 			South: -61.14290,
 			East:  54.67106,
@@ -198,8 +197,8 @@ func TestNormalizeWorkMapViewportUsesSharedClusterFallbacks(t *testing.T) {
 func TestNormalizeWorkMapViewportClampsLatitudeAndWrapsLongitude(t *testing.T) {
 	t.Parallel()
 
-	viewport, err := normalizeWorkMapViewport(&openv1.WorkMapViewport{
-		Bounds: &openv1.WorkMapBounds{
+	viewport, err := normalizeWorkMapViewport(&Viewport{
+		Bounds: &Bounds{
 			West:  -540,
 			South: 120,
 			East:  540,
@@ -248,8 +247,8 @@ func TestNormalizeWorkMapViewportUsesMapLibreWorldSize(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			viewport, err := normalizeWorkMapViewport(&openv1.WorkMapViewport{
-				Bounds: &openv1.WorkMapBounds{West: -100, East: 100, South: -60, North: 60},
+			viewport, err := normalizeWorkMapViewport(&Viewport{
+				Bounds: &Bounds{West: -100, East: 100, South: -60, North: 60},
 				Zoom:   test.zoom, WidthPx: test.width, HeightPx: 256,
 			})
 			if err != nil {
@@ -284,8 +283,8 @@ func TestNormalizeWorkMapViewportPreservesLegacyZoomDefaults(t *testing.T) {
 		{name: "negative zoom missing height", zoom: -0.5, width: 320},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			viewport, err := normalizeWorkMapViewport(&openv1.WorkMapViewport{
-				Bounds: &openv1.WorkMapBounds{West: -20, East: 20, South: -10, North: 10},
+			viewport, err := normalizeWorkMapViewport(&Viewport{
+				Bounds: &Bounds{West: -20, East: 20, South: -10, North: 10},
 				Zoom:   test.zoom, WidthPx: test.width, HeightPx: test.height,
 			})
 			if err != nil {
@@ -307,8 +306,8 @@ func TestNormalizeWorkMapViewportPreservesLegacyZoomDefaults(t *testing.T) {
 func TestNormalizeWorkMapViewportRejectsNonFiniteZoom(t *testing.T) {
 	t.Parallel()
 	for _, zoom := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
-		if _, err := normalizeWorkMapViewport(&openv1.WorkMapViewport{
-			Bounds: &openv1.WorkMapBounds{West: -20, East: 20, South: -10, North: 10},
+		if _, err := normalizeWorkMapViewport(&Viewport{
+			Bounds: &Bounds{West: -20, East: 20, South: -10, North: 10},
 			Zoom:   zoom, WidthPx: 320, HeightPx: 320,
 		}); errs.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Fatalf("non-finite zoom %v error=%v; want InvalidArgument", zoom, err)
@@ -335,8 +334,8 @@ func TestNormalizeWorkMapViewportPreservesSignedMapLibreZoom(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			viewport, err := normalizeWorkMapViewport(&openv1.WorkMapViewport{
-				Bounds: &openv1.WorkMapBounds{West: -100, East: 100, South: -60, North: 60},
+			viewport, err := normalizeWorkMapViewport(&Viewport{
+				Bounds: &Bounds{West: -100, East: 100, South: -60, North: 60},
 				Zoom:   test.zoom, WidthPx: test.width, HeightPx: test.height,
 			})
 			if err != nil {
@@ -351,4 +350,11 @@ func TestNormalizeWorkMapViewportPreservesSignedMapLibreZoom(t *testing.T) {
 			}
 		})
 	}
+}
+
+func minBreakoutZoom(cluster MapCluster) float64 {
+	if cluster.MinBreakoutZoom == nil {
+		return 0
+	}
+	return *cluster.MinBreakoutZoom
 }
