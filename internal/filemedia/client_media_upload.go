@@ -20,8 +20,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -109,15 +110,19 @@ func (s *Service) prepareMediaBundle(ctx context.Context, session model.UploadSe
 		return *session.ClientMediaBundleID, nil
 	}
 	bundleID := uuid.NewString()
-	result := s.db.WithContext(ctx).Model(&model.UploadSession{}).
-		Where("upload_id = ? AND file_id = ? AND status IN ? AND client_media_bundle_id IS NULL", session.UploadID, session.FileID, []model.UploadSessionStatus{model.UploadSessionStatusInitiated, model.UploadSessionStatusUploading}).
-		Updates(structured.Fields{"client_media_bundle_id": bundleID, "client_media_manifest": manifest, "last_activity_at": time.Now()})
-	if result.Error != nil {
-		return "", result.Error
+	changed := false
+	err = s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		var err error
+		changed, err = unit.Store().PrepareUploadBundle(ctx, session.UploadID, session.FileID, bundleID, manifest, time.Now())
+		return err
+	})
+	if err != nil {
+		return "", err
 	}
-	if result.RowsAffected != 1 {
+	if !changed {
 		return "", domainerr.Precondition("upload session changed before bundle preparation")
 	}
+
 	return bundleID, nil
 }
 
@@ -129,12 +134,19 @@ func (s *Service) authorizedClientMediaSession(ctx context.Context, uploadID, fi
 	if !IsValidUUID(fileID) || uploadID == "" || len(uploadID) > 256 {
 		return session, domainerr.InvalidField("upload_id", "invalid upload identity")
 	}
-	if err := s.db.WithContext(ctx).Where("upload_id = ? AND file_id = ?", uploadID, fileID).Take(&session).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	var row domain.UploadSession
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		row, err = store.UploadSession(ctx, uploadID, fileID, false)
+		return err
+	}); err != nil {
+		if errors.Is(err, domain.ErrUploadSessionNotFound) {
 			return session, domainerr.New(domainerr.NotFound, "", "upload session not found")
 		}
 		return session, err
 	}
+	session = uploadSessionFromStore(row)
+
 	user := auth.GetUser(ctx)
 	if user == nil {
 		return session, domainerr.AuthenticationRequired()

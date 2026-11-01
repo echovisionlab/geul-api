@@ -15,6 +15,11 @@ import (
 func writableUploadStatuses() []model.UploadSessionStatus {
 	return []model.UploadSessionStatus{model.UploadSessionStatusInitiated, model.UploadSessionStatusUploading}
 }
+
+func (s *store) PrepareUploadBundle(ctx context.Context, upload, file, bundle, manifest string, now time.Time) (bool, error) {
+	r := s.tx.WithContext(ctx).Model(&model.UploadSession{}).Where("upload_id = ? AND file_id = ? AND status IN ? AND client_media_bundle_id IS NULL", upload, file, writableUploadStatuses()).Updates(structured.Fields{"client_media_bundle_id": bundle, "client_media_manifest": manifest, "last_activity_at": now})
+	return r.RowsAffected == 1, r.Error
+}
 func (s *store) WritableUploadSession(ctx context.Context, upload, file string) (domain.UploadSession, error) {
 	var row model.UploadSession
 	err := s.tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("upload_id = ? AND file_id = ? AND status IN ?", upload, file, writableUploadStatuses()).Take(&row).Error

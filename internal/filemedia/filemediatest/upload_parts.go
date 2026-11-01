@@ -2,12 +2,30 @@ package filemediatest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 )
+
+func (s *LibraryStore) PrepareUploadBundle(_ context.Context, upload, file, bundle, manifest string, now time.Time) (bool, error) {
+	if s.Fail != nil {
+		return false, s.Fail
+	}
+	row, ok := s.UploadSessions[upload]
+	if !ok || row.FileID != file || !activeUploadStatus(row.Status, true) || row.ClientMediaBundleID != nil {
+		return false, nil
+	}
+	if !json.Valid([]byte(manifest)) {
+		return false, errors.New("upload bundle manifest is invalid JSON")
+	}
+	row.ClientMediaBundleID, row.ClientMediaManifest = new(bundle), new(manifest)
+	row.LastActivityAt, row.UpdatedAt = now, time.Now().UTC().Truncate(time.Microsecond)
+	s.UploadSessions[upload] = row
+	return true, nil
+}
 
 func (s *LibraryStore) WritableUploadSession(ctx context.Context, upload, file string) (domain.UploadSession, error) {
 	row, err := s.UploadSession(ctx, upload, file, true)

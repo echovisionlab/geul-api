@@ -133,3 +133,23 @@ func ExportLoadFinishedFile(s *Service, ctx context.Context, id string) (File, i
 	file, upload, err := s.loadFinishedMultipartFile(ctx, id)
 	return File(file), int32(upload), err
 }
+
+func ExportPrepareBundle(s *Service, ctx context.Context, row domain.UploadSession, command PrepareClientMediaUploadCommand) (string, error) {
+	return s.prepareMediaBundle(ctx, uploadSessionFromStore(row), command)
+}
+
+func ExportClientBundleFixture(t *testing.T, kind string) (domain.UploadSession, PrepareClientMediaUploadCommand, string) {
+	row, _ := clientMediaTestBundle(t, kind)
+	plan, err := decodeClientMediaPlan(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := PrepareClientMediaUploadCommand{FileID: row.FileID, UploadID: row.UploadID, Kind: managev1.ClientMediaKind_CLIENT_MEDIA_KIND_AUDIO, DurationSeconds: plan.DurationSeconds}
+	if kind == "video" {
+		command.Kind = managev1.ClientMediaKind_CLIENT_MEDIA_KIND_VIDEO
+	}
+	for _, artifact := range plan.Artifacts {
+		command.Artifacts = append(command.Artifacts, ClientMediaUploadArtifact{Path: artifact.Path, MimeType: artifact.MimeType, Size: artifact.Size, SHA256: artifact.SHA256, DerivativeType: managev1.FileDerivativeType(artifact.DerivativeType)})
+	}
+	return uploadSessionToStore(row), command, plan.MemberID
+}

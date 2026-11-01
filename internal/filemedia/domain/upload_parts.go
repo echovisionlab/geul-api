@@ -10,6 +10,7 @@ type UploadMIMEState struct {
 	DetectedMime *string
 }
 type UploadPartStore interface {
+	PrepareUploadBundle(context.Context, string, string, string, string, time.Time) (bool, error)
 	WritableUploadSession(context.Context, string, string) (UploadSession, error)
 	MarkUploadPartUploading(context.Context, string, string, time.Time) (bool, error)
 	UpsertUploadPart(context.Context, UploadPart) error
