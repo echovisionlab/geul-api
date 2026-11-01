@@ -204,6 +204,19 @@ func seedFormImageBindingFile(t *testing.T, db *gorm.DB, key string) string {
 
 func integrationSpiceDB(t *testing.T) *auth.SpiceDBClient { return testutil.IntegrationSpiceDB(t) }
 
+// formRequestAuditContext makes ctx a request of its principal, which every
+// audited Form mutation attributes its record to.
+func formRequestAuditContext(t *testing.T, ctx context.Context) context.Context {
+	t.Helper()
+	principal := auth.GetUser(ctx)
+	require.NotNil(t, principal)
+	request, err := sharedtelemetry.NewPropagatedRequestContext(uuid.NewString(), sharedtelemetry.MemberActor{
+		IdentityID: principal.IdentityID.String(), MemberID: principal.MemberID.String(), SessionID: principal.SessionID.String(),
+	})
+	require.NoError(t, err)
+	return sharedtelemetry.WithRequestContext(ctx, request)
+}
+
 func ptrString(value string) *string { return &value }
 
 func seedFormSourceLocaleBaseRowAt(t *testing.T, db *gorm.DB, now time.Time) string {

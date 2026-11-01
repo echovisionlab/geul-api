@@ -26,6 +26,7 @@ import (
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/require"
@@ -57,10 +58,19 @@ func seedFormPublicAdminMemberIdentityLink(t *testing.T, db *gorm.DB, identityID
 	return memberID
 }
 
+// formPublicPrincipalContext is a request of the Member, which the audited
+// management mutations that seed public fixtures attribute their records to.
 func formPublicPrincipalContext(memberID, identityID string) context.Context {
-	return auth.WithUser(context.Background(), &auth.UserInfo{
+	sessionID := uuid.NewString()
+	request, err := sharedtelemetry.NewPropagatedRequestContext(uuid.NewString(), sharedtelemetry.MemberActor{
+		IdentityID: identityID, MemberID: memberID, SessionID: sessionID,
+	})
+	if err != nil {
+		panic(err)
+	}
+	return auth.WithUser(sharedtelemetry.WithRequestContext(context.Background(), request), &auth.UserInfo{
 		MemberID: auth.MemberID(memberID), IdentityID: auth.IdentityID(identityID),
-		SessionID: auth.SessionID(uuid.NewString()), Authenticated: true, Onboarded: true,
+		SessionID: auth.SessionID(sessionID), Authenticated: true, Onboarded: true,
 	})
 }
 

@@ -18,6 +18,7 @@ func TestFormDeleteReleasesFeaturedImageBindingAndPreservesFileIntegration(t *te
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	ctx, spiceDB := testutil.IntegrationAdminContext(t, db)
+	ctx = formRequestAuditContext(t, ctx)
 	principal := auth.GetUser(ctx)
 	require.NotNil(t, principal)
 	service := newFormServiceForIntegration(db, principal.IdentityID.String(), spiceDB)
