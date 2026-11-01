@@ -11,11 +11,19 @@ import (
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
-type UserStateService struct {
-	identityManager auth.IdentityManager
+// userStateIdentities is the Kratos admin API a ban and its lifting write.
+type userStateIdentities interface {
+	auth.IdentityGetter
+	auth.IdentityStateWriter
+	auth.IdentityMetadataAdminWriter
+	auth.IdentitySessionRevoker
 }
 
-func NewUserStateService(identityManager auth.IdentityManager) *UserStateService {
+type UserStateService struct {
+	identityManager userStateIdentities
+}
+
+func NewUserStateService(identityManager userStateIdentities) *UserStateService {
 	if identityManager == nil {
 		panic("identityManager is required")
 	}

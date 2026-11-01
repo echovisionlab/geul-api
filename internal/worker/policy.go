@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/account"
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -123,7 +123,7 @@ func (h *Handlers) handleUnbanExpired(ctx context.Context) error {
 		userID string,
 		now time.Time,
 	) (bool, error) {
-		return account.ClearExpiredTimedBan(mutationCtx, h.db, h.kratosClient, userID, now, h.auditWriter)
+		return accountpostgres.ClearExpiredTimedBan(mutationCtx, h.db, h.kratosClient, userID, now, h.auditWriter)
 	})
 }
 

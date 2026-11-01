@@ -2,17 +2,13 @@ package account
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 type accountEmailChangeStage struct {
@@ -47,16 +43,13 @@ func (s *AccountEmailChangeLifecycle) StageOrCancel(
 		return err
 	}
 
-	return identitystate.WithMutation(ctx, s.db, stage.identityID, func(
-		mutationCtx context.Context,
-		connection *gorm.DB,
-	) error {
-		identity, memberID, err := s.loadAccountEmailChangeStageState(mutationCtx, connection, stage)
+	return s.units.Fenced(ctx, stage.identityID, func(mutationCtx context.Context, steps Steps) error {
+		identity, memberID, err := s.loadAccountEmailChangeStageState(mutationCtx, steps, stage)
 		if err != nil {
 			return err
 		}
-		return connection.Transaction(func(tx *gorm.DB) error {
-			return s.persistAccountEmailChangeStage(tx, stage, identity, memberID)
+		return steps.Step(mutationCtx, func(store Store) error {
+			return s.persistAccountEmailChangeStage(mutationCtx, store, stage, identity, memberID)
 		})
 	})
 }
@@ -93,7 +86,7 @@ func newAccountEmailChangeStage(
 
 func (s *AccountEmailChangeLifecycle) loadAccountEmailChangeStageState(
 	ctx context.Context,
-	db *gorm.DB,
+	steps Steps,
 	stage accountEmailChangeStage,
 ) (*auth.Identity, string, error) {
 	identity, err := s.identity.GetIdentity(ctx, stage.identityID)
@@ -106,20 +99,25 @@ func (s *AccountEmailChangeLifecycle) loadAccountEmailChangeStageState(
 	if !accountEmailsEqual(identity.PendingEmail(), stage.currentPendingEmail) {
 		return nil, "", fmt.Errorf("pending identity email changed before account email request")
 	}
-	memberID, err := authorizationtarget.ActiveMemberIDForIdentity(ctx, db, stage.identityID)
-	if err != nil {
+	var memberID string
+	if err := steps.Step(ctx, func(store Store) error {
+		var err error
+		memberID, err = store.ActiveMemberIDForIdentity(ctx, stage.identityID)
+		return err
+	}); err != nil {
 		return nil, "", fmt.Errorf("resolve account email change member: %w", err)
 	}
 	return identity, memberID, nil
 }
 
 func (s *AccountEmailChangeLifecycle) persistAccountEmailChangeStage(
-	tx *gorm.DB,
+	ctx context.Context,
+	store Store,
 	stage accountEmailChangeStage,
 	identity *auth.Identity,
 	memberID string,
 ) error {
-	active, err := lockAccountEmailChangeRequest(tx, stage.identityID)
+	active, err := store.LockEmailChangeRequest(ctx, stage.identityID)
 	if err != nil {
 		return err
 	}
@@ -127,48 +125,39 @@ func (s *AccountEmailChangeLifecycle) persistAccountEmailChangeStage(
 		stage.pendingVerified = identity.HasVerifiedEmailAddress(stage.currentPendingEmail)
 	}
 	if stage.candidatePendingEmail == "" || accountEmailsEqual(stage.candidatePendingEmail, stage.currentEmail) {
-		return cancelAccountEmailChangeStage(tx, active, identity, stage.pendingVerified)
+		return cancelAccountEmailChangeStage(ctx, store, active, identity, stage.pendingVerified)
 	}
 	if identity.HasVerifiedEmailAddress(stage.candidatePendingEmail) {
 		return ErrAccountEmailChangeInFlight
 	}
-	return s.replaceAccountEmailChangeStage(tx, active, identity, stage, memberID)
-}
-
-func lockAccountEmailChangeRequest(tx *gorm.DB, identityID string) (*model.AccountEmailChangeRequest, error) {
-	var active model.AccountEmailChangeRequest
-	err := tx.Raw(`
-		SELECT *
-		FROM account_email_change_request
-		WHERE identity_id = ?::uuid
-		FOR UPDATE
-	`, identityID).Scan(&active).Error
-	return &active, err
+	return s.replaceAccountEmailChangeStage(ctx, store, active, identity, stage, memberID)
 }
 
 func cancelAccountEmailChangeStage(
-	tx *gorm.DB,
-	active *model.AccountEmailChangeRequest,
+	ctx context.Context,
+	store Store,
+	active *EmailChangeRequest,
 	identity *auth.Identity,
 	pendingVerified bool,
 ) error {
-	if active.ID == "" {
+	if active == nil {
 		return nil
 	}
 	if pendingVerified || identity.HasVerifiedEmailAddress(active.RequestedEmailAddress) {
 		return ErrAccountEmailChangeInFlight
 	}
-	return deleteAccountEmailChangeRequest(tx, active.ID)
+	return store.DeleteEmailChangeRequest(ctx, active.ID)
 }
 
 func (s *AccountEmailChangeLifecycle) replaceAccountEmailChangeStage(
-	tx *gorm.DB,
-	active *model.AccountEmailChangeRequest,
+	ctx context.Context,
+	store Store,
+	active *EmailChangeRequest,
 	identity *auth.Identity,
 	stage accountEmailChangeStage,
 	memberID string,
 ) error {
-	if active.ID != "" {
+	if active != nil {
 		if accountEmailsEqual(active.PreviousEmailAddress, stage.currentEmail) &&
 			accountEmailsEqual(active.RequestedEmailAddress, stage.candidatePendingEmail) {
 			return nil
@@ -176,12 +165,12 @@ func (s *AccountEmailChangeLifecycle) replaceAccountEmailChangeStage(
 		if stage.pendingVerified || identity.HasVerifiedEmailAddress(active.RequestedEmailAddress) {
 			return ErrAccountEmailChangeInFlight
 		}
-		if err := deleteAccountEmailChangeRequest(tx, active.ID); err != nil {
+		if err := store.DeleteEmailChangeRequest(ctx, active.ID); err != nil {
 			return err
 		}
 	}
 
-	request := model.AccountEmailChangeRequest{
+	request := EmailChangeRequest{
 		ID:                    uuid.NewString(),
 		MemberID:              memberID,
 		IdentityID:            stage.identityID,
@@ -189,22 +178,11 @@ func (s *AccountEmailChangeLifecycle) replaceAccountEmailChangeStage(
 		RequestedEmailAddress: stage.candidatePendingEmail,
 		CreatedAt:             s.now().UTC(),
 	}
-	if err := tx.Create(&request).Error; err != nil {
-		if dberrors.IsUniqueViolation(err) {
+	if err := store.InsertEmailChangeRequest(ctx, request); err != nil {
+		if errors.Is(err, ErrEmailChangeRequestExists) {
 			return fmt.Errorf("%w: %w", ErrAccountEmailChangeConflict, err)
 		}
 		return err
-	}
-	return nil
-}
-
-func deleteAccountEmailChangeRequest(db *gorm.DB, requestID string) error {
-	result := db.Delete(&model.AccountEmailChangeRequest{}, "id = ?", requestID)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return gorm.ErrRecordNotFound
 	}
 	return nil
 }

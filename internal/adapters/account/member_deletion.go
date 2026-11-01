@@ -4,19 +4,20 @@ import (
 	"context"
 	"time"
 
-	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
+	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/account"
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/member"
-	"gorm.io/gorm"
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 )
 
 // MemberDeletion delegates the Member-owned portions of an Account lifecycle
 // command without making Account depend on the Member package.
 type MemberDeletion struct{}
 
-var _ account.MemberDeletionLifecycle = MemberDeletion{}
+var _ accountpostgres.MemberDeletion = MemberDeletion{}
 
 func (MemberDeletion) PrepareTombstone(
 	ctx context.Context, db *gorm.DB, memberID, identityID, email string,
@@ -34,7 +35,7 @@ func (MemberDeletion) FinalizeTombstone(
 	db *gorm.DB,
 	snapshot account.MemberDeletionSnapshot,
 	deletedAt time.Time,
-	appendAudit account.MemberDeletionAudit,
+	appendAudit accountpostgres.MemberDeletionAudit,
 ) error {
 	store, err := memberpostgres.BindTransaction(db)
 	if err != nil {
@@ -68,7 +69,7 @@ func (MemberDeletion) FinalizeUnonboardedHardDelete(
 	ctx context.Context,
 	tx *gorm.DB,
 	target account.MemberUnonboardedDeletionTarget,
-	appendAudit account.MemberDeletionAudit,
+	appendAudit accountpostgres.MemberDeletionAudit,
 ) error {
 	store, err := memberpostgres.BindTransaction(tx)
 	if err != nil {
@@ -79,7 +80,7 @@ func (MemberDeletion) FinalizeUnonboardedHardDelete(
 
 // deletionAudit binds Account's audit callback to the transaction the Member
 // step runs in.
-func deletionAudit(tx *gorm.DB, appendAudit account.MemberDeletionAudit) member.DeletionAudit {
+func deletionAudit(tx *gorm.DB, appendAudit accountpostgres.MemberDeletionAudit) member.DeletionAudit {
 	if appendAudit == nil {
 		return nil
 	}

@@ -4,18 +4,18 @@ import (
 	"context"
 	"errors"
 
-	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
-
-	"github.com/echovisionlab/geul-api/internal/account"
-	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"gorm.io/gorm"
+
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
+	memberdomain "github.com/echovisionlab/geul-api/internal/member"
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 )
 
 // MemberEmailProjection adapts Member-owned email projection operations for
 // the Account consumer port. It intentionally does not import any service.
 type MemberEmailProjection struct{}
 
-var _ account.MemberEmailProjection = MemberEmailProjection{}
+var _ accountpostgres.MemberEmails = MemberEmailProjection{}
 
 func (MemberEmailProjection) PrimaryEmail(
 	ctx context.Context, db *gorm.DB, memberID, identityID string,

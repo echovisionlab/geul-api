@@ -9,19 +9,17 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
-	"gorm.io/gorm"
 )
 
 // adminAccountSummary is the Account summary an administrator mutation
 // answers with.
-func (s *Service) adminAccountSummary(ctx context.Context, memberID string) (*managev1.AccountSummary, error) {
+func (s *Service) adminAccountSummary(ctx context.Context, memberID string) (*Summary, error) {
 	if _, err := authorizationtarget.RequireGlobalAdmin(ctx, s.spicedb); err != nil {
 		return nil, err
 	}
-	return accountSummaryForMember(ctx, s.db, s.spicedb, memberID)
+	return s.Summary(ctx, memberID)
 }
 
 // SetAccountRoleCommand replaces a Member's direct global role. A zero Role
@@ -32,7 +30,7 @@ type SetAccountRoleCommand struct {
 }
 
 // SetAccountRole replaces the direct global role of another live Member.
-func (s *Service) SetAccountRole(ctx context.Context, command SetAccountRoleCommand) (*managev1.AccountSummary, error) {
+func (s *Service) SetAccountRole(ctx context.Context, command SetAccountRoleCommand) (*Summary, error) {
 	actor, err := authorizationtarget.RequireGlobalAdmin(ctx, s.spicedb)
 	if err != nil {
 		return nil, err
@@ -43,8 +41,12 @@ func (s *Service) SetAccountRole(ctx context.Context, command SetAccountRoleComm
 	if !command.Role.Valid() {
 		return nil, domainerr.InvalidField("role", "invalid account role")
 	}
-	target, err := authorizationtarget.RequireLive(ctx, s.db, command.MemberID)
-	if err != nil {
+	var target Target
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		target, err = store.RequireLive(ctx, command.MemberID)
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	if err := s.replaceAccountRole(ctx, actor, target, command.Role); err != nil {
@@ -67,15 +69,13 @@ type accountRoleChange struct {
 // last-admin fence, the order every fence holder takes, and the fence is held
 // before authorization so a demotion and a deletion of the remaining admins
 // cannot both pass.
-func (s *Service) replaceAccountRole(ctx context.Context, actor *auth.UserInfo, target authorizationtarget.Target, role policyv1.RoleID) error {
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[accountRoleChange]{
+func (s *Service) replaceAccountRole(ctx context.Context, actor *auth.UserInfo, target Target, role policyv1.RoleID) error {
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[accountRoleChange, Store]{
 		Subjects: []string{actor.IdentityID.String(), target.IdentityID},
-		Lock: func(_ context.Context, tx *gorm.DB) error {
-			return tx.Exec("SELECT pg_advisory_xact_lock(?)", userDeletionAdminFenceKey).Error
-		},
-		Access: s.liveAdmin(actor),
-		Change: func(ctx context.Context, tx *gorm.DB) (accountRoleChange, error) {
-			return s.prepareAccountRole(ctx, tx, target, role)
+		Lock:     func(ctx context.Context, store Store) error { return store.LockAdminFence(ctx) },
+		Access:   s.liveAdmin(actor),
+		Change: func(ctx context.Context, store Store) (accountRoleChange, error) {
+			return s.prepareAccountRole(ctx, store, target, role)
 		},
 		Audit: func(change accountRoleChange) mutation.Audit {
 			return mutation.RequestAudit(sharedtelemetry.AuditMemberUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
@@ -107,8 +107,8 @@ func (s *Service) replaceAccountRole(ctx context.Context, actor *auth.UserInfo, 
 // retired actor answers NotFound, as a retired target does, which
 // FreshAdminCan's fence cannot express.
 func (s *Service) liveAdmin(actor *auth.UserInfo) mutation.Access {
-	return mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-		current, err := authorizationtarget.RequireLive(ctx, tx, actor.MemberID.String())
+	return mutation.Checked(func(ctx context.Context, store Store) error {
+		current, err := store.RequireLive(ctx, actor.MemberID.String())
 		if err != nil {
 			return err
 		}
@@ -136,8 +136,8 @@ func (s *Service) liveAdmin(actor *auth.UserInfo) mutation.Access {
 
 // prepareAccountRole re-reads the target under its Identity lock and reads
 // the role it replaces. An unchanged role rolls the mutation back.
-func (s *Service) prepareAccountRole(ctx context.Context, tx *gorm.DB, target authorizationtarget.Target, role policyv1.RoleID) (accountRoleChange, error) {
-	current, err := authorizationtarget.RequireLive(ctx, tx, target.MemberID)
+func (s *Service) prepareAccountRole(ctx context.Context, store Store, target Target, role policyv1.RoleID) (accountRoleChange, error) {
+	current, err := store.RequireLive(ctx, target.MemberID)
 	if err != nil {
 		return accountRoleChange{}, err
 	}
@@ -156,16 +156,22 @@ func (s *Service) prepareAccountRole(ctx context.Context, tx *gorm.DB, target au
 		return accountRoleChange{}, errAccountRoleUnchanged
 	}
 	if role != policyv1.Role.Admin() {
-		if err := ValidateLastActiveAdminDeletionWithAuthorization(ctx, tx, target.MemberID, target.IdentityID, s.spicedb); err != nil {
+		if err := validateLastActiveAdminDeletion(ctx, store, s.spicedb, target.MemberID, target.IdentityID); err != nil {
 			return accountRoleChange{}, err
 		}
 	}
 	return accountRoleChange{subject: subject, previous: previous, previousFound: previousFound}, nil
 }
 
+// GlobalRoles is the SpiceDB reads that resolve an Identity's global role.
+type GlobalRoles interface {
+	CheckActorCan(ctx context.Context, actor policyv1.Actor, can policyv1.Can) (bool, error)
+	LookupGlobalSubjects(ctx context.Context, lookup policyv1.SubjectLookup) ([]auth.AccountIdentitySubject, error)
+}
+
 func globalRoleForActor(
 	ctx context.Context,
-	authority *auth.SpiceDBClient,
+	authority GlobalRoles,
 	actor policyv1.Actor,
 ) (policyv1.RoleID, error) {
 	for _, candidate := range []struct {
@@ -193,11 +199,8 @@ func globalRoleForActor(
 
 func globalRolesForAccountIdentities(
 	ctx context.Context,
-	spicedb *auth.SpiceDBClient,
+	spicedb GlobalRoles,
 ) (map[string]policyv1.RoleID, error) {
-	if spicedb == nil {
-		return nil, fmt.Errorf("SpiceDB is required")
-	}
 	roles := make(map[string]policyv1.RoleID)
 	for _, candidate := range []struct {
 		lookup policyv1.SubjectLookup

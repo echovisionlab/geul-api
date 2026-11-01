@@ -1,4 +1,4 @@
 # Nil checks on audit writers per package. Audit is mandatory; lower with
 # -update.
-3 internal/account
+1 internal/account
 1 internal/campaign

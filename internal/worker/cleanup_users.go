@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/account"
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -22,11 +23,11 @@ func (h *Handlers) handleProcessUserDeletions(ctx context.Context) error {
 	if scrubbed > 0 {
 		slog.InfoContext(ctx, "Scrubbed expired Member email projections", "count", scrubbed)
 	}
-	identityPublisher, publisherOK := any(h.publisher).(account.UserDeletionIdentityDispatchPublisher)
+	identityPublisher, publisherOK := any(h.publisher).(accountpostgres.UserDeletionIdentityDispatchPublisher)
 	if !publisherOK {
 		return fmt.Errorf("user deletion identity publisher is not configured")
 	}
-	unonboardedQueued, unonboardedErr := account.EnqueueExpiredUnonboardedMembers(
+	unonboardedQueued, unonboardedErr := accountpostgres.EnqueueExpiredUnonboardedMembers(
 		ctx, h.db, identityPublisher, h.memberDeletion, now, account.UnonboardedMemberCleanupBatchSize,
 	)
 	if unonboardedErr != nil {
@@ -37,7 +38,7 @@ func (h *Handlers) handleProcessUserDeletions(ctx context.Context) error {
 	if unonboardedQueued > 0 {
 		slog.InfoContext(ctx, "Queued expired unonboarded Member hard deletions", "count", unonboardedQueued)
 	}
-	deletionPublisher, ok := h.publisher.(account.UserDeletionDispatchPublisher)
+	deletionPublisher, ok := h.publisher.(accountpostgres.UserDeletionDispatchPublisher)
 	if !ok {
 		return stderrors.Join(unonboardedErr, fmt.Errorf("user deletion command publisher is not configured"))
 	}
@@ -59,7 +60,7 @@ func (h *Handlers) handleProcessUserDeletions(ctx context.Context) error {
 
 	var processedCount int
 	for _, req := range requests {
-		if err := account.DispatchScheduledUserDeletion(ctx, h.db, deletionPublisher, h.spicedbClient, h.memberDeletion, req.ID, now); err != nil {
+		if err := accountpostgres.DispatchScheduledUserDeletion(ctx, h.db, deletionPublisher, h.spicedbClient, h.memberDeletion, req.ID, now); err != nil {
 			if stderrors.Is(err, account.ErrLastActiveAdminDeletion) {
 				slog.WarnContext(ctx, "Scheduled member deletion blocked", append(failurecause.Args(err), "member_id", req.MemberID, "identity_id", req.IdentityID, "reason", "last_active_admin")...)
 				continue

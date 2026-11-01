@@ -38,14 +38,6 @@ func SubscriptionState(ctx context.Context, store NewsletterStore, identityID st
 	return newsletterSubscriptionState(ctx, store, identityID)
 }
 
-// NewsletterAuditStates returns the exact transition for account transport.
-func NewsletterAuditStates(subscribed bool) (sharedtelemetry.AuditState, sharedtelemetry.AuditState) {
-	if subscribed {
-		return sharedtelemetry.AuditStateUnsubscribed, sharedtelemetry.AuditStateSubscribed
-	}
-	return sharedtelemetry.AuditStateSubscribed, sharedtelemetry.AuditStateUnsubscribed
-}
-
 // NewsletterSubscriptionAuditBuilder builds the account record of a
 // newsletter subscription transition of memberID.
 func NewsletterSubscriptionAuditBuilder(

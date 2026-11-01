@@ -6,29 +6,26 @@ import (
 	"github.com/echovisionlab/geul-api/internal/account"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
 )
 
-// Accounts reads the Account projections a Member view shows, on db outside
-// the Member store's snapshot.
+// Accounts reads the Account projections a Member view shows, outside the
+// Member store's snapshot.
 type Accounts struct {
-	DB      *gorm.DB
-	SpiceDB *auth.SpiceDBClient
+	Accounts *account.Service
 }
 
 var _ memberdomain.Accounts = Accounts{}
 
 func (a Accounts) SessionSummary(ctx context.Context, memberID string) (*memberdomain.AccountSummary, error) {
-	return accountSummary(account.SessionSummaryForMember(ctx, a.DB, a.SpiceDB, memberID))
+	return accountSummary(a.Accounts.SessionSummary(ctx, memberID))
 }
 
 func (a Accounts) Summary(ctx context.Context, memberID string) (*memberdomain.AccountSummary, error) {
-	return accountSummary(account.SummaryForMember(ctx, a.DB, a.SpiceDB, memberID))
+	return accountSummary(a.Accounts.Summary(ctx, memberID))
 }
 
 func (a Accounts) Summaries(ctx context.Context, memberIDs []string) (map[string]*memberdomain.AccountSummary, error) {
-	summaries, err := account.SummariesForMembers(ctx, a.DB, a.SpiceDB, memberIDs)
+	summaries, err := a.Accounts.Summaries(ctx, memberIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +40,7 @@ func (Accounts) AdminDetails(ctx context.Context, identity *auth.Identity) (*mem
 	candidates := account.ResolveAccountEmailProviderCandidates(ctx, identity.Credentials)
 	rows := account.ProjectedAccountEmailRows(identity, candidates)
 	details := &memberdomain.AccountDetails{}
-	for _, provider := range account.ProviderProto(identity) {
+	for _, provider := range account.Providers(identity) {
 		details.Providers = append(details.Providers, memberdomain.AccountProvider{Provider: provider.Provider, Identifier: provider.Identifier})
 	}
 	for _, row := range rows {
@@ -57,7 +54,7 @@ func (Accounts) AdminDetails(ctx context.Context, identity *auth.Identity) (*mem
 		}
 		for _, source := range row.Sources {
 			candidate.Sources = append(candidate.Sources, memberdomain.EmailSource{
-				Type: memberdomain.EmailSourceType(source.SourceType), Provider: source.Provider, ProviderSubject: source.ProviderSubject,
+				Type: memberdomain.EmailSourceType(source.Type), Provider: source.Provider, ProviderSubject: source.ProviderSubject,
 			})
 		}
 		details.EmailCandidates = append(details.EmailCandidates, candidate)
@@ -65,21 +62,16 @@ func (Accounts) AdminDetails(ctx context.Context, identity *auth.Identity) (*mem
 	return details, nil
 }
 
-func accountSummary(summary *managev1.AccountSummary, err error) (*memberdomain.AccountSummary, error) {
+func accountSummary(summary *account.Summary, err error) (*memberdomain.AccountSummary, error) {
 	if err != nil || summary == nil {
 		return nil, err
 	}
-	status, _ := memberdomain.AdminStatusFromProto(summary.Status)
-	result := &memberdomain.AccountSummary{MemberID: summary.MemberId, Role: summary.Role, Status: status, Banned: summary.Banned}
+	result := &memberdomain.AccountSummary{MemberID: summary.MemberID, Role: summary.Role, Status: memberdomain.AdminStatus(summary.Status), Banned: summary.Banned}
 	if email := summary.CanonicalEmail; email != nil {
 		result.CanonicalEmail = &memberdomain.CanonicalEmail{Email: email.Email, Verified: email.Verified}
 	}
 	if ban := summary.BanDetails; ban != nil {
-		result.BanDetails = &memberdomain.BanDetails{MetadataBanned: ban.MetadataBanned, IdentityState: ban.IdentityState, InactiveState: ban.InactiveState, Reason: ban.Reason}
-		if ban.ExpiresAt != nil {
-			expiresAt := ban.ExpiresAt.AsTime()
-			result.BanDetails.ExpiresAt = &expiresAt
-		}
+		result.BanDetails = &memberdomain.BanDetails{MetadataBanned: ban.MetadataBanned, IdentityState: ban.IdentityState, InactiveState: ban.InactiveState, Reason: ban.Reason, ExpiresAt: ban.ExpiresAt}
 	}
 	return result, nil
 }

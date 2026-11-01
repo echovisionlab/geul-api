@@ -18,14 +18,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
-
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/echovisionlab/geul-api/internal/account"
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	authenticationadapter "github.com/echovisionlab/geul-api/internal/adapters/authentication"
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
@@ -36,7 +34,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/member"
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
@@ -71,11 +71,15 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 	hookPublisher := &controlledHookEmailPublisher{delegate: publisher}
 	telemetryWriter := apitelemetry.NewDurableWriter(stack.Postgres.DB)
 	directRoles := accountadapter.AccountDirectRoleTransition{}
+	accountUnits, err := accountpostgres.NewUnits(stack.Postgres.DB, accountpostgres.Ports{
+		Members: accountadapter.MemberDeletion{}, MemberEmails: accountadapter.MemberEmailProjection{},
+		Newsletter: accountadapter.NewsletterSubscription{}, Publisher: publisher,
+	})
+	require.NoError(t, err)
 	accountEmailChangeLifecycle := account.NewAccountEmailChangeLifecycle(
-		stack.Postgres.DB,
+		accountUnits,
 		stack.KratosClient,
-		hookPublisher,
-		accountadapter.MemberEmailProjection{},
+		accountpostgres.EmailCommands{Publisher: hookPublisher},
 	)
 	_, rawCourierHandler := intrav1connect.NewEmailCourierServiceHandler(
 		emaildelivery.NewCourierConnectHandler(emaildelivery.NewEmailCourierService(
@@ -91,7 +95,7 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 		)),
 	)
 	go accountEmailChangeLifecycle.Start(ctx)
-	emails := memberadapter.AccountEmailProjection{DB: stack.Postgres.DB, Identity: stack.KratosClient}
+	emails := memberadapter.AccountEmailProjection{Units: accountUnits, Identity: stack.KratosClient}
 	memberUnits, err := memberpostgres.NewUnits(stack.Postgres.DB, memberpostgres.Ports{WelcomeEmails: publisher, WelcomeRecipients: emails})
 	require.NoError(t, err)
 	registrationMembers := member.NewMemberProvisioner(memberUnits, stack.KratosClient, stack.SpiceDBClient, emails, directRoles)
@@ -113,11 +117,10 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 		accountEmailChangeLifecycle,
 	)
 	credentialHooks := account.NewAccountCredentialHookLifecycle(
-		stack.Postgres.DB,
+		accountUnits,
 		stack.KratosClient,
 		telemetryWriter,
-		hookPublisher,
-		accountadapter.MemberEmailProjection{},
+		accountpostgres.EmailCommands{Publisher: hookPublisher},
 	)
 	authenticationHooks := authenticationadapter.NewHooksHandler(loginHooks, registrationHooks)
 	accountHooks := accountadapter.NewSettingsHooksHandler(accountSettingsHooks, credentialHooks)
@@ -309,13 +312,20 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 		500*time.Millisecond,
 	)
 	onboardingNickname := fmt.Sprintf("RegisteredMember%d", time.Now().UnixNano())
+	accounts, err := account.NewService(account.Deps{
+		Units: accountUnits, SpiceDB: stack.SpiceDBClient, Fence: identitystate.PostgresFence{}, Identity: stack.KratosClient,
+		Emails:  accountpostgres.EmailCommands{Publisher: publisher},
+		Members: accountpostgres.MemberAuthorizations(stack.Postgres.DB, accountadapter.MemberDeletion{}, stack.SpiceDBClient),
+		Audit:   apitelemetry.NewDurableWriter(stack.Postgres.DB),
+	})
+	require.NoError(t, err)
 	memberService, err := member.NewService(member.Deps{
 		Units:       memberUnits,
 		SpiceDB:     stack.SpiceDBClient,
 		Fence:       identitystate.PostgresFence{},
 		Identity:    stack.KratosClient,
 		AvatarFiles: backendIntegrationAvatarFiles{},
-		Accounts:    memberadapter.Accounts{DB: stack.Postgres.DB, SpiceDB: stack.SpiceDBClient},
+		Accounts:    memberadapter.Accounts{Accounts: accounts},
 		Audit:       apitelemetry.NewDurableWriter(stack.Postgres.DB),
 		SiteOrigin:  "https://www.example.test",
 	})

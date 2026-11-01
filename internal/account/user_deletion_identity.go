@@ -4,45 +4,30 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/identityread"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // processUnonboardedHardDelete is the worker-side terminal path for a
 // retention command. Account keeps the identity fence, Kratos deletion, and
 // account-subject cleanup; the Member port owns Member authorization and local
 // hard-delete state after the account anchor is gone.
-func processUnonboardedHardDelete(
-	ctx context.Context,
-	db *gorm.DB,
-	identity auth.IdentityDeleter,
-	spicedb *auth.SpiceDBClient,
-	members MemberDeletionLifecycle,
-	auditWriter domainaudit.Appender,
-	command *managev1.UserDeleteIdentityCommand,
-) error {
-	if db == nil || identity == nil || spicedb == nil || members == nil || auditWriter == nil || command == nil {
-		return fmt.Errorf("unonboarded hard deletion dependencies are required")
-	}
-	if err := validateDeletionIDPair(command.GetMemberId(), command.GetIdentityId()); err != nil {
+func (d UserDeletion) processUnonboardedHardDelete(ctx context.Context, command DeleteIdentityCommand) error {
+	if err := validateDeletionIDPair(command.MemberID, command.IdentityID); err != nil {
 		return err
 	}
-	memberID := strings.TrimSpace(command.GetMemberId())
-	identityID := strings.TrimSpace(command.GetIdentityId())
+	memberID := strings.TrimSpace(command.MemberID)
+	identityID := strings.TrimSpace(command.IdentityID)
 
-	return identitystate.WithMutation(ctx, db, identityID, func(mutationCtx context.Context, connection *gorm.DB) error {
-		target, err := members.PrepareUnonboardedHardDelete(mutationCtx, connection, memberID, identityID)
-		if err != nil || target.MemberID == "" {
+	return d.Units.Fenced(ctx, identityID, func(mutationCtx context.Context, steps Steps) error {
+		var target MemberUnonboardedDeletionTarget
+		if err := steps.Step(mutationCtx, func(store Store) error {
+			var err error
+			target, err = store.PrepareUnonboardedHardDelete(mutationCtx, memberID, identityID)
+			return err
+		}); err != nil || target.MemberID == "" {
 			return err
 		}
 		if !target.IdentityLinked {
-			exists, err := identityread.Exists(mutationCtx, connection, identityID)
+			exists, err := identityExists(mutationCtx, steps, identityID)
 			if err != nil {
 				return fmt.Errorf("confirm unonboarded identity absence: %w", err)
 			}
@@ -50,34 +35,39 @@ func processUnonboardedHardDelete(
 				return fmt.Errorf("unonboarded hard deletion identity link is missing while identity exists")
 			}
 		}
-		if err := identity.DeleteIdentity(mutationCtx, identityID); err != nil {
+		if err := d.Identities.DeleteIdentity(mutationCtx, identityID); err != nil {
 			return fmt.Errorf("delete unonboarded Kratos identity: %w", err)
 		}
-		if err := deleteAccountIdentityAuthorizationAndAnchor(mutationCtx, connection, spicedb, identityID); err != nil {
+		if err := d.deleteAccountIdentityAuthorizationAndAnchor(mutationCtx, steps, identityID); err != nil {
 			return err
 		}
-		if err := members.RevokeUnonboardedAuthorization(mutationCtx, spicedb, target); err != nil {
+		if err := d.Members.RevokeUnonboardedAuthorization(mutationCtx, target); err != nil {
 			return err
 		}
-		return connection.Transaction(func(tx *gorm.DB) error {
-			return members.FinalizeUnonboardedHardDelete(mutationCtx, tx, target, accountDeletedAudit(auditWriter))
+		return steps.Step(mutationCtx, func(store Store) error {
+			return store.FinalizeUnonboardedHardDelete(mutationCtx, target, accountDeletedAudit(store, d.Audit))
 		})
 	})
 }
 
-func deleteOrConfirmUserIdentity(
-	ctx context.Context,
-	db *gorm.DB,
-	identity auth.IdentityDeleter,
-	request MemberDeletionSnapshot,
-) error {
+func identityExists(ctx context.Context, steps Steps, identityID string) (bool, error) {
+	var exists bool
+	err := steps.Step(ctx, func(store Store) error {
+		var err error
+		exists, err = store.IdentityExists(ctx, identityID)
+		return err
+	})
+	return exists, err
+}
+
+func (d UserDeletion) deleteOrConfirmUserIdentity(ctx context.Context, steps Steps, request MemberDeletionSnapshot) error {
 	if !request.AlreadyTombstoned && request.IdentityLinked {
-		if err := identity.DeleteIdentity(ctx, request.IdentityID); err != nil {
+		if err := d.Identities.DeleteIdentity(ctx, request.IdentityID); err != nil {
 			return fmt.Errorf("delete identity: %w", err)
 		}
 		return nil
 	}
-	exists, err := identityread.Exists(ctx, db, request.IdentityID)
+	exists, err := identityExists(ctx, steps, request.IdentityID)
 	if err != nil {
 		return fmt.Errorf("confirm replay identity absence: %w", err)
 	}

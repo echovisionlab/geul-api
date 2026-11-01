@@ -46,6 +46,7 @@ var integrationCatalog = []integrationBand{
 		ParallelPackages: true,
 		Packages: []string{
 			"./cmd/server",
+			"./internal/account/postgres",
 			"./internal/adapters/geoip",
 			"./internal/adapters/legal",
 			"./internal/adapters/memberpat",

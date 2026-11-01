@@ -8,15 +8,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -35,11 +30,8 @@ func (s *AccountEmailChangeLifecycle) ApplyProvenCandidate(
 	if identityID == "" || targetEmail == "" {
 		return fmt.Errorf("identity and target email are required")
 	}
-	return identitystate.WithMutation(ctx, s.db, identityID, func(
-		mutationCtx context.Context,
-		connection *gorm.DB,
-	) error {
-		return s.applyProvenCandidateMutation(mutationCtx, connection, identityID, targetEmail)
+	return s.units.Fenced(ctx, identityID, func(mutationCtx context.Context, steps Steps) error {
+		return s.applyProvenCandidateMutation(mutationCtx, steps, identityID, targetEmail)
 	})
 }
 
@@ -51,36 +43,36 @@ type provenAccountEmailCandidate struct {
 }
 
 type provenAccountEmailStage struct {
-	request  model.AccountEmailChangeRequest
+	request  EmailChangeRequest
 	noChange bool
 }
 
 func (s *AccountEmailChangeLifecycle) applyProvenCandidateMutation(
 	ctx context.Context,
-	db *gorm.DB,
+	steps Steps,
 	identityID string,
 	targetEmail string,
 ) error {
-	candidate, err := s.loadProvenAccountEmailCandidate(ctx, db, identityID, targetEmail)
+	candidate, err := s.loadProvenAccountEmailCandidate(ctx, steps, identityID, targetEmail)
 	if err != nil {
 		return err
 	}
-	stage, err := s.stageProvenAccountEmailCandidate(db, identityID, targetEmail, candidate)
+	stage, err := s.stageProvenAccountEmailCandidate(ctx, steps, identityID, targetEmail, candidate)
 	if err != nil || stage.noChange {
 		return err
 	}
 	if accountEmailsEqual(candidate.previousEmail, targetEmail) {
-		return s.completeAccountEmailChangeRequest(ctx, db, &stage.request)
+		return s.completeAccountEmailChangeRequest(ctx, steps, &stage.request)
 	}
-	if err := s.applyProvenAccountEmailIdentity(ctx, db, identityID, candidate, &stage.request); err != nil {
+	if err := s.applyProvenAccountEmailIdentity(ctx, steps, identityID, candidate, &stage.request); err != nil {
 		return err
 	}
-	return s.completeAccountEmailChangeRequest(ctx, db, &stage.request)
+	return s.completeAccountEmailChangeRequest(ctx, steps, &stage.request)
 }
 
 func (s *AccountEmailChangeLifecycle) loadProvenAccountEmailCandidate(
 	ctx context.Context,
-	db *gorm.DB,
+	steps Steps,
 	identityID string,
 	targetEmail string,
 ) (provenAccountEmailCandidate, error) {
@@ -89,14 +81,18 @@ func (s *AccountEmailChangeLifecycle) loadProvenAccountEmailCandidate(
 		return provenAccountEmailCandidate{}, err
 	}
 	if identity == nil {
-		return provenAccountEmailCandidate{}, gorm.ErrRecordNotFound
+		return provenAccountEmailCandidate{}, ErrIdentityNotFound
 	}
-	memberID, err := authorizationtarget.ActiveMemberIDForIdentity(ctx, db, identityID)
-	if err != nil {
+	var memberID string
+	if err := steps.Step(ctx, func(store Store) error {
+		var err error
+		memberID, err = store.ActiveMemberIDForIdentity(ctx, identityID)
+		return err
+	}); err != nil {
 		return provenAccountEmailCandidate{}, fmt.Errorf("resolve account email change member: %w", err)
 	}
 	providerCandidates := ResolveAccountEmailProviderCandidates(ctx, identity.Credentials)
-	rows, err := NewAccountEmailService(db, s.identity, s.memberEmails).
+	rows, err := newAccountEmailService(s.identity, steps.Step).
 		SyncMemberEmailProjection(ctx, identityID, identity, providerCandidates)
 	if err != nil {
 		return provenAccountEmailCandidate{}, err
@@ -116,36 +112,36 @@ func (s *AccountEmailChangeLifecycle) loadProvenAccountEmailCandidate(
 }
 
 func (s *AccountEmailChangeLifecycle) stageProvenAccountEmailCandidate(
-	db *gorm.DB,
+	ctx context.Context,
+	steps Steps,
 	identityID string,
 	targetEmail string,
 	candidate provenAccountEmailCandidate,
 ) (provenAccountEmailStage, error) {
 	stage := provenAccountEmailStage{}
-	err := db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Raw(`
-			SELECT *
-			FROM account_email_change_request
-			WHERE identity_id = ?::uuid
-			FOR UPDATE
-		`, identityID).Scan(&stage.request).Error; err != nil {
+	err := steps.Step(ctx, func(store Store) error {
+		active, err := store.LockEmailChangeRequest(ctx, identityID)
+		if err != nil {
 			return err
 		}
+		if active != nil {
+			stage.request = *active
+		}
 		if accountEmailsEqual(candidate.previousEmail, targetEmail) {
-			return reconcileProvenCandidateNoChange(tx, candidate.identity, targetEmail, &stage)
+			return reconcileProvenCandidateNoChange(ctx, store, candidate.identity, targetEmail, &stage)
 		}
 		keep, err := reconcileProvenCandidateActiveRequest(
-			tx, candidate.identity, candidate.previousEmail, targetEmail, &stage.request,
+			ctx, store, candidate.identity, candidate.previousEmail, targetEmail, &stage.request,
 		)
 		if err != nil || keep {
 			return err
 		}
-		stage.request = model.AccountEmailChangeRequest{
+		stage.request = EmailChangeRequest{
 			ID: uuid.NewString(), MemberID: candidate.memberID, IdentityID: identityID,
 			PreviousEmailAddress: candidate.previousEmail, RequestedEmailAddress: targetEmail,
 			CreatedAt: s.now().UTC(),
 		}
-		if err := tx.Create(&stage.request).Error; dberrors.IsUniqueViolation(err) {
+		if err := store.InsertEmailChangeRequest(ctx, stage.request); errors.Is(err, ErrEmailChangeRequestExists) {
 			return fmt.Errorf("%w: %w", ErrAccountEmailChangeConflict, err)
 		} else {
 			return err
@@ -155,7 +151,8 @@ func (s *AccountEmailChangeLifecycle) stageProvenAccountEmailCandidate(
 }
 
 func reconcileProvenCandidateNoChange(
-	tx *gorm.DB,
+	ctx context.Context,
+	store Store,
 	identity *auth.Identity,
 	targetEmail string,
 	stage *provenAccountEmailStage,
@@ -170,20 +167,21 @@ func reconcileProvenCandidateNoChange(
 	if identity.HasVerifiedEmailAddress(stage.request.RequestedEmailAddress) {
 		return ErrAccountEmailChangeInFlight
 	}
-	if err := deleteAccountEmailChangeRequest(tx, stage.request.ID); err != nil {
+	if err := store.DeleteEmailChangeRequest(ctx, stage.request.ID); err != nil {
 		return err
 	}
-	stage.request = model.AccountEmailChangeRequest{}
+	stage.request = EmailChangeRequest{}
 	stage.noChange = true
 	return nil
 }
 
 func reconcileProvenCandidateActiveRequest(
-	tx *gorm.DB,
+	ctx context.Context,
+	store Store,
 	identity *auth.Identity,
 	previousEmail string,
 	targetEmail string,
-	active *model.AccountEmailChangeRequest,
+	active *EmailChangeRequest,
 ) (bool, error) {
 	if active.ID == "" {
 		return false, nil
@@ -195,7 +193,7 @@ func reconcileProvenCandidateActiveRequest(
 	if identity.HasVerifiedEmailAddress(active.RequestedEmailAddress) {
 		return false, ErrAccountEmailChangeInFlight
 	}
-	if err := deleteAccountEmailChangeRequest(tx, active.ID); err != nil {
+	if err := store.DeleteEmailChangeRequest(ctx, active.ID); err != nil {
 		return false, err
 	}
 	return false, nil
@@ -203,10 +201,10 @@ func reconcileProvenCandidateActiveRequest(
 
 func (s *AccountEmailChangeLifecycle) applyProvenAccountEmailIdentity(
 	ctx context.Context,
-	db *gorm.DB,
+	steps Steps,
 	identityID string,
 	candidate provenAccountEmailCandidate,
-	request *model.AccountEmailChangeRequest,
+	request *EmailChangeRequest,
 ) error {
 	nextAddresses := materializeProvenEmailAddress(
 		candidate.identity.VerifiableAddresses, candidate.displayEmail, s.now().UTC(),
@@ -218,7 +216,7 @@ func (s *AccountEmailChangeLifecycle) applyProvenAccountEmailIdentity(
 	if !auth.IsKratosConflict(err) {
 		return err
 	}
-	if finishErr := s.finishAccountEmailChangeRequest(db, request, "address_conflict"); finishErr != nil {
+	if finishErr := s.finishAccountEmailChangeRequest(ctx, steps, request, "address_conflict"); finishErr != nil {
 		return finishErr
 	}
 	// The text keeps the Kratos conflict; its body stays private.

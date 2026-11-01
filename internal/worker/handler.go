@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/echovisionlab/geul-api/internal/account"
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
 	filemediaruntime "github.com/echovisionlab/geul-api/internal/adapters/filemedia/runtime"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
@@ -70,7 +70,7 @@ type Handlers struct {
 	httpClient       httpDoer
 	auditWriter      *telemetry.DurableWriter
 	ogPlanner        *og.Planner
-	memberDeletion   account.MemberDeletionLifecycle
+	memberDeletion   accountpostgres.MemberDeletion
 	campaignEmail    CampaignEmailRenderer
 }
 
@@ -133,7 +133,7 @@ type HandlerDeps struct {
 	Audit            *telemetry.DurableWriter
 	SpiceDB          *auth.SpiceDBClient
 	OGPlanner        *og.Planner
-	MemberDeletion   account.MemberDeletionLifecycle
+	MemberDeletion   accountpostgres.MemberDeletion
 	CampaignEmail    CampaignEmailRenderer
 }
 

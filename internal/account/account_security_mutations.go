@@ -9,9 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -48,7 +46,7 @@ func (s *Service) freshSecurityPrincipal(ctx context.Context) (*auth.UserInfo, e
 
 // SetMyCanonicalEmail makes a proven address the principal's canonical
 // account email and returns the security settings it leaves.
-func (s *Service) SetMyCanonicalEmail(ctx context.Context, command SetMyCanonicalEmailCommand) (*managev1.AccountSecurity, error) {
+func (s *Service) SetMyCanonicalEmail(ctx context.Context, command SetMyCanonicalEmailCommand) (*Security, error) {
 	p, err := s.freshSecurityPrincipal(ctx)
 	if err != nil {
 		return nil, err
@@ -122,7 +120,7 @@ func (s *Service) RequestEmailChange(ctx context.Context, command RequestEmailCh
 }
 
 // RevokeMySession ends one of the principal's other active sessions.
-func (s *Service) RevokeMySession(ctx context.Context, command RevokeMySessionCommand) (*managev1.AccountSecurity, error) {
+func (s *Service) RevokeMySession(ctx context.Context, command RevokeMySessionCommand) (*Security, error) {
 	p, err := s.freshSecurityPrincipal(ctx)
 	if err != nil {
 		return nil, err
@@ -134,7 +132,11 @@ func (s *Service) RevokeMySession(ctx context.Context, command RevokeMySessionCo
 		return nil, domainerr.Precondition("the current session can only be ended through logout")
 	}
 	var owned bool
-	if err := s.db.WithContext(ctx).Raw(`SELECT EXISTS(SELECT 1 FROM `+identityread.LiveSessionsSQL+` AND id = ?::uuid)`, p.IdentityID.String(), command.SessionID).Scan(&owned).Error; err != nil {
+	if err := s.read(ctx, func(store Store) error {
+		var err error
+		owned, err = store.OwnsLiveSession(ctx, p.IdentityID.String(), command.SessionID)
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	if !owned {
@@ -155,7 +157,7 @@ func (s *Service) RevokeMySession(ctx context.Context, command RevokeMySessionCo
 
 // RevokeMyOtherSessions ends every active session of the principal except
 // the current one.
-func (s *Service) RevokeMyOtherSessions(ctx context.Context) (*managev1.AccountSecurity, error) {
+func (s *Service) RevokeMyOtherSessions(ctx context.Context) (*Security, error) {
 	p, err := s.freshSecurityPrincipal(ctx)
 	if err != nil {
 		return nil, err
@@ -163,7 +165,7 @@ func (s *Service) RevokeMyOtherSessions(ctx context.Context) (*managev1.AccountS
 	if p.SessionID == "" {
 		return nil, domainerr.InvalidSession()
 	}
-	revokedSessionIDs, err := revokeOtherSessions(ctx, s.db, s.identity, p.IdentityID.String(), p.SessionID.String())
+	revokedSessionIDs, err := s.revokeOtherSessions(ctx, p.IdentityID.String(), p.SessionID.String())
 	if err != nil {
 		return nil, err
 	}

@@ -6,21 +6,22 @@ import (
 	"fmt"
 	"sort"
 
-	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
+	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/account"
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
+	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	"gorm.io/gorm"
 )
 
 // AccountEmailProjection is the Account email projection a Member
 // registration and welcome email read: Identity reads go to Identity, and
 // the projection syncs in its own transaction on DB.
 type AccountEmailProjection struct {
-	DB       *gorm.DB
+	Units    account.Units
 	Identity auth.IdentityGetter
 }
 
@@ -32,7 +33,10 @@ var (
 func (p AccountEmailProjection) ResolveDelivery(
 	ctx context.Context, tx *gorm.DB, identityID string,
 ) (string, string, string, error) {
-	result, reason, err := account.ResolveMemberPrimaryEmailForIdentity(ctx, tx, accountMemberEmailProjection{}, p.Identity, identityID)
+	inTransaction := func(_ context.Context, work func(account.Store) error) error {
+		return work(accountpostgres.Bind(tx, accountpostgres.Ports{MemberEmails: accountMemberEmailProjection{}}))
+	}
+	result, reason, err := account.ResolveMemberPrimaryEmailForIdentity(ctx, inTransaction, p.Identity, identityID)
 	if err != nil || result == nil || result.Identity == nil {
 		return "", "", reason, err
 	}
@@ -100,7 +104,7 @@ func (p AccountEmailProjection) SyncMemberEmailProjection(
 	if identity != nil {
 		candidates = account.ResolveAccountEmailProviderCandidates(ctx, identity.Credentials)
 	}
-	_, err := account.NewAccountEmailService(p.DB, p.Identity, accountMemberEmailProjection{}).
+	_, err := account.NewAccountEmailService(p.Identity, p.Units).
 		SyncMemberEmailProjection(ctx, identityID, identity, candidates)
 	return err
 }

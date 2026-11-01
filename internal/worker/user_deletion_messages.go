@@ -6,7 +6,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	"github.com/echovisionlab/geul-api/internal/account"
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -38,11 +38,11 @@ func (h *Handlers) handleUserDeleteIdentityMessage(ctx context.Context, msg mq.M
 	); err != nil {
 		return err
 	}
-	publisher, ok := h.publisher.(account.EmailCommandPublisher)
+	publisher, ok := h.publisher.(accountpostgres.EmailCommandPublisher)
 	if !ok {
 		return fmt.Errorf("user deletion fanout publisher is not configured")
 	}
-	return account.ProcessUserDeleteIdentityAudited(
+	return accountpostgres.ProcessUserDeleteIdentityAudited(
 		ctx, h.db, h.kratosClient, h.spicedbClient, h.memberDeletion, publisher, h.auditWriter, &command,
 	)
 }
@@ -79,7 +79,7 @@ func (h *Handlers) handleUserDeleteAvatarMessage(ctx context.Context, msg mq.Mes
 			)
 		}
 	}
-	return account.ProcessUserDeleteAvatar(ctx, h.db, h.memberDeletion, command.GetMemberId(), command.GetAvatarAssetId())
+	return accountpostgres.ProcessUserDeleteAvatar(ctx, h.db, h.memberDeletion, command.GetMemberId(), command.GetAvatarAssetId())
 }
 
 func validateUserDeletionCommandMemberID(memberID string) error {

@@ -9,13 +9,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/mutation"
-
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	accountpostgres "github.com/echovisionlab/geul-api/internal/account/postgres"
 	accountadapter "github.com/echovisionlab/geul-api/internal/adapters/account"
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -23,6 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/member"
 	memberpostgres "github.com/echovisionlab/geul-api/internal/member/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -54,7 +54,9 @@ func (unusedWelcomeEmails) PublishSendEmailWithExecutor(context.Context, eventpk
 
 func integrationUnits(t *testing.T, db *gorm.DB, identities auth.IdentityGetter) (mutation.UnitOfWork[member.Store], memberadapter.AccountEmailProjection) {
 	t.Helper()
-	emails := memberadapter.AccountEmailProjection{DB: db, Identity: identities}
+	accountUnits, err := accountpostgres.NewEmailProjectionUnits(db, accountadapter.MemberEmailProjection{})
+	require.NoError(t, err)
+	emails := memberadapter.AccountEmailProjection{Units: accountUnits, Identity: identities}
 	units, err := memberpostgres.NewUnits(db, memberpostgres.Ports{WelcomeEmails: unusedWelcomeEmails{}, WelcomeRecipients: emails})
 	require.NoError(t, err)
 	return units, emails
@@ -103,7 +105,7 @@ func TestMemberAdminMutationsRejectStaleAdministratorIdentityIntegration(t *test
 			units, _ := integrationUnits(t, db, nil)
 			service, err := member.NewService(member.Deps{
 				Units: units, SpiceDB: spiceDB, Fence: identitystate.PostgresFence{}, Identity: &fakeIdentity{identities: map[string]*auth.Identity{}},
-				AvatarFiles: memberadapter.AvatarFiles{}, Accounts: memberadapter.Accounts{DB: db, SpiceDB: spiceDB},
+				AvatarFiles: memberadapter.AvatarFiles{}, Accounts: &fakeAccounts{summaries: map[string]*member.AccountSummary{}},
 				Audit: apitelemetry.NewDurableWriter(db),
 			})
 			require.NoError(t, err)
