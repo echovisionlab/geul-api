@@ -23,6 +23,9 @@ type UnitOfWork[S any] interface {
 	RelationshipTransaction(ctx context.Context, writer authzmutation.RelationshipWriter, work func(Tx[S], authzmutation.WriteRelationships) error) error
 	// Read runs read in one repeatable-read, read-only snapshot (Read).
 	Read(ctx context.Context, read func(S) error) error
+	// ReadLocked runs read in one repeatable-read snapshot that may take
+	// row locks (ReadLocked).
+	ReadLocked(ctx context.Context, read func(S) error) error
 }
 
 // Tx is one open transaction of a unit of work: the store bound to it, the
@@ -106,4 +109,8 @@ func (p postgres[S]) RelationshipTransaction(
 
 func (p postgres[S]) Read(ctx context.Context, read func(S) error) error {
 	return Read(ctx, p.db, func(tx *gorm.DB) error { return read(p.bind(tx)) })
+}
+
+func (p postgres[S]) ReadLocked(ctx context.Context, read func(S) error) error {
+	return ReadLocked(ctx, p.db, func(tx *gorm.DB) error { return read(p.bind(tx)) })
 }

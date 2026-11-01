@@ -485,3 +485,49 @@ func TestRunLocksSubjectsThroughTheFenceAndWritesRelationshipsThroughTheAuthoriz
 	require.Len(t, checker.Applied(), 1, "a failure before the write applies nothing")
 	require.EqualValues(t, 1, noteCount(t, db))
 }
+
+func TestFencedLocksThePrincipalThroughTheFenceForTheDomainCheck(t *testing.T) {
+	for _, inactive := range []bool{false, true} {
+		t.Run(fmt.Sprintf("inactive=%v", inactive), func(t *testing.T) {
+			ctx, principal := principalContext(t)
+			fence := &identitystatetest.Fence{}
+			if inactive {
+				fence.Deactivate(principal.IdentityID.String())
+			}
+			runner, db := newTestRunnerWith(t, authztest.AllowAll(), fence, &audittest.Recorder{})
+			hidden := errors.New("hidden")
+			var steps []string
+			spec := noteSpec(&steps, "fenced")
+			spec.Access = Fenced(func(ctx context.Context, _ *gorm.DB, lockActive func(*auth.UserInfo) (bool, error)) error {
+				active, err := lockActive(auth.GetUser(ctx))
+				require.NoError(t, err)
+				if !active {
+					return hidden
+				}
+				return nil
+			})
+
+			_, err := Run(ctx, runner, spec)
+
+			require.Equal(t, []string{principal.IdentityID.String()}, fence.Locked())
+			if inactive {
+				require.ErrorIs(t, err, hidden)
+				require.Zero(t, noteCount(t, db))
+				return
+			}
+			require.NoError(t, err)
+			require.EqualValues(t, 1, noteCount(t, db))
+		})
+	}
+	_, err := Run(memberRequestContext(t), mustRunner(t), Spec[note]{
+		Access: Fenced[*gorm.DB](nil), Change: func(context.Context, *gorm.DB) (note, error) { return note{}, nil },
+		Audit: func(note) Audit { return Unchanged() },
+	})
+	require.ErrorContains(t, err, "fenced access check is required")
+}
+
+func mustRunner(t *testing.T) *Runner {
+	t.Helper()
+	runner, _ := newTestRunner(t, &audittest.Recorder{})
+	return runner
+}

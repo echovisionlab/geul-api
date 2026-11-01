@@ -351,6 +351,26 @@ func Checked[S any](check func(ctx context.Context, store S) error) Access {
 	}}
 }
 
+// Fenced authorizes with check inside the transaction, for a domain whose
+// own check answers differently from FreshCan (a masked target answers not
+// found) but still takes the identity fence: lockActive locks a principal's
+// Identity through the fence and reports whether it is still active,
+// onboarded and unbanned.
+func Fenced[S any](check func(ctx context.Context, store S, lockActive func(*auth.UserInfo) (bool, error)) error) Access {
+	if check == nil {
+		return Access{err: errors.New("mutation fenced access check is required")}
+	}
+	return Access{check: func(ctx context.Context, tx *gorm.DB, store any, with authority) error {
+		typed, err := storeOf[S](store)
+		if err != nil {
+			return err
+		}
+		return check(ctx, typed, func(principal *auth.UserInfo) (bool, error) {
+			return with.fence.LockActivePrincipal(ctx, tx, principal)
+		})
+	}}
+}
+
 // Audit names the record a committed change appends.
 type Audit struct {
 	action    sharedtelemetry.AuditAction
