@@ -48,10 +48,10 @@ func TestCreateLabelStoresTheLabelAndMakesTheCallerItsOwner(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]policyv1.RelationshipMutation{{policy, ownerTouch, parentTouch}}, h.checker.Applied())
 	require.Equal(t, []mutation.Step{
-		mutation.StepAuthorizationLock, mutation.StepAccess, mutation.StepChange, mutation.StepAudit,
+		mutation.StepAuthorizationLock, mutation.StepLock, mutation.StepAccess, mutation.StepChange, mutation.StepAudit,
 		mutation.StepRelationships, mutation.StepCommit,
 	}, h.units.Steps())
-	require.Equal(t, 1, h.store.ParentGraphLocks())
+	require.Equal(t, 2, h.store.ParentGraphLocks(), "a create with a parent takes the hierarchy lock first and validates under it")
 }
 
 func TestCreateLabelRejectsBeforeStoringAnything(t *testing.T) {

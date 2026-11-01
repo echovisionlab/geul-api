@@ -378,6 +378,48 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			return nil
 		})
 	},
+	"a delete waits for a reparent away from the deleted parent": func(t *testing.T, h Harness) {
+		// The reparent row-locks its child under the graph lock, and the
+		// delete clears its children's parent; with the graph first in both
+		// the delete sees the child already moved.
+		parent := insert(t, h, nil)
+		child := insert(t, h, func(value *label.Label) { value.ParentLabelID = &parent.ID })
+		impacts := []label.DeletionImpact{{EntityID: "unread"}}
+		err := mutationtest.RequireSecondWaits(t, h.Harness,
+			func(ctx context.Context, store label.Store) error { return store.LockParentGraph(ctx) },
+			func(ctx context.Context, store label.Store) error {
+				if _, err := store.ContentDocumentID(ctx, child.ID, label.UpdateLock); err != nil {
+					return err
+				}
+				return store.UpdateDocumentMetadata(ctx, child.ID, entityparticipant.MetadataChange{
+					Parent: entityparticipant.Assignment{Changed: true},
+				}, time.Now().UTC())
+			},
+			labelDeleteLocks(parent.ID, &impacts),
+		)
+		require.NoError(t, err)
+		require.Empty(t, impacts, "the delete reads the reparent's commit")
+	},
+	"a delete waits for a reparent onto the deleted parent": func(t *testing.T, h Harness) {
+		// Both take the parent graph lock before any Label row (DeleteLabel,
+		// the metadata save). The reparent's foreign key share-locks the new
+		// parent while it holds the graph; a delete that locked the parent
+		// first deadlocked against it.
+		parent := insert(t, h, nil)
+		child := insert(t, h, nil)
+		var impacts []label.DeletionImpact
+		err := mutationtest.RequireSecondWaits(t, h.Harness,
+			func(ctx context.Context, store label.Store) error { return store.LockParentGraph(ctx) },
+			func(ctx context.Context, store label.Store) error {
+				return store.UpdateDocumentMetadata(ctx, child.ID, entityparticipant.MetadataChange{
+					Parent: entityparticipant.Assignment{Changed: true, Value: &parent.ID},
+				}, time.Now().UTC())
+			},
+			labelDeleteLocks(parent.ID, &impacts),
+		)
+		require.NoError(t, err)
+		require.Equal(t, []label.DeletionImpact{{Kind: label.ImpactChildLabel, EntityID: child.ID}}, impacts, "the delete reads the reparent's commit")
+	},
 	"a locked label makes a second writer wait for the first commit": func(t *testing.T, h Harness) {
 		value := insert(t, h, nil)
 		publishedAt := time.Now().UTC().Truncate(time.Microsecond)
@@ -399,4 +441,23 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		require.NoError(t, err)
 		require.Equal(t, label.StatusPublished, seen.Status, "the second writer reads the first commit")
 	},
+}
+
+// labelDeleteLocks takes DeleteLabel's locks on parentID, the parent graph,
+// the relation tables and the root row, and reads its deletion impacts.
+func labelDeleteLocks(parentID string, impacts *[]label.DeletionImpact) func(context.Context, label.Store) error {
+	return func(ctx context.Context, store label.Store) error {
+		if err := store.LockParentGraph(ctx); err != nil {
+			return err
+		}
+		if err := store.LockLabelRelations(ctx); err != nil {
+			return err
+		}
+		if _, err := store.LockLabelID(ctx, parentID); err != nil {
+			return err
+		}
+		var err error
+		*impacts, err = store.DeletionImpacts(ctx, parentID)
+		return err
+	}
 }

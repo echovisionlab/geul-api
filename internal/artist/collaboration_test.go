@@ -93,7 +93,7 @@ func TestUpdateArtistDocumentMetadataMovesTheParentRelationship(t *testing.T) {
 	touch, err := policyv1.Artist.TouchParent(f.artist.ID, parent.ID)
 	require.NoError(t, err)
 	require.Equal(t, [][]policyv1.RelationshipMutation{{touch}}, f.h.checker.Applied())
-	require.Equal(t, 1, f.h.store.ParentGraphLocks())
+	require.Equal(t, 2, f.h.store.ParentGraphLocks(), "a reparent takes the hierarchy lock before the content fence and validates under it")
 }
 
 func TestUpdateArtistDocumentMetadataRejections(t *testing.T) {

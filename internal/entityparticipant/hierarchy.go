@@ -10,6 +10,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 )
 
+// Every mutation of a participant-governed entity that changes its
+// hierarchy (a create with a parent, a reparent, a delete) takes the parent
+// graph lock before any entity row lock: a reparent's foreign key share-locks
+// the new parent row and a delete locks the parent and its children, so a
+// row lock taken first would deadlock against the other's graph lock.
+
 // ValidateParentTransition locks the hierarchy and checks that parentID, when
 // set, names another existing entity that is not a descendant of entityID.
 func (s Spec) ValidateParentTransition(ctx context.Context, store Store, entityID, parentID string) error {

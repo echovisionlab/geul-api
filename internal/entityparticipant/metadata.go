@@ -250,6 +250,8 @@ func (m Mutations[S]) SaveMetadata(ctx context.Context, save MetadataSave[S]) (c
 		Audit: func(contentblock.AdvanceResult) mutation.Audit { return mutation.Unchanged() },
 	}
 	if writesParent {
+		// The parent graph comes before the content fence's row lock.
+		spec.Lock = func(ctx context.Context, store S) error { return store.LockParentGraph(ctx) }
 		spec.Relationships = func(contentblock.AdvanceResult) ([]policyv1.RelationshipMutation, []policyv1.RelationshipMutation, error) {
 			return m.spec.ReplaceParentRelationships(save.EntityID, currentParent, save.Parent.Update.Value)
 		}

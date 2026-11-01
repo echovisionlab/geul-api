@@ -444,10 +444,10 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		require.NoError(t, err)
 		require.Equal(t, artist.StatusPublished, seen.Status, "the second writer reads the first commit")
 	},
-	"the parent graph lock makes a delete wait for a reparent": func(t *testing.T, h Harness) {
-		// A delete locks its root, then the parent graph; a reparent holds
-		// the graph, so the delete's relationship snapshot sees the commit
-		// that moves the child away.
+	"a delete waits for a reparent away from the deleted parent": func(t *testing.T, h Harness) {
+		// Both take the parent graph lock before any Artist row (DeleteArtist,
+		// the metadata save), so the delete's snapshot sees the commit that
+		// moves the child away.
 		parent := insert(t, h, nil)
 		child := insert(t, h, func(value *artist.Artist) { value.ParentArtistID = &parent.ID })
 		children := []entityparticipant.Related{{ID: "unread"}}
@@ -458,19 +458,45 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 					MetadataChange: entityparticipant.MetadataChange{Parent: entityparticipant.Assignment{Changed: true}},
 				}, time.Now().UTC())
 			},
-			func(ctx context.Context, store artist.Store) error {
-				if err := store.LockEntity(ctx, parent.ID); err != nil {
-					return err
-				}
-				if err := store.LockParentGraph(ctx); err != nil {
-					return err
-				}
-				var err error
-				children, err = store.ChildArtists(ctx, parent.ID)
-				return err
-			},
+			deleteLocks(parent.ID, &children),
 		)
 		require.NoError(t, err)
 		require.Empty(t, children, "the delete reads the reparent's commit")
 	},
+	"a delete waits for a reparent onto the deleted parent": func(t *testing.T, h Harness) {
+		// The reparent's foreign key share-locks the new parent row while it
+		// holds the graph lock; a delete that locked that row before the
+		// graph deadlocked against it.
+		parent := insert(t, h, nil)
+		child := insert(t, h, nil)
+		var children []entityparticipant.Related
+		err := mutationtest.RequireSecondWaits(t, h.Harness,
+			func(ctx context.Context, store artist.Store) error { return store.LockParentGraph(ctx) },
+			func(ctx context.Context, store artist.Store) error {
+				return store.UpdateDocumentMetadata(ctx, child.ID, artist.MetadataChange{
+					MetadataChange: entityparticipant.MetadataChange{Parent: entityparticipant.Assignment{Changed: true, Value: &parent.ID}},
+				}, time.Now().UTC())
+			},
+			deleteLocks(parent.ID, &children),
+		)
+		require.NoError(t, err)
+		require.Len(t, children, 1, "the delete reads the reparent's commit")
+		require.Equal(t, child.ID, children[0].ID)
+	},
+}
+
+// deleteLocks takes DeleteArtist's locks on parentID, the parent graph then
+// the root row, and reads its children.
+func deleteLocks(parentID string, children *[]entityparticipant.Related) func(context.Context, artist.Store) error {
+	return func(ctx context.Context, store artist.Store) error {
+		if err := store.LockParentGraph(ctx); err != nil {
+			return err
+		}
+		if err := store.LockEntity(ctx, parentID); err != nil {
+			return err
+		}
+		var err error
+		*children, err = store.ChildArtists(ctx, parentID)
+		return err
+	}
 }

@@ -53,6 +53,12 @@ func (s *Service) CreateArtist(ctx context.Context, command CreateArtistCommand)
 		// the canonical principal before the first durable state change and
 		// keeps that lock for the rest of the transaction.
 		Access: mutation.FreshAdminCan(policyv1.Artist.Create()),
+		Lock: func(ctx context.Context, store Store) error {
+			if artist.ParentArtistID == nil {
+				return nil
+			}
+			return store.LockParentGraph(ctx)
+		},
 		Change: func(ctx context.Context, store Store) (string, error) {
 			var err error
 			ownerIdentityID, err = createArtist(ctx, store, &artist, name, command, ownerMemberID)
@@ -188,13 +194,14 @@ func (s *Service) DeleteArtist(ctx context.Context, command DeleteArtistCommand)
 	}
 	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[artistDeletion, Store]{
 		Lock: func(ctx context.Context, store Store) error {
-			if err := artistEntity.LockRoot(ctx, store, command.ID); err != nil {
+			// Serialize the SpiceDB relationship snapshot with every Artist
+			// reparent. The parent graph comes before the root row, as in
+			// every hierarchy change, so a reparent onto this Artist cannot
+			// hold the graph while its foreign key waits on the root.
+			if err := store.LockParentGraph(ctx); err != nil {
 				return err
 			}
-			// Serialize the SpiceDB relationship snapshot with every Artist
-			// reparent. The root lock is acquired first everywhere to avoid a
-			// delete/reparent lock-order inversion for the same Artist.
-			return store.LockParentGraph(ctx)
+			return artistEntity.LockRoot(ctx, store, command.ID)
 		},
 		Access: artistEntity.LockedAccess(s.spiceDB, command.ID, policyv1.Artist.Delete),
 		Change: func(ctx context.Context, store Store) (artistDeletion, error) {

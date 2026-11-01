@@ -60,6 +60,12 @@ func (s *Service) CreateLabel(ctx context.Context, command CreateLabelCommand) (
 		// the canonical principal before the first durable state change and
 		// keeps that lock for the rest of the transaction.
 		Access: mutation.FreshAdminCan(policyv1.Label.Create()),
+		Lock: func(ctx context.Context, store Store) error {
+			if label.ParentLabelID == nil {
+				return nil
+			}
+			return store.LockParentGraph(ctx)
+		},
 		Change: func(ctx context.Context, store Store) (string, error) {
 			var err error
 			ownerIdentityID, err = createLabel(ctx, store, &label, name, command.Document, ownerMemberID, command.AcceptLanguage)
@@ -280,7 +286,11 @@ func (s *Service) DeleteLabel(ctx context.Context, command DeleteLabelCommand) (
 			// Freeze every relation represented by the preview revision until
 			// the Label delete commits. Deletion is rare; one short table lock
 			// keeps the exact-impact CAS honest without adding cross-domain
-			// state.
+			// state. The parent graph comes first, as in every hierarchy
+			// change.
+			if err := store.LockParentGraph(ctx); err != nil {
+				return err
+			}
 			if err := store.LockLabelRelations(ctx); err != nil {
 				return err
 			}
