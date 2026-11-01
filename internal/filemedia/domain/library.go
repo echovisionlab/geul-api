@@ -20,6 +20,9 @@ type FileFolder struct {
 	CreatedAt, UpdatedAt time.Time
 }
 type Store interface {
+	Catalog(context.Context, CatalogQuery) ([]CatalogRow, error)
+	FileCatalog(context.Context, string) (CatalogRow, error)
+	FileCatalogs(context.Context, []string) ([]CatalogRow, error)
 	FolderExists(context.Context, string) (bool, error)
 	InsertFolder(context.Context, FileFolder) (FileFolder, error)
 	Folder(context.Context, string) (FileFolder, error)

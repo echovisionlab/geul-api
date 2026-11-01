@@ -171,9 +171,10 @@ func (s *Service) loadFileManagerFilesByIDs(ctx context.Context, fileIDs []strin
 		return nil, nil
 	}
 	var rows []fileManagerCatalogRow
-	if err := s.db.WithContext(ctx).Raw(`SELECT 'file' AS item_type, id, folder_id AS parent_id, file_name AS name, extension, mime_type, file_size, duration_seconds, uploaded_by_member_id AS member_id, created_at, updated_at, 1 AS total FROM file WHERE id IN ? AND delete_requested_at IS NULL ORDER BY id`, fileIDs).Scan(&rows).Error; err != nil {
+	if err := s.units.Read(ctx, func(store Store) error { var err error; rows, err = store.FileCatalogs(ctx, fileIDs); return err }); err != nil {
 		return nil, err
 	}
+
 	if len(rows) != len(fileIDs) {
 		return nil, domainerr.Precondition("one or more files no longer exist")
 	}
