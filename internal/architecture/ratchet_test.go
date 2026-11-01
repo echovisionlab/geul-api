@@ -122,8 +122,9 @@ func productionFiles(t *testing.T, roots ...string) []productionFile {
 			}
 			relative = filepath.ToSlash(relative)
 			if entry.IsDir() {
+				// A package named *test (audittest, authztest) is test support.
 				if relative == "internal/testutil" || strings.HasPrefix(relative, "internal/testutil/") ||
-					relative == "internal/architecture" || strings.HasSuffix(relative, "/audittest") || entry.Name() == "testdata" {
+					relative == "internal/architecture" || strings.HasSuffix(entry.Name(), "test") || entry.Name() == "testdata" {
 					return filepath.SkipDir
 				}
 				return nil
