@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -98,7 +99,7 @@ func (EmailRendering) BuildRenderData(
 	input map[string]string,
 ) map[string]string {
 	return emaildelivery.BuildEmailRenderData(
-		ctx, db, cdnDomain, siteOrigin, requestedLocale, input,
+		ctx, emaildeliverypostgres.Bind(db), cdnDomain, siteOrigin, requestedLocale, input,
 	)
 }
 

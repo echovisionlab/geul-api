@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/model"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -23,13 +22,11 @@ const (
 // descriptors, notice events and the client wording each kind has always
 // answered with.
 type policyKind struct {
-	kind PolicyKind
-	// table holds the versions.
-	table     string
-	draft     model.LegalPolicyStatus
-	scheduled model.LegalPolicyStatus
-	active    model.LegalPolicyStatus
-	archived  model.LegalPolicyStatus
+	kind      PolicyKind
+	draft     Status
+	scheduled Status
+	active    Status
+	archived  Status
 	// shareLinkEntityType is the stored entity type of the kind's preview
 	// share links.
 	shareLinkEntityType string
@@ -52,9 +49,8 @@ type policyKind struct {
 
 var policyKinds = map[PolicyKind]*policyKind{
 	Terms: {
-		kind: Terms, table: "terms_history",
-		draft: model.TermsStatusDraft, scheduled: model.TermsStatusScheduled,
-		active: model.TermsStatusActive, archived: model.TermsStatusArchived,
+		kind:  Terms,
+		draft: TermsDraft, scheduled: TermsScheduled, active: TermsActive, archived: TermsArchived,
 		shareLinkEntityType: "SHARE_LINK_ENTITY_TYPE_TERMS",
 		updateEvent:         email.EventTermsUpdate, effectiveEvent: email.EventTermsEffective, effectiveURLKey: "terms_url",
 		defaultTitle: "Terms of Service", notFoundResource: "terms",
@@ -63,9 +59,8 @@ var policyKinds = map[PolicyKind]*policyKind{
 		touchPolicy: policyv1.TermsHistory.TouchPolicy, deletePolicy: policyv1.TermsHistory.DeletePolicy,
 	},
 	Privacy: {
-		kind: Privacy, table: "privacy_history",
-		draft: model.PrivacyStatusDraft, scheduled: model.PrivacyStatusScheduled,
-		active: model.PrivacyStatusActive, archived: model.PrivacyStatusArchived,
+		kind:  Privacy,
+		draft: PrivacyDraft, scheduled: PrivacyScheduled, active: PrivacyActive, archived: PrivacyArchived,
 		shareLinkEntityType: "SHARE_LINK_ENTITY_TYPE_PRIVACY",
 		updateEvent:         email.EventPrivacyUpdate, effectiveEvent: email.EventPrivacyEffective, effectiveURLKey: "privacy_url",
 		defaultTitle: "Privacy Policy", notFoundResource: "privacy policy",
@@ -97,7 +92,7 @@ func (k PolicyKind) ShareLinkEntityType() (string, bool) {
 
 // PolicyStatus returns the stored status of kind in lifecycle state, one of
 // draft, scheduled, active and archived.
-func PolicyStatus(kind PolicyKind, state string) (model.LegalPolicyStatus, bool) {
+func PolicyStatus(kind PolicyKind, state string) (Status, bool) {
 	descriptor, ok := policyKinds[kind]
 	if !ok {
 		return "", false
@@ -118,7 +113,7 @@ func PolicyStatus(kind PolicyKind, state string) (model.LegalPolicyStatus, bool)
 
 // auditState names status in audit records; a status of another kind has
 // none.
-func (k *policyKind) auditState(status model.LegalPolicyStatus) sharedtelemetry.AuditState {
+func (k *policyKind) auditState(status Status) sharedtelemetry.AuditState {
 	switch status {
 	case k.draft:
 		return sharedtelemetry.AuditStateDraft

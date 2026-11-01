@@ -19,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/sitelogo"
 	settingsdomain "github.com/echovisionlab/geul-api/internal/sitesettings"
+	sitesettingspostgres "github.com/echovisionlab/geul-api/internal/sitesettings/postgres"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -99,11 +100,11 @@ func siteRequest(ctx context.Context, db *gorm.DB) ([]og.Request, error) {
 func (i *Invalidator) Request(
 	ctx context.Context,
 	tx *gorm.DB,
-	before *model.SiteSettings,
-	after *model.SiteSettings,
+	before settingsdomain.Settings,
+	after settingsdomain.Settings,
 	keys []string,
 ) (*string, error) {
-	invalidation := settingsdomain.ClassifyOGInvalidation(before, after, keys)
+	invalidation := settingsdomain.ClassifyOGInvalidation(&before, &after, keys)
 	if !invalidation.All && !invalidation.Site && !invalidation.Content && !invalidation.Privacy && !invalidation.Terms {
 		return nil, nil
 	}
@@ -129,7 +130,7 @@ func (i *Invalidator) Request(
 func (i *Invalidator) requests(
 	ctx context.Context,
 	tx *gorm.DB,
-	after *model.SiteSettings,
+	after settingsdomain.Settings,
 	invalidation settingsdomain.OGInvalidation,
 ) ([]og.Request, error) {
 	var requests []og.Request
@@ -354,6 +355,6 @@ func validateTarget(target og.Target) error {
 	return nil
 }
 
-var _ settingsdomain.OGInvalidator = (*Invalidator)(nil)
+var _ sitesettingspostgres.OG = (*Invalidator)(nil)
 var _ og.RenderConfig = (*RenderConfig)(nil)
 var _ og.Projection = (*Projection)(nil)

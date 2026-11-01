@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/model"
 	core "github.com/echovisionlab/geul-api/internal/translation"
@@ -27,9 +28,9 @@ type legalInterchangeDomainStub struct {
 	applied  bool
 }
 
-func (s *legalInterchangeDomainStub) LoadTranslationInterchangeAIDocumentWithDB(
+func (s *legalInterchangeDomainStub) LoadTranslationInterchangeAIDocument(
 	context.Context,
-	*gorm.DB,
+	legal.Joined,
 	string,
 	string,
 	string,
@@ -40,9 +41,9 @@ func (s *legalInterchangeDomainStub) LoadTranslationInterchangeAIDocumentWithDB(
 	return s.current, nil
 }
 
-func (s *legalInterchangeDomainStub) ExecuteTranslationInterchangeMutationWithDB(
+func (s *legalInterchangeDomainStub) ExecuteTranslationInterchangeMutation(
 	_ context.Context,
-	_ *gorm.DB,
+	_ legal.Joined,
 	_ string,
 	_ string,
 	_ string,
@@ -97,7 +98,7 @@ func TestLegalInterchangeCreateUsesOnlyTargetLocaleAndCanRecreateAfterDelete(t *
 			Revision: fixture.revision, TargetRevision: &acceptedTarget.state.Revision, Changed: true,
 		},
 	}
-	port := NewLegalInterchange(domain)
+	port := NewLegalInterchange(domain, &audittest.Recorder{})
 	targets := make(map[string]core.UnitResult, len(fixture.plan.Units))
 	handles := make([]string, 0, len(fixture.plan.Units))
 	for _, unit := range fixture.plan.Units {
@@ -202,7 +203,7 @@ func TestLegalInterchangeRejectsStaleTargetRevisionInsideCompiler(t *testing.T) 
 	fixture := newLegalInterchangeFixture(t, "privacy")
 	empty := ""
 	domain := &legalInterchangeDomainStub{current: fixture.raw(true, true, &empty)}
-	port := NewLegalInterchange(domain)
+	port := NewLegalInterchange(domain, &audittest.Recorder{})
 	title := "changed"
 	stale := "tr1_stale"
 	_, err := port.ApplyTranslationInterchange(
@@ -302,9 +303,9 @@ func newLegalInterchangeFixture(t *testing.T, entityType string) legalInterchang
 			LocaleOverlay:           sourceOverlay,
 		},
 	}
-	plan, err := legal.BuildTranslationExtractionPlan(&model.TranslationJob{
+	plan, err := core.BuildRichTextExtractionPlan(&model.TranslationJob{
 		EntityType: entityType, EntityID: entityID, SourceLocale: "en", TargetLocale: "ko",
-	}, source)
+	}, source, core.RichTextDocumentFields{Title: true})
 	require.NoError(t, err)
 	return legalInterchangeFixture{
 		entityType: entityType, entityID: entityID, documentID: uuid.New(),

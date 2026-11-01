@@ -11,29 +11,24 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
 // Deps are the collaborators of the public legal use cases. Every field is
 // required; NewService rejects a missing one.
 type Deps struct {
-	DB            *gorm.DB
-	ContentBlocks *contentblock.Store
-	Media         legaldomain.PublicMedia
+	Units     Units // legalpublicpostgres.NewUnits
+	Localizer Localizer
+	OGImages  OGImages
 }
 
 func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
-		"DB": d.DB == nil, "ContentBlocks": d.ContentBlocks == nil, "Media": d.Media == nil,
+		"Units": d.Units == nil, "Localizer": d.Localizer == nil, "OGImages": d.OGImages == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -49,9 +44,9 @@ func (d Deps) validate() error {
 // Service holds the public Terms and Privacy use cases. Each takes the
 // legaldomain.PolicyKind it reads.
 type Service struct {
-	db            *gorm.DB
-	contentBlocks *contentblock.Store
-	media         legaldomain.PublicMedia
+	units     Units
+	localizer Localizer
+	ogImages  OGImages
 }
 
 // NewService validates deps and returns the public legal use cases.
@@ -59,20 +54,19 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	return &Service{db: deps.DB, contentBlocks: deps.ContentBlocks, media: deps.Media}, nil
+	return &Service{units: deps.Units, localizer: deps.Localizer, ogImages: deps.OGImages}, nil
 }
 
 // publicKind is what the public routes read of a policy kind.
 type publicKind struct {
+	kind      legaldomain.PolicyKind
 	entity    string
-	table     string
-	scheduled model.LegalPolicyStatus
-	active    model.LegalPolicyStatus
-	archived  model.LegalPolicyStatus
+	scheduled legaldomain.Status
+	active    legaldomain.Status
+	archived  legaldomain.Status
 	// shareLinkEntityType is the stored entity type of the kind's Share
 	// Links.
 	shareLinkEntityType string
-	localization        publiccontent.Spec
 	// serviceName names the kind's public service in failure records.
 	serviceName string
 }
@@ -87,24 +81,11 @@ func publicKindOf(kind legaldomain.PolicyKind) (publicKind, error) {
 	}
 	entity := string(kind)
 	return publicKind{
-		entity: entity, table: entity + "_history",
+		kind: kind, entity: entity,
 		scheduled: scheduled, active: active, archived: archived,
 		shareLinkEntityType: shareLinkEntityType,
-		localization: publiccontent.Spec{
-			EntityType: entity, TableName: entity + "_translation", SelectClause: "locale, title",
-		},
-		serviceName: "public." + strings.ToUpper(entity[:1]) + entity[1:],
+		serviceName:         "public." + strings.ToUpper(entity[:1]) + entity[1:],
 	}, nil
-}
-
-// publicPolicyRow is a published row of terms_history or privacy_history.
-type publicPolicyRow struct {
-	ID             string                  `gorm:"column:id;primaryKey"`
-	Version        int                     `gorm:"column:version"`
-	Title          string                  `gorm:"column:title"`
-	Status         model.LegalPolicyStatus `gorm:"column:status"`
-	EffectiveFrom  *time.Time              `gorm:"column:effective_from"`
-	EffectiveUntil *time.Time              `gorm:"column:effective_until"`
 }
 
 // PublicPolicy is a version as the public site shows it. A scheduled
@@ -119,7 +100,7 @@ type PublicPolicy struct {
 	EffectiveFrom  *time.Time
 	EffectiveUntil *time.Time
 	Localization   *publiccontent.Selection
-	OGAsset        *commonv1.AssetRef
+	OGAsset        *Asset
 }
 
 // PublicPolicies is the version a public read shows and the scheduled one
@@ -181,6 +162,7 @@ type ArchivedPolicies struct {
 }
 
 // ListArchivedPolicies returns archived versions, latest effective first.
+// A failed count reports a total of zero.
 func (s *Service) ListArchivedPolicies(ctx context.Context, kind legaldomain.PolicyKind, query ListArchivedPoliciesQuery) (_ ArchivedPolicies, returnErr error) {
 	descriptor, err := publicKindOf(kind)
 	if err != nil {
@@ -194,13 +176,17 @@ func (s *Service) ListArchivedPolicies(ctx context.Context, kind legaldomain.Pol
 	}
 	limit = min(limit, 100)
 	var total int64
-	s.db.WithContext(ctx).Table(descriptor.table).Where("status = ?", descriptor.archived).Count(&total)
-	var rows []publicPolicyRow
-	if err := s.db.WithContext(ctx).Table(descriptor.table).
-		Where("status = ?", descriptor.archived).
-		Order("effective_from DESC").
-		Limit(int(limit)).Offset(int(max(query.Offset, 0))).
-		Find(&rows).Error; err != nil {
+	_ = s.units.Read(ctx, func(store Store) error {
+		var err error
+		total, err = store.CountArchived(ctx, kind)
+		return err
+	})
+	var rows []Version
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		rows, err = store.ListArchived(ctx, kind, limit, max(query.Offset, 0))
+		return err
+	}); err != nil {
 		return ArchivedPolicies{}, err
 	}
 	items := make([]PolicySummary, 0, len(rows))

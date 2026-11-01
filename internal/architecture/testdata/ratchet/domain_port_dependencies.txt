@@ -1,9 +1,6 @@
 # <count> <domain package> <category>: files importing gorm, a SQL driver,
 # internal/model or generated contracts outside connect_handler*.go, and
 # references to auth.SpiceDBClient and kratos.* tables. Lower only.
-1 internal/admin generated contracts
-2 internal/admin gorm
-3 internal/admin spicedb client
 5 internal/ai generated contracts
 6 internal/ai gorm
 7 internal/ai spicedb client
@@ -15,34 +12,15 @@
 26 internal/campaign gorm
 25 internal/campaign model
 12 internal/campaign spicedb client
-13 internal/emailauthoring generated contracts
-22 internal/emailauthoring gorm
-13 internal/emailauthoring model
-5 internal/emailauthoring spicedb client
-11 internal/emaildelivery generated contracts
-6 internal/emaildelivery gorm
-2 internal/emaildelivery kratos tables
-7 internal/emaildelivery model
-2 internal/emaildelivery spicedb client
+7 internal/emailauthoring generated contracts
+6 internal/emaildelivery generated contracts
 1 internal/entityparticipant generated contracts
-17 internal/form generated contracts
-23 internal/form gorm
-16 internal/form model
-2 internal/form spicedb client
-2 internal/form sql driver
-7 internal/form/public generated contracts
-3 internal/form/public gorm
-6 internal/form/public model
-2 internal/form/public spicedb client
+8 internal/form generated contracts
+2 internal/form/public generated contracts
 12 internal/label generated contracts
 2 internal/label/public generated contracts
-10 internal/legal generated contracts
-17 internal/legal gorm
-10 internal/legal model
-6 internal/legal spicedb client
+7 internal/legal generated contracts
 2 internal/legal/public generated contracts
-3 internal/legal/public gorm
-3 internal/legal/public model
 1 internal/maptheme generated contracts
 3 internal/member generated contracts
 1 internal/member gorm
@@ -59,13 +37,6 @@
 4 internal/release/public generated contracts
 2 internal/series generated contracts
 1 internal/series/public generated contracts
-3 internal/sitesettings generated contracts
-5 internal/sitesettings gorm
-8 internal/sitesettings model
-2 internal/sitesettings spicedb client
-2 internal/sitesettings/public generated contracts
-2 internal/sitesettings/public model
-2 internal/sitesettings/public spicedb client
 5 internal/translation generated contracts
 1 internal/translation gorm
 2 internal/translation model

@@ -32,7 +32,6 @@ import (
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/menu"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/page"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/programevent"
@@ -796,9 +795,9 @@ func (application *compositionLegalPolicyApplication) CreatePolicyVersion(ctx co
 	application.principal = auth.GetUser(ctx)
 	application.title = *command.Title
 	application.kind = string(kind)
-	status := model.TermsStatusDraft
+	status := legal.TermsDraft
 	if kind == legal.Privacy {
-		status = model.PrivacyStatusDraft
+		status = legal.PrivacyDraft
 	}
 	return legal.Policy{ID: compositionFileID, Version: 2, Title: application.title, SourceLocale: "ko", Revision: compositionIdentityID, Status: status, CreatedAt: time.Now(), UpdatedAt: time.Now()}, nil
 }

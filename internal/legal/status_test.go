@@ -3,7 +3,6 @@ package legal
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -37,7 +36,7 @@ func TestLegalPolicyStatusMappingCoversEveryAPIStatus(t *testing.T) {
 			t.Fatalf("%s maps to %q (known %t) and back to %s", name, stored, known, PrivacyStatusToProto(stored))
 		}
 	}
-	if got := TermsStatusToProto(model.PrivacyStatusDraft); got != managev1.TermsStatus_TERMS_STATUS_UNSPECIFIED {
+	if got := TermsStatusToProto(PrivacyDraft); got != managev1.TermsStatus_TERMS_STATUS_UNSPECIFIED {
 		t.Fatalf("a Privacy status mapped to Terms %s", got)
 	}
 }

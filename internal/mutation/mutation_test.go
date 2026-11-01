@@ -238,6 +238,29 @@ func TestAnonymousAuditAttributesAVisitorWithoutASession(t *testing.T) {
 	require.Empty(t, records[0].MemberID)
 }
 
+func TestSystemAuditAttributesTheServiceWhateverTheRequestActor(t *testing.T) {
+	recorder := &audittest.Recorder{}
+	runner, _ := newTestRunner(t, recorder)
+	var steps []string
+	spec := noteSpec(&steps, "role")
+	spec.Audit = func(note) Audit {
+		return SystemAudit(sharedtelemetry.ServiceBackend, sharedtelemetry.AuditMemberUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+			return sharedtelemetry.NewMemberRoleUpdatedAuditRecord(metadata, uuid.NewString(), "user", "admin")
+		})
+	}
+	for _, ctx := range []context.Context{context.Background(), memberRequestContext(t)} {
+		_, err := Run(ctx, runner, spec)
+		require.NoError(t, err)
+	}
+	records := recorder.Records()
+	require.Len(t, records, 2)
+	for _, record := range records {
+		require.Equal(t, sharedtelemetry.ActorKindSystem, record.Kind)
+		require.Equal(t, string(sharedtelemetry.ServiceBackend), record.Service)
+		require.Empty(t, record.MemberID)
+	}
+}
+
 func TestRunRejectsAnIncompleteSpecBeforeTheTransaction(t *testing.T) {
 	runner, _ := newTestRunner(t, &audittest.Recorder{})
 	var steps []string

@@ -8,29 +8,25 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/securityaccess"
-	"gorm.io/gorm"
 )
 
 type AuthenticationAccessRecorder struct {
-	target           *url.URL
-	httpClient       *http.Client
-	db               *gorm.DB
-	writer           securityaccess.Appender
-	now              func() time.Time
-	resolvePrincipal func(context.Context, string) (*auth.UserInfo, error)
-	firstSession     func(context.Context, string) (bool, error)
-	resolveIncoming  func(*http.Request) *auth.UserInfo
+	target          *url.URL
+	httpClient      *http.Client
+	sessions        Sessions
+	writer          securityaccess.Appender
+	now             func() time.Time
+	resolveIncoming func(*http.Request) *auth.UserInfo
 }
 
 func NewAuthenticationAccessRecorder(
 	kratosPublicURL string,
-	db *gorm.DB,
+	sessions Sessions,
 	writer securityaccess.Appender,
 ) (*AuthenticationAccessRecorder, error) {
-	if db == nil {
-		return nil, errors.New("authentication access database is required")
+	if sessions == nil {
+		return nil, errors.New("authentication access sessions are required")
 	}
 	if writer == nil {
 		return nil, errors.New("security access writer is required")
@@ -42,15 +38,9 @@ func NewAuthenticationAccessRecorder(
 	recorder := &AuthenticationAccessRecorder{
 		target:     target,
 		httpClient: &http.Client{Timeout: 5 * time.Second},
-		db:         db,
+		sessions:   sessions,
 		writer:     writer,
 		now:        func() time.Time { return time.Now().UTC() },
-	}
-	recorder.resolvePrincipal = func(ctx context.Context, sessionID string) (*auth.UserInfo, error) {
-		return auth.ResolveAuthenticatedPrincipalBySessionID(ctx, db, sessionID)
-	}
-	recorder.firstSession = func(ctx context.Context, sessionID string) (bool, error) {
-		return identityread.FirstSession(ctx, db, sessionID)
 	}
 	recorder.resolveIncoming = recorder.resolveIncomingMember
 	return recorder, nil

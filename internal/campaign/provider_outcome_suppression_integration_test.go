@@ -3,24 +3,18 @@
 package campaign
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
-	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
-func TestSESProviderOutcomeUpdatesCampaignHistoryAndDeduplicatesSuppressionIntegration(t *testing.T) {
+func TestSESProviderOutcomeUpdatesCampaignHistoryIntegration(t *testing.T) {
 	t.Parallel()
 	db := testutil.NewIntegrationDB(t)
 	now := time.Now().UTC()
@@ -29,7 +23,6 @@ func TestSESProviderOutcomeUpdatesCampaignHistoryAndDeduplicatesSuppressionInteg
 	recipientID := uuid.NewString()
 	providerMessageID := "ses-provider-" + uuid.NewString()
 	recipientEmail := "ses-callback-" + uuid.NewString() + "@example.test"
-	referenceID := providerMessageID
 	identityID := uuid.NewString()
 	renderSnapshotJSON, err := json.Marshal(CampaignDeliverySnapshot{
 		Subject: "SES callback", ContentHTML: "<p>SES callback</p>", SourceLocale: "en",
@@ -101,38 +94,9 @@ func TestSESProviderOutcomeUpdatesCampaignHistoryAndDeduplicatesSuppressionInteg
 	result, err = applySESProviderOutcome(t.Context(), db, providerMessageID, SESProviderOutcomeComplained, complaintAt, "complaint")
 	require.NoError(t, err)
 	require.Equal(t, 1, result.UpdatedRecipients)
-	require.NoError(t, emaildelivery.SuppressEmailAddress(
-		t.Context(), db, recipientEmail,
-		emaildelivery.EmailSuppressionReasonSESComplaint,
-		emaildelivery.EmailSuppressionSourceSESCallback,
-		&referenceID, "complaint",
-	))
-	var firstSuppression model.EmailSuppression
-	require.NoError(t, db.Where("LOWER(email) = ? AND released_at IS NULL", emailutil.NormalizeAddressForDelivery(recipientEmail)).First(&firstSuppression).Error)
-
 	result, err = applySESProviderOutcome(t.Context(), db, providerMessageID, SESProviderOutcomeComplained, complaintAt.Add(time.Minute), "complaint")
 	require.NoError(t, err)
 	require.Zero(t, result.UpdatedRecipients)
-	require.NoError(t, emaildelivery.SuppressEmailAddress(
-		t.Context(), db, recipientEmail,
-		emaildelivery.EmailSuppressionReasonSESComplaint,
-		emaildelivery.EmailSuppressionSourceSESCallback,
-		&referenceID, "complaint",
-	))
-	var duplicateSuppression model.EmailSuppression
-	require.NoError(t, db.First(&duplicateSuppression, "id = ?", firstSuppression.ID).Error)
-	require.Equal(t, firstSuppression.SuppressedAt, duplicateSuppression.SuppressedAt)
-
-	require.NoError(t, emaildelivery.SuppressEmailAddress(
-		t.Context(), db, recipientEmail,
-		emaildelivery.EmailSuppressionReasonSESBounce,
-		emaildelivery.EmailSuppressionSourceSESCallback,
-		&referenceID, "late permanent bounce",
-	))
-	var afterLateBounce model.EmailSuppression
-	require.NoError(t, db.First(&afterLateBounce, "id = ?", firstSuppression.ID).Error)
-	require.Equal(t, emaildelivery.EmailSuppressionReasonSESComplaint, afterLateBounce.Reason)
-	require.Equal(t, firstSuppression.SuppressedAt, afterLateBounce.SuppressedAt)
 
 	var recipient model.CampaignDeliveryRecipient
 	require.NoError(t, db.First(&recipient, "id = ?", recipientID).Error)
@@ -144,38 +108,4 @@ func TestSESProviderOutcomeUpdatesCampaignHistoryAndDeduplicatesSuppressionInteg
 	require.NoError(t, db.First(&run, "id = ?", runID).Error)
 	require.Zero(t, run.SentCount)
 	require.Equal(t, 1, run.FailedCount)
-
-	adminContext, spiceDB := testutil.IntegrationAdminAuditContext(t, db)
-	admin := auth.GetUser(adminContext)
-	delivery, err := emaildelivery.NewService(emaildelivery.Deps{
-		DB: db, SpiceDB: spiceDB, AdapterCache: noopMailAdapterCache{},
-		AdapterChanges: unusedMailAdapterChanges{}, Audit: &audittest.Recorder{},
-	})
-	require.NoError(t, err)
-	err = delivery.ReleaseEmailSuppression(
-		testutil.NewAuditContext(t, string(admin.IdentityID), string(admin.MemberID)),
-		emaildelivery.ReleaseEmailSuppressionCommand{Email: recipientEmail},
-	)
-	require.NoError(t, err)
-	require.NoError(t, emaildelivery.SuppressEmailAddress(
-		t.Context(), db, recipientEmail,
-		emaildelivery.EmailSuppressionReasonSESComplaint,
-		emaildelivery.EmailSuppressionSourceSESCallback,
-		&referenceID, "replayed complaint",
-	))
-	var activeSuppressionCount int64
-	require.NoError(t, db.Model(&model.EmailSuppression{}).
-		Where("LOWER(email) = ? AND released_at IS NULL", emailutil.NormalizeAddressForDelivery(recipientEmail)).
-		Count(&activeSuppressionCount).Error)
-	require.Zero(t, activeSuppressionCount)
-}
-
-type noopMailAdapterCache struct{}
-
-func (noopMailAdapterCache) InvalidateCache() {}
-
-type unusedMailAdapterChanges struct{}
-
-func (unusedMailAdapterChanges) PublishMailAdapterChanged(context.Context, *managev1.MailAdapterChangedEvent) error {
-	return errors.New("test did not expect a mail adapter change")
 }

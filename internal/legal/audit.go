@@ -20,7 +20,7 @@ func legalPolicyAuditType(entityType string) (sharedtelemetry.AuditPolicyType, e
 }
 
 // policyIdentityAudit names the record of a created or deleted version.
-func policyIdentityAudit(action sharedtelemetry.AuditAction, kind *policyKind, row policyRow) mutation.Audit {
+func policyIdentityAudit(action sharedtelemetry.AuditAction, kind *policyKind, row Version) mutation.Audit {
 	return mutation.RequestAudit(action, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 		policyType, err := legalPolicyAuditType(kind.entity())
 		if err != nil {

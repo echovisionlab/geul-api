@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -17,7 +16,7 @@ import (
 // CollaborationAccess is the access of a collaboration room write.
 // editor-collab calls as itself: the owner's contributor fence inside the
 // write authorizes the room's contributors.
-var CollaborationAccess = mutation.Locked(func(context.Context, *gorm.DB, mutation.Require) error { return nil })
+var CollaborationAccess = mutation.Locked(func(context.Context, any, mutation.Require) error { return nil })
 
 // CollaborationChange is what a collaboration room write changed and the
 // record it names.
@@ -34,7 +33,7 @@ type CollaborationChange struct {
 
 // LocaleContentChange is the record of a change to id's content in locale,
 // credited to memberID.
-func (o Owner) LocaleContentChange(memberID, id, locale string, operation sharedtelemetry.AuditItemOperation) mutation.Audit {
+func (o Owner[S]) LocaleContentChange(memberID, id, locale string, operation sharedtelemetry.AuditItemOperation) mutation.Audit {
 	return mutation.MemberAudit(memberID, o.LocaleContentAudit.Action, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 		return o.LocaleContentAudit.Record(metadata, id, locale, operation)
 	})
@@ -43,7 +42,7 @@ func (o Owner) LocaleContentChange(memberID, id, locale string, operation shared
 // DecodeCollaborationBatch decodes a room's Block batch for documentID,
 // restoring the locale values its affected leaves keep. Every locale group
 // must be the room's locale.
-func (o Owner) DecodeCollaborationBatch(
+func (o Owner[S]) DecodeCollaborationBatch(
 	documentID uuid.UUID,
 	locale string,
 	batch *contentv1.RichTextBlockMutationBatch,
@@ -70,14 +69,13 @@ func (o Owner) DecodeCollaborationBatch(
 
 // SaveCollaborationTarget writes a target room's locale and credits a
 // change to originMemberID.
-func (o Owner) SaveCollaborationTarget(
+func (o Owner[S]) SaveCollaborationTarget(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store S,
 	input TargetLocaleMutation,
 	originMemberID string,
 ) (CollaborationChange, error) {
-	output, err := o.ApplyTargetLocaleMutation(ctx, tx, store, input)
+	output, err := o.ApplyTargetLocaleMutation(ctx, store, input)
 	if err != nil {
 		return CollaborationChange{}, err
 	}
@@ -103,29 +101,29 @@ type CollaborationDocument struct {
 	TargetRevision *string
 }
 
-// LoadCollaborationDocument reads id's document in locale under a lock of
-// its root row, which lock takes and which returns the document's ID.
-func (o Owner) LoadCollaborationDocument(
+// LoadCollaborationDocument reads id's document in locale in one snapshot
+// of units under a lock of its root row, which lock takes and which returns
+// the document's ID.
+func (o Owner[S]) LoadCollaborationDocument(
 	ctx context.Context,
-	db *gorm.DB,
-	store *contentblock.Store,
+	units mutation.UnitOfWork[S],
 	id string,
 	locale string,
-	lock func(ctx context.Context, tx *gorm.DB) (uuid.UUID, error),
+	lock func(ctx context.Context, store S) (uuid.UUID, error),
 ) (CollaborationDocument, error) {
 	var state ExactLocaleState
-	err := mutation.ReadLocked(ctx, db, func(tx *gorm.DB) error {
-		documentID, err := lock(ctx, tx)
+	err := units.ReadLocked(ctx, func(store S) error {
+		documentID, err := lock(ctx, store)
 		if err != nil {
 			return err
 		}
-		state, err = o.LoadExactLocaleState(ctx, tx, store, id, documentID, locale, false)
+		state, err = o.LoadExactLocaleState(ctx, store, id, documentID, locale, false)
 		return err
 	})
 	if err != nil {
 		return CollaborationDocument{}, err
 	}
-	document, err := state.MaterializeLocale(o, locale)
+	document, err := o.materializeLocale(state, locale)
 	if err != nil {
 		return CollaborationDocument{}, err
 	}

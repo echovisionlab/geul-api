@@ -4,21 +4,16 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/translation"
-	"gorm.io/gorm"
 )
 
 // LoadTranslationSourceDocument projects the canonical Form source into the
 // provider-neutral Translation contract.
-func LoadTranslationSourceDocument(
-	ctx context.Context,
-	db *gorm.DB,
-	formID string,
-) (*translation.SourceDocument, error) {
-	sourceLocale, err := loadFormResolvedSourceLocale(ctx, db, formID)
+func LoadTranslationSourceDocument(ctx context.Context, store Store, formID string) (*translation.SourceDocument, error) {
+	sourceLocale, err := loadFormResolvedSourceLocale(ctx, store, formID)
 	if err != nil {
 		return nil, err
 	}
-	state, err := LoadFormCanonicalSourceDocumentState(ctx, db, formID, sourceLocale)
+	state, err := LoadFormCanonicalSourceDocumentState(ctx, store, formID, sourceLocale)
 	if err != nil {
 		return nil, err
 	}

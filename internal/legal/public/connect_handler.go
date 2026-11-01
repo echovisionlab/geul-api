@@ -10,6 +10,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/open/v1/openv1connect"
 )
@@ -33,6 +34,29 @@ func localizationInfo(selection *publiccontent.Selection) *openv1.LocalizationIn
 		return nil
 	}
 	return publiccontent.ToProtoLocalizationInfo(*selection)
+}
+
+// assetMessage renders a ready public asset.
+func assetMessage(asset *Asset) *commonv1.AssetRef {
+	if asset == nil {
+		return nil
+	}
+	return &commonv1.AssetRef{
+		AssetId: asset.ID, Url: asset.URL, Extension: asset.Extension, MimeType: asset.MIMEType,
+		FileSize: asset.FileSize, Sha256: asset.SHA256, Disposition: assetDispositionMessage(asset.Disposition),
+		DownloadFilename: asset.DownloadFilename,
+	}
+}
+
+func assetDispositionMessage(disposition AssetDisposition) commonv1.AssetDisposition {
+	switch disposition {
+	case DispositionInline:
+		return commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE
+	case DispositionAttachment:
+		return commonv1.AssetDisposition_ASSET_DISPOSITION_ATTACHMENT
+	default:
+		return commonv1.AssetDisposition_ASSET_DISPOSITION_UNSPECIFIED
+	}
 }
 
 func getPolicyQuery(id, shareToken, sharePassword *string, header interface{ Get(string) string }) GetPolicyQuery {
@@ -69,7 +93,7 @@ func termsMessage(policy *PublicPolicy) *openv1.Terms {
 		Id: policy.ID, Version: policy.Version, Title: policy.Title,
 		Document: policy.Document, Revision: policy.Revision,
 		EffectiveFrom: optionalTimestamp(policy.EffectiveFrom), EffectiveUntil: optionalTimestamp(policy.EffectiveUntil),
-		LocalizationInfo: localizationInfo(policy.Localization), OgAsset: policy.OGAsset,
+		LocalizationInfo: localizationInfo(policy.Localization), OgAsset: assetMessage(policy.OGAsset),
 	}
 }
 
@@ -111,7 +135,7 @@ func privacyMessage(policy *PublicPolicy) *openv1.Privacy {
 		Id: policy.ID, Version: policy.Version, Title: policy.Title,
 		Document: policy.Document, Revision: policy.Revision,
 		EffectiveFrom: optionalTimestamp(policy.EffectiveFrom), EffectiveUntil: optionalTimestamp(policy.EffectiveUntil),
-		LocalizationInfo: localizationInfo(policy.Localization), OgAsset: policy.OGAsset,
+		LocalizationInfo: localizationInfo(policy.Localization), OgAsset: assetMessage(policy.OGAsset),
 	}
 }
 

@@ -32,6 +32,7 @@ import (
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authentication"
+	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
@@ -95,7 +96,8 @@ func TestPinnedKratosCodeFlowsReachAuthenticatedCourierQueue(t *testing.T) {
 	require.NoError(t, err)
 	registrationMembers := member.NewMemberProvisioner(memberUnits, stack.KratosClient, stack.SpiceDBClient, emails, directRoles)
 	loginRoles, err := authentication.NewService(authentication.Deps{
-		DB: stack.Postgres.DB, SpiceDB: stack.SpiceDBClient, Audit: telemetryWriter, Roles: directRoles,
+		Units: authenticationpostgres.NewUnits(stack.Postgres.DB), SpiceDB: stack.SpiceDBClient, Fence: identitystate.PostgresFence{},
+		Audit: telemetryWriter, Roles: directRoles, Sessions: authenticationpostgres.NewSessions(stack.Postgres.DB),
 	})
 	require.NoError(t, err)
 	loginHooks := authentication.NewLoginHookService(
@@ -418,7 +420,7 @@ func serveBackendIntegrationKratosProxy(
 ) (string, *authentication.AuthCodeIssuanceLimiter) {
 	t.Helper()
 	limiter := authentication.NewAuthCodeIssuanceLimiter(
-		stack.Postgres.DB,
+		authenticationpostgres.NewUnits(stack.Postgres.DB),
 		[]byte(testutil.IntegrationTokenSigningSecret),
 		authentication.AuthCodeIssuanceLimits{
 			Cooldown:        time.Millisecond,

@@ -14,7 +14,6 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -22,7 +21,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -31,12 +29,14 @@ const Profile = "email"
 
 // Owner is one kind of email content owner, a Campaign or an Email Template:
 // its rows, the wording its clients have always seen, and the rules it adds
-// to a shared write.
-type Owner struct {
+// to a shared write. S is the owner's Store, which embeds the email content
+// Store.
+type Owner[S Store] struct {
 	// Name names the owner in client messages: "Campaign".
 	Name string
 	// Entity is the owner's table and content entity type; its locale rows
-	// are in Entity+"_translation".
+	// are in Entity+"_translation", and it names the owner in content.updated
+	// signals.
 	Entity string
 	// IDField names an owner ID in invalid-argument answers.
 	IDField string
@@ -44,26 +44,25 @@ type Owner struct {
 	FileBlocksRejected string
 	// TranslatedSubjectRequired answers a translation without a subject.
 	TranslatedSubjectRequired string
-	// ContentEntityType names the owner in content.updated signals.
-	ContentEntityType managev1.ContentEntityType
 	// Rows reads and projects the owner's own rows.
-	Rows Rows
+	Rows Rows[S]
 	// LocaleContentAudit is the action and record of a change to one
 	// locale's content.
 	LocaleContentAudit LocaleContentAudit
 }
 
-// Rows reads and projects the rows an owner keeps beside its email content.
-type Rows interface {
+// Rows reads and projects the rows an owner keeps beside its email content,
+// through the owner's Store.
+type Rows[S any] interface {
 	// DocumentID reads the owner's content document.
-	DocumentID(ctx context.Context, db *gorm.DB, id string) (uuid.UUID, error)
+	DocumentID(ctx context.Context, store S, id string) (uuid.UUID, error)
 	// SourceContext reads the owner's translation source locale, locking
 	// the owner row when lock is set.
-	SourceContext(ctx context.Context, db *gorm.DB, id string, lock bool) (contentblock.DomainContext, error)
+	SourceContext(ctx context.Context, store S, id string, lock bool) (contentblock.DomainContext, error)
 	// ProjectSource rebuilds the owner's materialized content from
 	// snapshot after a source locale write; sourceChanged reports that the
 	// write changed the translation source every target falls back to.
-	ProjectSource(ctx context.Context, tx *gorm.DB, id string, snapshot contentblock.Snapshot, sourceChanged bool, now time.Time) error
+	ProjectSource(ctx context.Context, store S, id string, snapshot contentblock.Snapshot, sourceChanged bool, now time.Time) error
 }
 
 // LocaleContentAudit names the record of a locale content change.
@@ -72,19 +71,17 @@ type LocaleContentAudit struct {
 	Record func(metadata sharedtelemetry.AuditMetadata, id, locale string, operation sharedtelemetry.AuditItemOperation) (sharedtelemetry.AuditRecord, error)
 }
 
-func (o Owner) translationTable() string { return o.Entity + "_translation" }
-
-// appendLocaleContentAudit records a locale content change as memberID.
-func (o Owner) appendLocaleContentAudit(
+// appendLocaleContentAudit records a locale content change as memberID
+// through writer, which is bound to the joined transaction.
+func (o Owner[S]) appendLocaleContentAudit(
 	ctx context.Context,
-	tx *gorm.DB,
 	writer domainaudit.Appender,
 	memberID string,
 	id string,
 	locale string,
 	operation sharedtelemetry.AuditItemOperation,
 ) error {
-	return domainaudit.AppendMember(ctx, tx, writer, memberID, o.LocaleContentAudit.Action, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+	return domainaudit.AppendMember(ctx, nil, writer, memberID, o.LocaleContentAudit.Action, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 		return o.LocaleContentAudit.Record(metadata, id, locale, operation)
 	})
 }
@@ -127,7 +124,7 @@ func NormalizeLocale(value string) (string, error) {
 
 // NormalizeContentBlockError answers a content block store failure of the
 // owner's document; an already classified error passes through.
-func (o Owner) NormalizeContentBlockError(err error) error {
+func (o Owner[S]) NormalizeContentBlockError(err error) error {
 	if err == nil || connect.CodeOf(err) != connect.CodeUnknown {
 		return err
 	}
@@ -152,8 +149,8 @@ func (o Owner) NormalizeContentBlockError(err error) error {
 }
 
 // touch advances the owner row's updated_at after its content changed.
-func (o Owner) touch(ctx context.Context, tx *gorm.DB, id string, now time.Time) error {
-	if err := tx.WithContext(ctx).Table(o.Entity).Where("id = ?", id).Update("updated_at", now).Error; err != nil {
+func (o Owner[S]) touch(ctx context.Context, store S, id string, now time.Time) error {
+	if err := store.TouchOwner(ctx, id, now); err != nil {
 		return errs.Internal(err)
 	}
 	return nil

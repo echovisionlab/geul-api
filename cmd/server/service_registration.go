@@ -48,12 +48,14 @@ import (
 	translationadapter "github.com/echovisionlab/geul-api/internal/adapters/translation"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/admin"
+	adminpostgres "github.com/echovisionlab/geul-api/internal/admin/postgres"
 	"github.com/echovisionlab/geul-api/internal/ai"
 	"github.com/echovisionlab/geul-api/internal/aieditor"
 	"github.com/echovisionlab/geul-api/internal/audience"
 	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authentication"
+	authenticationpostgres "github.com/echovisionlab/geul-api/internal/authentication/postgres"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/collaboration"
 	"github.com/echovisionlab/geul-api/internal/config"
@@ -62,12 +64,16 @@ import (
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
+	emailauthoringpostgres "github.com/echovisionlab/geul-api/internal/emailauthoring/postgres"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filepublic "github.com/echovisionlab/geul-api/internal/filemedia/public"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
+	formpostgres "github.com/echovisionlab/geul-api/internal/form/postgres"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/legal"
+	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
 	llmproviders "github.com/echovisionlab/geul-api/internal/llm/providers"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
 	mapthemepostgres "github.com/echovisionlab/geul-api/internal/maptheme/postgres"
@@ -90,6 +96,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/sharelink"
 	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
+	sitesettingspostgres "github.com/echovisionlab/geul-api/internal/sitesettings/postgres"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/transcode"
 	"github.com/echovisionlab/geul-api/internal/work"
@@ -206,7 +213,8 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		internalServiceHeaderName: cfg.InternalServiceHeaderName,
 	}
 	authenticationService, err := authentication.NewService(authentication.Deps{
-		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, Roles: accountadapter.AccountDirectRoleTransition{},
+		Units: authenticationpostgres.NewUnits(db), SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{},
+		Audit: telemetryWriter, Roles: accountadapter.AccountDirectRoleTransition{}, Sessions: authenticationpostgres.NewSessions(db),
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize authentication service: %w", err)
@@ -238,10 +246,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		telemetryWriter,
 		campaign.WithLegalNoticeDeliveryPort(legalRuntime),
 	))
-	legalDependencies := legal.Dependencies{
-		OG:     legalRuntime,
-		Notice: legaladapter.NewNoticeRuntime(campaignDeliveryDispatcher),
-	}
 	fileService, err := filemedia.NewService(filemedia.Deps{
 		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, S3: s3Client, Presigner: s3PresignClient,
 		AsyncPublisher: servicePublisher, Transcoder: transcodeTracker, S3Bucket: cfg.S3Bucket,
@@ -612,11 +616,18 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(internalMenuPath, internalRPCTrust.collab(internalMenuHandler))
 	slog.Info("Registered internal service", "path", internalMenuPath)
 
-	formService, err := formdomain.NewService(formdomain.Deps{
-		DB: db, SpiceDB: spicedbClient, Password: passwordHasher, ContentBlocks: contentBlockStore,
-		Assets: formAssets, OG: formogadapter.NewOG(cfg.CDNURL, ogDeps.refresher), Routes: formadapter.NewRoutes(),
+	formUnits, err := formpostgres.NewUnits(db, formpostgres.Ports{
+		ContentBlocks: contentBlockStore, Signals: servicePublisher, Assets: formAssets,
+		OG: formogadapter.NewOG(cfg.CDNURL, ogDeps.refresher), Routes: formadapter.NewRoutes(),
 		Collaboration: formadapter.NewCollaboration(spicedbClient), Members: memberadapter.PreferredLocales{},
-		ShareLinks: sharelinkadapter.FormLinks{}, Signals: servicePublisher, Audit: telemetryWriter,
+		ShareLinks: sharelinkadapter.FormLinks{},
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Form store: %w", err)
+	}
+	formService, err := formdomain.NewService(formdomain.Deps{
+		Units: formUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
+		Password: passwordHasher,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize Form service: %w", err)
@@ -666,16 +677,25 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(clientPath, clientHandler)
 	slog.Info("Registered service", "path", clientPath)
 
-	legalPolicyService, err := legal.NewService(legal.Deps{
-		DB:            db,
-		SpiceDB:       spicedbClient,
+	legalUnits, err := legalpostgres.NewUnits(db, legalpostgres.Ports{
 		ContentBlocks: contentBlockStore,
-		OG:            legalDependencies.OG,
-		Notice:        legalDependencies.Notice,
+		Routes:        legalRuntime,
+		Notices:       legaladapter.NewNoticeRuntime(),
 		PreviewLinks:  sharelinkadapter.LegalPreviewLinks{},
 		Members:       memberadapter.PreferredLocales{},
-		Audit:         telemetryWriter,
-		BaseURL:       cfg.SiteOrigin,
+		Checkpoints:   collaborationRuntime.Checkpoints,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize legal store: %w", err)
+	}
+	legalPolicyService, err := legal.NewService(legal.Deps{
+		Units:    legalUnits,
+		SpiceDB:  spicedbClient,
+		Fence:    identitystate.PostgresFence{},
+		Audit:    telemetryWriter,
+		Dispatch: legaladapter.NewNoticeDispatch(db, campaignDeliveryDispatcher),
+		OGAssets: legaladapter.NewOGAssets(db, cfg.CDNURL),
+		BaseURL:  cfg.SiteOrigin,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize legal policy service: %w", err)
@@ -703,10 +723,17 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered service", "path", mapThemePath)
 
 	emailAuthoringRuntime := emailauthoringadapter.NewRuntime()
+	emailAuthoringUnits, err := emailauthoringpostgres.NewUnits(db, emailauthoringpostgres.Ports{
+		ContentBlocks: contentBlockStore, References: emailAuthoringReferences, Members: memberadapter.ContributorMembers{},
+		Checkpoints: collaborationRuntime.Checkpoints, Rendering: emailAuthoringRuntime,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize email authoring store: %w", err)
+	}
 	emailAuthoringService, err := emailauthoring.NewService(emailauthoring.Deps{
-		DB: db, SpiceDB: spicedbClient, ContentBlocks: contentBlockStore, Publisher: workerPublisher,
-		Runtime: emailAuthoringRuntime, RenderData: emailAuthoringRuntime, References: emailAuthoringReferences,
-		Audit: telemetryWriter, CDNDomain: cfg.CDNURL, SiteOrigin: cfg.SiteOrigin,
+		Units: emailAuthoringUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
+		TestEmails: emailauthoringadapter.NewTestEmails(workerPublisher), Locales: emailAuthoringRuntime,
+		CDNDomain: cfg.CDNURL, SiteOrigin: cfg.SiteOrigin,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize email authoring service: %w", err)
@@ -720,11 +747,13 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered service", "path", emailLayoutPath)
 
 	mailAdapterService, err := emaildelivery.NewService(emaildelivery.Deps{
-		DB:             db,
+		Units:          emaildeliverypostgres.NewUnits(db),
 		SpiceDB:        spicedbClient,
-		AdapterCache:   adapterLoader,
-		AdapterChanges: ogPublisher,
+		Fence:          identitystate.PostgresFence{},
 		Audit:          telemetryWriter,
+		Providers:      emaildeliveryadapter.MailProviders{},
+		AdapterCache:   adapterLoader,
+		AdapterChanges: emaildeliveryadapter.NewMailAdapterChanges(ogPublisher),
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize email delivery service: %w", err)
@@ -776,9 +805,15 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(audiencePath, audienceHandler)
 	slog.Info("Registered service", "path", audiencePath)
 
+	siteSettingUnits, err := sitesettingspostgres.NewUnits(db, sitesettingspostgres.Ports{
+		Assets: sitesettingsadapter.NewAssets(cfg.CDNURL), References: sitesettingsadapter.NewReferences(), OG: ogDeps.siteInvalidator(),
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize site settings store: %w", err)
+	}
 	siteSettingService, err := sitesettings.NewService(sitesettings.Deps{
-		DB: db, SpiceDB: spicedbClient, Assets: sitesettingsadapter.NewAssets(cfg.CDNURL), References: sitesettingsadapter.NewReferences(),
-		OG: ogDeps.siteInvalidator(), Audit: telemetryWriter, SiteOrigin: cfg.SiteOrigin,
+		Units: siteSettingUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
+		SiteOrigin: cfg.SiteOrigin,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize site settings service: %w", err)
@@ -796,10 +831,14 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		ogadapter.NewAuthorization(spicedbClient),
 		labeladapter.NewGlobalReconciler(),
 	)
-	adminService, err := admin.NewService(admin.Deps{
-		DB: db, SpiceDB: spicedbClient, Members: memberadapter.DashboardMembers{}, Posts: postadapter.DashboardPosts{},
+	adminUnits, err := adminpostgres.NewUnits(db, adminpostgres.Ports{
+		Members: memberadapter.DashboardMembers{}, Posts: postadapter.DashboardPosts{},
 		Pages: pageadapter.DashboardPages{}, Campaigns: campaignadapter.DashboardCampaigns{},
 	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize admin store: %w", err)
+	}
+	adminService, err := admin.NewService(admin.Deps{Units: adminUnits, SpiceDB: spicedbClient})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize admin service: %w", err)
 	}
@@ -824,9 +863,8 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		accountEmailChangeLifecycle: accountEmailChangeLifecycle,
 		collaborationRuntime:        collaborationRuntime,
 		programEvents:               programEventService,
-		emailAuthoringReferences:    emailAuthoringReferences,
-		legalRuntime:                legalRuntime,
-		legalDependencies:           legalDependencies,
+		emailAuthoringUnits:         emailAuthoringUnits,
+		legalUnits:                  legalUnits,
 		mapThemes:                   mapThemeService,
 	}).register()
 	if err != nil {
@@ -841,7 +879,6 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		domainRegistry:           translationRegistry,
 		emailAuthoringReferences: emailAuthoringReferences,
 		legalDocuments:           legalAIDocumentService,
-		internalFormService:      formService,
 		seriesService:            seriesService,
 		fileService:              fileService,
 	}).register()

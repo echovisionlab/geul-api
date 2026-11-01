@@ -9,10 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
@@ -98,20 +96,19 @@ func (e *AIDocumentRevisionConflictError) Error() string {
 // mutation, rejects what the owner's lifecycle forbids, authorizes the
 // request's Member to edit it and, for a mutation, locks that Member as the
 // contributor. It returns the owner's content document and the Member.
-type AIDocumentAuthority func(ctx context.Context, tx *gorm.DB, id string, forUpdate bool) (uuid.UUID, uuid.UUID, error)
+type AIDocumentAuthority[S any] func(ctx context.Context, store S, id string, forUpdate bool) (uuid.UUID, uuid.UUID, error)
 
-// AIDocuments is the AI document seam of one owner. Its writes run through
-// the owner's mutation pipeline.
-type AIDocuments struct {
-	Owner     Owner
-	DB        *gorm.DB
-	Store     *contentblock.Store
-	Mutations *mutation.Runner
-	Authorize AIDocumentAuthority
+// AIDocuments is the AI document seam of one owner. Its reads run in a
+// snapshot of Units and its writes through the owner's mutation pipeline.
+type AIDocuments[S Store] struct {
+	Owner     Owner[S]
+	Units     mutation.UnitOfWork[S]
+	Mutations *mutation.StoreRunner[S]
+	Authorize AIDocumentAuthority[S]
 }
 
 // Load returns the owner's state in locale for an authorized editor.
-func (d AIDocuments) Load(ctx context.Context, id, locale string) (AIDocumentState, error) {
+func (d AIDocuments[S]) Load(ctx context.Context, id, locale string) (AIDocumentState, error) {
 	id, err := CanonicalID(d.Owner.IDField, id)
 	if err != nil {
 		return AIDocumentState{}, err
@@ -121,12 +118,12 @@ func (d AIDocuments) Load(ctx context.Context, id, locale string) (AIDocumentSta
 		return AIDocumentState{}, err
 	}
 	var state AIDocumentState
-	err = mutation.ReadLocked(ctx, d.DB, func(tx *gorm.DB) error {
-		documentID, memberID, err := d.Authorize(ctx, tx, id, false)
+	err = d.Units.ReadLocked(ctx, func(store S) error {
+		documentID, memberID, err := d.Authorize(ctx, store, id, false)
 		if err != nil {
 			return err
 		}
-		state, err = d.loadState(ctx, tx, id, locale, documentID, memberID, false)
+		state, err = d.loadState(ctx, store, id, locale, documentID, memberID, false)
 		return err
 	})
 	return state, failurecause.WithAttrs(err, slog.String("entity_type", d.Owner.Entity), slog.String("entity_id", id), slog.String("locale", locale))
@@ -139,7 +136,7 @@ var errRollbackAIDocumentValidation = errors.New("rollback email content AI docu
 // source, locale and contributor facts, and only then invokes the adapter
 // compiler; the write, its projections, Audit and signal share the
 // transaction. Validate rolls the transaction back before Audit and signal.
-func (d AIDocuments) ExecuteAIDocumentMutation(
+func (d AIDocuments[S]) ExecuteAIDocumentMutation(
 	ctx context.Context,
 	id string,
 	locale string,
@@ -162,24 +159,28 @@ func (d AIDocuments) ExecuteAIDocumentMutation(
 	}
 	var documentID, memberID uuid.UUID
 	var applied aiDocumentApply
-	_, err = mutation.Run(ctx, d.Mutations, mutation.Spec[aiDocumentApply]{
-		Access: mutation.Locked(func(ctx context.Context, tx *gorm.DB, _ mutation.Require) error {
+	_, err = mutation.Run(ctx, d.Mutations, mutation.StoreSpec[aiDocumentApply, S]{
+		Access: mutation.Locked(func(ctx context.Context, store S, _ mutation.Require) error {
 			var err error
-			documentID, memberID, err = d.Authorize(ctx, tx, id, true)
+			documentID, memberID, err = d.Authorize(ctx, store, id, true)
 			return err
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (aiDocumentApply, error) {
+		Change: func(ctx context.Context, store S) (aiDocumentApply, error) {
 			var err error
-			applied, err = d.execute(ctx, tx, id, locale, documentID, memberID, compiler)
+			applied, err = d.execute(ctx, store, id, locale, documentID, memberID, compiler)
 			if err == nil && mode == AIDocumentExecutionValidate {
 				err = errRollbackAIDocumentValidation
 			}
 			return applied, err
 		},
 		Audit: func(applied aiDocumentApply) mutation.Audit { return applied.record },
-		Outbox: func(ctx context.Context, tx *gorm.DB, applied aiDocumentApply) error {
+		Outbox: func(ctx context.Context, store S, applied aiDocumentApply) error {
 			m, output := applied.mutation, applied.output
-			return contentsignal.PublishInteractive(ctx, tx, d.Owner.ContentEntityType, m.Reference, m.Locale, output.DocumentRevision, output.TargetRevision, output.Changed, m.DeleteTranslation, m.ContributorMember.String())
+			return store.PublishContentUpdate(ctx, ContentUpdate{
+				Entity: d.Owner.Entity, ID: m.Reference, Locale: m.Locale,
+				DocumentRevision: output.DocumentRevision, TargetRevision: output.TargetRevision,
+				Changed: output.Changed, Deleted: m.DeleteTranslation, ContributorMemberID: m.ContributorMember.String(),
+			})
 		},
 	})
 	output, currentDocumentRevision := applied.output, applied.currentDocumentRevision
@@ -207,22 +208,22 @@ type aiDocumentApply struct {
 	currentDocumentRevision string
 }
 
-// execute compiles and applies one mutation in tx after the owner locked and
-// authorized documentID for memberID.
-func (d AIDocuments) execute(
+// execute compiles and applies one mutation through store after the owner
+// locked and authorized documentID for memberID.
+func (d AIDocuments[S]) execute(
 	ctx context.Context,
-	tx *gorm.DB,
+	store S,
 	id string,
 	locale string,
 	documentID uuid.UUID,
 	memberID uuid.UUID,
 	compiler AIDocumentMutationCompiler,
 ) (aiDocumentApply, error) {
-	domain, err := d.Owner.Rows.SourceContext(ctx, tx, id, true)
+	domain, err := d.Owner.Rows.SourceContext(ctx, store, id, true)
 	if err != nil {
 		return aiDocumentApply{}, err
 	}
-	state, err := d.loadState(ctx, tx, id, locale, documentID, memberID, true)
+	state, err := d.loadState(ctx, store, id, locale, documentID, memberID, true)
 	if err != nil {
 		return aiDocumentApply{}, err
 	}
@@ -243,7 +244,7 @@ func (d AIDocuments) execute(
 		fence: d.Owner.authorizedAIDocumentFence(documentID, domain), now: dbtime.Now(),
 	}
 	applied.mutation = compiled
-	applied.output, applied.record, err = d.apply(ctx, tx, write)
+	applied.output, applied.record, err = d.apply(ctx, store, write)
 	return applied, err
 }
 
@@ -252,7 +253,7 @@ type aiDocumentWrite struct {
 	mutation   AIDocumentMutation
 	expected   uuid.UUID
 	documentID uuid.UUID
-	fence      contentblock.DomainFence
+	fence      Fence
 	now        time.Time
 }
 
@@ -263,7 +264,7 @@ func (w aiDocumentWrite) contributors() []uuid.UUID {
 // apply writes the mutation: a created or deleted translation, a source
 // edit with its subject, or a target edit. A changed source refreshes the
 // owner's projections; every change names the locale content record.
-func (d AIDocuments) apply(ctx context.Context, tx *gorm.DB, w aiDocumentWrite) (AIDocumentMutationResult, mutation.Audit, error) {
+func (d AIDocuments[S]) apply(ctx context.Context, store S, w aiDocumentWrite) (AIDocumentMutationResult, mutation.Audit, error) {
 	m := w.mutation
 	var result contentblock.Result
 	var targetRevision *string
@@ -271,14 +272,14 @@ func (d AIDocuments) apply(ctx context.Context, tx *gorm.DB, w aiDocumentWrite) 
 	switch {
 	case m.DeleteTranslation:
 		result, err = d.Owner.DeleteTargetLocale(
-			ctx, tx, d.Store, m.Reference, w.documentID, m.Locale,
+			ctx, store, m.Reference, w.documentID, m.Locale,
 			w.expected, m.ExpectedTargetRevision, w.contributors(), w.now, w.fence,
 		)
 	case !m.CreateTranslation && m.Locale == m.ExpectedSource:
-		result, err = d.applySource(ctx, tx, w)
+		result, err = d.applySource(ctx, store, w)
 	default:
 		var target TargetLocaleMutationResult
-		target, err = d.Owner.ApplyTargetLocaleMutation(ctx, tx, d.Store, d.targetMutation(w))
+		target, err = d.Owner.ApplyTargetLocaleMutation(ctx, store, d.targetMutation(w))
 		result, targetRevision = target.Result, &target.TargetRevision
 	}
 	if err != nil {
@@ -298,7 +299,7 @@ func (d AIDocuments) apply(ctx context.Context, tx *gorm.DB, w aiDocumentWrite) 
 
 // targetMutation is the target write of a created translation or a target
 // edit; a created translation seeds the source Blocks.
-func (d AIDocuments) targetMutation(w aiDocumentWrite) TargetLocaleMutation {
+func (d AIDocuments[S]) targetMutation(w aiDocumentWrite) TargetLocaleMutation {
 	m := w.mutation
 	input := TargetLocaleMutation{
 		ID: m.Reference, DocumentID: w.documentID, Locale: m.Locale,
@@ -330,54 +331,53 @@ func (w aiDocumentWrite) sourceBatch() contentblock.Batch {
 
 // applySource writes the source Blocks and subject as one source revision
 // and refreshes the owner's projections when they changed.
-func (d AIDocuments) applySource(ctx context.Context, tx *gorm.DB, w aiDocumentWrite) (contentblock.Result, error) {
+func (d AIDocuments[S]) applySource(ctx context.Context, store S, w aiDocumentWrite) (contentblock.Result, error) {
 	m := w.mutation
 	if m.ExpectedTargetRevision != nil {
 		return contentblock.Result{}, errs.InvalidArgument("expected_target_revision", "must be omitted for the source locale")
 	}
-	result, err := d.Store.ApplyBatchWithMetadata(ctx, tx, w.sourceBatch(), w.fence,
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
-			return d.Owner.ApplySubject(ctx, tx, m, w.now)
+	result, err := store.ApplyContentBatchWithMetadata(ctx, w.sourceBatch(), w.fence,
+		func(ctx context.Context) (contentblock.MetadataEffect, error) {
+			return d.Owner.ApplySubject(ctx, store, m, w.now)
 		},
 	)
 	if err != nil || !result.Changed {
 		return result, err
 	}
-	return result, d.Owner.refreshSource(ctx, tx, d.Store, m.Reference, w.documentID, m.ExpectedSource, result.TranslationSourceChanged, w.now)
+	return result, d.Owner.refreshSource(ctx, store, m.Reference, w.documentID, m.ExpectedSource, result.TranslationSourceChanged, w.now)
 }
 
 // refreshSource advances the owner row and rebuilds its projections from
 // the source snapshot a source write left.
-func (o Owner) refreshSource(
+func (o Owner[S]) refreshSource(
 	ctx context.Context,
-	tx *gorm.DB,
-	store *contentblock.Store,
+	store S,
 	id string,
 	documentID uuid.UUID,
 	sourceLocale string,
 	sourceChanged bool,
 	now time.Time,
 ) error {
-	if err := o.touch(ctx, tx, id, now); err != nil {
+	if err := o.touch(ctx, store, id, now); err != nil {
 		return err
 	}
-	snapshot, err := store.LoadSnapshotInTransaction(ctx, tx, documentID, sourceLocale)
+	snapshot, err := store.LockedContentSnapshot(ctx, documentID, sourceLocale)
 	if err != nil {
 		return o.NormalizeContentBlockError(err)
 	}
-	return o.Rows.ProjectSource(ctx, tx, id, snapshot, sourceChanged, now)
+	return o.Rows.ProjectSource(ctx, store, id, snapshot, sourceChanged, now)
 }
 
-func (d AIDocuments) loadState(
+func (d AIDocuments[S]) loadState(
 	ctx context.Context,
-	tx *gorm.DB,
+	store S,
 	id string,
 	locale string,
 	documentID uuid.UUID,
 	memberID uuid.UUID,
 	lockLocale bool,
 ) (AIDocumentState, error) {
-	state, err := d.Owner.LoadExactLocaleState(ctx, tx, d.Store, id, documentID, locale, lockLocale)
+	state, err := d.Owner.LoadExactLocaleState(ctx, store, id, documentID, locale, lockLocale)
 	if err != nil {
 		return AIDocumentState{}, err
 	}
@@ -386,9 +386,8 @@ func (d AIDocuments) loadState(
 		return AIDocumentState{}, d.Owner.NormalizeContentBlockError(err)
 	}
 	var subject *string
-	if state.TargetMetadata != nil && state.TargetMetadata.Subject.Valid {
-		value := state.TargetMetadata.Subject.String
-		subject = &value
+	if state.TargetMetadata != nil {
+		subject = state.TargetMetadata.Subject
 	}
 	var targetRevision *string
 	if locale != state.SourceLocale && state.TargetMetadata != nil {
@@ -403,8 +402,8 @@ func (d AIDocuments) loadState(
 	}, nil
 }
 
-func (o Owner) authorizedAIDocumentFence(expectedDocumentID uuid.UUID, domain contentblock.DomainContext) contentblock.DomainFence {
-	return func(_ context.Context, _ *gorm.DB, documentID uuid.UUID) (contentblock.DomainContext, error) {
+func (o Owner[S]) authorizedAIDocumentFence(expectedDocumentID uuid.UUID, domain contentblock.DomainContext) Fence {
+	return func(_ context.Context, documentID uuid.UUID) (contentblock.DomainContext, error) {
 		if documentID != expectedDocumentID {
 			return contentblock.DomainContext{}, errs.FailedPrecondition(o.Name + " content document changed; reload before saving")
 		}
@@ -412,7 +411,7 @@ func (o Owner) authorizedAIDocumentFence(expectedDocumentID uuid.UUID, domain co
 	}
 }
 
-func (o Owner) validateCompiledAIDocumentMutation(state AIDocumentState, mutation AIDocumentMutation, expected uuid.UUID) error {
+func (o Owner[S]) validateCompiledAIDocumentMutation(state AIDocumentState, mutation AIDocumentMutation, expected uuid.UUID) error {
 	if mutation.Reference != state.Reference || mutation.Locale != state.Locale ||
 		mutation.ContributorMember.String() != state.ViewerMemberID {
 		return errs.InvalidArgument("mutation", "compiled "+o.Name+" identity, locale, and contributor must match the locked state")
@@ -432,7 +431,7 @@ func (o Owner) validateCompiledAIDocumentMutation(state AIDocumentState, mutatio
 	return nil
 }
 
-func (o Owner) conflict(kind AIDocumentRevisionConflictKind, documentRevision string, targetRevision *string) *AIDocumentRevisionConflictError {
+func (o Owner[S]) conflict(kind AIDocumentRevisionConflictKind, documentRevision string, targetRevision *string) *AIDocumentRevisionConflictError {
 	return &AIDocumentRevisionConflictError{
 		Owner: o.Name, Kind: kind, CurrentDocumentRevision: documentRevision, CurrentTargetRevision: targetRevision,
 	}
@@ -440,7 +439,7 @@ func (o Owner) conflict(kind AIDocumentRevisionConflictKind, documentRevision st
 
 // normalizeAIDocumentMutation canonicalizes the compiled mutation and
 // returns its expected document revision.
-func (o Owner) normalizeAIDocumentMutation(input AIDocumentMutation) (AIDocumentMutation, uuid.UUID, error) {
+func (o Owner[S]) normalizeAIDocumentMutation(input AIDocumentMutation) (AIDocumentMutation, uuid.UUID, error) {
 	id, err := CanonicalID(o.IDField, input.Reference)
 	if err != nil {
 		return AIDocumentMutation{}, uuid.Nil, err
@@ -464,7 +463,7 @@ func (o Owner) normalizeAIDocumentMutation(input AIDocumentMutation) (AIDocument
 
 // validateAIDocumentMode admits exactly one of a batch, a created
 // translation of a missing target, and a deleted existing target.
-func (o Owner) validateAIDocumentMode(input AIDocumentMutation) error {
+func (o Owner[S]) validateAIDocumentMode(input AIDocumentMutation) error {
 	modes := 0
 	for _, set := range []bool{input.Batch != nil, input.CreateTranslation, input.DeleteTranslation} {
 		if set {
@@ -483,7 +482,7 @@ func (o Owner) validateAIDocumentMode(input AIDocumentMutation) error {
 	return nil
 }
 
-func (o Owner) mapAIDocumentError(err error, currentDocumentRevision string) error {
+func (o Owner[S]) mapAIDocumentError(err error, currentDocumentRevision string) error {
 	var conflict *AIDocumentRevisionConflictError
 	if errors.As(err, &conflict) {
 		return conflict

@@ -9,8 +9,6 @@ import (
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 const (
@@ -25,7 +23,7 @@ type MenuDiscovery interface {
 }
 
 type MenuLocationReader interface {
-	GetSetting(context.Context, sitesettings.GetSettingQuery) (*managev1.SiteSetting, error)
+	GetSetting(context.Context, sitesettings.GetSettingQuery) (sitesettings.Setting, error)
 }
 
 var menuDiscoveryTools = []mcpserver.Tool{
@@ -96,20 +94,20 @@ func (tools *MenuDiscoveryTools) CallTool(ctx context.Context, _ mcpserver.Princ
 			if err != nil {
 				return expectedToolError(err)
 			}
-			if setting == nil || setting.Key != key || setting.Value == nil {
+			if setting.Key != key {
 				return mcpserver.ToolResult{}, fmt.Errorf("Site Settings returned an invalid menu assignment for %s", key)
 			}
-			switch value := setting.Value.Kind.(type) {
-			case *structpb.Value_NullValue:
+			switch value := setting.Value.(type) {
+			case nil:
 				output[key] = nil
-			case *structpb.Value_StringValue:
-				if value.StringValue == "" {
+			case string:
+				if value == "" {
 					output[key] = nil
 				} else {
-					if err := validateUUID(key, value.StringValue); err != nil {
+					if err := validateUUID(key, value); err != nil {
 						return mcpserver.ToolResult{}, fmt.Errorf("invalid stored menu assignment: %w", err)
 					}
-					output[key] = value.StringValue
+					output[key] = value
 				}
 			default:
 				return mcpserver.ToolResult{}, fmt.Errorf("Site Settings returned a non-text menu assignment for %s", key)

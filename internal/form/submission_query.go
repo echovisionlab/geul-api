@@ -5,14 +5,10 @@ import (
 	"errors"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	"github.com/echovisionlab/geul-api/internal/securityaccess"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // ListFormSubmissionsQuery lists a Form's submissions. Search matches the
@@ -33,94 +29,87 @@ type GetFormSubmissionQuery struct {
 	ID string
 }
 
-// ListFormSubmissions returns a page of submissions of a Form the caller
-// manages and records the personal data access.
-func (s *Service) ListFormSubmissions(ctx context.Context, query ListFormSubmissionsQuery) (*managev1.ListFormSubmissionsResponse, error) {
-	// An unknown Form is not found for administrators too, as for every
-	// submission read.
-	if err := s.requireManagedForm(ctx, query.FormID); err != nil {
-		return nil, err
-	}
-	filtered, err := applyFormSubmissionFilters(s.db.WithContext(ctx).Model(&model.FormSubmission{}).Where("form_id = ?", query.FormID), query)
-	if err != nil {
-		return nil, err
-	}
-	sorted, err := applyFormSubmissionSort(filtered, query.Sorts)
-	if err != nil {
-		return nil, err
-	}
-	var total int64
-	if err := filtered.Count(&total).Error; err != nil {
-		return nil, err
-	}
-	pagination := queryutil.ExtractPaginationRaw(query.Page.Limit, query.Page.Offset, queryutil.PaginationConfig{DefaultLimit: 50, MaxLimit: 100})
-	var submissions []model.FormSubmission
-	if err := sorted.Limit(int(pagination.Limit)).Offset(int(pagination.Offset)).Find(&submissions).Error; err != nil {
-		return nil, err
-	}
-	protoSubmissions := make([]*managev1.FormSubmission, len(submissions))
-	for i := range submissions {
-		protoSubmissions[i] = toProtoSubmission(&submissions[i])
-	}
-	if err := s.personalDataAccess.AppendFormSubmissions(ctx, query.FormID); err != nil {
-		return nil, securityaccess.Unavailable().WithCause(err)
-	}
-	return &managev1.ListFormSubmissionsResponse{
-		Submissions: protoSubmissions,
-		Pagination: &commonv1.PaginationResponse{
-			Total:   int32(total),
-			Limit:   pagination.Limit,
-			Offset:  pagination.Offset,
-			HasMore: int64(pagination.Offset)+int64(pagination.Limit) < total,
-		},
-	}, nil
+// SubmissionPage is one page of a Form's submissions.
+type SubmissionPage struct {
+	Submissions []Submission
+	Pagination  Pagination
 }
 
-// requireManagedForm answers not found for a missing Form and for a Form the
-// caller may not manage.
-func (s *Service) requireManagedForm(ctx context.Context, formID string) error {
-	var count int64
-	if err := s.db.WithContext(ctx).Model(&model.Form{}).Where("id = ?", formID).Count(&count).Error; err != nil {
+// SubmissionWithSchema is one submission with its Form's source schema and
+// title.
+type SubmissionWithSchema struct {
+	Submission Submission
+	FormSchema []byte
+	FormTitle  string
+}
+
+// ListFormSubmissions returns a page of submissions of a Form the caller
+// manages and records the personal data access.
+func (s *Service) ListFormSubmissions(ctx context.Context, query ListFormSubmissionsQuery) (SubmissionPage, error) {
+	// An unknown Form is not found for administrators too, as for every
+	// submission read.
+	if err := s.requireExistingFormAction(ctx, query.FormID, formActionManage, domainerr.ResourceNotFound("form", query.FormID)); err != nil {
+		return SubmissionPage{}, err
+	}
+	list, err := formSubmissionList(query)
+	if err != nil {
+		return SubmissionPage{}, err
+	}
+	pagination := queryutil.ExtractPaginationRaw(query.Page.Limit, query.Page.Offset, queryutil.PaginationConfig{DefaultLimit: 50, MaxLimit: 100})
+	list.Limit, list.Offset = pagination.Limit, pagination.Offset
+	var page SubmissionPage
+	var total int64
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		page.Submissions, total, err = store.ListSubmissions(ctx, list)
 		return err
+	}); err != nil {
+		return SubmissionPage{}, err
 	}
-	notFound := domainerr.ResourceNotFound("form", formID)
-	if count == 0 {
-		return notFound
+	if err := s.personalDataAccess.AppendFormSubmissions(ctx, query.FormID); err != nil {
+		return SubmissionPage{}, securityaccess.Unavailable().WithCause(err)
 	}
-	return s.requireVisibleFormAction(ctx, formID, formActionManage, notFound)
+	page.Pagination = Pagination{
+		Total:   int32(total),
+		Limit:   pagination.Limit,
+		Offset:  pagination.Offset,
+		HasMore: int64(pagination.Offset)+int64(pagination.Limit) < total,
+	}
+	return page, nil
 }
 
 // GetFormSubmissionWithSchema returns one submission of a Form the caller manages with
 // the Form's source schema and records the personal data access.
-func (s *Service) GetFormSubmissionWithSchema(ctx context.Context, query GetFormSubmissionQuery) (*managev1.FormSubmissionWithSchema, error) {
+func (s *Service) GetFormSubmissionWithSchema(ctx context.Context, query GetFormSubmissionQuery) (SubmissionWithSchema, error) {
 	notFound := domainerr.New(domainerr.NotFound, "", "submission not found")
-	var submission model.FormSubmission
-	if err := s.db.WithContext(ctx).First(&submission, "id = ?", query.ID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, notFound
+	var submission Submission
+	var form Form
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		if submission, err = store.FindSubmission(ctx, query.ID); err != nil {
+			if errors.Is(err, ErrSubmissionNotFound) {
+				return notFound
+			}
+			return err
 		}
-		return nil, err
-	}
-	var form model.Form
-	if err := s.db.WithContext(ctx).First(&form, "id = ?", submission.FormID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, domainerr.New(domainerr.NotFound, "", "form not found")
-		}
-		return nil, err
+		form, err = store.FindForm(ctx, ByID, submission.FormID)
+		return formNotFound(err, domainerr.New(domainerr.NotFound, "", "form not found"))
+	}); err != nil {
+		return SubmissionWithSchema{}, err
 	}
 	if err := s.requireVisibleFormAction(ctx, form.ID, formActionManage, notFound); err != nil {
-		return nil, err
+		return SubmissionWithSchema{}, err
 	}
-	formSchema, sourceTitle, err := loadFormSourceSchema(ctx, s.db, form.ID)
-	if err != nil {
-		return nil, err
+	var result SubmissionWithSchema
+	if err := s.units.Read(ctx, func(store Store) error {
+		schema, sourceTitle, err := loadFormSourceSchema(ctx, store, form.ID)
+		result = SubmissionWithSchema{Submission: submission, FormSchema: schema, FormTitle: resolveFormTitle(sourceTitle)}
+		return err
+	}); err != nil {
+		return SubmissionWithSchema{}, err
 	}
 	if err := s.personalDataAccess.AppendFormSubmission(ctx, submission.ID); err != nil {
-		return nil, securityaccess.Unavailable().WithCause(err)
+		return SubmissionWithSchema{}, securityaccess.Unavailable().WithCause(err)
 	}
-	return &managev1.FormSubmissionWithSchema{
-		Submission: toProtoSubmission(&submission),
-		FormSchema: formSchema,
-		FormTitle:  resolveFormTitle(sourceTitle),
-	}, nil
+	return result, nil
 }

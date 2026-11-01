@@ -7,6 +7,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -26,6 +27,11 @@ func optionalTimestamp(value *time.Time) *timestamppb.Timestamp {
 		return nil
 	}
 	return timestamppb.New(*value)
+}
+
+// paginationMessage renders where a page of versions lies among them.
+func paginationMessage(page PolicyPage) *commonv1.PaginationResponse {
+	return &commonv1.PaginationResponse{Total: page.Total, Limit: page.Limit, Offset: page.Offset, HasMore: page.HasMore}
 }
 
 func optionalTime(value *timestamppb.Timestamp) *time.Time {
@@ -99,7 +105,7 @@ func (h *TermsConnectHandler) ListTermsVersions(ctx context.Context, req *connec
 	for i, version := range page.Versions {
 		versions[i] = TermsMessage(version)
 	}
-	return respond(&managev1.ListTermsVersionsResponse{Versions: versions, Pagination: page.Pagination}, err)
+	return respond(&managev1.ListTermsVersionsResponse{Versions: versions, Pagination: paginationMessage(page)}, err)
 }
 
 func (h *TermsConnectHandler) CreateTermsVersion(ctx context.Context, req *connect.Request[managev1.CreateTermsVersionRequest]) (*connect.Response[managev1.Terms], error) {
@@ -197,7 +203,7 @@ func (h *PrivacyConnectHandler) ListPrivacyVersions(ctx context.Context, req *co
 	for i, version := range page.Versions {
 		versions[i] = PrivacyMessage(version)
 	}
-	return respond(&managev1.ListPrivacyVersionsResponse{Versions: versions, Pagination: page.Pagination}, err)
+	return respond(&managev1.ListPrivacyVersionsResponse{Versions: versions, Pagination: paginationMessage(page)}, err)
 }
 
 func (h *PrivacyConnectHandler) CreatePrivacyVersion(ctx context.Context, req *connect.Request[managev1.CreatePrivacyVersionRequest]) (*connect.Response[managev1.Privacy], error) {
@@ -253,7 +259,7 @@ func termsLocaleMetadata(metadata *LocaleMetadata) *intrav1.TermsLocaleMetadata 
 }
 
 func (h *InternalTermsConnectHandler) LoadTermsBlockDocument(ctx context.Context, req *connect.Request[intrav1.LoadTermsBlockDocumentRequest]) (*connect.Response[intrav1.LoadTermsBlockDocumentResponse], error) {
-	result, err := h.documents.LoadBlockDocument(ctx, Terms, LoadBlockDocumentQuery{ID: req.Msg.TermsId, Locale: req.Msg.Locale, Principal: req.Msg.Principal})
+	result, err := h.documents.LoadBlockDocument(ctx, Terms, LoadBlockDocumentQuery{ID: req.Msg.TermsId, Locale: req.Msg.Locale, SessionID: req.Msg.GetPrincipal().GetSessionId()})
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}
@@ -323,7 +329,7 @@ func privacyLocaleMetadata(metadata *LocaleMetadata) *intrav1.PrivacyLocaleMetad
 }
 
 func (h *InternalPrivacyConnectHandler) LoadPrivacyBlockDocument(ctx context.Context, req *connect.Request[intrav1.LoadPrivacyBlockDocumentRequest]) (*connect.Response[intrav1.LoadPrivacyBlockDocumentResponse], error) {
-	result, err := h.documents.LoadBlockDocument(ctx, Privacy, LoadBlockDocumentQuery{ID: req.Msg.PrivacyId, Locale: req.Msg.Locale, Principal: req.Msg.Principal})
+	result, err := h.documents.LoadBlockDocument(ctx, Privacy, LoadBlockDocumentQuery{ID: req.Msg.PrivacyId, Locale: req.Msg.Locale, SessionID: req.Msg.GetPrincipal().GetSessionId()})
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}

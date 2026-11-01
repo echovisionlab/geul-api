@@ -16,12 +16,9 @@ import (
 	"gorm.io/gorm"
 
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/email"
 	legaldomain "github.com/echovisionlab/geul-api/internal/legal"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -77,7 +74,7 @@ func TestLegalPolicyTermsPrivacyParityIntegration(t *testing.T) {
 		updateEvent    string
 		effectiveEvent string
 		effectiveURL   string
-		ops            func(*gorm.DB, *auth.SpiceDBClient, *contentblock.Store) legalParityOps
+		ops            func(legalIntegration) legalParityOps
 
 		// Differences between the services.
 		defaultTitle       string // "Terms of Service" vs "Privacy Policy"
@@ -113,15 +110,14 @@ func TestLegalPolicyTermsPrivacyParityIntegration(t *testing.T) {
 		},
 	} {
 		t.Run(kind.name, func(t *testing.T) {
+			// The schema seeds the active notice template of every legal event.
 			db := newLegalLocalKratosIntegrationDB(t)
-			seedLegalDeliveryTemplateIntegration(t, db, kind.updateEvent)
-			seedLegalDeliveryTemplateIntegration(t, db, kind.effectiveEvent)
 			identityID := testutil.IntegrationUUID()
 			memberID := testutil.SeedPostIntegrationIdentity(t, db, identityID, "Legal parity admin")
 			spiceDB := testutil.IntegrationSpiceDB(t)
 			testutil.GrantIntegrationGlobalRole(t, spiceDB, identityID, policyv1.Role.Admin())
 			ctx := testutil.NewAuditContext(t, identityID, memberID)
-			ops := kind.ops(db, spiceDB, newLegalLifecycleContentBlockStore(t, spiceDB))
+			ops := kind.ops(newLegalIntegration(t, db, spiceDB, apitelemetry.NewDurableWriter(db)))
 			manage := policyv1.TermsHistory.Manage
 			if kind.name == "privacy" {
 				manage = policyv1.PrivacyHistory.Manage
@@ -253,14 +249,8 @@ func TestLegalPolicyTermsPrivacyParityIntegration(t *testing.T) {
 	}
 }
 
-func termsParityOps(db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentblock.Store) legalParityOps {
-	service := newTermsServiceForLegalIntegrationTest(
-		db, "https://example.com", "https://cdn.example.com", spiceDB, withLegalContentBlocks(store),
-	)
-	internal := newTestInternalTermsService(
-		db, apitelemetry.NewDurableWriter(db), legalIntegrationDependencies(db, "https://cdn.example.com"),
-		store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB),
-	)
+func termsParityOps(integration legalIntegration) legalParityOps {
+	service, internal := integration.terms(), integration.internalTerms()
 	fromTerms := func(terms *managev1.Terms) legalParityPolicy {
 		return legalParityPolicy{
 			ID: terms.Id, Revision: terms.Revision, Version: terms.Version, Title: terms.Title, Status: terms.Status.String(),
@@ -327,14 +317,8 @@ func termsParityOps(db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentbloc
 	}
 }
 
-func privacyParityOps(db *gorm.DB, spiceDB *auth.SpiceDBClient, store *contentblock.Store) legalParityOps {
-	service := newPrivacyServiceForLegalIntegrationTest(
-		db, "https://example.com", "https://cdn.example.com", spiceDB, withLegalContentBlocks(store),
-	)
-	internal := newTestInternalPrivacyService(
-		db, apitelemetry.NewDurableWriter(db), legalIntegrationDependencies(db, "https://cdn.example.com"),
-		store, spiceDB, testcollaboration.NewCheckpoints(db, spiceDB),
-	)
+func privacyParityOps(integration legalIntegration) legalParityOps {
+	service, internal := integration.privacy(), integration.internalPrivacy()
 	fromPrivacy := func(privacy *managev1.Privacy) legalParityPolicy {
 		return legalParityPolicy{
 			ID: privacy.Id, Revision: privacy.Revision, Version: privacy.Version, Title: privacy.Title, Status: privacy.Status.String(),

@@ -31,7 +31,7 @@ func (s *Service) AuthorizeGatewayAccess(ctx context.Context, query GatewayAcces
 	if err != nil {
 		return domainerr.InvalidSession().WithCause(err)
 	}
-	principal, err := auth.ResolveAuthenticatedPrincipalBySessionID(ctx, s.db, sessionID.String())
+	principal, err := s.sessions.Principal(ctx, sessionID.String())
 	if errors.Is(err, auth.ErrSessionPrincipalInvalid) {
 		return domainerr.InvalidSession().WithCause(err)
 	}
