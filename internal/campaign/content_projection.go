@@ -9,10 +9,8 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/model"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -24,8 +22,8 @@ type campaignEmailEditorProjection struct {
 
 func loadCampaignSourceLocales(
 	ctx context.Context,
-	db *gorm.DB,
-	campaigns []model.Campaign,
+	db Store,
+	campaigns []Campaign,
 ) (map[string]string, error) {
 	locales := make(map[string]string, len(campaigns))
 	if len(campaigns) == 0 {
@@ -35,24 +33,19 @@ func loadCampaignSourceLocales(
 	for index := range campaigns {
 		ids[index] = campaigns[index].ID
 	}
-	var rows []struct {
-		EntityID     string `gorm:"column:entity_id"`
-		SourceLocale string `gorm:"column:source_locale"`
-	}
-	if err := db.WithContext(ctx).
-		Table("campaign").
-		Select("id AS entity_id, source_locale").
-		Where("id IN ?", ids).
-		Find(&rows).Error; err != nil {
+
+	rows, err := db.CampaignSourceLocales(ctx, ids)
+	if err != nil {
 		return nil, err
 	}
-	for _, row := range rows {
-		locale, normalizeErr := emailcontent.NormalizeLocale(row.SourceLocale)
+	for id, source := range rows {
+		locale, normalizeErr := emailcontent.NormalizeLocale(source)
 		if normalizeErr != nil {
-			return nil, domainerr.Precondition("Campaign source locale is invalid").WithCause(failurecause.ServerFault(failurecause.WithAttrs(normalizeErr, slog.String("campaign_id", row.EntityID))))
+			return nil, domainerr.Precondition("Campaign source locale is invalid").WithCause(failurecause.ServerFault(failurecause.WithAttrs(normalizeErr, slog.String("campaign_id", id))))
 		}
-		locales[row.EntityID] = locale
+		locales[id] = locale
 	}
+
 	if len(locales) != len(campaigns) {
 		return nil, domainerr.Precondition("Campaign translation source is not initialized")
 	}
@@ -61,8 +54,7 @@ func loadCampaignSourceLocales(
 
 func loadCampaignEmailEditorProjection(
 	ctx context.Context,
-	db *gorm.DB,
-	store *contentblock.Store,
+	db Store,
 	campaignID string,
 ) (campaignEmailEditorProjection, error) {
 	documentID, err := loadCampaignEmailContentDocumentRoot(ctx, db, campaignID, false)
@@ -73,7 +65,7 @@ func loadCampaignEmailEditorProjection(
 	if err != nil {
 		return campaignEmailEditorProjection{}, err
 	}
-	snapshot, err := store.LoadSnapshot(ctx, db, documentID, domain.SourceLocale)
+	snapshot, err := db.ContentSnapshot(ctx, documentID, domain.SourceLocale)
 	if err != nil {
 		return campaignEmailEditorProjection{}, campaignContent.NormalizeContentBlockError(err)
 	}

@@ -4,8 +4,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
@@ -15,15 +13,15 @@ import (
 // shared write and Campaign adds its authorization, draft lifecycle and
 // contributor locks, while the transport adapter owns only DCDP conversion.
 type AIDocumentService struct {
-	emailcontent.AIDocuments[contentStore]
+	emailcontent.AIDocuments[Store]
 }
 
 // AIDocuments returns the Campaign AI document use cases.
 func (s *InternalService) AIDocuments() *AIDocumentService {
-	return &AIDocumentService{emailcontent.AIDocuments[contentStore]{
-		Owner: campaignContent, Units: contentUnits(s.db, s.contentBlocks),
-		Mutations: s.contentMutations, Authorize: func(ctx context.Context, store contentStore, campaignID string, forUpdate bool) (uuid.UUID, uuid.UUID, error) {
-			return s.authorizeAIDocument(ctx, store.tx, campaignID, forUpdate)
+	return &AIDocumentService{emailcontent.AIDocuments[Store]{
+		Owner: campaignContent, Units: s.units,
+		Mutations: s.mutations, Authorize: func(ctx context.Context, store Store, campaignID string, forUpdate bool) (uuid.UUID, uuid.UUID, error) {
+			return s.authorizeAIDocument(ctx, store, campaignID, forUpdate)
 		},
 	}}
 }
@@ -31,10 +29,10 @@ func (s *InternalService) AIDocuments() *AIDocumentService {
 // authorizeAIDocument share-locks the Campaign for a load. For a mutation it
 // locks the Campaign, proves the draft lifecycle and locks the editing
 // Member as the contributor. Both check the one exact Edit decision.
-func (s *InternalService) authorizeAIDocument(ctx context.Context, tx *gorm.DB, campaignID string, forUpdate bool) (uuid.UUID, uuid.UUID, error) {
-	lock := clause.LockingStrengthShare
+func (s *InternalService) authorizeAIDocument(ctx context.Context, tx Store, campaignID string, forUpdate bool) (uuid.UUID, uuid.UUID, error) {
+	lock := emailcontent.ShareLock
 	if forUpdate {
-		lock = clause.LockingStrengthUpdate
+		lock = emailcontent.UpdateLock
 	}
 	root, documentID, err := loadCampaignAIDocumentRoot(ctx, tx, campaignID, lock)
 	if err != nil {
@@ -48,5 +46,5 @@ func (s *InternalService) authorizeAIDocument(ctx context.Context, tx *gorm.DB, 
 	if err != nil || !forUpdate {
 		return documentID, memberID, err
 	}
-	return documentID, memberID, requireCampaignContributors(ctx, tx, s.members, []string{memberID.String()})
+	return documentID, memberID, requireCampaignContributors(ctx, tx, []string{memberID.String()})
 }

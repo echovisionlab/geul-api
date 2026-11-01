@@ -1,9 +1,11 @@
-package campaign
+package campaignpostgres
 
 import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/echovisionlab/geul-api/internal/campaign"
 
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -27,7 +29,7 @@ func TestRecipientSelectionFromAudienceSegmentMapsConfig(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, CampaignDeliveryTargetModeUsersByFilter, selection.Mode)
+	assert.Equal(t, campaign.CampaignDeliveryTargetModeUsersByFilter, selection.Mode)
 	assert.False(t, selection.RequireNewsletterSubscription)
 	assert.Equal(t, []string{"admin", "author"}, selection.Filters.AccountRoles)
 	assert.Equal(t, &createdAfter, selection.Filters.CreatedAfter)
@@ -38,12 +40,12 @@ func TestBuildBulkEmailRecipientCandidatesValidatesAudiencePlans(t *testing.T) {
 	t.Parallel()
 
 	_, err := buildBulkEmailRecipientCandidates(&bulkEmailRecipientSelection{
-		Mode: CampaignDeliveryTargetModeUserTags,
+		Mode: campaign.CampaignDeliveryTargetModeUserTags,
 	})
 	require.ErrorContains(t, err, "member_tag_ids required")
 
 	candidates, err := buildBulkEmailRecipientCandidates(&bulkEmailRecipientSelection{
-		Mode:                          CampaignDeliveryTargetModeUsersByFilter,
+		Mode:                          campaign.CampaignDeliveryTargetModeUsersByFilter,
 		RequireNewsletterSubscription: true,
 		Filters: &bulkEmailRecipientFilters{
 			AccountRoles: []string{"admin"},
@@ -63,7 +65,7 @@ func TestResolveBulkEmailRecipientSelectionPermissionsTreatsStoredRolesAsServerD
 	t.Parallel()
 
 	err := resolveBulkEmailRecipientSelectionPermissions(t.Context(), &auth.SpiceDBClient{}, &bulkEmailRecipientSelection{
-		Mode:    CampaignDeliveryTargetModeUsersByFilter,
+		Mode:    campaign.CampaignDeliveryTargetModeUsersByFilter,
 		Filters: &bulkEmailRecipientFilters{AccountRoles: []string{"retired-role"}},
 	})
 

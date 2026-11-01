@@ -1,4 +1,4 @@
-package campaign
+package campaignpostgres
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	campaigndomain "github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -37,11 +38,6 @@ type bulkEmailRecipientFilters struct {
 	ExcludedMemberIDs  []string
 }
 
-const (
-	BulkEmailContextAccountCurrent         = "account_current"
-	BulkEmailContextNewsletterSubscription = "newsletter_subscription"
-)
-
 type accountRecipientCandidateOptions struct {
 	ContextKind                   string
 	RequireNewsletterSubscription bool
@@ -54,23 +50,23 @@ func recipientSelectionFromAudienceSegment(
 ) (*bulkEmailRecipientSelection, error) {
 	if segment == nil {
 		return &bulkEmailRecipientSelection{
-			Mode: CampaignDeliveryTargetModeAllUsers,
+			Mode: campaigndomain.CampaignDeliveryTargetModeAllUsers,
 		}, nil
 	}
 
 	switch model.AudienceSegmentType(strings.TrimSpace(string(segment.SegmentType))) {
 	case model.AudienceSegmentAllMembers:
 		return &bulkEmailRecipientSelection{
-			Mode: CampaignDeliveryTargetModeAllUsers,
+			Mode: campaigndomain.CampaignDeliveryTargetModeAllUsers,
 		}, nil
 	case model.AudienceSegmentMemberTags:
 		return &bulkEmailRecipientSelection{
-			Mode:         CampaignDeliveryTargetModeUserTags,
+			Mode:         campaigndomain.CampaignDeliveryTargetModeUserTags,
 			MemberTagIDs: segment.Config.MemberTagIDs,
 		}, nil
 	case model.AudienceSegmentMembersByFilter:
 		return &bulkEmailRecipientSelection{
-			Mode: CampaignDeliveryTargetModeUsersByFilter,
+			Mode: campaigndomain.CampaignDeliveryTargetModeUsersByFilter,
 			Filters: &bulkEmailRecipientFilters{
 				AccountRoles:      segment.Config.AccountRoles,
 				CreatedAfter:      segment.Config.CreatedAfter,
@@ -85,7 +81,7 @@ func recipientSelectionFromAudienceSegment(
 
 // CountBulkEmailRecipientsForAudienceSegment counts the current audience
 // segment through the delivery-owned recipient selection query.
-func CountBulkEmailRecipientsForAudienceSegment(ctx context.Context, db *gorm.DB, spiceDB *auth.SpiceDBClient, segment *model.AudienceSegment) (int64, error) {
+func CountBulkEmailRecipientsForAudienceSegment(ctx context.Context, db *gorm.DB, spiceDB RecipientAuthorizer, segment *model.AudienceSegment) (int64, error) {
 	if segment != nil {
 		switch segment.SegmentType {
 		case model.AudienceSegmentMemberTags:
@@ -105,7 +101,7 @@ func CountBulkEmailRecipientsForAudienceSegment(ctx context.Context, db *gorm.DB
 func countBulkEmailRecipients(
 	ctx context.Context,
 	db *gorm.DB,
-	spiceDB *auth.SpiceDBClient,
+	spiceDB RecipientAuthorizer,
 	selection *bulkEmailRecipientSelection,
 ) (int64, error) {
 	if err := resolveBulkEmailRecipientSelectionPermissions(ctx, spiceDB, selection); err != nil {
@@ -135,16 +131,16 @@ func buildBulkEmailRecipientCandidates(
 	}
 
 	switch selection.Mode {
-	case CampaignDeliveryTargetModeAllUsers:
+	case campaigndomain.CampaignDeliveryTargetModeAllUsers:
 		return buildAccountRecipientCandidates(accountRecipientOptionsFromSelection(selection))
-	case CampaignDeliveryTargetModeUserTags:
+	case campaigndomain.CampaignDeliveryTargetModeUserTags:
 		if len(selection.MemberTagIDs) == 0 {
 			return bulkEmailRecipientCandidateQuery{}, fmt.Errorf("member_tag_ids required for MEMBER_TAGS query")
 		}
 		options := accountRecipientOptionsFromSelection(selection)
 		options.MemberTagIDs = selection.MemberTagIDs
 		return buildAccountRecipientCandidates(options)
-	case CampaignDeliveryTargetModeUsersByFilter:
+	case campaigndomain.CampaignDeliveryTargetModeUsersByFilter:
 		if selection.Filters == nil {
 			return bulkEmailRecipientCandidateQuery{}, fmt.Errorf("filters required for MEMBERS_BY_FILTER query")
 		}
@@ -159,9 +155,9 @@ func buildBulkEmailRecipientCandidates(
 }
 
 func accountRecipientOptionsFromSelection(selection *bulkEmailRecipientSelection) accountRecipientCandidateOptions {
-	contextKind := BulkEmailContextAccountCurrent
+	contextKind := campaigndomain.BulkEmailContextAccountCurrent
 	if selection.RequireNewsletterSubscription {
-		contextKind = BulkEmailContextNewsletterSubscription
+		contextKind = campaigndomain.BulkEmailContextNewsletterSubscription
 	}
 	return accountRecipientCandidateOptions{
 		ContextKind:                   contextKind,
@@ -173,7 +169,7 @@ func accountRecipientOptionsFromSelection(selection *bulkEmailRecipientSelection
 func buildAccountRecipientCandidates(options accountRecipientCandidateOptions) (bulkEmailRecipientCandidateQuery, error) {
 	contextKind := strings.TrimSpace(options.ContextKind)
 	if contextKind == "" {
-		contextKind = BulkEmailContextAccountCurrent
+		contextKind = campaigndomain.BulkEmailContextAccountCurrent
 	}
 
 	joins := []string{}
@@ -284,7 +280,7 @@ func normalizeBulkEmailSubjectLookup(value string) (policyv1.SubjectLookup, bool
 // resolveBulkEmailRecipientSelectionPermissions turns the product's typed
 // platform-permission filter into its current fully-consistent SpiceDB
 // account_identity subject set before SQL hydrates Member delivery details.
-func resolveBulkEmailRecipientSelectionPermissions(ctx context.Context, spiceDB *auth.SpiceDBClient, selection *bulkEmailRecipientSelection) error {
+func resolveBulkEmailRecipientSelectionPermissions(ctx context.Context, spiceDB RecipientAuthorizer, selection *bulkEmailRecipientSelection) error {
 	if selection == nil || selection.Filters == nil || len(selection.Filters.AccountRoles) == 0 {
 		return nil
 	}

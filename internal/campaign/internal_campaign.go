@@ -7,9 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
@@ -17,10 +15,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/persistencecheckpoint"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -28,57 +24,34 @@ import (
 // document use cases. Every field is required; NewInternalService rejects a
 // missing one.
 type InternalDeps struct {
-	DB      *gorm.DB
-	SpiceDB *auth.SpiceDBClient
-	// Permissions answers the Edit decisions of room loads and AI document
-	// writes.
-	Permissions   CollaborationPermissionChecker
-	ContentBlocks *contentblock.Store
-	Checkpoints   persistencecheckpoint.ContributorFence
-	Members       ContributorMembers
-	Audit         domainaudit.Appender
+	Units       Units
+	SpiceDB     mutation.Authorizer
+	Fence       identitystate.Fence
+	Permissions CollaborationPermissionChecker
+	Audit       domainaudit.Appender
+	Clock       func() time.Time
 }
 
 func (d InternalDeps) validate() error {
-	return requireDependencies("internal campaign", map[string]bool{
-		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Permissions": d.Permissions == nil,
-		"ContentBlocks": d.ContentBlocks == nil, "Checkpoints": d.Checkpoints == nil,
-		"Members": d.Members == nil, "Audit": d.Audit == nil,
-	})
+	return requireDependencies("internal campaign", map[string]bool{"Units": d.Units == nil, "SpiceDB": d.SpiceDB == nil, "Fence": d.Fence == nil, "Permissions": d.Permissions == nil, "Audit": d.Audit == nil, "Clock": d.Clock == nil})
 }
 
-// InternalService owns the typed Block persistence boundary for one
-// Campaign document. The collaboration runtime transports operations; it
-// does not own durable document bytes.
 type InternalService struct {
-	contentMutations *mutation.StoreRunner[contentStore]
-	db               *gorm.DB
-	permissions      CollaborationPermissionChecker
-	contentBlocks    *contentblock.Store
-	checkpoints      persistencecheckpoint.ContributorFence
-	members          ContributorMembers
-	mutations        *mutation.Runner
+	units       Units
+	permissions CollaborationPermissionChecker
+	mutations   *mutation.StoreRunner[Store]
+	now         func() time.Time
 }
 
-// NewInternalService validates deps and returns the Campaign collaboration
-// and AI document use cases.
 func NewInternalService(deps InternalDeps) (*InternalService, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, identitystate.PostgresFence{}, deps.Audit)
+	runner, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
 	if err != nil {
 		return nil, err
 	}
-	contentMutations, err := contentRunner(deps.DB, deps)
-	if err != nil {
-		return nil, err
-	}
-	return &InternalService{
-		contentMutations: contentMutations,
-		db:               deps.DB, permissions: deps.Permissions, contentBlocks: deps.ContentBlocks,
-		checkpoints: deps.Checkpoints, members: deps.Members, mutations: mutations,
-	}, nil
+	return &InternalService{units: deps.Units, permissions: deps.Permissions, mutations: runner, now: deps.Clock}, nil
 }
 
 // ApplyCampaignBlockBatchCommand applies a collaboration room's Block batch
@@ -105,7 +78,7 @@ type campaignCollaboration struct {
 // readCampaignCollaboration reads the room's Campaign document and source
 // locale.
 func (s *InternalService) readCampaignCollaboration(ctx context.Context, campaignID, locale string, contributors []string) (campaignCollaboration, error) {
-	write := campaignCollaboration{campaignID: campaignID, contributors: contributors, now: dbtime.Now()}
+	write := campaignCollaboration{campaignID: campaignID, contributors: contributors, now: s.now().UTC().Truncate(dbtime.Precision)}
 	if write.campaignID == "" {
 		return write, domainerr.Required("campaign_id")
 	}
@@ -113,11 +86,17 @@ func (s *InternalService) readCampaignCollaboration(ctx context.Context, campaig
 	if write.locale, err = emailcontent.NormalizeLocale(locale); err != nil {
 		return write, err
 	}
-	if write.documentID, err = loadCampaignEmailContentDocumentRoot(ctx, s.db, campaignID, false); err != nil {
-		return write, err
-	}
-	domain, err := loadCampaignSourceContext(ctx, s.db, campaignID, false)
-	write.sourceLocale = domain.SourceLocale
+
+	err = s.units.Read(ctx, func(store Store) error {
+		var err error
+		write.documentID, err = loadCampaignEmailContentDocumentRoot(ctx, store, campaignID, false)
+		if err != nil {
+			return err
+		}
+		domain, err := loadCampaignSourceContext(ctx, store, campaignID, false)
+		write.sourceLocale = domain.SourceLocale
+		return err
+	})
 	return write, err
 }
 
@@ -135,16 +114,16 @@ func (w campaignCollaboration) requireTargetOrigin() (string, error) {
 func (s *InternalService) saveCampaignCollaboration(
 	ctx context.Context,
 	write campaignCollaboration,
-	change func(ctx context.Context, tx *gorm.DB) (emailcontent.CollaborationChange, error),
+	change func(ctx context.Context, tx Store) (emailcontent.CollaborationChange, error),
 ) (emailcontent.CollaborationChange, error) {
-	return mutation.Run(ctx, s.mutations, mutation.Spec[emailcontent.CollaborationChange]{
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[emailcontent.CollaborationChange, Store]{
 		Access: emailcontent.CollaborationAccess,
-		Change: func(ctx context.Context, tx *gorm.DB) (emailcontent.CollaborationChange, error) {
-			if err := requireCampaignContributors(ctx, tx, s.members, write.contributors); err != nil {
+		Change: func(ctx context.Context, tx Store) (emailcontent.CollaborationChange, error) {
+			if err := requireCampaignContributors(ctx, tx, write.contributors); err != nil {
 				return emailcontent.CollaborationChange{}, err
 			}
-			if err := s.checkpoints.RequireCurrentContributors(
-				ctx, tx, intrav1.CollaborationResourceType_COLLABORATION_RESOURCE_TYPE_CAMPAIGN, write.campaignID, write.contributors,
+			if err := tx.RequireCurrentContributors(
+				ctx, write.campaignID, write.contributors,
 			); err != nil {
 				return emailcontent.CollaborationChange{}, err
 			}
@@ -178,21 +157,21 @@ func (s *InternalService) ApplyCampaignBlockBatch(ctx context.Context, command A
 		if err != nil {
 			return emailcontent.CollaborationChange{}, err
 		}
-		return s.saveCampaignCollaboration(ctx, write, func(ctx context.Context, tx *gorm.DB) (emailcontent.CollaborationChange, error) {
-			bound := bindContent(tx, s.contentBlocks)
+		return s.saveCampaignCollaboration(ctx, write, func(ctx context.Context, tx Store) (emailcontent.CollaborationChange, error) {
+			bound := tx
 			return campaignContent.SaveCollaborationTarget(ctx, bound, emailcontent.TargetLocaleMutation{
 				ID: write.campaignID, DocumentID: write.documentID, Locale: write.locale,
 				Batch: batch, ExpectedDocumentRevision: batch.ExpectedRevision,
 				ExpectedTargetRevision: command.ExpectedTargetRevision, Now: write.now,
-				Fence: contentFence(bound, campaignEmailContentFence(write.campaignID)),
+				Fence: campaignEmailContentFence(bound, write.campaignID),
 			}, originMemberID)
 		})
 	}
 	if command.ExpectedTargetRevision != nil {
 		return emailcontent.CollaborationChange{}, domainerr.InvalidField("expected_target_revision", "must be omitted for the source locale")
 	}
-	return s.saveCampaignCollaboration(ctx, write, func(ctx context.Context, tx *gorm.DB) (emailcontent.CollaborationChange, error) {
-		result, err := s.contentBlocks.ApplyBatch(ctx, tx, batch, campaignEmailContentFence(write.campaignID))
+	return s.saveCampaignCollaboration(ctx, write, func(ctx context.Context, tx Store) (emailcontent.CollaborationChange, error) {
+		result, err := tx.ApplyContentBatch(ctx, batch, campaignEmailContentFence(tx, write.campaignID))
 		if err != nil {
 			return emailcontent.CollaborationChange{}, campaignContent.NormalizeContentBlockError(err)
 		}
@@ -214,12 +193,12 @@ func (s *InternalService) ApplyCampaignBlockBatch(ctx context.Context, command A
 
 // projectCampaignSource re-materializes the source locale from the locked
 // document.
-func (s *InternalService) projectCampaignSource(ctx context.Context, tx *gorm.DB, write campaignCollaboration) error {
+func (s *InternalService) projectCampaignSource(ctx context.Context, tx Store, write campaignCollaboration) error {
 	domain, err := loadCampaignSourceContext(ctx, tx, write.campaignID, true)
 	if err != nil {
 		return err
 	}
-	snapshot, err := s.contentBlocks.LoadSnapshotInTransaction(ctx, tx, write.documentID, domain.SourceLocale)
+	snapshot, err := tx.LockedContentSnapshot(ctx, write.documentID, domain.SourceLocale)
 	if err != nil {
 		return campaignContent.NormalizeContentBlockError(err)
 	}
@@ -264,21 +243,21 @@ func (s *InternalService) UpdateCampaignLocaleMetadata(ctx context.Context, comm
 		if err != nil {
 			return emailcontent.CollaborationChange{}, err
 		}
-		return s.saveCampaignCollaboration(ctx, write, func(ctx context.Context, tx *gorm.DB) (emailcontent.CollaborationChange, error) {
-			bound := bindContent(tx, s.contentBlocks)
+		return s.saveCampaignCollaboration(ctx, write, func(ctx context.Context, tx Store) (emailcontent.CollaborationChange, error) {
+			bound := tx
 			return campaignContent.SaveCollaborationTarget(ctx, bound, emailcontent.TargetLocaleMutation{
 				ID: write.campaignID, DocumentID: write.documentID, Locale: write.locale,
 				Batch:                    contentblock.Batch{DocumentID: write.documentID, ExpectedRevision: expectedRevision},
 				ExpectedDocumentRevision: expectedRevision, ExpectedTargetRevision: command.ExpectedTargetRevision,
 				SetSubject: true, Subject: command.Subject, Now: write.now,
-				Fence: contentFence(bound, campaignEmailContentFence(write.campaignID)),
+				Fence: campaignEmailContentFence(bound, write.campaignID),
 			}, originMemberID)
 		})
 	}
 	if command.ExpectedTargetRevision != nil {
 		return emailcontent.CollaborationChange{}, domainerr.InvalidField("expected_target_revision", "must be omitted for the source locale")
 	}
-	return s.saveCampaignCollaboration(ctx, write, func(ctx context.Context, tx *gorm.DB) (emailcontent.CollaborationChange, error) {
+	return s.saveCampaignCollaboration(ctx, write, func(ctx context.Context, tx Store) (emailcontent.CollaborationChange, error) {
 		return s.saveCampaignSourceSubject(ctx, tx, write, expectedRevision, *command.Subject)
 	})
 }
@@ -286,13 +265,13 @@ func (s *InternalService) UpdateCampaignLocaleMetadata(ctx context.Context, comm
 // saveCampaignSourceSubject stores the source subject as the next document
 // revision and refreshes the source materialization when the translation
 // source changed.
-func (s *InternalService) saveCampaignSourceSubject(ctx context.Context, tx *gorm.DB, write campaignCollaboration, expectedRevision uuid.UUID, subject string) (emailcontent.CollaborationChange, error) {
+func (s *InternalService) saveCampaignSourceSubject(ctx context.Context, tx Store, write campaignCollaboration, expectedRevision uuid.UUID, subject string) (emailcontent.CollaborationChange, error) {
 	var sourceLocale string
-	result, err := s.contentBlocks.AdvanceRevision(
-		ctx, tx,
+	result, err := tx.AdvanceContentRevision(
+		ctx,
 		contentblock.AdvanceInput{DocumentID: write.documentID, ExpectedRevision: expectedRevision},
-		campaignEmailContentFence(write.campaignID),
-		func(ctx context.Context, tx *gorm.DB) (contentblock.MetadataEffect, error) {
+		campaignEmailContentFence(tx, write.campaignID),
+		func(ctx context.Context) (contentblock.MetadataEffect, error) {
 			domain, err := loadCampaignSourceContext(ctx, tx, write.campaignID, true)
 			if err != nil {
 				return contentblock.MetadataEffect{}, err
@@ -320,7 +299,7 @@ func (s *InternalService) saveCampaignSourceSubject(ctx context.Context, tx *gor
 type LoadCampaignDocumentQuery struct {
 	CampaignID string
 	Locale     string
-	Principal  *intrav1.CollaborationPrincipal
+	Principal  *CollaborationPrincipal
 }
 
 // LoadCampaignDocument returns the Campaign's document in the locale after
@@ -334,17 +313,19 @@ func (s *InternalService) LoadCampaignDocument(ctx context.Context, query LoadCa
 	if err != nil {
 		return emailcontent.CollaborationDocument{}, err
 	}
-	if err := requireCampaignEmailDocumentLoad(ctx, s.db, s.permissions, query.Principal, campaignID); err != nil {
+	if err := s.units.Read(ctx, func(store Store) error {
+		return requireCampaignEmailDocumentLoad(ctx, store, s.permissions, query.Principal, campaignID)
+	}); err != nil {
 		return emailcontent.CollaborationDocument{}, err
 	}
-	return campaignContent.LoadCollaborationDocument(ctx, contentUnits(s.db, s.contentBlocks), campaignID, locale, func(ctx context.Context, store contentStore) (uuid.UUID, error) {
-		return loadCampaignEmailContentDocumentRoot(ctx, store.tx, campaignID, true)
+	return campaignContent.LoadCollaborationDocument(ctx, s.units, campaignID, locale, func(ctx context.Context, store Store) (uuid.UUID, error) {
+		return loadCampaignEmailContentDocumentRoot(ctx, store, campaignID, true)
 	})
 }
 
 // requireCampaignContributors locks the sorted, unique Members a
 // collaboration write credits.
-func requireCampaignContributors(ctx context.Context, tx *gorm.DB, members ContributorMembers, contributors []string) error {
+func requireCampaignContributors(ctx context.Context, tx Store, contributors []string) error {
 	if len(contributors) == 0 {
 		return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires contributors")
 	}
@@ -356,7 +337,7 @@ func requireCampaignContributors(ctx context.Context, tx *gorm.DB, members Contr
 			return domainerr.InvalidField("contributor_member_ids", "collaboration mutation requires sorted unique Member UUIDs")
 		}
 	}
-	locked, err := members.LockMembers(ctx, tx, contributors)
+	locked, err := tx.LockMembers(ctx, contributors)
 	if err != nil {
 		return fmt.Errorf("lock Campaign contributor Members: %w", err)
 	}

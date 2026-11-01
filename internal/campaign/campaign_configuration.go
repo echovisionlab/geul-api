@@ -6,14 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
+
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -23,9 +19,9 @@ import (
 // fails validation for SEGMENT, and a segment needs a target mode.
 type UpdateCampaignConfigurationCommand struct {
 	ID             string
-	TargetMode     *managev1.CampaignTargetMode
+	TargetMode     *TargetMode
 	SegmentID      *string
-	RecipientScope *managev1.CampaignRecipientScope
+	RecipientScope *RecipientScope
 	// LayoutID set to an empty value clears the layout.
 	LayoutID *string
 }
@@ -56,20 +52,20 @@ func (s *Service) UpdateCampaignConfiguration(ctx context.Context, command Updat
 	if err != nil {
 		return CampaignConfiguration{}, err
 	}
-	var campaign model.Campaign
+	var campaign Campaign
 	var observedLayoutID string
 	var lockedLayouts map[string]CampaignLayoutReference
-	change, err := mutation.Run(ctx, s.mutations, mutation.Spec[campaignConfigurationChange]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	change, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[campaignConfigurationChange, Store]{
+		Lock: func(ctx context.Context, tx Store) error {
 			var err error
-			observedLayoutID, lockedLayouts, err = observeAndLockCampaignLayouts(ctx, tx, s.emailAuthoring, command.ID, command.LayoutID)
+			observedLayoutID, lockedLayouts, err = observeAndLockCampaignLayouts(ctx, tx, command.ID, command.LayoutID)
 			if err != nil {
 				return err
 			}
 			return lockCampaign(ctx, tx, command.ID, &campaign)
 		},
 		Access: access,
-		Change: func(ctx context.Context, tx *gorm.DB) (campaignConfigurationChange, error) {
+		Change: func(ctx context.Context, tx Store) (campaignConfigurationChange, error) {
 			next, err := requestedCampaignConfiguration(campaign, command)
 			if err != nil {
 				return campaignConfigurationChange{}, err
@@ -77,7 +73,7 @@ func (s *Service) UpdateCampaignConfiguration(ctx context.Context, command Updat
 			if err := s.validateCampaignConfiguration(ctx, tx, campaign, next, command, observedLayoutID, lockedLayouts); err != nil {
 				return campaignConfigurationChange{}, err
 			}
-			return applyCampaignConfiguration(ctx, tx, campaign, next)
+			return applyCampaignConfiguration(ctx, tx, campaign, next, s.now())
 		},
 		Audit: func(change campaignConfigurationChange) mutation.Audit {
 			if len(change.fields) == 0 {
@@ -91,14 +87,14 @@ func (s *Service) UpdateCampaignConfiguration(ctx context.Context, command Updat
 
 // requestedCampaignConfiguration overlays the command on the Campaign's
 // current configuration.
-func requestedCampaignConfiguration(campaign model.Campaign, command UpdateCampaignConfigurationCommand) (CampaignConfiguration, error) {
+func requestedCampaignConfiguration(campaign Campaign, command UpdateCampaignConfigurationCommand) (CampaignConfiguration, error) {
 	next := CampaignConfiguration{
 		ID: campaign.ID, TargetMode: campaign.TargetMode, SegmentID: campaign.SegmentID,
 		LayoutID: campaign.LayoutID, RecipientScope: campaign.RecipientScope, UpdatedAt: campaign.UpdatedAt,
 	}
 	touched := false
 	if command.TargetMode != nil {
-		parsedMode, err := campaignTargetModeFromProto(*command.TargetMode)
+		parsedMode, err := campaignTargetModeValue(*command.TargetMode)
 		if err != nil {
 			return next, domainerr.InvalidField("target_mode", err.Error())
 		}
@@ -109,7 +105,7 @@ func requestedCampaignConfiguration(campaign model.Campaign, command UpdateCampa
 		return next, domainerr.InvalidField("segment_id", "must be updated together with target_mode")
 	}
 	if command.RecipientScope != nil {
-		parsedScope, err := campaignRecipientScopeFromProto(*command.RecipientScope)
+		parsedScope, err := campaignRecipientScopeValue(*command.RecipientScope)
 		if err != nil {
 			return next, domainerr.InvalidField("recipient_scope", err.Error())
 		}
@@ -131,14 +127,14 @@ func requestedCampaignConfiguration(campaign model.Campaign, command UpdateCampa
 // layout.
 func (s *Service) validateCampaignConfiguration(
 	ctx context.Context,
-	tx *gorm.DB,
-	campaign model.Campaign,
+	tx Store,
+	campaign Campaign,
 	next CampaignConfiguration,
 	command UpdateCampaignConfigurationCommand,
 	observedLayoutID string,
 	lockedLayouts map[string]CampaignLayoutReference,
 ) error {
-	if err := validateCampaignTargetDefinition(model.Campaign{TargetMode: next.TargetMode, SegmentID: next.SegmentID}); err != nil {
+	if err := validateCampaignTargetDefinition(Campaign{TargetMode: next.TargetMode, SegmentID: next.SegmentID}); err != nil {
 		return domainerr.InvalidField("target_mode", err.Error())
 	}
 	if !campaignStatusAllowsEdit(campaign.Status) {
@@ -147,7 +143,7 @@ func (s *Service) validateCampaignConfiguration(
 	if ptrStringValue(campaign.LayoutID) != observedLayoutID {
 		return domainerr.Precondition("campaign layout assignment changed; retry")
 	}
-	if next.TargetMode == model.CampaignTargetModeSegment {
+	if next.TargetMode == CampaignTargetModeSegment {
 		if err := s.requireAssignableSegment(ctx, tx, *next.SegmentID); err != nil {
 			return err
 		}
@@ -162,27 +158,25 @@ func (s *Service) validateCampaignConfiguration(
 
 // applyCampaignConfiguration writes the fields of next that differ from the
 // locked Campaign.
-func applyCampaignConfiguration(ctx context.Context, tx *gorm.DB, campaign model.Campaign, next CampaignConfiguration) (campaignConfigurationChange, error) {
-	updates := structured.Fields{}
+func applyCampaignConfiguration(ctx context.Context, tx Store, campaign Campaign, next CampaignConfiguration, now time.Time) (campaignConfigurationChange, error) {
 	var fields []string
 	if campaign.TargetMode != next.TargetMode {
-		fields, updates["target_mode"] = append(fields, "target_mode"), next.TargetMode
+		fields = append(fields, "target_mode")
 	}
 	if ptrStringValue(campaign.SegmentID) != ptrStringValue(next.SegmentID) {
-		fields, updates["segment_id"] = append(fields, "segment"), next.SegmentID
+		fields = append(fields, "segment")
 	}
 	if ptrStringValue(campaign.LayoutID) != ptrStringValue(next.LayoutID) {
-		fields, updates["layout_id"] = append(fields, "layout"), next.LayoutID
+		fields = append(fields, "layout")
 	}
 	if campaign.RecipientScope != next.RecipientScope {
-		fields, updates["recipient_scope"] = append(fields, "recipient_scope"), next.RecipientScope
+		fields = append(fields, "recipient_scope")
 	}
 	if len(fields) == 0 {
 		return campaignConfigurationChange{CampaignConfiguration: next}, nil
 	}
-	next.UpdatedAt = dbtime.Now()
-	updates["updated_at"] = next.UpdatedAt
-	if err := tx.WithContext(ctx).Model(&campaign).Updates(updates).Error; err != nil {
+	next.UpdatedAt = now.UTC().Truncate(dbtime.Precision)
+	if err := tx.UpdateCampaign(ctx, campaign, CampaignChange{Configuration: &next, UpdatedAt: next.UpdatedAt}); err != nil {
 		return campaignConfigurationChange{}, err
 	}
 	next.Changed = true
@@ -195,27 +189,23 @@ func applyCampaignConfiguration(ctx context.Context, tx *gorm.DB, campaign model
 // write.
 func observeAndLockCampaignLayouts(
 	ctx context.Context,
-	tx *gorm.DB,
-	emailAuthoring CampaignEmailAuthoringPort,
+	tx Store,
 	campaignID string,
 	requestedLayoutID *string,
 ) (string, map[string]CampaignLayoutReference, error) {
-	var observed struct {
-		LayoutID *string `gorm:"column:layout_id"`
+
+	layoutID, err := tx.CampaignLayoutID(ctx, campaignID)
+	if errors.Is(err, ErrCampaignNotFound) {
+		return "", nil, errCampaignNotFound()
 	}
-	if err := tx.WithContext(ctx).
-		Model(&model.Campaign{}).
-		Select("layout_id").
-		First(&observed, "id = ?", campaignID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", nil, errCampaignNotFound()
-		}
+	if err != nil {
 		return "", nil, err
 	}
-	observedLayoutID := strings.TrimSpace(ptrStringValue(observed.LayoutID))
+
+	observedLayoutID := strings.TrimSpace(ptrStringValue(layoutID))
 	if observedLayoutID == "" && strings.TrimSpace(ptrStringValue(requestedLayoutID)) == "" {
 		return observedLayoutID, map[string]CampaignLayoutReference{}, nil
 	}
-	lockedLayouts, err := emailAuthoring.LockLayoutsForCampaign(ctx, tx, observedLayoutID, ptrStringValue(requestedLayoutID))
+	lockedLayouts, err := tx.LockLayouts(ctx, observedLayoutID, ptrStringValue(requestedLayoutID))
 	return observedLayoutID, lockedLayouts, err
 }

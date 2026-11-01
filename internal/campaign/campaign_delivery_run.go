@@ -6,47 +6,35 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 func createCampaignDeliveryRun(
 	ctx context.Context,
-	tx *gorm.DB,
-	campaign model.Campaign,
+	tx Store,
+	campaign Campaign,
 	scheduledAt time.Time,
 	targetCount int64,
-	audienceTargets CampaignAudienceTargetPort,
-	contentBlocks *contentblock.Store,
-	emailAuthoring CampaignEmailAuthoringPort,
-	delivery CampaignDeliveryPort,
 ) (CampaignDeliveryRunRef, error) {
-	if delivery == nil {
-		return CampaignDeliveryRunRef{}, domainerr.DependencyUnavailable("Campaign delivery")
-	}
+
 	if targetCount < 0 {
 		return CampaignDeliveryRunRef{}, domainerr.New(domainerr.Invalid, "", "target count cannot be negative")
 	}
 	observedLayoutID, lockedLayouts, err := observeAndLockCampaignLayouts(
 		ctx,
 		tx,
-		emailAuthoring,
 		campaign.ID,
 		nil,
 	)
 	if err != nil {
 		return CampaignDeliveryRunRef{}, err
 	}
-	var lockedCampaign model.Campaign
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		First(&lockedCampaign, "id = ?", campaign.ID).Error; err != nil {
+
+	lockedCampaign, err := tx.LockCampaign(ctx, campaign.ID)
+	if err != nil {
 		return CampaignDeliveryRunRef{}, err
 	}
+
 	if strings.TrimSpace(ptrStringValue(lockedCampaign.LayoutID)) != observedLayoutID {
 		return CampaignDeliveryRunRef{}, domainerr.Precondition("campaign layout assignment changed; retry")
 	}
@@ -55,7 +43,6 @@ func createCampaignDeliveryRun(
 		ctx,
 		tx,
 		campaign,
-		audienceTargets,
 	)
 	if err != nil {
 		return CampaignDeliveryRunRef{}, err
@@ -75,7 +62,7 @@ func createCampaignDeliveryRun(
 		updatedAt := layout.UpdatedAt.UTC()
 		sourceLayoutUpdatedAt = &updatedAt
 	}
-	snapshot, err := campaignRenderSnapshot(ctx, tx, contentBlocks, campaign, emailAuthoring)
+	snapshot, err := campaignRenderSnapshot(ctx, tx, campaign)
 	if err != nil {
 		return CampaignDeliveryRunRef{}, err
 	}
@@ -89,7 +76,7 @@ func createCampaignDeliveryRun(
 	if err := validateCampaignRecipientScopeContent(target.RecipientScope, snapshot); err != nil {
 		return CampaignDeliveryRunRef{}, err
 	}
-	run, err := delivery.SealRun(
+	run, err := sealCampaignDeliveryRun(
 		ctx,
 		tx,
 		CampaignDeliveryRunDefinition{
@@ -111,7 +98,7 @@ func createCampaignDeliveryRun(
 		return CampaignDeliveryRunRef{}, errors.New("Campaign delivery run identity is unavailable")
 	}
 	if targetCount > 0 {
-		if err := delivery.StartRun(ctx, tx, run.ID, targetCount, scheduledAt.UTC()); err != nil {
+		if err := startCampaignDeliveryRun(ctx, tx, run.ID, targetCount, scheduledAt.UTC()); err != nil {
 			return CampaignDeliveryRunRef{}, err
 		}
 	}

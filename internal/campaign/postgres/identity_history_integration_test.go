@@ -1,11 +1,12 @@
 //go:build integration
 
-package campaign
+package campaignpostgres
 
 import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -16,7 +17,7 @@ import (
 
 func TestDeletedIdentityPreservesMemberExclusionAndFrozenDeliveryDefinitionIntegration(t *testing.T) {
 	t.Parallel()
-	db := newCampaignLocalKratosStack(t).DB
+	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true, BootstrapKratosStub: true}).DB
 	now := time.Now().UTC()
 	includedIdentityID := uuid.NewString()
 	excludedIdentityID := uuid.NewString()
@@ -52,7 +53,7 @@ func TestDeletedIdentityPreservesMemberExclusionAndFrozenDeliveryDefinitionInteg
 		Name: "Frozen identity campaign", Subject: "Frozen identity campaign",
 		Status:     managev1.CampaignStatus_CAMPAIGN_STATUS_SENDING.String(),
 		TargetMode: model.CampaignTargetModeSegment, SegmentID: &segmentID,
-		RecipientScope: campaignRecipientScopeAllMatchingUsers,
+		RecipientScope: "ALL_MATCHING_USERS",
 		CreatedAt:      now, UpdatedAt: now,
 	}).Error)
 	runID := uuid.NewString()
@@ -64,15 +65,15 @@ func TestDeletedIdentityPreservesMemberExclusionAndFrozenDeliveryDefinitionInteg
 	}
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&model.CampaignDeliveryRun{
-			ID: runID, RunKind: EmailDeliveryRunKindCampaign, CampaignID: &campaignID,
-			Status: CampaignDeliveryRunStatusSending, ScheduledAt: now, StartedAt: &now,
+			ID: runID, RunKind: campaign.EmailDeliveryRunKindCampaign, CampaignID: &campaignID,
+			Status: campaign.CampaignDeliveryRunStatusSending, ScheduledAt: now, StartedAt: &now,
 			TemplateData: model.JSONFields{}, RenderSnapshot: renderSnapshot,
-			SnapshotSchemaVersion:   CampaignDeliverySnapshotSchemaVersion,
+			SnapshotSchemaVersion:   campaign.CampaignDeliverySnapshotSchemaVersion,
 			SourceCampaignUpdatedAt: &now,
 			AudienceSegmentID:       &segmentID,
-			TargetQueryVersion:      CampaignDeliveryTargetQueryVersion,
-			TargetMode:              CampaignDeliveryTargetModeUsersByFilter,
-			TargetRecipientScope:    campaignRecipientScopeAllMatchingUsers,
+			TargetQueryVersion:      campaign.CampaignDeliveryTargetQueryVersion,
+			TargetMode:              campaign.CampaignDeliveryTargetModeUsersByFilter,
+			TargetRecipientScope:    "ALL_MATCHING_USERS",
 			TargetCount:             1, CreatedAt: now, UpdatedAt: now,
 		}).Error; err != nil {
 			return err
@@ -91,8 +92,8 @@ func TestDeletedIdentityPreservesMemberExclusionAndFrozenDeliveryDefinitionInteg
 		ID: recipientID, RunID: runID,
 		RecipientEmail: includedEmail, NormalizedRecipientEmail: includedEmail,
 		IdentityID: &includedIdentityID, MemberID: &includedMemberID,
-		RecipientContextType: BulkEmailContextAccountCurrent,
-		Status:               CampaignDeliveryRecipientStatusPending,
+		RecipientContextType: campaign.BulkEmailContextAccountCurrent,
+		Status:               campaign.CampaignDeliveryRecipientStatusPending,
 		CreatedAt:            now, UpdatedAt: now,
 	}).Error)
 
@@ -116,7 +117,7 @@ func TestDeletedIdentityPreservesMemberExclusionAndFrozenDeliveryDefinitionInteg
 	require.NoError(t, db.First(&recipientAfter, "id = ?", recipientID).Error)
 	require.Equal(t, includedIdentityID, ptrStringValue(recipientAfter.IdentityID))
 	require.Equal(t, includedMemberID, ptrStringValue(recipientAfter.MemberID))
-	require.Equal(t, CampaignDeliveryRecipientStatusPending, recipientAfter.Status)
+	require.Equal(t, campaign.CampaignDeliveryRecipientStatusPending, recipientAfter.Status)
 	require.Equal(t, includedEmail, recipientAfter.NormalizedRecipientEmail)
 
 	var frozenAfter model.CampaignDeliveryRun
@@ -125,4 +126,32 @@ func TestDeletedIdentityPreservesMemberExclusionAndFrozenDeliveryDefinitionInteg
 	require.Equal(t, frozenBefore.RenderSnapshot, frozenAfter.RenderSnapshot)
 	require.Equal(t, frozenBefore.Status, frozenAfter.Status)
 	require.Equal(t, frozenBefore.TargetCount, frozenAfter.TargetCount)
+}
+
+func seedCampaignActiveMemberEmailPair(
+	t *testing.T,
+	db *gorm.DB,
+	identityID string,
+	email string,
+) string {
+	t.Helper()
+	memberID := uuid.NewString()
+	now := time.Now().UTC()
+	require.NoError(t, db.Exec(
+		"UPDATE kratos.identities SET external_id = ? WHERE id = ?::uuid",
+		memberID,
+		identityID,
+	).Error)
+	require.NoError(t, db.Exec(
+		`INSERT INTO account_identity (id, created_at)
+		 SELECT id, created_at FROM kratos.identities WHERE id = ?::uuid
+		 ON CONFLICT (id) DO NOTHING`,
+		identityID,
+	).Error)
+	require.NoError(t, db.Create(&model.Member{
+		ID: memberID, AccountIdentityID: &identityID, Nickname: "Campaign recipient " + memberID,
+		Onboarded: true, PrimaryEmail: &email, AvailableEmails: []string{email},
+		SocialLinks: map[string]string{}, CreatedAt: now, UpdatedAt: now,
+	}).Error)
+	return memberID
 }

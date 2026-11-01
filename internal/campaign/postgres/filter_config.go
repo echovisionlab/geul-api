@@ -1,4 +1,4 @@
-package campaign
+package campaignpostgres
 
 import (
 	"github.com/echovisionlab/geul-api/internal/model"

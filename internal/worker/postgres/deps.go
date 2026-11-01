@@ -13,7 +13,6 @@ import (
 	geoipadapter "github.com/echovisionlab/geul-api/internal/adapters/geoip"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/config"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/geoip"
@@ -107,12 +106,7 @@ func New(c Config) (worker.Deps, error) {
 	}
 	deps.Units = units
 
-	campaigns := campaignadapter.NewDeliveryDispatcher(c.DB, campaign.NewAuditedCampaignDeliveryDispatcher(
-		c.SpiceDB,
-		c.Publisher,
-		c.Audit,
-		campaign.WithLegalNoticeDeliveryPort(legaladapter.NewRuntime()),
-	))
+	campaigns := campaignadapter.NewDeliveryDispatcher(c.DB, c.SpiceDB, c.Publisher, c.Audit, legaladapter.NewRuntime())
 	metrics := emaildeliveryadapter.NewMetrics()
 	suppressions := emaildeliveryadapter.NewSuppressionStore(c.DB)
 

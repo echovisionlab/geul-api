@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
 	campaignadapter "github.com/echovisionlab/geul-api/internal/adapters/campaign"
 	emailauthoringadapter "github.com/echovisionlab/geul-api/internal/adapters/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/campaign"
@@ -141,9 +143,9 @@ func (r *NoticeRuntime) CreateRun(
 	if err != nil {
 		return nil, err
 	}
-	return campaign.SealLegalNoticeDeliveryRun(
+	run, err := campaign.SealLegalNoticeDeliveryRun(
 		ctx,
-		tx,
+		campaignpostgres.Bind(tx, campaignpostgres.Ports{}, nil),
 		campaign.LegalNoticeDeliveryRunDefinition{
 			TermsID:                 termsID,
 			PrivacyID:               privacyID,
@@ -159,6 +161,11 @@ func (r *NoticeRuntime) CreateRun(
 			SourcePrivacyVersion:    privacyVersion,
 		},
 	)
+	if err != nil {
+		return nil, err
+	}
+	row := campaignpostgres.DeliveryRunToRow(*run)
+	return &row, nil
 }
 
 func loadNoticeRenderSnapshot(

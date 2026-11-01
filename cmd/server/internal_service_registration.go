@@ -5,11 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
-
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/account"
-	collaborationadapter "github.com/echovisionlab/geul-api/internal/adapters/collaboration"
 	emaildeliveryadapter "github.com/echovisionlab/geul-api/internal/adapters/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
@@ -30,9 +27,9 @@ type internalContentServiceRegistration struct {
 	handlerOptions              []connect.HandlerOption
 	internalTrust               internalRPCTrustBoundary
 	accountEmailChangeLifecycle *account.AccountEmailChangeLifecycle
-	collaborationRuntime        *collaborationadapter.Runtime
 	programEvents               *programevent.Service
 	emailAuthoringUnits         mutation.UnitOfWork[emailauthoring.Store]
+	campaignUnits               campaign.Units
 	legalUnits                  mutation.UnitOfWork[legal.Store]
 	mapThemes                   *maptheme.Service
 }
@@ -49,17 +46,14 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	deps := r.dependencies
 	mux := deps.mux
 	cfg := deps.cfg
-	db := deps.db
 	workerPublisher := deps.workerPublisher
 	kratosClient := deps.kratosClient
 	spicedbClient := deps.spicedbClient
 	telemetryWriter := deps.telemetryWriter
-	contentBlockStore := deps.contentBlockStore
 	authCodeIssuanceLimiter := deps.authCodeIssuanceLimiter
 	internalHandlerOpts := r.handlerOptions
 	internalRPCTrust := r.internalTrust
 	accountEmailChangeLifecycle := r.accountEmailChangeLifecycle
-	collaborationRuntime := r.collaborationRuntime
 	legalUnits := r.legalUnits
 	// Internal API services are not browser/session authenticated and must not
 	// be exposed via Oathkeeper. Every handler is protected below by the exact
@@ -90,8 +84,7 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	slog.Info("Registered internal service", "path", internalMapPath)
 
 	internalCampaignService, err := campaign.NewInternalService(campaign.InternalDeps{
-		DB: db, SpiceDB: spicedbClient, Permissions: spicedbClient, ContentBlocks: contentBlockStore,
-		Checkpoints: collaborationRuntime.Checkpoints, Members: memberadapter.ContributorMembers{}, Audit: telemetryWriter,
+		Units: r.campaignUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Permissions: spicedbClient, Audit: telemetryWriter, Clock: time.Now,
 	})
 	if err != nil {
 		return internalContentServices{}, fmt.Errorf("initialize internal campaign service: %w", err)

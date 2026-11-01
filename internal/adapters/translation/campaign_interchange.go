@@ -3,6 +3,8 @@ package translationadapter
 import (
 	"context"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
 
 	"gorm.io/gorm"
@@ -76,8 +78,7 @@ func (a *CampaignInterchange) ApplyTranslationInterchange(
 	}
 	result, err := campaigndomain.ApplyTranslationInterchange(
 		ctx,
-		db,
-		store,
+		campaignpostgres.Bind(db, campaignpostgres.Ports{ContentBlocks: store}, a.audit),
 		command.EntityID,
 		command.SourceLocale,
 		emailcontent.InterchangeMutation{
@@ -120,7 +121,7 @@ func loadCampaignInterchangeTarget(
 		return emailRichTextInterchangeTarget{}, err
 	}
 	target, err := campaigndomain.LoadTranslationInterchangeTarget(
-		ctx, db, store, entityID, locale,
+		ctx, campaignpostgres.Bind(db, campaignpostgres.Ports{ContentBlocks: store}, nil), entityID, locale,
 	)
 	if err != nil {
 		return emailRichTextInterchangeTarget{}, err

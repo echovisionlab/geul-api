@@ -9,7 +9,7 @@ import (
 func TestEmailDeliveryCompletionDecisionMatrixForLegalNotice(t *testing.T) {
 	tests := []struct {
 		name      string
-		counts    campaignDeliveryCompletionCounts
+		counts    DeliveryCompletionCounts
 		target    int
 		complete  bool
 		runStatus string
@@ -22,7 +22,7 @@ func TestEmailDeliveryCompletionDecisionMatrixForLegalNotice(t *testing.T) {
 		},
 		{
 			name: "sent recipient completes as sent",
-			counts: campaignDeliveryCompletionCounts{
+			counts: DeliveryCompletionCounts{
 				Total: 1,
 				Sent:  1,
 			},
@@ -32,7 +32,7 @@ func TestEmailDeliveryCompletionDecisionMatrixForLegalNotice(t *testing.T) {
 		},
 		{
 			name: "zero sent blocked target fails",
-			counts: campaignDeliveryCompletionCounts{
+			counts: DeliveryCompletionCounts{
 				Total:   1,
 				Blocked: 1,
 			},
@@ -42,7 +42,7 @@ func TestEmailDeliveryCompletionDecisionMatrixForLegalNotice(t *testing.T) {
 		},
 		{
 			name: "pending target remains open",
-			counts: campaignDeliveryCompletionCounts{
+			counts: DeliveryCompletionCounts{
 				Total:   1,
 				Pending: 1,
 			},

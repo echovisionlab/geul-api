@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
 	transcodepostgres "github.com/echovisionlab/geul-api/internal/transcode/postgres"
 
 	"connectrpc.com/connect"
@@ -239,12 +240,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		return registeredServices{}, fmt.Errorf("initialize public file service: %w", err)
 	}
 	legalRuntime := legaladapter.NewOGRuntime(cfg.CDNURL, ogDeps.planner)
-	campaignDeliveryDispatcher := campaignadapter.NewDeliveryDispatcher(db, campaign.NewAuditedCampaignDeliveryDispatcher(
-		spicedbClient,
-		workerPublisher,
-		telemetryWriter,
-		campaign.WithLegalNoticeDeliveryPort(legalRuntime),
-	))
+	campaignDeliveryDispatcher := campaignadapter.NewDeliveryDispatcher(db, spicedbClient, workerPublisher, telemetryWriter, legalRuntime)
 	fileService, err := filemedia.NewService(filemedia.Deps{
 		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter, S3: s3Client, Presigner: s3PresignClient,
 		AsyncPublisher: servicePublisher, Transcoder: transcodeTracker, S3Bucket: cfg.S3Bucket,
@@ -775,11 +771,17 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered service", "path", commentPath)
 
 	campaignRuntime := campaignadapter.NewRuntime(workerPublisher, telemetryWriter)
+
+	campaignUnits, err := campaignpostgres.NewUnits(db, campaignpostgres.Ports{
+		ContentBlocks: contentBlockStore, Publisher: campaignRuntime, Routes: campaignRuntime, SpiceDB: spicedbClient,
+		EmailAuthoring: campaignadapter.NewEmailAuthoring(), EmailRendering: campaignadapter.NewEmailRendering(), AudienceTargets: campaignadapter.NewAudienceTargets(),
+		Members: memberadapter.ContributorMembers{}, Checkpoints: collaborationRuntime.Checkpoints,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize campaign store: %w", err)
+	}
 	campaignService, err := campaign.NewService(campaign.Deps{
-		DB: db, SpiceDB: spicedbClient, ContentBlocks: contentBlockStore, Runtime: campaignRuntime,
-		EmailAuthoring: campaignadapter.NewEmailAuthoring(), EmailRendering: campaignadapter.NewEmailRendering(),
-		EmailDelivery:   campaign.NewCampaignDeliveryRuntime(spicedbClient, workerPublisher),
-		AudienceTargets: campaignadapter.NewAudienceTargets(), Audit: telemetryWriter,
+		Units: campaignUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter, Runtime: campaignRuntime, Clock: time.Now,
 		CDNDomain: cfg.CDNURL, SiteOrigin: cfg.SiteOrigin,
 	})
 	if err != nil {
@@ -790,7 +792,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered service", "path", campaignPath)
 
 	audienceService, err := audience.NewService(audience.Deps{
-		Units:            audiencepostgres.NewUnits(db, campaign.SegmentUsage{}),
+		Units:            audiencepostgres.NewUnits(db, campaignpostgres.SegmentUsage{}),
 		SpiceDB:          spicedbClient,
 		Fence:            identitystate.PostgresFence{},
 		Audit:            telemetryWriter,
@@ -851,9 +853,9 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		handlerOptions:              internalHandlerOpts,
 		internalTrust:               internalRPCTrust,
 		accountEmailChangeLifecycle: accountEmailChangeLifecycle,
-		collaborationRuntime:        collaborationRuntime,
 		programEvents:               programEventService,
 		emailAuthoringUnits:         emailAuthoringUnits,
+		campaignUnits:               campaignUnits,
 		legalUnits:                  legalUnits,
 		mapThemes:                   mapThemeService,
 	}).register()

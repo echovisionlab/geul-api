@@ -4,10 +4,7 @@
 12 internal/artist generated contracts
 2 internal/artist/public generated contracts
 1 internal/audience generated contracts
-13 internal/campaign generated contracts
-26 internal/campaign gorm
-25 internal/campaign model
-12 internal/campaign spicedb client
+7 internal/campaign generated contracts
 7 internal/emailauthoring generated contracts
 6 internal/emaildelivery generated contracts
 1 internal/entityparticipant generated contracts

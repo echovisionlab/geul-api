@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -14,7 +16,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/audience"
 	"github.com/echovisionlab/geul-api/internal/audience/audiencetest"
 	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
-	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -25,7 +26,7 @@ func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 	audiencetest.RunStoreContract(t, func(t *testing.T) audiencetest.Harness {
 		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{BootstrapKratosStub: true, ApplyAppSchemaSQL: true}).DB
 		return audiencetest.Harness{
-			Harness:  mutationtest.PostgresHarness(db, audiencepostgres.NewUnits(db, campaign.SegmentUsage{})),
+			Harness:  mutationtest.PostgresHarness(db, audiencepostgres.NewUnits(db, campaignpostgres.SegmentUsage{})),
 			Fixtures: postgresFixtures{db: db},
 		}
 	})

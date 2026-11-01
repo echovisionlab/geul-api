@@ -4,6 +4,8 @@ package campaign
 import (
 	"context"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -17,7 +19,7 @@ import (
 // the narrow immutable target facts required by Campaign delivery.
 type AudienceTargets struct{}
 
-var _ campaigndomain.CampaignAudienceTargetPort = AudienceTargets{}
+var _ campaignpostgres.CampaignAudienceTargetPort = AudienceTargets{}
 
 func NewAudienceTargets() AudienceTargets { return AudienceTargets{} }
 
@@ -34,7 +36,7 @@ func (AudienceTargets) LockTarget(
 	}
 	target := campaigndomain.CampaignAudienceTarget{
 		Archived:    segment.ArchivedAt != nil,
-		SegmentType: segment.SegmentType,
+		SegmentType: campaigndomain.AudienceSegmentType(segment.SegmentType),
 	}
 	if target.Archived {
 		return target, nil

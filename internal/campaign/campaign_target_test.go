@@ -7,7 +7,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/localization"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 func TestCreateCampaignTargetDefinitionRequiresExplicitTarget(t *testing.T) {
@@ -24,10 +23,10 @@ func TestCreateCampaignTargetDefinitionRequiresExplicitTarget(t *testing.T) {
 	}{
 		{name: "unset target", wantErr: true},
 		{name: "empty all", target: CreateCampaignTarget{allMissing: true}, wantErr: true},
-		{name: "all", target: CreateCampaignTarget{All: true}, wantMode: model.CampaignTargetModeAll},
+		{name: "all", target: CreateCampaignTarget{All: true}, wantMode: CampaignTargetModeAll},
 		{name: "empty segment", target: CreateCampaignTarget{SegmentID: &empty}, wantErr: true},
 		{name: "invalid segment", target: CreateCampaignTarget{SegmentID: &invalid}, wantErr: true},
-		{name: "segment", target: CreateCampaignTarget{SegmentID: &segmentID}, wantMode: model.CampaignTargetModeSegment, wantSegment: &segmentID},
+		{name: "segment", target: CreateCampaignTarget{SegmentID: &segmentID}, wantMode: CampaignTargetModeSegment, wantSegment: &segmentID},
 	}
 
 	for _, test := range tests {

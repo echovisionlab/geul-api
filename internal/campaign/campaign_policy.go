@@ -3,47 +3,31 @@ package campaign
 import (
 	"fmt"
 	"strings"
-
-	"github.com/echovisionlab/geul-api/internal/model"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func campaignTargetModeFromProto(
-	mode managev1.CampaignTargetMode,
+func campaignTargetModeValue(
+	mode TargetMode,
 ) (string, error) {
 	switch mode {
-	case managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL:
-		return model.CampaignTargetModeAll, nil
-	case managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_SEGMENT:
-		return model.CampaignTargetModeSegment, nil
+	case TargetModeAll:
+		return CampaignTargetModeAll, nil
+	case TargetModeSegment:
+		return CampaignTargetModeSegment, nil
 	default:
 		return "", fmt.Errorf("campaign target_mode is required")
 	}
 }
 
-func campaignTargetModeToProto(
-	mode string,
-) managev1.CampaignTargetMode {
-	switch strings.TrimSpace(mode) {
-	case model.CampaignTargetModeAll:
-		return managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_ALL
-	case model.CampaignTargetModeSegment:
-		return managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_SEGMENT
-	default:
-		return managev1.CampaignTargetMode_CAMPAIGN_TARGET_MODE_UNSPECIFIED
-	}
-}
-
-func validateCampaignTargetDefinition(campaign model.Campaign) error {
+func validateCampaignTargetDefinition(campaign Campaign) error {
 	segmentID := strings.TrimSpace(ptrStringValue(campaign.SegmentID))
 	switch strings.TrimSpace(campaign.TargetMode) {
-	case model.CampaignTargetModeAll:
+	case CampaignTargetModeAll:
 		if segmentID != "" {
 			return fmt.Errorf(
 				"all-recipient campaign must not reference an audience segment",
 			)
 		}
-	case model.CampaignTargetModeSegment:
+	case CampaignTargetModeSegment:
 		if segmentID == "" {
 			return fmt.Errorf(
 				"segment-targeted campaign requires an audience segment",
@@ -55,14 +39,14 @@ func validateCampaignTargetDefinition(campaign model.Campaign) error {
 	return nil
 }
 
-func campaignStatusAllowsEdit(status string) bool {
-	return model.CampaignStatus(status) == model.CampaignStatusDraft
+func campaignStatusAllowsEdit(status CampaignStatus) bool {
+	return CampaignStatus(status) == CampaignStatusDraft
 }
 
-func campaignStatusAllowsSchedule(status string) bool {
-	return model.CampaignStatus(status) == model.CampaignStatusDraft
+func campaignStatusAllowsSchedule(status CampaignStatus) bool {
+	return CampaignStatus(status) == CampaignStatusDraft
 }
 
-func campaignStatusAllowsSendNow(status string) bool {
-	return model.CampaignStatus(status) == model.CampaignStatusDraft
+func campaignStatusAllowsSendNow(status CampaignStatus) bool {
+	return CampaignStatus(status) == CampaignStatusDraft
 }

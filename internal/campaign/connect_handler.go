@@ -3,6 +3,8 @@ package campaign
 import (
 	"context"
 
+	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -36,7 +38,11 @@ func NewConnectHandler(campaigns *Service) *ConnectHandler {
 
 func (h *ConnectHandler) GetCampaign(ctx context.Context, req *connect.Request[managev1.GetCampaignRequest]) (*connect.Response[managev1.GetCampaignResponse], error) {
 	campaign, err := h.campaigns.GetCampaign(ctx, GetCampaignQuery{ID: req.Msg.Id})
-	return respond(&managev1.GetCampaignResponse{Campaign: campaign}, err)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	result, err := toProtoCampaign(campaign)
+	return respond(&managev1.GetCampaignResponse{Campaign: result}, err)
 }
 
 func (h *ConnectHandler) ListCampaignsAdmin(ctx context.Context, req *connect.Request[managev1.ListCampaignsAdminRequest]) (*connect.Response[managev1.ListCampaignsAdminResponse], error) {
@@ -44,7 +50,17 @@ func (h *ConnectHandler) ListCampaignsAdmin(ctx context.Context, req *connect.Re
 		Limit: req.Msg.GetPagination().GetLimit(), Offset: req.Msg.GetPagination().GetOffset(),
 		Filters: req.Msg.Filters, Sorts: req.Msg.Sorts,
 	})
-	return respond(&managev1.ListCampaignsAdminResponse{Campaigns: page.Campaigns, Pagination: page.Pagination}, err)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	rows := make([]*managev1.Campaign, len(page.Campaigns))
+	for i := range page.Campaigns {
+		rows[i], err = toProtoCampaign(&page.Campaigns[i])
+		if err != nil {
+			return nil, errs.Wrap(err)
+		}
+	}
+	return respond(&managev1.ListCampaignsAdminResponse{Campaigns: rows, Pagination: &commonv1.PaginationResponse{Total: page.Pagination.Total, Limit: page.Pagination.Limit, Offset: page.Pagination.Offset, HasMore: page.Pagination.HasMore}}, nil)
 }
 
 func (h *ConnectHandler) CreateCampaign(ctx context.Context, req *connect.Request[managev1.CreateCampaignRequest]) (*connect.Response[managev1.CreateCampaignResponse], error) {
@@ -56,7 +72,11 @@ func (h *ConnectHandler) CreateCampaign(ctx context.Context, req *connect.Reques
 		command.Target = CreateCampaignTarget{SegmentID: &target.SegmentId}
 	}
 	campaign, err := h.campaigns.CreateCampaign(ctx, command)
-	return respond(&managev1.CreateCampaignResponse{Campaign: campaign}, err)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	result, err := toProtoCampaign(campaign)
+	return respond(&managev1.CreateCampaignResponse{Campaign: result}, err)
 }
 
 func (h *ConnectHandler) UpdateCampaignName(ctx context.Context, req *connect.Request[managev1.UpdateCampaignNameRequest]) (*connect.Response[managev1.UpdateCampaignNameResponse], error) {
@@ -68,8 +88,8 @@ func (h *ConnectHandler) UpdateCampaignName(ctx context.Context, req *connect.Re
 
 func (h *ConnectHandler) UpdateCampaignConfiguration(ctx context.Context, req *connect.Request[managev1.UpdateCampaignConfigurationRequest]) (*connect.Response[managev1.UpdateCampaignConfigurationResponse], error) {
 	configuration, err := h.campaigns.UpdateCampaignConfiguration(ctx, UpdateCampaignConfigurationCommand{
-		ID: req.Msg.Id, TargetMode: req.Msg.TargetMode, SegmentID: req.Msg.SegmentId,
-		RecipientScope: req.Msg.RecipientScope, LayoutID: req.Msg.LayoutId,
+		ID: req.Msg.Id, TargetMode: targetModeInput(req.Msg.TargetMode), SegmentID: req.Msg.SegmentId,
+		RecipientScope: recipientScopeInput(req.Msg.RecipientScope), LayoutID: req.Msg.LayoutId,
 	})
 	if err != nil {
 		return nil, errs.Wrap(err)
@@ -88,7 +108,7 @@ func (h *ConnectHandler) DeleteCampaign(ctx context.Context, req *connect.Reques
 }
 
 func (h *ConnectHandler) ScheduleCampaign(ctx context.Context, req *connect.Request[managev1.ScheduleCampaignRequest]) (*connect.Response[managev1.ScheduleCampaignResponse], error) {
-	command := ScheduleCampaignCommand{ID: req.Msg.Id, RecipientScope: req.Msg.GetRecipientScope()}
+	command := ScheduleCampaignCommand{ID: req.Msg.Id, RecipientScope: RecipientScope(req.Msg.GetRecipientScope())}
 	if req.Msg.ScheduledAt != nil {
 		scheduledAt := req.Msg.ScheduledAt.AsTime()
 		command.ScheduledAt = &scheduledAt
@@ -113,7 +133,7 @@ func (h *ConnectHandler) CancelCampaign(ctx context.Context, req *connect.Reques
 }
 
 func (h *ConnectHandler) SendCampaignNow(ctx context.Context, req *connect.Request[managev1.SendCampaignNowRequest]) (*connect.Response[managev1.SendCampaignNowResponse], error) {
-	lifecycle, err := h.campaigns.SendCampaignNow(ctx, SendCampaignNowCommand{ID: req.Msg.Id, RecipientScope: req.Msg.GetRecipientScope()})
+	lifecycle, err := h.campaigns.SendCampaignNow(ctx, SendCampaignNowCommand{ID: req.Msg.Id, RecipientScope: RecipientScope(req.Msg.GetRecipientScope())})
 	return respond(&managev1.SendCampaignNowResponse{
 		Id: lifecycle.ID, Status: campaignStatusToProto(lifecycle.Status),
 		RecipientCount: int32(lifecycle.RecipientCount), UpdatedAt: timestamppb.New(lifecycle.UpdatedAt),
@@ -137,12 +157,12 @@ func (h *ConnectHandler) SendTestCampaign(ctx context.Context, req *connect.Requ
 
 func (h *ConnectHandler) GetCampaignStats(ctx context.Context, req *connect.Request[managev1.GetCampaignStatsRequest]) (*connect.Response[managev1.GetCampaignStatsResponse], error) {
 	stats, err := h.campaigns.GetCampaignStats(ctx, GetCampaignStatsQuery{ID: req.Msg.Id})
-	return respond(&managev1.GetCampaignStatsResponse{Stats: stats}, err)
+	return respond(&managev1.GetCampaignStatsResponse{Stats: campaignStatsMessage(stats)}, err)
 }
 
 func (h *ConnectHandler) GetCampaignRecipients(ctx context.Context, req *connect.Request[managev1.GetCampaignRecipientsRequest]) (*connect.Response[managev1.GetCampaignRecipientsResponse], error) {
 	page, err := h.campaigns.GetCampaignRecipients(ctx, GetCampaignRecipientsQuery{ID: req.Msg.Id, Limit: req.Msg.Limit, Offset: req.Msg.Offset})
-	return respond(&managev1.GetCampaignRecipientsResponse{Recipients: page.Recipients, Total: page.Total}, err)
+	return respond(&managev1.GetCampaignRecipientsResponse{Recipients: campaignRecipientsMessage(page.Recipients), Total: page.Total}, err)
 }
 
 // InternalConnectHandler serves the Campaign collaboration RPCs.
@@ -183,7 +203,7 @@ func (h *InternalConnectHandler) UpdateCampaignLocaleMetadata(ctx context.Contex
 
 func (h *InternalConnectHandler) LoadDocument(ctx context.Context, req *connect.Request[intrav1.LoadCampaignDocumentRequest]) (*connect.Response[intrav1.LoadCampaignDocumentResponse], error) {
 	document, err := h.documents.LoadCampaignDocument(ctx, LoadCampaignDocumentQuery{
-		CampaignID: req.Msg.GetCampaignId(), Locale: req.Msg.GetLocale(), Principal: req.Msg.GetPrincipal(),
+		CampaignID: req.Msg.GetCampaignId(), Locale: req.Msg.GetLocale(), Principal: collaborationPrincipal(req.Msg.GetPrincipal()),
 	})
 	if err != nil {
 		return nil, errs.Wrap(err)
@@ -212,4 +232,42 @@ func campaignLocaleMetadataProjection(state emailcontent.ExactLocaleState, local
 func campaignSourceMetadataProjection(state emailcontent.ExactLocaleState) *intrav1.CampaignLocaleMetadata {
 	subject := ptrStringValue(state.SourceMetadata.Subject)
 	return &intrav1.CampaignLocaleMetadata{Locale: state.SourceLocale, Subject: &subject}
+}
+
+func targetModeInput(value *managev1.CampaignTargetMode) *TargetMode {
+	if value == nil {
+		return nil
+	}
+	v := TargetMode(*value)
+	return &v
+}
+func recipientScopeInput(value *managev1.CampaignRecipientScope) *RecipientScope {
+	if value == nil {
+		return nil
+	}
+	v := RecipientScope(*value)
+	return &v
+}
+func collaborationPrincipal(value *intrav1.CollaborationPrincipal) *CollaborationPrincipal {
+	if value == nil {
+		return nil
+	}
+	return &CollaborationPrincipal{SessionID: value.GetSessionId()}
+}
+
+func campaignStatsMessage(v *CampaignStats) *managev1.CampaignStats {
+	if v == nil {
+		return nil
+	}
+	return &managev1.CampaignStats{TotalSent: v.TotalSent, TotalSkipped: v.TotalSkipped, TotalFailed: v.TotalFailed, TotalBlocked: v.TotalBlocked, TotalSuppressed: v.TotalSuppressed}
+}
+func campaignRecipientsMessage(rows []CampaignDeliveryRecipient) []*managev1.CampaignRecipient {
+	if rows == nil {
+		return nil
+	}
+	out := make([]*managev1.CampaignRecipient, len(rows))
+	for i, row := range rows {
+		out[i] = campaignRecipientMessage(row)
+	}
+	return out
 }

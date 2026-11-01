@@ -9,13 +9,14 @@ import (
 	"os"
 	"testing"
 
+	campaignpostgres "github.com/echovisionlab/geul-api/internal/campaign/postgres"
+
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
 	audiencedomain "github.com/echovisionlab/geul-api/internal/audience"
 	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -47,7 +48,7 @@ func (noRecipients) Count(context.Context, audiencedomain.Segment) (int64, error
 func newIntegrationService(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, writer domainaudit.Appender) *audiencedomain.Service {
 	t.Helper()
 	service, err := audiencedomain.NewService(audiencedomain.Deps{
-		Units: audiencepostgres.NewUnits(db, campaign.SegmentUsage{}), SpiceDB: spiceDB,
+		Units: audiencepostgres.NewUnits(db, campaignpostgres.SegmentUsage{}), SpiceDB: spiceDB,
 		Fence: identitystate.PostgresFence{}, Audit: writer, RecipientCounter: noRecipients{},
 	})
 	require.NoError(t, err)

@@ -6,9 +6,6 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // RequireTranslationSourceMutable owns the Campaign root lock and the exact
@@ -16,38 +13,28 @@ import (
 // state.
 func RequireTranslationSourceMutable(
 	ctx context.Context,
-	tx *gorm.DB,
+	joined Joined,
 	campaignID string,
 ) error {
 	campaignID = strings.TrimSpace(campaignID)
-	var campaign model.Campaign
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Select("id", "status").
-		First(&campaign, "id = ?", campaignID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return domainerr.ResourceNotFound("campaign", campaignID)
-		}
+
+	campaign, err := joined.Store.LockCampaign(ctx, campaignID)
+	if errors.Is(err, ErrCampaignNotFound) {
+		return domainerr.ResourceNotFound("campaign", campaignID)
+	}
+	if err != nil {
 		return err
 	}
+
 	if !campaignStatusAllowsEdit(campaign.Status) {
 		return domainerr.Precondition(msgCampaignCannotUpdateSent)
 	}
 
-	var activeRunCount int64
-	if err := tx.WithContext(ctx).
-		Model(&model.CampaignDeliveryRun{}).
-		Where(
-			"campaign_id = ? AND status IN ?",
-			campaignID,
-			[]string{
-				CampaignDeliveryRunStatusScheduled,
-				CampaignDeliveryRunStatusSending,
-			},
-		).
-		Count(&activeRunCount).Error; err != nil {
+	activeRunCount, err := joined.Store.ActiveCampaignRunCount(ctx, campaignID)
+	if err != nil {
 		return err
 	}
+
 	if activeRunCount > 0 {
 		return domainerr.Precondition(
 			"campaign is frozen by an active delivery run",

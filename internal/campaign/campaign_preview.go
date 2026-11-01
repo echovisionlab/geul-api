@@ -8,15 +8,13 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/email"
-	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/model"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -63,11 +61,20 @@ func (s *Service) PreviewCampaign(ctx context.Context, query PreviewCampaignQuer
 	if err != nil {
 		return CampaignPreview{}, err
 	}
-	sampleData := s.emailRendering.BuildRenderData(ctx, s.db, s.cdnDomain, s.siteOrigin, requestedLocale, map[string]string{
+	sampleData := map[string]string{
 		"recipient_email":  "john@example.com",
 		"unsubscribe_link": "https://example.com/unsubscribe/sample",
+	}
+	_ = s.units.Read(ctx, func(store Store) error {
+		sampleData = store.EmailRenderData(ctx, s.cdnDomain, s.siteOrigin, requestedLocale, sampleData)
+		return nil
 	})
-	localizedCampaign, _, err := ResolveLocalizedCampaign(ctx, s.db, s.contentBlocks, campaign, requestedLocale)
+	var localizedCampaign Campaign
+	err = s.units.ReadLocked(ctx, func(store Store) error {
+		var err error
+		localizedCampaign, _, err = ResolveLocalizedCampaign(ctx, store, campaign, requestedLocale)
+		return err
+	})
 	if err != nil {
 		return CampaignPreview{}, err
 	}
@@ -83,12 +90,12 @@ func (s *Service) PreviewCampaign(ctx context.Context, query PreviewCampaignQuer
 	if err != nil {
 		return CampaignPreview{}, err
 	}
-	return CampaignPreview{Subject: subject, HTMLContent: htmlContent, TextContent: s.emailRendering.PlainText(htmlContent)}, nil
+	return CampaignPreview{Subject: subject, HTMLContent: htmlContent, TextContent: email.StripHTML(htmlContent)}, nil
 }
 
 // applyCampaignPreviewDraft overlays the unsaved subject and document of a
 // preview on the stored Campaign.
-func applyCampaignPreviewDraft(ctx context.Context, campaign *model.Campaign, query PreviewCampaignQuery) error {
+func applyCampaignPreviewDraft(ctx context.Context, campaign *Campaign, query PreviewCampaignQuery) error {
 	if query.Subject != nil {
 		campaign.Subject = *query.Subject
 	}
@@ -105,7 +112,7 @@ func applyCampaignPreviewDraft(ctx context.Context, campaign *model.Campaign, qu
 
 // renderCampaignPreviewHTML renders the Campaign's content inside the
 // requested layout, the saved one when none is requested, or no layout.
-func (s *Service) renderCampaignPreviewHTML(ctx context.Context, campaign model.Campaign, requestedLayoutID *string, locale string, sampleData map[string]string) (string, error) {
+func (s *Service) renderCampaignPreviewHTML(ctx context.Context, campaign Campaign, requestedLayoutID *string, locale string, sampleData map[string]string) (string, error) {
 	htmlContent := ""
 	if campaign.ContentHTML != nil {
 		htmlContent = *campaign.ContentHTML
@@ -119,14 +126,18 @@ func (s *Service) renderCampaignPreviewHTML(ctx context.Context, campaign model.
 	}
 	var err error
 	if layoutID != nil {
-		htmlContent, err = s.emailRendering.WrapWithLayout(ctx, s.db, *layoutID, locale, htmlContent, sampleData)
+		err = s.units.Read(ctx, func(store Store) error {
+			var err error
+			htmlContent, err = store.WrapWithLayout(ctx, *layoutID, locale, htmlContent, sampleData)
+			return err
+		})
 		if err != nil {
 			return "", err
 		}
 	} else if htmlContent, err = email.RenderEmailHTML(htmlContent, "", sampleData); err != nil {
 		return "", domainerr.InvalidField("document", err.Error())
 	}
-	return s.emailRendering.NormalizeHTML(htmlContent), nil
+	return email.NormalizeRenderedHTML(htmlContent), nil
 }
 
 // SendTestCampaignCommand sends a Campaign to one address with sample
@@ -144,18 +155,18 @@ func (s *Service) SendTestCampaign(ctx context.Context, command SendTestCampaign
 	if err != nil {
 		return err
 	}
-	var campaign model.Campaign
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[*managev1.SendEmailEvent]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
+	var campaign Campaign
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[*managev1.SendEmailEvent, Store]{
+		Lock: func(ctx context.Context, tx Store) error {
 			return lockCampaign(ctx, tx, command.ID, &campaign)
 		},
 		Access: access,
-		Change: func(ctx context.Context, tx *gorm.DB) (*managev1.SendEmailEvent, error) {
+		Change: func(ctx context.Context, tx Store) (*managev1.SendEmailEvent, error) {
 			return s.newCampaignTestSend(ctx, tx, command)
 		},
 		Audit: func(*managev1.SendEmailEvent) mutation.Audit { return mutation.Unchanged() },
-		Outbox: func(ctx context.Context, tx *gorm.DB, sendJob *managev1.SendEmailEvent) error {
-			if err := publishCampaignDurableProtoInTransaction(ctx, s.runtime, tx, eventpkg.QueueEmailSend, sendJob.GetMessageId(), sendJob); err != nil {
+		Outbox: func(ctx context.Context, tx Store, sendJob *managev1.SendEmailEvent) error {
+			if err := tx.Enqueue(ctx, eventpkg.QueueEmailSend, sendJob.GetMessageId(), sendJob); err != nil {
 				return fmt.Errorf("queue campaign test email: %w", err)
 			}
 			return nil
@@ -165,14 +176,14 @@ func (s *Service) SendTestCampaign(ctx context.Context, command SendTestCampaign
 }
 
 // newCampaignTestSend validates the address and returns the test send job.
-func (s *Service) newCampaignTestSend(ctx context.Context, tx *gorm.DB, command SendTestCampaignCommand) (*managev1.SendEmailEvent, error) {
+func (s *Service) newCampaignTestSend(ctx context.Context, tx Store, command SendTestCampaignCommand) (*managev1.SendEmailEvent, error) {
 	if command.Email == "" {
 		return nil, domainerr.Required("email")
 	}
 	if !campaignEmailRegex.MatchString(command.Email) {
 		return nil, domainerr.InvalidField("email", "invalid format")
 	}
-	if err := email.CheckTestSendReadiness(ctx, emailpostgres.Bind(tx), command.Email); err != nil {
+	if err := tx.CheckTestSendReadiness(ctx, command.Email); err != nil {
 		if message := email.TestSendReadinessMessage(err); message != "" {
 			return nil, domainerr.Precondition(message)
 		}
@@ -187,7 +198,7 @@ func (s *Service) newCampaignTestSend(ctx context.Context, tx *gorm.DB, command 
 			"unsubscribe_link": campaignPreviewUnsubscribeLink(s.siteOrigin),
 		},
 		ReferenceId:      &campaignID,
-		RecipientContext: s.emailRendering.TestRecipientContext(campaignEmailTestActorID(ctx)),
+		RecipientContext: email.TestEmailContext(campaignEmailTestActorID(ctx)),
 	}
 	if command.Locale != nil && strings.TrimSpace(*command.Locale) != "" {
 		normalizedLocale := s.runtime.NormalizeSupportedLocale(*command.Locale)
