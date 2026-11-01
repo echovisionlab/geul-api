@@ -6,17 +6,24 @@ import (
 	"time"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
 )
 
 type LibraryStore struct {
-	Folders map[string]domain.FileFolder
-	Files   map[string]CatalogFileRecord
-	Fail    error
-	Writes  int
+	PrincipalFence *identitystatetest.Fence
+	DeliveryLocks  []string
+	ReadyMeshes    map[string]domain.MeshDeliveryWitness
+	AvatarOwners   map[string]string
+	DeliveryOwners map[string]domain.DeliveryOwner
+	ExactUsages    map[string]bool
+	Folders        map[string]domain.FileFolder
+	Files          map[string]CatalogFileRecord
+	Fail           error
+	Writes         int
 }
 
 func NewLibraryStore() *LibraryStore {
-	return &LibraryStore{Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
+	return &LibraryStore{PrincipalFence: &identitystatetest.Fence{}, ReadyMeshes: map[string]domain.MeshDeliveryWitness{}, AvatarOwners: map[string]string{}, DeliveryOwners: map[string]domain.DeliveryOwner{}, ExactUsages: map[string]bool{}, Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
 }
 func (s *LibraryStore) Savepoint() func() {
 	saved := maps.Clone(s.Folders)

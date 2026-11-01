@@ -22,7 +22,15 @@ func TestPostgresCatalogStoreContractIntegration(t *testing.T) {
 	t.Parallel()
 	filemediatest.RunCatalogContract(t, func(t *testing.T) filemediatest.CatalogHarness {
 		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
-		return filemediatest.CatalogHarness{Harness: mutationtest.PostgresHarness(db, filemediapostgres.NewUnits(db, filemediapostgres.Ports{})), SeedFile: func(t *testing.T, row domain.CatalogRow, pending, output bool) {
+		return filemediatest.CatalogHarness{Harness: mutationtest.PostgresHarness(db, filemediapostgres.NewUnits(db, filemediapostgres.Ports{})), SeedAvatar: func(t *testing.T, id, owner string) {
+			require.NoError(t, db.Create(&model.FileIngestBinding{FileID: id, UploadType: "UPLOAD_TYPE_USER_AVATAR", EntityID: owner}).Error)
+		}, SeedMesh: func(t *testing.T, w domain.MeshDeliveryWitness, status string) {
+			require.NoError(t, db.Create(&model.MeshOptimizationCandidate{ID: w.CandidateID, SourceFileID: w.SourceFileID, OutputObjectID: uuid.NewString(), OutputFileID: &w.OutputFileID, TargetRatioPercent: 50, Method: model.MeshOptimizationMethodDraco, PipelineVersion: model.MeshOptimizationPipelineVersionDracoWebpV1, CacheKey: uuid.NewString(), Status: status}).Error)
+		}, SeedDeliveryOwner: func(t *testing.T, kind, id, doc, status, fileID string) {
+			require.Equal(t, "post", kind)
+			require.NoError(t, db.Exec(`INSERT INTO content_document(id,profile) VALUES (?::uuid,'post')`, doc).Error)
+			require.NoError(t, db.Exec(`INSERT INTO post(id,status,content_document_id,featured_image_file_id) VALUES (?::uuid,?,?::uuid,?::uuid)`, id, status, doc, fileID).Error)
+		}, SeedFile: func(t *testing.T, row domain.CatalogRow, pending, output bool) {
 			digest := sha256.Sum256([]byte(row.ID))
 			duration := int(*row.DurationSeconds)
 			var deletion *time.Time

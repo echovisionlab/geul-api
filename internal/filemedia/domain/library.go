@@ -20,6 +20,7 @@ type FileFolder struct {
 	CreatedAt, UpdatedAt time.Time
 }
 type Store interface {
+	DeliveryStore
 	LockFileForRename(context.Context, string) (File, error)
 	LockFilesForMove(context.Context, []string) ([]File, error)
 	RenameFile(context.Context, string, string) error

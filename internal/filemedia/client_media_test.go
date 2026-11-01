@@ -189,7 +189,7 @@ func TestClientMediaVerifiedAudioVideoRegisterWithoutEncodingJobs(t *testing.T) 
 			response, err := svc.getFileUrlsForID(t.Context(), session.FileID)
 			require.NoError(t, err)
 			require.Equal(t, file.ClientMediaBundleID, response.ClientMediaBundleId)
-			require.True(t, manageDeliveryResponseMatchesFile(response, file), "single-file receipt must survive final authorization fence")
+			require.True(t, manageDeliveryResponseMatchesFile(response, File(file)), "single-file receipt must survive final authorization fence")
 
 			ready, err := clientMediaFileReady(t.Context(), db, file)
 			require.NoError(t, err)
