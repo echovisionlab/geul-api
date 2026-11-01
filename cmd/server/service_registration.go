@@ -749,8 +749,14 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 		ogadapter.NewAuthorization(spicedbClient),
 		labeladapter.NewGlobalReconciler(),
 	)
-	adminService := admin.NewService(db, spicedbClient, ogAdmin)
-	adminPath, adminHandler := managev1connect.NewAdminServiceHandler(adminService, handlerOpts...)
+	adminService, err := admin.NewService(admin.Deps{
+		DB: db, SpiceDB: spicedbClient, Members: memberadapter.DashboardMembers{}, Posts: postadapter.DashboardPosts{},
+		Pages: pageadapter.DashboardPages{}, Campaigns: campaignadapter.DashboardCampaigns{},
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize admin service: %w", err)
+	}
+	adminPath, adminHandler := managev1connect.NewAdminServiceHandler(admin.NewConnectHandler(adminService, ogAdmin), handlerOpts...)
 	mux.Handle(adminPath, adminHandler)
 	slog.Info("Registered service", "path", adminPath)
 

@@ -9,14 +9,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 )
 
 func TestAdminDashboardRequiresUsableAdminUnit(t *testing.T) {
 	svc := &Service{}
 
-	_, err := svc.GetDashboardStats(context.Background(), connect.NewRequest(&managev1.GetDashboardStatsRequest{}))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	_, err := svc.DashboardStats(context.Background())
+	require.Equal(t, connect.CodePermissionDenied, errs.Wrap(err).Code())
 
 	userCtx := auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(uuid.NewString()),
@@ -24,8 +24,8 @@ func TestAdminDashboardRequiresUsableAdminUnit(t *testing.T) {
 		SessionID:     auth.SessionID(uuid.NewString()),
 		Authenticated: true,
 	})
-	_, err = svc.GetDashboardStats(userCtx, connect.NewRequest(&managev1.GetDashboardStatsRequest{}))
-	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
+	_, err = svc.DashboardStats(userCtx)
+	require.Equal(t, connect.CodeUnavailable, errs.Wrap(err).Code())
 
 	bannedAdminCtx := auth.WithUser(context.Background(), &auth.UserInfo{
 		IdentityID:    auth.IdentityID(uuid.NewString()),
@@ -34,6 +34,6 @@ func TestAdminDashboardRequiresUsableAdminUnit(t *testing.T) {
 		Authenticated: true,
 		Banned:        true,
 	})
-	_, err = svc.GetDashboardStats(bannedAdminCtx, connect.NewRequest(&managev1.GetDashboardStatsRequest{}))
-	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+	_, err = svc.DashboardStats(bannedAdminCtx)
+	require.Equal(t, connect.CodePermissionDenied, errs.Wrap(err).Code())
 }
