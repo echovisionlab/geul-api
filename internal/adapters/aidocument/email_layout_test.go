@@ -3,6 +3,7 @@ package aidocumentadapter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -188,9 +189,10 @@ func TestEmailLayoutMapsDomainRevisionConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	domain.validateErr = &emailauthoring.EmailLayoutAIDocumentRevisionConflictError{
-		Kind:                    emailauthoring.EmailLayoutAIDocumentDocumentRevisionConflict,
+	domain.validateErr = &core.RevisionConflict{
+		Kind:                    core.ConflictDocumentRevision,
 		CurrentDocumentRevision: "eld1_current",
+		Message:                 fmt.Sprintf("Email Layout AI document revision conflict: current document revision is %q", "eld1_current"),
 	}
 	service, err := core.NewService(port)
 	if err != nil {
@@ -221,10 +223,11 @@ func TestEmailLayoutMapsDomainTargetRevisionConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	currentTarget := "tr1_current"
-	domain.validateErr = &emailauthoring.EmailLayoutAIDocumentRevisionConflictError{
-		Kind:                    emailauthoring.EmailLayoutAIDocumentTargetRevisionConflict,
+	domain.validateErr = &core.RevisionConflict{
+		Kind:                    core.ConflictTargetRevision,
 		CurrentDocumentRevision: string(loaded.DocumentRevision),
 		CurrentTargetRevision:   &currentTarget,
+		Message:                 fmt.Sprintf("Email Layout AI document revision conflict: current document revision is %q", string(loaded.DocumentRevision)),
 	}
 	service, err := core.NewService(port)
 	if err != nil {

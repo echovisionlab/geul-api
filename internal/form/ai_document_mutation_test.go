@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 )
@@ -55,7 +56,7 @@ func TestValidateCompiledFormAIDocumentMutationKeepsLockedStateAuthoritative(t *
 		t.Run(test.name, func(t *testing.T) {
 			mutation := valid
 			test.mutate(&mutation)
-			var conflict *AIDocumentRevisionConflictError
+			var conflict *aidocument.RevisionConflict
 			if err := validateCompiledFormAIDocumentMutation(state, mutation); !errors.As(err, &conflict) ||
 				conflict.CurrentDocumentRevision != state.DocumentRevision || conflict.CurrentTargetRevision == nil ||
 				*conflict.CurrentTargetRevision != *state.TargetRevision {
@@ -66,9 +67,9 @@ func TestValidateCompiledFormAIDocumentMutationKeepsLockedStateAuthoritative(t *
 
 	staleTarget := valid
 	staleTarget.ExpectedTargetRevision = formTestStringPointer("50")
-	var conflict *AIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	if err := validateCompiledFormAIDocumentMutation(state, staleTarget); !errors.As(err, &conflict) ||
-		conflict.Kind != AIDocumentTargetRevisionConflict || conflict.CurrentTargetRevision == nil || *conflict.CurrentTargetRevision != "51" {
+		conflict.Kind != aidocument.ConflictTargetRevision || conflict.CurrentTargetRevision == nil || *conflict.CurrentTargetRevision != "51" {
 		t.Fatalf("target mismatch error = %+v", err)
 	}
 }

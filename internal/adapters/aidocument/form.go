@@ -145,7 +145,7 @@ func (p *formPort) executeMutation(
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}
-		var conflict *formdomain.AIDocumentRevisionConflictError
+		var conflict *core.RevisionConflict
 		if errors.As(err, &conflict) {
 			return core.ValidationResult{}, core.ApplyResult{}, formConflict(conflict, run.command.AffectedHandles)
 		}
@@ -302,9 +302,9 @@ func validateFormDocumentIdentity(identity core.DocumentIdentity) error {
 	}
 	return nil
 }
-func formConflict(conflict *formdomain.AIDocumentRevisionConflictError, handles []string) error {
+func formConflict(conflict *core.RevisionConflict, handles []string) error {
 	code := core.ConflictDocumentRevision
-	if conflict.Kind == formdomain.AIDocumentTargetRevisionConflict {
+	if conflict.Kind == core.ConflictTargetRevision {
 		code = core.ConflictTargetRevision
 	}
 	return &core.ConflictError{Conflict: core.Conflict{

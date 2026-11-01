@@ -277,7 +277,7 @@
         "fs",
         "fs"
       ],
-      "domain_error": "*legal.AIDocumentRevisionConflict: Legal AI document revision changed; reload before saving",
+      "domain_error": "*aidocument.RevisionConflict: Legal AI document revision changed; reload before saving",
       "validate": {
         "error": {
           "type": "*aidocument.ConflictError",
@@ -317,7 +317,7 @@
       "operations": [
         "fs"
       ],
-      "domain_error": "*legal.AIDocumentRevisionConflict: Legal AI document revision changed; reload before saving",
+      "domain_error": "*aidocument.RevisionConflict: Legal AI document revision changed; reload before saving",
       "validate": {
         "error": {
           "type": "*aidocument.ConflictError",

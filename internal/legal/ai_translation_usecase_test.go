@@ -6,17 +6,21 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/aidocument"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/translation"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -124,9 +128,9 @@ func TestExecuteAIDocumentMutationCreatesAndDeletesATranslation(t *testing.T) {
 			mutation.ExpectedTargetRevision = &expected
 			return mutation, err
 		})
-	var conflict *legal.AIDocumentRevisionConflict
+	var conflict *aidocument.RevisionConflict
 	require.ErrorAs(t, err, &conflict)
-	require.Equal(t, legal.AIDocumentTargetRevisionConflict, conflict.Kind)
+	require.Equal(t, aidocument.ConflictTargetRevision, conflict.Kind)
 }
 
 func TestAIDocumentMasksWhatTheCallerMayNotEdit(t *testing.T) {

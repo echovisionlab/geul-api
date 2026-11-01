@@ -5,14 +5,16 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/work"
 	"github.com/echovisionlab/geul-api/internal/work/worktest"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -139,9 +141,9 @@ func TestExecuteAIDocumentMutationCreatesAndDeletesATranslationWithoutBumpingThe
 		mutation.ExpectedTargetRevision = stringPointer("stale")
 		mutation.Metadata = work.AIDocumentMetadataPatch{SetTitle: true, Title: stringPointer("Stale")}
 	})
-	var conflict *work.AIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	require.ErrorAs(t, err, &conflict)
-	require.Equal(t, work.AIDocumentTargetRevisionConflict, conflict.Kind)
+	require.Equal(t, aidocument.ConflictTargetRevision, conflict.Kind)
 	require.Equal(t, *created.TargetRevision, *conflict.CurrentTargetRevision)
 
 	_, err = h.execute(t, editor, value.ID, "ko", work.AIDocumentExecutionApply, func(mutation *work.AIDocumentMutation) {
@@ -168,9 +170,9 @@ func TestExecuteAIDocumentMutationAnswersAStaleDocumentAndACompilerFailure(t *te
 		mutation.ExpectedRevision = uuid.New()
 		mutation.Batch.ExpectedRevision = mutation.ExpectedRevision
 	})
-	var conflict *work.AIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	require.ErrorAs(t, err, &conflict)
-	require.Equal(t, work.AIDocumentDocumentRevisionConflict, conflict.Kind)
+	require.Equal(t, aidocument.ConflictDocumentRevision, conflict.Kind)
 	require.Equal(t, h.revision(t, value.ID).String(), conflict.CurrentDocumentRevision)
 
 	compilerFailure := errors.New("operation does not compile")

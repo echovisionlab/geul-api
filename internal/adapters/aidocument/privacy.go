@@ -158,14 +158,14 @@ func (p *legalAIDocumentPort) executeMutation(
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}
-		var conflict *legal.AIDocumentRevisionConflict
+		var conflict *core.RevisionConflict
 		if errors.As(err, &conflict) {
 			code := core.ConflictDocumentRevision
-			if conflict.Kind == legal.AIDocumentTargetRevisionConflict {
+			if conflict.Kind == core.ConflictTargetRevision {
 				code = core.ConflictTargetRevision
 			}
 			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
-				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentRevision),
+				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
 				CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
 				AffectedHandles:       legalRequestAffectedHandles(request),
 			}}

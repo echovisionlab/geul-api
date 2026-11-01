@@ -7,8 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
@@ -19,7 +18,10 @@ import (
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	"github.com/google/uuid"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -53,23 +55,6 @@ type AIDocumentMutation struct {
 type AIDocumentMutationResult struct {
 	Result         contentblock.Result
 	TargetRevision *string
-}
-
-type AIDocumentRevisionConflictKind string
-
-const (
-	AIDocumentDocumentRevisionConflict AIDocumentRevisionConflictKind = "document"
-	AIDocumentTargetRevisionConflict   AIDocumentRevisionConflictKind = "target"
-)
-
-type AIDocumentRevisionConflictError struct {
-	Kind                    AIDocumentRevisionConflictKind
-	CurrentDocumentRevision string
-	CurrentTargetRevision   *string
-}
-
-func (e *AIDocumentRevisionConflictError) Error() string {
-	return "Post AI document revision changed: current document revision is " + e.CurrentDocumentRevision
 }
 
 var errRollbackPostAIDocumentValidation = errors.New("rollback Post AI document validation")
@@ -210,7 +195,7 @@ func recordPostAIDocumentEdit(
 // failure as itself, a revision conflict with the current revisions.
 func postAIDocumentFailure(err error, compiled AIDocumentMutation) error {
 	var compilerErr *postAIDocumentCompilerError
-	var conflict *AIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	var stale *contentblock.StaleRevisionError
 	var targetConflict *translation.TargetRevisionConflict
 	switch {
@@ -219,13 +204,18 @@ func postAIDocumentFailure(err error, compiled AIDocumentMutation) error {
 	case errors.As(err, &conflict):
 		return conflict
 	case errors.As(err, &stale):
-		return &AIDocumentRevisionConflictError{
-			Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: stale.CurrentRevision.String(),
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: stale.CurrentRevision.String(),
+			Message:                 "Post AI document revision changed: current document revision is " + stale.CurrentRevision.String(),
 		}
 	case errors.As(err, &targetConflict):
-		return &AIDocumentRevisionConflictError{
-			Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: compiled.ExpectedRevision.String(),
-			CurrentTargetRevision: postAIDocumentTargetConflictRevision(targetConflict),
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
+			CurrentDocumentRevision: compiled.ExpectedRevision.String(),
+			CurrentTargetRevision:   postAIDocumentTargetConflictRevision(targetConflict),
+			Message: "Post AI document revision changed: current document revision is " + compiled.ExpectedRevision.
+				String(),
 		}
 	default:
 		return normalizePostContentBlockError(err)
@@ -455,8 +445,10 @@ func postAIDocumentConflict(ctx context.Context, store Store, documentID uuid.UU
 	if err != nil {
 		return err
 	}
-	return &AIDocumentRevisionConflictError{
-		Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: revision.String(),
+	return &aidocument.RevisionConflict{
+		Kind:                    aidocument.ConflictDocumentRevision,
+		CurrentDocumentRevision: revision.String(),
+		Message:                 "Post AI document revision changed: current document revision is " + revision.String(),
 	}
 }
 

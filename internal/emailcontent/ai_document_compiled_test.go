@@ -4,10 +4,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/aidocument"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
-
-	"github.com/echovisionlab/geul-api/internal/contentblock"
 )
 
 func TestCompiledAIDocumentMutationBindsLockedState(t *testing.T) {
@@ -35,7 +35,7 @@ func TestCompiledAIDocumentMutationBindsLockedState(t *testing.T) {
 		func() AIDocumentMutation { value := mutation; value.ExpectedSource = "fr"; return value }(),
 		func() AIDocumentMutation { value := mutation; value.ExpectedPresence = false; return value }(),
 	} {
-		var conflict *AIDocumentRevisionConflictError
+		var conflict *aidocument.RevisionConflict
 		require.ErrorAs(t, testOwner.validateCompiledAIDocumentMutation(state, stale, revision), &conflict)
 		require.Equal(t, state.DocumentRevision, conflict.CurrentDocumentRevision)
 	}
@@ -51,6 +51,6 @@ func TestCompiledAIDocumentMutationBindsLockedState(t *testing.T) {
 	}
 	err := testOwner.validateCompiledAIDocumentMutation(state, wrongDocument, revision)
 	require.Error(t, err)
-	var conflict *AIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	require.False(t, errors.As(err, &conflict))
 }

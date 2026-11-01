@@ -80,10 +80,10 @@ func (d *emailContentAIDocumentDomain) Execute(
 		},
 	)
 	if err != nil {
-		var conflict *emailcontent.AIDocumentRevisionConflictError
+		var conflict *core.RevisionConflict
 		if errors.As(err, &conflict) {
 			code := core.ConflictDocumentRevision
-			if conflict.Kind == emailcontent.AIDocumentTargetRevisionConflict {
+			if conflict.Kind == core.ConflictTargetRevision {
 				code = core.ConflictTargetRevision
 			}
 			return emailRichTextMutationResult{}, &emailRichTextRevisionConflict{

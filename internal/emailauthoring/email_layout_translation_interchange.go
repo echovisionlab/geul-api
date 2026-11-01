@@ -2,15 +2,16 @@ package emailauthoring
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"strings"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/emailcontent"
-
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/email"
+	"github.com/echovisionlab/geul-api/internal/emailcontent"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
@@ -120,10 +121,13 @@ func ApplyEmailLayoutTranslationInterchange(
 			targetRevision := current.Revision
 			currentTargetRevision = &targetRevision
 		}
-		return EmailLayoutTranslationInterchangeTarget{}, false, &EmailLayoutAIDocumentRevisionConflictError{
-			Kind:                    EmailLayoutAIDocumentTargetRevisionConflict,
+		return EmailLayoutTranslationInterchangeTarget{}, false, &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
 			CurrentDocumentRevision: authority.DocumentRevision.String(),
 			CurrentTargetRevision:   currentTargetRevision,
+			Message: fmt.Sprintf("Email Layout AI document revision conflict: current document revision is %q", authority.DocumentRevision.
+				String(),
+			),
 		}
 	}
 	nextValues := maps.Clone(input.Values)

@@ -2,6 +2,7 @@ package aidocumentadapter
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -195,13 +196,17 @@ func TestArtistExactMutationGolden(t *testing.T) {
 		},
 		conflict: func(target bool) error {
 			if target {
-				return &artistdomain.AIDocumentRevisionConflictError{
-					Kind: artistdomain.AIDocumentTargetRevisionConflict, CurrentRevision: goldenDocumentRevision,
-					CurrentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+				return &core.RevisionConflict{
+					Kind:                    core.ConflictTargetRevision,
+					CurrentDocumentRevision: goldenDocumentRevision,
+					CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+					Message:                 fmt.Sprintf("Artist AI document revision conflict: current revision is %q", "0a000000-0000-4000-8000-000000000001"),
 				}
 			}
-			return &artistdomain.AIDocumentRevisionConflictError{
-				Kind: artistdomain.AIDocumentDocumentRevisionConflict, CurrentRevision: goldenCurrentDocumentRevision,
+			return &core.RevisionConflict{
+				Kind:                    core.ConflictDocumentRevision,
+				CurrentDocumentRevision: goldenCurrentDocumentRevision,
+				Message:                 fmt.Sprintf("Artist AI document revision conflict: current revision is %q", "0a000000-0000-4000-8000-000000000003"),
 			}
 		},
 		sourceOps:    []core.Operation{goldenContentEdit("changed source")},
@@ -236,13 +241,17 @@ func TestLabelExactMutationGolden(t *testing.T) {
 		},
 		conflict: func(target bool) error {
 			if target {
-				return &labeldomain.AIDocumentRevisionConflictError{
-					Kind: labeldomain.AIDocumentTargetRevisionConflict, CurrentDocumentRevision: goldenDocumentRevision,
-					CurrentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+				return &core.RevisionConflict{
+					Kind:                    core.ConflictTargetRevision,
+					CurrentDocumentRevision: goldenDocumentRevision,
+					CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+					Message:                 fmt.Sprintf("label AI document revision conflict: current document revision is %q", "0a000000-0000-4000-8000-000000000001"),
 				}
 			}
-			return &labeldomain.AIDocumentRevisionConflictError{
-				Kind: labeldomain.AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: goldenCurrentDocumentRevision,
+			return &core.RevisionConflict{
+				Kind:                    core.ConflictDocumentRevision,
+				CurrentDocumentRevision: goldenCurrentDocumentRevision,
+				Message:                 fmt.Sprintf("label AI document revision conflict: current document revision is %q", "0a000000-0000-4000-8000-000000000003"),
 			}
 		},
 		sourceOps:    []core.Operation{goldenContentEdit("changed source")},
@@ -278,13 +287,17 @@ func TestReleaseExactMutationGolden(t *testing.T) {
 		},
 		conflict: func(target bool) error {
 			if target {
-				return &releasedomain.AIDocumentRevisionConflictError{
-					Kind: releasedomain.AIDocumentTargetRevisionConflict, CurrentDocumentRevision: goldenDocumentRevision,
-					CurrentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+				return &core.RevisionConflict{
+					Kind:                    core.ConflictTargetRevision,
+					CurrentDocumentRevision: goldenDocumentRevision,
+					CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+					Message:                 fmt.Sprintf("Release AI document revision conflict: current document revision is %q", "0a000000-0000-4000-8000-000000000001"),
 				}
 			}
-			return &releasedomain.AIDocumentRevisionConflictError{
-				Kind: releasedomain.AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: goldenCurrentDocumentRevision,
+			return &core.RevisionConflict{
+				Kind:                    core.ConflictDocumentRevision,
+				CurrentDocumentRevision: goldenCurrentDocumentRevision,
+				Message:                 fmt.Sprintf("Release AI document revision conflict: current document revision is %q", "0a000000-0000-4000-8000-000000000003"),
 			}
 		},
 		sourceOps: []core.Operation{
@@ -330,13 +343,17 @@ func TestWorkExactMutationGolden(t *testing.T) {
 		},
 		conflict: func(target bool) error {
 			if target {
-				return &workdomain.AIDocumentRevisionConflictError{
-					Kind: workdomain.AIDocumentTargetRevisionConflict, CurrentDocumentRevision: goldenDocumentRevision,
-					CurrentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+				return &core.RevisionConflict{
+					Kind:                    core.ConflictTargetRevision,
+					CurrentDocumentRevision: goldenDocumentRevision,
+					CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+					Message:                 "Work AI document revision changed: current revision is " + "0a000000-0000-4000-8000-000000000001",
 				}
 			}
-			return &workdomain.AIDocumentRevisionConflictError{
-				Kind: workdomain.AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: goldenCurrentDocumentRevision,
+			return &core.RevisionConflict{
+				Kind:                    core.ConflictDocumentRevision,
+				CurrentDocumentRevision: goldenCurrentDocumentRevision,
+				Message:                 "Work AI document revision changed: current revision is " + "0a000000-0000-4000-8000-000000000003",
 			}
 		},
 		sourceOps: []core.Operation{
@@ -382,13 +399,17 @@ func TestPostExactMutationGolden(t *testing.T) {
 		},
 		conflict: func(target bool) error {
 			if target {
-				return &postdomain.AIDocumentRevisionConflictError{
-					Kind: postdomain.AIDocumentTargetRevisionConflict, CurrentDocumentRevision: goldenDocumentRevision,
-					CurrentTargetRevision: goldenStringPointer(goldenCurrentTargetRevision),
+				return &core.RevisionConflict{
+					Kind:                    core.ConflictTargetRevision,
+					CurrentDocumentRevision: goldenDocumentRevision,
+					CurrentTargetRevision:   goldenStringPointer(goldenCurrentTargetRevision),
+					Message:                 "Post AI document revision changed: current document revision is " + "0a000000-0000-4000-8000-000000000001",
 				}
 			}
-			return &postdomain.AIDocumentRevisionConflictError{
-				Kind: postdomain.AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: goldenCurrentDocumentRevision,
+			return &core.RevisionConflict{
+				Kind:                    core.ConflictDocumentRevision,
+				CurrentDocumentRevision: goldenCurrentDocumentRevision,
+				Message:                 "Post AI document revision changed: current document revision is " + "0a000000-0000-4000-8000-000000000003",
 			}
 		},
 		sourceOps: []core.Operation{

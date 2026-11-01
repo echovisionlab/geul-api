@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -12,8 +13,11 @@ import (
 	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
@@ -68,23 +72,6 @@ func (e *labelAIDocumentCompilerError) Unwrap() error { return e.cause }
 type AIDocumentMutationResult struct {
 	Content        contentblock.Result
 	TargetRevision *string
-}
-
-type AIDocumentRevisionConflictKind string
-
-const (
-	AIDocumentDocumentRevisionConflict AIDocumentRevisionConflictKind = "document"
-	AIDocumentTargetRevisionConflict   AIDocumentRevisionConflictKind = "target"
-)
-
-type AIDocumentRevisionConflictError struct {
-	Kind                    AIDocumentRevisionConflictKind
-	CurrentDocumentRevision string
-	CurrentTargetRevision   *string
-}
-
-func (e *AIDocumentRevisionConflictError) Error() string {
-	return fmt.Sprintf("label AI document revision conflict: current document revision is %q", e.CurrentDocumentRevision)
 }
 
 // ValidateAIDocumentDependencies lets the AI document registration fail
@@ -416,15 +403,18 @@ func validateCompiledLabelAIDocumentMutation(
 		)
 	}
 	if input.ExpectedRevision != state.Revision {
-		return uuid.Nil, &AIDocumentRevisionConflictError{
-			Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: state.Revision,
+		return uuid.Nil, &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: state.Revision,
+			Message:                 fmt.Sprintf("label AI document revision conflict: current document revision is %q", state.Revision),
 		}
 	}
 	if !optional.Equal(input.ExpectedTargetRevision, state.TargetRevision) {
-		return uuid.Nil, &AIDocumentRevisionConflictError{
-			Kind:                    AIDocumentTargetRevisionConflict,
+		return uuid.Nil, &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
 			CurrentDocumentRevision: state.Revision,
 			CurrentTargetRevision:   optional.Clone(state.TargetRevision),
+			Message:                 fmt.Sprintf("label AI document revision conflict: current document revision is %q", state.Revision),
 		}
 	}
 	if input.Batch != nil {
@@ -506,8 +496,10 @@ func labelAuthorizedAIDocumentFence(
 			if err != nil {
 				return contentblock.DomainContext{}, err
 			}
-			return contentblock.DomainContext{}, &AIDocumentRevisionConflictError{
-				Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: current.String(),
+			return contentblock.DomainContext{}, &aidocument.RevisionConflict{
+				Kind:                    aidocument.ConflictDocumentRevision,
+				CurrentDocumentRevision: current.String(),
+				Message:                 fmt.Sprintf("label AI document revision conflict: current document revision is %q", current.String()),
 			}
 		}
 		return source, nil
@@ -515,13 +507,17 @@ func labelAuthorizedAIDocumentFence(
 }
 
 func mapLabelAIDocumentMutationError(err error, currentDocumentRevision string) error {
-	var conflict *AIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	if errors.As(err, &conflict) {
 		return conflict
 	}
 	var stale *contentblock.StaleRevisionError
 	if errors.As(err, &stale) {
-		return &AIDocumentRevisionConflictError{Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: stale.CurrentRevision.String()}
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: stale.CurrentRevision.String(),
+			Message:                 fmt.Sprintf("label AI document revision conflict: current document revision is %q", stale.CurrentRevision.String()),
+		}
 	}
 	var targetConflict *translation.TargetRevisionConflict
 	if errors.As(err, &targetConflict) {
@@ -529,10 +525,11 @@ func mapLabelAIDocumentMutationError(err error, currentDocumentRevision string) 
 		if targetConflict.CurrentExists {
 			currentTargetRevision = optional.Clone(&targetConflict.CurrentRevision)
 		}
-		return &AIDocumentRevisionConflictError{
-			Kind:                    AIDocumentTargetRevisionConflict,
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
 			CurrentDocumentRevision: currentDocumentRevision,
 			CurrentTargetRevision:   currentTargetRevision,
+			Message:                 fmt.Sprintf("label AI document revision conflict: current document revision is %q", currentDocumentRevision),
 		}
 	}
 	return normalizeLabelContentBlockError(err)

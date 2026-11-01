@@ -9,8 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -18,6 +17,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	"github.com/google/uuid"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -191,21 +192,27 @@ func validateCompiledFormAIDocumentMutation(state AIDocumentState, input AIDocum
 		)
 	}
 	if input.ExpectedSource != state.SourceLocale || input.ExpectedPresence != state.LocaleExists {
-		return &AIDocumentRevisionConflictError{
-			Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: state.DocumentRevision,
-			CurrentTargetRevision: optional.Clone(state.TargetRevision),
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: state.DocumentRevision,
+			CurrentTargetRevision:   optional.Clone(state.TargetRevision),
+			Message:                 "Form AI document document revision conflict",
 		}
 	}
 	if input.ExpectedDocumentRevision != state.DocumentRevision {
-		return &AIDocumentRevisionConflictError{
-			Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: state.DocumentRevision,
-			CurrentTargetRevision: optional.Clone(state.TargetRevision),
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: state.DocumentRevision,
+			CurrentTargetRevision:   optional.Clone(state.TargetRevision),
+			Message:                 "Form AI document document revision conflict",
 		}
 	}
 	if !optional.Equal(input.ExpectedTargetRevision, state.TargetRevision) {
-		return &AIDocumentRevisionConflictError{
-			Kind: AIDocumentTargetRevisionConflict, CurrentDocumentRevision: state.DocumentRevision,
-			CurrentTargetRevision: optional.Clone(state.TargetRevision),
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
+			CurrentDocumentRevision: state.DocumentRevision,
+			CurrentTargetRevision:   optional.Clone(state.TargetRevision),
+			Message:                 "Form AI document target revision conflict",
 		}
 	}
 	return nil

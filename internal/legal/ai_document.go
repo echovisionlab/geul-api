@@ -7,8 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
@@ -18,6 +17,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	"github.com/google/uuid"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -77,23 +78,6 @@ type legalAIDocumentApplyResult struct {
 	CurrentDocumentRevision string
 	applied                 AIDocumentMutation
 	localeChange            *legalLocaleContentChange
-}
-
-type AIDocumentRevisionConflictKind string
-
-const (
-	AIDocumentDocumentRevisionConflict AIDocumentRevisionConflictKind = "document"
-	AIDocumentTargetRevisionConflict   AIDocumentRevisionConflictKind = "target"
-)
-
-type AIDocumentRevisionConflict struct {
-	Kind                  AIDocumentRevisionConflictKind
-	CurrentRevision       string
-	CurrentTargetRevision *string
-}
-
-func (e *AIDocumentRevisionConflict) Error() string {
-	return "Legal AI document revision changed; reload before saving"
 }
 
 // AIDocumentExecutionMode selects whether the exact Legal mutation commits or
@@ -384,9 +368,11 @@ func validateCompiledLegalAIDocumentMutation(
 				current := targetConflict.CurrentRevision
 				currentTargetRevision = &current
 			}
-			return &AIDocumentRevisionConflict{
-				Kind: AIDocumentTargetRevisionConflict, CurrentRevision: state.Revision,
-				CurrentTargetRevision: currentTargetRevision,
+			return &aidocument.RevisionConflict{
+				Kind:                    aidocument.ConflictTargetRevision,
+				CurrentDocumentRevision: state.Revision,
+				CurrentTargetRevision:   currentTargetRevision,
+				Message:                 "Legal AI document revision changed; reload before saving",
 			}
 		}
 		return err

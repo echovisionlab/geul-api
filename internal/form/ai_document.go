@@ -2,7 +2,6 @@ package form
 
 import (
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -50,23 +49,6 @@ type AIDocumentMutationResult struct {
 	DocumentRevision string
 	TargetRevision   *string
 	Changed          bool
-}
-
-type AIDocumentRevisionConflictKind string
-
-const (
-	AIDocumentDocumentRevisionConflict AIDocumentRevisionConflictKind = "document"
-	AIDocumentTargetRevisionConflict   AIDocumentRevisionConflictKind = "target"
-)
-
-type AIDocumentRevisionConflictError struct {
-	Kind                    AIDocumentRevisionConflictKind
-	CurrentDocumentRevision string
-	CurrentTargetRevision   *string
-}
-
-func (e *AIDocumentRevisionConflictError) Error() string {
-	return fmt.Sprintf("Form AI document %s revision conflict", e.Kind)
 }
 
 // AIDocumentExecutionMode selects whether the exact owning-domain mutation

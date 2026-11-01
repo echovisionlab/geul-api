@@ -254,9 +254,11 @@ func TestPrivacyExactTargetMutationPassesTargetFenceAndMapsTargetConflict(t *tes
 	require.Equal(t, targetRevision, *api.mutation.ExpectedTargetRevision)
 
 	currentTarget := "legal-target-revision-3"
-	api.resultErr = &legal.AIDocumentRevisionConflict{
-		Kind: legal.AIDocumentTargetRevisionConflict, CurrentRevision: documentRevision.String(),
-		CurrentTargetRevision: &currentTarget,
+	api.resultErr = &core.RevisionConflict{
+		Kind:                    core.ConflictTargetRevision,
+		CurrentDocumentRevision: documentRevision.String(),
+		CurrentTargetRevision:   &currentTarget,
+		Message:                 "Legal AI document revision changed; reload before saving",
 	}
 	_, err = service.Apply(t.Context(), request)
 	var conflict *core.ConflictError

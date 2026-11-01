@@ -9,15 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/aidocument"
+	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/emailcontent"
-	"github.com/echovisionlab/geul-api/internal/mutation"
-
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/google/uuid"
 
-	"github.com/echovisionlab/geul-api/internal/dbtime"
 	emailutil "github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/translation"
 )
@@ -86,26 +85,6 @@ type emailLayoutAIDocumentCompilerError struct{ cause error }
 
 func (e *emailLayoutAIDocumentCompilerError) Error() string { return e.cause.Error() }
 func (e *emailLayoutAIDocumentCompilerError) Unwrap() error { return e.cause }
-
-type EmailLayoutAIDocumentRevisionConflictKind string
-
-const (
-	EmailLayoutAIDocumentDocumentRevisionConflict EmailLayoutAIDocumentRevisionConflictKind = "document_revision"
-	EmailLayoutAIDocumentTargetRevisionConflict   EmailLayoutAIDocumentRevisionConflictKind = "target_revision"
-)
-
-type EmailLayoutAIDocumentRevisionConflictError struct {
-	Kind                    EmailLayoutAIDocumentRevisionConflictKind
-	CurrentDocumentRevision string
-	CurrentTargetRevision   *string
-}
-
-func (e *EmailLayoutAIDocumentRevisionConflictError) Error() string {
-	return fmt.Sprintf(
-		"Email Layout AI document revision conflict: current document revision is %q",
-		e.CurrentDocumentRevision,
-	)
-}
 
 // EmailLayoutAIDocumentService owns authorization, active-delivery lifecycle,
 // locking, opaque CAS, locale CRUD, and source/target persistence. The adapter
@@ -310,7 +289,7 @@ func deleteEmailLayoutAIDocumentTranslation(ctx context.Context, store Store, cu
 		return err
 	}
 	if !deleted {
-		return emailLayoutAIDocumentConflict(EmailLayoutAIDocumentTargetRevisionConflict, current)
+		return emailLayoutAIDocumentConflict(aidocument.ConflictTargetRevision, current)
 	}
 	return nil
 }
@@ -429,17 +408,11 @@ func validateCompiledEmailLayoutAIDocumentMutation(
 		)
 	}
 	if mutation.ExpectedDocumentRevision != state.DocumentRevision || mutation.ExpectedSource != state.SourceLocale {
-		return emailLayoutAIDocumentConflict(
-			EmailLayoutAIDocumentDocumentRevisionConflict,
-			state,
-		)
+		return emailLayoutAIDocumentConflict(aidocument.ConflictDocumentRevision, state)
 	}
 	if mutation.ExpectedPresence != state.LocaleExists ||
 		!emailLayoutAIDocumentStringEqual(mutation.ExpectedTargetRevision, state.TargetRevision) {
-		return emailLayoutAIDocumentConflict(
-			EmailLayoutAIDocumentTargetRevisionConflict,
-			state,
-		)
+		return emailLayoutAIDocumentConflict(aidocument.ConflictTargetRevision, state)
 	}
 	return nil
 }
@@ -508,12 +481,14 @@ func deriveEmailLayoutAIDocumentTargetRevision(state EmailLayoutAIDocumentState)
 }
 
 func emailLayoutAIDocumentConflict(
-	kind EmailLayoutAIDocumentRevisionConflictKind,
+	kind aidocument.ConflictCode,
 	state EmailLayoutAIDocumentState,
-) *EmailLayoutAIDocumentRevisionConflictError {
-	return &EmailLayoutAIDocumentRevisionConflictError{
-		Kind: kind, CurrentDocumentRevision: state.DocumentRevision,
-		CurrentTargetRevision: cloneEmailLayoutAIDocumentString(state.TargetRevision),
+) *aidocument.RevisionConflict {
+	return &aidocument.RevisionConflict{
+		Kind:                    kind,
+		CurrentDocumentRevision: state.DocumentRevision,
+		CurrentTargetRevision:   cloneEmailLayoutAIDocumentString(state.TargetRevision),
+		Message:                 fmt.Sprintf("Email Layout AI document revision conflict: current document revision is %q", state.DocumentRevision),
 	}
 }
 

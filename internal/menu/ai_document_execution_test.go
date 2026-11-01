@@ -7,13 +7,15 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
-
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -299,16 +301,25 @@ func TestAIDocumentRevisionConflictsReportTheCurrentRevisions(t *testing.T) {
 	}
 
 	_, err := f.execute(menuID, translation.DefaultLocale, menu.AIDocumentMutationEdit, menu.AIDocumentExecutionApply, withHandles)
-	var conflict *menu.AIDocumentRevisionConflict
+	var conflict *aidocument.RevisionConflict
 	require.ErrorAs(t, err, &conflict)
-	require.Equal(t, &menu.AIDocumentRevisionConflict{CurrentDocumentRevision: before, AffectedHandles: handles}, conflict)
+	require.Equal(t, &aidocument.RevisionConflict{
+		CurrentDocumentRevision: before,
+		AffectedHandles:         handles,
+		Kind:                    aidocument.ConflictDocumentRevision,
+		Message:                 "Menu AI document revision conflict",
+	}, conflict)
 	require.EqualError(t, err, "Menu AI document revision conflict")
 
 	targetRevision := uuid.NewString()
 	_, err = f.execute(menuID, translation.DefaultLocale, menu.AIDocumentMutationEdit, menu.AIDocumentExecutionApply,
 		menuMutation(before, &targetRevision, setName("Stale")))
 	require.ErrorAs(t, err, &conflict)
-	require.Equal(t, &menu.AIDocumentRevisionConflict{Target: true, CurrentDocumentRevision: before}, conflict)
+	require.Equal(t, &aidocument.RevisionConflict{
+		Kind:                    aidocument.ConflictTargetRevision,
+		CurrentDocumentRevision: before,
+		Message:                 "Menu AI document revision conflict",
+	}, conflict)
 	require.Len(t, f.audit.Records(), 1)
 }
 
@@ -399,7 +410,9 @@ func TestAIDocumentRequestRejections(t *testing.T) {
 		{"member without permission sees not found", outsider, menuID, menu.AIDocumentMutationEdit, menu.AIDocumentExecutionApply, menuMutation(before, nil, setName("Outsider")), connect.CodeNotFound, "menu not found: " + menuID, nil},
 		{"inactive member sees not found", inactive, menuID, menu.AIDocumentMutationEdit, menu.AIDocumentExecutionApply, menuMutation(before, nil, setName("Inactive")), connect.CodeNotFound, "menu not found: " + menuID, nil},
 		{"compiler error is returned unchanged", f.ctx, menuID, menu.AIDocumentMutationEdit, menu.AIDocumentExecutionApply,
-			func(menu.AIDocumentSnapshot) (menu.AIDocumentApply, error) { return menu.AIDocumentApply{}, compilerFailure }, 0, "", compilerFailure},
+			func(menu.AIDocumentSnapshot) (menu.AIDocumentApply, error) {
+				return menu.AIDocumentApply{}, compilerFailure
+			}, 0, "", compilerFailure},
 		{"compiled identity must match", f.ctx, menuID, menu.AIDocumentMutationEdit, menu.AIDocumentExecutionApply,
 			func(snapshot menu.AIDocumentSnapshot) (menu.AIDocumentApply, error) {
 				return menu.AIDocumentApply{MenuID: snapshot.ID, Locale: aiTarget, ExpectedDocumentRevision: before}, nil

@@ -3,8 +3,10 @@ package artist
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -12,7 +14,9 @@ import (
 	"github.com/echovisionlab/geul-api/internal/optional"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/google/uuid"
 )
@@ -93,9 +97,11 @@ func (s *Service) ExecuteAIDocumentMutation(
 			return AIDocumentMutationResult{}, compilerErr.cause
 		}
 		if errors.As(err, &targetConflict) {
-			return AIDocumentMutationResult{}, &AIDocumentRevisionConflictError{
-				Kind: AIDocumentTargetRevisionConflict, CurrentRevision: outcome.input.ExpectedRevision,
-				CurrentTargetRevision: artistTargetConflictRevision(targetConflict),
+			return AIDocumentMutationResult{}, &aidocument.RevisionConflict{
+				Kind:                    aidocument.ConflictTargetRevision,
+				CurrentDocumentRevision: outcome.input.ExpectedRevision,
+				CurrentTargetRevision:   artistTargetConflictRevision(targetConflict),
+				Message:                 fmt.Sprintf("Artist AI document revision conflict: current revision is %q", outcome.input.ExpectedRevision),
 			}
 		}
 		return AIDocumentMutationResult{}, err
@@ -200,14 +206,18 @@ func validateCompiledArtistAIDocumentMutation(
 		return uuid.Nil, domainerr.Precondition("Artist target locale presence and revision are inconsistent")
 	}
 	if input.ExpectedRevision != state.Revision {
-		return uuid.Nil, &AIDocumentRevisionConflictError{
-			Kind: AIDocumentDocumentRevisionConflict, CurrentRevision: state.Revision,
+		return uuid.Nil, &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: state.Revision,
+			Message:                 fmt.Sprintf("Artist AI document revision conflict: current revision is %q", state.Revision),
 		}
 	}
 	if !optional.Equal(input.ExpectedTargetRevision, state.TargetRevision) {
-		return uuid.Nil, &AIDocumentRevisionConflictError{
-			Kind: AIDocumentTargetRevisionConflict, CurrentRevision: state.Revision,
-			CurrentTargetRevision: optional.Clone(state.TargetRevision),
+		return uuid.Nil, &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
+			CurrentDocumentRevision: state.Revision,
+			CurrentTargetRevision:   optional.Clone(state.TargetRevision),
+			Message:                 fmt.Sprintf("Artist AI document revision conflict: current revision is %q", state.Revision),
 		}
 	}
 	if input.Batch != nil {
@@ -296,7 +306,11 @@ func artistAuthorizedAIDocumentFence(
 			if err != nil && !errors.Is(err, ErrDocumentRowNotFound) {
 				return contentblock.DomainContext{}, err
 			}
-			return contentblock.DomainContext{}, &AIDocumentRevisionConflictError{CurrentRevision: current.String()}
+			return contentblock.DomainContext{}, &aidocument.RevisionConflict{
+				CurrentDocumentRevision: current.String(),
+				Kind:                    aidocument.ConflictDocumentRevision,
+				Message:                 fmt.Sprintf("Artist AI document revision conflict: current revision is %q", current.String()),
+			}
 		}
 		return source, nil
 	}

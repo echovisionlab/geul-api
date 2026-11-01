@@ -7,10 +7,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/optional"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -125,17 +127,6 @@ type AIDocumentValidationError struct{ Issues []AIDocumentIssue }
 
 func (e *AIDocumentValidationError) Error() string {
 	return "Menu AI document operations are invalid"
-}
-
-type AIDocumentRevisionConflict struct {
-	Target                  bool
-	CurrentDocumentRevision string
-	CurrentTargetRevision   *string
-	AffectedHandles         []string
-}
-
-func (e *AIDocumentRevisionConflict) Error() string {
-	return "Menu AI document revision conflict"
 }
 
 var errRollbackMenuAIDocumentValidation = errors.New("rollback Menu AI document validation")
@@ -328,17 +319,21 @@ func requireCompiledMenuCommand(locked AIDocumentSnapshot, command AIDocumentApp
 		return domainerr.InvalidField("mutation", "compiled Menu operations must match the authorized mutation action")
 	}
 	if locked.DocumentRevision != command.ExpectedDocumentRevision {
-		return &AIDocumentRevisionConflict{
+		return &aidocument.RevisionConflict{
 			CurrentDocumentRevision: locked.DocumentRevision,
 			CurrentTargetRevision:   optional.Clone(locked.TargetRevision),
 			AffectedHandles:         append([]string(nil), command.AffectedHandles...),
+			Kind:                    aidocument.ConflictDocumentRevision,
+			Message:                 "Menu AI document revision conflict",
 		}
 	}
 	if !optional.Equal(locked.TargetRevision, command.ExpectedTargetRevision) {
-		return &AIDocumentRevisionConflict{
-			Target: true, CurrentDocumentRevision: locked.DocumentRevision,
-			CurrentTargetRevision: optional.Clone(locked.TargetRevision),
-			AffectedHandles:       append([]string(nil), command.AffectedHandles...),
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictTargetRevision,
+			CurrentDocumentRevision: locked.DocumentRevision,
+			CurrentTargetRevision:   optional.Clone(locked.TargetRevision),
+			AffectedHandles:         append([]string(nil), command.AffectedHandles...),
+			Message:                 "Menu AI document revision conflict",
 		}
 	}
 	return nil

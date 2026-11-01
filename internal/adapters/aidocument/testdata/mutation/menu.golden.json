@@ -235,7 +235,7 @@
       "operations": [
         "fs"
       ],
-      "domain_error": "*menu.AIDocumentRevisionConflict: Menu AI document revision conflict",
+      "domain_error": "*aidocument.RevisionConflict: Menu AI document revision conflict",
       "validate": {
         "error": {
           "type": "*aidocument.ConflictError",
@@ -269,7 +269,7 @@
       "operations": [
         "fs"
       ],
-      "domain_error": "*menu.AIDocumentRevisionConflict: Menu AI document revision conflict",
+      "domain_error": "*aidocument.RevisionConflict: Menu AI document revision conflict",
       "validate": {
         "error": {
           "type": "*aidocument.ConflictError",

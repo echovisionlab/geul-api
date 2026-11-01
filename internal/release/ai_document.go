@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
@@ -73,23 +75,6 @@ type AIDocumentMutationResult struct {
 	Changed          bool
 }
 
-type AIDocumentRevisionConflictKind string
-
-const (
-	AIDocumentDocumentRevisionConflict AIDocumentRevisionConflictKind = "document"
-	AIDocumentTargetRevisionConflict   AIDocumentRevisionConflictKind = "target"
-)
-
-type AIDocumentRevisionConflictError struct {
-	Kind                    AIDocumentRevisionConflictKind
-	CurrentDocumentRevision string
-	CurrentTargetRevision   *string
-}
-
-func (e *AIDocumentRevisionConflictError) Error() string {
-	return fmt.Sprintf("Release AI document revision conflict: current document revision is %q", e.CurrentDocumentRevision)
-}
-
 func validateReleaseAIDocumentMutation(input AIDocumentMutation) (uuid.UUID, uuid.UUID, error) {
 	releaseID, err := uuidFromCanonicalString(input.ReleaseID)
 	if err != nil {
@@ -125,14 +110,16 @@ func validateReleaseAIDocumentMutation(input AIDocumentMutation) (uuid.UUID, uui
 }
 
 func mapReleaseAIDocumentMutationError(err error) error {
-	var conflict *AIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	if errors.As(err, &conflict) {
 		return conflict
 	}
 	var stale *contentblock.StaleRevisionError
 	if errors.As(err, &stale) {
-		return &AIDocumentRevisionConflictError{
-			Kind: AIDocumentDocumentRevisionConflict, CurrentDocumentRevision: stale.CurrentRevision.String(),
+		return &aidocument.RevisionConflict{
+			Kind:                    aidocument.ConflictDocumentRevision,
+			CurrentDocumentRevision: stale.CurrentRevision.String(),
+			Message:                 fmt.Sprintf("Release AI document revision conflict: current document revision is %q", stale.CurrentRevision.String()),
 		}
 	}
 	return normalizeReleaseContentBlockError(err)

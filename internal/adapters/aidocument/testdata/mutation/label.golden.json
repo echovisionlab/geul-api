@@ -259,7 +259,7 @@
       "operations": [
         "fs"
       ],
-      "domain_error": "*label.AIDocumentRevisionConflictError: label AI document revision conflict: current document revision is \"0a000000-0000-4000-8000-000000000003\"",
+      "domain_error": "*aidocument.RevisionConflict: label AI document revision conflict: current document revision is \"0a000000-0000-4000-8000-000000000003\"",
       "validate": {
         "error": {
           "type": "*aidocument.ConflictError",
@@ -293,7 +293,7 @@
       "operations": [
         "fs"
       ],
-      "domain_error": "*label.AIDocumentRevisionConflictError: label AI document revision conflict: current document revision is \"0a000000-0000-4000-8000-000000000001\"",
+      "domain_error": "*aidocument.RevisionConflict: label AI document revision conflict: current document revision is \"0a000000-0000-4000-8000-000000000001\"",
       "validate": {
         "error": {
           "type": "*aidocument.ConflictError",

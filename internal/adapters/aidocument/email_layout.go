@@ -157,7 +157,7 @@ func (p *emailLayoutPort) executeMutation(
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}
-		var conflict *emailauthoring.EmailLayoutAIDocumentRevisionConflictError
+		var conflict *core.RevisionConflict
 		if errors.As(err, &conflict) {
 			return core.ValidationResult{}, core.ApplyResult{}, emailLayoutConflict(
 				conflict,
@@ -364,11 +364,11 @@ func validateEmailLayoutIdentity(identity core.DocumentIdentity) error {
 }
 
 func emailLayoutConflict(
-	conflict *emailauthoring.EmailLayoutAIDocumentRevisionConflictError,
+	conflict *core.RevisionConflict,
 	handles []string,
 ) error {
 	code := core.ConflictDocumentRevision
-	if conflict.Kind == emailauthoring.EmailLayoutAIDocumentTargetRevisionConflict {
+	if conflict.Kind == core.ConflictTargetRevision {
 		code = core.ConflictTargetRevision
 	}
 	return &core.ConflictError{Conflict: core.Conflict{

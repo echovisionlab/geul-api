@@ -206,7 +206,7 @@
       "operations": [
         "fs"
       ],
-      "domain_error": "*form.AIDocumentRevisionConflictError: Form AI document document revision conflict",
+      "domain_error": "*aidocument.RevisionConflict: Form AI document document revision conflict",
       "validate": {
         "error": {
           "type": "*aidocument.ConflictError",
@@ -240,7 +240,7 @@
       "operations": [
         "fs"
       ],
-      "domain_error": "*form.AIDocumentRevisionConflictError: Form AI document target revision conflict",
+      "domain_error": "*aidocument.RevisionConflict: Form AI document target revision conflict",
       "validate": {
         "error": {
           "type": "*aidocument.ConflictError",

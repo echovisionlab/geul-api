@@ -137,14 +137,14 @@ func (p *pagePort) executeMutation(
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}
-		var conflict *pagedomain.AIDocumentRevisionConflictError
+		var conflict *core.RevisionConflict
 		if errors.As(err, &conflict) {
 			code := core.ConflictDocumentRevision
-			if conflict.Kind == pagedomain.AIDocumentTargetRevisionConflict {
+			if conflict.Kind == core.ConflictTargetRevision {
 				code = core.ConflictTargetRevision
 			}
 			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
-				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentRevision),
+				Code: code, CurrentDocumentRevision: core.Revision(conflict.CurrentDocumentRevision),
 				CurrentTargetRevision: core.OptionalRevision(conflict.CurrentTargetRevision),
 				AffectedHandles:       append([]string(nil), run.command.AffectedHandles...),
 			}}

@@ -242,7 +242,7 @@
       "operations": [
         "fs"
       ],
-      "domain_error": "*page.AIDocumentRevisionConflictError: Page AI document revision changed: current revision is 0a000000-0000-4000-8000-000000000003",
+      "domain_error": "*aidocument.RevisionConflict: Page AI document revision changed: current revision is 0a000000-0000-4000-8000-000000000003",
       "validate": {
         "error": {
           "type": "*aidocument.ConflictError",
@@ -276,7 +276,7 @@
       "operations": [
         "fs"
       ],
-      "domain_error": "*page.AIDocumentRevisionConflictError: Page AI document revision changed: current revision is 0a000000-0000-4000-8000-000000000001",
+      "domain_error": "*aidocument.RevisionConflict: Page AI document revision changed: current revision is 0a000000-0000-4000-8000-000000000001",
       "validate": {
         "error": {
           "type": "*aidocument.ConflictError",

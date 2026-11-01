@@ -118,10 +118,10 @@ func (p *labelPort) executeMutation(
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}
-		var conflict *labeldomain.AIDocumentRevisionConflictError
+		var conflict *core.RevisionConflict
 		if errors.As(err, &conflict) {
 			code := core.ConflictDocumentRevision
-			if conflict.Kind == labeldomain.AIDocumentTargetRevisionConflict {
+			if conflict.Kind == core.ConflictTargetRevision {
 				code = core.ConflictTargetRevision
 			}
 			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{

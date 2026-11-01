@@ -8,15 +8,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
+	"github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
+	"github.com/google/uuid"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/targetlocale"
 	"github.com/echovisionlab/geul-api/internal/translation"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -73,24 +75,6 @@ type compilerError struct{ cause error }
 
 func (e *compilerError) Error() string { return e.cause.Error() }
 func (e *compilerError) Unwrap() error { return e.cause }
-
-type AIDocumentRevisionConflictKind string
-
-const (
-	AIDocumentDocumentRevisionConflict AIDocumentRevisionConflictKind = "document_revision"
-	AIDocumentTargetRevisionConflict   AIDocumentRevisionConflictKind = "target_revision"
-)
-
-type AIDocumentRevisionConflictError struct {
-	Owner                   string
-	Kind                    AIDocumentRevisionConflictKind
-	CurrentDocumentRevision string
-	CurrentTargetRevision   *string
-}
-
-func (e *AIDocumentRevisionConflictError) Error() string {
-	return fmt.Sprintf("%s AI document revision conflict: current revision is %q", e.Owner, e.CurrentDocumentRevision)
-}
 
 // AIDocumentAuthority reads the owner's root for a load, or locks it for a
 // mutation, rejects what the owner's lifecycle forbids, authorizes the
@@ -418,10 +402,10 @@ func (o Owner[S]) validateCompiledAIDocumentMutation(state AIDocumentState, muta
 	}
 	if mutation.ExpectedDocumentRevision != state.DocumentRevision || mutation.ExpectedSource != state.SourceLocale ||
 		mutation.ExpectedPresence != state.LocaleExists {
-		return o.conflict(AIDocumentDocumentRevisionConflict, state.DocumentRevision, state.TargetRevision)
+		return o.conflict(aidocument.ConflictDocumentRevision, state.DocumentRevision, state.TargetRevision)
 	}
 	if !stringsEqual(mutation.ExpectedTargetRevision, state.TargetRevision) {
-		return o.conflict(AIDocumentTargetRevisionConflict, state.DocumentRevision, state.TargetRevision)
+		return o.conflict(aidocument.ConflictTargetRevision, state.DocumentRevision, state.TargetRevision)
 	}
 	if mutation.Batch != nil && (mutation.Batch.DocumentID != state.DocumentID ||
 		mutation.Batch.ExpectedRevision != expected || len(mutation.Batch.ContributorMemberIDs) != 1 ||
@@ -431,9 +415,12 @@ func (o Owner[S]) validateCompiledAIDocumentMutation(state AIDocumentState, muta
 	return nil
 }
 
-func (o Owner[S]) conflict(kind AIDocumentRevisionConflictKind, documentRevision string, targetRevision *string) *AIDocumentRevisionConflictError {
-	return &AIDocumentRevisionConflictError{
-		Owner: o.Name, Kind: kind, CurrentDocumentRevision: documentRevision, CurrentTargetRevision: targetRevision,
+func (o Owner[S]) conflict(kind aidocument.ConflictCode, documentRevision string, targetRevision *string) *aidocument.RevisionConflict {
+	return &aidocument.RevisionConflict{
+		Kind:                    kind,
+		CurrentDocumentRevision: documentRevision,
+		CurrentTargetRevision:   targetRevision,
+		Message:                 fmt.Sprintf("%s AI document revision conflict: current revision is %q", o.Name, documentRevision),
 	}
 }
 
@@ -483,13 +470,13 @@ func (o Owner[S]) validateAIDocumentMode(input AIDocumentMutation) error {
 }
 
 func (o Owner[S]) mapAIDocumentError(err error, currentDocumentRevision string) error {
-	var conflict *AIDocumentRevisionConflictError
+	var conflict *aidocument.RevisionConflict
 	if errors.As(err, &conflict) {
 		return conflict
 	}
 	var stale *contentblock.StaleRevisionError
 	if errors.As(err, &stale) {
-		return o.conflict(AIDocumentDocumentRevisionConflict, stale.CurrentRevision.String(), nil)
+		return o.conflict(aidocument.ConflictDocumentRevision, stale.CurrentRevision.String(), nil)
 	}
 	var target *translation.TargetRevisionConflict
 	if errors.As(err, &target) {
@@ -497,7 +484,7 @@ func (o Owner[S]) mapAIDocumentError(err error, currentDocumentRevision string) 
 		if target.CurrentExists {
 			current = &target.CurrentRevision
 		}
-		return o.conflict(AIDocumentTargetRevisionConflict, currentDocumentRevision, current)
+		return o.conflict(aidocument.ConflictTargetRevision, currentDocumentRevision, current)
 	}
 	return o.NormalizeContentBlockError(err)
 }

@@ -179,9 +179,11 @@ func TestWorkExactTargetConflictMapsCurrentSplitCAS(t *testing.T) {
 	currentTarget := "work-target-current"
 	api := &exactWorkDocumentAPI{
 		state: workdomain.AIDocumentState{Work: workdomain.Work{ID: workID.String()}, Locale: "ko"},
-		authorizeErr: &workdomain.AIDocumentRevisionConflictError{
-			Kind: workdomain.AIDocumentTargetRevisionConflict, CurrentDocumentRevision: documentRevision.String(),
-			CurrentTargetRevision: &currentTarget,
+		authorizeErr: &core.RevisionConflict{
+			Kind:                    core.ConflictTargetRevision,
+			CurrentDocumentRevision: documentRevision.String(),
+			CurrentTargetRevision:   &currentTarget,
+			Message:                 "Work AI document revision changed: current revision is " + documentRevision.String(),
 		},
 	}
 	port := &workPort{application: api, codec: codec, catalog: workCatalog(codec)}

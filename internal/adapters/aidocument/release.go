@@ -127,10 +127,10 @@ func (p *releasePort) executeMutation(
 		); handled {
 			return invalid, core.ApplyResult{}, mapped
 		}
-		var conflict *releasedomain.AIDocumentRevisionConflictError
+		var conflict *core.RevisionConflict
 		if errors.As(err, &conflict) {
 			code := core.ConflictDocumentRevision
-			if conflict.Kind == releasedomain.AIDocumentTargetRevisionConflict {
+			if conflict.Kind == core.ConflictTargetRevision {
 				code = core.ConflictTargetRevision
 			}
 			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{

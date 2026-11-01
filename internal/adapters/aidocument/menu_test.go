@@ -187,9 +187,12 @@ func TestMenuExactApplyForwardsOwningCommandAndMapsConflict(t *testing.T) {
 	require.Equal(t, "target-revision-1", *domain.appliedCommand.ExpectedTargetRevision)
 	require.Equal(t, "Parent", domain.appliedCommand.Operations[0].Value.Text)
 
-	domain.applyErr = &menudomain.AIDocumentRevisionConflict{
-		Target: true, CurrentDocumentRevision: "revision-1", CurrentTargetRevision: adapterStringPointer("target-revision-3"),
-		AffectedHandles: []string{"field:parent/label"},
+	domain.applyErr = &core.RevisionConflict{
+		Kind:                    core.ConflictTargetRevision,
+		CurrentDocumentRevision: "revision-1",
+		CurrentTargetRevision:   adapterStringPointer("target-revision-3"),
+		AffectedHandles:         []string{"field:parent/label"},
+		Message:                 "Menu AI document revision conflict",
 	}
 	_, err = service.Apply(t.Context(), request)
 	var conflict *core.ConflictError

@@ -167,10 +167,10 @@ func (p *menuAIDocumentPort) executeMutation(
 			}
 			return core.ValidationResult{}, core.ApplyResult{}, &core.ValidationError{Result: run.validation}
 		}
-		var conflict *menudomain.AIDocumentRevisionConflict
+		var conflict *core.RevisionConflict
 		if errors.As(err, &conflict) {
 			code := core.ConflictDocumentRevision
-			if conflict.Target {
+			if conflict.Kind == core.ConflictTargetRevision {
 				code = core.ConflictTargetRevision
 			}
 			return core.ValidationResult{}, core.ApplyResult{}, &core.ConflictError{Conflict: core.Conflict{
