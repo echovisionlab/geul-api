@@ -24,6 +24,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
+	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/label"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
@@ -485,10 +486,6 @@ type compositionFileReferences struct {
 	managev1connect.UnimplementedFileServiceHandler
 }
 
-type compositionFormReferences struct {
-	managev1connect.UnimplementedFormServiceHandler
-}
-
 func compositionContentApplications() contentMCPApplications {
 	return contentMCPApplications{
 		legalPolicies: &legal.Service{},
@@ -505,7 +502,7 @@ func compositionContentApplications() contentMCPApplications {
 		genres:        &referencecatalog.Service{},
 		styles:        &referencecatalog.Service{},
 		formats:       &referencecatalog.Service{},
-		forms:         &compositionFormReferences{},
+		forms:         &formdomain.Service{},
 		postSeries:    &series.Service{},
 		tracks:        &releasepkg.Service{},
 		mapThemes:     &maptheme.Service{},

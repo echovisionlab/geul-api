@@ -16,7 +16,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
-	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
 	"github.com/echovisionlab/geul-api/internal/programevent"
@@ -36,7 +35,6 @@ type internalContentServiceRegistration struct {
 	emailAuthoringReferences    *emailauthoringadapter.CampaignDeliveryReferences
 	legalRuntime                *legaladapter.Runtime
 	legalDependencies           legal.Dependencies
-	formDependencies            formdomain.Dependencies
 	mapThemes                   *maptheme.Service
 }
 
@@ -45,7 +43,6 @@ type internalContentServiceRegistration struct {
 type internalContentServices struct {
 	emailTemplate  *emailauthoring.InternalEmailTemplateService
 	campaign       *campaign.InternalCampaignService
-	form           *formdomain.InternalFormService
 	legalDocuments *legal.AIDocumentService
 }
 
@@ -54,7 +51,6 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	mux := deps.mux
 	cfg := deps.cfg
 	db := deps.db
-	servicePublisher := deps.servicePublisher
 	workerPublisher := deps.workerPublisher
 	kratosClient := deps.kratosClient
 	spicedbClient := deps.spicedbClient
@@ -68,7 +64,6 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	emailAuthoringReferences := r.emailAuthoringReferences
 	legalRuntime := r.legalRuntime
 	legalDependencies := r.legalDependencies
-	formDependencies := r.formDependencies
 	// Internal API services are not browser/session authenticated and must not
 	// be exposed via Oathkeeper. Every handler is protected below by the exact
 	// caller-scoped service credential; private-network placement is additional
@@ -151,11 +146,6 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	mux.Handle(internalPrivacyPath, internalRPCTrust.collab(internalPrivacyHandler))
 	slog.Info("Registered internal service", "path", internalPrivacyPath)
 
-	internalFormService := formdomain.NewAuditedInternalFormService(db, servicePublisher, telemetryWriter, spicedbClient, formDependencies)
-	internalFormPath, internalFormHandler := intrav1connect.NewInternalFormServiceHandler(internalFormService, internalHandlerOpts...)
-	mux.Handle(internalFormPath, internalRPCTrust.collab(internalFormHandler))
-	slog.Info("Registered internal service", "path", internalFormPath)
-
 	legalAIDocumentService, err := legal.NewAIDocumentService(legal.AIDocumentDeps{
 		DB: db, ContentBlocks: contentBlockStore, SpiceDB: spicedbClient, OG: legalRuntime, Audit: telemetryWriter,
 	})
@@ -165,7 +155,6 @@ func (r internalContentServiceRegistration) register() (internalContentServices,
 	return internalContentServices{
 		emailTemplate:  internalEmailTemplateService,
 		campaign:       internalCampaignService,
-		form:           internalFormService,
 		legalDocuments: legalAIDocumentService,
 	}, nil
 }

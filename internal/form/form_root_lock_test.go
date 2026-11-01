@@ -4,14 +4,18 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/testutil/sqlitetest"
 )
 
-func TestFormTranslationApplyFenceAllowsUnpublishedRootAndRejectsDeletedRoot(t *testing.T) {
+func TestFormRootLockAllowsUnpublishedRootAndRejectsDeletedRoot(t *testing.T) {
 	db, err := sqlitetest.Open(t, sqlite.Open, &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`CREATE TABLE form (
@@ -25,15 +29,15 @@ func TestFormTranslationApplyFenceAllowsUnpublishedRootAndRejectsDeletedRoot(t *
 		formID, "FORM_STATUS_DRAFT",
 	).Error)
 
-	applyFence := func() error {
+	lock := func() error {
 		return db.Transaction(func(tx *gorm.DB) error {
-			return LockTranslationRoot(t.Context(), tx, formID)
+			var form model.Form
+			return lockFormRoot(t.Context(), tx, formID, &form, domainerr.ResourceNotFound("form", formID), "id")
 		})
 	}
 
-	require.NoError(t, applyFence(), "an already-submitted translation job may apply to a draft Form")
+	require.NoError(t, lock(), "a draft Form root is lockable")
 	require.NoError(t, db.Exec("DELETE FROM form WHERE id = ?", formID).Error)
-	err = applyFence()
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err),
-		"a deleted Form root must reject an existing translation job")
+	err = lock()
+	require.Equal(t, connect.CodeNotFound, errs.Wrap(err).Code(), "a deleted Form root answers not found")
 }

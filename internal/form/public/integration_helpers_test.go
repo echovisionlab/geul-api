@@ -11,14 +11,19 @@ import (
 
 	formadapter "github.com/echovisionlab/geul-api/internal/adapters/form"
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
+	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
+	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/crypto"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/structured"
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
@@ -138,20 +143,41 @@ func newFormPublicOGRefresher(db *gorm.DB, cdnDomain string) *og.Refresher {
 	return og.NewRefresher(planner, og.NewResolver(formogadapter.NewRequests()))
 }
 
-func newPublicManageFormService(t *testing.T, db *gorm.DB, adminIdentityID string) *formdomain.FormService {
+func newPublicManageFormService(t *testing.T, db *gorm.DB, _ string) *formdomain.ConnectHandler {
 	t.Helper()
-	assets := formadapter.NewAssets("https://cdn.example.com")
 	contentBlocks, err := contentblock.NewGeneratedStore(formPublicFileReuseAuthorizer{})
 	require.NoError(t, err)
-	return formdomain.NewFormService(
-		db,
-		crypto.NewPasswordHasher(&crypto.Argon2idParams{Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 8, KeyLength: 16}),
-		formPublicIdentityManager{identity: &auth.Identity{ID: adminIdentityID, State: auth.KratosStateActive, Traits: structured.Fields{"preferred_locale": "en"}}},
-		testutil.IntegrationSpiceDB(t),
-		formdomain.Dependencies{
-			ContentBlocks: contentBlocks,
-			Assets:        assets, PublicAssets: assets, Routes: formadapter.NewRoutes(), Translation: formadapter.NewTranslation(),
-			OG: formogadapter.NewOG("https://cdn.example.com", newFormPublicOGRefresher(db, "https://cdn.example.com")),
-		},
-	)
+	spiceDB := testutil.IntegrationSpiceDB(t)
+	forms, err := formdomain.NewService(formdomain.Deps{
+		DB:            db,
+		SpiceDB:       spiceDB,
+		Password:      crypto.NewPasswordHasher(&crypto.Argon2idParams{Memory: 64, Iterations: 1, Parallelism: 1, SaltLength: 8, KeyLength: 16}),
+		ContentBlocks: contentBlocks,
+		Assets:        formadapter.NewAssets("https://cdn.example.com"),
+		OG:            formogadapter.NewOG("https://cdn.example.com", newFormPublicOGRefresher(db, "https://cdn.example.com")),
+		Routes:        formadapter.NewRoutes(),
+		Collaboration: formadapter.NewCollaboration(spiceDB),
+		Members:       memberadapter.PreferredLocales{},
+		ShareLinks:    sharelinkadapter.FormLinks{},
+		Signals:       &mq.Publisher{},
+		Audit:         apitelemetry.NewDurableWriter(db),
+	})
+	require.NoError(t, err)
+	return formdomain.NewConnectHandler(forms)
+}
+
+// newPublicFormHandlerForIntegration composes the public Form boundary the
+// server composes; a nil audit appender is the durable telemetry writer.
+func newPublicFormHandlerForIntegration(t *testing.T, db *gorm.DB, password *crypto.PasswordHasher, audit domainaudit.Appender) *ConnectHandler {
+	t.Helper()
+	if audit == nil {
+		audit = apitelemetry.NewDurableWriter(db)
+	}
+	forms, err := NewService(Deps{
+		DB: db, SpiceDB: testutil.IntegrationSpiceDB(t), Password: password,
+		Assets:  formadapter.NewAssets("https://cdn.example.com"),
+		Members: memberadapter.PreferredLocales{}, ShareLinks: sharelinkadapter.FormLinks{}, Audit: audit,
+	})
+	require.NoError(t, err)
+	return NewConnectHandler(forms)
 }

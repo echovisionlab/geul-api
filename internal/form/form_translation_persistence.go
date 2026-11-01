@@ -7,11 +7,12 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/echovisionlab/geul-api/internal/translation"
+	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -38,20 +39,20 @@ func ApplyProviderTranslationCandidateWithDB(
 	input translation.EntryWrite,
 	auditWriter domainaudit.Appender,
 ) error {
-	if tx == nil || store == nil || job == nil || candidate == nil || auditWriter == nil {
+	if tx == nil || store == nil || job == nil || candidate == nil {
 		return errors.New("form provider translation dependencies are required")
 	}
 	if job.EntityType != "form" || !IsValidUUID(job.EntityID) ||
 		strings.TrimSpace(job.TargetLocale) == "" ||
 		strings.TrimSpace(job.RequestedByMemberID) == "" {
-		return errs.InvalidArgument("translation_job", "Form provider translation identity is invalid")
+		return domainerr.InvalidField("translation_job", "Form provider translation identity is invalid")
 	}
 	if input.Now.IsZero() {
-		return errs.InvalidArgument("now", "Form provider translation time is required")
+		return domainerr.InvalidField("now", "Form provider translation time is required")
 	}
 	patch, ok := candidate.ProviderPatch()
 	if !ok {
-		return errs.InvalidArgument("candidate", "Form provider unit patch is required")
+		return domainerr.InvalidField("candidate", "Form provider unit patch is required")
 	}
 
 	root, err := loadFormAIDocumentRoot(ctx, tx, job.EntityID, clause.LockingStrengthUpdate)
@@ -65,10 +66,10 @@ func ApplyProviderTranslationCandidateWithDB(
 		return err
 	}
 	if !sourceExists {
-		return errs.FailedPrecondition("Form source locale document is missing")
+		return domainerr.Precondition("Form source locale document is missing")
 	}
 	if err := validateCanonicalFormSchema(source.Schema); err != nil {
-		return errs.WithCause(errs.FailedPrecondition("Form source locale document is invalid"), failurecause.ServerFault(err))
+		return domainerr.Precondition("Form source locale document is invalid").WithCause(failurecause.ServerFault(err))
 	}
 
 	sourceTitle := ""
@@ -80,7 +81,7 @@ func ApplyProviderTranslationCandidateWithDB(
 		patch.Results,
 	)
 	if err != nil {
-		return errs.InvalidArgument("candidate", err.Error())
+		return domainerr.InvalidField("candidate", err.Error())
 	}
 	// Title is an optional stable scalar handle. Explicit empty still means the
 	// handle exists and accepts the request-time result; only SQL NULL removes
@@ -92,10 +93,10 @@ func ApplyProviderTranslationCandidateWithDB(
 		source.Schema, replacement.ContentJSON,
 	)
 	if err != nil {
-		return errs.InvalidArgument("candidate", err.Error())
+		return domainerr.InvalidField("candidate", err.Error())
 	}
 	if err := validateFormAIDocumentTargetSchema(source.Schema, canonicalSchema); err != nil {
-		return errs.InvalidArgument("candidate", err.Error())
+		return domainerr.InvalidField("candidate", err.Error())
 	}
 
 	current, currentExists := source, true
@@ -119,14 +120,12 @@ func ApplyProviderTranslationCandidateWithDB(
 		Schema:                   canonicalSchema,
 		ContributorMemberID:      strings.TrimSpace(job.RequestedByMemberID),
 	}
-	service := &InternalFormService{contentBlocks: store, auditWriter: auditWriter}
-	changed, err := service.persistAIDocumentMutation(
-		ctx, tx, mutation, root, source, current, currentExists,
-	)
+	changed, err := persistAIDocumentMutation(ctx, tx, store, mutation, root, source, current, currentExists)
 	if err != nil || !changed {
 		return err
 	}
-	return service.appendAIDocumentAudit(ctx, tx, mutation)
+	return domainaudit.AppendMember(ctx, tx, auditWriter, mutation.ContributorMemberID, sharedtelemetry.AuditFormUpdated,
+		formLocaleContentRecord(mutation.FormID, mutation.Locale, formAIDocumentAuditOperation(mutation)))
 }
 
 func formJSONValueOrNil(value []byte) structured.Value {

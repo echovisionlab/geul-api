@@ -29,22 +29,16 @@ type exactFormDocumentAPI struct {
 	compilerCalls int
 }
 
-func (a *exactFormDocumentAPI) LoadAIDocumentState(
-	context.Context,
-	string,
-	string,
-) (formdomain.AIDocumentState, error) {
+func (a *exactFormDocumentAPI) LoadAIDocument(context.Context, formdomain.LoadAIDocumentQuery) (formdomain.AIDocumentState, error) {
 	a.loadCalls++
 	return a.state, nil
 }
 
 func (a *exactFormDocumentAPI) ExecuteAIDocumentMutation(
 	_ context.Context,
-	formID string,
-	locale string,
-	_ formdomain.AIDocumentExecutionMode,
-	compiler formdomain.AIDocumentMutationCompiler,
+	command formdomain.ExecuteAIDocumentMutationCommand,
 ) (formdomain.AIDocumentMutationResult, error) {
+	formID, locale, compiler := command.FormID, command.Locale, command.Compile
 	a.executeCalls++
 	if a.authorizeErr != nil {
 		return formdomain.AIDocumentMutationResult{}, a.authorizeErr

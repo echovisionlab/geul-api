@@ -10,9 +10,6 @@ import (
 	"strconv"
 	"time"
 
-	"connectrpc.com/connect"
-
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -21,32 +18,36 @@ import (
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
-// FormService implements the public FormService
-func (s *FormService) GetDashboard(
-	ctx context.Context,
-	req *connect.Request[openv1.GetFormDashboardRequest],
-) (*connect.Response[openv1.GetFormDashboardResponse], error) {
-	if req.Msg.ShareToken == "" {
-		return nil, errs.NotFoundMsg("form not found")
-	}
+// GetFormDashboardQuery reads the shared submission dashboard of a Form
+// through its dashboard share link.
+type GetFormDashboardQuery struct {
+	Slug           string
+	ShareToken     string
+	SharePassword  *string
+	AcceptLanguage string
+}
 
-	form, err := s.findFormBySlugOrID(ctx, req.Msg.Slug)
+// GetFormDashboard returns the dashboard a valid dashboard share link opens;
+// without one the Form is not found.
+func (s *Service) GetFormDashboard(ctx context.Context, query GetFormDashboardQuery) (*openv1.GetFormDashboardResponse, error) {
+	if query.ShareToken == "" {
+		return nil, errFormNotFound()
+	}
+	form, err := s.findFormBySlugOrID(ctx, query.Slug)
 	if err != nil {
 		return nil, err
 	}
-
-	shareToken := req.Msg.ShareToken
+	shareToken := query.ShareToken
 	shareTokenState := s.validateShareToken(
 		ctx,
 		form,
 		&shareToken,
-		req.Msg.SharePassword,
+		query.SharePassword,
 		managev1.ShareLinkEntityType_SHARE_LINK_ENTITY_TYPE_FORM_DASHBOARD,
 	)
 	if !shareTokenState.valid {
-		return nil, errs.NotFoundMsg("form not found")
+		return nil, errFormNotFound()
 	}
-
 	if err := s.enforceFormAccess(ctx, form, formAccessOptions{
 		context:                  openv1.FormAccessContext_FORM_ACCESS_CONTEXT_URL,
 		hasValidPreviewToken:     true,
@@ -59,15 +60,11 @@ func (s *FormService) GetDashboard(
 	}); err != nil {
 		return nil, err
 	}
-
-	dashboard, err := s.buildFormDashboard(ctx, form, req.Header().Get("Accept-Language"))
+	dashboard, err := s.buildFormDashboard(ctx, form, query.AcceptLanguage)
 	if err != nil {
 		return nil, err
 	}
-
-	return connect.NewResponse(&openv1.GetFormDashboardResponse{
-		Dashboard: dashboard,
-	}), nil
+	return &openv1.GetFormDashboardResponse{Dashboard: dashboard}, nil
 }
 
 func stringifyDashboardValue(value structured.Value) (string, bool) {
@@ -83,7 +80,7 @@ func stringifyDashboardValue(value structured.Value) (string, bool) {
 	}
 }
 
-func (s *FormService) buildFormDashboard(
+func (s *Service) buildFormDashboard(
 	ctx context.Context,
 	form *model.Form,
 	acceptLanguage string,
@@ -98,7 +95,7 @@ func (s *FormService) buildFormDashboard(
 		Where("form_id = ?", form.ID).
 		Order("created_at DESC").
 		Find(&submissions).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 
 	return buildFormDashboardFromSubmissions(ctx, form, sourceDocument, submissions, time.Now()), nil
@@ -111,81 +108,9 @@ func buildFormDashboardFromSubmissions(
 	submissions []model.FormSubmission,
 	now time.Time,
 ) *openv1.FormDashboard {
-	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-	startOfWeek := startOfDay.AddDate(0, 0, -int(startOfDay.Weekday()))
-	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
-
-	var submissionsToday int32
-	var submissionsThisWeek int32
-	var submissionsThisMonth int32
-	fieldValues := make(map[string]map[string]int32)
 	fieldLabels := formdomain.ExtractFormFieldLabels(sourceDocument.Schema)
 	maps.Copy(fieldLabels, formSubmissionMetaFieldLabels)
-
-	for _, submission := range submissions {
-		createdAt := submission.CreatedAt
-		if createdAt.After(startOfDay) || createdAt.Equal(startOfDay) {
-			submissionsToday++
-		}
-		if createdAt.After(startOfWeek) || createdAt.Equal(startOfWeek) {
-			submissionsThisWeek++
-		}
-		if createdAt.After(startOfMonth) || createdAt.Equal(startOfMonth) {
-			submissionsThisMonth++
-		}
-
-		var data structured.Fields
-		if err := json.Unmarshal(submission.Data, &data); err != nil {
-			slog.ErrorContext(ctx, "Stored form submission is not valid JSON; skipping it in the dashboard", "domain", "form", "event", "form.operation_failed", "operation", "decode_dashboard_submission", "outcome", "failed", failurecause.Attr(err))
-		}
-
-		for fieldID, rawValue := range data {
-			value, ok := stringifyDashboardValue(rawValue)
-			if !ok {
-				continue
-			}
-			if _, exists := fieldValues[fieldID]; !exists {
-				fieldValues[fieldID] = make(map[string]int32)
-			}
-			fieldValues[fieldID][value]++
-		}
-	}
-
-	fieldStats := make([]*openv1.FormDashboardFieldStat, 0, len(fieldValues))
-	for fieldID, valueCounts := range fieldValues {
-		fieldLabel := fieldLabels[fieldID]
-		if fieldLabel == "" {
-			fieldLabel = fieldID
-		}
-
-		values := make([]*openv1.FormDashboardFieldValue, 0, len(valueCounts))
-		for value, count := range valueCounts {
-			values = append(values, &openv1.FormDashboardFieldValue{
-				Value: value,
-				Count: count,
-			})
-		}
-
-		sort.Slice(values, func(i, j int) bool {
-			if values[i].Count == values[j].Count {
-				return values[i].Value < values[j].Value
-			}
-			return values[i].Count > values[j].Count
-		})
-		if len(values) > 10 {
-			values = values[:10]
-		}
-
-		fieldStats = append(fieldStats, &openv1.FormDashboardFieldStat{
-			FieldId:    fieldID,
-			FieldLabel: fieldLabel,
-			Values:     values,
-		})
-	}
-
-	sort.Slice(fieldStats, func(i, j int) bool {
-		return fieldStats[i].FieldId < fieldStats[j].FieldId
-	})
+	periods := countFormDashboardPeriods(submissions, now)
 
 	formSlug := form.ID
 	if form.Slug != nil && *form.Slug != "" {
@@ -197,11 +122,88 @@ func buildFormDashboardFromSubmissions(
 		FormTitle:            sourceDocument.Title,
 		FormSlug:             formSlug,
 		TotalSubmissions:     int32(len(submissions)),
-		SubmissionsToday:     submissionsToday,
-		SubmissionsThisWeek:  submissionsThisWeek,
-		SubmissionsThisMonth: submissionsThisMonth,
-		FieldStats:           fieldStats,
+		SubmissionsToday:     periods.today,
+		SubmissionsThisWeek:  periods.thisWeek,
+		SubmissionsThisMonth: periods.thisMonth,
+		FieldStats:           formDashboardFieldStats(fieldLabels, countFormDashboardFieldValues(ctx, submissions)),
 	}
 }
 
-// VerifyPassword checks if the provided password is correct for a form
+// formDashboardPeriods counts the submissions created since the start of
+// the day, week and month.
+type formDashboardPeriods struct {
+	today, thisWeek, thisMonth int32
+}
+
+func countFormDashboardPeriods(submissions []model.FormSubmission, now time.Time) formDashboardPeriods {
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	startOfWeek := startOfDay.AddDate(0, 0, -int(startOfDay.Weekday()))
+	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	var periods formDashboardPeriods
+	for _, submission := range submissions {
+		createdAt := submission.CreatedAt
+		if !createdAt.Before(startOfDay) {
+			periods.today++
+		}
+		if !createdAt.Before(startOfWeek) {
+			periods.thisWeek++
+		}
+		if !createdAt.Before(startOfMonth) {
+			periods.thisMonth++
+		}
+	}
+	return periods
+}
+
+// countFormDashboardFieldValues counts each scalar value of each submitted
+// field.
+func countFormDashboardFieldValues(ctx context.Context, submissions []model.FormSubmission) map[string]map[string]int32 {
+	fieldValues := make(map[string]map[string]int32)
+	for _, submission := range submissions {
+		var data structured.Fields
+		if err := json.Unmarshal(submission.Data, &data); err != nil {
+			slog.ErrorContext(ctx, "Stored form submission is not valid JSON; skipping it in the dashboard", "domain", "form", "event", "form.operation_failed", "operation", "decode_dashboard_submission", "outcome", "failed", failurecause.Attr(err))
+		}
+		for fieldID, rawValue := range data {
+			value, ok := stringifyDashboardValue(rawValue)
+			if !ok {
+				continue
+			}
+			if _, exists := fieldValues[fieldID]; !exists {
+				fieldValues[fieldID] = make(map[string]int32)
+			}
+			fieldValues[fieldID][value]++
+		}
+	}
+	return fieldValues
+}
+
+// formDashboardFieldStats lists each field's ten most frequent values,
+// fields ordered by ID.
+func formDashboardFieldStats(fieldLabels map[string]string, fieldValues map[string]map[string]int32) []*openv1.FormDashboardFieldStat {
+	fieldStats := make([]*openv1.FormDashboardFieldStat, 0, len(fieldValues))
+	for fieldID, valueCounts := range fieldValues {
+		fieldLabel := fieldLabels[fieldID]
+		if fieldLabel == "" {
+			fieldLabel = fieldID
+		}
+		values := make([]*openv1.FormDashboardFieldValue, 0, len(valueCounts))
+		for value, count := range valueCounts {
+			values = append(values, &openv1.FormDashboardFieldValue{Value: value, Count: count})
+		}
+		sort.Slice(values, func(i, j int) bool {
+			if values[i].Count == values[j].Count {
+				return values[i].Value < values[j].Value
+			}
+			return values[i].Count > values[j].Count
+		})
+		if len(values) > 10 {
+			values = values[:10]
+		}
+		fieldStats = append(fieldStats, &openv1.FormDashboardFieldStat{FieldId: fieldID, FieldLabel: fieldLabel, Values: values})
+	}
+	sort.Slice(fieldStats, func(i, j int) bool {
+		return fieldStats[i].FieldId < fieldStats[j].FieldId
+	})
+	return fieldStats
+}

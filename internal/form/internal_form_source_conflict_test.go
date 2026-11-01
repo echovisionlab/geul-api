@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -19,7 +20,7 @@ func TestFormDocumentRevisionErrorsCarryTypedCollaborationConflicts(t *testing.T
 	}{
 		{
 			name:   "source document revision",
-			err:    formDocumentRevisionChangedConflict(),
+			err:    formDocumentRevisionChangedConflict(""),
 			reason: intrav1.CollaborationConflictReason_COLLABORATION_CONFLICT_REASON_DOCUMENT_REVISION_CHANGED,
 		},
 		{
@@ -36,12 +37,9 @@ func TestFormDocumentRevisionErrorsCarryTypedCollaborationConflicts(t *testing.T
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			if got := connect.CodeOf(testCase.err); got != connect.CodeFailedPrecondition {
+			connectErr := errs.Wrap(testCase.err)
+			if got := connectErr.Code(); got != connect.CodeFailedPrecondition {
 				t.Fatalf("code = %v, want %v", got, connect.CodeFailedPrecondition)
-			}
-			connectErr, ok := testCase.err.(*connect.Error) //nolint:errorlint // asserts the classified error is returned directly
-			if !ok {
-				t.Fatalf("error type = %T, want *connect.Error", testCase.err)
 			}
 			if len(connectErr.Details()) != 1 {
 				t.Fatalf("details = %d, want 1", len(connectErr.Details()))
@@ -70,12 +68,5 @@ func TestNormalizeFormDocumentSaveErrorPreservesUnrelatedErrors(t *testing.T) {
 	want = fmt.Errorf("save form document: %w", &pgconn.PgError{Code: "40P01"})
 	if got := normalizeFormDocumentSaveError(want); got != want { //nolint:errorlint // asserts the error is returned unchanged
 		t.Fatalf("deadlock error = %v, want original error", got)
-	}
-}
-
-func TestFormSerializationFailureIsRetryableWithoutInventedRevision(t *testing.T) {
-	err := normalizeFormDocumentSaveError(fmt.Errorf("save: %w", &pgconn.PgError{Code: "40001"}))
-	if connect.CodeOf(err) != connect.CodeAborted {
-		t.Fatalf("got %v", err)
 	}
 }

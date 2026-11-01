@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -21,11 +22,11 @@ func TestApplyFormSubmissionFiltersBuildsBoundLiteralSearchAndDateRange(t *testi
 	before := from.Add(time.Hour)
 	search := `A%_\B`
 	countryCode := "us"
-	query, err := applyFormSubmissionFilters(db.Model(&model.FormSubmission{}), &managev1.ListFormSubmissionsRequest{
-		Search:          &search,
-		CountryCode:     &countryCode,
-		CreatedAtFrom:   timestamppb.New(from),
-		CreatedAtBefore: timestamppb.New(before),
+	query, err := applyFormSubmissionFilters(db.Model(&model.FormSubmission{}), ListFormSubmissionsQuery{
+		Search:          search,
+		CountryCode:     countryCode,
+		CreatedAtFrom:   &from,
+		CreatedAtBefore: &before,
 	})
 	require.NoError(t, err)
 
@@ -43,37 +44,38 @@ func TestApplyFormSubmissionFiltersBuildsBoundLiteralSearchAndDateRange(t *testi
 }
 
 func TestApplyFormSubmissionFiltersRejectsInvalidBoundsAndOversizedInput(t *testing.T) {
+	bound := time.Unix(100, 0)
 	tests := []struct {
-		name string
-		req  *managev1.ListFormSubmissionsRequest
+		name  string
+		query ListFormSubmissionsQuery
 	}{
 		{
-			name: "oversized search",
-			req:  &managev1.ListFormSubmissionsRequest{Search: stringPointer(strings.Repeat("x", formSubmissionSearchMaxRunes+1))},
+			name:  "oversized search",
+			query: ListFormSubmissionsQuery{Search: strings.Repeat("x", formSubmissionSearchMaxRunes+1)},
 		},
 		{
-			name: "invalid country code",
-			req:  &managev1.ListFormSubmissionsRequest{CountryCode: stringPointer("USA")},
+			name:  "invalid country code",
+			query: ListFormSubmissionsQuery{CountryCode: "USA"},
 		},
 		{
-			name: "empty timestamp range",
-			req: &managev1.ListFormSubmissionsRequest{
-				CreatedAtFrom:   timestamppb.New(time.Unix(100, 0)),
-				CreatedAtBefore: timestamppb.New(time.Unix(100, 0)),
-			},
-		},
-		{
-			name: "invalid protobuf timestamp",
-			req:  &managev1.ListFormSubmissionsRequest{CreatedAtFrom: &timestamppb.Timestamp{Seconds: 253402300800}},
+			name:  "empty timestamp range",
+			query: ListFormSubmissionsQuery{CreatedAtFrom: &bound, CreatedAtBefore: &bound},
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := applyFormSubmissionFilters(newFormSubmissionQueryDryRunDB(t), test.req)
+			_, err := applyFormSubmissionFilters(newFormSubmissionQueryDryRunDB(t), test.query)
 			require.Error(t, err)
-			require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+			require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 		})
 	}
+}
+
+func TestListFormSubmissionsTranslatorRejectsInvalidProtobufTimestamp(t *testing.T) {
+	_, err := listFormSubmissionsQuery(&managev1.ListFormSubmissionsRequest{CreatedAtFrom: &timestamppb.Timestamp{Seconds: 253402300800}})
+	require.Error(t, err)
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
+	require.Equal(t, "created_at_from: must be a valid timestamp", errs.Wrap(err).Message())
 }
 
 func TestApplyFormSubmissionSortAllowsAliasesAndKeepsStableTies(t *testing.T) {
@@ -103,11 +105,11 @@ func TestApplyFormSubmissionSortAllowsAliasesAndKeepsStableTies(t *testing.T) {
 		Order: commonv1.SortOrder_SORT_ORDER_ASC,
 	}})
 	require.Error(t, err)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 
 	_, err = applyFormSubmissionSort(newFormSubmissionQueryDryRunDB(t), []*commonv1.SortSpec{{Field: "created_at"}})
 	require.Error(t, err)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Equal(t, connect.CodeInvalidArgument, errs.Wrap(err).Code())
 }
 
 func newFormSubmissionQueryDryRunDB(t *testing.T) *gorm.DB {
@@ -118,5 +120,3 @@ func newFormSubmissionQueryDryRunDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	return db
 }
-
-func stringPointer(value string) *string { return &value }

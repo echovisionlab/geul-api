@@ -2,88 +2,101 @@ package form
 
 import (
 	"errors"
+	"slices"
+	"strings"
 
-	"connectrpc.com/connect"
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/crypto"
-	"github.com/echovisionlab/geul-api/internal/dependencycheck"
-	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"gorm.io/gorm"
+
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/contentblock"
+	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/crypto"
+	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/mutation"
+	"github.com/echovisionlab/geul-api/internal/securityaccess"
 )
 
-// FormService implements the FormService Connect handler
-type FormService struct {
-	managev1connect.UnimplementedFormServiceHandler
-	db             *gorm.DB
-	spiceDB        *auth.SpiceDBClient
-	authorization  formPermissionChecker
-	password       *crypto.PasswordHasher
-	kratosClient   auth.IdentityManager
-	assets         Assets
-	og             OG
-	routes         Routes
-	securityAccess SecurityAccess
-	translation    Translation
-	auditWriter    domainaudit.Appender
-	contentBlocks  *contentblock.Store
+// AuditAppender persists the Form domain audit and the personal-data access
+// records of submission reads.
+type AuditAppender interface {
+	securityaccess.Appender
+	domainaudit.Appender
 }
 
-func securityAccessUnavailable() *connect.Error {
-	return connect.NewError(connect.CodeUnavailable, errors.New("personal data access record is temporarily unavailable"))
+// Deps are the collaborators of the Form use cases. Every field is required;
+// NewService rejects a missing one.
+type Deps struct {
+	DB       *gorm.DB
+	SpiceDB  *auth.SpiceDBClient
+	Password *crypto.PasswordHasher
+	// ContentBlocks advances the Form Content Document revision.
+	ContentBlocks *contentblock.Store
+	Assets        Assets
+	OG            OG
+	Routes        Routes
+	// Collaboration fences a collaboration save to its origin Member.
+	Collaboration Collaboration
+	Members       Members
+	ShareLinks    ShareLinks
+	Signals       contentsignal.Publisher
+	Audit         AuditAppender
 }
 
-func NewAuditedFormService(
-	db *gorm.DB,
-	password *crypto.PasswordHasher,
-	kratosClient auth.IdentityManager,
-	auditWriter domainaudit.Appender,
-	spiceDB *auth.SpiceDBClient,
-	dependencies Dependencies,
-) *FormService {
-	if auditWriter == nil {
-		panic("form domain audit writer is required")
+func (d Deps) validate() error {
+	var missing []string
+	for name, absent := range map[string]bool{
+		"DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Password": d.Password == nil,
+		"ContentBlocks": d.ContentBlocks == nil, "Assets": d.Assets == nil, "OG": d.OG == nil,
+		"Routes": d.Routes == nil, "Collaboration": d.Collaboration == nil, "Members": d.Members == nil,
+		"ShareLinks": d.ShareLinks == nil, "Signals": d.Signals == nil, "Audit": d.Audit == nil,
+	} {
+		if absent {
+			missing = append(missing, name)
+		}
 	}
-	if dependencies.SecurityAccess == nil {
-		panic("form security access recorder is required")
+	if len(missing) != 0 {
+		slices.Sort(missing)
+		return errors.New("form dependencies are required: " + strings.Join(missing, ", "))
 	}
-	service := NewFormService(db, password, kratosClient, spiceDB, dependencies)
-	service.securityAccess = dependencies.SecurityAccess
-	service.auditWriter = auditWriter
-	return service
+	return nil
 }
 
-// NewFormService creates a new FormService
-func NewFormService(
-	db *gorm.DB,
-	password *crypto.PasswordHasher,
-	kratosClient auth.IdentityManager,
-	spiceDB *auth.SpiceDBClient,
-	dependencies Dependencies,
-) *FormService {
-	dependencycheck.New("FormService").
-		RequireNotNil(db, "db").
-		RequireNotNil(password, "password").
-		RequireNotNil(kratosClient, "kratosClient").
-		RequireNotNil(spiceDB, "spiceDB").
-		RequireNotNil(dependencies.Assets, "assets").
-		RequireNotNil(dependencies.OG, "og").
-		RequireNotNil(dependencies.Routes, "routes").
-		RequireNotNil(dependencies.Translation, "translation").
-		RequireNotNil(dependencies.ContentBlocks, "contentBlocks").
-		Validate()
-	return &FormService{
-		db:             db,
-		spiceDB:        spiceDB,
-		authorization:  newFormPermissionChecker(spiceDB, db),
-		password:       password,
-		kratosClient:   kratosClient,
-		assets:         dependencies.Assets,
-		og:             dependencies.OG,
-		routes:         dependencies.Routes,
-		translation:    dependencies.Translation,
-		securityAccess: dependencies.SecurityAccess,
-		contentBlocks:  dependencies.ContentBlocks,
+// Service holds the Form use cases: management, submissions, the
+// editor-collab document boundary and the AI document boundary. Adapters
+// translate their requests into its commands and queries.
+type Service struct {
+	db      *gorm.DB
+	spiceDB *auth.SpiceDBClient
+	// authorization decides Form object actions; it is spiceDB.
+	authorization      formPermissionChecker
+	password           *crypto.PasswordHasher
+	contentBlocks      *contentblock.Store
+	assets             Assets
+	og                 OG
+	routes             Routes
+	collaboration      Collaboration
+	members            Members
+	shareLinks         ShareLinks
+	signals            contentsignal.Publisher
+	audit              domainaudit.Appender
+	personalDataAccess *securityaccess.Recorder
+	mutations          *mutation.Runner
+}
+
+// NewService validates deps and returns the Form use cases.
+func NewService(deps Deps) (*Service, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
 	}
+	mutations, err := mutation.NewRunner(deps.DB, deps.SpiceDB, deps.Audit)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{
+		db: deps.DB, spiceDB: deps.SpiceDB, authorization: authz.NewSpiceDBResourceChecker(deps.SpiceDB, deps.DB, "form"),
+		password: deps.Password, contentBlocks: deps.ContentBlocks, assets: deps.Assets, og: deps.OG, routes: deps.Routes,
+		collaboration: deps.Collaboration, members: deps.Members, shareLinks: deps.ShareLinks, signals: deps.Signals,
+		audit: deps.Audit, personalDataAccess: securityaccess.New(deps.Audit), mutations: mutations,
+	}, nil
 }

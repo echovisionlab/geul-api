@@ -4,22 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"google.golang.org/protobuf/proto"
 	"gorm.io/gorm"
 )
-
-// AsyncPublisher is the command and signal surface used by Form translation planning.
-type AsyncPublisher interface {
-	EnqueueProtobuf(context.Context, string, string, proto.Message) error
-	// content.updated is scheduled only in the owning mutation transaction.
-	contentsignal.Publisher
-}
 
 // Assets owns Form integration with File attachment and public asset bindings.
 type Assets interface {
@@ -43,12 +31,6 @@ type Routes interface {
 	SlugAvailable(context.Context, *gorm.DB, string, string) (bool, error)
 	EnsureAvailable(context.Context, *gorm.DB, string, string) error
 	EnsureAvailableLocked(context.Context, *gorm.DB, string, string) error
-}
-
-// SecurityAccess records reads of Form submission personal data.
-type SecurityAccess interface {
-	AppendFormSubmissions(context.Context, string) error
-	AppendFormSubmission(context.Context, string) error
 }
 
 // LocalizedOGDisposition is the Form-owned public-read view of a localized OG generation.
@@ -84,30 +66,22 @@ type LocalizationSelection struct {
 	OmitSourceOgFallback bool
 }
 
-// Translation owns Form's root-locale defaults and collaboration fence used by Forms.
-type Translation interface {
-	ResolveInitialSourceLocale(context.Context, *gorm.DB, auth.IdentityManager, string) string
-	NormalizeInitialSourceLocale(context.Context, *gorm.DB, string) string
-	DefaultLocale(context.Context, *gorm.DB) string
-	LockRoot(context.Context, *gorm.DB, string) error
-	RequireMutationContributor(
-		context.Context,
-		*gorm.DB,
-		*auth.SpiceDBClient,
-		intrav1.CollaborationResourceType,
-		string,
-		string,
-	) error
+// Collaboration re-resolves the one origin Member a collaboration save is
+// attributed to, inside the save's transaction.
+type Collaboration interface {
+	RequireCurrentContributor(ctx context.Context, tx *gorm.DB, formID, memberID string) error
 }
 
-type Dependencies struct {
-	ContentBlocks  *contentblock.Store
-	Assets         Assets
-	OG             OG
-	Routes         Routes
-	SecurityAccess SecurityAccess
-	Translation    Translation
-	PublicAssets   PublicAssets
+// Members reads the Member rows Forms need; Member owns them.
+type Members interface {
+	// PreferredLocale returns the preferred locale of a live Member, or nil.
+	PreferredLocale(ctx context.Context, db *gorm.DB, memberID string) (*string, error)
+}
+
+// ShareLinks removes a deleted Form's share links in its transaction; Share
+// Link owns them.
+type ShareLinks interface {
+	DeleteFormShareLinks(ctx context.Context, tx *gorm.DB, formID string) error
 }
 
 type TranslationDocumentState struct {

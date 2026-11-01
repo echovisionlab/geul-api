@@ -30,7 +30,7 @@ type translationServiceRegistration struct {
 	emailAuthoringReferences emailauthoring.CampaignDeliveryReferences
 	menuService              *menu.Service
 	legalDocuments           *legal.AIDocumentService
-	internalFormService      *formdomain.InternalFormService
+	internalFormService      *formdomain.Service
 	programEventService      *programevent.Service
 	seriesService            *series.Service
 	fileService              *filemedia.FileService

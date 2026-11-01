@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,7 +56,7 @@ func TestRequireFormActionRejectsUnknownActionWithoutAuthorizationCall(t *testin
 	checker := &recordingFormPermissionChecker{}
 	err := requireFormAction(t.Context(), checker, "form-id", formObjectAction(255))
 	require.Error(t, err)
-	assert.Equal(t, connect.CodeInternal, connect.CodeOf(err))
+	assert.Equal(t, connect.CodeInternal, errs.Wrap(err).Code())
 	assert.Empty(t, checker.calls)
 }
 

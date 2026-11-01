@@ -185,7 +185,7 @@ func TestEvaluateFormAccessPolicyMatrix(t *testing.T) {
 		},
 	}
 
-	service := &FormService{spiceDB: spiceDB}
+	service := &Service{spiceDB: spiceDB}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			reason, err := service.evaluateFormAccess(tc.ctx, tc.form(), tc.opts)

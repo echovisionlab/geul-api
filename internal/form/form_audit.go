@@ -1,92 +1,66 @@
 package form
 
 import (
-	"context"
-
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
+	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
-func (s *FormService) appendFormCreatedAudit(ctx context.Context, tx *gorm.DB, formID string) error {
-	if s.auditWriter == nil {
-		return nil
-	}
-	return domainaudit.AppendRequest(
-		ctx, tx, s.auditWriter, sharedtelemetry.AuditFormCreated,
-		func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewFormCreatedAuditRecord(m, formID)
-		},
-	)
+func formCreatedAudit(formID string) mutation.Audit {
+	return mutation.RequestAudit(sharedtelemetry.AuditFormCreated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewFormCreatedAuditRecord(m, formID)
+	})
 }
 
-func (s *FormService) appendFormDeletedAudit(ctx context.Context, tx *gorm.DB, formID string) error {
-	if s.auditWriter == nil {
-		return nil
-	}
-	return domainaudit.AppendRequest(
-		ctx, tx, s.auditWriter, sharedtelemetry.AuditFormDeleted,
-		func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewFormDeletedAuditRecord(m, formID)
-		},
-	)
+func formDeletedAudit(formID string) mutation.Audit {
+	return mutation.RequestAudit(sharedtelemetry.AuditFormDeleted, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewFormDeletedAuditRecord(m, formID)
+	})
 }
 
-func (s *FormService) appendFormSettingsAudit(ctx context.Context, tx *gorm.DB, formID string, fields []string) error {
-	if s.auditWriter == nil || len(fields) == 0 {
-		return nil
+func formSettingsAudit(formID string, fields []string) mutation.Audit {
+	if len(fields) == 0 {
+		return mutation.Unchanged()
 	}
-	return domainaudit.AppendRequest(
-		ctx, tx, s.auditWriter, sharedtelemetry.AuditFormUpdated,
-		func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewFormSettingsAuditRecord(m, formID, fields)
-		},
-	)
+	return mutation.RequestAudit(sharedtelemetry.AuditFormUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewFormSettingsAuditRecord(m, formID, fields)
+	})
 }
 
-func (s *FormService) appendFormLifecycleAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	formID string,
-	previous, next sharedtelemetry.AuditState,
-) error {
-	if s.auditWriter == nil {
-		return nil
+func formLifecycleAudit(formID string, previous, next model.FormStatus) mutation.Audit {
+	if previous == next {
+		return mutation.Unchanged()
 	}
-	return domainaudit.AppendRequest(
-		ctx, tx, s.auditWriter, sharedtelemetry.AuditFormUpdated,
-		func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewFormLifecycleAuditRecord(m, formID, previous, next)
-		},
-	)
+	return mutation.RequestAudit(sharedtelemetry.AuditFormUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewFormLifecycleAuditRecord(m, formID, formAuditState(previous), formAuditState(next))
+	})
 }
 
-func (s *FormService) appendFormFeaturedImageAudit(
-	ctx context.Context,
-	tx *gorm.DB,
-	formID, fileID string,
-	operation sharedtelemetry.AuditCollectionOperation,
-) error {
-	if s.auditWriter == nil {
-		return nil
-	}
-	return domainaudit.AppendRequest(
-		ctx, tx, s.auditWriter, sharedtelemetry.AuditFormUpdated,
-		func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewFormFeaturedImageAuditRecord(m, formID, fileID, operation)
-		},
-	)
+func formFeaturedImageAudit(formID, fileID string, operation sharedtelemetry.AuditCollectionOperation) mutation.Audit {
+	return mutation.RequestAudit(sharedtelemetry.AuditFormUpdated, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewFormFeaturedImageAuditRecord(m, formID, fileID, operation)
+	})
 }
 
-func (s *FormService) appendFormSubmissionDeletedAudit(ctx context.Context, tx *gorm.DB, submissionID string) error {
-	if s.auditWriter == nil {
-		return nil
+func formSubmissionDeletedAudit(submissionID string) mutation.Audit {
+	return mutation.RequestAudit(sharedtelemetry.AuditFormSubmissionDeleted, func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewFormSubmissionDeletedAuditRecord(m, submissionID)
+	})
+}
+
+// formLocaleContentRecord builds the record of one changed Form locale. A
+// collaboration save and an AI document edit attribute it to their origin
+// Member; an XLIFF import to the request.
+func formLocaleContentRecord(formID, locale string, operation sharedtelemetry.AuditItemOperation) domainaudit.Builder {
+	return func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+		return sharedtelemetry.NewFormLocaleContentAuditRecord(metadata, formID, locale, operation)
 	}
-	return domainaudit.AppendRequest(
-		ctx, tx, s.auditWriter, sharedtelemetry.AuditFormSubmissionDeleted,
-		func(m sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
-			return sharedtelemetry.NewFormSubmissionDeletedAuditRecord(m, submissionID)
-		},
-	)
+}
+
+func formAuditState(status model.FormStatus) sharedtelemetry.AuditState {
+	if status == model.FormStatusPublished {
+		return sharedtelemetry.AuditStatePublished
+	}
+	return sharedtelemetry.AuditStateDraft
 }

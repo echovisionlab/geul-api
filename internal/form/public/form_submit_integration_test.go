@@ -16,11 +16,9 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	formadapter "github.com/echovisionlab/geul-api/internal/adapters/form"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
@@ -330,18 +328,12 @@ func testFormPasswordHasher() *crypto.PasswordHasher {
 // These constructors keep the legacy public integration package exercising
 // the migrated Form boundary until the remaining public integration suite is
 // split by domain.
-func newPublicFormSubmissionService(t *testing.T, db *gorm.DB) *FormService {
+func newPublicFormSubmissionService(t *testing.T, db *gorm.DB) *ConnectHandler {
 	t.Helper()
-	assets := formadapter.NewAssets("https://cdn.example.com")
-	return NewFormService(db, testFormPasswordHasher(), testutil.IntegrationSpiceDB(t), formdomain.Dependencies{
-		PublicAssets: assets,
-	})
+	return newPublicFormHandlerForIntegration(t, db, testFormPasswordHasher(), nil)
 }
 
-func newAuditedPublicFormSubmissionService(t *testing.T, db *gorm.DB, audit domainaudit.Appender) *FormService {
+func newAuditedPublicFormSubmissionService(t *testing.T, db *gorm.DB, audit domainaudit.Appender) *ConnectHandler {
 	t.Helper()
-	assets := formadapter.NewAssets("https://cdn.example.com")
-	return NewAuditedFormService(db, testFormPasswordHasher(), testutil.IntegrationSpiceDB(t), audit, formdomain.Dependencies{
-		PublicAssets: assets,
-	})
+	return newPublicFormHandlerForIntegration(t, db, testFormPasswordHasher(), audit)
 }

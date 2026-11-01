@@ -45,17 +45,11 @@ type formPort struct {
 }
 
 type formDocumentAPI interface {
-	LoadAIDocumentState(context.Context, string, string) (formdomain.AIDocumentState, error)
-	ExecuteAIDocumentMutation(
-		context.Context,
-		string,
-		string,
-		formdomain.AIDocumentExecutionMode,
-		formdomain.AIDocumentMutationCompiler,
-	) (formdomain.AIDocumentMutationResult, error)
+	LoadAIDocument(context.Context, formdomain.LoadAIDocumentQuery) (formdomain.AIDocumentState, error)
+	ExecuteAIDocumentMutation(context.Context, formdomain.ExecuteAIDocumentMutationCommand) (formdomain.AIDocumentMutationResult, error)
 }
 
-func NewFormRegistration(service *formdomain.InternalFormService) (DomainRegistration, error) {
+func NewFormRegistration(service *formdomain.Service) (DomainRegistration, error) {
 	if service == nil {
 		return DomainRegistration{}, errors.New("form AI document service is required")
 	}
@@ -87,7 +81,7 @@ func (p *formPort) Load(ctx context.Context, identity core.DocumentIdentity, loc
 	if err := validateFormDocumentIdentity(identity); err != nil {
 		return core.Document{}, err
 	}
-	state, err := p.service.LoadAIDocumentState(ctx, string(identity.Reference), string(locale))
+	state, err := p.service.LoadAIDocument(ctx, formdomain.LoadAIDocumentQuery{FormID: string(identity.Reference), Locale: string(locale)})
 	if err != nil {
 		return core.Document{}, err
 	}
@@ -121,12 +115,9 @@ func (p *formPort) executeMutation(
 	}
 
 	run := newExactMutationRun("Form")
-	domainResult, err := p.service.ExecuteAIDocumentMutation(
-		ctx,
-		string(identity.Reference),
-		string(request.Locale),
-		mode,
-		func(state formdomain.AIDocumentState) (formdomain.AIDocumentMutation, error) {
+	domainResult, err := p.service.ExecuteAIDocumentMutation(ctx, formdomain.ExecuteAIDocumentMutationCommand{
+		FormID: string(identity.Reference), Locale: string(request.Locale), Mode: mode,
+		Compile: func(state formdomain.AIDocumentState) (formdomain.AIDocumentMutation, error) {
 			current, err := p.document(identity, request.Locale, state)
 			if err != nil {
 				return formdomain.AIDocumentMutation{}, err
@@ -147,7 +138,7 @@ func (p *formPort) executeMutation(
 			}
 			return mutation, nil
 		},
-	)
+	})
 	if err != nil {
 		if invalid, mapped, handled := handleExactMutationValidationError(
 			err, mode == formdomain.AIDocumentExecutionValidate,
