@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -248,4 +251,11 @@ func seedTranscodeTargetSource(t *testing.T, db *gorm.DB, extension, mimeType st
 		CreatedAt: time.Now().UTC(),
 	}).Error)
 	return fileID
+}
+
+func (p *recordingFileTranscoderPublisher) PublishIngest(ctx context.Context, event domain.IngestEvent) error {
+	return filemediaqueue.Lifecycle(p).PublishIngest(ctx, event)
+}
+func (p *recordingFileTranscoderPublisher) PublishProcessing(ctx context.Context, event domain.ProcessingEvent) error {
+	return filemediaqueue.Lifecycle(p).PublishProcessing(ctx, event)
 }

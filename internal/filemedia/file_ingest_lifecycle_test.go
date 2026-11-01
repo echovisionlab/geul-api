@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
@@ -37,7 +36,7 @@ func TestFileIngestEventEmitterPublishesTypedEvents(t *testing.T) {
 	)
 	require.NotNil(t, emitter)
 
-	emitter.setTarget(&commonv1.MediaObjectTarget{FileId: fileID, ObjectKey: fileKey, Extension: "mp3", MimeType: "audio/mpeg"})
+	emitter.setTarget(&domain.ObjectTarget{FileID: fileID, ObjectKey: fileKey, Extension: "mp3", MimeType: "audio/mpeg"})
 	emitter.publishDownloadProgress(25)
 	completedBytes := int64(100)
 	emitter.publishFinalized(100, &completedBytes)
@@ -95,8 +94,8 @@ func TestFileIngestEventEmitterUsesUploadSessionSequenceAllocator(t *testing.T) 
 	require.NotNil(t, emitter)
 
 	nextSequence := int64(40)
-	emitter.setTarget(&commonv1.MediaObjectTarget{
-		FileId: fileID, ObjectKey: "media/" + fileID + ".ogg", Extension: "ogg", MimeType: "audio/ogg",
+	emitter.setTarget(&domain.ObjectTarget{
+		FileID: fileID, ObjectKey: "media/" + fileID + ".ogg", Extension: "ogg", MimeType: "audio/ogg",
 	})
 	emitter.setUploadIdentity(domain.UploadSession{
 		UploadID:   uploadID,

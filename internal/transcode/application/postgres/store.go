@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
+
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
 	"gorm.io/gorm"
@@ -97,7 +99,7 @@ func (s store) WaveformSource(ctx context.Context, fileID string) (*commonv1.Med
 		}
 		return nil, false, fmt.Errorf("lookup waveform source: %w", err)
 	}
-	target, err := filemedia.CanonicalMediaObjectTargetForFile(filemedia.File(source))
+	target, err := filemediaqueue.CanonicalObjectTarget(filemedia.File(source))
 	if err != nil {
 		return nil, false, fmt.Errorf("build waveform source target: %w", err)
 	}

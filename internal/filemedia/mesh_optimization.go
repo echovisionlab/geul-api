@@ -14,12 +14,10 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/google/uuid"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -107,21 +105,6 @@ func meshOptimizationJobFromCandidate(candidate domain.MeshCandidate, source Fil
 		Source: sourceTarget, SlotID: source.IngestSlotID, AttemptID: source.IngestAttemptID,
 		CompressionMethod: int32(meshOptimizationCompressionMethod(candidate.Method)), TargetRatioPercent: candidate.TargetRatioPercent,
 		Profile: int32(meshOptimizationProfileForPipelineVersion(candidate.PipelineVersion)), Output: outputTarget, TimestampMS: time.Now().UnixMilli(),
-	}, nil
-}
-
-func meshMediaObjectTarget(fileID, extension, mimeType string) (*commonv1.MediaObjectTarget, error) {
-	fileID = strings.TrimSpace(fileID)
-	extension = strings.ToLower(strings.TrimSpace(extension))
-	objectKey, err := mediaauth.MediaObjectKey(fileID, extension)
-	if err != nil {
-		return nil, err
-	}
-	return &commonv1.MediaObjectTarget{
-		FileId:    fileID,
-		ObjectKey: objectKey,
-		Extension: extension,
-		MimeType:  strings.TrimSpace(mimeType),
 	}, nil
 }
 

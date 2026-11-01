@@ -6,6 +6,9 @@ import (
 	"context"
 	"errors"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"google.golang.org/protobuf/proto"
@@ -38,4 +41,11 @@ func (p *policySignalPublisher) NotifyProtobufWithExecutor(_ context.Context, ex
 	p.executor = executor
 	p.events = append(p.events, proto.Clone(message).(*managev1.ContentUpdatedEvent))
 	return p.err
+}
+
+func (p *policySignalPublisher) PublishIngest(ctx context.Context, event domain.IngestEvent) error {
+	return filemediaqueue.Lifecycle(p).PublishIngest(ctx, event)
+}
+func (p *policySignalPublisher) PublishProcessing(ctx context.Context, event domain.ProcessingEvent) error {
+	return filemediaqueue.Lifecycle(p).PublishProcessing(ctx, event)
 }

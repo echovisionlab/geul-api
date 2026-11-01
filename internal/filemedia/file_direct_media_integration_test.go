@@ -60,7 +60,7 @@ func TestEditorFileRemoteImportIsIndependentDirectIntegration(t *testing.T) {
 	require.NoError(t, err)
 	fileService := newTestService(Deps{
 		S3:             runtimeS3Client(t, stack),
-		AsyncPublisher: confirmedPublisher,
+		AsyncPublisher: nativeLifecyclePublisher{confirmedPublisher},
 		S3Bucket:       stack.S3MediaBucket,
 		CDNDomain:      stack.CDNURL,
 		MediaDomain:    stack.MediaURL,
