@@ -8,6 +8,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -209,13 +210,11 @@ func buildAccountRecipientCandidates(options accountRecipientCandidateOptions) (
 				? AS context_kind,
 				0 AS priority,
 				m.created_at AS sort_at
-			FROM kratos.identities ki
-			JOIN member m
-				ON m.id::text = ki.external_id
-				AND m.account_identity_id = ki.id
+			FROM member m
+			%s
 			%s
 			WHERE %s
-			`, strings.Join(joins, "\n"), strings.Join(where, "\n\t\t\t\tAND ")),
+			`, identityread.JoinLinked("m", "ki"), strings.Join(joins, "\n"), strings.Join(where, "\n\t\t\t\tAND ")),
 		Args: args,
 	}, nil
 }

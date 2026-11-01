@@ -13,6 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
@@ -375,9 +376,7 @@ func resolveCampaignDeliveryExcludedMemberPairs(
 	if err := tx.WithContext(ctx).
 		Table("member AS member").
 		Select("member.id AS member_id, identity.id AS identity_id").
-		Joins(`JOIN kratos.identities AS identity
-			ON identity.id = member.account_identity_id
-			AND identity.external_id = member.id::text`).
+		Joins(identityread.JoinLinked("member", "identity")).
 		Where("member.id IN ?", memberIDs).
 		Where("member.deleted_at IS NULL").
 		Where("member.onboarded = TRUE").

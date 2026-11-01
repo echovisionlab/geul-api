@@ -86,7 +86,6 @@
 6 internal/authorizationtarget -> kratos.identities
 6 internal/authorizationtarget -> member
 1 internal/authorizationtarget -> user_deletion_request
-2 internal/campaign -> kratos.identities
 2 internal/campaign -> member
 1 internal/campaign -> newsletter_subscription
 1 internal/campaign -> user_tag_mapping
