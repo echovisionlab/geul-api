@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 
 	"github.com/echovisionlab/geul-api/internal/identitystate"
@@ -57,6 +58,9 @@ func newTestService(deps Deps) *Service {
 
 	if deps.MemberSummaries == nil {
 		deps.MemberSummaries = unusedFilePorts{}
+	}
+	if deps.FaviconCommits == nil {
+		deps.FaviconCommits = filemediapostgres.NewFaviconCommits(deps.DB, filemediapostgres.Ports{})
 	}
 	if deps.Units == nil {
 		deps.Units = mutation.Postgres(deps.DB, func(tx *gorm.DB) Store {

@@ -224,3 +224,16 @@ func assetFromRow(asset model.PublicAsset) favicon.DerivativeAsset {
 		CreatedAt: asset.CreatedAt,
 	}
 }
+
+func (s store) AttachSourceAsset(ctx context.Context, asset, file string, now time.Time) (bool, error) {
+	result := s.db.WithContext(ctx).Model(&model.PublicAsset{}).
+		Where("id = ? AND kind = ? AND status = ? AND source_file_id IS NULL", asset, "favicon", model.PublicAssetStatusReady).
+		Updates(structured.Fields{"source_file_id": file, "updated_at": now})
+	return result.RowsAffected == 1, result.Error
+}
+
+func (s store) ScheduleStagedDeletion(ctx context.Context, ids []string, now time.Time) error {
+	return s.db.WithContext(ctx).Model(&model.PublicAsset{}).
+		Where("id IN ? AND status IN ?", ids, []string{model.PublicAssetStatusReady, model.PublicAssetStatusFailed}).
+		Updates(structured.Fields{"status": model.PublicAssetStatusDeletePending, "delete_requested_at": now, "updated_at": now}).Error
+}

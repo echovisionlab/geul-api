@@ -176,6 +176,9 @@ func RunContract(t *testing.T, open func(*testing.T) Harness) {
 			}))
 		},
 	}
+	for name, run := range stagingCases() {
+		cases[name] = run
+	}
 	for name, run := range cases {
 		t.Run(name, func(t *testing.T) { t.Parallel(); run(t, open(t)) })
 	}

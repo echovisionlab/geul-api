@@ -101,6 +101,7 @@ func TestLoadSetOfAnSVGSourceAddsItsReadySourceAsset(t *testing.T) {
 	set, err := favicon.LoadSet(t.Context(), store, fileID)
 	require.NoError(t, err)
 	require.Equal(t, svg.ID, set.IconSVG.AssetID)
+	require.Len(t, favicon.AssetIDs(set), 8)
 
 	legacy, generated := favicon.Projection(t.Context(), store, fileID)
 	require.Equal(t, set.IconPNG32.AssetID, legacy.AssetID)

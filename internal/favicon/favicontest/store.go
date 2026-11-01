@@ -17,6 +17,7 @@ import (
 
 // Store is an in-memory favicon.Store.
 type Store struct {
+	CDNDomain   string
 	mu          sync.Mutex
 	files       map[string]string
 	assets      map[string]favicon.DerivativeAsset
@@ -27,7 +28,7 @@ type Store struct {
 
 // New returns an empty fake Store and its unit of work.
 func New() (*Store, *mutationtest.UnitOfWork[favicon.Store]) {
-	store := &Store{
+	store := &Store{CDNDomain: "https://cdn.example.com",
 		files: map[string]string{}, assets: map[string]favicon.DerivativeAsset{},
 		derivatives: map[string]map[string]string{}, bindings: map[string]int{},
 	}
@@ -124,7 +125,7 @@ func (s *Store) NewestReadySourceAsset(_ context.Context, fileID string) (favico
 
 func (s *Store) AssetRef(asset favicon.DerivativeAsset) (*mediaasset.Reference, error) {
 	_, units := mediaassettest.New()
-	return mediaasset.NewLifecycle(units, "https://cdn.example.com").AssetRef(mediaasset.Asset{
+	return mediaasset.NewLifecycle(units, s.CDNDomain).AssetRef(mediaasset.Asset{
 		ID: asset.ID, SourceFileID: asset.SourceFileID, Kind: asset.Kind, ObjectKey: asset.ObjectKey,
 		Extension: asset.Extension, MimeType: asset.MimeType, FileSize: asset.FileSize, SHA256: asset.SHA256,
 		Disposition: asset.Disposition, DownloadFilename: asset.DownloadFilename, Status: mediaasset.AssetStatus(asset.Status),
@@ -229,3 +230,28 @@ func (s *Store) MarkAssetDeletePending(_ context.Context, assetID string, _ time
 }
 
 var _ favicon.Store = (*Store)(nil)
+
+func (s *Store) AttachSourceAsset(_ context.Context, id, file string, _ time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.assets[id]
+	if !ok || a.Kind != "favicon" || a.Status != favicon.AssetReady || a.SourceFileID != nil {
+		return false, nil
+	}
+	a.SourceFileID = new(file)
+	s.assets[id] = a
+	return true, nil
+}
+
+func (s *Store) ScheduleStagedDeletion(_ context.Context, ids []string, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range ids {
+		a, ok := s.assets[id]
+		if ok && (a.Status == favicon.AssetReady || a.Status == favicon.AssetFailed) {
+			a.Status = favicon.AssetDeletePending
+			s.assets[id] = a
+		}
+	}
+	return nil
+}

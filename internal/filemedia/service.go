@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/favicon"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -23,12 +24,13 @@ import (
 
 // Deps are the collaborators of the File use cases.
 type Deps struct {
-	Units   mutation.UnitOfWork[Store]
-	Fence   identitystate.Fence
-	DB      *gorm.DB
-	SpiceDB *auth.SpiceDBClient
-	Audit   domainaudit.Appender
-	S3      *s3.Client
+	FaviconCommits domain.FaviconCommits
+	Units          mutation.UnitOfWork[Store]
+	Fence          identitystate.Fence
+	DB             *gorm.DB
+	SpiceDB        *auth.SpiceDBClient
+	Audit          domainaudit.Appender
+	S3             *s3.Client
 	// Presigner signs multipart part uploads; nil signs with S3.
 	Presigner      *s3.PresignClient
 	AsyncPublisher AsyncPublisher
@@ -57,7 +59,7 @@ type Deps struct {
 func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
-		"Units": d.Units == nil, "Fence": d.Fence == nil, "DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil, "S3": d.S3 == nil,
+		"FaviconCommits": d.FaviconCommits == nil, "Units": d.Units == nil, "Fence": d.Fence == nil, "DB": d.DB == nil, "SpiceDB": d.SpiceDB == nil, "Audit": d.Audit == nil, "S3": d.S3 == nil,
 		"AsyncPublisher": d.AsyncPublisher == nil, "Transcoder": d.Transcoder == nil,
 		"LegalRoutes": d.LegalRoutes == nil, "PostAccess": d.PostAccess == nil,
 		"PagePolicyAccess": d.PagePolicyAccess == nil, "WorkAttachment": d.WorkAttachment == nil,
@@ -81,6 +83,7 @@ func (d Deps) validate() error {
 // other domains call. Connect and MCP adapters translate their requests into
 // its commands and queries.
 type Service struct {
+	faviconCommits            domain.FaviconCommits
 	uploadReads               fileStoreReader
 	units                     mutation.UnitOfWork[Store]
 	storeMutations            *mutation.StoreRunner[Store]
@@ -155,7 +158,7 @@ func NewService(deps Deps) (*Service, error) {
 		editorImage.MaxSize = deps.EditorImageMaxSize
 	}
 	return &Service{
-		units: deps.Units, storeMutations: storeMutations, db: deps.DB, spiceDB: deps.SpiceDB, auditWriter: deps.Audit, mutations: mutations,
+		faviconCommits: deps.FaviconCommits, units: deps.Units, storeMutations: storeMutations, db: deps.DB, spiceDB: deps.SpiceDB, auditWriter: deps.Audit, mutations: mutations,
 		s3Client: deps.S3, s3PresignClient: presigner, asyncPublisher: deps.AsyncPublisher,
 		publisher: deps.Transcoder, s3Bucket: deps.S3Bucket, cdnDomain: deps.CDNDomain,
 		mediaDomain: deps.MediaDomain, mediaSecret: deps.MediaSecret, downloadTTL: downloadTTL,

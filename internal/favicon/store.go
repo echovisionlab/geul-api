@@ -36,6 +36,8 @@ type DerivativeAsset struct {
 
 // Store is the favicon public assets of Files, bound to one transaction.
 type Store interface {
+	AttachSourceAsset(context.Context, string, string, time.Time) (bool, error)
+	ScheduleStagedDeletion(context.Context, []string, time.Time) error
 	// SourceMimeType returns the MIME type of a source File, or false.
 	SourceMimeType(ctx context.Context, fileID string) (string, bool, error)
 	// FaviconDerivatives returns a File's favicon derivatives with their
