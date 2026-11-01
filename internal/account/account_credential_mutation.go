@@ -20,6 +20,7 @@ import (
 // Handlers must not reproduce this ordering.
 type AccountCredentialMutationService struct {
 	db           *gorm.DB
+	fence        identitystate.Fence
 	identity     accountCredentialIdentityManager
 	memberEmails MemberEmailProjection
 }
@@ -32,11 +33,15 @@ type accountCredentialIdentityManager interface {
 
 func NewAccountCredentialMutationService(
 	db *gorm.DB,
+	fence identitystate.Fence,
 	identity accountCredentialIdentityManager,
 	memberEmails MemberEmailProjection,
 ) *AccountCredentialMutationService {
 	if db == nil {
 		panic("account credential mutation database is required")
+	}
+	if fence == nil {
+		panic("account credential mutation identity fence is required")
 	}
 	if identity == nil {
 		panic("account credential mutation identity manager is required")
@@ -44,7 +49,7 @@ func NewAccountCredentialMutationService(
 	if memberEmails == nil {
 		panic("account credential mutation member email projection is required")
 	}
-	return &AccountCredentialMutationService{db: db, identity: identity, memberEmails: memberEmails}
+	return &AccountCredentialMutationService{db: db, fence: fence, identity: identity, memberEmails: memberEmails}
 }
 
 func (s *AccountCredentialMutationService) LoadIdentity(
@@ -80,7 +85,7 @@ func (s *AccountCredentialMutationService) RemoveOIDCProvider(
 	if provider == "" || identifier == "" {
 		return domainerr.Precondition("SSO provider identity is incomplete")
 	}
-	return identitystate.WithMutation(ctx, s.db, identityID, func(mutationCtx context.Context, tx *gorm.DB) error {
+	return s.fence.WithMutation(ctx, s.db, identityID, func(mutationCtx context.Context, tx *gorm.DB) error {
 		identity, err := s.LoadIdentity(mutationCtx, identityID)
 		if err != nil {
 			return err

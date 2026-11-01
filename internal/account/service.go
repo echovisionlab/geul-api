@@ -108,7 +108,7 @@ func NewService(deps Deps) (*Service, error) {
 	return &Service{
 		db: deps.DB, spicedb: deps.SpiceDB, identity: deps.Identity, publisher: deps.Publisher,
 		newsletter: deps.Newsletter, memberDeletion: deps.MemberDeletion, memberEmails: deps.MemberEmails,
-		audit: deps.Audit, credentials: NewAccountCredentialMutationService(deps.DB, deps.Identity, deps.MemberEmails),
+		audit: deps.Audit, credentials: NewAccountCredentialMutationService(deps.DB, identitystate.PostgresFence{}, deps.Identity, deps.MemberEmails),
 		mutations: mutations, baseURL: strings.TrimRight(deps.SiteOrigin, "/"), interval: accountLifecycleReconcileInterval,
 	}, nil
 }
