@@ -15,6 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -78,5 +79,9 @@ func withTestStorage(service *Service) *Service {
 }
 
 func testFileStore(s *Service, tx *gorm.DB) Store {
-	return filemediapostgres.NewStore(tx, filemediapostgres.Ports{UploadTracks: s.trackAttachment, DeletionQueue: filemediaqueue.Async(s.asyncPublisher), PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: s.postAccess, Pages: s.pagePolicyAccess, Works: s.workPolicyAccess, Events: s.programEventAttachment, Releases: s.releasePolicyAccess, SpiceDB: s.spiceDB}), PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(s.asyncPublisher)})
+	return filemediapostgres.NewStore(tx, filemediapostgres.Ports{IngestTranscodes: filemediaqueue.Transcodes(s.publisher, s.asyncPublisher), UploadTracks: s.trackAttachment, DeletionQueue: filemediaqueue.Async(s.asyncPublisher), PolicyOwners: filemediapolicy.NewPolicyOwners(filemediapolicy.PolicyOwnerPorts{Posts: s.postAccess, Pages: s.pagePolicyAccess, Works: s.workPolicyAccess, Events: s.programEventAttachment, Releases: s.releasePolicyAccess, SpiceDB: s.spiceDB}), PolicyAudiences: filemediapolicy.Audiences{}, PolicySignals: filemediaqueue.Policy(s.asyncPublisher)})
+}
+
+func freshFileIngestAuthorityForTest(ctx context.Context, tx *gorm.DB, service *Service, upload managev1.UploadType, entity managev1.TranscodeEntityType, id string) error {
+	return requireFreshFileIngestAuthority(ctx, testFileStore(service, tx), service, upload, entity, id, func(user *auth.UserInfo) (bool, error) { return identitystate.LockActivePrincipal(ctx, tx, user) })
 }

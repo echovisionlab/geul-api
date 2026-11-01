@@ -131,7 +131,7 @@ func TestVerifiedPostFileMutationPassesOuterTransactionToOneEditAction(t *testin
 	ctx := auditedUserContext(context.Background(), postAccessPrincipal())
 	postID := uuid.NewString()
 
-	require.NoError(t, requireFreshFileIngestAuthority(
+	require.NoError(t, freshFileIngestAuthorityForTest(
 		ctx,
 		db,
 		service,

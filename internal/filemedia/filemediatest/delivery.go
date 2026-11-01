@@ -197,13 +197,29 @@ func (s *LibraryStore) StoredFileDeliveries(_ context.Context, ids []string, wit
 	}
 	return result, nil
 }
-func (s *LibraryStore) StoredDerivativeDeliveries(_ context.Context, ids []string) ([]domain.StoredDerivativeDelivery, error) {
+func (s *LibraryStore) StoredDerivativeDeliveries(ctx context.Context, ids []string) ([]domain.StoredDerivativeDelivery, error) {
 	if s.Fail != nil {
 		return nil, s.Fail
 	}
 	result := []domain.StoredDerivativeDelivery{}
 	for _, id := range ids {
-		result = append(result, s.Derivatives[id]...)
+		for _, row := range s.Derivatives[id] {
+			if row.AssetID != nil {
+				if asset, err := s.MediaAssets.Asset(ctx, *row.AssetID); err == nil {
+					row.AssetKind, row.AssetExtension, row.AssetMimeType = new(asset.Kind), new(asset.Extension), new(asset.MimeType)
+					row.AssetFileSize, row.AssetSHA256 = cloneUploadPointer(asset.FileSize), slices.Clone(asset.SHA256)
+					row.AssetDisposition, row.AssetDownloadFilename = new(asset.Disposition), cloneUploadPointer(asset.DownloadFilename)
+					row.AssetStatus = new(string(asset.Status))
+				}
+			}
+			if row.MediaGenerationID != nil {
+				if generation, err := s.MediaAssets.Generation(ctx, *row.MediaGenerationID); err == nil {
+					row.MediaGenerationFileID, row.MediaGenerationManifest = new(generation.FileID), new(generation.ManifestName)
+					row.MediaGenerationStatus = new(string(generation.Status))
+				}
+			}
+			result = append(result, row)
+		}
 	}
 	return result, nil
 }

@@ -24,6 +24,9 @@ type MeshRecord struct {
 }
 
 type LibraryStore struct {
+	IngestCommands          []domain.IngestTranscodeCommand
+	IngestTranscodeError    error
+	TrackOriginals          map[string]string
 	UploadTracks            map[string]bool
 	UploadSessions          map[string]domain.UploadSession
 	UploadPartRows          map[string][]domain.UploadPart
@@ -69,6 +72,13 @@ func NewLibraryStore() *LibraryStore {
 	return &LibraryStore{UploadSessions: map[string]domain.UploadSession{}, UploadPartRows: map[string][]domain.UploadPart{}, ScopedOwners: map[string]ScopedOwner{}, Policies: map[string]PolicyRecord{}, Segments: map[string]domain.PolicySegment{}, PolicyDenied: map[string]error{}, AssetIDs: map[string]bool{}, Generations: map[string]mediaasset.Generation{}, References: map[string][]string{}, TrackReleases: map[string]string{}, MediaAssets: assets, MeshRecords: map[string]MeshRecord{}, Derivatives: map[string][]domain.StoredDerivativeDelivery{}, IngestBindings: map[string]domain.IngestBinding{}, PrincipalFence: &identitystatetest.Fence{}, ReadyMeshes: map[string]domain.MeshDeliveryWitness{}, AvatarOwners: map[string]string{}, DeliveryOwners: map[string]domain.DeliveryOwner{}, ExactUsages: map[string]bool{}, Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
 }
 func (s *LibraryStore) Savepoint() func() {
+	commands := slices.Clone(s.IngestCommands)
+	originals := maps.Clone(s.TrackOriginals)
+	generations := maps.Clone(s.Generations)
+	derivatives := maps.Clone(s.Derivatives)
+	for id, rows := range derivatives {
+		derivatives[id] = slices.Clone(rows)
+	}
 	bindings := maps.Clone(s.IngestBindings)
 	for id, row := range bindings {
 		row.EntityType = cloneUploadPointer(row.EntityType)
@@ -84,6 +94,10 @@ func (s *LibraryStore) Savepoint() func() {
 	assets := s.MediaAssets.Savepoint()
 	favicon, outbox, audits := slices.Clone(s.FaviconDeletions), slices.Clone(s.DeletionOutbox), slices.Clone(s.Audits)
 	return func() {
+		s.IngestCommands = commands
+		s.TrackOriginals = originals
+		s.Generations = generations
+		s.Derivatives = derivatives
 		s.IngestBindings = bindings
 		s.UploadSessions = uploads
 		s.UploadPartRows = parts

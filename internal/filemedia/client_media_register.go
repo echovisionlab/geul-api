@@ -7,24 +7,21 @@ import (
 	"net/url"
 	"time"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // The caller holds the completion advisory lock throughout allocation, copy,
 // verification and registration. Both database phases recheck fresh authority.
-func (s *Service) registerVerifiedClientMediaBundle(ctx context.Context, completion *multipartCompletion, authorize func(context.Context, *gorm.DB) error) error {
+func (s *Service) registerVerifiedClientMediaBundle(ctx context.Context, completion *multipartCompletion, authorize func(context.Context, Store, func(*auth.UserInfo) (bool, error)) error) error {
 	session := completion.session
 	if session.ClientMediaBundleID == nil {
 		return nil
@@ -43,8 +40,8 @@ func (s *Service) registerVerifiedClientMediaBundle(ctx context.Context, complet
 		}
 	}
 	// Allocate owned rows first so a failed/revoked copy leaves cleanup authority.
-	if err := s.withClientMediaFileLock(ctx, session.FileID, authorize, func(tx *gorm.DB) error {
-		return allocateClientMedia(ctx, tx, session.FileID, plan.Artifacts)
+	if err := s.withClientMediaFileLock(ctx, session.FileID, authorize, func(store Store) error {
+		return allocateClientMedia(ctx, store, session.FileID, plan.Artifacts)
 	}); err != nil {
 		return err
 	}
@@ -52,28 +49,32 @@ func (s *Service) registerVerifiedClientMediaBundle(ctx context.Context, complet
 	if err != nil {
 		return err
 	}
-	return s.withClientMediaFileLock(ctx, session.FileID, authorize, func(tx *gorm.DB) error {
-		return s.completeClientMedia(ctx, tx, session, plan, result)
+	return s.withClientMediaFileLock(ctx, session.FileID, authorize, func(store Store) error {
+		return s.completeClientMedia(ctx, store, session, plan, result)
 	})
 }
 
-func (s *Service) withClientMediaFileLock(ctx context.Context, fileID string, authorize func(context.Context, *gorm.DB) error, apply func(*gorm.DB) error) error {
+func (s *Service) withClientMediaFileLock(ctx context.Context, fileID string, authorize func(context.Context, Store, func(*auth.UserInfo) (bool, error)) error, apply func(Store) error) error {
 	if authorize == nil {
 		return fmt.Errorf("client media authority fence required")
 	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := authorize(ctx, tx); err != nil {
-			return err
-		}
-		if err := mediaassetpostgres.Bind(tx).LockAttachableFiles(ctx, []string{fileID}); err != nil {
-			return err
-		}
-		return apply(tx)
+	_, err := mutation.Run(ctx, s.storeMutations, mutation.StoreSpec[struct{}, Store]{
+		Access: mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+			return authorize(ctx, store, lockActive)
+		}),
+		Change: func(ctx context.Context, store Store) (struct{}, error) {
+			if err := store.LockIngestFile(ctx, fileID); err != nil {
+				return struct{}{}, err
+			}
+			return struct{}{}, apply(store)
+		},
+		Audit: func(struct{}) mutation.Audit { return mutation.Unchanged() },
 	})
+	return err
 }
 
-func allocateClientMedia(ctx context.Context, tx *gorm.DB, fileID string, artifacts []clientMediaArtifact) error {
-	_, allocated, err := ensureStableFileIngestMediaGeneration(ctx, tx, fileID)
+func allocateClientMedia(ctx context.Context, store Store, fileID string, artifacts []clientMediaArtifact) error {
+	_, allocated, err := ensureStableFileIngestMediaGeneration(ctx, store, fileID)
 	if err != nil {
 		return err
 	}
@@ -84,7 +85,7 @@ func allocateClientMedia(ctx context.Context, tx *gorm.DB, fileID string, artifa
 		if artifact.isHLS() {
 			continue
 		}
-		_, allocated, err := ensureStableFileIngestPublicAsset(ctx, tx, fileID, artifact.assetKind(), artifact.extension(), artifact.MimeType)
+		_, allocated, err := ensureStableFileIngestPublicAsset(ctx, store, fileID, artifact.assetKind(), artifact.extension(), artifact.MimeType)
 		if err != nil {
 			return err
 		}
@@ -104,8 +105,8 @@ func (artifact clientMediaArtifact) canonicalKey(fileID, generationID string) st
 
 // Browser artifacts can write staging only. Copy to server-owned canonical
 // destinations, then independently verify every copied object's bytes again.
-func (s *Service) copyClientMedia(ctx context.Context, fileID, bundleID string, artifacts []clientMediaArtifact) (*commonv1.MediaGenerationWriteResult, error) {
-	result := &commonv1.MediaGenerationWriteResult{GenerationId: stableFileIngestFinalizerID(fileID, "hls")}
+func (s *Service) copyClientMedia(ctx context.Context, fileID, bundleID string, artifacts []clientMediaArtifact) (*mediaasset.WrittenGeneration, error) {
+	result := &mediaasset.WrittenGeneration{GenerationID: stableFileIngestFinalizerID(fileID, "hls")}
 	for _, artifact := range artifacts {
 		if artifact.isHLS() {
 			result.TotalSize += artifact.Size
@@ -115,10 +116,10 @@ func (s *Service) copyClientMedia(ctx context.Context, fileID, bundleID string, 
 				if err != nil {
 					return nil, err
 				}
-				result.ManifestSha256 = digest
+				result.ManifestSHA256 = digest
 			}
 		}
-		if err := s.copyClientArtifact(ctx, fileID, bundleID, result.GenerationId, artifact); err != nil {
+		if err := s.copyClientArtifact(ctx, fileID, bundleID, result.GenerationID, artifact); err != nil {
 			return nil, err
 		}
 	}
@@ -143,22 +144,21 @@ func (s *Service) copyClientArtifact(ctx context.Context, fileID, bundleID, gene
 	return nil
 }
 
-func (s *Service) completeClientMedia(ctx context.Context, tx *gorm.DB, session model.UploadSession, plan clientMediaPlan, result *commonv1.MediaGenerationWriteResult) error {
-	lifecycle := mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(tx), s.cdnDomain)
-	if _, _, err := ensureStableFileIngestMediaGeneration(ctx, tx, session.FileID); err != nil {
+func (s *Service) completeClientMedia(ctx context.Context, store Store, session model.UploadSession, plan clientMediaPlan, result *mediaasset.WrittenGeneration) error {
+	if _, _, err := ensureStableFileIngestMediaGeneration(ctx, store, session.FileID); err != nil {
 		return err
 	}
-	if _, err := lifecycle.CompleteMediaGeneration(ctx, mediaasset.WrittenGenerationFromProto(result)); err != nil {
+	if err := store.CompleteIngestGeneration(ctx, s.cdnDomain, *result); err != nil {
 		return err
 	}
-	if err := storeClientMediaDerivative(ctx, tx, session.FileID, clientHLS, nil, &result.GenerationId); err != nil {
+	if err := storeClientMediaDerivative(ctx, store, session.FileID, clientHLS, nil, &result.GenerationID); err != nil {
 		return err
 	}
 	for _, artifact := range plan.Artifacts {
 		if artifact.isHLS() {
 			continue
 		}
-		target, _, err := ensureStableFileIngestPublicAsset(ctx, tx, session.FileID, artifact.assetKind(), artifact.extension(), artifact.MimeType)
+		target, _, err := ensureStableFileIngestPublicAsset(ctx, store, session.FileID, artifact.assetKind(), artifact.extension(), artifact.MimeType)
 		if err != nil {
 			return err
 		}
@@ -166,25 +166,17 @@ func (s *Service) completeClientMedia(ctx context.Context, tx *gorm.DB, session 
 		if err != nil {
 			return err
 		}
-		if _, err := lifecycle.CompletePublicAsset(ctx, mediaasset.WrittenAssetFromProto(&commonv1.AssetWriteResult{AssetId: target.GetAssetId(), FileSize: artifact.Size, Sha256: digest})); err != nil {
+		if err := store.CompleteIngestAsset(ctx, s.cdnDomain, mediaasset.WrittenAsset{AssetID: target.AssetID, FileSize: artifact.Size, SHA256: digest}); err != nil {
 			return err
 		}
-		assetID := target.GetAssetId()
-		if err := storeClientMediaDerivative(ctx, tx, session.FileID, managev1.FileDerivativeType(artifact.DerivativeType), &assetID, nil); err != nil {
+		assetID := target.AssetID
+		if err := storeClientMediaDerivative(ctx, store, session.FileID, managev1.FileDerivativeType(artifact.DerivativeType), &assetID, nil); err != nil {
 			return err
 		}
 	}
-	return tx.Model(&model.File{}).Where("id = ? AND delete_requested_at IS NULL", session.FileID).Updates(structured.Fields{
-		"duration_seconds": int(math.Ceil(plan.DurationSeconds)), "client_media_bundle_id": *session.ClientMediaBundleID,
-	}).Error
+	return store.SetClientMediaBundle(ctx, session.FileID, *session.ClientMediaBundleID, int(math.Ceil(plan.DurationSeconds)))
 }
 
-func storeClientMediaDerivative(ctx context.Context, tx *gorm.DB, fileID string, kind managev1.FileDerivativeType, asset, generation *string) error {
-	return tx.WithContext(ctx).Table("file_derivative").Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "file_id"}, {Name: "type"}},
-		DoUpdates: clause.Assignments(structured.Fields{"asset_id": asset, "media_generation_id": generation}),
-	}).Create(structured.Fields{
-		"id": uuid.NewString(), "file_id": fileID, "type": kind.String(), "asset_id": asset,
-		"media_generation_id": generation, "created_at": time.Now().UTC(),
-	}).Error
+func storeClientMediaDerivative(ctx context.Context, store Store, fileID string, kind managev1.FileDerivativeType, asset, generation *string) error {
+	return store.UpsertIngestDerivative(ctx, domain.IngestDerivative{ID: uuid.NewString(), FileID: fileID, Type: kind.String(), AssetID: asset, GenerationID: generation, CreatedAt: time.Now().UTC()})
 }

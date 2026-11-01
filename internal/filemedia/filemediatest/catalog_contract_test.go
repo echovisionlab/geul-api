@@ -15,7 +15,7 @@ import (
 func TestFakeCatalogStoreContract(t *testing.T) {
 	RunCatalogContract(t, func(t *testing.T) CatalogHarness {
 		s := NewLibraryStore()
-		return CatalogHarness{SeedScoped: func(_ *testing.T, kind, id string, owner ScopedOwner, attachment domain.ScopedAttachment) {
+		return CatalogHarness{IngestCommands: func(*testing.T) []domain.IngestTranscodeCommand { return s.IngestCommands }, SeedScoped: func(_ *testing.T, kind, id string, owner ScopedOwner, attachment domain.ScopedAttachment) {
 			s.ScopedOwners[kind+":"+id] = owner
 			s.ScopedAttachments = append(s.ScopedAttachments, ScopedAttachmentRecord{OwnerKind: kind, OwnerID: id, DocumentID: owner.DocumentID, Attachment: attachment})
 		}, SeedPolicy: func(_ *testing.T, r domain.PolicyRelation, ids []string) {

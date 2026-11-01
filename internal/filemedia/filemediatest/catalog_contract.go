@@ -19,6 +19,7 @@ import (
 )
 
 type CatalogHarness struct {
+	IngestCommands   func(*testing.T) []domain.IngestTranscodeCommand
 	SeedScoped       func(*testing.T, string, string, ScopedOwner, domain.ScopedAttachment)
 	SeedPolicy       func(*testing.T, domain.PolicyRelation, []string)
 	SeedSegment      func(*testing.T, domain.PolicySegment)
@@ -498,6 +499,9 @@ func RunCatalogContract(t *testing.T, open func(*testing.T) CatalogHarness) {
 		cases[name] = run
 	}
 	for name, run := range verifiedIngestCases() {
+		cases[name] = run
+	}
+	for name, run := range ingestMediaCases() {
 		cases[name] = run
 	}
 	for name, run := range reuseContractCases() {

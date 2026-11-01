@@ -231,7 +231,7 @@ func TestFileIngestAudioOutputAllocatorRejectsPendingSourceFile(t *testing.T) {
 		Where("id = ?", fileID).
 		Update("delete_requested_at", now).Error)
 
-	_, _, _, err := ensureStableFileIngestAudioOutputs(t.Context(), db, fileID)
+	_, _, _, err := ensureStableFileIngestAudioOutputs(t.Context(), testFileStore(&Service{}, db), fileID)
 	require.Error(t, err)
 	require.Equal(t, connect.CodeFailedPrecondition, errs.Wrap(err).Code())
 

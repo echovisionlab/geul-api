@@ -384,7 +384,7 @@ func (s *Service) requireFinishedClientMediaBundle(ctx context.Context, file mod
 	if file.UploadedByMemberID == nil || *file.UploadedByMemberID != user.MemberID.String() {
 		return domainerr.Denied("completed client media bundle belongs to another member")
 	}
-	ready, err := clientMediaFileReady(ctx, s.db, file)
+	ready, err := s.clientMediaFileReady(ctx, File(file))
 	if err != nil {
 		return err
 	}
@@ -817,18 +817,20 @@ func (s *Service) attachPreparedTrack(ctx context.Context, completion *multipart
 	if completion.session.ClientMediaBundleID == nil {
 		return nil
 	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := requireFreshFileIngestAuthority(ctx, tx, s, completion.uploadType, uploadSessionEntityTypeToEnum(completion.session.EntityType), completion.session.EntityID); err != nil {
-			return err
-		}
-		service := *s
-		service.db = tx
-		_, err := service.AttachTrackOriginalAudio(ctx, AttachTrackOriginalAudioCommand{
-			TrackID: completion.session.EntityID, VerifiedFileID: completion.session.FileID,
-			IngestAttemptID: derefString(completion.session.AttemptID), ExpectedCurrentFileID: completion.session.ExpectedFileID,
-		})
-		return err
+	_, err := mutation.Run(ctx, s.storeMutations, mutation.StoreSpec[TrackOriginalAudioAttachment, Store]{
+		Access: mutation.Fenced(func(ctx context.Context, store Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+			return requireFreshFileIngestAuthority(ctx, store, s, completion.uploadType, uploadSessionEntityTypeToEnum(completion.session.EntityType), completion.session.EntityID, lockActive)
+		}),
+		Change: func(ctx context.Context, store Store) (TrackOriginalAudioAttachment, error) {
+			target, err := validateTrackOriginalAudioTarget(AttachTrackOriginalAudioCommand{TrackID: completion.session.EntityID, VerifiedFileID: completion.session.FileID, IngestAttemptID: derefString(completion.session.AttemptID), ExpectedCurrentFileID: completion.session.ExpectedFileID})
+			if err != nil {
+				return TrackOriginalAudioAttachment{}, err
+			}
+			return s.attachTrackOriginalAudio(ctx, store, target)
+		},
+		Audit: func(TrackOriginalAudioAttachment) mutation.Audit { return mutation.Unchanged() },
 	})
+	return err
 }
 
 func (s *Service) publishMultipartDownstreamCommands(

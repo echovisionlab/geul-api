@@ -35,6 +35,14 @@ func (s *store) InsertAsset(ctx context.Context, asset mediaasset.Asset) error {
 	return s.tx.WithContext(ctx).Create(&row).Error
 }
 
+func (s *store) EnsureAssetAllocation(ctx context.Context, asset mediaasset.Asset) (mediaasset.Asset, error) {
+	row := AssetRow(asset)
+	if err := s.tx.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
+		return mediaasset.Asset{}, err
+	}
+	return s.Asset(ctx, asset.ID)
+}
+
 func (s *store) Asset(ctx context.Context, id string) (mediaasset.Asset, error) {
 	return s.asset(ctx, id, false)
 }
