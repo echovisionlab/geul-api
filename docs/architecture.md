@@ -384,6 +384,8 @@ the ban columns:
 func JoinLinked(member, alias string) string     // JOIN of the Identity linked to the Member row aliased member
 func LeftJoinLinked(member, alias string) string // the same, keeping Members without a live link
 func BannedSQL(alias string) string              // administrator-facing ban state of the joined Identity
+func ActiveSQL(alias string) string              // the joined Identity is active and not banned
+func LockLinked(ctx context.Context, tx *gorm.DB, identityID, memberID string) error // share-lock the linked Identity
 const ExistsSQL = `EXISTS (SELECT 1 FROM kratos.identities WHERE id = ?::uuid)`
 func Exists(ctx context.Context, db *gorm.DB, identityID string) (bool, error)
 ```

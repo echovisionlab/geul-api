@@ -11,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+	"github.com/echovisionlab/geul-api/internal/identityread"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
@@ -120,20 +121,10 @@ func RequireLocked(ctx context.Context, tx *gorm.DB, memberID string) (Target, e
 		return Target{}, errs.Internal(result.Error)
 	}
 
-	var identity struct {
-		ID string `gorm:"column:id"`
-	}
-	result = tx.WithContext(ctx).
-		Table("kratos.identities").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-		Select("id").
-		Where("id = ?::uuid AND external_id = ?", target.IdentityID, target.MemberID).
-		Take(&identity)
-	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+	if err := identityread.LockLinked(ctx, tx, target.IdentityID, target.MemberID); errors.Is(err, gorm.ErrRecordNotFound) {
 		return Target{}, errs.NotFound("member", memberID)
-	}
-	if result.Error != nil {
-		return Target{}, errs.Internal(result.Error)
+	} else if err != nil {
+		return Target{}, errs.Internal(err)
 	}
 
 	current, err := Require(ctx, tx, memberID)
@@ -230,13 +221,10 @@ func ActiveForIdentity(db *gorm.DB, identityID string) (Target, error) {
 		SELECT member.id::text AS member_id,
 		       identity.id::text AS identity_id,
 		       member.onboarded
-		FROM kratos.identities AS identity
-		JOIN member
-		  ON member.id::text = identity.external_id
-		 AND member.account_identity_id = identity.id
+		FROM member
+		`+identityread.JoinLinked("member", "identity")+`
 		WHERE identity.id = ?::uuid
-		  AND identity.state = 'active'
-		  AND NOT COALESCE((identity.metadata_admin->>'banned')::boolean, false)
+		  AND `+identityread.ActiveSQL("identity")+`
 		  AND member.deleted_at IS NULL
 	`, identityID).Scan(&target).Error; err != nil {
 		return Target{}, err
@@ -298,15 +286,14 @@ func LockActivePairForCredentialMutation(ctx context.Context, tx *gorm.DB, membe
 	}
 	result := tx.WithContext(ctx).
 		Table("public.member AS member").
-		Joins("JOIN kratos.identities AS identity ON identity.id = member.account_identity_id AND identity.external_id = member.id::text").
+		Joins(identityread.JoinLinked("member", "identity")).
 		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate, Table: clause.Table{Name: "member"}}).
 		Select("member.id::text AS id").
 		Where(`member.id = ?::uuid
 			AND identity.id = ?::uuid
 			AND member.onboarded = TRUE
 			AND member.deleted_at IS NULL
-			AND identity.state = 'active'
-			AND NOT COALESCE((identity.metadata_admin->>'banned')::boolean, false)`, memberID, identityID).
+			AND `+identityread.ActiveSQL("identity"), memberID, identityID).
 		Take(&member)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return gorm.ErrRecordNotFound
@@ -359,14 +346,11 @@ func forMemberState(db *gorm.DB, memberID string, requireOnboarded bool) (Target
 		       identity.id::text AS identity_id,
 		       member.onboarded
 		FROM member
-		JOIN kratos.identities AS identity
-		  ON identity.id = member.account_identity_id
-		 AND identity.external_id = member.id::text
+		`+identityread.JoinLinked("member", "identity")+`
 		WHERE member.id = ?::uuid
 		  AND member.deleted_at IS NULL
 		  AND (? = FALSE OR member.onboarded = TRUE)
-		  AND identity.state = 'active'
-		  AND NOT COALESCE((identity.metadata_admin->>'banned')::boolean, false)
+		  AND `+identityread.ActiveSQL("identity")+`
 		  AND NOT EXISTS (
 		      SELECT 1
 		      FROM user_deletion_request AS request
@@ -412,9 +396,7 @@ func LinkedMemberForMember(db *gorm.DB, memberID string, requireOnboarded bool) 
 		       identity.id::text AS identity_id,
 		       member.onboarded
 		FROM member
-		JOIN kratos.identities AS identity
-		  ON identity.id = member.account_identity_id
-		 AND identity.external_id = member.id::text
+		`+identityread.JoinLinked("member", "identity")+`
 		WHERE member.id = ?::uuid
 		  AND member.deleted_at IS NULL
 		  AND (? = FALSE OR member.onboarded = TRUE)
@@ -472,9 +454,7 @@ func EligibleMemberIDs(ctx context.Context, db *gorm.DB, memberIDs []string) ([]
 	if err := db.WithContext(ctx).Raw(`
 		SELECT member.id::text AS id
 		FROM member
-		JOIN kratos.identities AS identity
-		  ON identity.id = member.account_identity_id
-		 AND identity.external_id = member.id::text
+		`+identityread.JoinLinked("member", "identity")+`
 		WHERE member.id IN ?
 		  AND member.deleted_at IS NULL
 		  AND member.onboarded = TRUE

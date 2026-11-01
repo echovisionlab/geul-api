@@ -63,7 +63,6 @@
 1 internal/authentication -> kratos.identities
 2 internal/authentication -> kratos.sessions
 1 internal/authentication -> member
-6 internal/authorizationtarget -> kratos.identities
 6 internal/authorizationtarget -> member
 1 internal/authorizationtarget -> user_deletion_request
 2 internal/campaign -> kratos.identities
