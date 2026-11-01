@@ -171,7 +171,7 @@ func (s *Service) loadFileURLResponses(
 ) (map[string]*managev1.GetMediaDeliveryResponse, error) {
 	return s.loadFileURLResponsesWithReader(ctx, s.units, fileIDs)
 }
-func (s *Service) loadFileURLResponsesWithReader(ctx context.Context, reader fileDeliveryReader, fileIDs []string) (map[string]*managev1.GetMediaDeliveryResponse, error) {
+func (s *Service) loadFileURLResponsesWithReader(ctx context.Context, reader fileStoreReader, fileIDs []string) (map[string]*managev1.GetMediaDeliveryResponse, error) {
 	if len(fileIDs) == 0 {
 		return map[string]*managev1.GetMediaDeliveryResponse{}, nil
 	}
@@ -289,7 +289,7 @@ func (s *Service) getFileUrlsForID(ctx context.Context, fileID string) (*managev
 
 func (s *Service) loadStoredDerivativeDeliveries(
 	ctx context.Context,
-	reader fileDeliveryReader,
+	reader fileStoreReader,
 	fileIDs []string,
 ) ([]storedDerivativeDeliveryRow, error) {
 	if len(fileIDs) == 0 {
@@ -487,7 +487,7 @@ func (s *Service) effectiveDownloadTTL() time.Duration {
 	return mediaauth.DownloadTTL
 }
 
-func (s *Service) sourceAssetReferencesWithReader(ctx context.Context, reader fileDeliveryReader, kind string, ids []string) (map[string]*mediaasset.Reference, error) {
+func (s *Service) sourceAssetReferencesWithReader(ctx context.Context, reader fileStoreReader, kind string, ids []string) (map[string]*mediaasset.Reference, error) {
 	if len(ids) == 0 {
 		return map[string]*mediaasset.Reference{}, nil
 	}
@@ -500,11 +500,11 @@ func (s *Service) sourceAssetReferencesWithReader(ctx context.Context, reader fi
 	return refs, err
 }
 
-type fileDeliveryReader interface {
+type fileStoreReader interface {
 	Read(context.Context, func(Store) error) error
 }
-type boundDeliveryReader struct{ Store }
+type boundFileStoreReader struct{ Store }
 
-func (r boundDeliveryReader) Read(_ context.Context, read func(Store) error) error {
+func (r boundFileStoreReader) Read(_ context.Context, read func(Store) error) error {
 	return read(r.Store)
 }

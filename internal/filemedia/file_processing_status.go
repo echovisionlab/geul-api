@@ -88,7 +88,7 @@ func (s *Service) populateFileProcessingStatus(
 ) error {
 	return s.populateFileProcessingStatusWithReader(ctx, s.units, responses)
 }
-func (s *Service) populateFileProcessingStatusWithReader(ctx context.Context, reader fileDeliveryReader, responses map[string]*commonv1.MediaDelivery) error {
+func (s *Service) populateFileProcessingStatusWithReader(ctx context.Context, reader fileStoreReader, responses map[string]*commonv1.MediaDelivery) error {
 	if len(responses) == 0 {
 		return nil
 	}

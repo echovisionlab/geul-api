@@ -15,7 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -48,17 +47,15 @@ type ClientMediaUploadArtifact struct {
 // PrepareClientMediaUpload returns the ID of the bundle it registered.
 func (s *Service) PrepareClientMediaUpload(ctx context.Context, command PrepareClientMediaUploadCommand) (string, error) {
 	var bundleID string
-	err := withMultipartCompletionAdvisoryLock(ctx, s.db, command.UploadID, command.FileID, func(db *gorm.DB) error {
-		svc := *s
-		svc.db = db
-		session, err := svc.authorizedClientMediaSession(ctx, command.UploadID, command.FileID)
+	err := withMultipartCompletionAdvisoryLock(ctx, s.db, command.UploadID, command.FileID, func(_ *gorm.DB) error {
+		session, err := s.authorizedClientMediaSession(ctx, command.UploadID, command.FileID)
 		if err != nil {
 			return err
 		}
 		if !clientMediaSessionWritable(session) {
 			return domainerr.Precondition("upload session is not writable")
 		}
-		bundleID, err = svc.prepareMediaBundle(ctx, session, command)
+		bundleID, err = s.prepareMediaBundle(ctx, session, command)
 		return err
 	})
 	if err != nil {
@@ -171,10 +168,10 @@ func (s *Service) HandleClientMediaArtifact(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	// The same lock seals PUT and completion; no upload can race canonical registration.
-	err := withMultipartCompletionAdvisoryLock(r.Context(), s.db, uploadID, fileID, func(db *gorm.DB) error {
-		return db.Transaction(func(tx *gorm.DB) error {
+	err := withMultipartCompletionAdvisoryLock(r.Context(), s.db, uploadID, fileID, func(_ *gorm.DB) error {
+		return s.units.Transaction(r.Context(), false, func(unit mutation.Tx[Store]) error {
 			svc := *s
-			svc.db = tx
+			svc.uploadReads = boundFileStoreReader{unit.Store()}
 			session, artifact, err := svc.authorizeMediaArtifact(r.Context(), identity.MemberID.String(), fileID, uploadID, bundleID, path)
 			if err != nil {
 				return err
@@ -182,7 +179,9 @@ func (s *Service) HandleClientMediaArtifact(w http.ResponseWriter, r *http.Reque
 			if err := svc.stageMediaArtifact(r, bundleID, *artifact); err != nil {
 				return err
 			}
-			svc.refreshUploadSessionActivity(r.Context(), session.UploadID)
+			if err := unit.Store().RenewUploadActivity(r.Context(), session.UploadID, time.Now()); err != nil {
+				slog.ErrorContext(r.Context(), "Failed to refresh upload session activity", failurecause.Attr(err), "uploadId", session.UploadID)
+			}
 			return nil
 		})
 	})
@@ -197,10 +196,16 @@ func (s *Service) HandleClientMediaArtifact(w http.ResponseWriter, r *http.Reque
 
 func (s *Service) authorizeMediaArtifact(ctx context.Context, memberID, fileID, uploadID, bundleID, path string) (model.UploadSession, *clientMediaArtifact, error) {
 	var session model.UploadSession
-	if err := s.db.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Where("upload_id = ? AND file_id = ?", uploadID, fileID).Take(&session).Error; err != nil {
+	var row domain.UploadSession
+	if err := s.readUploadFacts(ctx, func(store Store) error {
+		var err error
+		row, err = store.UploadSession(ctx, uploadID, fileID, true)
+		return err
+	}); err != nil {
 		return session, nil, domainerr.New(domainerr.NotFound, "", "upload session not found").WithCause(failurecause.WithAttrs(err, slog.String("upload_id", uploadID), slog.String("file_id", fileID)))
 	}
+	session = uploadSessionFromStore(row)
+
 	if err := s.checkPartUploadPermission(ctx, memberID, session); err != nil {
 		return session, nil, domainerr.Denied("artifact upload permission denied").WithCause(failurecause.WithAttrs(err, slog.String("upload_id", uploadID), slog.String("file_id", fileID)))
 	}
@@ -277,11 +282,16 @@ func (s *Service) clientMediaArtifactWritable(ctx context.Context, session model
 	if session.Status != model.UploadSessionStatusFinalizing {
 		return false, nil
 	}
-	var file model.File
-	err := s.db.WithContext(ctx).Where("id = ?", session.FileID).Take(&file).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	var file File
+	err := s.readUploadFacts(ctx, func(store Store) error {
+		var err error
+		file, err = store.IngestFile(ctx, session.FileID)
+		return err
+	})
+	if errors.Is(err, domain.ErrFileNotFound) {
 		return true, nil
 	}
+
 	if err != nil {
 		return false, err
 	}

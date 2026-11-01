@@ -13,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
-	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
@@ -138,19 +137,27 @@ func (s *Service) getUploadConfig(uploadType managev1.UploadType) *model.UploadC
 }
 
 func (s *Service) resolveTrackReleaseID(ctx context.Context, trackID string) (string, error) {
-	var track struct {
-		ReleaseID string `gorm:"column:release_id"`
-	}
+	var releaseID string
+	err := s.readUploadFacts(ctx, func(store Store) error {
+		rows, err := store.TrackReleaseIDs(ctx, []string{trackID})
+		if err != nil {
+			return err
+		}
+		var ok bool
+		releaseID, ok = rows[trackID]
+		if !ok {
+			return domain.ErrUploadTrackNotFound
+		}
+		return nil
+	})
+	return releaseID, err
+}
 
-	if err := s.db.WithContext(ctx).
-		Table("track").
-		Select("release_id").
-		Where("id = ?", trackID).
-		First(&track).Error; err != nil {
-		return "", err
+func (s *Service) readUploadFacts(ctx context.Context, read func(Store) error) error {
+	if s.uploadReads != nil {
+		return s.uploadReads.Read(ctx, read)
 	}
-
-	return track.ReleaseID, nil
+	return s.units.Read(ctx, read)
 }
 
 func (s *Service) buildManagedFileKey(
@@ -589,7 +596,7 @@ func (s *Service) resolveUploadPermissionEntityID(
 		return entityID, nil
 	}
 	releaseID, err := s.resolveTrackReleaseID(ctx, entityID)
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	if errors.Is(err, domain.ErrUploadTrackNotFound) {
 		return "", domainerr.New(domainerr.NotFound, "", "track not found")
 	}
 	if err != nil {
@@ -695,18 +702,21 @@ func (s *Service) ensureUploadPermissionEntityExists(
 		return nil
 	}
 
-	table, ok := uploadPermissionResourceTable(target.resourceType)
-	if !ok {
+	if _, ok := uploadPermissionResourceTable(target.resourceType); !ok {
 		return nil
 	}
-
-	var count int64
-	if err := s.db.WithContext(ctx).Table(table).Where("id = ?", entityID).Count(&count).Error; err != nil {
+	var exists bool
+	if err := s.readUploadFacts(ctx, func(store Store) error {
+		var err error
+		exists, err = store.UploadOwnerExists(ctx, target.resourceType, entityID)
+		return err
+	}); err != nil {
 		return err
 	}
-	if count == 0 {
+	if !exists {
 		return domainerr.ResourceNotFound(target.resourceType, entityID)
 	}
+
 	return nil
 }
 

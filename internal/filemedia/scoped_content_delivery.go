@@ -208,7 +208,7 @@ func (s *Service) hydrateAuthorizedContentBlockMedia(
 			currentFileIDs[relation.FileID] = struct{}{}
 		}
 	}
-	responses, err := s.loadFileURLResponsesWithReader(scopedCtx, boundDeliveryReader{joined.Store}, sortedStringSet(currentFileIDs))
+	responses, err := s.loadFileURLResponsesWithReader(scopedCtx, boundFileStoreReader{joined.Store}, sortedStringSet(currentFileIDs))
 	if err != nil {
 		return nil, err
 	}
@@ -330,7 +330,7 @@ func (s *Service) buildLockedInlineDelivery(
 		duration := int32(*file.DurationSeconds)
 		delivery.DurationSeconds = &duration
 	}
-	if err := s.populateFileProcessingStatusWithReader(ctx, boundDeliveryReader{store}, map[string]*commonv1.MediaDelivery{file.ID: delivery}); err != nil {
+	if err := s.populateFileProcessingStatusWithReader(ctx, boundFileStoreReader{store}, map[string]*commonv1.MediaDelivery{file.ID: delivery}); err != nil {
 		slog.ErrorContext(ctx, "Failed to populate scoped featured-image processing status", failurecause.Attr(err), "fileId", file.ID)
 	}
 	return delivery, nil

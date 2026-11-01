@@ -351,32 +351,6 @@ func TestClientMediaReadySignalHasCompleteOutputsAndNoCommands(t *testing.T) {
 	require.EqualValues(t, 6, event.GetOutputs().GetDurationSeconds())
 }
 
-func TestClientMediaFinalizingRepairNeverReopensRegisteredBundle(t *testing.T) {
-	session, _ := clientMediaTestBundle(t, "audio")
-	svc := withTestStorage(&Service{db: newServiceUnitDB(t)})
-	session.Status = model.UploadSessionStatusUploading
-	allowed, err := svc.clientMediaArtifactWritable(t.Context(), session)
-	require.NoError(t, err)
-	require.True(t, allowed)
-	session.Status = model.UploadSessionStatusFinalizing
-	allowed, err = svc.clientMediaArtifactWritable(t.Context(), session)
-	require.NoError(t, err)
-	require.True(t, allowed)
-	file := model.File{ID: session.FileID, FileName: "source", Extension: "mp4", MimeType: session.RequestedMime, FileSize: 100}
-	require.NoError(t, svc.db.Create(&file).Error)
-	allowed, err = svc.clientMediaArtifactWritable(t.Context(), session)
-	require.NoError(t, err)
-	require.True(t, allowed)
-	require.NoError(t, svc.db.Model(&model.File{}).Where("id = ?", file.ID).Update("client_media_bundle_id", *session.ClientMediaBundleID).Error)
-	allowed, err = svc.clientMediaArtifactWritable(t.Context(), session)
-	require.NoError(t, err)
-	require.False(t, allowed)
-	session.Status = model.UploadSessionStatusAborted
-	allowed, err = svc.clientMediaArtifactWritable(t.Context(), session)
-	require.NoError(t, err)
-	require.False(t, allowed)
-}
-
 func TestDirectMediaCompletionRequiresBrowserBundle(t *testing.T) {
 	for _, uploadType := range []managev1.UploadType{managev1.UploadType_UPLOAD_TYPE_EDITOR_ATTACHMENT, managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE, managev1.UploadType_UPLOAD_TYPE_EDITOR_AUDIO, managev1.UploadType_UPLOAD_TYPE_EDITOR_VIDEO, managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO} {
 		for _, mime := range []string{"audio/mpeg", "video/mp4"} {

@@ -18,6 +18,23 @@ func ingestContractFile() domain.File {
 
 func verifiedIngestCases() map[string]func(*testing.T, CatalogHarness) {
 	return map[string]func(*testing.T, CatalogHarness){
+		"upload owner facts preserve missing and unsupported targets": func(t *testing.T, h CatalogHarness) {
+			file, owner, doc := CatalogFile("owner", nil), uuid.NewString(), uuid.NewString()
+			h.SeedFile(t, file, false, false)
+			h.SeedDeliveryOwner(t, "post", owner, doc, "POST_STATUS_DRAFT", file.ID)
+			require.NoError(t, mutationtest.Read(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				exists, err := s.UploadOwnerExists(ctx, "post", owner)
+				require.NoError(t, err)
+				require.True(t, exists)
+				exists, err = s.UploadOwnerExists(ctx, "post", uuid.NewString())
+				require.NoError(t, err)
+				require.False(t, exists)
+				exists, err = s.UploadOwnerExists(ctx, "user", owner)
+				require.NoError(t, err)
+				require.False(t, exists)
+				return nil
+			}))
+		},
 		"concurrent ingest date folder allocation converges": func(t *testing.T, h CatalogHarness) {
 			var first *string
 			require.NoError(t, mutationtest.RequireSecondWaits(t, h.Harness, func(ctx context.Context, s domain.Store) error {

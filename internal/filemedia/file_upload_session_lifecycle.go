@@ -10,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -46,13 +45,7 @@ func (s *Service) createUploadSession(ctx context.Context, session *model.Upload
 
 func (s *Service) refreshUploadSessionActivity(ctx context.Context, uploadID string) {
 	now := time.Now()
-	if err := s.db.WithContext(ctx).
-		Model(&model.UploadSession{}).
-		Where("upload_id = ?", uploadID).
-		Updates(structured.Fields{
-			"last_activity_at": now,
-			"updated_at":       now,
-		}).Error; err != nil {
+	if err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error { return unit.Store().RenewUploadActivity(ctx, uploadID, now) }); err != nil {
 		slog.ErrorContext(ctx, "Failed to refresh upload session activity", failurecause.Attr(err), "uploadId", uploadID)
 	}
 }
