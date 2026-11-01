@@ -7,17 +7,18 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-type fileIngestTargetMode uint8
+type fileIngestTargetMode = domain.UploadTargetMode
 
 const (
-	fileIngestTargetModeUnknown fileIngestTargetMode = iota
-	fileIngestTargetModeGeneral
-	fileIngestTargetModeEditorFile
-	fileIngestTargetModeTrackProjection
+	fileIngestTargetModeUnknown         = domain.UploadTargetUnknown
+	fileIngestTargetModeGeneral         = domain.UploadTargetGeneral
+	fileIngestTargetModeEditorFile      = domain.UploadTargetEditorFile
+	fileIngestTargetModeTrackProjection = domain.UploadTargetTrackProjection
 )
 
 type fileIngestProjectionIdentity struct {
