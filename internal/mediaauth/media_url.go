@@ -86,6 +86,33 @@ func ExpiringFileRef(
 	purpose Purpose,
 	ttl time.Duration,
 ) (*commonv1.ExpiringMediaRef, error) {
+	ref, err := ExpiringReference(mediaDomain, secret, fileID, extension, mimeType, fileName, purpose, ttl)
+	if err != nil {
+		return nil, err
+	}
+	return &commonv1.ExpiringMediaRef{FileId: ref.FileID, Url: ref.URL, Purpose: DeliveryPurpose(ref.Purpose), ExpiresAt: timestamppb.New(ref.ExpiresAt), Extension: ref.Extension, MimeType: ref.MimeType, FileName: ref.FileName}, nil
+}
+
+// Reference is a signed media URL and the exact expiry enforced by its token.
+type Reference struct {
+	FileID, URL, Extension, MimeType string
+	FileName                         *string
+	Purpose                          Purpose
+	ExpiresAt                        time.Time
+}
+
+func (r *Reference) Clone() *Reference {
+	if r == nil {
+		return nil
+	}
+	result := *r
+	if r.FileName != nil {
+		v := *r.FileName
+		result.FileName = &v
+	}
+	return &result
+}
+func ExpiringReference(mediaDomain, secret, fileID, extension, mimeType string, fileName *string, purpose Purpose, ttl time.Duration) (*Reference, error) {
 	var downloadFilename string
 	if purpose == PurposeDownload {
 		downloadFilename = CanonicalDownloadFilename(fileName, fileID, extension)
@@ -94,15 +121,8 @@ func ExpiringFileRef(
 	if err != nil {
 		return nil, err
 	}
-	ref := &commonv1.ExpiringMediaRef{
-		FileId:    fileID,
-		Url:       url,
-		Purpose:   DeliveryPurpose(purpose),
-		ExpiresAt: timestamppb.New(expiresAt),
-		Extension: extension,
-		MimeType:  mimeType,
-		FileName:  fileName,
-	}
+
+	ref := &Reference{FileID: fileID, URL: url, Purpose: purpose, ExpiresAt: expiresAt, Extension: extension, MimeType: mimeType, FileName: fileName}
 	if purpose == PurposeDownload {
 		ref.FileName = &downloadFilename
 	}

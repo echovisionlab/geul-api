@@ -6,18 +6,16 @@ import (
 	"strings"
 	"time"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
+	"github.com/echovisionlab/geul-api/internal/authz"
+	"github.com/echovisionlab/geul-api/internal/mutation"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	"gorm.io/gorm"
 )
 
 // Deps are the collaborators of the public File use cases.
 type Deps struct {
-	DB          *gorm.DB
-	SpiceDB     *auth.SpiceDBClient
-	Segments    mediaassetpostgres.SegmentConfigLoader
+	Units       mutation.UnitOfWork[Store]
+	SpiceDB     authz.AuthorizationDecisionChecker
 	CDNDomain   string
 	MediaDomain string
 	MediaSecret string
@@ -29,19 +27,18 @@ type Deps struct {
 // Service holds the public File use cases: download authorization and the
 // public media deliveries other domains' public reads hydrate.
 type Service struct {
-	db          *gorm.DB
-	spiceDB     *auth.SpiceDBClient
+	units       mutation.UnitOfWork[Store]
+	spiceDB     authz.AuthorizationDecisionChecker
 	cdnDomain   string
 	mediaDomain string
 	mediaSecret string
 	downloadTTL time.Duration
-	segments    mediaassetpostgres.SegmentConfigLoader
 }
 
 // NewService validates deps and returns the public File use cases.
 func NewService(deps Deps) (*Service, error) {
 	var missing []string
-	for name, absent := range map[string]bool{"DB": deps.DB == nil, "SpiceDB": deps.SpiceDB == nil, "Segments": deps.Segments == nil} {
+	for name, absent := range map[string]bool{"Units": deps.Units == nil, "SpiceDB": deps.SpiceDB == nil} {
 		if absent {
 			missing = append(missing, name)
 		}
@@ -51,7 +48,7 @@ func NewService(deps Deps) (*Service, error) {
 		return nil, errors.New("public file media dependencies are required: " + strings.Join(missing, ", "))
 	}
 	return &Service{
-		db: deps.DB, spiceDB: deps.SpiceDB, segments: deps.Segments,
+		units: deps.Units, spiceDB: deps.SpiceDB,
 		cdnDomain: deps.CDNDomain, mediaDomain: deps.MediaDomain, mediaSecret: deps.MediaSecret,
 		downloadTTL: boundedMediaTTL(deps.DownloadTTL, mediaauth.DownloadTTL, mediaauth.DownloadTTL),
 	}, nil

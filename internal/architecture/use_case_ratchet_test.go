@@ -29,6 +29,7 @@ var pipelineDomains = []string{
 	"internal/emaildelivery",
 	"internal/entityparticipant",
 	"internal/filemedia/application",
+	"internal/filemedia/public",
 	"internal/form",
 	"internal/label",
 	"internal/legal",

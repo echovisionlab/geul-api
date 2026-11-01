@@ -891,6 +891,15 @@ it.
   asset; the owner's mutation supplies authorization and audit. Cleanup
   receives a separate `CleanupStore`, an object store, a cache and owner
   ports, keeping physical deletion outside the prepare/finalize transactions.
+- **Public download revalidation.** `filemedia/public.Service` evaluates
+  downloads in one `ReadLocked` snapshot, then opens a second snapshot to
+  revalidate and sign. Preserve the lock order: policy segments, owner,
+  draft principal, viewer, exact attachment relation. Sign while those locks
+  remain held. Its Store embeds the media asset download port so every
+  lookup joins the same pass. Delivery and download results use plain types;
+  `connect_handler_media.go` translates the owner-facing protobuf surface,
+  including unknown fields and partial in-place hydration on a signing error.
+  `mediaauth.Reference` carries the exact expiry enforced by the signed token.
 - **Admission bookkeeping.** A write that no principal authorizes and no
   audit record describes, such as the auth code issuance reservation of an
   anonymous request, is not a domain mutation. It calls

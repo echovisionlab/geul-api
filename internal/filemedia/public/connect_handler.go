@@ -24,7 +24,7 @@ func NewConnectHandler(files *Service) *ConnectHandler {
 }
 
 func (h *ConnectHandler) AuthorizeDownload(ctx context.Context, req *connect.Request[openv1.AuthorizeDownloadRequest]) (*connect.Response[openv1.AuthorizeDownloadResponse], error) {
-	query := AuthorizeDownloadQuery{EntityType: req.Msg.EntityType, EntityID: req.Msg.EntityId, TrackID: req.Msg.GetTrackId()}
+	query := AuthorizeDownloadQuery{EntityType: MediaEntityType(req.Msg.EntityType), EntityID: req.Msg.EntityId, TrackID: req.Msg.GetTrackId()}
 	if selector := req.Msg.GetContentBlock(); selector != nil {
 		query.ContentBlock = &ContentBlockFileSelector{BlockID: selector.GetBlockId(), ReferencePath: selector.GetReferencePath()}
 	}
@@ -32,5 +32,5 @@ func (h *ConnectHandler) AuthorizeDownload(ctx context.Context, req *connect.Req
 	if err != nil {
 		return nil, errs.Wrap(err)
 	}
-	return connect.NewResponse(response), nil
+	return connect.NewResponse(downloadResultProto(response)), nil
 }

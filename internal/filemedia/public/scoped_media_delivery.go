@@ -7,13 +7,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mediamime"
 
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"gorm.io/gorm"
 )
 
 const maxDirectDraftMediaTTL = 5 * time.Minute
@@ -25,58 +23,35 @@ func directDraftMediaTTL(configured time.Duration) time.Duration {
 	return configured
 }
 
-type scopedMediaFile struct {
-	ID              string  `gorm:"column:id"`
-	Extension       string  `gorm:"column:extension"`
-	MimeType        string  `gorm:"column:mime_type"`
-	FileSize        int64   `gorm:"column:file_size"`
-	FileName        *string `gorm:"column:file_name"`
-	DurationSeconds *int    `gorm:"column:duration_seconds"`
-}
-
-type scopedMediaDerivative struct {
-	FileID            string  `gorm:"column:file_id"`
-	Type              string  `gorm:"column:type"`
-	AssetID           *string `gorm:"column:asset_id"`
-	MediaGenerationID *string `gorm:"column:media_generation_id"`
-}
-
-func (s *Service) buildScopedMediaURLsWithDB(
+func (s *Service) buildScopedMediaURLs(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	accessByFileID map[string]resolvedMediaAccess,
-) (map[string]*commonv1.MediaDelivery, error) {
+) (map[string]*Delivery, error) {
 	allowedFileIDs := make([]string, 0, len(accessByFileID))
 	for fileID := range accessByFileID {
 		allowedFileIDs = append(allowedFileIDs, fileID)
 	}
 	slices.Sort(allowedFileIDs)
 	if len(allowedFileIDs) == 0 {
-		return map[string]*commonv1.MediaDelivery{}, nil
+		return map[string]*Delivery{}, nil
 	}
 
-	var files []scopedMediaFile
-	if err := db.WithContext(ctx).
-		Table("file").
-		Select("id, extension, mime_type, file_size, file_name, duration_seconds").
-		Where("id IN ? AND delete_requested_at IS NULL", allowedFileIDs).
-		Find(&files).Error; err != nil {
+	files, err := store.MediaFiles(ctx, allowedFileIDs)
+	if err != nil {
 		return nil, err
 	}
 
-	fileMap := make(map[string]scopedMediaFile, len(files))
+	fileMap := make(map[string]MediaFile, len(files))
 	for _, file := range files {
 		fileMap[file.ID] = file
 	}
 
-	var derivatives []scopedMediaDerivative
-	if err := db.WithContext(ctx).
-		Table("file_derivative").
-		Select("file_id, type, asset_id, media_generation_id").
-		Where("file_id IN ?", allowedFileIDs).
-		Find(&derivatives).Error; err != nil {
+	derivatives, err := store.Derivatives(ctx, allowedFileIDs)
+	if err != nil {
 		return nil, err
 	}
+
 	assetIDs := make([]string, 0, len(derivatives))
 	generationIDs := make([]string, 0, len(derivatives))
 	for _, derivative := range derivatives {
@@ -87,17 +62,16 @@ func (s *Service) buildScopedMediaURLsWithDB(
 			generationIDs = append(generationIDs, *derivative.MediaGenerationID)
 		}
 	}
-	assetsByID, err := loadReadyPublicAssetsByIDs(ctx, db, assetIDs)
+	assetsByID, err := store.ReadyAssets(ctx, assetIDs)
 	if err != nil {
 		return nil, err
 	}
-	generationsByID, err := loadReadyMediaGenerationsByIDs(ctx, db, generationIDs)
+	generationsByID, err := store.ReadyGenerations(ctx, generationIDs)
 	if err != nil {
 		return nil, err
 	}
-	publicAssetsByFileID, err := loadReadyPublicAssetsForSourceFiles(
+	publicAssetsByFileID, err := store.ReadyAssetsForFiles(
 		ctx,
-		db,
 		allowedFileIDs,
 		"image", "mesh", "texture", "gallery", "artwork", "poster", "map_image",
 	)
@@ -105,15 +79,15 @@ func (s *Service) buildScopedMediaURLsWithDB(
 		return nil, err
 	}
 
-	derivativeMap := make(map[string]map[string]scopedMediaDerivative, len(allowedFileIDs))
+	derivativeMap := make(map[string]map[string]Derivative, len(allowedFileIDs))
 	for _, derivative := range derivatives {
 		if _, ok := derivativeMap[derivative.FileID]; !ok {
-			derivativeMap[derivative.FileID] = make(map[string]scopedMediaDerivative)
+			derivativeMap[derivative.FileID] = make(map[string]Derivative)
 		}
 		derivativeMap[derivative.FileID][derivative.Type] = derivative
 	}
 
-	result := make(map[string]*commonv1.MediaDelivery, len(allowedFileIDs))
+	result := make(map[string]*Delivery, len(allowedFileIDs))
 	for _, fileID := range allowedFileIDs {
 		file, found := fileMap[fileID]
 		if !found {
@@ -140,14 +114,14 @@ func (s *Service) buildScopedMediaURLsWithDB(
 	return result, nil
 }
 
-// ResolvePublicDisplayMedia projects only immutable ready public image assets
+// ResolveDisplayMedia projects only immutable ready public image assets
 // after the owning public domain has authorized the exact featured-image
 // binding. Missing or failed projections remain unavailable; this path never
 // signs the private original File.
-func (s *Service) ResolvePublicDisplayMedia(
+func (s *Service) ResolveDisplayMedia(
 	ctx context.Context,
 	fileIDs []string,
-) (map[string]*commonv1.MediaDelivery, error) {
+) (map[string]*Delivery, error) {
 	requested := make([]string, 0, len(fileIDs))
 	for _, fileID := range fileIDs {
 		fileID = strings.TrimSpace(fileID)
@@ -156,44 +130,46 @@ func (s *Service) ResolvePublicDisplayMedia(
 		}
 	}
 	requested = sliceutil.UniqueTrimmed(requested)
-	result := make(map[string]*commonv1.MediaDelivery, len(requested))
+	result := make(map[string]*Delivery, len(requested))
 	if len(requested) == 0 {
 		return result, nil
 	}
 
-	var files []scopedMediaFile
-	if err := s.db.WithContext(ctx).Table("file").
-		Select("id, extension, mime_type, file_size, file_name, duration_seconds").
-		Where("id IN ? AND delete_requested_at IS NULL", requested).
-		Find(&files).Error; err != nil {
-		return nil, err
-	}
-	assets, err := loadReadyPublicAssetsForSourceFiles(
-		ctx, s.db, requested, "image", "gallery", "artwork", "poster", "map_image",
-	)
+	err := s.units.Read(ctx, func(store Store) error {
+		files, err := store.MediaFiles(ctx, requested)
+		if err != nil {
+			return err
+		}
+		assets, err := store.ReadyAssetsForFiles(ctx, requested, "image", "gallery", "artwork", "poster", "map_image")
+		if err != nil {
+			return err
+		}
+
+		for _, file := range files {
+			if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(file.MimeType)), "image/") {
+				continue
+			}
+			asset, found := assets[file.ID]
+			if !found || asset.SourceFileID == nil || *asset.SourceFileID != file.ID {
+				continue
+			}
+			ref, projectErr := projectReadyPublicAsset(s.cdnDomain, asset)
+			if projectErr != nil {
+				return projectErr
+			}
+			delivery := &Delivery{
+				FileID: file.ID, Extension: file.Extension, MimeType: file.MimeType,
+				FileSize: file.FileSize, Asset: ref, Thumbnail: ref,
+			}
+			if file.FileName != nil {
+				delivery.FileName = file.FileName
+			}
+			result[file.ID] = delivery
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	for _, file := range files {
-		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(file.MimeType)), "image/") {
-			continue
-		}
-		asset, found := assets[file.ID]
-		if !found || asset.SourceFileID == nil || *asset.SourceFileID != file.ID {
-			continue
-		}
-		ref, projectErr := projectReadyPublicAsset(s.cdnDomain, asset)
-		if projectErr != nil {
-			return nil, projectErr
-		}
-		delivery := &commonv1.MediaDelivery{
-			FileId: file.ID, Extension: file.Extension, MimeType: file.MimeType,
-			FileSize: file.FileSize, Asset: ref, Thumbnail: ref,
-		}
-		if file.FileName != nil {
-			delivery.FileName = file.FileName
-		}
-		result[file.ID] = delivery
 	}
 	return result, nil
 }
@@ -203,17 +179,17 @@ func projectScopedMediaURL(
 	mediaDomain string,
 	mediaSecret string,
 	access resolvedMediaAccess,
-	file scopedMediaFile,
-	derivatives map[string]scopedMediaDerivative,
-	assetsByID map[string]readyPublicAssetRow,
-	generationsByID map[string]readyMediaGenerationRow,
-	publicAsset readyPublicAssetRow,
-) (*commonv1.MediaDelivery, error) {
+	file MediaFile,
+	derivatives map[string]Derivative,
+	assetsByID map[string]ReadyAsset,
+	generationsByID map[string]ReadyGeneration,
+	publicAsset ReadyAsset,
+) (*Delivery, error) {
 	if expected := mediamime.GetExtensionFromMime(file.MimeType); expected == "bin" || expected != file.Extension {
 		return nil, errors.New("file extension does not match MIME type")
 	}
-	response := &commonv1.MediaDelivery{
-		FileId:    file.ID,
+	response := &Delivery{
+		FileID:    file.ID,
 		Extension: file.Extension,
 		MimeType:  file.MimeType,
 		FileSize:  file.FileSize,
@@ -242,7 +218,7 @@ func projectScopedMediaURL(
 		if access.directDraft {
 			inlineTTL = directDraftMediaTTL(inlineTTL)
 		}
-		inlineRef, err := mediaauth.ExpiringFileRef(
+		inlineRef, err := mediaauth.ExpiringReference(
 			mediaDomain,
 			mediaSecret,
 			file.ID,
@@ -260,7 +236,7 @@ func projectScopedMediaURL(
 
 	thumbnail, err := projectDerivativeAsset(
 		cdnDomain, derivatives, assetsByID,
-		managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_THUMBNAIL,
+		derivativeThumbnail,
 		true,
 	)
 	if err != nil {
@@ -275,7 +251,7 @@ func projectScopedMediaURL(
 	}
 	response.Spectrogram, err = projectDerivativeAsset(
 		mediaDomain, derivatives, assetsByID,
-		managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_SPECTROGRAM,
+		derivativeSpectrogram,
 		true,
 	)
 	if err != nil {
@@ -283,7 +259,7 @@ func projectScopedMediaURL(
 	}
 	response.Waveform, err = projectDerivativeAsset(
 		mediaDomain, derivatives, assetsByID,
-		managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_WAVEFORM,
+		derivativeWaveform,
 		true,
 	)
 	if err != nil {
@@ -295,15 +271,15 @@ func projectScopedMediaURL(
 
 func projectDerivativeAsset(
 	cdnDomain string,
-	derivatives map[string]scopedMediaDerivative,
-	assetsByID map[string]readyPublicAssetRow,
-	derivativeType managev1.FileDerivativeType,
+	derivatives map[string]Derivative,
+	assetsByID map[string]ReadyAsset,
+	derivativeType string,
 	allowed bool,
-) (*commonv1.AssetRef, error) {
+) (*mediaasset.Reference, error) {
 	if !allowed {
 		return nil, nil
 	}
-	derivative, found := derivatives[derivativeType.String()]
+	derivative, found := derivatives[derivativeType]
 	if !found || derivative.AssetID == nil {
 		return nil, nil
 	}
@@ -317,10 +293,10 @@ func projectDerivativeAsset(
 func projectHLSPlayback(
 	mediaDomain string,
 	fileID string,
-	derivatives map[string]scopedMediaDerivative,
-	generationsByID map[string]readyMediaGenerationRow,
-) (*commonv1.HlsMediaRef, error) {
-	derivative, found := derivatives[managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS.String()]
+	derivatives map[string]Derivative,
+	generationsByID map[string]ReadyGeneration,
+) (*HLSReference, error) {
+	derivative, found := derivatives[derivativeHls]
 	if !found || derivative.MediaGenerationID == nil {
 		return nil, nil
 	}
