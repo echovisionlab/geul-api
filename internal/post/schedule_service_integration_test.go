@@ -39,10 +39,6 @@ func TestProcessDueScheduledPostsDoesNotPublishTranslationWakeups(t *testing.T) 
 			postID, managev1.PostStatus_POST_STATUS_SCHEDULED.String(), scheduledAt, documentID,
 		).Error)
 	}
-	t.Cleanup(func() {
-		require.NoError(t, db.Exec("DELETE FROM post WHERE id IN ?", append(dueIDs, futureID)).Error)
-		require.NoError(t, db.Exec("DELETE FROM content_document WHERE id IN ?", documentIDs).Error)
-	})
 
 	published, err := processDueScheduledPosts(t, db)
 	require.NoError(t, err)

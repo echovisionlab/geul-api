@@ -114,7 +114,7 @@ func TestCreateCommentRechecksPostPolicyAfterWaitingForRowLock(t *testing.T) {
 				result <- err
 			}()
 
-			requireCallStillWaiting(t, result)
+			requireMutationWaiting(t, db, 1, result)
 			require.NoError(t, lockTx.Model(&model.Post{}).
 				Where("id = ?", postID).
 				Updates(test.update).Error)
@@ -154,7 +154,7 @@ func TestUpdateCommentRechecksDeletionAfterWaitingForRowLock(t *testing.T) {
 		result <- err
 	}()
 
-	requireCallStillWaiting(t, result)
+	requireMutationWaiting(t, db, 1, result)
 	require.NoError(t, lockTx.Model(&model.Comment{}).
 		Where("id = ?", comment.ID).
 		Updates(structured.Fields{
@@ -177,13 +177,6 @@ func TestCreateCommentRejectsMemberTombstonedBeforePrincipalLock(t *testing.T) {
 	db := testutil.NewConcurrentPostIntegrationDB(t)
 	userID, postID := seedConcurrentCommentFixture(t, db)
 	memberID := testutil.PostIntegrationMemberID(userID)
-	t.Cleanup(func() {
-		_ = db.Exec(`
-			UPDATE member
-			SET account_identity_id = ?::uuid, deleted_at = NULL, updated_at = GREATEST(created_at, clock_timestamp())
-			WHERE id = ?::uuid
-		`, userID, memberID).Error
-	})
 
 	revokeTx := db.Begin()
 	require.NoError(t, revokeTx.Error)
@@ -196,7 +189,7 @@ func TestCreateCommentRejectsMemberTombstonedBeforePrincipalLock(t *testing.T) {
 		)
 		result <- err
 	}()
-	requireCallStillWaiting(t, result)
+	requireMutationWaiting(t, db, 1, result)
 	require.NoError(t, tombstoneMemberForAuthorityRace(revokeTx, memberID))
 	require.NoError(t, revokeTx.Commit().Error)
 
@@ -211,13 +204,6 @@ func TestDeleteOwnCommentRejectsMemberTombstonedBeforePrincipalLock(t *testing.T
 	memberID := testutil.PostIntegrationMemberID(userID)
 	comment := model.Comment{PostID: postID, MemberID: &memberID, Content: "preserve me"}
 	require.NoError(t, db.Create(&comment).Error)
-	t.Cleanup(func() {
-		_ = db.Exec(`
-			UPDATE member
-			SET account_identity_id = ?::uuid, deleted_at = NULL, updated_at = GREATEST(created_at, clock_timestamp())
-			WHERE id = ?::uuid
-		`, userID, memberID).Error
-	})
 
 	revokeTx := db.Begin()
 	require.NoError(t, revokeTx.Error)
@@ -230,7 +216,7 @@ func TestDeleteOwnCommentRejectsMemberTombstonedBeforePrincipalLock(t *testing.T
 		)
 		result <- err
 	}()
-	requireCallStillWaiting(t, result)
+	requireMutationWaiting(t, db, 1, result)
 	require.NoError(t, tombstoneMemberForAuthorityRace(revokeTx, memberID))
 	require.NoError(t, revokeTx.Commit().Error)
 
@@ -238,38 +224,6 @@ func TestDeleteOwnCommentRejectsMemberTombstonedBeforePrincipalLock(t *testing.T
 	require.NoError(t, db.Where("id = ?", comment.ID).Take(&comment).Error)
 	require.False(t, comment.IsDeleted)
 	require.Equal(t, "preserve me", comment.Content)
-}
-
-func TestListCommentsIgnoresCursorFromAnotherPost(t *testing.T) {
-	t.Parallel()
-	db := testutil.NewPostIntegrationDB(t)
-	userID := testutil.PostIntegrationUUID()
-	testutil.SeedPostIntegrationIdentity(t, db, userID, "Comment cursor user")
-	memberID := testutil.PostIntegrationMemberID(userID)
-	targetPostID := testutil.SeedPostBaseRow(t, db, managev1.PostStatus_POST_STATUS_DRAFT.String())
-	otherPostID := testutil.SeedPostBaseRow(t, db, managev1.PostStatus_POST_STATUS_DRAFT.String())
-	require.NoError(t, db.Table("post").Where("id IN ?", []string{targetPostID, otherPostID}).
-		Update("status", managev1.PostStatus_POST_STATUS_PUBLISHED.String()).Error)
-
-	target := model.Comment{
-		PostID: targetPostID, MemberID: &memberID, Content: "target", CreatedAt: time.Unix(1_700_000_000, 0).UTC(),
-	}
-	other := model.Comment{
-		PostID: otherPostID, MemberID: &memberID, Content: "other", CreatedAt: time.Unix(1_700_000_100, 0).UTC(),
-	}
-	require.NoError(t, db.Create(&target).Error)
-	require.NoError(t, db.Create(&other).Error)
-
-	response, err := postintegration.NewPostCommentService(t, db, "", nil).ListCommentsByPost(
-		commentIntegrationUserContext(userID),
-		connect.NewRequest(&managev1.ListCommentsByPostRequest{
-			PostId: targetPostID,
-			Cursor: &other.ID,
-		}),
-	)
-	require.NoError(t, err)
-	require.Len(t, response.Msg.Comments, 1)
-	require.Equal(t, target.ID, response.Msg.Comments[0].Id)
 }
 
 func seedConcurrentCommentFixture(t *testing.T, db *gorm.DB) (string, string) {
@@ -290,10 +244,6 @@ func seedConcurrentCommentFixture(t *testing.T, db *gorm.DB) (string, string) {
 			VALUES (?::uuid, ?::uuid, NOW())
 		`, postID, testutil.PostIntegrationMemberID(userID)).Error
 	}))
-	t.Cleanup(func() {
-		require.NoError(t, db.Exec("DELETE FROM post WHERE id = ?", postID).Error)
-		require.NoError(t, db.Exec("DELETE FROM kratos.identities WHERE id = ?", userID).Error)
-	})
 	return userID, postID
 }
 
@@ -317,14 +267,6 @@ func commentIntegrationUserContext(userID string) context.Context {
 	return testutil.PostIntegrationContext(userID)
 }
 
-func requireCallStillWaiting(t *testing.T, result <-chan error) {
-	t.Helper()
-	select {
-	case err := <-result:
-		require.FailNow(t, "call returned before the authority row lock was released", "error: %v", err)
-	case <-time.After(100 * time.Millisecond):
-	}
-}
 
 func requireCallResult(t *testing.T, result <-chan error) error {
 	t.Helper()

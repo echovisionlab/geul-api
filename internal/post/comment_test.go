@@ -263,3 +263,17 @@ func TestListCommentsNeedsAViewableCommentablePost(t *testing.T) {
 	require.Zero(t, page.TotalCount)
 	require.Empty(t, h.audit.Records(), "a read is not audited")
 }
+
+func TestListCommentsIgnoresACursorFromAnotherPost(t *testing.T) {
+	h := newHarness(t)
+	reader := h.member(newPrincipal(), "Reader")
+	value, other := h.seedPost("Target", "", published), h.seedPost("Other", "", published)
+	target := h.store.PutComment(post.Comment{PostID: value.ID, Content: "target"})
+	elsewhere := h.store.PutComment(post.Comment{PostID: other.ID, Content: "other"})
+
+	page, err := h.comments.ListCommentsByPost(reader.context(t), post.ListCommentsQuery{PostID: value.ID, Cursor: &elsewhere.ID})
+
+	require.NoError(t, err)
+	require.Len(t, page.Comments, 1, "a cursor from another Post starts from the beginning")
+	require.Equal(t, target.ID, page.Comments[0].ID)
+}

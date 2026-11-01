@@ -5,7 +5,6 @@ package post_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 
@@ -92,7 +91,7 @@ func TestPostMutationsRecheckAuthorityAfterRootLockIntegration(t *testing.T) {
 			go func() {
 				result <- test.invoke(postAuthorRaceContext(actorID), service, postID, revision)
 			}()
-			requirePostMutationStillWaiting(t, result)
+			requireMutationWaiting(t, db, 1, result)
 			require.NoError(t, lockTx.Exec(
 				"DELETE FROM post_author WHERE post_id = ?::uuid AND member_id = ?::uuid",
 				postID, actorMemberID,
@@ -129,7 +128,7 @@ func TestPostUpdateRechecksExistenceAfterRootLockIntegration(t *testing.T) {
 		}))
 		result <- err
 	}()
-	requirePostMutationStillWaiting(t, result)
+	requireMutationWaiting(t, db, 1, result)
 	require.NoError(t, lockTx.Exec("DELETE FROM post WHERE id = ?::uuid", postID).Error)
 	require.NoError(t, lockTx.Commit().Error)
 
@@ -166,7 +165,7 @@ func TestExportedLockedPostAccessChecksAuthorityAfterRootLockIntegration(t *test
 				_ = accessTx.Rollback().Error
 				result <- err
 			}()
-			requirePostMutationStillWaiting(t, result)
+			requireMutationWaiting(t, db, 1, result)
 
 			removePostAuthorRelation(t, spiceDB, actorID, postID)
 			require.NoError(t, rootTx.Commit().Error)
@@ -192,7 +191,7 @@ func TestPostMutationRejectsMemberTombstonedBeforePrincipalLockIntegration(t *te
 		_, err := service.PublishPost(postAuthorRaceContext(actorID), connect.NewRequest(&managev1.PublishPostRequest{Id: postID}))
 		result <- err
 	}()
-	requirePostMutationStillWaiting(t, result)
+	requireMutationWaiting(t, db, 1, result)
 	require.NoError(t, revokeTx.Exec(`
 		UPDATE member
 		SET account_identity_id = NULL,
@@ -219,10 +218,6 @@ func TestCreatePostRejectsRoleDemotedBeforeIdentityLockIntegration(t *testing.T)
 	testutil.SeedPostIntegrationIdentity(t, db, actorID, "Create role race "+actorID[:8])
 	spiceDB := testutil.PostIntegrationSpiceDB(t)
 	testutil.GrantPostIntegrationRole(t, spiceDB, actorID, policyv1.Role.Author())
-	t.Cleanup(func() {
-		_ = db.Exec("DELETE FROM member WHERE id = ?::uuid", testutil.PostIntegrationMemberID(actorID)).Error
-		_ = db.Exec("DELETE FROM kratos.identities WHERE id = ?::uuid", actorID).Error
-	})
 
 	service := postintegration.NewPostDomainService(
 		t, db, "", spiceDB,
@@ -242,7 +237,7 @@ func TestCreatePostRejectsRoleDemotedBeforeIdentityLockIntegration(t *testing.T)
 		}))
 		result <- err
 	}()
-	requirePostMutationStillWaiting(t, result)
+	requireMutationWaiting(t, db, 1, result)
 	testutil.GrantPostIntegrationRole(t, spiceDB, actorID, policyv1.Role.User())
 	require.NoError(t, demoteTx.Commit().Error)
 
@@ -259,10 +254,6 @@ func TestAddPostAuthorRejectsTargetRoleDemotedBeforeIdentityLockIntegration(t *t
 	targetMemberID := testutil.PostIntegrationMemberID(targetID)
 	testutil.SeedPostIntegrationIdentity(t, db, targetID, "Target role race "+targetID[:8])
 	testutil.GrantPostIntegrationRole(t, spiceDB, targetID, policyv1.Role.Author())
-	t.Cleanup(func() {
-		_ = db.Exec("DELETE FROM member WHERE id = ?::uuid", targetMemberID).Error
-		_ = db.Exec("DELETE FROM kratos.identities WHERE id = ?::uuid", targetID).Error
-	})
 
 	demoteTx := db.Begin()
 	require.NoError(t, demoteTx.Error)
@@ -277,7 +268,7 @@ func TestAddPostAuthorRejectsTargetRoleDemotedBeforeIdentityLockIntegration(t *t
 		}))
 		result <- err
 	}()
-	requirePostMutationStillWaiting(t, result)
+	requireMutationWaiting(t, db, 1, result)
 	testutil.GrantPostIntegrationRole(t, spiceDB, targetID, policyv1.Role.User())
 	require.NoError(t, demoteTx.Commit().Error)
 
@@ -308,12 +299,6 @@ func seedPostAuthorityRaceFixture(t *testing.T) (*gorm.DB, string, string, strin
 			VALUES (?::uuid, ?::uuid, NOW()), (?::uuid, ?::uuid, NOW())
 		`, postID, testutil.PostIntegrationMemberID(actorID), postID, testutil.PostIntegrationMemberID(adminID)).Error
 	}))
-	t.Cleanup(func() {
-		_ = db.Exec("DELETE FROM post WHERE id = ?::uuid", postID).Error
-		_ = db.Exec("DELETE FROM content_document WHERE id = ?::uuid", documentID).Error
-		_ = db.Exec("DELETE FROM member WHERE id IN (?::uuid, ?::uuid)", testutil.PostIntegrationMemberID(actorID), testutil.PostIntegrationMemberID(adminID)).Error
-		_ = db.Exec("DELETE FROM kratos.identities WHERE id IN (?::uuid, ?::uuid)", actorID, adminID).Error
-	})
 	return db, actorID, testutil.PostIntegrationMemberID(actorID), postID
 }
 
@@ -347,11 +332,3 @@ func postAuthorRaceContext(identityID string) context.Context {
 	return testutil.PostIntegrationContext(identityID)
 }
 
-func requirePostMutationStillWaiting(t *testing.T, result <-chan error) {
-	t.Helper()
-	select {
-	case err := <-result:
-		require.FailNow(t, "post mutation returned before the Post root lock was released", "error: %v", err)
-	case <-time.After(150 * time.Millisecond):
-	}
-}
