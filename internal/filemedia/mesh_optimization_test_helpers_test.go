@@ -14,7 +14,6 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-//lint:ignore U1000 Integration-tagged mesh optimization tests use this publisher.
 type recordingMeshOptimizationPublisher struct {
 	jobs []*managev1.MeshOptimizationJob
 }
@@ -24,7 +23,6 @@ func (p *recordingMeshOptimizationPublisher) PublishMeshOptimizationJob(_ contex
 	return nil
 }
 
-//lint:ignore U1000 Integration-tagged mesh optimization tests use this fixture.
 type unitMeshOptimizationCandidateFixture struct {
 	SourceFileID    string
 	OutputFileID    *string
@@ -48,7 +46,6 @@ func newMeshOptimizationUnitDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-//lint:ignore U1000 Integration-tagged mesh optimization tests use this fixture helper.
 func seedUnitMeshOptimizationFile(t *testing.T, db *gorm.DB, _ string, mimeType string) string {
 	t.Helper()
 	fileID := uuid.NewString()
@@ -56,7 +53,6 @@ func seedUnitMeshOptimizationFile(t *testing.T, db *gorm.DB, _ string, mimeType 
 	return fileID
 }
 
-//lint:ignore U1000 Integration-tagged mesh optimization tests use this fixture helper.
 func seedUnitPageFileLink(t *testing.T, db *gorm.DB, pageID, fileID string) {
 	t.Helper()
 	documentID := uuid.NewString()
@@ -80,7 +76,6 @@ func seedUnitPageFileLink(t *testing.T, db *gorm.DB, pageID, fileID string) {
 	).Error)
 }
 
-//lint:ignore U1000 Integration-tagged mesh optimization tests use this fixture helper.
 func seedUnitMeshOptimizationCandidate(t *testing.T, db *gorm.DB, fixture unitMeshOptimizationCandidateFixture) model.MeshOptimizationCandidate {
 	t.Helper()
 	now := time.Now().UTC()
@@ -114,7 +109,6 @@ func seedUnitMeshOptimizationCandidate(t *testing.T, db *gorm.DB, fixture unitMe
 	return candidate
 }
 
-//lint:ignore U1000 Integration-tagged mesh optimization tests use this assertion helper.
 func requireUnitFileAbsent(t *testing.T, db *gorm.DB, fileID string) {
 	t.Helper()
 	var file model.File

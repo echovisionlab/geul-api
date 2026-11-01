@@ -1,5 +1,3 @@
-//go:build integration
-
 package filemedia
 
 import (
@@ -12,9 +10,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/echovisionlab/geul-api/internal/testutil"
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,9 +37,8 @@ func TestInitiateMultipartUploadRejectsInvalidFilenameBeforeS3MutationUnit(t *te
 		s3Bucket:      "media-bucket",
 		uploadConfigs: cloneUploadConfigs(),
 	}
-	stack := testutil.SetupOryStack(t)
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	svc.spiceDB = stack.SpiceDBClient
+	admin := newUnitUser()
+	svc.spiceDB = authztest.AllowAll().Client(t)
 	ctx := auditedUserContext(context.Background(), admin.AuthUserInfo())
 	_, err := NewConnectHandler(svc).InitiateMultipartUpload(ctx, connect.NewRequest(
 		&managev1.InitiateMultipartUploadRequest{

@@ -1,5 +1,3 @@
-//go:build integration
-
 package filemedia
 
 import (
@@ -13,11 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 func TestMeshOptimizationServiceRequiresSourceFileLinkedToEntity(t *testing.T) {
@@ -34,10 +31,9 @@ func TestMeshOptimizationServiceRequiresSourceFileLinkedToEntity(t *testing.T) {
 		Status:       model.MeshOptimizationCandidateStatusPending,
 	})
 	publisher := &recordingMeshOptimizationPublisher{}
-	stack := testutil.SetupOryStack(t)
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	attachInternalResourcePolicy(t, stack.SpiceDBClient, pageID)
-	service := NewMeshOptimizationService(db, publisher, nil, stack.SpiceDBClient)
+	admin := newUnitUser()
+	spiceDB := authztest.AllowAll().Client(t)
+	service := NewMeshOptimizationService(db, publisher, nil, spiceDB)
 	ctx := auditedUserContext(context.Background(), admin.AuthUserInfo())
 
 	result, err := service.GenerateCandidate(ctx, MeshOptimizationGenerateInput{
@@ -111,10 +107,9 @@ func TestMeshOptimizationProfilesUseIndependentPipelinesAndCaches(t *testing.T) 
 	sourceID := seedUnitMeshOptimizationFile(t, db, "page/"+pageID+"/files/source.glb", "model/gltf-binary")
 	seedUnitPageFileLink(t, db, pageID, sourceID)
 	publisher := &recordingMeshOptimizationPublisher{}
-	stack := testutil.SetupOryStack(t)
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	attachInternalResourcePolicy(t, stack.SpiceDBClient, pageID)
-	service := NewMeshOptimizationService(db, publisher, nil, stack.SpiceDBClient)
+	admin := newUnitUser()
+	spiceDB := authztest.AllowAll().Client(t)
+	service := NewMeshOptimizationService(db, publisher, nil, spiceDB)
 	ctx := auditedUserContext(context.Background(), admin.AuthUserInfo())
 
 	baseInput := MeshOptimizationGenerateInput{
@@ -193,10 +188,9 @@ func TestFileServiceBatchClearMeshOptimizationCandidatesScopesByProfile(t *testi
 		Status:          model.MeshOptimizationCandidateStatusFailed,
 		PipelineVersion: model.MeshOptimizationPipelineVersionParticleMeshV1,
 	})
-	stack := testutil.SetupOryStack(t)
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	attachInternalResourcePolicy(t, stack.SpiceDBClient, pageID)
-	service := &Service{db: db, spiceDB: stack.SpiceDBClient}
+	admin := newUnitUser()
+	spiceDB := authztest.AllowAll().Client(t)
+	service := &Service{db: db, spiceDB: spiceDB}
 
 	response, err := NewConnectHandler(service).ClearMeshOptimizationCandidates(
 		auditedUserContext(context.Background(), admin.AuthUserInfo()),
@@ -232,10 +226,9 @@ func TestMeshOptimizationUseCandidateSelectsDerivativeWithoutChangingDocumentAtt
 		EntityID:     pageID,
 		Status:       model.MeshOptimizationCandidateStatusReady,
 	})
-	stack := testutil.SetupOryStack(t)
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
-	attachInternalResourcePolicy(t, stack.SpiceDBClient, pageID)
-	service := NewMeshOptimizationService(db, nil, nil, stack.SpiceDBClient)
+	admin := newUnitUser()
+	spiceDB := authztest.AllowAll().Client(t)
+	service := NewMeshOptimizationService(db, nil, nil, spiceDB)
 
 	selected, err := service.UseCandidate(auditedUserContext(context.Background(), admin.AuthUserInfo()), candidate.ID)
 	require.NoError(t, err)
@@ -501,4 +494,42 @@ func TestMeshOptimizationEventsRequireExactIdentity(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+}
+
+func TestMeshOptimizationRequeueReturnsStoredCandidate(t *testing.T) {
+	t.Parallel()
+	db := newMeshOptimizationUnitDB(t)
+	previousPageID := uuid.NewString()
+	pageID := uuid.NewString()
+	sourceID := seedUnitMeshOptimizationFile(t, db, "ignored/source.glb", "model/gltf-binary")
+	seedUnitPageFileLink(t, db, pageID, sourceID)
+	failed := seedUnitMeshOptimizationCandidate(t, db, unitMeshOptimizationCandidateFixture{
+		SourceFileID: sourceID,
+		EntityType:   managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE,
+		EntityID:     previousPageID,
+		Status:       model.MeshOptimizationCandidateStatusFailed,
+	})
+	service := NewMeshOptimizationService(db, &recordingMeshOptimizationPublisher{}, nil, authztest.AllowAll().Client(t))
+	ctx := auditedUserContext(context.Background(), newUnitUser().AuthUserInfo())
+
+	result, err := service.GenerateCandidate(ctx, MeshOptimizationGenerateInput{
+		SourceFileID:       sourceID,
+		EntityType:         managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PAGE,
+		EntityID:           pageID,
+		TargetRatioPercent: 50,
+		Method:             model.MeshOptimizationMethodDraco,
+	})
+	require.NoError(t, err)
+	require.True(t, result.Enqueued)
+	require.Equal(t, failed.ID, result.Candidate.ID)
+
+	var stored model.MeshOptimizationCandidate
+	require.NoError(t, db.Take(&stored, "id = ?", failed.ID).Error)
+	require.NotNil(t, stored.EntityID)
+	require.Equal(t, pageID, *stored.EntityID)
+	require.Equal(t, stored.EntityID, result.Candidate.EntityID)
+	require.Equal(t, stored.EntityType, result.Candidate.EntityType)
+	require.True(t, stored.UpdatedAt.Equal(result.Candidate.UpdatedAt))
+	require.NotNil(t, stored.EnqueuedAt)
+	require.True(t, stored.EnqueuedAt.Equal(*result.Candidate.EnqueuedAt))
 }

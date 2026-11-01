@@ -1,5 +1,3 @@
-//go:build integration
-
 package filemedia
 
 import (
@@ -15,11 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 func TestDeleteCompletedUploadSessionFailurePreservesRetry(t *testing.T) {
@@ -192,8 +189,7 @@ func newAbortMultipartUploadRPCFixture(
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`).Error)
-	stack := testutil.SetupOryStack(t)
-	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
+	admin := newUnitUser()
 	userID := admin.MemberID
 	session := model.UploadSession{
 		UploadID:       "upload-abort-rpc",
@@ -224,7 +220,7 @@ func newAbortMultipartUploadRPCFixture(
 		MediaDomain:    "",
 		MediaSecret:    "",
 		Transcoder:     &recordingFileTranscoderPublisher{},
-		SpiceDB:        stack.SpiceDBClient,
+		SpiceDB:        authztest.AllowAll().Client(t),
 	})
 	ctx := auditedUserContext(context.Background(), admin.AuthUserInfo())
 	request := connect.NewRequest(&managev1.AbortMultipartUploadRequest{UploadId: session.UploadID, FileId: session.FileID})

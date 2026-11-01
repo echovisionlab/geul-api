@@ -11,14 +11,9 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/echovisionlab/geul-api/internal/audience"
-	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
@@ -148,19 +143,6 @@ func integrationAdminCtxWithIdentity(t *testing.T, db *gorm.DB, spiceDB *auth.Sp
 	})
 }
 
-func attachInternalResourcePolicy(t *testing.T, spiceDB *auth.SpiceDBClient, resourceID string) {
-	t.Helper()
-	mutation, err := policyv1.Page.TouchPolicy(resourceID)
-	require.NoError(t, err)
-	_, err = spiceDB.ApplyRelationships(t.Context(), mutation)
-	require.NoError(t, err)
-}
-
-func durableAudienceSpiceDB(t *testing.T) *auth.SpiceDBClient {
-	t.Helper()
-	return testutil.SetupOryStack(t).SpiceDBClient
-}
-
 func seedFileDeliveryPostAuthority(
 	t *testing.T,
 	spiceDB *auth.SpiceDBClient,
@@ -174,41 +156,6 @@ func seedFileDeliveryPostAuthority(
 	require.NoError(t, err)
 	_, err = spiceDB.ApplyRelationships(t.Context(), grant)
 	require.NoError(t, err)
-}
-
-func seedAudienceSegmentRelationsForTest(
-	t *testing.T,
-	db *gorm.DB,
-	segmentID string,
-	config model.AudienceSegmentConfig,
-) {
-	t.Helper()
-	for _, tagID := range config.MemberTagIDs {
-		require.NoError(t, db.Create(&model.AudienceSegmentUserTag{AudienceSegmentID: segmentID, UserTagID: tagID}).Error)
-	}
-	for _, role := range config.AccountRoles {
-		require.NoError(t, db.Create(&model.AudienceSegmentUserRole{AudienceSegmentID: segmentID, Role: role}).Error)
-	}
-	for _, memberID := range config.ExcludeMemberIDs {
-		require.NoError(t, db.Create(&model.AudienceSegmentExcludedMember{AudienceSegmentID: segmentID, MemberID: memberID}).Error)
-	}
-}
-
-type fileTestAudienceRecipientCounter struct{}
-
-func (fileTestAudienceRecipientCounter) Count(context.Context, audience.Segment) (int64, error) {
-	return 0, nil
-}
-
-func newAudienceServiceForTest(db *gorm.DB, spiceDB *auth.SpiceDBClient) *audience.ConnectHandler {
-	service, err := audience.NewService(audience.Deps{
-		Units: audiencepostgres.NewUnits(db, campaign.SegmentUsage{}), SpiceDB: spiceDB,
-		Fence: identitystate.PostgresFence{}, Audit: &audittest.Recorder{}, RecipientCounter: fileTestAudienceRecipientCounter{},
-	})
-	if err != nil {
-		panic(err)
-	}
-	return audience.NewConnectHandler(service)
 }
 
 func seedAudiencePostFileAttachment(t *testing.T, db *gorm.DB, postID, fileID string) {
@@ -334,4 +281,64 @@ func memberRequestContext() context.Context {
 		panic(err)
 	}
 	return sharedtelemetry.WithRequestContext(context.Background(), request)
+}
+
+func seedFileDeliveryContentPolicy(t *testing.T, spiceDB *auth.SpiceDBClient, resourceType string, resourceID string) {
+	t.Helper()
+	var policy policyv1.RelationshipMutation
+	var err error
+	switch resourceType {
+	case "post":
+		policy, err = policyv1.Post.TouchPolicy(resourceID)
+	case "page":
+		policy, err = policyv1.Page.TouchPolicy(resourceID)
+	case "work":
+		policy, err = policyv1.Work.TouchPolicy(resourceID)
+	case "program_event":
+		policy, err = policyv1.ProgramEvent.TouchPolicy(resourceID)
+	default:
+		require.FailNow(t, "unsupported FileDelivery content policy resource", resourceType)
+		return
+	}
+	require.NoError(t, err)
+	_, err = spiceDB.ApplyRelationships(t.Context(), policy)
+	require.NoError(t, err)
+}
+
+func decodeHardCutRoutedMessages[T proto.Message](
+	t *testing.T,
+	messages []hardCutPublishedMessage,
+	exchange string,
+	routingKey string,
+	newMessage func() T,
+) []T {
+	t.Helper()
+	decoded := make([]T, 0)
+	for _, message := range messages {
+		target := newMessage()
+		if message.exchange != exchange || message.key != routingKey ||
+			message.messageType != string(target.ProtoReflect().Descriptor().FullName()) {
+			continue
+		}
+		require.NoError(t, proto.Unmarshal(message.body, target))
+		decoded = append(decoded, target)
+	}
+	return decoded
+}
+
+func hardCutPtrString(value string) *string { return &value }
+
+func seedHardCutPageFixture(t *testing.T, db *gorm.DB) string {
+	t.Helper()
+	pageID := uuid.NewString()
+	documentID := uuid.NewString()
+	require.NoError(t, db.Exec(
+		`INSERT INTO content_document (id, profile) VALUES (?, 'page')`,
+		documentID,
+	).Error)
+	require.NoError(t, db.Exec(`
+		INSERT INTO page (id, content_document_id, status, show_title, created_at, updated_at)
+		VALUES (?, ?, 'PAGE_STATUS_DRAFT', TRUE, NOW(), NOW())
+	`, pageID, documentID).Error)
+	return pageID
 }
