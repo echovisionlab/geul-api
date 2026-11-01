@@ -10,8 +10,9 @@ import (
 )
 
 type CatalogFileRecord struct {
-	Row                         domain.CatalogRow
-	PendingDeletion, MeshOutput bool
+	IngestSlotID, IngestAttemptID, ClientMediaBundleID *string
+	Row                                                domain.CatalogRow
+	PendingDeletion, MeshOutput                        bool
 }
 
 func (s *LibraryStore) FileCatalog(_ context.Context, id string) (domain.CatalogRow, error) {

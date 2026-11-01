@@ -15,12 +15,148 @@ import (
 
 type CatalogHarness struct {
 	mutationtest.Harness[domain.Store]
-	SeedFile func(*testing.T, domain.CatalogRow, bool, bool)
+	SeedFile          func(*testing.T, domain.CatalogRow, bool, bool)
+	SeedAvatar        func(*testing.T, string, string)
+	SeedMesh          func(*testing.T, domain.MeshDeliveryWitness, string)
+	SeedDeliveryOwner func(*testing.T, string, string, string, string, string)
 }
 
 func RunCatalogContract(t *testing.T, open func(*testing.T) CatalogHarness) {
 	t.Helper()
 	cases := map[string]func(*testing.T, CatalogHarness){
+		"delivery projections preserve each locking scope": func(t *testing.T, h CatalogHarness) {
+			parent := insertFolder(t, h.Harness, nil, "parent")
+			row := CatalogFile("delivery", &parent.ID)
+			h.SeedFile(t, row, true, false)
+			require.NoError(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				for _, scope := range []domain.DeliveryFileScope{domain.CatalogDelivery, domain.StrongDelivery} {
+					files, err := s.LockDeliveryFiles(ctx, []string{row.ID, uuid.NewString()}, scope)
+					require.NoError(t, err)
+					require.Len(t, files, 1)
+					got := files[row.ID]
+					require.Equal(t, row.Name, got.FileName)
+					require.Equal(t, *row.Extension, got.Extension)
+					require.Equal(t, *row.MimeType, got.MimeType)
+					require.Equal(t, *row.FileSize, got.FileSize)
+					require.Equal(t, int(*row.DurationSeconds), *got.DurationSeconds)
+					require.NotNil(t, got.DeleteRequestedAt)
+					if scope == domain.CatalogDelivery {
+						require.Equal(t, row.ParentID, got.FolderID)
+						require.True(t, row.CreatedAt.Equal(got.CreatedAt))
+						require.True(t, row.UpdatedAt.Equal(got.UpdatedAt))
+					} else {
+						require.Nil(t, got.FolderID)
+						require.True(t, got.CreatedAt.IsZero())
+						require.True(t, got.UpdatedAt.IsZero())
+					}
+				}
+				file, found, err := s.LockUsageDeliveryFile(ctx, row.ID)
+				require.NoError(t, err)
+				require.True(t, found)
+				require.Equal(t, row.Name, file.FileName)
+				require.Nil(t, file.UploadedByMemberID)
+				require.Nil(t, file.FolderID)
+				require.True(t, file.CreatedAt.IsZero())
+				_, found, err = s.LockUsageDeliveryFile(ctx, uuid.NewString())
+				require.NoError(t, err)
+				require.False(t, found)
+				_, err = s.LockDeliveryFiles(ctx, []string{row.ID}, domain.DeliveryFileScope(99))
+				require.Error(t, err)
+				return nil
+			}))
+		},
+		"delivery share lock blocks rename": func(t *testing.T, h CatalogHarness) {
+			row := CatalogFile("before", nil)
+			h.SeedFile(t, row, false, false)
+			require.NoError(t, mutationtest.RequireSecondWaits(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				_, err := s.LockDeliveryFiles(ctx, []string{row.ID}, domain.CatalogDelivery)
+				return err
+			}, func(context.Context, domain.Store) error { return nil }, func(ctx context.Context, s domain.Store) error { return s.RenameFile(ctx, row.ID, "after") }))
+			require.NoError(t, mutationtest.Read(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				got, err := s.FileCatalog(ctx, row.ID)
+				require.Equal(t, "after", got.Name)
+				return err
+			}))
+		},
+		"usage share lock blocks move": func(t *testing.T, h CatalogHarness) {
+			parent := insertFolder(t, h.Harness, nil, "parent")
+			row := CatalogFile("before", nil)
+			h.SeedFile(t, row, false, false)
+			require.NoError(t, mutationtest.RequireSecondWaits(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				_, _, err := s.LockUsageDeliveryFile(ctx, row.ID)
+				return err
+			}, func(context.Context, domain.Store) error { return nil }, func(ctx context.Context, s domain.Store) error { return s.MoveFile(ctx, row.ID, &parent.ID) }))
+			require.NoError(t, mutationtest.Read(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				got, err := s.FileCatalog(ctx, row.ID)
+				require.Equal(t, &parent.ID, got.ParentID)
+				return err
+			}))
+		},
+		"avatar binding requires exact identity": func(t *testing.T, h CatalogHarness) {
+			row := CatalogFile("avatar", nil)
+			h.SeedFile(t, row, false, false)
+			identity := uuid.NewString()
+			h.SeedAvatar(t, row.ID, identity)
+			require.NoError(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				ok, err := s.LockAvatarFileBinding(ctx, row.ID, identity)
+				require.NoError(t, err)
+				require.True(t, ok)
+				ok, err = s.LockAvatarFileBinding(ctx, row.ID, uuid.NewString())
+				require.NoError(t, err)
+				require.False(t, ok)
+				ok, err = s.LockAvatarFileBinding(ctx, uuid.NewString(), identity)
+				require.False(t, ok)
+				return err
+			}))
+		},
+		"mesh witness requires source output and ready state": func(t *testing.T, h CatalogHarness) {
+			source, output := CatalogFile("source", nil), CatalogFile("output", nil)
+			h.SeedFile(t, source, false, false)
+			h.SeedFile(t, output, false, false)
+			witness := domain.MeshDeliveryWitness{CandidateID: uuid.NewString(), SourceFileID: source.ID, OutputFileID: output.ID}
+			h.SeedMesh(t, witness, "ready")
+			pending := witness
+			pending.CandidateID = uuid.NewString()
+			h.SeedMesh(t, pending, "pending")
+			require.NoError(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				changed := witness
+				changed.SourceFileID = uuid.NewString()
+				rows, err := s.LockMeshDeliveryWitnesses(ctx, []domain.MeshDeliveryWitness{changed, pending})
+				require.NoError(t, err)
+				require.Empty(t, rows)
+				rows, err = s.LockMeshDeliveryWitnesses(ctx, []domain.MeshDeliveryWitness{witness})
+				require.Equal(t, map[string]bool{witness.CandidateID: true}, rows)
+				return err
+			}))
+		},
+		"owner projection and exact featured relation": func(t *testing.T, h CatalogHarness) {
+			row := CatalogFile("featured", nil)
+			h.SeedFile(t, row, false, false)
+			owner, document := uuid.NewString(), uuid.NewString()
+			h.SeedDeliveryOwner(t, "post", owner, document, "POST_STATUS_PUBLISHED", row.ID)
+			require.NoError(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, s domain.Store) error {
+				got, ok, err := s.LockDeliveryOwner(ctx, "post", owner)
+				require.NoError(t, err)
+				require.True(t, ok)
+				require.Equal(t, owner, got.ID)
+				require.Equal(t, &document, got.ContentDocumentID)
+				require.Equal(t, "POST_STATUS_PUBLISHED", got.Status)
+				w := domain.DeliveryUsageWitness{Kind: "featured_image", ResourceType: "post", ResourceID: owner, FileID: row.ID}
+				ok, err = s.LockExactDeliveryUsage(ctx, w)
+				require.NoError(t, err)
+				require.True(t, ok)
+				w.FileID = uuid.NewString()
+				ok, err = s.LockExactDeliveryUsage(ctx, w)
+				require.NoError(t, err)
+				require.False(t, ok)
+				_, _, err = s.LockDeliveryOwner(ctx, "unsupported", owner)
+				require.Error(t, err)
+				_, err = s.LockExactDeliveryUsage(ctx, domain.DeliveryUsageWitness{Kind: "unsupported"})
+				require.Error(t, err)
+				return nil
+			}))
+		},
+
 		"rename lock projection and missing sentinel": func(t *testing.T, h CatalogHarness) {
 			row := CatalogFile("original", nil)
 			h.SeedFile(t, row, true, false)
