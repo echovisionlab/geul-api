@@ -185,7 +185,7 @@ func (s *Service) verifyCompletedRemoteImportObject(
 	file File,
 	uploadType managev1.UploadType,
 ) error {
-	target, err := CanonicalMediaObjectTargetForFile(file)
+	target, err := CanonicalObjectTarget(file)
 	if err != nil {
 		return fmt.Errorf("build existing remote import object target: %w", err)
 	}

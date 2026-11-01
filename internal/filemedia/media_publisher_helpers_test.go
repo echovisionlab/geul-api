@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+
 	"google.golang.org/protobuf/proto"
 
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
@@ -62,4 +65,11 @@ func (p *hardCutAsyncPublisher) EnqueueProtobufWithExecutor(
 		return errors.New("transactional fixture executor is required")
 	}
 	return p.EnqueueProtobuf(ctx, queue, messageID, msg)
+}
+
+func (p *hardCutAsyncPublisher) PublishIngest(ctx context.Context, event domain.IngestEvent) error {
+	return filemediaqueue.Lifecycle(p).PublishIngest(ctx, event)
+}
+func (p *hardCutAsyncPublisher) PublishProcessing(ctx context.Context, event domain.ProcessingEvent) error {
+	return filemediaqueue.Lifecycle(p).PublishProcessing(ctx, event)
 }

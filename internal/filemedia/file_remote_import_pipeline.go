@@ -19,7 +19,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -556,9 +555,9 @@ func (s *Service) storeRawRemoteImport(
 	}, nil
 }
 
-func remoteImportMediaTarget(fileID, objectKey, mimeType string) *commonv1.MediaObjectTarget {
-	return &commonv1.MediaObjectTarget{
-		FileId:    fileID,
+func remoteImportMediaTarget(fileID, objectKey, mimeType string) *domain.ObjectTarget {
+	return &domain.ObjectTarget{
+		FileID:    fileID,
 		ObjectKey: objectKey,
 		Extension: mediaExtension(&mimeType),
 		MimeType:  mimeType,

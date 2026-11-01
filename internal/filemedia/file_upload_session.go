@@ -10,7 +10,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -51,8 +50,8 @@ func (s *Service) recordInterruptedMultipartUpload(
 	}
 }
 
-func uploadSessionMediaObjectTarget(session domain.UploadSession) (*commonv1.MediaObjectTarget, error) {
-	return CanonicalMediaObjectTargetForFile(File{
+func uploadSessionMediaObjectTarget(session domain.UploadSession) (*domain.ObjectTarget, error) {
+	return CanonicalObjectTarget(File{
 		ID:        session.FileID,
 		Extension: mediaExtension(&session.RequestedMime),
 		MimeType:  session.RequestedMime,

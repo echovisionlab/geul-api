@@ -9,11 +9,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	"github.com/echovisionlab/geul-api/internal/mq"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
-	"google.golang.org/protobuf/proto"
 )
 
 const fileIngestProgressPublishInterval = 250 * time.Millisecond
@@ -28,7 +24,7 @@ type fileIngestEventEmitter struct {
 	entityID       string
 	correlationID  string
 	fileID         string
-	target         *commonv1.MediaObjectTarget
+	target         *domain.ObjectTarget
 	uploadID       string
 	uploadType     string
 	slotID         string
@@ -81,7 +77,7 @@ func (e *fileIngestEventEmitter) setSequenceAllocator(nextSequence fileIngestSeq
 	e.nextSequence = nextSequence
 }
 
-func (e *fileIngestEventEmitter) setTarget(target *commonv1.MediaObjectTarget) {
+func (e *fileIngestEventEmitter) setTarget(target *domain.ObjectTarget) {
 	if e == nil {
 		return
 	}
@@ -180,14 +176,14 @@ func fileIngestFailureReason(errText string) managev1.FileIngestFailureReason {
 	}
 }
 
-func (e *fileIngestEventEmitter) progress(progress int32, bytesCompleted *int64) *managev1.FileIngestProgress {
+func (e *fileIngestEventEmitter) progress(progress int32, bytesCompleted *int64) *domain.IngestProgress {
 	if progress < 0 {
 		progress = 0
 	}
 	if progress > 100 {
 		progress = 100
 	}
-	next := &managev1.FileIngestProgress{
+	next := &domain.IngestProgress{
 		Percentage: progress,
 	}
 	if bytesCompleted != nil {
@@ -200,7 +196,7 @@ func (e *fileIngestEventEmitter) progress(progress int32, bytesCompleted *int64)
 	return next
 }
 
-func (e *fileIngestEventEmitter) nextEventFields() (string, *managev1.FileIngestIdentity, int64, int64, bool) {
+func (e *fileIngestEventEmitter) nextEventFields() (string, *domain.IngestIdentity, int64, int64, bool) {
 	if e.nextSequence != nil && e.uploadID != "" {
 		sequence, err := e.nextSequence(e.ctx, e.uploadID)
 		if err != nil {
@@ -212,43 +208,25 @@ func (e *fileIngestEventEmitter) nextEventFields() (string, *managev1.FileIngest
 		e.sequence += 1
 	}
 	return e.correlationID,
-		&managev1.FileIngestIdentity{
-			EntityType:            e.entityType,
-			EntityId:              e.entityID,
-			FileId:                e.fileID,
+		&domain.IngestIdentity{
+			EntityType:            int32(e.entityType),
+			EntityID:              e.entityID,
+			FileID:                e.fileID,
 			Target:                e.target,
-			Source:                e.source,
-			MediaKind:             e.mediaKind,
-			UploadId:              optionalIngestString(e.uploadID),
-			SlotId:                optionalIngestString(e.slotID),
-			AttemptId:             optionalIngestString(e.attemptID),
-			ExpectedCurrentFileId: e.expectedFileID,
+			Source:                int32(e.source),
+			MediaKind:             int32(e.mediaKind),
+			UploadID:              optionalIngestString(e.uploadID),
+			SlotID:                optionalIngestString(e.slotID),
+			AttemptID:             optionalIngestString(e.attemptID),
+			ExpectedCurrentFileID: e.expectedFileID,
 		},
 		e.sequence,
 		time.Now().UnixMilli(),
 		true
 }
 
-func publishFileIngestEvent(ctx context.Context, publisher AsyncPublisher, event proto.Message) error {
-	if err := mq.ValidateFileIngestSignal(event); err != nil {
-		return err
-	}
-	if attached, ok := event.(*managev1.FileIngestAttachedEvent); ok {
-		messageID, err := mq.FileIngestAttachedMessageID(attached)
-		if err != nil {
-			return err
-		}
-		if err := publishDurableProto(
-			ctx, publisher, eventpkg.QueueReleaseTrackOriginalAudioProjection, messageID, attached,
-		); err != nil {
-			return err
-		}
-	}
-	return publishSignalProto(ctx, publisher, eventpkg.SignalFileIngest, event)
-}
-
 func (e *fileIngestEventEmitter) publishWithResult(
-	event proto.Message,
+	event domain.IngestEvent,
 	eventName string,
 	progress int32,
 ) error {
@@ -256,7 +234,7 @@ func (e *fileIngestEventEmitter) publishWithResult(
 		return nil
 	}
 
-	if err := publishFileIngestEvent(e.ctx, e.publisher, event); err != nil {
+	if err := e.publisher.PublishIngest(e.ctx, event); err != nil {
 		slog.ErrorContext(e.ctx, "Failed to publish file ingest lifecycle event",
 			failurecause.Attr(err),
 			"event", eventName,
@@ -290,7 +268,7 @@ func (e *fileIngestEventEmitter) publishWithResult(
 	return nil
 }
 
-func (e *fileIngestEventEmitter) publish(event proto.Message, eventName string, progress int32) {
+func (e *fileIngestEventEmitter) publish(event domain.IngestEvent, eventName string, progress int32) {
 	_ = e.publishWithResult(event, eventName, progress)
 }
 
@@ -302,11 +280,12 @@ func (e *fileIngestEventEmitter) publishUploading(progress int32, bytesCompleted
 	if !ok {
 		return
 	}
-	event := &managev1.FileIngestUploadEvent{
-		CorrelationId:  correlationID,
+	event := domain.IngestEvent{
+		Kind:           domain.IngestUploading,
+		CorrelationID:  correlationID,
 		Identity:       identity,
 		SequenceNumber: sequence,
-		TimestampMs:    timestampMs,
+		TimestampMS:    timestampMs,
 		Progress:       e.progress(progress, bytesCompleted),
 	}
 	e.publish(event, "uploading", progress)
@@ -320,11 +299,12 @@ func (e *fileIngestEventEmitter) publishDownloading(progress int32, bytesComplet
 	if !ok {
 		return
 	}
-	event := &managev1.FileIngestDownloadEvent{
-		CorrelationId:  correlationID,
+	event := domain.IngestEvent{
+		Kind:           domain.IngestDownloading,
+		CorrelationID:  correlationID,
 		Identity:       identity,
 		SequenceNumber: sequence,
-		TimestampMs:    timestampMs,
+		TimestampMS:    timestampMs,
 		Progress:       e.progress(progress, bytesCompleted),
 	}
 	e.publish(event, "downloading", progress)
@@ -338,11 +318,12 @@ func (e *fileIngestEventEmitter) publishFinalized(progress int32, bytesCompleted
 	if !ok {
 		return
 	}
-	event := &managev1.FileIngestFinalizedEvent{
-		CorrelationId:  correlationID,
+	event := domain.IngestEvent{
+		Kind:           domain.IngestFinalized,
+		CorrelationID:  correlationID,
 		Identity:       identity,
 		SequenceNumber: sequence,
-		TimestampMs:    timestampMs,
+		TimestampMS:    timestampMs,
 		Progress:       e.progress(progress, bytesCompleted),
 	}
 	e.publish(event, "finalized", progress)
@@ -364,11 +345,12 @@ func (e *fileIngestEventEmitter) publishAttachedConfirmed(
 	if !ok {
 		return fmt.Errorf("failed to allocate file ingest attached event identity")
 	}
-	event := &managev1.FileIngestAttachedEvent{
-		CorrelationId:  correlationID,
+	event := domain.IngestEvent{
+		Kind:           domain.IngestAttached,
+		CorrelationID:  correlationID,
 		Identity:       identity,
 		SequenceNumber: sequence,
-		TimestampMs:    timestampMs,
+		TimestampMS:    timestampMs,
 		FileName:       fileName,
 		MimeType:       mimeType,
 		FileSize:       fileSize,
@@ -384,12 +366,13 @@ func (e *fileIngestEventEmitter) publishFailed(errText string, progress int32, b
 	if !ok {
 		return
 	}
-	event := &managev1.FileIngestFailedEvent{
-		CorrelationId:  correlationID,
+	event := domain.IngestEvent{
+		Kind:           domain.IngestFailed,
+		CorrelationID:  correlationID,
 		Identity:       identity,
 		SequenceNumber: sequence,
-		TimestampMs:    timestampMs,
-		Reason:         fileIngestFailureReason(errText),
+		TimestampMS:    timestampMs,
+		Reason:         int32(fileIngestFailureReason(errText)),
 		Error:          errText,
 		Progress:       e.progress(progress, bytesCompleted),
 	}

@@ -10,6 +10,10 @@ import (
 	"os"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/mq"
+
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
+
 	"github.com/echovisionlab/geul-api/internal/adapters/filemediamembers"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -349,4 +353,20 @@ func seedHardCutPageFixture(t *testing.T, db *gorm.DB) string {
 		VALUES (?, ?, 'PAGE_STATUS_DRAFT', TRUE, NOW(), NOW())
 	`, pageID, documentID).Error)
 	return pageID
+}
+
+func (p *flakyAttachedConfirmPublisher) PublishIngest(ctx context.Context, event domain.IngestEvent) error {
+	return filemediaqueue.Lifecycle(p).PublishIngest(ctx, event)
+}
+func (p *flakyAttachedConfirmPublisher) PublishProcessing(ctx context.Context, event domain.ProcessingEvent) error {
+	return filemediaqueue.Lifecycle(p).PublishProcessing(ctx, event)
+}
+
+type nativeLifecyclePublisher struct{ *mq.Publisher }
+
+func (p nativeLifecyclePublisher) PublishIngest(ctx context.Context, event domain.IngestEvent) error {
+	return filemediaqueue.Lifecycle(p.Publisher).PublishIngest(ctx, event)
+}
+func (p nativeLifecyclePublisher) PublishProcessing(ctx context.Context, event domain.ProcessingEvent) error {
+	return filemediaqueue.Lifecycle(p.Publisher).PublishProcessing(ctx, event)
 }

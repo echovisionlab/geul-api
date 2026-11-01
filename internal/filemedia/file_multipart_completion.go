@@ -242,7 +242,7 @@ func (s *Service) recoverFinishedMultipartCompletion(
 		}
 	}
 
-	target, err := CanonicalMediaObjectTargetForFile(file)
+	target, err := CanonicalObjectTarget(file)
 	if err != nil {
 		return nil, domainerr.Precondition("completed file object target is invalid").WithCause(failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", file.ID))))
 	}

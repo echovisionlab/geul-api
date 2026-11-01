@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediaqueue"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -169,7 +171,7 @@ func TestHandleFileDeleteDeletesEveryTarget(t *testing.T) {
 
 	db := newFileDeleteWorkerUnitDB(t)
 	file := seedPendingWorkerFileDeletion(t, db, "video/mp4", "mp4")
-	original, err := filemedia.CanonicalMediaObjectTargetForFile(filemedia.File(file))
+	original, err := filemediaqueue.CanonicalObjectTarget(filemedia.File(file))
 	require.NoError(t, err)
 	generationID := uuid.NewString()
 	generationPrefix, err := mediaauth.MediaHLSObjectPrefix(file.ID, generationID)
@@ -248,7 +250,7 @@ func TestHandleFileDeleteRejectsIncompleteFullGenerationSetBeforeStorage(t *test
 	db := newFileDeleteWorkerUnitDB(t)
 	file := seedPendingWorkerFileDeletion(t, db, "video/mp4", "mp4")
 	_, _ = seedWorkerCleanupGeneration(t, db, file.ID)
-	original, err := filemedia.CanonicalMediaObjectTargetForFile(filemedia.File(file))
+	original, err := filemediaqueue.CanonicalObjectTarget(filemedia.File(file))
 	require.NoError(t, err)
 	storageCalled := false
 	handlers := &Handlers{
@@ -319,7 +321,7 @@ func TestHandleFileDeleteReturnsStorageFailuresWithoutPublishingCompletion(t *te
 			db := newFileDeleteWorkerUnitDB(t)
 			if tt.name == "original" {
 				file := seedPendingWorkerFileDeletion(t, db, "video/mp4", "mp4")
-				original, err := filemedia.CanonicalMediaObjectTargetForFile(filemedia.File(file))
+				original, err := filemediaqueue.CanonicalObjectTarget(filemedia.File(file))
 				require.NoError(t, err)
 				tt.event = &managev1.FileDeleteEvent{FileId: file.ID, Original: original}
 			} else {
@@ -350,7 +352,7 @@ func TestHandleFileDeleteReturnsStorageFailuresWithoutPublishingCompletion(t *te
 func TestHandleFileDeleteRetriesAfterS3SuccessAndDatabaseFinalizationFailure(t *testing.T) {
 	db := newFileDeleteWorkerUnitDB(t)
 	file := seedPendingWorkerFileDeletion(t, db, "audio/wav", "wav")
-	original, err := filemedia.CanonicalMediaObjectTargetForFile(filemedia.File(file))
+	original, err := filemediaqueue.CanonicalObjectTarget(filemedia.File(file))
 	require.NoError(t, err)
 	var deleteCalls int
 	s3Client := newFileDeleteTestS3Client(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -384,7 +386,7 @@ func TestHandleFileDeleteRetriesAfterS3SuccessAndDatabaseFinalizationFailure(t *
 func TestHandleFileDeleteDefersFinalizationUntilLateMeshResultIsRetired(t *testing.T) {
 	db := newFileDeleteWorkerUnitDB(t)
 	file := seedPendingWorkerFileDeletion(t, db, "model/gltf-binary", "glb")
-	original, err := filemedia.CanonicalMediaObjectTargetForFile(filemedia.File(file))
+	original, err := filemediaqueue.CanonicalObjectTarget(filemedia.File(file))
 	require.NoError(t, err)
 	require.NoError(t, db.Exec(`
 		INSERT INTO mesh_optimization_candidate (id, source_file_id, status, selected_at)
@@ -412,7 +414,7 @@ func TestHandleFileDeleteDefersFinalizationUntilLateMeshResultIsRetired(t *testi
 func TestHandleFileDeleteDefersStorageUntilTranscodeWriterFinishes(t *testing.T) {
 	db := newFileDeleteWorkerUnitDB(t)
 	file := seedPendingWorkerFileDeletion(t, db, "video/mp4", "mp4")
-	original, err := filemedia.CanonicalMediaObjectTargetForFile(filemedia.File(file))
+	original, err := filemediaqueue.CanonicalObjectTarget(filemedia.File(file))
 	require.NoError(t, err)
 	eventID := uuid.NewString()
 	require.NoError(t, db.Exec(`

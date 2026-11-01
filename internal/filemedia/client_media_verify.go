@@ -25,7 +25,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/transcoding/hls"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
 type clientTSValidator struct{ offset int64 }
@@ -213,17 +212,17 @@ func (s *Service) publishClientMediaReady(ctx context.Context, completion *multi
 		return err
 	}
 	duration := int32(math.Ceil(plan.DurationSeconds))
-	outputs := &managev1.MediaProcessingLifecycleOutputs{HlsGenerationId: &hlsID, DurationSeconds: &duration}
+	outputs := &domain.ProcessingOutputs{HLSGenerationID: &hlsID, DurationSeconds: &duration}
 	for _, artifact := range plan.Artifacts {
 		kind := artifact.assetKind()
 		id := stableFileIngestFinalizerID(fileID, kind)
 		switch kind {
 		case "waveform":
-			outputs.WaveformAssetId = &id
+			outputs.WaveformAssetID = &id
 		case "spectrogram":
-			outputs.SpectrogramAssetId = &id
+			outputs.SpectrogramAssetID = &id
 		case "thumbnail":
-			outputs.ThumbnailAssetId = &id
+			outputs.ThumbnailAssetID = &id
 		}
 	}
 	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_FILE
@@ -243,8 +242,11 @@ func (s *Service) publishClientMediaReady(ctx context.Context, completion *multi
 		}
 		releaseID = &release
 	}
-	event := &managev1.MediaProcessingLifecycleEvent{CorrelationId: completion.correlationID, EntityType: entityType, EntityId: entityID, FileId: fileID, Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY, Outputs: outputs, TimestampMs: time.Now().UnixMilli(), SlotId: completion.session.SlotID, AttemptId: completion.session.AttemptID, TrackId: trackID, ReleaseId: releaseID}
-	return publishSignalProto(ctx, s.asyncPublisher, eventpkg.SignalMediaProcessingLifecycle, event)
+	event := domain.ProcessingEvent{CorrelationID: completion.correlationID, EntityType: int32(entityType), EntityID: entityID, FileID: fileID, Status: int32(commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY), Outputs: outputs, TimestampMS: time.Now().UnixMilli(), SlotID: completion.session.SlotID, AttemptID: completion.session.AttemptID, TrackID: trackID, ReleaseID: releaseID}
+	if s.asyncPublisher == nil {
+		return fmt.Errorf("async publisher is required")
+	}
+	return s.asyncPublisher.PublishProcessing(ctx, event)
 }
 func (s *Service) cleanupClientMediaStaging(ctx context.Context, session domain.UploadSession) error {
 	if session.ClientMediaBundleID == nil {

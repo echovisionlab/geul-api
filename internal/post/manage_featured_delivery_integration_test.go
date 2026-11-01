@@ -6,6 +6,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
 	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
@@ -216,3 +218,10 @@ func (publisher postFeaturedAsyncPublisher) NotifyProtobufWithExecutor(
 type postFeaturedUnusedLegalRoutes struct{ filemedia.LegalRouteIdentity }
 
 type postFeaturedUnusedMemberSummaries struct{ filemedia.MemberSummaries }
+
+func (publisher postFeaturedAsyncPublisher) PublishIngest(ctx context.Context, event domain.IngestEvent) error {
+	return filemediaqueue.Lifecycle(publisher).PublishIngest(ctx, event)
+}
+func (publisher postFeaturedAsyncPublisher) PublishProcessing(ctx context.Context, event domain.ProcessingEvent) error {
+	return filemediaqueue.Lifecycle(publisher).PublishProcessing(ctx, event)
+}
