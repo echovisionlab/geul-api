@@ -28,11 +28,12 @@ type WrittenGeneration struct {
 	TotalSize      int64
 }
 type Reference struct {
-	AssetID     string
-	URL         string
-	Extension   string
-	MimeType    string
-	FileSize    int64
-	SHA256      []byte
-	Disposition Disposition
+	DownloadFilename *string
+	AssetID          string
+	URL              string
+	Extension        string
+	MimeType         string
+	FileSize         int64
+	SHA256           []byte
+	Disposition      Disposition
 }

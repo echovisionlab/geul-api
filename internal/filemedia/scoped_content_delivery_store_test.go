@@ -106,7 +106,7 @@ func TestScopedFeaturedImageUsesOwnerAuthorizationBeforeSlotRead(t *testing.T) {
 				require.Nil(t, got)
 				return
 			}
-			require.Equal(t, row.ID, got.FileId)
+			require.Equal(t, row.ID, got.FileID)
 			require.NotNil(t, got.Inline)
 			require.Nil(t, got.Download)
 		})

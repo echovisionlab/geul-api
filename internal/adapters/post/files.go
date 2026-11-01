@@ -3,6 +3,8 @@ package post
 import (
 	"context"
 
+	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
+
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -16,7 +18,7 @@ import (
 
 type manageFiles interface {
 	DeleteFileByID(context.Context, string) error
-	ResolveAuthorizedPostFeaturedImage(context.Context, string, string) (*commonv1.MediaDelivery, error)
+	ResolveAuthorizedPostFeaturedImage(context.Context, string, string) (*filemediadomain.Delivery, error)
 }
 
 type displayFiles interface {
@@ -45,7 +47,8 @@ func (a *Files) ResolveAuthorizedPostFeaturedImage(
 	postID string,
 	expectedFileID string,
 ) (*commonv1.MediaDelivery, error) {
-	return a.files.ResolveAuthorizedPostFeaturedImage(ctx, postID, expectedFileID)
+	value, err := a.files.ResolveAuthorizedPostFeaturedImage(ctx, postID, expectedFileID)
+	return filemediadomain.DeliveryMessage(value), err
 }
 
 func (a *Files) ResolvePublicDisplayMedia(

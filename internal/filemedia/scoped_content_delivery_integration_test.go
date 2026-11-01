@@ -359,7 +359,7 @@ func TestResolveAuthorizedPostFeaturedImageSignsBeforeSlotOrFileMutationIntegrat
 				)
 				fileID := ""
 				if delivery != nil {
-					fileID = delivery.GetFileId()
+					fileID = delivery.FileID
 				}
 				resolved <- resolution{deliveryFileID: fileID, err: err}
 			}()

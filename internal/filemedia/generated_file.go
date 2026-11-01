@@ -148,7 +148,7 @@ func (s *Service) ReadVerifiedFileBody(
 	var stored File
 	err = s.units.Read(ctx, func(store Store) error {
 		var readErr error
-		stored, readErr = store.VerifiedFileMetadata(ctx, delivery.FileId)
+		stored, readErr = store.VerifiedFileMetadata(ctx, delivery.FileID)
 		return readErr
 	})
 	if errors.Is(err, domain.ErrFileNotFound) {
@@ -157,7 +157,7 @@ func (s *Service) ReadVerifiedFileBody(
 	if err != nil {
 		return VerifiedFileBody{}, fmt.Errorf("load verified File metadata: %w", err)
 	}
-	if stored.ID != delivery.FileId || stored.Extension != delivery.Extension ||
+	if stored.ID != delivery.FileID || stored.Extension != delivery.Extension ||
 		stored.MimeType != delivery.MimeType || stored.FileSize != delivery.FileSize {
 		return VerifiedFileBody{}, domainerr.Precondition("verified File delivery metadata changed")
 	}

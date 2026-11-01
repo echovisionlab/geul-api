@@ -11,7 +11,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz"
@@ -141,7 +140,7 @@ func (s *Service) requireFileManagerFolder(ctx context.Context, folderID *string
 	})
 }
 
-func fileManagerFolderPath(raw []byte) ([]*managev1.FileManagerPathSegment, error) {
+func fileManagerFolderPath(raw []byte) ([]*FolderPathSegment, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -149,9 +148,9 @@ func fileManagerFolderPath(raw []byte) ([]*managev1.FileManagerPathSegment, erro
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return nil, err
 	}
-	path := make([]*managev1.FileManagerPathSegment, 0, len(decoded))
+	path := make([]*FolderPathSegment, 0, len(decoded))
 	for _, segment := range decoded {
-		path = append(path, &managev1.FileManagerPathSegment{Id: segment.ID, Name: segment.Name})
+		path = append(path, &FolderPathSegment{ID: segment.ID, Name: segment.Name})
 	}
 	return path, nil
 }
@@ -171,7 +170,7 @@ type ListFileManagerItemsQuery struct {
 
 // FileManagerItemPage is one page of File library items.
 type FileManagerItemPage struct {
-	Items         []*managev1.FileManagerItem
+	Items         []*LibraryItem
 	NextPageToken *string
 	Total         int64
 }
@@ -299,25 +298,25 @@ func (s *Service) fileManagerCatalogFilter(ctx context.Context, req ListFileMana
 func fileManagerItemsFromCatalog(
 	rows []fileManagerCatalogRow,
 	members map[string]MemberSummary,
-	fencedFiles map[string]*managev1.FileManagerFile,
-) ([]*managev1.FileManagerItem, error) {
-	items := make([]*managev1.FileManagerItem, 0, len(rows))
+	fencedFiles map[string]*LibraryFile,
+) ([]*LibraryItem, error) {
+	items := make([]*LibraryItem, 0, len(rows))
 	for _, row := range rows {
 		folderPath, pathErr := fileManagerFolderPath(row.FolderPath)
 		if pathErr != nil {
 			return nil, pathErr
 		}
 		if row.ItemType == "folder" {
-			folder := &managev1.FileFolder{
-				Id: row.ID, ParentId: row.ParentID, Name: row.Name,
-				CreatedAt: timestamppb.New(row.CreatedAt), UpdatedAt: timestamppb.New(row.UpdatedAt),
+			folder := &FolderView{
+				ID: row.ID, ParentID: row.ParentID, Name: row.Name,
+				CreatedAt: &row.CreatedAt, UpdatedAt: &row.UpdatedAt,
 			}
 			if row.MemberID != nil {
-				folder.CreatedByMember = memberSummaryProto(memberSummaryForID(members, *row.MemberID))
+				folder.CreatedByMember = memberSummaryForID(members, *row.MemberID)
 			}
-			items = append(items, &managev1.FileManagerItem{
-				Type: managev1.FileManagerItemType_FILE_MANAGER_ITEM_TYPE_FOLDER,
-				Item: &managev1.FileManagerItem_Folder{Folder: folder}, FolderPath: folderPath,
+			items = append(items, &LibraryItem{
+				Type:   domain.LibraryItemFolder,
+				Folder: folder, FolderPath: folderPath,
 			})
 			continue
 		}
@@ -325,9 +324,9 @@ func fileManagerItemsFromCatalog(
 		if file == nil {
 			return nil, domainerr.DependencyUnavailable("file catalog")
 		}
-		items = append(items, &managev1.FileManagerItem{
-			Type: managev1.FileManagerItemType_FILE_MANAGER_ITEM_TYPE_FILE,
-			Item: &managev1.FileManagerItem_File{File: file}, FolderPath: folderPath,
+		items = append(items, &LibraryItem{
+			Type: domain.LibraryItemFile,
+			File: file, FolderPath: folderPath,
 		})
 	}
 	return items, nil

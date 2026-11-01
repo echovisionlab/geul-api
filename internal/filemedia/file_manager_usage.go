@@ -9,14 +9,11 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
-	"google.golang.org/protobuf/types/known/timestamppb"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -58,7 +55,7 @@ func (s *Service) fileManagerFileFromCatalogRow(
 	row fileManagerCatalogRow,
 	members map[string]MemberSummary,
 	usageCount int32,
-) (*managev1.FileManagerFile, error) {
+) (*LibraryFile, error) {
 	if row.Extension == nil || row.MimeType == nil || row.FileSize == nil {
 		return nil, fmt.Errorf("file catalog row %s is incomplete", row.ID)
 	}
@@ -67,14 +64,14 @@ func (s *Service) fileManagerFileFromCatalogRow(
 	if err != nil {
 		return nil, err
 	}
-	file := &managev1.FileManagerFile{
-		Id: row.ID, FileName: row.Name, Extension: *row.Extension, MimeType: *row.MimeType,
-		FileSize: *row.FileSize, DurationSeconds: row.DurationSeconds, FolderId: row.ParentID,
-		CreatedAt: timestamppb.New(row.CreatedAt), UpdatedAt: timestamppb.New(row.UpdatedAt),
+	file := &LibraryFile{
+		ID: row.ID, FileName: row.Name, Extension: *row.Extension, MimeType: *row.MimeType,
+		FileSize: *row.FileSize, DurationSeconds: row.DurationSeconds, FolderID: row.ParentID,
+		CreatedAt: &row.CreatedAt, UpdatedAt: &row.UpdatedAt,
 		Delivery: deliveryResponse.Delivery, UsageCount: usageCount,
 	}
 	if row.MemberID != nil {
-		file.UploadedByMember = memberSummaryProto(memberSummaryForID(members, *row.MemberID))
+		file.UploadedByMember = memberSummaryForID(members, *row.MemberID)
 	}
 	return file, nil
 }

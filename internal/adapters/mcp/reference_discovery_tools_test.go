@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
@@ -15,7 +16,6 @@ import (
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestReferenceDiscoveryToolDescriptors(t *testing.T) {
@@ -209,10 +209,10 @@ func (r *recordingFileReferences) ListFileManagerItems(_ context.Context, query 
 		UploadedByMemberId: optional(query.UploadedByMemberID), SortField: query.SortField, SortOrder: query.SortOrder,
 		PageSize: query.PageSize, PageToken: optional(query.PageToken),
 	})
-	now := timestamppb.Now()
-	return filemedia.FileManagerItemPage{Items: []*managev1.FileManagerItem{
-		{Item: &managev1.FileManagerItem_File{File: &managev1.FileManagerFile{Id: "22222222-2222-4222-8222-222222222222", FileName: "cover.png", MimeType: "image/png", CreatedAt: now}}},
-		{Item: &managev1.FileManagerItem_Folder{Folder: &managev1.FileFolder{Id: "33333333-3333-4333-8333-333333333333", Name: "Covers", CreatedAt: now}}},
+	now := time.Now()
+	return filemedia.FileManagerItemPage{Items: []*filemedia.LibraryItem{
+		{Type: filemedia.LibraryItemFile, File: &filemedia.LibraryFile{ID: "22222222-2222-4222-8222-222222222222", FileName: "cover.png", MimeType: "image/png", CreatedAt: &now}},
+		{Type: filemedia.LibraryItemFolder, Folder: &filemedia.FolderView{ID: "33333333-3333-4333-8333-333333333333", Name: "Covers", CreatedAt: &now}},
 	}, Total: 2}, nil
 }
 

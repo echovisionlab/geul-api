@@ -28,8 +28,8 @@ const (
 type FileManager interface {
 	GetFileDeletionImpact(context.Context, filemedia.GetFileDeletionImpactQuery) ([]*filemedia.DeletionImpact, error)
 	DeleteFiles(context.Context, filemedia.DeleteFilesCommand) (filemedia.FileDeletionOutcome, error)
-	RenameFile(context.Context, filemedia.RenameFileCommand) (*managev1.FileManagerFile, error)
-	MoveFiles(context.Context, filemedia.MoveFilesCommand) ([]*managev1.FileManagerFile, error)
+	RenameFile(context.Context, filemedia.RenameFileCommand) (*filemedia.LibraryFile, error)
+	MoveFiles(context.Context, filemedia.MoveFilesCommand) ([]*filemedia.LibraryFile, error)
 	CreateFileFolder(context.Context, filemedia.CreateFileFolderCommand) (*filemedia.FolderView, error)
 	RenameFileFolder(context.Context, filemedia.RenameFileFolderCommand) (*filemedia.FolderView, error)
 	MoveFileFolder(context.Context, filemedia.MoveFileFolderCommand) (*filemedia.FolderView, error)
@@ -300,8 +300,8 @@ type fileManagerFile struct {
 	UpdatedAt  string  `json:"updated_at"`
 }
 
-func projectFileManagerFile(file *managev1.FileManagerFile) fileManagerFile {
-	return fileManagerFile{ID: file.GetId(), Name: file.GetFileName(), Extension: file.GetExtension(), MIMEType: file.GetMimeType(), Size: file.GetFileSize(), Duration: file.DurationSeconds, FolderID: file.FolderId, UsageCount: file.GetUsageCount(), CreatedAt: timestampString(file.GetCreatedAt()), UpdatedAt: timestampString(file.GetUpdatedAt())}
+func projectFileManagerFile(file *filemedia.LibraryFile) fileManagerFile {
+	return fileManagerFile{ID: file.ID, Name: file.FileName, Extension: file.Extension, MIMEType: file.MimeType, Size: file.FileSize, Duration: file.DurationSeconds, FolderID: file.FolderID, UsageCount: file.UsageCount, CreatedAt: fileManagerTimeString(file.CreatedAt), UpdatedAt: fileManagerTimeString(file.UpdatedAt)}
 }
 
 type fileManagerFolder struct {

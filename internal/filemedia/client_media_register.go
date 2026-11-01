@@ -15,7 +15,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // The caller holds the completion advisory lock throughout allocation, copy,
@@ -169,13 +168,13 @@ func (s *Service) completeClientMedia(ctx context.Context, store Store, session 
 			return err
 		}
 		assetID := target.AssetID
-		if err := storeClientMediaDerivative(ctx, store, session.FileID, managev1.FileDerivativeType(artifact.DerivativeType), &assetID, nil); err != nil {
+		if err := storeClientMediaDerivative(ctx, store, session.FileID, DerivativeKind(artifact.DerivativeType), &assetID, nil); err != nil {
 			return err
 		}
 	}
 	return store.SetClientMediaBundle(ctx, session.FileID, *session.ClientMediaBundleID, int(math.Ceil(plan.DurationSeconds)))
 }
 
-func storeClientMediaDerivative(ctx context.Context, store Store, fileID string, kind managev1.FileDerivativeType, asset, generation *string) error {
+func storeClientMediaDerivative(ctx context.Context, store Store, fileID string, kind DerivativeKind, asset, generation *string) error {
 	return store.UpsertIngestDerivative(ctx, domain.IngestDerivative{ID: uuid.NewString(), FileID: fileID, Type: kind.String(), AssetID: asset, GenerationID: generation, CreatedAt: time.Now().UTC()})
 }

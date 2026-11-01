@@ -169,7 +169,7 @@ func (s *Service) meshOptimizationCandidateResponse(
 			return nil, err
 		}
 		delivery.Delivery.FileName = &fileName
-		response.Delivery = delivery.Delivery
+		response.Delivery = DeliveryMessage(delivery.Delivery)
 	}
 	return response, nil
 }

@@ -2,13 +2,40 @@ package domain
 
 import (
 	"slices"
+	"strconv"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mediaauth"
 )
 
+type ProcessingStatus int32
+
+const (
+	ProcessingUnspecified ProcessingStatus = iota
+	ProcessingActive
+	ProcessingReady
+	ProcessingFailed
+)
+
+func (s ProcessingStatus) String() string {
+	switch s {
+	case ProcessingUnspecified:
+		return "MEDIA_PROCESSING_STATUS_UNSPECIFIED"
+	case ProcessingActive:
+		return "MEDIA_PROCESSING_STATUS_PROCESSING"
+	case ProcessingReady:
+		return "MEDIA_PROCESSING_STATUS_READY"
+	case ProcessingFailed:
+		return "MEDIA_PROCESSING_STATUS_FAILED"
+	default:
+		return strconv.FormatInt(int64(s), 10)
+	}
+}
+
 type HLSReference struct{ FileID, GenerationID, URL string }
 type Delivery struct {
+	ProcessingStatus                        ProcessingStatus
+	ProcessingPercentage                    *int32
 	FileID, Extension, MimeType             string
 	FileSize                                int64
 	FileName                                *string
@@ -23,6 +50,7 @@ func cloneAsset(value *mediaasset.Reference) *mediaasset.Reference {
 		return nil
 	}
 	result := *value
+	result.DownloadFilename = clonePointer(value.DownloadFilename)
 	result.SHA256 = slices.Clone(value.SHA256)
 	return &result
 }
@@ -31,6 +59,7 @@ func (d *Delivery) Clone() *Delivery {
 		return nil
 	}
 	result := *d
+	result.ProcessingPercentage = clonePointer(d.ProcessingPercentage)
 	if d.FileName != nil {
 		v := *d.FileName
 		result.FileName = &v

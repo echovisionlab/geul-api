@@ -38,7 +38,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/series"
 	translationapplication "github.com/echovisionlab/geul-api/internal/translation/application"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
 	"github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -541,18 +540,18 @@ func (*compositionFileRuntime) FindMultipartUploadCandidate(context.Context, fil
 	return &managev1.FindMultipartUploadCandidateResponse{}, nil
 }
 
-func (*compositionFileRuntime) CompleteMultipartUpload(context.Context, filemedia.CompleteMultipartUploadCommand) (*managev1.CompleteMultipartUploadResponse, error) {
-	return &managev1.CompleteMultipartUploadResponse{}, nil
+func (*compositionFileRuntime) CompleteMultipartUpload(context.Context, filemedia.CompleteMultipartUploadCommand) (*filemedia.CompletedUpload, error) {
+	return &filemedia.CompletedUpload{}, nil
 }
 
-func (*compositionFileRuntime) DownloadFromURL(context.Context, filemedia.DownloadFromURLCommand) (*managev1.DownloadFromUrlResponse, error) {
-	return &managev1.DownloadFromUrlResponse{}, nil
+func (*compositionFileRuntime) DownloadFromURL(context.Context, filemedia.DownloadFromURLCommand) (*filemedia.ImportedFile, error) {
+	return &filemedia.ImportedFile{}, nil
 }
 
 func (runtime *compositionFileRuntime) ImportRemoteFile(
 	ctx context.Context,
 	input filemedia.RemoteFileImportInput,
-) (*managev1.DownloadFromUrlResponse, error) {
+) (*filemedia.ImportedFile, error) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	runtime.importInput = &input
@@ -560,10 +559,10 @@ func (runtime *compositionFileRuntime) ImportRemoteFile(
 		copy := *principal
 		runtime.principal = &copy
 	}
-	return &managev1.DownloadFromUrlResponse{
-		FileId: compositionFileID,
-		Delivery: &commonv1.MediaDelivery{
-			FileId: compositionFileID, Extension: "png", MimeType: "image/png", FileSize: 68,
+	return &filemedia.ImportedFile{
+		FileID: compositionFileID,
+		Delivery: &filemedia.Delivery{
+			FileID: compositionFileID, Extension: "png", MimeType: "image/png", FileSize: 68,
 			FileName: &input.FileName,
 		},
 	}, nil
@@ -580,7 +579,7 @@ func (runtime *compositionFileRuntime) DeleteFiles(ctx context.Context, command 
 	return filemedia.FileDeletionOutcome{AcceptedFileIDs: command.FileIDs}, nil
 }
 
-func (runtime *compositionFileRuntime) GetMediaDelivery(ctx context.Context, query filemedia.GetMediaDeliveryQuery) (*managev1.GetMediaDeliveryResponse, error) {
+func (runtime *compositionFileRuntime) GetMediaDelivery(ctx context.Context, query filemedia.GetMediaDeliveryQuery) (*filemedia.MediaDeliveryResult, error) {
 	runtime.mu.Lock()
 	defer runtime.mu.Unlock()
 	runtime.deliveryCalls++
@@ -589,8 +588,8 @@ func (runtime *compositionFileRuntime) GetMediaDelivery(ctx context.Context, que
 		copy := *principal
 		runtime.principal = &copy
 	}
-	return &managev1.GetMediaDeliveryResponse{Delivery: &commonv1.MediaDelivery{
-		FileId: query.FileID, Extension: "bin", MimeType: "application/octet-stream", FileSize: 1,
+	return &filemedia.MediaDeliveryResult{Delivery: &filemedia.Delivery{
+		FileID: query.FileID, Extension: "bin", MimeType: "application/octet-stream", FileSize: 1,
 	}}, nil
 }
 

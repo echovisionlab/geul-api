@@ -4,7 +4,8 @@ import (
 	"context"
 	"testing"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,7 +18,7 @@ func (f *pageManageFilesFixture) ResolveAuthorizedPageFeaturedImage(
 	_ context.Context,
 	pageID string,
 	expectedFileID string,
-) (*commonv1.MediaDelivery, error) {
+) (*filemediadomain.Delivery, error) {
 	f.pageID = pageID
 	f.expectedFileID = expectedFileID
 	return nil, nil

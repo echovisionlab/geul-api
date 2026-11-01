@@ -63,11 +63,12 @@ func (h *ConnectHandler) ListFileManagerItems(ctx context.Context, req *connect.
 		PageToken: req.Msg.GetPageToken(), PageSize: req.Msg.PageSize,
 		SortField: req.Msg.SortField, SortOrder: req.Msg.SortOrder,
 	})
-	return respond(&managev1.ListFileManagerItemsResponse{Items: page.Items, NextPageToken: page.NextPageToken, Total: page.Total}, err)
+	return respond(&managev1.ListFileManagerItemsResponse{Items: libraryItemsMessage(page.Items), NextPageToken: page.NextPageToken, Total: page.Total}, err)
 }
 
 func (h *ConnectHandler) GetFile(ctx context.Context, req *connect.Request[managev1.GetFileRequest]) (*connect.Response[managev1.GetFileResponse], error) {
-	return respond(h.files.GetFile(ctx, GetFileQuery{FileID: req.Msg.FileId}))
+	value, err := h.files.GetFile(ctx, GetFileQuery{FileID: req.Msg.FileId})
+	return respond(fileDetailsMessage(value), err)
 }
 
 func (h *ConnectHandler) ListFileUsages(ctx context.Context, req *connect.Request[managev1.ListFileUsagesRequest]) (*connect.Response[managev1.ListFileUsagesResponse], error) {
@@ -97,12 +98,12 @@ func (h *ConnectHandler) DeleteFileFolder(ctx context.Context, req *connect.Requ
 
 func (h *ConnectHandler) RenameFile(ctx context.Context, req *connect.Request[managev1.RenameFileRequest]) (*connect.Response[managev1.RenameFileResponse], error) {
 	file, err := h.files.RenameFile(ctx, RenameFileCommand{FileID: req.Msg.FileId, FileName: req.Msg.FileName})
-	return respond(&managev1.RenameFileResponse{File: file}, err)
+	return respond(&managev1.RenameFileResponse{File: libraryFileMessage(file)}, err)
 }
 
 func (h *ConnectHandler) MoveFiles(ctx context.Context, req *connect.Request[managev1.MoveFilesRequest]) (*connect.Response[managev1.MoveFilesResponse], error) {
 	files, err := h.files.MoveFiles(ctx, MoveFilesCommand{FileIDs: req.Msg.FileIds, FolderID: req.Msg.GetFolderId()})
-	return respond(&managev1.MoveFilesResponse{Files: files}, err)
+	return respond(&managev1.MoveFilesResponse{Files: libraryFilesMessage(files)}, err)
 }
 
 func (h *ConnectHandler) GetFileDeletionImpact(ctx context.Context, req *connect.Request[managev1.GetFileDeletionImpactRequest]) (*connect.Response[managev1.GetFileDeletionImpactResponse], error) {
@@ -139,7 +140,7 @@ func prepareClientMediaUploadCommand(request *managev1.PrepareClientMediaUploadR
 	for _, artifact := range request.Artifacts {
 		artifacts = append(artifacts, ClientMediaUploadArtifact{
 			Path: artifact.GetPath(), MimeType: artifact.GetMimeType(), Size: artifact.GetSize(),
-			SHA256: artifact.GetSha256(), DerivativeType: artifact.GetDerivativeType(),
+			SHA256: artifact.GetSha256(), DerivativeType: DerivativeKind(artifact.GetDerivativeType()),
 		})
 	}
 	return PrepareClientMediaUploadCommand{
@@ -149,10 +150,11 @@ func prepareClientMediaUploadCommand(request *managev1.PrepareClientMediaUploadR
 }
 
 func (h *ConnectHandler) CompleteMultipartUpload(ctx context.Context, req *connect.Request[managev1.CompleteMultipartUploadRequest]) (*connect.Response[managev1.CompleteMultipartUploadResponse], error) {
-	return respond(h.files.CompleteMultipartUpload(ctx, CompleteMultipartUploadCommand{
+	value, err := h.files.CompleteMultipartUpload(ctx, CompleteMultipartUploadCommand{
 		FileID: req.Msg.FileId, UploadID: req.Msg.UploadId,
 		CorrelationID: req.Msg.GetCorrelationId(), ClientMediaBundleID: req.Msg.GetClientMediaBundleId(),
-	}))
+	})
+	return respond(CompletedUploadMessage(value), err)
 }
 
 func (h *ConnectHandler) AbortMultipartUpload(ctx context.Context, req *connect.Request[managev1.AbortMultipartUploadRequest]) (*connect.Response[managev1.AbortMultipartUploadResponse], error) {
@@ -172,20 +174,22 @@ func (h *ConnectHandler) FindMultipartUploadCandidate(ctx context.Context, req *
 }
 
 func (h *ConnectHandler) DownloadFromUrl(ctx context.Context, req *connect.Request[managev1.DownloadFromUrlRequest]) (*connect.Response[managev1.DownloadFromUrlResponse], error) {
-	return respond(h.files.DownloadFromURL(ctx, DownloadFromURLCommand{
+	value, err := h.files.DownloadFromURL(ctx, DownloadFromURLCommand{
 		UploadType: req.Msg.UploadType, EntityID: req.Msg.EntityId, EntityType: req.Msg.EntityType,
 		URL: req.Msg.Url, CorrelationID: req.Msg.GetCorrelationId(), SlotID: req.Msg.GetSlotId(),
 		ExpectedCurrentFileID: req.Msg.ExpectedCurrentFileId,
-	}))
+	})
+	return respond(ImportedFileMessage(value), err)
 }
 
 func (h *ConnectHandler) GetMediaDelivery(ctx context.Context, req *connect.Request[managev1.GetMediaDeliveryRequest]) (*connect.Response[managev1.GetMediaDeliveryResponse], error) {
-	return respond(h.files.GetMediaDelivery(ctx, GetMediaDeliveryQuery{FileID: req.Msg.FileId}))
+	value, err := h.files.GetMediaDelivery(ctx, GetMediaDeliveryQuery{FileID: req.Msg.FileId})
+	return respond(MediaDeliveryResultMessage(value), err)
 }
 
 func (h *ConnectHandler) GetBulkMediaDeliveries(ctx context.Context, req *connect.Request[managev1.GetBulkMediaDeliveriesRequest]) (*connect.Response[managev1.GetBulkMediaDeliveriesResponse], error) {
 	files, err := h.files.GetBulkMediaDeliveries(ctx, GetBulkMediaDeliveriesQuery{FileIDs: req.Msg.FileIds})
-	return respond(&managev1.GetBulkMediaDeliveriesResponse{Files: files}, err)
+	return respond(&managev1.GetBulkMediaDeliveriesResponse{Files: mediaDeliveryResultsMessage(files)}, err)
 }
 
 func fileDownloadPolicyTarget(entityType managev1.TranscodeEntityType, entityID string, blockID, referencePath *string) FileDownloadPolicyTarget {

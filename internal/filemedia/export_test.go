@@ -35,14 +35,14 @@ type ExportDeliveryGrant struct {
 	Usage                                   *domain.DeliveryUsageWitness
 }
 
-func ExportFinalizeManageDelivery(units mutation.UnitOfWork[Store], ctx context.Context, user *auth.UserInfo, response *managev1.GetMediaDeliveryResponse, grant ExportDeliveryGrant) (map[string]*managev1.GetMediaDeliveryResponse, bool, error) {
+func ExportFinalizeManageDelivery(units mutation.UnitOfWork[Store], ctx context.Context, user *auth.UserInfo, response *MediaDeliveryResult, grant ExportDeliveryGrant) (map[string]*MediaDeliveryResult, bool, error) {
 	s := &Service{units: units, mediaDomain: "https://media.example.com", mediaSecret: "delivery-test-secret"}
 	g := manageFileDeliveryGrant{lockFile: grant.Usage == nil, expectedUploader: grant.Uploader, expectedAvatarOwner: grant.AvatarOwner}
 	if w := grant.Usage; w != nil {
 		g.usageWitnesses = []manageFileDeliveryUsageWitness{{kind: w.Kind, fileID: w.FileID, resourceType: w.ResourceType, resourceID: w.ResourceID, relationID: w.RelationID, referencePath: w.ReferencePath, ownerFingerprint: grant.OwnerFingerprint}}
 	}
-	id := response.GetDelivery().GetFileId()
-	return s.finalizeManageFileURLResponses(ctx, map[string]*managev1.GetMediaDeliveryResponse{id: response}, &manageFileDeliveryAuthorization{principal: user, files: map[string]manageFileDeliveryGrant{id: g}})
+	id := response.Delivery.FileID
+	return s.finalizeManageFileURLResponses(ctx, map[string]*MediaDeliveryResult{id: response}, &manageFileDeliveryAuthorization{principal: user, files: map[string]manageFileDeliveryGrant{id: g}})
 }
 
 func ExportDeliveryService(units mutation.UnitOfWork[Store]) *Service {
@@ -145,7 +145,7 @@ func ExportClientBundleFixture(t *testing.T, kind string) (domain.UploadSession,
 		command.Kind = managev1.ClientMediaKind_CLIENT_MEDIA_KIND_VIDEO
 	}
 	for _, artifact := range plan.Artifacts {
-		command.Artifacts = append(command.Artifacts, ClientMediaUploadArtifact{Path: artifact.Path, MimeType: artifact.MimeType, Size: artifact.Size, SHA256: artifact.SHA256, DerivativeType: managev1.FileDerivativeType(artifact.DerivativeType)})
+		command.Artifacts = append(command.Artifacts, ClientMediaUploadArtifact{Path: artifact.Path, MimeType: artifact.MimeType, Size: artifact.Size, SHA256: artifact.SHA256, DerivativeType: DerivativeKind(artifact.DerivativeType)})
 	}
 	return row, command, plan.MemberID
 }

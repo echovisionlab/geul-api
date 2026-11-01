@@ -14,7 +14,6 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const fileManagerTestID = "11111111-1111-4111-8111-111111111111"
@@ -289,10 +288,10 @@ func (manager *recordingFileManager) record(ctx context.Context, name string, re
 	manager.request = request
 	manager.calls = append(manager.calls, name)
 }
-func fileManagerNativeFile() *managev1.FileManagerFile {
+func fileManagerNativeFile() *filemedia.LibraryFile {
 	duration := int32(12)
-	at := timestamppb.New(time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC))
-	return &managev1.FileManagerFile{Id: fileManagerTestID, FileName: "Actual name", Extension: "wav", MimeType: "audio/wav", FileSize: 42, DurationSeconds: &duration, UsageCount: 3, CreatedAt: at, UpdatedAt: at}
+	at := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+	return &filemedia.LibraryFile{ID: fileManagerTestID, FileName: "Actual name", Extension: "wav", MimeType: "audio/wav", FileSize: 42, DurationSeconds: &duration, UsageCount: 3, CreatedAt: &at, UpdatedAt: &at}
 }
 func fileManagerFolderView() *filemedia.FolderView {
 	return &filemedia.FolderView{ID: fileManagerTestFolderID, Name: "Actual folder"}
@@ -324,7 +323,7 @@ func (manager *recordingFileManager) DeleteFiles(ctx context.Context, command fi
 	return filemedia.FileDeletionOutcome{AcceptedFileIDs: manager.accepted, RejectedFiles: impacts}, nil
 }
 
-func (manager *recordingFileManager) RenameFile(ctx context.Context, command filemedia.RenameFileCommand) (*managev1.FileManagerFile, error) {
+func (manager *recordingFileManager) RenameFile(ctx context.Context, command filemedia.RenameFileCommand) (*filemedia.LibraryFile, error) {
 	manager.record(ctx, ToolFileRename, &managev1.RenameFileRequest{FileId: command.FileID, FileName: command.FileName})
 	if manager.err != nil {
 		return nil, manager.err
@@ -332,12 +331,12 @@ func (manager *recordingFileManager) RenameFile(ctx context.Context, command fil
 	return fileManagerNativeFile(), nil
 }
 
-func (manager *recordingFileManager) MoveFiles(ctx context.Context, command filemedia.MoveFilesCommand) ([]*managev1.FileManagerFile, error) {
+func (manager *recordingFileManager) MoveFiles(ctx context.Context, command filemedia.MoveFilesCommand) ([]*filemedia.LibraryFile, error) {
 	manager.record(ctx, ToolFileMove, &managev1.MoveFilesRequest{FileIds: command.FileIDs, FolderId: optionalFileManagerID(command.FolderID)})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return []*managev1.FileManagerFile{fileManagerNativeFile()}, nil
+	return []*filemedia.LibraryFile{fileManagerNativeFile()}, nil
 }
 
 func (manager *recordingFileManager) CreateFileFolder(ctx context.Context, command filemedia.CreateFileFolderCommand) (*filemedia.FolderView, error) {

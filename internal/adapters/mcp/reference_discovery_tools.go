@@ -270,21 +270,21 @@ func (tools *ReferenceDiscoveryTools) listFiles(ctx context.Context, arguments m
 		path := make([]map[string]any, 0, len(item.FolderPath))
 		for _, segment := range item.FolderPath {
 			if segment != nil {
-				path = append(path, map[string]any{"id": segment.Id, "name": segment.Name})
+				path = append(path, map[string]any{"id": segment.ID, "name": segment.Name})
 			}
 		}
-		if file := item.GetFile(); file != nil {
-			output := map[string]any{"item_type": "file", "id": file.Id, "name": file.FileName, "mime_type": file.MimeType, "file_size": file.FileSize, "usage_count": file.UsageCount, "created_at": timestampString(file.CreatedAt), "folder_path": path}
-			if file.FolderId != nil {
-				output["folder_id"] = *file.FolderId
+		if file := item.File; file != nil {
+			output := map[string]any{"item_type": "file", "id": file.ID, "name": file.FileName, "mime_type": file.MimeType, "file_size": file.FileSize, "usage_count": file.UsageCount, "created_at": fileManagerTimeString(file.CreatedAt), "folder_path": path}
+			if file.FolderID != nil {
+				output["folder_id"] = *file.FolderID
 			}
 			items = append(items, output)
 			continue
 		}
-		if folder := item.GetFolder(); folder != nil {
-			output := map[string]any{"item_type": "folder", "id": folder.Id, "name": folder.Name, "created_at": timestampString(folder.CreatedAt), "folder_path": path}
-			if folder.ParentId != nil {
-				output["folder_id"] = *folder.ParentId
+		if folder := item.Folder; folder != nil {
+			output := map[string]any{"item_type": "folder", "id": folder.ID, "name": folder.Name, "created_at": fileManagerTimeString(folder.CreatedAt), "folder_path": path}
+			if folder.ParentID != nil {
+				output["folder_id"] = *folder.ParentID
 			}
 			items = append(items, output)
 		}

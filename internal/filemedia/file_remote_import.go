@@ -19,8 +19,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -117,7 +117,7 @@ type RemoteFileImportInput struct {
 	CorrelationID string
 }
 
-func (s *Service) ImportRemoteFile(ctx context.Context, input RemoteFileImportInput) (_ *managev1.DownloadFromUrlResponse, resultErr error) {
+func (s *Service) ImportRemoteFile(ctx context.Context, input RemoteFileImportInput) (_ *ImportedFile, resultErr error) {
 	defer func() {
 		resultErr = failurecause.WithAttrs(failurecause.WithPrivate(resultErr, input.FileName), slog.String("correlation_id", input.CorrelationID), slog.String("upload_type", input.UploadType.String()))
 	}()
@@ -152,8 +152,8 @@ type remoteFileImportResult struct {
 	fileName              string
 	mimeType              string
 	size                  int64
-	inline                *commonv1.ExpiringMediaRef
-	download              *commonv1.ExpiringMediaRef
+	inline                *mediaauth.Reference
+	download              *mediaauth.Reference
 	slotID                string
 	attemptID             string
 	expectedCurrentFileID *string
@@ -340,7 +340,7 @@ type DownloadFromURLCommand struct {
 }
 
 // DownloadFromURL downloads a file from an external URL and stores it.
-func (s *Service) DownloadFromURL(ctx context.Context, command DownloadFromURLCommand) (*managev1.DownloadFromUrlResponse, error) {
+func (s *Service) DownloadFromURL(ctx context.Context, command DownloadFromURLCommand) (*ImportedFile, error) {
 	var entityType string
 	transcodeEntityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED
 	if command.EntityType != nil {
@@ -366,29 +366,29 @@ func (s *Service) DownloadFromURL(ctx context.Context, command DownloadFromURLCo
 	return remoteFileImportResponse(result), nil
 }
 
-func remoteFileImportResponse(result *remoteFileImportResult) *managev1.DownloadFromUrlResponse {
-	return &managev1.DownloadFromUrlResponse{
-		FileId:                result.fileID,
+func remoteFileImportResponse(result *remoteFileImportResult) *ImportedFile {
+	return &ImportedFile{
+		FileID:                result.fileID,
 		Delivery:              mediaDeliveryFromRemoteImport(result),
-		SlotId:                optionalNonEmptyString(result.slotID),
-		IngestAttemptId:       optionalNonEmptyString(result.attemptID),
-		ExpectedCurrentFileId: result.expectedCurrentFileID,
+		SlotID:                optionalNonEmptyString(result.slotID),
+		IngestAttemptID:       optionalNonEmptyString(result.attemptID),
+		ExpectedCurrentFileID: result.expectedCurrentFileID,
 	}
 }
 
-func mediaDeliveryFromRemoteImport(result *remoteFileImportResult) *commonv1.MediaDelivery {
+func mediaDeliveryFromRemoteImport(result *remoteFileImportResult) *Delivery {
 	if result == nil {
 		return nil
 	}
 	fileName := result.fileName
-	return &commonv1.MediaDelivery{
-		FileId:    result.fileID,
+	return &Delivery{
+		FileID:    result.fileID,
 		Extension: mediaExtension(&result.mimeType),
 		MimeType:  result.mimeType,
 		FileSize:  result.size,
 		FileName:  &fileName,
 		Inline:    result.inline,
 		Download:  result.download,
-		Asset:     mediaasset.ReferenceProto(result.asset),
+		Asset:     result.asset,
 	}
 }

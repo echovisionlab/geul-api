@@ -12,13 +12,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/mediaauth"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 
 	"connectrpc.com/connect"
 
 	"github.com/echovisionlab/geul-api/internal/postgreslock"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 )
@@ -37,8 +38,8 @@ func (r *remoteImportTestResolver) LookupIP(context.Context, string, string) ([]
 func TestMediaDeliveryFromRemoteImportPreservesPurposeSpecificRefs(t *testing.T) {
 	t.Parallel()
 
-	inline := &commonv1.ExpiringMediaRef{Url: "https://cdn.example.com/inline"}
-	download := &commonv1.ExpiringMediaRef{Url: "https://cdn.example.com/download"}
+	inline := &mediaauth.Reference{URL: "https://cdn.example.com/inline"}
+	download := &mediaauth.Reference{URL: "https://cdn.example.com/download"}
 	delivery := mediaDeliveryFromRemoteImport(&remoteFileImportResult{
 		fileID:   "file-1",
 		fileName: "image.webp",
@@ -48,7 +49,7 @@ func TestMediaDeliveryFromRemoteImportPreservesPurposeSpecificRefs(t *testing.T)
 		download: download,
 	})
 
-	if delivery.GetInline() != inline || delivery.GetDownload() != download {
+	if delivery.Inline != inline || delivery.Download != download {
 		t.Fatalf("purpose-specific refs were not preserved: %#v", delivery)
 	}
 }

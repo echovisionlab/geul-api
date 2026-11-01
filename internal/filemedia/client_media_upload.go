@@ -39,7 +39,7 @@ type ClientMediaUploadArtifact struct {
 	MimeType       string
 	Size           int64
 	SHA256         string
-	DerivativeType managev1.FileDerivativeType
+	DerivativeType DerivativeKind
 }
 
 // PrepareClientMediaUpload returns the ID of the bundle it registered.

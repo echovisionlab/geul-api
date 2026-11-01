@@ -6,7 +6,7 @@ func ReferenceProto(ref *Reference) *commonv1.AssetRef {
 	if ref == nil {
 		return nil
 	}
-	return &commonv1.AssetRef{AssetId: ref.AssetID, Url: ref.URL, Extension: ref.Extension, MimeType: ref.MimeType, FileSize: ref.FileSize, Sha256: append([]byte(nil), ref.SHA256...), Disposition: commonv1.AssetDisposition(ref.Disposition)}
+	return &commonv1.AssetRef{AssetId: ref.AssetID, Url: ref.URL, Extension: ref.Extension, MimeType: ref.MimeType, FileSize: ref.FileSize, Sha256: append([]byte(nil), ref.SHA256...), Disposition: commonv1.AssetDisposition(ref.Disposition), DownloadFilename: ref.DownloadFilename}
 }
 func WriteTargetProto(target *WriteTarget) *commonv1.AssetWriteTarget {
 	if target == nil {

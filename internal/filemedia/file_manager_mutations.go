@@ -11,7 +11,6 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // RenameFileCommand renames a File without changing its extension.
@@ -20,7 +19,7 @@ type RenameFileCommand struct {
 	FileName string
 }
 
-func (s *Service) RenameFile(ctx context.Context, command RenameFileCommand) (_ *managev1.FileManagerFile, resultErr error) {
+func (s *Service) RenameFile(ctx context.Context, command RenameFileCommand) (_ *LibraryFile, resultErr error) {
 	defer failurecause.AnnotatePrivate(&resultErr, command.FileName)
 
 	_, can, err := fileManagerAuthority(ctx)
@@ -89,7 +88,7 @@ type MoveFilesCommand struct {
 	FolderID string
 }
 
-func (s *Service) MoveFiles(ctx context.Context, command MoveFilesCommand) ([]*managev1.FileManagerFile, error) {
+func (s *Service) MoveFiles(ctx context.Context, command MoveFilesCommand) ([]*LibraryFile, error) {
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
@@ -159,7 +158,7 @@ func moveLockedFiles(ctx context.Context, store Store, fileIDs []string, folderI
 	return moves, nil
 }
 
-func (s *Service) loadFileManagerFilesByIDs(ctx context.Context, fileIDs []string) ([]*managev1.FileManagerFile, error) {
+func (s *Service) loadFileManagerFilesByIDs(ctx context.Context, fileIDs []string) ([]*LibraryFile, error) {
 	if len(fileIDs) == 0 {
 		return nil, nil
 	}
@@ -193,7 +192,7 @@ func (s *Service) loadFileManagerFilesByIDs(ctx context.Context, fileIDs []strin
 	if changed {
 		return nil, domainerr.Precondition("one or more files changed before delivery")
 	}
-	result := make([]*managev1.FileManagerFile, 0, len(fileIDs))
+	result := make([]*LibraryFile, 0, len(fileIDs))
 	for _, fileID := range fileIDs {
 		result = append(result, byID[fileID])
 	}
