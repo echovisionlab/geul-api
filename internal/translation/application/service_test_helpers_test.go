@@ -10,7 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -42,10 +42,10 @@ func newTestService(t *testing.T, deps Deps) *Service {
 		deps.ContentBlocks = &contentblock.Store{}
 	}
 	if deps.OGPlanner == nil {
-		deps.OGPlanner = &og.Planner{}
+		deps.OGPlanner = &ogpostgres.Planner{}
 	}
 	if deps.OGRefresher == nil {
-		deps.OGRefresher = &og.Refresher{}
+		deps.OGRefresher = &ogpostgres.Refresher{}
 	}
 	if deps.Domains == nil {
 		deps.Domains = testTranslationDomains{}

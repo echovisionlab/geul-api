@@ -22,6 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -92,11 +93,10 @@ func newSiteSettingsHandler(t *testing.T, deps sitesettings.Deps) *sitesettings.
 }
 
 func newSiteSettingsOGInvalidatorForTest(db *gorm.DB, cdnDomain string) *sitesettingsadapter.Invalidator {
-	planner := og.NewPlanner(
-		db, cdnDomain, sitesettingsadapter.NewRenderConfig(),
+	planner := ogpostgres.NewPlanner(cdnDomain, sitesettingsadapter.NewRenderConfig(),
 		legaladapter.NewProjection(), sitesettingsadapter.NewProjection(),
 	)
-	collector := og.NewCollector(
+	collector := ogpostgres.NewCollector(
 		postadapter.NewRequests(), pageadapter.NewRequests(), seriesadapter.NewRequests(),
 		workadapter.NewRequests(), labeladapter.NewRequests(), artistadapter.NewRequests(),
 		formogadapter.NewRequests(), legaladapter.NewRequests(), sitesettingsadapter.NewRequests(),

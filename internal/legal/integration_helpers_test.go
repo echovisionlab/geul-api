@@ -25,7 +25,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testcollaboration"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -98,8 +98,8 @@ func (legalTestRenderConfig) Snapshot(context.Context, *gorm.DB, string) ([]byte
 	return payload, fmt.Sprintf("%x", sha256.Sum256(payload)), nil
 }
 
-func newOGPlannerForTest(db *gorm.DB, cdnDomain string) *og.Planner {
-	return og.NewPlanner(db, cdnDomain, legalTestRenderConfig{}, legaladapter.NewProjection())
+func newOGPlannerForTest(db *gorm.DB, cdnDomain string) *ogpostgres.Planner {
+	return ogpostgres.NewPlanner(cdnDomain, legalTestRenderConfig{}, legaladapter.NewProjection())
 }
 
 func legalIntegrationAdminCtxWithIdentityAndSpiceDB(

@@ -24,7 +24,6 @@ import (
 	filemediaadapter "github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	formadapter "github.com/echovisionlab/geul-api/internal/adapters/form"
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
-	labeladapter "github.com/echovisionlab/geul-api/internal/adapters/label"
 	legaladapter "github.com/echovisionlab/geul-api/internal/adapters/legal"
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	memberadapter "github.com/echovisionlab/geul-api/internal/adapters/member"
@@ -780,15 +779,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(siteSettingPath, siteSettingHandler)
 	slog.Info("Registered service", "path", siteSettingPath)
 
-	ogAdmin := og.NewAdminService(
-		db,
-		cfg.CDNURL,
-		ogDeps.planner,
-		ogDeps.resolver,
-		ogDeps.collector,
-		ogadapter.NewAuthorization(spicedbClient),
-		labeladapter.NewGlobalReconciler(),
-	)
+	ogAdmin := og.NewAdminConnectHandler(og.NewAdmin(ogDeps.units, ogadapter.NewAuthorization(spicedbClient)))
 	adminService, err := admin.NewService(admin.Deps{
 		DB: db, SpiceDB: spicedbClient, Members: memberadapter.DashboardMembers{}, Posts: postadapter.DashboardPosts{},
 		Pages: pageadapter.DashboardPages{}, Campaigns: campaignadapter.DashboardCampaigns{},
@@ -962,7 +953,7 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	}
 	slog.Info("Registered MCP handler", "path", "/mcp", "methods", []string{http.MethodGet, http.MethodPost})
 
-	internalOgService := og.NewInternalService(db, cfg.CDNURL, ogDeps.projections...)
+	internalOgService := og.NewInternalConnectHandler(og.NewLifecycle(ogDeps.units))
 	internalOgPath, internalOgHandler := intrav1connect.NewInternalOgServiceHandler(internalOgService, internalHandlerOpts...)
 	mux.Handle(internalOgPath, internalRPCTrust.og(internalOgHandler))
 	slog.Info("Registered internal service", "path", internalOgPath)

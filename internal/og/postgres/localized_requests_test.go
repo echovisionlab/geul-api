@@ -1,7 +1,9 @@
-package og
+package ogpostgres
 
 import (
 	"testing"
+
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 
 	"connectrpc.com/connect"
 	"github.com/glebarez/sqlite"
@@ -40,5 +42,5 @@ func TestLocalizedRequestsUseExistingTargetValue(t *testing.T) {
 	require.NoError(t, db.Exec("DELETE FROM work_translation WHERE entity_id = ? AND locale = 'ko'", entityID).Error)
 	_, err = requests.Resolve(t.Context(), db, entityID, selection)
 	require.Error(t, err)
-	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
+	require.Equal(t, connect.CodeNotFound, errs.CodeOf(err))
 }

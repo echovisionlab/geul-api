@@ -16,6 +16,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -28,10 +29,14 @@ func TestDeleteFormRollsBackWhenDurableOgCancellationFailsIntegration(t *testing
 	require.NoError(t, db.First(&form, "id = ?", formID).Error)
 
 	locale := "en"
-	planner := og.NewPlanner(db, "https://cdn.example.com", formIntegrationRenderConfig{}, formogadapter.NewProjection())
+	planner := ogpostgres.NewPlanner("https://cdn.example.com", formIntegrationRenderConfig{}, formogadapter.NewProjection())
 	request := og.Request{Target: og.Target{EntityType: "form", EntityID: form.ID, Locale: &locale, Kind: "locale"}, Title: "Delete rollback fixture"}
-	plan, err := planner.RequestBulk(t.Context(), "automatic", "delete rollback fixture", []og.Request{request}, func(context.Context, *gorm.DB) ([]og.Request, error) {
-		return []og.Request{request}, nil
+	var plan *og.Plan
+	err := db.Transaction(func(tx *gorm.DB) (err error) {
+		plan, err = planner.RequestBulkReloadedWithDB(t.Context(), tx, "automatic", "delete rollback fixture", []og.Request{request}, func(context.Context, *gorm.DB) ([]og.Request, error) {
+			return []og.Request{request}, nil
+		})
+		return err
 	})
 	require.NoError(t, err)
 	require.Len(t, plan.GenerationIDs, 1)

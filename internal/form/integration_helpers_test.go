@@ -22,7 +22,7 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mq"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/securityaccess"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
@@ -75,9 +75,9 @@ func (formIntegrationRenderConfig) Snapshot(context.Context, *gorm.DB, string) (
 	return payload, fmt.Sprintf("%x", sha256.Sum256(payload)), nil
 }
 
-func newFormIntegrationOGRefresher(db *gorm.DB, cdnDomain string) *og.Refresher {
-	planner := og.NewPlanner(db, cdnDomain, formIntegrationRenderConfig{}, formogadapter.NewProjection())
-	return og.NewRefresher(planner, og.NewResolver(formogadapter.NewRequests()))
+func newFormIntegrationOGRefresher(db *gorm.DB, cdnDomain string) *ogpostgres.Refresher {
+	planner := ogpostgres.NewPlanner(cdnDomain, formIntegrationRenderConfig{}, formogadapter.NewProjection())
+	return ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(formogadapter.NewRequests()))
 }
 
 // formIntegrationAudit records personal data access through security and

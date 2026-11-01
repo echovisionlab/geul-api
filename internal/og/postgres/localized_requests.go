@@ -1,4 +1,4 @@
-package og
+package ogpostgres
 
 import (
 	"context"
@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/og"
+
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -51,14 +53,14 @@ func (s *LocalizedSource) Resolve(
 	entityType string,
 	entityID string,
 	selection *managev1.OgTargetSelection,
-) ([]Request, error) {
+) ([]og.Request, error) {
 	if !s.Handles(entityType) {
-		return nil, errs.InvalidEntityType(entityType)
+		return nil, domainerr.InvalidEntityType(entityType)
 	}
 	return s.requests.Resolve(ctx, db, entityID, selection)
 }
 
-func (s *LocalizedSource) All(ctx context.Context, db *gorm.DB) ([]Request, error) {
+func (s *LocalizedSource) All(ctx context.Context, db *gorm.DB) ([]og.Request, error) {
 	return s.requests.All(ctx, db)
 }
 
@@ -67,44 +69,44 @@ func (r *LocalizedRequests) Resolve(
 	db *gorm.DB,
 	entityID string,
 	selection *managev1.OgTargetSelection,
-) ([]Request, error) {
+) ([]og.Request, error) {
 	entityID = strings.TrimSpace(entityID)
 	if entityID == "" {
-		return nil, errs.Required("entity_id")
+		return nil, domainerr.Required("entity_id")
 	}
 	if selection == nil || selection.GetTarget() == nil {
-		return nil, errs.Required("selection")
+		return nil, domainerr.Required("selection")
 	}
 	base, source, err := r.base(ctx, db, entityID)
 	if err != nil {
 		return nil, err
 	}
 	if source == nil {
-		return nil, errs.FailedPrecondition("translation source locale is not configured")
+		return nil, domainerr.Precondition("translation source locale is not configured")
 	}
 	if selection.GetPrimary() != nil {
-		return []Request{r.request(entityID, source.SourceLocale, base)}, nil
+		return []og.Request{r.request(entityID, source.SourceLocale, base)}, nil
 	}
 	if locale := strings.TrimSpace(selection.GetLocale()); locale != "" {
 		if locale == source.SourceLocale {
-			return []Request{r.request(entityID, locale, base)}, nil
+			return []og.Request{r.request(entityID, locale, base)}, nil
 		}
 		target, err := r.translation(ctx, db, entityID, locale)
 		if err != nil {
 			return nil, err
 		}
 		if target == nil {
-			return nil, errs.NotFound(r.spec.EntityType+"_translation", entityID+":"+locale)
+			return nil, domainerr.ResourceNotFound(r.spec.EntityType+"_translation", entityID+":"+locale)
 		}
 		if target.Title != nil {
 			base.title = *target.Title
 		}
-		return []Request{r.request(entityID, locale, base)}, nil
+		return []og.Request{r.request(entityID, locale, base)}, nil
 	}
 	if selection.GetAllLocales() == nil {
-		return nil, errs.InvalidArgument("selection", "translated OG target selection is invalid")
+		return nil, domainerr.InvalidField("selection", "translated OG target selection is invalid")
 	}
-	requests := []Request{r.request(entityID, source.SourceLocale, base)}
+	requests := []og.Request{r.request(entityID, source.SourceLocale, base)}
 	targets, err := r.translations(ctx, db, entityID)
 	if err != nil {
 		return nil, err
@@ -119,12 +121,12 @@ func (r *LocalizedRequests) Resolve(
 	return requests, nil
 }
 
-func (r *LocalizedRequests) All(ctx context.Context, db *gorm.DB) ([]Request, error) {
+func (r *LocalizedRequests) All(ctx context.Context, db *gorm.DB) ([]og.Request, error) {
 	rows, err := r.rows(ctx, db)
 	if err != nil {
 		return nil, err
 	}
-	requests := make([]Request, 0, len(rows))
+	requests := make([]og.Request, 0, len(rows))
 	for _, row := range rows {
 		if row.SourceLocale == nil || strings.TrimSpace(*row.SourceLocale) == "" {
 			return nil, fmt.Errorf("%s %s has no translation source locale", r.spec.EntityType, row.ID)
@@ -268,9 +270,9 @@ func (r *LocalizedRequests) targetTranslationsQuery(
 			AND translation.locale <> source_root.source_locale`, entityID)
 }
 
-func (r *LocalizedRequests) request(entityID, locale string, snapshot localizedSnapshot) Request {
-	return Request{
-		Target: Target{
+func (r *LocalizedRequests) request(entityID, locale string, snapshot localizedSnapshot) og.Request {
+	return og.Request{
+		Target: og.Target{
 			EntityType: r.spec.EntityType, EntityID: entityID, Locale: &locale, Kind: "locale",
 		},
 		Title:               snapshot.title,

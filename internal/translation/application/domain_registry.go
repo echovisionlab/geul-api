@@ -8,7 +8,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
@@ -23,7 +23,7 @@ type DomainRegistry interface {
 	BuildExtractionPlan(*model.TranslationJob, *translation.SourceDocument) (*translation.ExtractionPlan, error)
 	BuildCandidate(*translation.ExtractionPlan, *translation.SourceDocument, map[string]translation.UnitResult) (*translation.Candidate, error)
 	ApplyCandidate(context.Context, *gorm.DB, *contentblock.Store, *model.TranslationJob, *translation.Candidate, translation.EntryWrite) (AppliedTranslationTarget, error)
-	RequestLocaleOG(context.Context, *gorm.DB, *og.Planner, *og.Refresher, string, string, string, string) (bool, error)
+	RequestLocaleOG(context.Context, *gorm.DB, *ogpostgres.Planner, *ogpostgres.Refresher, string, string, string, string) (bool, error)
 	TranslationEntrySelectSQL(string, string) (string, error)
 	LockRoot(context.Context, *gorm.DB, string, string) error
 	RequireEditable(context.Context, *gorm.DB, string, string) error

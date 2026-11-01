@@ -20,7 +20,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -338,11 +338,9 @@ func newAuditedTranslationProviderService(
 	spiceDB *auth.SpiceDBClient,
 ) *ConnectHandler {
 	t.Helper()
-	planner := og.NewPlanner(
-		db, "", translationProviderOGRenderConfig{}, sitesettingsadapter.NewProjection(),
-	)
-	refresher := og.NewRefresher(
-		planner, og.NewResolver(sitesettingsadapter.NewRequests()),
+	planner := ogpostgres.NewPlanner("", translationProviderOGRenderConfig{}, sitesettingsadapter.NewProjection())
+	refresher := ogpostgres.NewRefresher(
+		planner, ogpostgres.NewResolver(sitesettingsadapter.NewRequests()),
 	)
 	return NewConnectHandler(newTestService(t, Deps{
 		DB: db, Publisher: &translationProviderPublisherStub{}, Audit: auditWriter, SpiceDB: spiceDB,

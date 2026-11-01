@@ -21,7 +21,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mq"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil"
@@ -148,9 +148,9 @@ func (formPublicRenderConfig) Snapshot(context.Context, *gorm.DB, string) ([]byt
 	return payload, fmt.Sprintf("%x", sha256.Sum256(payload)), nil
 }
 
-func newFormPublicOGRefresher(db *gorm.DB, cdnDomain string) *og.Refresher {
-	planner := og.NewPlanner(db, cdnDomain, formPublicRenderConfig{}, formogadapter.NewProjection())
-	return og.NewRefresher(planner, og.NewResolver(formogadapter.NewRequests()))
+func newFormPublicOGRefresher(db *gorm.DB, cdnDomain string) *ogpostgres.Refresher {
+	planner := ogpostgres.NewPlanner(cdnDomain, formPublicRenderConfig{}, formogadapter.NewProjection())
+	return ogpostgres.NewRefresher(planner, ogpostgres.NewResolver(formogadapter.NewRequests()))
 }
 
 func newPublicManageFormService(t *testing.T, db *gorm.DB, _ string) *formdomain.ConnectHandler {

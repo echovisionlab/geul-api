@@ -8,7 +8,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -27,8 +27,8 @@ type requestTimeAuthorityTestDomains struct {
 func (d *requestTimeAuthorityTestDomains) RequestLocaleOG(
 	context.Context,
 	*gorm.DB,
-	*og.Planner,
-	*og.Refresher,
+	*ogpostgres.Planner,
+	*ogpostgres.Refresher,
 	string,
 	string,
 	string,

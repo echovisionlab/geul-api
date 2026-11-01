@@ -14,7 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
@@ -48,8 +48,8 @@ type TranslationJobManager struct {
 	now               func() time.Time
 	metrics           translationMetrics
 	contentBlocks     *contentblock.Store
-	ogPlanner         *og.Planner
-	ogRefresher       *og.Refresher
+	ogPlanner         *ogpostgres.Planner
+	ogRefresher       *ogpostgres.Refresher
 	domains           DomainRegistry
 	mutations         *mutation.Runner
 }
@@ -64,8 +64,8 @@ type JobManagerDeps struct {
 	Audit         domainaudit.Appender
 	Publisher     translationJobPublisher
 	ContentBlocks *contentblock.Store
-	OGPlanner     *og.Planner
-	OGRefresher   *og.Refresher
+	OGPlanner     *ogpostgres.Planner
+	OGRefresher   *ogpostgres.Refresher
 	Domains       DomainRegistry
 }
 

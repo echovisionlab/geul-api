@@ -7,11 +7,13 @@ import (
 	stderrors "errors"
 	"time"
 
-	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/adapters/ogprojection"
+
+	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/favicon"
 	mediaassetdomain "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 )
 
 const (
@@ -35,7 +37,7 @@ func mediaAssetCleanupForIntegration(h *Handlers) *mediaassetdomain.Cleanup {
 
 func ogCleanupForIntegration(h *Handlers) *og.Cleanup {
 	if h.ogCleanup == nil {
-		h.ogCleanup = og.NewCleanup(h.db, ogprojection.AssetReferences()...)
+		h.ogCleanup = og.NewCleanup(newWorkerOGUnits(h.db, ""))
 	}
 	return h.ogCleanup
 }
@@ -62,7 +64,7 @@ func publicAssetCleanupForIntegration(h *Handlers) *mediaassetdomain.PublicAsset
 			h.db,
 			storage,
 			cache,
-			ogCleanupForIntegration(h),
+			ogpostgres.NewAssetProtector(ogprojection.AssetReferences()...),
 		)
 	}
 	return h.publicAssets

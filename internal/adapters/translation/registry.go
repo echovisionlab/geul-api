@@ -15,7 +15,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	core "github.com/echovisionlab/geul-api/internal/translation"
 	"github.com/echovisionlab/geul-api/internal/translation/application"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
@@ -257,8 +257,8 @@ func providerLocaleUpdatedAtEqual(left *time.Time, right *time.Time) bool {
 func (r *DomainRegistry) RequestLocaleOG(
 	ctx context.Context,
 	tx *gorm.DB,
-	planner *og.Planner,
-	refresher *og.Refresher,
+	planner *ogpostgres.Planner,
+	refresher *ogpostgres.Refresher,
 	entityType string,
 	entityID string,
 	locale string,

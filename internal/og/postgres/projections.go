@@ -1,13 +1,15 @@
-package og
+package ogpostgres
 
 import (
 	"context"
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/og"
+
 	"gorm.io/gorm"
 
-	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
@@ -48,11 +50,11 @@ func NewTranslationProjection(spec TranslationProjectionSpec) *TranslationProjec
 	return &TranslationProjection{spec: spec}
 }
 
-func (p *TranslationProjection) Handles(target Target) bool {
+func (p *TranslationProjection) Handles(target og.Target) bool {
 	return target.EntityType == p.spec.EntityType
 }
 
-func (p *TranslationProjection) ReleasePending(ctx context.Context, tx *gorm.DB, target Target, cdnDomain string) error {
+func (p *TranslationProjection) ReleasePending(ctx context.Context, tx *gorm.DB, target og.Target, cdnDomain string) error {
 	locale, err := p.locale(target)
 	if err != nil {
 		return err
@@ -70,7 +72,7 @@ func (p *TranslationProjection) ReleasePending(ctx context.Context, tx *gorm.DB,
 func (p *TranslationProjection) Complete(
 	ctx context.Context,
 	tx *gorm.DB,
-	target Target,
+	target og.Target,
 	assetID string,
 	now time.Time,
 	cdnDomain string,
@@ -81,7 +83,7 @@ func (p *TranslationProjection) Complete(
 	}
 	switch {
 	case locale != "":
-		err = updateOGPointer(ctx, tx, p.translationTable(), "entity_id = ? AND locale = ?", assetID, now, ErrTranslationTargetMissing, target.EntityID, locale)
+		err = updateOGPointer(ctx, tx, p.translationTable(), "entity_id = ? AND locale = ?", assetID, now, og.ErrTranslationTargetMissing, target.EntityID, locale)
 	case p.spec.Localeless == LocalelessEntityRow:
 		err = updateOGPointer(ctx, tx, p.spec.EntityType, "id = ?", assetID, now, gorm.ErrRecordNotFound, target.EntityID)
 	default:
@@ -105,16 +107,16 @@ func (p *TranslationProjection) ReferencesAsset(ctx context.Context, tx *gorm.DB
 	return pointsAt(ctx, tx, p.spec.EntityType, "og_asset_id", assetID)
 }
 
-func (p *TranslationProjection) locale(target Target) (string, error) {
+func (p *TranslationProjection) locale(target og.Target) (string, error) {
 	if !p.Handles(target) {
-		return "", errs.InvalidEntityType(target.EntityType)
+		return "", domainerr.InvalidEntityType(target.EntityType)
 	}
 	locale, err := target.CanonicalLocale()
 	if err != nil {
 		return "", err
 	}
 	if locale == "" && p.spec.Localeless == LocalelessRejected {
-		return "", errs.FailedPrecondition(p.spec.EntityTitle + " OG target locale is required")
+		return "", domainerr.Precondition(p.spec.EntityTitle + " OG target locale is required")
 	}
 	return locale, nil
 }
@@ -140,13 +142,13 @@ func NewEntityProjection(entityType string) *EntityProjection {
 	return &EntityProjection{entityType: entityType}
 }
 
-func (p *EntityProjection) Handles(target Target) bool {
+func (p *EntityProjection) Handles(target og.Target) bool {
 	return target.EntityType == p.entityType
 }
 
-func (p *EntityProjection) ReleasePending(ctx context.Context, tx *gorm.DB, target Target, cdnDomain string) error {
+func (p *EntityProjection) ReleasePending(ctx context.Context, tx *gorm.DB, target og.Target, cdnDomain string) error {
 	if !p.Handles(target) {
-		return errs.InvalidEntityType(target.EntityType)
+		return domainerr.InvalidEntityType(target.EntityType)
 	}
 	if err := tx.WithContext(ctx).Table(p.entityType).
 		Where("id = ?", target.EntityID).
@@ -161,13 +163,13 @@ func (p *EntityProjection) ReleasePending(ctx context.Context, tx *gorm.DB, targ
 func (p *EntityProjection) Complete(
 	ctx context.Context,
 	tx *gorm.DB,
-	target Target,
+	target og.Target,
 	assetID string,
 	now time.Time,
 	cdnDomain string,
 ) error {
 	if !p.Handles(target) {
-		return errs.InvalidEntityType(target.EntityType)
+		return domainerr.InvalidEntityType(target.EntityType)
 	}
 	if target.Locale != nil && strings.TrimSpace(*target.Locale) != "" {
 		return gorm.ErrRecordNotFound

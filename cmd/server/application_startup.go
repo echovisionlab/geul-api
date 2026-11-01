@@ -37,6 +37,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/transcode"
 	translationapplication "github.com/echovisionlab/geul-api/internal/translation/application"
@@ -139,7 +140,10 @@ func initializeApplicationDependencies(
 	if err != nil {
 		return nil, fmt.Errorf("initialize Content Block store: %w", err)
 	}
-	deps.og = newOGDependencies(deps.db, cfg.CDNURL)
+	deps.og, err = newOGDependencies(deps.db, cfg.CDNURL)
+	if err != nil {
+		return nil, fmt.Errorf("initialize OG dependencies: %w", err)
+	}
 	translationRegistry, err := translationadapter.NewDomainRegistry(
 		emailauthoringadapter.NewCampaignDeliveryReferences(),
 		deps.telemetryWriter,
@@ -165,7 +169,7 @@ func initializeApplicationDependencies(
 		filemediaruntime.NewAuthorizationDeletion(deps.spicedbClient, nil),
 	)
 	cleanupStorage := mediaassetadapter.NewCleanupStorage(deps.s3Client, cfg.S3Bucket)
-	ogCleanup := og.NewCleanup(deps.db, ogprojection.AssetReferences()...)
+	ogCleanup := og.NewCleanup(deps.og.units)
 	mediaCleanup := mediaasset.NewCleanup(deps.db, cleanupStorage)
 	publicAssetCache := mediaassetadapter.NewPublicAssetCache(
 		cfg.CDNURL,
@@ -179,7 +183,7 @@ func initializeApplicationDependencies(
 		deps.db,
 		cleanupStorage,
 		publicAssetCache,
-		ogCleanup,
+		ogpostgres.NewAssetProtector(ogprojection.AssetReferences()...),
 	)
 	faviconCleanup := favicon.NewCleanup(deps.db)
 	deps.workerHandlers = worker.NewHandlers(worker.HandlerDeps{

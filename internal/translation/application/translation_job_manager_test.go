@@ -10,7 +10,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
 
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/assert"
@@ -247,8 +247,8 @@ func TestTranslationJobManagerConstructorsConfigureResolvers(t *testing.T) {
 	db := &gorm.DB{}
 	publisher := stubTranslationJobPublisher{}
 
-	planner := &og.Planner{}
-	refresher := &og.Refresher{}
+	planner := &ogpostgres.Planner{}
+	refresher := &ogpostgres.Refresher{}
 	manager, err := NewTranslationJobManager(JobManagerDeps{
 		DB: db, SpiceDB: &auth.SpiceDBClient{}, Audit: &audittest.Recorder{}, Publisher: publisher,
 		ContentBlocks: &contentblock.Store{}, OGPlanner: planner, OGRefresher: refresher, Domains: testTranslationDomains{},

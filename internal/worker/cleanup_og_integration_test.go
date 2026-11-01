@@ -20,6 +20,7 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -27,7 +28,7 @@ import (
 func requestWorkerOgGenerationForTest(
 	ctx context.Context,
 	db *gorm.DB,
-	planner *og.Planner,
+	planner *ogpostgres.Planner,
 	triggerKind string,
 	reason string,
 	requests []og.Request,
@@ -56,12 +57,11 @@ func requestWorkerOgGenerationForTest(
 func cancelWorkerOgGenerationEntityForTest(
 	ctx context.Context,
 	db *gorm.DB,
-	lifecycle *og.Lifecycle,
 	entityType managev1.OgEntityType,
 	entityID string,
 ) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return lifecycle.CancelEntityWithDB(ctx, tx, entityType, entityID)
+		return ogpostgres.CancelEntity(ctx, tx, entityType, entityID)
 	})
 }
 
@@ -277,7 +277,7 @@ func TestTerminalOgGenerationCleanupRecoversPutAfterCompletionOutageIntegration(
 	require.NoError(t, err)
 
 	cancelled, cancelledWorkID := createPlanWithObject("completion outage then cancel")
-	require.NoError(t, cancelWorkerOgGenerationEntityForTest(ctx, db, lifecycle, managev1.OgEntityType_OG_ENTITY_TYPE_WORK, cancelledWorkID))
+	require.NoError(t, cancelWorkerOgGenerationEntityForTest(ctx, db, managev1.OgEntityType_OG_ENTITY_TYPE_WORK, cancelledWorkID))
 
 	failed, _ := createPlanWithObject("completion outage then permanent failure")
 	claim, err := lifecycle.Claim(ctx, failed.GenerationIDs[0])

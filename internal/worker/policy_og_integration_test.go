@@ -20,7 +20,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/structured"
 	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -131,11 +130,11 @@ func TestScheduledLegalActivationAtomicallySwitchesCanonicalOgTargetIntegration(
 			require.Equal(t, og.Claimed, claim.Result)
 			digest := make([]byte, 32)
 			digest[0] = 0x42
-			status, _, err := lifecycle.Complete(t.Context(), activeEnglishGenerationID, claim.LeaseToken, &commonv1.AssetWriteResult{
-				AssetId: activeEnglishGenerationID, FileSize: 1024, Sha256: digest,
+			status, _, err := lifecycle.Complete(t.Context(), activeEnglishGenerationID, claim.LeaseToken, &og.WrittenAsset{
+				AssetID: activeEnglishGenerationID, FileSize: 1024, SHA256: digest,
 			})
 			require.NoError(t, err)
-			require.Equal(t, model.OgGenerationStatusReady, status)
+			require.Equal(t, og.StatusReady, status)
 
 			handlers := &Handlers{
 				db:          db,

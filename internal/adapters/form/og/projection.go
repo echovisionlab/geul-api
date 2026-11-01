@@ -10,6 +10,7 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
 
@@ -90,6 +91,6 @@ func formOgBindingKey(locale string) string {
 }
 
 var (
-	_ og.Projection     = (*Projection)(nil)
-	_ og.AssetReference = (*Projection)(nil)
+	_ ogpostgres.Projection     = (*Projection)(nil)
+	_ ogpostgres.AssetReference = (*Projection)(nil)
 )

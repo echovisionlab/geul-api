@@ -6,15 +6,16 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
 )
 
 // Requests reads exact-current Form locale snapshots for OG generation.
-type Requests struct{ localized *og.LocalizedRequests }
+type Requests struct{ localized *ogpostgres.LocalizedRequests }
 
 func NewRequests() *Requests {
-	return &Requests{localized: og.NewLocalizedRequests(og.LocalizedRequestSpec{
+	return &Requests{localized: ogpostgres.NewLocalizedRequests(ogpostgres.LocalizedRequestSpec{
 		EntityType:            "form",
 		Table:                 "form",
 		TranslationTable:      "form_translation",

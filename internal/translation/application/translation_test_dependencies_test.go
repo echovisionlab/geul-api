@@ -11,7 +11,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/form"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/series"
 	seriespostgres "github.com/echovisionlab/geul-api/internal/series/postgres"
 	"github.com/echovisionlab/geul-api/internal/translation"
@@ -91,7 +91,7 @@ func (testTranslationDomains) SourceLocaleAudit(_ context.Context, _ *gorm.DB, e
 	}, nil
 }
 
-func (testTranslationDomains) RequestLocaleOG(context.Context, *gorm.DB, *og.Planner, *og.Refresher, string, string, string, string) (bool, error) {
+func (testTranslationDomains) RequestLocaleOG(context.Context, *gorm.DB, *ogpostgres.Planner, *ogpostgres.Refresher, string, string, string, string) (bool, error) {
 	return false, nil
 }
 

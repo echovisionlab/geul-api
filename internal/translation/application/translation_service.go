@@ -21,7 +21,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -57,8 +57,8 @@ type Deps struct {
 	Audit         domainaudit.Appender
 	Publisher     Publisher
 	ContentBlocks *contentblock.Store
-	OGPlanner     *og.Planner
-	OGRefresher   *og.Refresher
+	OGPlanner     *ogpostgres.Planner
+	OGRefresher   *ogpostgres.Refresher
 	// Domains reaches each owning domain's translation port.
 	Domains DomainRegistry
 	// XLIFFFiles stores XLIFF exports and reads verified XLIFF uploads.
@@ -103,8 +103,8 @@ type Service struct {
 	cdnDomain          string
 	now                func() time.Time
 	contentBlocks      *contentblock.Store
-	ogPlanner          *og.Planner
-	ogRefresher        *og.Refresher
+	ogPlanner          *ogpostgres.Planner
+	ogRefresher        *ogpostgres.Refresher
 	metrics            translationMetrics
 	domains            DomainRegistry
 	xliffFiles         TranslationXLIFFFiles

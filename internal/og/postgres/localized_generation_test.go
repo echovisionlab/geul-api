@@ -1,7 +1,9 @@
-package og
+package ogpostgres
 
 import (
 	"testing"
+
+	"github.com/echovisionlab/geul-api/internal/og"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -28,15 +30,15 @@ func TestResolveExactLocalizedGenerationUsesTargetGenerationWithoutSourceCurrent
 
 	disposition, err := ResolveExactLocalizedGeneration(t.Context(), db, "work", entityID, "ko")
 	require.NoError(t, err)
-	require.Equal(t, LocalizedGenerationPending, disposition)
+	require.Equal(t, og.LocalizedGenerationPending, disposition)
 
 	require.NoError(t, db.Table("og_generation").Where("id = 'generation'").Update("status", "failed").Error)
 	disposition, err = ResolveExactLocalizedGeneration(t.Context(), db, "work", entityID, "ko")
 	require.NoError(t, err)
-	require.Equal(t, LocalizedGenerationTerminal, disposition)
+	require.Equal(t, og.LocalizedGenerationTerminal, disposition)
 
 	require.NoError(t, db.Table("og_generation_target").Where("id = 'target'").Delete(nil).Error)
 	disposition, err = ResolveExactLocalizedGeneration(t.Context(), db, "work", entityID, "ko")
 	require.NoError(t, err)
-	require.Equal(t, LocalizedGenerationMissing, disposition)
+	require.Equal(t, og.LocalizedGenerationMissing, disposition)
 }

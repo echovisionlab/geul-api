@@ -22,6 +22,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/scheduler"
 	"github.com/echovisionlab/geul-api/internal/telemetry"
@@ -69,7 +70,7 @@ type Handlers struct {
 	mailMetrics      mailMetrics
 	httpClient       httpDoer
 	auditWriter      *telemetry.DurableWriter
-	ogPlanner        *og.Planner
+	ogPlanner        *ogpostgres.Planner
 	memberDeletion   account.MemberDeletionLifecycle
 	campaignEmail    CampaignEmailRenderer
 }
@@ -132,7 +133,7 @@ type HandlerDeps struct {
 	TranslationJobs  TranslationJobProcessor
 	Audit            *telemetry.DurableWriter
 	SpiceDB          *auth.SpiceDBClient
-	OGPlanner        *og.Planner
+	OGPlanner        *ogpostgres.Planner
 	MemberDeletion   account.MemberDeletionLifecycle
 	CampaignEmail    CampaignEmailRenderer
 }

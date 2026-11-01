@@ -17,6 +17,7 @@ import (
 	sitesettingsadapter "github.com/echovisionlab/geul-api/internal/adapters/sitesettings"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 )
 
 func TestClearPendingOgProjectionCoversEveryGeneratedEntityShape(t *testing.T) {
@@ -48,7 +49,7 @@ func TestClearPendingOgProjectionCoversEveryGeneratedEntityShape(t *testing.T) {
 	locale := "ko"
 	translated := []struct {
 		entityType string
-		projection og.Projection
+		projection ogpostgres.Projection
 	}{
 		{entityType: "post", projection: postadapter.NewProjection()},
 		{entityType: "page", projection: pageadapter.NewProjection()},
@@ -68,7 +69,7 @@ func TestClearPendingOgProjectionCoversEveryGeneratedEntityShape(t *testing.T) {
 	}
 	baseOnly := []struct {
 		entityType string
-		projection og.Projection
+		projection ogpostgres.Projection
 	}{
 		{entityType: "label", projection: labeladapter.NewProjection()},
 	}

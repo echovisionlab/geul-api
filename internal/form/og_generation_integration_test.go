@@ -10,6 +10,7 @@ import (
 
 	formogadapter "github.com/echovisionlab/geul-api/internal/adapters/form/og"
 	"github.com/echovisionlab/geul-api/internal/og"
+	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -25,11 +26,7 @@ func TestResolveFormOgGenerationPreservesExactSourceAndTranslationTitlesIntegrat
 	require.NoError(t, db.Table("form").Where("id = ?", formID).Update("source_locale", "ko").Error)
 	resolve := func(t *testing.T, selection *managev1.OgTargetSelection) []og.Request {
 		t.Helper()
-		requests, err := og.NewResolver(formogadapter.NewRequests()).Resolve(t.Context(), db, &managev1.RegenerateOgImageRequest{
-			EntityType: managev1.OgEntityType_OG_ENTITY_TYPE_FORM,
-			EntityId:   &formID,
-			Selection:  selection,
-		})
+		requests, err := og.ResolveRequests(t.Context(), ogpostgres.Bind(db, ogpostgres.Ports{Requests: ogpostgres.NewResolver(formogadapter.NewRequests())}), "form", formID, og.SelectionFromProto(selection))
 		require.NoError(t, err)
 		return requests
 	}
