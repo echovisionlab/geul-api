@@ -119,8 +119,8 @@ func newManagePostFeaturedDeliveryFixture(t *testing.T) managePostFeaturedDelive
 		ProgramEventAttachment: postFeaturedUnusedProgramEventAttachment{},
 		TrackAttachment:        postFeaturedUnusedTrackAttachment{},
 		ReleasePolicyAccess:    postFeaturedUnusedReleasePolicyAccess{},
-		AudienceAccess:         postFeaturedUnusedAudienceAccess{},
-		MemberSummaries:        postFeaturedUnusedMemberSummaries{},
+
+		MemberSummaries: postFeaturedUnusedMemberSummaries{},
 	})
 	require.NoError(t, err)
 	manageFiles := &postFeaturedManageFiles{delegate: fileService}
@@ -237,5 +237,5 @@ type postFeaturedUnusedProgramEventAttachment struct {
 }
 type postFeaturedUnusedTrackAttachment struct{ filemedia.TrackAttachment }
 type postFeaturedUnusedReleasePolicyAccess struct{ filemedia.ReleasePolicyAccess }
-type postFeaturedUnusedAudienceAccess struct{ filemedia.AudienceAccess }
+
 type postFeaturedUnusedMemberSummaries struct{ filemedia.MemberSummaries }

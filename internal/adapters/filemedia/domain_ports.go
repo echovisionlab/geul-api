@@ -9,15 +9,12 @@ import (
 	"connectrpc.com/connect"
 	"gorm.io/gorm"
 
-	audiencedomain "github.com/echovisionlab/geul-api/internal/audience"
-	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
-	"github.com/echovisionlab/geul-api/internal/model"
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
@@ -26,7 +23,6 @@ import (
 	workdomain "github.com/echovisionlab/geul-api/internal/work"
 	workpostgres "github.com/echovisionlab/geul-api/internal/work/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type PostAccess struct {
@@ -178,32 +174,6 @@ func programEventAccessAnswer(err error) error {
 		return errs.Wrap(err)
 	}
 	return err
-}
-
-type AudienceAccess struct{}
-
-func NewAudienceAccess() *AudienceAccess { return &AudienceAccess{} }
-
-func (*AudienceAccess) ValidateAuthenticatedSegmentIDs(
-	ctx context.Context,
-	tx *gorm.DB,
-	segmentIDs []string,
-) error {
-	// Audience answers with use-case errors; File keeps answering with
-	// Connect errors until it migrates.
-	if err := audiencepostgres.ValidateAuthenticatedAccessSegmentIDs(ctx, tx, segmentIDs); err != nil {
-		return errs.Wrap(err)
-	}
-	return nil
-}
-
-func (*AudienceAccess) AuthenticatedSegmentSummary(
-	segment *model.AudienceSegment,
-) (*managev1.AudienceSegmentSummary, bool) {
-	if segment == nil {
-		return nil, false
-	}
-	return audiencedomain.AuthenticatedAccessSegmentSummary(audiencepostgres.SegmentOf(*segment))
 }
 
 type MemberSummaries struct {

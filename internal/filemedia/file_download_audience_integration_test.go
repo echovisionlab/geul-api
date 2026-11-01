@@ -100,7 +100,7 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 		asyncPublisher: &policySignalPublisher{},
 	}))
 	fileSvc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
-	fileSvc.audienceAccess = newIntegrationAudienceAccess()
+
 	updated, err := NewConnectHandler(fileSvc).UpdateFileDownloadPolicy(
 		authorCtx,
 		connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
@@ -216,7 +216,7 @@ func TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegratio
 	svc := withTestMutations(withTestStorage(&Service{db: db, spiceDB: stack.SpiceDBClient}))
 	svc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
 	svc.programEventAttachment = newIntegrationProgramEventAccess(db)
-	svc.audienceAccess = newIntegrationAudienceAccess()
+
 	for _, request := range []*managev1.GetFileDownloadPolicyRequest{
 		{EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST, EntityId: postID, BlockId: managePolicyString(postBlockID), ReferencePath: managePolicyString("file")},
 		{EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PROGRAM_EVENT, EntityId: eventID, BlockId: managePolicyString(eventBlockID), ReferencePath: managePolicyString("file")},

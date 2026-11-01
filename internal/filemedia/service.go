@@ -51,7 +51,6 @@ type Deps struct {
 	ProgramEventAttachment ProgramEventAttachment
 	TrackAttachment        TrackAttachment
 	ReleasePolicyAccess    ReleasePolicyAccess
-	AudienceAccess         AudienceAccess
 	MemberSummaries        MemberSummaries
 }
 
@@ -64,7 +63,7 @@ func (d Deps) validate() error {
 		"PagePolicyAccess": d.PagePolicyAccess == nil, "WorkAttachment": d.WorkAttachment == nil,
 		"WorkPolicyAccess": d.WorkPolicyAccess == nil, "ProgramEventAttachment": d.ProgramEventAttachment == nil,
 		"TrackAttachment": d.TrackAttachment == nil, "ReleasePolicyAccess": d.ReleasePolicyAccess == nil,
-		"AudienceAccess": d.AudienceAccess == nil, "MemberSummaries": d.MemberSummaries == nil,
+		"MemberSummaries": d.MemberSummaries == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -104,7 +103,6 @@ type Service struct {
 	programEventAttachment    ProgramEventAttachment
 	trackAttachment           TrackAttachment
 	releasePolicyAccess       ReleasePolicyAccess
-	audienceAccess            AudienceAccess
 	memberSummaries           MemberSummaries
 	remoteImportResolver      remoteImportResolver
 	remoteImportDialer        remoteImportDialer
@@ -165,6 +163,6 @@ func NewService(deps Deps) (*Service, error) {
 		pagePolicyAccess: deps.PagePolicyAccess, workAttachment: deps.WorkAttachment,
 		workPolicyAccess: deps.WorkPolicyAccess, programEventAttachment: deps.ProgramEventAttachment,
 		trackAttachment: deps.TrackAttachment, releasePolicyAccess: deps.ReleasePolicyAccess,
-		audienceAccess: deps.AudienceAccess, memberSummaries: deps.MemberSummaries,
+		memberSummaries: deps.MemberSummaries,
 	}, nil
 }

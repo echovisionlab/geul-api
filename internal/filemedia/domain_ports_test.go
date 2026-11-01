@@ -175,7 +175,7 @@ func TestPostFilePolicyActionsUseOneLockedActionInOuterTransaction(t *testing.T)
 	viewService := &Service{postAccess: viewAccess}
 	require.NoError(t, viewService.authorizeFileDownloadPolicyOwner(
 		ctx,
-		db,
+		testFileStore(viewService, db),
 		fileDownloadPolicyRelation{ResourceType: "post", ResourceID: postID},
 		filePolicyOwnerView,
 	))
@@ -189,7 +189,7 @@ func TestPostFilePolicyActionsUseOneLockedActionInOuterTransaction(t *testing.T)
 	editService := &Service{postAccess: editAccess}
 	require.NoError(t, editService.authorizeFileDownloadPolicyOwner(
 		ctx,
-		db,
+		testFileStore(editService, db),
 		fileDownloadPolicyRelation{ResourceType: "post", ResourceID: postID},
 		filePolicyOwnerEdit,
 	))
@@ -223,7 +223,7 @@ func TestProgramEventFileOperationsUseOneExactDomainAction(t *testing.T) {
 	viewService := &Service{programEventAttachment: viewAccess}
 	require.NoError(t, viewService.authorizeFileDownloadPolicyOwner(
 		ctx,
-		db,
+		testFileStore(viewService, db),
 		fileDownloadPolicyRelation{ResourceType: "program_event", ResourceID: eventID},
 		filePolicyOwnerView,
 	))
@@ -237,7 +237,7 @@ func TestProgramEventFileOperationsUseOneExactDomainAction(t *testing.T) {
 	editService := &Service{programEventAttachment: editAccess}
 	require.NoError(t, editService.authorizeFileDownloadPolicyOwner(
 		ctx,
-		db,
+		testFileStore(editService, db),
 		fileDownloadPolicyRelation{ResourceType: "program_event", ResourceID: eventID},
 		filePolicyOwnerEdit,
 	))

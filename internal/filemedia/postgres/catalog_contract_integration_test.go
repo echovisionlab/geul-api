@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediapolicy"
+
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	telemetry "github.com/echovisionlab/geul-telemetry"
 	"gorm.io/gorm"
@@ -34,7 +36,23 @@ func TestPostgresCatalogStoreContractIntegration(t *testing.T) {
 	filemediatest.RunCatalogContract(t, func(t *testing.T) filemediatest.CatalogHarness {
 		db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 		require.NoError(t, db.Exec(`CREATE TABLE filemedia_contract_output (sequence bigserial PRIMARY KEY, kind text NOT NULL, payload jsonb NOT NULL)`).Error)
-		return filemediatest.CatalogHarness{Audit: deletionContractOutputs{}, SeedAssetBinding: func(t *testing.T, asset, id string) {
+		return filemediatest.CatalogHarness{SeedSegment: func(t *testing.T, segment domain.PolicySegment) {
+			row := model.AudienceSegment{ID: segment.ID, Name: segment.Name, Description: segment.Description, SegmentType: model.AudienceSegmentType(segment.Kind), ArchivedAt: segment.ArchivedAt}
+			require.NoError(t, db.Create(&row).Error)
+		}, SeedPolicy: func(t *testing.T, r domain.PolicyRelation, ids []string) {
+			doc := uuid.NewString()
+			if r.Selector.OwnerKind == "track" {
+				require.NoError(t, db.Exec(`INSERT INTO content_document(id,profile) VALUES (?::uuid,'compact')`, doc).Error)
+				require.NoError(t, db.Exec(`INSERT INTO release(id,content_document_id,type) VALUES (?::uuid,?::uuid,'RELEASE_TYPE_ALBUM')`, r.ResourceID, doc).Error)
+				require.NoError(t, db.Exec(`INSERT INTO track(id,release_id,track_number,title,audio_original_file_id,download_audience) VALUES (?::uuid,?::uuid,1,'Track',?::uuid,?)`, r.Selector.EntityID, r.ResourceID, r.FileID, string(r.Audience)).Error)
+			} else {
+				require.NoError(t, db.Exec(`INSERT INTO content_document(id,profile) VALUES (?::uuid,'post')`, doc).Error)
+				require.NoError(t, db.Exec(`INSERT INTO post(id,content_document_id) VALUES (?::uuid,?::uuid)`, r.ResourceID, doc).Error)
+				require.NoError(t, db.Exec(`INSERT INTO content_block(id,document_id,container_slot,position,kind) VALUES (?::uuid,?::uuid,'body',0,'file')`, *r.Selector.BlockID, doc).Error)
+				require.NoError(t, db.Exec(`INSERT INTO content_block_attachment(block_id,reference_path,selector_kind,file_id,download_audience) VALUES (?::uuid,?,'active',?::uuid,?)`, *r.Selector.BlockID, *r.Selector.ReferencePath, r.FileID, string(r.Audience)).Error)
+			}
+			require.Empty(t, ids)
+		}, Audit: deletionContractOutputs{}, SeedAssetBinding: func(t *testing.T, asset, id string) {
 			require.NoError(t, db.Create(&model.PublicAssetBinding{AssetID: asset, SourceFileID: &id, OwnerType: "post", OwnerID: uuid.NewString(), BindingKey: "featured_image"}).Error)
 		}, Asset: func(t *testing.T, id string) mediaasset.Asset {
 			var a model.PublicAsset
@@ -64,7 +82,7 @@ func TestPostgresCatalogStoreContractIntegration(t *testing.T) {
 				expires = *m.ExpiresAt
 			}
 			return filemediatest.MeshRecord{Status: m.Status, CancelledAt: m.CancelledAt, ExpiresAt: expires, UpdatedAt: updated}, true
-		}, Harness: mutationtest.PostgresHarness(db, filemediapostgres.NewUnits(db, filemediapostgres.Ports{DeletionQueue: deletionContractOutputs{}})), SeedAsset: func(t *testing.T, a mediaasset.Asset) {
+		}, Harness: mutationtest.PostgresHarness(db, filemediapostgres.NewUnits(db, filemediapostgres.Ports{DeletionQueue: deletionContractOutputs{}, PolicyAudiences: filemediapolicy.Audiences{}})), SeedAsset: func(t *testing.T, a mediaasset.Asset) {
 			r := mediaassetpostgres.AssetRow(a)
 			require.NoError(t, db.Create(&r).Error)
 		}, SeedGeneration: func(t *testing.T, g mediaasset.Generation) {

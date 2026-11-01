@@ -39,7 +39,7 @@ func TestPageFilePolicyUsesOwningLockedAccess(t *testing.T) {
 	viewAccess := &recordingPagePolicyAccess{}
 	viewService := &Service{pagePolicyAccess: viewAccess}
 	require.NoError(t, viewService.authorizeFileDownloadPolicyOwner(
-		t.Context(), db,
+		t.Context(), testFileStore(viewService, db),
 		fileDownloadPolicyRelation{ResourceType: "page", ResourceID: pageID},
 		filePolicyOwnerView,
 	))
@@ -51,7 +51,7 @@ func TestPageFilePolicyUsesOwningLockedAccess(t *testing.T) {
 	editAccess := &recordingPagePolicyAccess{}
 	editService := &Service{pagePolicyAccess: editAccess}
 	require.NoError(t, editService.authorizeFileDownloadPolicyOwner(
-		t.Context(), db,
+		t.Context(), testFileStore(editService, db),
 		fileDownloadPolicyRelation{ResourceType: "page", ResourceID: pageID},
 		filePolicyOwnerEdit,
 	))

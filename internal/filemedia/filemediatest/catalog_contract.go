@@ -19,6 +19,8 @@ import (
 )
 
 type CatalogHarness struct {
+	SeedPolicy       func(*testing.T, domain.PolicyRelation, []string)
+	SeedSegment      func(*testing.T, domain.PolicySegment)
 	Audit            domainaudit.Appender
 	SeedAssetBinding func(*testing.T, string, string)
 	Asset            func(*testing.T, string) mediaasset.Asset
@@ -487,6 +489,9 @@ func RunCatalogContract(t *testing.T, open func(*testing.T) CatalogHarness) {
 			require.Empty(t, readCatalog(t, h, domain.CatalogQuery{MimePrefix: "audio/", PageSize: 50}))
 			require.Empty(t, readCatalog(t, h, domain.CatalogQuery{Uploader: uuid.NewString(), PageSize: 50}))
 		},
+	}
+	for name, run := range policyContractCases() {
+		cases[name] = run
 	}
 	for name, run := range libraryDeletionCases() {
 		cases[name] = run

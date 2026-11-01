@@ -215,21 +215,21 @@ func TestArchivedPostFileBoundariesAllowAuthorViewAndRequireAdminEdit(t *testing
 	require.NoError(t, service.authorizeManageFileDeliveries(authorCtx, []string{fileID}))
 	require.NoError(t, service.authorizeFileDownloadPolicyOwner(
 		authorCtx,
-		db,
+		testFileStore(service, db),
 		fileDownloadPolicyRelation{ResourceType: "post", ResourceID: postID},
 		filePolicyOwnerView,
 	))
 	require.Equal(t, connect.CodeNotFound, errs.CodeOf(
 		service.authorizeFileDownloadPolicyOwner(
 			authorCtx,
-			db,
+			testFileStore(service, db),
 			fileDownloadPolicyRelation{ResourceType: "post", ResourceID: postID},
 			filePolicyOwnerEdit,
 		),
 	))
 	require.NoError(t, service.authorizeFileDownloadPolicyOwner(
 		adminCtx,
-		db,
+		testFileStore(service, db),
 		fileDownloadPolicyRelation{ResourceType: "post", ResourceID: postID},
 		filePolicyOwnerEdit,
 	))
@@ -293,21 +293,21 @@ func TestArchivedProgramEventFileBoundariesAllowAuthorViewAndRequireAdminEdit(t 
 	require.NoError(t, service.authorizeManageFileDeliveries(authorCtx, []string{fileID}))
 	require.NoError(t, service.authorizeFileDownloadPolicyOwner(
 		authorCtx,
-		db,
+		testFileStore(service, db),
 		fileDownloadPolicyRelation{ResourceType: "program_event", ResourceID: eventID},
 		filePolicyOwnerView,
 	))
 	require.Equal(t, connect.CodeNotFound, errs.CodeOf(
 		service.authorizeFileDownloadPolicyOwner(
 			authorCtx,
-			db,
+			testFileStore(service, db),
 			fileDownloadPolicyRelation{ResourceType: "program_event", ResourceID: eventID},
 			filePolicyOwnerEdit,
 		),
 	))
 	require.NoError(t, service.authorizeFileDownloadPolicyOwner(
 		adminCtx,
-		db,
+		testFileStore(service, db),
 		fileDownloadPolicyRelation{ResourceType: "program_event", ResourceID: eventID},
 		filePolicyOwnerEdit,
 	))

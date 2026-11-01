@@ -24,42 +24,50 @@ type MeshRecord struct {
 }
 
 type LibraryStore struct {
-	AssetIDs         map[string]bool
-	Generations      map[string]mediaasset.Generation
-	References       map[string][]string
-	FaviconDeletions []string
-	DeletionOutbox   []domain.DeletionTarget
-	Audits           []telemetry.AuditRecord
-	EnqueueError     error
-	Usages           []domain.FileUsageRow
-	Slugs            []domain.FileUsageSlug
-	TrackReleases    map[string]string
-	MeshRecords      map[string]MeshRecord
-	Derivatives      map[string][]domain.StoredDerivativeDelivery
-	MediaAssets      *mediaassettest.Store
-	Failures         domain.ProcessingFailureCounts
-	DeliveryUsages   []domain.CurrentDeliveryUsage
-	IngestBindings   map[string]domain.IngestBinding
-	PrincipalFence   *identitystatetest.Fence
-	DeliveryLocks    []string
-	ReadyMeshes      map[string]domain.MeshDeliveryWitness
-	AvatarOwners     map[string]string
-	DeliveryOwners   map[string]domain.DeliveryOwner
-	ExactUsages      map[string]bool
-	Folders          map[string]domain.FileFolder
-	Files            map[string]CatalogFileRecord
-	Fail             error
-	Writes           int
+	ValidatedPolicySegments [][]string
+	Policies                map[string]PolicyRecord
+	Segments                map[string]domain.PolicySegment
+	PolicyChecks            []PolicyCheck
+	PolicyDenied            map[string]error
+	PolicySignals           []domain.PolicyChangeSignal
+	PolicySignalError       error
+	AssetIDs                map[string]bool
+	Generations             map[string]mediaasset.Generation
+	References              map[string][]string
+	FaviconDeletions        []string
+	DeletionOutbox          []domain.DeletionTarget
+	Audits                  []telemetry.AuditRecord
+	EnqueueError            error
+	Usages                  []domain.FileUsageRow
+	Slugs                   []domain.FileUsageSlug
+	TrackReleases           map[string]string
+	MeshRecords             map[string]MeshRecord
+	Derivatives             map[string][]domain.StoredDerivativeDelivery
+	MediaAssets             *mediaassettest.Store
+	Failures                domain.ProcessingFailureCounts
+	DeliveryUsages          []domain.CurrentDeliveryUsage
+	IngestBindings          map[string]domain.IngestBinding
+	PrincipalFence          *identitystatetest.Fence
+	DeliveryLocks           []string
+	ReadyMeshes             map[string]domain.MeshDeliveryWitness
+	AvatarOwners            map[string]string
+	DeliveryOwners          map[string]domain.DeliveryOwner
+	ExactUsages             map[string]bool
+	Folders                 map[string]domain.FileFolder
+	Files                   map[string]CatalogFileRecord
+	Fail                    error
+	Writes                  int
 }
 
 func NewLibraryStore() *LibraryStore {
 	assets, _ := mediaassettest.New()
-	return &LibraryStore{AssetIDs: map[string]bool{}, Generations: map[string]mediaasset.Generation{}, References: map[string][]string{}, TrackReleases: map[string]string{}, MediaAssets: assets, MeshRecords: map[string]MeshRecord{}, Derivatives: map[string][]domain.StoredDerivativeDelivery{}, IngestBindings: map[string]domain.IngestBinding{}, PrincipalFence: &identitystatetest.Fence{}, ReadyMeshes: map[string]domain.MeshDeliveryWitness{}, AvatarOwners: map[string]string{}, DeliveryOwners: map[string]domain.DeliveryOwner{}, ExactUsages: map[string]bool{}, Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
+	return &LibraryStore{Policies: map[string]PolicyRecord{}, Segments: map[string]domain.PolicySegment{}, PolicyDenied: map[string]error{}, AssetIDs: map[string]bool{}, Generations: map[string]mediaasset.Generation{}, References: map[string][]string{}, TrackReleases: map[string]string{}, MediaAssets: assets, MeshRecords: map[string]MeshRecord{}, Derivatives: map[string][]domain.StoredDerivativeDelivery{}, IngestBindings: map[string]domain.IngestBinding{}, PrincipalFence: &identitystatetest.Fence{}, ReadyMeshes: map[string]domain.MeshDeliveryWitness{}, AvatarOwners: map[string]string{}, DeliveryOwners: map[string]domain.DeliveryOwner{}, ExactUsages: map[string]bool{}, Files: map[string]CatalogFileRecord{}, Folders: map[string]domain.FileFolder{}}
 }
 func (s *LibraryStore) Savepoint() func() {
 	saved := maps.Clone(s.Folders)
 	files := maps.Clone(s.Files)
 	writes := s.Writes
+	policies, signals := clonePolicies(s.Policies), slices.Clone(s.PolicySignals)
 	mesh, ready := maps.Clone(s.MeshRecords), maps.Clone(s.ReadyMeshes)
 	assets := s.MediaAssets.Savepoint()
 	favicon, outbox, audits := slices.Clone(s.FaviconDeletions), slices.Clone(s.DeletionOutbox), slices.Clone(s.Audits)
@@ -67,6 +75,8 @@ func (s *LibraryStore) Savepoint() func() {
 		s.Folders = saved
 		s.Files = files
 		s.Writes = writes
+		s.Policies = policies
+		s.PolicySignals = signals
 		s.MeshRecords = mesh
 		s.ReadyMeshes = ready
 		assets()
