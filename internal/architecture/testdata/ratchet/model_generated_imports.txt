@@ -1,5 +1,3 @@
 # Generated contract imports in internal/model. Lower with -update.
 1 internal/model/file_derivative.go imports github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1
-1 internal/model/post.go imports github.com/echovisionlab/geul-event-contracts/gen/api/content/v1
 1 internal/model/upload_config.go imports github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1
-1 internal/model/work.go imports github.com/echovisionlab/geul-event-contracts/gen/api/content/v1

@@ -368,6 +368,9 @@ type postListPage struct {
 	authors     map[string][]*commonv1.MemberSummary
 	featured    map[string]*commonv1.MediaDelivery
 	authorities map[string]PostAuthority
+	// contents are the hydrated content projections of posts, by index; a
+	// metadata-only list leaves them unset.
+	contents []postContent
 }
 
 // listPostPage filters, counts and pages stored, then loads the projections
@@ -414,7 +417,11 @@ func (s *Service) loadPostListProjections(ctx context.Context, page *postListPag
 
 func (s *Service) projectListedPost(page postListPage, index int) (*managev1.Post, error) {
 	post := &page.posts[index]
-	return s.toProtoPostWithProjection(post, manageOgAssetFromReadyMap(
+	var content postContent
+	if page.contents != nil {
+		content = page.contents[index]
+	}
+	return s.toProtoPostWithProjection(post, content, manageOgAssetFromReadyMap(
 		page.readyOg, post.SourceLocaleOgAssetID, post.OgAssetID,
 	), page.authors[post.ID], page.featured[post.ID], page.authorities[post.ID])
 }

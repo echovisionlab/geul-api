@@ -23,7 +23,7 @@ func TestManagePostProjectionIncludesSourceLocale(t *testing.T) {
 			response, err := service.toProtoPost(&model.Post{
 				SourceLocale: locale, DocumentLayout: model.DefaultDocumentLayout(),
 				Series: &model.Series{SourceLocale: "ja"},
-			}, nil)
+			}, postContent{}, nil)
 			require.NoError(t, err)
 			if response.GetSourceLocale() != locale {
 				t.Fatalf("source locale = %q, want %q", response.GetSourceLocale(), locale)
@@ -50,7 +50,7 @@ func TestManagePostProjectionIncludesSourceLocale(t *testing.T) {
 func TestManagePostProjectionRejectsInvalidStoredDocumentLayout(t *testing.T) {
 	t.Parallel()
 	require.NotPanics(t, func() {
-		response, err := new(Service).toProtoPost(&model.Post{ID: "post", SourceLocale: "en"}, nil)
+		response, err := new(Service).toProtoPost(&model.Post{ID: "post", SourceLocale: "en"}, postContent{}, nil)
 		require.Error(t, err)
 		require.Nil(t, response)
 	})
@@ -72,15 +72,15 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	og := &commonv1.AssetRef{AssetId: uuid.NewString(), Url: "https://cdn.example/og.webp"}
 	response, err := new(Service).toProtoPostWithProjection(&model.Post{
 		ID: id, Title: "Title", Slug: new("post"), Summary: new("Summary"), SourceLocale: "ko",
-		ContentDocument: document, ContentRevision: revision, ConfigurationRevision: configurationRevision,
-		BlockMedia: media, Status: model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()),
+		ContentRevision: revision, ConfigurationRevision: configurationRevision,
+		Status:          model.PostStatus(managev1.PostStatus_POST_STATUS_DRAFT.String()),
 		CommentsEnabled: true, DocumentLayout: layout,
 		CreatedAt: now, UpdatedAt: now, PublishedAt: &now, ScheduledAt: &now, ScheduledTimeZone: new("Asia/Seoul"),
 		SeriesOrder: new(int32(3)), MapPlaceID: &mapPlaceID,
 		Categories: []model.Category{{ID: "category-1", Name: "Category", Slug: "category", CreatedAt: now}},
 		Tags:       []model.Tag{{ID: "tag-1", Name: "Tag", Slug: "tag", CreatedAt: now}},
 		Series:     &model.Series{ID: "series-1", Title: "Series", Slug: "series", SourceLocale: "ja", Status: "published", CreatedAt: now},
-	}, og, []*commonv1.MemberSummary{author}, featured, postAuthority(view, can))
+	}, postContent{document: document, blockMedia: media}, og, []*commonv1.MemberSummary{author}, featured, postAuthority(view, can))
 	require.NoError(t, err)
 	wire, err := protojson.Marshal(response)
 	require.NoError(t, err)
