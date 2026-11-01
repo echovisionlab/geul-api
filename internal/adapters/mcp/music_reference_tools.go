@@ -6,8 +6,6 @@ import (
 
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 const (
@@ -23,15 +21,15 @@ var musicReferenceTools = []mcpserver.Tool{
 }
 
 type GenreReferenceDiscovery interface {
-	ListGenresAdmin(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.GenreWithStats], error)
+	ListGenresAdmin(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.ReferenceUsage], error)
 }
 
 type StyleReferenceDiscovery interface {
-	ListStylesAdmin(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.StyleWithStats], error)
+	ListStylesAdmin(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.ReferenceUsage], error)
 }
 
 type FormatReferenceDiscovery interface {
-	ListFormatsAdmin(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.FormatWithStats], error)
+	ListFormatsAdmin(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.ReferenceUsage], error)
 }
 
 type MusicReferenceTools struct {
@@ -69,13 +67,13 @@ func (tools *MusicReferenceTools) CallTool(ctx context.Context, _ mcpserver.Prin
 		if err != nil {
 			return expectedToolError(err)
 		}
-		return musicReferenceResult(query, page.Pagination, projectMusicReferences(page.Items, projectGenreReference))
+		return musicReferenceResult(query, page.Pagination, projectMusicReferences(page.Items, describedMusicReference))
 	case ToolStyleList:
 		page, err := tools.styles.ListStylesAdmin(ctx, query)
 		if err != nil {
 			return expectedToolError(err)
 		}
-		return musicReferenceResult(query, page.Pagination, projectMusicReferences(page.Items, projectStyleReference))
+		return musicReferenceResult(query, page.Pagination, projectMusicReferences(page.Items, describedMusicReference))
 	default:
 		page, err := tools.formats.ListFormatsAdmin(ctx, query)
 		if err != nil {
@@ -85,9 +83,9 @@ func (tools *MusicReferenceTools) CallTool(ctx context.Context, _ mcpserver.Prin
 	}
 }
 
-func musicReferenceResult(query referencecatalog.ReferenceListQuery, pagination *commonv1.PaginationResponse, items []map[string]any) (mcpserver.ToolResult, error) {
-	output := map[string]any{"items": items, "total": pagination.GetTotal(), "limit": query.Limit, "offset": query.Offset, "has_more": pagination.GetHasMore()}
-	if pagination.GetHasMore() {
+func musicReferenceResult(query referencecatalog.ReferenceListQuery, pagination referencecatalog.Pagination, items []map[string]any) (mcpserver.ToolResult, error) {
+	output := map[string]any{"items": items, "total": pagination.Total, "limit": query.Limit, "offset": query.Offset, "has_more": pagination.HasMore}
+	if pagination.HasMore {
 		output["next_offset"] = int64(query.Offset) + int64(query.Limit)
 	}
 	return contentResult(output)
@@ -120,43 +118,24 @@ func musicReferenceListQuery(arguments mcpserver.ToolArguments) (referencecatalo
 	return referencecatalog.ReferenceListQuery{Filters: discoverySearchFilters(input.Query), Limit: limit, Offset: input.Offset}, nil
 }
 
-// projectMusicReferences projects the listed references; project answers nil
-// for an empty entry, which is skipped.
-func projectMusicReferences[T any](listed []T, project func(T) map[string]any) []map[string]any {
+// projectMusicReferences projects the listed references.
+func projectMusicReferences(listed []referencecatalog.ReferenceUsage, project func(referencecatalog.Reference) map[string]any) []map[string]any {
 	items := make([]map[string]any, 0, len(listed))
 	for _, item := range listed {
-		if projected := project(item); projected != nil {
-			items = append(items, projected)
-		}
+		items = append(items, project(item.Reference))
 	}
 	return items
 }
 
-func projectGenreReference(item *managev1.GenreWithStats) map[string]any {
-	if genre := item.GetGenre(); genre != nil {
-		return describedMusicReference(genre.Id, genre.Name, genre.Slug, genre.Description)
-	}
-	return nil
-}
-
-func projectStyleReference(item *managev1.StyleWithStats) map[string]any {
-	if style := item.GetStyle(); style != nil {
-		return describedMusicReference(style.Id, style.Name, style.Slug, style.Description)
-	}
-	return nil
-}
-
-func projectFormatReference(item *managev1.FormatWithStats) map[string]any {
-	if format := item.GetFormat(); format != nil {
-		return map[string]any{"id": format.Id, "name": format.Name, "slug": format.Slug}
-	}
-	return nil
-}
-
-func describedMusicReference(id, name, slug string, description *string) map[string]any {
-	projected := map[string]any{"id": id, "name": name, "slug": slug}
-	if description != nil {
-		projected["description"] = *description
+// describedMusicReference projects a Genre or Style.
+func describedMusicReference(reference referencecatalog.Reference) map[string]any {
+	projected := map[string]any{"id": reference.ID, "name": reference.Name, "slug": reference.Slug}
+	if reference.Description != nil {
+		projected["description"] = *reference.Description
 	}
 	return projected
+}
+
+func projectFormatReference(format referencecatalog.Reference) map[string]any {
+	return map[string]any{"id": format.ID, "name": format.Name, "slug": format.Slug}
 }

@@ -53,16 +53,16 @@ var referenceDiscoveryTools = []mcpserver.Tool{
 }
 
 type CategoryReferenceDiscovery interface {
-	ListCategories(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.Category], error)
+	ListCategories(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.Reference], error)
 }
 type TagReferenceDiscovery interface {
-	ListTags(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.Tag], error)
+	ListTags(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.Reference], error)
 }
 type ClientReferenceDiscovery interface {
-	SearchClients(context.Context, referencecatalog.SearchClientsQuery) ([]*managev1.Client, error)
+	SearchClients(context.Context, referencecatalog.SearchClientsQuery) ([]referencecatalog.ClientView, error)
 }
 type MapPlaceReferenceDiscovery interface {
-	SearchMapPlaces(context.Context, referencecatalog.SearchMapPlacesQuery) ([]*managev1.MapPlaceBasic, error)
+	SearchMapPlaces(context.Context, referencecatalog.SearchMapPlacesQuery) ([]referencecatalog.MapPlace, error)
 }
 type MemberReferenceDiscovery interface {
 	SearchMembers(context.Context, member.SearchMembersQuery) ([]*commonv1.MemberSummary, error)
@@ -144,22 +144,18 @@ func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, argu
 		if err != nil {
 			return expectedToolError(err)
 		}
-		hasMore = page.Pagination.GetHasMore()
+		hasMore = page.Pagination.HasMore
 		for _, item := range page.Items {
-			if item != nil {
-				items = append(items, referenceItem(item.Id, item.Name, item.Slug, "", "", false))
-			}
+			items = append(items, referenceItem(item.ID, item.Name, &item.Slug, "", "", false))
 		}
 	case "tag":
 		page, err := tools.tags.ListTags(ctx, referencecatalog.ReferenceListQuery{Filters: searchFilter, Limit: input.Limit})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		hasMore = page.Pagination.GetHasMore()
+		hasMore = page.Pagination.HasMore
 		for _, item := range page.Items {
-			if item != nil {
-				items = append(items, referenceItem(item.Id, item.Name, item.Slug, "", "", false))
-			}
+			items = append(items, referenceItem(item.ID, item.Name, &item.Slug, "", "", false))
 		}
 	case "client":
 		clients, err := tools.clients.SearchClients(ctx, referencecatalog.SearchClientsQuery{Query: input.Query, Limit: min(input.Limit+1, maximum)})
@@ -168,9 +164,7 @@ func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, argu
 		}
 		hasMore = quickSearchHasMore(len(clients), input.Limit, maximum)
 		for _, item := range clients[:min(len(clients), int(input.Limit))] {
-			if item != nil {
-				items = append(items, referenceItem(item.Id, item.Name, nil, "", "", false))
-			}
+			items = append(items, referenceItem(item.Client.ID, item.Client.Name, nil, "", "", false))
 		}
 	case "map_place":
 		places, err := tools.mapPlaces.SearchMapPlaces(ctx, referencecatalog.SearchMapPlacesQuery{Query: input.Query, Limit: min(input.Limit+1, maximum)})
@@ -179,9 +173,7 @@ func (tools *ReferenceDiscoveryTools) searchReferences(ctx context.Context, argu
 		}
 		hasMore = quickSearchHasMore(len(places), input.Limit, maximum)
 		for _, item := range places[:min(len(places), int(input.Limit))] {
-			if item != nil {
-				items = append(items, referenceItem(item.Id, item.Name, nil, item.Address, "", false))
-			}
+			items = append(items, referenceItem(item.ID, item.Name, nil, item.Address, "", false))
 		}
 	case "member":
 		members, err := tools.members.SearchMembers(ctx, member.SearchMembersQuery{Query: input.Query, Limit: min(input.Limit+1, maximum)})

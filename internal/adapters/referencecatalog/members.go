@@ -9,7 +9,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/model"
-	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -18,7 +18,7 @@ type MemberSummaries struct {
 	cdnDomain string
 }
 
-var _ referencecatalog.MemberSummaries = MemberSummaries{}
+var _ referencecatalogpostgres.Members = MemberSummaries{}
 
 func NewMemberSummaries(cdnDomain string) MemberSummaries {
 	return MemberSummaries{cdnDomain: cdnDomain}

@@ -32,11 +32,11 @@ var mapPlaceManagementTools = []mcpserver.Tool{
 // MapPlaceManagementApplication keeps authorization, image bindings, references,
 // and mutation audit in the native Map Place service.
 type MapPlaceManagementApplication interface {
-	GetMapPlace(context.Context, referencecatalog.GetMapPlaceQuery) (*managev1.MapPlace, error)
-	GetMapPlacesByIDs(context.Context, referencecatalog.GetMapPlacesByIDsQuery) ([]*managev1.MapPlace, error)
-	ListMapPlacesAdmin(context.Context, referencecatalog.ListMapPlacesAdminQuery) (referencecatalog.Page[*managev1.MapPlace], error)
-	CreateMapPlace(context.Context, referencecatalog.CreateMapPlaceCommand) (*managev1.MapPlace, error)
-	UpdateMapPlace(context.Context, referencecatalog.UpdateMapPlaceCommand) (*managev1.MapPlace, error)
+	GetMapPlace(context.Context, referencecatalog.GetMapPlaceQuery) (referencecatalog.MapPlaceView, error)
+	GetMapPlacesByIDs(context.Context, referencecatalog.GetMapPlacesByIDsQuery) ([]referencecatalog.MapPlaceView, error)
+	ListMapPlacesAdmin(context.Context, referencecatalog.ListMapPlacesAdminQuery) (referencecatalog.Page[referencecatalog.MapPlaceView], error)
+	CreateMapPlace(context.Context, referencecatalog.CreateMapPlaceCommand) (referencecatalog.MapPlaceView, error)
+	UpdateMapPlace(context.Context, referencecatalog.UpdateMapPlaceCommand) (referencecatalog.MapPlaceView, error)
 	DeleteMapPlace(context.Context, referencecatalog.DeleteMapPlaceCommand) error
 }
 
@@ -136,9 +136,9 @@ func (tools *MapPlaceManagementTools) listPlaces(ctx context.Context, arguments 
 	// The native Map Place list supplies total, limit, and offset but does not
 	// populate HasMore. Derive continuation from that authoritative total.
 	page := listed.Pagination
-	nextOffset := int64(page.GetOffset()) + int64(page.GetLimit())
-	hasMore := nextOffset < int64(page.GetTotal())
-	output := map[string]any{"items": projectMapPlaceSettingsMany(listed.Items), "total": page.GetTotal(), "limit": page.GetLimit(), "offset": page.GetOffset(), "has_more": hasMore}
+	nextOffset := int64(page.Offset) + int64(page.Limit)
+	hasMore := nextOffset < int64(page.Total)
+	output := map[string]any{"items": projectMapPlaceSettingsMany(listed.Items), "total": page.Total, "limit": page.Limit, "offset": page.Offset, "has_more": hasMore}
 	if hasMore {
 		output["next_offset"] = nextOffset
 	}
@@ -162,7 +162,7 @@ func (tools *MapPlaceManagementTools) mutateSettings(ctx context.Context, name s
 	if err != nil {
 		return executionError(err)
 	}
-	var place *managev1.MapPlace
+	var place referencecatalog.MapPlaceView
 	if name == ToolMapPlaceCreate {
 		if _, ok := arguments["map_place_id"]; ok {
 			return executionError(errors.New("map_place_id is not accepted during create"))
@@ -230,7 +230,9 @@ func decodeMapPlaceSettings(arguments mcpserver.ToolArguments) (mapPlaceSettings
 	return input, nil
 }
 
-func projectMapPlaceSettings(place *managev1.MapPlace) map[string]any {
+// projectMapPlaceSettings projects the manage API's rendering of a place.
+func projectMapPlaceSettings(view referencecatalog.MapPlaceView) map[string]any {
+	place := referencecatalog.MapPlaceMessage(view)
 	output := map[string]any{"id": place.GetId(), "name": place.GetName(), "address": place.GetAddress(), "lat": place.GetLat(), "lng": place.GetLng()}
 	if place.AddressComponents != nil {
 		output["address_components"] = place.AddressComponents
@@ -246,7 +248,7 @@ func projectMapPlaceSettings(place *managev1.MapPlace) map[string]any {
 	}
 	return output
 }
-func projectMapPlaceSettingsMany(places []*managev1.MapPlace) []map[string]any {
+func projectMapPlaceSettingsMany(places []referencecatalog.MapPlaceView) []map[string]any {
 	items := make([]map[string]any, 0, len(places))
 	for _, place := range places {
 		items = append(items, projectMapPlaceSettings(place))

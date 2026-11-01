@@ -2,4 +2,3 @@
 # *Status_value lookups) per package. Map stored statuses in one function per
 # domain (docs/architecture.md); lower with -update.
 10 internal/adapters/mcp
-2 internal/referencecatalog/public

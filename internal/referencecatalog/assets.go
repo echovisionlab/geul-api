@@ -1,18 +1,13 @@
 package referencecatalog
 
-import (
-	"context"
-
-	"gorm.io/gorm"
-
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-)
-
+// AssetOwner is the catalog row a public asset binding belongs to.
 type AssetOwner struct {
 	Type string
 	ID   string
 }
 
+// AssetBinding binds the ready asset of kind Kind that SourceFileID produced
+// to Owner under Key.
 type AssetBinding struct {
 	SourceFileID string
 	Owner        AssetOwner
@@ -20,21 +15,17 @@ type AssetBinding struct {
 	Kind         string
 }
 
+// AssetRelease releases Owner's bindings whose key starts with
+// BindingPrefix.
 type AssetRelease struct {
 	Owner         AssetOwner
 	BindingPrefix string
 }
 
+// AssetSource names the ready asset of kind Kind that FileID produced; a
+// public read also accepts FallbackKinds.
 type AssetSource struct {
 	FileID        string
 	Kind          string
 	FallbackKinds []string
-}
-
-// Assets provides the file-owned operations required by reference catalogs.
-type Assets interface {
-	LockForAttachment(context.Context, *gorm.DB, []string) error
-	BindReady(context.Context, *gorm.DB, AssetBinding) (*commonv1.AssetRef, error)
-	Release(context.Context, *gorm.DB, AssetRelease) error
-	ReadyRef(context.Context, *gorm.DB, AssetSource) (*commonv1.AssetRef, error)
 }

@@ -1,14 +1,10 @@
 package referencecatalog
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/jackc/pgx/v5/pgconn"
-
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/pathslug"
 )
@@ -43,22 +39,4 @@ func normalizeReferenceSlug(value string, maxLength int) (string, error) {
 		return "", err
 	}
 	return value, nil
-}
-
-func classifyReferenceUniqueViolation(resource string, name string, slug string, err error) error {
-	if !dberrors.IsUniqueViolation(err) {
-		return err
-	}
-
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		switch pgErr.ConstraintName {
-		case resource + "_name_key":
-			return domainerr.Duplicate(resource, "name", name).WithCause(err)
-		case resource + "_slug_key":
-			return domainerr.Duplicate(resource, "slug", slug).WithCause(err)
-		}
-	}
-
-	return domainerr.New(domainerr.AlreadyExists, "", resource+" with the same name or slug already exists").WithCause(err)
 }

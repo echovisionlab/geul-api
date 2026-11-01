@@ -31,8 +31,8 @@ const integrationHarnessPackage = "./scripts/test/integration"
 // integrationProcessDependencies lists packages whose tests start other module
 // binaries; a change to such a binary's dependencies selects them as well.
 var integrationProcessDependencies = map[string][]string{
-	"./internal/filemedia":        {"./cmd/server"},
-	"./internal/referencecatalog": {"./cmd/server"},
+	"./cmd/server/runtimetest": {"./cmd/server"},
+	"./internal/filemedia":     {"./cmd/server"},
 }
 
 var integrationCatalog = []integrationBand{
@@ -49,6 +49,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/adapters/geoip",
 			"./internal/adapters/legal",
 			"./internal/adapters/memberpat",
+			"./internal/adapters/referencecatalog",
 			"./internal/adapters/release",
 			"./internal/adapters/sitemap",
 			"./internal/adapters/sitesettings",
@@ -71,6 +72,8 @@ var integrationCatalog = []integrationBand{
 			"./internal/postgreslock",
 			"./internal/programevent/postgres",
 			"./internal/programevent/public/postgres",
+			"./internal/referencecatalog/postgres",
+			"./internal/referencecatalog/public/postgres",
 			"./internal/release/postgres",
 			"./internal/scheduler",
 			"./internal/series/postgres",
@@ -123,7 +126,7 @@ var integrationCatalog = []integrationBand{
 			"./internal/post",
 			"./internal/post/public",
 			"./internal/programevent",
-			"./internal/referencecatalog/public",
+			"./internal/referencecatalog",
 			"./internal/release",
 			"./internal/series",
 			"./internal/series/public",
@@ -143,8 +146,8 @@ var integrationCatalog = []integrationBand{
 		Resources: integrationRuntimeExclusive,
 		Packages: []string{
 			"./cmd/backend-integration-stack",
+			"./cmd/server/runtimetest",
 			"./internal/filemedia",
-			"./internal/referencecatalog",
 			"./internal/testutil",
 		},
 	},

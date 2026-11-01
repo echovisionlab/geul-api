@@ -1,11 +1,17 @@
 //go:build integration
 
-package referencecatalog
+// Package runtimetest checks cmd/server's route registration in a running
+// API process.
+package runtimetest
 
 import (
 	"bytes"
+	"context"
+	"flag"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -15,6 +21,23 @@ import (
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	flag.Parse()
+	suite, err := testutil.StartOryIntegrationSuite(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "start server runtime integration suite: %v\n", err)
+		os.Exit(1)
+	}
+	testutil.ActivateOryIntegrationSuite(suite)
+	code := m.Run()
+	testutil.DeactivateOryIntegrationSuite(suite)
+	if err := suite.Close(); err != nil && code == 0 {
+		fmt.Fprintf(os.Stderr, "close server runtime integration suite: %v\n", err)
+		code = 1
+	}
+	os.Exit(code)
+}
 
 // Exercise cmd/server's real registration, not a separately assembled test mux.
 // These contracts survived the split while their handlers disappeared.

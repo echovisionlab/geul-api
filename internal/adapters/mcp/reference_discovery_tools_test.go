@@ -130,19 +130,18 @@ type recordingCategoryReferences struct {
 	query *referencecatalog.ReferenceListQuery
 }
 
-func (r *recordingCategoryReferences) ListCategories(_ context.Context, query referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.Category], error) {
+func (r *recordingCategoryReferences) ListCategories(_ context.Context, query referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.Reference], error) {
 	r.query = &query
-	slug := "sound"
-	return referencecatalog.Page[*managev1.Category]{
-		Items:      []*managev1.Category{{Id: "11111111-1111-4111-8111-111111111111", Name: "Sound", Slug: &slug}},
-		Pagination: &commonv1.PaginationResponse{Total: 1, Limit: query.Limit},
+	return referencecatalog.Page[referencecatalog.Reference]{
+		Items:      []referencecatalog.Reference{{ID: "11111111-1111-4111-8111-111111111111", Name: "Sound", Slug: "sound"}},
+		Pagination: referencecatalog.Pagination{Total: 1, Limit: query.Limit},
 	}, nil
 }
 
 type recordingTagReferences struct{}
 
-func (recordingTagReferences) ListTags(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[*managev1.Tag], error) {
-	return referencecatalog.Page[*managev1.Tag]{}, errors.New("unexpected tag search")
+func (recordingTagReferences) ListTags(context.Context, referencecatalog.ReferenceListQuery) (referencecatalog.Page[referencecatalog.Reference], error) {
+	return referencecatalog.Page[referencecatalog.Reference]{}, errors.New("unexpected tag search")
 }
 
 type recordingClientReferences struct {
@@ -150,11 +149,11 @@ type recordingClientReferences struct {
 	count int
 }
 
-func (r *recordingClientReferences) SearchClients(_ context.Context, query referencecatalog.SearchClientsQuery) ([]*managev1.Client, error) {
+func (r *recordingClientReferences) SearchClients(_ context.Context, query referencecatalog.SearchClientsQuery) ([]referencecatalog.ClientView, error) {
 	r.query = &query
-	items := make([]*managev1.Client, r.count)
+	items := make([]referencecatalog.ClientView, r.count)
 	for index := range items {
-		items[index] = &managev1.Client{Id: managementWorkID, Name: "Client"}
+		items[index] = referencecatalog.ClientView{Client: referencecatalog.Client{ID: managementWorkID, Name: "Client"}}
 	}
 	return items, nil
 }
@@ -164,11 +163,11 @@ type recordingMapPlaceReferences struct {
 	count int
 }
 
-func (r *recordingMapPlaceReferences) SearchMapPlaces(_ context.Context, query referencecatalog.SearchMapPlacesQuery) ([]*managev1.MapPlaceBasic, error) {
+func (r *recordingMapPlaceReferences) SearchMapPlaces(_ context.Context, query referencecatalog.SearchMapPlacesQuery) ([]referencecatalog.MapPlace, error) {
 	r.query = &query
-	items := make([]*managev1.MapPlaceBasic, r.count)
+	items := make([]referencecatalog.MapPlace, r.count)
 	for index := range items {
-		items[index] = &managev1.MapPlaceBasic{Id: managementWorkID, Name: "Place"}
+		items[index] = referencecatalog.MapPlace{ID: managementWorkID, Name: "Place"}
 	}
 	return items, nil
 }

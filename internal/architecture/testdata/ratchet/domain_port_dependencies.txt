@@ -60,14 +60,8 @@
 5 internal/post/public generated contracts
 14 internal/programevent generated contracts
 7 internal/programevent/public generated contracts
-16 internal/referencecatalog generated contracts
-11 internal/referencecatalog gorm
-13 internal/referencecatalog model
-3 internal/referencecatalog spicedb client
-1 internal/referencecatalog sql driver
-7 internal/referencecatalog/public generated contracts
-3 internal/referencecatalog/public gorm
-3 internal/referencecatalog/public model
+6 internal/referencecatalog generated contracts
+6 internal/referencecatalog/public generated contracts
 12 internal/release generated contracts
 4 internal/release/public generated contracts
 2 internal/series generated contracts

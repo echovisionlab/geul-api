@@ -10,6 +10,7 @@ import (
 	menuadapter "github.com/echovisionlab/geul-api/internal/adapters/menu"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
 )
 
 // Targets adapts menu-owned reference maintenance to the Reference Catalog boundary.
@@ -17,7 +18,7 @@ type Targets struct {
 	lifecycle menuadapter.TargetLifecycle
 }
 
-var _ referencecatalog.MenuTargets = Targets{}
+var _ referencecatalogpostgres.MenuTargets = Targets{}
 
 func NewTargets(auditWriter domainaudit.Appender) Targets {
 	return Targets{lifecycle: menuadapter.NewTargetLifecycle(auditWriter)}

@@ -12,7 +12,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
-	publicreferencecatalog "github.com/echovisionlab/geul-api/internal/referencecatalog/public"
+	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
+	referencecatalogpublicpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/public/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -21,7 +22,7 @@ type Assets struct {
 	cdnDomain string
 }
 
-var _ referencecatalog.Assets = Assets{}
+var _ referencecatalogpostgres.Assets = Assets{}
 
 func NewAssets(cdnDomain string) Assets {
 	return Assets{cdnDomain: cdnDomain}
@@ -69,7 +70,7 @@ type PublicAssets struct {
 	cdnDomain string
 }
 
-var _ publicreferencecatalog.AssetReader = PublicAssets{}
+var _ referencecatalogpublicpostgres.Assets = PublicAssets{}
 
 func NewPublicAssets(cdnDomain string) PublicAssets {
 	return PublicAssets{cdnDomain: cdnDomain}

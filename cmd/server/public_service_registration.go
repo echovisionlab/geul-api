@@ -33,6 +33,7 @@ import (
 	programeventpublic "github.com/echovisionlab/geul-api/internal/programevent/public"
 	programeventpublicpostgres "github.com/echovisionlab/geul-api/internal/programevent/public/postgres"
 	publicreferencecatalog "github.com/echovisionlab/geul-api/internal/referencecatalog/public"
+	referencecatalogpublicpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/public/postgres"
 	seriespublic "github.com/echovisionlab/geul-api/internal/series/public"
 	sharelinkpostgres "github.com/echovisionlab/geul-api/internal/sharelink/postgres"
 	sharelinkpublic "github.com/echovisionlab/geul-api/internal/sharelink/public"
@@ -145,9 +146,11 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(publicWorkPath, publicWorkHandler)
 	slog.Info("Registered public service", "path", publicWorkPath)
 
-	publicReferenceCatalog, err := publicreferencecatalog.NewService(publicreferencecatalog.Deps{
-		DB: db, Assets: referencecatalogadapter.NewPublicAssets(cfg.CDNURL),
-	})
+	publicReferenceCatalogUnits, err := referencecatalogpublicpostgres.NewUnits(db, referencecatalogadapter.NewPublicAssets(cfg.CDNURL))
+	if err != nil {
+		return fmt.Errorf("initialize public reference catalog store: %w", err)
+	}
+	publicReferenceCatalog, err := publicreferencecatalog.NewService(publicreferencecatalog.Deps{Units: publicReferenceCatalogUnits})
 	if err != nil {
 		return fmt.Errorf("initialize public reference catalog service: %w", err)
 	}

@@ -82,6 +82,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	programeventpostgres "github.com/echovisionlab/geul-api/internal/programevent/postgres"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
+	referencecatalogpostgres "github.com/echovisionlab/geul-api/internal/referencecatalog/postgres"
 	"github.com/echovisionlab/geul-api/internal/series"
 	seriespostgres "github.com/echovisionlab/geul-api/internal/series/postgres"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
@@ -438,12 +439,17 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	if err != nil {
 		return registeredServices{}, err
 	}
-	referenceCatalog, err := referencecatalog.NewService(referencecatalog.Deps{
-		DB: db, SpiceDB: spicedbClient, Audit: telemetryWriter,
+	referenceCatalogUnits, err := referencecatalogpostgres.NewUnits(db, referencecatalogpostgres.Ports{
 		Assets:      referencecatalogadapter.NewAssets(cfg.CDNURL),
 		Members:     referencecatalogadapter.NewMemberSummaries(cfg.CDNURL),
 		MenuTargets: referencecatalogmenuadapter.NewTargets(telemetryWriter),
 		ClientWorks: workadapter.ClientWorks{},
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize reference catalog store: %w", err)
+	}
+	referenceCatalog, err := referencecatalog.NewService(referencecatalog.Deps{
+		Units: referenceCatalogUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize reference catalog service: %w", err)
