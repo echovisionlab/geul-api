@@ -29,7 +29,7 @@ func TestPostgresStoreKeepsTheStoreContractIntegration(t *testing.T) {
 			SeedTemplateContent: func(t *testing.T, id string, content email.TemplateContent) { seedTemplateContent(t, db, id, content) },
 			SeedLayout:          func(t *testing.T, sourceLocale string) string { return seedLayout(t, db, sourceLocale) },
 			SeedSuppression: func(t *testing.T, address string, released bool) {
-				suppression := model.EmailSuppression{Email: address, Reason: "bounce", Source: "test"}
+				suppression := model.EmailSuppression{Email: address, Reason: "bounce", Source: "admin"}
 				if released {
 					now := time.Now()
 					suppression.ReleasedAt = &now

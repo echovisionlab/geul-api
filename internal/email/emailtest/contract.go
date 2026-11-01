@@ -98,6 +98,17 @@ func ids[V any](rows []V, id func(V) string) []string {
 	return out
 }
 
+// inUTC is entry with its update time in UTC: PostgreSQL answers in the
+// session time zone.
+func inUTC(entry *email.LayoutEntry) *email.LayoutEntry {
+	if entry == nil {
+		return nil
+	}
+	utc := *entry
+	utc.UpdatedAt = utc.UpdatedAt.UTC()
+	return &utc
+}
+
 func localesOf(rows []email.LayoutContent) []string {
 	return ids(rows, func(row email.LayoutContent) string { return row.Locale })
 }
@@ -223,13 +234,16 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		read(t, h, func(ctx context.Context, store email.Store) error {
 			entry, err := store.LayoutEntry(ctx, layout, "ko")
 			require.NoError(t, err)
-			require.Equal(t, &email.LayoutEntry{Locale: "ko", HTMLContent: text("<p>source</p>"), ContentText: text("source"), UpdatedAt: at(1)}, entry)
+			require.Equal(t, &email.LayoutEntry{Locale: "ko", HTMLContent: text("<p>source</p>"), ContentText: text("source"), UpdatedAt: at(1)}, inUTC(entry))
 			entry, err = store.LayoutEntry(ctx, layout, "ja")
 			require.NoError(t, err)
 			require.Nil(t, entry)
 
 			targets, err := store.LayoutTargets(ctx, layout, "ko")
 			require.NoError(t, err)
+			for i := range targets {
+				targets[i] = *inUTC(&targets[i])
+			}
 			require.Equal(t, []email.LayoutEntry{
 				{Locale: "en", ContentText: text("en"), UpdatedAt: at(3)},
 				{Locale: "fr", HTMLContent: text("<p>fr</p>"), UpdatedAt: at(2)},
@@ -251,13 +265,13 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		read(t, h, func(ctx context.Context, store email.Store) error {
 			entry, err := store.LayoutEntry(ctx, layout, "en")
 			require.NoError(t, err)
-			require.Equal(t, &email.LayoutEntry{Locale: "en", HTMLContent: text("<p>third</p>"), ContentText: text("third"), UpdatedAt: at(2)}, entry)
+			require.Equal(t, &email.LayoutEntry{Locale: "en", HTMLContent: text("<p>third</p>"), ContentText: text("third"), UpdatedAt: at(2)}, inUTC(entry))
 			entry, err = store.LayoutEntry(ctx, layout, "ko")
 			require.NoError(t, err)
 			require.Nil(t, entry, "an update creates no row")
 			entry, err = store.LayoutEntry(ctx, layout, "fr")
 			require.NoError(t, err)
-			require.Equal(t, &email.LayoutEntry{Locale: "fr", HTMLContent: text("<p>fr</p>"), ContentText: text("fr"), UpdatedAt: at(6)}, entry)
+			require.Equal(t, &email.LayoutEntry{Locale: "fr", HTMLContent: text("<p>fr</p>"), ContentText: text("fr"), UpdatedAt: at(6)}, inUTC(entry))
 			return nil
 		})
 	},
@@ -282,11 +296,11 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		address := uuid.NewString() + "@example.test"
 		released := uuid.NewString() + "@example.test"
 		h.SeedSuppression(t, "Bounced-"+address, false)
-		h.SeedSuppression(t, "bounced-"+address, false)
+		h.SeedSuppression(t, "bounced-"+address, true)
 		h.SeedSuppression(t, released, true)
 
 		read(t, h, func(ctx context.Context, store email.Store) error {
-			for address, want := range map[string]int64{"bounced-" + address: 2, released: 0, "other-" + address: 0} {
+			for address, want := range map[string]int64{"bounced-" + address: 1, released: 0, "other-" + address: 0} {
 				count, err := store.ActiveSuppressionCount(ctx, address)
 				require.NoError(t, err)
 				require.Equal(t, want, count, address)
