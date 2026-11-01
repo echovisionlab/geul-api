@@ -239,6 +239,7 @@ func RequestAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder)
 func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func VersionAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func AnonymousAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit // a public mutation without a session
+func SystemAudit(service sharedtelemetry.ServiceName, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit // a backend service, on no principal's behalf
 func Audits(audits ...Audit) Audit
 func Unchanged() Audit
 
