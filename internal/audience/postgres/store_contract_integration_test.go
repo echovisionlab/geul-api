@@ -50,7 +50,7 @@ func (f postgresFixtures) MemberTag(t *testing.T) string {
 func (f postgresFixtures) Member(t *testing.T, eligible bool) string {
 	t.Helper()
 	identityID := uuid.NewString()
-	memberID := testutil.SeedPostIntegrationIdentity(t, f.db, identityID, "Audience Member")
+	memberID := testutil.SeedPostIntegrationIdentity(t, f.db, identityID, "Audience Member "+identityID)
 	if !eligible {
 		require.NoError(t, f.db.Exec(`UPDATE kratos.identities SET external_id = NULL WHERE id = ?::uuid`, identityID).Error)
 	}
