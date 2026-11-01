@@ -88,7 +88,7 @@ func loadFormInterchangeState(
 	if err != nil {
 		return formInterchangeState{}, err
 	}
-	if _, valid := formAIDocumentLifecycle(root.Status); !valid {
+	if !knownFormStatus(root.Status) {
 		return formInterchangeState{}, errFormUnsupportedLifecycle
 	}
 	loaded, err := loadAIDocumentStateAfterAuthorization(ctx, tx, formID, locale, root, "", lock == clause.LockingStrengthUpdate)

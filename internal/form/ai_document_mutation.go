@@ -62,7 +62,7 @@ func (s *Service) ExecuteAIDocumentMutation(ctx context.Context, command Execute
 			if root, err = loadFormAIDocumentRoot(ctx, tx, command.FormID, clause.LockingStrengthUpdate); err != nil {
 				return err
 			}
-			if _, valid := formAIDocumentLifecycle(root.Status); !valid {
+			if !knownFormStatus(root.Status) {
 				return errFormUnsupportedLifecycle
 			}
 			return nil

@@ -28,10 +28,10 @@ type formAIDocumentLocaleRow struct {
 }
 
 type formAIDocumentRoot struct {
-	Status           string `gorm:"column:status"`
-	SourceLocale     string `gorm:"column:source_locale"`
-	DocumentID       string `gorm:"column:content_document_id"`
-	DocumentRevision string `gorm:"column:document_revision"`
+	Status           model.FormStatus `gorm:"column:status"`
+	SourceLocale     string           `gorm:"column:source_locale"`
+	DocumentID       string           `gorm:"column:content_document_id"`
+	DocumentRevision string           `gorm:"column:document_revision"`
 }
 
 type formAIDocumentLoadedState struct {
@@ -68,7 +68,7 @@ func (s *Service) LoadAIDocument(ctx context.Context, query LoadAIDocumentQuery)
 		if err != nil {
 			return err
 		}
-		if _, valid := formAIDocumentLifecycle(root.Status); !valid {
+		if !knownFormStatus(root.Status) {
 			return errFormUnsupportedLifecycle
 		}
 		if err := s.requireVisibleFormAction(ctx, formID, formActionView, domainerr.ResourceNotFound("form", formID)); err != nil {
@@ -143,7 +143,7 @@ func loadAIDocumentStateAfterAuthorization(
 		}
 	}
 	state := AIDocumentState{
-		FormID: formID, Status: root.Status, DocumentRevision: root.DocumentRevision,
+		FormID: formID, Status: string(root.Status), DocumentRevision: root.DocumentRevision,
 		SourceLocale: sourceLocale, Locale: locale, LocaleExists: requestedExists,
 		SourceTitle: source.Title, SourceSchema: source.Schema, ViewerMemberID: viewerMemberID,
 	}
@@ -187,13 +187,7 @@ func loadFormAIDocumentLocale(ctx context.Context, tx *gorm.DB, formID, locale s
 	return row, true, nil
 }
 
-func formAIDocumentLifecycle(status string) (published, valid bool) {
-	switch model.FormStatus(status) {
-	case model.FormStatusDraft:
-		return false, true
-	case model.FormStatusPublished:
-		return true, true
-	default:
-		return false, false
-	}
+// knownFormStatus reports whether this build knows the stored status.
+func knownFormStatus(status model.FormStatus) bool {
+	return status == model.FormStatusDraft || status == model.FormStatusPublished
 }

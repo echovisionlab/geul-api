@@ -3,32 +3,29 @@ package form
 import (
 	"testing"
 
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/model"
 )
 
-func TestFormAIDocumentLifecycleUsesExactGeneratedStatus(t *testing.T) {
+func TestKnownFormStatusAcceptsOnlyTheStoredStatuses(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		status    string
-		published bool
-		valid     bool
+		status model.FormStatus
+		known  bool
 	}{
-		{status: managev1.FormStatus_FORM_STATUS_DRAFT.String(), valid: true},
-		{status: managev1.FormStatus_FORM_STATUS_PUBLISHED.String(), published: true, valid: true},
+		{status: model.FormStatusDraft, known: true},
+		{status: model.FormStatusPublished, known: true},
 		{status: "PUBLISHED"},
 		{status: "FORM_STATUS_PUBLISHED "},
 		{status: "BOGUS_PUBLISHED"},
 		{status: "FORM_STATUS_ARCHIVED"},
-		{status: managev1.FormStatus_FORM_STATUS_UNSPECIFIED.String()},
+		{status: "FORM_STATUS_UNSPECIFIED"},
 	}
 	for _, test := range tests {
-		test := test
-		t.Run(test.status, func(t *testing.T) {
+		t.Run(string(test.status), func(t *testing.T) {
 			t.Parallel()
-			published, valid := formAIDocumentLifecycle(test.status)
-			if published != test.published || valid != test.valid {
-				t.Fatalf("formAIDocumentLifecycle(%q) = (%t, %t), want (%t, %t)", test.status, published, valid, test.published, test.valid)
+			if known := knownFormStatus(test.status); known != test.known {
+				t.Fatalf("knownFormStatus(%q) = %t, want %t", test.status, known, test.known)
 			}
 		})
 	}
