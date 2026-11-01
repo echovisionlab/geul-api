@@ -8,6 +8,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"github.com/echovisionlab/geul-api/internal/audience"
+	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	campaigndomain "github.com/echovisionlab/geul-api/internal/campaign"
 	"github.com/echovisionlab/geul-api/internal/model"
 )
@@ -38,10 +39,11 @@ func (AudienceTargets) LockTarget(
 	if target.Archived {
 		return target, nil
 	}
-	if err := audience.LoadSegmentConfig(ctx, tx, &segment); err != nil {
+	if err := audiencepostgres.LoadSegmentConfig(ctx, tx, &segment); err != nil {
 		return campaigndomain.CampaignAudienceTarget{}, err
 	}
-	target.Valid = audience.ValidateSegmentConfigForType(segment.SegmentType, segment.Config) == nil
+	config := audiencepostgres.SegmentOf(segment).Config
+	target.Valid = audience.ValidateConfig(audience.SegmentType(segment.SegmentType), config) == nil
 	target.CreatedAfter = segment.CreatedAfter
 	target.CreatedBefore = segment.CreatedBefore
 	target.MemberTagIDs = append([]string(nil), segment.Config.MemberTagIDs...)

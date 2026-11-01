@@ -49,6 +49,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/ai"
 	"github.com/echovisionlab/geul-api/internal/aieditor"
 	"github.com/echovisionlab/geul-api/internal/audience"
+	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authentication"
 	"github.com/echovisionlab/geul-api/internal/campaign"
@@ -63,6 +64,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filepublic "github.com/echovisionlab/geul-api/internal/filemedia/public"
 	formdomain "github.com/echovisionlab/geul-api/internal/form"
+	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	llmproviders "github.com/echovisionlab/geul-api/internal/llm/providers"
 	"github.com/echovisionlab/geul-api/internal/maptheme"
@@ -708,12 +710,11 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	slog.Info("Registered service", "path", campaignPath)
 
 	audienceService, err := audience.NewService(audience.Deps{
-		DB:               db,
+		Units:            audiencepostgres.NewUnits(db, campaign.SegmentUsage{}),
 		SpiceDB:          spicedbClient,
-		RecipientCounter: audienceadapter.NewRecipientCounter(db, spicedbClient),
-		MemberReferences: audienceadapter.MemberReferences{},
-		Campaigns:        campaign.SegmentUsage{},
+		Fence:            identitystate.PostgresFence{},
 		Audit:            telemetryWriter,
+		RecipientCounter: audienceadapter.NewRecipientCounter(db, spicedbClient),
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize audience service: %w", err)

@@ -4,16 +4,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/stretchr/testify/require"
 )
 
 func TestReferenceCountsAreExposedByProto(t *testing.T) {
-	segment := toProtoSegment(&model.AudienceSegment{
-		CreatedAt:                    time.Now().UTC(),
-		CampaignCount:                2,
-		DeliveryRunCount:             3,
-		DownloadPolicyReferenceCount: 4,
+	segment := segmentMessage(SegmentView{
+		Segment:    Segment{CreatedAt: time.Now().UTC()},
+		References: References{Campaigns: 2, DeliveryRuns: 3, DownloadPolicies: 4},
 	})
 
 	require.Equal(t, int32(2), segment.CampaignCount)

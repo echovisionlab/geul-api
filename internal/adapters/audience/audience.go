@@ -7,10 +7,9 @@ import (
 	"gorm.io/gorm"
 
 	audiencedomain "github.com/echovisionlab/geul-api/internal/audience"
+	audiencepostgres "github.com/echovisionlab/geul-api/internal/audience/postgres"
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/campaign"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 // RecipientCounter adapts the delivery-owned recipient selection query to the
@@ -28,21 +27,8 @@ func NewRecipientCounter(db *gorm.DB, spiceDB *auth.SpiceDBClient) RecipientCoun
 
 func (c RecipientCounter) Count(
 	ctx context.Context,
-	segment *model.AudienceSegment,
+	segment audiencedomain.Segment,
 ) (int64, error) {
-	return campaign.CountBulkEmailRecipientsForAudienceSegment(ctx, c.db, c.spiceDB, segment)
-}
-
-// MemberReferences adapts the Member-owned durable-reference eligibility
-// query to Audience exclusion validation.
-type MemberReferences struct{}
-
-var _ audiencedomain.MemberReferences = MemberReferences{}
-
-func (MemberReferences) EligibleIDs(
-	ctx context.Context,
-	db *gorm.DB,
-	memberIDs []string,
-) ([]string, error) {
-	return authorizationtarget.EligibleMemberIDs(ctx, db, memberIDs)
+	row := audiencepostgres.SegmentRow(segment)
+	return campaign.CountBulkEmailRecipientsForAudienceSegment(ctx, c.db, c.spiceDB, &row)
 }

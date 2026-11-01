@@ -3,7 +3,6 @@ package audience
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -27,7 +26,7 @@ func TestSegmentTypeMappingCoversEveryAPIType(t *testing.T) {
 			t.Fatalf("%s maps back to %s", name, segmentTypeToProto(stored))
 		}
 	}
-	if got := segmentTypeToProto(model.AudienceSegmentType("SEGMENT_TYPE_RETIRED")); got != managev1.SegmentType_SEGMENT_TYPE_UNSPECIFIED {
+	if got := segmentTypeToProto(SegmentType("SEGMENT_TYPE_RETIRED")); got != managev1.SegmentType_SEGMENT_TYPE_UNSPECIFIED {
 		t.Fatalf("unknown stored type mapped to %s", got)
 	}
 }
