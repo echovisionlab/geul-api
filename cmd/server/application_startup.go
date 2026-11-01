@@ -32,6 +32,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/favicon"
+	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/member"
@@ -185,7 +186,7 @@ func initializeApplicationDependencies(
 		publicAssetCache,
 		ogpostgres.NewAssetProtector(ogprojection.AssetReferences()...),
 	)
-	faviconCleanup := favicon.NewCleanup(deps.db)
+	faviconCleanup := favicon.NewCleanup(faviconpostgres.NewUnits(deps.db, ""))
 	deps.workerHandlers = worker.NewHandlers(worker.HandlerDeps{
 		DB:               deps.db,
 		Config:           cfg,

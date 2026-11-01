@@ -13,7 +13,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/favicon"
+	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -397,7 +397,7 @@ func markLockedFileDeletionRequestedWithDB(
 	now time.Time,
 ) (*FileDeletionMutation, error) {
 	fileID := file.ID
-	if err := favicon.RequestDeletion(ctx, tx, fileID); err != nil {
+	if err := faviconpostgres.RequestDeletion(ctx, tx, fileID); err != nil {
 		return nil, err
 	}
 	if err := requestUnboundFileDerivativeAssetsDeletion(ctx, tx, fileID); err != nil {

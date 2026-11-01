@@ -11,6 +11,7 @@ import (
 
 	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/favicon"
+	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
 	mediaassetdomain "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/og"
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
@@ -44,7 +45,7 @@ func ogCleanupForIntegration(h *Handlers) *og.Cleanup {
 
 func faviconCleanupForIntegration(h *Handlers) *favicon.Cleanup {
 	if h.faviconCleanup == nil {
-		h.faviconCleanup = favicon.NewCleanup(h.db)
+		h.faviconCleanup = favicon.NewCleanup(faviconpostgres.NewUnits(h.db, ""))
 	}
 	return h.faviconCleanup
 }

@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/favicon"
+	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	domain "github.com/echovisionlab/geul-api/internal/sitesettings"
@@ -135,7 +135,7 @@ func (a Assets) ReplaceFavicon(ctx context.Context, db *gorm.DB, fileID *string)
 	if fileID == nil || strings.TrimSpace(*fileID) == "" {
 		return nil
 	}
-	set, err := favicon.LoadSet(ctx, db, a.cdnDomain, *fileID)
+	set, err := faviconpostgres.LoadSet(ctx, db, a.cdnDomain, *fileID)
 	if err != nil {
 		return err
 	}
@@ -207,5 +207,5 @@ func (a Assets) ProjectFavicon(
 	db *gorm.DB,
 	fileID string,
 ) (*commonv1.AssetRef, *commonv1.FaviconAssetSet) {
-	return favicon.Projection(ctx, db, a.cdnDomain, fileID)
+	return faviconpostgres.Projection(ctx, db, a.cdnDomain, fileID)
 }
