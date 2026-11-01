@@ -13,7 +13,7 @@ import (
 
 func TestOverviewRunsAcrossTheWholeCatalogIntegration(t *testing.T) {
 	t.Parallel()
-	db := testutil.NewIntegrationDB(t)
+	db := testutil.SetupAppPostgres(t, testutil.AppPostgresOptions{ApplyAppSchemaSQL: true}).DB
 	store := &store{tx: db}
 	_, err := store.OverviewStats(t.Context())
 	require.NoError(t, err)

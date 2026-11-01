@@ -358,7 +358,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 		require.True(t, updatedAt.Equal(*settings.UpdatedAt))
 
 		require.NoError(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, store application.Store) error {
-			_, err := store.UpdateRuntimeSettings(ctx, application.SettingsChange{TermsChanged: true})
+			_, err := store.UpdateRuntimeSettings(ctx, application.SettingsChange{ProtectedTerms: []string{}, TermsChanged: true})
 			return err
 		}))
 		require.NoError(t, mutationtest.Transact(t, h.Harness, func(ctx context.Context, store application.Store) (err error) {
