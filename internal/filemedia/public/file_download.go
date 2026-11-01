@@ -19,7 +19,7 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	pageaccesspostgres "github.com/echovisionlab/geul-api/internal/pageaccess/postgres"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
@@ -110,11 +110,11 @@ func (s *Service) contentBlockDownloadTarget(entityType openv1.PublicMediaEntity
 			if entityType != openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_PAGE || ownerStatus != string(model.PageStatusPublished) {
 				return true, nil
 			}
-			reason, err := pageaccess.EvaluateStored(ctx, tx, s.spiceDB, entityID)
+			reason, err := pageaccesspostgres.EvaluateStored(ctx, tx, s.spiceDB, entityID)
 			if err != nil {
 				return false, errs.Internal(err)
 			}
-			return reason == commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, nil
+			return reason == pageaccess.ReasonAllowed, nil
 		},
 		samePolicyKey: true,
 	}, nil
@@ -449,8 +449,8 @@ func (s *Service) resolveContentOwnerDownloadAccess(
 	}
 	if slices.Contains(publicStatuses, ownerStatus) {
 		if entityType == openv1.PublicMediaEntityType_PUBLIC_MEDIA_ENTITY_TYPE_PAGE {
-			reason, err := pageaccess.EvaluateStored(ctx, db, s.spiceDB, entityID)
-			return resolvedMediaAccess{}, reason == commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, err
+			reason, err := pageaccesspostgres.EvaluateStored(ctx, db, s.spiceDB, entityID)
+			return resolvedMediaAccess{}, reason == pageaccess.ReasonAllowed, err
 		}
 		return resolvedMediaAccess{}, true, nil
 	}

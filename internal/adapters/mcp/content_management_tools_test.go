@@ -11,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
+	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/work"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
@@ -131,14 +132,22 @@ func TestContentManagementPostAndPageSettingsReadReturnSourceState(t *testing.T)
 		AllowedActions: []managev1.PostAction{managev1.PostAction_POST_ACTION_EDIT, managev1.PostAction_POST_ACTION_CANCEL_SCHEDULE}, ScheduledAt: stamp, ScheduledTimeZone: &zone, PublishedAt: stamp, CreatedAt: stamp, UpdatedAt: stamp,
 		Document: &contentv1.RichTextDocument{}, FeaturedImageDelivery: &commonv1.MediaDelivery{FileId: managementWorkID},
 	}}
-	pages := &recordingPageManagement{getResponse: &managev1.Page{
-		Id: managementPageID, Title: "Source Page", Summary: &summary, Slug: &slug, SourceLocale: "ko", Status: managev1.PageStatus_PAGE_STATUS_PUBLISHED,
-		Revision: "actual-source-page-revision", ShowTitle: false, DocumentLayout: layout, PublishedAt: stamp, CreatedAt: stamp, UpdatedAt: stamp,
-		Document: &contentv1.PageDocument{}, FeaturedImageDelivery: &commonv1.MediaDelivery{FileId: managementWorkID},
-		AccessPolicy: &commonv1.PageAccessPolicy{
-			Mode: commonv1.PageAccessMode_PAGE_ACCESS_MODE_CONDITIONS, Match: commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ALL,
-			AllowedRoles: []policyv1.AuthorizationRole{policyv1.AuthorizationRole_AUTHOR}, UserTagIds: []string{managementWorkID}, NewsletterSubscriber: true,
-		},
+	published := stamp.AsTime()
+	pages := &recordingPageManagement{getResponse: pagedomain.Detail{
+		View: pagedomain.View{Page: pagedomain.Page{
+			ID: managementPageID, Slug: &slug, SourceLocale: "ko", Status: pagedomain.StatusPublished, ShowTitle: false,
+			DocumentLayout: pagedomain.DocumentLayout{
+				ContentHeight: pagedomain.ContentHeightViewport, PageChrome: pagedomain.PlacementPinned,
+				Footer: pagedomain.PlacementFlow, HideTableOfContents: true,
+			},
+			AccessPolicy: encodedPageAccessPolicy(t, &commonv1.PageAccessPolicy{
+				Mode: commonv1.PageAccessMode_PAGE_ACCESS_MODE_CONDITIONS, Match: commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ALL,
+				AllowedRoles: []policyv1.AuthorizationRole{policyv1.AuthorizationRole_AUTHOR}, UserTagIds: []string{managementWorkID}, NewsletterSubscriber: true,
+			}),
+			PublishedAt: &published, CreatedAt: published, UpdatedAt: published,
+		}, Title: "Source Page", Summary: &summary},
+		Revision: "actual-source-page-revision", Document: &contentv1.PageDocument{},
+		FeaturedImage: &commonv1.MediaDelivery{FileId: managementWorkID},
 	}}
 	tools, err := NewContentManagementTools(posts, &recordingWorkManagement{}, pages)
 	if err != nil {
@@ -373,7 +382,7 @@ func TestPostSettingsLayoutRejectsInvalidOrPartialNativeEnumsBeforeMutation(t *t
 
 func TestPageSettingsUpdateReturnsOwningValuesAndNoopStatus(t *testing.T) {
 	for _, changed := range []bool{true, false} {
-		pages := &recordingPageManagement{updateResponse: &managev1.UpdatePageResponse{Id: managementPageID, Changed: changed, ShowTitle: false}}
+		pages := &recordingPageManagement{updateResponse: pagedomain.UpdateResult{Page: pagedomain.Page{ID: managementPageID, ShowTitle: false}, Changed: changed}}
 		tools, err := NewContentManagementTools(&recordingPostManagement{}, &recordingWorkManagement{}, pages)
 		if err != nil {
 			t.Fatal(err)
@@ -389,7 +398,12 @@ func TestPageSettingsUpdateReturnsOwningValuesAndNoopStatus(t *testing.T) {
 }
 
 func TestPageSettingsReadReportsPublicWhenPolicyIsAbsent(t *testing.T) {
-	pages := &recordingPageManagement{getResponse: &managev1.Page{Id: managementPageID, Title: "Page", SourceLocale: "en", Status: managev1.PageStatus_PAGE_STATUS_DRAFT, Revision: "r"}}
+	pages := &recordingPageManagement{getResponse: pagedomain.Detail{
+		View: pagedomain.View{Page: pagedomain.Page{
+			ID: managementPageID, SourceLocale: "en", Status: pagedomain.StatusDraft, DocumentLayout: pagedomain.DefaultDocumentLayout(),
+		}, Title: "Page"},
+		Revision: "r",
+	}}
 	tools, err := NewContentManagementTools(&recordingPostManagement{}, &recordingWorkManagement{}, pages)
 	if err != nil {
 		t.Fatal(err)
@@ -413,7 +427,9 @@ func TestPageSettingsUpdateForwardsAccessPolicy(t *testing.T) {
 		{"conditions all", `{"mode":"conditions","match":"all","allowed_roles":["admin","author"],"newsletter_subscriber":true}`, &commonv1.PageAccessPolicy{Mode: commonv1.PageAccessMode_PAGE_ACCESS_MODE_CONDITIONS, Match: commonv1.PageAccessMatch_PAGE_ACCESS_MATCH_ALL, AllowedRoles: []policyv1.AuthorizationRole{policyv1.AuthorizationRole_ADMIN, policyv1.AuthorizationRole_AUTHOR}, NewsletterSubscriber: true}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			pages := &recordingPageManagement{updateResponse: &managev1.UpdatePageResponse{Id: managementPageID, Changed: true, AccessPolicy: test.want}}
+			pages := &recordingPageManagement{updateResponse: pagedomain.UpdateResult{
+				Page: pagedomain.Page{ID: managementPageID, AccessPolicy: encodedPageAccessPolicy(t, test.want)}, Changed: true,
+			}}
 			tools, err := NewContentManagementTools(&recordingPostManagement{}, &recordingWorkManagement{}, pages)
 			if err != nil {
 				t.Fatal(err)
@@ -422,10 +438,14 @@ func TestPageSettingsUpdateForwardsAccessPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !proto.Equal(pages.update.AccessPolicy, test.want) || pages.update.Slug != nil || pages.update.ShowTitle != nil {
+			if pages.update.AccessPolicy == nil || !proto.Equal(pageaccess.Message(*pages.update.AccessPolicy), test.want) || pages.update.Slug != nil || pages.update.ShowTitle != nil {
 				t.Fatalf("request = %+v", pages.update)
 			}
-			if !reflect.DeepEqual(result.StructuredContent["access_policy"], pageAccessPolicyOutput(test.want)) {
+			stored, err := pageaccess.Decode(pages.updateResponse.Page.AccessPolicy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(result.StructuredContent["access_policy"], pageAccessPolicyOutput(pageaccess.Message(stored))) {
 				t.Fatalf("access_policy = %#v", result.StructuredContent["access_policy"])
 			}
 		})
@@ -614,36 +634,51 @@ func (r *recordingWorkManagement) CreateWork(_ context.Context, command work.Cre
 type recordingPageManagement struct {
 	create         *pagedomain.CreatePageCommand
 	get            *pagedomain.GetPageQuery
-	getResponse    *managev1.Page
+	getResponse    pagedomain.Detail
 	getErr         error
 	update         *pagedomain.UpdatePageCommand
-	updateResponse *managev1.UpdatePageResponse
+	updateResponse pagedomain.UpdateResult
 }
 
-func (r *recordingPageManagement) GetPage(_ context.Context, query pagedomain.GetPageQuery) (*managev1.Page, error) {
+func (r *recordingPageManagement) GetPage(_ context.Context, query pagedomain.GetPageQuery) (pagedomain.Detail, error) {
 	r.get = &query
 	if r.getErr != nil {
-		return nil, r.getErr
+		return pagedomain.Detail{}, r.getErr
 	}
 	return r.getResponse, nil
 }
 
-func (r *recordingPageManagement) UpdatePage(_ context.Context, command pagedomain.UpdatePageCommand) (*managev1.UpdatePageResponse, error) {
+func (r *recordingPageManagement) UpdatePage(_ context.Context, command pagedomain.UpdatePageCommand) (pagedomain.UpdateResult, error) {
 	r.update = &command
 	return r.updateResponse, nil
 }
 
-func (r *recordingPageManagement) CreatePage(_ context.Context, command pagedomain.CreatePageCommand) (*managev1.Page, error) {
+func (r *recordingPageManagement) CreatePage(_ context.Context, command pagedomain.CreatePageCommand) (pagedomain.Detail, error) {
 	r.create = &command
-	return &managev1.Page{Id: managementPageID, Title: command.Title, SourceLocale: command.SourceLocale, Status: managev1.PageStatus_PAGE_STATUS_DRAFT, Revision: "page-revision"}, nil
+	return pagedomain.Detail{
+		View: pagedomain.View{Page: pagedomain.Page{
+			ID: managementPageID, SourceLocale: command.SourceLocale, Status: pagedomain.StatusDraft, DocumentLayout: pagedomain.DefaultDocumentLayout(),
+		}, Title: command.Title},
+		Revision: "page-revision",
+	}, nil
 }
 
-func (*recordingPageManagement) PublishPage(context.Context, pagedomain.PublishPageCommand) (*managev1.PageLifecycleMutationResponse, error) {
-	return nil, errors.New("publish page is not part of this test")
+func (*recordingPageManagement) PublishPage(context.Context, pagedomain.PublishPageCommand) (pagedomain.LifecycleResult, error) {
+	return pagedomain.LifecycleResult{}, errors.New("publish page is not part of this test")
 }
 
-func (*recordingPageManagement) UnpublishPage(context.Context, pagedomain.UnpublishPageCommand) (*managev1.PageLifecycleMutationResponse, error) {
-	return nil, errors.New("unpublish page is not part of this test")
+func (*recordingPageManagement) UnpublishPage(context.Context, pagedomain.UnpublishPageCommand) (pagedomain.LifecycleResult, error) {
+	return pagedomain.LifecycleResult{}, errors.New("unpublish page is not part of this test")
+}
+
+// encodedPageAccessPolicy is the stored form of policy.
+func encodedPageAccessPolicy(t *testing.T, policy *commonv1.PageAccessPolicy) json.RawMessage {
+	t.Helper()
+	encoded, err := pageaccess.Encode(pageaccess.FromMessage(policy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
 
 func (*recordingPageManagement) DeletePage(context.Context, pagedomain.DeletePageCommand) error {

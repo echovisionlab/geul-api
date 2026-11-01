@@ -1,9 +1,10 @@
-package page
+package pagepostgres
 
 import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
+	"github.com/echovisionlab/geul-api/internal/page"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -112,11 +113,7 @@ func TestBuildPageLocaleContentUpdatedEventRejectsInconsistentLocaleFence(t *tes
 }
 
 func TestBuildManagePageContentUpdatedEvent(t *testing.T) {
-	showTitle := false
-	event := buildManagePageContentUpdatedEvent(UpdatePageCommand{
-		ID:        "page-1",
-		ShowTitle: &showTitle,
-	})
+	event := contentUpdatedEvent(page.ContentUpdate{PageID: "page-1", Kind: page.SettingsUpdate, Fields: []string{"showTitle"}})
 	require.NotNil(t, event)
 
 	assert.Equal(t, managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE, event.EntityType)

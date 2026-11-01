@@ -360,23 +360,26 @@ type recordingPageRelated struct {
 	versions *pagedomain.ListPageVersionsQuery
 }
 
-func (r *recordingPageRelated) ListPageVersions(_ context.Context, query pagedomain.ListPageVersionsQuery) (*managev1.ListPageVersionsResponse, error) {
+func (r *recordingPageRelated) ListPageVersions(_ context.Context, query pagedomain.ListPageVersionsQuery) (pagedomain.VersionList, error) {
 	r.versions = &query
-	return &managev1.ListPageVersionsResponse{Pagination: (queryutil.Pagination{Limit: query.Page.Limit, Offset: query.Page.Offset}).BuildResponse(6)}, nil
+	pagination := (queryutil.Pagination{Limit: query.Page.Limit, Offset: query.Page.Offset}).BuildResponse(6)
+	return pagedomain.VersionList{Pagination: pagedomain.Pagination{
+		Total: pagination.Total, Limit: pagination.Limit, Offset: pagination.Offset, HasMore: pagination.HasMore,
+	}}, nil
 }
 
-func (*recordingPageRelated) SetPageFeaturedImage(context.Context, pagedomain.SetPageFeaturedImageCommand) (*managev1.SetPageFeaturedImageResponse, error) {
-	return nil, errors.New("set page featured image is not part of this test")
+func (*recordingPageRelated) SetPageFeaturedImage(context.Context, pagedomain.SetPageFeaturedImageCommand) (pagedomain.FeaturedImageResult, error) {
+	return pagedomain.FeaturedImageResult{}, errors.New("set page featured image is not part of this test")
 }
 
-func (*recordingPageRelated) DeletePageFeaturedImage(context.Context, pagedomain.DeletePageFeaturedImageCommand) (*managev1.OgAssetDeleteResponse, error) {
+func (*recordingPageRelated) DeletePageFeaturedImage(context.Context, pagedomain.DeletePageFeaturedImageCommand) (*string, error) {
 	return nil, errors.New("delete page featured image is not part of this test")
 }
 
-func (*recordingPageRelated) RestorePageVersion(context.Context, pagedomain.RestorePageVersionCommand) (*managev1.Page, error) {
-	return nil, errors.New("restore page version is not part of this test")
+func (*recordingPageRelated) RestorePageVersion(context.Context, pagedomain.RestorePageVersionCommand) (pagedomain.Detail, error) {
+	return pagedomain.Detail{}, errors.New("restore page version is not part of this test")
 }
 
-func (*recordingPageRelated) CheckPageSlugAvailable(context.Context, pagedomain.CheckPageSlugAvailableQuery) (*managev1.CheckPageSlugAvailableResponse, error) {
-	return nil, errors.New("check page slug is not part of this test")
+func (*recordingPageRelated) CheckPageSlugAvailable(context.Context, pagedomain.CheckPageSlugAvailableQuery) (bool, error) {
+	return false, errors.New("check page slug is not part of this test")
 }

@@ -8,40 +8,30 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/echovisionlab/geul-api/internal/dberrors"
-
-	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/publiccontent"
-	"github.com/echovisionlab/geul-api/internal/sitevariable"
-	"github.com/echovisionlab/geul-api/internal/translation"
-
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
+	"github.com/google/uuid"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/documentlayout"
+	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
+	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	pagedomain "github.com/echovisionlab/geul-api/internal/page"
+	"github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
+	"github.com/echovisionlab/geul-api/internal/publiccontent"
+	"github.com/echovisionlab/geul-api/internal/translation"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
-	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// Deps are the collaborators of the public Page use cases. Every field is
-// required; NewService rejects a missing one.
+// Deps are the collaborators of the public Page use cases; all are
+// required.
 type Deps struct {
-	DB          *gorm.DB
+	Units       mutation.UnitOfWork[Store] // pagepublicpostgres.NewUnits
 	DraftAccess DraftAccessChecker
-	ShareLinks  ShareLinkAccessChecker
 	Media       MediaResolver
-	Blocks      *contentblock.Store
+	Text        PublicText
 	// Permissions decide the reader's roles for a Page access policy.
 	Permissions pageaccess.PermissionChecker
 }
@@ -49,8 +39,8 @@ type Deps struct {
 func (d Deps) validate() error {
 	var missing []string
 	for name, absent := range map[string]bool{
-		"DB": d.DB == nil, "DraftAccess": d.DraftAccess == nil, "ShareLinks": d.ShareLinks == nil,
-		"Media": d.Media == nil, "Blocks": d.Blocks == nil, "Permissions": d.Permissions == nil,
+		"Units": d.Units == nil, "DraftAccess": d.DraftAccess == nil,
+		"Media": d.Media == nil, "Text": d.Text == nil, "Permissions": d.Permissions == nil,
 	} {
 		if absent {
 			missing = append(missing, name)
@@ -65,11 +55,10 @@ func (d Deps) validate() error {
 
 // Service holds the public Page use cases.
 type Service struct {
-	db          *gorm.DB
+	units       mutation.UnitOfWork[Store]
 	draftAccess DraftAccessChecker
-	shareLinks  ShareLinkAccessChecker
 	media       MediaResolver
-	blocks      *contentblock.Store
+	text        PublicText
 	permissions pageaccess.PermissionChecker
 }
 
@@ -78,10 +67,7 @@ func NewService(deps Deps) (*Service, error) {
 	if err := deps.validate(); err != nil {
 		return nil, err
 	}
-	return &Service{
-		db: deps.DB, draftAccess: deps.DraftAccess, shareLinks: deps.ShareLinks,
-		media: deps.Media, blocks: deps.Blocks, permissions: deps.Permissions,
-	}, nil
+	return &Service{units: deps.Units, draftAccess: deps.DraftAccess, media: deps.Media, text: deps.Text, permissions: deps.Permissions}, nil
 }
 
 // GetPageQuery reads the Page Slug names. An empty slug or "/" reads the
@@ -94,19 +80,11 @@ type GetPageQuery struct {
 	AcceptLanguage string
 }
 
-// pageLocator names the column a public Page read matches.
-type pageLocator string
-
-const (
-	pageLocatorID   pageLocator = "id"
-	pageLocatorSlug pageLocator = "slug"
-)
-
 // errPageNotFound answers a Page the reader may not know exists.
 var errPageNotFound = domainerr.New(domainerr.NotFound, "", "page not found")
 
 type publicPageRead struct {
-	locator         pageLocator
+	locator         page.Locator
 	value           string
 	publishedOnly   bool
 	notFoundAsEmpty bool
@@ -114,94 +92,21 @@ type publicPageRead struct {
 	sharePassword   string
 }
 
-var pageLocalizationSpec = publiccontent.Spec{
-	EntityType:   "page",
-	TableName:    "page_translation",
-	SelectClause: "locale, title, summary, og_asset_id",
-}
-
-func applyLocalizedPageFields(page *openv1.Page, localization publiccontent.Selection) {
-	if page == nil || localization.IsOriginal {
-		return
-	}
-
-	page.Title = ""
-	if localization.Title != nil {
-		page.Title = *localization.Title
-	}
-	page.Summary = localization.Summary
-}
-
-// resolvePageLocalizedMetadataSelection reads only Page locale metadata and
-// admits target locales that exist in the already-loaded Block snapshot.
-func resolvePageLocalizedMetadataSelection(
-	ctx context.Context,
-	db *gorm.DB,
-	pageID string,
-	acceptLanguage string,
-	documentLocales map[string]struct{},
-	settings translation.RuntimeSettings,
-) (publiccontent.Selection, error) {
-	selection, err := publiccontent.ResolveWithPolicy(
-		ctx, db, pageLocalizationSpec, pageID, acceptLanguage, settings,
-	)
-	if err != nil {
-		return publiccontent.Selection{}, err
-	}
-	if selection.DisplayedLocale != selection.SourceLocale {
-		if _, exists := documentLocales[selection.DisplayedLocale]; !exists {
-			requestedLocale := selection.RequestedLocale
-			// Re-resolving with the default locale yields its row only when it is
-			// stored; otherwise ResolveWithPolicy already falls back to source.
-			selection, err = publiccontent.ResolveWithPolicy(
-				ctx, db, pageLocalizationSpec, pageID,
-				publiccontent.DocumentFallbackLocale(selection, documentLocales, settings), settings,
-			)
-			if err != nil {
-				return publiccontent.Selection{}, err
-			}
-			selection.RequestedLocale = requestedLocale
-			selection.IsFallback = requestedLocale != selection.DisplayedLocale
-			selection.FallbackReason = openv1.LocalizationFallbackReason_LOCALIZATION_FALLBACK_REASON_SOURCE
-		}
-	}
-	if available, availableErr := publiccontent.AvailableLocales(
-		ctx, db, pageLocalizationSpec, pageID, selection.SourceLocale, settings,
-	); availableErr == nil {
-		selection.AvailableLocales = filterPageAvailableLocales(available, selection.SourceLocale, documentLocales)
-	} else {
-		slog.ErrorContext(ctx, "Available locale lookup failed; serving Page without its locale list", "domain", "page", "operation", "load_available_locales", "outcome", "failed", failurecause.Attr(availableErr), "page_id", pageID)
-	}
-	return selection, nil
-}
-
-func filterPageAvailableLocales(
-	available []string,
-	sourceLocale string,
-	documentLocales map[string]struct{},
-) []string {
-	filtered := make([]string, 0, len(available))
-	for _, locale := range available {
-		if locale == sourceLocale {
-			filtered = append(filtered, locale)
-			continue
-		}
-		if _, exists := documentLocales[locale]; exists {
-			filtered = append(filtered, locale)
-		}
-	}
-	return filtered
-}
-
-func pageDocumentLocales(snapshot contentblock.Snapshot) map[string]struct{} {
-	locales := make(map[string]struct{}, len(snapshot.LocaleOverlays))
-	for _, overlay := range snapshot.LocaleOverlays {
-		locale := strings.TrimSpace(overlay.Locale)
-		if locale != "" {
-			locales[locale] = struct{}{}
-		}
-	}
-	return locales
+// Read is a public Page read: why the reader may or may not see the Page
+// and, when Visible, the Page in its displayed locale.
+type Read struct {
+	AccessReason pageaccess.Reason
+	Visible      bool
+	Page         page.Page
+	// Title and Summary are the displayed locale's.
+	Title         string
+	Summary       *string
+	Document      *contentv1.LocalizedPageDocument
+	Revision      string
+	Localization  publiccontent.Selection
+	OgAsset       *commonv1.AssetRef
+	FeaturedImage *commonv1.MediaDelivery
+	BlockMedia    []*contentv1.ContentBlockMediaItem
 }
 
 // GetPage reads the public projection of a Page.
@@ -209,7 +114,7 @@ func pageDocumentLocales(snapshot contentblock.Snapshot) map[string]struct{} {
 // - slug="about" returns the page with that slug
 // - share_token allows access to draft pages
 // - authenticated accounts with the exact SpiceDB view permission can access drafts
-func (s *Service) GetPage(ctx context.Context, query GetPageQuery) (*openv1.GetPageResponse, error) {
+func (s *Service) GetPage(ctx context.Context, query GetPageQuery) (Read, error) {
 	if query.Slug == "/" || query.Slug == "" {
 		return s.handleHomepage(ctx, query.AcceptLanguage)
 	}
@@ -217,21 +122,21 @@ func (s *Service) GetPage(ctx context.Context, query GetPageQuery) (*openv1.GetP
 }
 
 // handleHomepage handles requests for the homepage (slug="/")
-func (s *Service) handleHomepage(
-	ctx context.Context,
-	acceptLanguage string,
-) (*openv1.GetPageResponse, error) {
-	homepagePageID, err := s.getHomepagePageID(ctx)
-	if err != nil {
-		return nil, err
+func (s *Service) handleHomepage(ctx context.Context, acceptLanguage string) (Read, error) {
+	var homepagePageID string
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		homepagePageID, err = store.HomepagePageID(ctx)
+		return err
+	}); err != nil {
+		return Read{}, err
 	}
 	if homepagePageID == "" {
 		// No homepage configured
-		return &openv1.GetPageResponse{}, nil
+		return Read{}, nil
 	}
-
-	return s.buildPageResponse(ctx, acceptLanguage, publicPageRead{
-		locator:         pageLocatorID,
+	return s.buildPageRead(ctx, acceptLanguage, publicPageRead{
+		locator:         page.ByID,
 		value:           homepagePageID,
 		publishedOnly:   true,
 		notFoundAsEmpty: true,
@@ -246,12 +151,12 @@ func (s *Service) handlePageBySlugOrID(
 	shareToken *string,
 	sharePassword string,
 	acceptLanguage string,
-) (*openv1.GetPageResponse, error) {
-	locator := pageLocatorSlug
+) (Read, error) {
+	locator := page.BySlug
 	if _, err := uuid.Parse(slugOrID); err == nil {
-		locator = pageLocatorID
+		locator = page.ByID
 	}
-	return s.buildPageResponse(ctx, acceptLanguage, publicPageRead{
+	return s.buildPageRead(ctx, acceptLanguage, publicPageRead{
 		locator:       locator,
 		value:         slugOrID,
 		shareToken:    shareToken,
@@ -259,16 +164,17 @@ func (s *Service) handlePageBySlugOrID(
 	})
 }
 
-// buildPageResponse builds one coherent localized Page projection.
-func (s *Service) buildPageResponse(
-	ctx context.Context,
-	acceptLanguage string,
-	read publicPageRead,
-) (*openv1.GetPageResponse, error) {
-	if read.locator != pageLocatorID && read.locator != pageLocatorSlug {
-		return nil, errors.New("page read locator is invalid")
+// buildPageRead builds one coherent localized Page projection.
+func (s *Service) buildPageRead(ctx context.Context, acceptLanguage string, read publicPageRead) (Read, error) {
+	if read.locator != page.ByID && read.locator != page.BySlug {
+		return Read{}, errors.New("page read locator is invalid")
 	}
-	settings, settingsErr := translation.LoadRuntimeSettings(ctx, s.db)
+	var settings translation.RuntimeSettings
+	settingsErr := s.units.ReadLocked(ctx, func(store Store) error {
+		var err error
+		settings, err = store.RuntimeSettings(ctx)
+		return err
+	})
 	if settingsErr != nil {
 		slog.ErrorContext(ctx, "Localization settings lookup failed; serving Page with default settings", "domain", "page", "operation", "load_localization_settings", "outcome", "failed", failurecause.Attr(settingsErr))
 		settings = translation.DefaultRuntimeSettings()
@@ -283,36 +189,35 @@ func (s *Service) buildPageResponse(
 		return err
 	})
 	if err != nil {
-		return nil, err
+		return Read{}, err
 	}
 	if !result.visible {
-		return &openv1.GetPageResponse{AccessReason: result.accessReason}, nil
+		return Read{AccessReason: result.accessReason}, nil
 	}
-	protoPage, err := s.toOpenPage(ctx, &result)
+	view, err := s.localizedView(ctx, &result)
 	if err != nil {
-		return nil, err
+		return Read{}, err
 	}
-	blockMedia, err := s.hydratePageMedia(ctx, protoPage, result)
-	if err != nil {
-		return nil, err
+	if view.BlockMedia, err = s.media.HydrateAuthorizedContentBlockMedia(
+		mediaasset.WithContentDownloadOwnerAuthorization(ctx, result.mediaAuthorization), result.blockMedia,
+	); err != nil {
+		return Read{}, err
 	}
-
-	return &openv1.GetPageResponse{
-		AccessReason: result.accessReason,
-		Page:         protoPage,
-		BlockMedia:   blockMedia,
-	}, nil
+	if view.FeaturedImage, err = s.media.ResolvePageFeaturedImageDelivery(ctx, result.page.FeaturedImageFileID); err != nil {
+		return Read{}, err
+	}
+	return view, nil
 }
 
 // pageReadResult is what one repeatable-read attempt observed. visible is
 // false when the Page is absent from an empty-on-miss read or its access
 // policy denies the reader; accessReason then says why.
 type pageReadResult struct {
-	page               model.Page
+	page               page.Page
 	visible            bool
-	accessReason       commonv1.PageAccessReason
+	accessReason       pageaccess.Reason
 	mediaAuthorization mediaasset.ContentDownloadOwnerAuthorization
-	sourceMetadata     *pagedomain.PageSourceLocaleMetadata
+	sourceMetadata     page.SourceMetadata
 	localization       publiccontent.Selection
 	snapshot           contentblock.Snapshot
 	document           *contentv1.LocalizedPageDocument
@@ -326,12 +231,10 @@ func (s *Service) loadPageRead(
 	settings translation.RuntimeSettings,
 ) (pageReadResult, error) {
 	var result pageReadResult
-	err := mutation.ReadLocked(ctx, s.db, func(tx *gorm.DB) error {
-		if err := tx.WithContext(ctx).
-			Clauses(clause.Locking{Strength: clause.LockingStrengthShare}).
-			Where(string(read.locator)+" = ?", read.value).
-			Take(&result.page).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
+	err := s.units.ReadLocked(ctx, func(store Store) error {
+		found, err := store.FindPage(ctx, read.locator, read.value)
+		if err != nil {
+			if errors.Is(err, page.ErrPageNotFound) {
 				if read.notFoundAsEmpty {
 					return nil
 				}
@@ -339,16 +242,16 @@ func (s *Service) loadPageRead(
 			}
 			return err
 		}
-		var err error
-		result.accessReason, result.mediaAuthorization, err = s.authorizePageRead(ctx, tx, read, result.page)
+		result.page = found
+		result.accessReason, result.mediaAuthorization, err = s.authorizePageRead(ctx, store, read, result.page)
 		if err != nil {
 			return err
 		}
-		if result.accessReason != commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED {
+		if result.accessReason != pageaccess.ReasonAllowed {
 			return nil
 		}
 		result.visible = true
-		return s.loadPageDocument(ctx, tx, &result, acceptLanguage, settings)
+		return s.loadPageDocument(ctx, store, &result, acceptLanguage, settings)
 	})
 	return result, err
 }
@@ -359,28 +262,27 @@ func (s *Service) loadPageRead(
 // follows its access policy, and a denial is a reason, not an error.
 func (s *Service) authorizePageRead(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	read publicPageRead,
-	page model.Page,
-) (commonv1.PageAccessReason, mediaasset.ContentDownloadOwnerAuthorization, error) {
+	value page.Page,
+) (pageaccess.Reason, mediaasset.ContentDownloadOwnerAuthorization, error) {
 	var authorization mediaasset.ContentDownloadOwnerAuthorization
-	published := page.Status == model.PageStatusPublished
-	if published {
-		accessReason, err := pageaccess.Evaluate(ctx, tx, s.permissions, page.ID, page.AccessPolicy)
+	if value.Status == page.StatusPublished {
+		accessReason, err := pageaccess.Evaluate(ctx, store, s.permissions, value.ID, value.AccessPolicy)
 		if err != nil {
 			return accessReason, authorization, err
 		}
-		if accessReason == commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED {
+		if accessReason == pageaccess.ReasonAllowed {
 			authorization.Mode = mediaasset.ContentDownloadOwnerAccessPublic
 		}
 		return accessReason, authorization, nil
 	}
 	if read.publishedOnly {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, authorization, errPageNotFound
+		return pageaccess.ReasonUnspecified, authorization, errPageNotFound
 	}
-	allowed, err := s.draftAccess.CanViewPageDraft(ctx, page.ID)
+	allowed, err := s.draftAccess.CanViewPageDraft(ctx, value.ID)
 	if err != nil {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, authorization, fmt.Errorf("check page draft view permission: %w", err)
+		return pageaccess.ReasonUnspecified, authorization, fmt.Errorf("check page draft view permission: %w", err)
 	}
 	if allowed {
 		authorization.Mode = mediaasset.ContentDownloadOwnerAccessAuthenticatedDraft
@@ -388,63 +290,56 @@ func (s *Service) authorizePageRead(
 			authorization.IdentityID = user.IdentityID.String()
 			authorization.MemberID = user.MemberID.String()
 		}
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, authorization, nil
+		return pageaccess.ReasonAllowed, authorization, nil
 	}
 	shareToken := ""
 	if read.shareToken != nil {
 		shareToken = *read.shareToken
 	}
-	link, err := s.shareLinks.RequirePageShareLinkAccess(ctx, tx, shareToken, read.sharePassword, page.ID)
+	link, err := store.RequireShareLink(ctx, shareToken, read.sharePassword, value.ID)
 	if err != nil {
-		return commonv1.PageAccessReason_PAGE_ACCESS_REASON_UNSPECIFIED, authorization, err
+		return pageaccess.ReasonUnspecified, authorization, err
 	}
 	authorization.Mode = mediaasset.ContentDownloadOwnerAccessShare
-	authorization.ShareLink = mediaasset.ContentDownloadShareLinkWitnessFromModel(link)
-	return commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED, authorization, nil
+	authorization.ShareLink = link
+	return pageaccess.ReasonAllowed, authorization, nil
 }
 
 // loadPageDocument loads the visible Page's content snapshot, selects the
 // displayed locale and materializes the document in result.
 func (s *Service) loadPageDocument(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	result *pageReadResult,
 	acceptLanguage string,
 	settings translation.RuntimeSettings,
 ) error {
-	page := &result.page
-	documentID, err := pagedomain.LoadPageContentDocumentIDForPublicRead(ctx, tx, page.ID)
+	value := &result.page
+	documentID, err := loadContentDocumentID(ctx, store, value.ID)
 	if err != nil {
 		return err
 	}
 	result.mediaAuthorization.ResourceType = "page"
-	result.mediaAuthorization.ResourceID = page.ID
-	result.mediaAuthorization.Status = string(page.Status)
+	result.mediaAuthorization.ResourceID = value.ID
+	result.mediaAuthorization.Status = string(value.Status)
 	result.mediaAuthorization.DocumentID = documentID.String()
-	result.sourceMetadata, err = pagedomain.LoadPageSourceLocaleMetadataForPublic(ctx, tx, page.ID)
+	source, exists, err := store.SourceMetadata(ctx, value.ID)
 	if err != nil {
 		return fmt.Errorf("load Page source locale metadata: %w", err)
 	}
-	if result.sourceMetadata == nil {
+	if !exists {
 		return errors.New("page source locale metadata is not initialized")
 	}
-	result.snapshot, err = s.blocks.LoadSnapshotInTransaction(ctx, tx, documentID, result.sourceMetadata.Locale)
+	result.sourceMetadata = source
+	result.snapshot, err = store.ContentSnapshot(ctx, documentID, source.Locale)
 	if err != nil {
 		return fmt.Errorf("load Page content document: %w", err)
 	}
-	localization, err := resolvePageLocalizedMetadataSelection(
-		ctx,
-		tx,
-		page.ID,
-		acceptLanguage,
-		pageDocumentLocales(result.snapshot),
-		settings,
-	)
+	localization, err := store.ResolveLocalization(ctx, value.ID, acceptLanguage, pageDocumentLocales(result.snapshot), settings)
 	if err != nil {
 		return fmt.Errorf("select Page locale: %w", err)
 	}
-	result.localization, err = publiccontent.ResolveOGConsistency(
-		ctx, tx, pageLocalizationSpec, page.ID, localization,
+	result.localization, err = store.ResolveOGConsistency(ctx, value.ID, localization,
 		func(ctx context.Context, assetID string) (bool, error) {
 			asset, err := s.media.ResolvePageOGAsset(ctx, nil, &assetID)
 			return asset != nil, err
@@ -453,125 +348,86 @@ func (s *Service) loadPageDocument(
 	if err != nil {
 		return fmt.Errorf("select Page OG locale: %w", err)
 	}
-	result.document, err = pagedomain.MaterializeLocalizedPageContentDocument(
-		result.snapshot,
-		result.localization.DisplayedLocale,
-	)
+	result.document, err = contentblock.MaterializeSnapshotPageLocale(result.snapshot, result.localization.DisplayedLocale)
 	if err != nil {
 		return fmt.Errorf("materialize Page content document: %w", err)
 	}
-	result.blockMedia, err = contentblock.LoadMediaReferences(ctx, tx, documentID)
+	result.blockMedia, err = store.MediaReferences(ctx, documentID)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-// toOpenPage maps a visible read to the public Page, overlaying source locale
-// metadata on result.page and resolving its OG asset and localized summary.
-func (s *Service) toOpenPage(ctx context.Context, result *pageReadResult) (*openv1.Page, error) {
-	page := &result.page
+// loadContentDocumentID reads the Page's content document; a missing Page
+// answers not found.
+func loadContentDocumentID(ctx context.Context, store Store, pageID string) (uuid.UUID, error) {
+	root, err := store.DocumentRoot(ctx, pageID)
+	if err != nil {
+		if errors.Is(err, page.ErrPageNotFound) {
+			return uuid.Nil, domainerr.ResourceNotFound("page", pageID)
+		}
+		return uuid.Nil, err
+	}
+	if root.ContentDocumentID == nil || *root.ContentDocumentID == uuid.Nil {
+		return uuid.Nil, domainerr.Precondition("page content document has not been populated")
+	}
+	return *root.ContentDocumentID, nil
+}
+
+func pageDocumentLocales(snapshot contentblock.Snapshot) map[string]struct{} {
+	locales := make(map[string]struct{}, len(snapshot.LocaleOverlays))
+	for _, overlay := range snapshot.LocaleOverlays {
+		locale := strings.TrimSpace(overlay.Locale)
+		if locale != "" {
+			locales[locale] = struct{}{}
+		}
+	}
+	return locales
+}
+
+// localizedView renders the visible read in its displayed locale: the source
+// title and summary, or the displayed locale's, and its OG image.
+func (s *Service) localizedView(ctx context.Context, result *pageReadResult) (Read, error) {
 	localization := result.localization
-	accessPolicy, err := pageaccess.Decode(page.AccessPolicy)
-	if err != nil {
-		return nil, err
+	view := Read{
+		AccessReason: result.accessReason, Visible: true, Page: result.page,
+		Title: derefString(result.sourceMetadata.Title), Summary: result.sourceMetadata.Summary,
+		Document: result.document, Revision: result.snapshot.Document.Revision.String(), Localization: localization,
 	}
-	pagedomain.OverlayPageSourceLocaleMetadataForPublic(page, result.sourceMetadata)
-	documentLayout, err := documentlayout.ToProto(page.DocumentLayout)
-	if err != nil {
-		return nil, err
-	}
-
-	protoPage := &openv1.Page{
-		AccessPolicy:   accessPolicy,
-		Id:             page.ID,
-		Title:          page.Title,
-		ShowTitle:      page.ShowTitle,
-		Status:         toProtoStatus(page.Status),
-		Document:       result.document,
-		Revision:       result.snapshot.Document.Revision.String(),
-		DocumentLayout: documentLayout,
-		CreatedAt:      timestamppb.New(page.CreatedAt),
-		UpdatedAt:      timestamppb.New(page.UpdatedAt),
-	}
-
-	if page.Slug != nil {
-		protoPage.Slug = page.Slug
-	}
-	if page.Summary != nil {
-		protoPage.Summary = page.Summary
-	}
-	protoPage.LocalizationInfo = publiccontent.ToProtoLocalizationInfo(localization)
-
-	if page.PublishedAt != nil {
-		protoPage.PublishedAt = timestamppb.New(*page.PublishedAt)
-	}
-	pageSourceOgAssetID := page.OgAssetID
+	pageSourceOgAssetID := result.page.OgAssetID
 	if localization.OmitSourceOgFallback {
 		pageSourceOgAssetID = nil
 	}
-	protoPage.OgAsset, err = s.media.ResolvePageOGAsset(ctx, pageSourceOgAssetID, localization.OgAssetID)
-	if err != nil {
-		return nil, err
+	var err error
+	if view.OgAsset, err = s.media.ResolvePageOGAsset(ctx, pageSourceOgAssetID, localization.OgAssetID); err != nil {
+		return Read{}, err
 	}
-
-	applyLocalizedPageFields(protoPage, localization)
-	if protoPage.Summary != nil && localization.IsOriginal {
-		resolved, resolveErr := sitevariable.ResolvePublicText(ctx, s.db, *protoPage.Summary)
-		if resolveErr != nil {
-			return nil, resolveErr
+	applyLocalizedPageFields(&view, localization)
+	if view.Summary != nil && localization.IsOriginal {
+		resolved, err := s.text.ResolvePublicText(ctx, *view.Summary)
+		if err != nil {
+			return Read{}, err
 		}
-		protoPage.Summary = &resolved
+		view.Summary = &resolved
 	}
-	return protoPage, nil
+	return view, nil
 }
 
-// hydratePageMedia authorizes the read's content Block media under its owner
-// authorization and sets the featured image delivery on protoPage.
-func (s *Service) hydratePageMedia(
-	ctx context.Context,
-	protoPage *openv1.Page,
-	result pageReadResult,
-) ([]*contentv1.ContentBlockMediaItem, error) {
-	blockMedia, err := s.media.HydrateAuthorizedContentBlockMedia(
-		mediaasset.WithContentDownloadOwnerAuthorization(ctx, result.mediaAuthorization), result.blockMedia,
-	)
-	if err != nil {
-		return nil, err
+func applyLocalizedPageFields(view *Read, localization publiccontent.Selection) {
+	if view == nil || localization.IsOriginal {
+		return
 	}
-	protoPage.FeaturedImageDelivery, err = s.media.ResolvePageFeaturedImageDelivery(ctx, result.page.FeaturedImageFileID)
-	if err != nil {
-		return nil, err
+	view.Title = ""
+	if localization.Title != nil {
+		view.Title = *localization.Title
 	}
-	return blockMedia, nil
+	view.Summary = localization.Summary
 }
 
-func (s *Service) getHomepagePageID(ctx context.Context) (string, error) {
-	var settings model.SiteSettings
-	if err := s.db.WithContext(ctx).
-		Select("homepage_page_id").
-		First(&settings, "id = 1").Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", nil
-		}
-		return "", err
+func derefString(value *string) string {
+	if value == nil {
+		return ""
 	}
-
-	if settings.HomepagePageID == nil {
-		return "", nil
-	}
-	return *settings.HomepagePageID, nil
-}
-
-// toProtoStatus maps a stored Page status to the public API enum. A value
-// the API does not know is UNSPECIFIED.
-func toProtoStatus(status model.PageStatus) openv1.PageStatus {
-	switch status {
-	case model.PageStatusDraft:
-		return openv1.PageStatus_PAGE_STATUS_DRAFT
-	case model.PageStatusPublished:
-		return openv1.PageStatus_PAGE_STATUS_PUBLISHED
-	default:
-		return openv1.PageStatus_PAGE_STATUS_UNSPECIFIED
-	}
+	return *value
 }

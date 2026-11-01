@@ -3,62 +3,103 @@ package page
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
 type pageAction = auth.ResourceAction
 
+// Authorizer is the SpiceDB port of the Page use cases: the fresh checks
+// and relationship writes of the mutation pipeline, a collaboration
+// contributor's authority and the relationship snapshot a deletion removes.
+// *auth.SpiceDBClient implements it.
+type Authorizer interface {
+	mutation.Authorizer
+	CheckActorCan(ctx context.Context, actor policyv1.Actor, can policyv1.Can) (bool, error)
+	SnapshotResourceRelationshipDescriptors(ctx context.Context, plan policyv1.RelationshipSnapshotPlan) ([]auth.RelationshipSnapshot, auth.ZedToken, error)
+}
+
 // PolicyAuthority exposes the Page-owned root and active-principal fence to
 // exact relation policy consumers without duplicating Page authorization.
 type PolicyAuthority struct {
-	checker CollaborationPermissionChecker
+	checker pageaccess.PermissionChecker
 }
 
-func NewPolicyAuthority(checker CollaborationPermissionChecker) *PolicyAuthority {
+func NewPolicyAuthority(checker pageaccess.PermissionChecker) *PolicyAuthority {
 	return &PolicyAuthority{checker: checker}
 }
 
-func (a *PolicyAuthority) RequireLockedView(ctx context.Context, tx *gorm.DB, pageID string) error {
+// RequireLockedView locks the Page root in the joined transaction and
+// requires the principal to view it under its audience.
+func (a *PolicyAuthority) RequireLockedView(ctx context.Context, store Store, pageID string) error {
 	if a == nil {
 		return domainerr.DependencyUnavailable("Page policy access")
 	}
-	if err := requireLockedPagePermission(ctx, tx, a.checker, pageID, policyv1.Page.View); err != nil {
+	if err := requireLockedPagePermission(ctx, store, a.require(ctx, store), pageID, policyv1.Page.View); err != nil {
 		return err
 	}
-	reason, err := pageaccess.EvaluateStored(ctx, tx, a.checker, pageID)
+	policy, err := store.AccessPolicy(ctx, pageID)
 	if err != nil {
 		return err
 	}
-	if reason != commonv1.PageAccessReason_PAGE_ACCESS_REASON_ALLOWED {
+	reason, err := pageaccess.Evaluate(ctx, store, a.checker, pageID, policy)
+	if err != nil {
+		return err
+	}
+	if reason != pageaccess.ReasonAllowed {
 		return domainerr.Denied("you do not have permission to access this page")
 	}
 	return nil
 }
 
-func (a *PolicyAuthority) RequireLockedEdit(ctx context.Context, tx *gorm.DB, pageID string) error {
+// RequireLockedEdit locks the Page root in the joined transaction and
+// requires the principal to edit it.
+func (a *PolicyAuthority) RequireLockedEdit(ctx context.Context, store Store, pageID string) error {
 	if a == nil {
 		return domainerr.DependencyUnavailable("Page policy access")
 	}
-	return requireLockedPagePermission(ctx, tx, a.checker, pageID, policyv1.Page.Edit)
+	return requireLockedPagePermission(ctx, store, a.require(ctx, store), pageID, policyv1.Page.Edit)
+}
+
+func (a *PolicyAuthority) require(ctx context.Context, store Store) mutation.Require {
+	return func(can policyv1.Can) error { return requireFreshCan(ctx, store, a.checker, can) }
+}
+
+// requireFreshCan is the fresh check of mutation.Locked through the Store's
+// identity fence, for a read that authorizes in its own snapshot or a step
+// in another domain's transaction: an active, onboarded principal that
+// holds can, read with full consistency.
+func requireFreshCan(ctx context.Context, store Store, checker authz.AuthorizationDecisionChecker, can policyv1.Can) error {
+	principal := auth.GetUser(ctx)
+	if principal == nil || !principal.Authenticated {
+		return domainerr.AuthenticationRequired()
+	}
+	active, err := store.LockActivePrincipal(ctx, principal)
+	if err != nil {
+		return fmt.Errorf("lock active principal: %w", err)
+	}
+	if !active {
+		if can.Valid() {
+			return domainerr.NoPermission(can.Action().Name(), can.Resource().Type())
+		}
+		return domainerr.NoPermission("access", "resource")
+	}
+	return authz.RequireCan(ctx, checker, can)
 }
 
 // requirePagePermission checks action on the Page outside a transaction. A
 // caller without it finds no Page.
 func requirePagePermission(
 	ctx context.Context,
-	checker CollaborationPermissionChecker,
+	checker authz.AuthorizationDecisionChecker,
 	pageID string,
 	action pageAction,
 ) error {
@@ -86,7 +127,7 @@ func requirePagePermission(
 
 func requirePagePlatformAction(
 	ctx context.Context,
-	checker CollaborationPermissionChecker,
+	checker authz.AuthorizationDecisionChecker,
 	can policyv1.Can,
 ) error {
 	principal := auth.GetUser(ctx)
@@ -107,7 +148,7 @@ func requirePagePlatformAction(
 	return nil
 }
 
-func requirePageCreate(ctx context.Context, checker CollaborationPermissionChecker) error {
+func requirePageCreate(ctx context.Context, checker authz.AuthorizationDecisionChecker) error {
 	can, err := policyv1.Page.Create()
 	if err != nil {
 		return err
@@ -115,7 +156,7 @@ func requirePageCreate(ctx context.Context, checker CollaborationPermissionCheck
 	return requirePagePlatformAction(ctx, checker, can)
 }
 
-func requirePageList(ctx context.Context, checker CollaborationPermissionChecker) error {
+func requirePageList(ctx context.Context, checker authz.AuthorizationDecisionChecker) error {
 	can, err := policyv1.Page.List()
 	if err != nil {
 		return err
@@ -125,13 +166,13 @@ func requirePageList(ctx context.Context, checker CollaborationPermissionChecker
 
 // freshPageCreate is the access of Page creation: a denied fresh create
 // check answers "admin access required".
-func (s *Service) freshPageCreate() mutation.Access {
-	return mutation.Locked(func(ctx context.Context, tx *gorm.DB, _ mutation.Require) error {
+func freshPageCreate() mutation.Access {
+	return mutation.Locked(func(_ context.Context, _ Store, require mutation.Require) error {
 		can, err := policyv1.Page.Create()
 		if err != nil {
 			return err
 		}
-		if err := identitystate.RequireFreshCan(ctx, tx, identitystate.PostgresFence{}, s.permissions, can); err != nil {
+		if err := require(can); err != nil {
 			if mutation.IsDenied(err) {
 				return domainerr.AdminRequired()
 			}
@@ -143,20 +184,15 @@ func (s *Service) freshPageCreate() mutation.Access {
 
 // lockedPage is the access of a Page mutation: the root is locked before
 // the one exact action is checked, and a caller without it finds no Page.
-func (s *Service) lockedPage(pageID string, action pageAction) mutation.Access {
-	return mutation.Locked(func(ctx context.Context, tx *gorm.DB, _ mutation.Require) error {
-		return requireLockedPagePermission(ctx, tx, s.permissions, pageID, action)
+func lockedPage(pageID string, action pageAction) mutation.Access {
+	return mutation.Locked(func(ctx context.Context, store Store, require mutation.Require) error {
+		return requireLockedPagePermission(ctx, store, require, pageID, action)
 	})
 }
 
-func lockPageAuthorizationRoot(ctx context.Context, tx *gorm.DB, pageID string) error {
-	var row struct {
-		ID string `gorm:"column:id"`
-	}
-	if err := tx.WithContext(ctx).Table("page").
-		Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Select("id").Where("id = ?", pageID).Take(&row).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+func lockPageAuthorizationRoot(ctx context.Context, store Store, pageID string) error {
+	if _, err := store.DocumentRoot(ctx, pageID, UpdateLock); err != nil {
+		if errors.Is(err, ErrPageNotFound) {
 			return domainerr.ResourceNotFound("page", pageID)
 		}
 		return err
@@ -166,26 +202,26 @@ func lockPageAuthorizationRoot(ctx context.Context, tx *gorm.DB, pageID string) 
 
 func requireLockedPagePermission(
 	ctx context.Context,
-	tx *gorm.DB,
-	checker CollaborationPermissionChecker,
+	store Store,
+	require mutation.Require,
 	pageID string,
 	action pageAction,
 ) error {
-	if err := lockPageAuthorizationRoot(ctx, tx, pageID); err != nil {
+	if err := lockPageAuthorizationRoot(ctx, store, pageID); err != nil {
 		return err
 	}
-	_, err := authorizePagePermissionAfterRootLock(ctx, tx, checker, pageID, action)
+	_, err := authorizePagePermissionAfterRootLock(ctx, require, pageID, action)
 	return err
 }
 
 // authorizePagePermissionAfterRootLock performs the current-principal fence
-// and one exact SpiceDB decision after the caller has locked the Page root.
-// Keeping this separate from requireLockedPagePermission lets aggregate-owned
-// transactions avoid locking and authorizing the same Page twice.
+// and one exact SpiceDB decision through require after the caller has locked
+// the Page root. Keeping this separate from requireLockedPagePermission lets
+// aggregate-owned transactions avoid locking and authorizing the same Page
+// twice.
 func authorizePagePermissionAfterRootLock(
 	ctx context.Context,
-	tx *gorm.DB,
-	checker CollaborationPermissionChecker,
+	require mutation.Require,
 	pageID string,
 	action pageAction,
 ) (*auth.UserInfo, error) {
@@ -197,7 +233,7 @@ func authorizePagePermissionAfterRootLock(
 	if err != nil {
 		return nil, domainerr.ResourceNotFound("page", pageID).WithCause(err)
 	}
-	if err := identitystate.RequireFreshCan(ctx, tx, identitystate.PostgresFence{}, checker, can); err != nil {
+	if err := require(can); err != nil {
 		if mutation.IsDenied(err) {
 			return nil, domainerr.ResourceNotFound("page", pageID).WithCause(err)
 		}

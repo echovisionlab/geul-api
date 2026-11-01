@@ -86,11 +86,11 @@ type WorkRelatedApplication interface {
 }
 
 type PageRelatedApplication interface {
-	SetPageFeaturedImage(context.Context, pagedomain.SetPageFeaturedImageCommand) (*managev1.SetPageFeaturedImageResponse, error)
-	DeletePageFeaturedImage(context.Context, pagedomain.DeletePageFeaturedImageCommand) (*managev1.OgAssetDeleteResponse, error)
-	ListPageVersions(context.Context, pagedomain.ListPageVersionsQuery) (*managev1.ListPageVersionsResponse, error)
-	RestorePageVersion(context.Context, pagedomain.RestorePageVersionCommand) (*managev1.Page, error)
-	CheckPageSlugAvailable(context.Context, pagedomain.CheckPageSlugAvailableQuery) (*managev1.CheckPageSlugAvailableResponse, error)
+	SetPageFeaturedImage(context.Context, pagedomain.SetPageFeaturedImageCommand) (pagedomain.FeaturedImageResult, error)
+	DeletePageFeaturedImage(context.Context, pagedomain.DeletePageFeaturedImageCommand) (*string, error)
+	ListPageVersions(context.Context, pagedomain.ListPageVersionsQuery) (pagedomain.VersionList, error)
+	RestorePageVersion(context.Context, pagedomain.RestorePageVersionCommand) (pagedomain.Detail, error)
+	CheckPageSlugAvailable(context.Context, pagedomain.CheckPageSlugAvailableQuery) (bool, error)
 }
 
 type ContentRelatedTools struct {
@@ -172,7 +172,7 @@ func (tools *ContentRelatedTools) featuredImage(ctx context.Context, name string
 			if err != nil {
 				return expectedToolError(err)
 			}
-			runID = response.OgGenerationRunId
+			runID = response.OgGenerationRunID
 		default:
 			return executionError(fmt.Errorf("document_type must be post, work, or page"))
 		}
@@ -194,8 +194,10 @@ func (tools *ContentRelatedTools) featuredImage(ctx context.Context, name string
 		}
 		return featuredImageDeleted(input, deleted)
 	case "page":
-		var deleted *managev1.OgAssetDeleteResponse
-		if deleted, err = tools.pages.DeletePageFeaturedImage(ctx, pagedomain.DeletePageFeaturedImageCommand{PageID: input.DocumentID}); err == nil {
+		var runID *string
+		if runID, err = tools.pages.DeletePageFeaturedImage(ctx, pagedomain.DeletePageFeaturedImageCommand{PageID: input.DocumentID}); err == nil {
+			var deleted *managev1.OgAssetDeleteResponse
+			deleted, err = pagedomain.FeaturedImageDeleteMessage(runID)
 			response = connect.NewResponse(deleted)
 		}
 	default:
@@ -490,9 +492,10 @@ func (tools *ContentRelatedTools) listDocumentVersions(ctx context.Context, argu
 			}
 		}
 	case "page":
-		response, err := tools.pages.ListPageVersions(ctx, pagedomain.ListPageVersionsQuery{
-			PageID: input.DocumentID, Page: pagedomain.Page{Limit: pagination.GetLimit(), Offset: pagination.GetOffset()},
+		list, err := tools.pages.ListPageVersions(ctx, pagedomain.ListPageVersionsQuery{
+			PageID: input.DocumentID, Page: pagedomain.Paging{Limit: pagination.GetLimit(), Offset: pagination.GetOffset()},
 		})
+		response, err := renderPage(list, err, pagedomain.VersionListMessage)
 		if err != nil {
 			return expectedToolError(err)
 		}
@@ -562,7 +565,8 @@ func (tools *ContentRelatedTools) restoreDocumentVersion(ctx context.Context, ar
 		}
 		output["title"], output["document_revision"], output["status"] = response.Title, response.Revision, contentStatus(response.Status.String(), "WORK_STATUS_")
 	case "page":
-		response, err := tools.pages.RestorePageVersion(ctx, pagedomain.RestorePageVersionCommand{PageID: input.DocumentID, VersionID: input.VersionID})
+		detail, err := tools.pages.RestorePageVersion(ctx, pagedomain.RestorePageVersionCommand{PageID: input.DocumentID, VersionID: input.VersionID})
+		response, err := renderPage(detail, err, pagedomain.PageMessage)
 		if err != nil {
 			return expectedToolError(err)
 		}
@@ -599,11 +603,11 @@ func (tools *ContentRelatedTools) checkDocumentSlug(ctx context.Context, argumen
 		}
 		available = response.Available
 	case "page":
-		response, err := tools.pages.CheckPageSlugAvailable(ctx, pagedomain.CheckPageSlugAvailableQuery{Slug: input.Slug, ExcludeID: input.ExcludeDocumentID})
+		pageAvailable, err := tools.pages.CheckPageSlugAvailable(ctx, pagedomain.CheckPageSlugAvailableQuery{Slug: input.Slug, ExcludeID: input.ExcludeDocumentID})
 		if err != nil {
 			return expectedToolError(err)
 		}
-		available = response.Available
+		available = pageAvailable
 	default:
 		return executionError(fmt.Errorf("document_type must be post, work, or page"))
 	}

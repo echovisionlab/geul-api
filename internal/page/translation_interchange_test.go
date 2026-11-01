@@ -5,20 +5,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/translation"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 )
 
 func TestPageInterchangeProjectionPreservesStableBlockExplicitEmpty(t *testing.T) {
 	source := pageInterchangeTestDocument("en", "Source title", "Source body")
-	plan, err := BuildTranslationExtractionPlan(&model.TranslationJob{
+	plan, err := BuildTranslationExtractionPlan(TranslationJob{
 		EntityType: "page", EntityID: "page-a", SourceLocale: "en", TargetLocale: "ko",
 	}, source)
 	require.NoError(t, err)
@@ -26,7 +22,7 @@ func TestPageInterchangeProjectionPreservesStableBlockExplicitEmpty(t *testing.T
 	explicitEmpty := ""
 	target := pageInterchangeTestDocument("ko", "", "")
 	targets, err := projectPageInterchangeTargets(
-		plan, pageAIDocumentLocale{Title: &explicitEmpty}, target.PageDocument,
+		plan, Locale{Title: &explicitEmpty}, target.PageDocument,
 		pageInterchangeExplicitEmptyProjector,
 		func(_ protoreflect.Message, _ []string) bool { return false },
 		func(result translation.UnitResult) translation.UnitResult { return result },
@@ -42,41 +38,29 @@ func TestPageInterchangeProjectionPreservesStableBlockExplicitEmpty(t *testing.T
 }
 
 func TestPageInterchangeTargetRevisionBindsLocaleIncarnation(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open("file:"+uuid.NewString()+"?mode=memory&cache=shared"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.Exec(`CREATE TABLE page_translation (
-		entity_id TEXT NOT NULL,
-		locale TEXT NOT NULL,
-		incarnation_id TEXT NOT NULL,
-		updated_at DATETIME NOT NULL,
-		PRIMARY KEY (entity_id, locale)
-	)`).Error)
-
+	store := newMemoryStore()
 	pageID := uuid.NewString()
 	updatedAt := time.Date(2026, time.August, 23, 4, 5, 6, 7000, time.UTC)
-	require.NoError(t, db.Exec(`INSERT INTO page_translation
-		(entity_id, locale, incarnation_id, updated_at) VALUES (?, 'ko', ?, ?)`,
-		pageID, "d7c6d919-a47c-47b4-b75e-a661908a7d32", updatedAt).Error)
-	first, err := pageInterchangeTargetRevision(context.Background(), db, pageID, "ko", "doc-revision", true)
+	store.locales[[2]string{pageID, "ko"}] = Locale{Locale: "ko", IncarnationID: uuid.MustParse("d7c6d919-a47c-47b4-b75e-a661908a7d32"), UpdatedAt: updatedAt}
+	first, err := pageInterchangeTargetRevision(context.Background(), store, pageID, "ko", "doc-revision", true)
 	require.NoError(t, err)
 
-	require.NoError(t, db.Exec(`UPDATE page_translation SET incarnation_id = ? WHERE entity_id = ? AND locale = 'ko'`,
-		"abc942b5-c2eb-4d0b-a480-c82538186124", pageID).Error)
-	second, err := pageInterchangeTargetRevision(context.Background(), db, pageID, "ko", "doc-revision", true)
+	store.locales[[2]string{pageID, "ko"}] = Locale{Locale: "ko", IncarnationID: uuid.MustParse("abc942b5-c2eb-4d0b-a480-c82538186124"), UpdatedAt: updatedAt}
+	second, err := pageInterchangeTargetRevision(context.Background(), store, pageID, "ko", "doc-revision", true)
 	require.NoError(t, err)
 	require.NotEqual(t, first, second)
 }
 
 func TestValidatePageInterchangeMutationUsesCurrentStableUnitIntersection(t *testing.T) {
 	source := pageInterchangeTestDocument("en", "Current title", "Current body")
-	plan, err := BuildTranslationExtractionPlan(&model.TranslationJob{
+	plan, err := BuildTranslationExtractionPlan(TranslationJob{
 		EntityType: "page", EntityID: "page-a", SourceLocale: "en", TargetLocale: "ko",
 	}, source)
 	require.NoError(t, err)
 	kept := plan.Units[0].UnitID
 	valid := TranslationInterchangeMutation{
 		PageID: "page-a", SourceLocale: "en", TargetLocale: "ko",
-		Mode:   managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		Mode:   InterchangePatch,
 		Source: source, Plan: plan,
 		Targets:     map[string]translation.UnitResult{kept: {UnitID: kept, TranslatedText: "Current"}},
 		UnitHandles: []string{kept},
@@ -96,13 +80,13 @@ func TestValidatePageInterchangeMutationUsesCurrentStableUnitIntersection(t *tes
 
 func TestValidatePageInterchangeMutationRejectsLocaleAndIdentityMismatch(t *testing.T) {
 	source := pageInterchangeTestDocument("en", "Source title", "Source body")
-	plan, err := BuildTranslationExtractionPlan(&model.TranslationJob{
+	plan, err := BuildTranslationExtractionPlan(TranslationJob{
 		EntityType: "page", EntityID: "page-a", SourceLocale: "en", TargetLocale: "ko",
 	}, source)
 	require.NoError(t, err)
 	mutation := TranslationInterchangeMutation{
 		PageID: "page-a", SourceLocale: "en", TargetLocale: "en",
-		Mode:   managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		Mode:   InterchangePatch,
 		Source: source, Plan: plan, Targets: map[string]translation.UnitResult{},
 	}
 	setPageInterchangeTestCodec(&mutation)
@@ -134,7 +118,7 @@ func TestPatchPageContainerInterchangePreservesUnselectedImmersiveSibling(t *tes
 	err := patchPageContainerInterchange(
 		candidate, current,
 		[]string{"section:scene:immersive-unit:unit-a:typed:text"},
-		managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_PATCH,
+		InterchangePatch,
 		func(destination, source protoreflect.Message, path []string) error {
 			require.Equal(t, []string{"immersive_scene", "units", "unit-a", "props", "text"}, path)
 			destinationSection := destination.Interface().(*contentv1.PageSectionLocale)
@@ -155,7 +139,7 @@ func TestPatchPageContainerInterchangePreservesUnselectedImmersiveSibling(t *tes
 	err = patchPageContainerInterchange(
 		replacement, current,
 		[]string{"section:scene:immersive-unit:unit-a:typed:text"},
-		managev1.TranslationInterchangeMode_TRANSLATION_INTERCHANGE_MODE_REPLACE,
+		InterchangeReplace,
 		func(destination, source protoreflect.Message, _ []string) error {
 			destinationSection := destination.Interface().(*contentv1.PageSectionLocale)
 			sourceSection := source.Interface().(*contentv1.PageSectionLocale)

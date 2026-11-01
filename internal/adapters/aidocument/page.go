@@ -12,9 +12,7 @@ import (
 
 	core "github.com/echovisionlab/geul-api/internal/aidocument"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	"github.com/echovisionlab/geul-api/internal/documentlayout"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
-	"github.com/echovisionlab/geul-api/internal/model"
 	pagedomain "github.com/echovisionlab/geul-api/internal/page"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
@@ -190,7 +188,7 @@ func (p *pagePort) project(identity core.DocumentIdentity, locale core.Locale, s
 		return core.Document{}, fmt.Errorf("project Page AI document: %w", err)
 	}
 	metadata := core.Node{ID: pageMetadataBlockID, Kind: pageMetadataBlockKind}
-	layout, err := documentlayout.ToProto(state.Page.DocumentLayout)
+	layout, err := pagedomain.DocumentLayoutMessage(state.Page.DocumentLayout)
 	if err != nil {
 		return core.Document{}, fmt.Errorf("project Page document layout: %w", err)
 	}
@@ -282,7 +280,7 @@ func (p *pagePort) compile(ctx context.Context, state pagedomain.AIDocumentState
 	return mutation, nil, nil
 }
 
-func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatch, current model.DocumentLayout, role core.LocaleRole, operation core.Operation, index int) (bool, *core.OperationIssue) {
+func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatch, current pagedomain.DocumentLayout, role core.LocaleRole, operation core.Operation, index int) (bool, *core.OperationIssue) {
 	var target core.FieldTarget
 	var value core.Value
 	switch operation.Kind {
@@ -319,7 +317,7 @@ func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatc
 		if patch.SetDocumentLayout {
 			current = patch.DocumentLayout
 		}
-		currentLayout, err := documentlayout.ToProto(current)
+		currentLayout, err := pagedomain.DocumentLayoutMessage(current)
 		if err != nil {
 			return issue(core.IssueInvalidOperation, "current Page document layout is invalid; set the whole layout")
 		}
@@ -353,7 +351,7 @@ func compilePageDocumentLayoutOperation(patch *pagedomain.AIDocumentMetadataPatc
 	if len(target.Path) == 0 && !hideTableOfContentsSet {
 		return issue(core.IssueInvalidOperation, "Page document layout replacement requires hideTableOfContents")
 	}
-	layout, err := documentlayout.FromProto(next)
+	layout, err := pagedomain.DocumentLayoutFromMessage(next)
 	if err != nil {
 		return issue(core.IssueInvalidOperation, err.Error())
 	}

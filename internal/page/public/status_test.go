@@ -3,7 +3,7 @@ package public
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
+	"github.com/echovisionlab/geul-api/internal/page"
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 )
 
@@ -16,11 +16,11 @@ func TestPublicPageStatusMappingCoversEveryAPIStatus(t *testing.T) {
 		if status == openv1.PageStatus_PAGE_STATUS_UNSPECIFIED {
 			continue
 		}
-		if got := toProtoStatus(model.PageStatus(name)); got != status {
+		if got := toProtoStatus(page.Status(name)); got != status {
 			t.Fatalf("stored %s maps to %s", name, got)
 		}
 	}
-	if got := toProtoStatus(model.PageStatus("PAGE_STATUS_ARCHIVED")); got != openv1.PageStatus_PAGE_STATUS_UNSPECIFIED {
+	if got := toProtoStatus(page.Status("PAGE_STATUS_ARCHIVED")); got != openv1.PageStatus_PAGE_STATUS_UNSPECIFIED {
 		t.Fatalf("unknown stored status mapped to %s", got)
 	}
 }

@@ -27,6 +27,7 @@ import (
 	mapthemepublic "github.com/echovisionlab/geul-api/internal/maptheme/public"
 	memberpublic "github.com/echovisionlab/geul-api/internal/member/public"
 	pagepublic "github.com/echovisionlab/geul-api/internal/page/public"
+	pagepublicpostgres "github.com/echovisionlab/geul-api/internal/page/public/postgres"
 	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
 	programeventpublic "github.com/echovisionlab/geul-api/internal/programevent/public"
 	publicreferencecatalog "github.com/echovisionlab/geul-api/internal/referencecatalog/public"
@@ -90,9 +91,13 @@ func (r publicServiceRegistration) register() error {
 	slog.Info("Registered public service", "path", publicFilePath)
 
 	pagePublicAccess := pageruntime.NewPublicAccess(spicedbClient, postShareLinks)
+	publicPageUnits, err := pagepublicpostgres.NewUnits(db, contentBlockStore, pagePublicAccess)
+	if err != nil {
+		return err
+	}
 	publicPageService, err := pagepublic.NewService(pagepublic.Deps{
-		DB: db, DraftAccess: pagePublicAccess, ShareLinks: pagePublicAccess,
-		Media: pageruntime.NewPublicMedia(publicFileService), Blocks: contentBlockStore, Permissions: spicedbClient,
+		Units: publicPageUnits, DraftAccess: pagePublicAccess, Media: pageruntime.NewPublicMedia(publicFileService),
+		Text: pagepublicpostgres.NewPublicText(db), Permissions: spicedbClient,
 	})
 	if err != nil {
 		return err

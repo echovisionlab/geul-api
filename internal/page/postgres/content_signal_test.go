@@ -1,4 +1,4 @@
-package page
+package pagepostgres
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/contentsignal"
 	"github.com/echovisionlab/geul-api/internal/mq"
+	"github.com/echovisionlab/geul-api/internal/page"
 )
 
 type failingPageSignalPublisher struct{ err error }
@@ -47,9 +48,7 @@ func mockPageSignalDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 func TestPageContentUpdatedEventsSatisfySignalContract(t *testing.T) {
 	targetRevision := "target-revision"
 	events := map[string]*managev1.ContentUpdatedEvent{
-		"manage update": buildManagePageContentUpdatedEvent(UpdatePageCommand{
-			ID: "page-1", Slug: proto.String("about"),
-		}),
+		"manage update": contentUpdatedEvent(page.ContentUpdate{PageID: "page-1", Kind: page.SettingsUpdate, Fields: []string{"slug"}}),
 		"lifecycle": buildManageStateTransitionContentUpdatedEvent(
 			"page-1", []string{"state.status"},
 		),
@@ -80,12 +79,7 @@ func TestPageContentUpdatedEventsSatisfySignalContract(t *testing.T) {
 			Locale:           "ko",
 			LocaleDeleted:    true,
 		}),
-		"document layout": buildContentUpdatedEvent(
-			managev1.ContentEntityType_CONTENT_ENTITY_TYPE_PAGE, "page-1",
-			managev1.ContentUpdateSource_CONTENT_UPDATE_SOURCE_COLLAB,
-			buildContentUpdatedFields([]string{"documentLayout"}, pageContentUpdatedFieldSpecs),
-			false, "revision", nil, nil,
-		),
+		"document layout": contentUpdatedEvent(page.ContentUpdate{PageID: "page-1", Kind: page.LayoutUpdate, Locale: page.LocaleUpdateChange{DocumentRevision: "revision"}}),
 	}
 	for name, event := range events {
 		require.NotNil(t, event, name)
@@ -99,11 +93,9 @@ func TestPageContentUpdatedEventsSatisfySignalContract(t *testing.T) {
 
 func TestPublishPageContentUpdatedRequiresOwningTransaction(t *testing.T) {
 	db, mock := mockPageSignalDB(t)
-	event := buildManageStateTransitionContentUpdatedEvent(
-		"page-1", []string{"state.status"},
-	)
+	update := page.ContentUpdate{PageID: "page-1", Kind: page.StateUpdate, Fields: []string{"state.status"}}
 
-	require.Error(t, (&Service{signals: &mq.Publisher{}}).publish(context.Background(), db, event))
+	require.Error(t, NewStore(db, Ports{Signals: &mq.Publisher{}}).PublishContentUpdate(context.Background(), update))
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT document.revision FROM page AS owner").WithArgs("page-1", 1).WillReturnRows(sqlmock.NewRows([]string{"revision"}).AddRow("revision"))
@@ -113,7 +105,7 @@ func TestPublishPageContentUpdatedRequiresOwningTransaction(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
-		return (&Service{signals: &mq.Publisher{}}).publish(context.Background(), tx, event)
+		return NewStore(tx, Ports{Signals: &mq.Publisher{}}).PublishContentUpdate(context.Background(), update)
 	}))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
@@ -121,15 +113,13 @@ func TestPublishPageContentUpdatedRequiresOwningTransaction(t *testing.T) {
 func TestPublishPageContentUpdatedFailureRollsBackMutation(t *testing.T) {
 	db, mock := mockPageSignalDB(t)
 	failure := errors.New("notify failed")
-	event := buildManageStateTransitionContentUpdatedEvent(
-		"page-1", []string{"state.status"},
-	)
+	update := page.ContentUpdate{PageID: "page-1", Kind: page.StateUpdate, Fields: []string{"state.status"}}
 
 	mock.ExpectBegin()
 	mock.ExpectQuery("SELECT document.revision FROM page AS owner").WithArgs("page-1", 1).WillReturnRows(sqlmock.NewRows([]string{"revision"}).AddRow("revision"))
 	mock.ExpectRollback()
 	err := db.Transaction(func(tx *gorm.DB) error {
-		return (&Service{signals: failingPageSignalPublisher{err: failure}}).publish(context.Background(), tx, event)
+		return NewStore(tx, Ports{Signals: failingPageSignalPublisher{err: failure}}).PublishContentUpdate(context.Background(), update)
 	})
 	require.ErrorIs(t, err, failure)
 	require.NoError(t, mock.ExpectationsWereMet())

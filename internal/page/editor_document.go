@@ -8,7 +8,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 type GetPageEditorDocumentQuery struct {
@@ -16,33 +15,37 @@ type GetPageEditorDocumentQuery struct {
 	Locale string
 }
 
+// EditorDocument is the editor document of the caller's session: its room
+// document and the title and summary of the room locale, or of the source
+// locale while the room locale has none.
+type EditorDocument struct {
+	Room    RoomDocument
+	Title   *string
+	Summary *string
+}
+
 // GetPageEditorDocument reads the editor document of the caller's session
 // through the collaboration room bootstrap, which authorizes and
 // materializes it.
-func (s *Service) GetPageEditorDocument(ctx context.Context, query GetPageEditorDocumentQuery) (_ *managev1.GetPageEditorDocumentResponse, returnErr error) {
+func (s *Service) GetPageEditorDocument(ctx context.Context, query GetPageEditorDocumentQuery) (_ EditorDocument, returnErr error) {
 	defer failurecause.Annotate(&returnErr, slog.String("page_id", query.PageID))
 
 	user := auth.GetUser(ctx)
 	if user == nil || !user.Authenticated || user.SessionID == "" {
-		return nil, domainerr.AuthenticationRequired()
+		return EditorDocument{}, domainerr.AuthenticationRequired()
 	}
-	loaded, err := s.LoadPageBlockDocument(ctx, LoadPageBlockDocumentQuery{
+	room, err := s.LoadPageBlockDocument(ctx, LoadPageBlockDocumentQuery{
 		PageID: query.PageID, Locale: query.Locale, SessionID: string(user.SessionID),
 	})
 	if err != nil {
 		if mutation.IsDenied(err) {
-			return nil, domainerr.ResourceNotFound("page", query.PageID)
+			return EditorDocument{}, domainerr.ResourceNotFound("page", query.PageID)
 		}
-		return nil, err
+		return EditorDocument{}, err
 	}
-	metadata := loaded.LocaleMetadata
+	metadata := room.LocaleMetadata
 	if metadata == nil {
-		metadata = loaded.SourceMetadata
+		metadata = &room.SourceMetadata
 	}
-	return &managev1.GetPageEditorDocumentResponse{
-		Document: loaded.Document, DocumentRevision: loaded.DocumentRevision, Locale: loaded.Locale,
-		LocaleExists: loaded.LocaleExists, TargetRevision: loaded.TargetRevision, SourceLocale: loaded.SourceMetadata.GetLocale(),
-		BlockMedia: loaded.BlockMedia, Editable: true, DocumentLayout: loaded.DocumentLayout,
-		Title: metadata.Title, Summary: metadata.Summary,
-	}, nil
+	return EditorDocument{Room: room, Title: metadata.Title, Summary: metadata.Summary}, nil
 }

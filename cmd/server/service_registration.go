@@ -76,6 +76,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/og"
 	"github.com/echovisionlab/geul-api/internal/page"
+	pagepostgres "github.com/echovisionlab/geul-api/internal/page/postgres"
 	"github.com/echovisionlab/geul-api/internal/post"
 	"github.com/echovisionlab/geul-api/internal/programevent"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
@@ -539,11 +540,17 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	mux.Handle(tagPath, tagHandler)
 	slog.Info("Registered service", "path", tagPath)
 
-	pageService, err := page.NewService(page.Deps{
-		DB: db, SpiceDB: spicedbClient, Runtime: pageRuntime, Files: pageruntime.NewFiles(fileService),
-		Signals: servicePublisher, ContentBlocks: contentBlockStore, MediaHydrator: fileService,
+	pageUnits, err := pagepostgres.NewUnits(db, pagepostgres.Ports{
+		ContentBlocks: contentBlockStore, Signals: servicePublisher, Runtime: pageRuntime, MediaHydrator: fileService,
 		MenuTargets: menuadapter.NewTargetLifecycle(telemetryWriter), Members: memberadapter.PageMembers{},
-		ShareLinks: sharelinkadapter.PageLinks{}, Audit: telemetryWriter,
+		ShareLinks: sharelinkadapter.PageLinks{},
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize Page store: %w", err)
+	}
+	pageService, err := page.NewService(page.Deps{
+		Units: pageUnits, SpiceDB: spicedbClient, Fence: identitystate.PostgresFence{}, Audit: telemetryWriter,
+		Files: pageruntime.NewFiles(fileService),
 	})
 	if err != nil {
 		return registeredServices{}, fmt.Errorf("initialize Page service: %w", err)
