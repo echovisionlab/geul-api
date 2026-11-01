@@ -175,20 +175,23 @@ func TestEmailTemplateTargetsKeepTheSharedRevisionAcrossWritersIntegration(t *te
 	require.Equal(t, []string{"custom_code", "recipient_name"}, []string{variables.Variables[0].Name, variables.Variables[1].Name})
 
 	store := emailauthoringpostgres.NewStore(db, e.ports)
-	absent := false
-	interchangeSubject := "대상 제목"
-	createdTarget, err := emailauthoring.ApplyTemplateTranslationInterchange(collab, store, created.ID, "en", emailcontent.InterchangeMutation{
-		TargetLocale: "ko", ExpectedDocumentRevision: sourceWrite.DocumentRevision, ExpectedPresence: absent,
-		Subject: &interchangeSubject, ContributorMemberID: contributorID, Now: time.Now().UTC(),
-	})
+	createdTarget, err := e.internal.TemplateAIDocuments().ExecuteAIDocumentMutation(e.ctx, created.ID, "ko", emailcontent.AIDocumentExecutionApply,
+		func(state emailcontent.AIDocumentState) (emailcontent.AIDocumentMutation, error) {
+			return emailcontent.AIDocumentMutation{
+				Reference: state.Reference, Locale: state.Locale, ExpectedDocumentRevision: state.DocumentRevision,
+				ExpectedSource: state.SourceLocale, ExpectedPresence: state.LocaleExists,
+				ContributorMember: uuid.MustParse(state.ViewerMemberID), CreateTranslation: true,
+			}, nil
+		})
 	require.NoError(t, err)
 	require.True(t, createdTarget.Changed)
+	require.Equal(t, sourceWrite.DocumentRevision, createdTarget.DocumentRevision)
 	source, err := emailauthoring.LoadTemplateTranslationSourceDocument(collab, store, created.ID)
 	require.NoError(t, err)
 	require.Equal(t, sourceWrite.DocumentRevision, source.ContentDocumentRevision)
 	blockID := source.ContentBlockDocument.GetLocaleOverlay().GetBlocks()[0].GetBlockId()
 
-	targetRevision := createdTarget.Revision
+	targetRevision := *createdTarget.TargetRevision
 	targetWrite, err := e.internal.ApplyTemplateBlockBatch(collab, emailauthoring.ApplyTemplateBlockBatchCommand{
 		TemplateID: created.ID, Locale: "ko", ExpectedTargetRevision: &targetRevision,
 		Batch: paragraphBatch(uuid.MustParse(sourceWrite.DocumentRevision), "ko", blockID, "번역 본문", false, contributorID),
