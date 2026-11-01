@@ -22,7 +22,8 @@ type Harness struct {
 	// SeedDocument stores an empty Post content document and returns its
 	// ID.
 	SeedDocument func(t *testing.T) string
-	// SeedMember stores a Member without an Identity and returns its ID.
+	// SeedMember stores a Member without an Identity and returns its ID;
+	// nickname is trimmed and not empty.
 	SeedMember func(t *testing.T, nickname string) string
 	// SeedTaxonomy stores a Category or a Tag and returns its ID.
 	SeedTaxonomy func(t *testing.T, taxonomy post.Taxonomy) string
@@ -287,9 +288,10 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 	"a due scheduled post is published once and a later one waits": func(t *testing.T, h Harness) {
 		due, later := insert(t, h, "Due", nil), insert(t, h, "Later", nil)
 		past, future := at(time.Now().Add(-time.Hour)), at(time.Now().Add(time.Hour))
+		zone := "UTC"
 		transact(t, h, func(ctx context.Context, store post.Store) error {
-			require.NoError(t, store.UpdateLifecycle(ctx, due.ID, post.LifecycleChange{Status: post.StatusScheduled, UpdatedAt: past, ScheduledAt: &past}))
-			return store.UpdateLifecycle(ctx, later.ID, post.LifecycleChange{Status: post.StatusScheduled, UpdatedAt: past, ScheduledAt: &future})
+			require.NoError(t, store.UpdateLifecycle(ctx, due.ID, post.LifecycleChange{Status: post.StatusScheduled, UpdatedAt: past, ScheduledAt: &past, ScheduledTimeZone: &zone}))
+			return store.UpdateLifecycle(ctx, later.ID, post.LifecycleChange{Status: post.StatusScheduled, UpdatedAt: past, ScheduledAt: &future, ScheduledTimeZone: &zone})
 		})
 		transact(t, h, func(ctx context.Context, store post.Store) error {
 			now, err := store.DatabaseNow(ctx)
@@ -445,7 +447,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 	},
 	"participants are stored per role and listed Authors first, oldest first": func(t *testing.T, h Harness) {
 		value := insert(t, h, "Participants", nil)
-		author, coauthor, collaborator := h.SeedMember(t, "Author"), h.SeedMember(t, " "), h.SeedMember(t, "Collaborator")
+		author, coauthor, collaborator := h.SeedMember(t, "Author"), h.SeedMember(t, "Coauthor"), h.SeedMember(t, "Collaborator")
 		base := at(time.Now())
 		transact(t, h, func(ctx context.Context, store post.Store) error {
 			require.NoError(t, store.InsertParticipant(ctx, value.ID, coauthor, post.RoleAuthor, base.Add(time.Second)))
@@ -486,7 +488,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 			require.Zero(t, deleted)
 			names, err := store.MemberNicknames(ctx, []string{author, coauthor, uuid.NewString()})
 			require.NoError(t, err)
-			require.Equal(t, map[string]string{author: "Author"}, names, "a blank nickname is no name")
+			require.Equal(t, map[string]string{author: "Author", coauthor: "Coauthor"}, names, "an unknown Member has no name")
 			_, err = store.LockLinkedMemberIdentity(ctx, author)
 			require.Error(t, err, "a Member without an Identity has no authorization target")
 			return nil
@@ -579,7 +581,7 @@ var storeContract = map[string]func(t *testing.T, h Harness){
 	"versions are numbered per post and listed newest first": func(t *testing.T, h Harness) {
 		value := insert(t, h, "Versions", nil)
 		memberID := h.SeedMember(t, "Contributor")
-		snapshot := json.RawMessage(`{"blocks":[]}`)
+		snapshot := json.RawMessage(`{"schemaVersion":1,"sourceLocale":"en","title":"Versions","summary":null,"document":{}}`)
 		var first, second post.StoredVersion
 		transact(t, h, func(ctx context.Context, store post.Store) error {
 			first = post.StoredVersion{PostID: value.ID, Version: 1, ContentSnapshot: snapshot, ContributorMemberIDs: []string{memberID}}

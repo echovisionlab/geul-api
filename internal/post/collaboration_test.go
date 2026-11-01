@@ -163,9 +163,10 @@ func TestLoadPostBlockDocumentNeedsAnEditingSession(t *testing.T) {
 	_, err = h.service.LoadPostBlockDocument(t.Context(), post.LoadPostBlockDocumentQuery{PostID: value.ID, Locale: "en", SessionID: text(uuid.NewString())})
 	require.Error(t, err, "an unknown session has no principal")
 	_, err = h.service.LoadPostBlockDocument(t.Context(), post.LoadPostBlockDocumentQuery{PostID: value.ID, Locale: "en", SessionID: &sessionID})
+	requireCode(t, err, connect.CodePermissionDenied, "no permission to edit this post")
 	checker.For(reader.identityID).Allow(policyv1.Post.View(value.ID))
 	_, err = h.service.LoadPostBlockDocument(t.Context(), post.LoadPostBlockDocumentQuery{PostID: value.ID, Locale: "en", SessionID: &sessionID})
-	requireCode(t, err, connect.CodePermissionDenied, "no permission to edit this post")
+	requireCode(t, err, connect.CodePermissionDenied, "no permission to edit this post", "viewing is not enough to open the room")
 
 	checker.For(reader.identityID).Allow(policyv1.Post.Edit(value.ID))
 	room, err := h.service.LoadPostBlockDocument(t.Context(), post.LoadPostBlockDocumentQuery{PostID: value.ID, Locale: "en", SessionID: &sessionID})

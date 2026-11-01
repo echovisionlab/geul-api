@@ -55,7 +55,7 @@ func TestPostgresStoreKeepsThePostStoreContractIntegration(t *testing.T) {
 			},
 			SeedMapPlace: func(t *testing.T) string {
 				id := uuid.NewString()
-				insert(t, `INSERT INTO map_place (id) VALUES (?)`, id)
+				insert(t, `INSERT INTO map_place (id, name, address, lat, lng) VALUES (?, 'Contract place', 'Contract address', 0, 0)`, id)
 				return id
 			},
 		}
