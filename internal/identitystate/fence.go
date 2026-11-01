@@ -211,12 +211,23 @@ func RequireFreshCan(
 	}
 	if !active {
 		if can.Valid() {
-			return errs.NoPermission(can.Action().Name(), can.Resource().Type())
+			return inactivePrincipalError{errs.NoPermission(can.Action().Name(), can.Resource().Type())}
 		}
-		return errs.NoPermission("access", "resource")
+		return inactivePrincipalError{errs.NoPermission("access", "resource")}
 	}
 	return authz.RequireCan(ctx, spiceDB, can)
 }
+
+// ErrInactivePrincipal marks RequireFreshCan's denial of a principal that is
+// no longer active, for a domain that answers that principal as if its target
+// did not exist instead of denying the action. The denial itself is unchanged.
+var ErrInactivePrincipal = errors.New("principal is not active")
+
+type inactivePrincipalError struct{ denial *connect.Error }
+
+func (err inactivePrincipalError) Error() string    { return err.denial.Error() }
+func (err inactivePrincipalError) Unwrap() error    { return err.denial }
+func (inactivePrincipalError) Is(target error) bool { return target == ErrInactivePrincipal }
 
 // RequireFreshAdminCan preserves the AdminRequired denial contract for an
 // admin-only domain mutation while using the common exact-Can lifecycle seam.
