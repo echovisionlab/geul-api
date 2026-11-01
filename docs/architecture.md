@@ -900,6 +900,11 @@ it.
   `connect_handler_media.go` translates the owner-facing protobuf surface,
   including unknown fields and partial in-place hydration on a signing error.
   `mediaauth.Reference` carries the exact expiry enforced by the signed token.
+- **A Store shared by services in one domain.** When importing the service
+  would create a cycle, put shared value types and Store contracts in a leaf
+  package within that domain (`filemedia/domain`). The service may re-export
+  those plain types; its SQL adapter imports the contracts. Persistence for
+  a separate application stays beside it (`filemedia/application/postgres`).
 - **Admission bookkeeping.** A write that no principal authorizes and no
   audit record describes, such as the auth code issuance reservation of an
   anonymous request, is not a domain mutation. It calls

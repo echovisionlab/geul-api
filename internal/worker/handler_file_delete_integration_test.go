@@ -14,7 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filemediaapplication "github.com/echovisionlab/geul-api/internal/filemedia/application"
-	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+	filemediaapplicationpostgres "github.com/echovisionlab/geul-api/internal/filemedia/application/postgres"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -125,7 +125,7 @@ func TestFileDeleteFinalizerUsesGlobalAuthorizationMutationFenceIntegration(t *t
 	})
 
 	authorizationCalled := make(chan struct{}, 1)
-	deletion := filemediaapplication.NewDeletion(filemediapostgres.NewDeletionUnits(db), signalingFileAuthorizationDeletion{
+	deletion := filemediaapplication.NewDeletion(filemediaapplicationpostgres.NewDeletionUnits(db), signalingFileAuthorizationDeletion{
 		called: authorizationCalled,
 	})
 	finalized := make(chan error, 1)

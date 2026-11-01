@@ -256,5 +256,9 @@ func (h *InternalConnectHandler) AttachTrackOriginalAudio(ctx context.Context, r
 }
 
 func (h *LinkPreviewConnectHandler) GetLinkPreview(ctx context.Context, req *connect.Request[managev1.GetLinkPreviewRequest]) (*connect.Response[managev1.GetLinkPreviewResponse], error) {
-	return respond(h.previews.GetLinkPreview(ctx, GetLinkPreviewQuery{URL: req.Msg.GetUrl()}))
+	result, err := h.previews.GetLinkPreview(ctx, GetLinkPreviewQuery{URL: req.Msg.GetUrl()})
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return connect.NewResponse(&managev1.GetLinkPreviewResponse{ResolvedUrl: result.ResolvedURL, Title: result.Title, Description: result.Description, SiteName: result.SiteName, ImageSource: result.ImageSource, IconSource: result.IconSource}), nil
 }

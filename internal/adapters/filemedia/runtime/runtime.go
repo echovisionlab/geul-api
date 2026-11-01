@@ -18,7 +18,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	filemediaapplication "github.com/echovisionlab/geul-api/internal/filemedia/application"
-	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+	filemediaapplicationpostgres "github.com/echovisionlab/geul-api/internal/filemedia/application/postgres"
 	transcodeapplication "github.com/echovisionlab/geul-api/internal/transcode/application"
 	applicationpostgres "github.com/echovisionlab/geul-api/internal/transcode/application/postgres"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -71,7 +71,7 @@ func (r *Runtime) HandleFileDelete(
 	if err := filemediaapplication.ValidateDeleteEvent(event); err != nil {
 		return fmt.Errorf("%w: %v", filemediaapplication.ErrInvalidFileDeleteTarget, err)
 	}
-	deletion := filemediaapplication.NewDeletion(filemediapostgres.NewDeletionUnits(r.db), r.fileAuth)
+	deletion := filemediaapplication.NewDeletion(filemediaapplicationpostgres.NewDeletionUnits(r.db), r.fileAuth)
 	target := filemediaapplication.DeletionTargetFromProto(event)
 	exists, err := deletion.ValidatePending(ctx, target)
 	if err != nil || !exists {

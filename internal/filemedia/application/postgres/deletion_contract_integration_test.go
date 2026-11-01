@@ -1,6 +1,6 @@
 //go:build integration
 
-package filemediapostgres
+package applicationpostgres
 
 import (
 	"crypto/sha256"

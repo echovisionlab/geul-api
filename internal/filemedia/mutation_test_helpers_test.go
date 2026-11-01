@@ -3,6 +3,8 @@ package filemedia
 import (
 	"context"
 
+	filemediapostgres "github.com/echovisionlab/geul-api/internal/filemedia/postgres"
+
 	"github.com/google/uuid"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -16,7 +18,7 @@ import (
 // runner NewService builds from its database, SpiceDB client and audit
 // appender. An unset appender records in memory.
 func withTestMutations(service *Service) *Service {
-	if service.mutations != nil || service.db == nil {
+	if service.db == nil {
 		return service
 	}
 	audit := service.auditWriter
@@ -32,7 +34,18 @@ func withTestMutations(service *Service) *Service {
 	if err != nil {
 		panic(err)
 	}
-	service.mutations = runner
+	if service.mutations == nil {
+		service.mutations = runner
+	}
+	if service.units == nil {
+		service.units = filemediapostgres.NewUnits(service.db, filemediapostgres.Ports{})
+	}
+	if service.storeMutations == nil {
+		service.storeMutations, err = mutation.NewStoreRunner(service.units, spiceDB, identitystate.PostgresFence{}, audit)
+		if err != nil {
+			panic(err)
+		}
+	}
 	return service
 }
 
