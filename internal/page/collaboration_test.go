@@ -228,6 +228,24 @@ func TestUpdatePageDocumentMetadataSavesTheLayoutFromTheSourceRoom(t *testing.T)
 	requireCode(t, err, connect.CodeFailedPrecondition, "")
 }
 
+func TestUpdatePageDocumentMetadataAttributesACollabSaveToItsContributor(t *testing.T) {
+	h := newHarness(t)
+	stored := h.seedPage("Source")
+	source := openRoom(t, h, stored, "en")
+	layout := page.DocumentLayout{ContentHeight: page.ContentHeightViewport, PageChrome: page.PlacementPinned, Footer: page.PlacementFlow}
+
+	saved, err := h.service.UpdatePageDocumentMetadata(collabContext(t), page.UpdatePageDocumentMetadataCommand{
+		PageID: stored.ID, Locale: "en", ExpectedRevision: source.document.DocumentRevision,
+		DocumentLayout: &layout, ContributorMemberIDs: []string{source.editor.memberID},
+	})
+
+	require.NoError(t, err)
+	require.True(t, saved.Changed)
+	require.Len(t, h.audit.Records(), 1)
+	require.Equal(t, source.editor.memberID, h.audit.Records()[0].MemberID)
+	require.Equal(t, []string{"document_layout"}, h.audit.Records()[0].ChangedFields)
+}
+
 func TestCreatePageVersionCheckpointStoresOnlyANewSourceDocument(t *testing.T) {
 	h := newHarness(t)
 	stored := h.seedPage("Source")
@@ -280,7 +298,9 @@ func collabContext(t *testing.T) context.Context {
 // race to a committed writer.
 type serializationFailure struct{}
 
-func (serializationFailure) Error() string    { return "could not serialize access due to concurrent delete" }
+func (serializationFailure) Error() string {
+	return "could not serialize access due to concurrent delete"
+}
 func (serializationFailure) SQLState() string { return "40001" }
 
 func TestLoadPageBlockDocumentRetriesASnapshotThatLostARace(t *testing.T) {

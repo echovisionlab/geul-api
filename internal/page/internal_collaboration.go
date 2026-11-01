@@ -654,6 +654,10 @@ func (s *Service) UpdatePageDocumentMetadata(ctx context.Context, command Update
 	if err != nil {
 		return LayoutSave{}, err
 	}
+	contributor, err := contentblock.MutationContributor(command.ContributorMemberIDs)
+	if err != nil {
+		return LayoutSave{}, err
+	}
 
 	now := time.Now().UTC()
 	var domain contentblock.DomainContext
@@ -674,7 +678,7 @@ func (s *Service) UpdatePageDocumentMetadata(ctx context.Context, command Update
 			if !advance.Changed {
 				return mutation.Unchanged()
 			}
-			return pageLayoutAudit(command.PageID)
+			return collabLayoutAudit(contributor, command.PageID)
 		},
 		Outbox: func(ctx context.Context, store Store, advance contentblock.AdvanceResult) error {
 			if !advance.Changed {
@@ -694,11 +698,22 @@ func (s *Service) UpdatePageDocumentMetadata(ctx context.Context, command Update
 	}, nil
 }
 
-// pageLayoutAudit records a changed Page document layout.
+// pageLayoutAudit records a changed Page document layout for the request's
+// member.
 func pageLayoutAudit(pageID string) mutation.Audit {
-	return mutation.RequestAudit(sharedtelemetry.AuditPageUpdated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+	return mutation.RequestAudit(sharedtelemetry.AuditPageUpdated, pageLayoutRecord(pageID))
+}
+
+// collabLayoutAudit attributes a changed Page document layout to the room's
+// contributor, because editor-collab saves it as itself.
+func collabLayoutAudit(memberID, pageID string) mutation.Audit {
+	return mutation.MemberAudit(memberID, sharedtelemetry.AuditPageUpdated, pageLayoutRecord(pageID))
+}
+
+func pageLayoutRecord(pageID string) func(sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
+	return func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 		return sharedtelemetry.NewPageConfigurationAuditRecord(metadata, pageID, []string{"document_layout"})
-	})
+	}
 }
 
 // pageCheckpoint is the outcome of a version checkpoint; created is nil when
