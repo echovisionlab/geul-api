@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -20,18 +19,24 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *Service) RenameFile(ctx context.Context, req *connect.Request[managev1.RenameFileRequest]) (_ *connect.Response[managev1.RenameFileResponse], resultErr error) {
-	defer failurecause.AnnotatePrivate(&resultErr, req.Msg.GetFileName())
+// RenameFileCommand renames a File without changing its extension.
+type RenameFileCommand struct {
+	FileID   string
+	FileName string
+}
+
+func (s *Service) RenameFile(ctx context.Context, command RenameFileCommand) (_ *managev1.FileManagerFile, resultErr error) {
+	defer failurecause.AnnotatePrivate(&resultErr, command.FileName)
 
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}
-	fileID, err := normalizeFileManagerUUID(req.Msg.FileId, "file_id", false)
+	fileID, err := normalizeFileManagerUUID(command.FileID, "file_id", false)
 	if err != nil {
 		return nil, err
 	}
-	name, err := normalizeFileManagerName(req.Msg.FileName, "file_name")
+	name, err := normalizeFileManagerName(command.FileName, "file_name")
 	if err != nil {
 		return nil, err
 	}
@@ -68,19 +73,26 @@ func (s *Service) RenameFile(ctx context.Context, req *connect.Request[managev1.
 	}); err != nil {
 		return nil, err
 	}
-	response, err := s.GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: *fileID}))
+	response, err := s.GetFile(ctx, GetFileQuery{FileID: *fileID})
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.RenameFileResponse{File: response.Msg.File}), nil
+	return response.File, nil
 }
 
-func (s *Service) MoveFiles(ctx context.Context, req *connect.Request[managev1.MoveFilesRequest]) (*connect.Response[managev1.MoveFilesResponse], error) {
+// MoveFilesCommand moves Files into FolderID, or to the root when FolderID is
+// empty.
+type MoveFilesCommand struct {
+	FileIDs  []string
+	FolderID string
+}
+
+func (s *Service) MoveFiles(ctx context.Context, command MoveFilesCommand) ([]*managev1.FileManagerFile, error) {
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}
-	fileIDs, err := uniqueUUIDs(req.Msg.FileIds, "file_ids")
+	fileIDs, err := uniqueUUIDs(command.FileIDs, "file_ids")
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +102,7 @@ func (s *Service) MoveFiles(ctx context.Context, req *connect.Request[managev1.M
 	if len(fileIDs) > fileManagerMaxMutationSize {
 		return nil, errs.InvalidArgument("file_ids", "at most 100 files are allowed")
 	}
-	folderID, err := normalizeFileManagerUUID(req.Msg.GetFolderId(), "folder_id", true)
+	folderID, err := normalizeFileManagerUUID(command.FolderID, "folder_id", true)
 	if err != nil {
 		return nil, err
 	}
@@ -132,13 +144,9 @@ func (s *Service) MoveFiles(ctx context.Context, req *connect.Request[managev1.M
 		}
 		return nil
 	}); err != nil {
-		return nil, errs.Wrap(err)
-	}
-	files, err := s.loadFileManagerFilesByIDs(ctx, fileIDs)
-	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.MoveFilesResponse{Files: files}), nil
+	return s.loadFileManagerFilesByIDs(ctx, fileIDs)
 }
 
 func (s *Service) loadFileManagerFilesByIDs(ctx context.Context, fileIDs []string) ([]*managev1.FileManagerFile, error) {

@@ -66,7 +66,7 @@ func prepareDirectEditorImageMultipart(
 	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
 	body, err := os.ReadFile(testutil.RepositoryTestImageJPEG(t))
 	require.NoError(t, err)
-	response, err := service.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+	response, err := NewConnectHandler(service).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
 		FileName:   "retry-image.jpg",
 		FileSize:   int64(len(body)),
@@ -159,7 +159,7 @@ func TestFinalizingMultipartSessionRejectsAbortAndReplacementDirectIntegration(t
 		Where("upload_id = ?", fixture.uploadID).
 		Update("status", model.UploadSessionStatusFinalizing).Error)
 
-	abortResponse, err := fixture.service.AbortMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.AbortMultipartUploadRequest{
+	abortResponse, err := NewConnectHandler(fixture.service).AbortMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.AbortMultipartUploadRequest{
 		UploadId: fixture.uploadID,
 		FileId:   fixture.fileID,
 	}))
@@ -167,7 +167,7 @@ func TestFinalizingMultipartSessionRejectsAbortAndReplacementDirectIntegration(t
 	require.Nil(t, abortResponse)
 	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))
 
-	replacement, err := fixture.service.InitiateMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+	replacement, err := NewConnectHandler(fixture.service).InitiateMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
 		FileName:   "replacement.jpg",
 		FileSize:   1,
@@ -183,7 +183,7 @@ func TestFinalizingMultipartSessionRejectsAbortAndReplacementDirectIntegration(t
 		managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FINALIZING,
 	)
 
-	completed, err := fixture.service.CompleteMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	completed, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId:        fixture.fileID,
 		UploadId:      fixture.uploadID,
 		CorrelationId: hardCutPtrString(uuid.NewString()),
@@ -215,7 +215,7 @@ func TestDeleteTrackGuardsFinalizingUploadSessionDirectIntegration(t *testing.T)
 	// The Track deletion records an audit entry for its request actor.
 	ctx := releaseAuditContext(t, manager.IdentityID, manager.MemberID)
 	entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK
-	initiated, err := fileService.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+	initiated, err := NewConnectHandler(fileService).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
 		EntityId:   trackID,
 		EntityType: &entityType,
@@ -317,7 +317,7 @@ func TestConcurrentTrackInitiateAndDeleteLeavesNoMultipartOrSessionDirectIntegra
 			initiateDone := make(chan initiateResult, 1)
 			entityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK
 			go func() {
-				response, err := fileService.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+				response, err := NewConnectHandler(fileService).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 					UploadType: managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO,
 					EntityId:   trackID, EntityType: &entityType,
 					FileName: "concurrent-track.mp3", FileSize: 1024, MimeType: "audio/mpeg",
@@ -419,7 +419,7 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 		UploadId: fixture.uploadID,
 	}
 	wrongUploadID := "untrusted-opaque-upload-id"
-	_, err := fixture.service.CompleteMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	_, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId:   fixture.fileID,
 		UploadId: wrongUploadID,
 	}))
@@ -427,7 +427,7 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 	require.Equal(t, connect.CodeNotFound, connect.CodeOf(err))
 	require.Equal(t, 0, observer.count(), "a wrong upload identity must not bypass an active session")
 
-	response, err := fixture.service.CompleteMultipartUpload(fixture.ctx, connect.NewRequest(request))
+	response, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(fixture.ctx, connect.NewRequest(request))
 	require.NoError(t, err)
 	require.Equal(t, fixture.fileID, response.Msg.GetFileId())
 	require.Equal(t, 1, observer.count())
@@ -441,7 +441,7 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 		return &managev1.FileIngestFailedEvent{}
 	}))
 
-	recovered, err := fixture.service.CompleteMultipartUpload(fixture.ctx, connect.NewRequest(request))
+	recovered, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(fixture.ctx, connect.NewRequest(request))
 	require.NoError(t, err)
 	require.Equal(t, response.Msg.GetFileId(), recovered.Msg.GetFileId())
 	require.Equal(t, response.Msg.GetDelivery().GetFileId(), recovered.Msg.GetDelivery().GetFileId())
@@ -450,7 +450,7 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 		return &managev1.FileIngestAttachedEvent{}
 	}), "independent editor Files never publish attachment projection events")
 
-	recoveredWithWrongID, err := fixture.service.CompleteMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	recoveredWithWrongID, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(fixture.ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId:   fixture.fileID,
 		UploadId: wrongUploadID,
 	}))
@@ -461,7 +461,7 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 	for _, role := range []policyv1.RoleID{policyv1.Role.Author(), policyv1.Role.User()} {
 		other := stack.CreateUser(t, role.ID())
 		otherCtx := auth.WithUser(context.Background(), other.AuthUserInfo())
-		recovered, err := fixture.service.CompleteMultipartUpload(otherCtx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{FileId: fixture.fileID, UploadId: wrongUploadID}))
+		recovered, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(otherCtx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{FileId: fixture.fileID, UploadId: wrongUploadID}))
 		if role == policyv1.Role.Author() {
 			require.NoError(t, err, "authors have file.list access")
 			require.Equal(t, fixture.fileID, recovered.Msg.GetFileId())
@@ -473,7 +473,7 @@ func TestCompleteMultipartUploadRecoversAmbiguousS3CompletionDirectIntegration(t
 
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	adminCtx := auth.WithUser(context.Background(), admin.AuthUserInfo())
-	adminRecovery, err := fixture.service.CompleteMultipartUpload(adminCtx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	adminRecovery, err := NewConnectHandler(fixture.service).CompleteMultipartUpload(adminCtx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId:   fixture.fileID,
 		UploadId: wrongUploadID,
 	}))
@@ -501,7 +501,7 @@ func TestCompleteMultipartUploadRestoresDedicatedAssetAfterResponseLossDirectInt
 	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
 	body, err := base64.StdEncoding.DecodeString("UklGRiwAAABXRUJQVlA4ICAAAAAwAQCdASoBAAEAAAAGJZwAA3AA/u4KZ/9qflZ7vuAAAA==")
 	require.NoError(t, err)
-	initiated, err := service.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+	initiated, err := NewConnectHandler(service).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_USER_AVATAR,
 		EntityId:   manager.ID,
 		FileName:   "response-loss-avatar.webp",
@@ -523,14 +523,14 @@ func TestCompleteMultipartUploadRestoresDedicatedAssetAfterResponseLossDirectInt
 		FileId:   initiated.Msg.GetFileId(),
 		UploadId: initiated.Msg.GetUploadId(),
 	}
-	completed, err := service.CompleteMultipartUpload(ctx, connect.NewRequest(request))
+	completed, err := NewConnectHandler(service).CompleteMultipartUpload(ctx, connect.NewRequest(request))
 	require.NoError(t, err)
 	require.NotNil(t, completed.Msg.GetDelivery().GetAsset())
 	finalizedBeforeRetry := len(decodeHardCutRoutedMessages(t, asyncPublisher.messages, eventpkg.SignalFileIngest, "", func() *managev1.FileIngestFinalizedEvent {
 		return &managev1.FileIngestFinalizedEvent{}
 	}))
 
-	recovered, err := service.CompleteMultipartUpload(ctx, connect.NewRequest(request))
+	recovered, err := NewConnectHandler(service).CompleteMultipartUpload(ctx, connect.NewRequest(request))
 	require.NoError(t, err)
 	require.Equal(t, completed.Msg.GetDelivery().GetAsset().GetAssetId(), recovered.Msg.GetDelivery().GetAsset().GetAssetId())
 
@@ -566,7 +566,7 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
 	fileName := fmt.Sprintf("editor-image-%d.jpg", time.Now().UnixNano())
 	lastModified := time.Now().UnixMilli()
-	initResp, err := svc.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+	initResp, err := NewConnectHandler(svc).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType:       managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
 		FileName:         fileName,
 		FileSize:         int64(len(imageBody)),
@@ -580,7 +580,7 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 	fileKey, err := mediaauth.MediaObjectKey(initResp.Msg.GetFileId(), initResp.Msg.GetExtension())
 	require.NoError(t, err)
 
-	candidateResp, err := svc.FindMultipartUploadCandidate(ctx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+	candidateResp, err := NewConnectHandler(svc).FindMultipartUploadCandidate(ctx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
 		UploadType:       managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
 		FileId:           hardCutPtrString(initResp.Msg.GetFileId()),
 		UploadId:         hardCutPtrString(initResp.Msg.GetUploadId()),
@@ -596,7 +596,7 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 
 	part := handleMultipartPartDirect(t, svc, manager, initResp.Msg.GetFileId(), initResp.Msg.GetUploadId(), 1, imageBody)
 	require.NotEmpty(t, part.ETag)
-	candidateResp, err = svc.FindMultipartUploadCandidate(ctx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+	candidateResp, err = NewConnectHandler(svc).FindMultipartUploadCandidate(ctx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
 		FileId:     hardCutPtrString(initResp.Msg.GetFileId()),
 		UploadId:   hardCutPtrString(initResp.Msg.GetUploadId()),
@@ -605,7 +605,7 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 	requireUploadSessionStatus(t, stack.DB, initResp.Msg.GetUploadId(), managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING)
 	require.Equal(t, []*managev1.UploadPartInfo{{PartNumber: 1, Etag: part.ETag}}, candidateResp.Msg.GetUploadedParts())
 
-	completeResp, err := svc.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	completeResp, err := NewConnectHandler(svc).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId:   initResp.Msg.GetFileId(),
 		UploadId: initResp.Msg.GetUploadId(),
 	}))
@@ -616,7 +616,7 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 	requireCanonicalInlineRef(t, completeResp.Msg.GetDelivery().GetInline(), initResp.Msg.GetFileId(), "jpg", "image/jpeg")
 	requireCanonicalDownloadRef(t, completeResp.Msg.GetDelivery().GetDownload(), initResp.Msg.GetFileId(), "jpg", "image/jpeg")
 	require.NotNil(t, completeResp.Msg.GetDelivery().GetAsset())
-	recoveredResp, err := svc.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	recoveredResp, err := NewConnectHandler(svc).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId:   initResp.Msg.GetFileId(),
 		UploadId: initResp.Msg.GetUploadId(),
 	}))
@@ -649,7 +649,7 @@ func TestFileServiceMultipartEditorImageLifecycleDirectIntegration(t *testing.T)
 		Count(&assetCount).Error)
 	require.EqualValues(t, 1, assetCount)
 
-	candidateResp, err = svc.FindMultipartUploadCandidate(ctx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+	candidateResp, err = NewConnectHandler(svc).FindMultipartUploadCandidate(ctx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_EDITOR_IMAGE,
 		FileId:     hardCutPtrString(initResp.Msg.GetFileId()),
 		UploadId:   hardCutPtrString(initResp.Msg.GetUploadId()),
@@ -696,7 +696,7 @@ func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectInt
 		SpiceDB:        stack.SpiceDBClient,
 	})
 	starterCtx := auth.WithUser(context.Background(), starter.AuthUserInfo())
-	initiated, err := svc.InitiateMultipartUpload(starterCtx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+	initiated, err := NewConnectHandler(svc).InitiateMultipartUpload(starterCtx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
 		FileName:   "Field Recording.jpg",
 		FileSize:   int64(len(body)),
@@ -713,18 +713,18 @@ func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectInt
 	).Scan(&targetIsNull).Error)
 	require.True(t, targetIsNull)
 
-	_, err = svc.FindMultipartUploadCandidate(starterCtx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+	_, err = NewConnectHandler(svc).FindMultipartUploadCandidate(starterCtx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
 	}))
 	require.Error(t, err, "general uploads cannot be rediscovered without the capability pair")
 
-	_, err = svc.FindMultipartUploadCandidate(starterCtx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+	_, err = NewConnectHandler(svc).FindMultipartUploadCandidate(starterCtx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
 		FileId:     &initiated.Msg.FileId,
 	}))
 	require.Error(t, err, "the file ID alone is not the upload capability")
 
-	candidate, err := svc.FindMultipartUploadCandidate(starterCtx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
+	candidate, err := NewConnectHandler(svc).FindMultipartUploadCandidate(starterCtx, connect.NewRequest(&managev1.FindMultipartUploadCandidateRequest{
 		UploadType: managev1.UploadType_UPLOAD_TYPE_GENERAL_FILE,
 		FileId:     &initiated.Msg.FileId,
 		UploadId:   &initiated.Msg.UploadId,
@@ -735,7 +735,7 @@ func TestFileServiceMultipartGeneralFileUsesCapabilityPairAndDateFolderDirectInt
 
 	handleMultipartPartDirect(t, svc, completer, initiated.Msg.GetFileId(), initiated.Msg.GetUploadId(), 1, body)
 	completerCtx := auth.WithUser(context.Background(), completer.AuthUserInfo())
-	completed, err := svc.CompleteMultipartUpload(completerCtx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	completed, err := NewConnectHandler(svc).CompleteMultipartUpload(completerCtx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId: initiated.Msg.GetFileId(), UploadId: initiated.Msg.GetUploadId(),
 	}))
 	require.NoError(t, err)
@@ -790,7 +790,7 @@ func TestFileServiceMultipartEditorMeshStoresGLBAndServesCDNDirectIntegration(t 
 	ctx := auth.WithUser(context.Background(), manager.AuthUserInfo())
 	fileName := fmt.Sprintf("editor-mesh-%d.glb", time.Now().UnixNano())
 	lastModified := time.Now().UnixMilli()
-	initResp, err := svc.InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
+	initResp, err := NewConnectHandler(svc).InitiateMultipartUpload(ctx, connect.NewRequest(&managev1.InitiateMultipartUploadRequest{
 		UploadType:       managev1.UploadType_UPLOAD_TYPE_EDITOR_MESH,
 		FileName:         fileName,
 		FileSize:         int64(len(meshBody)),
@@ -808,7 +808,7 @@ func TestFileServiceMultipartEditorMeshStoresGLBAndServesCDNDirectIntegration(t 
 	part := handleMultipartPartDirect(t, svc, manager, initResp.Msg.GetFileId(), initResp.Msg.GetUploadId(), 1, meshBody)
 	require.NotEmpty(t, part.ETag)
 
-	completeResp, err := svc.CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
+	completeResp, err := NewConnectHandler(svc).CompleteMultipartUpload(ctx, connect.NewRequest(&managev1.CompleteMultipartUploadRequest{
 		FileId:   initResp.Msg.GetFileId(),
 		UploadId: initResp.Msg.GetUploadId(),
 	}))

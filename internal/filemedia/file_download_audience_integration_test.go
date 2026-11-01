@@ -99,7 +99,7 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	}
 	fileSvc.postAccess = newIntegrationPostAccess(db, stack.SpiceDBClient)
 	fileSvc.audienceAccess = newIntegrationAudienceAccess()
-	updated, err := fileSvc.UpdateFileDownloadPolicy(
+	updated, err := NewConnectHandler(fileSvc).UpdateFileDownloadPolicy(
 		authorCtx,
 		connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
 			EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
@@ -150,7 +150,7 @@ func TestFileDownloadAudiencePolicyIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, allowed)
 
-	zeroSegmentPolicy, err := fileSvc.UpdateFileDownloadPolicy(
+	zeroSegmentPolicy, err := NewConnectHandler(fileSvc).UpdateFileDownloadPolicy(
 		authorCtx,
 		connect.NewRequest(&managev1.UpdateFileDownloadPolicyRequest{
 			EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST,
@@ -240,7 +240,7 @@ func TestGetFileDownloadPolicyLocksPostAndProgramEventInRepeatableReadIntegratio
 		{EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_POST, EntityId: postID, BlockId: managePolicyString(postBlockID), ReferencePath: managePolicyString("file")},
 		{EntityType: managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_PROGRAM_EVENT, EntityId: eventID, BlockId: managePolicyString(eventBlockID), ReferencePath: managePolicyString("file")},
 	} {
-		response, getErr := svc.GetFileDownloadPolicy(ctx, connect.NewRequest(request))
+		response, getErr := NewConnectHandler(svc).GetFileDownloadPolicy(ctx, connect.NewRequest(request))
 		require.NoError(t, getErr)
 		require.Equal(t, managev1.FileDownloadAudience_FILE_DOWNLOAD_AUDIENCE_DISABLED, response.Msg.GetPolicy().GetAudience())
 	}

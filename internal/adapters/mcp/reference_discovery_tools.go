@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/artist"
+	"github.com/echovisionlab/geul-api/internal/filemedia"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/member"
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
@@ -71,7 +71,7 @@ type ArtistReferenceDiscovery interface {
 	ListArtists(context.Context, artist.ListArtistsQuery) (artist.ArtistPage, error)
 }
 type FileReferenceDiscovery interface {
-	ListFileManagerItems(context.Context, *connect.Request[managev1.ListFileManagerItemsRequest]) (*connect.Response[managev1.ListFileManagerItemsResponse], error)
+	ListFileManagerItems(context.Context, filemedia.ListFileManagerItemsQuery) (filemedia.FileManagerItemPage, error)
 }
 
 type ReferenceDiscoveryTools struct {
@@ -266,16 +266,16 @@ func (tools *ReferenceDiscoveryTools) listFiles(ctx context.Context, arguments m
 	if input.PageSize < 1 || input.PageSize > 100 {
 		return executionError(errors.New("page_size must be between 1 and 100, or omitted for the default"))
 	}
-	response, err := tools.files.ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
-		FolderId: input.FolderID, Query: input.Query, MimeTypePrefix: input.MIMETypePrefix,
+	response, err := tools.files.ListFileManagerItems(ctx, filemedia.ListFileManagerItemsQuery{
+		FolderID: optionalString(input.FolderID), Query: optionalString(input.Query), MimeTypePrefix: optionalString(input.MIMETypePrefix),
 		SortField: managev1.FileManagerSortField_FILE_MANAGER_SORT_FIELD_UPDATED_AT,
-		SortOrder: commonv1.SortOrder_SORT_ORDER_DESC, PageSize: input.PageSize, PageToken: input.PageToken,
-	}))
+		SortOrder: commonv1.SortOrder_SORT_ORDER_DESC, PageSize: input.PageSize, PageToken: optionalString(input.PageToken),
+	})
 	if err != nil {
 		return expectedToolError(err)
 	}
-	items := make([]map[string]any, 0, len(response.Msg.Items))
-	for _, item := range response.Msg.Items {
+	items := make([]map[string]any, 0, len(response.Items))
+	for _, item := range response.Items {
 		if item == nil {
 			continue
 		}
@@ -301,7 +301,7 @@ func (tools *ReferenceDiscoveryTools) listFiles(ctx context.Context, arguments m
 			items = append(items, output)
 		}
 	}
-	return contentResult(map[string]any{"items": items, "total": response.Msg.Total, "next_page_token": optionalStringValue(response.Msg.NextPageToken)})
+	return contentResult(map[string]any{"items": items, "total": response.Total, "next_page_token": optionalStringValue(response.NextPageToken)})
 }
 
 var _ ToolProvider = (*ReferenceDiscoveryTools)(nil)

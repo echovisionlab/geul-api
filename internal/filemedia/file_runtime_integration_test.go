@@ -149,7 +149,7 @@ func TestRuntimeEditorFileRemoteImportIsIndependent(t *testing.T) {
 		Url:           "https://media.example.com/runtime-attachment.txt",
 		CorrelationId: &correlationID,
 	})
-	response, err := fileService.DownloadFromUrl(
+	response, err := NewConnectHandler(fileService).DownloadFromUrl(
 		auth.WithUser(context.Background(), manager.AuthUserInfo()),
 		request,
 	)

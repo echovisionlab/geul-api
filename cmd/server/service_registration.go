@@ -257,16 +257,16 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	}
 	pageRuntime := pageadapter.NewRuntime(cfg.CDNURL, ogDeps.refresher)
 	workRuntime := workadapter.NewRuntime(db, cfg.CDNURL, ogDeps.refresher)
-	filePath, fileHandler := managev1connect.NewFileServiceHandler(fileService, handlerOpts...)
+	filePath, fileHandler := managev1connect.NewFileServiceHandler(filemedia.NewConnectHandler(fileService), handlerOpts...)
 	mux.Handle(filePath, fileHandler)
 	slog.Info("Registered service", "path", filePath)
 	linkPreviewPath, linkPreviewHandler := managev1connect.NewLinkPreviewServiceHandler(
-		filemedia.NewLinkPreviewService(spicedbClient),
+		filemedia.NewLinkPreviewConnectHandler(filemedia.NewLinkPreviewService(spicedbClient)),
 		handlerOpts...,
 	)
 	mux.Handle(linkPreviewPath, linkPreviewHandler)
 	slog.Info("Registered service", "path", linkPreviewPath)
-	internalFileIngestService := filemedia.NewInternalFileIngestService(fileService)
+	internalFileIngestService := filemedia.NewInternalConnectHandler(fileService)
 	internalFileIngestPath, internalFileIngestHandler := intrav1connect.NewInternalFileIngestServiceHandler(
 		internalFileIngestService,
 		internalHandlerOpts...,

@@ -199,7 +199,7 @@ func TestFileServiceBatchClearMeshOptimizationCandidatesScopesByProfile(t *testi
 	attachInternalResourcePolicy(t, stack.SpiceDBClient, pageID)
 	service := &Service{db: db, spiceDB: stack.SpiceDBClient}
 
-	response, err := service.ClearMeshOptimizationCandidates(
+	response, err := NewConnectHandler(service).ClearMeshOptimizationCandidates(
 		auth.WithUser(context.Background(), admin.AuthUserInfo()),
 		connect.NewRequest(&managev1.ClearMeshOptimizationCandidatesRequest{
 			SourceFileId: sourceID,

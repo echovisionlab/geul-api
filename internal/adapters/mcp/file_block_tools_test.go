@@ -526,20 +526,37 @@ type recordingFileBlockManagement struct {
 	err           error
 }
 
-func (manager *recordingFileBlockManagement) GetFileDownloadPolicy(_ context.Context, request *connect.Request[managev1.GetFileDownloadPolicyRequest]) (*connect.Response[managev1.GetFileDownloadPolicyResponse], error) {
-	manager.getRequest = request
-	return connect.NewResponse(&managev1.GetFileDownloadPolicyResponse{Policy: manager.policy}), manager.err
+// The fake records each use-case call as the request a Connect client would
+// have sent, so the assertions read the native field names.
+func (manager *recordingFileBlockManagement) GetFileDownloadPolicy(_ context.Context, query fileauthority.GetFileDownloadPolicyQuery) (*managev1.FileDownloadPolicy, error) {
+	manager.getRequest = connect.NewRequest(&managev1.GetFileDownloadPolicyRequest{
+		EntityType: query.Target.EntityType, EntityId: query.Target.EntityID,
+		BlockId: query.Target.BlockID, ReferencePath: query.Target.ReferencePath,
+	})
+	return manager.policy, manager.err
 }
 
-func (manager *recordingFileBlockManagement) UpdateFileDownloadPolicy(_ context.Context, request *connect.Request[managev1.UpdateFileDownloadPolicyRequest]) (*connect.Response[managev1.UpdateFileDownloadPolicyResponse], error) {
-	manager.updateRequest = request
-	return connect.NewResponse(&managev1.UpdateFileDownloadPolicyResponse{Policy: manager.policy}), manager.err
+func (manager *recordingFileBlockManagement) UpdateFileDownloadPolicy(_ context.Context, command fileauthority.UpdateFileDownloadPolicyCommand) (*managev1.FileDownloadPolicy, error) {
+	request := &managev1.UpdateFileDownloadPolicyRequest{
+		EntityType: command.Target.EntityType, EntityId: command.Target.EntityID,
+		BlockId: command.Target.BlockID, ReferencePath: command.Target.ReferencePath,
+		ExpectedFileId: command.ExpectedFileID, Audience: command.Policy.Audience, AudienceSegmentIds: command.Policy.AudienceSegmentIDs,
+	}
+	if observed := command.Observed; observed != nil {
+		request.ObservedPolicy = &managev1.FileDownloadPolicyObservedState{Audience: observed.Audience, AudienceSegmentIds: observed.AudienceSegmentIDs}
+	}
+	manager.updateRequest = connect.NewRequest(request)
+	return manager.policy, manager.err
 }
 
-func (manager *recordingFileBlockManagement) ListFileUsages(_ context.Context, request *connect.Request[managev1.ListFileUsagesRequest]) (*connect.Response[managev1.ListFileUsagesResponse], error) {
-	manager.usageRequest = request
+func (manager *recordingFileBlockManagement) ListFileUsages(_ context.Context, query fileauthority.ListFileUsagesQuery) (fileauthority.FileUsagePage, error) {
+	request := &managev1.ListFileUsagesRequest{FileId: query.FileID, PageSize: query.PageSize}
+	if query.PageToken != "" {
+		request.PageToken = &query.PageToken
+	}
+	manager.usageRequest = connect.NewRequest(request)
 	if manager.usages == nil {
 		manager.usages = &managev1.ListFileUsagesResponse{}
 	}
-	return connect.NewResponse(manager.usages), manager.err
+	return fileauthority.FileUsagePage{Usages: manager.usages.Usages, NextPageToken: manager.usages.NextPageToken, Total: manager.usages.Total}, manager.err
 }

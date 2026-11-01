@@ -18,7 +18,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 )
 
 // Deps are the collaborators of the File use cases.
@@ -80,7 +79,6 @@ func (d Deps) validate() error {
 // other domains call. Connect and MCP adapters translate their requests into
 // its commands and queries.
 type Service struct {
-	managev1connect.UnimplementedFileServiceHandler
 	db                        *gorm.DB
 	s3Bucket                  string
 	cdnDomain                 string

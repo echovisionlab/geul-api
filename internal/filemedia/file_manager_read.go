@@ -5,28 +5,28 @@ import (
 	"fmt"
 	"sort"
 
-	"connectrpc.com/connect"
-
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *Service) GetFile(
-	ctx context.Context,
-	req *connect.Request[managev1.GetFileRequest],
-) (*connect.Response[managev1.GetFileResponse], error) {
+// GetFileQuery reads one File of the File library.
+type GetFileQuery struct {
+	FileID string
+}
+
+func (s *Service) GetFile(ctx context.Context, query GetFileQuery) (*managev1.GetFileResponse, error) {
 	if err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
-	fileID, err := normalizeFileManagerUUID(req.Msg.FileId, "file_id", false)
+	fileID, err := normalizeFileManagerUUID(query.FileID, "file_id", false)
 	if err != nil {
 		return nil, err
 	}
 	var row fileManagerCatalogRow
 	if err := s.db.WithContext(ctx).Raw(`SELECT 'file' AS item_type, id, folder_id AS parent_id, file_name AS name, extension, mime_type, file_size, duration_seconds, uploaded_by_member_id AS member_id, created_at, updated_at, 1 AS total FROM file WHERE id = ? AND delete_requested_at IS NULL`, *fileID).Scan(&row).Error; err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	if row.ID == "" {
 		return nil, errs.NotFound("file", *fileID)
@@ -36,21 +36,21 @@ func (s *Service) GetFile(
 		memberSummaries := s.memberSummaries
 		members, err = memberSummaries.Load(ctx, []string{*row.MemberID})
 		if err != nil {
-			return nil, errs.Internal(err)
+			return nil, err
 		}
 	}
 	usageRows, err := loadFileUsages(ctx, s.db, []string{*fileID})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	usageRows, err = s.filterVisibleFileUsages(ctx, usageRows)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	summary := summarizeFileUsages(usageRows)
 	generatedOutputs, err := s.loadFileGeneratedOutputs(ctx, *fileID)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	files, generatedOutputs, changed, err := s.finalizeFileManagerDeliveries(
 		ctx,
@@ -60,13 +60,13 @@ func (s *Service) GetFile(
 		generatedOutputs,
 	)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
 	file := files[*fileID]
 	if changed || file == nil {
 		return nil, errs.NotFound("file", *fileID)
 	}
-	return connect.NewResponse(&managev1.GetFileResponse{File: file, DomainUsageSummary: summary, GeneratedOutputs: generatedOutputs}), nil
+	return &managev1.GetFileResponse{File: file, DomainUsageSummary: summary, GeneratedOutputs: generatedOutputs}, nil
 }
 
 type fileManagerMeshOutputRow struct {

@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/filemedia"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	managev1connect "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -276,7 +276,6 @@ func TestFileManagerPreservesNativeErrors(t *testing.T) {
 }
 
 type recordingFileManager struct {
-	managev1connect.UnimplementedFileServiceHandler
 	ctx      context.Context
 	request  proto.Message
 	calls    []string
@@ -299,8 +298,10 @@ func fileManagerNativeFolder() *managev1.FileFolder {
 	return &managev1.FileFolder{Id: fileManagerTestFolderID, Name: "Actual folder"}
 }
 
-func (manager *recordingFileManager) GetFileDeletionImpact(ctx context.Context, request *connect.Request[managev1.GetFileDeletionImpactRequest]) (*connect.Response[managev1.GetFileDeletionImpactResponse], error) {
-	manager.record(ctx, ToolFileDeletionImpactGet, request.Msg)
+// The fake records each use-case call as the request a Connect client would
+// have sent, so the assertions read the native field names.
+func (manager *recordingFileManager) GetFileDeletionImpact(ctx context.Context, query filemedia.GetFileDeletionImpactQuery) ([]*managev1.FileDeletionImpact, error) {
+	manager.record(ctx, ToolFileDeletionImpactGet, &managev1.GetFileDeletionImpactRequest{FileIds: query.FileIDs})
 	if manager.err != nil {
 		return nil, manager.err
 	}
@@ -308,65 +309,72 @@ func (manager *recordingFileManager) GetFileDeletionImpact(ctx context.Context, 
 	if manager.impact != nil {
 		impacts = append(impacts, manager.impact)
 	}
-	return connect.NewResponse(&managev1.GetFileDeletionImpactResponse{Impacts: impacts}), nil
+	return impacts, nil
 }
 
-func (manager *recordingFileManager) DeleteFiles(ctx context.Context, request *connect.Request[managev1.DeleteFilesRequest]) (*connect.Response[managev1.DeleteFilesResponse], error) {
-	manager.record(ctx, ToolFileDelete, request.Msg)
+func (manager *recordingFileManager) DeleteFiles(ctx context.Context, command filemedia.DeleteFilesCommand) (filemedia.FileDeletionOutcome, error) {
+	manager.record(ctx, ToolFileDelete, &managev1.DeleteFilesRequest{FileIds: command.FileIDs})
 	if manager.err != nil {
-		return nil, manager.err
+		return filemedia.FileDeletionOutcome{}, manager.err
 	}
 	impacts := []*managev1.FileDeletionImpact{}
 	if manager.impact != nil {
 		impacts = append(impacts, manager.impact)
 	}
-	return connect.NewResponse(&managev1.DeleteFilesResponse{AcceptedFileIds: manager.accepted, RejectedFiles: impacts}), nil
+	return filemedia.FileDeletionOutcome{AcceptedFileIDs: manager.accepted, RejectedFiles: impacts}, nil
 }
 
-func (manager *recordingFileManager) RenameFile(ctx context.Context, request *connect.Request[managev1.RenameFileRequest]) (*connect.Response[managev1.RenameFileResponse], error) {
-	manager.record(ctx, ToolFileRename, request.Msg)
+func (manager *recordingFileManager) RenameFile(ctx context.Context, command filemedia.RenameFileCommand) (*managev1.FileManagerFile, error) {
+	manager.record(ctx, ToolFileRename, &managev1.RenameFileRequest{FileId: command.FileID, FileName: command.FileName})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return connect.NewResponse(&managev1.RenameFileResponse{File: fileManagerNativeFile()}), nil
+	return fileManagerNativeFile(), nil
 }
 
-func (manager *recordingFileManager) MoveFiles(ctx context.Context, request *connect.Request[managev1.MoveFilesRequest]) (*connect.Response[managev1.MoveFilesResponse], error) {
-	manager.record(ctx, ToolFileMove, request.Msg)
+func (manager *recordingFileManager) MoveFiles(ctx context.Context, command filemedia.MoveFilesCommand) ([]*managev1.FileManagerFile, error) {
+	manager.record(ctx, ToolFileMove, &managev1.MoveFilesRequest{FileIds: command.FileIDs, FolderId: optionalFileManagerID(command.FolderID)})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return connect.NewResponse(&managev1.MoveFilesResponse{Files: []*managev1.FileManagerFile{fileManagerNativeFile()}}), nil
+	return []*managev1.FileManagerFile{fileManagerNativeFile()}, nil
 }
 
-func (manager *recordingFileManager) CreateFileFolder(ctx context.Context, request *connect.Request[managev1.CreateFileFolderRequest]) (*connect.Response[managev1.CreateFileFolderResponse], error) {
-	manager.record(ctx, ToolFileFolderCreate, request.Msg)
+func (manager *recordingFileManager) CreateFileFolder(ctx context.Context, command filemedia.CreateFileFolderCommand) (*managev1.FileFolder, error) {
+	manager.record(ctx, ToolFileFolderCreate, &managev1.CreateFileFolderRequest{ParentId: optionalFileManagerID(command.ParentID), Name: command.Name})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return connect.NewResponse(&managev1.CreateFileFolderResponse{Folder: fileManagerNativeFolder()}), nil
+	return fileManagerNativeFolder(), nil
 }
 
-func (manager *recordingFileManager) RenameFileFolder(ctx context.Context, request *connect.Request[managev1.RenameFileFolderRequest]) (*connect.Response[managev1.RenameFileFolderResponse], error) {
-	manager.record(ctx, ToolFileFolderRename, request.Msg)
+func (manager *recordingFileManager) RenameFileFolder(ctx context.Context, command filemedia.RenameFileFolderCommand) (*managev1.FileFolder, error) {
+	manager.record(ctx, ToolFileFolderRename, &managev1.RenameFileFolderRequest{FolderId: command.FolderID, Name: command.Name})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return connect.NewResponse(&managev1.RenameFileFolderResponse{Folder: fileManagerNativeFolder()}), nil
+	return fileManagerNativeFolder(), nil
 }
 
-func (manager *recordingFileManager) MoveFileFolder(ctx context.Context, request *connect.Request[managev1.MoveFileFolderRequest]) (*connect.Response[managev1.MoveFileFolderResponse], error) {
-	manager.record(ctx, ToolFileFolderMove, request.Msg)
+func (manager *recordingFileManager) MoveFileFolder(ctx context.Context, command filemedia.MoveFileFolderCommand) (*managev1.FileFolder, error) {
+	manager.record(ctx, ToolFileFolderMove, &managev1.MoveFileFolderRequest{FolderId: command.FolderID, ParentId: optionalFileManagerID(command.ParentID)})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return connect.NewResponse(&managev1.MoveFileFolderResponse{Folder: fileManagerNativeFolder()}), nil
+	return fileManagerNativeFolder(), nil
 }
 
-func (manager *recordingFileManager) DeleteFileFolder(ctx context.Context, request *connect.Request[managev1.DeleteFileFolderRequest]) (*connect.Response[managev1.DeleteFileFolderResponse], error) {
-	manager.record(ctx, ToolFileFolderDelete, request.Msg)
+func (manager *recordingFileManager) DeleteFileFolder(ctx context.Context, command filemedia.DeleteFileFolderCommand) ([]string, error) {
+	manager.record(ctx, ToolFileFolderDelete, &managev1.DeleteFileFolderRequest{FolderId: command.FolderID})
 	if manager.err != nil {
 		return nil, manager.err
 	}
-	return connect.NewResponse(&managev1.DeleteFileFolderResponse{AcceptedFileIds: manager.accepted}), nil
+	return manager.accepted, nil
+}
+
+func optionalFileManagerID(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }

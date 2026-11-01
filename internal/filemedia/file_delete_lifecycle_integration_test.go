@@ -63,7 +63,7 @@ func TestFileServiceDeleteFilePersistsRequestAndPublishesDeleteEventIntegration(
 	}
 	require.NoError(t, db.Create(&retiredGeneration).Error)
 
-	resp, err := service.DeleteFile(
+	resp, err := NewConnectHandler(service).DeleteFile(
 		auth.WithUser(t.Context(), admin.AuthUserInfo()),
 		connect.NewRequest(&managev1.DeleteFileRequest{FileId: fileID}),
 	)
@@ -125,7 +125,7 @@ func TestFileServiceDeleteFileCleansUnselectedMeshOptimizationCandidatesIntegrat
 		Status:       model.MeshOptimizationCandidateStatusReady,
 	})
 
-	resp, err := service.DeleteFile(
+	resp, err := NewConnectHandler(service).DeleteFile(
 		auth.WithUser(t.Context(), admin.AuthUserInfo()),
 		connect.NewRequest(&managev1.DeleteFileRequest{FileId: sourceFileID}),
 	)

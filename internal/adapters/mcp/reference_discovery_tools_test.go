@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia"
 	memberdomain "github.com/echovisionlab/geul-api/internal/member"
 
 	"connectrpc.com/connect"
@@ -15,7 +16,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/referencecatalog"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -194,17 +194,28 @@ func (*recordingArtistReferences) ListArtists(context.Context, artist.ListArtist
 }
 
 type recordingFileReferences struct {
-	managev1connect.UnimplementedFileServiceHandler
 	request *connect.Request[managev1.ListFileManagerItemsRequest]
 }
 
-func (r *recordingFileReferences) ListFileManagerItems(_ context.Context, request *connect.Request[managev1.ListFileManagerItemsRequest]) (*connect.Response[managev1.ListFileManagerItemsResponse], error) {
-	r.request = request
+// ListFileManagerItems records the query as the request a Connect client
+// would have sent, so the assertions read the native field names.
+func (r *recordingFileReferences) ListFileManagerItems(_ context.Context, query filemedia.ListFileManagerItemsQuery) (filemedia.FileManagerItemPage, error) {
+	optional := func(value string) *string {
+		if value == "" {
+			return nil
+		}
+		return &value
+	}
+	r.request = connect.NewRequest(&managev1.ListFileManagerItemsRequest{
+		FolderId: optional(query.FolderID), Query: optional(query.Query), MimeTypePrefix: optional(query.MimeTypePrefix),
+		UploadedByMemberId: optional(query.UploadedByMemberID), SortField: query.SortField, SortOrder: query.SortOrder,
+		PageSize: query.PageSize, PageToken: optional(query.PageToken),
+	})
 	now := timestamppb.Now()
-	return connect.NewResponse(&managev1.ListFileManagerItemsResponse{Items: []*managev1.FileManagerItem{
+	return filemedia.FileManagerItemPage{Items: []*managev1.FileManagerItem{
 		{Item: &managev1.FileManagerItem_File{File: &managev1.FileManagerFile{Id: "22222222-2222-4222-8222-222222222222", FileName: "cover.png", MimeType: "image/png", CreatedAt: now}}},
 		{Item: &managev1.FileManagerItem_Folder{Folder: &managev1.FileFolder{Id: "33333333-3333-4333-8333-333333333333", Name: "Covers", CreatedAt: now}}},
-	}, Total: 2}), nil
+	}, Total: 2}, nil
 }
 
 func TestReferenceQuickSearchProbesTruncationWithinServiceCaps(t *testing.T) {

@@ -28,19 +28,6 @@ func TestFileFolderConflictKeepsOriginalCauseForTheRequestRecord(t *testing.T) {
 	}
 }
 
-func TestPrepareClientMediaUploadRejectsNilRequestWithoutLogging(t *testing.T) {
-	var output bytes.Buffer
-	previous := slog.Default()
-	slog.SetDefault(slog.New(telemetry.NewNormalizingHandler(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))))
-	t.Cleanup(func() { slog.SetDefault(previous) })
-
-	service := &Service{}
-	_, err := service.PrepareClientMediaUpload(t.Context(), nil)
-	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
-	// The request log records the rejected request once.
-	require.Empty(t, output.String())
-}
-
 func TestClientWaveformDecodeRejectsWithoutLogging(t *testing.T) {
 	var output bytes.Buffer
 	previous := slog.Default()

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
@@ -20,21 +19,28 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *Service) CreateFileFolder(ctx context.Context, req *connect.Request[managev1.CreateFileFolderRequest]) (_ *connect.Response[managev1.CreateFileFolderResponse], resultErr error) {
-	defer failurecause.AnnotatePrivate(&resultErr, req.Msg.GetName())
+// CreateFileFolderCommand creates a File library folder under ParentID, or at
+// the root when ParentID is empty.
+type CreateFileFolderCommand struct {
+	ParentID string
+	Name     string
+}
+
+func (s *Service) CreateFileFolder(ctx context.Context, command CreateFileFolderCommand) (_ *managev1.FileFolder, resultErr error) {
+	defer failurecause.AnnotatePrivate(&resultErr, command.Name)
 
 	user, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}
-	parentID, err := normalizeFileManagerUUID(req.Msg.GetParentId(), "parent_id", true)
+	parentID, err := normalizeFileManagerUUID(command.ParentID, "parent_id", true)
 	if err != nil {
 		return nil, err
 	}
 	if err := s.requireFileManagerFolder(ctx, parentID); err != nil {
 		return nil, err
 	}
-	name, err := normalizeFileManagerName(req.Msg.Name, "name")
+	name, err := normalizeFileManagerName(command.Name, "name")
 	if err != nil {
 		return nil, err
 	}
@@ -55,21 +61,27 @@ func (s *Service) CreateFileFolder(ctx context.Context, req *connect.Request[man
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.CreateFileFolderResponse{Folder: proto}), nil
+	return proto, nil
 }
 
-func (s *Service) RenameFileFolder(ctx context.Context, req *connect.Request[managev1.RenameFileFolderRequest]) (_ *connect.Response[managev1.RenameFileFolderResponse], resultErr error) {
-	defer failurecause.AnnotatePrivate(&resultErr, req.Msg.GetName())
+// RenameFileFolderCommand renames a File library folder.
+type RenameFileFolderCommand struct {
+	FolderID string
+	Name     string
+}
+
+func (s *Service) RenameFileFolder(ctx context.Context, command RenameFileFolderCommand) (_ *managev1.FileFolder, resultErr error) {
+	defer failurecause.AnnotatePrivate(&resultErr, command.Name)
 
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}
-	folderID, err := normalizeFileManagerUUID(req.Msg.FolderId, "folder_id", false)
+	folderID, err := normalizeFileManagerUUID(command.FolderID, "folder_id", false)
 	if err != nil {
 		return nil, err
 	}
-	name, err := normalizeFileManagerName(req.Msg.Name, "name")
+	name, err := normalizeFileManagerName(command.Name, "name")
 	if err != nil {
 		return nil, err
 	}
@@ -101,19 +113,26 @@ func (s *Service) RenameFileFolder(ctx context.Context, req *connect.Request[man
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.RenameFileFolderResponse{Folder: proto}), nil
+	return proto, nil
 }
 
-func (s *Service) MoveFileFolder(ctx context.Context, req *connect.Request[managev1.MoveFileFolderRequest]) (*connect.Response[managev1.MoveFileFolderResponse], error) {
+// MoveFileFolderCommand moves a File library folder under ParentID, or to the
+// root when ParentID is empty.
+type MoveFileFolderCommand struct {
+	FolderID string
+	ParentID string
+}
+
+func (s *Service) MoveFileFolder(ctx context.Context, command MoveFileFolderCommand) (*managev1.FileFolder, error) {
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}
-	folderID, err := normalizeFileManagerUUID(req.Msg.FolderId, "folder_id", false)
+	folderID, err := normalizeFileManagerUUID(command.FolderID, "folder_id", false)
 	if err != nil {
 		return nil, err
 	}
-	parentID, err := normalizeFileManagerUUID(req.Msg.GetParentId(), "parent_id", true)
+	parentID, err := normalizeFileManagerUUID(command.ParentID, "parent_id", true)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +207,7 @@ func (s *Service) MoveFileFolder(ctx context.Context, req *connect.Request[manag
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.MoveFileFolderResponse{Folder: proto}), nil
+	return proto, nil
 }
 
 func fileManagerMutationError(err error, message string, privateName string) error {

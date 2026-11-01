@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
@@ -136,16 +135,14 @@ func (s *Service) ReadVerifiedFileBody(
 	if maximumBytes <= 0 {
 		return VerifiedFileBody{}, errs.InvalidArgument("maximum_bytes", "positive size limit is required")
 	}
-	response, err := s.GetMediaDelivery(ctx, connect.NewRequest(
-		&managev1.GetMediaDeliveryRequest{FileId: strings.TrimSpace(fileID)},
-	))
+	response, err := s.GetMediaDelivery(ctx, GetMediaDeliveryQuery{FileID: strings.TrimSpace(fileID)})
 	if err != nil {
 		return VerifiedFileBody{}, err
 	}
-	if response == nil || response.Msg == nil || response.Msg.Delivery == nil {
+	if response == nil || response.Delivery == nil {
 		return VerifiedFileBody{}, errs.NotFound("file", fileID)
 	}
-	delivery := response.Msg.Delivery
+	delivery := response.Delivery
 	if delivery.FileSize <= 0 || delivery.FileSize > maximumBytes {
 		return VerifiedFileBody{}, errs.InvalidArgument("file_id", "File is empty or exceeds the size limit")
 	}

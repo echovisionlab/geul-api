@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/echovisionlab/geul-api/internal/model"
@@ -21,107 +20,109 @@ func (s *Service) meshOptimizationService() *MeshOptimizationService {
 	return NewMeshOptimizationService(s.db, publisher, s, s.spiceDB)
 }
 
-func (s *Service) ListMeshOptimizationCandidates(
-	ctx context.Context,
-	req *connect.Request[managev1.ListMeshOptimizationCandidatesRequest],
-) (*connect.Response[managev1.ListMeshOptimizationCandidatesResponse], error) {
-	candidates, err := s.meshOptimizationService().ListCandidates(ctx, MeshOptimizationListInput{
-		SourceFileID: strings.TrimSpace(req.Msg.SourceFileId),
-		EntityType:   req.Msg.EntityType,
-		EntityID:     strings.TrimSpace(req.Msg.EntityId),
-		Profile:      req.Msg.Profile,
-	})
+// ListMeshOptimizationCandidatesQuery lists the optimized candidates of a
+// 3D model File attached to an entity.
+type ListMeshOptimizationCandidatesQuery struct {
+	SourceFileID string
+	EntityType   managev1.TranscodeEntityType
+	EntityID     string
+	Profile      managev1.MeshOptimizationProfile
+}
+
+func (q ListMeshOptimizationCandidatesQuery) input() MeshOptimizationListInput {
+	return MeshOptimizationListInput{
+		SourceFileID: strings.TrimSpace(q.SourceFileID),
+		EntityType:   q.EntityType,
+		EntityID:     strings.TrimSpace(q.EntityID),
+		Profile:      q.Profile,
+	}
+}
+
+func (s *Service) ListMeshOptimizationCandidates(ctx context.Context, query ListMeshOptimizationCandidatesQuery) ([]*managev1.MeshOptimizationCandidate, error) {
+	candidates, err := s.meshOptimizationService().ListCandidates(ctx, query.input())
 	if err != nil {
 		return nil, err
 	}
-
-	response := &managev1.ListMeshOptimizationCandidatesResponse{
-		Candidates: make([]*managev1.MeshOptimizationCandidate, 0, len(candidates)),
-	}
+	projected := make([]*managev1.MeshOptimizationCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
-		projected, err := s.meshOptimizationCandidateResponse(candidate)
+		response, err := s.meshOptimizationCandidateResponse(candidate)
 		if err != nil {
 			return nil, err
 		}
-		response.Candidates = append(response.Candidates, projected)
+		projected = append(projected, response)
 	}
-	return connect.NewResponse(response), nil
+	return projected, nil
 }
 
-func (s *Service) GenerateMeshOptimizationCandidate(
-	ctx context.Context,
-	req *connect.Request[managev1.GenerateMeshOptimizationCandidateRequest],
-) (*connect.Response[managev1.GenerateMeshOptimizationCandidateResponse], error) {
+// GenerateMeshOptimizationCandidateCommand generates, or reuses, an optimized
+// candidate of a 3D model File.
+type GenerateMeshOptimizationCandidateCommand struct {
+	SourceFileID       string
+	EntityType         managev1.TranscodeEntityType
+	EntityID           string
+	TargetRatioPercent int32
+	Method             managev1.MeshOptimizationCompressionMethod
+	Profile            managev1.MeshOptimizationProfile
+}
+
+func (s *Service) GenerateMeshOptimizationCandidate(ctx context.Context, command GenerateMeshOptimizationCandidateCommand) (*managev1.GenerateMeshOptimizationCandidateResponse, error) {
 	result, err := s.meshOptimizationService().GenerateCandidate(ctx, MeshOptimizationGenerateInput{
-		SourceFileID:       strings.TrimSpace(req.Msg.SourceFileId),
-		EntityType:         req.Msg.EntityType,
-		EntityID:           strings.TrimSpace(req.Msg.EntityId),
-		TargetRatioPercent: req.Msg.TargetRatioPercent,
-		Method:             meshOptimizationRequestMethod(req.Msg.Method),
-		Profile:            req.Msg.Profile,
+		SourceFileID:       strings.TrimSpace(command.SourceFileID),
+		EntityType:         command.EntityType,
+		EntityID:           strings.TrimSpace(command.EntityID),
+		TargetRatioPercent: command.TargetRatioPercent,
+		Method:             meshOptimizationRequestMethod(command.Method),
+		Profile:            command.Profile,
 	})
 	if err != nil {
 		return nil, err
 	}
-
 	projected, err := s.meshOptimizationCandidateResponse(result.Candidate)
 	if err != nil {
 		return nil, err
 	}
-
-	return connect.NewResponse(&managev1.GenerateMeshOptimizationCandidateResponse{
+	return &managev1.GenerateMeshOptimizationCandidateResponse{
 		Candidate: projected,
 		CacheHit:  result.CacheHit,
 		Enqueued:  result.Enqueued,
-	}), nil
+	}, nil
 }
 
-func (s *Service) UseMeshOptimizationCandidate(
-	ctx context.Context,
-	req *connect.Request[managev1.UseMeshOptimizationCandidateRequest],
-) (*connect.Response[managev1.UseMeshOptimizationCandidateResponse], error) {
-	candidate, err := s.meshOptimizationService().UseCandidate(ctx, strings.TrimSpace(req.Msg.CandidateId))
+// UseMeshOptimizationCandidateCommand selects an optimized candidate.
+type UseMeshOptimizationCandidateCommand struct {
+	CandidateID string
+}
+
+func (s *Service) UseMeshOptimizationCandidate(ctx context.Context, command UseMeshOptimizationCandidateCommand) (*managev1.MeshOptimizationCandidate, error) {
+	candidate, err := s.meshOptimizationService().UseCandidate(ctx, strings.TrimSpace(command.CandidateID))
 	if err != nil {
 		return nil, err
 	}
-
-	projected, err := s.meshOptimizationCandidateResponse(*candidate)
-	if err != nil {
-		return nil, err
-	}
-
-	return connect.NewResponse(&managev1.UseMeshOptimizationCandidateResponse{
-		Candidate: projected,
-	}), nil
+	return s.meshOptimizationCandidateResponse(*candidate)
 }
 
-func (s *Service) ClearMeshOptimizationCandidates(
-	ctx context.Context,
-	req *connect.Request[managev1.ClearMeshOptimizationCandidatesRequest],
-) (*connect.Response[managev1.ClearMeshOptimizationCandidatesResponse], error) {
+// ClearMeshOptimizationCandidatesCommand discards one candidate when
+// CandidateID is set, or every candidate the list query matches.
+type ClearMeshOptimizationCandidatesCommand struct {
+	CandidateID string
+	Candidates  ListMeshOptimizationCandidatesQuery
+}
+
+func (s *Service) ClearMeshOptimizationCandidates(ctx context.Context, command ClearMeshOptimizationCandidatesCommand) error {
 	meshOptimization := s.meshOptimizationService()
-	if req.Msg.CandidateId != nil && strings.TrimSpace(*req.Msg.CandidateId) != "" {
-		if err := meshOptimization.DiscardCandidate(ctx, strings.TrimSpace(*req.Msg.CandidateId)); err != nil {
-			return nil, err
-		}
-		return connect.NewResponse(&managev1.ClearMeshOptimizationCandidatesResponse{Success: true}), nil
+	if candidateID := strings.TrimSpace(command.CandidateID); candidateID != "" {
+		return meshOptimization.DiscardCandidate(ctx, candidateID)
 	}
-
-	candidates, err := meshOptimization.ListCandidates(ctx, MeshOptimizationListInput{
-		SourceFileID: strings.TrimSpace(req.Msg.SourceFileId),
-		EntityType:   req.Msg.EntityType,
-		EntityID:     strings.TrimSpace(req.Msg.EntityId),
-		Profile:      req.Msg.Profile,
-	})
+	candidates, err := meshOptimization.ListCandidates(ctx, command.Candidates.input())
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, candidate := range candidates {
 		if err := meshOptimization.DiscardCandidate(ctx, candidate.ID); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return connect.NewResponse(&managev1.ClearMeshOptimizationCandidatesResponse{Success: true}), nil
+	return nil
 }
 
 func (s *Service) meshOptimizationCandidateResponse(

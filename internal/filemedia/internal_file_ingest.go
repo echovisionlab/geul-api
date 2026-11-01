@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"strings"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
@@ -14,156 +13,149 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
-	intrav1 "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1"
-	intrav1connect "github.com/echovisionlab/geul-event-contracts/gen/api/intra/v1/intrav1connect"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 )
 
-type InternalFileIngestService struct {
-	intrav1connect.UnimplementedInternalFileIngestServiceHandler
-	files *Service
+// AttachTrackOriginalAudioCommand attaches a verified File as a Track's
+// original audio. ExpectedCurrentFileID, when set, is the original the caller
+// replaces.
+type AttachTrackOriginalAudioCommand struct {
+	TrackID               string
+	VerifiedFileID        string
+	IngestAttemptID       string
+	ExpectedCurrentFileID *string
 }
 
-func NewInternalFileIngestService(files *Service) *InternalFileIngestService {
-	if files == nil {
-		panic("internal file ingest service: file service is required")
-	}
-	return &InternalFileIngestService{files: files}
+// trackOriginalAudioTarget is a validated AttachTrackOriginalAudioCommand.
+type trackOriginalAudioTarget struct {
+	trackID               string
+	fileID                string
+	attemptID             string
+	expectedCurrentFileID *string
 }
 
-func (s *InternalFileIngestService) AttachTrackOriginalAudio(
-	ctx context.Context,
-	req *connect.Request[intrav1.AttachTrackOriginalAudioRequest],
-) (*connect.Response[intrav1.AttachTrackOriginalAudioResponse], error) {
-	if req.Msg == nil {
-		return nil, errs.Required("request")
+func validateTrackOriginalAudioTarget(command AttachTrackOriginalAudioCommand) (trackOriginalAudioTarget, error) {
+	target := trackOriginalAudioTarget{
+		trackID:   strings.TrimSpace(command.TrackID),
+		fileID:    strings.TrimSpace(command.VerifiedFileID),
+		attemptID: strings.TrimSpace(command.IngestAttemptID),
 	}
-	attachment, err := s.files.attachTrackOriginalAudio(ctx, req.Msg)
-	if err != nil {
-		return nil, err
+	if _, err := uuid.Parse(target.trackID); err != nil {
+		return target, errs.InvalidArgument("track_id", "must be a UUID")
 	}
-	return connect.NewResponse(&intrav1.AttachTrackOriginalAudioResponse{
-		Result: attachment.result, CurrentFileId: attachment.currentFileID, ReleaseId: attachment.releaseID,
-	}), nil
-}
-
-type trackOriginalAudioAttachment struct {
-	result        intrav1.AttachTrackOriginalAudioResult
-	currentFileID string
-	releaseID     string
-}
-
-func (s *Service) attachTrackOriginalAudio(
-	ctx context.Context,
-	req *intrav1.AttachTrackOriginalAudioRequest,
-) (trackOriginalAudioAttachment, error) {
-	if req == nil {
-		return trackOriginalAudioAttachment{}, errs.Required("request")
+	if _, err := uuid.Parse(target.fileID); err != nil {
+		return target, errs.InvalidArgument("verified_file_id", "must be a UUID")
 	}
-	trackID := strings.TrimSpace(req.GetTrackId())
-	if _, err := uuid.Parse(trackID); err != nil {
-		return trackOriginalAudioAttachment{}, errs.InvalidArgument("track_id", "must be a UUID")
+	if _, err := uuid.Parse(target.attemptID); err != nil {
+		return target, errs.InvalidArgument("ingest_attempt_id", "must be a UUID")
 	}
-	fileID := strings.TrimSpace(req.GetVerifiedFileId())
-	if _, err := uuid.Parse(fileID); err != nil {
-		return trackOriginalAudioAttachment{}, errs.InvalidArgument("verified_file_id", "must be a UUID")
-	}
-	attemptID := strings.TrimSpace(req.GetIngestAttemptId())
-	if _, err := uuid.Parse(attemptID); err != nil {
-		return trackOriginalAudioAttachment{}, errs.InvalidArgument("ingest_attempt_id", "must be a UUID")
-	}
-	var expectedCurrentFileID *string
-	if req.ExpectedCurrentFileId != nil {
-		expected := strings.TrimSpace(req.GetExpectedCurrentFileId())
+	if command.ExpectedCurrentFileID != nil {
+		expected := strings.TrimSpace(*command.ExpectedCurrentFileID)
 		if _, err := uuid.Parse(expected); err != nil {
-			return trackOriginalAudioAttachment{}, errs.InvalidArgument("expected_current_file_id", "must be a UUID when present")
+			return target, errs.InvalidArgument("expected_current_file_id", "must be a UUID when present")
 		}
-		expectedCurrentFileID = &expected
+		target.expectedCurrentFileID = &expected
 	}
+	return target, nil
+}
 
+// AttachTrackOriginalAudio is the collaboration service's Track audio ingest
+// boundary.
+func (s *Service) AttachTrackOriginalAudio(ctx context.Context, command AttachTrackOriginalAudioCommand) (TrackOriginalAudioAttachment, error) {
+	target, err := validateTrackOriginalAudioTarget(command)
+	if err != nil {
+		return TrackOriginalAudioAttachment{}, err
+	}
 	var attachment TrackOriginalAudioAttachment
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		trackAttachment := s.trackAttachment
-		if err := trackAttachment.LockExistsWithDB(ctx, tx, trackID); err != nil {
-			return err
-		}
-		if err := mediaasset.LockAttachableFilesForUpdate(ctx, tx, []string{fileID}); err != nil {
-			return err
-		}
-		var file model.File
-		if err := tx.Where("id = ?", fileID).Take(&file).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.NotFound("file", fileID)
-			}
-			return err
-		}
-		if file.DeleteRequestedAt != nil {
-			return errs.FailedPrecondition("verified File is pending deletion")
-		}
-		if file.IngestAttemptID == nil || strings.TrimSpace(*file.IngestAttemptID) != attemptID {
-			return errs.FailedPrecondition("File ingest attempt does not match")
-		}
-		if _, err := CanonicalMediaObjectTargetForFile(file); err != nil {
-			return errs.WithCause(errs.FailedPrecondition("verified File metadata is not canonical"), failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", file.ID))))
-		}
-		var binding model.FileIngestBinding
-		if err := tx.Where("file_id = ?", fileID).Take(&binding).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return errs.FailedPrecondition("File ingest binding is missing")
-			}
-			return err
-		}
-		trackEntityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK.String()
-		if binding.UploadType != managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() ||
-			binding.EntityID != trackID || binding.EntityType == nil || *binding.EntityType != trackEntityType {
-			return errs.FailedPrecondition("File ingest binding does not match the Track")
-		}
-
-		ready, readyErr := clientMediaFileReady(ctx, tx, file)
-		if readyErr != nil {
-			return readyErr
-		}
-		if file.ClientMediaBundleID != nil && !ready {
-			return errs.FailedPrecondition("client media derivatives are not ready")
-		}
-		var err error
-		attachment, err = trackAttachment.AttachOriginalWithDB(ctx, tx, TrackOriginalAudioInput{
-			TrackID: trackID, VerifiedFileID: fileID, ExpectedCurrentFileID: expectedCurrentFileID, ClientMediaReady: ready, DurationSeconds: file.DurationSeconds,
-		})
-		if err != nil || attachment.AlreadyApplied || ready {
-			return err
-		}
-		job, shouldEnqueue, err := newStableFileIngestAudioTranscodeJob(
-			ctx, tx, file, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK, trackID,
-		)
-		if err != nil {
-			return err
-		}
-		if shouldEnqueue {
-			registrar, err := s.fileIngestTranscodeJobRegistrar()
-			if err != nil {
-				return err
-			}
-			if err := registrar.RegisterTranscodeAudio(ctx, tx, job); err != nil {
-				return err
-			}
-			if err := publishDurableProtoInTransaction(
-				ctx, s.transcodeCommandPublisher(), tx, eventpkg.QueueTranscoderAudio, job.GetEventId(), job,
-			); err != nil {
-				return err
-			}
-		}
-		return nil
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var attachErr error
+		attachment, attachErr = s.attachTrackOriginalAudioWithDB(ctx, tx, target)
+		return attachErr
 	})
 	if err != nil {
-		return trackOriginalAudioAttachment{}, errs.Internal(err)
+		return TrackOriginalAudioAttachment{}, errs.Internal(err)
 	}
-	result := intrav1.AttachTrackOriginalAudioResult_ATTACH_TRACK_ORIGINAL_AUDIO_RESULT_APPLIED
-	if attachment.AlreadyApplied {
-		result = intrav1.AttachTrackOriginalAudioResult_ATTACH_TRACK_ORIGINAL_AUDIO_RESULT_ALREADY_APPLIED
+	return attachment, nil
+}
+
+func (s *Service) attachTrackOriginalAudioWithDB(ctx context.Context, tx *gorm.DB, target trackOriginalAudioTarget) (TrackOriginalAudioAttachment, error) {
+	if err := s.trackAttachment.LockExistsWithDB(ctx, tx, target.trackID); err != nil {
+		return TrackOriginalAudioAttachment{}, err
 	}
-	return trackOriginalAudioAttachment{
-		result: result, currentFileID: attachment.CurrentFileID, releaseID: attachment.ReleaseID,
-	}, nil
+	if err := mediaasset.LockAttachableFilesForUpdate(ctx, tx, []string{target.fileID}); err != nil {
+		return TrackOriginalAudioAttachment{}, err
+	}
+	file, err := loadTrackOriginalAudioFile(tx, target)
+	if err != nil {
+		return TrackOriginalAudioAttachment{}, err
+	}
+	ready, err := clientMediaFileReady(ctx, tx, file)
+	if err != nil {
+		return TrackOriginalAudioAttachment{}, err
+	}
+	if file.ClientMediaBundleID != nil && !ready {
+		return TrackOriginalAudioAttachment{}, errs.FailedPrecondition("client media derivatives are not ready")
+	}
+	attachment, err := s.trackAttachment.AttachOriginalWithDB(ctx, tx, TrackOriginalAudioInput{
+		TrackID: target.trackID, VerifiedFileID: target.fileID, ExpectedCurrentFileID: target.expectedCurrentFileID,
+		ClientMediaReady: ready, DurationSeconds: file.DurationSeconds,
+	})
+	if err != nil || attachment.AlreadyApplied || ready {
+		return attachment, err
+	}
+	return attachment, s.enqueueTrackOriginalAudioTranscode(ctx, tx, file, target.trackID)
+}
+
+// loadTrackOriginalAudioFile reads the locked verified File and checks that
+// its ingest attempt and binding belong to the Track.
+func loadTrackOriginalAudioFile(tx *gorm.DB, target trackOriginalAudioTarget) (model.File, error) {
+	var file model.File
+	if err := tx.Where("id = ?", target.fileID).Take(&file).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return file, errs.NotFound("file", target.fileID)
+		}
+		return file, err
+	}
+	if file.DeleteRequestedAt != nil {
+		return file, errs.FailedPrecondition("verified File is pending deletion")
+	}
+	if file.IngestAttemptID == nil || strings.TrimSpace(*file.IngestAttemptID) != target.attemptID {
+		return file, errs.FailedPrecondition("File ingest attempt does not match")
+	}
+	if _, err := CanonicalMediaObjectTargetForFile(file); err != nil {
+		return file, errs.WithCause(errs.FailedPrecondition("verified File metadata is not canonical"), failurecause.ServerFault(failurecause.WithAttrs(err, slog.String("file_id", file.ID))))
+	}
+	var binding model.FileIngestBinding
+	if err := tx.Where("file_id = ?", target.fileID).Take(&binding).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return file, errs.FailedPrecondition("File ingest binding is missing")
+		}
+		return file, err
+	}
+	trackEntityType := managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK.String()
+	if binding.UploadType != managev1.UploadType_UPLOAD_TYPE_TRACK_AUDIO.String() ||
+		binding.EntityID != target.trackID || binding.EntityType == nil || *binding.EntityType != trackEntityType {
+		return file, errs.FailedPrecondition("File ingest binding does not match the Track")
+	}
+	return file, nil
+}
+
+func (s *Service) enqueueTrackOriginalAudioTranscode(ctx context.Context, tx *gorm.DB, file model.File, trackID string) error {
+	job, shouldEnqueue, err := newStableFileIngestAudioTranscodeJob(
+		ctx, tx, file, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_TRACK, trackID,
+	)
+	if err != nil || !shouldEnqueue {
+		return err
+	}
+	registrar, err := s.fileIngestTranscodeJobRegistrar()
+	if err != nil {
+		return err
+	}
+	if err := registrar.RegisterTranscodeAudio(ctx, tx, job); err != nil {
+		return err
+	}
+	return publishDurableProtoInTransaction(
+		ctx, s.transcodeCommandPublisher(), tx, eventpkg.QueueTranscoderAudio, job.GetEventId(), job,
+	)
 }

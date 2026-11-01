@@ -108,7 +108,7 @@ func TestAttachTrackOriginalAudioAppliesCASThenUsesStableTranscodeCommand(t *tes
 		ExpectedCurrentFileId: &oldFile.ID,
 	}
 
-	internalService := NewInternalFileIngestService(files)
+	internalService := NewInternalConnectHandler(files)
 	succeededResponse, err := internalService.AttachTrackOriginalAudio(t.Context(), connect.NewRequest(request))
 	require.NoError(t, err)
 	require.Equal(t, intrav1.AttachTrackOriginalAudioResult_ATTACH_TRACK_ORIGINAL_AUDIO_RESULT_APPLIED, succeededResponse.Msg.GetResult())
@@ -174,7 +174,7 @@ func TestAttachTrackOriginalAudioRejectsStaleCASWithoutSideEffects(t *testing.T)
 		TrackAttachment: newDirectTrackAttachment(stack.DB),
 	})
 
-	response, err := NewInternalFileIngestService(files).AttachTrackOriginalAudio(
+	response, err := NewInternalConnectHandler(files).AttachTrackOriginalAudio(
 		t.Context(),
 		connect.NewRequest(&intrav1.AttachTrackOriginalAudioRequest{
 			TrackId: trackID, VerifiedFileId: projected.ID, IngestAttemptId: attemptID,

@@ -45,7 +45,7 @@ func TestInitiateMultipartUploadRejectsInvalidFilenameBeforeS3MutationUnit(t *te
 	admin := stack.CreateUser(t, policyv1.Role.Admin().ID())
 	svc.spiceDB = stack.SpiceDBClient
 	ctx := auth.WithUser(context.Background(), admin.AuthUserInfo())
-	_, err := svc.InitiateMultipartUpload(ctx, connect.NewRequest(
+	_, err := NewConnectHandler(svc).InitiateMultipartUpload(ctx, connect.NewRequest(
 		&managev1.InitiateMultipartUploadRequest{
 			UploadType: managev1.UploadType_UPLOAD_TYPE_SITE_LOGO,
 			FileName:   "../logo.png",

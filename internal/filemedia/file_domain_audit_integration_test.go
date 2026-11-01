@@ -35,26 +35,26 @@ func TestFileManagerDomainAuditIntegration(t *testing.T) {
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
 	}
 
-	root, err := service.CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Library"}))
+	root, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Library"}))
 	require.NoError(t, err)
-	child, err := service.CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{ParentId: &root.Msg.Folder.Id, Name: "Child"}))
+	child, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{ParentId: &root.Msg.Folder.Id, Name: "Child"}))
 	require.NoError(t, err)
-	_, err = service.RenameFileFolder(ctx, connect.NewRequest(&managev1.RenameFileFolderRequest{FolderId: child.Msg.Folder.Id, Name: "Renamed"}))
+	_, err = NewConnectHandler(service).RenameFileFolder(ctx, connect.NewRequest(&managev1.RenameFileFolderRequest{FolderId: child.Msg.Folder.Id, Name: "Renamed"}))
 	require.NoError(t, err)
-	_, err = service.MoveFileFolder(ctx, connect.NewRequest(&managev1.MoveFileFolderRequest{FolderId: child.Msg.Folder.Id}))
+	_, err = NewConnectHandler(service).MoveFileFolder(ctx, connect.NewRequest(&managev1.MoveFileFolderRequest{FolderId: child.Msg.Folder.Id}))
 	require.NoError(t, err)
 	// Repeating root move is a semantic no-op.
-	_, err = service.MoveFileFolder(ctx, connect.NewRequest(&managev1.MoveFileFolderRequest{FolderId: child.Msg.Folder.Id}))
+	_, err = NewConnectHandler(service).MoveFileFolder(ctx, connect.NewRequest(&managev1.MoveFileFolderRequest{FolderId: child.Msg.Folder.Id}))
 	require.NoError(t, err)
 
 	fileID := seedFileManagerFile(t, db, root.Msg.Folder.Id, memberID, "source", "jpg", "image/jpeg")
-	_, err = service.RenameFile(ctx, connect.NewRequest(&managev1.RenameFileRequest{FileId: fileID, FileName: "renamed"}))
+	_, err = NewConnectHandler(service).RenameFile(ctx, connect.NewRequest(&managev1.RenameFileRequest{FileId: fileID, FileName: "renamed"}))
 	require.NoError(t, err)
-	_, err = service.MoveFiles(ctx, connect.NewRequest(&managev1.MoveFilesRequest{FileIds: []string{fileID}}))
+	_, err = NewConnectHandler(service).MoveFiles(ctx, connect.NewRequest(&managev1.MoveFilesRequest{FileIds: []string{fileID}}))
 	require.NoError(t, err)
-	_, err = service.MoveFiles(ctx, connect.NewRequest(&managev1.MoveFilesRequest{FileIds: []string{fileID}}))
+	_, err = NewConnectHandler(service).MoveFiles(ctx, connect.NewRequest(&managev1.MoveFilesRequest{FileIds: []string{fileID}}))
 	require.NoError(t, err)
-	_, err = service.DeleteFiles(ctx, connect.NewRequest(&managev1.DeleteFilesRequest{FileIds: []string{fileID}}))
+	_, err = NewConnectHandler(service).DeleteFiles(ctx, connect.NewRequest(&managev1.DeleteFilesRequest{FileIds: []string{fileID}}))
 	require.NoError(t, err)
 
 	var rows []postSeriesAuditRow
@@ -72,7 +72,7 @@ func TestFileManagerDomainAuditIntegration(t *testing.T) {
 		db: db, spiceDB: spiceDB, auditWriter: fileFailingAuditAppender{},
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
 	}
-	_, err = failing.CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "must rollback"}))
+	_, err = NewConnectHandler(failing).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "must rollback"}))
 	require.Error(t, err)
 	var count int64
 	require.NoError(t, db.Model(&model.FileFolder{}).Where("name = ?", "must rollback").Count(&count).Error)
@@ -118,13 +118,13 @@ func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *t
 	require.NoError(t, db.Table("file").Where("id = ?", failingIngestID).Count(&ingestCount).Error)
 	require.Zero(t, ingestCount)
 
-	root, err := service.CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Delete root"}))
+	root, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Delete root"}))
 	require.NoError(t, err)
-	child, err := service.CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{ParentId: &root.Msg.Folder.Id, Name: "Delete child"}))
+	child, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{ParentId: &root.Msg.Folder.Id, Name: "Delete child"}))
 	require.NoError(t, err)
 	rootFileID := seedFileManagerFile(t, db, root.Msg.Folder.Id, memberID, "root-file", "jpg", "image/jpeg")
 	childFileID := seedFileManagerFile(t, db, child.Msg.Folder.Id, memberID, "child-file", "jpg", "image/jpeg")
-	_, err = service.DeleteFileFolder(ctx, connect.NewRequest(&managev1.DeleteFileFolderRequest{FolderId: root.Msg.Folder.Id}))
+	_, err = NewConnectHandler(service).DeleteFileFolder(ctx, connect.NewRequest(&managev1.DeleteFileFolderRequest{FolderId: root.Msg.Folder.Id}))
 	require.NoError(t, err)
 	require.Len(t, publisher.messages, 2, "folder deletion publishes independent file commands only")
 	var pending int64
@@ -139,16 +139,16 @@ func TestVerifiedFileIngestAndRecursiveFolderDeletionDomainAuditIntegration(t *t
 		require.JSONEq(t, `{}`, string(row.Attributes))
 	}
 
-	rollbackRoot, err := service.CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Rollback root"}))
+	rollbackRoot, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Rollback root"}))
 	require.NoError(t, err)
-	rollbackChild, err := service.CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{ParentId: &rollbackRoot.Msg.Folder.Id, Name: "Rollback child"}))
+	rollbackChild, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{ParentId: &rollbackRoot.Msg.Folder.Id, Name: "Rollback child"}))
 	require.NoError(t, err)
 	rollbackFileID := seedFileManagerFile(t, db, rollbackChild.Msg.Folder.Id, memberID, "rollback-file", "jpg", "image/jpeg")
 	failingDelete := &Service{
 		db: db, spiceDB: spiceDB, asyncPublisher: &capturingAsyncPublisher{}, auditWriter: fileFailingAuditAppender{},
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
 	}
-	_, err = failingDelete.DeleteFileFolder(ctx, connect.NewRequest(&managev1.DeleteFileFolderRequest{FolderId: rollbackRoot.Msg.Folder.Id}))
+	_, err = NewConnectHandler(failingDelete).DeleteFileFolder(ctx, connect.NewRequest(&managev1.DeleteFileFolderRequest{FolderId: rollbackRoot.Msg.Folder.Id}))
 	require.Error(t, err)
 	var folderCount int64
 	require.NoError(t, db.Table("file_folder").Where("id IN ?", []string{rollbackRoot.Msg.Folder.Id, rollbackChild.Msg.Folder.Id}).Count(&folderCount).Error)

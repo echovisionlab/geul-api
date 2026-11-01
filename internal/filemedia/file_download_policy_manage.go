@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -50,27 +49,38 @@ type fileDownloadPolicyRelation struct {
 	ResourceID   string                          `gorm:"column:resource_id"`
 }
 
-func (s *Service) GetFileDownloadPolicy(
-	ctx context.Context,
-	req *connect.Request[managev1.GetFileDownloadPolicyRequest],
-) (*connect.Response[managev1.GetFileDownloadPolicyResponse], error) {
-	selector, err := validateFileDownloadPolicySelector(
-		req.Msg.EntityType, req.Msg.EntityId, req.Msg.BlockId, req.Msg.ReferencePath,
-	)
+// FileDownloadPolicyTarget names one File attachment: a File Block of a
+// document, or a Track's original audio.
+type FileDownloadPolicyTarget struct {
+	EntityType    managev1.TranscodeEntityType
+	EntityID      string
+	BlockID       *string
+	ReferencePath *string
+}
+
+func (t FileDownloadPolicyTarget) selector() (fileDownloadPolicySelector, error) {
+	return validateFileDownloadPolicySelector(t.EntityType, t.EntityID, t.BlockID, t.ReferencePath)
+}
+
+// GetFileDownloadPolicyQuery reads the download policy of one attachment.
+type GetFileDownloadPolicyQuery struct {
+	Target FileDownloadPolicyTarget
+}
+
+func (s *Service) GetFileDownloadPolicy(ctx context.Context, query GetFileDownloadPolicyQuery) (*managev1.FileDownloadPolicy, error) {
+	selector, err := query.Target.selector()
 	if err != nil {
 		return nil, err
 	}
-	var relation fileDownloadPolicyRelation
 	var policy *managev1.FileDownloadPolicy
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		resolved, resolveErr := s.resolveFileDownloadPolicyRelation(ctx, tx, selector, false)
+		relation, resolveErr := s.resolveFileDownloadPolicyRelation(ctx, tx, selector, false)
 		if resolveErr != nil {
 			return resolveErr
 		}
-		if authorizeErr := s.authorizeFileDownloadPolicyOwner(ctx, tx, resolved, filePolicyOwnerView); authorizeErr != nil {
+		if authorizeErr := s.authorizeFileDownloadPolicyOwner(ctx, tx, relation, filePolicyOwnerView); authorizeErr != nil {
 			return authorizeErr
 		}
-		relation = resolved
 		var loadErr error
 		policy, loadErr = s.loadManageFileDownloadPolicy(ctx, tx, relation)
 		return loadErr
@@ -78,68 +88,97 @@ func (s *Service) GetFileDownloadPolicy(
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.GetFileDownloadPolicyResponse{Policy: policy}), nil
+	return policy, nil
 }
 
-func (s *Service) UpdateFileDownloadPolicy(
-	ctx context.Context,
-	req *connect.Request[managev1.UpdateFileDownloadPolicyRequest],
-) (*connect.Response[managev1.UpdateFileDownloadPolicyResponse], error) {
-	selector, err := validateFileDownloadPolicySelector(
-		req.Msg.EntityType, req.Msg.EntityId, req.Msg.BlockId, req.Msg.ReferencePath,
-	)
+// FileDownloadPolicyState is a download audience with its segments.
+type FileDownloadPolicyState struct {
+	Audience           managev1.FileDownloadAudience
+	AudienceSegmentIDs []string
+}
+
+// UpdateFileDownloadPolicyCommand sets the download policy of the attachment
+// that still holds ExpectedFileID. Observed is the policy the caller read; a
+// concurrent change to a field the caller did not change is kept.
+type UpdateFileDownloadPolicyCommand struct {
+	Target         FileDownloadPolicyTarget
+	ExpectedFileID string
+	Policy         FileDownloadPolicyState
+	// Observed is required.
+	Observed *FileDownloadPolicyState
+}
+
+// fileDownloadPolicyChange is a validated UpdateFileDownloadPolicyCommand.
+type fileDownloadPolicyChange struct {
+	selector           fileDownloadPolicySelector
+	expectedFileID     string
+	audience           mediaasset.FileDownloadAudience
+	segmentIDs         []string
+	observedAudience   mediaasset.FileDownloadAudience
+	observedSegmentIDs []string
+}
+
+func validateFileDownloadPolicyChange(command UpdateFileDownloadPolicyCommand) (fileDownloadPolicyChange, error) {
+	selector, err := command.Target.selector()
 	if err != nil {
-		return nil, err
+		return fileDownloadPolicyChange{}, err
 	}
-	expectedFileID := strings.TrimSpace(req.Msg.ExpectedFileId)
-	parsedExpectedFileID, parseErr := uuid.Parse(expectedFileID)
+	parsedExpectedFileID, parseErr := uuid.Parse(strings.TrimSpace(command.ExpectedFileID))
 	if parseErr != nil {
-		return nil, errs.InvalidArgument("expected_file_id", "must be a valid UUID")
+		return fileDownloadPolicyChange{}, errs.InvalidArgument("expected_file_id", "must be a valid UUID")
 	}
-	expectedFileID = parsedExpectedFileID.String()
-	audience, ok := storedFileDownloadAudience(req.Msg.Audience)
+	audience, ok := storedFileDownloadAudience(command.Policy.Audience)
 	if !ok {
-		return nil, errs.InvalidArgument("audience", "unsupported file download audience")
+		return fileDownloadPolicyChange{}, errs.InvalidArgument("audience", "unsupported file download audience")
 	}
-	segmentIDs, err := uniqueUUIDs(req.Msg.AudienceSegmentIds, "audience_segment_ids")
+	segmentIDs, err := uniqueUUIDs(command.Policy.AudienceSegmentIDs, "audience_segment_ids")
 	if err != nil {
-		return nil, err
+		return fileDownloadPolicyChange{}, err
 	}
-	if req.Msg.ObservedPolicy == nil {
-		return nil, errs.InvalidArgument("observed_policy", "is required")
+	if command.Observed == nil {
+		return fileDownloadPolicyChange{}, errs.InvalidArgument("observed_policy", "is required")
 	}
-	var observedSegmentIDs []string
-	observedAudience, ok := storedFileDownloadAudience(req.Msg.ObservedPolicy.Audience)
+	observedAudience, ok := storedFileDownloadAudience(command.Observed.Audience)
 	if !ok {
-		return nil, errs.InvalidArgument("observed_policy.audience", "unsupported file download audience")
+		return fileDownloadPolicyChange{}, errs.InvalidArgument("observed_policy.audience", "unsupported file download audience")
 	}
-	observedSegmentIDs, err = uniqueUUIDs(req.Msg.ObservedPolicy.AudienceSegmentIds, "observed_policy.audience_segment_ids")
+	observedSegmentIDs, err := uniqueUUIDs(command.Observed.AudienceSegmentIDs, "observed_policy.audience_segment_ids")
 	if err != nil {
-		return nil, err
+		return fileDownloadPolicyChange{}, err
 	}
 	if len(observedSegmentIDs) > maxFileDownloadAudienceSegments {
-		return nil, errs.InvalidArgument(
-			"observed_policy.audience_segment_ids",
-			fmt.Sprintf("at most %d audience segments are allowed", maxFileDownloadAudienceSegments),
-		)
+		return fileDownloadPolicyChange{}, tooManyFileDownloadAudienceSegments("observed_policy.audience_segment_ids")
 	}
 	if len(segmentIDs) > maxFileDownloadAudienceSegments {
-		return nil, errs.InvalidArgument(
-			"audience_segment_ids",
-			fmt.Sprintf("at most %d audience segments are allowed", maxFileDownloadAudienceSegments),
-		)
+		return fileDownloadPolicyChange{}, tooManyFileDownloadAudienceSegments("audience_segment_ids")
 	}
 	if audience != mediaasset.FileDownloadAudienceRestricted && len(segmentIDs) > 0 {
-		return nil, errs.InvalidArgument("audience_segment_ids", "audience segments require restricted audience")
+		return fileDownloadPolicyChange{}, errs.InvalidArgument("audience_segment_ids", "audience segments require restricted audience")
 	}
 	slices.Sort(segmentIDs)
+	return fileDownloadPolicyChange{
+		selector: selector, expectedFileID: parsedExpectedFileID.String(),
+		audience: audience, segmentIDs: segmentIDs,
+		observedAudience: observedAudience, observedSegmentIDs: observedSegmentIDs,
+	}, nil
+}
+
+func tooManyFileDownloadAudienceSegments(field string) error {
+	return errs.InvalidArgument(field, fmt.Sprintf("at most %d audience segments are allowed", maxFileDownloadAudienceSegments))
+}
+
+func (s *Service) UpdateFileDownloadPolicy(ctx context.Context, command UpdateFileDownloadPolicyCommand) (*managev1.FileDownloadPolicy, error) {
+	change, err := validateFileDownloadPolicyChange(command)
+	if err != nil {
+		return nil, err
+	}
 	if err := requireFileDownloadPolicyActor(ctx); err != nil {
 		return nil, err
 	}
 	// Authorize the exact owner before validating Segment IDs so an unrelated
 	// caller cannot probe Audience state. The locked check is repeated inside
 	// the mutation transaction after Segment locks are acquired.
-	initial, err := s.resolveFileDownloadPolicyRelation(ctx, s.db, selector, false)
+	initial, err := s.resolveFileDownloadPolicyRelation(ctx, s.db, change.selector, false)
 	if err != nil {
 		return nil, err
 	}
@@ -148,68 +187,64 @@ func (s *Service) UpdateFileDownloadPolicy(
 	}); err != nil {
 		return nil, err
 	}
-
-	var relation fileDownloadPolicyRelation
 	var policy *managev1.FileDownloadPolicy
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		audienceAccess := s.audienceAccess
-		// Audience Segment rows are the first database lock in policy and archive
-		// flows. This stable order prevents archive-versus-policy deadlocks.
-		if validateErr := audienceAccess.ValidateAuthenticatedSegmentIDs(ctx, tx, segmentIDs); validateErr != nil {
-			return validateErr
-		}
-		resolved, resolveErr := s.resolveFileDownloadPolicyRelation(ctx, tx, selector, false)
-		if resolveErr != nil {
-			return resolveErr
-		}
-		if authorizeErr := s.authorizeFileDownloadPolicyOwner(ctx, tx, resolved, filePolicyOwnerEdit); authorizeErr != nil {
-			return authorizeErr
-		}
-		locked, lockErr := s.resolveFileDownloadPolicyRelation(ctx, tx, selector, true)
-		if lockErr != nil {
-			return lockErr
-		}
-		if locked.FileID != expectedFileID {
-			return errs.FailedPrecondition("File attachment changed; reload before saving download policy")
-		}
-		previousSegmentIDs, loadErr := loadFileDownloadPolicySegmentIDs(ctx, tx, locked)
-		if loadErr != nil {
-			return loadErr
-		}
-		nextAudience, nextSegmentIDs := mergeObservedFileDownloadPolicy(
-			locked.Audience, observedAudience, audience, previousSegmentIDs, observedSegmentIDs, segmentIDs,
-		)
-		if len(nextSegmentIDs) > maxFileDownloadAudienceSegments {
-			return errs.InvalidArgument(
-				"audience_segment_ids",
-				fmt.Sprintf("at most %d audience segments are allowed", maxFileDownloadAudienceSegments),
-			)
-		}
-		if locked.Audience == nextAudience && slices.Equal(previousSegmentIDs, nextSegmentIDs) {
-			relation = locked
-			policy, loadErr = s.loadManageFileDownloadPolicy(ctx, tx, relation)
-			return loadErr
-		}
-		if updateErr := updateFileDownloadPolicyRelation(ctx, tx, locked, nextAudience, nextSegmentIDs); updateErr != nil {
-			return updateErr
-		}
-		if auditErr := appendRelationFileDownloadPolicyAudit(
-			ctx, tx, s.auditWriter, locked, locked.Audience, nextAudience, previousSegmentIDs, nextSegmentIDs,
-		); auditErr != nil {
-			return auditErr
-		}
-		if signalErr := s.publishFileDownloadPolicyChanged(ctx, tx, locked); signalErr != nil {
-			return signalErr
-		}
-		locked.Audience = nextAudience
-		relation = locked
-		policy, loadErr = s.loadManageFileDownloadPolicy(ctx, tx, relation)
-		return loadErr
+		var applyErr error
+		policy, applyErr = s.applyFileDownloadPolicyChange(ctx, tx, change)
+		return applyErr
 	})
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&managev1.UpdateFileDownloadPolicyResponse{Policy: policy}), nil
+	return policy, nil
+}
+
+func (s *Service) applyFileDownloadPolicyChange(ctx context.Context, tx *gorm.DB, change fileDownloadPolicyChange) (*managev1.FileDownloadPolicy, error) {
+	// Audience Segment rows are the first database lock in policy and archive
+	// flows. This stable order prevents archive-versus-policy deadlocks.
+	if err := s.audienceAccess.ValidateAuthenticatedSegmentIDs(ctx, tx, change.segmentIDs); err != nil {
+		return nil, err
+	}
+	resolved, err := s.resolveFileDownloadPolicyRelation(ctx, tx, change.selector, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeFileDownloadPolicyOwner(ctx, tx, resolved, filePolicyOwnerEdit); err != nil {
+		return nil, err
+	}
+	locked, err := s.resolveFileDownloadPolicyRelation(ctx, tx, change.selector, true)
+	if err != nil {
+		return nil, err
+	}
+	if locked.FileID != change.expectedFileID {
+		return nil, errs.FailedPrecondition("File attachment changed; reload before saving download policy")
+	}
+	previousSegmentIDs, err := loadFileDownloadPolicySegmentIDs(ctx, tx, locked)
+	if err != nil {
+		return nil, err
+	}
+	nextAudience, nextSegmentIDs := mergeObservedFileDownloadPolicy(
+		locked.Audience, change.observedAudience, change.audience, previousSegmentIDs, change.observedSegmentIDs, change.segmentIDs,
+	)
+	if len(nextSegmentIDs) > maxFileDownloadAudienceSegments {
+		return nil, tooManyFileDownloadAudienceSegments("audience_segment_ids")
+	}
+	if locked.Audience == nextAudience && slices.Equal(previousSegmentIDs, nextSegmentIDs) {
+		return s.loadManageFileDownloadPolicy(ctx, tx, locked)
+	}
+	if err := updateFileDownloadPolicyRelation(ctx, tx, locked, nextAudience, nextSegmentIDs); err != nil {
+		return nil, err
+	}
+	if err := appendRelationFileDownloadPolicyAudit(
+		ctx, tx, s.auditWriter, locked, locked.Audience, nextAudience, previousSegmentIDs, nextSegmentIDs,
+	); err != nil {
+		return nil, err
+	}
+	if err := s.publishFileDownloadPolicyChanged(ctx, tx, locked); err != nil {
+		return nil, err
+	}
+	locked.Audience = nextAudience
+	return s.loadManageFileDownloadPolicy(ctx, tx, locked)
 }
 
 // Policy is attachment metadata. Track policies belong to their Release, not

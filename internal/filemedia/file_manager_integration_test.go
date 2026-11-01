@@ -34,16 +34,16 @@ func TestFileManagerCatalogUsageAndDeletionIntegration(t *testing.T) {
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
 	}
 
-	root, err := service.CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Library"}))
+	root, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Library"}))
 	require.NoError(t, err)
 	require.Equal(t, "Library", root.Msg.Folder.GetName())
-	child, err := service.CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{
+	child, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{
 		ParentId: &root.Msg.Folder.Id, Name: "Images",
 	}))
 	require.NoError(t, err)
 
 	require.NoError(t, db.SavePoint("file_manager_cycle_check").Error)
-	_, err = service.MoveFileFolder(ctx, connect.NewRequest(&managev1.MoveFileFolderRequest{
+	_, err = NewConnectHandler(service).MoveFileFolder(ctx, connect.NewRequest(&managev1.MoveFileFolderRequest{
 		FolderId: root.Msg.Folder.Id, ParentId: &child.Msg.Folder.Id,
 	}))
 	require.Error(t, err)
@@ -78,7 +78,7 @@ func TestFileManagerCatalogUsageAndDeletionIntegration(t *testing.T) {
 		VALUES (?, ?, 1, 'Exact usage track', ?)
 	`, trackID, releaseID, fileID).Error)
 
-	listed, err := service.ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
+	listed, err := NewConnectHandler(service).ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
 		FolderId: &child.Msg.Folder.Id,
 	}))
 	require.NoError(t, err)
@@ -88,7 +88,7 @@ func TestFileManagerCatalogUsageAndDeletionIntegration(t *testing.T) {
 	require.Equal(t, "jpg", listed.Msg.Items[0].GetFile().GetExtension())
 	require.EqualValues(t, 3, listed.Msg.Items[0].GetFile().GetUsageCount())
 	require.Equal(t, memberID, listed.Msg.Items[0].GetFile().GetUploadedByMember().GetId())
-	usages, err := service.ListFileUsages(ctx, connect.NewRequest(&managev1.ListFileUsagesRequest{FileId: fileID}))
+	usages, err := NewConnectHandler(service).ListFileUsages(ctx, connect.NewRequest(&managev1.ListFileUsagesRequest{FileId: fileID}))
 	require.NoError(t, err)
 	require.Len(t, usages.Msg.Usages, 3)
 	usageByBlockID := make(map[string]*managev1.FileUsage)
@@ -115,20 +115,20 @@ func TestFileManagerCatalogUsageAndDeletionIntegration(t *testing.T) {
 	require.Equal(t, "audio_original", trackUsage.GetReferencePath())
 	require.Equal(t, "/releases/"+releaseSlug, trackUsage.GetLink())
 
-	impact, err := service.GetFileDeletionImpact(ctx, connect.NewRequest(&managev1.GetFileDeletionImpactRequest{FileIds: []string{fileID}}))
+	impact, err := NewConnectHandler(service).GetFileDeletionImpact(ctx, connect.NewRequest(&managev1.GetFileDeletionImpactRequest{FileIds: []string{fileID}}))
 	require.NoError(t, err)
 	require.Len(t, impact.Msg.Impacts, 1)
 	require.EqualValues(t, 3, impact.Msg.Impacts[0].GetTotalUsageCount())
 	require.Equal(t, managev1.FileUsageDomain_FILE_USAGE_DOMAIN_POST, impact.Msg.Impacts[0].GetFirstUsages()[0].GetDomain())
 
-	rejected, err := service.DeleteFiles(ctx, connect.NewRequest(&managev1.DeleteFilesRequest{FileIds: []string{fileID}}))
+	rejected, err := NewConnectHandler(service).DeleteFiles(ctx, connect.NewRequest(&managev1.DeleteFilesRequest{FileIds: []string{fileID}}))
 	require.NoError(t, err)
 	require.Empty(t, rejected.Msg.AcceptedFileIds)
 	require.Len(t, rejected.Msg.RejectedFiles, 1)
 
 	require.NoError(t, db.Exec(`DELETE FROM content_block_attachment WHERE block_id IN ? AND file_id = ?`, []string{blockID, secondBlockID}, fileID).Error)
 	require.NoError(t, db.Exec(`UPDATE track SET audio_original_file_id = NULL WHERE id = ?`, trackID).Error)
-	accepted, err := service.DeleteFiles(ctx, connect.NewRequest(&managev1.DeleteFilesRequest{FileIds: []string{fileID}}))
+	accepted, err := NewConnectHandler(service).DeleteFiles(ctx, connect.NewRequest(&managev1.DeleteFilesRequest{FileIds: []string{fileID}}))
 	require.NoError(t, err)
 	require.Equal(t, []string{fileID}, accepted.Msg.AcceptedFileIds)
 	require.NotEmpty(t, publisher.messages)
@@ -145,9 +145,9 @@ func TestFileManagerSiteWideSearchIncludesFoldersPathsAndPaginationIntegration(t
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
 	}
 
-	root, err := service.CreateFileFolder(adminCtx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Library"}))
+	root, err := NewConnectHandler(service).CreateFileFolder(adminCtx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Library"}))
 	require.NoError(t, err)
-	covers, err := service.CreateFileFolder(adminCtx, connect.NewRequest(&managev1.CreateFileFolderRequest{
+	covers, err := NewConnectHandler(service).CreateFileFolder(adminCtx, connect.NewRequest(&managev1.CreateFileFolderRequest{
 		ParentId: &root.Msg.Folder.Id, Name: "Needle Covers",
 	}))
 	require.NoError(t, err)
@@ -155,7 +155,7 @@ func TestFileManagerSiteWideSearchIncludesFoldersPathsAndPaginationIntegration(t
 	needleQuery := "nEeDlE"
 	ctx := adminCtx
 
-	first, err := service.ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
+	first, err := NewConnectHandler(service).ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
 		Query: &needleQuery, PageSize: 1,
 	}))
 	require.NoError(t, err)
@@ -167,7 +167,7 @@ func TestFileManagerSiteWideSearchIncludesFoldersPathsAndPaginationIntegration(t
 	})
 	require.NotEmpty(t, first.Msg.GetNextPageToken())
 
-	second, err := service.ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
+	second, err := NewConnectHandler(service).ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
 		Query: &needleQuery, PageSize: 1, PageToken: first.Msg.NextPageToken,
 	}))
 	require.NoError(t, err)
@@ -180,31 +180,31 @@ func TestFileManagerSiteWideSearchIncludesFoldersPathsAndPaginationIntegration(t
 	require.Empty(t, second.Msg.GetNextPageToken())
 
 	fullNameQuery := "NEEDLE HERO.JPG"
-	fullName, err := service.ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
+	fullName, err := NewConnectHandler(service).ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
 		Query: &fullNameQuery,
 	}))
 	require.NoError(t, err)
 	require.EqualValues(t, 1, fullName.Msg.Total)
 	require.Equal(t, fileID, fullName.Msg.Items[0].GetFile().GetId())
 
-	browse, err := service.ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
+	browse, err := NewConnectHandler(service).ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
 		FolderId: &covers.Msg.Folder.Id,
 	}))
 	require.NoError(t, err)
 	require.Empty(t, browse.Msg.Items[0].GetFolderPath())
 
-	otherRoot, err := service.CreateFileFolder(adminCtx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Other"}))
+	otherRoot, err := NewConnectHandler(service).CreateFileFolder(adminCtx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Other"}))
 	require.NoError(t, err)
 	seedFileManagerFile(t, db, otherRoot.Msg.Folder.Id, memberID, "Needle Outside", "jpg", "image/jpeg")
 
-	withinLibrary, err := service.ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
+	withinLibrary, err := NewConnectHandler(service).ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
 		FolderId: &root.Msg.Folder.Id, Query: &needleQuery,
 	}))
 	require.NoError(t, err)
 	require.EqualValues(t, 2, withinLibrary.Msg.Total)
 	require.Len(t, withinLibrary.Msg.Items, 2)
 
-	withinCovers, err := service.ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
+	withinCovers, err := NewConnectHandler(service).ListFileManagerItems(ctx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{
 		FolderId: &covers.Msg.Folder.Id, Query: &needleQuery,
 	}))
 	require.NoError(t, err)
@@ -224,7 +224,7 @@ func TestFileManagerGetFileIncludesGeneratedOutputsIntegration(t *testing.T) {
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
 	}
 
-	folder, err := service.CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Generated"}))
+	folder, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Generated"}))
 	require.NoError(t, err)
 	sourceFileID := seedFileManagerFile(t, db, folder.Msg.Folder.Id, memberID, "source", "glb", "model/gltf-binary")
 	outputFileID := seedFileManagerFile(t, db, folder.Msg.Folder.Id, memberID, "optimized", "glb", "model/gltf-binary")
@@ -253,7 +253,7 @@ func TestFileManagerGetFileIncludesGeneratedOutputsIntegration(t *testing.T) {
 		Status:          model.MeshOptimizationCandidateStatusReady, CreatedAt: now, UpdatedAt: now,
 	}).Error)
 
-	response, err := service.GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: sourceFileID}))
+	response, err := NewConnectHandler(service).GetFile(ctx, connect.NewRequest(&managev1.GetFileRequest{FileId: sourceFileID}))
 	require.NoError(t, err)
 	require.Len(t, response.Msg.GeneratedOutputs, 2)
 	byType := make(map[managev1.FileDerivativeType]*managev1.FileGeneratedOutput, len(response.Msg.GeneratedOutputs))
@@ -284,9 +284,9 @@ func TestFileManagerFolderDeletionIsAllOrNothingIntegration(t *testing.T) {
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
 	}
 
-	root, err := service.CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Tree"}))
+	root, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Tree"}))
 	require.NoError(t, err)
-	child, err := service.CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{
+	child, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{
 		ParentId: &root.Msg.Folder.Id, Name: "Child",
 	}))
 	require.NoError(t, err)
@@ -294,7 +294,7 @@ func TestFileManagerFolderDeletionIsAllOrNothingIntegration(t *testing.T) {
 	usedFileID := seedFileManagerFile(t, db, child.Msg.Folder.Id, memberID, "used", "jpg", "image/jpeg")
 	_, blockID, _ := seedFileManagerPostBlockUsage(t, db, usedFileID, "Folder deletion usage")
 
-	_, err = service.DeleteFileFolder(ctx, connect.NewRequest(&managev1.DeleteFileFolderRequest{FolderId: root.Msg.Folder.Id}))
+	_, err = NewConnectHandler(service).DeleteFileFolder(ctx, connect.NewRequest(&managev1.DeleteFileFolderRequest{FolderId: root.Msg.Folder.Id}))
 	require.Error(t, err)
 	var folderCount int64
 	require.NoError(t, db.Table("file_folder").Where("id IN ?", []string{root.Msg.Folder.Id, child.Msg.Folder.Id}).Count(&folderCount).Error)
@@ -304,7 +304,7 @@ func TestFileManagerFolderDeletionIsAllOrNothingIntegration(t *testing.T) {
 	require.Zero(t, pendingCount)
 
 	require.NoError(t, db.Exec(`DELETE FROM content_block_attachment WHERE block_id = ? AND file_id = ?`, blockID, usedFileID).Error)
-	deleted, err := service.DeleteFileFolder(ctx, connect.NewRequest(&managev1.DeleteFileFolderRequest{FolderId: root.Msg.Folder.Id}))
+	deleted, err := NewConnectHandler(service).DeleteFileFolder(ctx, connect.NewRequest(&managev1.DeleteFileFolderRequest{FolderId: root.Msg.Folder.Id}))
 	require.NoError(t, err)
 	require.ElementsMatch(t, []string{unusedFileID, usedFileID}, deleted.Msg.AcceptedFileIds)
 	require.NoError(t, db.Table("file_folder").Where("id IN ?", []string{root.Msg.Folder.Id, child.Msg.Folder.Id}).Count(&folderCount).Error)
@@ -324,7 +324,7 @@ func TestFileManagerListsEverySiteSettingsUsageSlotIntegration(t *testing.T) {
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
 	}
 
-	folder, err := service.CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Settings"}))
+	folder, err := NewConnectHandler(service).CreateFileFolder(ctx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Settings"}))
 	require.NoError(t, err)
 	fileID := seedFileManagerFile(t, db, folder.Msg.Folder.Id, memberID, "branding", "png", "image/png")
 	require.NoError(t, db.Exec(`UPDATE site_settings SET
@@ -334,7 +334,7 @@ func TestFileManagerListsEverySiteSettingsUsageSlotIntegration(t *testing.T) {
 		WHERE id = 1`, fileID, fileID, fileID, fileID, fileID, fileID, fileID, fileID, fileID, fileID).Error)
 	require.NoError(t, db.Exec(`INSERT INTO site_setting_loader_file (site_setting_id, file_id, position) VALUES (1, ?, 0)`, fileID).Error)
 
-	response, err := service.ListFileUsages(ctx, connect.NewRequest(&managev1.ListFileUsagesRequest{FileId: fileID}))
+	response, err := NewConnectHandler(service).ListFileUsages(ctx, connect.NewRequest(&managev1.ListFileUsagesRequest{FileId: fileID}))
 	require.NoError(t, err)
 	require.Len(t, response.Msg.Usages, 11)
 
@@ -349,7 +349,7 @@ func TestFileManagerListsEverySiteSettingsUsageSlotIntegration(t *testing.T) {
 		"site_og_background", "privacy_og_background", "terms_og_background",
 	}, slots)
 
-	impact, err := service.GetFileDeletionImpact(ctx, connect.NewRequest(&managev1.GetFileDeletionImpactRequest{FileIds: []string{fileID}}))
+	impact, err := NewConnectHandler(service).GetFileDeletionImpact(ctx, connect.NewRequest(&managev1.GetFileDeletionImpactRequest{FileIds: []string{fileID}}))
 	require.NoError(t, err)
 	require.Len(t, impact.Msg.Impacts, 1)
 	require.EqualValues(t, 11, impact.Msg.Impacts[0].GetTotalUsageCount())
@@ -358,7 +358,7 @@ func TestFileManagerListsEverySiteSettingsUsageSlotIntegration(t *testing.T) {
 	require.Len(t, impact.Msg.Impacts[0].GetDomainCounts(), 1)
 	require.EqualValues(t, 11, impact.Msg.Impacts[0].GetDomainCounts()[0].GetCount())
 
-	rejected, err := service.DeleteFiles(ctx, connect.NewRequest(&managev1.DeleteFilesRequest{FileIds: []string{fileID}}))
+	rejected, err := NewConnectHandler(service).DeleteFiles(ctx, connect.NewRequest(&managev1.DeleteFilesRequest{FileIds: []string{fileID}}))
 	require.NoError(t, err)
 	require.Empty(t, rejected.Msg.AcceptedFileIds)
 	require.Len(t, rejected.Msg.RejectedFiles, 1)
@@ -380,7 +380,7 @@ func TestFileManagerFiltersAuthorUsageProjectionIntegration(t *testing.T) {
 		mediaSecret: "file-manager-author-secret", downloadTTL: time.Hour,
 		memberSummaries: newIntegrationMemberSummaries(db, "https://cdn.example.test"),
 	}
-	folder, err := service.CreateFileFolder(adminCtx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Author Files"}))
+	folder, err := NewConnectHandler(service).CreateFileFolder(adminCtx, connect.NewRequest(&managev1.CreateFileFolderRequest{Name: "Author Files"}))
 	require.NoError(t, err)
 	fileID := seedFileManagerFile(t, db, folder.Msg.Folder.Id, memberID, "shared", "png", "image/png")
 	postID, _, _ := seedFileManagerPostBlockUsage(t, db, fileID, "Author usage")
@@ -397,18 +397,18 @@ func TestFileManagerFiltersAuthorUsageProjectionIntegration(t *testing.T) {
 
 	authorCtx := adminCtx
 
-	listed, err := service.ListFileManagerItems(authorCtx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{FolderId: &folder.Msg.Folder.Id}))
+	listed, err := NewConnectHandler(service).ListFileManagerItems(authorCtx, connect.NewRequest(&managev1.ListFileManagerItemsRequest{FolderId: &folder.Msg.Folder.Id}))
 	require.NoError(t, err)
 	require.Len(t, listed.Msg.Items, 1)
 	require.EqualValues(t, 1, listed.Msg.Items[0].GetFile().GetUsageCount())
 
-	file, err := service.GetFile(authorCtx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
+	file, err := NewConnectHandler(service).GetFile(authorCtx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
 	require.NoError(t, err)
 	require.EqualValues(t, 1, file.Msg.File.GetUsageCount())
 	require.Len(t, file.Msg.DomainUsageSummary, 1)
 	require.Equal(t, managev1.FileUsageDomain_FILE_USAGE_DOMAIN_POST, file.Msg.DomainUsageSummary[0].GetDomain())
 
-	usages, err := service.ListFileUsages(authorCtx, connect.NewRequest(&managev1.ListFileUsagesRequest{FileId: fileID}))
+	usages, err := NewConnectHandler(service).ListFileUsages(authorCtx, connect.NewRequest(&managev1.ListFileUsagesRequest{FileId: fileID}))
 	require.NoError(t, err)
 	require.EqualValues(t, 1, usages.Msg.Total)
 	require.Len(t, usages.Msg.Usages, 1)
@@ -417,7 +417,7 @@ func TestFileManagerFiltersAuthorUsageProjectionIntegration(t *testing.T) {
 	require.NoError(t, err)
 	_, err = spiceDB.ApplyRelationships(t.Context(), revokeAuthor)
 	require.NoError(t, err)
-	hidden, err := service.GetFile(authorCtx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
+	hidden, err := NewConnectHandler(service).GetFile(authorCtx, connect.NewRequest(&managev1.GetFileRequest{FileId: fileID}))
 	require.NoError(t, err)
 	require.Zero(t, hidden.Msg.File.GetUsageCount())
 	require.Empty(t, hidden.Msg.DomainUsageSummary)

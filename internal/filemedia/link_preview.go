@@ -8,11 +8,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"connectrpc.com/connect"
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/charset"
 
@@ -20,7 +20,6 @@ import (
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1/managev1connect"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -37,7 +36,6 @@ const (
 // It fetches the page directly through the remote File import guard (HTTPS
 // only, public addresses, re-validated redirects) and stores nothing.
 type LinkPreviewService struct {
-	managev1connect.UnimplementedLinkPreviewServiceHandler
 	authorize     func(context.Context) error
 	resolver      remoteImportResolver
 	dial          remoteImportDialer
@@ -79,14 +77,16 @@ func requirePlatformAuthor(ctx context.Context, spiceDB *auth.SpiceDBClient) err
 	return nil
 }
 
-func (s *LinkPreviewService) GetLinkPreview(
-	ctx context.Context,
-	req *connect.Request[managev1.GetLinkPreviewRequest],
-) (*connect.Response[managev1.GetLinkPreviewResponse], error) {
+// GetLinkPreviewQuery reads the preview of one HTTPS page.
+type GetLinkPreviewQuery struct {
+	URL string
+}
+
+func (s *LinkPreviewService) GetLinkPreview(ctx context.Context, query GetLinkPreviewQuery) (*managev1.GetLinkPreviewResponse, error) {
 	if err := s.authorize(ctx); err != nil {
 		return nil, err
 	}
-	parsedURL, err := url.Parse(strings.TrimSpace(req.Msg.GetUrl()))
+	parsedURL, err := url.Parse(strings.TrimSpace(query.URL))
 	if err != nil {
 		return nil, errs.InvalidArgument("url", "invalid URL")
 	}
@@ -129,13 +129,13 @@ func (s *LinkPreviewService) GetLinkPreview(
 	case mediaType == "text/html" || mediaType == "application/xhtml+xml" || mediaType == "":
 		body, err := charset.NewReader(io.LimitReader(response.Body, linkPreviewMaxBytes), response.Header.Get("Content-Type"))
 		if err != nil {
-			return connect.NewResponse(result), nil
+			return result, nil
 		}
 		preview := parseLinkPreview(resolved, body)
 		result.Title, result.Description, result.SiteName, result.ImageSource, result.IconSource =
 			preview.title, preview.description, preview.siteName, preview.imageSource, preview.iconSource
 	}
-	return connect.NewResponse(result), nil
+	return result, nil
 }
 
 type linkPreview struct {
@@ -159,41 +159,43 @@ func parseLinkPreview(base *url.URL, body io.Reader) linkPreview {
 			case "body":
 				return buildLinkPreview(base, meta, icons, documentTitle)
 			case "link":
-				var rel, href string
-				for hasAttributes {
-					var attribute, value []byte
-					attribute, value, hasAttributes = tokenizer.TagAttr()
-					switch string(attribute) {
-					case "rel":
-						rel = strings.Join(strings.Fields(strings.ToLower(string(value))), " ")
-					case "href":
-						href = string(value)
-					}
-				}
-				if _, seen := icons[rel]; rel != "" && !seen {
-					icons[rel] = href
-				}
+				attributes := linkPreviewTagAttributes(tokenizer, hasAttributes, "rel", "href")
+				rel := strings.Join(strings.Fields(strings.ToLower(attributes["rel"])), " ")
+				keepFirstLinkPreviewValue(icons, rel, attributes["href"])
 			case "title":
 				if documentTitle == "" && tokenizer.Next() == html.TextToken {
 					documentTitle = string(tokenizer.Text())
 				}
 			case "meta":
-				var key, content string
-				for hasAttributes {
-					var attribute, value []byte
-					attribute, value, hasAttributes = tokenizer.TagAttr()
-					switch string(attribute) {
-					case "property", "name":
-						key = strings.ToLower(strings.TrimSpace(string(value)))
-					case "content":
-						content = string(value)
-					}
-				}
-				if _, seen := meta[key]; key != "" && !seen {
-					meta[key] = content
-				}
+				attributes := linkPreviewTagAttributes(tokenizer, hasAttributes, "property", "name", "content")
+				keepFirstLinkPreviewValue(meta, strings.ToLower(strings.TrimSpace(attributes["key"])), attributes["content"])
 			}
 		}
+	}
+}
+
+// linkPreviewTagAttributes reads the named attributes of the current tag.
+// "property" and "name" both fill "key", and the last one present wins.
+func linkPreviewTagAttributes(tokenizer *html.Tokenizer, hasAttributes bool, names ...string) map[string]string {
+	attributes := map[string]string{}
+	for hasAttributes {
+		var attribute, value []byte
+		attribute, value, hasAttributes = tokenizer.TagAttr()
+		name := string(attribute)
+		if !slices.Contains(names, name) {
+			continue
+		}
+		if name == "property" || name == "name" {
+			name = "key"
+		}
+		attributes[name] = string(value)
+	}
+	return attributes
+}
+
+func keepFirstLinkPreviewValue(values map[string]string, key, value string) {
+	if _, seen := values[key]; key != "" && !seen {
+		values[key] = value
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"time"
 
-	"connectrpc.com/connect"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -16,11 +15,16 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *Service) GetFileDeletionImpact(ctx context.Context, req *connect.Request[managev1.GetFileDeletionImpactRequest]) (*connect.Response[managev1.GetFileDeletionImpactResponse], error) {
+// GetFileDeletionImpactQuery reads what deleting each File would affect.
+type GetFileDeletionImpactQuery struct {
+	FileIDs []string
+}
+
+func (s *Service) GetFileDeletionImpact(ctx context.Context, query GetFileDeletionImpactQuery) ([]*managev1.FileDeletionImpact, error) {
 	if _, err := requireFileManagerAdmin(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
-	fileIDs, err := uniqueUUIDs(req.Msg.FileIds, "file_ids")
+	fileIDs, err := uniqueUUIDs(query.FileIDs, "file_ids")
 	if err != nil {
 		return nil, err
 	}
@@ -35,25 +39,37 @@ func (s *Service) GetFileDeletionImpact(ctx context.Context, req *connect.Reques
 	}
 	rows, err := loadFileUsages(ctx, s.db, fileIDs)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return nil, err
 	}
-	return connect.NewResponse(&managev1.GetFileDeletionImpactResponse{Impacts: impactsForFiles(fileIDs, rows)}), nil
+	return impactsForFiles(fileIDs, rows), nil
 }
 
-func (s *Service) DeleteFiles(ctx context.Context, req *connect.Request[managev1.DeleteFilesRequest]) (*connect.Response[managev1.DeleteFilesResponse], error) {
+// DeleteFilesCommand schedules the deletion of each unreferenced File.
+type DeleteFilesCommand struct {
+	FileIDs []string
+}
+
+// FileDeletionOutcome lists the Files whose deletion was scheduled and the
+// referenced Files it rejected.
+type FileDeletionOutcome struct {
+	AcceptedFileIDs []string
+	RejectedFiles   []*managev1.FileDeletionImpact
+}
+
+func (s *Service) DeleteFiles(ctx context.Context, command DeleteFilesCommand) (FileDeletionOutcome, error) {
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
-		return nil, err
+		return FileDeletionOutcome{}, err
 	}
-	fileIDs, err := uniqueUUIDs(req.Msg.FileIds, "file_ids")
+	fileIDs, err := uniqueUUIDs(command.FileIDs, "file_ids")
 	if err != nil {
-		return nil, err
+		return FileDeletionOutcome{}, err
 	}
 	if len(fileIDs) == 0 {
-		return nil, errs.Required("file_ids")
+		return FileDeletionOutcome{}, errs.Required("file_ids")
 	}
 	if len(fileIDs) > fileManagerMaxMutationSize {
-		return nil, errs.InvalidArgument("file_ids", "at most 100 files are allowed")
+		return FileDeletionOutcome{}, errs.InvalidArgument("file_ids", "at most 100 files are allowed")
 	}
 	accepted := make([]string, 0, len(fileIDs))
 	rejected := make([]*managev1.FileDeletionImpact, 0)
@@ -123,9 +139,9 @@ func (s *Service) DeleteFiles(ctx context.Context, req *connect.Request[managev1
 		}
 		return nil
 	}); err != nil {
-		return nil, errs.Wrap(err)
+		return FileDeletionOutcome{}, err
 	}
-	return connect.NewResponse(&managev1.DeleteFilesResponse{AcceptedFileIds: accepted, RejectedFiles: rejected}), nil
+	return FileDeletionOutcome{AcceptedFileIDs: accepted, RejectedFiles: rejected}, nil
 }
 
 func lockFileManagerDeletionRows(ctx context.Context, tx *gorm.DB, fileIDs []string) (map[string]model.File, error) {
@@ -144,12 +160,19 @@ func lockFileManagerDeletionRows(ctx context.Context, tx *gorm.DB, fileIDs []str
 	return result, nil
 }
 
-func (s *Service) DeleteFileFolder(ctx context.Context, req *connect.Request[managev1.DeleteFileFolderRequest]) (*connect.Response[managev1.DeleteFileFolderResponse], error) {
+// DeleteFileFolderCommand deletes a File library folder, its subfolders and
+// their unreferenced Files.
+type DeleteFileFolderCommand struct {
+	FolderID string
+}
+
+// DeleteFileFolder returns the IDs of the Files whose deletion it scheduled.
+func (s *Service) DeleteFileFolder(ctx context.Context, command DeleteFileFolderCommand) ([]string, error) {
 	_, can, err := fileManagerAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}
-	folderID, err := normalizeFileManagerUUID(req.Msg.FolderId, "folder_id", false)
+	folderID, err := normalizeFileManagerUUID(command.FolderID, "folder_id", false)
 	if err != nil {
 		return nil, err
 	}
@@ -188,9 +211,9 @@ func (s *Service) DeleteFileFolder(ctx context.Context, req *connect.Request[man
 		}
 		return nil
 	}); err != nil {
-		return nil, errs.Wrap(err)
+		return nil, err
 	}
-	return connect.NewResponse(&managev1.DeleteFileFolderResponse{AcceptedFileIds: plan.fileIDs}), nil
+	return plan.fileIDs, nil
 }
 
 type fileFolderDeletionPlan struct {

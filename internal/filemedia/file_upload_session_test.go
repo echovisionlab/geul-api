@@ -107,7 +107,7 @@ func TestAbortMultipartUploadReturnsErrorWhenSessionDeleteFails(t *testing.T) {
 			SELECT RAISE(ABORT, 'injected abort RPC session delete failure');
 		END`).Error)
 
-	response, err := service.AbortMultipartUpload(ctx, request)
+	response, err := NewConnectHandler(service).AbortMultipartUpload(ctx, request)
 	require.Error(t, err)
 	require.Nil(t, response)
 	require.Equal(t, connect.CodeInternal, connect.CodeOf(err))
@@ -125,7 +125,7 @@ func TestAbortMultipartUploadRejectsFinalizingSessionBeforeStorageMutation(t *te
 		model.UploadSessionStatusFinalizing,
 	)
 
-	response, err := service.AbortMultipartUpload(ctx, request)
+	response, err := NewConnectHandler(service).AbortMultipartUpload(ctx, request)
 	require.Error(t, err)
 	require.Nil(t, response)
 	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err))

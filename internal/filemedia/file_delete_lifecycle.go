@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -71,34 +70,30 @@ type FileDeletionMutation struct {
 	AlreadyPending       bool
 }
 
+// DeleteFileCommand requests the deletion of one File.
+type DeleteFileCommand struct {
+	FileID string
+}
+
 // DeleteFile durably requests file deletion. The worker removes the database
 // record only after its object deletion succeeds. Direct requests are admin-only.
-func (s *Service) DeleteFile(
-	ctx context.Context,
-	req *connect.Request[managev1.DeleteFileRequest],
-) (*connect.Response[managev1.DeleteFileResponse], error) {
-	fileID := strings.TrimSpace(req.Msg.FileId)
+func (s *Service) DeleteFile(ctx context.Context, command DeleteFileCommand) error {
+	fileID := strings.TrimSpace(command.FileID)
 	can, err := policyv1.File.Delete(fileID)
 	if err != nil {
-		return nil, errs.InvalidArgument("file_id", "must be a canonical resource UUID")
+		return errs.InvalidArgument("file_id", "must be a canonical resource UUID")
 	}
 	var file struct {
 		ID string `gorm:"column:id"`
 	}
 	if err := s.db.WithContext(ctx).Table("file").Where("id = ?", fileID).First(&file).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFound("file", fileID)
+			return errs.NotFound("file", fileID)
 		}
-		return nil, errs.Internal(err)
+		return err
 	}
 
-	if err := s.deleteFileRecordByIDWithCan(ctx, fileID, &can); err != nil {
-		return nil, errs.Wrap(err)
-	}
-
-	return connect.NewResponse(&managev1.DeleteFileResponse{
-		Success: true,
-	}), nil
+	return s.deleteFileRecordByIDWithCan(ctx, fileID, &can)
 }
 
 type fileMediaGenerationDeleteRef struct {

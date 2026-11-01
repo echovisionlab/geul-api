@@ -16,6 +16,6 @@ func TestManageBulkMediaDeliveryRejectsOversizedRequestUnit(t *testing.T) {
 	for index := range fileIDs {
 		fileIDs[index] = uuid.NewString()
 	}
-	_, err := (&Service{}).GetBulkMediaDeliveries(context.Background(), connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{FileIds: fileIDs}))
+	_, err := NewConnectHandler((&Service{})).GetBulkMediaDeliveries(context.Background(), connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{FileIds: fileIDs}))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 }

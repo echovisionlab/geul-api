@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -779,23 +778,27 @@ func uploadPermissionResourceTable(resourceType string) (string, bool) {
 }
 
 // AbortMultipartUpload aborts a multipart upload
-func (s *Service) AbortMultipartUpload(
-	ctx context.Context,
-	req *connect.Request[managev1.AbortMultipartUploadRequest],
-) (*connect.Response[managev1.AbortMultipartUploadResponse], error) {
+// AbortMultipartUploadCommand aborts the multipart upload of a File.
+type AbortMultipartUploadCommand struct {
+	FileID        string
+	UploadID      string
+	CorrelationID string
+}
+
+func (s *Service) AbortMultipartUpload(ctx context.Context, command AbortMultipartUploadCommand) error {
 	var session model.UploadSession
 	if err := s.db.WithContext(ctx).
-		Where("upload_id = ? AND file_id = ?", req.Msg.UploadId, req.Msg.FileId).
+		Where("upload_id = ? AND file_id = ?", command.UploadID, command.FileID).
 		First(&session).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errs.NotFoundMsg("upload session not found")
+			return errs.NotFoundMsg("upload session not found")
 		}
-		return nil, errs.Internal(fmt.Errorf("failed to load upload session: %w", err))
+		return errs.Internal(fmt.Errorf("failed to load upload session: %w", err))
 	}
 
 	user := auth.GetUser(ctx)
 	if user == nil {
-		return nil, errs.AuthenticationRequired()
+		return errs.AuthenticationRequired()
 	}
 	entityType := ""
 	if session.EntityType != nil {
@@ -803,7 +806,7 @@ func (s *Service) AbortMultipartUpload(
 	}
 	uploadType := managev1.UploadType(managev1.UploadType_value[session.UploadType])
 	if err := s.checkEntityPermission(ctx, uploadType, entityType, session.EntityID, user.MemberID.String()); err != nil {
-		return nil, err
+		return err
 	}
 
 	progressEmitter := newFileIngestEventEmitter(
@@ -812,30 +815,30 @@ func (s *Service) AbortMultipartUpload(
 		managev1.FileIngestSource_FILE_INGEST_SOURCE_DIRECT_UPLOAD,
 		uploadSessionEntityTypeToEnum(session.EntityType),
 		session.EntityID,
-		req.Msg.GetCorrelationId(),
+		command.CorrelationID,
 		session.FileID,
 		session.FileSize,
 	)
 	if progressEmitter != nil {
 		if err := s.bindUploadSessionIngestEmitter(progressEmitter, session); err != nil {
-			return nil, errs.Internal(err)
+			return errs.Internal(err)
 		}
 	}
 	if session.ClientMediaBundleID != nil {
 		if err := s.checkPartUploadPermission(ctx, user.MemberID.String(), session); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	fileKey, err := uploadSessionObjectKey(session)
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("invalid upload session target: %w", err))
+		return errs.Internal(fmt.Errorf("invalid upload session target: %w", err))
 	}
 	claimed, err := s.claimUploadSessionAbort(ctx, session.UploadID, session.FileID, time.Now())
 	if err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to claim upload session abort: %w", err))
+		return errs.Internal(fmt.Errorf("failed to claim upload session abort: %w", err))
 	}
 	if !claimed {
-		return nil, errs.FailedPrecondition("upload session is finalizing and can no longer be aborted")
+		return errs.FailedPrecondition("upload session is finalizing and can no longer be aborted")
 	}
 
 	cleanupCtx, cancel := newStorageCompensationContext(ctx)
@@ -847,7 +850,7 @@ func (s *Service) AbortMultipartUpload(
 	})
 	if err != nil {
 		if !IsMissingMultipartUploadAbortError(err) {
-			return nil, errs.Internal(fmt.Errorf("failed to abort multipart upload: %w", err))
+			return errs.Internal(fmt.Errorf("failed to abort multipart upload: %w", err))
 		}
 		slog.Info("Multipart upload was already absent during abort cleanup", "uploadId", session.UploadID, "fileId", session.FileID)
 	}
@@ -857,28 +860,50 @@ func (s *Service) AbortMultipartUpload(
 	}
 
 	if err := s.cleanupClientMediaStaging(cleanupCtx, session); err != nil {
-		return nil, errs.Internal(err)
+		return errs.Internal(err)
 	}
 	if err := s.deleteAbortedUploadSession(cleanupCtx, session.UploadID); err != nil {
-		return nil, errs.Internal(fmt.Errorf("failed to delete upload session after abort: %w", err))
+		return errs.Internal(fmt.Errorf("failed to delete upload session after abort: %w", err))
 	}
 
-	return connect.NewResponse(&managev1.AbortMultipartUploadResponse{
-		Success: true,
-	}), nil
+	return nil
 }
 
-// FindMultipartUploadCandidate returns the latest active resumable upload for an entity and upload type.
+// FindMultipartUploadCandidateQuery describes the upload a client may resume.
+// The optional fields narrow the match to the same local file.
+type FindMultipartUploadCandidateQuery struct {
+	UploadType            managev1.UploadType
+	EntityID              string
+	EntityType            *managev1.TranscodeEntityType
+	FileID                *string
+	UploadID              *string
+	FileName              *string
+	FileSize              *int64
+	MimeType              *string
+	FileLastModified      *int64
+	SlotID                *string
+	ExpectedCurrentFileID *string
+}
+
+func (q FindMultipartUploadCandidateQuery) entityType() managev1.TranscodeEntityType {
+	if q.EntityType == nil {
+		return managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED
+	}
+	return *q.EntityType
+}
+
+// FindMultipartUploadCandidate returns the latest active resumable upload for
+// an entity and upload type, or an empty response when there is none.
 func (s *Service) FindMultipartUploadCandidate(
 	ctx context.Context,
-	req *connect.Request[managev1.FindMultipartUploadCandidateRequest],
-) (*connect.Response[managev1.FindMultipartUploadCandidateResponse], error) {
+	query FindMultipartUploadCandidateQuery,
+) (*managev1.FindMultipartUploadCandidateResponse, error) {
 	user := auth.GetUser(ctx)
 	if user == nil {
 		return nil, errs.AuthenticationRequired()
 	}
 
-	search, err := s.prepareMultipartCandidateSearch(ctx, req.Msg, user.MemberID.String())
+	search, err := s.prepareMultipartCandidateSearch(ctx, query, user.MemberID.String())
 	if err != nil {
 		return nil, err
 	}
@@ -887,11 +912,11 @@ func (s *Service) FindMultipartUploadCandidate(
 		return nil, errs.Internal(fmt.Errorf("failed to find upload session candidate: %w", err))
 	}
 	if !found {
-		return connect.NewResponse(&managev1.FindMultipartUploadCandidateResponse{}), nil
+		return &managev1.FindMultipartUploadCandidateResponse{}, nil
 	}
 	response, err := s.prepareMultipartCandidateResponse(ctx, session)
 	if err != nil {
 		return nil, errs.Internal(fmt.Errorf("failed to reconcile upload session candidate: %w", err))
 	}
-	return connect.NewResponse(response), nil
+	return response, nil
 }

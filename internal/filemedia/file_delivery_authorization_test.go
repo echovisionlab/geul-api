@@ -101,9 +101,9 @@ func TestManageMediaDeliveryRejectsArbitraryAndMixedFileIDsBeforeSigning(t *test
 	seedFileDeliveryBinding(t, db, ownedFileID, managev1.UploadType_UPLOAD_TYPE_USER_AVATAR, managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED, owner.MemberID)
 	svc := &Service{db: db, spiceDB: stack.SpiceDBClient, postAccess: newIntegrationPostAccess(db, stack.SpiceDBClient), programEventAttachment: newIntegrationProgramEventAccess(db)}
 	ctx := fileDeliveryPrincipalContext(owner)
-	_, err := svc.GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: arbitraryFileID}))
+	_, err := NewConnectHandler(svc).GetMediaDelivery(ctx, connect.NewRequest(&managev1.GetMediaDeliveryRequest{FileId: arbitraryFileID}))
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
-	_, err = svc.GetBulkMediaDeliveries(ctx, connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{FileIds: []string{ownedFileID, arbitraryFileID}}))
+	_, err = NewConnectHandler(svc).GetBulkMediaDeliveries(ctx, connect.NewRequest(&managev1.GetBulkMediaDeliveriesRequest{FileIds: []string{ownedFileID, arbitraryFileID}}))
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 }
 

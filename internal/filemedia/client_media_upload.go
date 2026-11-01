@@ -26,33 +26,50 @@ import (
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
-func (s *Service) PrepareClientMediaUpload(ctx context.Context, req *connect.Request[managev1.PrepareClientMediaUploadRequest]) (*connect.Response[managev1.PrepareClientMediaUploadResponse], error) {
-	if req == nil || req.Msg == nil {
-		return nil, errs.Required("request")
-	}
-	r := req.Msg
+// PrepareClientMediaUploadCommand registers the browser-built media bundle
+// of an upload before its completion.
+type PrepareClientMediaUploadCommand struct {
+	FileID          string
+	UploadID        string
+	Kind            managev1.ClientMediaKind
+	DurationSeconds float64
+	Artifacts       []ClientMediaUploadArtifact
+}
+
+// ClientMediaUploadArtifact is one object of a client media bundle.
+type ClientMediaUploadArtifact struct {
+	Path           string
+	MimeType       string
+	Size           int64
+	SHA256         string
+	DerivativeType managev1.FileDerivativeType
+}
+
+// PrepareClientMediaUpload returns the ID of the bundle it registered.
+func (s *Service) PrepareClientMediaUpload(ctx context.Context, command PrepareClientMediaUploadCommand) (string, error) {
 	var bundleID string
-	err := withMultipartCompletionAdvisoryLock(ctx, s.db, r.GetUploadId(), r.GetFileId(), func(db *gorm.DB) error {
+	err := withMultipartCompletionAdvisoryLock(ctx, s.db, command.UploadID, command.FileID, func(db *gorm.DB) error {
 		svc := *s
 		svc.db = db
-		session, err := svc.authorizedClientMediaSession(ctx, r.GetUploadId(), r.GetFileId())
+		session, err := svc.authorizedClientMediaSession(ctx, command.UploadID, command.FileID)
 		if err != nil {
 			return err
 		}
 		if !clientMediaSessionWritable(session) {
 			return errs.FailedPrecondition("upload session is not writable")
 		}
-		bundleID, err = svc.prepareMediaBundle(ctx, session, r)
+		bundleID, err = svc.prepareMediaBundle(ctx, session, command)
 		return err
 	})
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	return connect.NewResponse(&managev1.PrepareClientMediaUploadResponse{BundleId: bundleID}), nil
+	return bundleID, nil
 }
-func clientMediaPlanFromRequest(request *managev1.PrepareClientMediaUploadRequest, memberID string) (clientMediaPlan, error) {
-	plan := clientMediaPlan{Version: clientMediaPlanVersion, DurationSeconds: request.GetDurationSeconds(), MemberID: memberID}
-	switch request.GetKind() {
+
+func clientMediaPlanFromCommand(command PrepareClientMediaUploadCommand, memberID string) (clientMediaPlan, error) {
+	plan := clientMediaPlan{Version: clientMediaPlanVersion, DurationSeconds: command.DurationSeconds, MemberID: memberID}
+	switch command.Kind {
 	case managev1.ClientMediaKind_CLIENT_MEDIA_KIND_AUDIO:
 		plan.Kind = "audio"
 	case managev1.ClientMediaKind_CLIENT_MEDIA_KIND_VIDEO:
@@ -60,14 +77,14 @@ func clientMediaPlanFromRequest(request *managev1.PrepareClientMediaUploadReques
 	default:
 		return plan, errs.InvalidArgument("kind", "unsupported media kind")
 	}
-	for _, artifact := range request.GetArtifacts() {
-		plan.Artifacts = append(plan.Artifacts, clientMediaArtifact{Path: artifact.GetPath(), MimeType: normalizeMimeType(artifact.GetMimeType()), Size: artifact.GetSize(), SHA256: artifact.GetSha256(), DerivativeType: int32(artifact.GetDerivativeType())})
+	for _, artifact := range command.Artifacts {
+		plan.Artifacts = append(plan.Artifacts, clientMediaArtifact{Path: artifact.Path, MimeType: normalizeMimeType(artifact.MimeType), Size: artifact.Size, SHA256: artifact.SHA256, DerivativeType: int32(artifact.DerivativeType)})
 	}
 	return plan, nil
 }
 
-func (s *Service) prepareMediaBundle(ctx context.Context, session model.UploadSession, request *managev1.PrepareClientMediaUploadRequest) (string, error) {
-	plan, err := clientMediaPlanFromRequest(request, auth.GetUser(ctx).MemberID.String())
+func (s *Service) prepareMediaBundle(ctx context.Context, session model.UploadSession, command PrepareClientMediaUploadCommand) (string, error) {
+	plan, err := clientMediaPlanFromCommand(command, auth.GetUser(ctx).MemberID.String())
 	if err != nil {
 		return "", err
 	}

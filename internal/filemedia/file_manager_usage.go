@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"gorm.io/gorm"
 
@@ -339,34 +338,45 @@ func fileUsageProto(row fileUsageRow) *managev1.FileUsage {
 	}
 }
 
-func (s *Service) ListFileUsages(
-	ctx context.Context,
-	req *connect.Request[managev1.ListFileUsagesRequest],
-) (*connect.Response[managev1.ListFileUsagesResponse], error) {
+// ListFileUsagesQuery pages the usages of one File the caller may see.
+type ListFileUsagesQuery struct {
+	FileID    string
+	PageToken string
+	PageSize  int32
+}
+
+// FileUsagePage is one page of a File's usages.
+type FileUsagePage struct {
+	Usages        []*managev1.FileUsage
+	NextPageToken *string
+	Total         int64
+}
+
+func (s *Service) ListFileUsages(ctx context.Context, req ListFileUsagesQuery) (FileUsagePage, error) {
 	if err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
-		return nil, err
+		return FileUsagePage{}, err
 	}
-	fileID, err := normalizeFileManagerUUID(req.Msg.FileId, "file_id", false)
+	fileID, err := normalizeFileManagerUUID(req.FileID, "file_id", false)
 	if err != nil {
-		return nil, err
+		return FileUsagePage{}, err
 	}
-	offset, err := decodeFileManagerPageToken(req.Msg.PageToken)
+	offset, err := decodeFileManagerPageToken(req.PageToken)
 	if err != nil {
-		return nil, err
+		return FileUsagePage{}, err
 	}
 	if err := s.requireFileManagerFile(ctx, *fileID); err != nil {
-		return nil, err
+		return FileUsagePage{}, err
 	}
 	rows, err := loadFileUsages(ctx, s.db, []string{*fileID})
 	if err != nil {
-		return nil, errs.Internal(err)
+		return FileUsagePage{}, err
 	}
 	rows, err = s.filterVisibleFileUsages(ctx, rows)
 	if err != nil {
-		return nil, errs.Internal(err)
+		return FileUsagePage{}, err
 	}
 	total := len(rows)
-	pageSize := fileManagerPageSize(req.Msg.PageSize, fileManagerMaxUsagePageSize)
+	pageSize := fileManagerPageSize(req.PageSize, fileManagerMaxUsagePageSize)
 	start := min(offset, total)
 	end := min(start+pageSize, total)
 	rows = rows[start:end]
@@ -378,7 +388,7 @@ func (s *Service) ListFileUsages(
 	if offset+len(rows) < total {
 		next = encodeFileManagerPageToken(offset + len(rows))
 	}
-	return connect.NewResponse(&managev1.ListFileUsagesResponse{Usages: usages, NextPageToken: next, Total: int64(total)}), nil
+	return FileUsagePage{Usages: usages, NextPageToken: next, Total: int64(total)}, nil
 }
 
 func (s *Service) requireFileManagerFile(ctx context.Context, fileID string) error {
