@@ -83,6 +83,18 @@ func AppendMember(
 	return appendRecord(ctx, tx, writer, action, actor, build)
 }
 
+// AppendAnonymous appends an audit record attributed to an anonymous
+// visitor, for a public mutation made without a session.
+func AppendAnonymous(
+	ctx context.Context,
+	tx *gorm.DB,
+	writer Appender,
+	action sharedtelemetry.AuditAction,
+	build Builder,
+) error {
+	return appendRecord(ctx, tx, writer, action, sharedtelemetry.RecordActor{Kind: sharedtelemetry.ActorKindAnonymous}, build)
+}
+
 // AppendSystem appends an audit record attributed to a backend service.
 func AppendSystem(
 	ctx context.Context,

@@ -158,6 +158,7 @@ func IsClassified(err error) bool      // any client answer, Connect code or use
 func RequestAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func MemberAudit(memberID string, action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
 func VersionAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit
+func AnonymousAudit(action sharedtelemetry.AuditAction, build domainaudit.Builder) Audit // a public mutation without a session
 func Audits(audits ...Audit) Audit
 func Unchanged() Audit
 
