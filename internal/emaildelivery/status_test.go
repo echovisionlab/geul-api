@@ -3,7 +3,6 @@ package emaildelivery
 import (
 	"testing"
 
-	"github.com/echovisionlab/geul-api/internal/model"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -20,11 +19,11 @@ func TestMailAdapterTypeMappingCoversEveryAPIType(t *testing.T) {
 			}
 			continue
 		}
-		if !known || string(stored) != name || mailAdapterTypeToProto(stored) != adapterType {
+		if !known || !stored.Known() || string(stored) != name || mailAdapterTypeToProto(stored) != adapterType {
 			t.Fatalf("%s maps to %q (known %t) and back to %s", name, stored, known, mailAdapterTypeToProto(stored))
 		}
 	}
-	if knownMailAdapterType(model.MailAdapterType("MAIL_ADAPTER_TYPE_RETIRED")) {
+	if AdapterType("MAIL_ADAPTER_TYPE_RETIRED").Known() {
 		t.Fatal("unknown stored type is known")
 	}
 }

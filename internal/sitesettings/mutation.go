@@ -7,13 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/structured"
 )
@@ -66,7 +62,7 @@ func (s *Service) SetSetting(ctx context.Context, command SetSettingCommand) (_ 
 		return SettingsUpdate{}, domainerr.InvalidField("key", fmt.Sprintf("invalid setting key: %s", command.Key))
 	}
 	defer failurecause.Annotate(&returnErr, slog.String("key", command.Key))
-	return s.updateSettings(ctx, []string{command.Key}, func(settings *model.SiteSettings) error {
+	return s.updateSettings(ctx, []string{command.Key}, func(settings *Settings) error {
 		if err := applySettingValue(settings, command.Key, command.Value); err != nil {
 			return domainerr.InvalidField("value", err.Error())
 		}
@@ -86,63 +82,56 @@ func (s *Service) SetManySettings(ctx context.Context, command SetManySettingsCo
 	for _, setting := range command.Settings {
 		keys = append(keys, setting.Key)
 	}
-	return s.updateSettings(ctx, keys, func(settings *model.SiteSettings) error {
+	return s.updateSettings(ctx, keys, func(settings *Settings) error {
 		return applyRequestedSiteSettings(settings, command.Settings)
 	})
 }
 
-// updateSettings applies the requested keys to the locked settings row and
+// updateSettings applies the requested keys to the locked settings and
 // stores the ones that changed with their bindings, OG regeneration and
 // audit record.
-func (s *Service) updateSettings(ctx context.Context, keys []string, apply func(*model.SiteSettings) error) (SettingsUpdate, error) {
-	var settings *model.SiteSettings
-	var before model.SiteSettings
-	change, err := mutation.Run(ctx, s.mutations, mutation.Spec[settingsChange]{
+func (s *Service) updateSettings(ctx context.Context, keys []string, apply func(*Settings) error) (SettingsUpdate, error) {
+	var settings, before Settings
+	change, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[settingsChange, Store]{
 		// A value the row rejects answers before authority, as it always has.
-		Lock: func(_ context.Context, tx *gorm.DB) error {
+		Lock: func(ctx context.Context, store Store) error {
 			var err error
-			if settings, err = loadSettingsRowForUpdate(tx); err != nil {
+			if settings, err = store.LockSettings(ctx); err != nil {
 				return err
 			}
-			before = cloneSiteSettingsForComparison(settings)
-			return apply(settings)
+			before = settings.Clone()
+			return apply(&settings)
 		},
 		Access: freshEdit(),
-		Change: func(ctx context.Context, tx *gorm.DB) (settingsChange, error) {
-			return s.storeSettings(ctx, tx, &before, settings, keys)
+		Change: func(ctx context.Context, store Store) (settingsChange, error) {
+			return storeSettings(ctx, store, &before, &settings, keys)
 		},
 		Audit: func(change settingsChange) mutation.Audit { return settingsAudit(change.changedKeys) },
 	})
 	return SettingsUpdate{OGGenerationRunID: change.ogRunID}, err
 }
 
-func (s *Service) storeSettings(
-	ctx context.Context,
-	tx *gorm.DB,
-	before *model.SiteSettings,
-	settings *model.SiteSettings,
-	keys []string,
-) (settingsChange, error) {
+func storeSettings(ctx context.Context, store Store, before, settings *Settings, keys []string) (settingsChange, error) {
 	changedKeys := changedSiteSettingKeys(before, settings, keys)
 	if len(changedKeys) == 0 {
 		return settingsChange{}, nil
 	}
-	if err := s.validateSiteSettingReferences(ctx, tx, settings, keys); err != nil {
+	if err := validateSiteSettingReferences(ctx, store, settings, keys); err != nil {
 		return settingsChange{}, err
 	}
-	if err := s.lockAndValidateSiteSettingAssets(ctx, tx, settings, keys); err != nil {
+	if err := lockAndValidateSiteSettingAssets(ctx, store, settings, keys); err != nil {
 		return settingsChange{}, err
 	}
 	settings.UpdatedAt = time.Now()
-	if err := tx.Save(settings).Error; err != nil {
+	if err := store.SaveSettings(ctx, *settings); err != nil {
 		return settingsChange{}, err
 	}
 	for _, key := range changedKeys {
-		if err := s.syncSiteSettingAssetBinding(ctx, tx, settings, key); err != nil {
+		if err := syncSiteSettingAssetBinding(ctx, store, settings, key); err != nil {
 			return settingsChange{}, err
 		}
 	}
-	runID, err := s.og.Request(ctx, tx, before, settings, changedKeys)
+	runID, err := store.RequestOGRegeneration(ctx, *before, *settings, changedKeys)
 	if err != nil {
 		return settingsChange{}, err
 	}
@@ -159,44 +148,33 @@ func (s *Service) AddSiteLoaderAsset(ctx context.Context, command AddSiteLoaderA
 		return domainerr.InvalidField("file_id", "file_id is required")
 	}
 	defer failurecause.Annotate(&returnErr, slog.String("file_id", fileID))
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[bool, Store]{
 		// The File is checked before authority, as it always has been.
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
-			if _, err := loadSettingsRowForUpdate(tx); err != nil {
+		Lock: func(ctx context.Context, store Store) error {
+			if _, err := store.LockSettings(ctx); err != nil {
 				return err
 			}
-			if err := s.assets.LockForAttachment(ctx, tx, []string{fileID}); err != nil {
+			if err := store.LockFilesForAttachment(ctx, []string{fileID}); err != nil {
 				return err
 			}
-			return s.assets.ValidateAttachment(ctx, tx, "loader", fileID)
+			return store.ValidateAttachment(ctx, "loader", fileID)
 		},
 		Access: freshEdit(),
-		Change: func(ctx context.Context, tx *gorm.DB) (bool, error) { return s.addLoaderFile(ctx, tx, fileID) },
+		Change: func(ctx context.Context, store Store) (bool, error) { return addLoaderFile(ctx, store, fileID) },
 		Audit:  loaderAudit,
 	})
 	return err
 }
 
-func (s *Service) addLoaderFile(ctx context.Context, tx *gorm.DB, fileID string) (bool, error) {
-	var nextPosition int32
-	if err := tx.Table("site_setting_loader_file").
-		Select("COALESCE(MAX(position) + 1, 0)").
-		Where("site_setting_id = ?", 1).
-		Scan(&nextPosition).Error; err != nil {
+func addLoaderFile(ctx context.Context, store Store, fileID string) (bool, error) {
+	added, err := store.AddLoaderFile(ctx, fileID)
+	if err != nil || !added {
 		return false, err
 	}
-	result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.SiteSettingLoaderFile{
-		SiteSettingID: 1, FileID: fileID, Position: nextPosition,
-	})
-	if result.Error != nil || result.RowsAffected == 0 {
-		return false, result.Error
-	}
-	if _, err := s.assets.BindReady(ctx, tx, AssetBinding{
-		SourceFileID: fileID, Key: "loader_" + fileID, Kind: "loader",
-	}); err != nil {
+	if err := store.BindAsset(ctx, AssetBinding{SourceFileID: fileID, Key: "loader_" + fileID, Kind: "loader"}); err != nil {
 		return false, err
 	}
-	return true, touchSettings(tx)
+	return true, store.TouchSettings(ctx)
 }
 
 // RemoveSiteLoaderAsset removes a File from the site loader assets.
@@ -209,21 +187,21 @@ func (s *Service) RemoveSiteLoaderAsset(ctx context.Context, command RemoveSiteL
 		return domainerr.InvalidField("file_id", "file_id is required")
 	}
 	defer failurecause.Annotate(&returnErr, slog.String("file_id", fileID))
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[bool]{
-		Lock: func(_ context.Context, tx *gorm.DB) error {
-			_, err := loadSettingsRowForUpdate(tx)
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[bool, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			_, err := store.LockSettings(ctx)
 			return err
 		},
 		Access: freshEdit(),
-		Change: func(ctx context.Context, tx *gorm.DB) (bool, error) {
-			result := tx.Where("site_setting_id = ? AND file_id = ?", 1, fileID).Delete(&model.SiteSettingLoaderFile{})
-			if result.Error != nil || result.RowsAffected == 0 {
-				return false, result.Error
-			}
-			if err := s.assets.Release(ctx, tx, "loader_"+fileID); err != nil {
+		Change: func(ctx context.Context, store Store) (bool, error) {
+			removed, err := store.RemoveLoaderFile(ctx, fileID)
+			if err != nil || !removed {
 				return false, err
 			}
-			return true, touchSettings(tx)
+			if err := store.ReleaseAssets(ctx, "loader_"+fileID); err != nil {
+				return false, err
+			}
+			return true, store.TouchSettings(ctx)
 		},
 		Audit: loaderAudit,
 	})
@@ -235,8 +213,4 @@ func loaderAudit(changed bool) mutation.Audit {
 		return mutation.Unchanged()
 	}
 	return settingsAudit([]string{"loader_file_ids"})
-}
-
-func touchSettings(tx *gorm.DB) error {
-	return tx.Model(&model.SiteSettings{}).Where("id = ?", 1).Update("updated_at", time.Now()).Error
 }

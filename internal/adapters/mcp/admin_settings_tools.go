@@ -8,11 +8,12 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/structured"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -32,14 +33,14 @@ var adminSettingsTools = []mcpserver.Tool{
 
 // These ports retain the same application services and request context as RPC.
 type SiteSettingsAdminApplication interface {
-	GetSettings(context.Context) (*managev1.AllSettings, error)
-	GetSetting(context.Context, sitesettings.GetSettingQuery) (*managev1.SiteSetting, error)
+	GetSettings(context.Context) (sitesettings.AdminSettings, error)
+	GetSetting(context.Context, sitesettings.GetSettingQuery) (sitesettings.Setting, error)
 	SetManySettings(context.Context, sitesettings.SetManySettingsCommand) (sitesettings.SettingsUpdate, error)
 }
 
 type MailAdapterAdminApplication interface {
 	ListMailAdapters(context.Context, emaildelivery.ListMailAdaptersQuery) (emaildelivery.MailAdapterPage, error)
-	UpdateMailAdapterSender(context.Context, emaildelivery.MailAdapterSenderUpdate) (*managev1.MailAdapter, error)
+	UpdateMailAdapterSender(context.Context, emaildelivery.MailAdapterSenderUpdate) (emaildelivery.MailAdapter, error)
 }
 
 type AdminSettingsTools struct {
@@ -85,7 +86,7 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 			if err != nil {
 				return mcpserver.ToolResult{}, err
 			}
-			settings[key] = binding.GetValue().AsInterface()
+			settings[key] = binding.Value
 		}
 		return adminSettingsResult(map[string]any{"settings": settings})
 	case ToolSiteSettingsUpdate:
@@ -143,12 +144,12 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 		}
 		adapters := make([]mailAdapterAdminOutput, 0, len(page.Adapters))
 		for _, adapter := range page.Adapters {
-			adapters = append(adapters, projectMailAdapterAdmin(adapter))
+			adapters = append(adapters, projectMailAdapterAdmin(ctx, adapter))
 		}
-		pagination := page.Pagination
+		total := int32(page.Total)
 		next := int64(input.Offset) + int64(len(adapters))
-		hasMore := len(adapters) > 0 && next < int64(pagination.GetTotal()) && next <= 1<<31-1
-		output := map[string]any{"adapters": adapters, "total": pagination.GetTotal(), "limit": limit, "offset": input.Offset, "has_more": hasMore}
+		hasMore := len(adapters) > 0 && next < int64(total) && next <= 1<<31-1
+		output := map[string]any{"adapters": adapters, "total": total, "limit": limit, "offset": input.Offset, "has_more": hasMore}
 		if hasMore {
 			output["next_offset"] = next
 		}
@@ -179,7 +180,7 @@ func (tools *AdminSettingsTools) callTool(ctx context.Context, name string, argu
 		if err != nil {
 			return mcpserver.ToolResult{}, err
 		}
-		return adminSettingsResult(map[string]any{"adapter": projectMailAdapterAdmin(adapter)})
+		return adminSettingsResult(map[string]any{"adapter": projectMailAdapterAdmin(ctx, adapter)})
 	default:
 		return mcpserver.ToolResult{}, mcpserver.ErrUnknownTool
 	}
@@ -208,25 +209,30 @@ func siteSettingsMutableKey(key string) bool {
 	}
 }
 
-func projectSiteSettings(settings *managev1.AllSettings) map[string]any {
-	public := settings.GetPublic()
-	if public == nil {
-		public = &managev1.PublicSettings{}
-	}
-	loaders := make([]string, 0, len(public.GetLoaderAssets()))
-	for _, loader := range public.GetLoaderAssets() {
-		loaders = append(loaders, loader.GetFileId())
+func projectSiteSettings(settings sitesettings.AdminSettings) map[string]any {
+	loaders := make([]string, 0, len(settings.LoaderAssets))
+	for _, loader := range settings.LoaderAssets {
+		loaders = append(loaders, loader.FileID)
 	}
 	return map[string]any{
-		"site_title": public.GetSiteTitle(), "company_name": public.GetCompanyName(), "company_address": public.GetCompanyAddress(), "tax_id": public.GetTaxId(),
-		"legal_email": public.GetLegalEmail(), "contact_email": public.GetContactEmail(),
-		"social_links": public.GetSocialLinks().AsMap(), "primary_color": public.GetPrimaryColor(), "default_comments_enabled": public.GetDefaultCommentsEnabled(),
-		"homepage_page_id": public.HomepagePageId, "menu_header_id": public.MenuHeaderId, "menu_secondary_id": public.MenuSecondaryId,
-		"menu_footer_id": public.MenuFooterId, "menu_avatar_dropdown_id": public.MenuAvatarDropdownId,
-		"meta_description": public.GetMetaDescription(), "google_analytics_id": public.GoogleAnalyticsId,
-		"loader_file_ids": loaders, "default_map_theme_id": public.GetDefaultMapThemeId(),
-		"og_image_config": settings.GetOgImageConfig().AsMap(), "site_origin": settings.GetRuntime().GetSiteOrigin(),
+		"site_title": settings.SiteTitle, "company_name": settings.CompanyName, "company_address": settings.CompanyAddress, "tax_id": settings.TaxID,
+		"legal_email": settings.LegalEmail, "contact_email": settings.ContactEmail,
+		"social_links": storedObject(settings.SocialLinks), "primary_color": settings.PrimaryColor, "default_comments_enabled": settings.DefaultCommentsEnabled,
+		"homepage_page_id": settings.HomepagePageID, "menu_header_id": settings.MenuHeaderID, "menu_secondary_id": settings.MenuSecondaryID,
+		"menu_footer_id": settings.MenuFooterID, "menu_avatar_dropdown_id": settings.MenuAvatarDropdownID,
+		"meta_description": settings.MetaDescription, "google_analytics_id": settings.GoogleAnalyticsID,
+		"loader_file_ids": loaders, "default_map_theme_id": settings.DefaultMapThemeID,
+		"og_image_config": storedObject(settings.OGImageConfig), "site_origin": settings.SiteOrigin,
 	}
+}
+
+// storedObject is a decoded JSON setting as the tool reports it: an object,
+// empty when none is stored.
+func storedObject(fields structured.Fields) map[string]any {
+	if fields == nil {
+		return map[string]any{}
+	}
+	return fields
 }
 
 // Explicit projection: even a service accidentally returning secrets cannot
@@ -247,15 +253,23 @@ type mailAdapterAdminOutput struct {
 	UpdatedAt string `json:"updated_at,omitempty"`
 }
 
-func projectMailAdapterAdmin(adapter *managev1.MailAdapter) mailAdapterAdminOutput {
-	output := mailAdapterAdminOutput{ID: adapter.GetId(), Name: adapter.GetName(), Type: strings.ToLower(strings.TrimPrefix(adapter.GetType().String(), "MAIL_ADAPTER_TYPE_")),
-		IsActive: adapter.GetIsActive(), Priority: adapter.GetPriority(), CreatedAt: adapter.GetCreatedAt(), UpdatedAt: adapter.GetUpdatedAt()}
-	if config := adapter.GetSesConfig(); config != nil {
-		output.FromName, output.FromEmail, output.Region = config.GetFromName(), config.GetFromEmail(), config.GetRegion()
+func projectMailAdapterAdmin(ctx context.Context, adapter emaildelivery.MailAdapter) mailAdapterAdminOutput {
+	adapterType := "unspecified"
+	if adapter.Type.Known() {
+		adapterType = strings.ToLower(strings.TrimPrefix(string(adapter.Type), "MAIL_ADAPTER_TYPE_"))
 	}
-	if config := adapter.GetSmtpConfig(); config != nil {
-		output.FromName, output.FromEmail, output.Host, output.Port = config.GetFromName(), config.GetFromEmail(), config.GetHost(), config.GetPort()
-		secure := config.GetSecure()
+	output := mailAdapterAdminOutput{ID: adapter.ID, Name: adapter.Name, Type: adapterType,
+		IsActive: adapter.IsActive, Priority: int32(adapter.Priority), CreatedAt: adapter.CreatedAt.Format(time.RFC3339)}
+	if adapter.UpdatedAt != nil {
+		output.UpdatedAt = adapter.UpdatedAt.Format(time.RFC3339)
+	}
+	ses, smtp := adapter.ProviderConfig(ctx)
+	if ses != nil {
+		output.FromName, output.FromEmail, output.Region = ses.FromName, ses.FromEmail, ses.Region
+	}
+	if smtp != nil {
+		output.FromName, output.FromEmail, output.Host, output.Port = smtp.FromName, smtp.FromEmail, smtp.Host, int32(smtp.Port)
+		secure := smtp.Secure
 		output.Secure = &secure
 	}
 	return output

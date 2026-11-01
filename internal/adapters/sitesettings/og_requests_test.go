@@ -32,6 +32,11 @@ func TestRequestsUseCanonicalSettingsRowBackground(t *testing.T) {
 	assert.Equal(t, fileID, *requests[0].FeaturedImageFileID)
 }
 
+func TestRequestsRejectANonCanonicalSiteIdentityBeforeReading(t *testing.T) {
+	_, err := NewRequests().Resolve(t.Context(), nil, "site", "arbitrary", primarySelection())
+	require.ErrorContains(t, err, "canonical site identity")
+}
+
 func siteOGUnitDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

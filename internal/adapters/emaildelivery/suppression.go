@@ -3,9 +3,9 @@ package emaildeliveryadapter
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"gorm.io/gorm"
 )
 
@@ -24,14 +24,7 @@ func (s *SuppressionStore) Suppress(
 	if s == nil || s.db == nil {
 		return fmt.Errorf("email suppression database is required")
 	}
-	var referenceID *string
-	if value := strings.TrimSpace(request.ReferenceID); value != "" {
-		referenceID = &value
-	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return emaildelivery.SuppressEmailAddress(
-			ctx, tx, request.Email, request.Reason, request.Source,
-			referenceID, request.ErrorType,
-		)
+		return emaildelivery.SuppressAddress(ctx, emaildeliverypostgres.Bind(tx), request)
 	})
 }
