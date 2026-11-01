@@ -19,12 +19,12 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/postgreslock"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -324,24 +324,30 @@ func (s *Service) loadFinishedMultipartFile(ctx context.Context, fileID string) 
 	// A different upload ID must not bypass an active session and return before
 	// attachment/downstream confirmation. Successful completion deletes the only
 	// session for this file after every required side effect has succeeded.
-	var activeSessionCount int64
-	if err := s.db.WithContext(ctx).
-		Model(&model.UploadSession{}).
-		Where("file_id = ?", fileID).
-		Count(&activeSessionCount).Error; err != nil {
+	var active bool
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		active, err = store.HasFileUploadSessions(ctx, fileID)
+		return err
+	}); err != nil {
 		return model.File{}, 0, fmt.Errorf("inspect completed upload authority: %w", err)
 	}
-	if activeSessionCount != 0 {
+	if active {
 		return model.File{}, 0, domainerr.New(domainerr.NotFound, "", "upload session not found")
 	}
-
-	var file model.File
-	if err := s.db.WithContext(ctx).Where("id = ?", fileID).Take(&file).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	var stored File
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		stored, err = store.IngestFile(ctx, fileID)
+		return err
+	}); err != nil {
+		if errors.Is(err, domain.ErrFileNotFound) {
 			return model.File{}, 0, domainerr.New(domainerr.NotFound, "", "upload session not found")
 		}
 		return model.File{}, 0, fmt.Errorf("load completed file: %w", err)
 	}
+	file := model.File(stored)
+
 	if file.DeleteRequestedAt != nil || file.FileSize <= 0 ||
 		strings.TrimSpace(file.FileName) == "" || strings.TrimSpace(file.MimeType) == "" ||
 		file.Extension != mediaExtension(&file.MimeType) ||
@@ -349,13 +355,18 @@ func (s *Service) loadFinishedMultipartFile(ctx context.Context, fileID string) 
 		return model.File{}, 0, domainerr.Precondition("completed file metadata is not deliverable")
 	}
 
-	var binding model.FileIngestBinding
-	if err := s.db.WithContext(ctx).Where("file_id = ?", fileID).Take(&binding).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	var binding domain.IngestBinding
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		binding, err = store.IngestBinding(ctx, fileID)
+		return err
+	}); err != nil {
+		if errors.Is(err, domain.ErrIngestBindingNotFound) {
 			return model.File{}, 0, domainerr.New(domainerr.NotFound, "", "upload session not found")
 		}
 		return model.File{}, 0, fmt.Errorf("load completed file binding: %w", err)
 	}
+
 	uploadTypeValue, ok := managev1.UploadType_value[binding.UploadType]
 	if !ok {
 		return model.File{}, 0, domainerr.Precondition("completed file binding has unsupported upload type")
@@ -854,14 +865,9 @@ func (s *Service) finishMultipartCompletion(
 
 func (s *Service) markMultipartCompletionFailed(ctx context.Context, uploadID string) {
 	now := time.Now()
-	err := s.db.WithContext(ctx).
-		Model(&model.UploadSession{}).
-		Where("upload_id = ? AND status = ?", uploadID, model.UploadSessionStatusFinalizing).
-		Updates(structured.Fields{
-			"status":           model.UploadSessionStatusFailed,
-			"last_activity_at": now,
-			"updated_at":       now,
-		}).Error
+	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+		return unit.Store().FailFinalizingUpload(ctx, uploadID, now)
+	})
 	if err != nil {
 		slog.ErrorContext(ctx, "Failed to mark multipart completion failed", failurecause.Attr(err), "uploadId", uploadID)
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/authzmutation"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
@@ -362,13 +363,12 @@ func (s *Service) createVerifiedFileIngestRecord(
 
 func (s *Service) completedFileRecordExists(ctx context.Context, fileID string) (bool, error) {
 	var count int64
-	if err := s.db.WithContext(ctx).
-		Model(&model.File{}).
-		Where("id = ?", fileID).
-		Count(&count).Error; err != nil {
-		return false, err
-	}
-	return count == 1, nil
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		count, err = store.FileCount(ctx, []string{fileID})
+		return err
+	})
+	return count == 1, err
 }
 
 func (s *Service) validateCompletedFileRecord(
@@ -377,10 +377,15 @@ func (s *Service) validateCompletedFileRecord(
 	uploadType managev1.UploadType,
 	entityType managev1.TranscodeEntityType,
 ) error {
-	var file model.File
-	if err := s.db.WithContext(ctx).Where("id = ?", session.FileID).Take(&file).Error; err != nil {
+	var file File
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		file, err = store.IngestFile(ctx, session.FileID)
+		return err
+	}); err != nil {
 		return fmt.Errorf("load completed file record: %w", err)
 	}
+
 	if file.FileName != storedFileBasename(session.FileName, session.FileID, file.Extension) ||
 		file.MimeType != derefString(session.DetectedMime) ||
 		file.FileSize != session.FileSize ||
@@ -393,10 +398,15 @@ func (s *Service) validateCompletedFileRecord(
 		return fmt.Errorf("completed file is pending deletion")
 	}
 
-	var binding model.FileIngestBinding
-	if err := s.db.WithContext(ctx).Where("file_id = ?", session.FileID).Take(&binding).Error; err != nil {
+	var binding domain.IngestBinding
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		binding, err = store.IngestBinding(ctx, session.FileID)
+		return err
+	}); err != nil {
 		return fmt.Errorf("load completed file ingest binding: %w", err)
 	}
+
 	var expectedEntityType *string
 	if entityType != managev1.TranscodeEntityType_TRANSCODE_ENTITY_TYPE_UNSPECIFIED {
 		value := entityType.String()
@@ -786,15 +796,18 @@ type AbortMultipartUploadCommand struct {
 }
 
 func (s *Service) AbortMultipartUpload(ctx context.Context, command AbortMultipartUploadCommand) error {
-	var session model.UploadSession
-	if err := s.db.WithContext(ctx).
-		Where("upload_id = ? AND file_id = ?", command.UploadID, command.FileID).
-		First(&session).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	var row domain.UploadSession
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		row, err = store.UploadSession(ctx, command.UploadID, command.FileID, false)
+		return err
+	}); err != nil {
+		if errors.Is(err, domain.ErrUploadSessionNotFound) {
 			return domainerr.New(domainerr.NotFound, "", "upload session not found")
 		}
 		return fmt.Errorf("failed to load upload session: %w", err)
 	}
+	session := uploadSessionFromStore(row)
 
 	user := auth.GetUser(ctx)
 	if user == nil {

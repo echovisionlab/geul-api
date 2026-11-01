@@ -211,9 +211,9 @@ func (s *Service) uploadAndRecordMultipartPart(
 				}
 			}
 
-			if err := lockedService.db.WithContext(ctx).
-				Where("upload_id = ? AND part_number = ?", session.UploadID, partNumber).
-				Delete(&model.UploadPart{}).Error; err != nil {
+			if err := lockedService.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
+				return unit.Store().DeleteUploadPart(ctx, session.UploadID, partNumber)
+			}); err != nil {
 				return fmt.Errorf("invalidate previous multipart uploaded part: %w", err)
 			}
 

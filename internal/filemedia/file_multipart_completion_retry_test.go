@@ -25,6 +25,7 @@ func TestVerifyMultipartCompletionTransientFetchFailureKeepsFinalizing(t *testin
 		http.Error(w, "temporary storage failure", http.StatusServiceUnavailable)
 	})
 	service.db = db
+	withTestStorage(service)
 
 	completion := insertFinalizingCompletion(t, db, 10)
 	err := service.verifyMultipartCompletionObject(context.Background(), completion)
@@ -38,6 +39,7 @@ func TestCompleteMultipartObjectTransientFailureKeepsFinalizing(t *testing.T) {
 		http.Error(w, "temporary complete failure", http.StatusServiceUnavailable)
 	})
 	service.db = db
+	withTestStorage(service)
 
 	completion := insertFinalizingCompletion(t, db, 10)
 	completion.verifiedMime = "audio/wav"
@@ -56,6 +58,7 @@ func TestCompleteMultipartObjectRepairablePartFailureKeepsFinalizing(t *testing.
 				_, _ = fmt.Fprintf(w, "<Error><Code>%s</Code><Message>repairable part list</Message></Error>", code)
 			})
 			service.db = db
+			withTestStorage(service)
 
 			completion := insertFinalizingCompletion(t, db, 10)
 			completion.verifiedMime = "audio/wav"
@@ -82,6 +85,7 @@ func TestVerifyMultipartCompletionSizeMismatchFailsAndDeletesObject(t *testing.T
 		}
 	})
 	service.db = db
+	withTestStorage(service)
 
 	completion := insertFinalizingCompletion(t, db, 10)
 	completion.verifiedMime = "image/png"
