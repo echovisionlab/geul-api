@@ -140,3 +140,10 @@ func (s *LibraryStore) ReadyPromotionReference(ctx context.Context, cdn, id stri
 	}
 	return s.promotionLifecycle(cdn).ReadyAssetRef(ctx, id)
 }
+
+func (s *LibraryStore) ReadyPromotionReferenceForFile(ctx context.Context, cdn, file, kind string) (*mediaasset.Reference, error) {
+	if s.Fail != nil {
+		return nil, s.Fail
+	}
+	return s.promotionLifecycle(cdn).ReadyAssetRefForSourceFile(ctx, file, kind)
+}

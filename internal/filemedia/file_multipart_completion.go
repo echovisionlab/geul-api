@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
@@ -145,15 +143,18 @@ func (s *Service) loadAuthorizedMultipartCompletion(
 	ctx context.Context,
 	request CompleteMultipartUploadCommand,
 ) (*multipartCompletion, bool, error) {
-	var session model.UploadSession
-	if err := s.db.WithContext(ctx).
-		Where("upload_id = ? AND file_id = ?", request.UploadID, request.FileID).
-		First(&session).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	var stored domain.UploadSession
+	if err := s.readUploadFacts(ctx, func(store Store) error {
+		var err error
+		stored, err = store.UploadSession(ctx, request.UploadID, request.FileID, false)
+		return err
+	}); err != nil {
+		if errors.Is(err, domain.ErrUploadSessionNotFound) {
 			return nil, false, nil
 		}
 		return nil, false, fmt.Errorf("failed to load upload session: %w", err)
 	}
+	session := uploadSessionFromStore(stored)
 
 	if err := clientMediaBundleMatches(session, request.ClientMediaBundleID); err != nil {
 		return nil, false, err
@@ -453,12 +454,16 @@ func (s *Service) restoreFinishedMultipartPromotedAsset(
 	if !promoted {
 		return nil, nil
 	}
-	asset, err := mediaasset.ReferenceResultProto(mediaasset.NewLifecycle(mediaassetpostgres.NewUnits(s.db), s.cdnDomain).
-		ReadyAssetRefForSourceFile(ctx, fileID, kind))
+	var asset *mediaasset.Reference
+	err := s.readUploadFacts(ctx, func(store Store) error {
+		var err error
+		asset, err = store.ReadyPromotionReferenceForFile(ctx, s.cdnDomain, fileID, kind)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	return asset, nil
+	return mediaasset.ReferenceProto(asset), nil
 }
 
 func (s *Service) completeMultipartObject(

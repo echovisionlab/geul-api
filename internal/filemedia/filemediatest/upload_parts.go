@@ -126,3 +126,14 @@ func (s *LibraryStore) UploadMIMEState(ctx context.Context, upload, file string)
 	r, err := s.UploadSession(ctx, upload, file, false)
 	return domain.UploadMIMEState{Status: r.Status, DetectedMime: r.DetectedMime}, err
 }
+
+func (s *LibraryStore) UploadedPartBytes(_ context.Context, upload string) (int64, error) {
+	if s.Fail != nil {
+		return 0, s.Fail
+	}
+	var size int64
+	for _, part := range s.UploadPartRows[upload] {
+		size += part.Size
+	}
+	return size, nil
+}

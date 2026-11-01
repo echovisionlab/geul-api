@@ -796,9 +796,11 @@ func (s *Service) publishMultipartPartProgress(
 		return
 	}
 	var uploadedBytes int64
-	if err := s.db.WithContext(ctx).Model(&model.UploadPart{}).
-		Where("upload_id = ?", request.session.UploadID).
-		Select("COALESCE(SUM(size), 0)").Scan(&uploadedBytes).Error; err != nil {
+	if err := s.readUploadFacts(ctx, func(store Store) error {
+		var err error
+		uploadedBytes, err = store.UploadedPartBytes(ctx, request.session.UploadID)
+		return err
+	}); err != nil {
 		slog.ErrorContext(ctx, "Failed to load multipart progress", failurecause.Attr(err), "uploadId", request.uploadID)
 		return
 	}

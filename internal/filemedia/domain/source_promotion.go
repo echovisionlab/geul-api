@@ -8,6 +8,7 @@ import (
 )
 
 type SourcePromotionStore interface {
+	ReadyPromotionReferenceForFile(context.Context, string, string, string) (*mediaasset.Reference, error)
 	PromotionFile(context.Context, string, bool) (File, error)
 	SourcePromotionAsset(context.Context, string, bool) (mediaasset.Asset, error)
 	PromotionAsset(context.Context, string, bool) (mediaasset.Asset, error)

@@ -78,3 +78,9 @@ func (s *store) DeleteAbortedUpload(ctx context.Context, upload string) (bool, e
 	r := s.tx.WithContext(ctx).Where("upload_id = ? AND status = ?", upload, model.UploadSessionStatusAborted).Delete(&model.UploadSession{})
 	return r.RowsAffected == 1, r.Error
 }
+
+func (s *store) UploadedPartBytes(ctx context.Context, upload string) (int64, error) {
+	var size int64
+	err := s.tx.WithContext(ctx).Model(&model.UploadPart{}).Where("upload_id = ?", upload).Select("COALESCE(SUM(size), 0)").Scan(&size).Error
+	return size, err
+}
