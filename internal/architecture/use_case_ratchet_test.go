@@ -22,6 +22,7 @@ var pipelineDomains = []string{
 	"internal/ai",
 	"internal/artist",
 	"internal/audience",
+	"internal/authentication",
 	"internal/campaign",
 	"internal/emailauthoring",
 	"internal/emaildelivery",
