@@ -10,11 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
+	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/testutil"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
@@ -79,6 +81,24 @@ func TestMetadataAIJobManagerLifecycleIntegration(t *testing.T) {
 	requireMetadataAIJobStatus(t, db, job.Id, metadataAIJobStatusApplied)
 
 	require.Len(t, publisher.messages, 1, "only the durable generation command is published")
+}
+
+func TestMetadataAIJobWithoutTargetIsRejectedForAdministratorIntegration(t *testing.T) {
+	t.Parallel()
+	db := testutil.NewIntegrationDB(t)
+	spiceDB := testutil.SetupOryStack(t).SpiceDBClient
+	publisher := &capturingAsyncPublisher{}
+	manager := NewMetadataJobManagerWithProvider(db, spiceDB, &stubAIProvider{}, publisher)
+	user := seedMetadataAIRequester(t, db, spiceDB)
+	ctx := auth.WithUser(context.Background(), user)
+
+	job, err := manager.StartJob(ctx, user, &managev1.StartMetadataGenerationRequest{
+		Context: `{"task":{"requestedKeys":["summary"]},"source":{"title":"No target"}}`,
+		Prompt:  "Generate a concise summary",
+	})
+	require.Nil(t, job)
+	require.Equal(t, connect.CodeInvalidArgument, errs.CodeOf(err))
+	require.Empty(t, publisher.messages)
 }
 
 func TestMetadataAIJobDispatchFailureRollsBackJobIntegration(t *testing.T) {

@@ -38,6 +38,11 @@ func (m *MetadataJobManager) StartJob(
 	if !allowed {
 		return nil, errs.PermissionDenied(errs.MsgPermissionDenied)
 	}
+	// Only an administrator is allowed without a target; the job still
+	// needs one to record.
+	if req.Target == nil {
+		return nil, errs.Required("target")
+	}
 
 	userPrompt := metadataAIUserPrompt(req.Context, req.Prompt)
 	if err := validateMetadataAIUserPrompt(userPrompt); err != nil {
