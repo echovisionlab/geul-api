@@ -203,7 +203,7 @@ func resolvedOgAssetRef(
 // ResolveReadyOGAsset selects the localized ready asset first and then the
 // source asset. The owning public domain controls when source fallback is
 // allowed by the IDs it supplies.
-func (s *FileService) ResolveReadyOGAsset(
+func (s *Service) ResolveReadyOGAsset(
 	ctx context.Context,
 	sourceAssetID *string,
 	localizedAssetID *string,

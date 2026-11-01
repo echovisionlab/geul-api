@@ -41,7 +41,7 @@ import (
 type publicServiceRegistration struct {
 	dependencies     serviceRegistrationDependencies
 	handlerOptions   []connect.HandlerOption
-	fileService      *filepublic.FileService
+	fileService      *filepublic.Service
 	postShareLinks   postruntime.ShareLinks
 	postMembers      *postadapter.MemberSummaries
 	workRuntime      *workadapter.Runtime
@@ -81,7 +81,7 @@ func (r publicServiceRegistration) register() error {
 	mux.Handle(manifestPath, manifestHandler)
 	slog.Info("Registered public service", "path", manifestPath)
 
-	publicFilePath, publicFileHandler := openv1connect.NewFileServiceHandler(publicFileService, publicHandlerOpts...)
+	publicFilePath, publicFileHandler := openv1connect.NewFileServiceHandler(filepublic.NewConnectHandler(publicFileService), publicHandlerOpts...)
 	mux.Handle(publicFilePath, publicFileHandler)
 	slog.Info("Registered public service", "path", publicFilePath)
 

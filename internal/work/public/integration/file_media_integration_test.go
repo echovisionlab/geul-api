@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	mediaassetadapter "github.com/echovisionlab/geul-api/internal/adapters/mediaasset"
 	workadapter "github.com/echovisionlab/geul-api/internal/adapters/work"
 	"github.com/echovisionlab/geul-api/internal/crypto"
 	filepublic "github.com/echovisionlab/geul-api/internal/filemedia/public"
@@ -49,7 +50,11 @@ func TestWorkServiceOwnsDraftMediaAndSharePasswordAuthorizationIntegration(t *te
 	require.NoError(t, err)
 	workID := work.Msg.Id
 
-	fileSvc := filepublic.NewFileService(db, publicIntegrationSpiceDBFor(t, db), "https://cdn.example.com", "https://media.example.com", publicMediaSecret, 30*time.Minute)
+	fileSvc, err := filepublic.NewService(filepublic.Deps{
+		DB: db, SpiceDB: publicIntegrationSpiceDBFor(t, db), Segments: mediaassetadapter.NewSegmentConfigs(),
+		CDNDomain: "https://cdn.example.com", MediaDomain: "https://media.example.com", MediaSecret: publicMediaSecret, DownloadTTL: 30 * time.Minute,
+	})
+	require.NoError(t, err)
 	publicWork := newPublicWorkHandler(t, workpublic.Deps{
 		DB: db, SpiceDB: publicIntegrationSpiceDBFor(t, db), BlockMedia: fileSvc,
 		Assets:  newPublicWorkRuntimeForTest(db, "https://cdn.example.com"),

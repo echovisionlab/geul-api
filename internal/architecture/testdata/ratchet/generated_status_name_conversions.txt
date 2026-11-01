@@ -10,7 +10,6 @@
 1 internal/adapters/translation
 9 internal/artist/public
 23 internal/campaign
-16 internal/filemedia/public
 2 internal/label/public
 3 internal/programevent/public
 2 internal/referencecatalog/public

@@ -208,15 +208,13 @@ func registerServices(deps serviceRegistrationDependencies) (registeredServices,
 	// Register Connect services
 	// FileService first (needed by other services for file deletion)
 	downloadTTL := time.Duration(cfg.MediaDownloadTTLSec) * time.Second
-	publicFileService := filepublic.NewFileService(
-		db,
-		spicedbClient,
-		cfg.CDNURL,
-		cfg.MediaURL,
-		cfg.MediaSigningSecret,
-		downloadTTL,
-		filepublic.WithDownloadSegmentConfigs(mediaassetadapter.NewSegmentConfigs()),
-	)
+	publicFileService, err := filepublic.NewService(filepublic.Deps{
+		DB: db, SpiceDB: spicedbClient, Segments: mediaassetadapter.NewSegmentConfigs(),
+		CDNDomain: cfg.CDNURL, MediaDomain: cfg.MediaURL, MediaSecret: cfg.MediaSigningSecret, DownloadTTL: downloadTTL,
+	})
+	if err != nil {
+		return registeredServices{}, fmt.Errorf("initialize public file service: %w", err)
+	}
 	legalRuntime := legaladapter.NewOGRuntime(cfg.CDNURL, ogDeps.planner)
 	campaignDeliveryDispatcher := campaign.NewAuditedCampaignDeliveryDispatcher(
 		db,

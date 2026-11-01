@@ -29,7 +29,7 @@ import (
 // actions to references loaded in the owning domain's document snapshot. This
 // relation lock is held through download signing so replacement, removal, or a
 // policy reset cannot commit and then receive a newly issued URL for stale data.
-func (s *FileService) hydrateAuthorizedContentBlockMedia(
+func (s *Service) hydrateAuthorizedContentBlockMedia(
 	ctx context.Context,
 	items []*contentv1.ContentBlockMediaItem,
 ) ([]*contentv1.ContentBlockMediaItem, error) {
@@ -121,7 +121,7 @@ type downloadEvaluation struct {
 	decisions map[string]*openv1.FileDownloadAccess
 }
 
-func (s *FileService) evaluateContentDownloads(
+func (s *Service) evaluateContentDownloads(
 	ctx context.Context,
 	tx *gorm.DB,
 	request contentDownloadRequest,
@@ -215,7 +215,7 @@ type lockedContentDownloads struct {
 // revalidateContentDownloads locks what the evaluation depended on, reloads
 // it, and applies a delivery and download decision to each target. A target
 // whose relation changed only gets the unavailable decision.
-func (s *FileService) revalidateContentDownloads(
+func (s *Service) revalidateContentDownloads(
 	ctx context.Context,
 	tx *gorm.DB,
 	request contentDownloadRequest,
@@ -259,7 +259,7 @@ func (s *FileService) revalidateContentDownloads(
 
 // lockContentDownloads takes the policy, owner and viewer locks in the order
 // every download path uses, then reloads the facts the evaluation used.
-func (s *FileService) lockContentDownloads(
+func (s *Service) lockContentDownloads(
 	ctx context.Context,
 	tx *gorm.DB,
 	request contentDownloadRequest,
@@ -340,7 +340,7 @@ func reusableDecision(
 
 // applyDelivery sets item's delivery, signing a download URL for source when
 // the decision allows a download, and then applies the decision.
-func (s *FileService) applyDelivery(
+func (s *Service) applyDelivery(
 	item *contentv1.ContentBlockMediaItem,
 	decision *openv1.FileDownloadAccess,
 	delivery *commonv1.MediaDelivery,
@@ -363,7 +363,7 @@ func (s *FileService) applyDelivery(
 	return nil
 }
 
-func (s *FileService) validateContentDownloadOwnerAuthorization(
+func (s *Service) validateContentDownloadOwnerAuthorization(
 	ctx context.Context,
 	db *gorm.DB,
 	authorization mediaasset.ContentDownloadOwnerAuthorization,
@@ -423,13 +423,13 @@ func (s *FileService) validateContentDownloadOwnerAuthorization(
 func contentDownloadOwnerStatusIsPublic(resourceType, status string) bool {
 	switch resourceType {
 	case "post":
-		return status == managev1.PostStatus_POST_STATUS_PUBLISHED.String() || status == managev1.PostStatus_POST_STATUS_ARCHIVED.String()
+		return status == string(model.PostStatusPublished) || status == string(model.PostStatusArchived)
 	case "page":
-		return status == managev1.PageStatus_PAGE_STATUS_PUBLISHED.String()
+		return status == string(model.PageStatusPublished)
 	case "work":
-		return status == managev1.WorkStatus_WORK_STATUS_PUBLISHED.String() || status == managev1.WorkStatus_WORK_STATUS_ARCHIVED.String()
+		return status == string(model.WorkStatusPublished) || status == string(model.WorkStatusArchived)
 	case "program_event":
-		return status == managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_PUBLISHED.String() || status == managev1.ProgramEventStatus_PROGRAM_EVENT_STATUS_ARCHIVED.String()
+		return status == string(model.ProgramEventStatusPublished) || status == string(model.ProgramEventStatusArchived)
 	default:
 		return false
 	}
@@ -641,7 +641,7 @@ func loadContentBlockMediaRelations(
 
 // HydrateAuthorizedContentBlockMedia adds delivery to exact references only
 // after the owning public domain has authorized and loaded its document.
-func (s *FileService) HydrateAuthorizedContentBlockMedia(
+func (s *Service) HydrateAuthorizedContentBlockMedia(
 	ctx context.Context,
 	items []*contentv1.ContentBlockMediaItem,
 ) ([]*contentv1.ContentBlockMediaItem, error) {
