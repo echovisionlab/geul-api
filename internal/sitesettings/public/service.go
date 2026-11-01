@@ -7,36 +7,77 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/sitelogo"
+	"github.com/echovisionlab/geul-api/internal/sitesettings"
 	"github.com/echovisionlab/geul-api/internal/sitevariable"
-
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/structured"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
-
-var linkTypeMap = map[string]openv1.LinkType{
-	"custom":   openv1.LinkType_LINK_TYPE_CUSTOM,
-	"page":     openv1.LinkType_LINK_TYPE_PAGE,
-	"category": openv1.LinkType_LINK_TYPE_CATEGORY,
-	"tag":      openv1.LinkType_LINK_TYPE_TAG,
-	"series":   openv1.LinkType_LINK_TYPE_SERIES,
-}
 
 type userContext struct {
 	isAuthenticated bool
 	rolePermissions map[string]bool
 }
 
+// Manifest is the public settings and the menus visible to the caller.
+type Manifest struct {
+	Settings PublicSettings
+	Menus    Menus
+}
+
+// PublicSettings are the settings every visitor reads. Each display logo
+// falls back to another configured one; GoogleAnalyticsID is nil when unset.
+type PublicSettings struct {
+	SiteTitle              string
+	MetaDescription        string
+	PrimaryColor           string
+	CompanyName            string
+	CompanyAddress         string
+	TaxID                  string
+	LegalEmail             string
+	ContactEmail           string
+	SiteOrigin             string
+	DefaultCommentsEnabled bool
+	SocialLinks            map[string]string
+	GoogleAnalyticsID      *string
+	LogoFullLight          *sitesettings.Asset
+	LogoFullDark           *sitesettings.Asset
+	LogoSymbolLight        *sitesettings.Asset
+	LogoSymbolDark         *sitesettings.Asset
+	Favicon                *sitesettings.Asset
+	FaviconSet             *sitesettings.FaviconSet
+	SiteOg                 *sitesettings.Asset
+	LoaderAssets           []sitesettings.Asset
+}
+
+// Menus are the visible items of the selected menus.
+type Menus struct {
+	Header         []MenuLink
+	Secondary      []MenuLink
+	Footer         []MenuLink
+	AvatarDropdown []MenuLink
+}
+
+// MenuLink is a visible Menu item and its visible children.
+type MenuLink struct {
+	ID           string
+	Label        string
+	LinkType     string
+	URL          *string
+	TargetID     *string
+	TargetSlug   *string
+	OpenInNewTab bool
+	Children     []MenuLink
+}
+
 // Deps are the collaborators of the public Site Settings use cases. Every
 // field except SiteOrigin is required; NewService rejects a missing one.
 type Deps struct {
 	Projection ManifestProjection
-	SpiceDB    *auth.SpiceDBClient
+	SpiceDB    authz.AuthorizationDecisionChecker
 	// SiteOrigin resolves site variables and is reported to clients; empty
 	// reports none.
 	SiteOrigin string
@@ -47,7 +88,7 @@ type Deps struct {
 type Service struct {
 	siteOrigin string
 	projection ManifestProjection
-	spiceDB    *auth.SpiceDBClient
+	spiceDB    authz.AuthorizationDecisionChecker
 }
 
 // NewService validates deps and returns the public Site Settings use cases.
@@ -76,24 +117,24 @@ type GetManifestQuery struct {
 
 // GetManifest returns the public settings and the menus visible to the
 // caller.
-func (s *Service) GetManifest(ctx context.Context, query GetManifestQuery) (*openv1.GetResponse, error) {
+func (s *Service) GetManifest(ctx context.Context, query GetManifestQuery) (Manifest, error) {
 	user, err := s.getUserContext(ctx)
 	if err != nil {
-		return nil, err
+		return Manifest{}, err
 	}
-	settingsRow, err := s.projection.Settings(ctx)
+	stored, err := s.projection.Settings(ctx)
 	if err != nil {
-		return nil, err
+		return Manifest{}, err
 	}
-	settings, err := s.buildSettings(ctx, settingsRow)
+	settings, err := s.buildSettings(ctx, stored)
 	if err != nil {
-		return nil, err
+		return Manifest{}, err
 	}
-	menus, err := s.loadMenus(ctx, user, settingsRow, query.AcceptLanguage)
+	menus, err := s.loadMenus(ctx, user, stored, query.AcceptLanguage)
 	if err != nil {
-		return nil, err
+		return Manifest{}, err
 	}
-	return &openv1.GetResponse{Settings: settings, Menus: menus}, nil
+	return Manifest{Settings: settings, Menus: menus}, nil
 }
 
 func hasAuthenticatedAccountIdentity(ctx context.Context) bool {
@@ -153,35 +194,39 @@ func (s *Service) checkCurrentPlatformCan(ctx context.Context, can policyv1.Can)
 	return s.spiceDB.Can(ctx, decision)
 }
 
-func (s *Service) buildSettings(ctx context.Context, settings *model.SiteSettings) (*openv1.SiteSettings, error) {
-	result := &openv1.SiteSettings{
-		SiteTitle: settings.SiteTitle, MetaDescription: sitevariable.FromSettings(*settings, s.siteOrigin).ResolveText(settings.MetaDescription),
+func (s *Service) buildSettings(ctx context.Context, settings sitesettings.Settings) (PublicSettings, error) {
+	variables := sitevariable.Context{
+		SiteTitle: settings.SiteTitle, SiteURL: strings.TrimRight(strings.TrimSpace(s.siteOrigin), "/"), CompanyName: settings.CompanyName,
+		LegalEmail: settings.LegalEmail, ContactEmail: settings.ContactEmail,
+	}
+	result := PublicSettings{
+		SiteTitle: settings.SiteTitle, MetaDescription: variables.ResolveText(settings.MetaDescription),
 		PrimaryColor: settings.PrimaryColor, CompanyName: settings.CompanyName,
-		CompanyAddress: settings.CompanyAddress, TaxId: settings.TaxID,
+		CompanyAddress: settings.CompanyAddress, TaxID: settings.TaxID,
 		LegalEmail: settings.LegalEmail, ContactEmail: settings.ContactEmail,
 		SiteOrigin:             s.siteOrigin,
-		DefaultCommentsEnabled: settings.DefaultCommentsEnabled, SocialLinks: map[string]string{},
+		DefaultCommentsEnabled: settings.DefaultCommentsEnabled,
 	}
 	if settings.GoogleAnalyticsID != nil && *settings.GoogleAnalyticsID != "" {
-		result.GoogleAnalyticsId = settings.GoogleAnalyticsID
+		result.GoogleAnalyticsID = settings.GoogleAnalyticsID
 	}
-	logos := sitelogo.Display[commonv1.AssetRef]{
+	logos := sitelogo.Display[sitesettings.Asset]{
 		FullLight:   s.readyLogo(ctx, settings.LogoFullLightFileID),
 		FullDark:    s.readyLogo(ctx, settings.LogoFullDarkFileID),
 		SymbolLight: s.readyLogo(ctx, settings.LogoSymbolLightFileID),
 		SymbolDark:  s.readyLogo(ctx, settings.LogoSymbolDarkFileID),
 	}.Resolved()
-	result.LogoFullLightAsset, result.LogoFullDarkAsset = logos.FullLight, logos.FullDark
-	result.LogoSymbolLightAsset, result.LogoSymbolDarkAsset = logos.SymbolLight, logos.SymbolDark
+	result.LogoFullLight, result.LogoFullDark = logos.FullLight, logos.FullDark
+	result.LogoSymbolLight, result.LogoSymbolDark = logos.SymbolLight, logos.SymbolDark
 	if settings.FaviconFileID != nil {
-		result.FaviconAsset, result.FaviconAssetSet = s.projection.Favicon(ctx, *settings.FaviconFileID)
+		result.Favicon, result.FaviconSet = s.projection.Favicon(ctx, *settings.FaviconFileID)
 	}
 	if settings.SiteOgAssetID != nil && strings.TrimSpace(*settings.SiteOgAssetID) != "" {
-		result.SiteOgAsset = s.projection.ReadyAsset(ctx, *settings.SiteOgAssetID)
+		result.SiteOg = s.projection.ReadyAsset(ctx, *settings.SiteOgAssetID)
 	}
 	loaderAssets, err := s.projection.LoaderAssets(ctx)
 	if err != nil {
-		return nil, err
+		return PublicSettings{}, err
 	}
 	result.LoaderAssets = loaderAssets
 	result.SocialLinks = manifestSocialLinks(ctx, settings.SocialLinks)
@@ -206,17 +251,12 @@ func manifestSocialLinks(ctx context.Context, raw []byte) map[string]string {
 	return result
 }
 
-func (s *Service) loadMenus(
-	ctx context.Context,
-	user userContext,
-	settings *model.SiteSettings,
-	acceptLanguage string,
-) (*openv1.Menus, error) {
+func (s *Service) loadMenus(ctx context.Context, user userContext, settings sitesettings.Settings, acceptLanguage string) (Menus, error) {
 	menus, err := s.projection.Menus(ctx, settings, acceptLanguage)
 	if err != nil {
-		return nil, err
+		return Menus{}, err
 	}
-	return &openv1.Menus{
+	return Menus{
 		Header:         s.filterAndConvertItems(ctx, menus.Header, user),
 		Secondary:      s.filterAndConvertItems(ctx, menus.Secondary, user),
 		Footer:         s.filterAndConvertItems(ctx, menus.Footer, user),
@@ -224,17 +264,17 @@ func (s *Service) loadMenus(
 	}, nil
 }
 
-func (s *Service) filterAndConvertItems(ctx context.Context, items []model.MenuItem, user userContext) []*openv1.MenuItem {
-	result := make([]*openv1.MenuItem, 0, len(items))
+func (s *Service) filterAndConvertItems(ctx context.Context, items []MenuItem, user userContext) []MenuLink {
+	result := make([]MenuLink, 0, len(items))
 	for i := range items {
 		if s.isItemVisible(&items[i], user) {
-			result = append(result, s.convertItem(ctx, &items[i], user))
+			result = append(result, s.convertItem(ctx, items[i], user))
 		}
 	}
 	return result
 }
 
-func (s *Service) isItemVisible(item *model.MenuItem, user userContext) bool {
+func (s *Service) isItemVisible(item *MenuItem, user userContext) bool {
 	if item.Visibility == nil {
 		return true
 	}
@@ -260,9 +300,8 @@ func (s *Service) isItemVisible(item *model.MenuItem, user userContext) bool {
 	}
 }
 
-func (s *Service) convertItem(ctx context.Context, item *model.MenuItem, user userContext) *openv1.MenuItem {
-	result := &openv1.MenuItem{Id: item.ID, Label: item.Label, LinkType: linkTypeMap[item.LinkType]}
-	result.Url, result.TargetId = item.URL, item.TargetID
+func (s *Service) convertItem(ctx context.Context, item MenuItem, user userContext) MenuLink {
+	result := MenuLink{ID: item.ID, Label: item.Label, LinkType: item.LinkType, URL: item.URL, TargetID: item.TargetID}
 	if slug := s.projection.TargetSlug(ctx, item); slug != nil {
 		result.TargetSlug = slug
 	}
@@ -277,7 +316,7 @@ func (s *Service) convertItem(ctx context.Context, item *model.MenuItem, user us
 
 // readyLogo returns the ready display asset for a configured logo slot, or nil
 // when the slot is unset or its asset is not ready, so resolution falls back.
-func (s *Service) readyLogo(ctx context.Context, fileID *string) *commonv1.AssetRef {
+func (s *Service) readyLogo(ctx context.Context, fileID *string) *sitesettings.Asset {
 	if fileID == nil || strings.TrimSpace(*fileID) == "" {
 		return nil
 	}

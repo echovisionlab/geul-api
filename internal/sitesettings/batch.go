@@ -4,10 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"gorm.io/gorm"
-
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 )
 
 func validateSiteSettingKeys(settings []Setting) error {
@@ -23,13 +20,7 @@ func validateSiteSettingKeys(settings []Setting) error {
 	return domainerr.InvalidField("keys", fmt.Sprintf("invalid setting keys: %v", invalidKeys))
 }
 
-func cloneSiteSettingsForComparison(settings *model.SiteSettings) model.SiteSettings {
-	clone := *settings
-	clone.OGImageConfig = append([]byte(nil), settings.OGImageConfig...)
-	return clone
-}
-
-func applyRequestedSiteSettings(settings *model.SiteSettings, requested []Setting) error {
+func applyRequestedSiteSettings(settings *Settings, requested []Setting) error {
 	if err := validateSiteSettingKeys(requested); err != nil {
 		return err
 	}
@@ -44,15 +35,10 @@ func applyRequestedSiteSettings(settings *model.SiteSettings, requested []Settin
 	return nil
 }
 
-func (s *Service) validateSiteSettingReferences(
-	ctx context.Context,
-	tx *gorm.DB,
-	settings *model.SiteSettings,
-	keys []string,
-) error {
+func validateSiteSettingReferences(ctx context.Context, store Store, settings *Settings, keys []string) error {
 	for _, key := range keys {
 		if key == "homepage_page_id" || isSiteSettingMenuReference(key) {
-			if err := s.references.Validate(ctx, tx, key, siteSettingReferenceValue(settings, key)); err != nil {
+			if err := store.ValidateReference(ctx, key, siteSettingReferenceValue(settings, key)); err != nil {
 				return err
 			}
 		}
@@ -60,12 +46,7 @@ func (s *Service) validateSiteSettingReferences(
 	return nil
 }
 
-func (s *Service) lockAndValidateSiteSettingAssets(
-	ctx context.Context,
-	tx *gorm.DB,
-	settings *model.SiteSettings,
-	keys []string,
-) error {
+func lockAndValidateSiteSettingAssets(ctx context.Context, store Store, settings *Settings, keys []string) error {
 	fileIDs := make([]string, 0, len(keys))
 	for _, key := range keys {
 		fileID, _, _, managed := siteSettingAssetBinding(settings, key)
@@ -73,7 +54,7 @@ func (s *Service) lockAndValidateSiteSettingAssets(
 			fileIDs = append(fileIDs, *fileID)
 		}
 	}
-	if err := s.assets.LockForAttachment(ctx, tx, fileIDs); err != nil {
+	if err := store.LockFilesForAttachment(ctx, fileIDs); err != nil {
 		return err
 	}
 	validatedKeys := make(map[string]struct{}, len(keys))
@@ -84,7 +65,7 @@ func (s *Service) lockAndValidateSiteSettingAssets(
 		validatedKeys[key] = struct{}{}
 		fileID, _, _, managed := siteSettingAssetBinding(settings, key)
 		if managed && fileID != nil {
-			if err := s.assets.ValidateAttachment(ctx, tx, key, *fileID); err != nil {
+			if err := store.ValidateAttachment(ctx, key, *fileID); err != nil {
 				return err
 			}
 		}

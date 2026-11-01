@@ -11,9 +11,8 @@ import (
 	mcpserver "github.com/echovisionlab/geul-api/internal/mcp"
 	"github.com/echovisionlab/geul-api/internal/menu"
 	"github.com/echovisionlab/geul-api/internal/sitesettings"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+	"github.com/echovisionlab/geul-api/internal/structured"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 func TestMenuDiscoveryDescriptorsAndDependencies(t *testing.T) {
@@ -92,11 +91,11 @@ func TestMenuDiscoveryRejectsInvalidInputsBeforeCallingOwners(t *testing.T) {
 }
 
 func TestMenuLocationsReadsOnlyFixedMenuKeysAndPreservesUnassignedSlots(t *testing.T) {
-	fixture := &recordingMenuDiscovery{values: map[string]*structpb.Value{
-		"menu_header_id":          structpb.NewStringValue(managementWorkID),
-		"menu_secondary_id":       structpb.NewNullValue(),
-		"menu_footer_id":          structpb.NewStringValue(managementPostID),
-		"menu_avatar_dropdown_id": structpb.NewStringValue(""),
+	fixture := &recordingMenuDiscovery{values: map[string]structured.Value{
+		"menu_header_id":          managementWorkID,
+		"menu_secondary_id":       nil,
+		"menu_footer_id":          managementPostID,
+		"menu_avatar_dropdown_id": "",
 	}}
 	tools, err := NewMenuDiscoveryTools(fixture, fixture)
 	require.NoError(t, err)
@@ -104,7 +103,7 @@ func TestMenuLocationsReadsOnlyFixedMenuKeysAndPreservesUnassignedSlots(t *testi
 	require.NoError(t, err)
 	require.Equal(t, []string{"menu_header_id", "menu_secondary_id", "menu_footer_id", "menu_avatar_dropdown_id"}, fixture.keys)
 	require.Equal(t, map[string]any{"menu_header_id": managementWorkID, "menu_secondary_id": nil, "menu_footer_id": managementPostID, "menu_avatar_dropdown_id": nil}, result.StructuredContent)
-	for _, bad := range []*structpb.Value{structpb.NewBoolValue(true), structpb.NewStringValue("not-a-uuid"), nil} {
+	for _, bad := range []structured.Value{true, "not-a-uuid", float64(1)} {
 		fixture.values["menu_header_id"] = bad
 		_, err := tools.CallTool(t.Context(), mcpserver.Principal{}, ToolMenuLocationsGet, toolArguments(t, `{}`))
 		require.Error(t, err)
@@ -136,7 +135,7 @@ func TestMenuDiscoveryReturnsOwnerDenialsAndKeepsInternalErrorsPrivate(t *testin
 type recordingMenuDiscovery struct {
 	page              menu.MenuPage
 	paginationRequest menu.ListMenusQuery
-	values            map[string]*structpb.Value
+	values            map[string]structured.Value
 	keys              []string
 	actor             *auth.UserInfo
 	calls             int
@@ -150,9 +149,9 @@ func (r *recordingMenuDiscovery) ListMenus(ctx context.Context, query menu.ListM
 	return r.page, r.err
 }
 
-func (r *recordingMenuDiscovery) GetSetting(ctx context.Context, query sitesettings.GetSettingQuery) (*managev1.SiteSetting, error) {
+func (r *recordingMenuDiscovery) GetSetting(ctx context.Context, query sitesettings.GetSettingQuery) (sitesettings.Setting, error) {
 	r.calls++
 	r.actor = auth.GetUser(ctx)
 	r.keys = append(r.keys, query.Key)
-	return &managev1.SiteSetting{Key: query.Key, Value: r.values[query.Key]}, r.err
+	return sitesettings.Setting{Key: query.Key, Value: r.values[query.Key]}, r.err
 }

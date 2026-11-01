@@ -7,7 +7,7 @@ import (
 
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/model"
-	domain "github.com/echovisionlab/geul-api/internal/sitesettings"
+	sitesettingspostgres "github.com/echovisionlab/geul-api/internal/sitesettings/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -18,7 +18,7 @@ type References struct{}
 
 func NewReferences() References { return References{} }
 
-var _ domain.References = References{}
+var _ sitesettingspostgres.References = References{}
 
 func (References) Validate(ctx context.Context, db *gorm.DB, key string, value *string) error {
 	if value == nil || strings.TrimSpace(*value) == "" {

@@ -10,8 +10,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/model"
 	domain "github.com/echovisionlab/geul-api/internal/sitesettings"
+	sitesettingspostgres "github.com/echovisionlab/geul-api/internal/sitesettings/postgres"
 	publicsitesettings "github.com/echovisionlab/geul-api/internal/sitesettings/public"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
 
@@ -19,12 +19,12 @@ import (
 // the public Site Settings manifest.
 type PublicProjection struct {
 	db     *gorm.DB
-	assets domain.Assets
+	assets Assets
 	menus  ManifestMenus
 }
 
-func NewPublicProjection(db *gorm.DB, assets domain.Assets, menus ManifestMenus) *PublicProjection {
-	if db == nil || assets == nil {
+func NewPublicProjection(db *gorm.DB, assets Assets, menus ManifestMenus) *PublicProjection {
+	if db == nil {
 		panic("site settings public projection dependencies are required")
 	}
 	return &PublicProjection{db: db, assets: assets, menus: menus}
@@ -32,17 +32,17 @@ func NewPublicProjection(db *gorm.DB, assets domain.Assets, menus ManifestMenus)
 
 var _ publicsitesettings.ManifestProjection = (*PublicProjection)(nil)
 
-func (p *PublicProjection) Settings(ctx context.Context) (*model.SiteSettings, error) {
+func (p *PublicProjection) Settings(ctx context.Context) (domain.Settings, error) {
 	var settings model.SiteSettings
 	if err := p.db.WithContext(ctx).First(&settings, "id = 1").Error; err != nil {
-		return nil, err
+		return domain.Settings{}, err
 	}
-	return &settings, nil
+	return sitesettingspostgres.SettingsFromRow(settings), nil
 }
 
 func (p *PublicProjection) Menus(
 	ctx context.Context,
-	settings *model.SiteSettings,
+	settings domain.Settings,
 	acceptLanguage string,
 ) (publicsitesettings.MenuSlots, error) {
 	menuIDs := selectedManifestMenuIDs(settings)
@@ -56,7 +56,7 @@ func (p *PublicProjection) Menus(
 	for _, menu := range menus {
 		byID[menu.ID] = menu
 	}
-	load := func(menuID *string) ([]model.MenuItem, error) {
+	load := func(menuID *string) ([]publicsitesettings.MenuItem, error) {
 		if menuID == nil || strings.TrimSpace(*menuID) == "" {
 			return nil, nil
 		}
@@ -75,7 +75,8 @@ func (p *PublicProjection) Menus(
 		} else {
 			items = localized
 		}
-		return p.menus.PublishedPageTargets(ctx, p.db, items)
+		published, err := p.menus.PublishedPageTargets(ctx, p.db, items)
+		return manifestMenuItems(published), err
 	}
 	var result publicsitesettings.MenuSlots
 	var err error
@@ -94,7 +95,27 @@ func (p *PublicProjection) Menus(
 	return result, nil
 }
 
-func selectedManifestMenuIDs(settings *model.SiteSettings) []string {
+// manifestMenuItems maps the stored items to the manifest's; nil stays nil.
+func manifestMenuItems(items []model.MenuItem) []publicsitesettings.MenuItem {
+	if items == nil {
+		return nil
+	}
+	result := make([]publicsitesettings.MenuItem, 0, len(items))
+	for _, item := range items {
+		mapped := publicsitesettings.MenuItem{
+			ID: item.ID, Label: item.Label, LinkType: item.LinkType,
+			URL: item.URL, TargetID: item.TargetID, TargetSlug: item.TargetSlug,
+			OpenInNewTab: item.OpenInNewTab, Children: manifestMenuItems(item.Children),
+		}
+		if item.Visibility != nil {
+			mapped.Visibility = &publicsitesettings.MenuVisibility{Mode: item.Visibility.Mode, Roles: item.Visibility.Roles}
+		}
+		result = append(result, mapped)
+	}
+	return result
+}
+
+func selectedManifestMenuIDs(settings domain.Settings) []string {
 	ids := make([]string, 0, 4)
 	for _, id := range []*string{
 		settings.MenuHeaderID,
@@ -109,32 +130,30 @@ func selectedManifestMenuIDs(settings *model.SiteSettings) []string {
 	return ids
 }
 
-func (p *PublicProjection) ReadySourceAsset(ctx context.Context, fileID, kind string) *commonv1.AssetRef {
+func (p *PublicProjection) ReadySourceAsset(ctx context.Context, fileID, kind string) *domain.Asset {
 	asset, err := p.assets.ReadyRef(ctx, p.db, fileID, kind)
 	if err != nil {
 		slog.Log(ctx, errs.OperationLogLevel(err), "Site Settings public asset resolution failed; serving Site Settings without the asset", failurecause.Attr(err), "file_id", fileID, "kind", kind)
 		return nil
 	}
-	return asset
+	return sitesettingspostgres.AssetFromRef(asset)
 }
 
-func (p *PublicProjection) ReadyAsset(ctx context.Context, assetID string) *commonv1.AssetRef {
+func (p *PublicProjection) ReadyAsset(ctx context.Context, assetID string) *domain.Asset {
 	asset, err := p.assets.ReadyAsset(ctx, p.db, assetID)
 	if err != nil {
 		slog.Log(ctx, errs.OperationLogLevel(err), "Site Settings public asset resolution failed; serving Site Settings without the asset", failurecause.Attr(err), "asset_id", assetID)
 		return nil
 	}
-	return asset
+	return sitesettingspostgres.AssetFromRef(asset)
 }
 
-func (p *PublicProjection) Favicon(
-	ctx context.Context,
-	fileID string,
-) (*commonv1.AssetRef, *commonv1.FaviconAssetSet) {
-	return p.assets.ProjectFavicon(ctx, p.db, fileID)
+func (p *PublicProjection) Favicon(ctx context.Context, fileID string) (*domain.Asset, *domain.FaviconSet) {
+	asset, set := p.assets.ProjectFavicon(ctx, p.db, fileID)
+	return sitesettingspostgres.AssetFromRef(asset), sitesettingspostgres.FaviconSetFromRef(set)
 }
 
-func (p *PublicProjection) LoaderAssets(ctx context.Context) ([]*commonv1.AssetRef, error) {
+func (p *PublicProjection) LoaderAssets(ctx context.Context) ([]domain.Asset, error) {
 	var rows []struct {
 		FileID string `gorm:"column:file_id"`
 	}
@@ -143,15 +162,15 @@ func (p *PublicProjection) LoaderAssets(ctx context.Context) ([]*commonv1.AssetR
 		Order("slf.position ASC, slf.created_at ASC").Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	assets := make([]*commonv1.AssetRef, 0, len(rows))
+	assets := make([]domain.Asset, 0, len(rows))
 	for _, row := range rows {
 		if asset := p.ReadySourceAsset(ctx, row.FileID, "loader"); asset != nil {
-			assets = append(assets, asset)
+			assets = append(assets, *asset)
 		}
 	}
 	return assets, nil
 }
 
-func (p *PublicProjection) TargetSlug(ctx context.Context, item *model.MenuItem) *string {
-	return p.menus.TargetSlug(ctx, p.db, item)
+func (p *PublicProjection) TargetSlug(ctx context.Context, item publicsitesettings.MenuItem) *string {
+	return p.menus.TargetSlug(ctx, p.db, &model.MenuItem{LinkType: item.LinkType, TargetID: item.TargetID, TargetSlug: item.TargetSlug})
 }

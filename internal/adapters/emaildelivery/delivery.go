@@ -14,6 +14,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/email"
 	"github.com/echovisionlab/geul-api/internal/emailauthoring"
 	"github.com/echovisionlab/geul-api/internal/emaildelivery"
+	emaildeliverypostgres "github.com/echovisionlab/geul-api/internal/emaildelivery/postgres"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
 	"github.com/echovisionlab/geul-api/internal/localization"
 	"github.com/echovisionlab/geul-api/internal/member"
@@ -113,26 +114,14 @@ func (s *SuppressionStore) Find(ctx context.Context, recipient string) (*emailde
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("email suppression database is required")
 	}
-	row, err := emaildelivery.GetActiveEmailSuppression(ctx, s.db, recipient)
-	if err != nil || row == nil {
-		return nil, err
-	}
-	return &emaildelivery.Suppression{Reason: row.Reason}, nil
+	return emaildelivery.FindActiveSuppression(ctx, emaildeliverypostgres.Bind(s.db), recipient)
 }
 
 func (s *SuppressionStore) Lookup(ctx context.Context, recipients []string) (map[string]emaildelivery.Suppression, error) {
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("email suppression database is required")
 	}
-	rows, err := emaildelivery.LookupActiveEmailSuppressionsByEmail(ctx, s.db, recipients)
-	if err != nil {
-		return nil, err
-	}
-	result := make(map[string]emaildelivery.Suppression, len(rows))
-	for address, row := range rows {
-		result[address] = emaildelivery.Suppression{Reason: row.Reason}
-	}
-	return result, nil
+	return emaildelivery.LookupActiveSuppressions(ctx, emaildeliverypostgres.Bind(s.db), recipients)
 }
 
 type BulkCampaignStore struct {
@@ -306,17 +295,18 @@ func (r *Renderer) Render(
 			targetLocale = *normalized
 		}
 	}
+	store := emaildeliverypostgres.Bind(r.db)
 	if targetLocale == "" {
-		targetLocale = emaildelivery.LookupEmailRecipientLocale(ctx, r.db, job.GetRecipient())
+		targetLocale = emaildelivery.LookupEmailRecipientLocale(ctx, store, job.GetRecipient())
 	}
 	if targetLocale == "" {
-		targetLocale = emaildelivery.LookupEmailIdentityLocale(ctx, r.db, emaildelivery.EmailRecipientContextIdentityID(job))
+		targetLocale = emaildelivery.LookupEmailIdentityLocale(ctx, store, emaildelivery.EmailRecipientContextIdentityID(job))
 	}
 	if err := emailauthoring.ValidateAutomaticEmailTemplateData(job.GetTemplateType(), job.GetTemplateData()); err != nil {
 		return nil, err
 	}
 	templateData := emaildelivery.BuildEmailRenderData(
-		ctx, r.db, r.cdnURL, r.siteOrigin, targetLocale, job.GetTemplateData(),
+		ctx, store, r.cdnURL, r.siteOrigin, targetLocale, job.GetTemplateData(),
 	)
 	return r.renderTemplate(ctx, job, targetLocale, templateData)
 }

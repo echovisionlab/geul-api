@@ -13,6 +13,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	domain "github.com/echovisionlab/geul-api/internal/sitesettings"
+	sitesettingspostgres "github.com/echovisionlab/geul-api/internal/sitesettings/postgres"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -32,7 +33,7 @@ type Assets struct {
 	cdnDomain string
 }
 
-var _ domain.Assets = Assets{}
+var _ sitesettingspostgres.Assets = Assets{}
 
 func NewAssets(cdnDomain string) Assets {
 	return Assets{cdnDomain: cdnDomain}
