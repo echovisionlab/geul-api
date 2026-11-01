@@ -45,15 +45,18 @@ func (s *Service) AssignPostToSeries(ctx context.Context, command AssignPostToSe
 			return requireSeriesPermissionAndLock(ctx, store, require, command.SeriesID, policyv1.PostSeries.Manage)
 		}),
 		Change: func(ctx context.Context, store Store) (struct{}, error) {
-			return struct{}{}, assignLockedPost(ctx, store, &audits, command.PostID, command.SeriesID, observed)
+			return struct{}{}, assignLockedPost(ctx, store, &audits, command.PostID, command.SeriesID, observed, true)
 		},
 		Audit: func(struct{}) mutation.Audit { return audits.audit() },
 	})
 	return err
 }
 
-// assignPostToSeriesAfterSeriesPermission assigns a Post inside a mutation
-// that already holds the Series manage decision.
+// assignPostToSeriesAfterSeriesPermission assigns a Post inside an AI
+// document mutation that already holds the Series manage decision. That
+// mutation advances the target document once for the whole batch, against
+// the revision it locked, so the assignment leaves the target document to
+// it.
 func assignPostToSeriesAfterSeriesPermission(
 	ctx context.Context,
 	store Store,
@@ -65,12 +68,13 @@ func assignPostToSeriesAfterSeriesPermission(
 	if err := lockSeriesAssignmentRoots(ctx, store, seriesID, observedSeriesID); err != nil {
 		return err
 	}
-	return assignLockedPost(ctx, store, audits, postID, seriesID, observedSeriesID)
+	return assignLockedPost(ctx, store, audits, postID, seriesID, observedSeriesID, false)
 }
 
 // assignLockedPost moves a Post into seriesID once both Series roots are
 // locked: the Post must still be where it was observed and its owner must
-// allow the edit.
+// allow the edit. The document of the Series it left always advances; the
+// target document only when advanceTarget is set.
 func assignLockedPost(
 	ctx context.Context,
 	store Store,
@@ -78,6 +82,7 @@ func assignLockedPost(
 	postID string,
 	seriesID string,
 	observedSeriesID *string,
+	advanceTarget bool,
 ) error {
 	posts := store.Posts()
 	currentSeriesID, err := lockPostSeriesRelation(ctx, posts, postID)
@@ -109,14 +114,18 @@ func assignLockedPost(
 		previousSeriesID = *currentSeriesID
 	}
 	audits.membership(seriesID, postID, previousSeriesID, seriesID)
+	if currentSeriesID != nil {
+		if err := compactSeriesPostOrders(ctx, posts, *currentSeriesID, now); err != nil {
+			return err
+		}
+	}
+	if advanceTarget {
+		if err := advanceSeriesContentDocumentForMutation(ctx, store, seriesID, time.Now().UTC()); err != nil {
+			return err
+		}
+	}
 	if currentSeriesID == nil {
-		return advanceSeriesContentDocumentForMutation(ctx, store, seriesID, time.Now().UTC())
-	}
-	if err := compactSeriesPostOrders(ctx, posts, *currentSeriesID, now); err != nil {
-		return err
-	}
-	if err := advanceSeriesContentDocumentForMutation(ctx, store, seriesID, time.Now().UTC()); err != nil {
-		return err
+		return nil
 	}
 	return advanceSeriesContentDocumentForMutation(ctx, store, *currentSeriesID, time.Now().UTC())
 }

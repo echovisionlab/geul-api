@@ -294,3 +294,25 @@ func TestPostSeriesAIDocumentHidesTheSeriesFromACallerWithoutTheAction(t *testin
 	stored, _ := a.store.StoredTranslation(a.seriesID, "en")
 	require.Equal(t, text("Source summary"), stored.Summary)
 }
+
+func TestPostSeriesAIDocumentInsertsAPostAndAdvancesTheDocumentOnce(t *testing.T) {
+	a := newAIFixture(t)
+	other := a.store.SeedSeries(series.Series{Title: "Other"})
+	loose := a.store.SeedPost(seriestest.Post{}).ID
+	moved := a.store.SeedPost(seriestest.Post{SeriesID: &other.ID, SeriesPost: series.SeriesPost{SeriesOrder: intPointer(0)}}).ID
+	otherRevision := a.store.Revision(other.ID)
+	before := a.load(t, "en")
+
+	result, err := a.application.Apply(a.ctx(t), a.request("en", before,
+		core.InsertRelationItemOperation(aiBlock, aiPosts, core.RelationItemID(loose), "post", core.RelationItemID(a.postIDs[0])),
+		core.InsertRelationItemOperation(aiBlock, aiPosts, core.RelationItemID(moved), "post", ""),
+	))
+
+	require.NoError(t, err)
+	require.True(t, result.Changed)
+	require.NotEqual(t, before.DocumentRevision, result.DocumentRevision)
+	require.Equal(t, string(result.DocumentRevision), a.store.Revision(a.seriesID))
+	require.Equal(t, []string{moved, a.postIDs[0], loose, a.postIDs[1]}, a.store.Order(a.seriesID))
+	require.Empty(t, a.store.Order(other.ID))
+	require.NotEqual(t, otherRevision, a.store.Revision(other.ID), "the Series the Post left advances too")
+}
