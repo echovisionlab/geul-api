@@ -90,19 +90,19 @@ func TestMultipartInitiateResponseFromSessionShapesFreshAndResumeResponses(t *te
 		false,
 	)
 
-	require.Equal(t, "upload-fresh", freshResp.GetUploadId())
-	require.Equal(t, "file-fresh", freshResp.GetFileId())
-	require.Equal(t, "webp", freshResp.GetExtension())
-	require.EqualValues(t, 1, freshResp.GetTotalParts())
-	require.EqualValues(t, chunkSize, freshResp.GetChunkSize())
-	require.Equal(t, managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED, freshResp.GetStatus())
-	require.False(t, freshResp.GetResumed())
-	require.Empty(t, freshResp.GetUploadedParts())
+	require.Equal(t, "upload-fresh", freshResp.UploadID)
+	require.Equal(t, "file-fresh", freshResp.FileID)
+	require.Equal(t, "webp", freshResp.Extension)
+	require.EqualValues(t, 1, freshResp.TotalParts)
+	require.EqualValues(t, chunkSize, freshResp.ChunkSize)
+	require.Equal(t, domain.UploadSessionStatusInitiated, freshResp.Status)
+	require.False(t, freshResp.Resumed)
+	require.Empty(t, freshResp.UploadedParts)
 
 	attemptID := "attempt-1"
-	uploadedParts := []*managev1.UploadPartInfo{
-		{PartNumber: 1, Etag: "etag-1"},
-		{PartNumber: 2, Etag: "etag-2"},
+	uploadedParts := []*UploadedPart{
+		{PartNumber: 1, ETag: "etag-1"},
+		{PartNumber: 2, ETag: "etag-2"},
 	}
 
 	resp := multipartInitiateResponseFromSession(
@@ -119,16 +119,16 @@ func TestMultipartInitiateResponseFromSessionShapesFreshAndResumeResponses(t *te
 		true,
 	)
 
-	require.Equal(t, "upload-1", resp.GetUploadId())
-	require.Equal(t, "file-1", resp.GetFileId())
-	require.Equal(t, "webp", resp.GetExtension())
-	require.EqualValues(t, 3, resp.GetTotalParts())
-	require.EqualValues(t, 64, resp.GetChunkSize())
-	require.Equal(t, uploadedParts, resp.GetUploadedParts())
-	require.Equal(t, managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING, resp.GetStatus())
-	require.True(t, resp.GetResumed())
-	require.Empty(t, resp.GetSlotId())
-	require.Equal(t, attemptID, resp.GetIngestAttemptId())
+	require.Equal(t, "upload-1", resp.UploadID)
+	require.Equal(t, "file-1", resp.FileID)
+	require.Equal(t, "webp", resp.Extension)
+	require.EqualValues(t, 3, resp.TotalParts)
+	require.EqualValues(t, 64, resp.ChunkSize)
+	require.Equal(t, uploadedParts, resp.UploadedParts)
+	require.Equal(t, domain.UploadSessionStatusUploading, resp.Status)
+	require.True(t, resp.Resumed)
+	require.Empty(t, resp.SlotID)
+	require.Equal(t, attemptID, *resp.IngestAttemptID)
 }
 
 func TestContainsFinalizingUploadSession(t *testing.T) {
@@ -259,10 +259,10 @@ func TestUploadPartConversionsPreservePartOrder(t *testing.T) {
 
 	uploadInfos := uploadPartInfos(parts)
 	require.Len(t, uploadInfos, 2)
-	require.EqualValues(t, 2, uploadInfos[0].GetPartNumber())
-	require.Equal(t, "etag-2", uploadInfos[0].GetEtag())
-	require.EqualValues(t, 1, uploadInfos[1].GetPartNumber())
-	require.Equal(t, "etag-1", uploadInfos[1].GetEtag())
+	require.EqualValues(t, 2, uploadInfos[0].PartNumber)
+	require.Equal(t, "etag-2", uploadInfos[0].ETag)
+	require.EqualValues(t, 1, uploadInfos[1].PartNumber)
+	require.Equal(t, "etag-1", uploadInfos[1].ETag)
 
 	require.Equal(t, []int32{2, 1}, uploadPartModelNumbers(parts))
 }

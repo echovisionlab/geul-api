@@ -14,7 +14,6 @@ import (
 	"connectrpc.com/connect"
 	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
@@ -22,11 +21,11 @@ import (
 type fakeMCPFileRuntime struct {
 	importInput     *filemediadomain.RemoteFileImportInput
 	initiateRequest *managev1.InitiateMultipartUploadRequest
-	initiateResult  *managev1.InitiateMultipartUploadResponse
+	initiateResult  *filemediadomain.MultipartUpload
 	initiateError   error
 
 	findRequest *managev1.FindMultipartUploadCandidateRequest
-	findResult  *managev1.FindMultipartUploadCandidateResponse
+	findResult  *filemediadomain.MultipartCandidate
 	findError   error
 
 	completeRequest *managev1.CompleteMultipartUploadRequest
@@ -49,7 +48,7 @@ func (runtime *fakeMCPFileRuntime) ImportRemoteFile(_ context.Context, input fil
 
 // The fake records each command as the request a Connect client would have
 // sent, so the assertions read the native field names.
-func (runtime *fakeMCPFileRuntime) InitiateMultipartUpload(_ context.Context, command filemediadomain.InitiateMultipartUploadCommand) (*managev1.InitiateMultipartUploadResponse, error) {
+func (runtime *fakeMCPFileRuntime) InitiateMultipartUpload(_ context.Context, command filemediadomain.InitiateMultipartUploadCommand) (*filemediadomain.MultipartUpload, error) {
 	runtime.initiateRequest = &managev1.InitiateMultipartUploadRequest{
 		UploadType: command.UploadType, EntityId: command.EntityID, FileSize: command.FileSize,
 		MimeType: command.MimeType, EntityType: command.EntityType, FileName: command.FileName,
@@ -61,7 +60,7 @@ func (runtime *fakeMCPFileRuntime) InitiateMultipartUpload(_ context.Context, co
 	return runtime.initiateResult, nil
 }
 
-func (runtime *fakeMCPFileRuntime) FindMultipartUploadCandidate(_ context.Context, query filemediadomain.FindMultipartUploadCandidateQuery) (*managev1.FindMultipartUploadCandidateResponse, error) {
+func (runtime *fakeMCPFileRuntime) FindMultipartUploadCandidate(_ context.Context, query filemediadomain.FindMultipartUploadCandidateQuery) (*filemediadomain.MultipartCandidate, error) {
 	runtime.findRequest = &managev1.FindMultipartUploadCandidateRequest{
 		UploadType: query.UploadType, EntityId: query.EntityID, FileId: query.FileID, FileName: query.FileName,
 		FileSize: query.FileSize, MimeType: query.MimeType, FileLastModified: query.FileLastModified,
@@ -162,9 +161,9 @@ func TestMCPFileBeginMultipartUsesIndependentFileIngest(t *testing.T) {
 		kind, wantUploadType := kind, wantUploadType
 		t.Run(string(kind), func(t *testing.T) {
 			t.Parallel()
-			runtime := &fakeMCPFileRuntime{initiateResult: &managev1.InitiateMultipartUploadResponse{
-				FileId: fileID, UploadId: "upload-1", TotalParts: 2, ChunkSize: 1024,
-				Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED,
+			runtime := &fakeMCPFileRuntime{initiateResult: &filemediadomain.MultipartUpload{
+				FileID: fileID, UploadID: "upload-1", TotalParts: 2, ChunkSize: 1024,
+				Status: filemediadomain.UploadSessionStatusInitiated,
 			}}
 			facade, _ := NewMCPFileFacade(runtime)
 			modified := int64(123)
@@ -265,14 +264,14 @@ func TestMCPFileStatusReturnsOnlyCompactPartProgress(t *testing.T) {
 
 	fileID := uuid.NewString()
 	bundleID := uuid.NewString()
-	lastActivity := timestamppb.New(time.Date(2026, 8, 23, 1, 2, 3, 0, time.FixedZone("KST", 9*60*60)))
-	runtime := &fakeMCPFileRuntime{findResult: &managev1.FindMultipartUploadCandidateResponse{
-		ClientMediaBundleId: &bundleID,
-		FileId:              pointer(fileID), UploadId: pointer("upload-1"), TotalParts: 3, ChunkSize: 1024,
-		Status:        managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING,
-		UploadedParts: []*managev1.UploadPartInfo{{PartNumber: 1, Etag: "must-not-leak"}, {PartNumber: 3, Etag: "must-not-leak"}},
+	lastActivity := time.Date(2026, 8, 23, 1, 2, 3, 0, time.FixedZone("KST", 9*60*60))
+	runtime := &fakeMCPFileRuntime{findResult: &filemediadomain.MultipartCandidate{
+		ClientMediaBundleID: &bundleID,
+		FileID:              pointer(fileID), UploadID: pointer("upload-1"), TotalParts: 3, ChunkSize: 1024,
+		Status:        filemediadomain.UploadSessionStatusUploading,
+		UploadedParts: []*filemediadomain.UploadedPart{{PartNumber: 1, ETag: "must-not-leak"}, {PartNumber: 3, ETag: "must-not-leak"}},
 		FileName:      pointer("audio.wav"), MimeType: pointer("audio/wav"), FileSize: 3072,
-		LastActivityAt: lastActivity,
+		LastActivityAt: &lastActivity,
 	}}
 	facade, _ := NewMCPFileFacade(runtime)
 	handle := MCPFileSessionHandle{
@@ -299,7 +298,7 @@ func TestMCPFileStatusFallsBackToAuthorizedDeliveryAfterSessionRemoval(t *testin
 
 	fileID := uuid.NewString()
 	runtime := &fakeMCPFileRuntime{
-		findResult:     &managev1.FindMultipartUploadCandidateResponse{},
+		findResult:     &filemediadomain.MultipartCandidate{},
 		deliveryResult: &filemediadomain.MediaDeliveryResult{Delivery: minimalDelivery(fileID)},
 	}
 	facade, _ := NewMCPFileFacade(runtime)
@@ -405,8 +404,8 @@ func TestMCPFileTrackAudioPreservesNativeTargetCASAndCompletion(t *testing.T) {
 					expected = &current
 				}
 				runtime := &fakeMCPFileRuntime{
-					initiateResult: &managev1.InitiateMultipartUploadResponse{FileId: fileID, UploadId: "track-upload", TotalParts: 1, ChunkSize: 1024, Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED},
-					findResult:     &managev1.FindMultipartUploadCandidateResponse{FileId: pointer(fileID), UploadId: pointer("track-upload"), TotalParts: 1, ChunkSize: 1024, Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING, ClientMediaBundleId: &bundleID},
+					initiateResult: &filemediadomain.MultipartUpload{FileID: fileID, UploadID: "track-upload", TotalParts: 1, ChunkSize: 1024, Status: filemediadomain.UploadSessionStatusInitiated},
+					findResult:     &filemediadomain.MultipartCandidate{FileID: pointer(fileID), UploadID: pointer("track-upload"), TotalParts: 1, ChunkSize: 1024, Status: filemediadomain.UploadSessionStatusUploading, ClientMediaBundleID: &bundleID},
 					completeResult: &filemediadomain.CompletedUpload{FileID: fileID, Delivery: minimalDelivery(fileID)},
 				}
 				facade, _ := NewMCPFileFacade(runtime)

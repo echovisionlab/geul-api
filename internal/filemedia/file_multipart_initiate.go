@@ -57,7 +57,7 @@ func (c InitiateMultipartUploadCommand) entityType() managev1.TranscodeEntityTyp
 func (s *Service) InitiateMultipartUpload(
 	ctx context.Context,
 	command InitiateMultipartUploadCommand,
-) (_ *managev1.InitiateMultipartUploadResponse, resultErr error) {
+) (_ *MultipartUpload, resultErr error) {
 	defer failurecause.AnnotatePrivate(&resultErr, command.FileName)
 
 	initiation, err := s.prepareMultipartUploadInitiation(ctx, command)
@@ -214,7 +214,7 @@ func (s *Service) resumeOrReplaceMultipartUpload(
 	ctx context.Context,
 	request InitiateMultipartUploadCommand,
 	initiation multipartUploadInitiation,
-) (*managev1.InitiateMultipartUploadResponse, bool, error) {
+) (*MultipartUpload, bool, error) {
 	selection, err := s.selectMultipartResumeCandidate(
 		ctx,
 		request.entityType(),
@@ -250,7 +250,7 @@ func (s *Service) createMultipartUploadSession(
 	ctx context.Context,
 	request InitiateMultipartUploadCommand,
 	initiation multipartUploadInitiation,
-) (*managev1.InitiateMultipartUploadResponse, error) {
+) (*MultipartUpload, error) {
 	fileID := uuid.NewString()
 	fileKey, err := s.buildManagedFileKey(fileID, initiation.canonicalMime)
 	if err != nil {

@@ -866,7 +866,7 @@ func (q FindMultipartUploadCandidateQuery) entityType() managev1.TranscodeEntity
 func (s *Service) FindMultipartUploadCandidate(
 	ctx context.Context,
 	query FindMultipartUploadCandidateQuery,
-) (*managev1.FindMultipartUploadCandidateResponse, error) {
+) (*MultipartCandidate, error) {
 	user := auth.GetUser(ctx)
 	if user == nil {
 		return nil, domainerr.AuthenticationRequired()
@@ -881,7 +881,7 @@ func (s *Service) FindMultipartUploadCandidate(
 		return nil, fmt.Errorf("failed to find upload session candidate: %w", err)
 	}
 	if !found {
-		return &managev1.FindMultipartUploadCandidateResponse{}, nil
+		return &MultipartCandidate{}, nil
 	}
 	response, err := s.prepareMultipartCandidateResponse(ctx, session)
 	if err != nil {

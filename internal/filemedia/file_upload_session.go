@@ -111,23 +111,6 @@ func (s *Service) bindUploadSessionIngestEmitter(emitter *fileIngestEventEmitter
 	return nil
 }
 
-func uploadSessionStatusToProto(status domain.UploadSessionStatus) managev1.UploadSessionStatus {
-	switch status {
-	case domain.UploadSessionStatusInitiated:
-		return managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED
-	case domain.UploadSessionStatusUploading:
-		return managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING
-	case domain.UploadSessionStatusFinalizing:
-		return managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FINALIZING
-	case domain.UploadSessionStatusFailed:
-		return managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_FAILED
-	case domain.UploadSessionStatusAborted:
-		return managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_ABORTED
-	default:
-		return managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UNSPECIFIED
-	}
-}
-
 func (s *Service) claimUploadPartActivity(
 	ctx context.Context,
 	uploadID string,
@@ -215,25 +198,25 @@ func uploadSessionMatchesSelection(
 
 func multipartInitiateResponseFromSession(
 	session domain.UploadSession,
-	uploadedParts []*managev1.UploadPartInfo,
+	uploadedParts []*UploadedPart,
 	resumed bool,
-) *managev1.InitiateMultipartUploadResponse {
-	return &managev1.InitiateMultipartUploadResponse{
-		UploadId:              session.UploadID,
-		FileId:                session.FileID,
+) *MultipartUpload {
+	return &MultipartUpload{
+		UploadID:              session.UploadID,
+		FileID:                session.FileID,
 		Extension:             mediaExtension(&session.RequestedMime),
 		TotalParts:            session.TotalParts,
 		ChunkSize:             session.ChunkSize,
 		UploadedParts:         uploadedParts,
-		Status:                uploadSessionStatusToProto(session.Status),
+		Status:                session.Status,
 		Resumed:               resumed,
-		SlotId:                session.SlotID,
-		IngestAttemptId:       session.AttemptID,
-		ExpectedCurrentFileId: session.ExpectedFileID,
+		SlotID:                session.SlotID,
+		IngestAttemptID:       session.AttemptID,
+		ExpectedCurrentFileID: session.ExpectedFileID,
 	}
 }
 
-func (s *Service) loadUploadPartInfos(ctx context.Context, uploadID string) ([]*managev1.UploadPartInfo, error) {
+func (s *Service) loadUploadPartInfos(ctx context.Context, uploadID string) ([]*UploadedPart, error) {
 	var rows []domain.UploadPart
 	err := s.units.Read(ctx, func(store Store) error { var err error; rows, err = store.UploadParts(ctx, uploadID); return err })
 	if err != nil {

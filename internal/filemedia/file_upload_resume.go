@@ -11,7 +11,7 @@ import (
 type multipartResumeSelection struct {
 	activeSessions []domain.UploadSession
 	session        *domain.UploadSession
-	response       *managev1.InitiateMultipartUploadResponse
+	response       *MultipartUpload
 }
 
 func (s *Service) selectMultipartResumeCandidate(
@@ -69,7 +69,7 @@ func (s *Service) selectUnserializedMultipartResumeCandidate(
 func (s *Service) buildMultipartResumeResponse(
 	ctx context.Context,
 	session domain.UploadSession,
-) (*managev1.InitiateMultipartUploadResponse, error) {
+) (*MultipartUpload, error) {
 	uploadedParts, err := s.loadUploadPartInfos(ctx, session.UploadID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load uploaded parts: %w", err)

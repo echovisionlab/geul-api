@@ -215,7 +215,7 @@ func TestFileServiceMeshOptimizationCandidateResponseHidesFailedOutputTarget(t *
 	errorMessage := "mesh optimization publisher is not configured"
 	service := &Service{cdnDomain: "cdn.example.com"}
 
-	response, err := service.meshOptimizationCandidateResponse(domain.MeshCandidate{
+	view, err := service.meshOptimizationCandidateResponse(domain.MeshCandidate{
 		ID:                 "candidate-id",
 		SourceFileID:       "source-file-id",
 		TargetRatioPercent: 40,
@@ -226,6 +226,7 @@ func TestFileServiceMeshOptimizationCandidateResponseHidesFailedOutputTarget(t *
 		UpdatedAt:          now,
 	})
 	require.NoError(t, err)
+	response := meshCandidateMessage(view)
 
 	require.Nil(t, response.FileId)
 	require.Nil(t, response.FileName)
@@ -252,7 +253,7 @@ func TestFileServiceMeshOptimizationCandidateResponseIncludesReadyOutputFile(t *
 	outputFileSize := int64(512)
 	service := &Service{cdnDomain: "cdn.example.com", mediaSecret: "secret"}
 
-	response, err := service.meshOptimizationCandidateResponse(domain.MeshCandidate{
+	view, err := service.meshOptimizationCandidateResponse(domain.MeshCandidate{
 		ID:                 "candidate-id",
 		SourceFileID:       "source-file-id",
 		OutputObjectID:     outputFileID,
@@ -266,6 +267,7 @@ func TestFileServiceMeshOptimizationCandidateResponseIncludesReadyOutputFile(t *
 		UpdatedAt:          now,
 	})
 	require.NoError(t, err)
+	response := meshCandidateMessage(view)
 
 	require.Equal(t, outputFileID, response.GetFileId())
 	require.Equal(t, outputFileID+".glb", response.GetFileName())

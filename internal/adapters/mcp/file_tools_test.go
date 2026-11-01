@@ -14,7 +14,6 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/echovisionlab/geul-api/internal/adapters/filemedia"
 	"github.com/echovisionlab/geul-api/internal/auth"
@@ -28,11 +27,11 @@ type recordingMCPFileRuntime struct {
 	user        *auth.UserInfo
 
 	initiateRequest *managev1.InitiateMultipartUploadRequest
-	initiateResult  *managev1.InitiateMultipartUploadResponse
+	initiateResult  *filemediadomain.MultipartUpload
 	initiateError   error
 
 	findRequest *managev1.FindMultipartUploadCandidateRequest
-	findResult  *managev1.FindMultipartUploadCandidateResponse
+	findResult  *filemediadomain.MultipartCandidate
 	findError   error
 
 	completeRequest *managev1.CompleteMultipartUploadRequest
@@ -60,7 +59,7 @@ func (runtime *recordingMCPFileRuntime) capture(ctx context.Context) {
 
 // The fake records each command as the request a Connect client would have
 // sent, so the assertions read the native field names.
-func (runtime *recordingMCPFileRuntime) InitiateMultipartUpload(ctx context.Context, command filemediadomain.InitiateMultipartUploadCommand) (*managev1.InitiateMultipartUploadResponse, error) {
+func (runtime *recordingMCPFileRuntime) InitiateMultipartUpload(ctx context.Context, command filemediadomain.InitiateMultipartUploadCommand) (*filemediadomain.MultipartUpload, error) {
 	runtime.capture(ctx)
 	runtime.initiateRequest = &managev1.InitiateMultipartUploadRequest{
 		UploadType: command.UploadType, EntityId: command.EntityID, FileSize: command.FileSize,
@@ -73,7 +72,7 @@ func (runtime *recordingMCPFileRuntime) InitiateMultipartUpload(ctx context.Cont
 	return runtime.initiateResult, nil
 }
 
-func (runtime *recordingMCPFileRuntime) FindMultipartUploadCandidate(ctx context.Context, query filemediadomain.FindMultipartUploadCandidateQuery) (*managev1.FindMultipartUploadCandidateResponse, error) {
+func (runtime *recordingMCPFileRuntime) FindMultipartUploadCandidate(ctx context.Context, query filemediadomain.FindMultipartUploadCandidateQuery) (*filemediadomain.MultipartCandidate, error) {
 	runtime.capture(ctx)
 	runtime.findRequest = &managev1.FindMultipartUploadCandidateRequest{
 		UploadType: query.UploadType, EntityId: query.EntityID, FileId: query.FileID, FileName: query.FileName,
@@ -185,18 +184,18 @@ func TestFileToolsTransferActionsUseOneCompactSessionHandle(t *testing.T) {
 	bundleID := uuid.NewString()
 	lastActivity := time.Date(2026, 8, 23, 10, 11, 12, 123, time.FixedZone("test", 9*60*60))
 	runtime := &recordingMCPFileRuntime{
-		initiateResult: &managev1.InitiateMultipartUploadResponse{
-			FileId: fileID, UploadId: "upload-a", TotalParts: 3, ChunkSize: 1024,
-			Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED,
+		initiateResult: &filemediadomain.MultipartUpload{
+			FileID: fileID, UploadID: "upload-a", TotalParts: 3, ChunkSize: 1024,
+			Status: filemediadomain.UploadSessionStatusInitiated,
 		},
-		findResult: &managev1.FindMultipartUploadCandidateResponse{
-			ClientMediaBundleId: &bundleID,
-			FileId:              fileStringPointer(fileID), UploadId: fileStringPointer("upload-a"),
+		findResult: &filemediadomain.MultipartCandidate{
+			ClientMediaBundleID: &bundleID,
+			FileID:              fileStringPointer(fileID), UploadID: fileStringPointer("upload-a"),
 			FileName: fileStringPointer("audio.wav"), MimeType: fileStringPointer("audio/wav"), FileSize: 3072,
 			TotalParts: 3, ChunkSize: 1024,
-			Status:         managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING,
-			UploadedParts:  []*managev1.UploadPartInfo{{PartNumber: 1, Etag: "must-not-leak"}, {PartNumber: 3, Etag: "must-not-leak"}},
-			LastActivityAt: timestamppb.New(lastActivity),
+			Status:         filemediadomain.UploadSessionStatusUploading,
+			UploadedParts:  []*filemediadomain.UploadedPart{{PartNumber: 1, ETag: "must-not-leak"}, {PartNumber: 3, ETag: "must-not-leak"}},
+			LastActivityAt: &lastActivity,
 		},
 	}
 	tools := mustFileTools(t, runtime)
@@ -288,8 +287,8 @@ func TestFileToolsTrackAudioHandleRoundTripPreservesTargetAndCAS(t *testing.T) {
 		t.Run(current, func(t *testing.T) {
 			fileID, trackID, bundleID := uuid.NewString(), uuid.NewString(), uuid.NewString()
 			runtime := &recordingMCPFileRuntime{
-				initiateResult: &managev1.InitiateMultipartUploadResponse{FileId: fileID, UploadId: "track-upload", TotalParts: 1, ChunkSize: 1024, Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED},
-				findResult:     &managev1.FindMultipartUploadCandidateResponse{FileId: fileStringPointer(fileID), UploadId: fileStringPointer("track-upload"), TotalParts: 1, ChunkSize: 1024, Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING, ClientMediaBundleId: &bundleID},
+				initiateResult: &filemediadomain.MultipartUpload{FileID: fileID, UploadID: "track-upload", TotalParts: 1, ChunkSize: 1024, Status: filemediadomain.UploadSessionStatusInitiated},
+				findResult:     &filemediadomain.MultipartCandidate{FileID: fileStringPointer(fileID), UploadID: fileStringPointer("track-upload"), TotalParts: 1, ChunkSize: 1024, Status: filemediadomain.UploadSessionStatusUploading, ClientMediaBundleID: &bundleID},
 				completeResult: &filemediadomain.CompletedUpload{FileID: fileID, Delivery: fileTestDelivery(fileID)},
 			}
 			tools := mustFileTools(t, runtime)
@@ -617,8 +616,8 @@ func TestFileToolsTransferEnforcesFlattenedSchemaRules(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			delivery := fileTestDelivery(fileID)
 			runtime := &recordingMCPFileRuntime{
-				initiateResult: &managev1.InitiateMultipartUploadResponse{FileId: fileID, UploadId: "upload", TotalParts: 1, ChunkSize: 1024, Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_INITIATED},
-				findResult:     &managev1.FindMultipartUploadCandidateResponse{FileId: fileStringPointer(fileID), UploadId: fileStringPointer("upload"), TotalParts: 1, ChunkSize: 1024, Status: managev1.UploadSessionStatus_UPLOAD_SESSION_STATUS_UPLOADING},
+				initiateResult: &filemediadomain.MultipartUpload{FileID: fileID, UploadID: "upload", TotalParts: 1, ChunkSize: 1024, Status: filemediadomain.UploadSessionStatusInitiated},
+				findResult:     &filemediadomain.MultipartCandidate{FileID: fileStringPointer(fileID), UploadID: fileStringPointer("upload"), TotalParts: 1, ChunkSize: 1024, Status: filemediadomain.UploadSessionStatusUploading},
 				completeResult: &filemediadomain.CompletedUpload{FileID: fileID, Delivery: delivery},
 				downloadResult: &filemediadomain.ImportedFile{FileID: fileID, Delivery: delivery},
 			}
