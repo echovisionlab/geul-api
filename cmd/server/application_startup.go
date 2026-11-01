@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediareuse"
+
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
 	faviconpostgres "github.com/echovisionlab/geul-api/internal/favicon/postgres"
@@ -42,7 +44,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/email"
 	emailpostgres "github.com/echovisionlab/geul-api/internal/email/postgres"
 	"github.com/echovisionlab/geul-api/internal/favicon"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/mq"
 	"github.com/echovisionlab/geul-api/internal/og"
@@ -156,7 +157,7 @@ func initializeApplicationDependencies(
 		return nil, fmt.Errorf("initialize metadata AI job manager: %w", err)
 	}
 	deps.contentBlockStore, err = contentblock.NewGeneratedStore(
-		filemedia.NewContentBlockFileReuseAuthorizer(deps.spicedbClient),
+		filemediareuse.New(deps.spicedbClient),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("initialize Content Block store: %w", err)

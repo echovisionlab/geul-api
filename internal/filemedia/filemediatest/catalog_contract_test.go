@@ -1,6 +1,7 @@
 package filemediatest
 
 import (
+	"crypto/sha256"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -42,7 +43,9 @@ func TestFakeCatalogStoreContract(t *testing.T) {
 			s.DeliveryOwners[kind+"\x00"+id] = domain.DeliveryOwner{ID: id, ContentDocumentID: &doc, Status: status}
 			s.ExactUsages[domain.DeliveryUsageWitness{Kind: "featured_image", ResourceType: kind, ResourceID: id, FileID: fileID}.Key()] = true
 		}, SeedFile: func(_ *testing.T, row domain.CatalogRow, pending, output bool) {
-			s.Files[row.ID] = CatalogFileRecord{Row: row, PendingDeletion: pending, MeshOutput: output}
+			s.Files[row.ID] = CatalogFileRecord{Row: row, PendingDeletion: pending, MeshOutput: output, SHA256: sha256Bytes(row.ID)}
 		}}
 	})
 }
+
+func sha256Bytes(value string) []byte { sum := sha256.Sum256([]byte(value)); return sum[:] }

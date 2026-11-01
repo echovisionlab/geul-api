@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediareuse"
+
 	mediaassetpostgres "github.com/echovisionlab/geul-api/internal/mediaasset/postgres"
 
 	"github.com/echovisionlab/geul-api/internal/mediamime"
@@ -23,7 +25,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/model"
 	releasepkg "github.com/echovisionlab/geul-api/internal/release"
@@ -95,7 +96,7 @@ func withAuditedRequestContext(t *testing.T, ctx context.Context) context.Contex
 
 func newPageIntegrationContentBlockStore(t *testing.T, spiceDB *auth.SpiceDBClient) *contentblock.Store {
 	t.Helper()
-	store, err := contentblock.NewGeneratedStore(filemedia.NewContentBlockFileReuseAuthorizer(spiceDB))
+	store, err := contentblock.NewGeneratedStore(filemediareuse.New(spiceDB))
 	require.NoError(t, err)
 	return store
 }

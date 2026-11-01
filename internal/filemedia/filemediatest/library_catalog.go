@@ -11,6 +11,7 @@ import (
 )
 
 type CatalogFileRecord struct {
+	SHA256                                             []byte
 	DeleteRequestedAt                                  *time.Time
 	IngestSlotID, IngestAttemptID, ClientMediaBundleID *string
 	Row                                                domain.CatalogRow

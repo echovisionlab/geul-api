@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/adapters/filemediareuse"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -22,7 +24,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
-	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/legal"
 	legalpostgres "github.com/echovisionlab/geul-api/internal/legal/postgres"
@@ -81,7 +82,7 @@ type legalIntegration struct {
 func newLegalIntegration(t *testing.T, db *gorm.DB, spiceDB *auth.SpiceDBClient, audit domainaudit.Appender) legalIntegration {
 	t.Helper()
 	const cdnDomain = "https://cdn.example.test"
-	contents, err := contentblock.NewGeneratedStore(filemedia.NewContentBlockFileReuseAuthorizer(spiceDB))
+	contents, err := contentblock.NewGeneratedStore(filemediareuse.New(spiceDB))
 	require.NoError(t, err)
 	units, err := legalpostgres.NewUnits(db, legalpostgres.Ports{
 		ContentBlocks: contents,
