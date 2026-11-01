@@ -26,6 +26,9 @@ type UnitOfWork[S any] interface {
 	// ReadLocked runs read in one repeatable-read snapshot that may take
 	// row locks (ReadLocked).
 	ReadLocked(ctx context.Context, read func(S) error) error
+	// ReadCurrent runs read in one read-committed transaction that locks
+	// the rows it reads (ReadCurrent).
+	ReadCurrent(ctx context.Context, read func(S) error) error
 }
 
 // Tx is one open transaction of a unit of work: the store bound to it, the
@@ -113,4 +116,8 @@ func (p postgres[S]) Read(ctx context.Context, read func(S) error) error {
 
 func (p postgres[S]) ReadLocked(ctx context.Context, read func(S) error) error {
 	return ReadLocked(ctx, p.db, func(tx *gorm.DB) error { return read(p.bind(tx)) })
+}
+
+func (p postgres[S]) ReadCurrent(ctx context.Context, read func(S) error) error {
+	return ReadCurrent(ctx, p.db, func(tx *gorm.DB) error { return read(p.bind(tx)) })
 }

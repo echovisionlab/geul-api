@@ -6,16 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/dberrors"
+	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/routeregistry"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -57,7 +51,7 @@ type UpdateProgramEventCommand struct {
 	ClearEndsAt      bool
 	Timezone         *string
 	AllDay           *bool
-	LocationMode     *model.ProgramEventLocationMode
+	LocationMode     *LocationMode
 	MapPlaceID       *string
 	SeriesID         *string
 	SeriesOrder      *int32
@@ -84,79 +78,7 @@ type EventUpdate struct {
 // they apply to, so applyProgramEventTimeAndLocationUpdates recomputes them
 // against the locked row.
 type programEventUpdate struct {
-	typeID       *string
-	timezone     *string
-	allDay       *bool
-	slug         *string
-	seriesID     nullableColumn[string]
-	seriesOrder  nullableColumn[int32]
-	ticketURL    nullableColumn[string]
-	streamURL    nullableColumn[string]
-	externalURL  nullableColumn[string]
-	startsAt     *time.Time
-	endsAt       nullableColumn[time.Time]
-	locationMode *model.ProgramEventLocationMode
-	mapPlaceID   nullableColumn[string]
-	now          time.Time
-}
-
-// nullableColumn is an update to a nullable column. An unset column is left
-// alone; a set one with a nil value is written as NULL.
-type nullableColumn[T any] struct {
-	set   bool
-	value *T
-}
-
-func setNullableColumn[T any](value *T) nullableColumn[T] {
-	return nullableColumn[T]{set: true, value: value}
-}
-
-func (c nullableColumn[T]) columnValue() any {
-	if c.value == nil {
-		return nil
-	}
-	return *c.value
-}
-
-// columns is the program_event row update for the fields the request sets.
-func (u programEventUpdate) columns(updatedAt time.Time) structured.Fields {
-	columns := structured.Fields{"updated_at": updatedAt}
-	if u.typeID != nil {
-		columns["type_id"] = *u.typeID
-	}
-	if u.startsAt != nil {
-		columns["starts_at"] = *u.startsAt
-	}
-	if u.endsAt.set {
-		columns["ends_at"] = u.endsAt.columnValue()
-	}
-	if u.timezone != nil {
-		columns["timezone"] = *u.timezone
-	}
-	if u.allDay != nil {
-		columns["all_day"] = *u.allDay
-	}
-	if u.locationMode != nil {
-		columns["location_mode"] = *u.locationMode
-	}
-	if u.slug != nil {
-		columns["slug"] = *u.slug
-	}
-	for column, update := range map[string]nullableColumn[string]{
-		"map_place_id": u.mapPlaceID,
-		"series_id":    u.seriesID,
-		"ticket_url":   u.ticketURL,
-		"stream_url":   u.streamURL,
-		"external_url": u.externalURL,
-	} {
-		if update.set {
-			columns[column] = update.columnValue()
-		}
-	}
-	if u.seriesOrder.set {
-		columns["series_order"] = u.seriesOrder.columnValue()
-	}
-	return columns
+	SettingsUpdate
 }
 
 // eventChange is a committed event settings update and the audit records
@@ -177,22 +99,18 @@ func (s *Service) UpdateProgramEvent(ctx context.Context, command UpdateProgramE
 	if err != nil {
 		return EventUpdate{}, err
 	}
-	var current model.ProgramEvent
-	change, err := mutation.Run(ctx, s.mutations, mutation.Spec[eventChange]{
-		Lock: func(ctx context.Context, tx *gorm.DB) error {
-			if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).First(&current, "id = ?", event.ID).Error; err != nil {
-				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return domainerr.ResourceNotFound("program event", event.ID)
-				}
-				return err
-			}
-			return nil
+	var current Event
+	change, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[eventChange, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			var err error
+			current, err = store.Event(ctx, event.ID, UpdateLock)
+			return notFoundAs(err, domainerr.ResourceNotFound("program event", event.ID))
 		},
-		Access: mutation.Checked(func(ctx context.Context, tx *gorm.DB) error {
-			return authorizeLockedProgramEvent(ctx, tx, s.spiceDB, current.ID, current.Status, "edit", policyv1.ProgramEvent.Edit)
+		Access: mutation.Fenced(func(ctx context.Context, _ Store, lockActive func(*auth.UserInfo) (bool, error)) error {
+			return authorizeLockedProgramEvent(ctx, lockActive, s.spiceDB, current.ID, current.Status, "edit", policyv1.ProgramEvent.Edit)
 		}),
-		Change: func(ctx context.Context, tx *gorm.DB) (eventChange, error) {
-			return s.applyProgramEventUpdate(ctx, tx, current, command, update)
+		Change: func(ctx context.Context, store Store) (eventChange, error) {
+			return s.applyProgramEventUpdate(ctx, store, current, command, update)
 		},
 		Audit: func(change eventChange) mutation.Audit {
 			return mutation.Audits(change.records...)
@@ -201,27 +119,26 @@ func (s *Service) UpdateProgramEvent(ctx context.Context, command UpdateProgramE
 	return change.update, err
 }
 
-func (s *Service) loadProgramEventForUpdate(ctx context.Context, eventID string) (model.ProgramEvent, error) {
-	var event model.ProgramEvent
-	if err := s.db.WithContext(ctx).First(&event, "id = ?", eventID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return event, domainerr.ResourceNotFound("program event", eventID)
-		}
-		return event, err
-	}
-	return event, nil
+func (s *Service) loadProgramEventForUpdate(ctx context.Context, eventID string) (Event, error) {
+	var event Event
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		event, err = store.Event(ctx, eventID, NoLock)
+		return err
+	})
+	return event, notFoundAs(err, domainerr.ResourceNotFound("program event", eventID))
 }
 
 func (s *Service) prepareProgramEventUpdate(
 	ctx context.Context,
-	event *model.ProgramEvent,
+	event *Event,
 	command UpdateProgramEventCommand,
 ) (programEventUpdate, error) {
-	update := programEventUpdate{
-		typeID: command.TypeID,
-		allDay: command.AllDay,
-		now:    dbtime.Now(),
-	}
+	update := programEventUpdate{SettingsUpdate{
+		TypeID:    command.TypeID,
+		AllDay:    command.AllDay,
+		UpdatedAt: dbtime.Now(),
+	}}
 	if err := applyProgramEventTimeAndLocationUpdates(&update, event, command); err != nil {
 		return programEventUpdate{}, err
 	}
@@ -230,7 +147,7 @@ func (s *Service) prepareProgramEventUpdate(
 		if timezone == "" {
 			return programEventUpdate{}, domainerr.Required("timezone")
 		}
-		update.timezone = &timezone
+		update.Timezone = &timezone
 	}
 	applyProgramEventOptionalFields(&update, command)
 	if command.Slug != nil {
@@ -238,41 +155,41 @@ func (s *Service) prepareProgramEventUpdate(
 		if err != nil {
 			return programEventUpdate{}, err
 		}
-		if err := routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "program event", "events", slug); err != nil {
+		if err := s.checkRoute(ctx, EventRoute, slug); err != nil {
 			return programEventUpdate{}, err
 		}
-		update.slug = &slug
+		update.Slug = &slug
 	}
 	return update, nil
 }
 
 func applyProgramEventTimeAndLocationUpdates(
 	update *programEventUpdate,
-	event *model.ProgramEvent,
+	event *Event,
 	command UpdateProgramEventCommand,
 ) error {
-	update.startsAt, update.endsAt = nil, nullableColumn[time.Time]{}
-	update.locationMode, update.mapPlaceID = nil, nullableColumn[string]{}
+	update.StartsAt, update.EndsAt = nil, Nullable[time.Time]{}
+	update.LocationMode, update.MapPlaceID = nil, Nullable[string]{}
 	if err := applyProgramEventTimeUpdate(update, event, command); err != nil {
 		return err
 	}
 	return applyProgramEventLocationUpdate(update, event, command)
 }
 
-func applyProgramEventTimeUpdate(update *programEventUpdate, event *model.ProgramEvent, command UpdateProgramEventCommand) error {
+func applyProgramEventTimeUpdate(update *programEventUpdate, event *Event, command UpdateProgramEventCommand) error {
 	startsAt := event.StartsAt
 	if command.StartsAt != nil {
 		startsAt = *command.StartsAt
-		update.startsAt = &startsAt
+		update.StartsAt = &startsAt
 	}
 	endsAt := event.EndsAt
 	switch {
 	case command.ClearEndsAt:
 		endsAt = nil
-		update.endsAt = setNullableColumn[time.Time](nil)
+		update.EndsAt = setNullable[time.Time](nil)
 	case command.EndsAt != nil:
 		endsAt = command.EndsAt
-		update.endsAt = setNullableColumn(endsAt)
+		update.EndsAt = setNullable(endsAt)
 	}
 	if command.StartsAt == nil && !command.ClearEndsAt && command.EndsAt == nil {
 		return nil
@@ -280,7 +197,7 @@ func applyProgramEventTimeUpdate(update *programEventUpdate, event *model.Progra
 	return validateProgramEventTimeRange(startsAt, endsAt)
 }
 
-func applyProgramEventLocationUpdate(update *programEventUpdate, event *model.ProgramEvent, command UpdateProgramEventCommand) error {
+func applyProgramEventLocationUpdate(update *programEventUpdate, event *Event, command UpdateProgramEventCommand) error {
 	if command.LocationMode == nil && command.MapPlaceID == nil {
 		return nil
 	}
@@ -303,15 +220,15 @@ func applyProgramEventLocationUpdate(update *programEventUpdate, event *model.Pr
 		return err
 	}
 	if command.LocationMode != nil {
-		update.locationMode = &locationMode
+		update.LocationMode = &locationMode
 		if !locationMode.UsesMapPlace() {
-			update.mapPlaceID = setNullableColumn[string](nil)
+			update.MapPlaceID = setNullable[string](nil)
 		}
 	}
 	if command.MapPlaceID != nil {
-		update.mapPlaceID = setNullableColumn[string](nil)
+		update.MapPlaceID = setNullable[string](nil)
 		if locationMode.UsesMapPlace() {
-			update.mapPlaceID = setNullableColumn(nullableString(command.MapPlaceID))
+			update.MapPlaceID = setNullable(nullableString(command.MapPlaceID))
 		}
 	}
 	return nil
@@ -319,43 +236,43 @@ func applyProgramEventLocationUpdate(update *programEventUpdate, event *model.Pr
 
 func applyProgramEventOptionalFields(update *programEventUpdate, command UpdateProgramEventCommand) {
 	if command.SeriesID != nil {
-		update.seriesID = setNullableColumn(nullableString(command.SeriesID))
+		update.SeriesID = setNullable(nullableString(command.SeriesID))
 	}
 	switch {
 	case command.ClearSeriesOrder:
-		update.seriesOrder = setNullableColumn[int32](nil)
+		update.SeriesOrder = setNullable[int32](nil)
 	case command.SeriesOrder != nil:
 		seriesOrder := *command.SeriesOrder
-		update.seriesOrder = setNullableColumn(&seriesOrder)
+		update.SeriesOrder = setNullable(&seriesOrder)
 	}
 	if command.TicketURL != nil {
-		update.ticketURL = setNullableColumn(nullableString(command.TicketURL))
+		update.TicketURL = setNullable(nullableString(command.TicketURL))
 	}
 	if command.StreamURL != nil {
-		update.streamURL = setNullableColumn(nullableString(command.StreamURL))
+		update.StreamURL = setNullable(nullableString(command.StreamURL))
 	}
 	if command.ExternalURL != nil {
-		update.externalURL = setNullableColumn(nullableString(command.ExternalURL))
+		update.ExternalURL = setNullable(nullableString(command.ExternalURL))
 	}
 }
 
 func (s *Service) applyProgramEventUpdate(
 	ctx context.Context,
-	tx *gorm.DB,
-	current model.ProgramEvent,
+	store Store,
+	current Event,
 	command UpdateProgramEventCommand,
 	update programEventUpdate,
 ) (eventChange, error) {
-	changedFields, err := writeProgramEventMetadata(ctx, tx, current, command, update)
+	changedFields, err := writeProgramEventMetadata(ctx, store, current, command, update)
 	if err != nil {
 		return eventChange{}, err
 	}
 	metadataChanged := len(changedFields) > 0
-	posterAudit, err := s.applyProgramEventPosterChange(ctx, tx, current.ID, command)
+	posterAudit, err := applyProgramEventPosterChange(ctx, store, current.ID, command)
 	if err != nil {
 		return eventChange{}, err
 	}
-	relationFields, creditReplacement, err := replaceProgramEventUpdateRelations(ctx, tx, current.ID, command)
+	relationFields, creditReplacement, err := replaceProgramEventUpdateRelations(ctx, store, current.ID, command)
 	if err != nil {
 		return eventChange{}, err
 	}
@@ -370,11 +287,11 @@ func (s *Service) applyProgramEventUpdate(
 		return change, nil
 	}
 	if !metadataChanged {
-		if err := tx.WithContext(ctx).Model(&model.ProgramEvent{}).Where("id = ?", current.ID).Update("updated_at", update.now).Error; err != nil {
+		if err := store.TouchEvent(ctx, current.ID, update.UpdatedAt); err != nil {
 			return eventChange{}, err
 		}
 	}
-	change.update.Changed, change.update.UpdatedAt = true, update.now
+	change.update.Changed, change.update.UpdatedAt = true, update.UpdatedAt
 	if len(changedFields) > 0 {
 		change.records = append(change.records, eventAudit(func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
 			return sharedtelemetry.NewProgramEventMetadataAuditRecord(metadata, current.ID, changedFields)
@@ -388,19 +305,19 @@ func (s *Service) applyProgramEventUpdate(
 // fields.
 func writeProgramEventMetadata(
 	ctx context.Context,
-	tx *gorm.DB,
-	current model.ProgramEvent,
+	store Store,
+	current Event,
 	command UpdateProgramEventCommand,
 	update programEventUpdate,
 ) ([]string, error) {
 	if err := applyProgramEventTimeAndLocationUpdates(&update, &current, command); err != nil {
 		return nil, err
 	}
-	if err := validateProgramEventSeriesRelationForUpdate(tx, current, update); err != nil {
+	if err := validateProgramEventSeriesRelationForUpdate(ctx, store, current, update); err != nil {
 		return nil, err
 	}
-	if update.slug != nil {
-		if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "program event", "events", *update.slug); err != nil {
+	if update.Slug != nil {
+		if err := store.LockRoute(ctx, EventRoute, *update.Slug); err != nil {
 			return nil, err
 		}
 	}
@@ -408,8 +325,8 @@ func writeProgramEventMetadata(
 	if len(changedFields) == 0 {
 		return nil, nil
 	}
-	if err := tx.Model(&current).Updates(update.columns(update.now)).Error; err != nil {
-		if dberrors.IsUniqueViolation(err) && command.Slug != nil {
+	if err := store.UpdateSettings(ctx, current.ID, update.SettingsUpdate); err != nil {
+		if errors.Is(err, ErrSlugTaken) && command.Slug != nil {
 			return nil, domainerr.Duplicate("program event", "slug", *command.Slug).WithCause(err)
 		}
 		return nil, err
@@ -440,20 +357,20 @@ func posterAudit(eventID, before, after string) *mutation.Audit {
 
 // applyProgramEventPosterChange applies the requested poster and returns the
 // record of the primary poster it added or removed.
-func (s *Service) applyProgramEventPosterChange(
+func applyProgramEventPosterChange(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
 	eventID string,
 	command UpdateProgramEventCommand,
 ) (*mutation.Audit, error) {
-	posterBefore, err := loadProgramEventPrimaryMediaFileID(ctx, tx, eventID, "poster")
+	posterBefore, err := store.PrimaryMediaFileID(ctx, eventID, "poster")
 	if err != nil {
 		return nil, err
 	}
-	if err := applyProgramEventPosterUpdate(ctx, tx, s.media, eventID, command.PosterFileID); err != nil {
+	if err := applyProgramEventPosterUpdate(ctx, store, eventID, command.PosterFileID); err != nil {
 		return nil, err
 	}
-	posterAfter, err := loadProgramEventPrimaryMediaFileID(ctx, tx, eventID, "poster")
+	posterAfter, err := store.PrimaryMediaFileID(ctx, eventID, "poster")
 	if err != nil {
 		return nil, err
 	}
@@ -483,77 +400,63 @@ func childOrderAudit(eventID, kind string, itemIDs []string) mutation.Audit {
 	})
 }
 
-func programEventMetadataChangedFields(event model.ProgramEvent, update programEventUpdate) []string {
+func programEventMetadataChangedFields(event Event, update programEventUpdate) []string {
 	changed := make([]string, 0, 4)
-	if update.typeID != nil && *update.typeID != event.TypeID {
+	if update.TypeID != nil && *update.TypeID != event.TypeID {
 		changed = append(changed, "type")
 	}
-	if update.seriesID.set && !sameNullableString(event.SeriesID, update.seriesID.value) {
+	if update.SeriesID.Set && !sameNullableString(event.SeriesID, update.SeriesID.Value) {
 		changed = append(changed, "series")
 	}
-	if update.seriesOrder.set && !sameNullableInt32(event.SeriesOrder, update.seriesOrder.value) {
+	if update.SeriesOrder.Set && !sameNullableInt32(event.SeriesOrder, update.SeriesOrder.Value) {
 		changed = append(changed, "series_order")
 	}
-	if update.startsAt != nil && !update.startsAt.Equal(event.StartsAt) {
+	if update.StartsAt != nil && !update.StartsAt.Equal(event.StartsAt) {
 		changed = append(changed, "starts_at")
 	}
-	if update.endsAt.set && !sameNullableTime(event.EndsAt, update.endsAt.value) {
+	if update.EndsAt.Set && !sameNullableTime(event.EndsAt, update.EndsAt.Value) {
 		changed = append(changed, "ends_at")
 	}
-	if update.timezone != nil && *update.timezone != event.Timezone {
+	if update.Timezone != nil && *update.Timezone != event.Timezone {
 		changed = append(changed, "timezone")
 	}
-	if update.allDay != nil && *update.allDay != event.AllDay {
+	if update.AllDay != nil && *update.AllDay != event.AllDay {
 		changed = append(changed, "all_day")
 	}
-	if update.locationMode != nil && *update.locationMode != event.LocationMode {
+	if update.LocationMode != nil && *update.LocationMode != event.LocationMode {
 		changed = append(changed, "location_mode")
 	}
-	if update.mapPlaceID.set && !sameNullableString(event.MapPlaceID, update.mapPlaceID.value) {
+	if update.MapPlaceID.Set && !sameNullableString(event.MapPlaceID, update.MapPlaceID.Value) {
 		changed = append(changed, "map_place_id")
 	}
-	if update.slug != nil && *update.slug != event.Slug {
+	if update.Slug != nil && *update.Slug != event.Slug {
 		changed = append(changed, "slug")
 	}
-	if update.ticketURL.set && !sameNullableString(event.TicketURL, update.ticketURL.value) {
+	if update.TicketURL.Set && !sameNullableString(event.TicketURL, update.TicketURL.Value) {
 		changed = append(changed, "ticket_url")
 	}
-	if update.streamURL.set && !sameNullableString(event.StreamURL, update.streamURL.value) {
+	if update.StreamURL.Set && !sameNullableString(event.StreamURL, update.StreamURL.Value) {
 		changed = append(changed, "stream_url")
 	}
-	if update.externalURL.set && !sameNullableString(event.ExternalURL, update.externalURL.value) {
+	if update.ExternalURL.Set && !sameNullableString(event.ExternalURL, update.ExternalURL.Value) {
 		changed = append(changed, "external_url")
 	}
 	return changed
 }
 
-func sameNullableTime(left, right *time.Time) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return left.Equal(*right)
-}
-
-func sameNullableInt32(left, right *int32) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
-}
-
-func validateProgramEventSeriesRelationForUpdate(tx *gorm.DB, current model.ProgramEvent, update programEventUpdate) error {
+func validateProgramEventSeriesRelationForUpdate(ctx context.Context, store Store, current Event, update programEventUpdate) error {
 	seriesID := current.SeriesID
-	if update.seriesID.set {
-		seriesID = update.seriesID.value
+	if update.SeriesID.Set {
+		seriesID = update.SeriesID.Value
 	}
 	seriesOrder := current.SeriesOrder
-	if update.seriesOrder.set {
-		seriesOrder = update.seriesOrder.value
+	if update.SeriesOrder.Set {
+		seriesOrder = update.SeriesOrder.Value
 	}
-	return validateProgramEventSeriesRelation(tx, current.ID, seriesID, seriesOrder)
+	return validateProgramEventSeriesRelation(ctx, store, current.ID, seriesID, seriesOrder)
 }
 
-func validateProgramEventSeriesRelation(tx *gorm.DB, eventID string, seriesID *string, seriesOrder *int32) error {
+func validateProgramEventSeriesRelation(ctx context.Context, store Store, eventID string, seriesID *string, seriesOrder *int32) error {
 	if seriesID == nil && seriesOrder == nil {
 		return nil
 	}
@@ -569,39 +472,33 @@ func validateProgramEventSeriesRelation(tx *gorm.DB, eventID string, seriesID *s
 	if *seriesOrder < 0 {
 		return domainerr.InvalidField("series_order", "must be non-negative")
 	}
-	var series model.ProgramEventSeries
-	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Select("id").First(&series, "id = ?", *seriesID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := store.LockSeriesID(ctx, *seriesID); err != nil {
+		if errors.Is(err, ErrSeriesNotFound) {
 			return domainerr.InvalidField("series_id", "program event series does not exist")
 		}
 		return err
 	}
-	query := tx.Select("id").Where("series_id = ? AND series_order = ?", *seriesID, *seriesOrder)
-	if strings.TrimSpace(eventID) != "" {
-		query = query.Where("id <> ?", eventID)
-	}
-	var duplicate model.ProgramEvent
-	err := query.Take(&duplicate).Error
-	if err == nil {
-		return domainerr.InvalidField("series_order", "must be unique within the program event series")
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
+	taken, err := store.SeriesOrderTaken(ctx, *seriesID, *seriesOrder, eventID)
+	if err != nil {
 		return err
+	}
+	if taken {
+		return domainerr.InvalidField("series_order", "must be unique within the program event series")
 	}
 	return nil
 }
 
-func applyProgramEventPosterUpdate(ctx context.Context, tx *gorm.DB, mediaAssets MediaAssets, eventID string, posterFileID *string) error {
+func applyProgramEventPosterUpdate(ctx context.Context, store Store, eventID string, posterFileID *string) error {
 	if posterFileID == nil {
 		return nil
 	}
 	if strings.TrimSpace(*posterFileID) == "" {
-		return deleteDefaultProgramEventPosterMedia(ctx, tx, mediaAssets, eventID)
+		return deleteDefaultProgramEventPosterMedia(ctx, store, eventID)
 	}
-	return addProgramEventMedia(ctx, tx, mediaAssets, eventID, *posterFileID, "poster", nil, nil, true)
+	return addProgramEventMedia(ctx, store, eventID, *posterFileID, "poster", nil, nil, true)
 }
 
-func replaceProgramEventUpdateRelations(ctx context.Context, tx *gorm.DB, eventID string, command UpdateProgramEventCommand) ([]string, programEventCreditReplacement, error) {
+func replaceProgramEventUpdateRelations(ctx context.Context, store Store, eventID string, command UpdateProgramEventCommand) ([]string, programEventCreditReplacement, error) {
 	creditReplacement := programEventCreditReplacement{}
 	if err := validateProgramEventRelationBaselines(command); err != nil {
 		return nil, creditReplacement, err
@@ -609,17 +506,17 @@ func replaceProgramEventUpdateRelations(ctx context.Context, tx *gorm.DB, eventI
 	changed := make([]string, 0, 3)
 	for _, relation := range []struct {
 		field string
+		kind  RelationKind
 		edit  RelationsEdit
-		apply func(context.Context, *gorm.DB, string, []Relation, []Relation) (bool, error)
 	}{
-		{"artists", command.Artists, mergeAndApplyProgramEventArtists},
-		{"labels", command.Labels, mergeAndApplyProgramEventLabels},
-		{"clients", command.Clients, mergeAndApplyProgramEventClients},
+		{"artists", ArtistRelation, command.Artists},
+		{"labels", LabelRelation, command.Labels},
+		{"clients", ClientRelation, command.Clients},
 	} {
 		if !relation.edit.requested() {
 			continue
 		}
-		didChange, err := relation.apply(ctx, tx, eventID, *relation.edit.Observed, relation.edit.Desired)
+		didChange, err := mergeAndApplyProgramEventRelations(ctx, store, relation.kind, eventID, *relation.edit.Observed, relation.edit.Desired)
 		if err != nil {
 			return nil, creditReplacement, err
 		}
@@ -628,12 +525,12 @@ func replaceProgramEventUpdateRelations(ctx context.Context, tx *gorm.DB, eventI
 		}
 	}
 	if command.Credits.requested() {
-		current, err := loadProgramEventCreditRows(ctx, tx, eventID)
+		current, err := store.Credits(ctx, eventID)
 		if err != nil {
 			return nil, creditReplacement, err
 		}
 		if !sameProgramEventCredits(current, command.Credits.Desired) {
-			creditReplacement, err = replaceProgramEventCredits(ctx, tx, eventID, command.Credits.Desired)
+			creditReplacement, err = replaceProgramEventCredits(ctx, store, eventID, command.Credits.Desired)
 			if err != nil {
 				return nil, creditReplacement, err
 			}

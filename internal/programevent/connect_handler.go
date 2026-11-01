@@ -58,7 +58,11 @@ func deleted(err error) (*connect.Response[managev1.DeleteResponse], error) {
 }
 
 func (h *ConnectHandler) GetProgramEvent(ctx context.Context, req *connect.Request[managev1.GetProgramEventRequest]) (*connect.Response[managev1.ProgramEvent], error) {
-	return respond(h.events.GetProgramEvent(ctx, GetProgramEventQuery{ID: req.Msg.Id}))
+	event, err := h.events.GetProgramEvent(ctx, GetProgramEventQuery{ID: req.Msg.Id})
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return connect.NewResponse(EventMessage(event)), nil
 }
 
 func (h *ConnectHandler) ListProgramEventsAdmin(ctx context.Context, req *connect.Request[managev1.ListProgramEventsAdminRequest]) (*connect.Response[managev1.ListProgramEventsAdminResponse], error) {
@@ -66,13 +70,24 @@ func (h *ConnectHandler) ListProgramEventsAdmin(ctx context.Context, req *connec
 		Limit: req.Msg.GetPagination().GetLimit(), Offset: req.Msg.GetPagination().GetOffset(),
 		Filters: req.Msg.Filters, Sorts: req.Msg.Sorts,
 	})
-	return respond(&managev1.ListProgramEventsAdminResponse{Events: list.Events, Pagination: list.Pagination}, err)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	events := make([]*managev1.ProgramEventSummary, 0, len(list.Events))
+	for _, event := range list.Events {
+		events = append(events, EventSummaryMessage(event))
+	}
+	return connect.NewResponse(&managev1.ListProgramEventsAdminResponse{Events: events, Pagination: PaginationMessage(list.Pagination)}), nil
 }
 
 func (h *ConnectHandler) CreateProgramEvent(ctx context.Context, req *connect.Request[managev1.CreateProgramEventRequest]) (*connect.Response[managev1.ProgramEvent], error) {
 	command := createProgramEventCommand(req.Msg)
 	command.AcceptLanguage = req.Header().Get("Accept-Language")
-	return respond(h.events.CreateProgramEvent(ctx, command))
+	event, err := h.events.CreateProgramEvent(ctx, command)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return connect.NewResponse(EventMessage(event)), nil
 }
 
 func (h *ConnectHandler) UpdateProgramEvent(ctx context.Context, req *connect.Request[managev1.UpdateProgramEventRequest]) (*connect.Response[managev1.UpdateProgramEventResponse], error) {
@@ -87,9 +102,12 @@ func (h *ConnectHandler) AddProgramEventMedia(ctx context.Context, req *connect.
 		EventID: req.Msg.EventId, FileID: req.Msg.FileId, Role: req.Msg.Role,
 		Alt: req.Msg.Alt, Caption: req.Msg.Caption, MakePrimary: req.Msg.MakePrimary,
 	})
-	return respond(&managev1.AddProgramEventMediaResponse{
-		EventId: req.Msg.EventId, Changed: change.Changed, Media: change.Media, UpdatedAt: timestamppb.New(change.UpdatedAt),
-	}, err)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return connect.NewResponse(&managev1.AddProgramEventMediaResponse{
+		EventId: req.Msg.EventId, Changed: change.Changed, Media: MediaMessage(*change.Media), UpdatedAt: timestamppb.New(change.UpdatedAt),
+	}), nil
 }
 
 func (h *ConnectHandler) DeleteProgramEventMedia(ctx context.Context, req *connect.Request[managev1.DeleteProgramEventMediaRequest]) (*connect.Response[managev1.DeleteProgramEventMediaResponse], error) {
@@ -110,7 +128,7 @@ func (h *ConnectHandler) ReorderProgramEventMedia(ctx context.Context, req *conn
 }
 
 func (h *ConnectHandler) AddProgramEventCredit(ctx context.Context, req *connect.Request[managev1.AddProgramEventCreditRequest]) (*connect.Response[managev1.ProgramEventCredit], error) {
-	return respond(h.events.AddProgramEventCredit(ctx, AddProgramEventCreditCommand{
+	return respondCredit(h.events.AddProgramEventCredit(ctx, AddProgramEventCreditCommand{
 		EventID: req.Msg.EventId, ArtistID: req.Msg.ArtistId, MemberID: req.Msg.MemberId,
 		DisplayName: req.Msg.DisplayName, CreditRole: req.Msg.CreditRole, Description: req.Msg.Description,
 		SortOrder: req.Msg.SortOrder,
@@ -118,10 +136,17 @@ func (h *ConnectHandler) AddProgramEventCredit(ctx context.Context, req *connect
 }
 
 func (h *ConnectHandler) UpdateProgramEventCredit(ctx context.Context, req *connect.Request[managev1.UpdateProgramEventCreditRequest]) (*connect.Response[managev1.ProgramEventCredit], error) {
-	return respond(h.events.UpdateProgramEventCredit(ctx, UpdateProgramEventCreditCommand{
+	return respondCredit(h.events.UpdateProgramEventCredit(ctx, UpdateProgramEventCreditCommand{
 		EventID: req.Msg.EventId, CreditID: req.Msg.CreditId, CreditRole: req.Msg.CreditRole,
 		Description: req.Msg.Description, SortOrder: req.Msg.SortOrder,
 	}))
+}
+
+func respondCredit(credit CreditView, err error) (*connect.Response[managev1.ProgramEventCredit], error) {
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return connect.NewResponse(CreditMessage(credit)), nil
 }
 
 func (h *ConnectHandler) DeleteProgramEventCredit(ctx context.Context, req *connect.Request[managev1.DeleteProgramEventCreditRequest]) (*connect.Response[managev1.DeleteResponse], error) {
@@ -264,7 +289,14 @@ func CreditsFromProto(rows []*managev1.ProgramEventCredit) []Credit {
 }
 
 func (h *SeriesConnectHandler) GetProgramEventSeries(ctx context.Context, req *connect.Request[managev1.GetProgramEventSeriesRequest]) (*connect.Response[managev1.ProgramEventSeries], error) {
-	return respond(h.events.GetProgramEventSeries(ctx, GetProgramEventSeriesQuery{IDOrSlug: req.Msg.Id}))
+	return respondSeries(h.events.GetProgramEventSeries(ctx, GetProgramEventSeriesQuery{IDOrSlug: req.Msg.Id}))
+}
+
+func respondSeries(series Series, err error) (*connect.Response[managev1.ProgramEventSeries], error) {
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return connect.NewResponse(SeriesMessage(series)), nil
 }
 
 func (h *SeriesConnectHandler) ListProgramEventSeriesAdmin(ctx context.Context, req *connect.Request[managev1.ListProgramEventSeriesAdminRequest]) (*connect.Response[managev1.ListProgramEventSeriesAdminResponse], error) {
@@ -272,11 +304,18 @@ func (h *SeriesConnectHandler) ListProgramEventSeriesAdmin(ctx context.Context, 
 		Limit: req.Msg.GetPagination().GetLimit(), Offset: req.Msg.GetPagination().GetOffset(),
 		Filters: req.Msg.Filters, Sorts: req.Msg.Sorts,
 	})
-	return respond(&managev1.ListProgramEventSeriesAdminResponse{Series: list.Series, Pagination: list.Pagination}, err)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	series := make([]*managev1.ProgramEventSeries, 0, len(list.Series))
+	for _, item := range list.Series {
+		series = append(series, SeriesMessage(item))
+	}
+	return connect.NewResponse(&managev1.ListProgramEventSeriesAdminResponse{Series: series, Pagination: PaginationMessage(list.Pagination)}), nil
 }
 
 func (h *SeriesConnectHandler) CreateProgramEventSeries(ctx context.Context, req *connect.Request[managev1.CreateProgramEventSeriesRequest]) (*connect.Response[managev1.ProgramEventSeries], error) {
-	return respond(h.events.CreateProgramEventSeries(ctx, CreateProgramEventSeriesCommand{
+	return respondSeries(h.events.CreateProgramEventSeries(ctx, CreateProgramEventSeriesCommand{
 		Title: req.Msg.Title, Slug: req.Msg.Slug, Summary: req.Msg.Summary,
 		Description: req.Msg.Description, PosterFileID: req.Msg.PosterFileId,
 	}))
@@ -292,7 +331,7 @@ func (h *SeriesConnectHandler) UpdateProgramEventSeries(ctx context.Context, req
 		status, _ := programEventSeriesStatusFromProto(req.Msg.GetStatus())
 		command.Status = &status
 	}
-	return respond(h.events.UpdateProgramEventSeries(ctx, command))
+	return respondSeries(h.events.UpdateProgramEventSeries(ctx, command))
 }
 
 func (h *SeriesConnectHandler) DeleteProgramEventSeries(ctx context.Context, req *connect.Request[managev1.DeleteProgramEventSeriesRequest]) (*connect.Response[managev1.DeleteResponse], error) {
@@ -304,11 +343,25 @@ func (h *TypeConnectHandler) ListProgramEventTypesAdmin(ctx context.Context, req
 		Limit: req.Msg.GetPagination().GetLimit(), Offset: req.Msg.GetPagination().GetOffset(),
 		Filters: req.Msg.Filters, Sorts: req.Msg.Sorts,
 	})
-	return respond(&managev1.ListProgramEventTypesAdminResponse{Types: list.Types, Pagination: list.Pagination}, err)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	types := make([]*managev1.ProgramEventType, 0, len(list.Types))
+	for _, item := range list.Types {
+		types = append(types, TypeMessage(item))
+	}
+	return connect.NewResponse(&managev1.ListProgramEventTypesAdminResponse{Types: types, Pagination: PaginationMessage(list.Pagination)}), nil
+}
+
+func respondType(eventType TypeView, err error) (*connect.Response[managev1.ProgramEventType], error) {
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return connect.NewResponse(TypeMessage(eventType)), nil
 }
 
 func (h *TypeConnectHandler) CreateProgramEventType(ctx context.Context, req *connect.Request[managev1.CreateProgramEventTypeRequest]) (*connect.Response[managev1.ProgramEventType], error) {
-	return respond(h.events.CreateProgramEventType(ctx, CreateProgramEventTypeCommand{
+	return respondType(h.events.CreateProgramEventType(ctx, CreateProgramEventTypeCommand{
 		Slug: req.Msg.Slug, Locale: req.Msg.Locale, AcceptLanguage: req.Header().Get("Accept-Language"),
 		Name: req.Msg.Name, Description: req.Msg.Description, SortOrder: req.Msg.GetSortOrder(),
 		RequiresPlace: req.Msg.GetRequiresPlace(), RequiresStreamURL: req.Msg.GetRequiresStreamUrl(),
@@ -326,7 +379,7 @@ func (h *TypeConnectHandler) UpdateProgramEventType(ctx context.Context, req *co
 		status, _ := programEventTypeStatusFromProto(req.Msg.GetStatus())
 		command.Status = &status
 	}
-	return respond(h.events.UpdateProgramEventType(ctx, command))
+	return respondType(h.events.UpdateProgramEventType(ctx, command))
 }
 
 func (h *TypeConnectHandler) DeleteProgramEventType(ctx context.Context, req *connect.Request[managev1.DeleteProgramEventTypeRequest]) (*connect.Response[managev1.DeleteResponse], error) {

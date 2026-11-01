@@ -16,8 +16,10 @@ func IsForeignKeyViolation(err error) bool {
 	if errors.Is(err, gorm.ErrForeignKeyViolated) {
 		return true
 	}
+	// 23503 is foreign_key_violation; 23001 is restrict_violation, which an
+	// ON DELETE RESTRICT reference raises.
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+	if errors.As(err, &pgErr) && (pgErr.Code == "23503" || pgErr.Code == "23001") {
 		return true
 	}
 

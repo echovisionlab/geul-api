@@ -43,18 +43,14 @@ func NewTypeConnectHandler(events *Service) *TypeConnectHandler {
 	return &TypeConnectHandler{events: events}
 }
 
-func respond[T any](message *T, err error) (*connect.Response[T], error) {
-	if err != nil {
-		return nil, errs.Wrap(err)
-	}
-	return connect.NewResponse(message), nil
-}
-
 func (h *ConnectHandler) Get(ctx context.Context, req *connect.Request[openv1.GetProgramEventRequest]) (*connect.Response[openv1.GetProgramEventResponse], error) {
 	event, err := h.events.GetProgramEvent(ctx, GetProgramEventQuery{
 		SlugOrID: req.Msg.Slug, AcceptLanguage: req.Header().Get("Accept-Language"),
 	})
-	return respond(&openv1.GetProgramEventResponse{Event: event.Event, BlockMedia: event.BlockMedia}, err)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return connect.NewResponse(&openv1.GetProgramEventResponse{Event: eventMessage(event.Event), BlockMedia: event.BlockMedia}), nil
 }
 
 func (h *ConnectHandler) List(ctx context.Context, req *connect.Request[openv1.ListProgramEventsRequest]) (*connect.Response[openv1.ListProgramEventsResponse], error) {
@@ -62,19 +58,36 @@ func (h *ConnectHandler) List(ctx context.Context, req *connect.Request[openv1.L
 		Limit: req.Msg.GetPagination().GetLimit(), Offset: req.Msg.GetPagination().GetOffset(),
 		Filters: req.Msg.Filters, Sorts: req.Msg.Sorts, AcceptLanguage: req.Header().Get("Accept-Language"),
 	})
-	return respond(&openv1.ListProgramEventsResponse{Events: list.Events, Pagination: list.Pagination}, err)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	events := make([]*openv1.ProgramEventSummary, 0, len(list.Events))
+	for _, summary := range list.Events {
+		events = append(events, summaryMessage(summary))
+	}
+	return connect.NewResponse(&openv1.ListProgramEventsResponse{Events: events, Pagination: paginationMessage(list.Pagination)}), nil
 }
 
 func (h *SeriesConnectHandler) Get(ctx context.Context, req *connect.Request[openv1.GetProgramEventSeriesRequest]) (*connect.Response[openv1.GetProgramEventSeriesResponse], error) {
 	series, err := h.events.GetProgramEventSeries(ctx, GetProgramEventSeriesQuery{SlugOrID: req.Msg.Slug})
-	return respond(&openv1.GetProgramEventSeriesResponse{Series: series}, err)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	return connect.NewResponse(&openv1.GetProgramEventSeriesResponse{Series: seriesMessage(&series)}), nil
 }
 
 func (h *SeriesConnectHandler) List(ctx context.Context, req *connect.Request[openv1.ListProgramEventSeriesRequest]) (*connect.Response[openv1.ListProgramEventSeriesResponse], error) {
 	list, err := h.events.ListProgramEventSeries(ctx, ListProgramEventSeriesQuery{
 		Limit: req.Msg.GetPagination().GetLimit(), Offset: req.Msg.GetPagination().GetOffset(), Filters: req.Msg.Filters,
 	})
-	return respond(&openv1.ListProgramEventSeriesResponse{Series: list.Series, Pagination: list.Pagination}, err)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	series := make([]*openv1.ProgramEventSeries, 0, len(list.Series))
+	for i := range list.Series {
+		series = append(series, seriesMessage(&list.Series[i]))
+	}
+	return connect.NewResponse(&openv1.ListProgramEventSeriesResponse{Series: series, Pagination: paginationMessage(list.Pagination)}), nil
 }
 
 func (h *TypeConnectHandler) List(ctx context.Context, req *connect.Request[openv1.ListProgramEventTypesRequest]) (*connect.Response[openv1.ListProgramEventTypesResponse], error) {
@@ -82,5 +95,12 @@ func (h *TypeConnectHandler) List(ctx context.Context, req *connect.Request[open
 		Limit: req.Msg.GetPagination().GetLimit(), Offset: req.Msg.GetPagination().GetOffset(),
 		Filters: req.Msg.Filters, AcceptLanguage: req.Header().Get("Accept-Language"),
 	})
-	return respond(&openv1.ListProgramEventTypesResponse{Types: list.Types, Pagination: list.Pagination}, err)
+	if err != nil {
+		return nil, errs.Wrap(err)
+	}
+	types := make([]*openv1.ProgramEventType, 0, len(list.Types))
+	for i := range list.Types {
+		types = append(types, typeMessage(&list.Types[i]))
+	}
+	return connect.NewResponse(&openv1.ListProgramEventTypesResponse{Types: types, Pagination: paginationMessage(list.Pagination)}), nil
 }

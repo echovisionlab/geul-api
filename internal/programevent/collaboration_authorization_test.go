@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/model"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 	"github.com/stretchr/testify/require"
@@ -46,8 +45,8 @@ func TestProgramEventActionSelectionUsesArchivedCapabilitiesExclusively(t *testi
 	t.Parallel()
 
 	const eventID = "22222222-2222-4222-8222-222222222222"
-	archived := model.ProgramEventStatusArchived
-	draft := model.ProgramEventStatusDraft
+	archived := StatusArchived
+	draft := StatusDraft
 	viewArchived, err := programEventViewAction(archived)(eventID)
 	require.NoError(t, err)
 	wantViewArchived, err := policyv1.ProgramEvent.ViewArchived(eventID)
@@ -106,4 +105,4 @@ func TestProgramEventTargetLocaleAuditOperationReflectsResourceLifecycle(t *test
 	require.Equal(t, sharedtelemetry.AuditItemOperationDeleted, programEventTargetLocaleContentOperation(false, true, true))
 }
 
-var _ CollaborationPermissionChecker = (*recordingProgramEventPermissionChecker)(nil)
+var _ ActorChecker = (*recordingProgramEventPermissionChecker)(nil)

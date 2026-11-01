@@ -29,7 +29,7 @@ var programEventMediaTools = []mcpserver.Tool{
 // ProgramEventMediaApplication is the exact native owning service boundary.
 // Authorization, File attachment validation and transactional ordering stay there.
 type ProgramEventMediaApplication interface {
-	GetProgramEvent(context.Context, programevent.GetProgramEventQuery) (*managev1.ProgramEvent, error)
+	GetProgramEvent(context.Context, programevent.GetProgramEventQuery) (programevent.EventView, error)
 	AddProgramEventMedia(context.Context, programevent.AddProgramEventMediaCommand) (programevent.MediaChange, error)
 	DeleteProgramEventMedia(context.Context, programevent.DeleteProgramEventMediaCommand) (programevent.MediaChange, error)
 	ReorderProgramEventMedia(context.Context, programevent.ReorderProgramEventMediaCommand) (programevent.MediaOrder, error)
@@ -60,10 +60,11 @@ func (tools *ProgramEventMediaTools) CallTool(ctx context.Context, _ mcpserver.P
 		if err := validateUUID("document_id", input.DocumentID); err != nil {
 			return executionError(err)
 		}
-		event, err := tools.application.GetProgramEvent(ctx, programevent.GetProgramEventQuery{ID: input.DocumentID})
+		view, err := tools.application.GetProgramEvent(ctx, programevent.GetProgramEventQuery{ID: input.DocumentID})
 		if err != nil {
 			return expectedToolError(err)
 		}
+		event := programevent.EventMessage(view)
 		media := make([]map[string]any, 0, len(event.Media))
 		for _, item := range event.Media {
 			if item != nil {
@@ -101,7 +102,7 @@ func (tools *ProgramEventMediaTools) CallTool(ctx context.Context, _ mcpserver.P
 			return expectedToolError(err)
 		}
 		output := programEventMediaMutationOutput(input.DocumentID, change.Changed, change.UpdatedAt)
-		output["media"] = programEventMediaOutput(change.Media)
+		output["media"] = programEventMediaOutput(programevent.MediaMessage(*change.Media))
 		return contentResult(output)
 	case ToolProgramEventMediaRemove:
 		var input struct {

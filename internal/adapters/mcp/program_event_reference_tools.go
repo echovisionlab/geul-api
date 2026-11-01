@@ -129,11 +129,9 @@ func (tools *ProgramEventReferenceTools) CallTool(ctx context.Context, _ mcpserv
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = list.Pagination
-		for _, item := range list.Types {
-			if item == nil {
-				continue
-			}
+		responsePagination = programevent.PaginationMessage(list.Pagination)
+		for _, view := range list.Types {
+			item := programevent.TypeMessage(view)
 			locales := make([]map[string]any, 0, len(item.Locales))
 			for _, locale := range item.Locales {
 				if locale != nil {
@@ -151,11 +149,10 @@ func (tools *ProgramEventReferenceTools) CallTool(ctx context.Context, _ mcpserv
 		if err != nil {
 			return expectedToolError(err)
 		}
-		responsePagination = list.Pagination
-		for _, item := range list.Series {
-			if item != nil {
-				items = append(items, map[string]any{"id": item.Id, "slug": item.Slug, "title": item.Title, "status": item.Status.String()})
-			}
+		responsePagination = programevent.PaginationMessage(list.Pagination)
+		for _, series := range list.Series {
+			item := programevent.SeriesMessage(series)
+			items = append(items, map[string]any{"id": item.Id, "slug": item.Slug, "title": item.Title, "status": item.Status.String()})
 		}
 	case ToolLabelList:
 		page, err := tools.labels.ListLabelsAdmin(ctx, label.ListLabelsQuery{Limit: pagination.GetLimit(), Offset: pagination.GetOffset(), Filters: filters})

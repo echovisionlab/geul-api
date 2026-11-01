@@ -6,21 +6,14 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
 	"github.com/echovisionlab/geul-api/internal/authz"
-	"github.com/echovisionlab/geul-api/internal/dberrors"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	queryutil "github.com/echovisionlab/geul-api/internal/query"
-	"github.com/echovisionlab/geul-api/internal/routeregistry"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
+	"github.com/google/uuid"
 )
 
 // CreateProgramEventSeriesCommand creates a draft series.
@@ -33,19 +26,19 @@ type CreateProgramEventSeriesCommand struct {
 }
 
 // CreateProgramEventSeries creates the series and its authorization policy.
-func (s *Service) CreateProgramEventSeries(ctx context.Context, command CreateProgramEventSeriesCommand) (*managev1.ProgramEventSeries, error) {
+func (s *Service) CreateProgramEventSeries(ctx context.Context, command CreateProgramEventSeriesCommand) (Series, error) {
 	can, err := policyv1.ProgramEventSeries.Create()
 	if err != nil {
-		return nil, err
+		return Series{}, err
 	}
 	series, err := s.newProgramEventSeries(ctx, command)
 	if err != nil {
-		return nil, err
+		return Series{}, err
 	}
-	if _, err := mutation.Run(ctx, s.mutations, mutation.Spec[string]{
+	if _, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[string, Store]{
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(ctx context.Context, tx *gorm.DB) (string, error) {
-			return series.ID, s.createProgramEventSeriesWithDB(ctx, tx, series)
+		Change: func(ctx context.Context, store Store) (string, error) {
+			return series.ID, createProgramEventSeries(ctx, store, series)
 		},
 		Audit: func(seriesID string) mutation.Audit {
 			return mutation.RequestAudit(sharedtelemetry.AuditProgramEventSeriesCreated, func(metadata sharedtelemetry.AuditMetadata) (sharedtelemetry.AuditRecord, error) {
@@ -56,12 +49,12 @@ func (s *Service) CreateProgramEventSeries(ctx context.Context, command CreatePr
 			return policyRelationships(policyv1.ProgramEventSeries.TouchPolicy, policyv1.ProgramEventSeries.DeletePolicy, seriesID)
 		},
 	}); err != nil {
-		return nil, err
+		return Series{}, err
 	}
 	return s.loadProgramEventSeries(ctx, series.ID)
 }
 
-func (s *Service) newProgramEventSeries(ctx context.Context, command CreateProgramEventSeriesCommand) (*model.ProgramEventSeries, error) {
+func (s *Service) newProgramEventSeries(ctx context.Context, command CreateProgramEventSeriesCommand) (*Series, error) {
 	title := strings.TrimSpace(command.Title)
 	if title == "" {
 		return nil, domainerr.Required("title")
@@ -70,13 +63,13 @@ func (s *Service) newProgramEventSeries(ctx context.Context, command CreateProgr
 	if err != nil {
 		return nil, err
 	}
-	if err := routeregistry.EnsureResourceRouteAvailable(ctx, s.db, "program event series", "event-series", slug); err != nil {
+	if err := s.checkRoute(ctx, SeriesRoute, slug); err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	return &model.ProgramEventSeries{
+	return &Series{
 		Slug:         slug,
-		Status:       model.ProgramEventStatusDraft,
+		Status:       StatusDraft,
 		Title:        title,
 		Summary:      command.Summary,
 		Description:  command.Description,
@@ -86,17 +79,17 @@ func (s *Service) newProgramEventSeries(ctx context.Context, command CreateProgr
 	}, nil
 }
 
-func (s *Service) createProgramEventSeriesWithDB(ctx context.Context, tx *gorm.DB, series *model.ProgramEventSeries) error {
-	if err := routeregistry.EnsureResourceRouteAvailableInTx(ctx, tx, "program event series", "event-series", series.Slug); err != nil {
+func createProgramEventSeries(ctx context.Context, store Store, series *Series) error {
+	if err := store.LockRoute(ctx, SeriesRoute, series.Slug); err != nil {
 		return err
 	}
 	if series.PosterFileID != nil {
-		if err := s.media.LockAttachableFilesForUpdate(ctx, tx, []string{*series.PosterFileID}); err != nil {
+		if err := store.LockAttachableFiles(ctx, []string{*series.PosterFileID}); err != nil {
 			return err
 		}
 	}
-	if err := tx.Omit("ID").Clauses(clause.Returning{}).Create(series).Error; err != nil {
-		if dberrors.IsUniqueViolation(err) {
+	if err := store.InsertSeries(ctx, series); err != nil {
+		if errors.Is(err, ErrSlugTaken) {
 			return domainerr.Duplicate("program event series", "slug", series.Slug).WithCause(err)
 		}
 		return err
@@ -104,8 +97,7 @@ func (s *Service) createProgramEventSeriesWithDB(ctx context.Context, tx *gorm.D
 	if series.PosterFileID == nil {
 		return nil
 	}
-	_, err := s.media.BindReadyAssetForSourceFile(ctx, tx, *series.PosterFileID, "program_event_series", series.ID, "poster", "poster")
-	return err
+	return store.BindSeriesPoster(ctx, series.ID, *series.PosterFileID)
 }
 
 // GetProgramEventSeriesQuery names the series by ID or slug.
@@ -114,19 +106,19 @@ type GetProgramEventSeriesQuery struct {
 }
 
 // GetProgramEventSeries returns one series to an administrator.
-func (s *Service) GetProgramEventSeries(ctx context.Context, query GetProgramEventSeriesQuery) (*managev1.ProgramEventSeries, error) {
-	series, err := s.loadProgramEventSeriesRow(ctx, query.IDOrSlug)
+func (s *Service) GetProgramEventSeries(ctx context.Context, query GetProgramEventSeriesQuery) (Series, error) {
+	series, err := s.loadProgramEventSeries(ctx, query.IDOrSlug)
 	if err != nil {
-		return nil, err
+		return Series{}, err
 	}
 	can, err := policyv1.ProgramEventSeries.View(series.ID)
 	if err != nil {
-		return nil, err
+		return Series{}, err
 	}
 	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
-		return nil, err
+		return Series{}, err
 	}
-	return s.toProtoProgramEventSeries(series)
+	return series, nil
 }
 
 // ListProgramEventSeriesQuery is one page of the administrator series list.
@@ -139,8 +131,8 @@ type ListProgramEventSeriesQuery struct {
 
 // SeriesList is one page of series.
 type SeriesList struct {
-	Series     []*managev1.ProgramEventSeries
-	Pagination *commonv1.PaginationResponse
+	Series     []Series
+	Pagination Pagination
 }
 
 // ListProgramEventSeriesAdmin returns one page of series to an
@@ -153,37 +145,23 @@ func (s *Service) ListProgramEventSeriesAdmin(ctx context.Context, query ListPro
 	if err := authz.RequireAdminCan(ctx, s.spiceDB, can); err != nil {
 		return SeriesList{}, err
 	}
-	rows := s.db.WithContext(ctx).Model(&model.ProgramEventSeries{})
 	mappedFilters, err := mapProgramEventSeriesFilters(query.Filters)
 	if err != nil {
 		return SeriesList{}, err
 	}
-	rows, err = ProgramEventSeriesFilterConfig.ApplyFilters(rows, mappedFilters)
-	if err != nil {
-		return SeriesList{}, err
-	}
+	page := queryutil.ExtractPaginationRaw(query.Limit, query.Offset, queryutil.DefaultPaginationConfig)
+	var series []Series
 	var total int64
-	if err := rows.Count(&total).Error; err != nil {
+	if err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		series, total, err = store.ListSeries(ctx, ListPage{Filters: mappedFilters, Sorts: query.Sorts, Limit: page.Limit, Offset: page.Offset})
+		return err
+	}); err != nil {
 		return SeriesList{}, err
 	}
-	rows, err = programEventSeriesSortConfig.ApplySort(rows, query.Sorts)
-	if err != nil {
-		return SeriesList{}, err
-	}
-	pagination := queryutil.ExtractPaginationRaw(query.Limit, query.Offset, queryutil.DefaultPaginationConfig)
-	var series []model.ProgramEventSeries
-	if err := pagination.Apply(rows).Find(&series).Error; err != nil {
-		return SeriesList{}, err
-	}
-	result := make([]*managev1.ProgramEventSeries, 0, len(series))
-	for i := range series {
-		item, err := s.toProtoProgramEventSeries(&series[i])
-		if err != nil {
-			return SeriesList{}, err
-		}
-		result = append(result, item)
-	}
-	return SeriesList{Series: result, Pagination: pagination.BuildResponse(total)}, nil
+	return SeriesList{Series: series, Pagination: Pagination{
+		Total: int32(total), Limit: page.Limit, Offset: page.Offset, HasMore: page.HasMore(total),
+	}}, nil
 }
 
 // DeleteProgramEventSeriesCommand names the series to delete.
@@ -198,14 +176,14 @@ func (s *Service) DeleteProgramEventSeries(ctx context.Context, command DeletePr
 	if err != nil {
 		return domainerr.InvalidField("id", "must be a canonical resource UUID")
 	}
-	_, err = mutation.Run(ctx, s.mutations, mutation.Spec[[]string]{
-		Lock: func(_ context.Context, tx *gorm.DB) error {
-			_, err := lockProgramEventSeriesForUpdate(tx, command.ID)
+	_, err = mutation.Run(ctx, s.mutations, mutation.StoreSpec[[]string, Store]{
+		Lock: func(ctx context.Context, store Store) error {
+			_, err := lockProgramEventSeriesForUpdate(ctx, store, command.ID)
 			return err
 		},
 		Access: mutation.FreshAdminCan(can, nil),
-		Change: func(ctx context.Context, tx *gorm.DB) ([]string, error) {
-			return s.deleteProgramEventSeries(ctx, tx, command.ID)
+		Change: func(ctx context.Context, store Store) ([]string, error) {
+			return deleteProgramEventSeries(ctx, store, command.ID)
 		},
 		Audit: func(detachedEventIDs []string) mutation.Audit {
 			records := make([]mutation.Audit, 0, len(detachedEventIDs)+1)
@@ -222,7 +200,7 @@ func (s *Service) DeleteProgramEventSeries(ctx context.Context, command DeletePr
 			return policyRelationships(policyv1.ProgramEventSeries.DeletePolicy, policyv1.ProgramEventSeries.TouchPolicy, command.ID)
 		},
 	})
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	if errors.Is(err, ErrSeriesNotFound) {
 		return domainerr.ResourceNotFound("program event series", command.ID)
 	}
 	return err
@@ -230,28 +208,43 @@ func (s *Service) DeleteProgramEventSeries(ctx context.Context, command DeletePr
 
 // deleteProgramEventSeries detaches the series' events, deletes it and
 // releases its poster. It returns the detached events.
-func (s *Service) deleteProgramEventSeries(ctx context.Context, tx *gorm.DB, seriesID string) ([]string, error) {
-	var affectedEvents []model.ProgramEvent
-	if err := tx.Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).
-		Where("series_id = ?", seriesID).
-		Find(&affectedEvents).Error; err != nil {
+func deleteProgramEventSeries(ctx context.Context, store Store, seriesID string) ([]string, error) {
+	affected, err := store.LockSeriesEvents(ctx, seriesID)
+	if err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	detached := make([]string, 0, len(affectedEvents))
-	for _, event := range affectedEvents {
-		if err := tx.Model(&model.ProgramEvent{}).Where("id = ?", event.ID).
-			Updates(structured.Fields{"series_id": nil, "series_order": nil, "updated_at": now}).Error; err != nil {
+	detached := make([]string, 0, len(affected))
+	for _, eventID := range affected {
+		if err := store.DetachFromSeries(ctx, eventID, now); err != nil {
 			return nil, err
 		}
-		detached = append(detached, event.ID)
+		detached = append(detached, eventID)
 	}
-	result := tx.Delete(&model.ProgramEventSeries{}, "id = ?", seriesID)
-	if result.Error != nil {
-		return nil, result.Error
+	deleted, err := store.DeleteSeries(ctx, seriesID)
+	if err != nil {
+		return nil, err
 	}
-	if result.RowsAffected == 0 {
-		return nil, gorm.ErrRecordNotFound
+	if !deleted {
+		return nil, ErrSeriesNotFound
 	}
-	return detached, s.media.ReleasePublicAssetBindings(ctx, tx, "program_event_series", seriesID, "poster")
+	return detached, store.ReleaseSeriesPoster(ctx, seriesID)
+}
+
+// loadProgramEventSeries reads the series an ID or slug names.
+func (s *Service) loadProgramEventSeries(ctx context.Context, idOrSlug string) (Series, error) {
+	var series Series
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		if _, parseErr := uuid.Parse(idOrSlug); parseErr == nil {
+			series, err = store.Series(ctx, idOrSlug, NoLock)
+		} else {
+			series, err = store.SeriesBySlug(ctx, idOrSlug)
+		}
+		return err
+	})
+	if errors.Is(err, ErrSeriesNotFound) {
+		return Series{}, domainerr.ResourceNotFound("program event series", idOrSlug)
+	}
+	return series, err
 }

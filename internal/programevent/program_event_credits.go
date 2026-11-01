@@ -8,18 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
-
-	"github.com/echovisionlab/geul-api/internal/authorizationtarget"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/failurecause"
-	"github.com/echovisionlab/geul-api/internal/model"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	"github.com/echovisionlab/geul-api/internal/structured"
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
@@ -38,50 +31,50 @@ type AddProgramEventCreditCommand struct {
 }
 
 // AddProgramEventCredit adds one credit to the event.
-func (s *Service) AddProgramEventCredit(ctx context.Context, command AddProgramEventCreditCommand) (*managev1.ProgramEventCredit, error) {
+func (s *Service) AddProgramEventCredit(ctx context.Context, command AddProgramEventCreditCommand) (CreditView, error) {
 	if strings.TrimSpace(command.EventID) == "" {
-		return nil, domainerr.Required("event_id")
+		return CreditView{}, domainerr.Required("event_id")
 	}
 	if countPresent(command.ArtistID, command.MemberID, command.DisplayName) != 1 {
-		return nil, domainerr.InvalidField("credit", "exactly one of artist_id, user_id, display_name is required")
+		return CreditView{}, domainerr.InvalidField("credit", "exactly one of artist_id, user_id, display_name is required")
 	}
 	lock, access := s.lockedEventEdit(command.EventID, policyv1.ProgramEvent.Edit)
-	credit, err := mutation.Run(ctx, s.mutations, mutation.Spec[model.ProgramEventCredit]{
+	credit, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[CreditRecord, Store]{
 		Lock:   lock,
 		Access: access,
-		Change: func(ctx context.Context, tx *gorm.DB) (model.ProgramEventCredit, error) {
-			return addProgramEventCredit(ctx, tx, command)
+		Change: func(ctx context.Context, store Store) (CreditRecord, error) {
+			return addProgramEventCredit(ctx, store, command)
 		},
-		Audit: func(credit model.ProgramEventCredit) mutation.Audit {
+		Audit: func(credit CreditRecord) mutation.Audit {
 			return childAudit(command.EventID, "credits", credit.ID, sharedtelemetry.AuditItemOperationCreated)
 		},
 	})
 	if err != nil {
-		return nil, err
+		return CreditView{}, err
 	}
-	return s.toProtoProgramEventCredit(ctx, &credit), nil
+	return s.committedCreditView(ctx, credit), nil
 }
 
-func addProgramEventCredit(ctx context.Context, tx *gorm.DB, command AddProgramEventCreditCommand) (model.ProgramEventCredit, error) {
+func addProgramEventCredit(ctx context.Context, store Store, command AddProgramEventCreditCommand) (CreditRecord, error) {
 	if memberID := strings.TrimSpace(derefString(command.MemberID)); memberID != "" {
-		if err := authorizationtarget.LockReferences(ctx, tx, []authorizationtarget.Reference{{
+		if err := store.LockCreditMembers(ctx, []CreditMemberReference{{
 			MemberID: memberID,
 			Field:    "member_id",
 		}}); err != nil {
-			return model.ProgramEventCredit{}, err
+			return CreditRecord{}, err
 		}
 	}
 	var sortOrder int32
 	if command.SortOrder != nil {
 		sortOrder = *command.SortOrder
 	} else {
-		next, err := nextProgramEventCreditSortOrder(ctx, tx, command.EventID)
+		next, err := store.NextCreditSortOrder(ctx, command.EventID)
 		if err != nil {
-			return model.ProgramEventCredit{}, err
+			return CreditRecord{}, err
 		}
 		sortOrder = next
 	}
-	credit := model.ProgramEventCredit{
+	credit := CreditRecord{
 		EventID:     command.EventID,
 		ArtistID:    normalizedStringPtr(command.ArtistID),
 		MemberID:    normalizedStringPtr(command.MemberID),
@@ -91,17 +84,10 @@ func addProgramEventCredit(ctx context.Context, tx *gorm.DB, command AddProgramE
 		SortOrder:   sortOrder,
 		CreatedAt:   dbtime.Now(),
 	}
-	if err := tx.WithContext(ctx).Omit("ID").Clauses(clause.Returning{}).Create(&credit).Error; err != nil {
-		return model.ProgramEventCredit{}, err
+	if err := store.InsertCredit(ctx, &credit); err != nil {
+		return CreditRecord{}, err
 	}
-	return credit, touchProgramEvent(ctx, tx, command.EventID)
-}
-
-func derefString(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
+	return credit, store.TouchEvent(ctx, command.EventID, time.Now().UTC())
 }
 
 // UpdateProgramEventCreditCommand changes a credit's role, description or
@@ -115,24 +101,24 @@ type UpdateProgramEventCreditCommand struct {
 }
 
 type creditChange struct {
-	credit  model.ProgramEventCredit
+	credit  CreditRecord
 	changed bool
 }
 
 // UpdateProgramEventCredit changes one credit of the event.
-func (s *Service) UpdateProgramEventCredit(ctx context.Context, command UpdateProgramEventCreditCommand) (*managev1.ProgramEventCredit, error) {
+func (s *Service) UpdateProgramEventCredit(ctx context.Context, command UpdateProgramEventCreditCommand) (CreditView, error) {
 	if strings.TrimSpace(command.EventID) == "" {
-		return nil, domainerr.Required("event_id")
+		return CreditView{}, domainerr.Required("event_id")
 	}
 	if strings.TrimSpace(command.CreditID) == "" {
-		return nil, domainerr.Required("credit_id")
+		return CreditView{}, domainerr.Required("credit_id")
 	}
 	lock, access := s.lockedEventEdit(command.EventID, policyv1.ProgramEvent.Edit)
-	change, err := mutation.Run(ctx, s.mutations, mutation.Spec[creditChange]{
+	change, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[creditChange, Store]{
 		Lock:   lock,
 		Access: access,
-		Change: func(ctx context.Context, tx *gorm.DB) (creditChange, error) {
-			return updateProgramEventCredit(ctx, tx, command)
+		Change: func(ctx context.Context, store Store) (creditChange, error) {
+			return updateProgramEventCredit(ctx, store, command)
 		},
 		Audit: func(change creditChange) mutation.Audit {
 			if !change.changed {
@@ -142,44 +128,42 @@ func (s *Service) UpdateProgramEventCredit(ctx context.Context, command UpdatePr
 		},
 	})
 	if err != nil {
-		return nil, err
+		return CreditView{}, err
 	}
-	return s.toProtoProgramEventCredit(ctx, &change.credit), nil
+	return s.committedCreditView(ctx, change.credit), nil
 }
 
-func updateProgramEventCredit(ctx context.Context, tx *gorm.DB, command UpdateProgramEventCreditCommand) (creditChange, error) {
-	var credit model.ProgramEventCredit
-	if err := loadProgramEventCredit(ctx, tx, command.EventID, command.CreditID, &credit); err != nil {
+func updateProgramEventCredit(ctx context.Context, store Store, command UpdateProgramEventCreditCommand) (creditChange, error) {
+	credit, err := loadProgramEventCredit(ctx, store, command.EventID, command.CreditID)
+	if err != nil {
 		return creditChange{}, err
 	}
-	update := programEventCreditUpdate{sortOrder: command.SortOrder}
+	update := CreditUpdate{SortOrder: command.SortOrder}
 	if command.CreditRole != nil {
-		update.creditRole = setNullableColumn(normalizedStringPtr(command.CreditRole))
+		update.CreditRole = setNullable(normalizedStringPtr(command.CreditRole))
 	}
 	if command.Description != nil {
-		update.description = setNullableColumn(normalizedStringPtr(command.Description))
+		update.Description = setNullable(normalizedStringPtr(command.Description))
 	}
-	if !update.changed(credit) {
+	if !creditChanged(update, credit) {
 		return creditChange{credit: credit}, nil
 	}
-	if err := tx.WithContext(ctx).Model(&credit).Updates(update.columns()).Error; err != nil {
+	if err := store.UpdateCredit(ctx, credit.ID, update); err != nil {
 		return creditChange{}, err
 	}
-	if err := tx.WithContext(ctx).
-		First(&credit, "event_id = ? AND id = ?", command.EventID, command.CreditID).Error; err != nil {
+	credit, err = store.Credit(ctx, command.EventID, command.CreditID)
+	if err != nil {
 		return creditChange{}, err
 	}
-	return creditChange{credit: credit, changed: true}, touchProgramEvent(ctx, tx, command.EventID)
+	return creditChange{credit: credit, changed: true}, store.TouchEvent(ctx, command.EventID, time.Now().UTC())
 }
 
-func loadProgramEventCredit(ctx context.Context, tx *gorm.DB, eventID, creditID string, credit *model.ProgramEventCredit) error {
-	if err := tx.WithContext(ctx).First(credit, "event_id = ? AND id = ?", eventID, creditID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return domainerr.ResourceNotFound("program event credit", creditID)
-		}
-		return err
+func loadProgramEventCredit(ctx context.Context, store Store, eventID, creditID string) (CreditRecord, error) {
+	credit, err := store.Credit(ctx, eventID, creditID)
+	if errors.Is(err, ErrCreditNotFound) {
+		return CreditRecord{}, domainerr.ResourceNotFound("program event credit", creditID)
 	}
-	return nil
+	return credit, err
 }
 
 // DeleteProgramEventCreditCommand names the credit to delete.
@@ -197,23 +181,22 @@ func (s *Service) DeleteProgramEventCredit(ctx context.Context, command DeletePr
 		return domainerr.Required("credit_id")
 	}
 	lock, access := s.lockedEventEdit(command.EventID, policyv1.ProgramEvent.Edit)
-	_, err := mutation.Run(ctx, s.mutations, mutation.Spec[string]{
+	_, err := mutation.Run(ctx, s.mutations, mutation.StoreSpec[string, Store]{
 		Lock:   lock,
 		Access: access,
-		Change: func(ctx context.Context, tx *gorm.DB) (string, error) {
-			var credit model.ProgramEventCredit
-			if err := loadProgramEventCredit(ctx, tx, command.EventID, command.CreditID, &credit); err != nil {
+		Change: func(ctx context.Context, store Store) (string, error) {
+			credit, err := loadProgramEventCredit(ctx, store, command.EventID, command.CreditID)
+			if err != nil {
 				return "", err
 			}
-			result := tx.WithContext(ctx).
-				Delete(&model.ProgramEventCredit{}, "event_id = ? AND id = ?", command.EventID, command.CreditID)
-			if result.Error != nil {
-				return "", result.Error
+			deleted, err := store.DeleteCredit(ctx, command.EventID, command.CreditID)
+			if err != nil {
+				return "", err
 			}
-			if result.RowsAffected == 0 {
+			if !deleted {
 				return "", domainerr.ResourceNotFound("program event credit", command.CreditID)
 			}
-			return credit.ID, touchProgramEvent(ctx, tx, command.EventID)
+			return credit.ID, store.TouchEvent(ctx, command.EventID, time.Now().UTC())
 		},
 		Audit: func(creditID string) mutation.Audit {
 			return childAudit(command.EventID, "credits", creditID, sharedtelemetry.AuditItemOperationDeleted)
@@ -240,11 +223,11 @@ func (s *Service) ReorderProgramEventCredits(ctx context.Context, command Reorde
 		return CreditOrder{}, domainerr.Required("event_id")
 	}
 	lock, access := s.lockedEventEdit(command.EventID, policyv1.ProgramEvent.Edit)
-	return mutation.Run(ctx, s.mutations, mutation.Spec[CreditOrder]{
+	return mutation.Run(ctx, s.mutations, mutation.StoreSpec[CreditOrder, Store]{
 		Lock:   lock,
 		Access: access,
-		Change: func(ctx context.Context, tx *gorm.DB) (CreditOrder, error) {
-			return reorderProgramEventCredits(ctx, tx, command)
+		Change: func(ctx context.Context, store Store) (CreditOrder, error) {
+			return reorderProgramEventCredits(ctx, store, command)
 		},
 		Audit: func(order CreditOrder) mutation.Audit {
 			if !order.Changed {
@@ -255,39 +238,32 @@ func (s *Service) ReorderProgramEventCredits(ctx context.Context, command Reorde
 	})
 }
 
-func reorderProgramEventCredits(ctx context.Context, tx *gorm.DB, command ReorderProgramEventCreditsCommand) (CreditOrder, error) {
-	if err := validateProgramEventCreditOrder(ctx, tx, command); err != nil {
+func reorderProgramEventCredits(ctx context.Context, store Store, command ReorderProgramEventCreditsCommand) (CreditOrder, error) {
+	if err := validateProgramEventCreditOrder(ctx, store, command); err != nil {
 		return CreditOrder{}, err
 	}
-	var current []model.ProgramEventCredit
-	if err := tx.WithContext(ctx).Where("event_id = ?", command.EventID).Order("sort_order ASC, created_at ASC").Find(&current).Error; err != nil {
+	current, err := store.Credits(ctx, command.EventID)
+	if err != nil {
 		return CreditOrder{}, err
 	}
 	if len(current) != len(command.CreditIDs) {
 		return CreditOrder{}, domainerr.InvalidField("credit_ids", "credit order must include every item")
 	}
-	currentIDs := make([]string, len(current))
-	for index := range current {
-		currentIDs[index] = current[index].ID
-	}
-	changed := !sameStringSlice(currentIDs, command.CreditIDs)
+	changed := !sameStringSlice(creditIDs(current), command.CreditIDs)
 	if changed {
 		for index, creditID := range command.CreditIDs {
-			if err := tx.WithContext(ctx).
-				Model(&model.ProgramEventCredit{}).
-				Where("event_id = ? AND id = ?", command.EventID, creditID).
-				Update("sort_order", index).Error; err != nil {
+			if err := store.PlaceCredit(ctx, command.EventID, creditID, index); err != nil {
 				return CreditOrder{}, err
 			}
 		}
 	}
-	updatedAt, err := programEventRelationMutationUpdatedAt(ctx, tx, command.EventID, changed)
+	updatedAt, err := programEventRelationMutationUpdatedAt(ctx, store, command.EventID, changed)
 	return CreditOrder{Changed: changed, UpdatedAt: updatedAt}, err
 }
 
 // validateProgramEventCreditOrder requires distinct credit IDs that all
 // belong to the event.
-func validateProgramEventCreditOrder(ctx context.Context, tx *gorm.DB, command ReorderProgramEventCreditsCommand) error {
+func validateProgramEventCreditOrder(ctx context.Context, store Store, command ReorderProgramEventCreditsCommand) error {
 	seen := make(map[string]struct{}, len(command.CreditIDs))
 	for _, creditID := range command.CreditIDs {
 		if strings.TrimSpace(creditID) == "" {
@@ -301,11 +277,8 @@ func validateProgramEventCreditOrder(ctx context.Context, tx *gorm.DB, command R
 	if len(command.CreditIDs) == 0 {
 		return nil
 	}
-	var count int64
-	if err := tx.WithContext(ctx).
-		Model(&model.ProgramEventCredit{}).
-		Where("event_id = ? AND id IN ?", command.EventID, command.CreditIDs).
-		Count(&count).Error; err != nil {
+	count, err := store.CountCredits(ctx, command.EventID, command.CreditIDs)
+	if err != nil {
 		return err
 	}
 	if count != int64(len(command.CreditIDs)) {
@@ -314,125 +287,51 @@ func validateProgramEventCreditOrder(ctx context.Context, tx *gorm.DB, command R
 	return nil
 }
 
-// programEventCreditUpdate is an update to one credit row; unset and nil
-// fields are left alone.
-type programEventCreditUpdate struct {
-	artistID    nullableColumn[string]
-	memberID    nullableColumn[string]
-	displayName nullableColumn[string]
-	creditRole  nullableColumn[string]
-	description nullableColumn[string]
-	sortOrder   *int32
+func creditIDs(credits []CreditRecord) []string {
+	ids := make([]string, len(credits))
+	for index := range credits {
+		ids[index] = credits[index].ID
+	}
+	return ids
 }
 
-func (u programEventCreditUpdate) changed(credit model.ProgramEventCredit) bool {
+// creditChanged reports whether update changes credit.
+func creditChanged(update CreditUpdate, credit CreditRecord) bool {
 	for _, column := range []struct {
 		current *string
-		update  nullableColumn[string]
+		update  Nullable[string]
 	}{
-		{credit.ArtistID, u.artistID},
-		{credit.MemberID, u.memberID},
-		{credit.DisplayName, u.displayName},
-		{credit.CreditRole, u.creditRole},
-		{credit.Description, u.description},
+		{credit.ArtistID, update.ArtistID},
+		{credit.MemberID, update.MemberID},
+		{credit.DisplayName, update.DisplayName},
+		{credit.CreditRole, update.CreditRole},
+		{credit.Description, update.Description},
 	} {
-		if column.update.set && !sameNullableString(column.current, column.update.value) {
+		if column.update.Set && !sameNullableString(column.current, column.update.Value) {
 			return true
 		}
 	}
-	return u.sortOrder != nil && credit.SortOrder != *u.sortOrder
+	return update.SortOrder != nil && credit.SortOrder != *update.SortOrder
 }
 
-func (u programEventCreditUpdate) columns() structured.Fields {
-	columns := structured.Fields{}
-	for column, update := range map[string]nullableColumn[string]{
-		"artist_id":    u.artistID,
-		"member_id":    u.memberID,
-		"display_name": u.displayName,
-		"credit_role":  u.creditRole,
-		"description":  u.description,
-	} {
-		if update.set {
-			columns[column] = update.columnValue()
-		}
-	}
-	if u.sortOrder != nil {
-		columns["sort_order"] = *u.sortOrder
-	}
-	return columns
-}
-
-func replaceProgramEventArtists(ctx context.Context, db *gorm.DB, eventID string, artists []Relation) error {
-	return replaceProgramEventRelations(ctx, db, eventID, artists, func(
-		artist Relation,
-		now time.Time,
-	) (model.ProgramEventArtist, error) {
-		if artist.ID == "" {
-			return model.ProgramEventArtist{}, domainerr.Required("artist_id")
-		}
-		return model.ProgramEventArtist{
-			EventID: eventID, ArtistID: artist.ID, Role: artist.Role,
-			SortOrder: artist.SortOrder, CreatedAt: now,
-		}, nil
-	})
-}
-
-func replaceProgramEventLabels(ctx context.Context, db *gorm.DB, eventID string, labels []Relation) error {
-	return replaceProgramEventRelations(ctx, db, eventID, labels, func(
-		label Relation,
-		now time.Time,
-	) (model.ProgramEventLabel, error) {
-		if label.ID == "" {
-			return model.ProgramEventLabel{}, domainerr.Required("label_id")
-		}
-		return model.ProgramEventLabel{
-			EventID: eventID, LabelID: label.ID, Role: label.Role,
-			SortOrder: label.SortOrder, CreatedAt: now,
-		}, nil
-	})
-}
-
-func replaceProgramEventClients(ctx context.Context, db *gorm.DB, eventID string, clients []Relation) error {
-	return replaceProgramEventRelations(ctx, db, eventID, clients, func(
-		client Relation,
-		now time.Time,
-	) (model.ProgramEventClient, error) {
-		if client.ID == "" {
-			return model.ProgramEventClient{}, domainerr.Required("client_id")
-		}
-		return model.ProgramEventClient{
-			EventID: eventID, ClientID: client.ID, Role: client.Role,
-			SortOrder: client.SortOrder, CreatedAt: now,
-		}, nil
-	})
-}
-
-func replaceProgramEventRelations[Row interface{}](
-	ctx context.Context,
-	db *gorm.DB,
-	eventID string,
-	inputs []Relation,
-	build func(Relation, time.Time) (Row, error),
-) error {
-	if err := db.WithContext(ctx).Delete(new(Row), "event_id = ?", eventID).Error; err != nil {
+// replaceProgramEventRelations replaces every relation of kind with inputs;
+// field names a missing related ID.
+func replaceProgramEventRelations(ctx context.Context, store Store, kind RelationKind, field, eventID string, inputs []Relation) error {
+	if err := store.DeleteRelations(ctx, kind, eventID); err != nil {
 		return err
 	}
-	rows := make([]Row, 0, len(inputs))
+	rows := make([]Relation, 0, len(inputs))
 	now := time.Now().UTC()
 	for _, input := range inputs {
-		row, err := build(input, now)
-		if err != nil {
-			return err
+		if input.ID == "" {
+			return domainerr.Required(field)
 		}
-		rows = append(rows, row)
+		rows = append(rows, input)
 	}
 	if len(rows) == 0 {
 		return nil
 	}
-	if err := db.WithContext(ctx).Create(&rows).Error; err != nil {
-		return err
-	}
-	return nil
+	return store.InsertRelations(ctx, kind, eventID, rows, now)
 }
 
 type programEventCreditReplacement struct {
@@ -446,36 +345,35 @@ type programEventCreditChange struct {
 	operation sharedtelemetry.AuditItemOperation
 }
 
-func replaceProgramEventCredits(ctx context.Context, db *gorm.DB, eventID string, credits []Credit) (programEventCreditReplacement, error) {
+func replaceProgramEventCredits(ctx context.Context, store Store, eventID string, credits []Credit) (programEventCreditReplacement, error) {
 	result := programEventCreditReplacement{}
-	references := make([]authorizationtarget.Reference, 0, len(credits))
+	references := make([]CreditMemberReference, 0, len(credits))
 	for i, credit := range credits {
 		if countPresent(credit.ArtistID, credit.MemberID, credit.DisplayName) != 1 {
 			return result, domainerr.InvalidField("credit", "exactly one of artist_id, user_id, display_name is required")
 		}
 		if credit.MemberID != nil {
-			references = append(references, authorizationtarget.Reference{
+			references = append(references, CreditMemberReference{
 				MemberID: *credit.MemberID,
 				Field:    fmt.Sprintf("credit[%d].member_id", i),
 			})
 		}
 	}
-	if err := authorizationtarget.LockReferences(ctx, db, references); err != nil {
+	if err := store.LockCreditMembers(ctx, references); err != nil {
 		return result, err
 	}
-	var existing []model.ProgramEventCredit
-	if err := db.WithContext(ctx).Clauses(clause.Locking{Strength: clause.LockingStrengthUpdate}).Where("event_id = ?", eventID).Order("sort_order ASC, created_at ASC").Find(&existing).Error; err != nil {
+	existing, err := store.LockCredits(ctx, eventID)
+	if err != nil {
 		return result, err
 	}
-	previousIDs := make([]string, len(existing))
-	byID := make(map[string]model.ProgramEventCredit, len(existing))
+	previousIDs := creditIDs(existing)
+	byID := make(map[string]CreditRecord, len(existing))
 	for index := range existing {
-		previousIDs[index] = existing[index].ID
 		byID[existing[index].ID] = existing[index]
 	}
 	seen := make(map[string]struct{}, len(credits))
 	for _, credit := range credits {
-		change, err := writeProgramEventCredit(ctx, db, eventID, credit, byID, seen)
+		change, err := writeProgramEventCredit(ctx, store, eventID, credit, byID, seen)
 		if err != nil {
 			return result, err
 		}
@@ -487,19 +385,16 @@ func replaceProgramEventCredits(ctx context.Context, db *gorm.DB, eventID string
 		if _, keep := seen[current.ID]; keep {
 			continue
 		}
-		if err := db.WithContext(ctx).Delete(&current).Error; err != nil {
+		if err := store.RemoveCredit(ctx, current.ID); err != nil {
 			return result, err
 		}
 		result.changes = append(result.changes, programEventCreditChange{id: current.ID, operation: sharedtelemetry.AuditItemOperationDeleted})
 	}
-	rows, err := loadProgramEventCreditRows(ctx, db, eventID)
+	rows, err := store.Credits(ctx, eventID)
 	if err != nil {
 		return result, err
 	}
-	result.orderedIDs = make([]string, len(rows))
-	for index := range rows {
-		result.orderedIDs[index] = rows[index].ID
-	}
+	result.orderedIDs = creditIDs(rows)
 	result.orderChanged = !sameStringSlice(previousIDs, result.orderedIDs)
 	return result, nil
 }
@@ -509,15 +404,15 @@ func replaceProgramEventCredits(ctx context.Context, db *gorm.DB, eventID string
 // credit is unchanged.
 func writeProgramEventCredit(
 	ctx context.Context,
-	db *gorm.DB,
+	store Store,
 	eventID string,
 	credit Credit,
-	byID map[string]model.ProgramEventCredit,
+	byID map[string]CreditRecord,
 	seen map[string]struct{},
 ) (*programEventCreditChange, error) {
 	if credit.ID == "" {
-		row := model.ProgramEventCredit{EventID: eventID, ArtistID: normalizedStringPtr(credit.ArtistID), MemberID: normalizedStringPtr(credit.MemberID), DisplayName: normalizedStringPtr(credit.DisplayName), CreditRole: normalizedStringPtr(credit.CreditRole), Description: normalizedStringPtr(credit.Description), SortOrder: credit.SortOrder, CreatedAt: time.Now().UTC()}
-		if err := db.WithContext(ctx).Omit("ID").Clauses(clause.Returning{}).Create(&row).Error; err != nil {
+		row := CreditRecord{EventID: eventID, ArtistID: normalizedStringPtr(credit.ArtistID), MemberID: normalizedStringPtr(credit.MemberID), DisplayName: normalizedStringPtr(credit.DisplayName), CreditRole: normalizedStringPtr(credit.CreditRole), Description: normalizedStringPtr(credit.Description), SortOrder: credit.SortOrder, CreatedAt: time.Now().UTC()}
+		if err := store.InsertCredit(ctx, &row); err != nil {
 			return nil, err
 		}
 		return &programEventCreditChange{id: row.ID, operation: sharedtelemetry.AuditItemOperationCreated}, nil
@@ -531,32 +426,24 @@ func writeProgramEventCredit(
 	}
 	seen[current.ID] = struct{}{}
 	sortOrder := credit.SortOrder
-	update := programEventCreditUpdate{
-		artistID:    setNullableColumn(normalizedStringPtr(credit.ArtistID)),
-		memberID:    setNullableColumn(normalizedStringPtr(credit.MemberID)),
-		displayName: setNullableColumn(normalizedStringPtr(credit.DisplayName)),
-		creditRole:  setNullableColumn(normalizedStringPtr(credit.CreditRole)),
-		description: setNullableColumn(normalizedStringPtr(credit.Description)),
-		sortOrder:   &sortOrder,
+	update := CreditUpdate{
+		ArtistID:    setNullable(normalizedStringPtr(credit.ArtistID)),
+		MemberID:    setNullable(normalizedStringPtr(credit.MemberID)),
+		DisplayName: setNullable(normalizedStringPtr(credit.DisplayName)),
+		CreditRole:  setNullable(normalizedStringPtr(credit.CreditRole)),
+		Description: setNullable(normalizedStringPtr(credit.Description)),
+		SortOrder:   &sortOrder,
 	}
-	if !update.changed(current) {
+	if !creditChanged(update, current) {
 		return nil, nil
 	}
-	if err := db.WithContext(ctx).Model(&current).Updates(update.columns()).Error; err != nil {
+	if err := store.UpdateCredit(ctx, current.ID, update); err != nil {
 		return nil, err
 	}
 	return &programEventCreditChange{id: current.ID, operation: sharedtelemetry.AuditItemOperationUpdated}, nil
 }
 
-func loadProgramEventCreditRows(ctx context.Context, db *gorm.DB, eventID string) ([]model.ProgramEventCredit, error) {
-	var rows []model.ProgramEventCredit
-	if err := db.WithContext(ctx).Where("event_id = ?", eventID).Order("sort_order ASC, created_at ASC").Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
-
-func sameProgramEventCredits(left []model.ProgramEventCredit, right []Credit) bool {
+func sameProgramEventCredits(left []CreditRecord, right []Credit) bool {
 	if len(left) != len(right) {
 		return false
 	}
@@ -568,54 +455,13 @@ func sameProgramEventCredits(left []model.ProgramEventCredit, right []Credit) bo
 	return true
 }
 
-func loadProgramEventArtists(ctx context.Context, db *gorm.DB, eventID string) ([]*managev1.ProgramEventArtist, error) {
-	return loadProgramEventRelations(
-		ctx, db, eventID, "sort_order ASC, artist_id ASC",
-		func(row model.ProgramEventArtist) *managev1.ProgramEventArtist {
-			return &managev1.ProgramEventArtist{ArtistId: row.ArtistID, Role: row.Role, SortOrder: row.SortOrder}
-		},
-	)
-}
+// creditReader runs one lookup of a credit projection: in the caller's
+// transaction, or in a snapshot of its own after a commit.
+type creditReader func(read func(Store) error) error
 
-func loadProgramEventLabels(ctx context.Context, db *gorm.DB, eventID string) ([]*managev1.ProgramEventLabel, error) {
-	return loadProgramEventRelations(
-		ctx, db, eventID, "sort_order ASC, label_id ASC",
-		func(row model.ProgramEventLabel) *managev1.ProgramEventLabel {
-			return &managev1.ProgramEventLabel{LabelId: row.LabelID, Role: row.Role, SortOrder: row.SortOrder}
-		},
-	)
-}
-
-func loadProgramEventClients(ctx context.Context, db *gorm.DB, eventID string) ([]*managev1.ProgramEventClient, error) {
-	return loadProgramEventRelations(
-		ctx, db, eventID, "sort_order ASC, client_id ASC",
-		func(row model.ProgramEventClient) *managev1.ProgramEventClient {
-			return &managev1.ProgramEventClient{ClientId: row.ClientID, Role: row.Role, SortOrder: row.SortOrder}
-		},
-	)
-}
-
-func loadProgramEventRelations[Row interface{}, Result interface{}](
-	ctx context.Context,
-	db *gorm.DB,
-	eventID string,
-	order string,
-	convert func(Row) *Result,
-) ([]*Result, error) {
-	var rows []Row
-	if err := db.WithContext(ctx).Where("event_id = ?", eventID).Order(order).Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	result := make([]*Result, 0, len(rows))
-	for _, row := range rows {
-		result = append(result, convert(row))
-	}
-	return result, nil
-}
-
-func (s *Service) loadProgramEventCredits(ctx context.Context, db *gorm.DB, eventID string) ([]*managev1.ProgramEventCredit, error) {
-	var rows []model.ProgramEventCredit
-	if err := db.WithContext(ctx).Where("event_id = ?", eventID).Order("sort_order ASC, id ASC").Find(&rows).Error; err != nil {
+func (s *Service) loadProgramEventCredits(ctx context.Context, store Store, eventID string) ([]CreditView, error) {
+	rows, err := store.CreditsByID(ctx, eventID)
+	if err != nil {
 		return nil, err
 	}
 	memberIDs := make([]string, 0, len(rows))
@@ -628,37 +474,32 @@ func (s *Service) loadProgramEventCredits(ctx context.Context, db *gorm.DB, even
 	if err != nil {
 		return nil, err
 	}
-	result := make([]*managev1.ProgramEventCredit, 0, len(rows))
+	inTransaction := func(read func(Store) error) error { return read(store) }
+	result := make([]CreditView, 0, len(rows))
 	for i := range rows {
-		result = append(result, s.creditProto(ctx, db, &rows[i], summaries))
+		result = append(result, creditView(ctx, inTransaction, rows[i], summaries))
 	}
 	return result, nil
 }
 
-func (s *Service) toProtoProgramEventCredit(ctx context.Context, row *model.ProgramEventCredit) *managev1.ProgramEventCredit {
+// committedCreditView projects a credit a mutation just committed; each
+// lookup reads in its own snapshot.
+func (s *Service) committedCreditView(ctx context.Context, row CreditRecord) CreditView {
 	memberIDs := []string(nil)
-	if row != nil && row.MemberID != nil {
+	if row.MemberID != nil {
 		memberIDs = append(memberIDs, *row.MemberID)
 	}
 	summaries, err := s.creditMembers.LoadCreditMemberSummaries(ctx, memberIDs)
 	if err != nil {
 		slog.ErrorContext(ctx, "Program Event credit member lookup failed; serving credit without member summary", "domain", "programevent", "operation", "load_credit_member_summaries", failurecause.Attr(err), "event_id", row.EventID, "credit_id", row.ID)
 	}
-	return s.creditProto(ctx, s.db, row, summaries)
+	return creditView(ctx, func(read func(Store) error) error { return s.units.Read(ctx, read) }, row, summaries)
 }
 
-func (s *Service) creditProto(ctx context.Context, db *gorm.DB, row *model.ProgramEventCredit, summaries map[string]*commonv1.MemberSummary) *managev1.ProgramEventCredit {
-	credit := &managev1.ProgramEventCredit{
-		Id:          row.ID,
-		ArtistId:    row.ArtistID,
-		MemberId:    row.MemberID,
-		DisplayName: row.DisplayName,
-		CreditRole:  row.CreditRole,
-		Description: row.Description,
-		SortOrder:   row.SortOrder,
-	}
+func creditView(ctx context.Context, read creditReader, row CreditRecord, summaries map[string]*commonv1.MemberSummary) CreditView {
+	credit := CreditView{CreditRecord: row}
 	if row.ArtistID != nil {
-		credit.Artist = s.creditArtist(ctx, db, row)
+		credit.Artist = loadCreditArtist(ctx, read, row)
 	}
 	if row.MemberID != nil {
 		credit.Member = summaries[*row.MemberID]
@@ -666,33 +507,47 @@ func (s *Service) creditProto(ctx context.Context, db *gorm.DB, row *model.Progr
 	return credit
 }
 
-// creditArtist is the credited artist of row with its first image, or nil
-// when the artist cannot be read.
-func (s *Service) creditArtist(ctx context.Context, db *gorm.DB, row *model.ProgramEventCredit) *managev1.ProgramEventCreditArtist {
-	id, name, slug, err := s.creditArtists.CreditArtist(ctx, db, *row.ArtistID)
+// loadCreditArtist is the credited artist of row with its first image, or
+// nil when the artist cannot be read.
+func loadCreditArtist(ctx context.Context, read creditReader, row CreditRecord) *CreditArtist {
+	var artist CreditArtist
+	err := read(func(store Store) error {
+		var err error
+		artist, err = store.CreditArtist(ctx, *row.ArtistID)
+		return err
+	})
 	if err != nil {
 		slog.ErrorContext(ctx, "Program Event credit artist lookup failed; serving credit without artist", "domain", "programevent", "operation", "load_credit_artist", failurecause.Attr(err), "event_id", row.EventID, "credit_id", row.ID)
 		return nil
 	}
-	if id == "" {
+	if artist.ID == "" {
 		return nil
 	}
-	artist := &managev1.ProgramEventCreditArtist{Id: id, Name: name, Slug: slug}
-	if imageAsset := s.creditArtistImage(ctx, db, id); imageAsset != nil {
+	if imageAsset := loadCreditArtistImage(ctx, read, artist.ID); imageAsset != nil {
 		artist.ImageAsset = imageAsset
 	}
-	return artist
+	return &artist
 }
 
-func (s *Service) creditArtistImage(ctx context.Context, db *gorm.DB, artistID string) *commonv1.AssetRef {
-	fileID, err := s.creditArtists.FirstImageFileID(ctx, db, artistID)
+func loadCreditArtistImage(ctx context.Context, read creditReader, artistID string) *commonv1.AssetRef {
+	var fileID string
+	err := read(func(store Store) error {
+		var err error
+		fileID, err = store.ArtistImageFileID(ctx, artistID)
+		return err
+	})
 	if err != nil || fileID == "" {
 		if err != nil {
 			slog.ErrorContext(ctx, "Program Event artist image lookup failed; serving artist without image", "domain", "programevent", "operation", "load_artist_image", failurecause.Attr(err), "artist_id", artistID)
 		}
 		return nil
 	}
-	asset, err := s.media.ReadyPublicAssetRefForSourceFile(ctx, db, fileID, "image")
+	var asset *commonv1.AssetRef
+	err = read(func(store Store) error {
+		var err error
+		asset, err = store.ReadyImageAsset(ctx, fileID)
+		return err
+	})
 	if err != nil {
 		slog.ErrorContext(ctx, "Program Event artist image asset resolution failed; serving artist without image", "domain", "programevent", "operation", "resolve_artist_image_asset", failurecause.Attr(err), "artist_id", artistID, "file_id", fileID)
 		return nil

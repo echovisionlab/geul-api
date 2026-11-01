@@ -5,172 +5,45 @@ import (
 	"math"
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
-	"github.com/echovisionlab/geul-api/internal/model"
-	"gorm.io/gorm"
 )
 
-func mergeProgramEventArtists(
-	current []model.ProgramEventArtist,
-	observed, desired []Relation,
-) ([]model.ProgramEventArtist, error) {
-	return mergeProgramEventRelationRows(
-		"artists", "artist_id", current, observed, desired,
-		func(row Relation) string { return row.ID },
-		func(row Relation) *string { return row.Role },
-		func(row model.ProgramEventArtist) string { return row.ArtistID },
-		func(row *model.ProgramEventArtist, role *string) { row.Role = role },
-		func(row Relation, sortOrder int32) model.ProgramEventArtist {
-			return model.ProgramEventArtist{ArtistID: row.ID, Role: row.Role, SortOrder: sortOrder}
-		},
-		func(row model.ProgramEventArtist) int32 { return row.SortOrder },
-	)
+// relationNames is the request collection and ID field of each relation
+// kind.
+var relationNames = map[RelationKind]struct{ collection, idField string }{
+	ArtistRelation: {"artists", "artist_id"},
+	LabelRelation:  {"labels", "label_id"},
+	ClientRelation: {"clients", "client_id"},
 }
 
-func mergeProgramEventLabels(
-	current []model.ProgramEventLabel,
-	observed, desired []Relation,
-) ([]model.ProgramEventLabel, error) {
-	return mergeProgramEventRelationRows(
-		"labels", "label_id", current, observed, desired,
-		func(row Relation) string { return row.ID },
-		func(row Relation) *string { return row.Role },
-		func(row model.ProgramEventLabel) string { return row.LabelID },
-		func(row *model.ProgramEventLabel, role *string) { row.Role = role },
-		func(row Relation, sortOrder int32) model.ProgramEventLabel {
-			return model.ProgramEventLabel{LabelID: row.ID, Role: row.Role, SortOrder: sortOrder}
-		},
-		func(row model.ProgramEventLabel) int32 { return row.SortOrder },
-	)
-}
-
-func mergeProgramEventClients(
-	current []model.ProgramEventClient,
-	observed, desired []Relation,
-) ([]model.ProgramEventClient, error) {
-	return mergeProgramEventRelationRows(
-		"clients", "client_id", current, observed, desired,
-		func(row Relation) string { return row.ID },
-		func(row Relation) *string { return row.Role },
-		func(row model.ProgramEventClient) string { return row.ClientID },
-		func(row *model.ProgramEventClient, role *string) { row.Role = role },
-		func(row Relation, sortOrder int32) model.ProgramEventClient {
-			return model.ProgramEventClient{ClientID: row.ID, Role: row.Role, SortOrder: sortOrder}
-		},
-		func(row model.ProgramEventClient) int32 { return row.SortOrder },
-	)
-}
-
-func mergeAndApplyProgramEventArtists(
+func mergeAndApplyProgramEventRelations(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
+	kind RelationKind,
 	eventID string,
 	observed, desired []Relation,
 ) (bool, error) {
-	current, err := loadProgramEventRelationRows[model.ProgramEventArtist](ctx, tx, eventID, "sort_order ASC, artist_id ASC")
+	current, err := store.Relations(ctx, kind, eventID)
 	if err != nil {
 		return false, err
 	}
-	merged, err := mergeProgramEventArtists(current, observed, desired)
+	names := relationNames[kind]
+	merged, err := mergeProgramEventRelationRows(names.collection, names.idField, current, observed, desired)
 	if err != nil {
 		return false, err
 	}
-	return applyProgramEventRelationDelta(ctx, tx, eventID, current, merged,
-		func(row model.ProgramEventArtist) string { return row.ArtistID },
-		func(row model.ProgramEventArtist) *string { return row.Role },
-		func(row *model.ProgramEventArtist, id string) { row.EventID = id },
-		func(ctx context.Context, tx *gorm.DB, eventID, relationID string) (int64, error) {
-			result := tx.WithContext(ctx).Where("event_id = ? AND artist_id = ?", eventID, relationID).Delete(&model.ProgramEventArtist{})
-			return result.RowsAffected, result.Error
-		},
-		func(ctx context.Context, tx *gorm.DB, eventID, relationID string, role *string) (int64, error) {
-			result := tx.WithContext(ctx).Model(&model.ProgramEventArtist{}).Where("event_id = ? AND artist_id = ?", eventID, relationID).Updates(map[string]any{"role": role})
-			return result.RowsAffected, result.Error
-		},
-	)
+	return applyProgramEventRelationDelta(ctx, store, kind, eventID, current, merged)
 }
 
-func mergeAndApplyProgramEventLabels(
-	ctx context.Context,
-	tx *gorm.DB,
-	eventID string,
-	observed, desired []Relation,
-) (bool, error) {
-	current, err := loadProgramEventRelationRows[model.ProgramEventLabel](ctx, tx, eventID, "sort_order ASC, label_id ASC")
-	if err != nil {
-		return false, err
-	}
-	merged, err := mergeProgramEventLabels(current, observed, desired)
-	if err != nil {
-		return false, err
-	}
-	return applyProgramEventRelationDelta(ctx, tx, eventID, current, merged,
-		func(row model.ProgramEventLabel) string { return row.LabelID },
-		func(row model.ProgramEventLabel) *string { return row.Role },
-		func(row *model.ProgramEventLabel, id string) { row.EventID = id },
-		func(ctx context.Context, tx *gorm.DB, eventID, relationID string) (int64, error) {
-			result := tx.WithContext(ctx).Where("event_id = ? AND label_id = ?", eventID, relationID).Delete(&model.ProgramEventLabel{})
-			return result.RowsAffected, result.Error
-		},
-		func(ctx context.Context, tx *gorm.DB, eventID, relationID string, role *string) (int64, error) {
-			result := tx.WithContext(ctx).Model(&model.ProgramEventLabel{}).Where("event_id = ? AND label_id = ?", eventID, relationID).Updates(map[string]any{"role": role})
-			return result.RowsAffected, result.Error
-		},
-	)
-}
-
-func mergeAndApplyProgramEventClients(
-	ctx context.Context,
-	tx *gorm.DB,
-	eventID string,
-	observed, desired []Relation,
-) (bool, error) {
-	current, err := loadProgramEventRelationRows[model.ProgramEventClient](ctx, tx, eventID, "sort_order ASC, client_id ASC")
-	if err != nil {
-		return false, err
-	}
-	merged, err := mergeProgramEventClients(current, observed, desired)
-	if err != nil {
-		return false, err
-	}
-	return applyProgramEventRelationDelta(ctx, tx, eventID, current, merged,
-		func(row model.ProgramEventClient) string { return row.ClientID },
-		func(row model.ProgramEventClient) *string { return row.Role },
-		func(row *model.ProgramEventClient, id string) { row.EventID = id },
-		func(ctx context.Context, tx *gorm.DB, eventID, relationID string) (int64, error) {
-			result := tx.WithContext(ctx).Where("event_id = ? AND client_id = ?", eventID, relationID).Delete(&model.ProgramEventClient{})
-			return result.RowsAffected, result.Error
-		},
-		func(ctx context.Context, tx *gorm.DB, eventID, relationID string, role *string) (int64, error) {
-			result := tx.WithContext(ctx).Model(&model.ProgramEventClient{}).Where("event_id = ? AND client_id = ?", eventID, relationID).Updates(map[string]any{"role": role})
-			return result.RowsAffected, result.Error
-		},
-	)
-}
-
-func loadProgramEventRelationRows[Row any](ctx context.Context, tx *gorm.DB, eventID, order string) ([]Row, error) {
-	var rows []Row
-	if err := tx.WithContext(ctx).Where("event_id = ?", eventID).Order(order).Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
-
-func mergeProgramEventRelationRows[Row any](
+func mergeProgramEventRelationRows(
 	collection, idField string,
-	current []Row,
+	current []Relation,
 	observed, desired []Relation,
-	inputID func(Relation) string,
-	inputRole func(Relation) *string,
-	rowID func(Row) string,
-	setRowRole func(*Row, *string),
-	buildNew func(Relation, int32) Row,
-	rowSortOrder func(Row) int32,
-) ([]Row, error) {
-	observedRows, err := indexProgramEventRelationInputs(collection, idField, observed, inputID)
+) ([]Relation, error) {
+	observedRows, err := indexProgramEventRelationInputs(collection, idField, observed)
 	if err != nil {
 		return nil, err
 	}
-	desiredRows, err := indexProgramEventRelationInputs(collection, idField, desired, inputID)
+	desiredRows, err := indexProgramEventRelationInputs(collection, idField, desired)
 	if err != nil {
 		return nil, err
 	}
@@ -178,42 +51,39 @@ func mergeProgramEventRelationRows[Row any](
 	currentIDs := make(map[string]struct{}, len(current))
 	maxSortOrder := int32(-1)
 	for _, row := range current {
-		currentIDs[rowID(row)] = struct{}{}
-		if sortOrder := rowSortOrder(row); sortOrder > maxSortOrder {
-			maxSortOrder = sortOrder
+		currentIDs[row.ID] = struct{}{}
+		if row.SortOrder > maxSortOrder {
+			maxSortOrder = row.SortOrder
 		}
 	}
-	next := make([]Row, 0, len(current)+len(desiredRows))
+	next := make([]Relation, 0, len(current)+len(desiredRows))
 	for _, row := range current {
-		id := rowID(row)
-		observedRow, wasObserved := observedRows[id]
-		desiredRow, isDesired := desiredRows[id]
+		observedRow, wasObserved := observedRows[row.ID]
+		desiredRow, isDesired := desiredRows[row.ID]
 		if wasObserved && !isDesired {
 			continue
 		}
 		if wasObserved && isDesired {
-			role := inputRole(desiredRow)
-			if role != nil && !sameNullableString(inputRole(observedRow), role) {
-				setRowRole(&row, role)
+			if role := desiredRow.Role; role != nil && !sameNullableString(observedRow.Role, role) {
+				row.Role = role
 			}
 		}
 		next = append(next, row)
 	}
 
 	for _, desiredRow := range desired {
-		id := inputID(desiredRow)
-		if _, wasObserved := observedRows[id]; wasObserved {
+		if _, wasObserved := observedRows[desiredRow.ID]; wasObserved {
 			continue
 		}
-		if _, alreadyCurrent := currentIDs[id]; alreadyCurrent {
+		if _, alreadyCurrent := currentIDs[desiredRow.ID]; alreadyCurrent {
 			continue
 		}
 		if maxSortOrder == math.MaxInt32 {
 			return nil, domainerr.InvalidField(collection, "sort order capacity exceeded")
 		}
 		maxSortOrder++
-		next = append(next, buildNew(desiredRow, maxSortOrder))
-		currentIDs[id] = struct{}{}
+		next = append(next, Relation{ID: desiredRow.ID, Role: desiredRow.Role, SortOrder: maxSortOrder})
+		currentIDs[desiredRow.ID] = struct{}{}
 	}
 	return next, nil
 }
@@ -222,42 +92,37 @@ func mergeProgramEventRelationRows[Row any](
 // current rows and the merged result. It intentionally never rewrites sort
 // order for retained rows, since Event relation inputs currently have no
 // explicit reorder control.
-func applyProgramEventRelationDelta[Row any](
+func applyProgramEventRelationDelta(
 	ctx context.Context,
-	tx *gorm.DB,
+	store Store,
+	kind RelationKind,
 	eventID string,
-	current, merged []Row,
-	id func(Row) string,
-	role func(Row) *string,
-	setEventID func(*Row, string),
-	delete func(context.Context, *gorm.DB, string, string) (int64, error),
-	updateRole func(context.Context, *gorm.DB, string, string, *string) (int64, error),
+	current, merged []Relation,
 ) (bool, error) {
-	currentByID := make(map[string]Row, len(current))
+	currentByID := make(map[string]Relation, len(current))
 	for _, row := range current {
-		currentByID[id(row)] = row
+		currentByID[row.ID] = row
 	}
-	mergedByID := make(map[string]Row, len(merged))
+	mergedByID := make(map[string]Relation, len(merged))
 	for _, row := range merged {
-		mergedByID[id(row)] = row
+		mergedByID[row.ID] = row
 	}
 
 	changed := false
 	for _, row := range current {
-		rowID := id(row)
-		mergedRow, retained := mergedByID[rowID]
+		mergedRow, retained := mergedByID[row.ID]
 		if !retained {
-			rowsAffected, err := delete(ctx, tx, eventID, rowID)
+			rowsAffected, err := store.DeleteRelation(ctx, kind, eventID, row.ID)
 			if err != nil {
 				return false, err
 			}
 			changed = changed || rowsAffected > 0
 			continue
 		}
-		if sameNullableString(role(row), role(mergedRow)) {
+		if sameNullableString(row.Role, mergedRow.Role) {
 			continue
 		}
-		rowsAffected, err := updateRole(ctx, tx, eventID, rowID, role(mergedRow))
+		rowsAffected, err := store.SetRelationRole(ctx, kind, eventID, row.ID, mergedRow.Role)
 		if err != nil {
 			return false, err
 		}
@@ -265,11 +130,10 @@ func applyProgramEventRelationDelta[Row any](
 	}
 
 	for _, row := range merged {
-		if _, existed := currentByID[id(row)]; existed {
+		if _, existed := currentByID[row.ID]; existed {
 			continue
 		}
-		setEventID(&row, eventID)
-		if err := tx.WithContext(ctx).Create(&row).Error; err != nil {
+		if err := store.InsertRelation(ctx, kind, eventID, row); err != nil {
 			return false, err
 		}
 		changed = true
@@ -277,21 +141,16 @@ func applyProgramEventRelationDelta[Row any](
 	return changed, nil
 }
 
-func indexProgramEventRelationInputs(
-	collection, idField string,
-	rows []Relation,
-	inputID func(Relation) string,
-) (map[string]Relation, error) {
+func indexProgramEventRelationInputs(collection, idField string, rows []Relation) (map[string]Relation, error) {
 	indexed := make(map[string]Relation, len(rows))
 	for _, row := range rows {
-		id := inputID(row)
-		if id == "" {
+		if row.ID == "" {
 			return nil, domainerr.Required(idField)
 		}
-		if _, exists := indexed[id]; exists {
+		if _, exists := indexed[row.ID]; exists {
 			return nil, domainerr.InvalidField(collection, "duplicate relation id")
 		}
-		indexed[id] = row
+		indexed[row.ID] = row
 	}
 	return indexed, nil
 }
