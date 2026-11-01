@@ -19,7 +19,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -34,7 +33,7 @@ type multipartCompletion struct {
 	uploadedParts   []domain.UploadPart
 	domainApplied   bool
 	promotedAsset   *mediaasset.Reference
-	delivery        *commonv1.MediaDelivery
+	delivery        *Delivery
 	progressEmitter *fileIngestEventEmitter
 }
 
@@ -63,8 +62,8 @@ type CompleteMultipartUploadCommand struct {
 func (s *Service) CompleteMultipartUpload(
 	ctx context.Context,
 	command CompleteMultipartUploadCommand,
-) (*managev1.CompleteMultipartUploadResponse, error) {
-	var response *managev1.CompleteMultipartUploadResponse
+) (*CompletedUpload, error) {
+	var response *CompletedUpload
 	err := s.ingestLocks.Multipart(ctx,
 		command.UploadID,
 		command.FileID,
@@ -216,7 +215,7 @@ func (s *Service) loadAuthorizedMultipartCompletion(
 func (s *Service) recoverFinishedMultipartCompletion(
 	ctx context.Context,
 	request CompleteMultipartUploadCommand,
-) (*managev1.CompleteMultipartUploadResponse, error) {
+) (*CompletedUpload, error) {
 	fileID := strings.TrimSpace(request.FileID)
 	if !IsValidUUID(fileID) {
 		return nil, domainerr.InvalidField("file_id", "invalid UUID format")
@@ -279,8 +278,8 @@ func (s *Service) recoverFinishedMultipartCompletion(
 	if err != nil {
 		return nil, err
 	}
-	return &managev1.CompleteMultipartUploadResponse{
-		FileId:   file.ID,
+	return &CompletedUpload{
+		FileID:   file.ID,
 		Delivery: delivery,
 	}, nil
 }
@@ -361,7 +360,7 @@ func (s *Service) requireFinishedClientMediaBundle(ctx context.Context, file Fil
 	return nil
 }
 
-func (s *Service) signFinishedMultipartDelivery(file File, promotedAsset *mediaasset.Reference) (*commonv1.MediaDelivery, error) {
+func (s *Service) signFinishedMultipartDelivery(file File, promotedAsset *mediaasset.Reference) (*Delivery, error) {
 	inline, err := buildExpiringMediaFileRef(
 		s.mediaDomain,
 		s.mediaSecret,
@@ -389,13 +388,13 @@ func (s *Service) signFinishedMultipartDelivery(file File, promotedAsset *mediaa
 	if err != nil {
 		return nil, fmt.Errorf("sign completed file download delivery: %w", err)
 	}
-	return &commonv1.MediaDelivery{
-		FileId:    file.ID,
+	return &Delivery{
+		FileID:    file.ID,
 		Extension: file.Extension,
 		MimeType:  file.MimeType,
 		FileSize:  file.FileSize,
 		FileName:  &downloadFileName,
-		Asset:     mediaasset.ReferenceProto(promotedAsset),
+		Asset:     promotedAsset,
 		Inline:    inline,
 		Download:  download,
 	}, nil
@@ -750,13 +749,13 @@ func (s *Service) attachOrProjectMultipartCompletion(
 	if err != nil {
 		return completion.publishFailure(err)
 	}
-	completion.delivery = &commonv1.MediaDelivery{
-		FileId:    completion.session.FileID,
+	completion.delivery = &Delivery{
+		FileID:    completion.session.FileID,
 		Extension: extension,
 		MimeType:  completion.verifiedMime,
 		FileSize:  completion.session.FileSize,
 		FileName:  &completion.session.FileName,
-		Asset:     mediaasset.ReferenceProto(completion.promotedAsset),
+		Asset:     completion.promotedAsset,
 		Inline:    inline,
 		Download:  download,
 	}
@@ -823,15 +822,15 @@ func (s *Service) publishMultipartDownstreamCommands(
 func (s *Service) finishMultipartCompletion(
 	ctx context.Context,
 	completion *multipartCompletion,
-) (*managev1.CompleteMultipartUploadResponse, error) {
+) (*CompletedUpload, error) {
 	if err := s.cleanupClientMediaStaging(ctx, completion.session); err != nil {
 		return nil, err
 	}
 	if err := s.deleteCompletedUploadSession(ctx, completion.session.UploadID); err != nil {
 		return nil, fmt.Errorf("failed to delete completed upload session: %w", err)
 	}
-	return &managev1.CompleteMultipartUploadResponse{
-		FileId:   completion.session.FileID,
+	return &CompletedUpload{
+		FileID:   completion.session.FileID,
 		Delivery: completion.delivery,
 	}, nil
 }

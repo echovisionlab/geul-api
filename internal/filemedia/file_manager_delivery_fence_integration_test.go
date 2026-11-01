@@ -1115,7 +1115,7 @@ func TestManagePageUsageSigningCompletesBeforeDocumentChangeIntegration(t *testi
 		<-releaseSigned
 	}
 	type result struct {
-		response *managev1.GetMediaDeliveryResponse
+		response *MediaDeliveryResult
 		current  bool
 		err      error
 	}
@@ -1134,8 +1134,8 @@ func TestManagePageUsageSigningCompletesBeforeDocumentChangeIntegration(t *testi
 	got := <-done
 	require.NoError(t, got.err)
 	require.True(t, got.current)
-	require.NotEmpty(t, got.response.GetDelivery().GetInline().GetUrl())
-	require.Nil(t, got.response.GetDelivery().GetDownload())
+	require.NotEmpty(t, got.response.Delivery.Inline.URL)
+	require.Nil(t, got.response.Delivery.Download)
 	require.NoError(t, <-changed)
 }
 

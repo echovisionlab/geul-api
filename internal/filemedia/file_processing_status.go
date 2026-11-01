@@ -5,11 +5,10 @@ import (
 	"strings"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
 type fileProcessingSnapshot struct {
-	Status     commonv1.MediaProcessingStatus
+	Status     ProcessingStatus
 	Percentage *int32
 }
 
@@ -31,19 +30,19 @@ func resolveFileProcessingSnapshot(
 		)
 	}
 	return fileProcessingSnapshot{
-		Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY,
+		Status: ProcessingReady,
 	}
 }
 
 func resolveVideoProcessingSnapshot(hasHLS bool, transcodeFailures int64) fileProcessingSnapshot {
 	if hasHLS {
-		return fileProcessingSnapshot{Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY}
+		return fileProcessingSnapshot{Status: ProcessingReady}
 	}
 	if transcodeFailures > 0 {
-		return fileProcessingSnapshot{Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_FAILED}
+		return fileProcessingSnapshot{Status: ProcessingFailed}
 	}
 	return fileProcessingSnapshot{
-		Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_PROCESSING, Percentage: new(int32(0)),
+		Status: ProcessingActive, Percentage: new(int32(0)),
 	}
 }
 
@@ -56,19 +55,19 @@ func resolveAudioProcessingSnapshot(
 ) fileProcessingSnapshot {
 	completed := countCompletedAudioDerivatives(hasHLS, hasWaveform, hasSpectrogram)
 	if completed == 3 {
-		return fileProcessingSnapshot{Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY}
+		return fileProcessingSnapshot{Status: ProcessingReady}
 	}
 	transcodeFailed := (!hasHLS || !hasSpectrogram) && transcodeFailures > 0
 	waveformFailed := !hasWaveform && waveformFailures > 0
 	if transcodeFailed || waveformFailed {
-		return fileProcessingSnapshot{Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_FAILED}
+		return fileProcessingSnapshot{Status: ProcessingFailed}
 	}
 	percentage := int32(0)
 	if completed > 0 {
 		percentage = (completed*100 + 1) / 3
 	}
 	return fileProcessingSnapshot{
-		Status: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_PROCESSING, Percentage: new(percentage),
+		Status: ProcessingActive, Percentage: new(percentage),
 	}
 }
 
@@ -84,11 +83,11 @@ func countCompletedAudioDerivatives(hasHLS, hasWaveform, hasSpectrogram bool) in
 
 func (s *Service) populateFileProcessingStatus(
 	ctx context.Context,
-	responses map[string]*commonv1.MediaDelivery,
+	responses map[string]*Delivery,
 ) error {
 	return s.populateFileProcessingStatusWithReader(ctx, s.units, responses)
 }
-func (s *Service) populateFileProcessingStatusWithReader(ctx context.Context, reader fileStoreReader, responses map[string]*commonv1.MediaDelivery) error {
+func (s *Service) populateFileProcessingStatusWithReader(ctx context.Context, reader fileStoreReader, responses map[string]*Delivery) error {
 	if len(responses) == 0 {
 		return nil
 	}
@@ -100,9 +99,9 @@ func (s *Service) populateFileProcessingStatusWithReader(ctx context.Context, re
 			continue
 		}
 		switch {
-		case strings.HasPrefix(normalizeMimeType(response.GetMimeType()), "audio/"):
+		case strings.HasPrefix(normalizeMimeType(response.MimeType), "audio/"):
 			audioIDs = append(audioIDs, fileID)
-		case strings.HasPrefix(normalizeMimeType(response.GetMimeType()), "video/"):
+		case strings.HasPrefix(normalizeMimeType(response.MimeType), "video/"):
 			videoIDs = append(videoIDs, fileID)
 		}
 	}
@@ -123,10 +122,10 @@ func (s *Service) populateFileProcessingStatusWithReader(ctx context.Context, re
 			continue
 		}
 		snapshot := resolveFileProcessingSnapshot(
-			response.GetMimeType(),
-			response.GetPlayback() != nil && response.GetPlayback().GetUrl() != "",
-			response.GetWaveform() != nil && response.GetWaveform().GetUrl() != "",
-			response.GetSpectrogram() != nil && response.GetSpectrogram().GetUrl() != "",
+			response.MimeType,
+			response.Playback != nil && response.Playback.URL != "",
+			response.Waveform != nil && response.Waveform.URL != "",
+			response.Spectrogram != nil && response.Spectrogram.URL != "",
 			failures.Audio[fileID]+failures.Video[fileID],
 			failures.Waveform[fileID],
 		)

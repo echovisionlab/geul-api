@@ -26,7 +26,7 @@ func (r *MemberSummaries) Load(ctx context.Context, ids []string) (map[string]do
 	for id, value := range summaries {
 		projected := domain.MemberSummary{ID: value.ID, Nickname: value.Nickname, Deleted: value.Deleted}
 		if avatar := value.Avatar; avatar != nil {
-			projected.Avatar = &mediaasset.Reference{AssetID: avatar.ID, URL: avatar.URL, Extension: avatar.Extension, MimeType: avatar.MIMEType, FileSize: avatar.FileSize, SHA256: append([]byte(nil), avatar.SHA256...), Disposition: mediaasset.Disposition(avatar.Disposition)}
+			projected.Avatar = &mediaasset.Reference{AssetID: avatar.ID, URL: avatar.URL, Extension: avatar.Extension, MimeType: avatar.MIMEType, FileSize: avatar.FileSize, SHA256: append([]byte(nil), avatar.SHA256...), Disposition: mediaasset.Disposition(avatar.Disposition), DownloadFilename: avatar.DownloadFilename}
 		}
 		result[id] = projected
 	}

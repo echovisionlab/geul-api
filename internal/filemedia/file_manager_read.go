@@ -7,9 +7,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/domainerr"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
-	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
 // GetFileQuery reads one File of the File library.
@@ -17,7 +14,7 @@ type GetFileQuery struct {
 	FileID string
 }
 
-func (s *Service) GetFile(ctx context.Context, query GetFileQuery) (*managev1.GetFileResponse, error) {
+func (s *Service) GetFile(ctx context.Context, query GetFileQuery) (*FileDetails, error) {
 	if err := requireFileDownloadAuthor(ctx, s.spiceDB); err != nil {
 		return nil, err
 	}
@@ -68,50 +65,50 @@ func (s *Service) GetFile(ctx context.Context, query GetFileQuery) (*managev1.Ge
 	if changed || file == nil {
 		return nil, domainerr.ResourceNotFound("file", *fileID)
 	}
-	return &managev1.GetFileResponse{File: file, DomainUsageSummary: fileUsageViewsProto(summary), GeneratedOutputs: generatedOutputs}, nil
+	return &FileDetails{File: file, UsageSummary: summary, GeneratedOutputs: generatedOutputs}, nil
 }
 
 type fileManagerMeshOutputRow = domain.MeshDeliveryOutput
 
-func (s *Service) loadFileGeneratedOutputs(ctx context.Context, fileID string) ([]*managev1.FileGeneratedOutput, error) {
+func (s *Service) loadFileGeneratedOutputs(ctx context.Context, fileID string) ([]*GeneratedOutput, error) {
 	derivatives, err := s.loadStoredDerivativeDeliveries(ctx, s.units, []string{fileID})
 	if err != nil {
 		return nil, err
 	}
-	outputs := make([]*managev1.FileGeneratedOutput, 0, len(derivatives))
+	outputs := make([]*GeneratedOutput, 0, len(derivatives))
 	for _, derivative := range derivatives {
-		value, ok := managev1.FileDerivativeType_value[derivative.Type]
+		value, ok := domain.ParseDerivativeKind(derivative.Type)
 		if !ok {
 			continue
 		}
-		output := &managev1.FileGeneratedOutput{
-			Type:   managev1.FileDerivativeType(value),
+		output := &GeneratedOutput{
+			Type:   DerivativeKind(value),
 			Status: derivativeProcessingStatus(derivative),
 		}
 		if derivative.AssetID != nil {
-			output.Id = *derivative.AssetID
+			output.ID = *derivative.AssetID
 			if ref, refErr := s.assetRefForDerivative(derivative); refErr != nil {
 				return nil, refErr
 			} else if ref != nil {
-				output.Delivery = &commonv1.MediaDelivery{
-					FileId: fileID, Extension: ref.Extension, MimeType: ref.MimeType,
-					FileSize: ref.FileSize, Asset: mediaasset.ReferenceProto(ref),
-					ProcessingStatus: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY,
+				output.Delivery = &Delivery{
+					FileID: fileID, Extension: ref.Extension, MimeType: ref.MimeType,
+					FileSize: ref.FileSize, Asset: ref,
+					ProcessingStatus: ProcessingReady,
 				}
 			}
 		}
 		if derivative.MediaGenerationID != nil {
-			output.Id = *derivative.MediaGenerationID
+			output.ID = *derivative.MediaGenerationID
 			if ref, refErr := s.hlsPlaybackRef(fileID, derivative); refErr != nil {
 				return nil, refErr
 			} else if ref != nil {
-				output.Delivery = &commonv1.MediaDelivery{
-					FileId: fileID, Playback: ref,
-					ProcessingStatus: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY,
+				output.Delivery = &Delivery{
+					FileID: fileID, Playback: ref,
+					ProcessingStatus: ProcessingReady,
 				}
 			}
 		}
-		if output.Id != "" {
+		if output.ID != "" {
 			outputs = append(outputs, output)
 		}
 	}
@@ -135,8 +132,8 @@ func (s *Service) loadFileGeneratedOutputs(ctx context.Context, fileID string) (
 		return nil, err
 	}
 	for _, row := range meshRows {
-		output := &managev1.FileGeneratedOutput{
-			Id: row.ID, Type: managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_OPTIMIZED_MESH,
+		output := &GeneratedOutput{
+			ID: row.ID, Type: DerivativeOptimizedMesh,
 			Status: fileManagerProcessingStatus(row.Status),
 		}
 		if row.OutputFileID != nil {
@@ -148,29 +145,29 @@ func (s *Service) loadFileGeneratedOutputs(ctx context.Context, fileID string) (
 		if outputs[i].Type != outputs[j].Type {
 			return outputs[i].Type < outputs[j].Type
 		}
-		return outputs[i].Id < outputs[j].Id
+		return outputs[i].ID < outputs[j].ID
 	})
 	return outputs, nil
 }
 
-func derivativeProcessingStatus(row storedDerivativeDeliveryRow) commonv1.MediaProcessingStatus {
+func derivativeProcessingStatus(row storedDerivativeDeliveryRow) ProcessingStatus {
 	if row.AssetStatus != nil {
 		return fileManagerProcessingStatus(*row.AssetStatus)
 	}
 	if row.MediaGenerationStatus != nil {
 		return fileManagerProcessingStatus(*row.MediaGenerationStatus)
 	}
-	return commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_PROCESSING
+	return ProcessingActive
 }
 
-func fileManagerProcessingStatus(status string) commonv1.MediaProcessingStatus {
+func fileManagerProcessingStatus(status string) ProcessingStatus {
 	switch status {
 	case "ready":
-		return commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY
+		return ProcessingReady
 	case "failed", "retired", "cancelled", "deleted":
-		return commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_FAILED
+		return ProcessingFailed
 	default:
-		return commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_PROCESSING
+		return ProcessingActive
 	}
 }
 

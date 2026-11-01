@@ -14,9 +14,7 @@ import (
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/uuidutil"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
@@ -39,7 +37,7 @@ func (s *Service) ResolveAuthorizedPostFeaturedImage(
 	ctx context.Context,
 	postID string,
 	expectedFileID string,
-) (*commonv1.MediaDelivery, error) {
+) (*Delivery, error) {
 	return s.resolveAuthorizedFeaturedImage(
 		ctx,
 		scopedContentOwnerPost,
@@ -54,7 +52,7 @@ func (s *Service) ResolveAuthorizedPageFeaturedImage(
 	ctx context.Context,
 	pageID string,
 	expectedFileID string,
-) (*commonv1.MediaDelivery, error) {
+) (*Delivery, error) {
 	return s.resolveAuthorizedFeaturedImage(
 		ctx,
 		scopedContentOwnerPage,
@@ -68,7 +66,7 @@ func (s *Service) resolveAuthorizedFeaturedImage(
 	owner scopedContentOwner,
 	ownerID string,
 	expectedFileID string,
-) (*commonv1.MediaDelivery, error) {
+) (*Delivery, error) {
 	if _, err := uuidutil.ParseCanonical(strings.TrimSpace(ownerID), "owner_id"); err != nil {
 		return nil, domainerr.InvalidField("owner_id", "must be a canonical UUID")
 	}
@@ -79,7 +77,7 @@ func (s *Service) resolveAuthorizedFeaturedImage(
 		}
 	}
 
-	var delivery *commonv1.MediaDelivery
+	var delivery *Delivery
 	err := s.units.Transaction(ctx, false, func(tx mutation.Tx[Store]) error {
 		store := tx.Store()
 		if err := store.RequirePolicyOwner(ctx, string(owner), ownerID, false); err != nil {
@@ -270,7 +268,7 @@ func deliverScopedContentBlockMediaItem(
 	item *contentv1.ContentBlockMediaItem,
 	relations map[string]domain.ScopedAttachment,
 	files map[string]File,
-	responses map[string]*managev1.GetMediaDeliveryResponse,
+	responses map[string]*MediaDeliveryResult,
 	principal *auth.UserInfo,
 	hasLibraryDownload bool,
 ) {
@@ -285,10 +283,10 @@ func deliverScopedContentBlockMediaItem(
 		return
 	}
 	response := responses[fileID]
-	if response == nil || response.GetDelivery() == nil {
+	if response == nil || response.Delivery == nil {
 		return
 	}
-	delivery := proto.Clone(response.GetDelivery()).(*commonv1.MediaDelivery)
+	delivery := response.Delivery.Clone()
 	allowDownload := hasLibraryDownload ||
 		(file.UploadedByMemberID != nil && strings.TrimSpace(*file.UploadedByMemberID) == principal.MemberID.String())
 	if !allowDownload {
@@ -297,14 +295,14 @@ func deliverScopedContentBlockMediaItem(
 		item.DownloadAvailability = contentv1.ContentBlockDownloadAvailability_CONTENT_BLOCK_DOWNLOAD_AVAILABILITY_AVAILABLE
 		item.DownloadAction = contentv1.ContentBlockDownloadAction_CONTENT_BLOCK_DOWNLOAD_ACTION_DOWNLOAD
 	}
-	item.Delivery = delivery
+	item.Delivery = DeliveryMessage(delivery)
 }
 
 func (s *Service) buildLockedInlineDelivery(
 	ctx context.Context,
 	store Store,
 	file File,
-) (*commonv1.MediaDelivery, error) {
+) (*Delivery, error) {
 	inline, err := buildExpiringMediaFileRef(
 		s.mediaDomain,
 		s.mediaSecret,
@@ -318,8 +316,8 @@ func (s *Service) buildLockedInlineDelivery(
 	if err != nil {
 		return nil, err
 	}
-	delivery := &commonv1.MediaDelivery{
-		FileId:    file.ID,
+	delivery := &Delivery{
+		FileID:    file.ID,
 		Extension: file.Extension,
 		MimeType:  file.MimeType,
 		FileSize:  file.FileSize,
@@ -330,7 +328,7 @@ func (s *Service) buildLockedInlineDelivery(
 		duration := int32(*file.DurationSeconds)
 		delivery.DurationSeconds = &duration
 	}
-	if err := s.populateFileProcessingStatusWithReader(ctx, boundFileStoreReader{store}, map[string]*commonv1.MediaDelivery{file.ID: delivery}); err != nil {
+	if err := s.populateFileProcessingStatusWithReader(ctx, boundFileStoreReader{store}, map[string]*Delivery{file.ID: delivery}); err != nil {
 		slog.ErrorContext(ctx, "Failed to populate scoped featured-image processing status", failurecause.Attr(err), "fileId", file.ID)
 	}
 	return delivery, nil

@@ -14,9 +14,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/mutation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type storedFileDeliveryRow = domain.StoredFileDelivery
@@ -28,7 +25,7 @@ type storedDerivativeDeliveryRow = domain.StoredDerivativeDelivery
 func (s *Service) resolveContentFileDeliveries(
 	ctx context.Context,
 	fileIDs []string,
-) (map[string]*commonv1.MediaDelivery, error) {
+) (map[string]*Delivery, error) {
 	unique := make([]string, 0, len(fileIDs))
 	seen := make(map[string]struct{}, len(fileIDs))
 	for _, fileID := range fileIDs {
@@ -42,7 +39,7 @@ func (s *Service) resolveContentFileDeliveries(
 		seen[fileID] = struct{}{}
 		unique = append(unique, fileID)
 	}
-	result := make(map[string]*commonv1.MediaDelivery, len(unique))
+	result := make(map[string]*Delivery, len(unique))
 	if len(unique) == 0 {
 		return result, nil
 	}
@@ -70,8 +67,8 @@ func (s *Service) resolveContentFileDeliveries(
 		if err != nil {
 			return nil, err
 		}
-		delivery := &commonv1.MediaDelivery{
-			FileId:    file.ID,
+		delivery := &Delivery{
+			FileID:    file.ID,
 			Extension: file.Extension,
 			MimeType:  file.MimeType,
 			FileSize:  file.FileSize,
@@ -98,11 +95,11 @@ type GetMediaDeliveryQuery struct {
 }
 
 // GetMediaDelivery returns delivery refs for a single file and its derivatives.
-func (s *Service) GetMediaDelivery(ctx context.Context, query GetMediaDeliveryQuery) (*managev1.GetMediaDeliveryResponse, error) {
+func (s *Service) GetMediaDelivery(ctx context.Context, query GetMediaDeliveryQuery) (*MediaDeliveryResult, error) {
 	return s.getMediaDelivery(ctx, query.FileID, true)
 }
 
-func (s *Service) getMediaDelivery(ctx context.Context, fileID string, allowChangedRetry bool) (*managev1.GetMediaDeliveryResponse, error) {
+func (s *Service) getMediaDelivery(ctx context.Context, fileID string, allowChangedRetry bool) (*MediaDeliveryResult, error) {
 	if fileID == "" {
 		return nil, domainerr.Required("file_id")
 	}
@@ -115,7 +112,7 @@ func (s *Service) getMediaDelivery(ctx context.Context, fileID string, allowChan
 	if err != nil {
 		return nil, err
 	}
-	fenced, changed, err := s.finalizeManageFileURLResponses(ctx, map[string]*managev1.GetMediaDeliveryResponse{
+	fenced, changed, err := s.finalizeManageFileURLResponses(ctx, map[string]*MediaDeliveryResult{
 		fileID: response,
 	}, authorization)
 	if err != nil {
@@ -144,12 +141,12 @@ type GetBulkMediaDeliveriesQuery struct {
 
 // GetBulkMediaDeliveries returns delivery refs for multiple files and their
 // derivatives, keyed by File ID.
-func (s *Service) GetBulkMediaDeliveries(ctx context.Context, query GetBulkMediaDeliveriesQuery) (map[string]*managev1.GetMediaDeliveryResponse, error) {
+func (s *Service) GetBulkMediaDeliveries(ctx context.Context, query GetBulkMediaDeliveriesQuery) (map[string]*MediaDeliveryResult, error) {
 	if len(query.FileIDs) > MaxMediaDeliveryBatchSize {
 		return nil, domainerr.InvalidField("file_ids", fmt.Sprintf("must contain at most %d items", MaxMediaDeliveryBatchSize))
 	}
 	if len(query.FileIDs) == 0 {
-		return make(map[string]*managev1.GetMediaDeliveryResponse), nil
+		return make(map[string]*MediaDeliveryResult), nil
 	}
 	authorization, err := s.authorizeManageFileDeliveriesWithWitness(ctx, query.FileIDs)
 	if err != nil {
@@ -168,12 +165,12 @@ func (s *Service) GetBulkMediaDeliveries(ctx context.Context, query GetBulkMedia
 func (s *Service) loadFileURLResponses(
 	ctx context.Context,
 	fileIDs []string,
-) (map[string]*managev1.GetMediaDeliveryResponse, error) {
+) (map[string]*MediaDeliveryResult, error) {
 	return s.loadFileURLResponsesWithReader(ctx, s.units, fileIDs)
 }
-func (s *Service) loadFileURLResponsesWithReader(ctx context.Context, reader fileStoreReader, fileIDs []string) (map[string]*managev1.GetMediaDeliveryResponse, error) {
+func (s *Service) loadFileURLResponsesWithReader(ctx context.Context, reader fileStoreReader, fileIDs []string) (map[string]*MediaDeliveryResult, error) {
 	if len(fileIDs) == 0 {
-		return map[string]*managev1.GetMediaDeliveryResponse{}, nil
+		return map[string]*MediaDeliveryResult{}, nil
 	}
 	var files []storedFileDeliveryRow
 	if err := reader.Read(ctx, func(store Store) error {
@@ -213,17 +210,17 @@ func (s *Service) loadFileURLResponsesWithReader(ctx context.Context, reader fil
 			meshFileIDs = append(meshFileIDs, file.ID)
 		}
 	}
-	imageAssets, err := mediaasset.ReferenceMapResultProto(s.sourceAssetReferencesWithReader(ctx, reader, "image", imageFileIDs))
+	imageAssets, err := s.sourceAssetReferencesWithReader(ctx, reader, "image", imageFileIDs)
 	if err != nil {
 		return nil, err
 	}
-	meshAssets, err := mediaasset.ReferenceMapResultProto(s.sourceAssetReferencesWithReader(ctx, reader, "mesh", meshFileIDs))
+	meshAssets, err := s.sourceAssetReferencesWithReader(ctx, reader, "mesh", meshFileIDs)
 	if err != nil {
 		return nil, err
 	}
 
-	result := make(map[string]*managev1.GetMediaDeliveryResponse, len(fileIDs))
-	deliveries := make(map[string]*commonv1.MediaDelivery, len(fileIDs))
+	result := make(map[string]*MediaDeliveryResult, len(fileIDs))
+	deliveries := make(map[string]*Delivery, len(fileIDs))
 
 	for _, fileID := range fileIDs {
 		file, found := fileMap[fileID]
@@ -241,7 +238,7 @@ func (s *Service) loadFileURLResponsesWithReader(ctx context.Context, reader fil
 		if err != nil {
 			return nil, err
 		}
-		response.ClientMediaBundleId = file.ClientMediaBundleID
+		response.ClientMediaBundleID = file.ClientMediaBundleID
 		if file.FileName != nil {
 			response.Delivery.FileName = file.FileName
 		}
@@ -249,8 +246,8 @@ func (s *Service) loadFileURLResponsesWithReader(ctx context.Context, reader fil
 			duration := int32(*file.DurationSeconds)
 			response.Delivery.DurationSeconds = &duration
 		}
-		response.IngestSlotId = file.IngestSlotID
-		response.IngestAttemptId = file.IngestAttemptID
+		response.IngestSlotID = file.IngestSlotID
+		response.IngestAttemptID = file.IngestAttemptID
 
 		if derivs, ok := derivativeMap[fileID]; ok {
 			if err := s.attachFileDerivativeURLs(response, fileID, derivs); err != nil {
@@ -264,7 +261,7 @@ func (s *Service) loadFileURLResponsesWithReader(ctx context.Context, reader fil
 		}
 
 		result[fileID] = response
-		deliveries[fileID] = response.GetDelivery()
+		deliveries[fileID] = response.Delivery
 	}
 
 	if err := s.populateFileProcessingStatusWithReader(ctx, reader, deliveries); err != nil {
@@ -275,7 +272,7 @@ func (s *Service) loadFileURLResponsesWithReader(ctx context.Context, reader fil
 }
 
 // getFileUrlsForID is a helper that returns delivery refs for a single file ID.
-func (s *Service) getFileUrlsForID(ctx context.Context, fileID string) (*managev1.GetMediaDeliveryResponse, error) {
+func (s *Service) getFileUrlsForID(ctx context.Context, fileID string) (*MediaDeliveryResult, error) {
 	responses, err := s.loadFileURLResponses(ctx, []string{fileID})
 	if err != nil {
 		return nil, err
@@ -310,7 +307,7 @@ func (s *Service) fileURLsResponseFromStoredFile(
 	mimeType string,
 	fileSize int64,
 	fileName *string,
-) (*managev1.GetMediaDeliveryResponse, error) {
+) (*MediaDeliveryResult, error) {
 	extension = strings.ToLower(strings.TrimSpace(extension))
 	if extension == "" {
 		return nil, fmt.Errorf("file %s has no canonical extension", fileID)
@@ -327,9 +324,9 @@ func (s *Service) fileURLsResponseFromStoredFile(
 	if err != nil {
 		return nil, err
 	}
-	return &managev1.GetMediaDeliveryResponse{
-		Delivery: &commonv1.MediaDelivery{
-			FileId:    fileID,
+	return &MediaDeliveryResult{
+		Delivery: &Delivery{
+			FileID:    fileID,
 			Extension: extension,
 			MimeType:  mimeType,
 			FileSize:  fileSize,
@@ -348,13 +345,9 @@ func buildExpiringMediaFileRef(
 	fileName *string,
 	purpose mediaauth.Purpose,
 	ttl time.Duration,
-) (*commonv1.ExpiringMediaRef, error) {
-	var deliveryPurpose commonv1.MediaDeliveryPurpose
+) (*mediaauth.Reference, error) {
 	switch purpose {
-	case mediaauth.PurposeInline:
-		deliveryPurpose = commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_INLINE
-	case mediaauth.PurposeDownload:
-		deliveryPurpose = commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_DOWNLOAD
+	case mediaauth.PurposeInline, mediaauth.PurposeDownload:
 	default:
 		return nil, fmt.Errorf("unsupported file delivery purpose %q", purpose)
 	}
@@ -374,11 +367,11 @@ func buildExpiringMediaFileRef(
 	if err != nil {
 		return nil, err
 	}
-	ref := &commonv1.ExpiringMediaRef{
-		FileId:    fileID,
-		Url:       url,
-		Purpose:   deliveryPurpose,
-		ExpiresAt: timestamppb.New(expiresAt),
+	ref := &mediaauth.Reference{
+		FileID:    fileID,
+		URL:       url,
+		Purpose:   purpose,
+		ExpiresAt: expiresAt,
 		Extension: extension,
 		MimeType:  mimeType,
 		FileName:  normalizedOptionalString(fileName),
@@ -390,37 +383,37 @@ func buildExpiringMediaFileRef(
 }
 
 func (s *Service) attachFileDerivativeURLs(
-	response *managev1.GetMediaDeliveryResponse,
+	response *MediaDeliveryResult,
 	fileID string,
 	derivs map[string]storedDerivativeDeliveryRow,
 ) error {
-	if thumbnail, ok := derivs[managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_THUMBNAIL.String()]; ok {
+	if thumbnail, ok := derivs[DerivativeThumbnail.String()]; ok {
 		ref, err := s.assetRefForDerivative(thumbnail)
 		if err != nil {
 			return err
 		}
-		response.Delivery.Thumbnail = mediaasset.ReferenceProto(ref)
+		response.Delivery.Thumbnail = ref
 	}
-	if hls, ok := derivs[managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS.String()]; ok {
+	if hls, ok := derivs[DerivativeHLS.String()]; ok {
 		ref, err := s.hlsPlaybackRef(fileID, hls)
 		if err != nil {
 			return err
 		}
 		response.Delivery.Playback = ref
 	}
-	if spectrogram, ok := derivs[managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_SPECTROGRAM.String()]; ok {
+	if spectrogram, ok := derivs[DerivativeSpectrogram.String()]; ok {
 		ref, err := s.assetRefForDerivative(spectrogram)
 		if err != nil {
 			return err
 		}
-		response.Delivery.Spectrogram = mediaasset.ReferenceProto(ref)
+		response.Delivery.Spectrogram = ref
 	}
-	if waveform, ok := derivs[managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_WAVEFORM.String()]; ok {
+	if waveform, ok := derivs[DerivativeWaveform.String()]; ok {
 		ref, err := s.assetRefForDerivative(waveform)
 		if err != nil {
 			return err
 		}
-		response.Delivery.Waveform = mediaasset.ReferenceProto(ref)
+		response.Delivery.Waveform = ref
 	}
 	return nil
 }
@@ -458,7 +451,7 @@ func (s *Service) assetRefForDerivative(row storedDerivativeDeliveryRow) (*media
 	}, nil
 }
 
-func (s *Service) hlsPlaybackRef(fileID string, row storedDerivativeDeliveryRow) (*commonv1.HlsMediaRef, error) {
+func (s *Service) hlsPlaybackRef(fileID string, row storedDerivativeDeliveryRow) (*HLSReference, error) {
 	if row.MediaGenerationID == nil || row.MediaGenerationStatus == nil || *row.MediaGenerationStatus != string(mediaasset.GenerationReady) {
 		return nil, nil
 	}
@@ -473,10 +466,10 @@ func (s *Service) hlsPlaybackRef(fileID string, row storedDerivativeDeliveryRow)
 		return nil, err
 	}
 	generationID := *row.MediaGenerationID
-	return &commonv1.HlsMediaRef{
-		FileId:       fileID,
-		GenerationId: generationID,
-		Url:          url,
+	return &HLSReference{
+		FileID:       fileID,
+		GenerationID: generationID,
+		URL:          url,
 	}, nil
 }
 

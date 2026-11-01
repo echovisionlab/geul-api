@@ -7,7 +7,6 @@ import (
 
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 	"github.com/echovisionlab/geul-api/internal/model"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -28,15 +27,15 @@ func TestFileURLsResponseFromStoredFileSignsDownloadURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fileURLsResponseFromStoredFile() error = %v", err)
 	}
-	delivery := response.GetDelivery()
+	delivery := response.Delivery
 
-	if delivery.GetMimeType() != "image/jpeg" {
-		t.Fatalf("mime type = %q, want image/jpeg", delivery.GetMimeType())
+	if delivery.MimeType != "image/jpeg" {
+		t.Fatalf("mime type = %q, want image/jpeg", delivery.MimeType)
 	}
-	if delivery.GetFileSize() != 128 {
-		t.Fatalf("file size = %d, want 128", delivery.GetFileSize())
+	if delivery.FileSize != 128 {
+		t.Fatalf("file size = %d, want 128", delivery.FileSize)
 	}
-	downloadURL := delivery.GetDownload().GetUrl()
+	downloadURL := delivery.Download.URL
 	if !strings.HasPrefix(downloadURL, "https://media.example.com/media/") {
 		t.Fatalf("expected signed media URL, got %q", downloadURL)
 	}
@@ -95,7 +94,7 @@ func TestFileURLsResponseFromStoredFileUsesDeterministicHistoricalFilenameFallba
 	if err != nil {
 		t.Fatalf("fileURLsResponseFromStoredFile() error = %v", err)
 	}
-	claims := validateMediaURLToken(t, response.GetDelivery().GetDownload().GetUrl(), secret)
+	claims := validateMediaURLToken(t, response.Delivery.Download.URL, secret)
 	if claims.Filename != "download-"+fileID+".wav" {
 		t.Fatalf("filename = %q, want deterministic fallback", claims.Filename)
 	}
@@ -115,7 +114,7 @@ func TestAttachFileDerivativeURLs(t *testing.T) {
 	thumbnailID := "33333333-3333-4333-8333-333333333333"
 	spectrogramID := "44444444-4444-4444-8444-444444444444"
 	waveformID := "55555555-5555-4555-8555-555555555555"
-	response := &managev1.GetMediaDeliveryResponse{Delivery: &commonv1.MediaDelivery{}}
+	response := &MediaDeliveryResult{Delivery: &Delivery{}}
 	imageMime := "image/webp"
 	jsonMime := "application/json"
 	ready := model.PublicAssetStatusReady
@@ -171,22 +170,22 @@ func TestAttachFileDerivativeURLs(t *testing.T) {
 		t.Fatalf("attachFileDerivativeURLs() error = %v", err)
 	}
 
-	if response.GetDelivery().GetThumbnail().GetUrl() != "https://cdn.example.com/asset/"+thumbnailID+"/thumbnail.webp" {
-		t.Fatalf("thumbnail URL = %q", response.GetDelivery().GetThumbnail().GetUrl())
+	if response.Delivery.Thumbnail.URL != "https://cdn.example.com/asset/"+thumbnailID+"/thumbnail.webp" {
+		t.Fatalf("thumbnail URL = %q", response.Delivery.Thumbnail.URL)
 	}
-	if response.GetDelivery().GetSpectrogram().GetUrl() != "https://media.example.com/asset/"+spectrogramID+"/spectrogram.webp" {
-		t.Fatalf("spectrogram URL = %v", response.GetDelivery().GetSpectrogram().GetUrl())
+	if response.Delivery.Spectrogram.URL != "https://media.example.com/asset/"+spectrogramID+"/spectrogram.webp" {
+		t.Fatalf("spectrogram URL = %v", response.Delivery.Spectrogram.URL)
 	}
-	if response.GetDelivery().GetWaveform().GetUrl() != "https://media.example.com/asset/"+waveformID+"/waveform.json" {
-		t.Fatalf("waveform URL = %v", response.GetDelivery().GetWaveform().GetUrl())
+	if response.Delivery.Waveform.URL != "https://media.example.com/asset/"+waveformID+"/waveform.json" {
+		t.Fatalf("waveform URL = %v", response.Delivery.Waveform.URL)
 	}
-	playbackURL := response.GetDelivery().GetPlayback().GetUrl()
+	playbackURL := response.Delivery.Playback.URL
 	wantPlaybackURL := "https://media.example.com/media/" + fileID + "/hls/" + hlsID + "/master.m3u8"
 	if playbackURL != wantPlaybackURL {
 		t.Fatalf("playback URL = %q, want %q", playbackURL, wantPlaybackURL)
 	}
-	if response.GetDelivery().GetPlayback().GetGenerationId() != hlsID {
-		t.Fatalf("playback generation = %q, want %q", response.GetDelivery().GetPlayback().GetGenerationId(), hlsID)
+	if response.Delivery.Playback.GenerationID != hlsID {
+		t.Fatalf("playback generation = %q, want %q", response.Delivery.Playback.GenerationID, hlsID)
 	}
 }
 

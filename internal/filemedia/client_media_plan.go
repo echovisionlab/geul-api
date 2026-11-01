@@ -27,10 +27,10 @@ const (
 )
 
 const (
-	clientHLS         = managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_HLS
-	clientSpectrogram = managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_SPECTROGRAM
-	clientWaveform    = managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_WAVEFORM
-	clientThumbnail   = managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_THUMBNAIL
+	clientHLS         = DerivativeHLS
+	clientSpectrogram = DerivativeSpectrogram
+	clientWaveform    = DerivativeWaveform
+	clientThumbnail   = DerivativeThumbnail
 )
 
 var clientMediaPathPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
@@ -142,8 +142,8 @@ func (budget *clientMediaBudget) admit(artifact clientMediaArtifact, kind string
 	}
 	return nil
 }
-func clientMediaArtifactPolicy(name, kind string) (string, managev1.FileDerivativeType, error) {
-	const unset = managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_UNSPECIFIED
+func clientMediaArtifactPolicy(name, kind string) (string, DerivativeKind, error) {
+	const unset = DerivativeUnspecified
 	switch name {
 	case "spectrogram.png":
 		if kind == "audio" {
@@ -235,7 +235,7 @@ func (plan clientMediaPlan) artifact(path string) *clientMediaArtifact {
 }
 
 func (artifact clientMediaArtifact) isHLS() bool {
-	return managev1.FileDerivativeType(artifact.DerivativeType) == clientHLS
+	return DerivativeKind(artifact.DerivativeType) == clientHLS
 }
 
 func (artifact clientMediaArtifact) assetKind() string {

@@ -23,7 +23,6 @@ import (
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/transcoding/hls"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 )
 
@@ -242,7 +241,7 @@ func (s *Service) publishClientMediaReady(ctx context.Context, completion *multi
 		}
 		releaseID = &release
 	}
-	event := domain.ProcessingEvent{CorrelationID: completion.correlationID, EntityType: int32(entityType), EntityID: entityID, FileID: fileID, Status: int32(commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY), Outputs: outputs, TimestampMS: time.Now().UnixMilli(), SlotID: completion.session.SlotID, AttemptID: completion.session.AttemptID, TrackID: trackID, ReleaseID: releaseID}
+	event := domain.ProcessingEvent{CorrelationID: completion.correlationID, EntityType: int32(entityType), EntityID: entityID, FileID: fileID, Status: int32(ProcessingReady), Outputs: outputs, TimestampMS: time.Now().UnixMilli(), SlotID: completion.session.SlotID, AttemptID: completion.session.AttemptID, TrackID: trackID, ReleaseID: releaseID}
 	if s.asyncPublisher == nil {
 		return fmt.Errorf("async publisher is required")
 	}

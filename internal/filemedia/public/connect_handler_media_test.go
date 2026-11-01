@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	public "github.com/echovisionlab/geul-api/internal/filemedia/public"
 	"github.com/echovisionlab/geul-api/internal/filemedia/public/publictest"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -18,15 +19,17 @@ import (
 
 func TestDeliveryBoundaryPreservesEveryWireField(t *testing.T) {
 	filename, duration := "파일", int32(0)
+	percentage := int32(0)
+	downloadName := "download.webp"
 	expiry := time.Unix(2000000000, 123).UTC()
-	asset := &mediaasset.Reference{AssetID: "asset", URL: "https://cdn/asset", Extension: "webp", MimeType: "image/webp", FileSize: 64, SHA256: []byte{1, 2, 3}, Disposition: mediaasset.DispositionInline}
+	asset := &mediaasset.Reference{AssetID: "asset", URL: "https://cdn/asset", Extension: "webp", MimeType: "image/webp", FileSize: 64, SHA256: []byte{1, 2, 3}, Disposition: mediaasset.DispositionInline, DownloadFilename: &downloadName}
 	inline := &mediaauth.Reference{FileID: "file", URL: "https://media/inline", Extension: "webp", MimeType: "image/webp", FileName: &filename, Purpose: mediaauth.PurposeInline, ExpiresAt: expiry}
 	download := inline.Clone()
 	download.URL = "https://media/download"
 	download.Purpose = mediaauth.PurposeDownload
-	value := &public.Delivery{FileID: "file", Extension: "webp", MimeType: "image/webp", FileSize: 1024, FileName: &filename, DurationSeconds: &duration, Asset: asset, Thumbnail: asset, Spectrogram: asset, Waveform: asset, Playback: &public.HLSReference{FileID: "file", GenerationID: "generation", URL: "https://media/hls"}, Inline: inline, Download: download}
-	wireAsset := &commonv1.AssetRef{AssetId: "asset", Url: "https://cdn/asset", Extension: "webp", MimeType: "image/webp", FileSize: 64, Sha256: []byte{1, 2, 3}, Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE}
-	expected := &commonv1.MediaDelivery{FileId: "file", Extension: "webp", MimeType: "image/webp", FileSize: 1024, FileName: &filename, DurationSeconds: &duration, Asset: wireAsset, Thumbnail: wireAsset, Spectrogram: wireAsset, Waveform: wireAsset, Playback: &commonv1.HlsMediaRef{FileId: "file", GenerationId: "generation", Url: "https://media/hls"}, Inline: &commonv1.ExpiringMediaRef{FileId: "file", Url: "https://media/inline", Extension: "webp", MimeType: "image/webp", FileName: &filename, Purpose: commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_INLINE, ExpiresAt: timestamppb.New(expiry)}, Download: &commonv1.ExpiringMediaRef{FileId: "file", Url: "https://media/download", Extension: "webp", MimeType: "image/webp", FileName: &filename, Purpose: commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_DOWNLOAD, ExpiresAt: timestamppb.New(expiry)}}
+	value := &public.Delivery{ProcessingStatus: domain.ProcessingReady, ProcessingPercentage: &percentage, FileID: "file", Extension: "webp", MimeType: "image/webp", FileSize: 1024, FileName: &filename, DurationSeconds: &duration, Asset: asset, Thumbnail: asset, Spectrogram: asset, Waveform: asset, Playback: &public.HLSReference{FileID: "file", GenerationID: "generation", URL: "https://media/hls"}, Inline: inline, Download: download}
+	wireAsset := &commonv1.AssetRef{AssetId: "asset", Url: "https://cdn/asset", Extension: "webp", MimeType: "image/webp", FileSize: 64, Sha256: []byte{1, 2, 3}, Disposition: commonv1.AssetDisposition_ASSET_DISPOSITION_INLINE, DownloadFilename: &downloadName}
+	expected := &commonv1.MediaDelivery{ProcessingStatus: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY, ProcessingPercentage: &percentage, FileId: "file", Extension: "webp", MimeType: "image/webp", FileSize: 1024, FileName: &filename, DurationSeconds: &duration, Asset: wireAsset, Thumbnail: wireAsset, Spectrogram: wireAsset, Waveform: wireAsset, Playback: &commonv1.HlsMediaRef{FileId: "file", GenerationId: "generation", Url: "https://media/hls"}, Inline: &commonv1.ExpiringMediaRef{FileId: "file", Url: "https://media/inline", Extension: "webp", MimeType: "image/webp", FileName: &filename, Purpose: commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_INLINE, ExpiresAt: timestamppb.New(expiry)}, Download: &commonv1.ExpiringMediaRef{FileId: "file", Url: "https://media/download", Extension: "webp", MimeType: "image/webp", FileName: &filename, Purpose: commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_DOWNLOAD, ExpiresAt: timestamppb.New(expiry)}}
 	actual, err := proto.MarshalOptions{Deterministic: true}.Marshal(public.DeliveryProto(value))
 	require.NoError(t, err)
 	want, err := proto.MarshalOptions{Deterministic: true}.Marshal(expected)
@@ -39,12 +42,17 @@ func TestDeliveryBoundaryPreservesEveryWireField(t *testing.T) {
 	require.Nil(t, empty.Inline)
 	clone := value.Clone()
 	clone.Asset.SHA256[0] = 9
+	*clone.Asset.DownloadFilename = "changed"
+	*clone.ProcessingPercentage = 99
 	*clone.FileName = "changed"
 	*clone.DurationSeconds = 5
 	clone.Inline.URL = "changed"
 	*clone.Inline.FileName = "changed"
 	clone.Playback.URL = "changed"
 	require.Equal(t, byte(1), value.Asset.SHA256[0])
+	require.Equal(t, "download.webp", *value.Asset.DownloadFilename)
+	require.Zero(t, *value.ProcessingPercentage)
+	require.Nil(t, empty.ProcessingPercentage)
 	require.Equal(t, "파일", *value.FileName)
 	require.Zero(t, *value.DurationSeconds)
 	require.Equal(t, "https://media/inline", value.Inline.URL)

@@ -177,7 +177,7 @@ func (f *postFeaturedManageFiles) ResolveAuthorizedPostFeaturedImage(
 	ctx context.Context,
 	postID string,
 	expectedFileID string,
-) (*commonv1.MediaDelivery, error) {
+) (*filemedia.Delivery, error) {
 	f.expectedFileID = expectedFileID
 	if f.beforeExact != nil {
 		before := f.beforeExact

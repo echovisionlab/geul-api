@@ -4,11 +4,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/echovisionlab/geul-api/internal/mediaauth"
+
 	"github.com/echovisionlab/geul-api/internal/filemedia"
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
 	"github.com/echovisionlab/geul-api/internal/filemedia/filemediatest"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -21,7 +21,7 @@ func TestManageDeliveryStoreFencesRejectChangedWitnesses(t *testing.T) {
 			row.MemberID = new(f.user.MemberID.String())
 			f.store.Files[row.ID] = filemediatest.CatalogFileRecord{Row: row}
 			f.store.AvatarOwners[row.ID] = f.user.IdentityID.String()
-			response := &managev1.GetMediaDeliveryResponse{Delivery: &commonv1.MediaDelivery{FileId: row.ID, FileName: &row.Name, Extension: *row.Extension, MimeType: *row.MimeType, FileSize: *row.FileSize, DurationSeconds: row.DurationSeconds, Inline: &commonv1.ExpiringMediaRef{Url: "old-inline"}, Download: &commonv1.ExpiringMediaRef{Url: "old-download"}}}
+			response := &filemedia.MediaDeliveryResult{Delivery: &filemedia.Delivery{FileID: row.ID, FileName: &row.Name, Extension: *row.Extension, MimeType: *row.MimeType, FileSize: *row.FileSize, DurationSeconds: row.DurationSeconds, Inline: &mediaauth.Reference{URL: "old-inline"}, Download: &mediaauth.Reference{URL: "old-download"}}}
 			grant := filemedia.ExportDeliveryGrant{Uploader: f.user.MemberID.String(), AvatarOwner: f.user.IdentityID.String()}
 			var witness domain.DeliveryUsageWitness
 			if mode == "usage" || mode == "owner_changed" || mode == "relation_changed" {
@@ -67,13 +67,13 @@ func TestManageDeliveryStoreFencesRejectChangedWitnesses(t *testing.T) {
 				return
 			}
 			require.Len(t, got, 1)
-			require.NotEqual(t, "old-inline", got[row.ID].Delivery.Inline.Url)
-			require.Equal(t, "old-inline", response.Delivery.Inline.Url)
+			require.NotEqual(t, "old-inline", got[row.ID].Delivery.Inline.URL)
+			require.Equal(t, "old-inline", response.Delivery.Inline.URL)
 			if mode == "usage" {
 				require.Nil(t, got[row.ID].Delivery.Download)
 				require.Equal(t, []string{"owner:post\x00" + witness.ResourceID, "principal", "usage:" + witness.Key(), "files"}, f.store.DeliveryLocks)
 			} else {
-				require.NotEqual(t, "old-download", got[row.ID].Delivery.Download.Url)
+				require.NotEqual(t, "old-download", got[row.ID].Delivery.Download.URL)
 				require.Equal(t, []string{"principal", "files", "avatar"}, f.store.DeliveryLocks)
 			}
 		})

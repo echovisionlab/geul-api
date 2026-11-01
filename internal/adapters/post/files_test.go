@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
+
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -77,7 +79,7 @@ func (f *recordingManageFiles) ResolveAuthorizedPostFeaturedImage(
 	_ context.Context,
 	postID string,
 	expectedFileID string,
-) (*commonv1.MediaDelivery, error) {
+) (*filemediadomain.Delivery, error) {
 	f.postID = postID
 	f.expectedFileID = expectedFileID
 	return nil, f.err

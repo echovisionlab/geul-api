@@ -11,9 +11,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/auth"
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
-	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
-	"google.golang.org/protobuf/proto"
 )
 
 // finalizeFileManagerDeliveries is the final issuance fence for File Manager
@@ -27,17 +24,17 @@ func (s *Service) finalizeFileManagerDeliveries(
 	rows []fileManagerCatalogRow,
 	members map[string]MemberSummary,
 	usageCounts map[string]int32,
-	generatedOutputs []*managev1.FileGeneratedOutput,
-) (map[string]*managev1.FileManagerFile, []*managev1.FileGeneratedOutput, bool, error) {
+	generatedOutputs []*GeneratedOutput,
+) (map[string]*LibraryFile, []*GeneratedOutput, bool, error) {
 	fileIDs := fileManagerDeliveryFileIDs(rows, generatedOutputs)
 	if len(fileIDs) == 0 {
-		return map[string]*managev1.FileManagerFile{}, cloneFileGeneratedOutputs(generatedOutputs), false, nil
+		return map[string]*LibraryFile{}, cloneFileGeneratedOutputs(generatedOutputs), false, nil
 	}
 	if s.testBeforeFileManagerDeliveryFence != nil {
 		s.testBeforeFileManagerDeliveryFence(append([]string(nil), fileIDs...))
 	}
 
-	var files map[string]*managev1.FileManagerFile
+	var files map[string]*LibraryFile
 	outputs := cloneFileGeneratedOutputs(generatedOutputs)
 	meshWitnesses := fileManagerMeshDeliveryWitnesses(rows, outputs)
 	changed := false
@@ -72,7 +69,7 @@ func (s *Service) finalizeFileManagerDeliveries(
 		return nil
 	})
 	if files == nil {
-		files = make(map[string]*managev1.FileManagerFile, len(rows))
+		files = make(map[string]*LibraryFile, len(rows))
 	}
 	return files, outputs, changed, err
 }
@@ -84,8 +81,8 @@ func (s *Service) fenceFileManagerCatalogFiles(
 	lockedByID map[string]File,
 	members map[string]MemberSummary,
 	usageCounts map[string]int32,
-) (map[string]*managev1.FileManagerFile, bool, error) {
-	files := make(map[string]*managev1.FileManagerFile, len(rows))
+) (map[string]*LibraryFile, bool, error) {
+	files := make(map[string]*LibraryFile, len(rows))
 	changed := false
 	for _, row := range rows {
 		if row.ItemType != "file" {
@@ -109,21 +106,24 @@ func (s *Service) fenceFileManagerCatalogFiles(
 // against its locked File and drops the deliveries whose File or ready mesh
 // candidate changed.
 func (s *Service) fenceFileManagerGeneratedOutputs(
-	outputs []*managev1.FileGeneratedOutput,
+	outputs []*GeneratedOutput,
 	lockedByID map[string]File,
 	currentMeshCandidates map[string]bool,
 ) error {
 	for _, output := range outputs {
-		delivery := output.GetDelivery()
-		if delivery == nil || (delivery.GetInline() == nil && delivery.GetDownload() == nil) {
+		if output == nil {
 			continue
 		}
-		if output.GetType() == managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_OPTIMIZED_MESH &&
-			!currentMeshCandidates[output.GetId()] {
+		delivery := output.Delivery
+		if delivery == nil || (delivery.Inline == nil && delivery.Download == nil) {
+			continue
+		}
+		if output.Type == DerivativeOptimizedMesh &&
+			!currentMeshCandidates[output.ID] {
 			output.Delivery = nil
 			continue
 		}
-		file, ok := lockedByID[delivery.GetFileId()]
+		file, ok := lockedByID[delivery.FileID]
 		if !ok || file.DeleteRequestedAt != nil || !fileManagerDeliveryMatchesFile(delivery, file) {
 			output.Delivery = nil
 			continue
@@ -145,7 +145,7 @@ type fileManagerMeshDeliveryWitness struct {
 
 func fileManagerMeshDeliveryWitnesses(
 	rows []fileManagerCatalogRow,
-	outputs []*managev1.FileGeneratedOutput,
+	outputs []*GeneratedOutput,
 ) []fileManagerMeshDeliveryWitness {
 	sourceFileID := ""
 	for _, row := range rows {
@@ -156,19 +156,22 @@ func fileManagerMeshDeliveryWitnesses(
 	}
 	witnesses := make([]fileManagerMeshDeliveryWitness, 0)
 	for _, output := range outputs {
-		if output.GetType() != managev1.FileDerivativeType_FILE_DERIVATIVE_TYPE_OPTIMIZED_MESH ||
-			output.GetDelivery() == nil || output.GetDelivery().GetInline() == nil {
+		if output == nil {
+			continue
+		}
+		if output.Type != DerivativeOptimizedMesh ||
+			output.Delivery == nil || output.Delivery.Inline == nil {
 			continue
 		}
 		witnesses = append(witnesses, fileManagerMeshDeliveryWitness{
-			candidateID: output.GetId(), sourceFileID: sourceFileID, outputFileID: output.GetDelivery().GetFileId(),
+			candidateID: output.ID, sourceFileID: sourceFileID, outputFileID: output.Delivery.FileID,
 		})
 	}
 	sort.Slice(witnesses, func(i, j int) bool { return witnesses[i].candidateID < witnesses[j].candidateID })
 	return witnesses
 }
 
-func fileManagerDeliveryFileIDs(rows []fileManagerCatalogRow, outputs []*managev1.FileGeneratedOutput) []string {
+func fileManagerDeliveryFileIDs(rows []fileManagerCatalogRow, outputs []*GeneratedOutput) []string {
 	seen := make(map[string]struct{}, len(rows)+len(outputs))
 	for _, row := range rows {
 		if row.ItemType == "file" && strings.TrimSpace(row.ID) != "" {
@@ -176,11 +179,14 @@ func fileManagerDeliveryFileIDs(rows []fileManagerCatalogRow, outputs []*managev
 		}
 	}
 	for _, output := range outputs {
-		delivery := output.GetDelivery()
-		if delivery == nil || (delivery.GetInline() == nil && delivery.GetDownload() == nil) {
+		if output == nil {
 			continue
 		}
-		if fileID := strings.TrimSpace(delivery.GetFileId()); fileID != "" {
+		delivery := output.Delivery
+		if delivery == nil || (delivery.Inline == nil && delivery.Download == nil) {
+			continue
+		}
+		if fileID := strings.TrimSpace(delivery.FileID); fileID != "" {
 			seen[fileID] = struct{}{}
 		}
 	}
@@ -192,14 +198,14 @@ func fileManagerDeliveryFileIDs(rows []fileManagerCatalogRow, outputs []*managev
 	return fileIDs
 }
 
-func cloneFileGeneratedOutputs(outputs []*managev1.FileGeneratedOutput) []*managev1.FileGeneratedOutput {
-	cloned := make([]*managev1.FileGeneratedOutput, 0, len(outputs))
+func cloneFileGeneratedOutputs(outputs []*GeneratedOutput) []*GeneratedOutput {
+	cloned := make([]*GeneratedOutput, 0, len(outputs))
 	for _, output := range outputs {
 		if output == nil {
 			cloned = append(cloned, nil)
 			continue
 		}
-		cloned = append(cloned, proto.Clone(output).(*managev1.FileGeneratedOutput))
+		cloned = append(cloned, output.Clone())
 	}
 	return cloned
 }
@@ -218,15 +224,18 @@ func fileManagerCatalogRowMatchesFile(row fileManagerCatalogRow, file File) bool
 	return int64(*row.DurationSeconds) == int64(*file.DurationSeconds)
 }
 
-func fileManagerDeliveryMatchesFile(delivery *commonv1.MediaDelivery, file File) bool {
-	if delivery.GetFileId() != file.ID || delivery.GetExtension() != file.Extension ||
-		delivery.GetMimeType() != file.MimeType || delivery.GetFileSize() != file.FileSize {
+func fileManagerDeliveryMatchesFile(delivery *Delivery, file File) bool {
+	if delivery == nil {
+		return false
+	}
+	if delivery.FileID != file.ID || delivery.Extension != file.Extension ||
+		delivery.MimeType != file.MimeType || delivery.FileSize != file.FileSize {
 		return false
 	}
 	if delivery.DurationSeconds == nil || file.DurationSeconds == nil {
 		return delivery.DurationSeconds == nil && file.DurationSeconds == nil
 	}
-	return int64(delivery.GetDurationSeconds()) == int64(*file.DurationSeconds)
+	return int64(*delivery.DurationSeconds) == int64(*file.DurationSeconds)
 }
 
 func equalOptionalString(left, right *string) bool {
@@ -237,11 +246,11 @@ func equalOptionalString(left, right *string) bool {
 }
 
 func (s *Service) rebuildLockedPrivateDelivery(
-	previous *commonv1.MediaDelivery,
+	previous *Delivery,
 	file File,
-) (*commonv1.MediaDelivery, error) {
-	delivery := proto.Clone(previous).(*commonv1.MediaDelivery)
-	delivery.FileId = file.ID
+) (*Delivery, error) {
+	delivery := previous.Clone()
+	delivery.FileID = file.ID
 	delivery.Extension = file.Extension
 	delivery.MimeType = file.MimeType
 	delivery.FileSize = file.FileSize
@@ -255,7 +264,7 @@ func (s *Service) rebuildLockedPrivateDelivery(
 	delivery.Inline = nil
 	delivery.Download = nil
 	var err error
-	if previous.GetInline() != nil {
+	if previous.Inline != nil {
 		delivery.Inline, err = buildExpiringMediaFileRef(
 			s.mediaDomain, s.mediaSecret, file.ID, file.Extension, file.MimeType, nil,
 			mediaauth.PurposeInline, mediaauth.InlineTTL,
@@ -264,7 +273,7 @@ func (s *Service) rebuildLockedPrivateDelivery(
 			return nil, err
 		}
 	}
-	if previous.GetDownload() != nil {
+	if previous.Download != nil {
 		delivery.Download, err = buildExpiringMediaFileRef(
 			s.mediaDomain, s.mediaSecret, file.ID, file.Extension, file.MimeType, &file.FileName,
 			mediaauth.PurposeDownload, s.effectiveDownloadTTL(),
@@ -281,26 +290,26 @@ func (s *Service) rebuildLockedPrivateDelivery(
 // owning authorization boundary and does not pass through this method.
 func (s *Service) finalizeManageFileURLResponses(
 	ctx context.Context,
-	responses map[string]*managev1.GetMediaDeliveryResponse,
+	responses map[string]*MediaDeliveryResult,
 	authorization *manageFileDeliveryAuthorization,
-) (map[string]*managev1.GetMediaDeliveryResponse, bool, error) {
+) (map[string]*MediaDeliveryResult, bool, error) {
 	fileIDs := make([]string, 0, len(responses))
 	for fileID, response := range responses {
-		if strings.TrimSpace(fileID) == "" || response == nil || response.GetDelivery() == nil {
+		if strings.TrimSpace(fileID) == "" || response == nil || response.Delivery == nil {
 			continue
 		}
 		fileIDs = append(fileIDs, fileID)
 	}
 	sort.Strings(fileIDs)
 	if len(fileIDs) == 0 {
-		return map[string]*managev1.GetMediaDeliveryResponse{}, false, nil
+		return map[string]*MediaDeliveryResult{}, false, nil
 	}
 	if s.testBeforeManageDeliveryFence != nil {
 		s.testBeforeManageDeliveryFence(append([]string(nil), fileIDs...))
 	}
 
 	if authorization == nil || authorization.principal == nil {
-		return map[string]*managev1.GetMediaDeliveryResponse{}, true, nil
+		return map[string]*MediaDeliveryResult{}, true, nil
 	}
 	weakIDs := make([]string, 0, len(fileIDs))
 	strongIDs := make([]string, 0, len(fileIDs))
@@ -318,7 +327,7 @@ func (s *Service) finalizeManageFileURLResponses(
 		}
 	}
 
-	result := make(map[string]*managev1.GetMediaDeliveryResponse, len(fileIDs))
+	result := make(map[string]*MediaDeliveryResult, len(fileIDs))
 	weak, weakChanged, err := s.finalizeUsageManageFileURLResponses(ctx, weakIDs, responses, authorization)
 	if err != nil {
 		return nil, changed, err
@@ -341,10 +350,10 @@ func (s *Service) finalizeManageFileURLResponses(
 func (s *Service) finalizeStrongManageFileURLResponses(
 	ctx context.Context,
 	fileIDs []string,
-	responses map[string]*managev1.GetMediaDeliveryResponse,
+	responses map[string]*MediaDeliveryResult,
 	authorization *manageFileDeliveryAuthorization,
-) (map[string]*managev1.GetMediaDeliveryResponse, bool, error) {
-	result := make(map[string]*managev1.GetMediaDeliveryResponse, len(fileIDs))
+) (map[string]*MediaDeliveryResult, bool, error) {
+	result := make(map[string]*MediaDeliveryResult, len(fileIDs))
 	if len(fileIDs) == 0 {
 		return result, false, nil
 	}
@@ -391,11 +400,11 @@ func (s *Service) finalizeStrongManageFileURLResponses(
 func (s *Service) fenceStrongManageDelivery(
 	ctx context.Context,
 	tx Store,
-	response *managev1.GetMediaDeliveryResponse,
+	response *MediaDeliveryResult,
 	grant manageFileDeliveryGrant,
 	lockedByID map[string]File,
 	fileID string,
-) (*managev1.GetMediaDeliveryResponse, bool, error) {
+) (*MediaDeliveryResult, bool, error) {
 	file, ok := lockedByID[fileID]
 	if !ok || file.DeleteRequestedAt != nil || !manageDeliveryResponseMatchesFile(response, file) ||
 		(grant.expectedUploader != "" && (file.UploadedByMemberID == nil || *file.UploadedByMemberID != grant.expectedUploader)) {
@@ -410,8 +419,8 @@ func (s *Service) fenceStrongManageDelivery(
 			return nil, false, nil
 		}
 	}
-	cloned := proto.Clone(response).(*managev1.GetMediaDeliveryResponse)
-	fenced, err := s.rebuildLockedPrivateDelivery(cloned.GetDelivery(), file)
+	cloned := response.Clone()
+	fenced, err := s.rebuildLockedPrivateDelivery(cloned.Delivery, file)
 	if err != nil {
 		return nil, false, err
 	}
@@ -422,10 +431,10 @@ func (s *Service) fenceStrongManageDelivery(
 func (s *Service) finalizeUsageManageFileURLResponses(
 	ctx context.Context,
 	fileIDs []string,
-	responses map[string]*managev1.GetMediaDeliveryResponse,
+	responses map[string]*MediaDeliveryResult,
 	authorization *manageFileDeliveryAuthorization,
-) (map[string]*managev1.GetMediaDeliveryResponse, bool, error) {
-	result := make(map[string]*managev1.GetMediaDeliveryResponse, len(fileIDs))
+) (map[string]*MediaDeliveryResult, bool, error) {
+	result := make(map[string]*MediaDeliveryResult, len(fileIDs))
 	changed := false
 	for _, fileID := range fileIDs {
 		response, current, err := s.finalizeUsageManageFileURLResponse(ctx, fileID, responses[fileID], authorization)
@@ -444,10 +453,10 @@ func (s *Service) finalizeUsageManageFileURLResponses(
 func (s *Service) finalizeUsageManageFileURLResponse(
 	ctx context.Context,
 	fileID string,
-	response *managev1.GetMediaDeliveryResponse,
+	response *MediaDeliveryResult,
 	authorization *manageFileDeliveryAuthorization,
-) (*managev1.GetMediaDeliveryResponse, bool, error) {
-	var finalized *managev1.GetMediaDeliveryResponse
+) (*MediaDeliveryResult, bool, error) {
+	var finalized *MediaDeliveryResult
 	currentResult := false
 	err := s.units.Transaction(ctx, false, func(unit mutation.Tx[Store]) error {
 		tx := unit.Store()
@@ -489,8 +498,8 @@ func (s *Service) finalizeUsageManageFileURLResponse(
 		if !anyCurrent || file.DeleteRequestedAt != nil || !manageDeliveryResponseMatchesFile(response, file) {
 			return nil
 		}
-		cloned := proto.Clone(response).(*managev1.GetMediaDeliveryResponse)
-		previous := proto.Clone(cloned.GetDelivery()).(*commonv1.MediaDelivery)
+		cloned := response.Clone()
+		previous := cloned.Delivery.Clone()
 		previous.Download = nil
 		fenced, err := s.rebuildLockedPrivateDelivery(previous, file)
 		if err != nil {
@@ -557,16 +566,16 @@ func isContentManageDeliveryOwner(resourceType string) bool {
 	}
 }
 
-func manageDeliveryResponseMatchesFile(response *managev1.GetMediaDeliveryResponse, file File) bool {
-	if response != nil && !equalOptionalString(response.ClientMediaBundleId, file.ClientMediaBundleID) {
+func manageDeliveryResponseMatchesFile(response *MediaDeliveryResult, file File) bool {
+	if response != nil && !equalOptionalString(response.ClientMediaBundleID, file.ClientMediaBundleID) {
 		return false
 	}
-	if response == nil || !fileManagerDeliveryMatchesFile(response.GetDelivery(), file) ||
-		!equalOptionalString(response.IngestSlotId, file.IngestSlotID) ||
-		!equalOptionalString(response.IngestAttemptId, file.IngestAttemptID) {
+	if response == nil || !fileManagerDeliveryMatchesFile(response.Delivery, file) ||
+		!equalOptionalString(response.IngestSlotID, file.IngestSlotID) ||
+		!equalOptionalString(response.IngestAttemptID, file.IngestAttemptID) {
 		return false
 	}
-	fileName := response.GetDelivery().FileName
+	fileName := response.Delivery.FileName
 	if fileName == nil {
 		return strings.TrimSpace(file.FileName) == ""
 	}

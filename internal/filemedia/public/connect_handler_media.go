@@ -20,7 +20,7 @@ func DeliveryProto(d *Delivery) *commonv1.MediaDelivery {
 	if d == nil {
 		return nil
 	}
-	return &commonv1.MediaDelivery{FileId: d.FileID, Extension: d.Extension, MimeType: d.MimeType, FileSize: d.FileSize, FileName: d.FileName, DurationSeconds: d.DurationSeconds, Asset: mediaasset.ReferenceProto(d.Asset), Thumbnail: mediaasset.ReferenceProto(d.Thumbnail), Spectrogram: mediaasset.ReferenceProto(d.Spectrogram), Waveform: mediaasset.ReferenceProto(d.Waveform), Playback: hlsReferenceProto(d.Playback), Inline: mediaauth.ReferenceProto(d.Inline), Download: mediaauth.ReferenceProto(d.Download)}
+	return &commonv1.MediaDelivery{FileId: d.FileID, Extension: d.Extension, MimeType: d.MimeType, FileSize: d.FileSize, ProcessingStatus: commonv1.MediaProcessingStatus(d.ProcessingStatus), ProcessingPercentage: d.ProcessingPercentage, FileName: d.FileName, DurationSeconds: d.DurationSeconds, Asset: mediaasset.ReferenceProto(d.Asset), Thumbnail: mediaasset.ReferenceProto(d.Thumbnail), Spectrogram: mediaasset.ReferenceProto(d.Spectrogram), Waveform: mediaasset.ReferenceProto(d.Waveform), Playback: hlsReferenceProto(d.Playback), Inline: mediaauth.ReferenceProto(d.Inline), Download: mediaauth.ReferenceProto(d.Download)}
 }
 func downloadResultProto(result *DownloadResult) *openv1.AuthorizeDownloadResponse {
 	if result == nil {
