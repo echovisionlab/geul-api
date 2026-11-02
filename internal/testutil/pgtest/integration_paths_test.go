@@ -11,6 +11,10 @@ func TestIntegrationPathsFromPackageDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module github.com/echovisionlab/geul-api\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	// Keep sibling discovery inside the fixture when GOTMPDIR is in a workspace.
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(root), "geul-identity"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	nested := filepath.Join(root, "internal", "feature")
 	if err := os.MkdirAll(nested, 0700); err != nil {
 		t.Fatal(err)
