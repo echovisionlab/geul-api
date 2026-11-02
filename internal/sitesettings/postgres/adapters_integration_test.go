@@ -69,7 +69,8 @@ func newUnits(t *testing.T, db *gorm.DB) mutation.UnitOfWork[sitesettings.Store]
 func newService(t *testing.T, db *gorm.DB, checker *authztest.Checker) *sitesettings.Service {
 	t.Helper()
 	service, err := sitesettings.NewService(sitesettings.Deps{
-		Units: newUnits(t, db), SpiceDB: checker, Fence: &identitystatetest.Fence{}, Audit: &audittest.Recorder{},
+		Assets: sitesettingspostgres.NewAssetReader(db, sitesettingsadapter.NewAssets(cdnDomain)),
+		Units:  newUnits(t, db), SpiceDB: checker, Fence: &identitystatetest.Fence{}, Audit: &audittest.Recorder{},
 	})
 	require.NoError(t, err)
 	return service

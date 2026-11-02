@@ -45,7 +45,7 @@ func newFixture(t *testing.T, checker *authztest.Checker, audit *audittest.Recor
 	store, units := sitesettingstest.New()
 	fence := &identitystatetest.Fence{}
 	service, err := sitesettings.NewService(sitesettings.Deps{
-		Units: units, SpiceDB: checker, Fence: fence, Audit: audit, SiteOrigin: " https://www.example.test/ ",
+		Assets: store, Units: units, SpiceDB: checker, Fence: fence, Audit: audit, SiteOrigin: " https://www.example.test/ ",
 	})
 	require.NoError(t, err)
 	return &fixture{

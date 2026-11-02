@@ -92,6 +92,13 @@ type AssetBinding struct {
 	Kind         string
 }
 
+// AssetReader resolves optional display assets independently of the settings snapshot.
+// Each failed lookup leaves subsequent lookups usable.
+type AssetReader interface {
+	ReadyAsset(ctx context.Context, fileID, kind string) (*Asset, error)
+	Favicon(ctx context.Context, fileID string) (*Asset, *FaviconSet)
+}
+
 // Store is what the Site Settings use cases read and write, bound to one
 // transaction or read snapshot. Besides the settings row and its loader
 // Files it drives, in the same transaction, the File and public asset

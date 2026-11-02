@@ -371,14 +371,16 @@ func (s *Lifecycle) BindReadyAssetForSourceFile(
 }
 
 func (s *Lifecycle) ReadyAssetRef(ctx context.Context, assetID string) (*Reference, error) {
-	asset, err := s.loadPublicAsset(ctx, strings.TrimSpace(assetID))
+	var ref *Reference
+	err := s.units.Read(ctx, func(store Store) error {
+		var err error
+		ref, err = NewReferenceReader(store, s.cdnDomain).ReadyAssetRef(ctx, assetID)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	if asset.Status != AssetReady || asset.FileSize == nil || len(asset.SHA256) != 32 {
-		return nil, domainerr.Precondition("public asset is not ready")
-	}
-	return s.AssetRef(*asset)
+	return ref, nil
 }
 
 func (s *Lifecycle) ReadyAssetRefForSourceFile(ctx context.Context, sourceFileID, expectedKind string) (*Reference, error) {
@@ -391,18 +393,7 @@ func (s *Lifecycle) ReadyAssetRefForSourceFile(ctx context.Context, sourceFileID
 	return ref, err
 }
 func (s *Lifecycle) readyAssetRefForSourceFile(ctx context.Context, store Store, sourceFileID, expectedKind string) (*Reference, error) {
-	expectedKind = strings.TrimSpace(expectedKind)
-	if _, ok := publicAssetKinds[expectedKind]; !ok {
-		return nil, domainerr.InvalidField("kind", "unsupported public asset kind")
-	}
-	asset, err := store.ReadyAssetForFile(ctx, sourceFileID, expectedKind)
-	if errors.Is(err, ErrAssetNotFound) {
-		return nil, domainerr.ResourceNotFound("public_asset_for_source_file", sourceFileID)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return s.AssetRef(asset)
+	return NewReferenceReader(store, s.cdnDomain).ReadyAssetRefForSourceFile(ctx, sourceFileID, expectedKind)
 }
 
 func ReadyPublicAssetRefForSourceFile(
@@ -460,22 +451,7 @@ func LoadReadyPublicAssetRefsForSourceFiles(
 
 // AssetRef returns the immutable CDN reference for a ready public asset.
 func (s *Lifecycle) AssetRef(asset Asset) (*Reference, error) {
-	if asset.Kind == "attachment" || asset.Disposition != "inline" {
-		return nil, domainerr.Precondition("attachment public assets cannot be emitted")
-	}
-	assetPath, err := mediaauth.AssetPath(asset.ID, asset.Kind, asset.Extension)
-	if err != nil {
-		return nil, err
-	}
-	return &Reference{
-		AssetID:     asset.ID,
-		URL:         mediaauth.JoinOrigin(s.cdnDomain, assetPath),
-		Extension:   asset.Extension,
-		MimeType:    asset.MimeType,
-		FileSize:    *asset.FileSize,
-		SHA256:      append([]byte(nil), asset.SHA256...),
-		Disposition: DispositionInline,
-	}, nil
+	return assetReference(s.cdnDomain, asset)
 }
 
 func (s *Lifecycle) RequestPublicAssetDeletion(ctx context.Context, assetID string) error {
