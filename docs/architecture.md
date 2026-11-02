@@ -476,10 +476,10 @@ func NewConnectHandler(members *Service) *ConnectHandler
 
   ```go
   type Deps struct {
-  	Units   mutation.UnitOfWork[Store] // <domain>postgres.NewUnits(db)
-  	SpiceDB Authorizer                 // mutation.Authorizer or the domain's wider interface
-  	Fence   identitystate.Fence        // identitystate.PostgresFence{}
-  	Audit   domainaudit.Appender
+      Units   mutation.UnitOfWork[Store] // <domain>postgres.NewUnits(db)
+      SpiceDB Authorizer                 // mutation.Authorizer or the domain's wider interface
+      Fence   identitystate.Fence        // identitystate.PostgresFence{}
+      Audit   domainaudit.Appender
   }
 
   mutations, err := mutation.NewStoreRunner(deps.Units, deps.SpiceDB, deps.Fence, deps.Audit)
