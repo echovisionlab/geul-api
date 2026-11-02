@@ -67,8 +67,8 @@ func TestProjectTrackHLSRefsUnit(t *testing.T) {
 
 	require.Len(t, got, 1)
 	require.NotNil(t, got[fileID])
-	assert.Equal(t, "https://media.example.com/media/"+fileID+"/hls/"+generationID+"/master.m3u8", got[fileID].GetUrl())
-	assert.Equal(t, generationID, got[fileID].GetGenerationId())
+	assert.Equal(t, "https://media.example.com/media/"+fileID+"/hls/"+generationID+"/master.m3u8", optional.Value(got[fileID]).URL)
+	assert.Equal(t, generationID, optional.Value(got[fileID]).GenerationID)
 	empty, err := projectTrackHLSRefs("https://media.example.com", nil)
 	require.NoError(t, err)
 	assert.Empty(t, empty)

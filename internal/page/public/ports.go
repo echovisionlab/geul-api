@@ -3,7 +3,7 @@ package public
 import (
 	"context"
 
-	"github.com/google/uuid"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
@@ -11,7 +11,8 @@ import (
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	"github.com/echovisionlab/geul-api/internal/translation"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/google/uuid"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 )
 
@@ -24,7 +25,7 @@ type DraftAccessChecker interface {
 // visibility and exact attachment selectors have been authorized.
 type MediaResolver interface {
 	HydrateAuthorizedContentBlockMedia(context.Context, []*contentv1.ContentBlockMediaItem) ([]*contentv1.ContentBlockMediaItem, error)
-	ResolvePageFeaturedImageDelivery(context.Context, *string) (*commonv1.MediaDelivery, error)
+	ResolvePageFeaturedImageDelivery(context.Context, *string) (*fileref.Delivery, error)
 	ResolvePageOGAsset(context.Context, *string, *string) (*mediaasset.Reference, error)
 }
 

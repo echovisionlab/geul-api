@@ -9,6 +9,7 @@ import (
 	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
 
 	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 
@@ -26,7 +27,6 @@ import (
 
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/stretchr/testify/require"
@@ -192,11 +192,11 @@ func (f *postFeaturedManageFiles) ResolveAuthorizedPostFeaturedImage(
 
 type postFeaturedPublicDisplayFiles struct{}
 
-func (postFeaturedPublicDisplayFiles) ResolvePublicDisplayMedia(
+func (postFeaturedPublicDisplayFiles) ResolveDisplayMedia(
 	context.Context,
 	[]string,
-) (map[string]*commonv1.MediaDelivery, error) {
-	return map[string]*commonv1.MediaDelivery{}, nil
+) (map[string]*fileref.Delivery, error) {
+	return map[string]*fileref.Delivery{}, nil
 }
 
 type postFeaturedAsyncPublisher struct{}

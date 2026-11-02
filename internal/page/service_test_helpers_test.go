@@ -4,20 +4,22 @@ import (
 	"context"
 	"testing"
 
-	"connectrpc.com/connect"
-	"github.com/google/uuid"
-	"github.com/stretchr/testify/require"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
+	"connectrpc.com/connect"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/echovisionlab/geul-api/internal/domainaudit/audittest"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/mutation/mutationtest"
 	"github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/page/pagetest"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
@@ -134,12 +136,12 @@ type featuredImages struct {
 	requests []string
 }
 
-func (f *featuredImages) ResolveAuthorizedPageFeaturedImage(_ context.Context, pageID, fileID string) (*commonv1.MediaDelivery, error) {
+func (f *featuredImages) ResolveAuthorizedPageFeaturedImage(_ context.Context, pageID, fileID string) (*fileref.Delivery, error) {
 	f.requests = append(f.requests, pageID+":"+fileID)
 	if fileID == "" {
 		return nil, nil
 	}
-	return &commonv1.MediaDelivery{FileId: fileID}, nil
+	return &fileref.Delivery{FileID: fileID}, nil
 }
 
 func text(value string) *string { return &value }

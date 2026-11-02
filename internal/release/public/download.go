@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
 )
 
 // DownloadAccessResolver decides the download access of each requested
@@ -22,18 +22,18 @@ type DownloadAccessResolver interface {
 }
 
 // TrackDownloadSigner signs the download of one File.
-type TrackDownloadSigner func(MediaFile) (*commonv1.ExpiringMediaRef, error)
+type TrackDownloadSigner func(MediaFile) (*mediaauth.Reference, error)
 
 // DownloadSigner builds signed delivery URLs of Track originals.
 type DownloadSigner interface {
-	DownloadRef(MediaFile) (*commonv1.ExpiringMediaRef, error)
+	DownloadRef(MediaFile) (*mediaauth.Reference, error)
 }
 
 // TrackDownloadAuthorization is the download access of one Track original
 // and, when it allows the download, its signed reference.
 type TrackDownloadAuthorization struct {
 	Access   *DownloadAccess
-	Download *commonv1.ExpiringMediaRef
+	Download *mediaauth.Reference
 }
 
 // TrackDownloadAccessRequest asks for the download access of a Track's

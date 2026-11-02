@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	optional "github.com/echovisionlab/geul-api/internal/optional"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 )
 
@@ -101,34 +103,33 @@ func TestPublicHLSURL(t *testing.T) {
 	}
 }
 
-func TestExpiringFileRef(t *testing.T) {
+func TestExpiringReference(t *testing.T) {
 	name := "source"
-	inline, err := ExpiringFileRef("cdn.example.com", "secret", testFileID, "wav", "audio/wav", &name, PurposeInline, time.Minute)
+	inline, err := ExpiringReference("cdn.example.com", "secret", testFileID, "wav", "audio/wav", &name, PurposeInline, time.Minute)
 	if err != nil {
-		t.Fatalf("inline ExpiringFileRef() error = %v", err)
+		t.Fatalf("inline ExpiringReference() error = %v", err)
 	}
-	if inline.GetPurpose() != commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_INLINE || inline.GetFileName() != "source" ||
-		inline.GetFileId() != testFileID || inline.GetMimeType() != "audio/wav" || inline.GetExtension() != "wav" {
+	if optional.Value(inline).Purpose != PurposeInline || optional.Value(optional.Value(inline).FileName) != "source" || optional.Value(inline).FileID != testFileID || optional.Value(inline).MimeType != "audio/wav" || optional.Value(inline).Extension != "wav" {
 		t.Fatalf("inline ref = %v", inline)
 	}
-	if signedClaims(t, inline.GetUrl()).Filename != "" {
+	if signedClaims(t, optional.Value(inline).URL).Filename != "" {
 		t.Fatal("inline token carries a download filename")
 	}
 
-	download, err := ExpiringFileRef("cdn.example.com", "secret", testFileID, "wav", "audio/wav", &name, PurposeDownload, time.Minute)
+	download, err := ExpiringReference("cdn.example.com", "secret", testFileID, "wav", "audio/wav", &name, PurposeDownload, time.Minute)
 	if err != nil {
-		t.Fatalf("download ExpiringFileRef() error = %v", err)
+		t.Fatalf("download ExpiringReference() error = %v", err)
 	}
-	claims := signedClaims(t, download.GetUrl())
-	if download.GetFileName() != "source.wav" || claims.Filename != "source.wav" {
-		t.Fatalf("download ref file name = %q, token filename = %q", download.GetFileName(), claims.Filename)
+	claims := signedClaims(t, optional.Value(download).URL)
+	if optional.Value(optional.Value(download).FileName) != "source.wav" || claims.Filename != "source.wav" {
+		t.Fatalf("download ref file name = %q, token filename = %q", optional.Value(optional.Value(download).FileName), claims.Filename)
 	}
-	if !download.GetExpiresAt().AsTime().Equal(time.Unix(claims.ExpiryUnix, 0)) {
+	if !optional.Value(download).ExpiresAt.Equal(time.Unix(claims.ExpiryUnix, 0)) {
 		t.Fatal("advertised expiry differs from the token expiry")
 	}
 
-	if _, err := ExpiringFileRef("", "", testFileID, "wav", "audio/wav", nil, PurposeInline, time.Minute); !errors.Is(err, ErrURLSigningFailed) {
-		t.Fatalf("unsigned ExpiringFileRef() error = %v", err)
+	if _, err := ExpiringReference("", "", testFileID, "wav", "audio/wav", nil, PurposeInline, time.Minute); !errors.Is(err, ErrURLSigningFailed) {
+		t.Fatalf("unsigned ExpiringReference() error = %v", err)
 	}
 }
 

@@ -4,21 +4,25 @@ import (
 	"context"
 	"testing"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/auth"
+	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"github.com/echovisionlab/geul-api/internal/auth"
-	"github.com/echovisionlab/geul-api/internal/authz/authztest"
 	errs "github.com/echovisionlab/geul-api/internal/errors"
 	"github.com/echovisionlab/geul-api/internal/identitystate/identitystatetest"
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/page"
 	"github.com/echovisionlab/geul-api/internal/page/pagetest"
+
 	pagepublic "github.com/echovisionlab/geul-api/internal/page/public"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 )
 
@@ -65,11 +69,11 @@ func (m *media) HydrateAuthorizedContentBlockMedia(ctx context.Context, items []
 	return items, nil
 }
 
-func (*media) ResolvePageFeaturedImageDelivery(_ context.Context, fileID *string) (*commonv1.MediaDelivery, error) {
+func (*media) ResolvePageFeaturedImageDelivery(_ context.Context, fileID *string) (*fileref.Delivery, error) {
 	if fileID == nil {
 		return nil, nil
 	}
-	return &commonv1.MediaDelivery{FileId: *fileID}, nil
+	return &fileref.Delivery{FileID: *fileID}, nil
 }
 
 func (*media) ResolvePageOGAsset(context.Context, *string, *string) (*mediaasset.Reference, error) {

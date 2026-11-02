@@ -3,15 +3,18 @@ package post
 import (
 	"context"
 
-	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
-
-	"gorm.io/gorm"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
+	filemediadomain "github.com/echovisionlab/geul-api/internal/filemedia"
+	"gorm.io/gorm"
+
 	errs "github.com/echovisionlab/geul-api/internal/errors"
+
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+
 	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 )
@@ -22,7 +25,7 @@ type manageFiles interface {
 }
 
 type displayFiles interface {
-	ResolvePublicDisplayMedia(context.Context, []string) (map[string]*commonv1.MediaDelivery, error)
+	ResolveDisplayMedia(context.Context, []string) (map[string]*fileref.Delivery, error)
 }
 
 // Files adapts File Media's authorized delivery surface to Post's manage port.
@@ -46,20 +49,20 @@ func (a *Files) ResolveAuthorizedPostFeaturedImage(
 	ctx context.Context,
 	postID string,
 	expectedFileID string,
-) (*commonv1.MediaDelivery, error) {
+) (*fileref.Delivery, error) {
 	value, err := a.files.ResolveAuthorizedPostFeaturedImage(ctx, postID, expectedFileID)
-	return filemediadomain.DeliveryMessage(value), err
+	return value, err
 }
 
-func (a *Files) ResolvePublicDisplayMedia(
+func (a *Files) ResolveDisplayMedia(
 	ctx context.Context,
 	fileIDs []string,
-) (map[string]*commonv1.MediaDelivery, error) {
-	return a.display.ResolvePublicDisplayMedia(ctx, fileIDs)
+) (map[string]*fileref.Delivery, error) {
+	return a.display.ResolveDisplayMedia(ctx, fileIDs)
 }
 
 type publicFiles interface {
-	ResolvePublicDisplayMedia(context.Context, []string) (map[string]*commonv1.MediaDelivery, error)
+	ResolveDisplayMedia(context.Context, []string) (map[string]*fileref.Delivery, error)
 	HydrateAuthorizedContentBlockMedia(
 		context.Context,
 		[]*contentv1.ContentBlockMediaItem,
@@ -81,11 +84,11 @@ func NewPublicFiles(db *gorm.DB, files publicFiles) *PublicFiles {
 	return &PublicFiles{db: db, files: files}
 }
 
-func (a *PublicFiles) ResolvePublicDisplayMedia(
+func (a *PublicFiles) ResolveDisplayMedia(
 	ctx context.Context,
 	fileIDs []string,
-) (map[string]*commonv1.MediaDelivery, error) {
-	return a.files.ResolvePublicDisplayMedia(ctx, fileIDs)
+) (map[string]*fileref.Delivery, error) {
+	return a.files.ResolveDisplayMedia(ctx, fileIDs)
 }
 
 func (a *PublicFiles) ResolveAuthorizedContentBlockMedia(

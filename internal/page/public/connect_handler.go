@@ -3,6 +3,8 @@ package public
 import (
 	"context"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 
 	"connectrpc.com/connect"
@@ -71,7 +73,7 @@ func getPageResponse(read Read) (*openv1.GetPageResponse, error) {
 		Summary:               read.Summary,
 		LocalizationInfo:      publiccontent.ToProtoLocalizationInfo(read.Localization),
 		OgAsset:               mediaasset.ReferenceProto(read.OgAsset),
-		FeaturedImageDelivery: read.FeaturedImage,
+		FeaturedImageDelivery: fileref.DeliveryProto(read.FeaturedImage),
 	}
 	if p.PublishedAt != nil {
 		message.PublishedAt = timestamppb.New(*p.PublishedAt)

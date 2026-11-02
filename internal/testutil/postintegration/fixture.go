@@ -10,12 +10,15 @@ import (
 	"fmt"
 	"testing"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
 
 	eventpkg "github.com/echovisionlab/geul-event-contracts/go/event"
 	"github.com/stretchr/testify/require"
 
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
+
 	sharelinkadapter "github.com/echovisionlab/geul-api/internal/adapters/sharelink"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
@@ -23,14 +26,17 @@ import (
 	"github.com/echovisionlab/geul-api/internal/domainaudit"
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
+
 	ogpostgres "github.com/echovisionlab/geul-api/internal/og/postgres"
+
 	postdomain "github.com/echovisionlab/geul-api/internal/post"
+
 	postpostgres "github.com/echovisionlab/geul-api/internal/post/postgres"
 	"github.com/echovisionlab/geul-api/internal/sharelink"
-	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 
+	apitelemetry "github.com/echovisionlab/geul-api/internal/telemetry"
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
@@ -40,11 +46,11 @@ import (
 type fileService struct{}
 
 func (fileService) DeleteFileByID(context.Context, string) error { return nil }
-func (fileService) ResolveAuthorizedPostFeaturedImage(context.Context, string, string) (*commonv1.MediaDelivery, error) {
+func (fileService) ResolveAuthorizedPostFeaturedImage(context.Context, string, string) (*fileref.Delivery, error) {
 	return nil, nil
 }
-func (fileService) ResolvePublicDisplayMedia(context.Context, []string) (map[string]*commonv1.MediaDelivery, error) {
-	return map[string]*commonv1.MediaDelivery{}, nil
+func (fileService) ResolveDisplayMedia(context.Context, []string) (map[string]*fileref.Delivery, error) {
+	return map[string]*fileref.Delivery{}, nil
 }
 
 type asyncPublisher struct{}

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	"github.com/echovisionlab/geul-api/internal/contentblock"
 	"github.com/echovisionlab/geul-api/internal/dbtime"
@@ -18,14 +18,18 @@ import (
 	"github.com/echovisionlab/geul-api/internal/identitystate"
 	"github.com/echovisionlab/geul-api/internal/mutation"
 	"github.com/echovisionlab/geul-api/internal/pageaccess"
+	"github.com/google/uuid"
+
 	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
+
 	sharedtelemetry "github.com/echovisionlab/geul-telemetry"
 )
 
 // FileDeliveryResolver projects exact File IDs after Page authorization.
 type FileDeliveryResolver interface {
-	ResolveAuthorizedPageFeaturedImage(context.Context, string, string) (*commonv1.MediaDelivery, error)
+	ResolveAuthorizedPageFeaturedImage(context.Context, string, string) (*fileref.Delivery, error)
 }
 
 // Deps are the collaborators of the Page use cases; all are required.

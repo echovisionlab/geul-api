@@ -4,6 +4,10 @@ import (
 	"context"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
+	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
+
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 
 	"connectrpc.com/connect"
@@ -217,8 +221,8 @@ func trackMediaDelivery(durationSeconds *int, media TrackMedia) *commonv1.MediaD
 		MimeType:         media.Source.MimeType,
 		FileSize:         media.Source.FileSize,
 		FileName:         media.Source.FileName,
-		Playback:         media.Playback,
-		Download:         media.Download,
+		Playback:         fileref.HLSReferenceProto(media.Playback),
+		Download:         mediaauth.ReferenceProto(media.Download),
 		Waveform:         mediaasset.ReferenceProto(media.Waveform),
 		Spectrogram:      mediaasset.ReferenceProto(media.Spectrogram),
 		ProcessingStatus: commonv1.MediaProcessingStatus_MEDIA_PROCESSING_STATUS_READY,

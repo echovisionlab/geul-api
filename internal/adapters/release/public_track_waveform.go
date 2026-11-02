@@ -3,10 +3,10 @@ package release
 import (
 	"context"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/sliceutil"
-
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
 	"gorm.io/gorm"
@@ -72,10 +72,10 @@ func loadTrackHLSRefs(
 	db *gorm.DB,
 	mediaDomain string,
 	fileIDs []string,
-) (map[string]*commonv1.HlsMediaRef, error) {
+) (map[string]*fileref.HLSReference, error) {
 	ids := sliceutil.UniqueNonZero(fileIDs)
 	if len(ids) == 0 {
-		return map[string]*commonv1.HlsMediaRef{}, nil
+		return map[string]*fileref.HLSReference{}, nil
 	}
 
 	var rows []trackHLSDerivativeRow
@@ -117,8 +117,8 @@ func projectTrackStaticDerivativeRefs(mediaDomain string, rows []trackStaticDeri
 func projectTrackHLSRefs(
 	mediaDomain string,
 	rows []trackHLSDerivativeRow,
-) (map[string]*commonv1.HlsMediaRef, error) {
-	result := make(map[string]*commonv1.HlsMediaRef, len(rows))
+) (map[string]*fileref.HLSReference, error) {
+	result := make(map[string]*fileref.HLSReference, len(rows))
 	for _, row := range rows {
 		ref, err := buildPublicHLSRef(mediaDomain, readyMediaGenerationRow(row))
 		if err != nil {

@@ -3,9 +3,9 @@ package public
 import (
 	"context"
 
-	"github.com/echovisionlab/geul-api/internal/memberref"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+	"github.com/echovisionlab/geul-api/internal/memberref"
 
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
 
@@ -14,7 +14,7 @@ import (
 )
 
 type FileService interface {
-	ResolvePublicDisplayMedia(context.Context, []string) (map[string]*commonv1.MediaDelivery, error)
+	ResolveDisplayMedia(context.Context, []string) (map[string]*fileref.Delivery, error)
 	ResolveAuthorizedContentBlockMedia(context.Context, uuid.UUID) ([]*contentv1.ContentBlockMediaItem, error)
 }
 

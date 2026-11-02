@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -73,25 +72,6 @@ func PublicHLSURL(mediaDomain, fileID, generationID, objectName string) (string,
 	return JoinOrigin(mediaDomain, "/"+prefix+"/"+objectName), nil
 }
 
-// ExpiringFileRef signs one file for public delivery. A download carries the
-// canonical download filename both in its token and in the reference.
-func ExpiringFileRef(
-	mediaDomain string,
-	secret string,
-	fileID string,
-	extension string,
-	mimeType string,
-	fileName *string,
-	purpose Purpose,
-	ttl time.Duration,
-) (*commonv1.ExpiringMediaRef, error) {
-	ref, err := ExpiringReference(mediaDomain, secret, fileID, extension, mimeType, fileName, purpose, ttl)
-	if err != nil {
-		return nil, err
-	}
-	return ReferenceProto(ref), nil
-}
-
 // Reference is a signed media URL and the exact expiry enforced by its token.
 type Reference struct {
 	FileID, URL, Extension, MimeType string
@@ -128,20 +108,6 @@ func ExpiringReference(mediaDomain, secret, fileID, extension, mimeType string, 
 	return ref, nil
 }
 
-// DeliveryPurpose maps a token purpose to its wire value.
-func DeliveryPurpose(purpose Purpose) commonv1.MediaDeliveryPurpose {
-	switch purpose {
-	case PurposeInline:
-		return commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_INLINE
-	case PurposeDownload:
-		return commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_DOWNLOAD
-	default:
-		return commonv1.MediaDeliveryPurpose_MEDIA_DELIVERY_PURPOSE_UNSPECIFIED
-	}
-}
-
-// ValidDownloadFilename reports whether value may appear as a token's
-// download filename claim.
 func ValidDownloadFilename(value string) bool {
 	return validFilename(value)
 }

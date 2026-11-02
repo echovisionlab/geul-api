@@ -5,6 +5,8 @@ import (
 	"errors"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/publiccontent"
 	"github.com/echovisionlab/geul-api/internal/release"
@@ -67,7 +69,7 @@ type Store interface {
 	// derivatives of the original audio Files.
 	TrackWaveforms(ctx context.Context, fileIDs []string) (map[string]*mediaasset.Reference, error)
 	TrackSpectrograms(ctx context.Context, fileIDs []string) (map[string]*mediaasset.Reference, error)
-	TrackHLS(ctx context.Context, fileIDs []string) (map[string]*commonv1.HlsMediaRef, error)
+	TrackHLS(ctx context.Context, fileIDs []string) (map[string]*fileref.HLSReference, error)
 	// TrackCredits lists the Tracks' credits with their Artists' first
 	// images by Track, sort order and creation.
 	TrackCredits(ctx context.Context, trackIDs []string) ([]TrackCreditRow, error)

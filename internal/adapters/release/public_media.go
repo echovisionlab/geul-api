@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 
 	mediaauth "github.com/echovisionlab/geul-api/internal/mediaauth"
@@ -12,8 +14,6 @@ import (
 	releasepublic "github.com/echovisionlab/geul-api/internal/release/public"
 
 	releasepublicpostgres "github.com/echovisionlab/geul-api/internal/release/public/postgres"
-
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
 	"gorm.io/gorm"
 )
 
@@ -80,12 +80,12 @@ func (m *PublicMedia) TrackHLS(
 	ctx context.Context,
 	db *gorm.DB,
 	fileIDs []string,
-) (map[string]*commonv1.HlsMediaRef, error) {
+) (map[string]*fileref.HLSReference, error) {
 	return loadTrackHLSRefs(ctx, db, m.mediaDomain, fileIDs)
 }
 
-func (m *PublicMedia) DownloadRef(file releasepublic.MediaFile) (*commonv1.ExpiringMediaRef, error) {
-	return mediaauth.ExpiringFileRef(
+func (m *PublicMedia) DownloadRef(file releasepublic.MediaFile) (*mediaauth.Reference, error) {
+	return mediaauth.ExpiringReference(
 		m.mediaDomain, m.mediaSecret, file.ID, file.Extension, file.MimeType,
 		file.FileName, mediaauth.PurposeDownload, m.downloadTTL,
 	)

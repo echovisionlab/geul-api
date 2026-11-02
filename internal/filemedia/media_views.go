@@ -1,10 +1,13 @@
 package filemedia
 
-import "github.com/echovisionlab/geul-api/internal/filemedia/domain"
+import (
+	"github.com/echovisionlab/geul-api/internal/filemedia/domain"
+	"github.com/echovisionlab/geul-api/internal/fileref"
+)
 
-type Delivery = domain.Delivery
-type HLSReference = domain.HLSReference
-type ProcessingStatus = domain.ProcessingStatus
+type Delivery = fileref.Delivery
+type HLSReference = fileref.HLSReference
+type ProcessingStatus = fileref.ProcessingStatus
 type DerivativeKind = domain.DerivativeKind
 type MediaDeliveryResult = domain.MediaDeliveryResult
 type CompletedUpload = domain.CompletedUpload
@@ -20,10 +23,10 @@ const (
 	LibraryItemUnspecified         = domain.LibraryItemUnspecified
 	LibraryItemFolder              = domain.LibraryItemFolder
 	LibraryItemFile                = domain.LibraryItemFile
-	ProcessingUnspecified          = domain.ProcessingUnspecified
-	ProcessingActive               = domain.ProcessingActive
-	ProcessingReady                = domain.ProcessingReady
-	ProcessingFailed               = domain.ProcessingFailed
+	ProcessingUnspecified          = fileref.ProcessingUnspecified
+	ProcessingActive               = fileref.ProcessingActive
+	ProcessingReady                = fileref.ProcessingReady
+	ProcessingFailed               = fileref.ProcessingFailed
 	DerivativeUnspecified          = domain.DerivativeUnspecified
 	DerivativeThumbnail            = domain.DerivativeThumbnail
 	DerivativeHLS                  = domain.DerivativeHLS

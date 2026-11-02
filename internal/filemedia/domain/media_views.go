@@ -1,9 +1,13 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"github.com/echovisionlab/geul-api/internal/fileref"
+)
 
 type MediaDeliveryResult struct {
-	Delivery                                           *Delivery
+	Delivery                                           *fileref.Delivery
 	IngestSlotID, IngestAttemptID, ClientMediaBundleID *string
 }
 
@@ -20,11 +24,11 @@ func (r *MediaDeliveryResult) Clone() *MediaDeliveryResult {
 }
 
 type CompletedUpload struct {
-	Delivery *Delivery
+	Delivery *fileref.Delivery
 	FileID   string
 }
 type ImportedFile struct {
-	Delivery                                       *Delivery
+	Delivery                                       *fileref.Delivery
 	FileID                                         string
 	SlotID, IngestAttemptID, ExpectedCurrentFileID *string
 }
@@ -36,15 +40,15 @@ type LibraryFile struct {
 	FolderID                          *string
 	UploadedByMember                  *MemberSummary
 	CreatedAt, UpdatedAt              *time.Time
-	Delivery                          *Delivery
+	Delivery                          *fileref.Delivery
 	UsageCount                        int32
 }
 
 type GeneratedOutput struct {
 	ID       string
 	Type     DerivativeKind
-	Status   ProcessingStatus
-	Delivery *Delivery
+	Status   fileref.ProcessingStatus
+	Delivery *fileref.Delivery
 }
 
 func (o *GeneratedOutput) Clone() *GeneratedOutput {
@@ -87,6 +91,6 @@ func clonePointer[T any](value *T) *T {
 
 type ScopedContentMediaItem struct {
 	FileID, BlockID, ReferencePath string
-	Delivery                       *Delivery
+	Delivery                       *fileref.Delivery
 	DownloadAllowed                bool
 }

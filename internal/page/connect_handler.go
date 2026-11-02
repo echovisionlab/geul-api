@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	"github.com/echovisionlab/geul-api/internal/mediaasset"
 
 	"connectrpc.com/connect"
@@ -256,7 +258,7 @@ func PageMessage(detail Detail) (*managev1.Page, error) {
 		CreatedAt:             timestamppb.New(p.CreatedAt),
 		UpdatedAt:             timestamppb.New(p.UpdatedAt),
 		OgAsset:               mediaasset.ReferenceProto(detail.OgAsset),
-		FeaturedImageDelivery: detail.FeaturedImage,
+		FeaturedImageDelivery: fileref.DeliveryProto(detail.FeaturedImage),
 		Document:              detail.Document,
 		Revision:              detail.Revision,
 		BlockMedia:            detail.BlockMedia,
@@ -337,7 +339,7 @@ func LifecycleMessage(result LifecycleResult) (*managev1.PageLifecycleMutationRe
 
 // FeaturedImageMessage renders a set featured image.
 func FeaturedImageMessage(result FeaturedImageResult) (*managev1.SetPageFeaturedImageResponse, error) {
-	return &managev1.SetPageFeaturedImageResponse{ImageDelivery: result.Delivery, OgGenerationRunId: result.OgGenerationRunID}, nil
+	return &managev1.SetPageFeaturedImageResponse{ImageDelivery: fileref.DeliveryProto(result.Delivery), OgGenerationRunId: result.OgGenerationRunID}, nil
 }
 
 // FeaturedImageDeleteMessage renders a removed featured image.

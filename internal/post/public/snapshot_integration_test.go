@@ -9,24 +9,32 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
 
 	"connectrpc.com/connect"
+	"github.com/echovisionlab/geul-api/internal/testutil/contenttest"
+
 	postadapter "github.com/echovisionlab/geul-api/internal/adapters/post"
+
 	postruntime "github.com/echovisionlab/geul-api/internal/adapters/post/runtime"
+
 	referencecatalogadapter "github.com/echovisionlab/geul-api/internal/adapters/referencecatalog"
 	"github.com/echovisionlab/geul-api/internal/auth"
 	"github.com/echovisionlab/geul-api/internal/contentblock"
-	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
-	postpublicpostgres "github.com/echovisionlab/geul-api/internal/post/public/postgres"
 
+	postpublic "github.com/echovisionlab/geul-api/internal/post/public"
+
+	postpublicpostgres "github.com/echovisionlab/geul-api/internal/post/public/postgres"
 	"github.com/echovisionlab/geul-api/internal/testutil/orytest"
 	"github.com/echovisionlab/geul-api/internal/testutil/postintegration"
 	"github.com/echovisionlab/geul-api/internal/testutil/runtimetest"
-	commonv1 "github.com/echovisionlab/geul-event-contracts/gen/api/common/v1"
+
 	contentv1 "github.com/echovisionlab/geul-event-contracts/gen/api/content/v1"
+
 	managev1 "github.com/echovisionlab/geul-event-contracts/gen/api/manage/v1"
+
 	openv1 "github.com/echovisionlab/geul-event-contracts/gen/api/open/v1"
+
 	policyv1 "github.com/echovisionlab/geul-event-contracts/gen/api/policy/v1"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -215,8 +223,8 @@ func requirePublicPostUpdateWaitsForSnapshot(t *testing.T, db *gorm.DB, writeDon
 
 type snapshotFileService struct{}
 
-func (snapshotFileService) ResolvePublicDisplayMedia(context.Context, []string) (map[string]*commonv1.MediaDelivery, error) {
-	return map[string]*commonv1.MediaDelivery{}, nil
+func (snapshotFileService) ResolveDisplayMedia(context.Context, []string) (map[string]*fileref.Delivery, error) {
+	return map[string]*fileref.Delivery{}, nil
 }
 
 func (snapshotFileService) ResolveAuthorizedContentBlockMedia(

@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	fileref "github.com/echovisionlab/geul-api/internal/fileref"
+
 	mediaasset "github.com/echovisionlab/geul-api/internal/mediaasset"
 	"github.com/echovisionlab/geul-api/internal/memberref"
 
@@ -69,7 +71,7 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	viewCan, err := policyv1.Post.View(id)
 	require.NoError(t, err)
 	author := &memberref.Summary{ID: uuid.NewString(), Nickname: "Author"}
-	featured := &commonv1.MediaDelivery{FileId: uuid.NewString()}
+	featured := &fileref.Delivery{FileID: uuid.NewString()}
 	og := &mediaasset.Reference{AssetID: uuid.NewString(), URL: "https://cdn.example/og.webp"}
 	view, err := postViewWithProjection(Post{
 		ID: id, Title: "Title", Slug: new("post"), Summary: new("Summary"), SourceLocale: "ko",
@@ -97,7 +99,7 @@ func TestManagePostWireResponseKeepsContentRelationsAndAuthority(t *testing.T) {
 	require.Equal(t, configurationRevision, decoded.ConfigurationRevision)
 	require.True(t, proto.Equal(media[0], decoded.BlockMedia[0]))
 	require.True(t, proto.Equal(memberref.ReferenceMessage(author), decoded.AuthorMembers[0]))
-	require.True(t, proto.Equal(featured, decoded.FeaturedImageDelivery))
+	require.True(t, proto.Equal(fileref.DeliveryProto(featured), decoded.FeaturedImageDelivery))
 	require.True(t, proto.Equal(mediaasset.ReferenceProto(og), decoded.OgAsset))
 	require.True(t, proto.Equal(&commonv1.DocumentLayout{
 		ContentHeight: commonv1.DocumentContentHeight_DOCUMENT_CONTENT_HEIGHT_CONTENT,
